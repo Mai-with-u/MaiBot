@@ -1185,20 +1185,24 @@ class LLMOrchestrator:
                 exclude_models=failed_models_this_request,
                 model_name=model_name,
             )
-            last_model_name = model_info.name
-            trace_context.model_attempt = 0
-            context_items: List[ContextItem] = []
-            if context_factory:
-                parameter_count = len(inspect.signature(context_factory).parameters)
-                if parameter_count >= 2:
-                    context_result = context_factory(client, model_info)
-                else:
-                    context_result = context_factory(client)
-                if inspect.isawaitable(context_result):
-                    context_items = await context_result
-                else:
-                    context_items = context_result
+            # 取得实例后立即登记租约：与获取之间不存在任何挂起点，
+            # 避免此窗口内配置重载把无租约的实例视为空闲并立即关闭其连接池
+            client.acquire_request_lease()
             try:
+                last_model_name = model_info.name
+                trace_context.model_attempt = 0
+                context_items: List[ContextItem] = []
+                if context_factory:
+                    parameter_count = len(inspect.signature(context_factory).parameters)
+                    if parameter_count >= 2:
+                        context_result = context_factory(client, model_info)
+                    else:
+                        context_result = context_factory(client)
+                    if inspect.isawaitable(context_result):
+                        context_items = await context_result
+                    else:
+                        context_items = context_result
+
                 request = self._build_client_request(
                     request_type=request_type,
                     model_info=model_info,
@@ -1266,6 +1270,15 @@ class LLMOrchestrator:
                 if isinstance(last_exception, RespNotOkException) and last_exception.status_code == 400:
                     logger.warning("收到客户端错误 (400)，跳过当前模型并继续尝试其他模型。")
                     continue
+            finally:
+                client.release_request_lease()
+                # 实例已被注册表淘汰且本请求是最后一个使用者时，由请求方负责关闭连接池；
+                # 关闭失败仅记录日志，不掩盖请求本身正在传播的异常语义
+                if client.should_close_after_release():
+                    try:
+                        await client.aclose()
+                    except Exception as close_error:
+                        logger.warning(f"释放已淘汰 LLM 客户端连接池失败: {close_error}")
 
         logger.error(f"所有 {max_attempts} 个模型均尝试失败。")
         if last_exception:

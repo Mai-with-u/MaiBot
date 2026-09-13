@@ -7,6 +7,9 @@ import importlib.util
 
 
 class DummyLogger:
+    def debug(self, *a, **k):
+        pass
+
     def info(self, *a, **k):
         pass
 
@@ -87,7 +90,7 @@ class DummyMaiImage:
 
     async def calculate_hash_format(self):
         self.file_hash = "dummy-hash"
-        return None
+        return True
 
 
 class DummyLLMRequest:
@@ -196,6 +199,17 @@ def patch_external_dependencies(monkeypatch):
 
     llm_options_mod = types.SimpleNamespace(LLMImageOptions=lambda **kwargs: types.SimpleNamespace(**kwargs))
     monkeypatch.setitem(sys.modules, "src.common.data_models.llm_service_data_models", llm_options_mod)
+
+    # Patch config_manager to make _is_vlm_task_configured return True
+    mock_model_config = types.SimpleNamespace(
+        model_task_config=types.SimpleNamespace(
+            vlm=types.SimpleNamespace(model_list=["mock-vlm-model"])
+        )
+    )
+    config_mgr_mod = types.SimpleNamespace(
+        config_manager=types.SimpleNamespace(get_model_config=lambda: mock_model_config)
+    )
+    monkeypatch.setitem(sys.modules, "src.config.config", config_mgr_mod)
 
     # If module already imported, reload it to apply patches
     mod_name = "src.chat.image_system.image_manager"

@@ -1,8 +1,9 @@
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 import asyncio
+import threading
 
 from rich.traceback import install
 from sqlmodel import select
@@ -20,6 +21,12 @@ if TYPE_CHECKING:
 install(extra_lines=3)
 
 logger = get_logger("chat_manager")
+
+# 会话内存缓存的淘汰阈值：超过该时长没有任何消息的会话从内存中移除。
+# 数据库记录保留，后续消息到达时会通过 get_or_create_session 自动重新加载，
+# 避免长期运行时内存随历史会话数无界增长。与 heartflow 的 24 小时不活跃
+# 淘汰阈值保持一致，尽量保证被淘汰时没有仍在使用的运行时引用。
+SESSION_EVICTION_INACTIVE_SECONDS = 24 * 60 * 60
 
 
 class SessionContext:
@@ -85,6 +92,8 @@ class ChatManager:
     def __init__(self) -> None:
         self.sessions: Dict[str, BotChatSession] = {}  # session_id -> BotChatSession
         self.last_messages: Dict[str, "SessionMessage"] = {}  # session_id -> SessionMessage
+        self._deleted_session_ids: Set[str] = set()
+        self._session_lock = threading.Lock()
 
     async def initialize(self):
         """初始化聊天管理器"""
@@ -122,6 +131,8 @@ class ChatManager:
             account_id=account_id,
             scope=scope,
         )
+        with self._session_lock:
+            self._deleted_session_ids.discard(session_id)
         if session := self.get_session_by_session_id(session_id):
             route_metadata_changed = self._apply_route_metadata(session, account_id=account_id, scope=scope)
             session.update_active_time()
@@ -198,6 +209,13 @@ class ChatManager:
         if session is not None and self._update_session_identity(session, message):
             self._save_session(session)
 
+    def release_session(self, session_id: str) -> None:
+        """释放指定聊天流的内存缓存（会话对象与最近一条消息），供聊天流删除等场景调用。"""
+        with self._session_lock:
+            self._deleted_session_ids.add(session_id)
+            self.sessions.pop(session_id, None)
+            self.last_messages.pop(session_id, None)
+
     @staticmethod
     def _normalize_identity_text(value: Optional[str]) -> Optional[str]:
         normalized_value = str(value or "").strip()
@@ -255,15 +273,62 @@ class ChatManager:
             await asyncio.sleep(interval_seconds)
             try:
                 await asyncio.to_thread(self.save_all_sessions)
+                # 仅在保存成功后才淘汰不活跃会话，确保被淘汰的会话数据已落库。
+                evicted_count = await asyncio.to_thread(self.evict_inactive_sessions)
+                if evicted_count:
+                    logger.info(f"已从内存淘汰 {evicted_count} 个不活跃会话（数据保留在数据库中）")
             except Exception as e:
-                logger.error(f"定期保存会话记录时发生错误: {e}")
+                logger.error(f"定期保存/淘汰会话记录时发生错误: {e}")
+
+    def evict_inactive_sessions(
+        self,
+        inactive_seconds: float = SESSION_EVICTION_INACTIVE_SECONDS,
+    ) -> int:
+        """将长时间不活跃的会话与其最近一条消息从内存缓存中移除。
+
+        只影响内存缓存：数据库中的会话记录保留，后续消息到达时
+        会通过 get_or_create_session 自动重新加载。
+
+        Args:
+            inactive_seconds: 不活跃阈值，单位为秒，默认为24小时
+        Returns:
+            int: 淘汰的会话数量
+        """
+        stale_cutoff = datetime.now() - timedelta(seconds=inactive_seconds)
+
+        with self._session_lock:
+            stale_session_ids = [
+                session_id
+                for session_id, session in list(self.sessions.items())
+                # last_active_timestamp 缺失时回退到会话创建时间。
+                if (session.last_active_timestamp or session.created_timestamp) < stale_cutoff
+            ]
+            for session_id in stale_session_ids:
+                self.sessions.pop(session_id, None)
+
+            # last_messages 可能包含尚未创建会话对象的条目，按消息自身时间戳判断。
+            stale_message_ids = [
+                session_id
+                for session_id, message in list(self.last_messages.items())
+                if isinstance(message.timestamp, datetime) and message.timestamp < stale_cutoff
+            ]
+            for session_id in stale_message_ids:
+                self.last_messages.pop(session_id, None)
+
+        return len(stale_session_ids)
 
     def save_all_sessions(self):
         """将内存中的全部会话记录保存到数据库"""
         try:
-            for session in self.sessions.values():
+            with self._session_lock:
+                sessions_to_save = [
+                    session
+                    for session in list(self.sessions.values())
+                    if session.session_id not in self._deleted_session_ids
+                ]
+            for session in sessions_to_save:
                 self._save_session(session)
-            logger.info(f"共 {len(self.sessions)} 个会话已经保存到数据库中")
+            logger.info(f"共 {len(sessions_to_save)} 个会话已经保存到数据库中")
         except Exception as e:
             logger.error(f"保存会话记录到数据库时发生错误: {e}")
             raise e
@@ -521,6 +586,9 @@ class ChatManager:
 
     def _save_session(self, session: BotChatSession):
         """将会话记录保存到数据库"""
+        with self._session_lock:
+            if session.session_id in self._deleted_session_ids:
+                return
         with get_db_session() as db_session:
             db_instance = session.to_db_instance()
             statement = select(ChatSession).filter_by(session_id=db_instance.session_id).limit(1)

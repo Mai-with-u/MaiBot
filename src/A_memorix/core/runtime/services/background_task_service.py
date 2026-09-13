@@ -426,6 +426,13 @@ class MemoryBackgroundTaskService(KernelServiceBase):
                 active_window_hours = max(1.0, float(self._cfg("person_profile.active_window_hours", 72.0) or 72.0))
                 max_refresh = max(1, int(self._cfg("person_profile.max_refresh_per_cycle", 50) or 50))
                 cutoff = time.time() - active_window_hours * 3600.0
+                # 顺手清理窗口外的时间戳：这些条目永远不会再次命中候选，
+                # 不清理会让字典随历史人物数无界增长。
+                stale_person_ids = [
+                    person_id for person_id, seen_at in self._active_person_timestamps.items() if seen_at < cutoff
+                ]
+                for person_id in stale_person_ids:
+                    self._active_person_timestamps.pop(person_id, None)
                 candidates = [
                     person_id
                     for person_id, seen_at in sorted(

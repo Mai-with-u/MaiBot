@@ -33,6 +33,9 @@ class EmbeddingAPIAdapter:
 
     _GLOBAL_DIMENSION_CACHE: Dict[str, int] = {}
     _GLOBAL_TEXT_EMBEDDING_CACHE: Dict[Tuple[str, int, str], np.ndarray] = {}
+    # 文本向量缓存按唯一文本无界增长（单条可达数 KB），超过上限时
+    # 按插入顺序淘汰最旧条目，防止长期运行内存无界增长。
+    MAX_TEXT_EMBEDDING_CACHE_SIZE = 4096
 
     def __init__(
         self,
@@ -499,6 +502,7 @@ class EmbeddingAPIAdapter:
                     text = batch[batch_index]
                     cache_key = self._embedding_cache_key(text, dimensions)
                     self._GLOBAL_TEXT_EMBEDDING_CACHE[cache_key] = vector.copy()
+                    self._prune_text_embedding_cache()
 
             batch_results.extend(normalized_results)
             batch_results.sort(key=lambda item: item[0])
@@ -523,6 +527,17 @@ class EmbeddingAPIAdapter:
             finally:
                 self.max_concurrent = previous
         return await self.encode(texts, batch_size=batch_size, dimensions=dimensions)
+
+    @classmethod
+    def _prune_text_embedding_cache(cls) -> None:
+        """把文本向量缓存裁剪到容量上限内（按插入顺序淘汰最旧条目）。"""
+
+        cache = cls._GLOBAL_TEXT_EMBEDDING_CACHE
+        overflow = len(cache) - cls.MAX_TEXT_EMBEDDING_CACHE_SIZE
+        if overflow <= 0:
+            return
+        for key in list(cache)[:overflow]:
+            cache.pop(key, None)
 
     def get_embedding_dimension(self) -> int:
         if self._dimension is not None:

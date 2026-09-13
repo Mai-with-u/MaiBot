@@ -437,6 +437,23 @@ class RuntimeDataCapabilityMixin:
             logger.error(f"[cap.message.get_by_id] 执行失败: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
 
+    # 插件消息查询的单次返回上限：仓储层把 limit<=0 视为"不限制"，
+    # 直接透传会让插件一次调用就把全量历史物化进内存，必须钳制。
+    MAX_PLUGIN_MESSAGE_LIMIT = 500
+    DEFAULT_PLUGIN_MESSAGE_LIMIT = 100
+
+    @classmethod
+    def _normalize_message_limit(cls, args: Dict[str, Any]) -> int:
+        """解析插件传入的消息条数上限：缺失/非法/<=0 一律回退默认值，并限制最大值。"""
+
+        try:
+            limit = int(args.get("limit") or 0)
+        except (TypeError, ValueError):
+            limit = 0
+        if limit <= 0:
+            return cls.DEFAULT_PLUGIN_MESSAGE_LIMIT
+        return min(limit, cls.MAX_PLUGIN_MESSAGE_LIMIT)
+
     async def _cap_message_get_by_time(self, plugin_id: str, capability: str, args: Dict[str, Any]) -> Any:
         from src.services import message_service 
 
@@ -444,7 +461,7 @@ class RuntimeDataCapabilityMixin:
             messages = message_service.get_messages_by_time(
                 start_time=float(args.get("start_time", 0.0)),
                 end_time=float(args.get("end_time", 0.0)),
-                limit=args.get("limit", 0),
+                limit=self._normalize_message_limit(args),
                 limit_mode=args.get("limit_mode", "latest"),
                 filter_mai=args.get("filter_mai", False),
             )
@@ -471,7 +488,7 @@ class RuntimeDataCapabilityMixin:
                 chat_id=chat_id,
                 start_time=float(args.get("start_time", 0.0)),
                 end_time=float(args.get("end_time", 0.0)),
-                limit=args.get("limit", 0),
+                limit=self._normalize_message_limit(args),
                 limit_mode=args.get("limit_mode", "latest"),
                 filter_mai=args.get("filter_mai", False),
                 filter_command=args.get("filter_command", False),
@@ -503,7 +520,7 @@ class RuntimeDataCapabilityMixin:
                 chat_id=chat_id,
                 start_time=current_time - hours * 3600,
                 end_time=current_time,
-                limit=args.get("limit", 100),
+                limit=self._normalize_message_limit(args),
                 limit_mode=args.get("limit_mode", "latest"),
                 filter_mai=args.get("filter_mai", False),
             )
@@ -550,7 +567,7 @@ class RuntimeDataCapabilityMixin:
                     chat_id=chat_id,
                     start_time=float(args.get("start_time", 0.0)),
                     end_time=float(args.get("end_time", 0.0)),
-                    limit=args.get("limit", 0),
+                    limit=self._normalize_message_limit(args),
                 )
             else:
                 messages = self._deserialize_messages(messages)

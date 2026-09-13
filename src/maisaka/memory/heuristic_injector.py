@@ -22,6 +22,9 @@ logger = get_logger("maisaka_heuristic_memory")
 HEURISTIC_MEMORY_REFERENCE_MARKER = "【启发式记忆-内部参考】"
 _SOURCE_CHAT_SUMMARY_PREFIX = "chat_summary:"
 _SOURCE_PERSON_FACT_PREFIX = "person_fact:"
+# 会话状态保留时长：超过该时长未被访问的状态会被清理，
+# 防止状态字典随历史会话数无界增长。
+_STATE_RETENTION_SECONDS = 24 * 60 * 60
 
 
 def _get_int_config(config: Any, name: str, default: int) -> int:
@@ -37,6 +40,7 @@ class HeuristicMemoryRecallState:
 
     last_recall_at: float = 0.0
     last_message_count: int = 0
+    last_seen_at: float = 0.0
     cached_reference: str = ""
     cache_expires_at: float = 0.0
 
@@ -86,6 +90,8 @@ class HeuristicMemoryInjector:
 
         state = self._states.setdefault(session.session_id, HeuristicMemoryRecallState())
         now = time()
+        state.last_seen_at = now
+        self._prune_stale_states(now)
         cache_ttl = max(0, _get_int_config(config, "heuristic_memory_recall_cache_ttl_seconds", 300))
         if state.cached_reference and cache_ttl > 0 and now < state.cache_expires_at:
             return state.cached_reference
@@ -156,6 +162,17 @@ class HeuristicMemoryInjector:
             return
         state.cached_reference = ""
         state.cache_expires_at = 0.0
+
+    def _prune_stale_states(self, now: float) -> None:
+        """清理长时间未访问的会话状态，避免状态字典随历史会话数无界增长。"""
+
+        stale_ids = [
+            session_id
+            for session_id, state in self._states.items()
+            if now - state.last_seen_at > _STATE_RETENTION_SECONDS
+        ]
+        for session_id in stale_ids:
+            self._states.pop(session_id, None)
 
     @staticmethod
     def _can_trigger(

@@ -148,17 +148,17 @@ async def websocket_logs(websocket: WebSocket, token: Optional[str] = Query(None
     active_connections.add(websocket)
     logger.info(f"📡 WebSocket 客户端已连接（已认证），当前连接数: {len(active_connections)}")
 
-    # 连接建立后，立即发送历史日志
     try:
-        recent_logs = load_recent_logs(limit=100)
-        logger.info(f"发送 {len(recent_logs)} 条历史日志到客户端")
+        # 连接建立后，立即发送历史日志
+        try:
+            recent_logs = load_recent_logs(limit=100)
+            logger.info(f"发送 {len(recent_logs)} 条历史日志到客户端")
 
-        for log_entry in recent_logs:
-            await websocket.send_text(json.dumps(log_entry, ensure_ascii=False))
-    except Exception as e:
-        logger.error(f"发送历史日志失败: {e}")
+            for log_entry in recent_logs:
+                await websocket.send_text(json.dumps(log_entry, ensure_ascii=False))
+        except Exception as e:
+            logger.error(f"发送历史日志失败: {e}")
 
-    try:
         # 保持连接，等待客户端消息或断开
         while True:
             # 接收客户端消息（用于心跳或控制指令）
@@ -171,10 +171,11 @@ async def websocket_logs(websocket: WebSocket, token: Optional[str] = Query(None
                 await websocket.send_text("pong")
 
     except WebSocketDisconnect:
-        active_connections.discard(websocket)
         logger.info(f"📡 WebSocket 客户端已断开，当前连接数: {len(active_connections)}")
     except Exception as e:
         logger.error(f"❌ WebSocket 错误: {e}")
+    finally:
+        # 无论正常断开、异常还是任务被取消（CancelledError 不会被 except Exception 捕获），都必须移除连接引用
         active_connections.discard(websocket)
 
 

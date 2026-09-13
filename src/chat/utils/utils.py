@@ -917,6 +917,32 @@ def get_chat_type_and_target_info(chat_id: str) -> Tuple[bool, Optional["ChatTar
     return is_group_chat, chat_target_info
 
 
+# replyer 动作临时文件的保留数量上限：这些文件只用于临时排查，
+# 每次群聊回复都会新增一个，不清理会随运行时长无限累积。
+MAX_REPLYER_ACTION_TEMP_FILES = 200
+
+
+def _cleanup_replyer_action_temp_files(temp_dir: str) -> None:
+    """把 replyer 动作临时文件裁剪到保留数量上限内（删除最旧的）。"""
+
+    try:
+        entries = [
+            entry
+            for entry in os.listdir(temp_dir)
+            if entry.startswith("replyer_action_") and entry.endswith(".json")
+        ]
+        if len(entries) <= MAX_REPLYER_ACTION_TEMP_FILES:
+            return
+        entries.sort()
+        for filename in entries[: len(entries) - MAX_REPLYER_ACTION_TEMP_FILES]:
+            try:
+                os.remove(os.path.join(temp_dir, filename))
+            except OSError:
+                continue
+    except Exception as e:
+        logger.debug(f"清理replyer动作临时文件失败: {e}")
+
+
 def record_replyer_action_temp(chat_id: str, reason: str, think_level: int) -> None:
     """
     临时记录replyer动作被选择的信息（仅群聊）
@@ -947,6 +973,9 @@ def record_replyer_action_temp(chat_id: str, reason: str, think_level: int) -> N
         # 写入文件
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(record_data, f, ensure_ascii=False, indent=2)
+
+        # 文件名含微秒级时间戳，按名称排序即按创建顺序排序，裁掉最旧的。
+        _cleanup_replyer_action_temp_files(temp_dir)
 
         logger.debug(f"已记录replyer动作选择: chat_id={chat_id}, think_level={think_level}")
     except Exception as e:

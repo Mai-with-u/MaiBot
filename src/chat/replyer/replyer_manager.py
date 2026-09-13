@@ -65,5 +65,19 @@ class ReplyerManager:
         logger.debug(f"Replyer 创建完成: cache_key={cache_key}")
         return replyer
 
+    def invalidate_replyer(self, stream_id: str) -> None:
+        """使指定会话的所有 replyer 缓存失效，供聊天流删除等场景调用。"""
+        normalized_stream_id = str(stream_id or "").strip()
+        if not normalized_stream_id:
+            logger.warning("[ReplyerManager] 缺少 stream_id，跳过 replyer 缓存失效")
+            return
+
+        suffix = f":{normalized_stream_id}"
+        stale_keys = [cache_key for cache_key in self._repliers if cache_key.endswith(suffix)]
+        for cache_key in stale_keys:
+            self._repliers.pop(cache_key, None)
+        if stale_keys:
+            logger.info(f"[ReplyerManager] 已失效 {len(stale_keys)} 个 replyer 缓存: stream_id={normalized_stream_id}")
+
 
 replyer_manager = ReplyerManager()

@@ -422,6 +422,13 @@ class PersonFactWritebackService:
 class ChatSummaryWritebackState:
     last_trigger_message_count: int = 0
     last_trigger_time: float = 0.0
+    # 状态最近一次被访问的时间，用于清理长期不活跃的会话状态。
+    last_accessed_at: float = 0.0
+
+
+# 会话写回状态的内存保留时长：超过该时长未被访问的状态会被清理，
+# 需要时会重新从数据库恢复触发位点，不影响正确性。
+_STATE_RETENTION_SECONDS = 7 * 24 * 60 * 60
 
 
 class ChatSummaryWritebackService:
@@ -430,6 +437,7 @@ class ChatSummaryWritebackService:
         self._worker_task: Optional[asyncio.Task] = None
         self._stopping = False
         self._states: dict[str, ChatSummaryWritebackState] = {}
+        self._last_prune_time: float = 0.0
 
     async def start(self) -> None:
         if self._worker_task is not None and not self._worker_task.done():
@@ -450,6 +458,18 @@ class ChatSummaryWritebackService:
             pass
         except Exception as exc:
             logger.warning(f"关闭聊天摘要写回 worker 失败: {exc}")
+
+    def _prune_stale_states(self) -> None:
+        """清理长时间未访问的会话状态，避免字典随历史会话数无界增长。"""
+
+        cutoff = time.time() - _STATE_RETENTION_SECONDS
+        stale_ids = [
+            session_id
+            for session_id, state in self._states.items()
+            if state.last_accessed_at < cutoff
+        ]
+        for session_id in stale_ids:
+            self._states.pop(session_id, None)
 
     async def enqueue(self, message: Any) -> None:
         if not bool(global_config.a_memorix.integration.chat_summary_writeback_enabled):
@@ -494,8 +514,12 @@ class ChatSummaryWritebackService:
             state = ChatSummaryWritebackState(
                 last_trigger_message_count=restored_count,
                 last_trigger_time=time.time() if restored_count > 0 else 0.0,
+                last_accessed_at=time.time(),
             )
             self._states[session_id] = state
+            self._prune_stale_states()
+        else:
+            state.last_accessed_at = time.time()
         pending_message_count = max(0, total_message_count - state.last_trigger_message_count)
         if pending_message_count < threshold:
             return

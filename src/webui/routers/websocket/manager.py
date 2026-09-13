@@ -13,6 +13,12 @@ from src.common.logger import get_logger
 logger = get_logger("webui.websocket")
 
 
+# 单个连接出站发送队列的上限。慢速或僵死的客户端（TCP 已连但不读取）会导致
+# 广播消息在其队列中无限积压，超过上限即判定连接异常并主动断开，
+# 由客户端重连后重新拉取状态。
+SEND_QUEUE_MAX_SIZE = 512
+
+
 @dataclass
 class WebSocketConnection:
     """统一 WebSocket 连接上下文。"""
@@ -21,7 +27,9 @@ class WebSocketConnection:
     websocket: WebSocket
     subscriptions: Set[str] = field(default_factory=set)
     chat_sessions: Dict[str, str] = field(default_factory=dict)
-    send_queue: "asyncio.Queue[Optional[Dict[str, Any]]]" = field(default_factory=asyncio.Queue)
+    send_queue: "asyncio.Queue[Optional[Dict[str, Any]]]" = field(
+        default_factory=lambda: asyncio.Queue(maxsize=SEND_QUEUE_MAX_SIZE)
+    )
     sender_task: Optional["asyncio.Task[None]"] = None
 
 
@@ -110,7 +118,14 @@ class UnifiedWebSocketManager:
         except Exception as exc:
             logger.debug(f"关闭统一 WebSocket 底层连接时出现异常: connection={connection_id}, error={exc}")
 
-        await connection.send_queue.put(None)
+        try:
+            # 队列可能已被慢速客户端填满，此时无法再投递退出哨兵，
+            # 直接取消发送协程以避免清理流程被阻塞。
+            connection.send_queue.put_nowait(None)
+        except asyncio.QueueFull:
+            if connection.sender_task is not None:
+                connection.sender_task.cancel()
+
         if connection.sender_task is not None:
             try:
                 await connection.sender_task
@@ -212,8 +227,28 @@ class UnifiedWebSocketManager:
             return False
         return self._build_subscription_key(domain, topic) in connection.subscriptions
 
+    def has_topic_subscribers(self, domain: str, topic: str) -> bool:
+        """判断是否存在任意连接订阅了指定主题。"""
+
+        subscription_key = self._build_subscription_key(domain, topic)
+        return any(
+            subscription_key in connection.subscriptions for connection in self.connections.values()
+        )
+
+    @staticmethod
+    def _try_put_nowait(connection: WebSocketConnection, message: Dict[str, Any]) -> bool:
+        """尝试立即把消息放入发送队列，队列已满时返回 ``False``。"""
+
+        try:
+            connection.send_queue.put_nowait(message)
+            return True
+        except asyncio.QueueFull:
+            return False
+
     async def enqueue(self, connection_id: str, message: Dict[str, Any]) -> None:
         """向指定连接的发送队列压入消息。
+
+        队列有界：投递失败说明客户端消费过慢，将调度断开该连接。
 
         Args:
             connection_id: 连接 ID。
@@ -230,23 +265,47 @@ class UnifiedWebSocketManager:
 
         current_loop = asyncio.get_running_loop()
         if target_loop is current_loop:
-            await connection.send_queue.put(message)
+            if not self._try_put_nowait(connection, message):
+                logger.warning(f"统一 WebSocket 发送队列已满，主动断开慢速连接: connection={connection_id}")
+                await self.disconnect(connection_id)
             return
 
         # WebUI 运行在独立线程事件循环中，跨 loop 投递必须回到连接所属 loop 执行。
+        async def _put_on_target_loop() -> bool:
+            return self._try_put_nowait(connection, message)
+
         try:
-            future = asyncio.run_coroutine_threadsafe(connection.send_queue.put(message), target_loop)
+            future = asyncio.run_coroutine_threadsafe(_put_on_target_loop(), target_loop)
         except RuntimeError as exc:
             logger.debug(f"统一 WebSocket 跨线程投递失败: connection={connection_id}, error={exc}")
             return
 
         try:
-            await asyncio.wrap_future(future)
+            delivered = await asyncio.wrap_future(future)
         except asyncio.CancelledError:
             future.cancel()
             raise
         except Exception as exc:
             logger.debug(f"统一 WebSocket 等待跨线程投递时出现异常: connection={connection_id}, error={exc}")
+            return
+
+        if not delivered:
+            logger.warning(f"统一 WebSocket 发送队列已满，主动断开慢速连接: connection={connection_id}")
+            # 断开清理必须回到连接所属的事件循环执行。
+            try:
+                disconnect_future = asyncio.run_coroutine_threadsafe(self.disconnect(connection_id), target_loop)
+            except RuntimeError as exc:
+                logger.debug(f"统一 WebSocket 调度断开慢速连接失败: connection={connection_id}, error={exc}")
+                return
+            disconnect_future.add_done_callback(
+                lambda future: (
+                    None
+                    if future.exception() is None
+                    else logger.debug(
+                        f"统一 WebSocket 断开慢速连接时出现异常: connection={connection_id}, error={future.exception()}"
+                    )
+                )
+            )
 
     async def send_response(
         self,

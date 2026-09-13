@@ -13,6 +13,7 @@ import tomlkit
 
 from src.chat.heart_flow.heartflow_manager import heartflow_manager
 from src.chat.message_receive.chat_manager import chat_manager as core_chat_manager
+from src.chat.replyer.replyer_manager import replyer_manager
 from src.common.database.database import get_db_session
 from src.common.database.database_model import (
     BehaviorAction,
@@ -1118,14 +1119,22 @@ def _delete_or_unlink_jargons(session: Any, session_id: str) -> Dict[str, int]:
     }
 
 
-def _release_deleted_chat_runtime(session_id: str) -> None:
-    """移除运行期缓存，避免定时保存把已删除聊天流重新写回数据库。"""
+async def _release_deleted_chat_runtime(session_id: str) -> None:
+    """释放已删除聊天流的运行期状态：移除内存缓存、停止心流运行时并失效 replyer 缓存。
 
-    core_chat_manager.sessions.pop(session_id, None)
-    heartflow_manager.heartflow_chat_list.pop(session_id, None)
+    避免定时保存把已删除聊天流重新写回数据库，同时防止运行时后台任务泄露。
+    """
+
+    core_chat_manager.release_session(session_id)
+    replyer_manager.invalidate_replyer(session_id)
+    try:
+        await heartflow_manager.release_chat(session_id, reason="chat_deleted")
+    except Exception as exc:
+        # 数据库记录已删除；运行时停止失败仅记录，待后续释放/淘汰流程重试
+        logger.error(f"释放已删除聊天流 {session_id} 的心流运行时失败: {exc}", exc_info=True)
 
 
-def _delete_chat_session_scope(session_id: str) -> Dict[str, Any]:
+async def _delete_chat_session_scope(session_id: str) -> Dict[str, Any]:
     """删除聊天流及所有直接归属该 session_id 的数据库记录。"""
 
     with get_db_session() as session:
@@ -1169,7 +1178,7 @@ def _delete_chat_session_scope(session_id: str) -> Dict[str, Any]:
             total_deleted += deleted_count
             items.append({"key": key, "label": label, "count": deleted_count})
 
-    _release_deleted_chat_runtime(session_id)
+    await _release_deleted_chat_runtime(session_id)
     logger.warning(
         "已删除聊天流及关联数据: "
         f"session_id={session_id} total_deleted={total_deleted} items={items}"

@@ -255,6 +255,20 @@ class SummaryImporter:
             return
 
         target_store = self._graph_vector_store()
+        if target_store is None or self.embedding_manager is None:
+            if not self._allow_metadata_only_write():
+                missing_deps = [
+                    dep
+                    for dep, obj in (("graph_vector_store", target_store), ("embedding_manager", self.embedding_manager))
+                    if obj is None
+                ]
+                raise RuntimeError(f"实体向量依赖缺失: {' 与 '.join(missing_deps)} 不可用且未开启 metadata_only 模式")
+            logger.warning(
+                "实体向量依赖不可用，跳过实体向量写入并保留 metadata/graph: "
+                f"store_ready={target_store is not None} embedding_ready={self.embedding_manager is not None}"
+            )
+            return
+
         pending_entities: List[Tuple[str, str, str]] = []
         for entity_hash, name in entities:
             token = str(entity_hash or "").strip()
@@ -703,10 +717,7 @@ class SummaryImporter:
                 metadata=metadata,
             )
 
-            # 7. 持久化
-            self.vector_store.save()
-            self.graph_store.save()
-
+            # 先写入外部引用标记建立幂等索引，确保保存或后续步骤异常时重试可精准去重
             external_id = str((metadata or {}).get("external_id", "") or "").strip()
             if external_id:
                 self.metadata_store.upsert_external_memory_ref(
@@ -715,6 +726,15 @@ class SummaryImporter:
                     source_type="chat_summary",
                     metadata={"chat_id": stream_id},
                 )
+
+            # 7. 持久化（同时保存主向量库与独立的图向量库，避免重复调用相同实例）
+            saved_stores: set[int] = set()
+            for store in (self.vector_store, self._graph_vector_store()):
+                if store is not None and id(store) not in saved_stores:
+                    store.save()
+                    saved_stores.add(id(store))
+            if self.graph_store is not None:
+                self.graph_store.save()
 
             result_msg = f"总结导入成功|长度: {len(summary_text)}|实体: {len(entities)}|关系: {len(relations)}"
             return SummaryImportResult(
@@ -813,6 +833,17 @@ class SummaryImporter:
             logger.warning(f"非法 summarization.default_knowledge_type={type_str}，回退 narrative")
             knowledge_type = KnowledgeType.NARRATIVE
 
+        # 在写入 metadata_store 之前前置校验向量依赖，避免在不可回滚时留下悬空段落
+        vector_writer = getattr(plugin_instance, "write_paragraph_vector_or_enqueue", None)
+        if not callable(vector_writer):
+            if (self.vector_store is None or self.embedding_manager is None) and not self._allow_metadata_only_write():
+                missing_deps = [
+                    dep
+                    for dep, obj in (("vector_store", self.vector_store), ("embedding_manager", self.embedding_manager))
+                    if obj is None
+                ]
+                raise RuntimeError(f"总结导入前置依赖检查失败: {' 与 '.join(missing_deps)} 不可用且未开启 metadata_only 回退")
+
         # 导入总结文本
         hash_value = self.metadata_store.add_paragraph(
             content=summary,
@@ -822,7 +853,6 @@ class SummaryImporter:
             time_meta=time_meta,
         )
 
-        vector_writer = getattr(plugin_instance, "write_paragraph_vector_or_enqueue", None)
         if callable(vector_writer):
             result = await vector_writer(
                 paragraph_hash=hash_value,
@@ -833,8 +863,24 @@ class SummaryImporter:
                 logger.warning(f"总结导入段落进入回退写入: {result}")
         else:
             try:
-                embedding = await self.embedding_manager.encode(summary)
-                self.vector_store.add(vectors=embedding.reshape(1, -1), ids=[hash_value])
+                if self.vector_store is not None and self.embedding_manager is not None:
+                    embedding = await self.embedding_manager.encode(summary)
+                    self.vector_store.add(vectors=embedding.reshape(1, -1), ids=[hash_value])
+                elif not self._allow_metadata_only_write():
+                    missing_deps = [
+                        dep
+                        for dep, obj in (("vector_store", self.vector_store), ("embedding_manager", self.embedding_manager))
+                        if obj is None
+                    ]
+                    raise RuntimeError(f"{' 与 '.join(missing_deps)} 不可用")
+                else:
+                    missing_reasons = []
+                    if self.vector_store is None:
+                        missing_reasons.append("vector_store_unavailable")
+                    if self.embedding_manager is None:
+                        missing_reasons.append("embedding_manager_unavailable")
+                    error_reason = "+".join(missing_reasons) or "vector_runtime_unavailable"
+                    self.metadata_store.enqueue_paragraph_vector_backfill(hash_value, error=error_reason)
             except Exception as exc:
                 if not self._allow_metadata_only_write():
                     raise
@@ -844,12 +890,19 @@ class SummaryImporter:
         # 导入实体
         normalized_entities = _normalize_entity_items(entities)
         if normalized_entities:
-            with self.metadata_store.transaction(immediate=True), self.graph_store.batch_update():
-                self.graph_store.add_nodes(normalized_entities)
-                entity_hashes = self.metadata_store.add_entities_batch(
-                    normalized_entities,
-                    source_paragraph=hash_value,
-                )
+            if self.graph_store is not None:
+                with self.metadata_store.transaction(immediate=True), self.graph_store.batch_update():
+                    self.graph_store.add_nodes(normalized_entities)
+                    entity_hashes = self.metadata_store.add_entities_batch(
+                        normalized_entities,
+                        source_paragraph=hash_value,
+                    )
+            else:
+                with self.metadata_store.transaction(immediate=True):
+                    entity_hashes = self.metadata_store.add_entities_batch(
+                        normalized_entities,
+                        source_paragraph=hash_value,
+                    )
             entity_vector_items = list(zip(entity_hashes, normalized_entities, strict=True))
             await self._ensure_entity_vectors(entity_vector_items)
 
@@ -871,7 +924,7 @@ class SummaryImporter:
                     source_paragraph=hash_value,
                     write_vector=write_vector,
                 )
-            else:
+            elif self.graph_store is not None:
                 with self.metadata_store.transaction(immediate=True), self.graph_store.batch_update():
                     # 写入元数据和图数据库（保留 relation_hashes，确保后续可按关系精确修剪）
                     relation_hashes = self.metadata_store.add_relations_batch(
@@ -882,6 +935,13 @@ class SummaryImporter:
                     self.graph_store.add_edges(
                         [(subject, obj) for subject, _, obj in relation_tuples],
                         relation_hashes=relation_hashes,
+                    )
+            else:
+                with self.metadata_store.transaction(immediate=True):
+                    self.metadata_store.add_relations_batch(
+                        relation_tuples,
+                        confidence=1.0,
+                        source_paragraph=hash_value,
                     )
 
         logger.info(f"总结导入完成: hash={hash_value[:8]}")

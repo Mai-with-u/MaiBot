@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 import json
 import shutil
 import tempfile
+import time
 import uuid
 import zipfile
 
@@ -34,6 +35,9 @@ _OPTIONAL_EXPORT_PARTS = ("plugins", "logs")
 _ALLOWED_IMPORT_PARTS = set(_EXPORT_DIRS)
 _TRANSFER_TEMP_DIR = Path(tempfile.gettempdir()) / "maibot_webui_transfer"
 _CHUNK_SIZE = 1024 * 1024
+_TERMINAL_JOB_STATUSES = {"completed", "failed", "cancelled"}
+_TRANSFER_JOB_RETENTION_SECONDS = 30 * 60
+_TRANSFER_JOB_MAX_ENTRIES = 64
 
 TransferJobStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
 
@@ -80,7 +84,7 @@ class _TransferJob:
     def __init__(self, job_id: str, kind: Literal["export", "import"]) -> None:
         self.job_id = job_id
         self.kind = kind
-        self.status: TransferJobStatus = "pending"
+        self._status: TransferJobStatus = "pending"
         self.progress = 0
         self.message = "等待处理"
         self.total_files = 0
@@ -92,6 +96,18 @@ class _TransferJob:
         self.manifest: dict[str, Any] | None = None
         self.error: str | None = None
         self.cancel_requested = False
+        self.finished_at: float | None = None
+
+    @property
+    def status(self) -> TransferJobStatus:
+        """任务状态；进入终态时记录时间戳，供过期回收使用。"""
+        return self._status
+
+    @status.setter
+    def status(self, value: TransferJobStatus) -> None:
+        self._status = value
+        if value in _TERMINAL_JOB_STATUSES and self.finished_at is None:
+            self.finished_at = time.monotonic()
 
     def to_response(self) -> DataTransferJobResponse:
         download_url = None
@@ -118,8 +134,45 @@ class _TransferJob:
 _jobs: dict[str, _TransferJob] = {}
 
 
+def _evict_stale_jobs() -> None:
+    """回收已结束且超过保留时长的任务记录，避免长期运行时任务字典无限累积。
+
+    超出容量上限时，即使未到期也会从最早的已结束任务开始回收；
+    进行中的任务（未进入终态）永远不会被回收。
+    """
+    now = time.monotonic()
+    finished_jobs = sorted(
+        (job.finished_at, job_id)
+        for job_id, job in _jobs.items()
+        if job.finished_at is not None
+    )
+    expired_count = sum(
+        1 for finished_at, _ in finished_jobs if now - finished_at > _TRANSFER_JOB_RETENTION_SECONDS
+    )
+    # 计算容量压力时把即将插入的新任务一并计入，保证插入后任务总数不超过上限
+    removable_count = min(
+        max(expired_count, len(_jobs) + 1 - _TRANSFER_JOB_MAX_ENTRIES),
+        len(finished_jobs),
+    )
+    for _, job_id in finished_jobs[:removable_count]:
+        job = _jobs.get(job_id)
+        if job is None:
+            continue
+        if job.file_path is not None:
+            try:
+                job.file_path.unlink(missing_ok=True)
+            except OSError as exc:
+                # 删除失败时保留任务记录及其 file_path，待后续回收时重试
+                logger.warning(f"清理数据迁移任务文件失败: {job.file_path}, error={exc}")
+                continue
+        _jobs.pop(job_id, None)
+
+
 def _new_job(kind: Literal["export", "import"]) -> _TransferJob:
     _TRANSFER_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    _evict_stale_jobs()
+    if len(_jobs) >= _TRANSFER_JOB_MAX_ENTRIES:
+        raise HTTPException(status_code=429, detail="当前数据迁移任务并发数已达上限，请等待已有任务完成后重试")
     job = _TransferJob(job_id=uuid.uuid4().hex, kind=kind)
     _jobs[job.job_id] = job
     return job
@@ -372,8 +425,11 @@ def _run_import_job(job_id: str, archive_path: Path, enabled_parts: set[str]) ->
         job.error = str(exc)
         job.message = "导入失败"
     finally:
+        # 仅在删除成功后清空 file_path；失败时保留记录与路径，供 _evict_stale_jobs 后续重试
         try:
             archive_path.unlink(missing_ok=True)
+            if job.file_path == archive_path:
+                job.file_path = None
         except OSError as exc:
             logger.warning(f"清理导入临时文件失败: {archive_path}, error={exc}")
 
@@ -454,8 +510,20 @@ async def create_data_import(
 
     job = _new_job("import")
     upload_path = _TRANSFER_TEMP_DIR / f"{job.job_id}-upload.zip"
-    await _save_upload_file(file, upload_path)
-    await file.close()
+    # 上传前先把临时文件挂到任务上，确保任何失败路径都能被过期回收统一清理
+    job.file_path = upload_path
+    try:
+        try:
+            await _save_upload_file(file, upload_path)
+        finally:
+            await file.close()
+    except Exception as exc:
+        # 上传失败：任务置为终态并保留 file_path，交由 _evict_stale_jobs 统一回收重试
+        logger.warning(f"保存上传的数据包失败: {exc}")
+        job.error = str(exc)
+        job.message = "导入失败"
+        job.status = "failed"
+        raise HTTPException(status_code=500, detail="保存上传文件失败") from exc
 
     background_tasks.add_task(_run_import_job, job.job_id, upload_path, enabled_parts)
     return DataImportResponse(job_id=job.job_id, status=job.status)

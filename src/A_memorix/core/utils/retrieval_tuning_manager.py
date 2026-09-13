@@ -688,6 +688,33 @@ class RetrievalTuningManager:
     def _pending_task_count(self) -> int:
         return sum(1 for t in self._tasks.values() if t.status in {"queued", "running", "cancel_requested"})
 
+    # 内存中保留的任务记录数量上限：任务记录含最多 200 轮的 profile/metrics
+    # 深拷贝（单任务可达几十至几百 KB），超限后按插入顺序淘汰最旧的
+    # 已完成/已取消/已失败任务，防止字典随历史任务数无界增长。
+    MAX_RETAINED_FINISHED_TASKS = 50
+
+    def _prune_finished_tasks_locked(self) -> None:
+        """把内存任务记录裁剪到容量上限内（需持有 ``self._lock``）。只淘汰终态任务。"""
+
+        overflow = len(self._tasks) - self.MAX_RETAINED_FINISHED_TASKS
+        if overflow <= 0:
+            return
+        finished_statuses = {"completed", "failed", "cancelled"}
+        removed_count = 0
+        # _task_order 新任务在左侧，从最旧的一端开始淘汰。
+        for task_id in list(reversed(self._task_order)):
+            if removed_count >= overflow:
+                break
+            task = self._tasks.get(task_id)
+            if task is None or task.status not in finished_statuses:
+                continue
+            self._tasks.pop(task_id, None)
+            try:
+                self._task_order.remove(task_id)
+            except ValueError:
+                pass
+            removed_count += 1
+
     def _sample_triples_for_query_set(
         self,
         *,
@@ -1022,6 +1049,7 @@ class RetrievalTuningManager:
                 task.finished_at = _now()
                 task.updated_at = task.finished_at
                 self._queue = deque([x for x in self._queue if x != task_id])
+                self._prune_finished_tasks_locked()
                 return task.to_summary()
             task.status = "cancel_requested"
             task.cancel_requested = True
@@ -1113,6 +1141,7 @@ class RetrievalTuningManager:
                 async with self._lock:
                     if self._active_task_id == task_id:
                         self._active_task_id = None
+                    self._prune_finished_tasks_locked()
 
     async def _run_task(self, task_id: str) -> None:
         async with self._lock:

@@ -192,7 +192,7 @@ class LPMMConverter:
     def _load_plugin_config(self) -> Dict[str, Any]:
         config_path = DEFAULT_CONFIG_PATH
         if not config_path.exists():
-            raise FileNotFoundError(f"A_Memorix 配置不存在，无法确定 Embedding 指纹: {config_path}")
+            return {}
         with open(config_path, "r", encoding="utf-8") as f:
             parsed = tomlkit.load(f)
         if not isinstance(parsed, dict):

@@ -153,7 +153,7 @@ class EventDispatcher:
                     **(extra_args or {}),
                 }
                 # 非阻塞：保持实例级强引用，防止 task 被 GC 回收
-                task = asyncio.create_task(self._invoke_handler(supervisor, entry, args, event_type))
+                task = asyncio.create_task(self._invoke_background_handler(supervisor, entry, args, event_type))
                 self._background_tasks.add(task)
                 task.add_done_callback(self._background_tasks.discard)
         try:
@@ -169,6 +169,24 @@ class EventDispatcher:
             logger.error(f"构建修改后的 SessionMessage 失败: {e}")
             modified_message_obj = None
         return should_continue, modified_message_obj
+
+    async def _invoke_background_handler(
+        self,
+        supervisor: "PluginRunnerSupervisor",
+        handler_entry: "EventHandlerEntry",
+        args: Dict[str, Any],
+        event_type: str,
+    ) -> Optional[EventResult]:
+        """后台执行非阻塞处理器，启动前重新校验条目注册状态。
+
+        任务入队到真正启动之间插件可能已被卸载/重载：
+        若不校验，旧任务会通过 try_acquire 的 setdefault 重建已清理的熔断状态，
+        或把结果写入同 ID 重载后插件的新状态。
+        """
+        if handler_entry not in self._component_registry.get_event_handlers(event_type):
+            logger.debug(f"EventHandler {handler_entry.full_name} 已注销或被禁用，跳过后台执行")
+            return None
+        return await self._invoke_handler(supervisor, handler_entry, args, event_type)
 
     async def _invoke_handler(
         self,

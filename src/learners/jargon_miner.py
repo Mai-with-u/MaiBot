@@ -143,6 +143,8 @@ class JargonMiner:
         self.cache: OrderedDict[str, None] = OrderedDict()
         # 黑话提取锁，防止并发执行
         self._extraction_lock = asyncio.Lock()
+        # 进行中的含义推断任务（按 jargon id 去重），防止同一词条并发重复推断
+        self._inflight_inference_tasks: Dict[int, "asyncio.Task[None]"] = {}
 
     @staticmethod
     def _get_runtime_manager() -> Any:
@@ -692,7 +694,12 @@ class JargonMiner:
                 # 已存在记录，更新 count 和证据消息引用
                 self._update_jargon(matched_jargon, evidence_messages)
                 if self._should_infer_meaning(matched_jargon):
-                    asyncio.create_task(self._infer_meaning_by_id(matched_jargon.id))  # type: ignore
+                    jargon_id = int(matched_jargon.id)  # type: ignore
+                    if jargon_id not in self._inflight_inference_tasks:
+                        self._inflight_inference_tasks[jargon_id] = asyncio.create_task(
+                            self._infer_meaning_by_id(jargon_id)
+                        )
+                        self._inflight_inference_tasks[jargon_id].add_done_callback(self._on_inference_done)
                 updated += 1
             else:
                 # 没找到匹配记录，创建新记录
@@ -876,6 +883,20 @@ class JargonMiner:
         )
         # 如果没有找到下一个阈值，说明已经超过100，不应该再推断
         return False if next_threshold is None else count >= next_threshold
+
+    def _on_inference_done(self, task: "asyncio.Task[None]") -> None:
+        """推断任务结束后清理进行中去重集合，并记录未捕获异常。"""
+
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"黑话含义推断任务发生异常: {e}")
+        finally:
+            for jargon_id, running_task in list(self._inflight_inference_tasks.items()):
+                if running_task is task:
+                    del self._inflight_inference_tasks[jargon_id]
 
     async def _infer_meaning_by_id(self, jargon_id: int):
         jargon_obj: Optional[MaiJargon] = None
