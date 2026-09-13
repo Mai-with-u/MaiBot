@@ -175,6 +175,7 @@ describe('ChatTabBar', () => {
         isUploadingUserAvatar={false}
         onSwitch={onSwitch}
         onSelectObserved={vi.fn()}
+        onOpenObservedSettings={vi.fn()}
         onClose={onClose}
         onUpdateUserAvatar={vi.fn(async () => {})}
       />
@@ -209,6 +210,7 @@ describe('ChatTabBar', () => {
         isUploadingUserAvatar={false}
         onSwitch={vi.fn()}
         onSelectObserved={vi.fn()}
+        onOpenObservedSettings={vi.fn()}
         onClose={vi.fn()}
         onUpdateUserAvatar={onUpdateUserAvatar}
       />
@@ -231,6 +233,7 @@ describe('ChatTabBar', () => {
         isUploadingUserAvatar
         onSwitch={vi.fn()}
         onSelectObserved={vi.fn()}
+        onOpenObservedSettings={vi.fn()}
         onClose={vi.fn()}
         onUpdateUserAvatar={onUpdateUserAvatar}
       />
@@ -241,6 +244,7 @@ describe('ChatTabBar', () => {
   it('移动端切换条同时展示并选择只读观察聊天流', async () => {
     const user = userEvent.setup()
     const onSelectObserved = vi.fn()
+    const onOpenObservedSettings = vi.fn()
     render(
       <ChatTabBar
         tabs={[makeTab('webui-default')]}
@@ -267,13 +271,20 @@ describe('ChatTabBar', () => {
         isUploadingUserAvatar={false}
         onSwitch={vi.fn()}
         onSelectObserved={onSelectObserved}
+        onOpenObservedSettings={onOpenObservedSettings}
         onClose={vi.fn()}
         onUpdateUserAvatar={vi.fn(async () => {})}
       />
     )
 
-    await user.click(screen.getByRole('button', { name: /测试观察群/ }))
+    await user.click(
+      screen.getByRole('button', { name: /^测试观察群chat\.sidebar\.observedBadge/ })
+    )
     expect(onSelectObserved).toHaveBeenCalledWith('observed-a')
+    await user.click(
+      screen.getByRole('button', { name: 'chat.sidebar.openSettings:测试观察群' })
+    )
+    expect(onOpenObservedSettings).toHaveBeenCalledWith('observed-a')
     expect(screen.getByLabelText('chat.sidebar.observedBadge')).toBeInTheDocument()
   })
 })

@@ -243,6 +243,7 @@
       "observedBadge": "Observe",
       "observedChats": "Mai's chat streams",
       "observedPreview": "Read-only observation",
+      "openSettings": "Open chat settings for {{name}}",
       "online": "Online",
       "offline": "Offline",
       "subtitle": "{{count}} conversations",

@@ -52,6 +52,7 @@ interface SidebarStubProps {
   isUploadingUserAvatar: boolean
   onSwitch: (tabId: string) => void
   onSelectObserved: (sessionId: string) => void
+  onOpenObservedSettings: (sessionId: string) => void
   onClose: (tabId: string) => void
   onUpdateUserAvatar: (file: File) => Promise<void> | void
   onUpdateUserName: (name: string) => void
@@ -65,6 +66,7 @@ interface MonitorStubProps {
 // ---------- 共享 mock 状态（vi.hoisted 保证在 vi.mock 工厂之前初始化） ----------
 
 const mocks = vi.hoisted(() => ({
+  navigate: vi.fn(),
   toast: vi.fn(),
   openSession: vi.fn(),
   sendMessage: vi.fn(),
@@ -88,6 +90,10 @@ const mocks = vi.hoisted(() => ({
   composer: null as ComposerStubProps | null,
   sidebar: null as SidebarStubProps | null,
   messageList: null as MessageListStubProps | null,
+}))
+
+vi.mock('@tanstack/react-router', () => ({
+  useNavigate: () => mocks.navigate,
 }))
 
 // t 必须是稳定引用，直接返回 key；带 count 的场景拼接 count 便于断言
@@ -614,6 +620,12 @@ describe('聊天页 ChatPage', () => {
       '/chat?observe=observed-1'
     )
     expect(screen.queryByTestId('composer')).not.toBeInTheDocument()
+
+    act(() => sidebarProps().onOpenObservedSettings('observed-1'))
+    expect(mocks.navigate).toHaveBeenCalledWith({
+      to: '/chat-management',
+      search: { session_id: 'observed-1' },
+    })
 
     act(() => sidebarProps().onSwitch('webui-default'))
     expect(screen.getByTestId('composer')).toBeInTheDocument()

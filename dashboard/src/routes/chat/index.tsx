@@ -1,3 +1,4 @@
+import { useNavigate } from '@tanstack/react-router'
 import { motion } from 'motion/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -219,6 +220,7 @@ function buildRuntimeStatusFromStage(data: StageStatusEvent): ChatRuntimeStatus 
 }
 
 export function ChatPage() {
+  const navigate = useNavigate()
   const { t, i18n } = useTranslation()
   const {
     sessions: observedSessions,
@@ -1027,6 +1029,10 @@ export function ChatPage() {
     setActiveObservedSessionId(sessionId)
   }
 
+  const openObservedSettings = (sessionId: string) => {
+    void navigate({ to: '/chat-management', search: { session_id: sessionId } })
+  }
+
   return (
     <div className="bg-background flex h-full min-h-0">
       {/* 桌面端：左侧会话侧边栏 */}
@@ -1055,6 +1061,7 @@ export function ChatPage() {
           isUploadingUserAvatar={isUploadingUserAvatar}
           onSwitch={switchTab}
           onSelectObserved={selectObservedSession}
+          onOpenObservedSettings={openObservedSettings}
           onClose={closeTab}
           onUpdateUserAvatar={handleUpdateUserAvatar}
           onUpdateUserName={handleUpdateUserName}
@@ -1088,6 +1095,7 @@ export function ChatPage() {
             isUploadingUserAvatar={isUploadingUserAvatar}
             onSwitch={switchTab}
             onSelectObserved={selectObservedSession}
+            onOpenObservedSettings={openObservedSettings}
             onClose={closeTab}
             onUpdateUserAvatar={handleUpdateUserAvatar}
           />

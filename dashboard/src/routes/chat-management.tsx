@@ -86,6 +86,13 @@ type MutualGroupKind = 'expression' | 'jargon' | 'memory'
 type LearningKind = 'expression' | 'jargon' | 'behavior'
 const MUTUAL_GROUP_CHAT_RESULT_LIMIT = 50
 
+function getRequestedSessionId(): string | null {
+  if (typeof window === 'undefined') {
+    return null
+  }
+  return new URLSearchParams(window.location.search).get('session_id')?.trim() || null
+}
+
 const MUTUAL_GROUP_KIND_LABEL: Record<MutualGroupKind, string> = {
   expression: '表达',
   jargon: '黑话',
@@ -2138,6 +2145,8 @@ function DeleteChatStreamDialog({
 }
 
 export function ChatManagementPage() {
+  const requestedSessionId = useMemo(() => getRequestedSessionId(), [])
+  const requestedSessionOpenedRef = useRef(false)
   const [activeView, setActiveView] = useState<ChatManagementView>(() => {
     if (typeof window === 'undefined') {
       return 'streams'
@@ -2182,6 +2191,20 @@ export function ChatManagementPage() {
   const visibleEnd = Math.min(currentPage * PAGE_SIZE, filteredChats.length)
   const groupCount = chats.filter((chat) => chat.chat_type === 'group').length
   const privateCount = chats.length - groupCount
+
+  useEffect(() => {
+    if (!requestedSessionId || requestedSessionOpenedRef.current || chats.length === 0) {
+      return
+    }
+    const requestedChat = chats.find((chat) => chat.session_id === requestedSessionId)
+    if (requestedChat) {
+      const frameId = window.requestAnimationFrame(() => {
+        requestedSessionOpenedRef.current = true
+        setSelectedChat(requestedChat)
+      })
+      return () => window.cancelAnimationFrame(frameId)
+    }
+  }, [chats, requestedSessionId])
 
   useEffect(() => {
     const frameId = window.requestAnimationFrame(() => setPage(1))

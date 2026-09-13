@@ -1,4 +1,14 @@
-import { Bot, Camera, Eye, Loader2, UserCircle2, UserRound, UsersRound, X } from 'lucide-react'
+import {
+  Bot,
+  Camera,
+  Eye,
+  Loader2,
+  Settings,
+  UserCircle2,
+  UserRound,
+  UsersRound,
+  X,
+} from 'lucide-react'
 import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -21,6 +31,7 @@ interface ChatTabBarProps {
   isUploadingUserAvatar: boolean
   onSwitch: (tabId: string) => void
   onSelectObserved: (sessionId: string) => void
+  onOpenObservedSettings: (sessionId: string) => void
   onClose: (tabId: string, e?: React.MouseEvent | React.KeyboardEvent) => void
   onUpdateUserAvatar: (file: File) => Promise<void>
 }
@@ -39,6 +50,7 @@ export function ChatTabBar({
   isUploadingUserAvatar,
   onSwitch,
   onSelectObserved,
+  onOpenObservedSettings,
   onClose,
   onUpdateUserAvatar,
 }: ChatTabBarProps) {
@@ -112,21 +124,36 @@ export function ChatTabBar({
           const active = activeObservedSessionId === session.sessionId
           const Icon = session.isGroupChat ? UsersRound : UserRound
           return (
-            <button
+            <div
               key={session.sessionId}
-              type="button"
               className={cn(
-                'flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition',
+                'flex shrink-0 items-center rounded-full border text-xs transition',
                 active
                   ? 'bg-primary text-primary-foreground border-transparent shadow-sm'
                   : 'bg-background/60 text-muted-foreground hover:text-foreground hover:bg-background border-transparent'
               )}
-              onClick={() => onSelectObserved(session.sessionId)}
             >
-              <Icon className="h-3.5 w-3.5" />
-              <span className="max-w-32 truncate font-medium">{session.sessionName}</span>
-              <Eye className="h-3 w-3 opacity-70" aria-label={t('chat.sidebar.observedBadge')} />
-            </button>
+              <button
+                type="button"
+                className="flex items-center gap-1.5 rounded-full px-3 py-1.5"
+                onClick={() => onSelectObserved(session.sessionId)}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                <span className="max-w-32 truncate font-medium">{session.sessionName}</span>
+                <Eye className="h-3 w-3 opacity-70" aria-label={t('chat.sidebar.observedBadge')} />
+              </button>
+              <button
+                type="button"
+                aria-label={t('chat.sidebar.openSettings', { name: session.sessionName })}
+                className={cn(
+                  'mr-1 rounded-full p-0.5 transition',
+                  active ? 'hover:bg-primary-foreground/20' : 'hover:bg-muted'
+                )}
+                onClick={() => onOpenObservedSettings(session.sessionId)}
+              >
+                <Settings className="h-3 w-3" />
+              </button>
+            </div>
           )
         })}
         <button
