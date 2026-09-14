@@ -78,6 +78,7 @@ from .base_client import (
     APIResponse,
     AudioTranscriptionRequest,
     EmbeddingRequest,
+    ImageEmbeddingRequest,
     ResponseRequest,
     UsageTuple,
     client_registry,
@@ -88,6 +89,7 @@ from ..request_snapshot import (
     save_failed_request_snapshot,
     serialize_audio_request_snapshot,
     serialize_embedding_request_snapshot,
+    serialize_image_embedding_request_snapshot,
     serialize_response_request_snapshot,
 )
 
@@ -95,6 +97,21 @@ logger = get_logger("llm_models")
 
 SUPPORTED_OPENAI_IMAGE_FORMATS = {"jpeg", "png", "webp"}
 """OpenAI 兼容图片输入稳定支持的格式集合。"""
+
+
+def _render_image_embedding_template(value: Any, replacements: Dict[str, str]) -> Any:
+    """递归替换图片嵌入输入模板中的受控占位符。"""
+
+    if isinstance(value, str):
+        rendered = value
+        for name, replacement in replacements.items():
+            rendered = rendered.replace("{" + name + "}", replacement)
+        return rendered
+    if isinstance(value, list):
+        return [_render_image_embedding_template(item, replacements) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _render_image_embedding_template(item, replacements) for key, item in value.items()}
+    return value
 
 THINK_CONTENT_PATTERN = re.compile(
     r"<think>(?P<think>.*?)</think>(?P<content>.*)|<think>(?P<think_unclosed>.*)|(?P<content_only>.+)",
@@ -1639,6 +1656,85 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
             )
             attach_request_snapshot(exc, snapshot_path)
             raise
+
+    async def get_image_embedding(self, request: ImageEmbeddingRequest) -> APIResponse:
+        """调用 OpenAI 兼容的图片嵌入扩展协议。"""
+
+        model_info = request.model_info
+        extra_params = dict(request.extra_params)
+        if "image_embedding_input" not in extra_params and "image_embedding_body" not in extra_params:
+            raise ValueError("图片嵌入必须配置 Provider 对应的 image_embedding_input 或 image_embedding_body")
+        input_template = extra_params.pop("image_embedding_input", None)
+        body_template = extra_params.pop("image_embedding_body", None)
+        encoded = base64.b64encode(request.image_bytes).decode("ascii")
+        replacements = {
+            "base64": encoded,
+            "data_uri": f"data:{request.mime_type};base64,{encoded}",
+            "mime_type": request.mime_type,
+        }
+        image_input = _render_image_embedding_template(input_template, replacements)
+        if body_template is not None:
+            if not isinstance(body_template, dict):
+                raise ValueError("image_embedding_body 必须是对象")
+            rendered_body = _render_image_embedding_template(body_template, replacements)
+            if "input" in rendered_body:
+                image_input = rendered_body.pop("input")
+            extra_params.update(rendered_body)
+        if image_input is None:
+            raise ValueError("图片嵌入请求模板缺少 input")
+        request_overrides = split_openai_request_overrides(extra_params)
+        provider_request = {
+            "base_url": self.api_provider.base_url,
+            "endpoint": "/embeddings",
+            "method": "POST",
+            "operation": "embeddings.create.image",
+            "request_kwargs": {
+                "extra_body": request_overrides.extra_body or None,
+                "extra_headers": request_overrides.extra_headers or None,
+                "extra_query": request_overrides.extra_query or None,
+                "image": {
+                    "byte_size": len(request.image_bytes),
+                    "mime_type": request.mime_type,
+                },
+                "model": model_info.model_identifier,
+            },
+        }
+        try:
+            raw_response = await self.client.embeddings.create(
+                model=model_info.model_identifier,
+                input=cast(Any, image_input),
+                extra_headers=request_overrides.extra_headers or None,
+                extra_query=request_overrides.extra_query or None,
+                extra_body=request_overrides.extra_body or None,
+            )
+        except APIConnectionError as exc:
+            wrapped_error: Exception = NetworkConnectionError(str(exc))
+        except APIStatusError as exc:
+            wrapped_error = RespNotOkException(exc.status_code, _build_api_status_message(exc))
+        except Exception as exc:
+            wrapped_error = exc
+        else:
+            if not raw_response.data:
+                wrapped_error = RespParseException(raw_response, "图片嵌入响应缺少 embeddings 数据")
+            else:
+                response = APIResponse(embedding=raw_response.data[0].embedding, raw_data=raw_response)
+                usage_record = _extract_usage_record(getattr(raw_response, "usage", None))
+                if usage_record is not None:
+                    response.usage = self._build_usage_record(model_info, usage_record)
+                return response
+
+        snapshot_path = save_failed_request_snapshot(
+            api_provider=self.api_provider,
+            client_type="openai",
+            error=wrapped_error,
+            internal_request=serialize_image_embedding_request_snapshot(request),
+            model_info=model_info,
+            operation="embeddings.create.image",
+            provider_request=provider_request,
+            trace_context=request.trace_context,
+        )
+        attach_request_snapshot(wrapped_error, snapshot_path)
+        raise wrapped_error
 
     async def _execute_embedding_request(
         self,

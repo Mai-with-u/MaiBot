@@ -1794,6 +1794,99 @@ class AMemorixStorageConfig(ConfigBase):
     """数据目录"""
 
 
+class AMemorixImageMemoryConfig(ConfigBase):
+    """A_Memorix 图片资产、向量任务和相似召回配置。"""
+
+    enabled: bool = Field(
+        default=True,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "启用图片记忆",
+                "en_US": "Enable image memory",
+                "ja_JP": "画像記憶を有効化",
+            }
+        },
+    )
+    task_name: str = Field(
+        default="image_embedding",
+        json_schema_extra={
+            "label": {
+                "zh_CN": "图片嵌入任务",
+                "en_US": "Image embedding task",
+                "ja_JP": "画像埋め込みタスク",
+            }
+        },
+    )
+    preprocess_version: str = Field(
+        default="identity_v1",
+        json_schema_extra={"label": {"zh_CN": "预处理版本", "en_US": "Preprocess version", "ja_JP": "前処理バージョン"}},
+    )
+    probe_retry_seconds: float = Field(
+        default=60.0,
+        ge=0.0,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "模型探测重试间隔",
+                "en_US": "Model probe retry interval",
+                "ja_JP": "モデル確認の再試行間隔",
+            }
+        },
+    )
+    max_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        ge=1,
+        json_schema_extra={"label": {"zh_CN": "单图大小上限", "en_US": "Image size limit", "ja_JP": "画像サイズ上限"}},
+    )
+    max_pixels: int = Field(
+        default=40_000_000,
+        ge=1,
+        json_schema_extra={"label": {"zh_CN": "单图像素上限", "en_US": "Image pixel limit", "ja_JP": "画像ピクセル上限"}},
+    )
+    candidate_limit: int = Field(
+        default=8,
+        ge=1,
+        le=100,
+        json_schema_extra={"label": {"zh_CN": "相似候选数量", "en_US": "Similar candidate count", "ja_JP": "類似候補数"}},
+    )
+    similarity_threshold: float = Field(
+        default=0.72,
+        ge=-1.0,
+        le=1.0,
+        json_schema_extra={"label": {"zh_CN": "相似度阈值", "en_US": "Similarity threshold", "ja_JP": "類似度しきい値"}},
+    )
+    job_poll_interval_seconds: float = Field(
+        default=2.0,
+        ge=0.1,
+        json_schema_extra={"label": {"zh_CN": "任务轮询间隔", "en_US": "Job polling interval", "ja_JP": "ジョブ確認間隔"}},
+    )
+    job_batch_size: int = Field(
+        default=4,
+        ge=1,
+        le=100,
+        json_schema_extra={"label": {"zh_CN": "任务处理批量", "en_US": "Job batch size", "ja_JP": "ジョブ処理バッチ数"}},
+    )
+    job_enqueue_batch_size: int = Field(
+        default=200,
+        ge=1,
+        json_schema_extra={"label": {"zh_CN": "任务入队批量", "en_US": "Job enqueue batch", "ja_JP": "ジョブ登録バッチ数"}},
+    )
+    job_lease_seconds: float = Field(
+        default=120.0,
+        ge=1.0,
+        json_schema_extra={"label": {"zh_CN": "任务租约秒数", "en_US": "Job lease seconds", "ja_JP": "ジョブリース秒数"}},
+    )
+    job_max_retries: int = Field(
+        default=5,
+        ge=0,
+        json_schema_extra={"label": {"zh_CN": "任务最大重试", "en_US": "Maximum job retries", "ja_JP": "ジョブ最大再試行回数"}},
+    )
+    min_train_threshold: int = Field(
+        default=40,
+        ge=1,
+        json_schema_extra={"label": {"zh_CN": "索引训练最小样本", "en_US": "Minimum index training samples", "ja_JP": "索引学習の最小サンプル数"}},
+    )
+
+
 class AMemorixEmbeddingFallbackConfig(ConfigBase):
     """A_Memorix Embedding 回退"""
 
@@ -3729,6 +3822,19 @@ class AMemorixConfig(ConfigBase):
         },
     )
     """存储位置"""
+
+    image_memory: AMemorixImageMemoryConfig = Field(
+        default_factory=AMemorixImageMemoryConfig,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "图片记忆",
+                "en_US": "Image memory",
+                "ja_JP": "画像記憶",
+            },
+            "x-collapsed-by-default": True,
+        },
+    )
+    """图片资产留存、图片嵌入和相似内容召回配置"""
 
     embedding: AMemorixEmbeddingConfig = Field(
         default_factory=AMemorixEmbeddingConfig,

@@ -64,6 +64,7 @@ DEFAULT_TASK_CONFIG_TEMPLATES: dict[str, dict[str, Any]] = {
     "vlm": {"model_list": [], "max_tokens": 4096, "hard_timeout": 240.0},
     "voice": {"model_list": [], "max_tokens": 4096, "hard_timeout": 120.0},
     "embedding": {"model_list": [], "max_tokens": 4096, "hard_timeout": 60.0},
+    "image_embedding": {"model_list": [], "max_tokens": 4096, "hard_timeout": 60.0},
 }
 
 DEFAULT_MODEL_TEMPLATES: list[dict[str, Any]] = [

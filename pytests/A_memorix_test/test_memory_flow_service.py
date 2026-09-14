@@ -477,6 +477,7 @@ def test_summary_prompt_keeps_static_rules_before_chat_history():
         personality_context="你的性格设定是：稳定。",
         previous_summary_context="",
         chat_history="用户：第一条动态消息",
+        image_evidence_catalog="无",
     )
 
     rules_index = prompt.index("事实筛选规则")
@@ -492,6 +493,7 @@ def test_summary_prompt_forbids_repeating_rejected_fact_values():
         personality_context="你的性格设定是：稳定。",
         previous_summary_context="",
         chat_history="用户：不是猫毛，是青霉素",
+        image_evidence_catalog="无",
     )
 
     assert "只输出最终正确事实" in prompt

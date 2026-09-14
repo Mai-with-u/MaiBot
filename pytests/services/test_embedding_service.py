@@ -42,3 +42,39 @@ async def test_embed_texts_keeps_fail_fast_default(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="批量失败"):
         await client.embed_texts(["bad"], return_exceptions=False)
+
+
+@pytest.mark.asyncio
+async def test_embed_image_dispatches_binary_and_preserves_protocol() -> None:
+    client = object.__new__(EmbeddingServiceClient)
+    client.session_id = "chat-session"
+    received = {}
+
+    async def fake_get_image_embedding(image_bytes, **kwargs):
+        received["image_bytes"] = image_bytes
+        received.update(kwargs)
+        return SimpleNamespace(
+            embedding=[0.25, 0.75],
+            model_name="clip-test",
+            model_identifier="clip-test-v1",
+            api_provider="test-provider",
+            request_protocol_hash="protocol-test",
+        )
+
+    client._orchestrator = SimpleNamespace(get_image_embedding=fake_get_image_embedding)
+
+    result = await client.embed_image(
+        b"image-payload",
+        mime_type="image/png",
+        preprocess_version="identity_v1",
+    )
+
+    assert result.embedding == [0.25, 0.75]
+    assert result.mime_type == "image/png"
+    assert result.preprocess_version == "identity_v1"
+    assert received == {
+        "image_bytes": b"image-payload",
+        "mime_type": "image/png",
+        "preprocess_version": "identity_v1",
+        "session_id": "chat-session",
+    }

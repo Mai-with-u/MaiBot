@@ -11,6 +11,7 @@ from .feedback_correction_service import MemoryFeedbackCorrectionService
 from .fact_admin_service import MemoryFactAdminService
 from .graph_admin_service import MemoryGraphAdminService
 from .import_tuning_admin_service import MemoryImportTuningAdminService
+from .image_service import MemoryImageService
 from .ingest_service import MemoryIngestService
 from .memory_maintenance_service import MemoryMaintenanceService
 from .memory_search_service import MemorySearchService
@@ -42,6 +43,7 @@ __all__ = [
     "MemoryFactAdminService",
     "MemoryGraphAdminService",
     "MemoryImportTuningAdminService",
+    "MemoryImageService",
     "MemoryIngestService",
     "MemoryMaintenanceService",
     "MemorySearchService",

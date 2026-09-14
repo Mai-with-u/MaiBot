@@ -65,6 +65,10 @@ class _ReplayKernel:
         self.calls.append(("ingest_text", str(kwargs.get("external_id", ""))))
         return {"success": True, "stored_ids": [kwargs.get("external_id")]}
 
+    async def image_memory(self, *, action: str, **kwargs) -> dict[str, Any]:
+        self.calls.append((f"image_memory:{action}", str(kwargs.get("external_ref", ""))))
+        return {"success": True}
+
 
 class _FileBackedReplayKernel:
     def __init__(self, business_path: Path) -> None:
@@ -417,6 +421,34 @@ async def test_host_service_replays_startup_queue_in_created_order(
         for line in (tmp_path / "startup_write_queue.done.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     assert [row["record_id"] for row in done_rows] == ["early", "late"]
+
+
+@pytest.mark.asyncio
+async def test_host_service_persists_and_replays_startup_image_write(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    service = AMemorixHostService()
+    service._runtime_state = "migrating"  # type: ignore[attr-defined]
+    monkeypatch.setattr(service, "is_enabled", lambda: True)
+    monkeypatch.setattr(service, "_read_config", lambda: {"storage": {"data_dir": str(tmp_path)}})
+
+    queued = await service.invoke(
+        "image_memory",
+        {
+            "action": "ingest",
+            "image_bytes": b"image-payload",
+            "external_ref": "chat:c:m1:0",
+        },
+    )
+    assert queued["queued"] is True
+    pending = service._startup_queue_pending_records()  # type: ignore[attr-defined]
+    assert pending[0]["payload"]["image_base64"] == "aW1hZ2UtcGF5bG9hZA=="
+    assert "image_bytes" not in pending[0]["payload"]
+
+    kernel = _ReplayKernel()
+    await service._replay_startup_write_queue(kernel)  # type: ignore[arg-type]
+    assert kernel.calls == [("image_memory:ingest", "chat:c:m1:0")]
 
 
 @pytest.mark.asyncio

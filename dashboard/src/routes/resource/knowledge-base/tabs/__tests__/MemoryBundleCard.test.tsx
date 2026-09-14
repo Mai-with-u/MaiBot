@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getMemoryBundles, getMemoryImportTasks, getMemorySources } from '@/lib/memory-api'
+import { downloadMemoryBundle, exportMemoryBundle, getMemoryBundles, getMemoryImportTasks, getMemorySources } from '@/lib/memory-api'
 
 import { MemoryBundleCard } from '../MemoryBundleCard'
 
@@ -74,6 +74,21 @@ beforeEach(() => {
 })
 
 describe('MemoryBundleCard', () => {
+  it('导出预览显示资源范围且不要求文件名或触发下载', async () => {
+    const user = userEvent.setup()
+    vi.mocked(exportMemoryBundle).mockResolvedValue({
+      success: true, preview: true, counts: { image_assets: 2, paragraphs: 3, image_links: 4 },
+      uncompressed_size: 1048576,
+    })
+    render(<MemoryBundleCard chatTargets={[]} />)
+    await user.click(screen.getByRole('button', { name: '预览导出内容' }))
+    expect(await screen.findByText(/当前导出预览：2 张图片、3 条段落/)).toBeInTheDocument()
+    expect(exportMemoryBundle).toHaveBeenCalledWith(expect.objectContaining({
+      preview: true, include_image_related: false,
+    }))
+    expect(downloadMemoryBundle).not.toHaveBeenCalled()
+  })
+
   it('挂载后自动读取并展示已安装知识包', async () => {
     render(<MemoryBundleCard chatTargets={[]} />)
 

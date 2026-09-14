@@ -10,7 +10,7 @@ from typing import Any, Coroutine, List, Literal, TypeVar, overload
 
 import asyncio
 
-from src.common.data_models.embedding_service_data_models import EmbeddingResult
+from src.common.data_models.embedding_service_data_models import EmbeddingResult, ImageEmbeddingResult
 from src.common.logger import get_logger
 from src.llm_models.utils_model import LLMOrchestrator
 from src.services.service_task_resolver import resolve_task_name
@@ -63,6 +63,36 @@ class EmbeddingServiceClient:
             model_name=raw_result.model_name,
             model_identifier=raw_result.model_identifier,
             api_provider=raw_result.api_provider,
+        )
+
+    async def embed_image(
+        self,
+        image_bytes: bytes,
+        *,
+        mime_type: str,
+        preprocess_version: str,
+        session_id: str = "",
+    ) -> ImageEmbeddingResult:
+        """生成单张图片的嵌入向量。"""
+
+        if not image_bytes:
+            raise ValueError("图片嵌入输入不能为空")
+        if not mime_type.startswith("image/"):
+            raise ValueError("图片嵌入输入必须提供 image/* MIME 类型")
+        raw_result = await self._orchestrator.get_image_embedding(
+            bytes(image_bytes),
+            mime_type=mime_type,
+            preprocess_version=preprocess_version,
+            session_id=self._resolve_effective_session_id(session_id),
+        )
+        return ImageEmbeddingResult(
+            embedding=list(raw_result.embedding),
+            model_name=raw_result.model_name,
+            model_identifier=raw_result.model_identifier,
+            api_provider=raw_result.api_provider,
+            mime_type=mime_type,
+            preprocess_version=preprocess_version,
+            request_protocol_hash=raw_result.request_protocol_hash,
         )
 
     @overload

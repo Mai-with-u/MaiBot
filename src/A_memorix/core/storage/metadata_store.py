@@ -30,6 +30,7 @@ from .metadata_episode import MetadataEpisodeMixin
 from .metadata_fact import MetadataFactMixin
 from .metadata_feedback import MetadataFeedbackMixin
 from .metadata_fts import MetadataFTSMixin
+from .metadata_image import MetadataImageMixin
 from .metadata_profile import MetadataProfileMixin
 from .metadata_schema import MetadataSchemaMixin, SCHEMA_VERSION
 from .sqlite_connection import SQLiteConnectionManager
@@ -45,6 +46,7 @@ class MetadataStore(
     MetadataEpisodeMixin,
     MetadataFactMixin,
     MetadataFeedbackMixin,
+    MetadataImageMixin,
     MetadataProfileMixin,
 ):
     """

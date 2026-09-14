@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timezone
 from io import BytesIO
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import hashlib
@@ -20,9 +20,11 @@ from .base import KernelServiceBase
 
 
 BUNDLE_FORMAT = "a-memorix-memory-bundle"
-BUNDLE_FORMAT_VERSION = 1
+BUNDLE_FORMAT_VERSION = 2
+BUNDLE_LEGACY_FORMAT_VERSION = 1
 BUNDLE_EXTENSION = ".amembundle"
-MAX_BUNDLE_MEMBERS = 32
+MAX_BUNDLE_MEMBERS = 4096
+MAX_BUNDLE_MEMBER_BYTES = 256 * 1024 * 1024
 MAX_BUNDLE_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
 FULL_STATE_TABLE_ORDER = (
     "paragraphs",
@@ -125,6 +127,20 @@ def _replace_json_tokens(value: Any, replacements: Dict[str, str]) -> Any:
     return value
 
 
+def _canonical_image_evidence(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        evidence = dict(value)
+    else:
+        try:
+            parsed = json.loads(str(value or "{}"))
+        except (TypeError, ValueError):
+            return {}
+        evidence = dict(parsed) if isinstance(parsed, dict) else {}
+    for key in ("chat_id", "external_ref", "imported", "message_id", "source_link_id"):
+        evidence.pop(key, None)
+    return evidence
+
+
 def _batched(values: Sequence[str], size: int = 400) -> Iterable[List[str]]:
     for offset in range(0, len(values), size):
         yield list(values[offset : offset + size])
@@ -151,8 +167,79 @@ def _resource_key_values(resource_type: str, resource_key: str) -> List[Any]:
     return values
 
 
+def _canonical_image_semantics(records: Dict[str, Any]) -> Dict[str, Any]:
+    """构造不受实例 UUID、安装时间和运行状态影响的图片语义摘要。"""
+
+    assets_by_id = {str(item.get("asset_id") or ""): item for item in records.get("assets") or []}
+    occurrences = sorted(
+        (dict(item) for item in records.get("occurrences") or []),
+        key=lambda item: (
+            str(assets_by_id.get(str(item.get("asset_id") or ""), {}).get("content_hash") or ""),
+            str(item.get("component_path") or ""),
+            str(item.get("occurrence_id") or ""),
+        ),
+    )
+    occurrence_keys = {
+        str(item.get("occurrence_id") or ""): f"occurrence-{index}"
+        for index, item in enumerate(occurrences)
+    }
+    return {
+        "assets": sorted(
+            [
+                {
+                    "byte_size": int(item.get("byte_size") or 0),
+                    "content_hash": str(item.get("content_hash") or ""),
+                    "height": int(item.get("height") or 0),
+                    "mime_type": str(item.get("mime_type") or ""),
+                    "width": int(item.get("width") or 0),
+                }
+                for item in records.get("assets") or []
+            ],
+            key=lambda item: item["content_hash"],
+        ),
+        "occurrences": [
+            {
+                "asset_hash": str(assets_by_id.get(str(item.get("asset_id") or ""), {}).get("content_hash") or ""),
+                "component_path": str(item.get("component_path") or ""),
+            }
+            for item in occurrences
+        ],
+        "observations": sorted(
+            [
+                {
+                    "confirm_status": str(item.get("confirm_status") or ""),
+                    "occurrence": occurrence_keys.get(str(item.get("occurrence_id") or ""), ""),
+                    "source_kind": str(item.get("source_kind") or ""),
+                    "text": str(item.get("text") or ""),
+                    "evidence": _canonical_image_evidence(item.get("evidence_json")),
+                }
+                for item in records.get("observations") or []
+            ],
+            key=lambda item: (item["occurrence"], item["source_kind"], item["text"]),
+        ),
+        "links": sorted(
+            [
+                {
+                    "link_kind": str(item.get("link_kind") or ""),
+                    "occurrence": occurrence_keys.get(str(item.get("occurrence_id") or ""), ""),
+                    "target_id": str(item.get("target_id") or ""),
+                    "target_type": str(item.get("target_type") or ""),
+                    "evidence": _canonical_image_evidence(item.get("evidence_json")),
+                }
+                for item in records.get("links") or []
+            ],
+            key=lambda item: (item["occurrence"], item["target_type"], item["target_id"]),
+        ),
+    }
+
+
 class MemoryBundleAdminService(KernelServiceBase):
     """导出、检查和安装 A_Memorix 可分享记忆包。"""
+
+    def _image_runtime(self):
+        """兼容不装配图片通道的轻量内核与历史测试内核。"""
+
+        return getattr(self._kernel, "image_memory_runtime", None)
 
     async def memory_bundle_admin(self, *, action: str, **kwargs: Any) -> Dict[str, Any]:
         await self.initialize()
@@ -164,7 +251,17 @@ class MemoryBundleAdminService(KernelServiceBase):
             return await self._export_bundle(kwargs)
         if act == "inspect":
             loaded = self._load_bundle(self._resolve_bundle_path(str(kwargs.get("path", "") or "")))
-            return {"success": True, **self._public_bundle_summary(loaded)}
+            image_runtime = self._image_runtime()
+            current = image_runtime.status() if image_runtime is not None else {}
+            declared = loaded["manifest"].get("image_embedding_fingerprint")
+            compatible = bool(declared and current.get("fingerprint") == declared)
+            return {
+                "success": True, **self._public_bundle_summary(loaded),
+                "images": {"vector_compatible": compatible,
+                           "has_vectors": "vectors/images.npz" in loaded["member_names"],
+                           "runtime_status": current.get("status", "disabled"),
+                           "missing_resources": 0},
+            }
         if act == "import":
             async with self._storage_cleanup_lock:
                 return await self._import_bundle(kwargs)
@@ -349,6 +446,25 @@ class MemoryBundleAdminService(KernelServiceBase):
         source = str(row.get("source", "") or "").strip()
         return source == f"chat_summary:{chat_id}"
 
+    @staticmethod
+    def _paragraph_chat_ids(row: Dict[str, Any]) -> set[str]:
+        """从新旧段落字段中提取真实聊天流 ID。"""
+
+        metadata = _json_object(row.get("metadata"))
+        chat_ids: set[str] = set()
+        for key in ("chat_ids", "session_ids", "stream_ids"):
+            chat_ids.update(_string_tokens(metadata.get(key)))
+        for key in ("chat_id", "session_id", "stream_id"):
+            value = str(metadata.get(key, "") or "").strip()
+            if value:
+                chat_ids.add(value)
+        source = str(row.get("source", "") or "").strip()
+        if source.startswith("chat_summary:"):
+            source_chat_id = source.removeprefix("chat_summary:").strip()
+            if source_chat_id:
+                chat_ids.add(source_chat_id)
+        return chat_ids
+
     def _query_by_values(self, table: str, column: str, values: Sequence[str]) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
         ordered_values = list(dict.fromkeys(str(item) for item in values if str(item)))
@@ -428,9 +544,9 @@ class MemoryBundleAdminService(KernelServiceBase):
             if person_id:
                 person_ids.add(person_id)
         selected_chat_ids = {
-            str(_json_object(row.get("metadata")).get("chat_id", "") or "").strip()
+            chat_id
             for row in paragraphs
-            if str(_json_object(row.get("metadata")).get("chat_id", "") or "").strip()
+            for chat_id in self._paragraph_chat_ids(row)
         }
 
         all_claims = self.metadata_store.query("SELECT * FROM fact_claims")
@@ -596,16 +712,91 @@ class MemoryBundleAdminService(KernelServiceBase):
         )
         return buffer.getvalue()
 
+    def _select_image_occurrence_ids(
+        self,
+        *,
+        selector: Dict[str, Any],
+        paragraph_ids: Sequence[str],
+    ) -> List[str]:
+        if self._image_runtime() is None:
+            return []
+        selector_type = str(selector.get("type", "all") or "all").strip().lower()
+        if selector_type in {"image", "images"}:
+            occurrence_ids = [str(item) for item in selector.get("occurrence_ids") or [] if str(item).strip()]
+            content_hashes = [str(item) for item in selector.get("content_hashes") or selector.get("values") or [] if str(item).strip()]
+            rows: List[Dict[str, Any]] = []
+            if occurrence_ids:
+                rows.extend(self._query_by_values("image_occurrences", "occurrence_id", occurrence_ids))
+            if content_hashes:
+                for batch in _batched(content_hashes):
+                    placeholders = ",".join("?" for _ in batch)
+                    rows.extend(
+                        self.metadata_store.query(
+                            f"""
+                            SELECT occurrence.* FROM image_occurrences AS occurrence
+                            JOIN image_assets AS asset ON asset.asset_id=occurrence.asset_id
+                            WHERE occurrence.status='active' AND asset.status='active'
+                              AND asset.content_hash IN ({placeholders})
+                            """,
+                            tuple(batch),
+                        )
+                    )
+            return list(dict.fromkeys(str(row["occurrence_id"]) for row in rows if row.get("status") == "active"))
+        if selector_type == "chat":
+            chat_id = str(selector.get("chat_id") or selector.get("value") or "").strip()
+            rows = self.metadata_store.list_visible_image_occurrences(chat_ids=[chat_id])
+            return [str(row["occurrence_id"]) for row in rows if str(row.get("chat_id") or "") == chat_id]
+        if selector_type == "all":
+            return [
+                str(row["occurrence_id"])
+                for row in self.metadata_store.list_visible_image_occurrences(chat_ids=None)
+            ]
+        if not paragraph_ids:
+            return []
+        placeholders = ",".join("?" for _ in paragraph_ids)
+        rows = self.metadata_store.query(
+            f"""
+            SELECT DISTINCT occurrence_id FROM image_memory_links
+            WHERE status='active' AND target_type='paragraph' AND target_id IN ({placeholders})
+            """,
+            tuple(paragraph_ids),
+        )
+        return [str(row["occurrence_id"]) for row in rows]
+
     async def _export_bundle(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         content_level = str(payload.get("content_level", "knowledge") or "knowledge").strip().lower()
         if content_level not in {"knowledge", "full"}:
             raise ValueError("content_level 只支持 knowledge 或 full")
         selector_payload = payload.get("selector")
         selector = dict(selector_payload) if isinstance(selector_payload, dict) else {"type": "all"}
-        paragraphs, resolved_selector = await self._select_paragraphs(selector)
-        if not paragraphs:
-            return {"success": False, "error": "当前选择范围没有可导出的段落"}
+        selector_type = str(selector.get("type", "all") or "all").strip().lower()
+        if selector_type in {"image", "images"}:
+            paragraphs = []
+            resolved_selector = {"type": "image", "values": list(selector.get("content_hashes") or selector.get("values") or []), "precision": "exact"}
+        else:
+            paragraphs, resolved_selector = await self._select_paragraphs(selector)
 
+        selected_occurrences = self._select_image_occurrence_ids(
+            selector=selector, paragraph_ids=[str(row["hash"]) for row in paragraphs],
+        ) if bool(payload.get("include_images", True)) else []
+        selected_links = self.metadata_store.list_image_memory_links(selected_occurrences)
+        include_image_related = bool(payload.get("include_image_related", False))
+        if include_image_related:
+            resolved_selector["include_image_related"] = True
+        paragraph_ids = {str(row["hash"]) for row in paragraphs}
+        # 只有显式选择携带关联知识时才扩展文字范围，不从新增段落继续收集其他图片。
+        for link in selected_links if include_image_related else []:
+            target_type, target_id = str(link["target_type"]), str(link["target_id"])
+            if target_type == "paragraph":
+                paragraph_ids.add(target_id)
+            elif target_type in {"entity", "relation", "episode"}:
+                table, column = {
+                    "entity": ("paragraph_entities", "entity_hash"),
+                    "relation": ("paragraph_relations", "relation_hash"),
+                    "episode": ("episode_paragraphs", "episode_id"),
+                }[target_type]
+                paragraph_ids.update(str(row["paragraph_hash"]) for row in self._query_by_values(table, column, [target_id]))
+        paragraphs = [row for row in self._query_by_values("paragraphs", "hash", sorted(paragraph_ids)) if not row.get("is_deleted")]
         state_tables = self._collect_related_rows(paragraphs)
         docs = self._build_knowledge_docs(state_tables)
         knowledge = {
@@ -619,7 +810,31 @@ class MemoryBundleAdminService(KernelServiceBase):
             "tables": state_tables,
             "excluded": list(FULL_STATE_EXCLUSIONS),
         }
+        paragraph_ids = [str(row["hash"]) for row in state_tables["paragraphs"]]
+        image_occurrence_ids = selected_occurrences
+        image_records = (
+            self._image_runtime().export_records(image_occurrence_ids)
+            if self._image_runtime() is not None and image_occurrence_ids
+            else {"assets": [], "occurrences": [], "observations": [], "links": [], "fingerprint": {}}
+        )
+        has_images = bool(image_records.get("assets"))
+        exported_targets = {
+            "paragraph": {str(row["hash"]) for row in state_tables["paragraphs"]},
+            "entity": {str(row["hash"]) for row in state_tables["entities"]},
+            "relation": {str(row["hash"]) for row in state_tables["relations"]},
+            "episode": {str(row["episode_id"]) for row in state_tables["episodes"]} if content_level == "full" else set(),
+        }
+        for link in image_records.get("links") or []:
+            if str(link["target_id"]) not in exported_targets.get(str(link["target_type"]), set()):
+                if include_image_related:
+                    raise ValueError("图片关联目标不在可迁移知识闭包内；Episode关联请使用完整包，孤立目标需先补齐来源知识")
+        image_records["links"] = [link for link in image_records.get("links") or []
+                                  if str(link["target_id"]) in exported_targets.get(str(link["target_type"]), set())]
+        if not paragraphs and not has_images:
+            return {"success": False, "error": "当前选择范围没有可导出的文字或图片记忆"}
         content_payload = {"knowledge": knowledge, "state": state if content_level == "full" else None}
+        if has_images:
+            content_payload["images"] = _canonical_image_semantics(image_records)
         content_digest = hashlib.sha256(_canonical_json_bytes(content_payload)).hexdigest()
 
         package_payload = payload.get("package")
@@ -639,8 +854,16 @@ class MemoryBundleAdminService(KernelServiceBase):
             }
         else:
             counts = {table: len(rows) for table, rows in state_tables.items()}
+        if has_images:
+            counts.update(
+                {
+                    "image_assets": len(image_records.get("assets") or []),
+                    "image_occurrences": len(image_records.get("occurrences") or []),
+                    "image_observations": len(image_records.get("observations") or []),
+                    "image_links": len(image_records.get("links") or []),
+                }
+            )
 
-        paragraph_ids = [str(row["hash"]) for row in state_tables["paragraphs"]]
         entity_ids = [str(row["hash"]) for row in state_tables["entities"]]
         relation_ids = [str(row["hash"]) for row in state_tables["relations"]]
         graph_ids = [self._graph_vector_id("entity", item_id) for item_id in entity_ids] + [
@@ -652,6 +875,19 @@ class MemoryBundleAdminService(KernelServiceBase):
         }
         if content_level == "full":
             members["state.json"] = _canonical_json_bytes(state)
+        if has_images and self._image_runtime() is not None:
+            portable_image_records = {
+                key: value
+                for key, value in image_records.items()
+                if key in {"assets", "occurrences", "observations", "links", "fingerprint"}
+            }
+            for asset in portable_image_records["assets"]:
+                storage_key = str(asset.get("storage_key") or "")
+                suffix = Path(storage_key).suffix.lower() or ".bin"
+                member_name = f"images/assets/{asset['content_hash']}{suffix}"
+                asset["member"] = member_name
+                members[member_name] = self._image_runtime().asset_store.read_bytes(storage_key)
+            members["images.json"] = _canonical_json_bytes(portable_image_records)
 
         embedding_fingerprint: Optional[Dict[str, Any]] = None
         if bool(payload.get("include_vectors", True)):
@@ -669,10 +905,16 @@ class MemoryBundleAdminService(KernelServiceBase):
                     members["vectors/paragraphs.npz"] = paragraph_vectors
                 if graph_vectors is not None:
                     members["vectors/graph.npz"] = graph_vectors
+            if has_images and self._image_runtime() is not None:
+                image_vectors = self._image_runtime().export_vectors(
+                    [str(item.get("asset_id") or "") for item in image_records.get("assets") or []]
+                )
+                if image_vectors is not None:
+                    members["vectors/images.npz"] = image_vectors
 
         manifest = {
             "format": BUNDLE_FORMAT,
-            "format_version": BUNDLE_FORMAT_VERSION,
+            "format_version": BUNDLE_FORMAT_VERSION if has_images else BUNDLE_LEGACY_FORMAT_VERSION,
             "created_at": now_iso,
             "content_level": content_level,
             "content_digest": content_digest,
@@ -687,6 +929,7 @@ class MemoryBundleAdminService(KernelServiceBase):
             "counts": counts,
             "components": sorted(members),
             "embedding_fingerprint": embedding_fingerprint,
+            "image_embedding_fingerprint": image_records.get("fingerprint") if has_images else None,
             "compatibility": {
                 "knowledge_semantics": "lpmm_openie",
                 "minimum_a_memorix_bundle_version": 1,
@@ -695,6 +938,10 @@ class MemoryBundleAdminService(KernelServiceBase):
         members["manifest.json"] = _canonical_json_bytes(manifest)
         checksums = {name: hashlib.sha256(content).hexdigest() for name, content in sorted(members.items())}
         members["checksums.json"] = _canonical_json_bytes({"algorithm": "sha256", "files": checksums})
+
+        if bool(payload.get("preview", False)):
+            return {"success": True, "preview": True, "manifest": manifest, "counts": counts,
+                    "uncompressed_size": sum(len(content) for content in members.values())}
 
         filename = f"{self._safe_file_stem(name)}-{self._safe_file_stem(version)}{BUNDLE_EXTENSION}"
         target = self._bundles_root() / filename
@@ -715,6 +962,40 @@ class MemoryBundleAdminService(KernelServiceBase):
             "size": target.stat().st_size,
         }
 
+    @staticmethod
+    def _read_archive_member(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> tuple[bytes, str]:
+        """逐块读取单个成员，同时限制真实解压长度并计算校验和。"""
+
+        chunks: List[bytes] = []
+        digest = hashlib.sha256()
+        read_size = 0
+        with archive.open(info, "r") as member:
+            while chunk := member.read(1024 * 1024):
+                read_size += len(chunk)
+                if read_size > int(info.file_size) or read_size > MAX_BUNDLE_MEMBER_BYTES:
+                    raise ValueError(f"记忆包成员解压长度异常或超过限制: {info.filename}")
+                digest.update(chunk)
+                chunks.append(chunk)
+        if read_size != int(info.file_size):
+            raise ValueError(f"记忆包成员解压长度异常: {info.filename}")
+        return b"".join(chunks), digest.hexdigest()
+
+    @staticmethod
+    def _hash_archive_member(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> str:
+        """流式校验大成员，不在内存中保留其内容。"""
+
+        digest = hashlib.sha256()
+        read_size = 0
+        with archive.open(info, "r") as member:
+            while chunk := member.read(1024 * 1024):
+                read_size += len(chunk)
+                if read_size > int(info.file_size) or read_size > MAX_BUNDLE_MEMBER_BYTES:
+                    raise ValueError(f"记忆包成员解压长度异常或超过限制: {info.filename}")
+                digest.update(chunk)
+        if read_size != int(info.file_size):
+            raise ValueError(f"记忆包成员解压长度异常: {info.filename}")
+        return digest.hexdigest()
+
     def _load_bundle(self, path: Path) -> Dict[str, Any]:
         try:
             archive = zipfile.ZipFile(path, "r")
@@ -724,27 +1005,45 @@ class MemoryBundleAdminService(KernelServiceBase):
             infos = archive.infolist()
             if len(infos) > MAX_BUNDLE_MEMBERS:
                 raise ValueError("记忆包文件项过多")
+            if any(int(info.file_size) > MAX_BUNDLE_MEMBER_BYTES for info in infos):
+                raise ValueError("记忆包单个文件解压后超过 256 MiB 限制")
             if sum(int(info.file_size) for info in infos) > MAX_BUNDLE_UNCOMPRESSED_BYTES:
                 raise ValueError("记忆包解压后超过 1 GiB 限制")
-            names = {info.filename for info in infos}
+            info_by_name = {info.filename: info for info in infos}
+            names = set(info_by_name)
             if len(names) != len(infos):
                 raise ValueError("记忆包包含重复文件项")
+            for name in names:
+                member_path = PurePosixPath(name)
+                if not name or "\\" in name or member_path.is_absolute() or ".." in member_path.parts:
+                    raise ValueError(f"记忆包包含非法文件路径: {name}")
             required = {"manifest.json", "knowledge.json", "checksums.json"}
             if not required.issubset(names):
                 raise ValueError("记忆包缺少 manifest.json、knowledge.json 或 checksums.json")
-            raw_members = {name: archive.read(name) for name in names}
 
-        try:
-            manifest = json.loads(raw_members["manifest.json"])
-            knowledge = json.loads(raw_members["knowledge.json"])
-            checksums = json.loads(raw_members["checksums.json"])
-            state = json.loads(raw_members["state.json"]) if "state.json" in raw_members else None
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ValueError("记忆包中的 JSON 无法解析") from exc
+            json_names = required | ({"state.json", "images.json"} & names)
+            json_members = {
+                name: self._read_archive_member(archive, info_by_name[name])[0]
+                for name in json_names
+            }
+
+            try:
+                manifest = json.loads(json_members["manifest.json"])
+                knowledge = json.loads(json_members["knowledge.json"])
+                checksums = json.loads(json_members["checksums.json"])
+                state = json.loads(json_members["state.json"]) if "state.json" in json_members else None
+                images = json.loads(json_members["images.json"]) if "images.json" in json_members else None
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValueError("记忆包中的 JSON 无法解析") from exc
         if not isinstance(manifest, dict) or manifest.get("format") != BUNDLE_FORMAT:
             raise ValueError("不是 A_Memorix 记忆包")
-        if int(manifest.get("format_version", 0) or 0) != BUNDLE_FORMAT_VERSION:
+        format_version = int(manifest.get("format_version", 0) or 0)
+        if format_version not in {BUNDLE_LEGACY_FORMAT_VERSION, BUNDLE_FORMAT_VERSION}:
             raise ValueError(f"暂不支持记忆包版本: {manifest.get('format_version')}")
+        if format_version == BUNDLE_LEGACY_FORMAT_VERSION and images is not None:
+            raise ValueError("v1 记忆包不能包含图片扩展")
+        if format_version == BUNDLE_FORMAT_VERSION and not isinstance(images, dict):
+            raise ValueError("v2 记忆包缺少 images.json")
         if not isinstance(knowledge, dict) or not isinstance(knowledge.get("docs"), list):
             raise ValueError("knowledge.json 缺少 docs 数组")
         content_level = str(manifest.get("content_level", "") or "").strip().lower()
@@ -768,12 +1067,47 @@ class MemoryBundleAdminService(KernelServiceBase):
             if unexpected:
                 detail_parts.append(f"未知={','.join(unexpected)}")
             raise ValueError(f"checksums.json 未完整覆盖记忆包成员: {'; '.join(detail_parts)}")
-        for member_name, expected in checksum_files.items():
-            content = raw_members.get(str(member_name))
-            if content is None or hashlib.sha256(content).hexdigest() != str(expected):
-                raise ValueError(f"记忆包校验失败: {member_name}")
+        try:
+            checksum_archive = zipfile.ZipFile(path, "r")
+        except zipfile.BadZipFile as exc:
+            raise ValueError("记忆包在校验期间已损坏") from exc
+        with checksum_archive:
+            checksum_infos = checksum_archive.infolist()
+            checksum_info_by_name = {info.filename: info for info in checksum_infos}
+            if len(checksum_info_by_name) != len(checksum_infos) or set(checksum_info_by_name) != names:
+                raise ValueError("记忆包成员在校验期间发生变化")
+            for member_name, expected in checksum_files.items():
+                name = str(member_name)
+                content = json_members.get(name)
+                actual = (
+                    hashlib.sha256(content).hexdigest()
+                    if content is not None
+                    else self._hash_archive_member(checksum_archive, checksum_info_by_name[name])
+                )
+                if actual != str(expected):
+                    raise ValueError(f"记忆包校验失败: {member_name}")
+
+        if isinstance(images, dict):
+            declared_asset_members: set[str] = set()
+            for asset in images.get("assets") or []:
+                if not isinstance(asset, dict):
+                    raise ValueError("images.json 包含无效资产记录")
+                member_name = str(asset.get("member") or "")
+                content_hash = str(asset.get("content_hash") or "")
+                if member_name in declared_asset_members or member_name not in names:
+                    raise ValueError("图片资产成员缺失或被重复声明")
+                declared_asset_members.add(member_name)
+                if not member_name.startswith("images/assets/"):
+                    raise ValueError("图片资产不在 images/assets 目录")
+                if str(checksum_files.get(member_name) or "") != content_hash:
+                    raise ValueError(f"图片资产内容哈希不一致: {member_name}")
+            actual_asset_members = {name for name in names if name.startswith("images/assets/")}
+            if actual_asset_members != declared_asset_members:
+                raise ValueError("记忆包包含未声明或缺失的图片资产")
 
         content_payload = {"knowledge": knowledge, "state": state if content_level == "full" else None}
+        if isinstance(images, dict):
+            content_payload["images"] = _canonical_image_semantics(images)
         content_digest = hashlib.sha256(_canonical_json_bytes(content_payload)).hexdigest()
         if content_digest != str(manifest.get("content_digest", "") or ""):
             raise ValueError("记忆包内容摘要不一致")
@@ -782,8 +1116,28 @@ class MemoryBundleAdminService(KernelServiceBase):
             "manifest": manifest,
             "knowledge": knowledge,
             "state": state,
-            "members": raw_members,
+            "images": images,
+            "member_names": names,
+            "member_checksums": {str(name): str(value) for name, value in checksum_files.items()},
         }
+
+    def _read_validated_bundle_member(self, loaded: Dict[str, Any], member_name: str) -> bytes:
+        """按需读取已检查成员，并防止检查后文件被替换。"""
+
+        name = str(member_name)
+        if name not in loaded["member_names"]:
+            raise ValueError(f"记忆包缺少成员: {name}")
+        try:
+            with zipfile.ZipFile(Path(loaded["path"]), "r") as archive:
+                infos = [info for info in archive.infolist() if info.filename == name]
+                if len(infos) != 1 or int(infos[0].file_size) > MAX_BUNDLE_MEMBER_BYTES:
+                    raise ValueError(f"记忆包成员已发生变化: {name}")
+                content, actual = self._read_archive_member(archive, infos[0])
+        except zipfile.BadZipFile as exc:
+            raise ValueError("记忆包在安装前已损坏") from exc
+        if actual != str(loaded["member_checksums"].get(name) or ""):
+            raise ValueError(f"记忆包成员在检查后发生变化: {name}")
+        return content
 
     @staticmethod
     def _public_bundle_summary(loaded: Dict[str, Any]) -> Dict[str, Any]:
@@ -831,6 +1185,10 @@ class MemoryBundleAdminService(KernelServiceBase):
             for table in tables
         }
         occupied = {table: count for table, count in counts.items() if count > 0}
+        if self._image_runtime() is not None:
+            image_count = self.metadata_store.image_memory_stats()["asset_count"]
+            if image_count:
+                occupied["image_assets"] = image_count
         if occupied:
             detail = ", ".join(f"{table}={count}" for table, count in occupied.items())
             raise ValueError(f"restore 模式要求目标记忆库为空，当前存在: {detail}")
@@ -1355,9 +1713,9 @@ class MemoryBundleAdminService(KernelServiceBase):
                     if str(relation.get("hash", "") or "") != expected_hash:
                         raise ValueError("完整包包含关系内容与稳定哈希不一致的记录")
                 original_chat_ids = {
-                    str(_json_object(row.get("metadata")).get("chat_id", "") or "").strip()
+                    original_chat_id
                     for row in tables["paragraphs"]
-                    if str(_json_object(row.get("metadata")).get("chat_id", "") or "").strip()
+                    for original_chat_id in self._paragraph_chat_ids(row)
                 }
                 tables = self._remap_full_state(
                     tables,
@@ -1519,8 +1877,11 @@ class MemoryBundleAdminService(KernelServiceBase):
             for item in (self._knowledge_doc(doc) for doc in loaded["knowledge"].get("docs", []))
             if item is not None
         ]
-        if not normalized_docs:
-            raise ValueError("记忆包没有有效知识段落")
+        image_records = loaded.get("images") if isinstance(loaded.get("images"), dict) else None
+        if not normalized_docs and image_records is None:
+            raise ValueError("记忆包没有有效知识段落或图片记忆")
+        if image_records is not None and self._image_runtime() is None:
+            raise ValueError("当前运行时未启用图片记忆，无法安装含图片的记忆包")
 
         valid_mappings, paragraph_hashes, entity_hashes, relation_hashes, inserted = (
             self._install_bundle_metadata(
@@ -1535,6 +1896,28 @@ class MemoryBundleAdminService(KernelServiceBase):
         )
 
         try:
+            imported_images: Dict[str, Any] = {"assets": 0, "occurrences": 0, "asset_map": {}}
+            if image_records is not None and self._image_runtime() is not None:
+                target_id_map = {
+                    "paragraph": {paragraph_hash: paragraph_hash for paragraph_hash in paragraph_hashes},
+                    "entity": {entity_hash: entity_hash for entity_hash in entity_hashes},
+                    "relation": {relation_hash: relation_hash for relation_hash in relation_hashes},
+                    "episode": {
+                        str(item.get("episode_id") or ""): str(item.get("episode_id") or "")
+                        for item in ((loaded.get("state") or {}).get("tables") or {}).get("episodes", [])
+                    },
+                }
+                imported_images = await self._image_runtime().import_records(
+                    records=image_records,
+                    asset_loader=lambda asset: self._read_validated_bundle_member(
+                        loaded,
+                        str(asset.get("member") or ""),
+                    ),
+                    installation_id=installation_id,
+                    scope_type=scope_type,
+                    chat_id=chat_id,
+                    target_id_map=target_id_map,
+                )
             graph_result = self._graph_admin_service._rebuild_graph_from_metadata()
             self.metadata_store.rebuild_relation_hash_aliases()
 
@@ -1542,42 +1925,56 @@ class MemoryBundleAdminService(KernelServiceBase):
             vector_imported = {"paragraphs": 0, "graph": 0}
             vector_reused = self._bundle_vectors_compatible(manifest)
             if vector_reused:
-                members = loaded["members"]
-                if "vectors/paragraphs.npz" in members:
+                member_names = loaded["member_names"]
+                if "vectors/paragraphs.npz" in member_names:
                     count, ids = self._import_vector_member(
-                        members["vectors/paragraphs.npz"],
+                        self._read_validated_bundle_member(loaded, "vectors/paragraphs.npz"),
                         self._paragraph_store(),
                         allowed_ids=set(paragraph_hashes),
                     )
                     vector_imported["paragraphs"] = count
                     packaged_vector_ids.update(ids)
-                if "vectors/graph.npz" in members:
+                if "vectors/graph.npz" in member_names:
                     allowed_graph_ids = {
                         self._graph_vector_id("entity", entity_hash) for entity_hash in entity_hashes
-                    } | {
-                        self._graph_vector_id("relation", relation_hash) for relation_hash in relation_hashes
                     }
+                    if self.relation_vectors_enabled:
+                        allowed_graph_ids.update(
+                            self._graph_vector_id("relation", relation_hash)
+                            for relation_hash in relation_hashes
+                        )
                     graph_store_ids = None
                     if not self._dual_vector_pools_enabled():
                         graph_store_ids = {
                             self._graph_vector_id("entity", entity_hash): entity_hash
                             for entity_hash in entity_hashes
                         }
-                        graph_store_ids.update(
-                            {
+                        if self.relation_vectors_enabled:
+                            graph_store_ids.update(
+                                {
                                 self._graph_vector_id("relation", relation_hash): relation_hash
                                 for relation_hash in relation_hashes
-                            }
-                        )
+                                }
+                            )
                     count, ids = self._import_vector_member(
-                        members["vectors/graph.npz"],
+                        self._read_validated_bundle_member(loaded, "vectors/graph.npz"),
                         self._graph_vector_store(),
                         allowed_ids=allowed_graph_ids,
                         store_id_by_archive_id=graph_store_ids,
                     )
                     vector_imported["graph"] = count
                     packaged_vector_ids.update(ids)
-
+            image_vectors_imported = 0
+            if (
+                image_records is not None
+                and self._image_runtime() is not None
+                and "vectors/images.npz" in loaded["member_names"]
+            ):
+                image_vectors_imported = await self._image_runtime().import_vectors(
+                    self._read_validated_bundle_member(loaded, "vectors/images.npz"),
+                    asset_map=dict(imported_images.get("asset_map") or {}),
+                    fingerprint=dict(manifest.get("image_embedding_fingerprint") or {}),
+                )
             generated_vectors = await self._ensure_imported_vectors(
                 paragraph_hashes=paragraph_hashes,
                 entity_hashes=sorted(entity_hashes),
@@ -1600,7 +1997,14 @@ class MemoryBundleAdminService(KernelServiceBase):
                 ) from install_error
             raise
 
-        return {
+        vector_result = {
+            "bundle_compatible": vector_reused,
+            "imported": vector_imported,
+            "generated": generated_vectors,
+        }
+        if image_records is not None:
+            vector_result["images_imported"] = image_vectors_imported
+        response = {
             "success": True,
             "already_installed": False,
             "installation_id": installation_id,
@@ -1611,13 +2015,23 @@ class MemoryBundleAdminService(KernelServiceBase):
             "chat_id": chat_id,
             "inserted": inserted,
             "mapped_paragraphs": len(valid_mappings),
-            "vectors": {
-                "bundle_compatible": vector_reused,
-                "imported": vector_imported,
-                "generated": generated_vectors,
-            },
+            "vectors": vector_result,
             "graph": graph_result,
         }
+        if image_records is not None:
+            image_runtime_status = self._image_runtime().status() if self._image_runtime() is not None else {}
+            imported_asset_count = int(imported_images.get("assets") or 0)
+            image_retrieval_status = str(image_runtime_status.get("status") or "unavailable")
+            if image_retrieval_status == "ready" and image_vectors_imported < imported_asset_count:
+                image_retrieval_status = "pending"
+            response["images"] = {
+                "assets": imported_asset_count,
+                "occurrences": int(imported_images.get("occurrences") or 0),
+                "content_status": "installed",
+                "retrieval_status": image_retrieval_status,
+                "retrieval_message": str(image_runtime_status.get("message") or ""),
+            }
+        return response
 
     def _list_installed(self, *, limit: int) -> Dict[str, Any]:
         rows = self.metadata_store.query(
@@ -1633,6 +2047,19 @@ class MemoryBundleAdminService(KernelServiceBase):
         )
         for row in rows:
             row.pop("manifest_json", None)
+            image_runtime = self._image_runtime()
+            fp = str(image_runtime.fingerprint.get("hash", "")) if image_runtime is not None else ""
+            counts = self.metadata_store.query(
+                "SELECT COUNT(DISTINCT o.asset_id) AS assets, COUNT(DISTINCT o.occurrence_id) AS occurrences, "
+                "COUNT(DISTINCT e.asset_id) AS ready FROM image_occurrences o "
+                "LEFT JOIN image_embeddings e ON e.asset_id=o.asset_id AND e.fingerprint_hash=? AND e.status='ready' "
+                "WHERE o.installation_id=? AND o.status='active'", (fp, row["installation_id"]),
+            )[0]
+            runtime_status = image_runtime.status()["status"] if image_runtime is not None else "disabled"
+            row["images"] = {**counts, "content_status": row["status"],
+                             "retrieval_status": runtime_status if runtime_status != "ready" else (
+                                 "ready" if counts["assets"] == counts["ready"] else "pending"
+                             )}
         return {"success": True, "items": rows, "count": len(rows)}
 
     async def _uninstall(self, installation_id: str) -> Dict[str, Any]:
@@ -1653,11 +2080,21 @@ class MemoryBundleAdminService(KernelServiceBase):
             """,
             (token,),
         )
-        if not resources:
+        image_occurrence_count = int(
+            self.metadata_store.query(
+                "SELECT COUNT(*) AS count FROM image_occurrences WHERE installation_id=? AND status='active'",
+                (token,),
+            )[0]["count"]
+        )
+        if not resources and image_occurrence_count <= 0:
             return {
                 "success": False,
                 "error": "该安装记录缺少资源归属信息，无法安全卸载，请重新安装后再试",
             }
+
+        released_image_assets: List[Dict[str, str]] = []
+        if self._image_runtime() is not None and image_occurrence_count > 0:
+            released_image_assets = await self._image_runtime().release_installation_atomic(token)
 
         order = {resource_type: index for index, resource_type in enumerate(reversed(FULL_STATE_TABLE_ORDER))}
         resources.sort(key=lambda item: order.get(str(item["resource_type"]), len(order)))
@@ -1745,6 +2182,8 @@ class MemoryBundleAdminService(KernelServiceBase):
         graph_result = self._graph_admin_service._rebuild_graph_from_metadata()
         self.metadata_store.rebuild_relation_hash_aliases()
         self._persist(force_vectors=True)
+        if self._image_runtime() is not None:
+            self._image_runtime().finalize_released_assets(released_image_assets)
 
         return {
             "success": True,
@@ -1756,6 +2195,7 @@ class MemoryBundleAdminService(KernelServiceBase):
                 "paragraphs": removed_paragraph_vectors,
                 "graph": removed_graph_vectors,
             },
+            "removed_images": len(released_image_assets),
             "graph": graph_result,
             "message": "知识包及其独占记忆已卸载，共享记忆已保留",
         }

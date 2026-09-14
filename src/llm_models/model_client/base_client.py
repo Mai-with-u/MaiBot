@@ -299,6 +299,18 @@ class EmbeddingRequest:
 
 
 @dataclass(slots=True)
+class ImageEmbeddingRequest:
+    """统一的图片嵌入请求，原始图片只在进程内传递。"""
+
+    model_info: ModelInfo
+    image_bytes: bytes
+    mime_type: str
+    preprocess_version: str
+    extra_params: Dict[str, Any] = field(default_factory=dict)
+    trace_context: RequestTraceContext | None = None
+
+
+@dataclass(slots=True)
 class AudioTranscriptionRequest:
     """统一的音频转录请求。"""
 
@@ -309,7 +321,7 @@ class AudioTranscriptionRequest:
     trace_context: RequestTraceContext | None = None
 
 
-ClientRequest = ResponseRequest | EmbeddingRequest | AudioTranscriptionRequest
+ClientRequest = ResponseRequest | EmbeddingRequest | ImageEmbeddingRequest | AudioTranscriptionRequest
 """统一客户端请求类型。"""
 
 
@@ -351,6 +363,15 @@ class BaseClient(ABC):
             APIResponse: 嵌入响应。
         """
         raise NotImplementedError("'get_embedding' method should be overridden in subclasses")
+
+    async def get_image_embedding(self, request: ImageEmbeddingRequest) -> APIResponse:
+        """获取图片嵌入；未实现该协议的 Provider 应明确报错。"""
+
+        from src.llm_models.exceptions import ImageEmbeddingUnsupportedError
+
+        raise ImageEmbeddingUnsupportedError(
+            f"Provider 客户端 {type(self).__name__} 未实现图片嵌入协议"
+        )
 
     @abstractmethod
     async def get_audio_transcriptions(self, request: AudioTranscriptionRequest) -> APIResponse:

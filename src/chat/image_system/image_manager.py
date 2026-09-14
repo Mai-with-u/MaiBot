@@ -1,9 +1,10 @@
-﻿import asyncio
-import base64
-import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
+
+import asyncio
+import base64
+import hashlib
 
 from rich.traceback import install
 from sqlmodel import select
@@ -65,6 +66,14 @@ class ImageManager:
                 # 返回会话外使用的只读记录，避免在会话关闭后触发属性刷新。
                 session.expunge(record)
             return record
+
+    def get_cached_image_description(self, image_hash: str) -> str:
+        """读取已完成的 VLM 描述，不触发新的模型调用。"""
+
+        record = self._get_image_record(str(image_hash or "").strip())
+        if record is None or not record.vlm_processed:
+            return ""
+        return str(record.description or "").strip()
 
     def _normalize_image_registration_fields(self, record: Images) -> bool:
         """Normalize accidental emoji registration fields on image records."""
@@ -198,6 +207,24 @@ class ImageManager:
         except Exception as exc:
             logger.debug(f"图片描述后台任务结束时捕获异常，哈希值: {image_hash}，错误: {exc}")
             return
+
+
+        async def sync_description_to_memory() -> None:
+            try:
+                record = self._get_image_record(image_hash)
+                if record is None or not record.description:
+                    return
+                from src.services.memory_service import memory_service
+
+                await memory_service.image_memory(
+                    action="describe",
+                    content_hash=image_hash,
+                    text=f"[图片：{record.description}]",
+                )
+            except Exception as exc:
+                logger.warning(f"同步图片描述到记忆失败，哈希值: {image_hash}，错误: {exc}")
+
+        asyncio.create_task(sync_description_to_memory(), name=f"A_Memorix.image_description.{image_hash[:12]}")
 
         try:
             from src.maisaka.visual.chat_history_refresher import log_tracked_image_recognition_completed

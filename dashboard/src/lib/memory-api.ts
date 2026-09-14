@@ -679,7 +679,13 @@ export interface MemoryImportActionPayload {
 }
 
 export type MemoryBundleContentLevel = 'knowledge' | 'full'
-export type MemoryBundleSelectorType = 'all' | 'source' | 'chat' | 'import_task' | 'package'
+export type MemoryBundleSelectorType =
+  | 'all'
+  | 'source'
+  | 'chat'
+  | 'import_task'
+  | 'package'
+  | 'image'
 
 export interface MemoryBundleManifestPayload {
   format: string
@@ -705,6 +711,8 @@ export interface MemoryBundleManifestPayload {
 }
 
 export interface MemoryBundleExportPayload {
+  preview?: boolean
+  uncompressed_size?: number
   success: boolean
   file_name?: string
   path?: string
@@ -715,6 +723,14 @@ export interface MemoryBundleExportPayload {
 }
 
 export interface MemoryBundleImportPayload {
+  images?: {
+    assets: number
+    occurrences: number
+    content_status: string
+    retrieval_status: string
+    retrieval_message?: string
+  }
+  vectors?: { images_imported?: number }
   success: boolean
   already_installed?: boolean
   installation_id?: string
@@ -729,6 +745,13 @@ export interface MemoryBundleImportPayload {
 }
 
 export interface MemoryBundleInstallationPayload {
+  images?: {
+    assets: number
+    occurrences: number
+    ready: number
+    content_status: string
+    retrieval_status: string
+  }
   installation_id: string
   package_id: string
   version: string
@@ -1548,26 +1571,20 @@ export async function retractMemoryFact(
   claimId: string,
   reason: string
 ): Promise<MemoryFactActionPayload> {
-  return requestJson<MemoryFactActionPayload>(
-    `/facts/${encodeURIComponent(claimId)}/retract`,
-    {
-      method: 'POST',
-      body: { reason, requested_by: 'knowledge_base' },
-    }
-  )
+  return requestJson<MemoryFactActionPayload>(`/facts/${encodeURIComponent(claimId)}/retract`, {
+    method: 'POST',
+    body: { reason, requested_by: 'knowledge_base' },
+  })
 }
 
 export async function restoreMemoryFact(
   claimId: string,
   reason: string
 ): Promise<MemoryFactActionPayload> {
-  return requestJson<MemoryFactActionPayload>(
-    `/facts/${encodeURIComponent(claimId)}/restore`,
-    {
-      method: 'POST',
-      body: { reason, requested_by: 'knowledge_base' },
-    }
-  )
+  return requestJson<MemoryFactActionPayload>(`/facts/${encodeURIComponent(claimId)}/restore`, {
+    method: 'POST',
+    body: { reason, requested_by: 'knowledge_base' },
+  })
 }
 
 export async function getMemoryGraph(limit: number = 120): Promise<MemoryGraphPayload> {
@@ -2253,6 +2270,8 @@ export async function retryMemoryImportTask(
 }
 
 export async function exportMemoryBundle(payload: {
+  preview?: boolean
+  include_image_related?: boolean
   content_level: MemoryBundleContentLevel
   selector: Record<string, unknown>
   include_vectors?: boolean
@@ -2291,17 +2310,22 @@ export async function getMemoryBundles(limit: number = 50): Promise<MemoryBundle
   return requestJson<MemoryBundleListPayload>(`/bundles?limit=${limit}`)
 }
 
-export async function uninstallMemoryBundle(installationId: string): Promise<MemoryBundleUninstallPayload> {
-  return requestJson<MemoryBundleUninstallPayload>(`/bundles/${encodeURIComponent(installationId)}`, {
-    method: 'DELETE',
-  })
+export async function uninstallMemoryBundle(
+  installationId: string
+): Promise<MemoryBundleUninstallPayload> {
+  return requestJson<MemoryBundleUninstallPayload>(
+    `/bundles/${encodeURIComponent(installationId)}`,
+    {
+      method: 'DELETE',
+    }
+  )
 }
 
 export async function downloadMemoryBundle(fileName: string): Promise<Blob> {
   return backendApi.request<Blob>(
     'GET',
     `${API_BASE}/bundles/download/${encodeURIComponent(fileName)}`,
-    { parse: 'blob' },
+    { parse: 'blob' }
   )
 }
 
@@ -2349,4 +2373,253 @@ export async function getMemoryTuningReport(
   return requestJson(
     `/retrieval_tuning/tasks/${encodeURIComponent(taskId)}/report?format=${format}`
   )
+}
+
+export interface MemoryImageStatsPayload {
+  storage_bytes?: number
+  asset_count: number
+  occurrence_count: number
+  observation_count: number
+  link_count: number
+  ready_vector_count: number
+  pending_job_count: number
+  failed_job_count: number
+  pending_description_count: number
+  failed_description_count: number
+  pending_unbound_description_count: number
+}
+
+export interface MemoryImageAssetPayload {
+  asset_id: string
+  content_hash: string
+  mime_type: string
+  byte_size: number
+  width: number
+  height: number
+  status: string
+  created_at: number
+  updated_at: number
+  occurrence_count: number
+  latest_occurrence_at?: number | null
+}
+
+export interface MemoryImageOccurrencePayload {
+  occurrence_id: string
+  asset_id: string
+  source_kind: string
+  scope_type: string
+  chat_id: string
+  chat_name?: string
+  message_id: string
+  component_path: string
+  occurred_at?: number | null
+  installation_id: string
+  status: string
+}
+
+export interface MemoryImageObservationPayload {
+  observation_id: string
+  occurrence_id: string
+  text: string
+  source_kind: string
+  confirm_status: string
+  version: number
+}
+
+export interface MemoryImageLinkPayload {
+  evidence_json?: string
+  link_id: string
+  occurrence_id: string
+  target_type: string
+  target_id: string
+  link_kind: string
+  memory?: {
+    target_type: string
+    target_id: string
+    content: string
+  } | null
+}
+
+export interface MemoryImageStatusPayload {
+  index_progress?: { total: number; ready: number; remaining: number }
+  recovery?: { removed_files: number; issues: Array<{ storage_key: string; error: string }> }
+  success: boolean
+  enabled?: boolean
+  status?: string
+  message?: string
+  generation?: number
+  dimension?: number
+  fingerprint?: Record<string, unknown>
+  stats?: MemoryImageStatsPayload
+  error?: string
+}
+
+export interface MemoryImageListPayload extends MemoryImageStatusPayload {
+  items?: MemoryImageAssetPayload[]
+}
+
+export interface MemoryImageDetailPayload {
+  success: boolean
+  asset?: MemoryImageAssetPayload
+  occurrences?: MemoryImageOccurrencePayload[]
+  observations?: MemoryImageObservationPayload[]
+  links?: MemoryImageLinkPayload[]
+  error?: string
+}
+
+export async function getMemoryImageStatus(): Promise<MemoryImageStatusPayload> {
+  return requestJson<MemoryImageStatusPayload>('/images/status')
+}
+
+export async function getMemoryImages(
+  limit: number = 50,
+  offset: number = 0
+): Promise<MemoryImageListPayload> {
+  return requestJson<MemoryImageListPayload>(`/images?limit=${limit}&offset=${offset}`)
+}
+
+export async function getMemoryImage(assetId: string): Promise<MemoryImageDetailPayload> {
+  return requestJson<MemoryImageDetailPayload>(`/images/${encodeURIComponent(assetId)}`)
+}
+
+export function getMemoryImageContentUrl(assetId: string): string {
+  return `${API_BASE}/images/${encodeURIComponent(assetId)}/content`
+}
+
+export async function reindexMemoryImages(): Promise<
+  MemoryImageStatusPayload & {
+    claimed?: number
+    processed?: number
+  }
+> {
+  return requestJson('/images/reindex', { method: 'POST' })
+}
+
+export interface MemoryImageBackfillPayload {
+  counts: Record<string, number>
+  items: Array<{
+    record_id: number
+    message_id?: string
+    component_path?: string
+    chat_name?: string
+    category: string
+    error?: string
+  }>
+  upper_id?: number | null
+  success: boolean
+  scanned_messages: number
+  processed_messages: number
+  failed_messages: number
+  next_before_id?: number | null
+}
+
+export async function backfillMemoryImages(
+  limit: number = 500,
+  beforeId?: number,
+  preview = false,
+  upperId?: number
+): Promise<MemoryImageBackfillPayload> {
+  const cursor = beforeId ? `&before_id=${beforeId}` : ''
+  const upper = upperId ? `&upper_id=${upperId}` : ''
+  return requestJson(`/images/backfill?limit=${limit}${cursor}${upper}&preview=${preview}`, {
+    method: 'POST',
+  })
+}
+
+export interface MemoryBundlePreviewPayload {
+  success: boolean
+  error?: string
+  size: number
+  counts: Record<string, number>
+  images: {
+    vector_compatible: boolean
+    has_vectors: boolean
+    runtime_status: string
+    missing_resources: number
+  }
+}
+
+export async function inspectMemoryBundle(file: File): Promise<MemoryBundlePreviewPayload> {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('preview', 'true')
+  return requestJson('/bundles/import', { method: 'POST', body: formData })
+}
+
+export interface MemoryImageJobPayload {
+  kind: string
+  id: string
+  asset_id: string
+  status: string
+  attempt_count: number
+  last_error: string
+  updated_at: number
+  lease_until: number
+}
+
+export async function getMemoryImageJobs(
+  status = '',
+  offset = 0
+): Promise<{ success: boolean; items: MemoryImageJobPayload[]; total: number }> {
+  return requestJson(`/image-jobs?limit=25&offset=${offset}&status=${encodeURIComponent(status)}`)
+}
+
+export interface MemoryImageSearchPayload {
+  success: boolean
+  status: string
+  timings_ms: Record<string, number>
+  related_memory_count: number
+  hits: Array<{
+    asset_id: string
+    similarity: number
+    match_kind: string
+    occurrences: MemoryImageOccurrencePayload[]
+    observations: MemoryImageObservationPayload[]
+    related_memories: Array<{ content: string }>
+  }>
+}
+
+export async function searchMemoryImages(
+  assetId: string,
+  threshold: number
+): Promise<MemoryImageSearchPayload> {
+  return requestJson(`/images/${encodeURIComponent(assetId)}/search?threshold=${threshold}`, {
+    method: 'POST',
+  })
+}
+
+export async function deleteMemoryImageOccurrence(occurrenceId: string): Promise<{
+  success: boolean
+  asset_released?: boolean
+  error?: string
+}> {
+  return requestJson(`/images/occurrences/${encodeURIComponent(occurrenceId)}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function saveMemoryImageObservation(payload: {
+  occurrence_id: string
+  text: string
+  confirm_status?: string
+  supersedes_id?: string
+}): Promise<{
+  success: boolean
+  observation?: MemoryImageObservationPayload
+  error?: string
+}> {
+  return requestJson('/images/observations', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function deleteMemoryImageLink(linkId: string): Promise<{
+  success: boolean
+  invalidated?: number
+  error?: string
+}> {
+  return requestJson(`/images/links/${encodeURIComponent(linkId)}`, {
+    method: 'DELETE',
+  })
 }

@@ -493,3 +493,12 @@ class ModelTaskConfig(ConfigBase):
         },
     )
     """嵌入模型，需要文本嵌入类型的模型，不可使用LLM"""
+
+    image_embedding: TaskConfig = Field(
+        default_factory=TaskConfig,
+        json_schema_extra={
+            "x-widget": "custom",
+            "advanced": True,
+        },
+    )
+    """图片嵌入模型，必须实现图片输入到向量的协议"""

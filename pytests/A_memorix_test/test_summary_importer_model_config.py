@@ -12,6 +12,7 @@ from src.A_memorix.core.utils.summary_importer import (
     _normalize_relation_items,
 )
 from src.config.model_configs import TaskConfig
+from src.common.prompt_i18n import load_prompt
 from src.services import llm_service as llm_api
 
 
@@ -188,11 +189,29 @@ def test_summary_prompt_requires_incremental_output_from_current_window() -> Non
         personality_context="",
         previous_summary_context="\n历史净化摘要回顾：\n- 用户喜欢绿茶。\n",
         chat_history="用户：今天天气不错。",
+        image_evidence_catalog="无",
     )
 
     assert "只输出当前聊天窗口新引入或明确变更" in prompt
     assert "不得把未变化的历史事实再次写入 summary" in prompt
     assert '"summary": ""' in prompt
+
+
+@pytest.mark.parametrize("locale", ["zh-CN", "en-US", "ja-JP"])
+def test_summary_prompt_locales_share_image_evidence_contract(locale: str) -> None:
+    prompt = load_prompt(
+        "a_memorix_chat_summary",
+        locale=locale,
+        bot_name="Mai",
+        personality_context="",
+        previous_summary_context="",
+        chat_history="message",
+        image_evidence_catalog="message_id=m1, component_path=0",
+    )
+
+    assert "image_evidence" in prompt
+    assert "component_path" in prompt
+    assert "message_id=m1, component_path=0" in prompt
 
 
 @pytest.mark.asyncio

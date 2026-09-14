@@ -95,3 +95,8 @@ class MemoryRuntimeDependencyService(KernelServiceBase):
                 self.graph_store.save()
         if self.sparse_index is not None and getattr(self.sparse_index.config, "enabled", False):
             self.sparse_index.ensure_loaded()
+        if self.image_memory_runtime is not None and self.image_memory_runtime.vector_store is not None:
+            self.image_memory_runtime.persist_vector_store(
+                self.image_memory_runtime.vector_store,
+                self.image_memory_runtime.fingerprint,
+            )

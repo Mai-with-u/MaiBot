@@ -19,6 +19,7 @@ from src.llm_models.model_client.base_client import (
     AudioTranscriptionRequest,
     ClientRequest,
     EmbeddingRequest,
+    ImageEmbeddingRequest,
     GenerationAttempt,
     RequestTraceContext,
     ResponseRequest,
@@ -701,6 +702,22 @@ def serialize_embedding_request_snapshot(request: EmbeddingRequest) -> dict[str,
     }
 
 
+def serialize_image_embedding_request_snapshot(request: ImageEmbeddingRequest) -> dict[str, Any]:
+    """序列化图片嵌入请求，只保留可诊断的摘要。"""
+
+    from hashlib import sha256
+
+    return {
+        "byte_size": len(request.image_bytes),
+        "content_sha256": sha256(request.image_bytes).hexdigest(),
+        "extra_params": _json_friendly(dict(request.extra_params)),
+        "mime_type": request.mime_type,
+        "model_info": serialize_model_info_snapshot(request.model_info),
+        "preprocess_version": request.preprocess_version,
+        "request_kind": "image_embedding",
+    }
+
+
 def serialize_audio_request_snapshot(request: AudioTranscriptionRequest) -> dict[str, Any]:
     """序列化音频转写请求。"""
     return {
@@ -739,6 +756,8 @@ def serialize_client_request_snapshot(request: ClientRequest) -> dict[str, Any]:
         return serialize_response_request_snapshot(request)
     if isinstance(request, EmbeddingRequest):
         return serialize_embedding_request_snapshot(request)
+    if isinstance(request, ImageEmbeddingRequest):
+        return serialize_image_embedding_request_snapshot(request)
     return serialize_audio_request_snapshot(request)
 
 

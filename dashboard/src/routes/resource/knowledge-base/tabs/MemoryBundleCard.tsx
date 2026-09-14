@@ -23,8 +23,13 @@ import {
   getMemoryImportTasks,
   getMemorySources,
   importMemoryBundle,
+  inspectMemoryBundle,
+  getMemoryImages,
+  getMemoryImageContentUrl,
   uninstallMemoryBundle,
   type MemoryBundleContentLevel,
+  type MemoryBundlePreviewPayload,
+  type MemoryImageAssetPayload,
   type MemoryBundleInstallationPayload,
   type MemoryBundleSelectorType,
   type MemoryImportChatTargetPayload,
@@ -40,6 +45,17 @@ interface MemoryBundleCardProps {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function imageRetrievalLabel(status?: string): string {
+  const labels: Record<string, string> = {
+    ready: '已就绪',
+    pending: '等待构建',
+    unavailable: '模型不可用',
+    disabled: '功能未启用',
+    failed: '初始化失败',
+  }
+  return status ? (labels[status] ?? status) : '无图片'
 }
 
 function selectorPayload(type: MemoryBundleSelectorType, value: string): Record<string, unknown> {
@@ -59,6 +75,7 @@ function selectorPayload(type: MemoryBundleSelectorType, value: string): Record<
   if (type === 'import_task') {
     return { type, task_id: token }
   }
+  if (type === 'image') return { type, content_hashes: token.split(',').filter(Boolean) }
   return { type, installation_id: token }
 }
 
@@ -70,12 +87,17 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
   const [packageId, setPackageId] = useState('')
   const [packageVersion, setPackageVersion] = useState('1.0.0')
   const [includeVectors, setIncludeVectors] = useState(true)
+  const [includeImageRelated, setIncludeImageRelated] = useState(true)
   const [exporting, setExporting] = useState(false)
   const [sources, setSources] = useState<MemorySourceItemPayload[]>([])
   const [importTasks, setImportTasks] = useState<MemoryImportTaskPayload[]>([])
   const [loadingExportOptions, setLoadingExportOptions] = useState(false)
 
   const [bundleFile, setBundleFile] = useState<File | null>(null)
+  const [imageOptions, setImageOptions] = useState<MemoryImageAssetPayload[]>([])
+  const [imageOffset, setImageOffset] = useState(0)
+  const [preview, setPreview] = useState<MemoryBundlePreviewPayload | null>(null)
+  const [inspecting, setInspecting] = useState(false)
   const [installScope, setInstallScope] = useState<'global' | 'chat'>('global')
   const [installChatId, setInstallChatId] = useState('')
   const [installMode, setInstallMode] = useState<'merge' | 'restore'>('merge')
@@ -86,6 +108,36 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
   const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
 
   const chatOptions = useMemo(() => chatTargets.slice(0, 200), [chatTargets])
+  useEffect(() => {
+    if (selectorType !== 'image') return
+    let active = true
+    getMemoryImages(24, imageOffset)
+      .then((payload) => {
+        if (!payload.success) throw new Error(payload.error || '图片列表读取失败')
+        if (active) setImageOptions(payload.items ?? [])
+      })
+      .catch((error) => {
+        if (active) setNotice({ kind: 'error', text: errorMessage(error) })
+      })
+    return () => {
+      active = false
+    }
+  }, [selectorType, imageOffset])
+
+  const inspectFile = async () => {
+    if (!bundleFile) return
+    setInspecting(true)
+    setPreview(null)
+    try {
+      const result = await inspectMemoryBundle(bundleFile)
+      if (!result.success) throw new Error(result.error || '记忆包校验失败')
+      setPreview(result)
+    } catch (error) {
+      setNotice({ kind: 'error', text: errorMessage(error) })
+    } finally {
+      setInspecting(false)
+    }
+  }
   const installedPackageOptions = useMemo(
     () => installations.filter((item) => item.status === 'installed'),
     [installations]
@@ -136,7 +188,7 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
     void refreshExportOptions()
   }, [refreshExportOptions])
 
-  const handleExport = async () => {
+  const handleExport = async (previewOnly = false) => {
     setExporting(true)
     setNotice(null)
     try {
@@ -144,6 +196,8 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
         throw new Error('包名称和版本不能为空')
       }
       const payload = await exportMemoryBundle({
+        preview: previewOnly,
+        include_image_related: selectorType === 'image' && includeImageRelated,
         content_level: contentLevel,
         selector: selectorPayload(selectorType, selectorValue),
         include_vectors: includeVectors,
@@ -153,9 +207,17 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
           name: packageName.trim(),
         },
       })
-      if (!payload.success || !payload.file_name) {
+      if (!payload.success) {
         throw new Error(payload.error || '导出记忆包失败')
       }
+      if (previewOnly) {
+        setNotice({
+          kind: 'success',
+          text: `当前导出预览：${payload.counts?.image_assets ?? 0} 张图片、${payload.counts?.paragraphs ?? 0} 条段落、${payload.counts?.entities ?? 0} 个实体、${payload.counts?.relations ?? 0} 条关系、${payload.counts?.image_links ?? 0} 条图片关联；未压缩内容 ${((payload.uncompressed_size ?? 0) / 1048576).toFixed(2)} MiB。尚未生成文件，正式导出时会重新读取当前数据。`,
+        })
+        return
+      }
+      if (!payload.file_name) throw new Error('导出结果缺少文件名')
       const blob = await downloadMemoryBundle(payload.file_name)
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
@@ -166,7 +228,10 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
       anchor.remove()
       URL.revokeObjectURL(url)
       const paragraphCount = Number(payload.counts?.paragraphs ?? 0)
-      setNotice({ kind: 'success', text: `已导出 ${paragraphCount} 条段落：${payload.file_name}` })
+      setNotice({
+        kind: 'success',
+        text: `已导出 ${paragraphCount} 条段落、${payload.counts?.image_assets ?? 0} 张图片，文件大小 ${((payload.size ?? 0) / 1048576).toFixed(2)} MiB：${payload.file_name}`,
+      })
     } catch (error) {
       setNotice({ kind: 'error', text: errorMessage(error) })
     } finally {
@@ -199,7 +264,7 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
         kind: 'success',
         text: payload.already_installed
           ? `知识包 ${payload.package?.name || ''} 已安装，无需重复写入`
-          : `已安装 ${payload.package?.name || bundleFile.name}，映射 ${payload.mapped_paragraphs ?? 0} 条段落`,
+          : `已安装 ${payload.package?.name || bundleFile.name}，映射 ${payload.mapped_paragraphs ?? 0} 条段落；图片 ${payload.images?.assets ?? 0} 张，图片内容${payload.images?.content_status === 'installed' ? '已安装' : '无'}，检索${imageRetrievalLabel(payload.images?.retrieval_status)}，复用向量 ${payload.vectors?.images_imported ?? 0} 个`,
       })
       await refreshInstallations()
     } catch (error) {
@@ -241,9 +306,8 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
           可分享记忆包
         </CardTitle>
         <CardDescription>
-          导出 LPMM
-          同语义知识，或连同人物画像、Episode、事实账本和生命周期状态完整迁移。安装过程不调用 LLM
-          抽取。
+          可选择图片及关联知识导出，也可连同人物画像、Episode、事实账本和生命周期状态完整迁移。安装过程不调用
+          LLM 抽取。
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -291,6 +355,7 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">全部记忆</SelectItem>
+                    <SelectItem value="image">选择图片</SelectItem>
                     <SelectItem value="chat">指定聊天流</SelectItem>
                     <SelectItem value="source">指定来源</SelectItem>
                     <SelectItem value="import_task">指定导入任务</SelectItem>
@@ -300,7 +365,49 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
               </div>
             </div>
 
-            {selectorType === 'chat' ? (
+            {selectorType === 'image' ? (
+              <div className="space-y-2">
+                <p className="text-sm">
+                  选择要导出的图片，已选{selectorValue.split(',').filter(Boolean).length}张
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  {imageOptions.map((image) => (
+                    <label key={image.asset_id} className="rounded border p-2">
+                      <input
+                        type="checkbox"
+                        aria-label={`选择图片 ${image.content_hash.slice(0, 12)}`}
+                        checked={selectorValue.split(',').includes(image.content_hash)}
+                        onChange={(event) => {
+                          const selected = new Set(selectorValue.split(',').filter(Boolean))
+                          if (event.target.checked) selected.add(image.content_hash)
+                          else selected.delete(image.content_hash)
+                          setSelectorValue([...selected].join(','))
+                        }}
+                      />
+                      <img
+                        src={getMemoryImageContentUrl(image.asset_id)}
+                        alt="待导出图片"
+                        className="h-20 w-full object-contain"
+                      />
+                    </label>
+                  ))}
+                </div>
+                <Button
+                  variant="outline"
+                  disabled={imageOffset === 0}
+                  onClick={() => setImageOffset(imageOffset - 24)}
+                >
+                  上一批图片
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={imageOptions.length < 24}
+                  onClick={() => setImageOffset(imageOffset + 24)}
+                >
+                  下一批图片
+                </Button>
+              </div>
+            ) : selectorType === 'chat' ? (
               <div className="space-y-2">
                 <Label>聊天流</Label>
                 <Select value={selectorValue} onValueChange={setSelectorValue}>
@@ -427,6 +534,22 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
               />
               携带兼容向量，加快相同 embedding 配置下的安装
             </Label>
+            {selectorType === 'image' && (
+              <Label
+                htmlFor="memory-bundle-image-related"
+                className="flex items-center gap-2 text-sm"
+              >
+                <Checkbox
+                  id="memory-bundle-image-related"
+                  checked={includeImageRelated}
+                  onCheckedChange={(checked) => setIncludeImageRelated(checked === true)}
+                />
+                携带所选图片直接关联的知识；关闭时仅保留图片及认知
+              </Label>
+            )}
+            <Button variant="outline" onClick={() => void handleExport(true)} disabled={exporting}>
+              预览导出内容
+            </Button>
             <Button onClick={() => void handleExport()} disabled={exporting}>
               {exporting ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -449,9 +572,41 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
               <Input
                 type="file"
                 accept=".amembundle,application/vnd.a-memorix.bundle+zip"
-                onChange={(event) => setBundleFile(event.target.files?.[0] || null)}
+                disabled={inspecting || installing}
+                onChange={(event) => {
+                  setBundleFile(event.target.files?.[0] || null)
+                  setPreview(null)
+                }}
               />
             </div>
+            <Button
+              variant="outline"
+              disabled={!bundleFile || inspecting || installing}
+              onClick={() => void inspectFile()}
+            >
+              {inspecting ? '检查中…' : '检查图片资源与向量兼容性'}
+            </Button>
+            {preview && (
+              <div className="space-y-1 rounded border p-3 text-sm">
+                <p>
+                  文件 {(preview.size / 1048576).toFixed(2)} MiB，图片{' '}
+                  {preview.counts.image_assets ?? 0} 张、出现{' '}
+                  {preview.counts.image_occurrences ?? 0} 次、关联 {preview.counts.image_links ?? 0}{' '}
+                  条
+                </p>
+                <p>
+                  资源校验完成，缺失 {preview.images.missing_resources} 项。
+                  {preview.images.has_vectors
+                    ? preview.images.vector_compatible
+                      ? '图片向量兼容，可复用。'
+                      : '图片向量与当前空间不兼容，需要本地重建。'
+                    : '未携带图片向量，需要本地构建。'}
+                </p>
+                {preview.images.runtime_status !== 'ready' && (
+                  <p>当前图片模型尚未就绪，安装内容后需等待模型恢复才能完成检索构建。</p>
+                )}
+              </div>
+            )}
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>安装范围</Label>
@@ -537,6 +692,15 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
                         <div className="text-muted-foreground truncate text-xs">
                           {item.package_id} · {item.version} · {item.paragraph_count} 条
                         </div>
+                        {item.images && item.images.assets > 0 && (
+                          <p className="text-muted-foreground text-xs">
+                            图片 {item.images.assets} 张、出现 {item.images.occurrences} 次；内容
+                            {item.images.content_status === 'installed'
+                              ? '已安装'
+                              : '未就绪'}；向量 {item.images.ready}/{item.images.assets}，检索
+                            {imageRetrievalLabel(item.images.retrieval_status)}
+                          </p>
+                        )}
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
                         <Badge variant={item.status === 'installed' ? 'outline' : 'destructive'}>

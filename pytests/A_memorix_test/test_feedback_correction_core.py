@@ -500,6 +500,8 @@ def test_fuzzy_modify_superseded_change_type_matches_operation() -> None:
         get_paragraph_relations=lambda paragraph_hash: [],
         get_paragraph_entities=lambda paragraph_hash: [],
         get_relation_status_batch=lambda hashes: {},
+        list_active_image_memory_link_ids=lambda **kwargs: [],
+        invalidate_image_memory_links=lambda **kwargs: 0,
         detach_fact_evidence_for_paragraphs=lambda hashes, **kwargs: {
             "paragraph_hashes": list(hashes),
             "evidence": [],

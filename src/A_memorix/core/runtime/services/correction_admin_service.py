@@ -328,6 +328,7 @@ class MemoryCorrectionAdminService(KernelServiceBase):
         stale_marks_deleted: List[Dict[str, Any]] = []
         stale_marks_restored: List[Dict[str, Any]] = []
         stale_marks_skipped: List[Dict[str, Any]] = []
+        restored_image_link_count = 0
         for item in execution.get("superseded_targets") or []:
             if not isinstance(item, dict):
                 continue
@@ -364,6 +365,9 @@ class MemoryCorrectionAdminService(KernelServiceBase):
                         )
                     else:
                         self.metadata_store.mark_relations_active([relation_hash])
+                    restored_image_link_count += self.metadata_store.restore_image_memory_links(
+                        tokens(relation_item.get("image_link_ids"))
+                    )
                     restored_targets.append(
                         {"target_type": "relation", "hash": relation_hash, "cascade_from": hash_value}
                     )
@@ -411,6 +415,9 @@ class MemoryCorrectionAdminService(KernelServiceBase):
                             fact_evidence_snapshot,
                             reason=reason or "fuzzy_modify_rollback_restore_fact_evidence",
                         )
+                    restored_image_link_count += self.metadata_store.restore_image_memory_links(
+                        tokens(item.get("image_link_ids"))
+                    )
                     restored_targets.append({"target_type": target_type, "hash": hash_value})
                 else:
                     restore_failures.append(
@@ -427,6 +434,9 @@ class MemoryCorrectionAdminService(KernelServiceBase):
                         )
                     else:
                         self.metadata_store.mark_relations_active([hash_value])
+                    restored_image_link_count += self.metadata_store.restore_image_memory_links(
+                        tokens(item.get("image_link_ids"))
+                    )
                     restored_targets.append({"target_type": target_type, "hash": hash_value})
                 else:
                     restore_failures.append({"target_type": target_type, "hash": hash_value, "error": "目标关系不存在"})
@@ -458,6 +468,7 @@ class MemoryCorrectionAdminService(KernelServiceBase):
             "stale_marks_deleted": stale_marks_deleted,
             "stale_marks_restored": stale_marks_restored,
             "stale_marks_skipped": stale_marks_skipped,
+            "restored_image_link_count": restored_image_link_count,
             "items": rollback_items,
             "requested_by": requested_by,
             "reason": reason,
@@ -917,6 +928,10 @@ class MemoryCorrectionAdminService(KernelServiceBase):
             if action == "mark_inactive":
                 previous = self.metadata_store.get_relation(relation_hash)
                 previous_metadata = coerce_metadata_dict((previous or {}).get("metadata"))
+                image_link_ids = self.metadata_store.list_active_image_memory_link_ids(
+                    target_type="relation",
+                    target_ids=[relation_hash],
+                )
                 patch = {
                     "memory_change": {
                         "change_id": plan_token,
@@ -929,11 +944,16 @@ class MemoryCorrectionAdminService(KernelServiceBase):
                 }
                 updated_metadata = self.metadata_store.update_relation_metadata(relation_hash, patch, merge=True)
                 self.metadata_store.mark_relations_inactive([relation_hash], inactive_since=changed_at)
+                self.metadata_store.invalidate_image_memory_links(
+                    target_type="relation",
+                    target_ids=[relation_hash],
+                )
                 result["relations_marked_inactive"].append(
                     {
                         **relation,
                         "previous_metadata": previous_metadata,
                         "updated_metadata": updated_metadata if isinstance(updated_metadata, dict) else {},
+                        "image_link_ids": image_link_ids,
                         "previous_is_inactive": bool((previous or {}).get("is_inactive", False)),
                         "previous_inactive_since": (previous or {}).get("inactive_since"),
                     }
@@ -1106,9 +1126,17 @@ class MemoryCorrectionAdminService(KernelServiceBase):
             if previous is None:
                 return {}
             previous_metadata = coerce_metadata_dict(previous.get("metadata"))
+            image_link_ids = self.metadata_store.list_active_image_memory_link_ids(
+                target_type="paragraph",
+                target_ids=[hash_value],
+            )
             updated = self.metadata_store.update_paragraph_metadata(hash_value, patch, merge=True)
             if updated is None:
                 return {}
+            self.metadata_store.invalidate_image_memory_links(
+                target_type="paragraph",
+                target_ids=[hash_value],
+            )
             fact_evidence_snapshot = self.metadata_store.detach_fact_evidence_for_paragraphs(
                 [hash_value],
                 reason=reason or "memory_correction_paragraph_superseded",
@@ -1125,6 +1153,7 @@ class MemoryCorrectionAdminService(KernelServiceBase):
                 "hash": hash_value,
                 "previous_metadata": previous_metadata,
                 "updated_metadata": updated,
+                "image_link_ids": image_link_ids,
                 "fact_evidence_snapshot": fact_evidence_snapshot,
                 "cascade": cascade,
             }
@@ -1132,15 +1161,24 @@ class MemoryCorrectionAdminService(KernelServiceBase):
         if previous is None:
             return {}
         previous_metadata = coerce_metadata_dict(previous.get("metadata"))
+        image_link_ids = self.metadata_store.list_active_image_memory_link_ids(
+            target_type="relation",
+            target_ids=[hash_value],
+        )
         updated = self.metadata_store.update_relation_metadata(hash_value, patch, merge=True)
         if updated is None:
             return {}
         self.metadata_store.mark_relations_inactive([hash_value], inactive_since=valid_to)
+        self.metadata_store.invalidate_image_memory_links(
+            target_type="relation",
+            target_ids=[hash_value],
+        )
         return {
             "target_type": target_type,
             "hash": hash_value,
             "previous_metadata": previous_metadata,
             "updated_metadata": updated,
+            "image_link_ids": image_link_ids,
             "previous_is_inactive": bool(previous.get("is_inactive", False)),
             "previous_inactive_since": previous.get("inactive_since"),
         }

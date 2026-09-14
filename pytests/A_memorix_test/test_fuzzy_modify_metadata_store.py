@@ -10,7 +10,7 @@ def test_fuzzy_modify_plan_and_superseded_metadata(tmp_path):
     store = MetadataStore(data_dir=tmp_path)
     store.connect()
     try:
-        assert SCHEMA_VERSION == 24
+        assert SCHEMA_VERSION == 25
 
         paragraph_hash = store.add_paragraph(
             "小明喜欢咖啡",
@@ -268,7 +268,6 @@ def test_fuzzy_modify_paragraph_cascade_marks_stale_when_relation_has_other_supp
         other_paragraph_hash = store.add_paragraph("朋友也说小明喜欢咖啡", source="person_fact:person-1")
         relation_hash = store.add_relation("小明", "喜欢", "咖啡", source_paragraph=old_paragraph_hash)
         store.link_paragraph_relation(other_paragraph_hash, relation_hash)
-
         kernel = SDKMemoryKernel(plugin_root=Path("."), config={})
         kernel.metadata_store = store
         result = kernel._mark_fuzzy_modify_target_superseded(
@@ -418,6 +417,31 @@ async def test_fuzzy_modify_rollback_removes_owned_stale_mark(tmp_path):
         other_paragraph_hash = store.add_paragraph("朋友也说小明喜欢咖啡", source="person_fact:person-1")
         relation_hash = store.add_relation("小明", "喜欢", "咖啡", source_paragraph=old_paragraph_hash)
         store.link_paragraph_relation(other_paragraph_hash, relation_hash)
+        asset = store.upsert_image_asset(
+            content_hash="sha256:image-for-correction",
+            storage_key="sha256/im/image-for-correction.png",
+            mime_type="image/png",
+            byte_size=10,
+            width=1,
+            height=1,
+        )
+        occurrence = store.upsert_image_occurrence(
+            asset_id=asset["asset_id"],
+            external_ref="chat:test:message:0",
+            source_kind="chat",
+            scope_type="chat",
+            chat_id="test-chat",
+            message_id="message-1",
+            component_path="0",
+            occurred_at=900.0,
+        )
+        store.upsert_image_memory_link(
+            occurrence_id=occurrence["occurrence_id"],
+            target_type="paragraph",
+            target_id=old_paragraph_hash,
+            link_kind="fact_evidence",
+            evidence={"fact_id": "f1"},
+        )
         plan = store.create_fuzzy_modify_plan(
             request_text="小明不喜欢咖啡",
             scope="person_profile",
@@ -442,6 +466,7 @@ async def test_fuzzy_modify_rollback_removes_owned_stale_mark(tmp_path):
             replacement_hashes=[],
             plan_id=plan["plan_id"],
         )
+        assert store.list_image_memory_links([occurrence["occurrence_id"]]) == []
         store.update_fuzzy_modify_plan(
             plan["plan_id"],
             status="executed",
@@ -469,6 +494,8 @@ async def test_fuzzy_modify_rollback_removes_owned_stale_mark(tmp_path):
         restored = store.get_paragraph(old_paragraph_hash)
         assert restored is not None
         assert restored["metadata"] == {"source_type": "person_fact", "keep": True}
+        assert len(store.list_image_memory_links([occurrence["occurrence_id"]])) == 1
+        assert rollback["rollback"]["restored_image_link_count"] == 1
         assert rollback["rollback"]["stale_marks_deleted"][0]["relation_hash"] == relation_hash
         assert rollback["rollback"]["profile_refresh_person_ids"] == ["person-1"]
         refresh_request = store.get_person_profile_refresh_request("person-1")
