@@ -10,7 +10,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -100,6 +100,7 @@ export function ImagesTab() {
   const [observationText, setObservationText] = useState('')
   const [savingSemantic, setSavingSemantic] = useState(false)
   const [error, setError] = useState('')
+  const detailRequestIdRef = useRef(0)
 
   const loadPage = useCallback(async () => {
     setLoading(true)
@@ -131,20 +132,33 @@ export function ImagesTab() {
   }, [loadPage])
 
   const selectAsset = useCallback(async (assetId: string) => {
+    const requestId = ++detailRequestIdRef.current
     setSelectedId(assetId)
     setDetailLoading(true)
+    setError('')
     try {
       const payload = await getMemoryImage(assetId)
+      if (requestId !== detailRequestIdRef.current) return
       setDetail(payload)
       if (!payload.success) {
         setError(payload.error ?? '图片详情加载失败')
       }
     } catch (reason) {
+      if (requestId !== detailRequestIdRef.current) return
       setError(reason instanceof Error ? reason.message : '图片详情加载失败')
     } finally {
-      setDetailLoading(false)
+      if (requestId === detailRequestIdRef.current) {
+        setDetailLoading(false)
+      }
     }
   }, [])
+
+  useEffect(
+    () => () => {
+      detailRequestIdRef.current += 1
+    },
+    []
+  )
 
   const reindex = async () => {
     setReindexing(true)
