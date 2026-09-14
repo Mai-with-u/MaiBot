@@ -790,6 +790,33 @@ async def test_embedding_probe_retries_pending_vector_fingerprint_without_embedd
     assert calls == ["recover"]
 
 
+@pytest.mark.asyncio
+async def test_embedding_probe_runs_once_before_waiting_for_periodic_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
+    kernel._background_stopping = False
+    calls: list[str] = []
+
+    async def fake_recover_embedding_once() -> dict[str, Any]:
+        calls.append("recover")
+        kernel._background_stopping = True
+        return {"success": True}
+
+    async def fail_if_sleep_runs_first(_seconds: float) -> None:
+        raise AssertionError("首次 embedding 探测前不应等待周期定时器")
+
+    monkeypatch.setattr(kernel, "_embedding_fallback_enabled", lambda: True)
+    monkeypatch.setattr(kernel, "_is_startup_self_check_deferred", lambda: True)
+    monkeypatch.setattr(kernel, "_is_embedding_degraded", lambda: False)
+    monkeypatch.setattr(kernel, "_recover_embedding_once", fake_recover_embedding_once)
+    monkeypatch.setattr(asyncio, "sleep", fail_if_sleep_runs_first)
+
+    await kernel._background_task_service._embedding_probe_loop()
+
+    assert calls == ["recover"]
+
+
 def test_dual_vector_reload_reports_temporarily_unavailable_embedding_fingerprint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

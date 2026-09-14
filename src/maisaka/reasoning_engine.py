@@ -80,6 +80,7 @@ from src.maisaka.jargon_context_matcher import (
     extract_jargon_reference_contents,
 )
 from src.maisaka.memory.heuristic_injector import heuristic_memory_injector
+from src.maisaka.memory.image_injector import image_memory_injector
 from src.maisaka.memory.mid_term import (
     build_mid_term_memory_message,
     build_mid_term_memory_reference_message,
@@ -522,13 +523,26 @@ class MaisakaReasoningEngine:
                 logger.debug(f"{self._runtime.log_prefix} 人物画像自动注入失败，已跳过: {exc}")
                 return []
 
-        heuristic_memory_message, profile_messages = await asyncio.gather(
+        async def build_image_memory_message() -> str:
+            try:
+                return await image_memory_injector.build_injection_message(
+                    session_id=str(self._runtime.session_id or ""),
+                    source_messages=source_messages,
+                )
+            except Exception as exc:
+                logger.debug(f"{self._runtime.log_prefix} 图片记忆自然拉起失败，已跳过: {exc}")
+                return ""
+
+        heuristic_memory_message, profile_messages, image_memory_message = await asyncio.gather(
             build_heuristic_memory_message(),
             build_profile_messages(),
+            build_image_memory_message(),
         )
         if heuristic_memory_message:
             injected_messages.append(heuristic_memory_message)
         injected_messages.extend(profile_messages)
+        if image_memory_message:
+            injected_messages.append(image_memory_message)
         return injected_messages
 
     def _refresh_jargon_reference_message(self) -> Optional[ReferenceMessage]:

@@ -15,6 +15,8 @@ from .fetch_history import get_tool_spec as get_fetch_history_tool_spec
 from .fetch_history import handle_tool as handle_fetch_history_tool
 from .query_memory import get_tool_spec as get_query_memory_tool_spec
 from .query_memory import handle_tool as handle_query_memory_tool
+from .query_image_memory import get_tool_spec as get_query_image_memory_tool_spec
+from .query_image_memory import handle_tool as handle_query_image_memory_tool
 from .query_person_profile import get_tool_spec as get_query_person_profile_tool_spec
 from .query_person_profile import handle_tool as handle_query_person_profile_tool
 from .reply import get_tool_spec as get_reply_tool_spec
@@ -76,6 +78,10 @@ def _get_query_person_profile_tool_spec() -> ToolSpec:
     )
 
 
+def _get_query_image_memory_tool_spec() -> ToolSpec:
+    return get_query_image_memory_tool_spec(enabled=bool(global_config.a_memorix.image_memory.enabled))
+
+
 BUILTIN_TOOL_ENTRIES: List[BuiltinToolEntry] = [
     BuiltinToolEntry("wait", get_wait_tool_spec, handle_wait_tool, stage="both"),
     BuiltinToolEntry("reply", get_reply_tool_spec, handle_reply_tool, stage="action"),
@@ -87,6 +93,12 @@ BUILTIN_TOOL_ENTRIES: List[BuiltinToolEntry] = [
         visibility="deferred",
     ),
     BuiltinToolEntry("query_memory", _get_query_memory_tool_spec, handle_query_memory_tool, stage="action"),
+    BuiltinToolEntry(
+        "query_image_memory",
+        _get_query_image_memory_tool_spec,
+        handle_query_image_memory_tool,
+        stage="action",
+    ),
     BuiltinToolEntry(
         "query_person_profile",
         _get_query_person_profile_tool_spec,

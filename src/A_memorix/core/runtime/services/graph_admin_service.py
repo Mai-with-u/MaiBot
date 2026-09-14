@@ -1386,6 +1386,16 @@ class MemoryGraphAdminService(KernelServiceBase):
 
                 if resolved_target_hash != old_entity_hash:
                     cursor.execute("DELETE FROM entities WHERE hash = ?", (old_entity_hash,))
+                self.metadata_store.remap_image_memory_links(
+                    target_type="entity",
+                    target_id_map={old_entity_hash: resolved_target_hash},
+                    conn=conn,
+                )
+                self.metadata_store.remap_image_memory_links(
+                    target_type="relation",
+                    target_id_map=relation_hash_map,
+                    conn=conn,
+                )
                 if episode_sources:
                     self.metadata_store._enqueue_episode_source_rebuilds(
                         episode_sources,

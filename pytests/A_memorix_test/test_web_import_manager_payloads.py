@@ -240,6 +240,20 @@ def _build_manager(
     return manager, metadata_store
 
 
+def test_runtime_store_persistence_uses_fingerprint_entrypoint() -> None:
+    manager, _ = _build_manager()
+    persisted: list[object] = []
+    graph_saves: list[bool] = []
+    manager.plugin.persist_vector_store = lambda store: persisted.append(store)
+    manager.plugin.graph_store.save = lambda: graph_saves.append(True)
+    expected_stores = manager._vector_stores_for_persistence()
+
+    manager._save_runtime_stores_locked()
+
+    assert persisted == expected_stores
+    assert graph_saves == [True]
+
+
 def _build_progress_task(task_id: str, total_chunks: int = 2) -> ImportTaskRecord:
     file_record = ImportFileRecord(
         file_id="file-1",
@@ -1334,3 +1348,18 @@ async def test_late_user_cancellation_keeps_completed_result() -> None:
     assert summary["status"] == "completed"
     assert summary["cancel_origin"] == ""
     assert summary["cancel_requested_at"] is None
+
+
+def test_metadata_only_import_ready_check_does_not_require_vector_stores() -> None:
+    manager, _ = _build_manager()
+    manager.plugin.vector_store = None
+    manager.plugin.paragraph_vector_store = None
+    manager.plugin.graph_vector_store = None
+
+    manager._ensure_ready()
+
+    manager.plugin.get_config = lambda key, default=None: (
+        False if key == "embedding.fallback.allow_metadata_only_write" else default
+    )
+    with pytest.raises(ValueError, match="paragraph_vector_store, graph_vector_store"):
+        manager._ensure_ready()

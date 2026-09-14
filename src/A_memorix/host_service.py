@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+from datetime import datetime
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence, Tuple
+
 import asyncio
+import base64
 import json
 import os
 import stat
 import time
 import uuid
-from datetime import datetime
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence, Tuple
 
 import tomlkit
 
 from src.common.logger import get_logger
+from src.common.runtime_loop import run_on_main_loop
 from src.common.utils.utils_config import AMemorixConfigUtils
 from src.config.official_configs import AMemorixConfig
 from src.webui.utils.toml_utils import _update_toml_doc
@@ -215,6 +218,16 @@ class AMemorixHostService:
         *,
         timeout_ms: Optional[int] = None,
     ) -> Any:
+        """将跨线程管理请求统一投递到主循环，保证内核的异步锁有效。"""
+        return await run_on_main_loop(self._invoke_on_runtime(component_name, args, timeout_ms=timeout_ms))
+
+    async def _invoke_on_runtime(
+        self,
+        component_name: str,
+        args: Dict[str, Any] | None = None,
+        *,
+        timeout_ms: Optional[int] = None,
+    ) -> Any:
         """将 MaiBot 宿主请求路由到共享 A_Memorix 内核。
 
         本层负责启动状态、宿主参数适配、共享聊天范围、启动期写入排队和管理命令
@@ -298,6 +311,23 @@ class AMemorixHostService:
 
         if component_name == "memory_stats":
             return kernel.memory_stats()
+
+        if component_name == "image_memory":
+            action = str(payload.get("action") or "").strip().lower()
+            scoped_payload = dict(payload)
+            if action in {"search", "get"} and "chat_ids" not in scoped_payload:
+                chat_id = str(payload.get("chat_id") or "").strip()
+                config = self._read_config()
+                if bool(config.get("global_memory_sharing_enabled", False)):
+                    scoped_payload["chat_ids"] = None
+                else:
+                    scoped_payload["chat_ids"] = [
+                        item
+                        for item in (chat_id, *AMemorixConfigUtils.get_shared_memory_session_ids(chat_id))
+                        if item
+                    ]
+            scoped_payload.pop("action", None)
+            return await kernel.image_memory(action=action, **scoped_payload)
 
         if is_admin_component(component_name):
             try:
@@ -478,7 +508,7 @@ class AMemorixHostService:
             component_name = str(item.get("component_name", "") or "").strip()
             if not record_id or record_id in done_ids:
                 continue
-            if component_name not in {"ingest_summary", "ingest_text"}:
+            if component_name not in {"ingest_summary", "ingest_text", "image_memory"}:
                 continue
             records.append(item)
         records.sort(key=lambda item: float(item.get("created_at", 0.0) or 0.0))
@@ -521,10 +551,16 @@ class AMemorixHostService:
         }
 
     async def _enqueue_startup_write(self, component_name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        queued_payload = dict(payload)
+        image_bytes = queued_payload.pop("image_bytes", None)
+        if image_bytes is not None:
+            if not isinstance(image_bytes, (bytes, bytearray, memoryview)):
+                raise TypeError("启动队列中的 image_bytes 必须是字节数据")
+            queued_payload["image_base64"] = base64.b64encode(bytes(image_bytes)).decode("ascii")
         record = {
             "record_id": uuid.uuid4().hex,
             "component_name": component_name,
-            "payload": payload,
+            "payload": queued_payload,
             "created_at": time.time(),
         }
         await self._append_jsonl(self._startup_queue_path(), record)
@@ -544,7 +580,11 @@ class AMemorixHostService:
         status = self._startup_status_payload()
         initializing = bool(status.get("initializing"))
         failed = bool(status.get("initialization_failed"))
-        if initializing and component_name in {"ingest_summary", "ingest_text"}:
+        image_write = component_name == "image_memory" and str(payload.get("action") or "").strip().lower() in {
+            "ingest",
+            "describe",
+        }
+        if initializing and (component_name in {"ingest_summary", "ingest_text"} or image_write):
             return await self._enqueue_startup_write(component_name, payload)
 
         reason = "a_memorix_initializing" if initializing else "a_memorix_initialization_failed"
@@ -562,9 +602,11 @@ class AMemorixHostService:
             return {**base, "summary": "", "traits": [], "evidence": []}
         if component_name == "memory_stats":
             return {**base, "paragraph_count": 0, "relation_count": 0, "episode_count": 0}
+        if component_name == "image_memory":
+            return {**base, "success": False, "hits": [], "error": message}
         if component_name == "memory_runtime_admin":
             return base
-        if component_name in {"ingest_summary", "ingest_text"}:
+        if component_name in {"ingest_summary", "ingest_text"} or image_write:
             return {
                 **base,
                 "success": False,
@@ -613,6 +655,13 @@ class AMemorixHostService:
                 user_id=str(payload.get("user_id", "") or "").strip(),
                 group_id=str(payload.get("group_id", "") or "").strip(),
             )
+        if component_name == "image_memory":
+            action = str(payload.get("action") or "").strip().lower()
+            if action not in {"ingest", "describe"}:
+                raise ValueError(f"不支持的启动队列图片写入操作: {action}")
+            image_payload = dict(payload)
+            image_payload.pop("action", None)
+            return await kernel.image_memory(action=action, **image_payload)
         raise ValueError(f"不支持的启动队列写入类型: {component_name}")
 
     async def _replay_startup_write_queue(self, kernel: SDKMemoryKernel) -> None:

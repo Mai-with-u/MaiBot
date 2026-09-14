@@ -1,18 +1,28 @@
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import base64
 import json
 
+import pytest
+
 from src.config.model_configs import APIProvider, ModelInfo
 from src.llm_models.generation_diagnostics import sanitize_generation_diagnostic
-from src.llm_models.model_client.base_client import APIResponse, RequestTraceContext, ResponseRequest
+from src.llm_models.model_client.base_client import (
+    APIResponse,
+    ImageEmbeddingRequest,
+    RequestTraceContext,
+    ResponseRequest,
+)
+from src.llm_models.model_client.openai_client import OpenaiClient
 from src.llm_models.payload_content.context_item import ContextItemBuilder
 from src.llm_models.request_snapshot import (
     attach_request_snapshot,
     deserialize_persisted_context_items_snapshot,
     mark_request_succeeded,
     save_failed_request_snapshot,
+    serialize_image_embedding_request_snapshot,
     serialize_response_request_snapshot,
     update_failed_request_attempt,
 )
@@ -209,3 +219,61 @@ def test_generation_diagnostic_sanitizes_credentials_private_fields_urls_and_bin
     assert sanitized["nested"]["thought_signature"] == "[仅在内存 replay fragment 中保留]"
     assert sanitized["image_base64"]["type"] == "omitted_binary"
     assert sanitized["bytes"]["type"] == "omitted_binary"
+
+
+def test_image_embedding_snapshot_keeps_diagnostics_without_raw_image() -> None:
+    image_bytes = b"private-image-payload"
+    request = ImageEmbeddingRequest(
+        model_info=_build_model(),
+        image_bytes=image_bytes,
+        mime_type="image/png",
+        preprocess_version="identity_v1",
+        extra_params={"dimensions": 512},
+    )
+
+    snapshot = serialize_image_embedding_request_snapshot(request)
+    serialized = json.dumps(snapshot, ensure_ascii=False)
+
+    assert snapshot["request_kind"] == "image_embedding"
+    assert snapshot["byte_size"] == len(image_bytes)
+    assert snapshot["mime_type"] == "image/png"
+    assert snapshot["preprocess_version"] == "identity_v1"
+    assert "private-image-payload" not in serialized
+    assert base64.b64encode(image_bytes).decode("ascii") not in serialized
+
+
+@pytest.mark.asyncio
+async def test_openai_image_embedding_uses_explicit_data_uri_protocol() -> None:
+    captured: dict[str, object] = {}
+
+    class FakeEmbeddings:
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(data=[SimpleNamespace(embedding=[0.2, 0.8])], usage=None)
+
+    client = object.__new__(OpenaiClient)
+    client.api_provider = _build_provider()
+    client.client = SimpleNamespace(embeddings=FakeEmbeddings())
+    request = ImageEmbeddingRequest(
+        model_info=_build_model(),
+        image_bytes=b"image-bytes",
+        mime_type="image/png",
+        preprocess_version="identity_v1",
+        extra_params={"image_embedding_input": "{data_uri}"},
+    )
+
+    response = await client.get_image_embedding(request)
+
+    assert response.embedding == [0.2, 0.8]
+    assert captured["model"] == "test-model-id"
+    assert captured["input"] == f"data:image/png;base64,{base64.b64encode(b'image-bytes').decode('ascii')}"
+
+
+@pytest.mark.asyncio
+async def test_image_embedding_rejects_missing_protocol_before_network() -> None:
+    client = object.__new__(OpenaiClient)
+    request = ImageEmbeddingRequest(
+        model_info=_build_model(), image_bytes=b"image", mime_type="image/png", preprocess_version="identity_v1",
+    )
+    with pytest.raises(ValueError, match="必须配置 Provider"):
+        await client.get_image_embedding(request)

@@ -73,15 +73,6 @@ vi.mock('@/hooks/use-toast', () => ({
   useToast: () => ({ toast: toastMock }),
 }))
 
-vi.mock('@/lib/unified-ws', () => ({
-  unifiedWsClient: {
-    onConnectionChange: (listener: (connected: boolean) => void) => {
-      listener(false)
-      return () => undefined
-    },
-  },
-}))
-
 vi.mock('@/lib/memory-progress-client', () => ({
   memoryProgressClient: {
     subscribe: (
@@ -733,6 +724,39 @@ describe('useImportQueue', () => {
     })
     const high = renderQueue()
     await waitFor(() => expect(high.result.current.importPollInterval).toBe(1500))
+  })
+
+  it('自动轮询会把运行任务更新为服务端最新状态', async () => {
+    vi.mocked(memoryApi.getMemoryImportSettings).mockResolvedValue({
+      success: true,
+      settings: { poll_interval_ms: 200 },
+    })
+    let listCalls = 0
+    vi.mocked(memoryApi.getMemoryImportTasks).mockImplementation(async () => {
+      listCalls += 1
+      const completed = listCalls > 1
+      return {
+        success: true,
+        items: [
+          makeTask({
+            status: completed ? 'completed' : 'running',
+            current_step: completed ? 'completed' : 'running',
+            done_chunks: completed ? 10 : 1,
+            progress: completed ? 100 : 10,
+          }),
+        ],
+      }
+    })
+
+    const { result } = renderQueue()
+    await waitFor(() => expect(result.current.runningImportTasks).toHaveLength(1))
+    await waitFor(
+      () => {
+        expect(result.current.runningImportTasks).toHaveLength(0)
+        expect(result.current.recentImportTasks[0]?.status).toBe('completed')
+      },
+      { timeout: 1_500 },
+    )
   })
 
   it('任务列表查询失败写入局部错误文案，非 Error 走兜底句', async () => {

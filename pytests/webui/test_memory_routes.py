@@ -1564,6 +1564,112 @@ def test_import_upload_route_rejects_unknown_chat_id(client: TestClient, monkeyp
     assert list(tmp_path.iterdir()) == []
 
 
+def test_memory_bundle_export_and_list_routes(client: TestClient, monkeypatch):
+    calls = []
+
+    async def fake_bundle_admin(*, action: str, **kwargs):
+        calls.append((action, kwargs))
+        if action == "export":
+            return {"success": True, "file_name": "demo.amembundle"}
+        if action == "list":
+            return {"success": True, "items": [], "count": 0}
+        raise AssertionError(action)
+
+    monkeypatch.setattr(memory_router_module.memory_service, "bundle_admin", fake_bundle_admin)
+
+    export_response = client.post(
+        "/api/webui/memory/bundles/export",
+        json={"content_level": "knowledge", "selector": {"type": "all"}},
+    )
+    list_response = client.get("/api/webui/memory/bundles", params={"limit": 12})
+
+    assert export_response.status_code == 200
+    assert export_response.json()["file_name"] == "demo.amembundle"
+    assert list_response.status_code == 200
+    assert calls == [
+        (
+            "export",
+            {
+                "timeout_ms": 600000,
+                "content_level": "knowledge",
+                "selector": {"type": "all"},
+            },
+        ),
+        ("list", {"limit": 12}),
+    ]
+
+
+def test_memory_bundle_import_route_uses_real_chat_and_cleans_staging(
+    client: TestClient,
+    monkeypatch,
+    tmp_path: Path,
+):
+    monkeypatch.setattr(memory_router_module, "STAGING_ROOT", tmp_path)
+    monkeypatch.setattr(
+        memory_router_module._chat_manager,
+        "get_existing_session_by_session_id",
+        lambda chat_id: SimpleNamespace(session_id=chat_id) if chat_id == "session-1" else None,
+    )
+
+    async def fake_bundle_admin(*, action: str, **kwargs):
+        assert action == "import"
+        assert kwargs["scope_type"] == "chat"
+        assert kwargs["chat_id"] == "session-1"
+        assert Path(kwargs["path"]).is_file()
+        assert Path(kwargs["path"]).suffix == ".amembundle"
+        return {"success": True, "installation_id": "install-1"}
+
+    monkeypatch.setattr(memory_router_module.memory_service, "bundle_admin", fake_bundle_admin)
+
+    response = client.post(
+        "/api/webui/memory/bundles/import",
+        data={"payload_json": '{"scope_type":"chat","chat_id":"session-1"}'},
+        files={"file": ("demo.amembundle", b"bundle", "application/zip")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["installation_id"] == "install-1"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_memory_bundle_download_route_returns_registered_file(client: TestClient, monkeypatch, tmp_path: Path):
+    bundle_path = tmp_path / "demo.amembundle"
+    bundle_path.write_bytes(b"bundle-content")
+
+    async def fake_bundle_admin(*, action: str, **kwargs):
+        assert action == "resolve_file"
+        assert kwargs == {"file_name": "demo.amembundle"}
+        return {"success": True, "path": str(bundle_path), "file_name": bundle_path.name}
+
+    monkeypatch.setattr(memory_router_module.memory_service, "bundle_admin", fake_bundle_admin)
+
+    response = client.get("/api/webui/memory/bundles/download/demo.amembundle")
+
+    assert response.status_code == 200
+    assert response.content == b"bundle-content"
+    assert "demo.amembundle" in response.headers["content-disposition"]
+
+
+def test_memory_bundle_uninstall_route_removes_installed_memories(client: TestClient, monkeypatch):
+    async def fake_bundle_admin(*, action: str, **kwargs):
+        assert action == "uninstall"
+        assert kwargs == {"installation_id": "install-1"}
+        return {
+            "success": True,
+            "installation_id": "install-1",
+            "removed_memories": True,
+            "removed": {"paragraphs": 2},
+        }
+
+    monkeypatch.setattr(memory_router_module.memory_service, "bundle_admin", fake_bundle_admin)
+
+    response = client.delete("/api/webui/memory/bundles/install-1")
+
+    assert response.status_code == 200
+    assert response.json()["removed_memories"] is True
+    assert response.json()["removed"]["paragraphs"] == 2
+
+
 def test_import_chat_targets_route(client: TestClient, monkeypatch):
     chat_session = SimpleNamespace(
         session_id="session-1",

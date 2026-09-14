@@ -74,6 +74,7 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
 
         self.embedding_manager = None
         self.metadata_store = None
+        self.image_memory_runtime = None
         self.graph_store = None
         self.vector_store = None
         self.paragraph_vector_store = None
@@ -149,6 +150,33 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
         self.metadata_store = kernel_module.MetadataStore(data_dir=self.data_dir / "metadata")
         self.metadata_store.connect()
         self._set_runtime_capability("metadata", True)
+
+        image_config = self._cfg("image_memory", {}) or {}
+        if bool(image_config.get("enabled", True)):
+            from ...image import ImageAssetStore, ImageMemoryRuntime
+            from ...image.embedder import HostImageEmbedder
+
+            asset_store = ImageAssetStore(
+                self.data_dir / "images" / "assets",
+                max_bytes=int(image_config.get("max_bytes", 10 * 1024 * 1024)),
+                max_pixels=int(image_config.get("max_pixels", 40_000_000)),
+            )
+
+            def persist_image_vectors(store, fingerprint) -> None:
+                store.save(embedding_fingerprint=fingerprint)
+
+            self.image_memory_runtime = ImageMemoryRuntime(
+                metadata_store=self.metadata_store,
+                asset_store=asset_store,
+                embedder=HostImageEmbedder(
+                    task_name=str(image_config.get("task_name", "image_embedding")),
+                    preprocess_version=str(image_config.get("preprocess_version", "identity_v1")),
+                    probe_retry_seconds=float(image_config.get("probe_retry_seconds", 60.0)),
+                ),
+                vector_root=self.data_dir / "images" / "vectors",
+                config=image_config,
+                persist_vector_store=persist_image_vectors,
+            )
 
         try:
             self.graph_store = kernel_module.GraphStore(
@@ -349,6 +377,7 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
                 self.vector_store,
                 self.paragraph_vector_store,
                 self.graph_vector_store,
+                self.image_memory_runtime.vector_store if self.image_memory_runtime is not None else None,
             )
         )
         if has_writable_store and not self._runtime_writer_lock.held:

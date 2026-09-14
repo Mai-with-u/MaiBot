@@ -118,9 +118,12 @@ class EpisodeService:
         disabled_source_types = sorted(
             {
                 str(item or "").strip().lower()
-                for item in argument_tokens(self._cfg("episode.disabled_source_types", ["person_fact"]))
+                for item in argument_tokens(
+                    self._cfg("episode.disabled_source_types", ["person_fact", "knowledge_pack"])
+                )
                 if str(item or "").strip()
             }
+            | {"knowledge_pack"}
         )
         return {
             "materialization_version": self.MATERIALIZATION_VERSION,

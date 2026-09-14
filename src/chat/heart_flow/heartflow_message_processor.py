@@ -60,6 +60,9 @@ class HeartFCMessageReceiver:
             await MessageUtils.store_message_to_db_async(message)  # 存储消息到数据库
             if chat is not None:
                 await chat.register_message(message)
+            from src.services.memory_flow_service import memory_automation_service
+
+            await memory_automation_service.on_incoming_message(message)
 
             # 3. 日志记录
             mes_name = group_info.group_name if group_info else "私聊"

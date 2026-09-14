@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Tabs } from '@/components/ui/tabs'
 import i18n from '@/i18n'
@@ -129,6 +129,7 @@ describe('MemoryRecordsTab', () => {
     renderTab()
 
     expect(await screen.findAllByText('小明喜欢咖啡')).not.toHaveLength(0)
+    expect(screen.getAllByText('事实资料')).not.toHaveLength(0)
     expect(await screen.findByText('关联实体')).toBeInTheDocument()
     expect(screen.getByText('小明')).toBeInTheDocument()
     expect(contextMock).toHaveBeenCalledWith('paragraph', 'paragraph-01')
@@ -741,7 +742,7 @@ describe('MemoryRecordsTab 未覆盖交互', () => {
       fact_transitions: [
         {
           transition_type: 'mystery',
-          created_at: 'not-a-date',
+          created_at: Number.NaN,
           reason: '无法解析的时间戳',
           evidence_type: 'manual',
         },

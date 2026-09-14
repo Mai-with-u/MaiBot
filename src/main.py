@@ -258,12 +258,14 @@ async def main() -> None:
         if system.webui_server:
             await system.webui_server.shutdown()
         from src.A_memorix.host_service import a_memorix_host_service
+        from src.chat.image_system.image_manager import image_manager
         from src.emoji_system.emoji_manager import emoji_manager
         from src.mcp_module.service import get_mcp_service
         from src.plugin_runtime.integration import get_plugin_runtime_manager
         from src.services.memory_flow_service import memory_automation_service
 
         emoji_manager.shutdown()
+        await image_manager.shutdown()
         await memory_automation_service.shutdown()
         await a_memorix_host_service.stop()
         await get_plugin_runtime_manager().bridge_event("on_stop")

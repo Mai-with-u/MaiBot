@@ -1,6 +1,16 @@
 import { useMemo, useState } from 'react'
 
-import { Check, ChevronLeft, ChevronRight, Loader2, MoreHorizontal, RefreshCw, Search, Upload } from 'lucide-react'
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  MoreHorizontal,
+  PackageOpen,
+  RefreshCw,
+  Search,
+  Upload,
+} from 'lucide-react'
 
 import { MemoryMiniTabs } from '@/components/memory/MemoryMiniTabs'
 import { MemoryProgressIndicator } from '@/components/memory/MemoryProgressIndicator'
@@ -16,7 +26,7 @@ import { Progress } from '@/components/ui/progress'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Tabs, TabsContent } from '@/components/ui/tabs'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { formatChatAccountLabel, formatChatDisplayName } from '@/lib/chat-display'
@@ -42,6 +52,7 @@ import {
   normalizeImportInputMode,
   normalizeProgress,
 } from '../utils'
+import { MemoryBundleCard } from './MemoryBundleCard'
 
 const UNIFIED_IMPORT_MODE_OPTIONS = [
   { value: 'text', label: '文本' },
@@ -239,6 +250,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
   } = form
   const [chatTargetQuery, setChatTargetQuery] = useState('')
   const [importParametersOpen, setImportParametersOpen] = useState(false)
+  const [transferMode, setTransferMode] = useState<'import' | 'bundle'>('import')
   const selectedImportChatTarget = useMemo(
     () => importChatTargets.find((chat) => chat.chat_id === importCommonChatId.trim()),
     [importChatTargets, importCommonChatId],
@@ -261,7 +273,31 @@ export function ImportTab({ queue, form }: ImportTabProps) {
       value="import"
       className="space-y-6 [&_input]:h-10 [&_[role=combobox]]:h-10 [&_textarea]:min-h-[96px]"
     >
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <Tabs
+        value={transferMode}
+        onValueChange={(value) => setTransferMode(value as 'import' | 'bundle')}
+      >
+        <TabsList
+          aria-label="导入导出功能"
+          className="border-border/60 bg-muted/30 h-auto w-fit gap-1 rounded-xl border"
+        >
+          <TabsTrigger value="import">
+            <Upload className="mr-2 h-4 w-4" />
+            导入任务
+          </TabsTrigger>
+          <TabsTrigger value="bundle">
+            <PackageOpen className="mr-2 h-4 w-4" />
+            记忆包导入导出
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      <div
+        className={cn(
+          'grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]',
+          transferMode !== 'import' && 'hidden',
+        )}
+      >
         <div className="order-2 space-y-6 lg:order-1">
           <Card className="rounded-2xl border-border/70 shadow-sm">
             <CardHeader>
@@ -942,7 +978,8 @@ export function ImportTab({ queue, form }: ImportTabProps) {
         </div>
       </div>
 
-      <Card className="rounded-2xl border-border/70 bg-card/90 shadow-sm">
+      {transferMode === 'import' ? (
+        <Card className="rounded-2xl border-border/70 bg-card/90 shadow-sm">
           <CardHeader className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <CardTitle>任务详情</CardTitle>
@@ -1235,6 +1272,8 @@ export function ImportTab({ queue, form }: ImportTabProps) {
             )}
           </CardContent>
         </Card>
+      ) : null}
+      {transferMode === 'bundle' ? <MemoryBundleCard chatTargets={importChatTargets} /> : null}
     </TabsContent>
   )
 }

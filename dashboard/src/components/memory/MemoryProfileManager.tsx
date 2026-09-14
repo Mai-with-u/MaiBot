@@ -222,8 +222,8 @@ export function MemoryProfileManager({ initialPersonId = '' }: MemoryProfileMana
       const nextItems = payload.items ?? []
       setProfiles(nextItems)
       setProfileListMode('library')
-      if (!selectedPersonId && nextItems.length > 0) {
-        setSelectedPersonId(nextItems[0].person_id)
+      if (nextItems.length > 0) {
+        setSelectedPersonId((current) => current || nextItems[0].person_id)
       }
     } catch (error) {
       toast({
@@ -234,7 +234,7 @@ export function MemoryProfileManager({ initialPersonId = '' }: MemoryProfileMana
     } finally {
       setLoading(false)
     }
-  }, [selectedPersonId, toast])
+  }, [toast])
 
   useEffect(() => {
     if (initialLoadedRef.current) {

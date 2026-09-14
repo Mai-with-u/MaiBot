@@ -16,12 +16,28 @@ from .knowledge_types import (
 
 logger = get_logger("A_Memorix.MetadataSchema")
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 26
 RUNTIME_AUTO_MIGRATION_MIN_SCHEMA_VERSION = 9
 
 
 class MetadataSchemaMixin:
     """维护元数据数据库表结构、版本迁移与数据规范化。"""
+
+    @staticmethod
+    def _ensure_summary_checkpoint_tables(cursor: sqlite3.Cursor) -> None:
+        """保存成功空摘要的幂等标识与触发进度，不生成可检索段落。"""
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS chat_summary_checkpoints (
+                external_id TEXT PRIMARY KEY,
+                chat_id TEXT NOT NULL,
+                trigger_message_count INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_chat_summary_checkpoints_chat
+            ON chat_summary_checkpoints(chat_id, trigger_message_count)
+        """)
 
     def _assert_schema_compatible(self, db_existed: bool) -> None:
         """运行时执行 post-1.0 自动迁移；legacy/vNext 仍要求离线迁移。"""
@@ -1039,6 +1055,206 @@ class MetadataSchemaMixin:
             ON memory_fuzzy_modify_plans(target_person_id, target_chat_id)
         """)
 
+    @staticmethod
+    def _ensure_knowledge_package_tables(cursor: sqlite3.Cursor) -> None:
+        """创建可分享知识包的安装登记和段落归属表。"""
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_packages (
+                installation_id TEXT PRIMARY KEY,
+                package_id TEXT NOT NULL,
+                version TEXT NOT NULL,
+                name TEXT NOT NULL,
+                content_level TEXT NOT NULL,
+                content_digest TEXT NOT NULL,
+                manifest_json TEXT NOT NULL,
+                scope_type TEXT NOT NULL,
+                scope_key TEXT NOT NULL,
+                chat_id TEXT,
+                status TEXT NOT NULL DEFAULT 'installed',
+                installed_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                UNIQUE(package_id, version, scope_type, scope_key)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_knowledge_packages_updated
+            ON knowledge_packages(status, updated_at DESC)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_knowledge_packages_package
+            ON knowledge_packages(package_id, version, status)
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_package_paragraphs (
+                installation_id TEXT NOT NULL,
+                doc_id TEXT NOT NULL,
+                paragraph_hash TEXT NOT NULL,
+                PRIMARY KEY (installation_id, doc_id),
+                FOREIGN KEY (installation_id) REFERENCES knowledge_packages(installation_id) ON DELETE CASCADE,
+                FOREIGN KEY (paragraph_hash) REFERENCES paragraphs(hash) ON DELETE CASCADE
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_knowledge_package_paragraphs_hash
+            ON knowledge_package_paragraphs(paragraph_hash, installation_id)
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_package_resources (
+                installation_id TEXT NOT NULL,
+                resource_type TEXT NOT NULL,
+                resource_key TEXT NOT NULL,
+                created_by_installation INTEGER NOT NULL CHECK(created_by_installation IN (0, 1)),
+                PRIMARY KEY (installation_id, resource_type, resource_key),
+                FOREIGN KEY (installation_id) REFERENCES knowledge_packages(installation_id) ON DELETE CASCADE
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_knowledge_package_resources_lookup
+            ON knowledge_package_resources(resource_type, resource_key, created_by_installation)
+        """)
+
+    @staticmethod
+    def _ensure_image_memory_tables(cursor: sqlite3.Cursor) -> None:
+        """创建图片记忆的权威记录和可恢复嵌入任务。"""
+
+        cursor.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS image_assets (
+                asset_id TEXT PRIMARY KEY,
+                content_hash TEXT NOT NULL UNIQUE,
+                storage_key TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                byte_size INTEGER NOT NULL,
+                width INTEGER NOT NULL,
+                height INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_image_assets_status_updated
+            ON image_assets(status, updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS image_occurrences (
+                occurrence_id TEXT PRIMARY KEY,
+                asset_id TEXT NOT NULL,
+                external_ref TEXT NOT NULL UNIQUE,
+                source_kind TEXT NOT NULL,
+                scope_type TEXT NOT NULL,
+                chat_id TEXT NOT NULL DEFAULT '',
+                message_id TEXT NOT NULL DEFAULT '',
+                component_path TEXT NOT NULL DEFAULT '',
+                occurred_at REAL,
+                installation_id TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                FOREIGN KEY (asset_id) REFERENCES image_assets(asset_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_image_occurrences_scope
+            ON image_occurrences(scope_type, chat_id, status, occurred_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_image_occurrences_asset
+            ON image_occurrences(asset_id, status);
+            CREATE INDEX IF NOT EXISTS idx_image_occurrences_installation
+            ON image_occurrences(installation_id, status);
+
+            CREATE TABLE IF NOT EXISTS image_observations (
+                observation_id TEXT PRIMARY KEY,
+                occurrence_id TEXT NOT NULL,
+                text TEXT NOT NULL,
+                source_kind TEXT NOT NULL,
+                confirm_status TEXT NOT NULL,
+                evidence_json TEXT NOT NULL DEFAULT '{}',
+                version INTEGER NOT NULL DEFAULT 1,
+                supersedes_id TEXT NOT NULL DEFAULT '',
+                superseded_by TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL,
+                FOREIGN KEY (occurrence_id) REFERENCES image_occurrences(occurrence_id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_image_observations_occurrence
+            ON image_observations(occurrence_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS image_memory_links (
+                link_id TEXT PRIMARY KEY,
+                occurrence_id TEXT NOT NULL,
+                target_type TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                link_kind TEXT NOT NULL,
+                evidence_json TEXT NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                UNIQUE(occurrence_id, target_type, target_id),
+                FOREIGN KEY (occurrence_id) REFERENCES image_occurrences(occurrence_id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_image_memory_links_target
+            ON image_memory_links(target_type, target_id, status);
+
+            CREATE TABLE IF NOT EXISTS image_description_compensations (
+                occurrence_id TEXT NOT NULL,
+                description_hash TEXT NOT NULL,
+                status TEXT NOT NULL,
+                lease_token TEXT NOT NULL DEFAULT '',
+                lease_until REAL NOT NULL DEFAULT 0,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                PRIMARY KEY(occurrence_id, description_hash),
+                FOREIGN KEY (occurrence_id) REFERENCES image_occurrences(occurrence_id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_image_description_compensations_claim
+            ON image_description_compensations(status, lease_until, attempt_count, created_at);
+
+            CREATE TABLE IF NOT EXISTS image_pending_descriptions (
+                content_hash TEXT NOT NULL,
+                description_hash TEXT NOT NULL,
+                text TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                PRIMARY KEY(content_hash, description_hash)
+            );
+
+            CREATE TABLE IF NOT EXISTS image_embeddings (
+                asset_id TEXT NOT NULL,
+                fingerprint_hash TEXT NOT NULL,
+                vector_id TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                dimension INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                updated_at REAL NOT NULL,
+                PRIMARY KEY(asset_id, fingerprint_hash),
+                FOREIGN KEY (asset_id) REFERENCES image_assets(asset_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS image_embedding_jobs (
+                job_id TEXT PRIMARY KEY,
+                asset_id TEXT NOT NULL,
+                fingerprint_hash TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                lease_token TEXT NOT NULL DEFAULT '',
+                lease_until REAL NOT NULL DEFAULT 0,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                UNIQUE(asset_id, fingerprint_hash, generation),
+                FOREIGN KEY (asset_id) REFERENCES image_assets(asset_id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_image_embedding_jobs_claim
+            ON image_embedding_jobs(status, lease_until, attempt_count, created_at);
+
+            CREATE TABLE IF NOT EXISTS image_runtime_state (
+                singleton_id INTEGER PRIMARY KEY CHECK(singleton_id = 1),
+                generation INTEGER NOT NULL,
+                fingerprint_hash TEXT NOT NULL,
+                dimension INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            """
+        )
+
     def _initialize_tables(self) -> None:
         """初始化数据库表结构"""
         cursor = self._conn.cursor()
@@ -1599,6 +1815,9 @@ class MetadataSchemaMixin:
         self._ensure_relation_graph_projection_tables(cursor)
         self._ensure_external_memory_refs_foreign_key(cursor)
         self._ensure_fuzzy_modify_plan_tables(cursor)
+        self._ensure_knowledge_package_tables(cursor)
+        self._ensure_image_memory_tables(cursor)
+        self._ensure_summary_checkpoint_tables(cursor)
         self._create_temporal_indexes_if_ready()
         self._create_performance_indexes()
         # 新版 schema 包含完整字段，直接写入版本信息
@@ -1914,6 +2133,9 @@ class MetadataSchemaMixin:
         self._ensure_relation_graph_projection_tables(cursor)
         self._ensure_external_memory_refs_foreign_key(cursor)
         self._ensure_fuzzy_modify_plan_tables(cursor)
+        self._ensure_knowledge_package_tables(cursor)
+        self._ensure_image_memory_tables(cursor)
+        self._ensure_summary_checkpoint_tables(cursor)
 
         # 检查paragraphs表是否有knowledge_type列
         cursor.execute("PRAGMA table_info(paragraphs)")

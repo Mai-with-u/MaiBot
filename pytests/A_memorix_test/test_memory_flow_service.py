@@ -477,6 +477,7 @@ def test_summary_prompt_keeps_static_rules_before_chat_history():
         personality_context="你的性格设定是：稳定。",
         previous_summary_context="",
         chat_history="用户：第一条动态消息",
+        image_evidence_catalog="无",
     )
 
     rules_index = prompt.index("事实筛选规则")
@@ -492,6 +493,7 @@ def test_summary_prompt_forbids_repeating_rejected_fact_values():
         personality_context="你的性格设定是：稳定。",
         previous_summary_context="",
         chat_history="用户：不是猫毛，是青霉素",
+        image_evidence_catalog="无",
     )
 
     assert "只输出最终正确事实" in prompt
@@ -549,6 +551,10 @@ async def test_chat_summary_writeback_service_falls_back_to_current_count_for_le
 async def test_chat_summary_writeback_service_loads_trigger_count_from_summary_metadata(monkeypatch):
     class FakeMetadataStore:
         @staticmethod
+        def get_summary_checkpoint_count(chat_id: str) -> int:
+            return 0
+
+        @staticmethod
         def get_paragraphs_by_source(source: str):
             assert source == "chat_summary:session-1"
             return [
@@ -571,7 +577,11 @@ async def test_chat_summary_writeback_service_loads_trigger_count_from_summary_m
 
 
 @pytest.mark.asyncio
-async def test_memory_automation_service_auto_starts_and_delegates():
+async def test_memory_automation_service_auto_starts_and_delegates(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(memory_flow_module.ImageMemoryWritebackService, 'start', AsyncMock())
+    monkeypatch.setattr(memory_flow_module.ImageMemoryWritebackService, 'shutdown', AsyncMock())
     events: list[tuple[str, str]] = []
 
     class FakeFactWriteback:
@@ -612,7 +622,12 @@ async def test_memory_automation_service_auto_starts_and_delegates():
 
 
 @pytest.mark.asyncio
-async def test_memory_automation_service_on_incoming_message_auto_starts_only():
+async def test_memory_automation_service_on_incoming_message_auto_starts_only(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(memory_flow_module.ImageMemoryWritebackService, 'start', AsyncMock())
+    monkeypatch.setattr(memory_flow_module.ImageMemoryWritebackService, 'enqueue', AsyncMock())
+    monkeypatch.setattr(memory_flow_module.ImageMemoryWritebackService, 'shutdown', AsyncMock())
     events: list[tuple[str, str]] = []
 
     class FakeFactWriteback:

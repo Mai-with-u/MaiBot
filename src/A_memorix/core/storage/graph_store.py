@@ -215,9 +215,10 @@ class GraphStore:
         snapshots_root = data_dir / "graph_snapshots"
         snapshots_root.mkdir(parents=True, exist_ok=True)
         generation = f"graph-{uuid.uuid4().hex}"
-        temporary_dir = snapshots_root / f".{generation}.tmp"
         snapshot_dir = snapshots_root / generation
-        temporary_dir.mkdir(parents=True)
+        # generation 唯一且尚未被指针引用；文件写完后再原子切换指针即可发布。
+        # 避免 Windows 上目录被索引器短暂打开时，目录重命名出现拒绝访问。
+        snapshot_dir.mkdir(parents=True)
         snapshot_metadata = {
             **metadata,
             "snapshot_generation": generation,
@@ -225,10 +226,9 @@ class GraphStore:
             "edge_hash_map": self._serialize_edge_hash_map(),
         }
         if self._adjacency is not None:
-            with (temporary_dir / "graph_adjacency.npz").open("wb") as handle:
+            with (snapshot_dir / "graph_adjacency.npz").open("wb") as handle:
                 save_npz(handle, self._adjacency)
-        _write_json_object(temporary_dir / "graph_metadata.json", snapshot_metadata)
-        temporary_dir.replace(snapshot_dir)
+        _write_json_object(snapshot_dir / "graph_metadata.json", snapshot_metadata)
         return generation
 
     @staticmethod

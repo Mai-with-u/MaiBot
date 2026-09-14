@@ -25,6 +25,17 @@ class _MissingHashSummaryImporter:
         return SummaryImportResult(success=True, detail="ok")
 
 
+class _NoIncrementSummaryImporter:
+    async def import_from_stream(self, **kwargs: Any) -> SummaryImportResult:
+        del kwargs
+        return SummaryImportResult(
+            success=True,
+            detail="当前窗口没有新增长期记忆",
+            source="chat_summary:session-1",
+            skipped=True,
+        )
+
+
 class _FakeSegmentationService:
     def __init__(self) -> None:
         self.calls: List[List[Dict[str, Any]]] = []
@@ -97,6 +108,39 @@ async def test_auto_chat_summary_requires_paragraph_hash(
 
     with pytest.raises(RuntimeError, match="paragraph_hash"):
         await kernel.summarize_chat_stream(chat_id="session-1")
+
+
+@pytest.mark.asyncio
+async def test_auto_chat_summary_accepts_explicit_no_increment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    kernel = SDKMemoryKernel(plugin_root=tmp_path, config={})
+    persist_calls = 0
+
+    async def fake_initialize() -> None:
+        return None
+
+    def fake_persist() -> None:
+        nonlocal persist_calls
+        persist_calls += 1
+
+    monkeypatch.setattr(kernel, "initialize", fake_initialize)
+    monkeypatch.setattr(kernel, "_persist", fake_persist)
+    kernel.summary_importer = _NoIncrementSummaryImporter()
+
+    result = await kernel.summarize_chat_stream(
+        chat_id="session-1",
+        metadata={"external_id": "summary-noop-1"},
+    )
+
+    assert result == {
+        "success": True,
+        "detail": "当前窗口没有新增长期记忆",
+        "episode_source": "chat_summary:session-1",
+        "skipped_ids": ["summary-noop-1"],
+    }
+    assert persist_calls == 0
 
 
 def test_interval_sweep_keeps_overlapping_ranges_in_one_group() -> None:

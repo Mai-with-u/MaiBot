@@ -99,6 +99,11 @@ class KernelRuntimeFacade:
     def allow_metadata_only_write(self) -> bool:
         return self._kernel._allow_metadata_only_write()
 
+    def persist_vector_store(self, store: VectorStore) -> None:
+        """通过内核统一入口保存向量及其 embedding 模型指纹。"""
+
+        self._kernel._save_vector_store(store)
+
     async def ingest_text(self, **kwargs: Any) -> Dict[str, Any]:
         """让派生写入统一复用内核的 external ID 幂等入口。"""
 

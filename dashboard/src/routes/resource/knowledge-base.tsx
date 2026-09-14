@@ -70,6 +70,7 @@ import { CorrectionTab } from './knowledge-base/tabs/CorrectionTab'
 import { DeleteTab } from './knowledge-base/tabs/DeleteTab'
 import { FeedbackTab } from './knowledge-base/tabs/FeedbackTab'
 import { ImportTab } from './knowledge-base/tabs/ImportTab'
+import { ImagesTab } from './knowledge-base/tabs/ImagesTab'
 import { MemoryRecordsTab } from './knowledge-base/tabs/MemoryRecordsTab'
 import { TuningTab } from './knowledge-base/tabs/TuningTab'
 import { KnowledgeGraphPage } from './knowledge-graph'
@@ -77,6 +78,7 @@ import { KnowledgeGraphPage } from './knowledge-graph'
 const MEMORY_QUICK_START_DISMISSED_KEY = 'memory-quick-start-dismissed'
 type MemoryConsoleTab =
   | 'records'
+  | 'images'
   | 'graph'
   | 'timeline'
   | 'import'
@@ -92,6 +94,7 @@ type LoadableMemoryTab = Extract<
 
 const MEMORY_CONSOLE_TABS: MemoryConsoleTab[] = [
   'records',
+  'images',
   'graph',
   'timeline',
   'import',
@@ -1127,9 +1130,9 @@ export function KnowledgeBasePage() {
                       <Upload className="h-4 w-4" />
                     </div>
                     <div className="min-w-0">
-                      <div className="text-sm font-semibold">导入资料</div>
+                      <div className="text-sm font-semibold">导入或导出资料</div>
                       <div className="text-muted-foreground mt-0.5 text-xs leading-relaxed">
-                        把文件、聊天记录写进记忆库
+                        写入资料，或迁移可分享记忆包
                       </div>
                     </div>
                   </button>
@@ -1188,6 +1191,7 @@ export function KnowledgeBasePage() {
                       label: '记忆查询',
                       description: '查询数据库权威记录与关联内容',
                     },
+                    { value: 'images', label: '图片记忆', description: '图片向量、认知与关联记忆' },
                     { value: 'graph', label: '图谱', description: '实体关系图与证据视图' },
                     { value: 'timeline', label: '审计时间线', description: '核对聊天流记忆变动' },
                     { value: 'episodes', label: '情景记忆', description: '查看和重建情景记忆' },
@@ -1208,7 +1212,11 @@ export function KnowledgeBasePage() {
                   className="w-full max-w-full grid-cols-3 sm:w-fit sm:auto-cols-max sm:grid-flow-col sm:grid-cols-none"
                 >
                   {[
-                    { value: 'import', label: '导入', description: '创建并管理导入任务' },
+                    {
+                      value: 'import',
+                      label: '导入导出',
+                      description: '导入资料并管理可分享记忆包',
+                    },
                     { value: 'inspection', label: '记忆检修', description: '维护记忆状态并修正记忆内容' },
                     { value: 'delete', label: '删除', description: '批量删除与历史回溯' },
                     { value: 'feedback', label: '纠错历史', description: '查看反馈与回滚' },
@@ -1229,6 +1237,8 @@ export function KnowledgeBasePage() {
             {shouldRenderMemoryTab('records') && (
               <MemoryRecordsTab onAction={handleMemoryRecordAction} />
             )}
+
+            {shouldRenderMemoryTab('images') && <ImagesTab />}
 
             <TabsContent
               value="graph"
@@ -1256,7 +1266,7 @@ export function KnowledgeBasePage() {
                 </TabsContent>
               ))}
 
-            {/* 导入面板的数据由 useImportQueue/useImportForm 自管加载（useQuery enabled:active），
+            {/* 导入导出面板的数据由 useImportQueue/useImportForm 自管加载（useQuery enabled:active），
                 不再走 loadedPanelDataRef 懒加载门控；表单即时可交互，任务列表异步填充 */}
             {shouldRenderMemoryTab('import') && <ImportTab queue={importQueue} form={importForm} />}
 

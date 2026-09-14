@@ -40,7 +40,11 @@ def get_tool_spec(*, enabled: bool = True) -> ToolSpec:
                 },
                 "mode": {
                     "type": "string",
-                    "description": "search事实偏好，time时间段，episode经历，aggregate整体，hybrid不确定。",
+                    "description": (
+                        "检索路由：search按语义检索事实、偏好等记忆；time按时间范围检索；"
+                        "episode检索经历；aggregate综合检索；hybrid同时使用语义与时间范围。"
+                        "time和hybrid至少提供time_start或time_end；没有时间条件时使用search。"
+                    ),
                     "enum": sorted(_ALLOWED_QUERY_MODES),
                     "default": "search",
                 },
@@ -50,11 +54,11 @@ def get_tool_spec(*, enabled: bool = True) -> ToolSpec:
                 },
                 "time_start": {
                     "type": "string",
-                    "description": "起始时间。",
+                    "description": "起始时间，仅接受YYYY/MM/DD或YYYY/MM/DD HH:mm。",
                 },
                 "time_end": {
                     "type": "string",
-                    "description": "结束时间。",
+                    "description": "结束时间，仅接受YYYY/MM/DD或YYYY/MM/DD HH:mm。",
                 },
                 "respect_filter": {
                     "type": "boolean",

@@ -3,8 +3,8 @@
  *
  * 收编导入任务队列相关的服务端状态与交互：
  * - 任务列表（tasks）与导入设置（settings）走 useQuery，仅在导入面板激活时拉取（enabled: active）；
- * - 轮询 + WebSocket 融合：WS 推送优先（订阅 import_progress → invalidate），WS 未连接时由轮询兜底
- *   （refetchInterval = active && !wsConnected ? importPollInterval : false）；
+ * - 轮询 + WebSocket 融合：轮询负责最终一致性，WS 推送负责即时刷新
+ *   （refetchInterval = active && importAutoPolling ? importPollInterval : false）；
  * - 选中任务详情与分块分页仍以本地 state + 命令式加载维持（依赖用户选择，不适合纯查询缓存）；
  * - 队列读失败用 importErrorText 局部呈现，取消/重试写失败仍走全局 toast。
  *
@@ -16,7 +16,6 @@ import { useQuery } from '@tanstack/react-query'
 
 import { useToast } from '@/hooks/use-toast'
 import { memoryProgressClient, type MemoryProgressEvent } from '@/lib/memory-progress-client'
-import { unifiedWsClient } from '@/lib/unified-ws'
 import {
   cancelMemoryImportTask,
   getMemoryImportSettings,
@@ -80,15 +79,6 @@ export function useImportQueue({
 }: UseImportQueueOptions): UseImportQueueResult {
   const { toast } = useToast()
 
-  // WS 连接状态：连接时关闭轮询，断开时由轮询兜底
-  const [wsConnected, setWsConnected] = useState(false)
-  useEffect(() => {
-    const unsubscribe = unifiedWsClient.onConnectionChange((connected) => {
-      setWsConnected(connected)
-    })
-    return unsubscribe
-  }, [])
-
   // 导入设置：仅用于派生轮询间隔；与 useImportForm 共享同一查询缓存
   const settingsQuery = useQuery({
     queryKey: ['memory-import', 'settings'],
@@ -103,12 +93,12 @@ export function useImportQueue({
 
   const [importAutoPolling, setImportAutoPolling] = useState(true)
 
-  // 导入任务列表：导入面板激活时拉取；WS 未连接且开启自动轮询时由 refetchInterval 兜底
+  // 导入任务列表：轮询保证最终一致性，避免 WS 已连接但进度事件缺失时页面停在旧状态。
   const tasksQuery = useQuery({
     queryKey: ['memory-import', 'tasks'],
     queryFn: () => getMemoryImportTasks(20),
     enabled: active,
-    refetchInterval: active && importAutoPolling && !wsConnected ? importPollInterval : false,
+    refetchInterval: active && importAutoPolling ? importPollInterval : false,
   })
   const importTasks = useMemo(() => tasksQuery.data?.items ?? [], [tasksQuery.data?.items])
 

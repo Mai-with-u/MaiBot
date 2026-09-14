@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field
+from ipaddress import ip_address
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 from src.config.model_configs import APIProvider, OpenAICompatibleAuthType
 
@@ -38,6 +40,24 @@ def normalize_openai_base_url(base_url: str) -> str:
     if base_url and "://" not in base_url:
         base_url = "http://" + base_url
     return base_url.rstrip("/")
+
+
+def validate_image_embedding_transport(base_url: str) -> None:
+    """图片二进制只通过 HTTPS 或明确的本机回环 HTTP 地址发送。"""
+    parsed = urlsplit(normalize_openai_base_url(base_url))
+    if parsed.scheme == "https" and parsed.hostname:
+        return
+    host = parsed.hostname or ""
+    if parsed.scheme == "http":
+        if host.lower() == "localhost":
+            return
+        try:
+            address = ip_address(host)
+        except ValueError:
+            address = None
+        if address is not None and address.is_loopback:
+            return
+    raise ValueError("图片嵌入服务必须使用 HTTPS；仅本机回环地址允许 HTTP，请修改 Provider 地址")
 
 
 def _build_auth_header_value(prefix: str, api_key: str) -> str:

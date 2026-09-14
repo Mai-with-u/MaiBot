@@ -280,6 +280,7 @@ class LLMEmbeddingResult(BaseDataModel):
     model_name: str = field(default_factory=str)
     model_identifier: str = field(default_factory=str)
     api_provider: str = field(default_factory=str)
+    request_protocol_hash: str = field(default_factory=str)
 
 
 __all__ = [

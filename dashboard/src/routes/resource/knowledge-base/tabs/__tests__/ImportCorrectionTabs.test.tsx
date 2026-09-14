@@ -24,6 +24,10 @@ import type { UseMemoryCorrectionResult } from '../../hooks/useMemoryCorrection'
 import { CorrectionTab } from '../CorrectionTab'
 import { ImportTab } from '../ImportTab'
 
+vi.mock('../MemoryBundleCard', () => ({
+  MemoryBundleCard: () => <div>记忆包功能面板</div>,
+}))
+
 afterEach(() => {
   cleanup()
 })
@@ -478,6 +482,22 @@ const manyChats: MemoryImportChatTargetPayload[] = [
 ]
 
 describe('ImportTab', () => {
+  it('切换到记忆包页时隐藏导入任务详情', async () => {
+    const user = userEvent.setup()
+    renderImport({
+      queue: {
+        selectedImportTaskId: 'task-run-1',
+        selectedImportTaskResolved: makeImportTask(),
+      },
+    })
+
+    expect(screen.getByText('任务详情')).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: '记忆包导入导出' }))
+
+    expect(screen.getByText('记忆包功能面板')).toBeInTheDocument()
+    expect(screen.queryByText('任务详情')).not.toBeInTheDocument()
+  })
+
   it('未选资料类别时禁用提交并展示校验文案', async () => {
     const user = userEvent.setup()
     const { form } = renderImport({
@@ -489,6 +509,14 @@ describe('ImportTab', () => {
 
     const submit = screen.getByRole('button', { name: '创建导入任务' })
     expect(submit).toBeDisabled()
+    const importTab = screen.getByRole('tab', { name: '导入任务' })
+    expect(importTab).toHaveAttribute('data-dashboard-tabs-trigger', 'true')
+    expect(importTab.closest('[data-dashboard-tabs-list="true"]')).not.toBeNull()
+    expect(importTab).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '记忆包导入导出' })).toHaveAttribute(
+      'aria-selected',
+      'false',
+    )
     expect(screen.queryByText('公共参数')).not.toBeInTheDocument()
     expect(screen.queryByText('这些设置会应用到当前导入任务。一般保持默认即可，只在批量导入或排查问题时调整。')).not.toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('请选择资料类别')

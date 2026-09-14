@@ -16,8 +16,12 @@ def should_auto_enqueue_episode(config_getter: ConfigGetter, *, source_type: str
     normalized_source_type = str(source_type or "").strip().lower()
     disabled_types = {
         str(item or "").strip().lower()
-        for item in argument_tokens(config_getter("episode.disabled_source_types", ["person_fact"]))
+        for item in argument_tokens(
+            config_getter("episode.disabled_source_types", ["person_fact", "knowledge_pack"])
+        )
     }
+    # 已加工知识包含有权威段落、实体和关系，不应再次交给 LLM 生成 Episode。
+    disabled_types.add("knowledge_pack")
     return normalized_source_type not in disabled_types
 
 

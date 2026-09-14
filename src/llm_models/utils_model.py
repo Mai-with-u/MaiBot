@@ -4,7 +4,9 @@ from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple
 
 import asyncio
+import hashlib
 import inspect
+import json
 import random
 import re
 import time
@@ -37,6 +39,7 @@ from src.llm_models.model_client.base_client import (
     ClientRequest,
     EmbeddingRequest,
     GenerationAttempt,
+    ImageEmbeddingRequest,
     RequestTraceContext,
     ResponseRequest,
     client_registry,
@@ -83,6 +86,7 @@ class RequestType(Enum):
 
     RESPONSE = "response"
     EMBEDDING = "embedding"
+    IMAGE_EMBEDDING = "image_embedding"
     AUDIO = "audio"
 
 
@@ -557,6 +561,59 @@ class LLMOrchestrator:
             api_provider=model_info.api_provider,
         )
 
+    async def get_image_embedding(
+        self,
+        image_bytes: bytes,
+        *,
+        mime_type: str,
+        preprocess_version: str,
+        session_id: str = "",
+    ) -> LLMEmbeddingResult:
+        """通过专用图片协议生成嵌入向量。"""
+
+        self._refresh_task_config()
+        start_time = time.time()
+        execution_result = await self._execute_request(
+            request_type=RequestType.IMAGE_EMBEDDING,
+            image_bytes=bytes(image_bytes),
+            image_mime_type=mime_type,
+            image_preprocess_version=preprocess_version,
+            session_id=session_id,
+        )
+        response = execution_result.api_response
+        model_info = execution_result.model_info
+        if not response.embedding:
+            raise RuntimeError("图片嵌入模型没有返回向量")
+        if usage := response.usage:
+            llm_usage_recorder.record_usage_to_database(
+                model_info=model_info,
+                model_usage=usage,
+                user_id="system",
+                request_type=self.request_type,
+                task_name=self.task_name,
+                session_id=self._resolve_effective_session_id(session_id),
+                time_cost=time.time() - start_time,
+            )
+        return LLMEmbeddingResult(
+            embedding=response.embedding,
+            model_name=model_info.name,
+            model_identifier=model_info.model_identifier,
+            api_provider=model_info.api_provider,
+            request_protocol_hash=hashlib.sha256(
+                json.dumps(
+                    {
+                        "input": model_info.extra_params.get("image_embedding_input", "{data_uri}"),
+                        "body": model_info.extra_params.get("image_embedding_body"),
+                        "task": model_info.extra_params.get("task"),
+                        "dimensions": model_info.extra_params.get("dimensions"),
+                    },
+                    sort_keys=True,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+        )
+
     def _resolve_effective_temperature(
         self,
         model_info: ModelInfo,
@@ -693,6 +750,25 @@ class LLMOrchestrator:
             trace_context=trace_context,
         )
 
+    @staticmethod
+    def _build_image_embedding_request(
+        model_info: ModelInfo,
+        image_bytes: bytes,
+        mime_type: str,
+        preprocess_version: str,
+        trace_context: RequestTraceContext,
+    ) -> ImageEmbeddingRequest:
+        """构建只在进程内携带原始图片的嵌入请求。"""
+
+        return ImageEmbeddingRequest(
+            model_info=model_info,
+            image_bytes=image_bytes,
+            mime_type=mime_type,
+            preprocess_version=preprocess_version,
+            extra_params=dict(model_info.extra_params),
+            trace_context=trace_context,
+        )
+
     def _build_client_request(
         self,
         request_type: RequestType,
@@ -706,6 +782,9 @@ class LLMOrchestrator:
         temperature: Optional[float],
         max_tokens: Optional[int],
         embedding_input: str | None,
+        image_bytes: bytes | None,
+        image_mime_type: str | None,
+        image_preprocess_version: str | None,
         audio_base64: str | None,
         trace_context: RequestTraceContext,
     ) -> ClientRequest:
@@ -750,6 +829,16 @@ class LLMOrchestrator:
             return self._build_embedding_request(
                 model_info=model_info,
                 embedding_input=embedding_input,
+                trace_context=trace_context,
+            )
+        if request_type == RequestType.IMAGE_EMBEDDING:
+            if image_bytes is None or not image_mime_type or not image_preprocess_version:
+                raise ValueError("图片嵌入请求缺少图片、MIME 类型或预处理版本")
+            return self._build_image_embedding_request(
+                model_info=model_info,
+                image_bytes=image_bytes,
+                mime_type=image_mime_type,
+                preprocess_version=image_preprocess_version,
                 trace_context=trace_context,
             )
         if request_type == RequestType.AUDIO:
@@ -846,6 +935,7 @@ class LLMOrchestrator:
         operation = {
             ResponseRequest: "response",
             EmbeddingRequest: "embedding",
+            ImageEmbeddingRequest: "image_embedding",
             AudioTranscriptionRequest: "audio_transcription",
         }[type(request)]
         attempt_number = trace_context.attempt or len(trace_context.generation_attempts) + 1
@@ -923,6 +1013,8 @@ class LLMOrchestrator:
                     response = await client.get_response(active_request)
                 elif isinstance(active_request, EmbeddingRequest):
                     response = await client.get_embedding(active_request)
+                elif isinstance(active_request, ImageEmbeddingRequest):
+                    response = await client.get_image_embedding(active_request)
                 else:
                     response = await client.get_audio_transcriptions(active_request)
                 self._record_success_generation_attempt(
@@ -1148,6 +1240,9 @@ class LLMOrchestrator:
         max_tokens: Optional[int] = None,
         model_name: Optional[str] = None,
         embedding_input: str | None = None,
+        image_bytes: bytes | None = None,
+        image_mime_type: str | None = None,
+        image_preprocess_version: str | None = None,
         audio_base64: str | None = None,
         interrupt_flag: asyncio.Event | None = None,
         session_id: str = "",
@@ -1211,6 +1306,9 @@ class LLMOrchestrator:
                     temperature=temperature,
                     max_tokens=max_tokens,
                     embedding_input=embedding_input,
+                    image_bytes=image_bytes,
+                    image_mime_type=image_mime_type,
+                    image_preprocess_version=image_preprocess_version,
                     audio_base64=audio_base64,
                     trace_context=trace_context,
                 )

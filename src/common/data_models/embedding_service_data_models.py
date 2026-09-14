@@ -16,6 +16,16 @@ class EmbeddingResult(BaseDataModel):
     api_provider: str = field(default_factory=str)
 
 
+@dataclass(slots=True)
+class ImageEmbeddingResult(EmbeddingResult):
+    """图片嵌入结果及其预处理协议。"""
+
+    mime_type: str = field(default_factory=str)
+    preprocess_version: str = field(default_factory=str)
+    request_protocol_hash: str = field(default_factory=str)
+
+
 __all__ = [
     "EmbeddingResult",
+    "ImageEmbeddingResult",
 ]

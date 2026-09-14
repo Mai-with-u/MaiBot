@@ -2,20 +2,27 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from json_repair import repair_json
-from typing import Any, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 import asyncio
 import json
 import time
 
+from json_repair import repair_json
+
 from src.common.logger import get_logger
+from src.common.database.database import ROOT_PATH
 from src.common.message_repository import count_messages, find_messages
+from src.common.data_models.message_component_data_model import TextComponent
 from src.chat.utils.utils import is_bot_self
 from src.config.config import global_config
 from src.person_info.person_info import Person, get_person_id, store_person_memory_from_answer
 from src.services import memory_service as memory_service_module
 from src.services.memory_service import memory_service
+from src.A_memorix.core.image.component_paths import build_chat_external_ref, iter_message_image_components
+
+from .image_writeback_journal import ImageWritebackJournal
 
 logger = get_logger("memory_flow_service")
 
@@ -97,17 +104,13 @@ class PersonFactWritebackService:
             return
 
         session_id = str(
-            getattr(message, "session_id", "")
-            or getattr(getattr(message, "session", None), "session_id", "")
-            or ""
+            getattr(message, "session_id", "") or getattr(getattr(message, "session", None), "session_id", "") or ""
         ).strip()
         if not session_id:
             return
 
         person_name = str(
-            getattr(target_person, "person_name", "")
-            or getattr(target_person, "nickname", "")
-            or ""
+            getattr(target_person, "person_name", "") or getattr(target_person, "nickname", "") or ""
         ).strip()
         if not person_name:
             return
@@ -152,11 +155,7 @@ class PersonFactWritebackService:
                 if person is not None:
                     return person
 
-        session_id = str(
-            getattr(message, "session_id", "")
-            or getattr(session, "session_id", "")
-            or ""
-        ).strip()
+        session_id = str(getattr(message, "session_id", "") or getattr(session, "session_id", "") or "").strip()
         timestamp = self._extract_message_timestamp(message)
         if not session_id:
             return None
@@ -191,11 +190,7 @@ class PersonFactWritebackService:
 
     def _collect_user_evidence(self, message: Any, person: Person) -> PersonFactEvidence:
         session = getattr(message, "session", None)
-        session_id = str(
-            getattr(message, "session_id", "")
-            or getattr(session, "session_id", "")
-            or ""
-        ).strip()
+        session_id = str(getattr(message, "session_id", "") or getattr(session, "session_id", "") or "").strip()
         if not session_id:
             return PersonFactEvidence(target_messages=[], context_messages=[])
 
@@ -307,7 +302,9 @@ class PersonFactWritebackService:
         if target_lines:
             parts.append("目标用户原始发言（事实值必须来自这里）：\n" + "\n".join(target_lines))
         if context_lines:
-            parts.append("邻近上下文（只用于理解省略、追问和指代，不能单独作为事实来源）：\n" + "\n".join(context_lines))
+            parts.append(
+                "邻近上下文（只用于理解省略、追问和指代，不能单独作为事实来源）：\n" + "\n".join(context_lines)
+            )
         return "\n\n".join(parts)
 
     @staticmethod
@@ -553,15 +550,16 @@ class ChatSummaryWritebackService:
             if metadata_store is None:
                 return 0
 
+            checkpoint_count = metadata_store.get_summary_checkpoint_count(session_id)
             paragraphs = metadata_store.get_paragraphs_by_source(f"chat_summary:{session_id}")
             if not paragraphs:
-                return 0
+                return min(total_message_count, checkpoint_count)
 
             latest_paragraph = max(paragraphs, key=self._paragraph_created_at)
             metadata = self._paragraph_metadata(latest_paragraph)
             trigger_message_count = self._coerce_positive_int(metadata.get("trigger_message_count"))
             if trigger_message_count > 0:
-                return min(total_message_count, trigger_message_count)
+                return min(total_message_count, max(trigger_message_count, checkpoint_count))
 
             # 兼容旧摘要数据：没有触发计数时，只能退化为对齐当前计数，
             # 至少避免重启后立刻重复写入一条相近摘要。
@@ -606,25 +604,19 @@ class ChatSummaryWritebackService:
     @staticmethod
     def _resolve_session_id(message: Any) -> str:
         return str(
-            getattr(message, "session_id", "")
-            or getattr(getattr(message, "session", None), "session_id", "")
-            or ""
+            getattr(message, "session_id", "") or getattr(getattr(message, "session", None), "session_id", "") or ""
         ).strip()
 
     @staticmethod
     def _extract_session_user_id(message: Any) -> str:
         return str(
-            getattr(getattr(message, "session", None), "user_id", "")
-            or getattr(message, "user_id", "")
-            or ""
+            getattr(getattr(message, "session", None), "user_id", "") or getattr(message, "user_id", "") or ""
         ).strip()
 
     @staticmethod
     def _extract_session_group_id(message: Any) -> str:
         return str(
-            getattr(getattr(message, "session", None), "group_id", "")
-            or getattr(message, "group_id", "")
-            or ""
+            getattr(getattr(message, "session", None), "group_id", "") or getattr(message, "group_id", "") or ""
         ).strip()
 
     @staticmethod
@@ -663,10 +655,252 @@ class ChatSummaryWritebackService:
         return min(configured, pending)
 
 
+class ImageMemoryWritebackService:
+    """把已注册聊天消息中的原始图片按组件路径写入 A_Memorix。"""
+
+    def __init__(self, journal_path: Optional[Path] = None) -> None:
+        self._journal_path = (
+            journal_path if journal_path is not None else ROOT_PATH / "data" / "image_writeback.sqlite3"
+        )
+        self._journal: Optional[ImageWritebackJournal] = None
+        self._worker_task: Optional[asyncio.Task] = None
+        self._compensation_task: Optional[asyncio.Task] = None
+        self._stopping = False
+
+    async def start(self) -> None:
+        if self._worker_task is not None and not self._worker_task.done():
+            return
+        if not self._enabled():
+            return
+        if self._journal is None:
+            self._journal = ImageWritebackJournal(self._journal_path)
+        self._stopping = False
+        self._worker_task = asyncio.create_task(self._worker_loop(), name="A_Memorix.image_writeback")
+        self._compensation_task = asyncio.create_task(
+            self._compensation_loop(),
+            name="A_Memorix.image_description_compensation",
+        )
+
+    async def shutdown(self) -> None:
+        self._stopping = True
+        worker = self._worker_task
+        compensation = self._compensation_task
+        self._worker_task = None
+        self._compensation_task = None
+        for task in (worker, compensation):
+            if task is None:
+                continue
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        if self._journal is not None:
+            self._journal.close()
+            self._journal = None
+
+    async def enqueue(self, message: Any) -> None:
+        if not self._enabled() or self._stopping:
+            return
+        if not any(iter_message_image_components(message.raw_message.components)):
+            return
+        if self._journal is None:
+            await self.start()
+        if self._journal is None:
+            raise RuntimeError("图片写回服务初始化未完成")
+        self._journal.enqueue(str(message.session_id), str(message.message_id))
+
+    @staticmethod
+    def _enabled() -> bool:
+        """接收与后台处理都服从长期记忆总开关和图片开关。"""
+        return global_config.a_memorix.plugin.enabled and global_config.a_memorix.image_memory.enabled
+
+    def list_jobs(self, status: str = "", limit: int = 25, offset: int = 0) -> Dict[str, Any]:
+        # 管理服务独立读取任务，不启动消息接收或模型调用。
+        journal = ImageWritebackJournal(self._journal_path)
+        try:
+            return journal.list_jobs(status, limit, offset)
+        finally:
+            journal.close()
+
+    def retry_failed(self) -> int:
+        journal = ImageWritebackJournal(self._journal_path)
+        try:
+            return journal.retry_failed()
+        finally:
+            journal.close()
+
+    async def backfill_messages(self, messages: List[Any]) -> Dict[str, int]:
+        """同步回填一批历史消息；出现外部引用保证重复执行仍然幂等。"""
+
+        processed = 0
+        failed = 0
+        for message in messages:
+            try:
+                if await self._handle_message(message):
+                    processed += 1
+            except Exception as exc:
+                failed += 1
+                logger.warning(f"历史图片记忆回填失败: message_id={message.message_id} error={exc}")
+        return {"processed_messages": processed, "failed_messages": failed}
+
+    async def _worker_loop(self) -> None:
+        while not self._stopping:
+            if not self._enabled():
+                await asyncio.sleep(max(0.1, global_config.a_memorix.image_memory.job_poll_interval_seconds))
+                continue
+            if self._journal is None:
+                raise RuntimeError("图片写回任务库未初始化")
+            job = self._journal.next_job()
+            if job is None:
+                await asyncio.sleep(max(0.1, global_config.a_memorix.image_memory.job_poll_interval_seconds))
+                continue
+            try:
+                messages = find_messages(session_id=job["session_id"], message_id=job["message_id"], limit=1)
+                if not messages:
+                    raise ValueError("图片入库任务的来源消息不存在")
+                message = messages[0]
+                await self._handle_message(message)
+                self._journal.complete(job["session_id"], job["message_id"])
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._journal.fail(job, str(exc), 1 + int(global_config.a_memorix.image_memory.job_max_retries))
+                logger.warning(f"图片记忆写入失败，任务已保留: {exc}", exc_info=True)
+
+    async def _compensation_loop(self) -> None:
+        """处理持久化的晚到描述任务，进程中断后由租约重新领取。"""
+
+        interval = max(0.1, float(global_config.a_memorix.image_memory.job_poll_interval_seconds))
+        while not self._stopping:
+            try:
+                if self._enabled():
+                    await self._process_description_compensations()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(f"图片描述摘要补偿处理失败: {exc}", exc_info=True)
+            await asyncio.sleep(interval)
+
+    async def _process_description_compensations(self) -> None:
+        claimed = await memory_service.image_memory(
+            action="claim_description_compensations",
+            limit=int(global_config.a_memorix.image_memory.job_batch_size),
+        )
+        if not claimed.get("success"):
+            return
+        lease_token = str(claimed.get("lease_token") or "")
+        for item in claimed.get("items") or []:
+            occurrence_id = str(item.get("occurrence_id") or "")
+            description_hash = str(item.get("description_hash") or "")
+            try:
+                result = await memory_service.ingest_summary(
+                    external_id=(f"image_description_compensation:{occurrence_id}:{description_hash}"),
+                    chat_id=str(item["chat_id"]),
+                    text="",
+                    participants=[],
+                    time_end=float(item["occurred_at"]) + 0.001,
+                    metadata={
+                        "generate_from_chat": True,
+                        "context_length": int(
+                            global_config.a_memorix.integration.chat_summary_writeback_context_length
+                        ),
+                        "writeback_source": "image_description_compensation",
+                        "trigger": "image_description_ready",
+                        "image_message_id": str(item["message_id"]),
+                        "summary_review_count": 2,
+                    },
+                    respect_filter=True,
+                )
+                success = result.success
+                error = "" if success else result.detail
+            except Exception as exc:
+                success = False
+                error = str(exc)
+            await memory_service.image_memory(
+                action="complete_description_compensation",
+                occurrence_id=occurrence_id,
+                description_hash=description_hash,
+                lease_token=lease_token,
+                success=success,
+                error=error,
+            )
+
+    @staticmethod
+    def _explicit_user_text(components: List[Any]) -> str:
+        """只读取用户发送的文本组件，排除 VLM 生成的图片描述。"""
+
+        parts = [component.text.strip() for component in components if isinstance(component, TextComponent)]
+        return " ".join(part for part in parts if part)
+
+    async def _handle_message(self, message: Any, *, component_paths: Optional[List[str]] = None) -> bool:
+        raw_message = message.raw_message
+        components = raw_message.components
+        image_components = list(iter_message_image_components(components))
+        if not image_components:
+            return False
+        chat_id = str(message.session_id).strip()
+        message_id = str(message.message_id).strip()
+        if not chat_id or not message_id:
+            raise ValueError("图片消息缺少真实 chat_id 或 message_id")
+        timestamp = message.timestamp.timestamp()
+        user_statement = self._explicit_user_text(components)
+        failures: List[Exception] = []
+        for component_path, component in image_components:
+            if component_paths is not None and component_path not in component_paths:
+                continue
+            try:
+                if not component.binary_data:
+                    await component.load_image_binary()
+                result = await memory_service.image_memory(
+                    action="ingest",
+                    image_bytes=bytes(component.binary_data),
+                    source_kind="chat",
+                    external_ref=build_chat_external_ref(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        component_path=component_path,
+                    ),
+                    scope_type="chat",
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    component_path=component_path,
+                    occurred_at=timestamp,
+                    user_statement=user_statement,
+                )
+                from src.chat.image_system.image_manager import image_manager
+
+                if not result.get("success"):
+                    raise RuntimeError(str(result.get("error") or "图片记忆写入失败"))
+
+                cached_description = image_manager.get_cached_image_description(component.binary_hash)
+                description = (
+                    f"[图片：{cached_description}]" if cached_description else str(component.content or "").strip()
+                )
+                if result.get("success") and description:
+                    await memory_service.image_memory(
+                        action="describe",
+                        content_hash=str(result.get("content_hash") or component.binary_hash),
+                        text=description,
+                    )
+            except Exception as exc:
+                exc.add_note(f"图片组件处理失败: message_id={message_id}, component_path={component_path}")
+                failures.append(exc)
+            finally:
+                # 聊天记录只保留图片路径和哈希，需要时可重新载入，避免长期持有原始二进制。
+                component.binary_data = b""
+        if failures:
+            # 处理完所有组件后完整暴露失败，任务保留供重试，已成功组件由外部引用去重。
+            raise ExceptionGroup("消息中的图片组件处理失败", failures)
+        return True
+
+
 class MemoryAutomationService:
     def __init__(self) -> None:
         self.fact_writeback = PersonFactWritebackService()
         self.chat_summary_writeback = ChatSummaryWritebackService()
+        self.image_writeback = ImageMemoryWritebackService()
         self._started = False
 
     async def start(self) -> None:
@@ -674,19 +908,21 @@ class MemoryAutomationService:
             return
         await self.fact_writeback.start()
         await self.chat_summary_writeback.start()
+        await self.image_writeback.start()
         self._started = True
 
     async def shutdown(self) -> None:
         if not self._started:
             return
+        await self.image_writeback.shutdown()
         await self.chat_summary_writeback.shutdown()
         await self.fact_writeback.shutdown()
         self._started = False
 
     async def on_incoming_message(self, message: Any) -> None:
-        del message
         if not self._started:
             await self.start()
+        await self.image_writeback.enqueue(message)
 
     async def on_message_sent(self, message: Any) -> None:
         if not self._started:

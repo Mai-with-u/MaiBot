@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Any, Dict, List
 
+import base64
 import uuid
 
 from src.common.logger import get_logger
@@ -12,6 +13,7 @@ from src.llm_models.model_client.base_client import (
     AudioTranscriptionRequest,
     BaseClient,
     EmbeddingRequest,
+    ImageEmbeddingRequest,
     ResponseRequest,
     UsageRecord,
 )
@@ -26,6 +28,7 @@ from src.llm_models.request_snapshot import (
     deserialize_tool_calls_snapshot,
     serialize_audio_request_snapshot,
     serialize_embedding_request_snapshot,
+    serialize_image_embedding_request_snapshot,
     serialize_response_request_snapshot,
 )
 
@@ -107,6 +110,14 @@ class PluginLLMClient(BaseClient):
             APIResponse: 嵌入响应。
         """
         result = await self._invoke_provider("embedding", serialize_embedding_request_snapshot(request))
+        return self._build_api_response(result, request.model_info.name, request.model_info.api_provider)
+
+    async def get_image_embedding(self, request: ImageEmbeddingRequest) -> APIResponse:
+        """通过插件 Provider 的专用操作获取图片嵌入。"""
+
+        payload = serialize_image_embedding_request_snapshot(request)
+        payload["image_base64"] = base64.b64encode(request.image_bytes).decode("ascii")
+        result = await self._invoke_provider("image_embedding", payload)
         return self._build_api_response(result, request.model_info.name, request.model_info.api_provider)
 
     async def get_audio_transcriptions(self, request: AudioTranscriptionRequest) -> APIResponse:

@@ -109,6 +109,7 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
         self.graph_vector_store: Optional[VectorStore] = None
         self.graph_store: Optional[GraphStore] = None
         self.metadata_store: Optional[MetadataStore] = None
+        self.image_memory_runtime = None
         self.relation_write_service: Optional[RelationWriteService] = None
         self.sparse_index: Optional[SparseBM25Index] = None
         self.retriever = None
@@ -192,6 +193,7 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
 
         from .services import (
             MemoryBackgroundTaskService,
+            MemoryBundleAdminService,
             MemoryChatFilterService,
             MemoryCorrectionAdminService,
             MemoryDeleteAdminService,
@@ -203,6 +205,7 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
             MemoryFeedbackCorrectionService,
             MemoryGraphAdminService,
             MemoryImportTuningAdminService,
+            MemoryImageService,
             MemoryIngestService,
             MemoryMaintenanceService,
             MemorySearchService,
@@ -223,6 +226,7 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
 
         self._graph_admin_service = MemoryGraphAdminService(self)
         self._background_task_service = MemoryBackgroundTaskService(self)
+        self._bundle_admin_service = MemoryBundleAdminService(self)
         self._chat_filter_service = MemoryChatFilterService(self)
         self._delete_admin_service = MemoryDeleteAdminService(self)
         self._dual_vector_migration_service = MemoryDualVectorMigrationService(self)
@@ -243,6 +247,7 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
         self._episode_admin_service = MemoryEpisodeAdminService(self)
         self._profile_admin_service = MemoryProfileAdminService(self)
         self._import_tuning_admin_service = MemoryImportTuningAdminService(self)
+        self._image_service = MemoryImageService(self)
         self._v5_admin_service = MemoryV5AdminService(self)
         self._vector_delete_service = MemoryVectorDeleteService(self)
         self._vector_recovery_service = MemoryVectorRecoveryService(self)
@@ -263,6 +268,7 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
             "threshold",
             "summarization",
             "person_profile",
+            "image_memory",
         } and isinstance(current, dict):
             return current.get(key, default)
         for part in key.split("."):
@@ -1134,6 +1140,15 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
     async def memory_import_admin(self, *, action: str, **kwargs) -> Dict[str, Any]:
         service = self._import_tuning_admin_service
         return await type(service).memory_import_admin(service, action=action, **kwargs)
+
+    async def memory_bundle_admin(self, *, action: str, **kwargs) -> Dict[str, Any]:
+        service = self._bundle_admin_service
+        return await type(service).memory_bundle_admin(service, action=action, **kwargs)
+
+    async def image_memory(self, *, action: str, **kwargs: Any) -> Dict[str, Any]:
+        """执行图片记忆写入、检索和管理操作。"""
+
+        return await self._image_service.execute(action=action, **kwargs)
 
     async def memory_tuning_admin(self, *, action: str, **kwargs) -> Dict[str, Any]:
         service = self._import_tuning_admin_service

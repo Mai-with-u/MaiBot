@@ -26,6 +26,10 @@ class NetworkConnectionError(Exception):
         return self.message or "连接异常，请检查网络连接状态或URL是否正确"
 
 
+class ImageEmbeddingUnsupportedError(Exception):
+    """当前 Provider 或模型没有实现图片嵌入协议。"""
+
+
 class ReqAbortException(Exception):
     """请求异常退出，常见于请求被中断或取消"""
 

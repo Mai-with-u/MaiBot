@@ -414,11 +414,12 @@ describe('MemoryProfileManager 查询流程', () => {
   })
 
   it('initialPersonId 会展开高级入口并直接定位画像', async () => {
-    // 画像库置空避免默认选中干扰初始定位
-    vi.mocked(memoryApi.getMemoryProfiles).mockResolvedValue({ success: true, items: [] })
     await renderManager('p-init')
 
     expect(screen.getByLabelText('person_id')).toHaveValue('p-init')
+    const currentPerson = screen.getByText('当前定位 person_id').parentElement
+    expect(currentPerson).not.toBeNull()
+    expect(within(currentPerson as HTMLElement).getByText('p-init')).toBeInTheDocument()
     await waitFor(() => {
       expect(memoryApi.queryMemoryProfile).toHaveBeenCalledWith({
         personId: 'p-init',
@@ -442,6 +443,9 @@ describe('MemoryProfileManager 查询流程', () => {
         forceRefresh: false,
       })
     })
+    expect(memoryApi.getMemoryProfileEvidence).not.toHaveBeenCalledWith(
+      expect.objectContaining({ personId: 'p1' }),
+    )
   })
 })
 

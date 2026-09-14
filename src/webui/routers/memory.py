@@ -3,22 +3,25 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
+from sqlmodel import col, select
 
 import json
 import shutil
+import tomlkit
 import uuid
 
-from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
-from pydantic import BaseModel, Field
-from sqlmodel import col, select
-import tomlkit
-
 from src.A_memorix.host_service import a_memorix_host_service
+from src.A_memorix.core.image.component_paths import iter_message_image_components
 from src.A_memorix.runtime_registry import get_runtime_kernel
+from src.chat.message_receive.message import SessionMessage
 from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
 from src.common.database.database import get_db_session
 from src.common.database.database_model import ChatSession, Messages, PersonInfo
 from src.person_info.person_info import resolve_person_id_for_memory
+from src.services.memory_flow_service import memory_automation_service
 from src.services.memory_service import MemorySearchResult, memory_service
 from src.webui.dependencies import require_auth
 
@@ -90,6 +93,13 @@ class EpisodeRebuildRequest(BaseModel):
 class EpisodeProcessPendingRequest(BaseModel):
     limit: int = Field(20, ge=1, le=200)
     max_retry: int = Field(3, ge=1, le=20)
+
+
+class ImageObservationRequest(BaseModel):
+    occurrence_id: str = Field(..., min_length=1)
+    text: str = Field(..., min_length=1)
+    confirm_status: str = "confirmed"
+    supersedes_id: str = ""
 
 
 class ProfileOverrideRequest(BaseModel):
@@ -3763,6 +3773,276 @@ async def cancel_memory_import_task(task_id: str):
 @router.post("/import/tasks/{task_id}/retry")
 async def retry_memory_import_task(task_id: str, payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_retry(task_id, payload)
+
+
+@router.post("/bundles/export")
+async def export_memory_bundle(payload: dict[str, Any] = Body(default_factory=dict)):
+    return await memory_service.bundle_admin(action="export", timeout_ms=600000, **_unwrap_payload(payload))
+
+
+@router.post("/bundles/import")
+async def import_memory_bundle(
+    file: UploadFile = File(...),
+    payload_json: str = Form("{}"),
+    preview: bool = Form(False),
+):
+    staging_dir, staged_files = await _stage_upload_files([file])
+    try:
+        try:
+            payload = json.loads(payload_json or "{}")
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"payload_json 不是有效 JSON: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="payload_json 必须为对象")
+        payload = _validate_import_chat_id(_unwrap_payload(payload))
+        staged_path = str(staged_files[0]["staged_path"])
+        if preview:
+            return await memory_service.bundle_admin(action="inspect", path=staged_path, timeout_ms=600000)
+        return await memory_service.bundle_admin(
+            action="import",
+            path=staged_path,
+            timeout_ms=600000,
+            **payload,
+        )
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+
+
+@router.get("/bundles")
+async def list_memory_bundles(limit: int = Query(50, ge=1, le=200)):
+    return await memory_service.bundle_admin(action="list", limit=limit)
+
+
+@router.get("/bundles/download/{file_name}", response_class=FileResponse)
+async def download_memory_bundle(file_name: str) -> FileResponse:
+    payload = await memory_service.bundle_admin(action="resolve_file", file_name=Path(file_name).name)
+    if not bool(payload.get("success", False)):
+        raise HTTPException(status_code=404, detail=str(payload.get("error", "记忆包不存在")))
+    path = Path(str(payload.get("path", "") or ""))
+    return FileResponse(
+        path,
+        media_type="application/vnd.a-memorix.bundle+zip",
+        filename=path.name,
+    )
+
+
+@router.delete("/bundles/{installation_id}")
+async def uninstall_memory_bundle(installation_id: str):
+    return await memory_service.bundle_admin(action="uninstall", installation_id=installation_id)
+
+
+@router.get("/images/status")
+async def get_image_memory_status():
+    """读取图片索引空间、任务队列和图片语义记录的状态。"""
+
+    return await memory_service.image_memory(action="status")
+
+
+@router.get("/images")
+async def list_image_memories(
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    return await memory_service.image_memory(action="list", limit=limit, offset=offset)
+
+
+@router.get("/images/{asset_id}")
+async def get_image_memory(asset_id: str):
+    payload = await memory_service.image_memory(action="get", asset_id=asset_id, chat_ids=None)
+    for occurrence in payload.get("occurrences") or []:
+        chat_id = str(occurrence.get("chat_id") or "").strip()
+        if not chat_id:
+            occurrence["chat_name"] = "全局记忆"
+            continue
+        chat_session = _find_real_chat_session(chat_id)
+        occurrence["chat_name"] = _get_chat_name(chat_session, {}) if chat_session is not None else chat_id
+    return payload
+
+
+@router.get("/image-jobs")
+async def list_image_memory_jobs(
+    limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0), status: str = "",
+):
+    return await memory_service.image_memory(action="jobs", limit=limit, offset=offset, status=status)
+
+
+@router.get("/image-writeback-jobs")
+async def list_image_writeback_jobs(
+    limit: int = Query(25, ge=1, le=200), offset: int = Query(0, ge=0), status: str = '',
+):
+    payload = memory_automation_service.image_writeback.list_jobs(status, limit, offset)
+    for item in payload['items']:
+        session = _find_real_chat_session(item['session_id'])
+        item['chat_name'] = _get_chat_name(session, {}) if session is not None else '来源聊天流已移除'
+    return payload
+
+
+@router.post("/image-writeback-jobs/retry")
+async def retry_image_writeback_jobs():
+    count = memory_automation_service.image_writeback.retry_failed()
+    return {'success': True, 'count': count}
+
+
+@router.post("/image-jobs/retry")
+async def retry_failed_image_memory_jobs():
+    """重排失败的图片嵌入与描述补偿任务。"""
+    result = await memory_service.image_memory(action="retry_failed_jobs")
+    if not result.get("success"):
+        raise HTTPException(status_code=503, detail=str(result.get("error") or "图片任务重新排队失败"))
+    return result
+
+
+@router.post("/images/{asset_id}/search")
+async def search_image_memories(
+    asset_id: str, limit: int = Query(8, ge=1, le=100), threshold: float = Query(0.72, ge=-1, le=1),
+    chat_id: Optional[str] = None,
+):
+    if chat_id and _find_real_chat_session(chat_id) is None:
+        raise HTTPException(status_code=400, detail="聊天流不存在")
+    asset = await memory_service.image_memory(action="get", asset_id=asset_id, chat_ids=None)
+    if not asset.get("success"):
+        raise HTTPException(status_code=404, detail="图片不存在")
+    result = await memory_service.image_memory(
+        action="search", content_hash=asset["asset"]["content_hash"],
+        chat_ids=[chat_id] if chat_id else None, candidate_limit=limit, similarity_threshold=threshold,
+    )
+    if result.get("success") is False:
+        raise HTTPException(status_code=502, detail=str(result.get("error") or "图片检索失败"))
+    for hit in result.get("hits") or []:
+        for occurrence in hit["occurrences"]:
+            session = _find_real_chat_session(str(occurrence["chat_id"])) if occurrence["chat_id"] else None
+            occurrence["chat_name"] = _get_chat_name(session, {}) if session else "全局或来源已移除"
+    return {"success": True, **result}
+
+
+@router.get("/images/{asset_id}/content", response_class=FileResponse)
+async def get_image_memory_content(asset_id: str) -> FileResponse:
+    """从内容寻址资产库返回已登记图片，不接受客户端提供文件路径。"""
+
+    kernel = get_runtime_kernel()
+    if kernel is None or kernel.image_memory_runtime is None:
+        raise HTTPException(status_code=503, detail="图片记忆未启用")
+    runtime = kernel.image_memory_runtime
+    asset = runtime.metadata_store.get_image_asset(asset_id)
+    if asset is None or asset["status"] != "active":
+        raise HTTPException(status_code=404, detail="图片不存在")
+    try:
+        path = runtime.asset_store.path_for_read(str(asset["storage_key"]))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="图片资产文件不存在") from exc
+    return FileResponse(path=path, media_type=str(asset["mime_type"]))
+
+
+@router.post("/images/reindex")
+async def reindex_image_memories():
+    return await memory_service.image_memory(action="process_jobs", timeout_ms=600000)
+
+
+@router.post("/images/backfill")
+async def backfill_image_memories(
+    limit: int = Query(500, ge=1, le=5000),
+    before_id: Optional[int] = Query(None, ge=1),
+    upper_id: Optional[int] = Query(None, ge=1),
+    preview: bool = Query(False),
+):
+    """按固定消息上界分页检查，预览不写入，执行时重新校验每张图片。"""
+
+    # 旧消息的 is_picture 标志不一定覆盖嵌套转发，必须按持久化组件树逐条识别。
+    statement = select(Messages)
+    if before_id is not None:
+        statement = statement.where(col(Messages.id) < before_id)
+    if upper_id is not None:
+        statement = statement.where(col(Messages.id) <= upper_id)
+    statement = statement.order_by(col(Messages.id).desc()).limit(limit)
+    with get_db_session(auto_commit=False) as session:
+        records = list(session.exec(statement).all())
+    kernel = get_runtime_kernel()
+    if kernel is None or kernel.image_memory_runtime is None:
+        raise HTTPException(status_code=503, detail="图片记忆未启用")
+    runtime = kernel.image_memory_runtime
+    items = []
+    counts: dict[str, int] = {}
+    processed_ids = set()
+    failed_ids = set()
+    for record in records:
+        try:
+            message = SessionMessage.from_db_instance(record)
+        except Exception as exc:
+            items.append({"record_id": record.id, "category": "missing_source", "error": str(exc)})
+            counts["missing_source"] = counts.get("missing_source", 0) + 1
+            failed_ids.add(record.id)
+            continue
+        for component_path, component in iter_message_image_components(message.raw_message.components):
+            session = _find_real_chat_session(str(message.session_id))
+            item = {"record_id": record.id, "message_id": message.message_id, "component_path": component_path,
+                    "chat_name": _get_chat_name(session, {}) if session else "来源聊天流无法解析"}
+            category = "ready"
+            try:
+                if not message.message_id:
+                    category = "missing_source"
+                    raise ValueError("缺少来源消息ID")
+                if session is None:
+                    category = "missing_chat"
+                    raise ValueError("无法解析已注册的真实聊天流")
+                category = "missing_file"
+                await component.load_image_binary()
+                if not component.binary_data:
+                    raise FileNotFoundError("图片缓存不存在或无法读取")
+                category = "invalid_image"
+                inspected = runtime.asset_store.inspect(bytes(component.binary_data))
+                if inspected.frame_count > 1:
+                    raise ValueError("仅支持静态图片")
+                category = "ready"
+                if not preview:
+                    category = "write_failed"
+                    await memory_automation_service.image_writeback._handle_message(
+                        message, component_paths=[component_path],
+                    )
+                    category = "processed"
+                    processed_ids.add(record.id)
+            except Exception as exc:
+                item["error"] = str(exc)
+                failed_ids.add(record.id)
+            finally:
+                component.binary_data = b""
+            item["category"] = category
+            items.append(item)
+            counts[category] = counts.get(category, 0) + 1
+    record_ids = [int(record.id) for record in records if record.id is not None]
+    return {
+        "success": not failed_ids,
+        "preview": preview,
+        "scanned_messages": len(records),
+        "processed_messages": len(processed_ids),
+        "failed_messages": len(failed_ids),
+        "items": items,
+        "counts": counts,
+        "upper_id": upper_id or (max(record_ids) if record_ids else None),
+        "next_before_id": min(record_ids) if len(records) == limit and record_ids else None,
+    }
+
+
+@router.delete("/images/occurrences/{occurrence_id}")
+async def delete_image_memory_occurrence(occurrence_id: str):
+    return await memory_service.image_memory(action="delete_occurrence", occurrence_id=occurrence_id)
+
+
+@router.post("/images/observations")
+async def save_image_memory_observation(payload: ImageObservationRequest):
+    return await memory_service.image_memory(
+        action="observe",
+        occurrence_id=payload.occurrence_id,
+        text=payload.text,
+        source_kind="manual",
+        confirm_status=payload.confirm_status,
+        supersedes_id=payload.supersedes_id,
+        evidence={"source": "webui"},
+    )
+
+
+@router.delete("/images/links/{link_id}")
+async def delete_image_memory_link(link_id: str):
+    return await memory_service.image_memory(action="unlink", link_id=link_id)
 
 
 @router.get("/retrieval_tuning/settings")
