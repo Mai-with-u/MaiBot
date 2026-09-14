@@ -538,6 +538,13 @@ class SummaryImporter:
         external_id = str(metadata.get("external_id", "") or "").strip()
         if not external_id:
             return None
+        checkpoint = self.metadata_store.get_summary_checkpoint(external_id)
+        if checkpoint is not None:
+            if checkpoint["chat_id"] != stream_id:
+                raise ValueError("空摘要标识已绑定到其他聊天流")
+            return SummaryImportResult(
+                True, "该窗口已完成空增量总结", source=f"chat_summary:{stream_id}", skipped=True
+            )
         existing = self.metadata_store.get_external_memory_ref(external_id)
         if existing is None:
             return None
@@ -751,6 +758,13 @@ class SummaryImporter:
             if not summary_text:
                 if data.get("entities") != [] or data.get("relations") != [] or facts:
                     return SummaryImportResult(False, "空增量必须同时返回空实体、空关系和空事实数组")
+                external_id = str((metadata or {}).get("external_id") or "").strip()
+                if external_id:
+                    self.metadata_store.record_summary_checkpoint(
+                        external_id=external_id,
+                        chat_id=stream_id,
+                        trigger_message_count=int((metadata or {}).get("trigger_message_count") or 0),
+                    )
                 return SummaryImportResult(
                     True,
                     "当前窗口没有新增长期记忆，跳过段落写入",
@@ -768,6 +782,12 @@ class SummaryImporter:
                 }
 
             # 6. 执行导入
+            # 先验证完整证据集合，避免模型输出错误时留下已提交的段落或部分图片关联。
+            for fact in facts:
+                for evidence in fact.get("image_evidence") or []:
+                    key = (str(evidence["message_id"]), str(evidence["component_path"]))
+                    if key not in allowed_image_evidence:
+                        raise ValueError(f"总结模型返回了窗口外图片证据: {key[0]}:{key[1]}")
             paragraph_hash = await self._execute_import(
                 summary_text,
                 entities,

@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Any, Dict, Optional
 
 import asyncio
 
@@ -14,6 +15,16 @@ from src.A_memorix.core.utils.summary_importer import (
 from src.config.model_configs import TaskConfig
 from src.common.prompt_i18n import load_prompt
 from src.services import llm_service as llm_api
+
+
+class _SummaryCheckpoints:
+    """测试替身实现空摘要进度接口，避免测试依赖私有连接。"""
+
+    def get_summary_checkpoint(self, external_id: str) -> Optional[Dict[str, Any]]:
+        return self.__dict__.setdefault("checkpoints", {}).get(external_id)
+
+    def record_summary_checkpoint(self, **kwargs: Any) -> None:
+        self.__dict__.setdefault("checkpoints", {})[kwargs["external_id"]] = kwargs
 
 
 def test_persist_vector_store_delegates_to_runtime_facade() -> None:
@@ -216,7 +227,7 @@ def test_summary_prompt_locales_share_image_evidence_contract(locale: str) -> No
 
 @pytest.mark.asyncio
 async def test_empty_incremental_summary_is_successful_noop(monkeypatch) -> None:
-    class SummaryStore:
+    class SummaryStore(_SummaryCheckpoints):
         @staticmethod
         def get_external_memory_ref(external_id: str):
             assert external_id == "summary-noop-1"
@@ -274,7 +285,7 @@ async def test_empty_incremental_summary_is_successful_noop(monkeypatch) -> None
 
 @pytest.mark.asyncio
 async def test_history_only_followup_windows_do_not_write_repeated_paragraphs(monkeypatch) -> None:
-    class SummaryStore:
+    class SummaryStore(_SummaryCheckpoints):
         def __init__(self) -> None:
             self.paragraphs = []
             self.refs = {}
@@ -384,7 +395,7 @@ def test_summary_review_normalization_preserves_legal_semantics(text: str) -> No
 
 @pytest.mark.asyncio
 async def test_summary_external_id_short_circuits_before_runtime_or_model() -> None:
-    class ExistingSummaryStore:
+    class ExistingSummaryStore(_SummaryCheckpoints):
         @staticmethod
         def get_external_memory_ref(external_id: str):
             assert external_id == "summary-1"
@@ -418,7 +429,7 @@ async def test_summary_external_id_short_circuits_before_runtime_or_model() -> N
 
 
 def test_summary_external_id_cannot_be_reused_across_streams() -> None:
-    class ExistingSummaryStore:
+    class ExistingSummaryStore(_SummaryCheckpoints):
         @staticmethod
         def get_external_memory_ref(external_id: str):
             return {"external_id": external_id, "paragraph_hash": "paragraph-1"}

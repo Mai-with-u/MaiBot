@@ -71,6 +71,7 @@ async def test_worker_reloads_pending_message_after_restart(tmp_path: Path, monk
     journal.enqueue('real-chat', 'persisted-message')
     journal.close()
     service = flow.ImageMemoryWritebackService(path)
+    monkeypatch.setattr(service, "_enabled", lambda: True)
     service._journal = ImageWritebackJournal(path)
     message = SimpleNamespace(session_id='real-chat', message_id='persisted-message')
     loaded = []

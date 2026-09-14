@@ -551,6 +551,10 @@ async def test_chat_summary_writeback_service_falls_back_to_current_count_for_le
 async def test_chat_summary_writeback_service_loads_trigger_count_from_summary_metadata(monkeypatch):
     class FakeMetadataStore:
         @staticmethod
+        def get_summary_checkpoint_count(chat_id: str) -> int:
+            return 0
+
+        @staticmethod
         def get_paragraphs_by_source(source: str):
             assert source == "chat_summary:session-1"
             return [

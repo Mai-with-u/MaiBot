@@ -239,6 +239,11 @@ async def graceful_shutdown(main_system: MainSystem | None = None):  # sourcery 
             step_name="停止插件运行时",
         )
 
+        # 先等待图片描述写回，再关闭记忆内核，避免未完成同步被统一取消。
+        from src.chat.image_system.image_manager import image_manager
+
+        await _await_shutdown_step(image_manager.shutdown(), timeout=120.0, step_name="等待图片描述同步")
+
         # 停止所有异步任务
         await _await_shutdown_step(
             async_task_manager.stop_and_wait_all_tasks(),

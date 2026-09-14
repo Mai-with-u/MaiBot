@@ -46,6 +46,9 @@ class MemoryImageService(KernelServiceBase):
                 offset=max(0, int(kwargs.get("offset", 0))),
                 status=str(kwargs.get("status") or ""),
             )
+        if operation == "retry_failed_jobs":
+            counts = runtime.metadata_store.retry_failed_image_jobs()
+            return {"success": True, "counts": counts, "count": sum(counts.values())}
         if operation == "ingest":
             image_bytes = self._decode_image(kwargs)
             if image_bytes is None:

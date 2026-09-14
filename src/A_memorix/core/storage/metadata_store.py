@@ -1642,6 +1642,33 @@ class MetadataStore(
 
         return [dict(row) for row in cursor.fetchall()]
 
+    def get_summary_checkpoint(self, external_id: str) -> Optional[Dict[str, Any]]:
+        """读取成功空摘要的幂等记录。"""
+        rows = self.query("SELECT * FROM chat_summary_checkpoints WHERE external_id=?", (external_id,))
+        return rows[0] if rows else None
+
+    def record_summary_checkpoint(self, *, external_id: str, chat_id: str, trigger_message_count: int) -> None:
+        """原子记录空摘要成功，重复标识不允许跨聊天流使用。"""
+        with self.transaction(immediate=True) as database:
+            row = database.execute(
+                "SELECT chat_id FROM chat_summary_checkpoints WHERE external_id=?", (external_id,)
+            ).fetchone()
+            if row is not None and row["chat_id"] != chat_id:
+                raise ValueError("空摘要标识已绑定到其他聊天流")
+            database.execute(
+                "INSERT OR IGNORE INTO chat_summary_checkpoints "
+                "(external_id, chat_id, trigger_message_count, created_at) VALUES (?, ?, ?, ?)",
+                (external_id, chat_id, max(0, trigger_message_count), datetime.now().timestamp()),
+            )
+
+    def get_summary_checkpoint_count(self, chat_id: str) -> int:
+        """返回该真实聊天流已成功跳过的最新触发计数。"""
+        rows = self.query(
+            "SELECT COALESCE(MAX(trigger_message_count), 0) AS count FROM chat_summary_checkpoints WHERE chat_id=?",
+            (chat_id,),
+        )
+        return int(rows[0]["count"])
+
     def get_external_memory_ref(self, external_id: str) -> Optional[Dict[str, Any]]:
         """按 external_id 查询外部记忆映射。"""
         token = str(external_id or "").strip()

@@ -1,13 +1,14 @@
+from dataclasses import dataclass, field
+from typing import Any, Callable, Coroutine, Dict, List, Set, Tuple, cast
+from urllib.parse import urlparse
+from uuid import uuid4
+
 import asyncio
 import base64
 import binascii
 import io
 import json
 import re
-from dataclasses import dataclass, field
-from typing import Any, Callable, Coroutine, Dict, List, Set, Tuple, cast
-from urllib.parse import urlparse
-from uuid import uuid4
 
 from json_repair import repair_json
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream
@@ -42,6 +43,7 @@ from src.llm_models.exceptions import (
 from src.llm_models.openai_compat import (
     build_openai_compatible_client_config,
     split_openai_request_overrides,
+    validate_image_embedding_transport,
 )
 from src.llm_models.payload_content.context_item import (
     AssistantMessageItem,
@@ -1664,6 +1666,7 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
         extra_params = dict(request.extra_params)
         if "image_embedding_input" not in extra_params and "image_embedding_body" not in extra_params:
             raise ValueError("图片嵌入必须配置 Provider 对应的 image_embedding_input 或 image_embedding_body")
+        validate_image_embedding_transport(self.api_provider.base_url)
         input_template = extra_params.pop("image_embedding_input", None)
         body_template = extra_params.pop("image_embedding_body", None)
         encoded = base64.b64encode(request.image_bytes).decode("ascii")

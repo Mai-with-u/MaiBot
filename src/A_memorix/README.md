@@ -22,7 +22,7 @@ A_Memorix 是 MaiBot 内置的长期记忆子系统。
 
 - 旧 `components/commands/*`、`components/tools/*` 与 `server.py` 已移除。
 - 统一入口为宿主侧 host service + [`core/runtime/sdk_memory_kernel.py`](core/runtime/sdk_memory_kernel.py)。
-- 元数据 schema 为 `v24`，支持外部引用、知识包安装登记与运维操作记录。
+- 元数据 schema 为 `v26`，支持外部引用、知识包安装登记、图片记忆、空摘要触发进度与运维操作记录。
 
 如果你还在使用旧版 slash 命令（如 `/query`、`/memory`、`/visualize`），需要按本文的 Tool 接口迁移。
 

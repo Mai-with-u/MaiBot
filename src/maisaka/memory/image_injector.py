@@ -58,6 +58,8 @@ class ImageMemoryInjector:
         lines = [IMAGE_MEMORY_REFERENCE_MARKER, "以下内容来自当前图片的历史同图或相似图记录，仅作为回答依据。"]
         seen: set[str] = set()
         for result in results:
+            if result.get("success") is False:
+                raise RuntimeError(str(result.get("error") or "图片记忆检索失败"))
             for hit in result.get("hits") or []:
                 score = float(hit.get("similarity") or 0.0)
                 match_kind = "同一图片" if hit.get("match_kind") == "exact_hash" else "相似图片"

@@ -168,14 +168,12 @@ async def test_knowledge_bundle_exports_lpmm_semantics_and_installs_without_extr
         assert json.loads(paragraph["metadata"])["knowledge_package_id"] == "example.grain"
         assert target_kernel.metadata_store.query("SELECT * FROM relations")
         assert target_kernel.metadata_store.query("SELECT * FROM episodes") == []
-        assert target_kernel.metadata_store.query("SELECT * FROM knowledge_packages")[0]["package_id"] == "example.grain"
+        assert (
+            target_kernel.metadata_store.query("SELECT * FROM knowledge_packages")[0]["package_id"] == "example.grain"
+        )
         target_kernel.paragraph_vectors.ids.add(paragraph_hash)
-        entity_hashes = {
-            str(row["hash"]) for row in target_kernel.metadata_store.query("SELECT hash FROM entities")
-        }
-        relation_hashes = {
-            str(row["hash"]) for row in target_kernel.metadata_store.query("SELECT hash FROM relations")
-        }
+        entity_hashes = {str(row["hash"]) for row in target_kernel.metadata_store.query("SELECT hash FROM entities")}
+        relation_hashes = {str(row["hash"]) for row in target_kernel.metadata_store.query("SELECT hash FROM relations")}
         target_kernel.graph_vectors.ids.update(f"entity:{entity_hash}" for entity_hash in entity_hashes)
         target_kernel.graph_vectors.ids.update(f"relation:{relation_hash}" for relation_hash in relation_hashes)
 
@@ -452,18 +450,21 @@ async def test_full_bundle_restores_closed_episode_and_profile_with_chat_remap(t
         assert target_kernel.metadata_store.query("SELECT source FROM episodes")[0]["source"] == "chat_summary:chat-new"
         target_episode = target_kernel.metadata_store.query("SELECT episode_id FROM episodes")[0]["episode_id"]
         assert target_episode != "episode-1"
-        assert target_kernel.metadata_store.query("SELECT episode_id FROM episode_paragraphs")[0][
-            "episode_id"
-        ] == target_episode
+        assert (
+            target_kernel.metadata_store.query("SELECT episode_id FROM episode_paragraphs")[0]["episode_id"]
+            == target_episode
+        )
         target_fact = target_kernel.metadata_store.query("SELECT * FROM fact_claims")[0]
         assert target_fact["scope_id"] == "chat-new"
         assert target_fact["claim_id"] != fact["claim_id"]
-        assert target_kernel.metadata_store.query("SELECT claim_id FROM fact_evidence")[0]["claim_id"] == target_fact[
-            "claim_id"
-        ]
-        assert target_kernel.metadata_store.query("SELECT profile_text FROM person_profile_snapshots")[0][
-            "profile_text"
-        ] == "小明喜欢逛书店"
+        assert (
+            target_kernel.metadata_store.query("SELECT claim_id FROM fact_evidence")[0]["claim_id"]
+            == target_fact["claim_id"]
+        )
+        assert (
+            target_kernel.metadata_store.query("SELECT profile_text FROM person_profile_snapshots")[0]["profile_text"]
+            == "小明喜欢逛书店"
+        )
         uninstalled = await MemoryBundleAdminService(target_kernel).memory_bundle_admin(
             action="uninstall",
             installation_id=installed["installation_id"],
@@ -517,10 +518,10 @@ async def test_full_bundle_recovers_legacy_chat_scope_from_summary_source(tmp_pa
             selector={"type": "chat", "chat_id": "chat-old"},
         )
         loaded = source_service._load_bundle(Path(exported["path"]))
-        assert {
-            str(row["fact_key"])
-            for row in loaded["state"]["tables"]["fact_claims"]
-        } == {"legacy.with_evidence", "legacy.without_evidence"}
+        assert {str(row["fact_key"]) for row in loaded["state"]["tables"]["fact_claims"]} == {
+            "legacy.with_evidence",
+            "legacy.without_evidence",
+        }
 
         installed = await MemoryBundleAdminService(target_kernel).memory_bundle_admin(
             action="import",
@@ -748,9 +749,7 @@ async def test_interrupted_installation_is_cleaned_before_retry(tmp_path: Path) 
         )
         assert installed["success"] is True
         assert installed["already_installed"] is False
-        assert target_kernel.metadata_store.query("SELECT status FROM knowledge_packages") == [
-            {"status": "installed"}
-        ]
+        assert target_kernel.metadata_store.query("SELECT status FROM knowledge_packages") == [{"status": "installed"}]
 
         uninstalled = await service.memory_bundle_admin(
             action="uninstall",

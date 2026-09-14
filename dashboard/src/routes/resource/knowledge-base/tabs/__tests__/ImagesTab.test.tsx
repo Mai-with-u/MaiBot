@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   getJobs: vi.fn(),
   getWritebackJobs: vi.fn(),
   retryWriteback: vi.fn(),
+  retryImageJobs: vi.fn(),
   getList: vi.fn(),
   getStatus: vi.fn(),
   search: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock('@/lib/memory-api', async (importOriginal) => {
     getMemoryImageJobs: api.getJobs,
     getImageWritebackJobs: api.getWritebackJobs,
     retryImageWritebackJobs: api.retryWriteback,
+    retryMemoryImageJobs: api.retryImageJobs,
     getMemoryImages: api.getList,
     getMemoryImageStatus: api.getStatus,
     searchMemoryImages: api.search,
@@ -90,6 +92,20 @@ function renderTab() {
 }
 
 describe('ImagesTab 图片详情请求顺序', () => {
+  it('重新排队失败的嵌入与描述任务，并刷新任务列表', async () => {
+    api.retryImageJobs.mockResolvedValue({ success: true, count: 2 })
+    renderTab()
+    const button = await screen.findByRole('button', {
+      name: '重试失败的嵌入与描述任务',
+      hidden: true,
+    })
+    const previousCalls = api.getJobs.mock.calls.length
+    fireEvent.click(button)
+    await waitFor(() => expect(api.retryImageJobs).toHaveBeenCalledOnce())
+    await waitFor(() => expect(api.getJobs.mock.calls.length).toBeGreaterThan(previousCalls))
+    expect(api.retryWriteback).not.toHaveBeenCalled()
+  })
+
   it('默认收起技术操作，空状态可打开维护入口', async () => {
     api.getList.mockResolvedValue({ success: true, items: [] })
     const scroll = vi.fn()

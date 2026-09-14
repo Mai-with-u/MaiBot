@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence, Tuple
+
 import asyncio
 import base64
 import json
@@ -7,13 +11,11 @@ import os
 import stat
 import time
 import uuid
-from datetime import datetime
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence, Tuple
 
 import tomlkit
 
 from src.common.logger import get_logger
+from src.common.runtime_loop import run_on_main_loop
 from src.common.utils.utils_config import AMemorixConfigUtils
 from src.config.official_configs import AMemorixConfig
 from src.webui.utils.toml_utils import _update_toml_doc
@@ -210,6 +212,16 @@ class AMemorixHostService:
         }
 
     async def invoke(
+        self,
+        component_name: str,
+        args: Dict[str, Any] | None = None,
+        *,
+        timeout_ms: Optional[int] = None,
+    ) -> Any:
+        """将跨线程管理请求统一投递到主循环，保证内核的异步锁有效。"""
+        return await run_on_main_loop(self._invoke_on_runtime(component_name, args, timeout_ms=timeout_ms))
+
+    async def _invoke_on_runtime(
         self,
         component_name: str,
         args: Dict[str, Any] | None = None,

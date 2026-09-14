@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import asyncio
+
 import pytest
 
 from src.maisaka.memory import image_injector as image_injector_module
@@ -72,5 +73,6 @@ async def test_image_memory_injector_does_not_hide_service_timeout(monkeypatch) 
     monkeypatch.setattr(image_injector_module.memory_service, "image_memory", failing_image_memory)
     with pytest.raises(TimeoutError, match="模型请求超时"):
         await image_injector_module.image_memory_injector.build_injection_message(
-            session_id="chat-real", source_messages=[message],
+            session_id="chat-real",
+            source_messages=[message],
         )

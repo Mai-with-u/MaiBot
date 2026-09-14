@@ -16,12 +16,28 @@ from .knowledge_types import (
 
 logger = get_logger("A_Memorix.MetadataSchema")
 
-SCHEMA_VERSION = 25
+SCHEMA_VERSION = 26
 RUNTIME_AUTO_MIGRATION_MIN_SCHEMA_VERSION = 9
 
 
 class MetadataSchemaMixin:
     """维护元数据数据库表结构、版本迁移与数据规范化。"""
+
+    @staticmethod
+    def _ensure_summary_checkpoint_tables(cursor: sqlite3.Cursor) -> None:
+        """保存成功空摘要的幂等标识与触发进度，不生成可检索段落。"""
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS chat_summary_checkpoints (
+                external_id TEXT PRIMARY KEY,
+                chat_id TEXT NOT NULL,
+                trigger_message_count INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_chat_summary_checkpoints_chat
+            ON chat_summary_checkpoints(chat_id, trigger_message_count)
+        """)
 
     def _assert_schema_compatible(self, db_existed: bool) -> None:
         """运行时执行 post-1.0 自动迁移；legacy/vNext 仍要求离线迁移。"""
@@ -1801,6 +1817,7 @@ class MetadataSchemaMixin:
         self._ensure_fuzzy_modify_plan_tables(cursor)
         self._ensure_knowledge_package_tables(cursor)
         self._ensure_image_memory_tables(cursor)
+        self._ensure_summary_checkpoint_tables(cursor)
         self._create_temporal_indexes_if_ready()
         self._create_performance_indexes()
         # 新版 schema 包含完整字段，直接写入版本信息
@@ -2118,6 +2135,7 @@ class MetadataSchemaMixin:
         self._ensure_fuzzy_modify_plan_tables(cursor)
         self._ensure_knowledge_package_tables(cursor)
         self._ensure_image_memory_tables(cursor)
+        self._ensure_summary_checkpoint_tables(cursor)
 
         # 检查paragraphs表是否有knowledge_type列
         cursor.execute("PRAGMA table_info(paragraphs)")

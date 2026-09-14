@@ -3883,6 +3883,15 @@ async def retry_image_writeback_jobs():
     return {'success': True, 'count': count}
 
 
+@router.post("/image-jobs/retry")
+async def retry_failed_image_memory_jobs():
+    """重排失败的图片嵌入与描述补偿任务。"""
+    result = await memory_service.image_memory(action="retry_failed_jobs")
+    if not result.get("success"):
+        raise HTTPException(status_code=503, detail=str(result.get("error") or "图片任务重新排队失败"))
+    return result
+
+
 @router.post("/images/{asset_id}/search")
 async def search_image_memories(
     asset_id: str, limit: int = Query(8, ge=1, le=100), threshold: float = Query(0.72, ge=-1, le=1),

@@ -6,8 +6,8 @@
 
 对应代码：
 
-- [summary_importer.py](D:/Dev/rdev/MaiBot/src/A_memorix/core/utils/summary_importer.py)：`SUMMARY_PROMPT_TEMPLATE`、`SummaryImportResult.skipped`、`_build_previous_summary_context`、`_import_from_stream_unlocked`。
-- [summary_service.py](D:/Dev/rdev/MaiBot/src/A_memorix/core/runtime/services/summary_service.py)：`MemorySummaryService.summarize_chat_stream`，区分实际写入和正常跳过。
+- [summary_importer.py](../src/A_memorix/core/utils/summary_importer.py)：`SUMMARY_PROMPT_TEMPLATE`、`SummaryImportResult.skipped`、`_build_previous_summary_context`、`_import_from_stream_unlocked`。
+- [summary_service.py](../src/A_memorix/core/runtime/services/summary_service.py)：`MemorySummaryService.summarize_chat_stream`，区分实际写入和正常跳过。
 
 ## 导入任务自动刷新
 
@@ -15,7 +15,7 @@
 
 对应代码：
 
-- [useImportQueue.ts](D:/Dev/rdev/MaiBot/dashboard/src/routes/resource/knowledge-base/hooks/useImportQueue.ts)：`useImportQueue`、任务查询的 `enabled`和 `refetchInterval`、进度事件订阅。
+- [useImportQueue.ts](../dashboard/src/routes/resource/knowledge-base/hooks/useImportQueue.ts)：`useImportQueue`、任务查询的 `enabled`和 `refetchInterval`、进度事件订阅。
 
 ## 记忆列表与详情展示知识类型
 
@@ -23,7 +23,7 @@
 
 对应代码：
 
-- [MemoryRecordsTab.tsx](D:/Dev/rdev/MaiBot/dashboard/src/routes/resource/knowledge-base/tabs/MemoryRecordsTab.tsx)：`KNOWLEDGE_TYPE_LABELS`、`getKnowledgeTypeLabel`、`RecordButton`和详情标签区域。
+- [MemoryRecordsTab.tsx](../dashboard/src/routes/resource/knowledge-base/tabs/MemoryRecordsTab.tsx)：`KNOWLEDGE_TYPE_LABELS`、`getKnowledgeTypeLabel`、`RecordButton`和详情标签区域。
 
 ## 长期记忆查询工具明确检索模式与时间格式
 
@@ -31,7 +31,7 @@
 
 对应代码：
 
-- [query_memory.py](D:/Dev/rdev/MaiBot/src/maisaka/builtin_tool/query_memory.py)：`get_tool_spec`中的 `mode`、`time_start`和 `time_end`参数定义。
+- [query_memory.py](../src/maisaka/builtin_tool/query_memory.py)：`get_tool_spec`中的 `mode`、`time_start`和 `time_end`参数定义。
 
 ## 向量通道启动后立即恢复探测
 
@@ -39,7 +39,7 @@
 
 对应代码：
 
-- [background_task_service.py](D:/Dev/rdev/MaiBot/src/A_memorix/core/runtime/services/background_task_service.py)：`MemoryBackgroundTaskService._embedding_probe_loop`。
+- [background_task_service.py](../src/A_memorix/core/runtime/services/background_task_service.py)：`MemoryBackgroundTaskService._embedding_probe_loop`。
 
 ## 摘要与文件导入持久化向量指纹
 
@@ -47,9 +47,9 @@
 
 对应代码：
 
-- [runtime_facade.py](D:/Dev/rdev/MaiBot/src/A_memorix/core/runtime/runtime_facade.py)：`KernelRuntimeFacade.persist_vector_store`。
-- [summary_importer.py](D:/Dev/rdev/MaiBot/src/A_memorix/core/utils/summary_importer.py)：`SummaryImporter._persist_vector_store`和摘要持久化调用。
-- [web_import_manager.py](D:/Dev/rdev/MaiBot/src/A_memorix/core/utils/web_import_manager.py)：`ImportTaskManager._save_runtime_stores_locked`。
+- [runtime_facade.py](../src/A_memorix/core/runtime/runtime_facade.py)：`KernelRuntimeFacade.persist_vector_store`。
+- [summary_importer.py](../src/A_memorix/core/utils/summary_importer.py)：`SummaryImporter._persist_vector_store`和摘要持久化调用。
+- [web_import_manager.py](../src/A_memorix/core/utils/web_import_manager.py)：`ImportTaskManager._save_runtime_stores_locked`。
 
 ## 纯元数据模式允许导入
 
@@ -57,7 +57,7 @@
 
 对应代码：
 
-- [web_import_manager.py](D:/Dev/rdev/MaiBot/src/A_memorix/core/utils/web_import_manager.py)：`ImportTaskManager._ensure_ready`。
+- [web_import_manager.py](../src/A_memorix/core/utils/web_import_manager.py)：`ImportTaskManager._ensure_ready`。
 
 ## 人物画像与经历详情保持正确定位
 
@@ -65,8 +65,8 @@
 
 对应代码：
 
-- [MemoryProfileManager.tsx](D:/Dev/rdev/MaiBot/dashboard/src/components/memory/MemoryProfileManager.tsx)：`loadProfiles`中的函数式选择状态更新。
-- [MemoryEpisodeManager.tsx](D:/Dev/rdev/MaiBot/dashboard/src/components/memory/MemoryEpisodeManager.tsx)：`loadEpisodes`、`loadDetail`和 `detailRequestIdRef`。
+- [MemoryProfileManager.tsx](../dashboard/src/components/memory/MemoryProfileManager.tsx)：`loadProfiles`中的函数式选择状态更新。
+- [MemoryEpisodeManager.tsx](../dashboard/src/components/memory/MemoryEpisodeManager.tsx)：`loadEpisodes`、`loadDetail`和 `detailRequestIdRef`。
 
 ## 可分享记忆包导出
 
@@ -76,8 +76,8 @@
 
 对应代码：
 
-- [bundle_admin_service.py](D:/Dev/rdev/MaiBot/src/A_memorix/core/runtime/services/bundle_admin_service.py)：`_select_paragraphs`、`_paragraph_matches_chat`、`_collect_related_rows`、`_build_knowledge_docs`、`_export_bundle`。
-- [metadata_schema.py](D:/Dev/rdev/MaiBot/src/A_memorix/core/storage/metadata_schema.py)：`_ensure_knowledge_package_tables`中的 `knowledge_packages`和 `knowledge_package_paragraphs`。
+- [bundle_admin_service.py](../src/A_memorix/core/runtime/services/bundle_admin_service.py)：`_select_paragraphs`、`_paragraph_matches_chat`、`_collect_related_rows`、`_build_knowledge_docs`、`_export_bundle`。
+- [metadata_schema.py](../src/A_memorix/core/storage/metadata_schema.py)：`_ensure_knowledge_package_tables`中的 `knowledge_packages`和 `knowledge_package_paragraphs`。
 
 ## 记忆包校验与内容检查
 
@@ -85,7 +85,7 @@
 
 对应代码：
 
-- [bundle_admin_service.py](D:/Dev/rdev/MaiBot/src/A_memorix/core/runtime/services/bundle_admin_service.py)：`_resolve_bundle_path`、`_load_bundle`、`_public_bundle_summary`、`memory_bundle_admin`的 `inspect`操作。
+- [bundle_admin_service.py](../src/A_memorix/core/runtime/services/bundle_admin_service.py)：`_resolve_bundle_path`、`_load_bundle`、`_public_bundle_summary`、`memory_bundle_admin`的 `inspect`操作。
 
 ## 记忆包安装与作用域映射
 
@@ -95,8 +95,8 @@
 
 对应代码：
 
-- [bundle_admin_service.py](D:/Dev/rdev/MaiBot/src/A_memorix/core/runtime/services/bundle_admin_service.py)：`_validate_install_scope`、`_existing_installation`、`_assert_restore_target_empty`、`_insert_knowledge_docs`、`_remap_full_state`、`_insert_full_state`、`_import_bundle`。
-- [memory.py](D:/Dev/rdev/MaiBot/src/webui/routers/memory.py)：`import_memory_bundle`中的上传处理和真实聊天流校验。
+- [bundle_admin_service.py](../src/A_memorix/core/runtime/services/bundle_admin_service.py)：`_validate_install_scope`、`_existing_installation`、`_assert_restore_target_empty`、`_insert_knowledge_docs`、`_remap_full_state`、`_insert_full_state`、`_import_bundle`。
+- [memory.py](../src/webui/routers/memory.py)：`import_memory_bundle`中的上传处理和真实聊天流校验。
 
 ## 已加工知识不重复生成Episode
 
@@ -104,9 +104,9 @@
 
 对应代码：
 
-- [profile_policy.py](D:/Dev/rdev/MaiBot/src/A_memorix/core/utils/profile_policy.py)：`should_auto_enqueue_episode`。
-- [episode_service.py](D:/Dev/rdev/MaiBot/src/A_memorix/core/utils/episode_service.py)：Episode配置中的 `disabled_source_types`处理。
-- [bundle_admin_service.py](D:/Dev/rdev/MaiBot/src/A_memorix/core/runtime/services/bundle_admin_service.py)：`_insert_knowledge_docs`、`_insert_full_state`。
+- [profile_policy.py](../src/A_memorix/core/utils/profile_policy.py)：`should_auto_enqueue_episode`。
+- [episode_service.py](../src/A_memorix/core/utils/episode_service.py)：Episode配置中的 `disabled_source_types`处理。
+- [bundle_admin_service.py](../src/A_memorix/core/runtime/services/bundle_admin_service.py)：`_insert_knowledge_docs`、`_insert_full_state`。
 
 ## 记忆包向量复用及单池、双池映射
 
@@ -116,7 +116,7 @@
 
 对应代码：
 
-- [bundle_admin_service.py](D:/Dev/rdev/MaiBot/src/A_memorix/core/runtime/services/bundle_admin_service.py)：`_export_vector_member`、`_export_bundle`、`_bundle_vectors_compatible`、`_import_vector_member`、`_ensure_imported_vectors`、`_uninstall`。
+- [bundle_admin_service.py](../src/A_memorix/core/runtime/services/bundle_admin_service.py)：`_export_vector_member`、`_export_bundle`、`_bundle_vectors_compatible`、`_import_vector_member`、`_ensure_imported_vectors`、`_uninstall`。
 
 ## 记忆包安装中断清理与安全卸载
 
@@ -126,8 +126,8 @@
 
 对应代码：
 
-- [metadata_schema.py](D:/Dev/rdev/MaiBot/src/A_memorix/core/storage/metadata_schema.py)：`_ensure_knowledge_package_tables`中的 `knowledge_package_resources`。
-- [bundle_admin_service.py](D:/Dev/rdev/MaiBot/src/A_memorix/core/runtime/services/bundle_admin_service.py)：`_register_installation`、`_set_installation_status`、`_install_bundle_metadata`、`_import_bundle`、`_uninstall`。
+- [metadata_schema.py](../src/A_memorix/core/storage/metadata_schema.py)：`_ensure_knowledge_package_tables`中的 `knowledge_package_resources`。
+- [bundle_admin_service.py](../src/A_memorix/core/runtime/services/bundle_admin_service.py)：`_register_installation`、`_set_installation_status`、`_install_bundle_metadata`、`_import_bundle`、`_uninstall`。
 
 ## 记忆包管理服务与Web接口
 
@@ -135,13 +135,13 @@
 
 对应代码：
 
-- [admin_contracts.py](D:/Dev/rdev/MaiBot/src/A_memorix/core/runtime/admin_contracts.py)：`_dispatch_memory_bundle_admin`、`_BUNDLE_ACTIONS`、`ADMIN_COMPONENT_SPECS`。
-- [sdk_memory_kernel.py](D:/Dev/rdev/MaiBot/src/A_memorix/core/runtime/sdk_memory_kernel.py)：`MemoryBundleAdminService`注册和 `memory_bundle_admin`。
-- [services/__init__.py](D:/Dev/rdev/MaiBot/src/A_memorix/core/runtime/services/__init__.py)：导出 `MemoryBundleAdminService`。
-- [plugin.py](D:/Dev/rdev/MaiBot/src/A_memorix/plugin.py)：`handle_memory_bundle_admin`。
-- [memory_service.py](D:/Dev/rdev/MaiBot/src/services/memory_service.py)：`MemoryService.bundle_admin`。
-- [memory.py](D:/Dev/rdev/MaiBot/src/webui/routers/memory.py)：`export_memory_bundle`、`import_memory_bundle`、`list_memory_bundles`、`download_memory_bundle`、`uninstall_memory_bundle`。
-- [memory-api.ts](D:/Dev/rdev/MaiBot/dashboard/src/lib/memory-api.ts)：`MemoryBundleContentLevel`、`MemoryBundleSelectorType`、记忆包请求与响应类型，以及 `exportMemoryBundle`、`importMemoryBundle`、`getMemoryBundles`、`uninstallMemoryBundle`、`downloadMemoryBundle`。
+- [admin_contracts.py](../src/A_memorix/core/runtime/admin_contracts.py)：`_dispatch_memory_bundle_admin`、`_BUNDLE_ACTIONS`、`ADMIN_COMPONENT_SPECS`。
+- [sdk_memory_kernel.py](../src/A_memorix/core/runtime/sdk_memory_kernel.py)：`MemoryBundleAdminService`注册和 `memory_bundle_admin`。
+- [services/__init__.py](../src/A_memorix/core/runtime/services/__init__.py)：导出 `MemoryBundleAdminService`。
+- [plugin.py](../src/A_memorix/plugin.py)：`handle_memory_bundle_admin`。
+- [memory_service.py](../src/services/memory_service.py)：`MemoryService.bundle_admin`。
+- [memory.py](../src/webui/routers/memory.py)：`export_memory_bundle`、`import_memory_bundle`、`list_memory_bundles`、`download_memory_bundle`、`uninstall_memory_bundle`。
+- [memory-api.ts](../dashboard/src/lib/memory-api.ts)：`MemoryBundleContentLevel`、`MemoryBundleSelectorType`、记忆包请求与响应类型，以及 `exportMemoryBundle`、`importMemoryBundle`、`getMemoryBundles`、`uninstallMemoryBundle`、`downloadMemoryBundle`。
 
 ## WebUI记忆包导入导出管理
 
@@ -151,9 +151,9 @@
 
 对应代码：
 
-- [knowledge-base.tsx](D:/Dev/rdev/MaiBot/dashboard/src/routes/resource/knowledge-base.tsx)：导入导出入口名称与说明。
-- [ImportTab.tsx](D:/Dev/rdev/MaiBot/dashboard/src/routes/resource/knowledge-base/tabs/ImportTab.tsx)：`transferMode`、内部 `Tabs`、任务区域显隐和 `MemoryBundleCard`挂载。
-- [MemoryBundleCard.tsx](D:/Dev/rdev/MaiBot/dashboard/src/routes/resource/knowledge-base/tabs/MemoryBundleCard.tsx)：`selectorPayload`、`refreshExportOptions`、`refreshInstallations`、`handleExport`、`handleInstall`、`handleUninstall`。
+- [knowledge-base.tsx](../dashboard/src/routes/resource/knowledge-base.tsx)：导入导出入口名称与说明。
+- [ImportTab.tsx](../dashboard/src/routes/resource/knowledge-base/tabs/ImportTab.tsx)：`transferMode`、内部 `Tabs`、任务区域显隐和 `MemoryBundleCard`挂载。
+- [MemoryBundleCard.tsx](../dashboard/src/routes/resource/knowledge-base/tabs/MemoryBundleCard.tsx)：`selectorPayload`、`refreshExportOptions`、`refreshInstallations`、`handleExport`、`handleInstall`、`handleUninstall`。
 
 ## 整体数据导出排除运行锁
 
@@ -161,4 +161,4 @@
 
 对应代码：
 
-- [data_transfer.py](D:/Dev/rdev/MaiBot/src/webui/routers/data_transfer.py)：`_EXCLUDED_EXPORT_PATHS`、`_iter_export_files`。
+- [data_transfer.py](../src/webui/routers/data_transfer.py)：`_EXCLUDED_EXPORT_PATHS`、`_iter_export_files`。

@@ -2052,6 +2052,15 @@ class MemoryBundleAdminService(KernelServiceBase):
         return {"success": True, "items": rows, "count": len(rows)}
 
     async def _uninstall(self, installation_id: str) -> Dict[str, Any]:
+        """在图片发布临界区内完成引用释放和物理清理。"""
+        runtime = self._image_runtime()
+        if runtime is not None:
+            async with runtime.publication_guard():
+                return await self._uninstall_locked(installation_id)
+        return await self._uninstall_locked(installation_id)
+
+    async def _uninstall_locked(self, installation_id: str) -> Dict[str, Any]:
+        """调用方已持有图片发布锁，卸载期间禁止重新激活共享资产。"""
         token = str(installation_id or "").strip()
         if not token:
             raise ValueError("installation_id 不能为空")
@@ -2083,7 +2092,8 @@ class MemoryBundleAdminService(KernelServiceBase):
 
         released_image_assets: List[Dict[str, str]] = []
         if self._image_runtime() is not None and image_occurrence_count > 0:
-            released_image_assets = await self._image_runtime().release_installation_atomic(token)
+            with self.metadata_store.transaction(immediate=True) as connection:
+                released_image_assets = self._image_runtime().release_installation(token, conn=connection)
 
         order = {resource_type: index for index, resource_type in enumerate(reversed(FULL_STATE_TABLE_ORDER))}
         resources.sort(key=lambda item: order.get(str(item["resource_type"]), len(order)))

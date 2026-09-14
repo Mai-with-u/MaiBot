@@ -42,7 +42,12 @@ else:
     runtime._publish_asset_only(payload)
 os._exit(27)
 """
-    child = subprocess.run([sys.executable, "-c", script, str(tmp_path), stage], capture_output=True, timeout=60)
+    child = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path), stage],
+        capture_output=True,
+        timeout=60,
+        cwd=Path(__file__).resolve().parents[2],
+    )
     assert child.returncode == 27, child.stderr.decode(errors="replace")
     metadata, runtime = _runtime(tmp_path, _Embedder())
     try:
@@ -57,7 +62,9 @@ os._exit(27)
 async def test_recovery_keeps_referenced_assets_and_reports_missing_file(tmp_path: Path) -> None:
     metadata, runtime = _runtime(tmp_path, _Embedder())
     try:
-        image = await runtime.ingest(image_bytes=_png((80, 1, 2)), source_kind="chat", scope_type="chat", external_ref="keep", chat_id="real")
+        image = await runtime.ingest(
+            image_bytes=_png((80, 1, 2)), source_kind="chat", scope_type="chat", external_ref="keep", chat_id="real"
+        )
         assert runtime.reconcile_assets()["removed_files"] == 0
         asset = metadata.get_image_asset(image["asset_id"])
         runtime.asset_store.delete(asset["storage_key"])
@@ -73,16 +80,22 @@ async def test_image_task_diagnostics_progress_and_timings(tmp_path: Path) -> No
     metadata, runtime = _runtime(tmp_path, _Embedder())
     try:
         await runtime.ensure_embedding_space()
-        image = await runtime.ingest(image_bytes=_png((90, 20, 5)), source_kind="chat", scope_type="chat", external_ref="diag", chat_id="real")
+        image = await runtime.ingest(
+            image_bytes=_png((90, 20, 5)), source_kind="chat", scope_type="chat", external_ref="diag", chat_id="real"
+        )
         jobs = metadata.list_image_jobs(limit=10, offset=0, status="pending")
         assert jobs["total"] == 1
         assert jobs["items"][0]["asset_id"] == image["asset_id"]
         await runtime.process_jobs_once()
         assert runtime.status()["index_progress"] == {"total": 1, "ready": 1, "remaining": 0}
         assert runtime.status()["stats"]["storage_bytes"] > 0
-        result = await runtime.search(content_hash=image["content_hash"], chat_ids=["real"], candidate_limit=8, similarity_threshold=0.72)
+        result = await runtime.search(
+            content_hash=image["content_hash"], chat_ids=["real"], candidate_limit=8, similarity_threshold=0.72
+        )
         assert {"scope", "embedding", "vector_search", "expansion", "total"} <= result["timings_ms"].keys()
-        empty = await runtime.search(content_hash=image["content_hash"], chat_ids=["unrelated"], candidate_limit=8, similarity_threshold=0.72)
+        empty = await runtime.search(
+            content_hash=image["content_hash"], chat_ids=["unrelated"], candidate_limit=8, similarity_threshold=0.72
+        )
         assert empty["hits"] == []
         assert empty["related_memory_count"] == 0
         assert empty["timings_ms"]["embedding"] == 0
@@ -95,13 +108,25 @@ async def test_image_task_diagnostics_progress_and_timings(tmp_path: Path) -> No
 async def test_backfill_does_not_duplicate_or_revive_corrected_observation(tmp_path: Path) -> None:
     metadata, runtime = _runtime(tmp_path, _Embedder())
     try:
-        kwargs = dict(image_bytes=_png((25, 35, 45)), source_kind="chat", scope_type="chat",
-                      external_ref="replay", chat_id="real", user_statement="原始说明")
+        kwargs = dict(
+            image_bytes=_png((25, 35, 45)),
+            source_kind="chat",
+            scope_type="chat",
+            external_ref="replay",
+            chat_id="real",
+            user_statement="原始说明",
+        )
         first = await runtime.ingest(**kwargs)
         occurrence_id = first["occurrence_id"]
         observation = metadata.list_image_observations([occurrence_id])[0]
-        runtime.add_observation(occurrence_id=occurrence_id, text="已修正说明", source_kind="manual",
-                                confirm_status="confirmed", evidence={}, supersedes_id=observation["observation_id"])
+        runtime.add_observation(
+            occurrence_id=occurrence_id,
+            text="已修正说明",
+            source_kind="manual",
+            confirm_status="confirmed",
+            evidence={},
+            supersedes_id=observation["observation_id"],
+        )
         await runtime.ingest(**kwargs)
         current = metadata.list_image_observations([occurrence_id])
         assert [item["text"] for item in current] == ["已修正说明"]
@@ -115,12 +140,20 @@ async def test_restart_rebuilds_missing_vector_projection(tmp_path: Path) -> Non
     metadata, runtime = _runtime(tmp_path, _Embedder())
     try:
         await runtime.ensure_embedding_space()
-        image = await runtime.ingest(image_bytes=_png((9, 80, 12)), source_kind="chat", scope_type="chat",
-                                     external_ref="lost-projection", chat_id="real")
+        image = await runtime.ingest(
+            image_bytes=_png((9, 80, 12)),
+            source_kind="chat",
+            scope_type="chat",
+            external_ref="lost-projection",
+            chat_id="real",
+        )
         await runtime.process_jobs_once()
         restarted = ImageMemoryRuntime(
-            metadata_store=metadata, asset_store=runtime.asset_store, embedder=_Embedder(),
-            vector_root=tmp_path / "missing-projection", config=runtime.config,
+            metadata_store=metadata,
+            asset_store=runtime.asset_store,
+            embedder=_Embedder(),
+            vector_root=tmp_path / "missing-projection",
+            config=runtime.config,
             persist_vector_store=runtime.persist_vector_store,
         )
         await restarted.ensure_embedding_space()
@@ -139,8 +172,13 @@ async def test_background_jobs_train_index_at_image_threshold(tmp_path: Path) ->
     try:
         await runtime.ensure_embedding_space()
         for index in range(40):
-            await runtime.ingest(image_bytes=_png((index, 100, 5)), source_kind="chat", scope_type="chat",
-                                 external_ref=f"training:{index}", chat_id="real")
+            await runtime.ingest(
+                image_bytes=_png((index, 100, 5)),
+                source_kind="chat",
+                scope_type="chat",
+                external_ref=f"training:{index}",
+                chat_id="real",
+            )
         assert (await runtime.process_jobs_once())["processed"] == 40
         assert runtime.vector_store._is_trained
         assert runtime.vector_store._index.ntotal == 40
@@ -200,31 +238,49 @@ async def test_search_excludes_current_occurrence_and_expands_real_memory(tmp_pa
     try:
         await runtime.ensure_embedding_space()
         first = await runtime.ingest(
-            image_bytes=_png((230, 20, 0)), source_kind="chat", external_ref="chat:c:m1:0",
-            scope_type="chat", chat_id="c", message_id="m1", component_path="0", user_statement="红色封面",
+            image_bytes=_png((230, 20, 0)),
+            source_kind="chat",
+            external_ref="chat:c:m1:0",
+            scope_type="chat",
+            chat_id="c",
+            message_id="m1",
+            component_path="0",
+            user_statement="红色封面",
         )
         second = await runtime.ingest(
-            image_bytes=_png((220, 25, 0)), source_kind="chat", external_ref="chat:c:m2:0",
-            scope_type="chat", chat_id="c", message_id="m2", component_path="0",
+            image_bytes=_png((220, 25, 0)),
+            source_kind="chat",
+            external_ref="chat:c:m2:0",
+            scope_type="chat",
+            chat_id="c",
+            message_id="m2",
+            component_path="0",
         )
         await runtime.process_jobs_once()
         paragraph_text = "这本红色封面的书是在旧书店买的。"
         paragraph_hash = metadata.add_paragraph(paragraph_text, source="chat_summary:c")
         assert paragraph_hash == compute_hash(normalize_text(paragraph_text))
         runtime.link(
-            occurrence_id=first["occurrence_id"], target_type="paragraph", target_id=paragraph_hash,
-            link_kind="fact_evidence", evidence={"fact_id": "f1"},
+            occurrence_id=first["occurrence_id"],
+            target_type="paragraph",
+            target_id=paragraph_hash,
+            link_kind="fact_evidence",
+            evidence={"fact_id": "f1"},
         )
 
         result = await runtime.search(
-            content_hash=second["content_hash"], current_occurrence_id=second["occurrence_id"],
-            chat_ids=["c"], candidate_limit=5, similarity_threshold=0.9,
+            content_hash=second["content_hash"],
+            current_occurrence_id=second["occurrence_id"],
+            chat_ids=["c"],
+            candidate_limit=5,
+            similarity_threshold=0.9,
         )
         assert result["hits"][0]["match_kind"] == "visual_similar"
         assert result["hits"][0]["related_memories"][0]["content"] == paragraph_text
         assert all(
             occurrence["occurrence_id"] != second["occurrence_id"]
-            for hit in result["hits"] for occurrence in hit["occurrences"]
+            for hit in result["hits"]
+            for occurrence in hit["occurrences"]
         )
     finally:
         metadata.close()
@@ -237,8 +293,13 @@ async def test_deleted_asset_cannot_be_published_after_embedding_await(tmp_path:
     try:
         await runtime.ensure_embedding_space()
         ingested = await runtime.ingest(
-            image_bytes=_png((20, 80, 210)), source_kind="chat", external_ref="chat:c:m1:0",
-            scope_type="chat", chat_id="c", message_id="m1", component_path="0",
+            image_bytes=_png((20, 80, 210)),
+            source_kind="chat",
+            external_ref="chat:c:m1:0",
+            scope_type="chat",
+            chat_id="c",
+            message_id="m1",
+            component_path="0",
         )
         worker = asyncio.create_task(runtime.process_jobs_once())
         await embedder.started.wait()
@@ -265,13 +326,25 @@ async def test_reingest_rebuilds_deleted_image_vector(tmp_path: Path) -> None:
     try:
         await runtime.ensure_embedding_space()
         payload = _png((42, 80, 100))
-        first = await runtime.ingest(image_bytes=payload, source_kind="chat", external_ref="chat:c:old:0",
-                                     scope_type="chat", chat_id="c", message_id="old")
+        first = await runtime.ingest(
+            image_bytes=payload,
+            source_kind="chat",
+            external_ref="chat:c:old:0",
+            scope_type="chat",
+            chat_id="c",
+            message_id="old",
+        )
         assert (await runtime.process_jobs_once())["processed"] == 1
         await runtime.delete_occurrence(first["occurrence_id"])
         assert runtime.status()["stats"]["ready_vector_count"] == 0
-        second = await runtime.ingest(image_bytes=payload, source_kind="chat", external_ref="chat:c:new:0",
-                                      scope_type="chat", chat_id="c", message_id="new")
+        second = await runtime.ingest(
+            image_bytes=payload,
+            source_kind="chat",
+            external_ref="chat:c:new:0",
+            scope_type="chat",
+            chat_id="c",
+            message_id="new",
+        )
         assert second["embedding_status"] == "pending"
         assert (await runtime.process_jobs_once())["processed"] == 1
         assert runtime.status()["stats"]["ready_vector_count"] == 1
@@ -284,15 +357,24 @@ async def test_invalid_bundle_vector_does_not_remove_existing_vector(tmp_path: P
     metadata, runtime = _runtime(tmp_path, _Embedder())
     try:
         await runtime.ensure_embedding_space()
-        entry = await runtime.ingest(image_bytes=_png((80, 40, 10)), source_kind="chat",
-                                     external_ref="chat:c:existing:0", scope_type="chat", chat_id="c")
+        entry = await runtime.ingest(
+            image_bytes=_png((80, 40, 10)),
+            source_kind="chat",
+            external_ref="chat:c:existing:0",
+            scope_type="chat",
+            chat_id="c",
+        )
         await runtime.process_jobs_once()
         payload = BytesIO()
-        np.savez_compressed(payload, ids=np.asarray(["existing", "unknown"]),
-                            vectors=np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32))
+        np.savez_compressed(
+            payload,
+            ids=np.asarray(["existing", "unknown"]),
+            vectors=np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32),
+        )
         with pytest.raises(ValueError, match="未知资产"):
-            await runtime.import_vectors(payload.getvalue(), asset_map={"existing": entry["asset_id"]},
-                                         fingerprint=runtime.fingerprint)
+            await runtime.import_vectors(
+                payload.getvalue(), asset_map={"existing": entry["asset_id"]}, fingerprint=runtime.fingerprint
+            )
         assert entry["asset_id"] in runtime.vector_store
         assert runtime.status()["stats"]["ready_vector_count"] == 1
     finally:
@@ -384,12 +466,15 @@ async def test_description_compensation_is_durable_and_idempotent(tmp_path: Path
             lease_token="lease-1",
             success=True,
         )
-        assert metadata.claim_image_description_compensations(
-            lease_token="lease-2",
-            lease_seconds=30,
-            max_attempts=3,
-            limit=10,
-        ) == []
+        assert (
+            metadata.claim_image_description_compensations(
+                lease_token="lease-2",
+                lease_seconds=30,
+                max_attempts=3,
+                limit=10,
+            )
+            == []
+        )
     finally:
         metadata.close()
 
@@ -540,13 +625,17 @@ async def test_pure_image_bundle_round_trip_has_no_phantom_occurrence(tmp_path: 
     source_runtime = ImageMemoryRuntime(
         metadata_store=source_kernel.metadata_store,
         asset_store=ImageAssetStore(tmp_path / "bundle-source-assets", max_bytes=1024 * 1024, max_pixels=1000),
-        embedder=_Embedder(), vector_root=tmp_path / "bundle-source-vectors", config={},
+        embedder=_Embedder(),
+        vector_root=tmp_path / "bundle-source-vectors",
+        config={},
         persist_vector_store=lambda store, fingerprint: store.save(embedding_fingerprint=fingerprint),
     )
     target_runtime = ImageMemoryRuntime(
         metadata_store=target_kernel.metadata_store,
         asset_store=ImageAssetStore(tmp_path / "bundle-target-assets", max_bytes=1024 * 1024, max_pixels=1000),
-        embedder=_Embedder(), vector_root=tmp_path / "bundle-target-vectors", config={},
+        embedder=_Embedder(),
+        vector_root=tmp_path / "bundle-target-vectors",
+        config={},
         persist_vector_store=lambda store, fingerprint: store.save(embedding_fingerprint=fingerprint),
     )
     source_kernel.image_memory_runtime = source_runtime
@@ -555,25 +644,41 @@ async def test_pure_image_bundle_round_trip_has_no_phantom_occurrence(tmp_path: 
         await source_runtime.ensure_embedding_space()
         await target_runtime.ensure_embedding_space()
         image = await source_runtime.ingest(
-            image_bytes=_png((180, 30, 10)), source_kind="chat", external_ref="chat:old:m1:0",
-            scope_type="chat", chat_id="old", message_id="m1", component_path="0", user_statement="旧书封面",
+            image_bytes=_png((180, 30, 10)),
+            source_kind="chat",
+            external_ref="chat:old:m1:0",
+            scope_type="chat",
+            chat_id="old",
+            message_id="m1",
+            component_path="0",
+            user_statement="旧书封面",
         )
         await source_runtime.process_jobs_once()
         if with_link:
             paragraph_id = source_kernel.metadata_store.add_paragraph("旧书封面对应周日读书会。", source="manual")
-            source_runtime.link(occurrence_id=image["occurrence_id"], target_type="paragraph", target_id=paragraph_id,
-                                link_kind="fact_evidence", evidence={"fact_id": "f1"})
+            source_runtime.link(
+                occurrence_id=image["occurrence_id"],
+                target_type="paragraph",
+                target_id=paragraph_id,
+                link_kind="fact_evidence",
+                evidence={"fact_id": "f1"},
+            )
         source_bundle_service = MemoryBundleAdminService(source_kernel)
         preview = await source_bundle_service.memory_bundle_admin(
-            action="export", selector={"type": "image", "content_hashes": [image["content_hash"]]},
-            include_image_related=False, preview=True,
+            action="export",
+            selector={"type": "image", "content_hashes": [image["content_hash"]]},
+            include_image_related=False,
+            preview=True,
         )
         assert preview["counts"]["paragraphs"] == 0
         assert preview["counts"]["image_links"] == 0
         assert not list(source_kernel.data_dir.rglob("*.amembundle"))
         exported = await source_bundle_service.memory_bundle_admin(
-            action="export", selector={"type": "image", "content_hashes": [image["content_hash"]]},
-            include_vectors=True, include_image_related=True, package={"id": "images.books", "version": "1.0.0", "name": "书封图片"},
+            action="export",
+            selector={"type": "image", "content_hashes": [image["content_hash"]]},
+            include_vectors=True,
+            include_image_related=True,
+            package={"id": "images.books", "version": "1.0.0", "name": "书封图片"},
         )
         assert exported["manifest"]["format_version"] == 2
         assert exported["counts"]["image_occurrences"] == 1
@@ -583,8 +688,10 @@ async def test_pure_image_bundle_round_trip_has_no_phantom_occurrence(tmp_path: 
         assert any(name.startswith("images/assets/") for name in loaded["member_names"])
 
         installed = await MemoryBundleAdminService(target_kernel).memory_bundle_admin(
-            action="import", path=str(_copy_bundle_for_install(exported["path"], target_kernel.data_dir)),
-            scope_type="chat", chat_id="new",
+            action="import",
+            path=str(_copy_bundle_for_install(exported["path"], target_kernel.data_dir)),
+            scope_type="chat",
+            chat_id="new",
         )
         assert installed["images"]["assets"] == 1
         assert installed["images"]["occurrences"] == 1
@@ -594,13 +701,15 @@ async def test_pure_image_bundle_round_trip_has_no_phantom_occurrence(tmp_path: 
         occurrence = target_kernel.metadata_store.list_visible_image_occurrences(chat_ids=["new"])[0]
         assert occurrence["source_kind"] == "imported_knowledge"
         if with_link:
-            result = await target_runtime.search(content_hash=image["content_hash"], chat_ids=["new"],
-                                                 candidate_limit=8, similarity_threshold=.72)
+            result = await target_runtime.search(
+                content_hash=image["content_hash"], chat_ids=["new"], candidate_limit=8, similarity_threshold=0.72
+            )
             assert result["hits"][0]["related_memories"][0]["content"] == "旧书封面对应周日读书会。"
         reexported = await MemoryBundleAdminService(target_kernel).memory_bundle_admin(
             action="export",
             selector={"type": "image", "content_hashes": [image["content_hash"]]},
-            include_vectors=True, include_image_related=True,
+            include_vectors=True,
+            include_image_related=True,
             package={"id": "images.books.copy", "version": "1.0.0", "name": "书封图片副本"},
         )
         # 混合包的文字元数据会映射目标聊天流和安装来源，重新导出后内容摘要可变化。
@@ -611,7 +720,8 @@ async def test_pure_image_bundle_round_trip_has_no_phantom_occurrence(tmp_path: 
             assert reexported["counts"]["image_links"] == 1
 
         uninstalled = await MemoryBundleAdminService(target_kernel).memory_bundle_admin(
-            action="uninstall", installation_id=installed["installation_id"],
+            action="uninstall",
+            installation_id=installed["installation_id"],
         )
         assert uninstalled["success"] is True
         assert target_kernel.metadata_store.image_memory_stats()["asset_count"] == 0

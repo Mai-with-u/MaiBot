@@ -190,7 +190,8 @@ class MetadataImageMixin:
             # 回填及描述重放不能重复创建认知，也不能重新激活已被人工修正的旧文本。
             existing = database.execute(
                 "SELECT * FROM image_observations WHERE occurrence_id=? AND source_kind=? AND text=? "
-                "ORDER BY created_at LIMIT 1", (occurrence_id, source_kind, content),
+                "ORDER BY created_at LIMIT 1",
+                (occurrence_id, source_kind, content),
             ).fetchone()
             if existing is not None:
                 return dict(existing)
@@ -493,6 +494,27 @@ class MetadataImageMixin:
             (content_hash, description_hash),
         )
         return int(cursor.rowcount or 0)
+
+    def retry_failed_image_jobs(self) -> Dict[str, int]:
+        """显式重置失败任务；保留正在执行的租约和已完成任务。"""
+        counts: Dict[str, int] = {}
+        with self.transaction(immediate=True) as database:
+            embedding = database.execute(
+                "UPDATE image_embedding_jobs SET status='pending', attempt_count=0, "
+                "lease_token='', lease_until=0, last_error='', updated_at=? "
+                "WHERE status='failed' AND asset_id IN (SELECT asset_id FROM image_assets WHERE status='active')",
+                (_now(),),
+            )
+            counts["embedding"] = embedding.rowcount
+            description = database.execute(
+                "UPDATE image_description_compensations SET status='pending', attempt_count=0, "
+                "lease_token='', lease_until=0, last_error='', updated_at=? "
+                "WHERE status='failed' AND occurrence_id IN "
+                "(SELECT occurrence_id FROM image_occurrences WHERE status='active')",
+                (_now(),),
+            )
+            counts["description"] = description.rowcount
+        return counts
 
     def claim_image_description_compensations(
         self,
@@ -955,7 +977,9 @@ class MetadataImageMixin:
                 "SELECT COUNT(*) FROM image_embeddings e JOIN image_assets a ON a.asset_id=e.asset_id "
                 "WHERE e.status='ready' AND a.status='active'"
             ),
-            "pending_job_count": count("SELECT COUNT(*) FROM image_embedding_jobs WHERE status IN ('pending','running')"),
+            "pending_job_count": count(
+                "SELECT COUNT(*) FROM image_embedding_jobs WHERE status IN ('pending','running')"
+            ),
             "failed_job_count": count("SELECT COUNT(*) FROM image_embedding_jobs WHERE status='failed'"),
             "pending_description_count": count(
                 "SELECT COUNT(*) FROM image_description_compensations WHERE status IN ('pending','running')"
@@ -963,16 +987,15 @@ class MetadataImageMixin:
             "failed_description_count": count(
                 "SELECT COUNT(*) FROM image_description_compensations WHERE status='failed'"
             ),
-            "pending_unbound_description_count": count(
-                "SELECT COUNT(*) FROM image_pending_descriptions"
-            ),
+            "pending_unbound_description_count": count("SELECT COUNT(*) FROM image_pending_descriptions"),
         }
 
     def image_index_progress(self, fingerprint: str) -> Dict[str, int]:
         total = self._conn.execute("SELECT COUNT(*) FROM image_assets WHERE status='active'").fetchone()[0]
         ready = self._conn.execute(
             "SELECT COUNT(*) FROM image_embeddings e JOIN image_assets a ON a.asset_id=e.asset_id "
-            "WHERE a.status='active' AND e.status='ready' AND e.fingerprint_hash=?", (fingerprint,),
+            "WHERE a.status='active' AND e.status='ready' AND e.fingerprint_hash=?",
+            (fingerprint,),
         ).fetchone()[0]
         return {"total": int(total), "ready": int(ready), "remaining": int(total - ready)}
 
@@ -1008,13 +1031,17 @@ class MetadataImageMixin:
         active_ids = [str(row["occurrence_id"]) for row in occurrences]
         asset_ids = list(dict.fromkeys(str(row["asset_id"]) for row in occurrences))
         asset_placeholders = ",".join("?" for _ in asset_ids)
-        assets = [
-            dict(row)
-            for row in self._conn.execute(
-                f"SELECT * FROM image_assets WHERE status='active' AND asset_id IN ({asset_placeholders})",
-                tuple(asset_ids),
-            ).fetchall()
-        ] if asset_ids else []
+        assets = (
+            [
+                dict(row)
+                for row in self._conn.execute(
+                    f"SELECT * FROM image_assets WHERE status='active' AND asset_id IN ({asset_placeholders})",
+                    tuple(asset_ids),
+                ).fetchall()
+            ]
+            if asset_ids
+            else []
+        )
         return {
             "assets": assets,
             "occurrences": occurrences,

@@ -50,8 +50,14 @@ class _Image:
 async def test_preview_classifies_each_image_without_writing_and_execution_keeps_valid_siblings(monkeypatch, tmp_path):
     good = _png((20, 30, 40))
     messages = {
-        1: SimpleNamespace(session_id="real", message_id="m1", raw_message=SimpleNamespace(components=[_Image(good), _Image(b"", missing=True), _Image(b"broken")])),
-        2: SimpleNamespace(session_id="unknown", message_id="m2", raw_message=SimpleNamespace(components=[_Image(good)])),
+        1: SimpleNamespace(
+            session_id="real",
+            message_id="m1",
+            raw_message=SimpleNamespace(components=[_Image(good), _Image(b"", missing=True), _Image(b"broken")]),
+        ),
+        2: SimpleNamespace(
+            session_id="unknown", message_id="m2", raw_message=SimpleNamespace(components=[_Image(good)])
+        ),
         3: SimpleNamespace(session_id="real", message_id="", raw_message=SimpleNamespace(components=[_Image(good)])),
     }
     records = [SimpleNamespace(id=key) for key in messages]
@@ -75,7 +81,13 @@ async def test_preview_classifies_each_image_without_writing_and_execution_keeps
     monkeypatch.setattr(routes.memory_automation_service.image_writeback, "_handle_message", write)
     preview = await routes.backfill_image_memories(limit=100, before_id=None, upper_id=None, preview=True)
     assert written == []
-    assert preview["counts"] == {"ready": 1, "missing_file": 1, "invalid_image": 1, "missing_chat": 1, "missing_source": 1}
+    assert preview["counts"] == {
+        "ready": 1,
+        "missing_file": 1,
+        "invalid_image": 1,
+        "missing_chat": 1,
+        "missing_source": 1,
+    }
     assert preview["upper_id"] == 3
     executed = await routes.backfill_image_memories(limit=100, before_id=None, upper_id=3, preview=False)
     assert written == [("m1", 0)]

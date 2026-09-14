@@ -2585,6 +2585,10 @@ export async function getMemoryImageJobs(
   return requestJson(`/image-jobs?limit=25&offset=${offset}&status=${encodeURIComponent(status)}`)
 }
 
+export async function retryMemoryImageJobs(): Promise<{ success: boolean; count: number }> {
+  return requestJson('/image-jobs/retry', { method: 'POST' })
+}
+
 export interface MemoryImageSearchPayload {
   success: boolean
   status: string

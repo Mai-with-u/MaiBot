@@ -17,6 +17,7 @@ import {
   backfillMemoryImages,
   getImageWritebackJobs,
   retryImageWritebackJobs,
+  retryMemoryImageJobs,
   type ImageWritebackJob,
   getMemoryImageContentUrl,
   getMemoryImageJobs,
@@ -225,6 +226,8 @@ export function ImageMaintenancePanel({ status, onRefresh }: ImageMaintenancePan
   const [jobOffset, setJobOffset] = useState(0)
   const [jobTotal, setJobTotal] = useState(0)
   const [jobLoading, setJobLoading] = useState(false)
+  const [retryingImageJobs, setRetryingImageJobs] = useState(false)
+  const [jobRevision, setJobRevision] = useState(0)
   const [reindexing, setReindexing] = useState(false)
   const stop = useRef(false)
   const [writebackJobs, setWritebackJobs] = useState<ImageWritebackJob[]>([])
@@ -297,7 +300,23 @@ export function ImageMaintenancePanel({ status, onRefresh }: ImageMaintenancePan
     return () => {
       active = false
     }
-  }, [jobStatus, jobOffset, status])
+  }, [jobStatus, jobOffset, status, jobRevision])
+
+  const retryImageJobs = async () => {
+    setRetryingImageJobs(true)
+    try {
+      const result = await retryMemoryImageJobs()
+      if (!result.success) throw new Error('图片任务重新排队失败')
+      toast({ title: `已重新排队 ${result.count} 条图片嵌入或描述补偿任务` })
+      setJobOffset(0)
+      setJobRevision((revision) => revision + 1)
+      await onRefresh()
+    } catch (reason) {
+      setError(String(reason))
+    } finally {
+      setRetryingImageJobs(false)
+    }
+  }
 
   const reindex = async () => {
     setReindexing(true)
@@ -543,6 +562,14 @@ export function ImageMaintenancePanel({ status, onRefresh }: ImageMaintenancePan
                   onClick={() => setJobOffset(Math.max(0, jobOffset - 25))}
                 >
                   上一批任务
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={retryingImageJobs}
+                  onClick={() => void retryImageJobs()}
+                >
+                  重试失败的嵌入与描述任务
                 </Button>
                 <Button
                   variant="outline"

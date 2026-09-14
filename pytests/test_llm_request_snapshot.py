@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import base64
 import json
+
 import pytest
 
 from src.config.model_configs import APIProvider, ModelInfo

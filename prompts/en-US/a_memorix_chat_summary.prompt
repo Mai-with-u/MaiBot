@@ -14,7 +14,7 @@ Fact rules:
 - When a fact is corrected, emit only the user's latest explicit correction. Do not repeat the wrong value or describe the correction process.
 - Historical sanitized summaries are context for references and novelty. Unchanged historical facts remain valid but must not be emitted again.
 - If this window has no new long-term fact and no explicit change to a historical fact, summary must be empty and entities, relations, and facts must all be empty arrays.
-- Do not extract names, places, preferences, identities, accounts, or relations from bot or tool content unless the user explicitly confirms them as real.
+- Do not extract names, places, preferences, identities, accounts, or relations from bot, tool, code, sample data, or third-party hearsay content unless the user explicitly confirms them as real.
 - Respect statements such as “do not remember”, “not a fact”, “only a test/example/joke”.
 - Temporary requests stay temporary. Do not generalize them into allergies, long-term dislikes, habits, or identity traits.
 - Co-occurrence in a group chat does not establish acquaintance, friendship, employment, or another relation.

@@ -57,7 +57,7 @@ class ImageMemoryRuntime:
         """恢复文件发布与数据库提交之间中断留下的资产，不删除仍有引用的文件。"""
         removed = 0
         issues: List[Dict[str, str]] = []
-        assets = self.metadata_store._conn.execute("SELECT * FROM image_assets").fetchall()
+        assets = self.metadata_store.query("SELECT * FROM image_assets")
         retained: Dict[str, str] = {}
         for row in assets:
             asset = dict(row)
@@ -75,12 +75,15 @@ class ImageMemoryRuntime:
                 continue
             digest = name.split(".", 1)[0]
             managed = (
-                len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
+                len(digest) == 64
+                and all(char in "0123456789abcdef" for char in digest)
                 and path.suffix in {".png", ".jpg", ".bmp", ".webp"}
             )
             temporary_digest = name[1:].split(".", 1)[0]
             temporary = (
-                name.startswith(".") and name.endswith(".tmp") and len(temporary_digest) == 64
+                name.startswith(".")
+                and name.endswith(".tmp")
+                and len(temporary_digest) == 64
                 and all(char in "0123456789abcdef" for char in temporary_digest)
             )
             if path.is_file() and not path.is_symlink() and (managed or temporary):
@@ -164,11 +167,17 @@ class ImageMemoryRuntime:
                             (time.time(), asset_id, fp_hash),
                         )
                         self.metadata_store.enqueue_image_embedding_job(
-                            asset_id=asset_id, fingerprint_hash=fp_hash, generation=generation, conn=database,
+                            asset_id=asset_id,
+                            fingerprint_hash=fp_hash,
+                            generation=generation,
+                            conn=database,
                         )
-            deleted_ids = [str(row[0]) for row in self.metadata_store._conn.execute(
-                "SELECT asset_id FROM image_assets WHERE status='deleted'"
-            ).fetchall()]
+            deleted_ids = [
+                str(row[0])
+                for row in self.metadata_store._conn.execute(
+                    "SELECT asset_id FROM image_assets WHERE status='deleted'"
+                ).fetchall()
+            ]
             if deleted_ids and store.delete(deleted_ids):
                 self.persist_vector_store(store, fingerprint)
             with self.metadata_store.transaction(immediate=True) as database:
@@ -259,9 +268,8 @@ class ImageMemoryRuntime:
                             )
                     if previous_asset_id and previous_asset_id != asset_id:
                         previous_asset = self.metadata_store.get_image_asset(previous_asset_id)
-                        if (
-                            previous_asset is not None
-                            and self.metadata_store.abort_image_jobs_if_unreferenced(previous_asset_id, conn=database)
+                        if previous_asset is not None and self.metadata_store.abort_image_jobs_if_unreferenced(
+                            previous_asset_id, conn=database
                         ):
                             released.append(
                                 {
@@ -293,7 +301,9 @@ class ImageMemoryRuntime:
             "asset_id": str(asset["asset_id"]),
             "occurrence_id": str(occurrence["occurrence_id"]),
             "content_hash": str(asset["content_hash"]),
-            "embedding_status": str((job or {}).get("status") or ("ready" if self._status == "ready" else self._status)),
+            "embedding_status": str(
+                (job or {}).get("status") or ("ready" if self._status == "ready" else self._status)
+            ),
         }
 
     async def process_jobs_once(self) -> Dict[str, Any]:
@@ -405,10 +415,22 @@ class ImageMemoryRuntime:
         for occurrence in visible:
             occurrences_by_asset.setdefault(str(occurrence["asset_id"]), []).append(occurrence)
         if not occurrences_by_asset:
+            status = await self.ensure_embedding_space()
             elapsed = round((time.perf_counter() - started) * 1000, 2)
             return {
-                "status": self._status, "query_asset_id": "", "hits": [], "related_memory_count": 0,
-                "timings_ms": {"scope": elapsed, "embedding": 0.0, "vector_search": 0.0, "expansion": 0.0, "total": elapsed},
+                "status": status["status"],
+                "query_asset_id": "",
+                "hits": [],
+                "related_memory_count": 0,
+                "success": status["status"] == "ready",
+                "error": status["message"] if status["status"] != "ready" else "",
+                "timings_ms": {
+                    "scope": elapsed,
+                    "embedding": 0.0,
+                    "vector_search": 0.0,
+                    "expansion": 0.0,
+                    "total": elapsed,
+                },
             }
 
         query_asset = self.metadata_store.get_image_asset_by_hash(content_hash) if content_hash else None
@@ -425,7 +447,11 @@ class ImageMemoryRuntime:
         status = await self.ensure_embedding_space()
         if status["status"] == "ready" and self.vector_store is not None:
             if image_bytes:
-                encoded = await self.embedder.embed(bytes(image_bytes), mime_type=self.asset_store.inspect(bytes(image_bytes)).mime_type, session_id=session_id)
+                encoded = await self.embedder.embed(
+                    bytes(image_bytes),
+                    mime_type=self.asset_store.inspect(bytes(image_bytes)).mime_type,
+                    session_id=session_id,
+                )
                 query_vector = np.asarray(encoded["embedding"], dtype=np.float32)
             elif query_asset_id:
                 query_vector = self.vector_store.get_vectors([query_asset_id]).get(query_asset_id)
@@ -458,7 +484,9 @@ class ImageMemoryRuntime:
                         "similarity": similarity,
                     }
         timings.setdefault("embedding", round((time.perf_counter() - stage_started) * 1000, 2))
-        timings["vector_search"] = round((time.perf_counter() - stage_started) * 1000, 2) if query_vector is not None else 0.0
+        timings["vector_search"] = (
+            round((time.perf_counter() - stage_started) * 1000, 2) if query_vector is not None else 0.0
+        )
         stage_started = time.perf_counter()
         ordered = sorted(hits.values(), key=lambda item: float(item["similarity"]), reverse=True)
         expanded: List[Dict[str, Any]] = []
@@ -485,6 +513,8 @@ class ImageMemoryRuntime:
         timings["total"] = round((time.perf_counter() - started) * 1000, 2)
         return {
             "status": status["status"],
+            "success": status["status"] == "ready" or bool(expanded),
+            "error": status["message"] if status["status"] != "ready" else "",
             "query_asset_id": query_asset_id,
             "hits": expanded,
             "timings_ms": timings,
@@ -506,7 +536,10 @@ class ImageMemoryRuntime:
             "asset": asset,
             "occurrences": occurrences,
             "observations": self.metadata_store.list_image_observations(ids),
-            "links": [{**item, "memory": self._target_content(str(item["target_type"]), str(item["target_id"]))} for item in links],
+            "links": [
+                {**item, "memory": self._target_content(str(item["target_type"]), str(item["target_id"]))}
+                for item in links
+            ],
         }
 
     def link(
@@ -558,8 +591,7 @@ class ImageMemoryRuntime:
             for occurrence in self.metadata_store.list_image_occurrences_for_asset(str(asset["asset_id"])):
                 active = self.metadata_store.list_image_observations([str(occurrence["occurrence_id"])])
                 already_recorded = any(
-                    item["source_kind"] == "model_description" and item["text"] == description
-                    for item in active
+                    item["source_kind"] == "model_description" and item["text"] == description for item in active
                 )
                 if not already_recorded:
                     self.metadata_store.add_image_observation(
@@ -661,7 +693,11 @@ class ImageMemoryRuntime:
             self.persist_vector_store(self.vector_store, self.fingerprint)
 
     def list_assets(self, *, limit: int, offset: int) -> Dict[str, Any]:
-        return {"success": True, "items": self.metadata_store.list_image_assets(limit=limit, offset=offset), **self.status()}
+        return {
+            "success": True,
+            "items": self.metadata_store.list_image_assets(limit=limit, offset=offset),
+            **self.status(),
+        }
 
     def export_records(self, occurrence_ids: Iterable[str]) -> Dict[str, Any]:
         records = self.metadata_store.export_image_records(occurrence_ids)
@@ -686,9 +722,7 @@ class ImageMemoryRuntime:
                 for asset in records.get("assets") or []:
                     declared_hash = str(asset.get("content_hash") or "")
                     payload = (
-                        asset_loader(asset)
-                        if asset_loader is not None
-                        else (asset_bytes or {}).get(declared_hash, b"")
+                        asset_loader(asset) if asset_loader is not None else (asset_bytes or {}).get(declared_hash, b"")
                     )
                     if not payload or self.asset_store.content_hash(payload) != declared_hash:
                         raise ValueError(f"记忆包图片资产与声明哈希不一致: {declared_hash}")

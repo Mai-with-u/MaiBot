@@ -40,7 +40,8 @@ class ImageWritebackJournal:
         # 成功前始终保持 pending，进程退出不会丢失正在处理的任务。
         row = self.connection.execute(
             "SELECT * FROM image_writeback_jobs WHERE status='pending' AND retry_at<=? "
-            "ORDER BY retry_at,updated_at LIMIT 1", (time.time(),),
+            "ORDER BY retry_at,updated_at LIMIT 1",
+            (time.time(),),
         ).fetchone()
         return dict(row) if row is not None else None
 
@@ -48,41 +49,48 @@ class ImageWritebackJournal:
         with self.connection:
             self.connection.execute(
                 "UPDATE image_writeback_jobs SET status='done',last_error='',updated_at=? "
-                "WHERE session_id=? AND message_id=?", (time.time(), session_id, message_id),
+                "WHERE session_id=? AND message_id=?",
+                (time.time(), session_id, message_id),
             )
 
     def fail(self, job: Dict[str, Any], error: str, max_attempts: int) -> None:
-        attempts = int(job['attempts']) + 1
+        attempts = int(job["attempts"]) + 1
         now = time.time()
         with self.connection:
             self.connection.execute(
                 "UPDATE image_writeback_jobs SET status=?,attempts=?,retry_at=?,last_error=?,updated_at=? "
                 "WHERE session_id=? AND message_id=?",
                 (
-                    'failed' if attempts >= max_attempts else 'pending', attempts,
-                    now + min(300, 2 ** min(attempts, 9)), error, now,
-                    job['session_id'], job['message_id'],
+                    "failed" if attempts >= max_attempts else "pending",
+                    attempts,
+                    now + min(300, 2 ** min(attempts, 9)),
+                    error,
+                    now,
+                    job["session_id"],
+                    job["message_id"],
                 ),
             )
 
     def list_jobs(self, status: str, limit: int, offset: int) -> Dict[str, Any]:
-        where = 'WHERE status=?' if status else ''
+        where = "WHERE status=?" if status else ""
         parameters = (status,) if status else ()
         total = self.connection.execute(
-            f'SELECT COUNT(*) FROM image_writeback_jobs {where}', parameters,
+            f"SELECT COUNT(*) FROM image_writeback_jobs {where}",
+            parameters,
         ).fetchone()[0]
         rows = self.connection.execute(
-            f'SELECT * FROM image_writeback_jobs {where} ORDER BY updated_at DESC LIMIT ? OFFSET ?',
+            f"SELECT * FROM image_writeback_jobs {where} ORDER BY updated_at DESC LIMIT ? OFFSET ?",
             (*parameters, limit, offset),
         ).fetchall()
         items: List[Dict[str, Any]] = [dict(row) for row in rows]
-        return {'success': True, 'items': items, 'total': total}
+        return {"success": True, "items": items, "total": total}
 
     def retry_failed(self) -> int:
         with self.connection:
             cursor = self.connection.execute(
                 "UPDATE image_writeback_jobs SET status='pending',attempts=0,retry_at=0,updated_at=? "
-                "WHERE status='failed'", (time.time(),),
+                "WHERE status='failed'",
+                (time.time(),),
             )
         return cursor.rowcount
 
