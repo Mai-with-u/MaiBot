@@ -121,6 +121,19 @@ describe('loadBotBasicConfig', () => {
       alias_names: [],
     })
   })
+
+  it('QQ 账号为数字时转为字符串，读取失败时向上抛出', async () => {
+    getMock.mockResolvedValue({
+      config: { bot: { qq_account: 10001, nickname: '麦麦' } },
+    })
+    await expect(loadBotBasicConfig()).resolves.toMatchObject({
+      platform: 'qq',
+      qq_account: '10001',
+    })
+
+    getMock.mockRejectedValue(new ApiError('读取 Bot 配置失败', { status: 500 }))
+    await expect(loadBotBasicConfig()).rejects.toMatchObject({ status: 500 })
+  })
 })
 
 describe('loadPersonalityConfig', () => {
@@ -156,6 +169,11 @@ describe('loadPersonalityConfig', () => {
       multiple_reply_style: [],
       multiple_probability: 0.2,
     })
+  })
+
+  it('读取人格配置失败时向上抛出', async () => {
+    getMock.mockRejectedValue(new ApiError('读取人格配置失败', { status: 503 }))
+    await expect(loadPersonalityConfig()).rejects.toMatchObject({ status: 503 })
   })
 })
 
@@ -253,6 +271,33 @@ describe('loadModelSetupConfig', () => {
       replyer_visual: false,
       replyer_thinking: false,
     })
+  })
+
+  it('thinking 非对象时回退解析 enable_thinking 字符串，读取失败则抛出', async () => {
+    getMock.mockResolvedValue({
+      config: {
+        models: [
+          {
+            model_identifier: 'x',
+            name: 'planner-model',
+            extra_params: { thinking: ['not-an-object'], enable_thinking: 'TRUE' },
+          },
+        ],
+        model_task_config: {
+          planner: { model_list: ['planner-model'] },
+          replyer: { model_list: [] },
+        },
+      },
+    })
+
+    await expect(loadModelSetupConfig()).resolves.toMatchObject({
+      planner_thinking: true,
+      replyer_model_name: '',
+      replyer_thinking: false,
+    })
+
+    getMock.mockRejectedValue(new ApiError('读取模型配置失败', { status: 500 }))
+    await expect(loadModelSetupConfig()).rejects.toMatchObject({ status: 500 })
   })
 })
 
@@ -481,6 +526,13 @@ describe('saveModelSetupConfig', () => {
       vlm: { model_list: ['vlm-model'] },
     })
   })
+
+  it('读取模型配置失败时不提交保存', async () => {
+    getMock.mockRejectedValue(new ApiError('读取模型配置失败', { status: 500 }))
+
+    await expect(saveModelSetupConfig(setupConfig, 'DeepSeek')).rejects.toBeInstanceOf(ApiError)
+    expect(postMock).not.toHaveBeenCalled()
+  })
 })
 
 describe('completeSetup', () => {
@@ -492,6 +544,11 @@ describe('completeSetup', () => {
     expect(postMock).toHaveBeenCalledWith('/api/webui/setup/complete', {
       errorMessage: '标记设置完成失败',
     })
+  })
+
+  it('标记完成失败时向上抛出', async () => {
+    postMock.mockRejectedValue(new ApiError('标记设置完成失败', { status: 500 }))
+    await expect(completeSetup()).rejects.toMatchObject({ status: 500 })
   })
 })
 

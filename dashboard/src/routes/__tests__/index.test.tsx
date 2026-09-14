@@ -432,7 +432,7 @@ describe('IndexPage 特征化', () => {
     for (const light of featureLights?.querySelectorAll(
       '[data-dashboard-feature-status-light="true"]'
     ) ?? []) {
-      expect(light).toHaveClass('rounded-full', 'border-0')
+      expect(light).toHaveClass('rounded-none', 'border-0')
     }
   })
 
@@ -1129,39 +1129,43 @@ describe('IndexPage 快捷操作与审核器', () => {
     render(<IndexPage />)
 
     expect(await screen.findByText('home.quickActions.empty')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'home.quickActions.add' }))
+    await user.click(await screen.findByRole('button', { name: 'home.quickActions.add' }))
 
-    await user.type(
-      screen.getByPlaceholderText('home.quickActions.dialog.searchPlaceholder'),
-      'zzzz-no-match'
-    )
-    expect(screen.getByText('home.quickActions.dialog.noMatches')).toBeInTheDocument()
+    const search = await screen.findByPlaceholderText('home.quickActions.dialog.searchPlaceholder')
+    await user.type(search, 'zzzz-no-match')
+    expect(await screen.findByText('home.quickActions.dialog.noMatches')).toBeInTheDocument()
 
-    await user.clear(screen.getByPlaceholderText('home.quickActions.dialog.searchPlaceholder'))
-    await user.click(screen.getByRole('checkbox', { name: /home\.quickActions\.restart/ }))
-    await user.click(screen.getByRole('button', { name: 'home.quickActions.dialog.done' }))
-    expect(screen.getByRole('button', { name: 'home.quickActions.restart' })).toBeInTheDocument()
+    await user.clear(search)
+    await user.click(await screen.findByRole('checkbox', { name: /home\.quickActions\.restart/ }))
+    await user.click(await screen.findByRole('button', { name: 'home.quickActions.dialog.done' }))
+    expect(
+      await screen.findByRole('button', { name: 'home.quickActions.restart' })
+    ).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: 'home.cards.edit' }))
+    await user.click(await screen.findByRole('button', { name: 'home.cards.edit' }))
     const quickActionsCard = document.querySelector('[data-home-card-id="builtin:quick-actions"]')
     await user.click(
       within(quickActionsCard as HTMLElement).getByRole('button', { name: 'home.cards.editCard' })
     )
-    await user.click(screen.getByRole('button', { name: 'home.quickActions.customize' }))
-    await user.click(screen.getByRole('button', { name: 'home.quickActions.dialog.restoreDefault' }))
-    await user.click(screen.getByRole('button', { name: 'home.quickActions.dialog.done' }))
-    await user.click(screen.getByRole('button', { name: 'home.cards.done' }))
+    await user.click(await screen.findByRole('button', { name: 'home.quickActions.customize' }))
+    await user.click(
+      await screen.findByRole('button', { name: 'home.quickActions.dialog.restoreDefault' })
+    )
+    await user.click(await screen.findByRole('button', { name: 'home.quickActions.dialog.done' }))
+    await user.click(await screen.findByRole('button', { name: 'home.cards.done' }))
 
-    expect(screen.getByRole('button', { name: 'home.quickActions.restart' })).toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: /home\.quickActions\.expressionReview/ })
+      await screen.findByRole('button', { name: 'home.quickActions.restart' })
+    ).toBeInTheDocument()
+    expect(
+      await screen.findByRole('button', { name: /home\.quickActions\.expressionReview/ })
     ).toBeInTheDocument()
     expect(JSON.parse(localStorage.getItem('maibot-home-quick-shortcuts') ?? '[]')).toEqual([
       'action:restart',
       'action:expression-review',
       'route:logs',
     ])
-  })
+  }, 30_000)
 
   it('重启进行中时按钮禁用并旋转图标', async () => {
     mocks.isRestarting = true

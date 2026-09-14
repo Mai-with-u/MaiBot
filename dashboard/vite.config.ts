@@ -12,6 +12,10 @@ export default defineConfig({
   server: {
     host: '127.0.0.1',
     port: 7999,
+    watch: {
+      // 依赖目录的本地备份不应进入 Vite 文件监听，否则会占用大量句柄并导致服务无响应。
+      ignored: ['**/node_modules.mixed-backup-*/**'],
+    },
     allowedHosts: ['sengokucolad.tail1e46b9.ts.net'],
     proxy: {
       '/api': {
@@ -32,6 +36,8 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, './src'),
     },
+    // CodeMirror 扩展依赖同一份 state/view 单例；混用包管理器时重复实例会导致扩展解析失败。
+    dedupe: ['@codemirror/state', '@codemirror/view'],
   },
   optimizeDeps: {
     include: ['react', 'react-dom'],

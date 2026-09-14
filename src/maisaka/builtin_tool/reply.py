@@ -1,6 +1,8 @@
 ﻿"""reply 内置工具。"""
 
 from typing import Any, Optional
+
+import json
 import traceback
 
 from src.chat.replyer.replyer_manager import replyer_manager
@@ -24,6 +26,33 @@ _DUPLICATE_TARGET_REPLY_REMINDER_TEMPLATE = (
     "你刚刚已经回复过这条消息，你刚刚的发言是：“{previous_reply}”\n"
     "你现在想再次回复这条消息，进行补充，注意请不要和之前你的发言重复。"
 )
+
+
+def _normalize_reply_arguments(raw_arguments: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """兼容模型把 reply 参数重复包裹在 arguments 字段中的情况。"""
+
+    if set(raw_arguments) != {"arguments"}:
+        return raw_arguments, ""
+
+    wrapped_arguments = raw_arguments["arguments"]
+    if not isinstance(wrapped_arguments, str):
+        return raw_arguments, (
+            "reply 工具参数结构错误：顶层 `arguments` 应为包含 reply 参数的 JSON 字符串，"
+            f"实际类型为 {type(wrapped_arguments).__name__}。"
+        )
+
+    try:
+        parsed_arguments = json.loads(wrapped_arguments)
+    except json.JSONDecodeError as exc:
+        return raw_arguments, f"reply 工具参数结构错误：顶层 `arguments` 不是有效的 JSON 对象：{exc.msg}。"
+
+    if not isinstance(parsed_arguments, dict):
+        return raw_arguments, (
+            "reply 工具参数结构错误：顶层 `arguments` 必须解析为 JSON 对象，"
+            f"实际解析结果为 {type(parsed_arguments).__name__}。"
+        )
+
+    return parsed_arguments, ""
 
 
 def _use_expression_intent() -> bool:
@@ -299,7 +328,15 @@ async def handle_tool(
 ) -> ToolExecutionResult:
     """执行 reply 内置工具。"""
 
-    invocation_arguments = dict(invocation.arguments or {})
+    raw_invocation_arguments = dict(invocation.arguments or {})
+    invocation_arguments, argument_structure_error = _normalize_reply_arguments(raw_invocation_arguments)
+    if argument_structure_error:
+        return tool_ctx.build_failure_result(invocation.tool_name, argument_structure_error)
+    if invocation_arguments != raw_invocation_arguments:
+        logger.warning(
+            f"{tool_ctx.runtime.log_prefix} 检测到 reply 工具参数被重复包裹，已自动解包: "
+            f"调用编号={invocation.call_id}"
+        )
     latest_thought = context.reasoning if context is not None else invocation.reasoning
     target_message_id = str(invocation_arguments.get("msg_id") or "").strip()
     set_quote = bool(invocation_arguments.get("set_quote", True))

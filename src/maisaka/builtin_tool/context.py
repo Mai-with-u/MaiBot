@@ -425,7 +425,11 @@ class BuiltinToolRuntimeContext:
         if not at_components and not image_components and not emoji_components:
             return items
 
-        items[0].sequence.components = at_components + items[0].sequence.components
+        at_prefix_components = []
+        for at_component in at_components:
+            at_prefix_components.extend([at_component, TextComponent(" ")])
+
+        items[0].sequence.components = at_prefix_components + items[0].sequence.components
         items[-1].sequence.components.extend(image_components)
         items[-1].sequence.components.extend(emoji_components)
         return items

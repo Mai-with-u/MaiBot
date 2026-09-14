@@ -346,4 +346,90 @@ describe('PlannerMonitor 详情弹窗', () => {
     await waitFor(() => expect(errorSpy).toHaveBeenCalledWith('加载计划详情失败:', loadError))
     expect(await screen.findByText('无数据')).toBeInTheDocument()
   })
+
+  it('详情动作为空、推理为空且耗时缺失时展示占位', async () => {
+    vi.mocked(plannerApi.getLogDetail).mockResolvedValue({
+      type: 'normal_planner',
+      chat_id: 'chat-1',
+      timestamp: 1700000000,
+      prompt: '',
+      reasoning: '',
+      raw_output: '',
+      actions: [],
+      timing: {
+        prompt_build_ms: undefined as unknown as number,
+        llm_duration_ms: undefined as unknown as number,
+        total_plan_ms: undefined as unknown as number,
+        loop_start_time: 0,
+      },
+      extra: null,
+    })
+    const user = userEvent.setup()
+    await enterChatLogs(user)
+    await user.click(screen.getByText('预览：用户在提问'))
+
+    expect(await screen.findByText('计划执行详情')).toBeInTheDocument()
+    expect(screen.getAllByText('0 个动作').length).toBeGreaterThan(0)
+    expect(screen.getByText('执行动作 (0)')).toBeInTheDocument()
+    expect(screen.getAllByText('无推理内容').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('0ms')).toHaveLength(3)
+    expect(screen.queryByText('原始输出')).not.toBeInTheDocument()
+    expect(screen.queryByText('完整提示词')).not.toBeInTheDocument()
+  })
 })
+
+describe('PlannerMonitor 错误态与加载空态', () => {
+  it('总览请求失败时按空列表展示', async () => {
+    vi.mocked(plannerApi.getPlannerOverview).mockRejectedValue(new Error('后端挂了'))
+    render(<PlannerMonitor autoRefresh={false} refreshKey={0} />, { wrapper: makeWrapper() })
+
+    expect(await screen.findByText('暂无聊天记录')).toBeInTheDocument()
+    expect(screen.getAllByText('0')).toHaveLength(2)
+  })
+
+  it('总览加载中展示骨架而不展示空态文案', async () => {
+    vi.mocked(plannerApi.getPlannerOverview).mockImplementation(() => new Promise(() => {}))
+    const { container } = render(<PlannerMonitor autoRefresh={false} refreshKey={0} />, {
+      wrapper: makeWrapper(),
+    })
+    await act(async () => {})
+
+    expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0)
+    expect(screen.queryByText('暂无聊天记录')).not.toBeInTheDocument()
+  })
+
+  it('聊天日志请求失败时按空记录展示', async () => {
+    vi.mocked(plannerApi.getChatLogs).mockRejectedValue(new Error('日志不可用'))
+    const user = userEvent.setup()
+    await renderOverview()
+    await user.click(screen.getByRole('button', { name: /测试群/ }))
+
+    expect(await screen.findByText('暂无计划记录')).toBeInTheDocument()
+    expect(screen.getByText(/共 0 条计划记录/)).toBeInTheDocument()
+  })
+
+  it('搜索后可清除关键词，非法页码跳转被忽略', async () => {
+    const user = userEvent.setup()
+    await enterChatLogs(user)
+
+    const searchInput = screen.getByPlaceholderText('搜索提示词内容...')
+    await user.type(searchInput, '提问{Enter}')
+    await waitFor(() =>
+      expect(plannerApi.getChatLogs).toHaveBeenCalledWith('chat-1', 1, 20, '提问')
+    )
+
+    await user.click(screen.getByRole('button', { name: '清除' }))
+    await waitFor(() => expect(screen.queryByText(/搜索关键词/)).not.toBeInTheDocument())
+    expect(plannerApi.getChatLogs).toHaveBeenLastCalledWith('chat-1', 1, 20, undefined)
+
+    const jumpInput = screen.getByPlaceholderText('跳转')
+    await user.type(jumpInput, '0')
+    await user.click(screen.getByRole('button', { name: '跳转' }))
+    expect(plannerApi.getChatLogs).not.toHaveBeenCalledWith('chat-1', 0, 20, undefined)
+
+    await user.clear(jumpInput)
+    await user.keyboard('{Enter}')
+    expect(plannerApi.getChatLogs).not.toHaveBeenCalledWith('chat-1', Number.NaN, 20, undefined)
+  })
+})
+

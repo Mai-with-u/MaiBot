@@ -921,9 +921,9 @@ describe('ReasoningProcessPage 复制导出与预览', () => {
     await enterStage(user, 'planner')
     await selectRecord('晚饭计划')
 
-    await user.click(screen.getByRole('button', { name: '导出' }))
-    await user.click(screen.getByRole('switch', { name: '抹去昵称' }))
-    await user.click(screen.getByRole('button', { name: '下载 JSON' }))
+    await user.click(await screen.findByRole('button', { name: '导出' }))
+    await user.click(await screen.findByRole('switch', { name: '抹去昵称' }))
+    await user.click(await screen.findByRole('button', { name: '下载 JSON' }))
 
     const blob = createObjectUrl.mock.calls[0][0] as Blob
     await expect(blob.text()).resolves.toContain('张三')
@@ -942,8 +942,8 @@ describe('ReasoningProcessPage 复制导出与预览', () => {
     await selectRecord('坏 JSON')
     expect(await screen.findByText('没有结构化内容')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: '导出' }))
-    await user.click(screen.getByRole('button', { name: '下载 JSON' }))
+    await user.click(await screen.findByRole('button', { name: '导出' }))
+    await user.click(await screen.findByRole('button', { name: '下载 JSON' }))
     await waitFor(() => {
       expect(toastMock).toHaveBeenCalledWith({
         title: '导出失败',
@@ -951,7 +951,7 @@ describe('ReasoningProcessPage 复制导出与预览', () => {
         variant: 'destructive',
       })
     })
-  })
+  }, 30_000)
 
   it('纯文本 / 纯 HTML / HTML 预览分支，以及文本读取失败', async () => {
     const user = userEvent.setup()

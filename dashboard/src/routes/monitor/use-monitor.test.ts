@@ -83,6 +83,15 @@ describe('useChatNameMap', () => {
     // 新映射整体替换旧映射
     expect(result.current.chatNameMap.has('chat-1')).toBe(false)
   })
+
+  it('聊天列表为空时映射为空且名称回退为 chat_id', async () => {
+    mockGetChatList.mockResolvedValue([])
+    const { result } = renderHook(() => useChatNameMap())
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.chatNameMap.size).toBe(0)
+    expect(result.current.getChatName('chat-empty')).toBe('chat-empty')
+  })
 })
 
 describe('formatTimestamp', () => {
@@ -109,6 +118,8 @@ describe('formatRelativeTime', () => {
     expect(formatRelativeTime(now - 7500)).toBe('2 小时前')
     expect(formatRelativeTime(now - 86400)).toBe('1 天前')
     expect(formatRelativeTime(now - 200000)).toBe('2 天前')
+    // 未来时间差为负，仍按刚刚展示
+    expect(formatRelativeTime(now + 30)).toBe('刚刚')
   })
 })
 

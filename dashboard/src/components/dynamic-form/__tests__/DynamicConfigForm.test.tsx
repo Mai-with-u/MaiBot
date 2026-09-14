@@ -1119,4 +1119,392 @@ describe('DynamicConfigForm', () => {
       expect(document.querySelector('.md\\:grid-cols-2')).not.toBeInTheDocument()
     })
   })
+
+  describe('visibility recursion and remaining hook callbacks', () => {
+    it('propagates onChange from inline wrapper hooks and their default children', async () => {
+      const WrapperHook: React.FC<FieldHookComponentProps> = ({ onChange, children }) => (
+        <div data-testid="inline-wrapper">
+          <button type="button" onClick={() => onChange?.('from-wrapper')}>
+            包装写入
+          </button>
+          {children}
+        </div>
+      )
+      const hooks = new FieldHookRegistry()
+      hooks.register('wrapped_field', WrapperHook, 'wrapper')
+      const onChange = vi.fn()
+      const user = userEvent.setup()
+
+      render(
+        <DynamicConfigForm
+          schema={{
+            className: 'TestConfig',
+            classDoc: 'Test',
+            fields: [makeField('wrapped_field', { label: '包装字段' })],
+          }}
+          values={{ wrapped_field: '' }}
+          onChange={onChange}
+          hooks={hooks}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: '包装写入' }))
+      expect(onChange).toHaveBeenCalledWith('wrapped_field', 'from-wrapper')
+
+      await user.type(screen.getByRole('textbox'), 'A')
+      expect(onChange).toHaveBeenCalledWith('wrapped_field', 'A')
+    })
+
+    it('recursively inspects nested visibility including hidden, advanced and replace children', () => {
+      const HiddenHook: React.FC<FieldHookComponentProps> = () => {
+        throw new Error('hidden nested hook should not render')
+      }
+      const ReplaceHook: React.FC<FieldHookComponentProps> = ({ fieldPath }) => (
+        <div>deep-replace:{fieldPath}</div>
+      )
+      const hooks = new FieldHookRegistry()
+      hooks.register('shell.hidden_leaf', HiddenHook, 'hidden')
+      hooks.register('shell.hidden_box', HiddenHook, 'hidden')
+      hooks.register('probe.replaced_box', ReplaceHook, 'replace')
+
+      const schema: ConfigSchema = {
+        className: 'RootConfig',
+        classDoc: 'Root',
+        fields: [],
+        nested: {
+          shell: {
+            className: 'ShellConfig',
+            classDoc: '外壳',
+            fields: [
+              makeField('hidden_leaf', { label: '隐藏叶子' }),
+              makeField('visible_box', { type: 'object', label: '可见盒' }),
+            ],
+            nested: {
+              hidden_box: {
+                className: 'HiddenBox',
+                classDoc: '隐藏盒',
+                fields: [makeField('x', { label: '隐藏盒字段' })],
+              },
+              visible_box: {
+                className: 'VisibleBox',
+                classDoc: '可见深层',
+                fields: [makeField('leaf', { label: '深层叶子' })],
+              },
+            },
+          },
+          only_adv: {
+            className: 'OnlyAdvParent',
+            classDoc: '仅高级子树',
+            fields: [
+              makeField('adv_only', { type: 'object', label: '仅高级', advanced: true }),
+            ],
+            nested: {
+              adv_only: {
+                className: 'AdvOnly',
+                classDoc: '仅高级分组',
+                fields: [makeField('y', { label: '仅高级字段' })],
+              },
+            },
+          },
+          probe: {
+            className: 'ProbeConfig',
+            classDoc: '探针分组',
+            fields: [],
+            nested: {
+              replaced_box: {
+                className: 'ReplacedBox',
+                classDoc: '替换盒',
+                fields: [],
+              },
+            },
+          },
+        },
+      }
+
+      const view = render(
+        <DynamicConfigForm
+          schema={schema}
+          values={{
+            shell: { visible_box: { leaf: '' } },
+            only_adv: { adv_only: { y: '' } },
+          }}
+          onChange={vi.fn()}
+          hooks={hooks}
+        />,
+      )
+
+      expect(screen.getByText('外壳')).toBeInTheDocument()
+      expect(screen.getByText('可见深层')).toBeInTheDocument()
+      expect(screen.getByText('深层叶子')).toBeInTheDocument()
+      expect(screen.getByText('探针分组')).toBeInTheDocument()
+      expect(screen.getByText('deep-replace:probe.replaced_box')).toBeInTheDocument()
+      expect(screen.queryByText('隐藏叶子')).not.toBeInTheDocument()
+      expect(screen.queryByText('隐藏盒')).not.toBeInTheDocument()
+      expect(screen.queryByText('仅高级子树')).not.toBeInTheDocument()
+      expect(screen.queryByText('仅高级字段')).not.toBeInTheDocument()
+
+      view.rerender(
+        <DynamicConfigForm
+          schema={schema}
+          values={{
+            shell: { visible_box: { leaf: '' } },
+            only_adv: { adv_only: { y: '' } },
+          }}
+          onChange={vi.fn()}
+          hooks={hooks}
+          advancedVisible
+        />,
+      )
+      expect(screen.getByText('仅高级子树')).toBeInTheDocument()
+      expect(screen.getByText('仅高级分组')).toBeInTheDocument()
+      expect(screen.getByText('仅高级字段')).toBeInTheDocument()
+    })
+
+    it('omits wrapper hooks on nested schemas that have no visible content', () => {
+      const WrapperHook: React.FC<FieldHookComponentProps> = ({ children }) => (
+        <div data-testid="empty-wrapper">{children}</div>
+      )
+      const hooks = new FieldHookRegistry()
+      hooks.register('empty_wrap', WrapperHook, 'wrapper')
+
+      render(
+        <DynamicConfigForm
+          schema={{
+            className: 'RootConfig',
+            classDoc: 'Root',
+            fields: [],
+            nested: {
+              empty_wrap: {
+                className: 'EmptyWrap',
+                classDoc: '空包装分组',
+                fields: [],
+              },
+              kept: {
+                className: 'Kept',
+                classDoc: '保留分组',
+                fields: [makeField('inner', { label: '保留字段' })],
+              },
+            },
+          }}
+          values={{}}
+          onChange={vi.fn()}
+          hooks={hooks}
+        />,
+      )
+
+      expect(screen.getByText('保留分组')).toBeInTheDocument()
+      expect(screen.queryByText('空包装分组')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('empty-wrapper')).not.toBeInTheDocument()
+    })
+
+    it('hides advanced nested wrapper sections until advancedVisible is true', () => {
+      const WrapperHook: React.FC<FieldHookComponentProps> = ({ children }) => (
+        <div data-testid="adv-wrapper">{children}</div>
+      )
+      const hooks = new FieldHookRegistry()
+      hooks.register('advanced_wrap', WrapperHook, 'wrapper')
+      const schema: ConfigSchema = {
+        className: 'RootConfig',
+        classDoc: 'Root',
+        fields: [
+          makeField('advanced_wrap', {
+            type: 'object',
+            label: '高级包装',
+            advanced: true,
+          }),
+        ],
+        nested: {
+          advanced_wrap: {
+            className: 'AdvancedWrap',
+            classDoc: '高级包装',
+            fields: [makeField('inner', { label: '高级包装字段' })],
+          },
+        },
+      }
+
+      const view = render(
+        <DynamicConfigForm schema={schema} values={{}} onChange={vi.fn()} hooks={hooks} />,
+      )
+      expect(screen.queryByTestId('adv-wrapper')).not.toBeInTheDocument()
+      expect(screen.queryByText('高级包装字段')).not.toBeInTheDocument()
+
+      view.rerender(
+        <DynamicConfigForm
+          schema={schema}
+          values={{}}
+          onChange={vi.fn()}
+          hooks={hooks}
+          advancedVisible
+        />,
+      )
+      expect(screen.getByTestId('adv-wrapper')).toBeInTheDocument()
+      expect(screen.getByText('高级包装字段')).toBeInTheDocument()
+    })
+
+    it('propagates onChange from nested replace and wrapper hooks', async () => {
+      const ReplaceHook: React.FC<FieldHookComponentProps> = ({ onChange }) => (
+        <button type="button" onClick={() => onChange?.('from-nested-replace')}>
+          嵌套替换写入
+        </button>
+      )
+      const WrapperHook: React.FC<FieldHookComponentProps> = ({ onChange, children }) => (
+        <div>
+          <button type="button" onClick={() => onChange?.('from-nested-wrapper')}>
+            嵌套包装写入
+          </button>
+          {children}
+        </div>
+      )
+      const hooks = new FieldHookRegistry()
+      hooks.register('replaced', ReplaceHook, 'replace')
+      hooks.register('wrapped', WrapperHook, 'wrapper')
+      const onChange = vi.fn()
+      const user = userEvent.setup()
+
+      render(
+        <DynamicConfigForm
+          schema={{
+            className: 'RootConfig',
+            classDoc: 'Root',
+            fields: [],
+            nested: {
+              replaced: {
+                className: 'ReplacedConfig',
+                classDoc: '替换分组',
+                fields: [],
+              },
+              wrapped: {
+                className: 'WrappedConfig',
+                classDoc: '包装分组',
+                fields: [makeField('inner', { label: '包装内字段' })],
+              },
+            },
+          }}
+          values={{ wrapped: { inner: '' } }}
+          onChange={onChange}
+          hooks={hooks}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: '嵌套替换写入' }))
+      expect(onChange).toHaveBeenCalledWith('replaced', 'from-nested-replace')
+
+      await user.click(screen.getByRole('button', { name: '嵌套包装写入' }))
+      expect(onChange).toHaveBeenCalledWith('wrapped', 'from-nested-wrapper')
+    })
+
+    it('prefixes onChange from NestedDynamicConfigSection when values are missing', async () => {
+      const onChange = vi.fn()
+      const user = userEvent.setup()
+
+      render(
+        <DynamicConfigForm
+          schema={{
+            className: 'InnerConfig',
+            classDoc: 'Inner',
+            fields: [],
+            nested: {
+              child: {
+                className: 'ChildConfig',
+                classDoc: '直接子分组',
+                fields: [makeField('leaf', { label: '叶子字段' })],
+              },
+            },
+          }}
+          values={{}}
+          onChange={onChange}
+          level={1}
+          basePath="parent"
+        />,
+      )
+
+      await user.type(screen.getByRole('textbox'), 'K')
+      expect(onChange).toHaveBeenCalledWith('child.leaf', 'K')
+    })
+
+    it('returns null when hooks.has is true but hooks.get is empty', () => {
+      class HasWithoutGetRegistry extends FieldHookRegistry {
+        has(fieldPath: string): boolean {
+          return fieldPath === 'ghost' || fieldPath === 'ghost_section'
+        }
+
+        get(_fieldPath: string) {
+          return undefined
+        }
+      }
+
+      render(
+        <DynamicConfigForm
+          schema={{
+            className: 'RootConfig',
+            classDoc: 'Root',
+            fields: [
+              makeField('ghost', { label: '幽灵字段' }),
+              makeField('kept', { label: '保留可见字段' }),
+            ],
+            nested: {
+              ghost_section: {
+                className: 'GhostSection',
+                classDoc: '幽灵分组',
+                fields: [makeField('inner', { label: '幽灵内字段' })],
+              },
+            },
+          }}
+          values={{ ghost: 'x', kept: 'y' }}
+          onChange={vi.fn()}
+          hooks={new HasWithoutGetRegistry()}
+        />,
+      )
+
+      expect(screen.getByText('保留可见字段')).toBeInTheDocument()
+      expect(screen.queryByText('幽灵字段')).not.toBeInTheDocument()
+      expect(screen.queryByText('幽灵分组')).not.toBeInTheDocument()
+    })
+
+    it('does not render an inline field when its hook flips to hidden after the inline check', () => {
+      const HiddenHook: React.FC<FieldHookComponentProps> = () => {
+        throw new Error('flipped hidden hook should not render')
+      }
+      const WrapperHook: React.FC<FieldHookComponentProps> = () => <div>不应残留包装</div>
+
+      class FlipToHiddenRegistry extends FieldHookRegistry {
+        private seen = new Set<string>()
+
+        has(fieldPath: string): boolean {
+          return fieldPath === 'secret_inline'
+        }
+
+        get(fieldPath: string) {
+          if (fieldPath !== 'secret_inline') {
+            return undefined
+          }
+          if (this.seen.has(fieldPath)) {
+            return { type: 'hidden' as const, component: HiddenHook }
+          }
+          this.seen.add(fieldPath)
+          return { type: 'wrapper' as const, component: WrapperHook }
+        }
+      }
+
+      render(
+        <DynamicConfigForm
+          schema={{
+            className: 'TestConfig',
+            classDoc: 'Test',
+            fields: [
+              makeField('secret_inline', { label: '翻转隐藏字段' }),
+              makeField('kept', { label: '旁边字段' }),
+            ],
+          }}
+          values={{ secret_inline: 'x', kept: 'y' }}
+          onChange={vi.fn()}
+          hooks={new FlipToHiddenRegistry()}
+        />,
+      )
+
+      expect(screen.getByText('旁边字段')).toBeInTheDocument()
+      expect(screen.queryByText('翻转隐藏字段')).not.toBeInTheDocument()
+      expect(screen.queryByText('不应残留包装')).not.toBeInTheDocument()
+    })
+  })
 })

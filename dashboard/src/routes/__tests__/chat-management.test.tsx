@@ -446,6 +446,15 @@ describe('ChatManagementPage 聊天流列表', () => {
 })
 
 describe('ChatManagementPage 详情弹窗', () => {
+  it('通过 session_id 查询参数直接打开对应聊天流详情', async () => {
+    window.history.replaceState(null, '', '/chat-management?session_id=sess-2')
+    render(<ChatManagementPage />, { wrapper: makeWrapper() })
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    expect(chatApi.getChatStreamDetail).toHaveBeenCalledWith('sess-2')
+    expect(screen.getByRole('heading', { name: '小明的私聊' })).toBeInTheDocument()
+  })
+
   it('点击行打开详情：渲染基础信息、适配器、频率规则栈与 Prompt', async () => {
     const user = userEvent.setup()
     const dialog = await openDetail(user)

@@ -5,6 +5,7 @@ import {
   Edit2,
   Eye,
   Loader2,
+  Settings,
   UserCircle2,
   UserRound,
   UsersRound,
@@ -38,6 +39,7 @@ interface ChatWorkspaceSidebarProps {
   isUploadingUserAvatar: boolean
   onSwitch: (tabId: string) => void
   onSelectObserved: (sessionId: string) => void
+  onOpenObservedSettings: (sessionId: string) => void
   onClose: (tabId: string, e?: React.MouseEvent | React.KeyboardEvent) => void
   onUpdateUserAvatar: (file: File) => Promise<void>
   onUpdateUserName: (name: string) => void
@@ -145,11 +147,13 @@ function ObservedConversationItem({
   status,
   active,
   onSelect,
+  onOpenSettings,
 }: {
   session: SessionInfo
   status?: StageStatusInfo
   active: boolean
   onSelect: (sessionId: string) => void
+  onOpenSettings: (sessionId: string) => void
 }) {
   const { t } = useTranslation()
   const targetId = session.isGroupChat ? session.groupId : session.userId
@@ -158,57 +162,78 @@ function ObservedConversationItem({
   const Icon = session.isGroupChat ? UsersRound : UserRound
 
   return (
-    <button
-      type="button"
+    <div
       className={cn(
-        'relative flex w-full min-w-0 items-center gap-2.5 overflow-hidden rounded-xl px-2.5 py-2 text-left transition-colors',
+        'group relative flex w-full min-w-0 items-center gap-1 rounded-xl pr-1 transition-colors',
         active
           ? 'bg-primary/12 text-foreground shadow-inner'
           : 'hover:bg-muted/70 text-foreground/90'
       )}
-      onClick={() => onSelect(session.sessionId)}
     >
       {active && (
         <span aria-hidden className="bg-primary absolute top-2 bottom-2 left-0 w-1 rounded-full" />
       )}
-      <div className="relative shrink-0">
-        <Avatar className="ring-border/60 h-9 w-9 ring-1">
-          {avatarUrl && (
-            <AvatarImage
-              src={avatarUrl}
-              alt={t('chat.sidebar.observedAvatarAlt', { name: session.sessionName })}
-              className="object-cover"
-            />
-          )}
-          <AvatarFallback className="bg-secondary text-secondary-foreground">
-            <Icon className="h-4.5 w-4.5" />
-          </AvatarFallback>
-        </Avatar>
-        <span
-          aria-hidden
-          className={cn(
-            'border-card absolute right-0 bottom-0 h-3 w-3 rounded-full border-2',
-            status?.agentState === 'wait'
-              ? 'bg-blue-500'
-              : status
-                ? 'bg-emerald-500'
-                : 'bg-muted-foreground/40'
-          )}
-        />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">{session.sessionName}</span>
-          <span className="bg-secondary text-secondary-foreground flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium tracking-wide">
-            <Eye className="h-2.5 w-2.5" />
-            {t('chat.sidebar.observedBadge')}
-          </span>
+      <button
+        type="button"
+        className="flex w-full min-w-0 flex-1 items-center gap-2.5 overflow-hidden rounded-xl px-2.5 py-2 text-left"
+        onClick={() => onSelect(session.sessionId)}
+      >
+        <div className="relative shrink-0">
+          <Avatar className="ring-border/60 h-9 w-9 ring-1">
+            {avatarUrl && (
+              <AvatarImage
+                src={avatarUrl}
+                alt={t('chat.sidebar.observedAvatarAlt', { name: session.sessionName })}
+                className="object-cover"
+              />
+            )}
+            <AvatarFallback className="bg-secondary text-secondary-foreground">
+              <Icon className="h-4.5 w-4.5" />
+            </AvatarFallback>
+          </Avatar>
+          <span
+            aria-hidden
+            className={cn(
+              'border-card absolute right-0 bottom-0 h-3 w-3 rounded-full border-2',
+              status?.agentState === 'wait'
+                ? 'bg-blue-500'
+                : status
+                  ? 'bg-emerald-500'
+                  : 'bg-muted-foreground/40'
+            )}
+          />
         </div>
-        <p className="text-muted-foreground mt-0.5 truncate text-xs">
-          {status?.stage || t('chat.sidebar.observedPreview')}
-        </p>
-      </div>
-    </button>
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">
+              {session.sessionName}
+            </span>
+            <span className="bg-secondary text-secondary-foreground flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium tracking-wide">
+              <Eye className="h-2.5 w-2.5" />
+              {t('chat.sidebar.observedBadge')}
+            </span>
+          </div>
+          <p className="text-muted-foreground mt-0.5 truncate text-xs">
+            {status?.stage || t('chat.sidebar.observedPreview')}
+          </p>
+        </div>
+      </button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={t('chat.sidebar.openSettings', { name: session.sessionName })}
+            className="text-muted-foreground hover:bg-background hover:text-foreground rounded-md p-1 opacity-60 transition group-hover:opacity-100 focus-visible:opacity-100"
+            onClick={() => onOpenSettings(session.sessionId)}
+          >
+            <Settings className="h-3.5 w-3.5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="right">
+          {t('chat.sidebar.openSettings', { name: session.sessionName })}
+        </TooltipContent>
+      </Tooltip>
+    </div>
   )
 }
 
@@ -225,6 +250,7 @@ export function ChatWorkspaceSidebar({
   isUploadingUserAvatar,
   onSwitch,
   onSelectObserved,
+  onOpenObservedSettings,
   onClose,
   onUpdateUserAvatar,
   onUpdateUserName,
@@ -312,6 +338,7 @@ export function ChatWorkspaceSidebar({
                   status={observedStageStatuses.get(session.sessionId)}
                   active={activeObservedSessionId === session.sessionId}
                   onSelect={onSelectObserved}
+                  onOpenSettings={onOpenObservedSettings}
                 />
               ))
             )}

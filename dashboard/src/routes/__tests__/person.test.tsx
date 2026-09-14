@@ -401,4 +401,364 @@ describe('PersonManagementPage 特征化', () => {
     expect(await within(getDesktopTable()).findByText('人物1')).toBeInTheDocument()
     expect(screen.queryByText('列表加载失败了')).not.toBeInTheDocument()
   })
+
+  it('认识状态筛选：选择「未认识」后再切回「全部」', async () => {
+    const user = userEvent.setup()
+    await renderPage()
+    await within(getDesktopTable()).findByText('人物1')
+
+    await user.click(screen.getByLabelText('认识状态'))
+    await user.click(await screen.findByRole('option', { name: '未认识' }))
+
+    await waitFor(() =>
+      expect(personApi.getPersonList).toHaveBeenCalledWith({
+        page: 1,
+        page_size: 20,
+        search: undefined,
+        is_known: false,
+        platform: undefined,
+      })
+    )
+
+    await user.click(screen.getByLabelText('认识状态'))
+    await user.click(await screen.findByRole('option', { name: '全部' }))
+
+    await waitFor(() =>
+      expect(personApi.getPersonList).toHaveBeenCalledWith({
+        page: 1,
+        page_size: 20,
+        search: undefined,
+        is_known: undefined,
+        platform: undefined,
+      })
+    )
+  })
+
+  it('平台筛选：选择具体平台后再切回全部平台', async () => {
+    const user = userEvent.setup()
+    await renderPage()
+    await within(getDesktopTable()).findByText('人物1')
+
+    await user.click(screen.getByLabelText('平台'))
+    await user.click(await screen.findByRole('option', { name: 'qq (4)' }))
+
+    await waitFor(() =>
+      expect(personApi.getPersonList).toHaveBeenCalledWith({
+        page: 1,
+        page_size: 20,
+        search: undefined,
+        is_known: undefined,
+        platform: 'qq',
+      })
+    )
+
+    await user.click(screen.getByLabelText('平台'))
+    await user.click(await screen.findByRole('option', { name: '全部平台' }))
+
+    await waitFor(() =>
+      expect(personApi.getPersonList).toHaveBeenCalledWith({
+        page: 1,
+        page_size: 20,
+        search: undefined,
+        is_known: undefined,
+        platform: undefined,
+      })
+    )
+  })
+
+  it('每页条数：切换为 10 后以 page_size=10 重新拉取', async () => {
+    const user = userEvent.setup()
+    await renderPage()
+    await within(getDesktopTable()).findByText('人物1')
+
+    await user.click(screen.getByLabelText('每页显示'))
+    await user.click(await screen.findByRole('option', { name: '10' }))
+
+    await waitFor(() =>
+      expect(personApi.getPersonList).toHaveBeenCalledWith({
+        page: 1,
+        page_size: 10,
+        search: undefined,
+        is_known: undefined,
+        platform: undefined,
+      })
+    )
+  })
+
+  it('行选择：桌面单行与移动卡片复选框均可计入选中', async () => {
+    const user = userEvent.setup()
+    await renderPage()
+    await within(getDesktopTable()).findByText('人物1')
+
+    await user.click(screen.getByRole('checkbox', { name: '选择 人物1' }))
+    expect(screen.getByText('已选择 1 个人物')).toBeInTheDocument()
+
+    const mobileCheckboxes = screen
+      .getAllByRole('checkbox')
+      .filter((el) => el.getAttribute('aria-label') == null)
+    // 桌面勾的是人物1，移动卡片第一项也是人物1；点第二项才能累加选中
+    expect(mobileCheckboxes.length).toBeGreaterThanOrEqual(2)
+    await user.click(mobileCheckboxes[1])
+    expect(screen.getByText('已选择 2 个人物')).toBeInTheDocument()
+  })
+
+  it('空名称人物：表格回退展示，删除文案回退到 user_id', async () => {
+    vi.mocked(personApi.getPersonList).mockResolvedValue({
+      data: [
+        makePerson(1, { person_name: null, nickname: null, last_know: 1_700_000_000 }),
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    const user = userEvent.setup()
+    await renderPage()
+
+    const table = getDesktopTable()
+    expect(await within(table).findByText('10001')).toBeInTheDocument()
+    expect(
+      within(table).getByText(new Date(1_700_000_000 * 1000).toLocaleString('zh-CN'))
+    ).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: '选择 10001' })).toBeInTheDocument()
+    expect(screen.getAllByText('未命名').length).toBeGreaterThan(0)
+
+    await user.click(screen.getAllByRole('button', { name: '删除' })[0])
+    const dialog = await screen.findByRole('alertdialog')
+    expect(within(dialog).getByText(/确定要删除人物信息 "10001"/)).toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: '删除' }))
+    await waitFor(() => expect(personApi.deletePerson).toHaveBeenCalledWith('person-1'))
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith({
+        title: '删除成功',
+        description: '已删除人物信息: 10001',
+      })
+    )
+  })
+
+  it('空名称但有昵称：删除文案回退到昵称', async () => {
+    vi.mocked(personApi.getPersonList).mockResolvedValue({
+      data: [makePerson(1, { person_name: null, nickname: '小李' })],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    const user = userEvent.setup()
+    await renderPage()
+    await within(getDesktopTable()).findByText('小李')
+
+    await user.click(screen.getAllByRole('button', { name: '删除' })[0])
+    const dialog = await screen.findByRole('alertdialog')
+    await user.click(within(dialog).getByRole('button', { name: '删除' }))
+
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith({
+        title: '删除成功',
+        description: '已删除人物信息: 小李',
+      })
+    )
+  })
+
+  it('查看详情：展示时间戳、群昵称、未认识与空名称，关闭对话框', async () => {
+    vi.mocked(personApi.getPersonDetail).mockResolvedValue(
+      makePerson(1, {
+        person_name: null,
+        nickname: '昵称1',
+        is_known: false,
+        memory_points: null,
+        name_reason: null,
+        know_times: 1_700_000_000,
+        know_since: 1_690_000_000,
+        last_know: 1_710_000_000,
+        group_nick_name: [{ group_id: '10086', group_nick_name: '群里的小明' }],
+      })
+    )
+    const user = userEvent.setup()
+    await renderPage()
+    await within(getDesktopTable()).findByText('人物1')
+
+    await user.click(screen.getAllByRole('button', { name: '详情' })[0])
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('人物详情')).toBeInTheDocument()
+    expect(within(dialog).getByText('查看 昵称1 的完整信息')).toBeInTheDocument()
+    expect(within(dialog).getByText('未认识')).toBeInTheDocument()
+    expect(within(dialog).getByText('10086')).toBeInTheDocument()
+    expect(within(dialog).getByText('群里的小明')).toBeInTheDocument()
+    expect(
+      within(dialog).getByText(new Date(1_700_000_000 * 1000).toLocaleString('zh-CN'))
+    ).toBeInTheDocument()
+    expect(
+      within(dialog).getByText(new Date(1_690_000_000 * 1000).toLocaleString('zh-CN'))
+    ).toBeInTheDocument()
+    expect(
+      within(dialog).getByText(new Date(1_710_000_000 * 1000).toLocaleString('zh-CN'))
+    ).toBeInTheDocument()
+
+    // 页脚「关闭」在 DOM 中先于右上角 X（后者也叫关闭）
+    const closeButtons = within(dialog).getAllByRole('button', { name: '关闭' })
+    await user.click(closeButtons[0])
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('查看详情失败：非 Error 拒绝时使用兜底文案', async () => {
+    vi.mocked(personApi.getPersonDetail).mockRejectedValue('后端炸了')
+    const user = userEvent.setup()
+    await renderPage()
+    await within(getDesktopTable()).findByText('人物1')
+
+    await user.click(screen.getAllByRole('button', { name: '详情' })[0])
+
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith({
+        title: '加载详情失败',
+        description: '无法加载人物详情',
+        variant: 'destructive',
+      })
+    )
+  })
+
+  it('编辑保存：修改昵称、名称原因与认识开关', async () => {
+    vi.mocked(personApi.getPersonList).mockResolvedValue({
+      data: [makePerson(1, { person_name: null, nickname: null, is_known: false })],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    const user = userEvent.setup()
+    await renderPage()
+    await within(getDesktopTable()).findByText('10001')
+
+    await user.click(screen.getAllByRole('button', { name: '编辑' })[0])
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('修改 10001 的信息')).toBeInTheDocument()
+
+    await user.type(screen.getByLabelText('人物名称'), 'Alice')
+    await user.type(screen.getByLabelText('昵称'), 'Ali')
+    await user.type(screen.getByLabelText('名称设定原因'), '朋友介绍')
+    await user.click(screen.getByRole('switch', { name: '已认识' }))
+    await user.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() =>
+      expect(personApi.updatePerson).toHaveBeenCalledWith('person-1', {
+        person_name: 'Alice',
+        name_reason: '朋友介绍',
+        nickname: 'Ali',
+        is_known: true,
+      })
+    )
+  })
+
+  it('编辑取消：关闭对话框且不调用 updatePerson', async () => {
+    const user = userEvent.setup()
+    await renderPage()
+    await within(getDesktopTable()).findByText('人物1')
+
+    await user.click(screen.getAllByRole('button', { name: '编辑' })[0])
+    expect(await screen.findByText('编辑人物信息')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByText('编辑人物信息')).not.toBeInTheDocument())
+    expect(personApi.updatePerson).not.toHaveBeenCalled()
+  })
+
+  it('分页：末页、上一页、首页与回车跳转', async () => {
+    vi.mocked(personApi.getPersonList).mockResolvedValue({
+      data: [makePerson(1), makePerson(2)],
+      total: 50,
+      page: 1,
+      page_size: 20,
+    })
+    const user = userEvent.setup()
+    await renderPage()
+    expect(await screen.findByText('共 50 条记录，第 1 / 3 页')).toBeInTheDocument()
+
+    const pager = screen.getByText('共 50 条记录，第 1 / 3 页').parentElement as HTMLElement
+    const iconButtons = within(pager)
+      .getAllByRole('button')
+      .filter((btn) => (btn.textContent ?? '').trim() === '')
+    expect(iconButtons).toHaveLength(2)
+
+    await user.click(iconButtons[1])
+    expect(await screen.findByText('共 50 条记录，第 3 / 3 页')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '上一页' }))
+    expect(await screen.findByText('共 50 条记录，第 2 / 3 页')).toBeInTheDocument()
+
+    const pagerOnPage2 = screen.getByText('共 50 条记录，第 2 / 3 页').parentElement as HTMLElement
+    const firstPageBtn = within(pagerOnPage2)
+      .getAllByRole('button')
+      .filter((btn) => (btn.textContent ?? '').trim() === '')[0]
+    await user.click(firstPageBtn)
+    expect(await screen.findByText('共 50 条记录，第 1 / 3 页')).toBeInTheDocument()
+
+    const jumpInput = screen.getByRole('spinbutton')
+    await user.type(jumpInput, '2{Enter}')
+    expect(await screen.findByText('共 50 条记录，第 2 / 3 页')).toBeInTheDocument()
+  })
+
+  it('移动端：查看、编辑、删除按钮驱动同一套动作', async () => {
+    const user = userEvent.setup()
+    await renderPage()
+    await within(getDesktopTable()).findByText('人物1')
+
+    await user.click(screen.getAllByRole('button', { name: '查看' })[0])
+    expect(await screen.findByText('人物详情')).toBeInTheDocument()
+    expect(personApi.getPersonDetail).toHaveBeenCalledWith('person-1')
+    const detailDialog = screen.getByRole('dialog')
+    const closeButtons = within(detailDialog).getAllByRole('button', { name: '关闭' })
+    await user.click(closeButtons[0])
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    await user.click(screen.getAllByRole('button', { name: '编辑' })[2])
+    expect(await screen.findByText('编辑人物信息')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByText('编辑人物信息')).not.toBeInTheDocument())
+
+    await user.click(screen.getAllByRole('button', { name: '删除' })[2])
+    const alert = await screen.findByRole('alertdialog')
+    expect(within(alert).getByText('确认删除')).toBeInTheDocument()
+    await user.click(within(alert).getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    expect(personApi.deletePerson).not.toHaveBeenCalled()
+  })
+
+  it('移动端重试：点击卡片视图重试后恢复列表', async () => {
+    vi.mocked(personApi.getPersonList).mockRejectedValueOnce(new Error('卡片加载失败'))
+    const user = userEvent.setup()
+    await renderPage()
+
+    expect(await screen.findAllByText('卡片加载失败')).toHaveLength(2)
+    await user.click(screen.getAllByRole('button', { name: '重试' })[1])
+
+    expect(await within(getDesktopTable()).findByText('人物1')).toBeInTheDocument()
+    expect(screen.queryByText('卡片加载失败')).not.toBeInTheDocument()
+  })
+
+  it('删除确认取消：关闭对话框且不调用 deletePerson', async () => {
+    const user = userEvent.setup()
+    await renderPage()
+    await within(getDesktopTable()).findByText('人物1')
+
+    await user.click(screen.getAllByRole('button', { name: '删除' })[0])
+    const dialog = await screen.findByRole('alertdialog')
+    await user.click(within(dialog).getByRole('button', { name: '取消' }))
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    expect(personApi.deletePerson).not.toHaveBeenCalled()
+  })
+
+  it('批量删除取消：关闭对话框且不调用 batchDeletePersons', async () => {
+    const user = userEvent.setup()
+    await renderPage()
+    await within(getDesktopTable()).findByText('人物1')
+
+    await user.click(screen.getByRole('checkbox', { name: '全选' }))
+    await user.click(screen.getByRole('button', { name: '批量删除' }))
+    const dialog = await screen.findByRole('alertdialog')
+    await user.click(within(dialog).getByRole('button', { name: '取消' }))
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    expect(personApi.batchDeletePersons).not.toHaveBeenCalled()
+  })
 })

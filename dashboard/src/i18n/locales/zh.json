@@ -243,6 +243,7 @@
       "observedBadge": "观察",
       "observedChats": "麦麦的聊天流",
       "observedPreview": "只读观察",
+      "openSettings": "打开 {{name}} 的聊天设置",
       "online": "在线",
       "offline": "离线",
       "subtitle": "{{count}} 个会话",

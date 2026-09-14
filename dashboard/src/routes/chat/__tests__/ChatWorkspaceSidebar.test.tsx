@@ -79,6 +79,7 @@ function renderSidebar(overrides: Partial<Parameters<typeof ChatWorkspaceSidebar
     isUploadingUserAvatar: false,
     onSwitch: vi.fn(),
     onSelectObserved: vi.fn(),
+    onOpenObservedSettings: vi.fn(),
     onClose: vi.fn(),
     onUpdateUserAvatar: vi.fn(async () => {}),
     onUpdateUserName: vi.fn(),
@@ -207,8 +208,16 @@ describe('ChatWorkspaceSidebar', () => {
     ])
     expect(screen.getByText('正在思考')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /旧群聊/ }))
+    await user.click(
+      screen.getByRole('button', { name: /^旧群聊chat\.sidebar\.observedBadge/ })
+    )
     expect(props.onSelectObserved).toHaveBeenCalledWith('old-session')
+
+    await user.click(
+      screen.getByRole('button', { name: 'chat.sidebar.openSettings:新的私聊' })
+    )
+    expect(props.onOpenObservedSettings).toHaveBeenCalledWith('new-session')
+    expect(props.onSelectObserved).toHaveBeenCalledTimes(1)
   })
 
   it('编辑昵称后按 Enter 提交去除首尾空白', async () => {

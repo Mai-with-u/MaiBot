@@ -3,18 +3,23 @@ name: Publish WebUI Dist
 on:
   push:
     branches:
-      - main
       - dev
       - r-dev
     paths:
       - "dashboard/**"
   workflow_dispatch:
 
+concurrency:
+  group: publish-webui-dist-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
 jobs:
   build-and-publish:
+    outputs:
+      webui_version: ${{ steps.package_version.outputs.webui_version }}
     runs-on: ubuntu-24.04
     environment: webui
     steps:
@@ -32,16 +37,16 @@ jobs:
           bun run build
 
       - name: Prepare dist package
+        id: package_version
         run: |
+          set -euo pipefail
+
           rm -rf .webui_dist_pkg
           mkdir -p .webui_dist_pkg/maibot_dashboard/dist
           BASE_VERSION=$(python -c "import json; print(json.load(open('dashboard/package.json'))['version'])")
-          if [ "${GITHUB_REF_NAME}" = "main" ]; then
-            WEBUI_VERSION="${BASE_VERSION}"
-          else
-            TODAY=$(date -u +%Y%m%d)
-            WEBUI_VERSION="${BASE_VERSION}.dev${TODAY}${GITHUB_RUN_NUMBER}"
-          fi
+          TODAY=$(date -u +%Y%m%d)
+          WEBUI_VERSION="${BASE_VERSION}.dev${TODAY}${GITHUB_RUN_NUMBER}"
+          echo "webui_version=${WEBUI_VERSION}" >> "$GITHUB_OUTPUT"
           cat > .webui_dist_pkg/pyproject.toml <<EOF
           [project]
           name = "maibot-dashboard"
@@ -96,3 +101,45 @@ jobs:
           python -m pip install --upgrade build twine
           python -m build
           python -m twine upload -u __token__ -p "$PYPI_API_TOKEN" dist/*
+
+  update-dev-dependency:
+    name: Update Dashboard Dependency
+    needs: build-and-publish
+    if: github.ref_name == 'dev'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout dev
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Update dashboard dev dependency
+        env:
+          DASHBOARD_DEV_VERSION: ${{ needs.build-and-publish.outputs.webui_version }}
+        run: |
+          uv run --no-project --with packaging --with tomlkit python .github/scripts/update_dashboard_dependency.py
+          uv lock --upgrade-package maibot-dashboard
+
+      - name: Commit dependency update
+        env:
+          DASHBOARD_DEV_VERSION: ${{ needs.build-and-publish.outputs.webui_version }}
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- pyproject.toml requirements.txt uv.lock; then
+            echo "Dashboard dev 依赖已是 ${DASHBOARD_DEV_VERSION}"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml requirements.txt uv.lock
+          git commit -m "chore: 更新 dashboard dev 依赖至 ${DASHBOARD_DEV_VERSION}"
+          git pull --rebase origin dev
+          git push origin HEAD:dev

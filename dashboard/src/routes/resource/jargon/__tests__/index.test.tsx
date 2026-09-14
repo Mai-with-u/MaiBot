@@ -33,11 +33,16 @@ vi.mock('@/lib/jargon-api', () => ({
 interface JargonListStubProps {
   jargons: Jargon[]
   total: number
+  loading?: boolean
+  page?: number
+  pageSize?: number
   hideChatColumn?: boolean
   onEdit: (jargon: Jargon) => void
   onDelete: (jargon: Jargon) => void
   onToggleSelect: (id: number) => void
+  onToggleSelectAll?: () => void
   onJumpToPage: (page: string) => void
+  onPageSizeChange?: (pageSize: number) => void
 }
 
 // 子组件桩：暴露主文件传入的回调，用于驱动详情/删除/多选/跳页编排
@@ -45,17 +50,36 @@ vi.mock('../JargonList', () => ({
   JargonList: ({
     jargons,
     total,
+    loading,
+    page,
+    pageSize,
     hideChatColumn,
     onEdit,
     onDelete,
     onToggleSelect,
+    onToggleSelectAll,
     onJumpToPage,
+    onPageSizeChange,
   }: JargonListStubProps) => (
     <div data-testid="jargon-list">
       <span data-testid="list-count">{`${jargons.length}/${total}`}</span>
+      <span data-testid="list-loading">{String(Boolean(loading))}</span>
+      <span data-testid="list-page">{`${page ?? ''}/${pageSize ?? ''}`}</span>
       <span data-testid="hide-chat">{String(hideChatColumn)}</span>
       <button type="button" onClick={() => onJumpToPage('99')}>
         jump-99
+      </button>
+      <button type="button" onClick={() => onJumpToPage('2')}>
+        jump-2
+      </button>
+      <button type="button" onClick={() => onJumpToPage('abc')}>
+        jump-abc
+      </button>
+      <button type="button" onClick={() => onPageSizeChange?.(1)}>
+        page-size-1
+      </button>
+      <button type="button" onClick={() => onToggleSelectAll?.()}>
+        toggle-all
       </button>
       {jargons.map((jargon) => (
         <div key={jargon.id}>
@@ -73,42 +97,148 @@ vi.mock('../JargonList', () => ({
 
 // 对话框桩：只保留编排所需的最小交互面
 vi.mock('../JargonDialogs', () => ({
-  JargonDetailDialog: ({ open, jargon }: { open: boolean; jargon: Jargon | null }) =>
-    open && jargon ? <div data-testid="detail-dialog">{jargon.content}</div> : null,
-  JargonCreateDialog: () => null,
-  JargonImportDialog: () => null,
+  JargonDetailDialog: ({
+    open,
+    jargon,
+    chatList,
+    onChanged,
+  }: {
+    open: boolean
+    jargon: Jargon | null
+    chatList?: { session_id: string }[]
+    onChanged: (jargon: Jargon) => void
+  }) =>
+    open && jargon ? (
+      <div data-testid="detail-dialog">
+        {jargon.content}
+        <span data-testid="detail-chat-count">{chatList?.length ?? 0}</span>
+        <button
+          type="button"
+          onClick={() => onChanged({ ...jargon, content: `${jargon.content}-changed` })}
+        >
+          detail-changed
+        </button>
+      </div>
+    ) : null,
+  JargonCreateDialog: ({
+    open,
+    onSuccess,
+  }: {
+    open: boolean
+    onSuccess: () => void
+  }) =>
+    open ? (
+      <div data-testid="create-dialog">
+        <button type="button" onClick={() => onSuccess()}>
+          create-success
+        </button>
+      </div>
+    ) : null,
+  JargonImportDialog: ({
+    open,
+    onSuccess,
+  }: {
+    open: boolean
+    onSuccess: () => void
+  }) =>
+    open ? (
+      <div data-testid="import-dialog">
+        <button type="button" onClick={() => onSuccess()}>
+          import-success
+        </button>
+      </div>
+    ) : null,
   JargonExportDialog: ({
     open,
     scope,
     includeChatInfo,
+    exporting,
+    selectedCount,
     onExport,
+    onScopeChange,
+    onIncludeChatInfoChange,
   }: {
     open: boolean
     scope: JargonExportScope
     includeChatInfo: boolean
+    exporting?: boolean
+    selectedCount?: number
     onExport: (scope: JargonExportScope, includeChatInfo: boolean) => Promise<void>
+    onScopeChange?: (scope: JargonExportScope) => void
+    onIncludeChatInfoChange?: (include: boolean) => void
   }) =>
     open ? (
-      <button
-        type="button"
-        onClick={() => {
-          void onExport(scope, includeChatInfo)
-        }}
-      >
-        confirm-export
-      </button>
+      <div data-testid="export-dialog">
+        <span data-testid="export-scope">{scope}</span>
+        <span data-testid="export-selected-count">{selectedCount ?? 0}</span>
+        {exporting ? <span data-testid="exporting">导出中</span> : null}
+        <button
+          type="button"
+          onClick={() => {
+            void onExport(scope, includeChatInfo)
+          }}
+        >
+          confirm-export
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            void onExport('selected', includeChatInfo)
+          }}
+        >
+          export-selected-scope
+        </button>
+        <button type="button" onClick={() => onScopeChange?.('selected')}>
+          set-scope-selected
+        </button>
+        <button type="button" onClick={() => onIncludeChatInfoChange?.(true)}>
+          set-include-chat
+        </button>
+      </div>
     ) : null,
-  DeleteConfirmDialog: ({ open, onConfirm }: { open: boolean; onConfirm: () => void }) =>
-    open ? (
+  DeleteConfirmDialog: ({
+    open,
+    onConfirm,
+    onOpenChange,
+  }: {
+    open: boolean
+    onConfirm: () => void
+    onOpenChange?: (open: boolean) => void
+  }) => (
+    <>
+      {open ? (
+        <>
+          <button type="button" onClick={onConfirm}>
+            confirm-delete
+          </button>
+          <button type="button" onClick={() => onOpenChange?.(false)}>
+            cancel-delete
+          </button>
+        </>
+      ) : null}
       <button type="button" onClick={onConfirm}>
-        confirm-delete
+        force-delete-confirm
       </button>
-    ) : null,
-  BatchDeleteConfirmDialog: ({ open, onConfirm }: { open: boolean; onConfirm: () => void }) =>
+    </>
+  ),
+  BatchDeleteConfirmDialog: ({
+    open,
+    onConfirm,
+    onOpenChange,
+  }: {
+    open: boolean
+    onConfirm: () => void
+    onOpenChange?: (open: boolean) => void
+  }) =>
     open ? (
-      <button type="button" onClick={onConfirm}>
-        confirm-batch-delete
-      </button>
+      <>
+        <button type="button" onClick={onConfirm}>
+          confirm-batch-delete
+        </button>
+        <button type="button" onClick={() => onOpenChange?.(false)}>
+          cancel-batch-delete
+        </button>
+      </>
     ) : null,
 }))
 
@@ -117,16 +247,33 @@ vi.mock('@/components/chat-scope-filter-panel', () => ({
   ChatScopeFilterPanel: ({
     items,
     onItemSelect,
+    emptyContent,
+    collapsed,
+    onCollapsedChange,
+    collapseLabel,
+    expandLabel,
   }: {
     items: { id: string; label: string }[]
     onItemSelect: (id: string) => void
+    emptyContent?: ReactNode
+    collapsed?: boolean
+    onCollapsedChange?: (collapsed: boolean) => void
+    collapseLabel?: string
+    expandLabel?: string
   }) => (
     <div data-testid="scope-panel">
+      <span data-testid="scope-collapsed">{String(Boolean(collapsed))}</span>
+      {onCollapsedChange ? (
+        <button type="button" onClick={() => onCollapsedChange(!collapsed)}>
+          {collapsed ? expandLabel : collapseLabel}
+        </button>
+      ) : null}
       {items.map((item) => (
         <button type="button" key={item.id} onClick={() => onItemSelect(item.id)}>
           {`scope-${item.id}`}
         </button>
       ))}
+      {items.length <= 1 ? emptyContent : null}
     </div>
   ),
 }))
@@ -414,5 +561,245 @@ describe('JargonManagementPage 特征化', () => {
     })
     await user.click(screen.getByRole('button', { name: '重试' }))
     expect(await screen.findByTestId('list-count')).toHaveTextContent('1/1')
+  })
+
+  it('无黑话/手动黑话/推断完成分类分别带 jargon_status 或 is_complete 查询', async () => {
+    const user = userEvent.setup()
+    await renderPage()
+    await user.click(screen.getByRole('button', { name: /黑话分类/ }))
+    await user.click(await screen.findByRole('menuitemradio', { name: /无黑话/ }))
+    await waitFor(() =>
+      expect(jargonApi.getJargonList).toHaveBeenCalledWith(
+        expect.objectContaining({ jargon_status: 'confirmed_not_jargon' })
+      )
+    )
+
+    await user.click(screen.getByRole('button', { name: /黑话分类/ }))
+    await user.click(await screen.findByRole('menuitemradio', { name: /手动黑话/ }))
+    await waitFor(() =>
+      expect(jargonApi.getJargonList).toHaveBeenCalledWith(
+        expect.objectContaining({ jargon_status: 'manual_jargon' })
+      )
+    )
+
+    await user.click(screen.getByRole('button', { name: /黑话分类/ }))
+    await user.click(await screen.findByRole('menuitemradio', { name: /推断完成/ }))
+    await waitFor(() =>
+      expect(jargonApi.getJargonList).toHaveBeenCalledWith(
+        expect.objectContaining({ is_complete: true, jargon_status: undefined })
+      )
+    )
+  })
+
+  it('全局分类下再选聊天会重置为总数量并带 session_id', async () => {
+    const user = userEvent.setup()
+    await renderPage()
+    await user.click(screen.getByRole('button', { name: /黑话分类/ }))
+    await user.click(await screen.findByRole('menuitemradio', { name: /全局黑话/ }))
+    await waitFor(() =>
+      expect(jargonApi.getJargonList).toHaveBeenLastCalledWith(
+        expect.objectContaining({ is_global: true, session_id: undefined })
+      )
+    )
+
+    await user.click(screen.getByText('scope-chat-1'))
+    await waitFor(() =>
+      expect(jargonApi.getJargonList).toHaveBeenLastCalledWith(
+        expect.objectContaining({ session_id: 'chat-1', is_global: undefined })
+      )
+    )
+    expect(screen.getByRole('button', { name: /黑话分类：总数量/ })).toBeInTheDocument()
+  })
+
+  it('选中后导出默认 selected，包含聊天信息时下载 with-chat 文件', async () => {
+    const user = userEvent.setup()
+    let downloaded = ''
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+      this: HTMLAnchorElement
+    ) {
+      downloaded = this.download
+    })
+    await renderPage()
+    await user.click(screen.getByText('select-1'))
+    await user.click(screen.getByText('select-2'))
+    await user.click(screen.getByRole('button', { name: '导出黑话' }))
+    expect(screen.getByTestId('export-scope')).toHaveTextContent('selected')
+    expect(screen.getByTestId('export-selected-count')).toHaveTextContent('2')
+
+    await user.click(screen.getByText('set-include-chat'))
+    await user.click(screen.getByText('confirm-export'))
+    await waitFor(() =>
+      expect(jargonApi.exportJargons).toHaveBeenCalledWith({
+        ids: [1, 2],
+        include_chat_info: true,
+      })
+    )
+    await waitFor(() => expect(downloaded).toBe('jargons-selected-with-chat.json'))
+  })
+
+  it('导出范围为 selected 但未选中时提示没有选中项目', async () => {
+    const user = userEvent.setup()
+    await renderPage()
+    await user.click(screen.getByRole('button', { name: '导出黑话' }))
+    await user.click(screen.getByText('export-selected-scope'))
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: '没有选中项目',
+          description: '请先选择要导出的黑话',
+          variant: 'destructive',
+        })
+      )
+    )
+    expect(jargonApi.exportJargons).not.toHaveBeenCalled()
+  })
+
+  it('导出失败非 Error 展示无法导出黑话', async () => {
+    const user = userEvent.setup()
+    vi.mocked(jargonApi.exportJargons).mockRejectedValue('boom')
+    await renderPage()
+    await user.click(screen.getByRole('button', { name: '导出黑话' }))
+    await user.click(await screen.findByText('confirm-export'))
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({ title: '导出失败', description: '无法导出黑话' })
+      )
+    )
+  })
+
+  it('详情加载失败非 Error 展示无法加载黑话详情', async () => {
+    const user = userEvent.setup()
+    vi.mocked(jargonApi.getJargonDetail).mockRejectedValue('missing')
+    await renderPage()
+    await user.click(screen.getByText('edit-1'))
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({ title: '加载详情失败', description: '无法加载黑话详情' })
+      )
+    )
+  })
+
+  it('详情竞态：旧请求返回不覆盖新选中项', async () => {
+    const user = userEvent.setup()
+    let resolveSlow: (value: { success: true; data: Jargon }) => void = () => {}
+    vi.mocked(jargonApi.getJargonDetail).mockImplementation((id: number) => {
+      if (id === 1) {
+        return new Promise((resolve) => {
+          resolveSlow = resolve
+        })
+      }
+      return Promise.resolve({ success: true, data: makeJargon(2, '词B-详情') })
+    })
+    await renderPage()
+    await user.click(screen.getByText('edit-1'))
+    await user.click(screen.getByText('edit-2'))
+    expect(await screen.findByText('词B-详情')).toBeInTheDocument()
+    resolveSlow({ success: true, data: makeJargon(1, '词A-慢') })
+    await waitFor(() => {
+      expect(screen.getByTestId('detail-dialog')).toHaveTextContent('词B-详情')
+    })
+    expect(screen.queryByText('词A-慢')).not.toBeInTheDocument()
+  })
+
+  it('改每页条数后有效页码跳转；非法页码仍提示', async () => {
+    const user = userEvent.setup()
+    await renderPage()
+    await user.click(screen.getByText('page-size-1'))
+    await waitFor(() =>
+      expect(jargonApi.getJargonList).toHaveBeenCalledWith(expect.objectContaining({ page_size: 1 }))
+    )
+    await user.click(screen.getByText('jump-2'))
+    await waitFor(() =>
+      expect(jargonApi.getJargonList).toHaveBeenCalledWith(expect.objectContaining({ page: 2 }))
+    )
+    await user.click(screen.getByText('jump-abc'))
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({ title: '无效的页码', description: '请输入1-2之间的页码' })
+    )
+  })
+
+  it('全选、取消选择，以及无确认目标时删除直接返回', async () => {
+    const user = userEvent.setup()
+    await renderPage()
+    await user.click(screen.getByText('toggle-all'))
+    expect(await screen.findByText('已选择 2 个')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '取消选择' }))
+    expect(screen.queryByText('已选择 2 个')).not.toBeInTheDocument()
+
+    await user.click(screen.getByText('force-delete-confirm'))
+    expect(jargonApi.deleteJargon).not.toHaveBeenCalled()
+  })
+
+  it('打开新增/导入并在成功回调后刷新；导入会清空选中', async () => {
+    const user = userEvent.setup()
+    await renderPage()
+    const listCalls = vi.mocked(jargonApi.getJargonList).mock.calls.length
+
+    await user.click(screen.getByRole('button', { name: '新增黑话' }))
+    expect(screen.getByTestId('create-dialog')).toBeInTheDocument()
+    await user.click(screen.getByText('create-success'))
+    await waitFor(() => expect(screen.queryByTestId('create-dialog')).not.toBeInTheDocument())
+    await waitFor(() =>
+      expect(vi.mocked(jargonApi.getJargonList).mock.calls.length).toBeGreaterThan(listCalls)
+    )
+
+    await user.click(screen.getByText('select-1'))
+    expect(await screen.findByText('已选择 1 个')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '导入黑话' }))
+    expect(screen.getByTestId('import-dialog')).toBeInTheDocument()
+    await user.click(screen.getByText('import-success'))
+    await waitFor(() => expect(screen.queryByText('已选择 1 个')).not.toBeInTheDocument())
+  })
+
+  it('详情 onChanged 更新当前词条；删除对话框可取消', async () => {
+    const user = userEvent.setup()
+    await renderPage()
+    await user.click(screen.getByText('edit-1'))
+    expect(await screen.findByText('词A-详情')).toBeInTheDocument()
+    await user.click(screen.getByText('detail-changed'))
+    expect(screen.getByTestId('detail-dialog')).toHaveTextContent('词A-详情-changed')
+
+    await user.click(screen.getByText('del-1'))
+    expect(await screen.findByText('confirm-delete')).toBeInTheDocument()
+    await user.click(screen.getByText('cancel-delete'))
+    expect(screen.queryByText('confirm-delete')).not.toBeInTheDocument()
+    expect(jargonApi.deleteJargon).not.toHaveBeenCalled()
+  })
+
+  it('折叠范围列表；批量删除成功提示并可关闭确认框', async () => {
+    const user = userEvent.setup()
+    await renderPage()
+    expect(screen.getByTestId('scope-collapsed')).toHaveTextContent('false')
+    await user.click(screen.getByRole('button', { name: '折叠范围列表' }))
+    expect(screen.getByTestId('scope-collapsed')).toHaveTextContent('true')
+    expect(screen.getByRole('button', { name: '展开范围列表' })).toBeInTheDocument()
+
+    await user.click(screen.getByText('select-1'))
+    await user.click(screen.getByRole('button', { name: /批量删除/ }))
+    expect(await screen.findByText('confirm-batch-delete')).toBeInTheDocument()
+    await user.click(screen.getByText('cancel-batch-delete'))
+    expect(screen.queryByText('confirm-batch-delete')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /批量删除/ }))
+    await user.click(await screen.findByText('confirm-batch-delete'))
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: '批量删除成功',
+          description: '已删除 1 个黑话',
+        })
+      )
+    )
+  })
+
+  it('统计无 data 时数量回落为 0；初次加载把 loading 传给列表', async () => {
+    vi.mocked(jargonApi.getJargonStats).mockResolvedValue({
+      success: true,
+      data: undefined as unknown as never,
+    })
+    vi.mocked(jargonApi.getJargonList).mockImplementation(() => new Promise(() => {}))
+    render(<JargonManagementPage />, { wrapper: makeWrapper() })
+    expect(await screen.findByTestId('list-loading')).toHaveTextContent('true')
+    expect(await screen.findByRole('button', { name: '黑话分类：总数量 0' })).toBeInTheDocument()
   })
 })

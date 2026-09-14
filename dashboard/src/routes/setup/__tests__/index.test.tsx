@@ -481,3 +481,160 @@ describe('SetupPage 语言切换', () => {
     expect(mocks.changeLanguage).toHaveBeenCalledWith('ko')
   })
 })
+
+describe('SetupPage 错误态与空态', () => {
+  async function goToLastStep() {
+    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.next' }))
+    await screen.findByRole('button', { name: 'setupPage.actions.complete' })
+  }
+
+  it('配置未返回前显示加载态，不渲染表单', () => {
+    mocks.loadSetupStatus.mockImplementation(() => new Promise(() => {}))
+    render(<SetupPage />)
+
+    expect(screen.getByText('setupPage.loading.title')).toBeInTheDocument()
+    expect(
+      screen.queryByLabelText('setupPage.forms.botBasic.nickname.label')
+    ).not.toBeInTheDocument()
+  })
+
+  it('任一配置加载失败时弹出错误提示并结束加载态', async () => {
+    mocks.loadBotBasicConfig.mockRejectedValue(new Error('网络炸了'))
+    render(<SetupPage />)
+    await waitLoadingDone()
+
+    expect(mocks.toast).toHaveBeenCalledWith({
+      title: 'setupPage.toast.loadFailedTitle',
+      description: '网络炸了',
+      variant: 'destructive',
+    })
+    expect(screen.getByLabelText('setupPage.forms.botBasic.nickname.label')).toBeInTheDocument()
+  })
+
+  it('加载失败且错误不是 Error 时使用默认失败描述', async () => {
+    mocks.loadPersonalityConfig.mockRejectedValue('boom')
+    render(<SetupPage />)
+    await waitLoadingDone()
+
+    expect(mocks.toast).toHaveBeenCalledWith({
+      title: 'setupPage.toast.loadFailedTitle',
+      description: 'setupPage.toast.loadFailedDescription',
+      variant: 'destructive',
+    })
+  })
+
+  it('昵称为空时下一步被校验拦截且不触发保存', async () => {
+    mocks.loadBotBasicConfig.mockResolvedValue({ ...defaultBotBasic, nickname: '  ' })
+    render(<SetupPage />)
+    await waitLoadingDone()
+
+    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.next' }))
+
+    await waitFor(() => {
+      expect(mocks.toast).toHaveBeenCalledWith({
+        title: 'setupPage.toast.validationFailedTitle',
+        description: 'setupPage.validation.enterNickname',
+        variant: 'destructive',
+      })
+    })
+    expect(mocks.saveBotBasicConfig).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'setupPage.actions.next' })).toBeInTheDocument()
+  })
+
+  it('保存失败时提示错误并停留在当前步骤', async () => {
+    mocks.saveBotBasicConfig.mockRejectedValue(new Error('磁盘满了'))
+    render(<SetupPage />)
+    await waitLoadingDone()
+
+    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.next' }))
+
+    await waitFor(() => {
+      expect(mocks.toast).toHaveBeenCalledWith({
+        title: 'setupPage.toast.saveFailedTitle',
+        description: '磁盘满了',
+        variant: 'destructive',
+      })
+    })
+    expect(screen.getByRole('button', { name: 'setupPage.actions.next' })).toBeInTheDocument()
+  })
+
+  it('完成时 API Key 为空则拦截且不标记完成', async () => {
+    mocks.loadApiProviderSetupConfig.mockResolvedValue({ ...defaultApiProvider, api_key: '' })
+    render(<SetupPage />)
+    await waitLoadingDone()
+    await goToLastStep()
+
+    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.complete' }))
+
+    await waitFor(() => {
+      expect(mocks.toast).toHaveBeenCalledWith({
+        title: 'setupPage.toast.validationFailedTitle',
+        description: 'setupPage.validation.enterApiKey',
+        variant: 'destructive',
+      })
+    })
+    expect(mocks.completeSetup).not.toHaveBeenCalled()
+    expect(mocks.navigate).not.toHaveBeenCalled()
+  })
+
+  it('完成时 planner 模型标识符为空则拦截且不标记完成', async () => {
+    mocks.loadModelSetupConfig.mockResolvedValue({
+      ...defaultModelSetup,
+      planner_model_identifier: '   ',
+    })
+    render(<SetupPage />)
+    await waitLoadingDone()
+    await goToLastStep()
+
+    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.complete' }))
+
+    await waitFor(() => {
+      expect(mocks.toast).toHaveBeenCalledWith({
+        title: 'setupPage.toast.validationFailedTitle',
+        description: 'setupPage.validation.enterPlannerModelIdentifier',
+        variant: 'destructive',
+      })
+    })
+    expect(mocks.completeSetup).not.toHaveBeenCalled()
+  })
+
+  it('完成时标记完成失败则提示错误且不跳转', async () => {
+    mocks.completeSetup.mockRejectedValue(new Error('写入失败'))
+    render(<SetupPage />)
+    await waitLoadingDone()
+    await goToLastStep()
+
+    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.complete' }))
+
+    await waitFor(() => {
+      expect(mocks.toast).toHaveBeenCalledWith({
+        title: 'setupPage.toast.completeFailedTitle',
+        description: '写入失败',
+        variant: 'destructive',
+      })
+    })
+    expect(mocks.navigate).not.toHaveBeenCalled()
+  })
+
+  it('保存 Token 时后端抛错则提示错误且不跳转', async () => {
+    mocks.loadSetupStatus.mockResolvedValue({ ...defaultStatus, requires_custom_token: true })
+    mocks.updateAccessToken.mockRejectedValue(new Error('网络断开'))
+    render(<SetupPage />)
+    await waitLoadingDone()
+
+    fireEvent.change(screen.getByLabelText('setupPage.forms.customToken.label'), {
+      target: { value: 'Abcdefghij!123' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.saveToken' }))
+
+    await waitFor(() => {
+      expect(mocks.toast).toHaveBeenCalledWith({
+        title: 'setupPage.toast.saveFailedTitle',
+        description: '网络断开',
+        variant: 'destructive',
+      })
+    })
+    expect(mocks.navigate).not.toHaveBeenCalled()
+  })
+})
+

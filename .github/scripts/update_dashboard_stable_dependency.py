@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Iterable
 from urllib.error import HTTPError
 from urllib.request import urlopen
+
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import Version
@@ -19,8 +20,8 @@ DASHBOARD_PACKAGE_PATH = Path("dashboard/package.json")
 PYPROJECT_PATH = Path("pyproject.toml")
 REQUIREMENTS_PATH = Path("requirements.txt")
 PYPI_VERSION_JSON_URL = f"https://pypi.org/pypi/{PACKAGE_NAME}/{{version}}/json"
-CHECK_INTERVAL_SECONDS = 180
-MAX_CHECK_ATTEMPTS = 3
+CHECK_INTERVAL_SECONDS = 15
+MAX_CHECK_ATTEMPTS = 40
 
 
 def find_dashboard_requirement(requirements: Iterable[str]) -> Requirement:
@@ -38,21 +39,14 @@ def dependencies_are_current(target_version: Version) -> bool:
     expected_requirement = f"{PACKAGE_NAME}=={target_version}"
 
     document = tomlkit.parse(PYPROJECT_PATH.read_text(encoding="utf-8"))
-    pyproject_requirement = find_dashboard_requirement(
-        str(item) for item in document["project"]["dependencies"]
-    )
+    pyproject_requirement = find_dashboard_requirement(str(item) for item in document["project"]["dependencies"])
 
     requirement_lines = REQUIREMENTS_PATH.read_text(encoding="utf-8").splitlines()
     requirements_requirement = find_dashboard_requirement(
-        line.strip()
-        for line in requirement_lines
-        if line.strip() and not line.strip().startswith("#")
+        line.strip() for line in requirement_lines if line.strip() and not line.strip().startswith("#")
     )
 
-    return (
-        str(pyproject_requirement) == expected_requirement
-        and str(requirements_requirement) == expected_requirement
-    )
+    return str(pyproject_requirement) == expected_requirement and str(requirements_requirement) == expected_requirement
 
 
 def get_target_stable_version() -> Version:
@@ -67,12 +61,9 @@ def wait_for_published_version(target_version: Version) -> None:
     version_url = PYPI_VERSION_JSON_URL.format(version=target_version)
 
     for attempt in range(1, MAX_CHECK_ATTEMPTS + 1):
-        print(
-            f"等待 {CHECK_INTERVAL_SECONDS} 秒后检查 PyPI 上的 "
-            f"{PACKAGE_NAME}=={target_version}（第 {attempt}/{MAX_CHECK_ATTEMPTS} 次）"
-        )
-        time.sleep(CHECK_INTERVAL_SECONDS)
+        print(f"检查 PyPI 上的 {PACKAGE_NAME}=={target_version}（第 {attempt}/{MAX_CHECK_ATTEMPTS} 次）")
 
+        pypi_data = None
         try:
             with urlopen(version_url, timeout=30) as response:
                 pypi_data = json.load(response)
@@ -80,14 +71,17 @@ def wait_for_published_version(target_version: Version) -> None:
             if error.code != 404:
                 raise
             print(f"PyPI 上暂未找到 {PACKAGE_NAME}=={target_version}")
-            continue
 
-        release_files = pypi_data["urls"]
-        if release_files and any(not release_file.get("yanked", False) for release_file in release_files):
-            print(f"PyPI 已发布 dashboard 正式版本: {target_version}")
-            return
+        if pypi_data is not None:
+            release_files = pypi_data["urls"]
+            if release_files and any(not release_file.get("yanked", False) for release_file in release_files):
+                print(f"PyPI 已发布 dashboard 正式版本: {target_version}")
+                return
 
-        print(f"PyPI 上的 {PACKAGE_NAME}=={target_version} 没有可用的未撤回文件")
+            print(f"PyPI 上的 {PACKAGE_NAME}=={target_version} 没有可用的未撤回文件")
+
+        if attempt < MAX_CHECK_ATTEMPTS:
+            time.sleep(CHECK_INTERVAL_SECONDS)
 
     raise RuntimeError(
         f"等待 {MAX_CHECK_ATTEMPTS * CHECK_INTERVAL_SECONDS} 秒后，"
@@ -152,13 +146,14 @@ def update_requirements(target_version: Version) -> bool:
 
 def main() -> None:
     target_version = get_target_stable_version()
-    print(f"main 分支 dashboard 目标正式版本: {target_version}")
+    print(f"Dashboard 目标正式版本: {target_version}")
+
+    # 即使依赖文件已经写入目标版本，也必须确认 PyPI 上的发布物真实可用。
+    wait_for_published_version(target_version)
 
     if dependencies_are_current(target_version):
-        print(f"依赖文件已锁定到 {PACKAGE_NAME}=={target_version}，无需等待 PyPI")
+        print(f"依赖文件已锁定到 {PACKAGE_NAME}=={target_version}")
         return
-
-    wait_for_published_version(target_version)
 
     pyproject_updated = update_pyproject(target_version)
     requirements_updated = update_requirements(target_version)

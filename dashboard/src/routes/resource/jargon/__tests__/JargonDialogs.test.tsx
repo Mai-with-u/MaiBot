@@ -1,6 +1,6 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   BatchDeleteConfirmDialog,
@@ -17,6 +17,19 @@ import type { Jargon, JargonChatInfo, JargonExportItem } from '@/types/jargon'
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+})
+
+beforeEach(() => {
+  // Radix Select 打开下拉时会调用 pointer-capture，jsdom 未实现
+  if (!Element.prototype.hasPointerCapture) {
+    Element.prototype.hasPointerCapture = () => false
+  }
+  if (!Element.prototype.setPointerCapture) {
+    Element.prototype.setPointerCapture = () => {}
+  }
+  if (!Element.prototype.releasePointerCapture) {
+    Element.prototype.releasePointerCapture = () => {}
+  }
 })
 
 // toast 断言用稳定引用的 spy（vi.mock 工厂被提升，必须用 vi.hoisted）
@@ -232,6 +245,142 @@ describe('JargonDetailDialog', () => {
     )
     expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '已取消固定' }))
   })
+
+  it('session_ids 为空时回退为 session_id，保存仍带上该聊天', async () => {
+    const user = userEvent.setup()
+    vi.mocked(jargonApi.updateJargon).mockResolvedValue({
+      success: true,
+      message: 'ok',
+      data: makeJargon(1),
+    })
+    renderDetail(makeJargon(1, { session_ids: [] }))
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() =>
+      expect(jargonApi.updateJargon).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ session_ids: ['s1'], session_id: 's1' })
+      )
+    )
+  })
+
+  it('编辑含义、切换黑话状态与全局开关后保存', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    const updated = makeJargon(1, { meaning: '新含义', is_jargon: false, is_global: true })
+    vi.mocked(jargonApi.updateJargon).mockResolvedValue({
+      success: true,
+      message: 'ok',
+      data: updated,
+    })
+    const { onChanged } = renderDetail(makeJargon(1))
+
+    const meaningInput = screen.getByLabelText('含义')
+    await user.clear(meaningInput)
+    await user.type(meaningInput, '新含义')
+
+    await user.click(screen.getByRole('combobox'))
+    await user.click(await screen.findByRole('option', { name: '无黑话' }))
+    expect(screen.getAllByText('无黑话').length).toBeGreaterThanOrEqual(1)
+
+    await user.click(screen.getByRole('switch', { name: '全局黑话' }))
+    await user.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() =>
+      expect(jargonApi.updateJargon).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          meaning: '新含义',
+          is_jargon: false,
+          is_global: true,
+        })
+      )
+    )
+    expect(onChanged).toHaveBeenCalledWith(updated)
+  })
+
+  it('保存成功但无 data 时只提示成功，不回调 onChanged', async () => {
+    const user = userEvent.setup()
+    vi.mocked(jargonApi.updateJargon).mockResolvedValue({
+      success: true,
+      message: 'ok',
+    } as never)
+    const { onChanged } = renderDetail(makeJargon(1))
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '保存成功' }))
+    )
+    expect(onChanged).not.toHaveBeenCalled()
+  })
+
+  it('保存失败且非 Error 时展示兜底文案', async () => {
+    const user = userEvent.setup()
+    vi.mocked(jargonApi.updateJargon).mockRejectedValue('boom')
+    renderDetail(makeJargon(1))
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({ title: '保存失败', description: '无法更新黑话' })
+      )
+    )
+  })
+
+  it('关闭按钮回调 onOpenChange(false)', async () => {
+    const user = userEvent.setup()
+    const { onOpenChange } = renderDetail(makeJargon(1))
+    const saveButton = screen.getByRole('button', { name: '保存' })
+    const footer = saveButton.parentElement
+    expect(footer).not.toBeNull()
+    const closeButton = screen
+      .getAllByRole('button', { name: '关闭' })
+      .find((btn) => footer?.contains(btn))
+    expect(closeButton).toBeDefined()
+    await user.click(closeButton!)
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('清空含义后固定按钮禁用；直接调用 onClick 提示无法固定', () => {
+    renderDetail(makeJargon(1, { meaning: '老含义' }))
+    fireEvent.change(screen.getByLabelText('含义'), { target: { value: '' } })
+    const pinButton = screen.getByRole('button', { name: '固定含义' })
+    expect(pinButton).toBeDisabled()
+    // 无含义时按钮禁用，React 不会派发 click；取出 props.onClick 覆盖守卫分支
+    const reactPropsKey = Object.keys(pinButton).find((key) => key.startsWith('__reactProps$'))
+    const reactProps = reactPropsKey
+      ? (pinButton as unknown as Record<string, { onClick?: () => void }>)[reactPropsKey]
+      : undefined
+    expect(reactProps?.onClick).toBeTypeOf('function')
+    reactProps?.onClick?.()
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: '无法固定',
+        description: '当前黑话还没有含义，不能固定为手动记录',
+      })
+    )
+    expect(jargonApi.updateJargon).not.toHaveBeenCalled()
+  })
+
+  it('固定含义失败：展示兜底错误信息', async () => {
+    const user = userEvent.setup()
+    vi.mocked(jargonApi.updateJargon).mockRejectedValue('固定接口炸了')
+    renderDetail(makeJargon(1, { meaning: '老含义' }))
+    await user.click(screen.getByRole('button', { name: '固定含义' }))
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({ title: '固定失败', description: '无法固定黑话含义' })
+      )
+    )
+  })
+
+  it('取消固定失败：展示兜底错误信息', async () => {
+    const user = userEvent.setup()
+    vi.mocked(jargonApi.updateJargon).mockRejectedValue('取消接口炸了')
+    renderDetail(makeJargon(1, { created_by: 'MANUAL' }))
+    await user.click(screen.getByRole('button', { name: '取消固定' }))
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({ title: '取消固定失败', description: '无法取消固定黑话含义' })
+      )
+    )
+  })
 })
 
 describe('JargonCreateDialog', () => {
@@ -299,6 +448,53 @@ describe('JargonCreateDialog', () => {
       )
     )
     expect(onSuccess).not.toHaveBeenCalled()
+  })
+
+  it('填写含义并开启全局后创建成功', async () => {
+    const user = userEvent.setup()
+    vi.mocked(jargonApi.createJargon).mockResolvedValue({
+      success: true,
+      message: 'ok',
+      data: makeJargon(10, { content: '新词', meaning: '解释', is_global: true }),
+    })
+    const { onSuccess } = renderCreate()
+    await user.type(screen.getByLabelText(/内容/), '新词')
+    await user.type(screen.getByLabelText('含义'), '解释')
+    await user.click(screen.getByRole('switch', { name: '设为全局黑话' }))
+    await user.click(screen.getByText('ms-add-s1'))
+    await user.click(screen.getByRole('button', { name: '创建' }))
+    await waitFor(() =>
+      expect(jargonApi.createJargon).toHaveBeenCalledWith({
+        content: '新词',
+        meaning: '解释',
+        session_ids: ['s1'],
+        session_id: 's1',
+        is_global: true,
+      })
+    )
+    expect(onSuccess).toHaveBeenCalledTimes(1)
+  })
+
+  it('创建失败且非 Error 时展示兜底文案', async () => {
+    const user = userEvent.setup()
+    vi.mocked(jargonApi.createJargon).mockRejectedValue('boom')
+    const { onSuccess } = renderCreate()
+    await user.type(screen.getByLabelText(/内容/), '新词')
+    await user.click(screen.getByText('ms-add-s1'))
+    await user.click(screen.getByRole('button', { name: '创建' }))
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({ title: '创建失败', description: '无法创建黑话' })
+      )
+    )
+    expect(onSuccess).not.toHaveBeenCalled()
+  })
+
+  it('取消按钮回调 onOpenChange(false)', async () => {
+    const user = userEvent.setup()
+    const { onOpenChange } = renderCreate()
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 })
 
@@ -396,6 +592,87 @@ describe('JargonImportDialog', () => {
       expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '读取失败' }))
     )
   })
+
+  it('未真正选中文件时忽略 change', () => {
+    renderImport()
+    fireEvent.change(screen.getByLabelText('JSON 文件'), { target: { files: [] } })
+    expect(toastMock).not.toHaveBeenCalled()
+    expect(screen.getByText('支持 maibot.jargon.export 或黑话数组')).toBeInTheDocument()
+  })
+
+  it('关闭后再打开会清空已选文件与冲突策略', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    const onSuccess = vi.fn()
+    const onOpenChange = vi.fn()
+    const props = { chatList, onSuccess, onOpenChange }
+    const { rerender } = render(<JargonImportDialog open {...props} />)
+    await user.upload(
+      screen.getByLabelText('JSON 文件'),
+      makeJsonFile('jargons.json', [makeExportItem('词1')])
+    )
+    expect(await screen.findByText('jargons.json，共 1 条黑话')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('combobox'))
+    await user.click(await screen.findByRole('option', { name: '覆盖已有黑话' }))
+
+    rerender(<JargonImportDialog open={false} {...props} />)
+    rerender(<JargonImportDialog open {...props} />)
+
+    expect(screen.getByText('支持 maibot.jargon.export 或黑话数组')).toBeInTheDocument()
+    expect(screen.queryByText(/共 1 条黑话/)).not.toBeInTheDocument()
+    expect(screen.getByRole('combobox')).toHaveTextContent('跳过已有黑话')
+  })
+
+  it('冲突策略选覆盖后按 overwrite 导入', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    const items = [makeExportItem('词1')]
+    vi.mocked(jargonApi.importJargons).mockResolvedValue({
+      success: true,
+      message: 'ok',
+      imported_count: 1,
+      skipped_count: 0,
+      failed_count: 0,
+    })
+    renderImport()
+    await user.upload(screen.getByLabelText('JSON 文件'), makeJsonFile('jargons.json', items))
+    expect(await screen.findByText('jargons.json，共 1 条黑话')).toBeInTheDocument()
+    await user.click(screen.getByText('ms-add-s1'))
+    await user.click(screen.getByRole('combobox'))
+    await user.click(await screen.findByRole('option', { name: '覆盖已有黑话' }))
+    await user.click(screen.getByRole('button', { name: '导入' }))
+    await waitFor(() =>
+      expect(jargonApi.importJargons).toHaveBeenCalledWith({
+        target_session_ids: ['s1'],
+        jargons: items,
+        conflict_strategy: 'overwrite',
+      })
+    )
+  })
+
+  it('导入失败：展示兜底错误信息', async () => {
+    const user = userEvent.setup()
+    vi.mocked(jargonApi.importJargons).mockRejectedValue('导入接口炸了')
+    renderImport()
+    await user.upload(
+      screen.getByLabelText('JSON 文件'),
+      makeJsonFile('jargons.json', [makeExportItem('词1')])
+    )
+    expect(await screen.findByText('jargons.json，共 1 条黑话')).toBeInTheDocument()
+    await user.click(screen.getByText('ms-add-s1'))
+    await user.click(screen.getByRole('button', { name: '导入' }))
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({ title: '导入失败', description: '无法导入黑话' })
+      )
+    )
+  })
+
+  it('取消按钮回调 onOpenChange(false)', async () => {
+    const user = userEvent.setup()
+    const { onOpenChange } = renderImport()
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
 })
 
 describe('JargonExportDialog', () => {
@@ -456,6 +733,21 @@ describe('JargonExportDialog', () => {
     renderExport({ exporting: true })
     expect(screen.getByRole('button', { name: '导出中...' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '取消' })).toBeDisabled()
+  })
+
+  it('有选中项时切换范围为 selected', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    const { onScopeChange } = renderExport({ selectedCount: 2, scope: 'all' })
+    await user.click(screen.getByRole('combobox'))
+    await user.click(await screen.findByRole('option', { name: '已选择 2 个' }))
+    expect(onScopeChange).toHaveBeenCalledWith('selected')
+  })
+
+  it('取消按钮回调 onOpenChange(false)', async () => {
+    const user = userEvent.setup()
+    const { onOpenChange } = renderExport()
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 })
 

@@ -429,6 +429,7 @@ export function useModelConfig() {
       price_out: model.price_out ?? 0,
       cache: model.cache ?? false,
       cache_price_in: model.cache_price_in ?? 0,
+      send_temperature: model.send_temperature ?? true,
       visual: model.visual ?? false,
       force_stream_mode: model.force_stream_mode ?? false,
       extra_params: model.extra_params ?? {},
@@ -570,6 +571,19 @@ export function useModelConfig() {
   const saveProviders = useCallback(
     async (nextProviders: APIProvider[], affectedModels: unknown[] = []) => {
       const cleanedProviders = nextProviders.map(cleanProviderData)
+      if (affectedModels.length === 0) {
+        // 单独保存提供商，允许先配置提供商再添加模型；模型和任务草稿继续各自自动保存。
+        const providerCheckpoint = prepareProviderSaveBarrier(cleanedProviders)
+        await enqueueConfigWrite(async () => {
+          await updateModelConfigSection('api_providers', cleanedProviders)
+        })
+        if (commitProviderSaveBarrier(providerCheckpoint)) {
+          syncProviderState(cleanedProviders)
+        }
+        return
+      }
+
+      // 级联删除涉及模型和任务引用，必须整份写入，避免产生不一致的中间状态。
       const { models: nextModels, taskConfig: nextTaskConfig } = removeModelsForProviders(
         models,
         taskConfig,
@@ -597,8 +611,11 @@ export function useModelConfig() {
     },
     [
       checkTaskConfigIssues,
+      commitProviderSaveBarrier,
+      enqueueConfigWrite,
       models,
       persistModelConfigDraft,
+      prepareProviderSaveBarrier,
       removeModelsForProviders,
       syncProviderState,
       taskConfig,
@@ -865,6 +882,7 @@ export function useModelConfig() {
           cache: isDeepSeekTemplateProvider(defaultProvider),
           cache_price_in: 0,
           temperature: null,
+          send_temperature: true,
           max_tokens: null,
           visual: false,
           force_stream_mode: false,
@@ -980,6 +998,7 @@ export function useModelConfig() {
       price_out: editingModel.price_out ?? 0,
       cache: editingModel.cache ?? false,
       cache_price_in: editingModel.cache_price_in ?? 0,
+      send_temperature: editingModel.send_temperature ?? true,
       visual: editingModel.visual ?? false,
       force_stream_mode: editingModel.force_stream_mode ?? false,
       extra_params: editingModel.extra_params ?? {},
@@ -1243,7 +1262,7 @@ export function useModelConfig() {
         } else {
           toast({
             title: testResult.tool_call_ok ? '模型响应异常' : '工具调用未通过',
-            description: testResult.error || `${modelName} 未通过模型能力测试`,
+            description: `${modelName} 未通过模型能力测试，请点击“详情”查看完整错误信息`,
             variant: 'destructive',
             duration: 10000,
             action: buildModelTestDetailAction(testResult),

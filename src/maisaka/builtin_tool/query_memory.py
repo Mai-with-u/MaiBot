@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Optional, Tuple
+import re
 
 from src.common.logger import get_logger
 from src.config.config import global_config
@@ -16,6 +17,7 @@ from .context import BuiltinToolRuntimeContext
 logger = get_logger("maisaka_builtin_query_memory")
 
 _ALLOWED_QUERY_MODES = {"search", "time", "hybrid", "episode", "aggregate"}
+_ISO_QUERY_TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?$")
 REPLYER_MEMORY_REFERENCE_MARKER = "【长期记忆检索结果-内部参考】"
 
 
@@ -80,6 +82,8 @@ def _normalize_optional_time(raw_value: Any) -> str | float | None:
         time_text = raw_value.strip()
         if not time_text:
             return None
+        if _ISO_QUERY_TIME_RE.fullmatch(time_text):
+            return time_text.replace("-", "/", 2)
         return time_text
     if isinstance(raw_value, (float, int)):
         return float(raw_value)

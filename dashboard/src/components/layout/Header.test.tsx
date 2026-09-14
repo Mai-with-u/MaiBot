@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   electron: false,
   inheritedFrom: 'header',
   focusCompanion: true,
+  language: 'zh-CN',
   t: vi.fn((key: string) => key),
   changeLanguage: vi.fn(),
   getActiveBackend: vi.fn(),
@@ -51,7 +52,7 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: mocks.t,
     i18n: {
-      language: 'zh-CN',
+      language: mocks.language,
       changeLanguage: mocks.changeLanguage,
     },
   }),
@@ -224,6 +225,7 @@ describe('Header', () => {
     mocks.electron = false
     mocks.inheritedFrom = 'header'
     mocks.focusCompanion = true
+    mocks.language = 'zh-CN'
     mocks.getActiveBackend.mockResolvedValue({ name: '本地后端' })
     mocks.logout.mockResolvedValue(undefined)
     vi.spyOn(window, 'open').mockImplementation(() => null)
@@ -631,6 +633,127 @@ describe('Header', () => {
     unmount()
     expect(observers[0]?.disconnect).toHaveBeenCalled()
     globalThis.ResizeObserver = OriginalResizeObserver
+  })
+
+  it('工作区离开定时器可被再次离开/进入/点击打断，卸载时清掉未完成定时器', () => {
+    vi.useFakeTimers()
+    const props = makeProps({ workspaceMode: 'settings' })
+    const { rerender, unmount } = render(<Header {...props} />)
+
+    const chatLink = screen.getByRole('link', { name: 'workspace.chat' })
+    const logsLink = screen.getByRole('link', { name: 'workspace.logs' })
+    const tabs = document.querySelector('[data-dashboard-workspace-tabs="true"]') as HTMLElement
+
+    fireEvent.pointerEnter(chatLink)
+    fireEvent.pointerLeave(tabs)
+    fireEvent.pointerLeave(tabs)
+    fireEvent.pointerEnter(logsLink)
+    expect(logsLink.querySelector('[data-layout-id="topbar-selection-pill"]')).toBeInTheDocument()
+
+    fireEvent.pointerLeave(tabs)
+    fireEvent.click(chatLink)
+    expect(props.onWorkspaceNavigate).toHaveBeenCalledWith('/chat')
+
+    rerender(<Header {...makeProps({ workspaceMode: 'chat' })} />)
+    fireEvent.pointerEnter(logsLink)
+    fireEvent.pointerLeave(tabs)
+    unmount()
+    act(() => {
+      vi.advanceTimersByTime(600)
+    })
+  })
+
+  it('顶栏按钮悬停定时器可被再次进入打断，并触发设置/语言/文档等剩余回调', () => {
+    vi.useFakeTimers()
+    const props = makeProps()
+    render(<Header {...props} />)
+
+    const searchButton = screen.getByRole('button', { name: 'header.searchPlaceholder' })
+    const docsButton = screen.getByRole('button', { name: 'header.viewDocs' })
+    const languageButton = screen.getByRole('button', { name: 'header.switchLanguage' })
+    const themeButton = screen.getAllByRole('button', { name: 'header.switchToLight' })[0]
+    const logoutButton = screen.getByRole('button', { name: 'header.logout' })
+    const settingsLink = screen.getByRole('link', { name: 'sidebar.menu.settings' })
+
+    fireEvent.pointerEnter(searchButton)
+    fireEvent.pointerLeave(searchButton)
+    fireEvent.pointerLeave(searchButton)
+    fireEvent.pointerEnter(searchButton)
+
+    fireEvent.pointerEnter(docsButton)
+    fireEvent.pointerLeave(docsButton)
+    fireEvent.pointerEnter(languageButton)
+    fireEvent.click(languageButton)
+    fireEvent.pointerEnter(themeButton)
+    fireEvent.pointerLeave(themeButton)
+    fireEvent.pointerEnter(logoutButton)
+    fireEvent.pointerLeave(logoutButton)
+    fireEvent.click(settingsLink)
+    fireEvent.click(screen.getAllByRole('button', { name: 'English' })[1])
+
+    expect(settingsLink).toHaveAttribute('href', '/settings')
+    expect(mocks.changeLanguage).toHaveBeenCalledWith('en')
+
+    act(() => {
+      vi.advanceTimersByTime(600)
+    })
+  })
+
+  it('日志工作区在动画帧内缺少切换器时保持未压缩', () => {
+    vi.useFakeTimers()
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      return window.setTimeout(() => callback(0), 0)
+    })
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+      window.clearTimeout(id)
+    })
+
+    render(<Header {...makeProps({ workspaceMode: 'logs' })} />)
+    act(() => {
+      vi.advanceTimersByTime(0)
+    })
+    expect(document.querySelector('[data-workspace-tab="chat"]')).toHaveClass('px-2.5')
+  })
+
+  it('折叠顶栏在非设置工作区隐藏侧栏按钮，专注页与深色更多菜单走对应样式', () => {
+    mocks.pathname = '/focus'
+    const collapsedProps = makeProps({
+      topbarCollapsed: true,
+      sidebarOpen: true,
+      workspaceMode: 'logs',
+      actualTheme: 'dark',
+    })
+    const { rerender } = render(<Header {...collapsedProps} />)
+
+    const strip = document.querySelector('[data-dashboard-header-strip="true"]')
+    expect(
+      strip?.querySelector('[data-dashboard-sidebar-mode-switch="true"]')
+    ).toHaveClass('lg:hidden')
+
+    const expandedProps = makeProps({
+      topbarCollapsed: false,
+      sidebarOpen: true,
+      workspaceMode: 'logs',
+      actualTheme: 'dark',
+    })
+    rerender(<Header {...expandedProps} />)
+    expect(screen.getAllByRole('link', { name: 'sidebar.menu.focusCompanion' })[0]).toHaveClass(
+      'bg-accent'
+    )
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'header.switchToLight' })[1])
+    expect(mocks.toggleTheme).toHaveBeenCalledWith(
+      'light',
+      expandedProps.onThemeChange,
+      expect.anything()
+    )
+  })
+
+  it('语言代码为空时回退中文并勾选中文项', () => {
+    mocks.language = ''
+    render(<Header {...makeProps()} />)
+    const zhItem = screen.getAllByRole('button', { name: /中文/ })[0]
+    expect(zhItem.querySelector('svg')).toBeTruthy()
   })
 })
 

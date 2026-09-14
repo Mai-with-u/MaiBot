@@ -1,5 +1,5 @@
 ﻿from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import base64
 
@@ -7,6 +7,47 @@ from src.common.logger import get_logger
 from src.config.config import global_config
 
 logger = get_logger("plugin_runtime.integration")
+
+_DEFAULT_PLUGIN_LLM_TASK = "utils"
+
+
+def _resolve_llm_capability_route(
+    args: Dict[str, Any],
+    available_tasks: Dict[str, Any],
+) -> Tuple[str, str | None]:
+    """解析插件 LLM 请求使用的任务与直选模型。
+
+    新版 SDK 会显式发送 ``task_name``，此时 ``model`` 与 ``model_name`` 都表示
+    具体模型。旧版 SDK 未发送 ``task_name``，需要继续兼容把 ``model`` 当作任务名
+    使用的插件。
+
+    Args:
+        args: capability 调用参数。
+        available_tasks: 当前 Host 可用的模型任务。
+
+    Returns:
+        Tuple[str, str | None]: 任务名与可选的直选模型名。
+
+    Raises:
+        ValueError: ``model`` 与 ``model_name`` 指定了不同模型时抛出。
+    """
+    requested_task_name = str(args.get("task_name", "") or "").strip()
+    model_alias = str(args.get("model", "") or "").strip()
+    requested_model_name = str(args.get("model_name", "") or "").strip()
+
+    if model_alias and requested_model_name and model_alias != requested_model_name:
+        raise ValueError("model 与 model_name 不能指定不同的模型")
+
+    if "task_name" in args:
+        return requested_task_name or _DEFAULT_PLUGIN_LLM_TASK, requested_model_name or model_alias or None
+
+    if requested_model_name:
+        return _DEFAULT_PLUGIN_LLM_TASK, requested_model_name
+
+    if model_alias in available_tasks:
+        return model_alias, None
+
+    return _DEFAULT_PLUGIN_LLM_TASK, model_alias or None
 
 
 def _get_nested_config_value(source: Any, key: str, default: Any = None) -> Any:
@@ -572,12 +613,14 @@ class RuntimeCoreCapabilityMixin:
 
         try:
             prompt = _normalize_prompt_arg(args.get("prompt"))
-            task_name = llm_api.resolve_task_name(str(args.get("model", "") or args.get("model_name", "")))
+            task_name, model_name = _resolve_llm_capability_route(args, llm_api.get_available_models())
+            task_name = llm_api.resolve_task_name(task_name)
             result = await llm_api.generate(
                 llm_api.LLMServiceRequest(
                     task_name=task_name,
                     request_type=f"plugin.{plugin_id}",
                     prompt=prompt,
+                    model_name=model_name,
                     temperature=args.get("temperature"),
                     max_tokens=args.get("max_tokens"),
                 )
@@ -607,12 +650,14 @@ class RuntimeCoreCapabilityMixin:
 
         try:
             prompt = _normalize_prompt_arg(args.get("prompt"))
-            task_name = llm_api.resolve_task_name(str(args.get("model", "") or args.get("model_name", "")))
+            task_name, model_name = _resolve_llm_capability_route(args, llm_api.get_available_models())
+            task_name = llm_api.resolve_task_name(task_name)
             result = await llm_api.generate(
                 llm_api.LLMServiceRequest(
                     task_name=task_name,
                     request_type=f"plugin.{plugin_id}",
                     prompt=prompt,
+                    model_name=model_name,
                     tool_options=tool_options,
                     temperature=args.get("temperature"),
                     max_tokens=args.get("max_tokens"),

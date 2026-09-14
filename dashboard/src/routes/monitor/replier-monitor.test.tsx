@@ -345,4 +345,86 @@ describe('ReplierMonitor 详情弹窗', () => {
     await waitFor(() => expect(errorSpy).toHaveBeenCalledWith('加载回复详情失败:', loadError))
     expect(await screen.findByText('无数据')).toBeInTheDocument()
   })
+
+  it('成功详情在输出/推理/错误均为空时只展示占位，不渲染可选区块', async () => {
+    vi.mocked(plannerApi.getReplyLogDetail).mockResolvedValue({
+      type: 'reply',
+      chat_id: 'chat-1',
+      timestamp: 1700000000,
+      prompt: '',
+      output: '',
+      processed_output: [],
+      model: 'gpt-empty',
+      reasoning: '',
+      think_level: 0,
+      timing: {
+        prompt_ms: undefined as unknown as number,
+        overall_ms: undefined as unknown as number,
+        timing_logs: [],
+        llm_ms: undefined as unknown as number,
+        almost_zero: '',
+      },
+      error: null,
+      success: true,
+    })
+    const user = userEvent.setup()
+    await enterChatLogs(user)
+    await user.click(screen.getByText('预览：你好呀'))
+
+    expect(await screen.findByText('回复生成详情')).toBeInTheDocument()
+    expect(screen.getAllByText('成功').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('无输出内容').length).toBeGreaterThan(0)
+    expect(screen.getByText('gpt-empty')).toBeInTheDocument()
+    expect(screen.getAllByText('0ms')).toHaveLength(3)
+    expect(screen.queryByText('处理后的输出')).not.toBeInTheDocument()
+    expect(screen.queryByText('推理过程')).not.toBeInTheDocument()
+    expect(screen.queryByText('错误信息')).not.toBeInTheDocument()
+    expect(screen.queryByText('完整提示词')).not.toBeInTheDocument()
+  })
 })
+
+describe('ReplierMonitor 错误态与加载空态', () => {
+  it('总览请求失败时按空列表展示', async () => {
+    vi.mocked(plannerApi.getReplierOverview).mockRejectedValue(new Error('后端挂了'))
+    render(<ReplierMonitor autoRefresh={false} refreshKey={0} />, { wrapper: makeWrapper() })
+
+    expect(await screen.findByText('暂无聊天记录')).toBeInTheDocument()
+    expect(screen.getAllByText('0')).toHaveLength(2)
+  })
+
+  it('总览加载中展示骨架而不展示空态文案', async () => {
+    vi.mocked(plannerApi.getReplierOverview).mockImplementation(() => new Promise(() => {}))
+    const { container } = render(<ReplierMonitor autoRefresh={false} refreshKey={0} />, {
+      wrapper: makeWrapper(),
+    })
+    await act(async () => {})
+
+    expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0)
+    expect(screen.queryByText('暂无聊天记录')).not.toBeInTheDocument()
+  })
+
+  it('回复日志请求失败时按空记录展示', async () => {
+    vi.mocked(plannerApi.getReplyChatLogs).mockRejectedValue(new Error('日志不可用'))
+    const user = userEvent.setup()
+    await renderOverview()
+    await user.click(screen.getByRole('button', { name: /测试群/ }))
+
+    expect(await screen.findByText('暂无回复记录')).toBeInTheDocument()
+    expect(screen.getByText(/共 0 条回复记录/)).toBeInTheDocument()
+  })
+
+  it('非法页码与空跳转被忽略', async () => {
+    const user = userEvent.setup()
+    await enterChatLogs(user)
+
+    const jumpInput = screen.getByPlaceholderText('跳转')
+    await user.type(jumpInput, '0')
+    await user.click(screen.getByRole('button', { name: '跳转' }))
+    expect(plannerApi.getReplyChatLogs).not.toHaveBeenCalledWith('chat-1', 0, 20, undefined)
+
+    await user.clear(jumpInput)
+    await user.click(screen.getByRole('button', { name: '跳转' }))
+    expect(plannerApi.getReplyChatLogs).not.toHaveBeenCalledWith('chat-1', Number.NaN, 20, undefined)
+  })
+})
+

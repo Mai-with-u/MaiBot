@@ -57,6 +57,14 @@ describe('CustomTokenForm', () => {
     expect(onChange).toHaveBeenCalledWith('Abc!123456')
   })
 
+  it('空 Token 时四条规则均未通过', () => {
+    render(<CustomTokenForm token="" onChange={vi.fn()} />)
+
+    for (const label of ['长度至少 10 位', '包含大写字母', '包含小写字母', '包含特殊符号']) {
+      expect(screen.getByText(label)).toHaveClass('text-muted-foreground')
+    }
+  })
+
   it('按真实校验规则区分通过与未通过的样式', () => {
     // "abc" 只满足小写字母规则
     render(<CustomTokenForm token="abc" onChange={vi.fn()} />)
@@ -157,6 +165,24 @@ describe('ApiProviderSetupForm', () => {
     expect(onChange).toHaveBeenLastCalledWith({ ...config, api_key: 'sk-new' })
   })
 
+  it('空配置时 API Key 为空，点击自定义后回调清空字段', () => {
+    const onChange = vi.fn()
+    render(
+      <ApiProviderSetupForm
+        config={{ provider_name: '', base_url: '', api_key: '' }}
+        onChange={onChange}
+      />
+    )
+
+    expect(screen.getByLabelText('setupPage.forms.apiProvider.apiKey.label')).toHaveValue('')
+
+    fireEvent.click(screen.getByRole('button', { name: '自定义' }))
+    expect(onChange).toHaveBeenCalledWith({ provider_name: '', base_url: '', api_key: '' })
+    expect(
+      screen.getByPlaceholderText('setupPage.forms.apiProvider.providerName.placeholder')
+    ).toHaveValue('')
+  })
+
   it('API Key 默认隐藏且可切换明文显示', () => {
     render(<ApiProviderSetupForm config={config} onChange={vi.fn()} />)
 
@@ -169,6 +195,60 @@ describe('ApiProviderSetupForm', () => {
     expect(
       screen.getByRole('button', { name: 'setupPage.forms.apiProvider.apiKey.hide' })
     ).toBeInTheDocument()
+  })
+
+  it('预置下拉切换提供商，未知选项被忽略，自定义与预置可往返并编辑字段', () => {
+    const onChange = vi.fn()
+    render(<ApiProviderSetupForm config={config} onChange={onChange} />)
+
+    const presetSelect = screen.getByLabelText('选择预置提供商')
+    fireEvent.change(presetSelect, { target: { value: 'zhipu' } })
+    expect(onChange).toHaveBeenCalledWith({
+      ...config,
+      provider_name: 'ZhipuAI',
+      base_url: 'https://open.bigmodel.cn/api/paas/v4',
+      api_key: '',
+    })
+
+    fireEvent.change(presetSelect, { target: { value: 'not-exist' } })
+    expect(onChange).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: '自定义' }))
+    fireEvent.change(
+      screen.getByPlaceholderText('setupPage.forms.apiProvider.providerName.placeholder'),
+      { target: { value: 'Mine' } }
+    )
+    fireEvent.change(screen.getByPlaceholderText('https://api.example.com/v1'), {
+      target: { value: 'https://mine.example/v1' },
+    })
+    fireEvent.change(screen.getByLabelText('setupPage.forms.apiProvider.apiKey.label'), {
+      target: { value: 'sk-new' },
+    })
+    expect(onChange).toHaveBeenLastCalledWith({ ...config, api_key: 'sk-new' })
+
+    fireEvent.click(screen.getByRole('button', { name: '预置' }))
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...config,
+      provider_name: 'ZhipuAI',
+      base_url: 'https://open.bigmodel.cn/api/paas/v4',
+      api_key: '',
+    })
+  })
+
+  it('无法匹配预置时进入自定义模式', () => {
+    render(
+      <ApiProviderSetupForm
+        config={{ provider_name: 'Private', base_url: 'https://private.example/v1', api_key: 'k' }}
+        onChange={vi.fn()}
+      />
+    )
+
+    expect(
+      screen.getByPlaceholderText('setupPage.forms.apiProvider.providerName.placeholder')
+    ).toHaveValue('Private')
+    expect(screen.getByPlaceholderText('https://api.example.com/v1')).toHaveValue(
+      'https://private.example/v1'
+    )
   })
 })
 
@@ -239,4 +319,50 @@ describe('ModelSetupForm', () => {
     fireEvent.click(thinkingSwitches[1])
     expect(onChange).toHaveBeenLastCalledWith({ ...config, replyer_thinking: true })
   })
+
+  it('空标识符回显为空，修改后按标识符推断思考开关', () => {
+    const onChange = vi.fn()
+    const emptyConfig: ModelSetupConfig = {
+      ...config,
+      planner_model_identifier: '',
+      replyer_model_identifier: '',
+    }
+    render(<ModelSetupForm config={emptyConfig} onChange={onChange} />)
+
+    const plannerInput = screen.getByPlaceholderText('gpt-4.1-mini')
+    const replyerInput = screen.getByPlaceholderText('gpt-4.1')
+    expect(plannerInput).toHaveValue('')
+    expect(replyerInput).toHaveValue('')
+
+    fireEvent.change(plannerInput, { target: { value: 'gpt-4.1-mini' } })
+    expect(onChange).toHaveBeenCalledWith({
+      ...emptyConfig,
+      planner_model_identifier: 'gpt-4.1-mini',
+      planner_model_name: 'gpt-4.1-mini',
+      planner_thinking: false,
+    })
+
+    fireEvent.change(replyerInput, { target: { value: ' Deepseek-V4-Pro ' } })
+    expect(onChange).toHaveBeenCalledWith({
+      ...emptyConfig,
+      replyer_model_identifier: ' Deepseek-V4-Pro ',
+      replyer_model_name: ' Deepseek-V4-Pro ',
+      replyer_thinking: true,
+    })
+  })
+
+  it('切换规划器与回复器思考开关分别回调对应字段', () => {
+    const onChange = vi.fn()
+    render(<ModelSetupForm config={config} onChange={onChange} />)
+
+    const thinkingSwitches = screen.getAllByRole('switch', { name: '启用思考' })
+    expect(thinkingSwitches).toHaveLength(2)
+
+    fireEvent.click(thinkingSwitches[0])
+    expect(onChange).toHaveBeenLastCalledWith({ ...config, planner_thinking: false })
+
+    fireEvent.click(thinkingSwitches[1])
+    expect(onChange).toHaveBeenLastCalledWith({ ...config, replyer_thinking: true })
+  })
 })
+

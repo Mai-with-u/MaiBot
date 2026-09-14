@@ -1089,6 +1089,8 @@ function PlannerToolCallsBlock({
   const isFinishTool = (toolName?: string) => toolName?.trim().toLowerCase() === 'finish'
   const finishTools = displayTools.filter((tool) => isFinishTool(tool.tool_name))
   const regularTools = displayTools.filter((tool) => !isFinishTool(tool.tool_name))
+  const plannerStopped =
+    finishTools.length > 0 || data.final_state.end_reason === 'tool_stop_after_execution'
 
   if (displayTools.length <= 0) {
     return null
@@ -1116,7 +1118,7 @@ function PlannerToolCallsBlock({
             {regularTools.length} 个
           </Badge>
         </div>
-        {finishTools.length > 0 && (
+        {plannerStopped && (
           <div className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2.5 py-1.5 text-xs">
             <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
             <span className="font-medium">本轮思考暂时结束</span>

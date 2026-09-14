@@ -218,7 +218,8 @@ export function MessageList({
       isNearBottomRef.current = distanceFromBottom <= 80
       captureScrollAnchors()
     }
-    updateNearBottom()
+    // 新会话挂载时视口天然位于顶部，但首次展示应由下方 effect 自动定位到最新消息。
+    // 此后只根据用户的真实滚动更新跟随状态，避免初始位置阻断首次到底部定位。
     viewport.addEventListener('scroll', updateNearBottom, { passive: true })
     return () => viewport.removeEventListener('scroll', updateNearBottom)
   }, [captureScrollAnchors])

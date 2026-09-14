@@ -171,6 +171,7 @@
       "observedBadge": "観察",
       "observedChats": "麦麦のチャットストリーム",
       "observedPreview": "読み取り専用の観察",
+      "openSettings": "{{name}}のチャット設定を開く",
       "online": "オンライン",
       "offline": "オフライン",
       "subtitle": "{{count}} 件の会話",

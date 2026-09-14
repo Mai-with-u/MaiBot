@@ -386,3 +386,282 @@ describe('EmojiUploadDialog', () => {
     expect(hoisted.postMock.mock.calls[0][1].body.get('description')).toBe('开心,高兴')
   })
 })
+
+// jsdom 未实现 Pointer Capture，Radix Select 打开下拉时会调用
+function stubPointerCapture() {
+  if (!Element.prototype.hasPointerCapture) {
+    Element.prototype.hasPointerCapture = () => false
+  }
+  if (!Element.prototype.setPointerCapture) {
+    Element.prototype.setPointerCapture = () => {}
+  }
+  if (!Element.prototype.releasePointerCapture) {
+    Element.prototype.releasePointerCapture = () => {}
+  }
+}
+
+// disabled 按钮的 native click 不会进 React onClick，改为直接调 fiber props
+function invokeReactClick(element: HTMLElement) {
+  const propsKey = Object.keys(element).find((key) => key.startsWith('__reactProps$'))
+  if (!propsKey) {
+    throw new Error('未找到 React props')
+  }
+  const props = (
+    element as unknown as Record<
+      string,
+      { onClick?: (event: { preventDefault: () => void; stopPropagation: () => void }) => void }
+    >
+  )[propsKey]
+  act(() => {
+    props.onClick?.({ preventDefault() {}, stopPropagation() {} })
+  })
+}
+
+describe('EmojiDetailDialog 覆盖补全', () => {
+  it('discarded 状态展示丢弃徽章', () => {
+    render(
+      <EmojiDetailDialog emoji={makeEmoji({ status: 'discarded' })} open onOpenChange={vi.fn()} />
+    )
+    expect(screen.getByText('丢弃')).toBeInTheDocument()
+  })
+
+  it('unknown 状态展示不认识徽章', () => {
+    render(
+      <EmojiDetailDialog emoji={makeEmoji({ status: 'unknown' })} open onOpenChange={vi.fn()} />
+    )
+    expect(screen.getByText('不认识')).toBeInTheDocument()
+  })
+
+  it('known 状态展示认识徽章', () => {
+    render(<EmojiDetailDialog emoji={makeEmoji({ status: 'known' })} open onOpenChange={vi.fn()} />)
+    expect(screen.getByText('认识')).toBeInTheDocument()
+  })
+
+  it('描述为空时预览 alt 回退为“表情包”', () => {
+    render(
+      <EmojiDetailDialog emoji={makeEmoji({ description: '' })} open onOpenChange={vi.fn()} />
+    )
+    expect(screen.getByAltText('表情包')).toBeInTheDocument()
+  })
+
+  it('预览图 onError 时隐藏 img 并在父节点插入占位 svg', () => {
+    render(<EmojiDetailDialog emoji={makeEmoji()} open onOpenChange={vi.fn()} />)
+    const img = screen.getByAltText('一只开心的猫')
+    const parent = img.parentElement!
+    fireEvent.error(img)
+    expect(parent.querySelector('svg')).not.toBeNull()
+    expect(parent.querySelector('img')).toBeNull()
+  })
+
+  it('预览图 onError 且 parentElement 为空时只隐藏图片', () => {
+    render(<EmojiDetailDialog emoji={makeEmoji()} open onOpenChange={vi.fn()} />)
+    const img = screen.getByAltText('一只开心的猫') as HTMLImageElement
+    Object.defineProperty(img, 'parentElement', { configurable: true, value: null })
+    fireEvent.error(img)
+    expect(img.style.display).toBe('none')
+  })
+})
+
+describe('EmojiEditDialog 覆盖补全', () => {
+  beforeEach(() => {
+    stubPointerCapture()
+  })
+
+  it('emotion 为 null 时输入框预填空字符串', () => {
+    render(
+      <EmojiEditDialog
+        emoji={makeEmoji({ emotion: null, status: 'known' })}
+        open
+        onOpenChange={vi.fn()}
+        onSuccess={vi.fn()}
+      />
+    )
+    expect(screen.getByPlaceholderText('输入情绪描述...')).toHaveValue('')
+  })
+
+  it('通过下拉将状态改为丢弃后保存 is_banned=true', async () => {
+    const user = userEvent.setup()
+    hoisted.updateEmojiMock.mockResolvedValue({ success: true, message: 'ok' })
+    render(
+      <EmojiEditDialog
+        emoji={makeEmoji({ id: 11, emotion: '怒', status: 'known' })}
+        open
+        onOpenChange={vi.fn()}
+        onSuccess={vi.fn()}
+      />
+    )
+    await user.click(screen.getByRole('combobox'))
+    await user.click(await screen.findByRole('option', { name: '丢弃' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() =>
+      expect(hoisted.updateEmojiMock).toHaveBeenCalledWith(11, {
+        emotion: '怒',
+        is_registered: false,
+        is_banned: true,
+      })
+    )
+  })
+
+  it('通过下拉将状态改为不认识后保存时清空情绪', async () => {
+    const user = userEvent.setup()
+    hoisted.updateEmojiMock.mockResolvedValue({ success: true, message: 'ok' })
+    render(
+      <EmojiEditDialog
+        emoji={makeEmoji({ id: 12, emotion: '还在', status: 'known' })}
+        open
+        onOpenChange={vi.fn()}
+        onSuccess={vi.fn()}
+      />
+    )
+    await user.click(screen.getByRole('combobox'))
+    await user.click(await screen.findByRole('option', { name: '不认识' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() =>
+      expect(hoisted.updateEmojiMock).toHaveBeenCalledWith(12, {
+        emotion: '',
+        is_registered: false,
+        is_banned: false,
+      })
+    )
+  })
+
+  it('通过下拉将状态改为据为己用后保存 is_registered=true', async () => {
+    const user = userEvent.setup()
+    hoisted.updateEmojiMock.mockResolvedValue({ success: true, message: 'ok' })
+    render(
+      <EmojiEditDialog
+        emoji={makeEmoji({ id: 13, emotion: '喜', status: 'known' })}
+        open
+        onOpenChange={vi.fn()}
+        onSuccess={vi.fn()}
+      />
+    )
+    await user.click(screen.getByRole('combobox'))
+    await user.click(await screen.findByRole('option', { name: '据为己用' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() =>
+      expect(hoisted.updateEmojiMock).toHaveBeenCalledWith(13, {
+        emotion: '喜',
+        is_registered: true,
+        is_banned: false,
+      })
+    )
+  })
+
+  it('保存抛出非 Error 时 toast 描述为“保存失败”', async () => {
+    hoisted.updateEmojiMock.mockRejectedValue('boom')
+    render(
+      <EmojiEditDialog emoji={makeEmoji()} open onOpenChange={vi.fn()} onSuccess={vi.fn()} />
+    )
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() =>
+      expect(hoisted.toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({ title: '错误', description: '保存失败', variant: 'destructive' })
+      )
+    )
+  })
+})
+
+describe('EmojiUploadDialog 覆盖补全', () => {
+  it('upload 事件在没有文件时保持选择步骤', () => {
+    render(<EmojiUploadDialog open onOpenChange={vi.fn()} onSuccess={vi.fn()} />)
+    const uppy = latestUppy()
+    uppy.files = []
+    act(() => uppy.emit('upload'))
+    expect(screen.getByText('上传表情包 - 选择文件')).toBeInTheDocument()
+  })
+
+  it('关闭对话框时调用 cancelAll，再次打开回到选择步骤', async () => {
+    const props = { onOpenChange: vi.fn(), onSuccess: vi.fn() }
+    const { rerender } = render(<EmojiUploadDialog open {...props} />)
+    const uppy = latestUppy()
+    const cancelAll = vi.spyOn(uppy, 'cancelAll')
+    uppy.files = [makeUppyFile('f1', 'a.png')]
+    act(() => uppy.emit('upload'))
+    expect(await screen.findByText('上传表情包 - 填写信息')).toBeInTheDocument()
+
+    rerender(<EmojiUploadDialog open={false} {...props} />)
+    expect(cancelAll).toHaveBeenCalled()
+
+    rerender(<EmojiUploadDialog open {...props} />)
+    expect(await screen.findByText('上传表情包 - 选择文件')).toBeInTheDocument()
+  })
+
+  it('文件自带 preview 时直接使用，不调用 createObjectURL', async () => {
+    render(<EmojiUploadDialog open onOpenChange={vi.fn()} onSuccess={vi.fn()} />)
+    const createSpy = vi.spyOn(URL, 'createObjectURL')
+    const uppy = latestUppy()
+    uppy.files = [
+      {
+        id: 'f1',
+        name: 'pred.png',
+        preview: 'blob:already-there',
+        data: new File(['x'], 'pred.png', { type: 'image/png' }),
+      },
+    ]
+    act(() => uppy.emit('upload'))
+    const img = await screen.findByAltText('pred.png')
+    expect(img).toHaveAttribute('src', 'blob:already-there')
+    expect(createSpy).not.toHaveBeenCalled()
+  })
+
+  it('未填标签时强制触发提交会弹出必填 toast', async () => {
+    render(<EmojiUploadDialog open onOpenChange={vi.fn()} onSuccess={vi.fn()} />)
+    const uppy = latestUppy()
+    uppy.files = [makeUppyFile('f1', 'a.png')]
+    act(() => uppy.emit('upload'))
+    await screen.findByText('上传表情包 - 填写信息')
+    const uploadButton = screen.getByRole('button', { name: '上传' })
+    expect(uploadButton).toBeDisabled()
+    invokeReactClick(uploadButton)
+    await waitFor(() =>
+      expect(hoisted.toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: '请填写必填项',
+          description: '每个表情包的情感标签都是必填的',
+          variant: 'destructive',
+        })
+      )
+    )
+  })
+
+  it('多文件：键盘选中、添加/移除标签后返回选择步骤', async () => {
+    const user = userEvent.setup()
+    render(<EmojiUploadDialog open onOpenChange={vi.fn()} onSuccess={vi.fn()} />)
+    const uppy = latestUppy()
+    uppy.files = [makeUppyFile('f1', 'a.png'), makeUppyFile('f2', 'b.png')]
+    act(() => uppy.emit('upload'))
+    expect(await screen.findByText('上传表情包 - 批量编辑')).toBeInTheDocument()
+    expect(screen.getByText('点击左侧卡片编辑')).toBeInTheDocument()
+
+    const cardA = screen.getByRole('button', { name: /a\.png/ })
+    const cardB = screen.getByRole('button', { name: /b\.png/ })
+
+    fireEvent.keyDown(cardB, { key: 'Tab' })
+    expect(screen.getByText('点击左侧卡片编辑')).toBeInTheDocument()
+
+    fireEvent.keyDown(cardA, { key: 'Enter' })
+    expect(screen.getByPlaceholderText('输入一个标签')).toBeInTheDocument()
+
+    fireEvent.keyDown(cardB, { key: ' ' })
+    expect(screen.getAllByText('b.png').length).toBeGreaterThanOrEqual(2)
+
+    await user.click(screen.getByRole('button', { name: '添加标签' }))
+    expect(screen.getAllByPlaceholderText('输入一个标签')).toHaveLength(2)
+
+    const removeButtons = screen.getAllByTitle('移除标签')
+    await user.click(removeButtons[1])
+    expect(screen.getAllByPlaceholderText('输入一个标签')).toHaveLength(1)
+
+    const lastInput = screen.getByPlaceholderText('输入一个标签')
+    await user.type(lastInput, 'hello')
+    const lastRemove = screen.getByTitle('移除标签')
+    expect(lastRemove).toBeDisabled()
+    invokeReactClick(lastRemove)
+    expect(screen.getByPlaceholderText('输入一个标签')).toHaveValue('')
+
+    fireEvent.click(screen.getByRole('button', { name: '返回' }))
+    expect(await screen.findByText('上传表情包 - 选择文件')).toBeInTheDocument()
+  })
+})
+

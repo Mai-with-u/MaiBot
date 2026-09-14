@@ -764,6 +764,150 @@ describe('MemoryEpisodeManager 列表、筛选与空态', () => {
       expect(memoryApi.getMemoryEpisode).toHaveBeenCalledWith('ep-init')
     })
   })
+
+  it('空字段条目走 ID/横杠回退，无 ID 详情不请求并展示空段落', async () => {
+    vi.mocked(memoryApi.getMemoryEpisodes).mockResolvedValue({
+      success: true,
+      items: [
+        makeEpisode({
+          episode_id: undefined,
+          id: undefined,
+          title: '空字段条目',
+          summary: undefined,
+          content: undefined,
+          source: undefined,
+          person_name: undefined,
+          person_id: undefined,
+          updated_at: null,
+          created_at: 0,
+          paragraphs: [{}],
+        }),
+        makeEpisode({
+          episode_id: 'ep-id-only',
+          title: undefined,
+          summary: undefined,
+          content: undefined,
+          person_name: undefined,
+          person_id: undefined,
+          updated_at: undefined,
+          created_at: 1_700_000_000,
+        }),
+      ],
+    })
+
+    await renderEpisodes()
+
+    expect(await screen.findByText('空字段条目')).toBeInTheDocument()
+    expect(screen.getAllByText('ep-id-only').length).toBeGreaterThan(0)
+    expect(screen.getByText(formatEpisodeTime(1_700_000_000))).toBeInTheDocument()
+    expect(screen.getByText('无 ID')).toBeInTheDocument()
+    expect(document.querySelector('textarea')).toHaveValue('')
+    expect(screen.getAllByText('-').length).toBeGreaterThan(0)
+    expect(memoryApi.getMemoryEpisode).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getAllByText('ep-id-only')[0])
+    await waitFor(() => {
+      expect(memoryApi.getMemoryEpisode).toHaveBeenCalledWith('ep-id-only')
+    })
+  })
+
+  it('列表 items 缺失视为空；非 Error 失败转成字符串 toast', async () => {
+    vi.mocked(memoryApi.getMemoryEpisodes)
+      .mockResolvedValueOnce({ success: true, items: undefined as unknown as MemoryEpisodeItemPayload[] })
+      .mockRejectedValueOnce('后端挂了')
+
+    await renderEpisodes()
+    expect(await screen.findByText('没有匹配的 Episode')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /刷新 Episode/ }))
+    await waitFor(() => {
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: '加载情节记忆失败',
+          description: '后端挂了',
+          variant: 'destructive',
+        }),
+      )
+    })
+  })
+
+  it('详情加载中显示占位，Error 对象用 message', async () => {
+    let resolveDetail: (value: MemoryEpisodeDetailPayload) => void = () => {}
+    vi.mocked(memoryApi.getMemoryEpisodes).mockResolvedValue({
+      success: true,
+      items: [makeEpisode(), makeEpisode({ episode_id: 'ep-2', title: '第二项' })],
+    })
+    vi.mocked(memoryApi.getMemoryEpisode).mockImplementation(
+      () => new Promise((resolve) => {
+        resolveDetail = resolve
+      }),
+    )
+
+    await renderEpisodes()
+    expect(await screen.findByText('咖啡店相遇')).toBeInTheDocument()
+    expect(await screen.findByLabelText('加载中')).toBeInTheDocument()
+
+    resolveDetail(makeEpisodeDetail(makeEpisode({
+      paragraphs: [{ hash: 'h-empty' }],
+    })))
+    expect(await screen.findByText('h-empty')).toBeInTheDocument()
+
+    vi.mocked(memoryApi.getMemoryEpisode).mockRejectedValueOnce(new Error('详情超时'))
+    fireEvent.click(screen.getByText('第二项'))
+    await waitFor(() => {
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: '加载 Episode 详情失败',
+          description: '详情超时',
+          variant: 'destructive',
+        }),
+      )
+    })
+  })
+
+  it('失败来源三项都缺字段时展示未知', async () => {
+    vi.mocked(memoryApi.getMemoryEpisodeStatus).mockResolvedValue({
+      success: true,
+      failed: [{}, { source: 'keep' }],
+    })
+    await renderEpisodes()
+    expect(screen.getByText(/最近失败来源：未知、keep/)).toBeInTheDocument()
+  })
+
+  it('只回填 initialEpisodeId；非有限时间戳不写入输入框', async () => {
+    vi.mocked(memoryApi.getMemoryEpisodes).mockResolvedValue({
+      success: true,
+      items: [makeEpisode({ episode_id: 'ep-init' })],
+    })
+
+    render(
+      <MemoryEpisodeManager
+        initialEpisodeId="ep-init"
+        initialTimeStart={Number.NaN}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(memoryApi.getMemoryEpisode).toHaveBeenCalledWith('ep-init')
+    })
+    expect(screen.getByLabelText('来源')).toHaveValue('')
+    expect(screen.getByLabelText('开始时间戳')).toHaveValue('')
+    expect(screen.getByLabelText('结束时间戳')).toHaveValue('')
+  })
+
+  it('只回填结束时间；相同初始 key 的重复渲染不会再套用', async () => {
+    const view = render(<MemoryEpisodeManager initialTimeEnd={1_700_000_500} />)
+    await waitFor(() => {
+      expect(screen.getByLabelText('结束时间戳')).toHaveValue('1700000500')
+    })
+    expect(screen.getByLabelText('来源')).toHaveValue('')
+
+    view.rerender(
+      <MemoryEpisodeManager initialTimeEnd={'1700000500' as unknown as number} />,
+    )
+    expect(screen.getByLabelText('结束时间戳')).toHaveValue('1700000500')
+    expect(screen.getByLabelText('开始时间戳')).toHaveValue('')
+  })
 })
 
 describe('MemoryEpisodeManager 重建与待处理任务', () => {
@@ -938,6 +1082,119 @@ describe('MemoryEpisodeManager 重建与待处理任务', () => {
           variant: 'destructive',
         }),
       )
+    })
+  })
+
+  it('勾选重建全部后取消确认对话框不发请求', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await renderReady()
+
+    fireEvent.click(screen.getByLabelText('重新生成全部可用来源'))
+    fireEvent.click(screen.getByRole('button', { name: /重新生成 Episode/ }))
+    expect(confirmSpy).toHaveBeenCalledWith('确认重建全部可用来源的 Episode？这个操作可能耗时较长。')
+    expect(memoryApi.rebuildMemoryEpisodes).not.toHaveBeenCalled()
+  })
+
+  it('未知失败原因原样展示，缺计数时按 0 项提示', async () => {
+    await renderReady()
+    vi.mocked(memoryApi.rebuildMemoryEpisodes)
+      .mockResolvedValueOnce({ success: false, unfinished_items: [{ reason: 'weird_reason' }] })
+      .mockResolvedValueOnce({ success: false })
+      .mockResolvedValueOnce({ success: true })
+
+    const rebuildButton = screen.getByRole('button', { name: /重新生成 Episode/ })
+
+    fireEvent.click(rebuildButton)
+    await waitFor(() => {
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({ description: 'weird_reason', variant: 'destructive' }),
+      )
+    })
+
+    fireEvent.click(rebuildButton)
+    await waitFor(() => {
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({ description: '失败 0 项，未完成 0 项' }),
+      )
+    })
+
+    fireEvent.click(rebuildButton)
+    await waitFor(() => {
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({ description: '已处理 0 项' }),
+      )
+    })
+  })
+
+  it('重建抛出非 Error、处理待重建抛出 Error 都展示描述', async () => {
+    await renderReady()
+
+    vi.mocked(memoryApi.rebuildMemoryEpisodes).mockRejectedValueOnce('重建超时')
+    fireEvent.click(screen.getByRole('button', { name: /重新生成 Episode/ }))
+    await waitFor(() => {
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Episode 重建失败',
+          description: '重建超时',
+          variant: 'destructive',
+        }),
+      )
+    })
+
+    vi.mocked(memoryApi.processMemoryEpisodePending).mockRejectedValueOnce(new Error('处理失败'))
+    fireEvent.click(screen.getByRole('button', { name: /处理来源重建任务/ }))
+    await waitFor(() => {
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: '处理来源重建任务失败',
+          description: '处理失败',
+          variant: 'destructive',
+        }),
+      )
+    })
+  })
+
+  it('处理待重建上限为空或小数视为无效', async () => {
+    await renderReady()
+
+    fireEvent.change(screen.getByLabelText('本次处理上限'), { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: /处理来源重建任务/ }))
+    await waitFor(() => {
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({ title: '处理参数无效', variant: 'destructive' }),
+      )
+    })
+    expect(memoryApi.processMemoryEpisodePending).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('本次处理上限'), { target: { value: '1.5' } })
+    fireEvent.change(screen.getByLabelText('最大尝试次数（含首次）'), { target: { value: '2' } })
+    fireEvent.click(screen.getByRole('button', { name: /处理来源重建任务/ }))
+    expect(memoryApi.processMemoryEpisodePending).not.toHaveBeenCalled()
+  })
+
+  it('刷新时把数量传给状态接口；重建进行中禁用运维按钮', async () => {
+    let resolveRebuild: (value: MemoryEpisodeActionPayload) => void = () => {}
+    vi.mocked(memoryApi.rebuildMemoryEpisodes).mockImplementation(
+      () => new Promise((resolve) => {
+        resolveRebuild = resolve
+      }),
+    )
+    await renderReady()
+
+    fireEvent.change(screen.getByLabelText('数量'), { target: { value: '8' } })
+    fireEvent.click(screen.getByRole('button', { name: /刷新 Episode/ }))
+    await waitFor(() => {
+      expect(memoryApi.getMemoryEpisodeStatus).toHaveBeenCalledWith(8)
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /重新生成 Episode/ }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /重新生成 Episode/ })).toBeDisabled()
+    })
+    expect(screen.getByRole('button', { name: /处理来源重建任务/ })).toBeDisabled()
+    resolveRebuild(makeAction())
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /重新生成 Episode/ })).toBeEnabled()
     })
   })
 })
@@ -1279,5 +1536,146 @@ describe('MemoryTimelineManager 范围、筛选与分页', () => {
     expect(toastMock).not.toHaveBeenCalledWith(
       expect.objectContaining({ description: '过期失败' }),
     )
+  })
+
+  it('有聊天流但无事件时展示空列表和零摘要', async () => {
+    await renderTimeline({ initialChatId: 'chat-1' })
+    expect(await screen.findByText('当前范围内没有可审计事件。')).toBeInTheDocument()
+    expect(screen.getByText(/测试群 · 账号 acc-1 · 0 条事件/)).toBeInTheDocument()
+  })
+
+  it('加载中禁用刷新；无法解析的时间字符串会清空结束时间', async () => {
+    let resolveTimeline: (value: MemoryTimelinePayload) => void = () => {}
+    vi.mocked(memoryApi.getMemoryTimeline).mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveTimeline = resolve
+      }),
+    )
+
+    await renderTimeline(
+      { initialChatId: 'chat-1', initialTimeEnd: 1_700_010_000 },
+      { waitForLoad: false },
+    )
+    expect(screen.getByRole('button', { name: /刷新时间线/ })).toBeDisabled()
+
+    resolveTimeline(makeTimelinePayload([]))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /刷新时间线/ })).toBeEnabled()
+    })
+
+    const endInput = screen.getByLabelText('结束时间') as HTMLInputElement
+    // datetime-local 会把非法值洗成空串，改成 text 才能打到 Date.parse 失败分支
+    endInput.type = 'text'
+    fireEvent.change(endInput, { target: { value: 'not-a-date' } })
+    await waitFor(() => {
+      expect(memoryApi.getMemoryTimeline).toHaveBeenLastCalledWith(
+        expect.objectContaining({ timeEnd: undefined }),
+      )
+    })
+  })
+
+  it('无平台聊天流选项不加平台后缀，仍作为真实聊天流请求', async () => {
+    const user = userEvent.setup()
+    await renderTimeline({
+      chatTargets: [
+        makeChatTarget({
+          chat_id: 'chat-np',
+          chat_name: '无平台群',
+          platform: null,
+          is_group: true,
+        }),
+      ],
+    })
+    await waitFor(() => {
+      expect(memoryApi.getMemoryTimeline).toHaveBeenCalledWith(
+        expect.objectContaining({ chatId: 'chat-np' }),
+      )
+    })
+    await user.click(screen.getAllByRole('combobox')[0])
+    expect(await screen.findByRole('option', { name: /无平台群 \(群聊\)/ })).toBeInTheDocument()
+  })
+
+  it('切换聊天流与段落/反馈/维护筛选会重新请求', async () => {
+    const user = userEvent.setup()
+    await renderTimeline()
+    await waitFor(() => expect(memoryApi.getMemoryTimeline).toHaveBeenCalled())
+
+    await user.click(screen.getAllByRole('combobox')[1])
+    await user.click(await screen.findByRole('option', { name: '段落' }))
+    await waitFor(() => {
+      expect(memoryApi.getMemoryTimeline).toHaveBeenLastCalledWith(
+        expect.objectContaining({ types: ['paragraph'] }),
+      )
+    })
+
+    await user.click(screen.getAllByRole('combobox')[1])
+    await user.click(await screen.findByRole('option', { name: '反馈纠错' }))
+    await waitFor(() => {
+      expect(memoryApi.getMemoryTimeline).toHaveBeenLastCalledWith(
+        expect.objectContaining({ types: ['feedback'] }),
+      )
+    })
+
+    await user.click(screen.getAllByRole('combobox')[1])
+    await user.click(await screen.findByRole('option', { name: '维护操作' }))
+    await waitFor(() => {
+      expect(memoryApi.getMemoryTimeline).toHaveBeenLastCalledWith(
+        expect.objectContaining({ types: ['maintenance'] }),
+      )
+    })
+
+    await user.click(screen.getAllByRole('combobox')[0])
+    await user.click(await screen.findByRole('option', { name: /私聊对象/ }))
+    await waitFor(() => {
+      expect(memoryApi.getMemoryTimeline).toHaveBeenLastCalledWith(
+        expect.objectContaining({ chatId: 'chat-2' }),
+      )
+    })
+  })
+
+  it('每页 10 条时分页窗口不超过总页数，缺分类计数按 0 展示', async () => {
+    const user = userEvent.setup()
+    const items = Array.from({ length: 12 }, (_, index) => makeTimelineEvent(index + 1))
+    vi.mocked(memoryApi.getMemoryTimeline).mockResolvedValue(
+      makeTimelinePayload(items, { summary: { total: 12, by_type: {} } }),
+    )
+    await renderTimeline({ initialChatId: 'chat-1' })
+
+    expect(await screen.findByText('事件1')).toBeInTheDocument()
+    expect(screen.getByText(/12 条事件/)).toBeInTheDocument()
+
+    await user.click(screen.getByLabelText('每页显示条数'))
+    await user.click(await screen.findByRole('option', { name: '10 条' }))
+    expect(await screen.findByText('事件10')).toBeInTheDocument()
+    expect(screen.queryByText('事件11')).not.toBeInTheDocument()
+    expect(screen.getByText(/第 1 \/ 2 页，每页 10 条/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '下一页' }))
+    expect(await screen.findByText('事件11')).toBeInTheDocument()
+    expect(screen.getByText('事件12')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '下一页' })).toBeDisabled()
+  })
+
+  it('画像/反馈/删除/维护事件展示分类与类型标签', async () => {
+    const events = [
+      makeTimelineEvent(1, { category: 'profile', event_type: 'profile_updated', title: '画像事件' }),
+      makeTimelineEvent(2, { category: 'feedback', event_type: 'feedback_correction_applied', title: '纠错事件' }),
+      makeTimelineEvent(3, { category: 'delete', event_type: 'delete_executed', title: '删除事件' }),
+      makeTimelineEvent(4, { category: 'maintenance', event_type: 'relation_frozen', title: '冻结事件' }),
+    ]
+    vi.mocked(memoryApi.getMemoryTimeline).mockResolvedValue(makeTimelinePayload(events))
+    await renderTimeline({ initialChatId: 'chat-1' })
+
+    expect(await screen.findByText('画像事件')).toBeInTheDocument()
+    expect(screen.getAllByText('人物画像').length).toBeGreaterThan(0)
+    expect(screen.getByText('画像更新')).toBeInTheDocument()
+    expect(screen.getByText('纠错事件')).toBeInTheDocument()
+    expect(screen.getAllByText('反馈纠错').length).toBeGreaterThan(0)
+    expect(screen.getByText('删除事件')).toBeInTheDocument()
+    expect(screen.getByText('删除执行')).toBeInTheDocument()
+    expect(screen.getByText('冻结事件')).toBeInTheDocument()
+    expect(screen.getAllByText('维护操作').length).toBeGreaterThan(0)
+    expect(screen.getByText('关系冻结')).toBeInTheDocument()
+    expect(screen.getAllByText('删除恢复').length).toBeGreaterThan(0)
   })
 })

@@ -49,6 +49,36 @@ def test_update_prompt_file_saves_custom_version(client: TestClient) -> None:
     assert file_info["custom_version_count"] == 1
 
 
+def test_prompt_catalog_lists_emoji_content_analysis_metadata(client: TestClient) -> None:
+    prompt_dir = config_router_module.PROMPTS_DIR / "zh-CN"
+    (prompt_dir / "emoji_content_analysis.prompt").write_text(
+        "输入类型：{image_type}",
+        encoding="utf-8",
+    )
+    (prompt_dir / ".meta.toml").write_text(
+        """
+[emoji_content_analysis]
+display_name = "表情包内容分析"
+advanced = true
+description = "用于分析表情包图片内容的模板。"
+""".strip(),
+        encoding="utf-8",
+    )
+    clear_prompt_cache()
+
+    response = client.get("/api/webui/config/prompts")
+
+    assert response.status_code == 200
+    file_info = next(
+        item
+        for item in response.json()["files"]["zh-CN"]
+        if item["name"] == "emoji_content_analysis.prompt"
+    )
+    assert file_info["display_name"] == "表情包内容分析"
+    assert file_info["advanced"] is True
+    assert file_info["description"] == "用于分析表情包图片内容的模板。"
+
+
 def test_update_prompt_file_rejects_placeholder_mismatch(client: TestClient) -> None:
     response = client.put(
         "/api/webui/config/prompts/zh-CN/replyer.prompt",

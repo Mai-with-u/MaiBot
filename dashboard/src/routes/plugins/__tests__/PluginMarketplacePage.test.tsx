@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -796,5 +796,813 @@ describe('PluginMarketplacePage WebSocket 进度', () => {
       description: '无法实时显示加载进度',
       variant: 'destructive',
     })
+  })
+})
+
+function polyfillPointerCapture() {
+  const proto = Element.prototype as Element & {
+    hasPointerCapture?: (pointerId: number) => boolean
+    setPointerCapture?: (pointerId: number) => void
+    releasePointerCapture?: (pointerId: number) => void
+  }
+  if (typeof proto.hasPointerCapture !== 'function') {
+    proto.hasPointerCapture = () => false
+  }
+  if (typeof proto.setPointerCapture !== 'function') {
+    proto.setPointerCapture = () => {}
+  }
+  if (typeof proto.releasePointerCapture !== 'function') {
+    proto.releasePointerCapture = () => {}
+  }
+}
+
+async function selectMarketplaceOption(label: string, optionName: string) {
+  polyfillPointerCapture()
+  const trigger = screen.getByRole('combobox', { name: label })
+  fireEvent.pointerDown(trigger)
+  fireEvent.click(trigger)
+  const option = await screen.findByRole('option', { name: optionName })
+  fireEvent.pointerDown(option)
+  fireEvent.click(option)
+}
+
+describe('PluginMarketplacePage 错误态与空市场', () => {
+  it('市场清单为空时仍渲染标签页且计数为 0', async () => {
+    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([])
+
+    await renderPage()
+
+    expect(screen.getByTestId('marketplace-tab')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugin-plugin-a')).not.toBeInTheDocument()
+    expect(getCountBadgeText()).toBe('全部插件 0')
+  })
+
+  it('仅有本地插件时计数不计入市场插件', async () => {
+    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([])
+    vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([makeInstalledPlugin('local-only', '0.1.0')])
+
+    await renderPage()
+
+    expect(screen.getByTestId('plugin-local-only')).toHaveAttribute('data-source', 'local')
+    expect(getCountBadgeText()).toBe('全部插件 0')
+  })
+
+  it('清单尚未返回时显示加载指示', async () => {
+    vi.mocked(pluginApi.fetchPluginList).mockImplementation(() => new Promise(() => {}))
+
+    render(<PluginMarketplacePage />)
+
+    expect(screen.getByRole('status', { name: '加载中' })).toBeInTheDocument()
+    expect(screen.queryByTestId('marketplace-tab')).not.toBeInTheDocument()
+  })
+
+  it('加载失败后点击重新加载会刷新页面', async () => {
+    const user = userEvent.setup()
+    vi.mocked(pluginApi.fetchPluginList).mockRejectedValue(new Error('网络中断'))
+    const reload = vi.fn()
+    vi.stubGlobal('location', { ...window.location, reload })
+
+    render(<PluginMarketplacePage />)
+    await user.click(await screen.findByRole('button', { name: '重新加载' }))
+
+    expect(reload).toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('市场清单以非 Error 拒绝时使用默认加载失败文案', async () => {
+    vi.mocked(pluginApi.fetchPluginList).mockRejectedValue('upstream 500')
+
+    render(<PluginMarketplacePage />)
+
+    expect(await screen.findByRole('heading', { name: '加载失败' })).toBeInTheDocument()
+    expect(screen.getByText('加载失败', { selector: 'p' })).toBeInTheDocument()
+    expect(toastMock).toHaveBeenCalledWith({
+      title: '加载失败',
+      description: '加载失败',
+      variant: 'destructive',
+    })
+  })
+
+  it('Git 未安装且无错误信息时展示默认说明', async () => {
+    vi.mocked(pluginApi.checkGitStatus).mockResolvedValue({ installed: false })
+
+    await renderPage()
+
+    expect(screen.getByText('Git 未安装')).toBeInTheDocument()
+    expect(screen.getAllByText('请先安装 Git 才能使用插件安装功能').length).toBeGreaterThan(0)
+    expect(toastMock).toHaveBeenCalledWith({
+      title: 'Git 未安装',
+      description: '请先安装 Git 才能使用插件安装功能',
+      variant: 'destructive',
+    })
+  })
+
+  it('统计刷新失败时仍渲染市场清单并记录警告', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.mocked(pluginStatsApi.getPluginStatsSummary).mockRejectedValue(new Error('统计服务不可用'))
+
+    await renderPage()
+
+    expect(screen.getByTestId('plugin-plugin-a')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(warnSpy).toHaveBeenCalledWith('刷新插件统计失败:', expect.any(Error))
+    )
+  })
+
+  it('WebSocket 订阅失败时记录错误且不影响清单渲染', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(pluginApi.connectPluginProgressWebSocket).mockRejectedValue(new Error('订阅失败'))
+
+    await renderPage()
+
+    expect(screen.getByTestId('plugin-plugin-a')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(errorSpy).toHaveBeenCalledWith('WebSocket subscribe error:', expect.any(Error))
+    )
+  })
+
+  it('fetch 进度缺少 error 字段时回退为加载失败', async () => {
+    await renderPage()
+
+    act(() => {
+      progressHandler?.(makeProgress({ stage: 'error', message: '失败' }))
+    })
+
+    expect(await screen.findByRole('heading', { name: '加载失败' })).toBeInTheDocument()
+    expect(screen.getByText('加载失败', { selector: 'p' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重新加载' })).toBeInTheDocument()
+  })
+
+  it('fetch 进度消息为空时展示默认加载文案', async () => {
+    await renderPage()
+
+    act(() => {
+      progressHandler?.(makeProgress({ message: '' }))
+    })
+
+    expect(screen.getByText('加载插件市场')).toBeInTheDocument()
+    expect(screen.getByText('正在获取插件清单')).toBeInTheDocument()
+  })
+})
+
+describe('PluginMarketplacePage 筛选', () => {
+  it('按类型筛选与排序写入会话存储并更新计数', async () => {
+    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([
+      makeMarketPlugin('plugin-a', {}, { plugin_type: 'extension' }),
+      makeMarketPlugin('plugin-b', {}, { plugin_type: 'chat' }),
+    ])
+    await renderPage()
+    expect(getCountBadgeText()).toBe('全部插件 2')
+
+    await selectMarketplaceOption('类型筛选', '聊天')
+    expect(getCountBadgeText()).toBe('全部插件 1')
+    expect(screen.getByTestId('marketplace-tab')).toHaveAttribute('data-type-filter', 'chat')
+
+    await selectMarketplaceOption('类型筛选', '适配器')
+    expect(getCountBadgeText()).toBe('全部插件 0')
+    expect(screen.getByTestId('marketplace-tab')).toHaveAttribute('data-type-filter', 'adapter')
+
+    await selectMarketplaceOption('类型筛选', '全部类型')
+    expect(getCountBadgeText()).toBe('全部插件 2')
+
+    await selectMarketplaceOption('排序', '下载最多')
+    expect(screen.getByTestId('marketplace-tab')).toHaveAttribute('data-sort-by', 'downloads')
+    const saved = JSON.parse(window.sessionStorage.getItem(PLUGIN_MARKET_VIEW_STATE_KEY) ?? '{}')
+    expect(saved.pluginTypeFilter).toBe('all')
+    expect(saved.marketplaceSortBy).toBe('downloads')
+  })
+
+  it('按名称与关键词搜索过滤计数', async () => {
+    const user = userEvent.setup()
+    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([
+      makeMarketPlugin('plugin-a', {}, { name: '天气助手', keywords: [] }),
+      makeMarketPlugin('plugin-b', {}, { name: '音乐盒', description: '播放本地歌曲', keywords: ['量子纠缠'] }),
+    ])
+    await renderPage()
+
+    await user.clear(screen.getByPlaceholderText('搜索插件...'))
+    await user.type(screen.getByPlaceholderText('搜索插件...'), '天气助手')
+    expect(getCountBadgeText()).toBe('全部插件 1')
+
+    await user.clear(screen.getByPlaceholderText('搜索插件...'))
+    await user.type(screen.getByPlaceholderText('搜索插件...'), '量子')
+    expect(getCountBadgeText()).toBe('全部插件 1')
+    expect(screen.getByTestId('marketplace-tab')).toHaveAttribute('data-search', '量子')
+  })
+
+  it('兼容性筛选排除不兼容插件，关闭后计入；无 manifest 的插件始终排除', async () => {
+    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([
+      makeMarketPlugin('plugin-a'),
+      makeMarketPlugin('legacy-a', {}, { manifest_version: 1 }),
+      { ...makeMarketPlugin('ghost'), manifest: undefined as unknown as PluginInfo['manifest'] },
+    ])
+
+    await renderPage()
+    // 默认仅显示兼容插件：legacy / ghost 均不计入
+    expect(getCountBadgeText()).toBe('全部插件 1')
+
+    cleanup()
+    window.localStorage.setItem('plugins-market-compatible-only', 'false')
+    await renderPage()
+    // 关闭兼容性筛选后计入 legacy，ghost 仍因缺少 manifest 被排除
+    expect(getCountBadgeText()).toBe('全部插件 2')
+  })
+})
+
+describe('PluginMarketplacePage 安装失败与仓库回退', () => {
+  it('安装抛出非 Error 时提示未知错误', async () => {
+    const user = userEvent.setup()
+    vi.mocked(pluginApi.installPlugin).mockRejectedValue('disk full')
+    await renderPage()
+
+    await user.click(screen.getByText('install-plugin-a'))
+    await user.click(screen.getByText('confirm-install-main'))
+
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith({
+        title: '安装失败',
+        description: '未知错误',
+        variant: 'destructive',
+      })
+    )
+    expect(screen.getByTestId('install-dialog')).toHaveAttribute('data-progress-stage', 'error')
+  })
+
+  it('缺少 repository_url 时回退 urls.repository，且无 manifest.id 时不记录下载', async () => {
+    const user = userEvent.setup()
+    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([
+      makeMarketPlugin('plugin-a', {}, {
+        id: undefined,
+        repository_url: undefined,
+        urls: { repository: 'https://example.com/alt.git' },
+      }),
+    ])
+    await renderPage()
+
+    await user.click(screen.getByText('install-plugin-a'))
+    await user.click(screen.getByText('confirm-install-main'))
+
+    await waitFor(() =>
+      expect(pluginApi.installPlugin).toHaveBeenCalledWith(
+        'plugin-a',
+        'https://example.com/alt.git',
+        'main'
+      )
+    )
+    expect(pluginStatsApi.recordPluginDownload).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith({
+        title: '安装成功',
+        description: '插件plugin-a 已成功安装',
+      })
+    )
+  })
+
+  it('记录下载失败不影响安装成功，成功进度超时后清除', async () => {
+    const user = userEvent.setup()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.mocked(pluginStatsApi.recordPluginDownload).mockRejectedValue(new Error('统计写入失败'))
+    await renderPage()
+
+    await user.click(screen.getByText('install-plugin-a'))
+    await user.click(screen.getByText('confirm-install-main'))
+
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith({
+        title: '安装成功',
+        description: '插件plugin-a 已成功安装',
+      })
+    )
+    await waitFor(() =>
+      expect(warnSpy).toHaveBeenCalledWith('Failed to record download:', expect.any(Error))
+    )
+    expect(screen.getByTestId('install-dialog')).toHaveAttribute('data-progress-stage', 'success')
+    await waitFor(
+      () => expect(screen.getByTestId('install-dialog')).toHaveAttribute('data-progress-stage', ''),
+      { timeout: 3500 }
+    )
+  })
+})
+
+describe('PluginMarketplacePage 更新路径', () => {
+  it('更新失败：弹出错误提示并将插件进度置为 error', async () => {
+    const user = userEvent.setup()
+    vi.mocked(pluginApi.updatePlugin).mockRejectedValue(new Error('fast-forward 失败'))
+    await renderPage()
+
+    await user.click(screen.getByText('update-plugin-a'))
+
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith({
+        title: '更新失败',
+        description: 'fast-forward 失败',
+        variant: 'destructive',
+      })
+    )
+  })
+
+  it('更新抛出非 Error 时提示未知错误', async () => {
+    const user = userEvent.setup()
+    vi.mocked(pluginApi.updatePlugin).mockRejectedValue('conflict')
+    await renderPage()
+
+    await user.click(screen.getByText('update-plugin-a'))
+
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith({
+        title: '更新失败',
+        description: '未知错误',
+        variant: 'destructive',
+      })
+    )
+  })
+
+  it('不兼容插件不允许更新，且 needsUpdate 为 false', async () => {
+    const user = userEvent.setup()
+    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([
+      makeMarketPlugin('legacy-a', {}, { manifest_version: 1, version: '2.0.0' }),
+    ])
+    vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([makeInstalledPlugin('legacy-a', '1.0.0')])
+    await renderPage()
+
+    expect(screen.getByTestId('badge-legacy-a')).toHaveTextContent('不兼容')
+    expect(screen.getByTestId('plugin-legacy-a')).toHaveAttribute('data-needs-update', 'false')
+
+    await user.click(screen.getByText('update-legacy-a'))
+    expect(toastMock).toHaveBeenCalledWith({
+      title: '无法更新',
+      description: '该插件使用旧版 manifest (v1)，已不被麦麦 1.2.0 支持',
+      variant: 'destructive',
+    })
+    expect(pluginApi.updatePlugin).not.toHaveBeenCalled()
+  })
+
+  it('缺少 repository_url 时更新回退 urls.repository', async () => {
+    const user = userEvent.setup()
+    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([
+      makeMarketPlugin('plugin-a', {}, {
+        repository_url: undefined,
+        urls: { repository: 'https://example.com/alt.git' },
+      }),
+    ])
+    vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([makeInstalledPlugin('plugin-a', '1.0.0')])
+    await renderPage()
+
+    await user.click(screen.getByText('update-plugin-a'))
+
+    await waitFor(() =>
+      expect(pluginApi.updatePlugin).toHaveBeenCalledWith(
+        'plugin-a',
+        'https://example.com/alt.git',
+        'main'
+      )
+    )
+  })
+
+  it('更新进行中再次点击更新会被忽略', async () => {
+    const user = userEvent.setup()
+    vi.mocked(pluginApi.updatePlugin).mockImplementation(() => new Promise(() => {}))
+    await renderPage()
+
+    await user.click(screen.getByText('update-plugin-a'))
+    await user.click(screen.getByText('update-plugin-a'))
+
+    expect(pluginApi.updatePlugin).toHaveBeenCalledTimes(1)
+  })
+
+  it('卸载进度为 loading 时忽略卸载点击', async () => {
+    const user = userEvent.setup()
+    vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([makeInstalledPlugin('plugin-a', '1.2.0')])
+    await renderPage()
+
+    act(() => {
+      progressHandler?.(makeProgress({
+        operation: 'uninstall',
+        stage: 'loading',
+        plugin_id: 'plugin-a',
+        message: '正在卸载',
+      }))
+    })
+
+    await user.click(screen.getByText('uninstall-plugin-a'))
+    expect(pluginApi.uninstallPlugin).not.toHaveBeenCalled()
+  })
+
+  it('卸载抛出非 Error 时提示未知错误', async () => {
+    const user = userEvent.setup()
+    vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([makeInstalledPlugin('plugin-a', '1.2.0')])
+    vi.mocked(pluginApi.uninstallPlugin).mockRejectedValue('busy')
+    await renderPage()
+
+    await user.click(screen.getByText('uninstall-plugin-a'))
+
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith({
+        title: '卸载失败',
+        description: '未知错误',
+        variant: 'destructive',
+      })
+    )
+  })
+})
+
+describe('PluginMarketplacePage 点赞互斥与缺省错误', () => {
+  it('点赞请求进行中重复点击会被忽略', async () => {
+    const user = userEvent.setup()
+    let resolveLike: (value: {
+      success: boolean
+      likes?: number
+      dislikes?: number
+      liked?: boolean
+      disliked?: boolean
+    }) => void = () => {}
+    vi.mocked(pluginStatsApi.likePlugin).mockImplementation(
+      () => new Promise((resolve) => {
+        resolveLike = resolve
+      })
+    )
+    await renderPage()
+
+    await user.click(screen.getByText('like-plugin-a'))
+    await user.click(screen.getByText('like-plugin-a'))
+    expect(pluginStatsApi.likePlugin).toHaveBeenCalledTimes(1)
+
+    resolveLike({ success: true, likes: 4, dislikes: 0, liked: true, disliked: false })
+    await waitFor(() =>
+      expect(screen.getByTestId('plugin-plugin-a')).toHaveAttribute('data-likes', '4')
+    )
+  })
+
+  it('点赞失败且无 error 字段时使用默认提示', async () => {
+    const user = userEvent.setup()
+    vi.mocked(pluginStatsApi.likePlugin).mockResolvedValue({ success: false })
+    await renderPage()
+
+    await user.click(screen.getByText('like-plugin-a'))
+
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith({
+        title: '点赞失败',
+        description: '无法提交点赞',
+        variant: 'destructive',
+      })
+    )
+  })
+})
+
+describe('PluginMarketplacePage 合并、兼容性边界与进度清理', () => {
+  it('按 manifest.id 合并已安装信息，并补齐本地稀疏清单字段', async () => {
+    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([makeMarketPlugin('plugin-a')])
+    vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([
+      {
+        ...makeInstalledPlugin('runtime-a', '1.0.0'),
+        manifest: { ...makeInstalledPlugin('runtime-a', '1.0.0').manifest, id: 'plugin-a' },
+      },
+      {
+        id: 'local-sparse',
+        path: '/plugins/local-sparse',
+        changelog: '修复崩溃',
+        manifest: {
+          name: '稀疏插件',
+          version: '0.1.0',
+          author: { name: '本地' },
+          host_application: { min_version: '1.0.0' },
+          urls: {
+            homepage: 'https://example.com/home',
+            repository: 'https://example.com/sparse.git',
+          },
+        },
+      } as InstalledPlugin,
+    ])
+
+    await renderPage()
+
+    expect(screen.getByTestId('plugin-plugin-a')).toHaveAttribute('data-installed', 'true')
+    expect(screen.getByTestId('plugin-plugin-a')).toHaveAttribute('data-installed-version', '1.0.0')
+    expect(screen.getByTestId('plugin-local-sparse')).toHaveAttribute('data-source', 'local')
+    expect(screen.getByTestId('plugin-local-sparse')).toHaveAttribute('data-installed', 'true')
+  })
+
+  it('未声明 host_application 的 v2 插件视为兼容', async () => {
+    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([
+      makeMarketPlugin('no-host', {}, {
+        host_application: undefined as unknown as PluginInfo['manifest']['host_application'],
+      }),
+    ])
+
+    await renderPage()
+
+    expect(screen.getByTestId('plugin-no-host')).toHaveAttribute('data-compatible', 'true')
+    expect(screen.getByTestId('reason-no-host')).toHaveTextContent('')
+  })
+
+  it('仅声明最低版本时不兼容原因使用 min+ 文案', async () => {
+    vi.mocked(pluginApi.isPluginCompatible).mockReturnValue(false)
+    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([
+      makeMarketPlugin('min-a', {}, { host_application: { min_version: '2.0.0' } }),
+    ])
+
+    await renderPage()
+
+    expect(screen.getByTestId('reason-min-a')).toHaveTextContent(
+      '不兼容当前版本 (需要 2.0.0+，当前 1.2.0)'
+    )
+  })
+
+  it('缺少 min_version 时不兼容原因回退为未知', async () => {
+    vi.mocked(pluginApi.isPluginCompatible).mockReturnValue(false)
+    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([
+      makeMarketPlugin('unknown-min', {}, {
+        host_application: { min_version: '', max_version: '3.0.0' },
+      }),
+    ])
+
+    await renderPage()
+
+    expect(screen.getByTestId('reason-unknown-min')).toHaveTextContent(
+      '不兼容当前版本 (需要 未知 - 3.0.0，当前 1.2.0)'
+    )
+  })
+
+  it('缺少 manifest_version 时按 v1 判定不兼容', async () => {
+    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([
+      makeMarketPlugin('no-ver', {}, { manifest_version: undefined as unknown as number }),
+    ])
+
+    await renderPage()
+
+    expect(screen.getByTestId('plugin-no-ver')).toHaveAttribute('data-compatible', 'false')
+    expect(screen.getByTestId('reason-no-ver')).toHaveTextContent(
+      '该插件使用旧版 manifest (v1)，已不被麦麦 1.2.0 支持'
+    )
+  })
+
+  it('麦麦版本缺失时一律视为兼容并允许安装', async () => {
+    const user = userEvent.setup()
+    vi.mocked(pluginApi.getMaimaiVersion).mockResolvedValue(null as never)
+    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([
+      makeMarketPlugin('legacy-a', {}, { manifest_version: 1 }),
+    ])
+
+    await renderPage()
+
+    expect(screen.getByTestId('plugin-legacy-a')).toHaveAttribute('data-compatible', 'true')
+    await user.click(screen.getByText('install-legacy-a'))
+    expect(screen.getByTestId('install-dialog')).toHaveAttribute('data-plugin-id', 'legacy-a')
+  })
+
+  it('版本数字段相同但字符串不同时 needsUpdate 为 false', async () => {
+    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([
+      makeMarketPlugin('same-extra', {}, { version: '1.2.00' }),
+    ])
+    vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([
+      makeInstalledPlugin('same-extra', '1.2.0'),
+    ])
+
+    await renderPage()
+
+    expect(screen.getByTestId('plugin-same-extra')).toHaveAttribute('data-needs-update', 'false')
+    expect(screen.getByTestId('badge-same-extra')).toHaveTextContent('已安装')
+  })
+
+  it('已安装但缺少本地版本时徽章按 0.0.0 比较，needsUpdate 仍为 false', async () => {
+    vi.mocked(pluginApi.checkPluginInstalled).mockReturnValue(true)
+    vi.mocked(pluginApi.getInstalledPluginVersion).mockReturnValue(undefined)
+
+    await renderPage()
+
+    expect(screen.getByTestId('plugin-plugin-a')).toHaveAttribute('data-installed', 'true')
+    expect(screen.getByTestId('badge-plugin-a')).toHaveTextContent('可更新')
+    expect(screen.getByTestId('plugin-plugin-a')).toHaveAttribute('data-needs-update', 'false')
+  })
+
+  it('非法会话字段回退搜索词与显示已安装开关', async () => {
+    window.sessionStorage.setItem(
+      PLUGIN_MARKET_VIEW_STATE_KEY,
+      JSON.stringify({
+        searchQuery: 123,
+        showInstalledPlugins: 'yes',
+        pluginTypeFilter: 'all',
+        marketplaceSortBy: 'default',
+      })
+    )
+
+    await renderPage()
+
+    expect(screen.getByPlaceholderText('搜索插件...')).toHaveValue('')
+    expect(screen.getByTestId('marketplace-tab')).toHaveAttribute('data-hide-installed', 'true')
+  })
+
+  it('恢复并持久化滚动位置', async () => {
+    window.sessionStorage.setItem('plugins-market-scroll-top', '88')
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      cb(0)
+      return 1
+    })
+
+    await renderPage()
+
+    const viewport = document.querySelector('[data-dashboard-scrollbar-viewport="true"]') as HTMLDivElement
+    expect(viewport.scrollTop).toBe(88)
+
+    viewport.scrollTop = 42
+    act(() => {
+      viewport.dispatchEvent(new Event('scroll'))
+    })
+    expect(window.sessionStorage.getItem('plugins-market-scroll-top')).toBe('42')
+  })
+
+  it('无效或非正滚动位置不恢复', async () => {
+    window.sessionStorage.setItem('plugins-market-scroll-top', 'not-a-number')
+    await renderPage()
+    const viewport = document.querySelector('[data-dashboard-scrollbar-viewport="true"]') as HTMLDivElement
+    expect(viewport.scrollTop).toBe(0)
+
+    cleanup()
+    window.sessionStorage.setItem('plugins-market-scroll-top', '-8')
+    await renderPage()
+    expect(
+      (document.querySelector('[data-dashboard-scrollbar-viewport="true"]') as HTMLDivElement).scrollTop
+    ).toBe(0)
+  })
+
+  it('插件列表替换时取消未执行的滚动恢复动画帧', async () => {
+    window.sessionStorage.setItem('plugins-market-scroll-top', '50')
+    const cancelSpy = vi.spyOn(window, 'cancelAnimationFrame')
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 77)
+
+    let resolveFetch: ((value: PluginInfo[]) => void) | null = null
+    vi.mocked(pluginApi.getCachedPluginList).mockReturnValue([makeMarketPlugin('cached-x')])
+    vi.mocked(pluginApi.fetchPluginList).mockImplementation(
+      () => new Promise((resolve) => {
+        resolveFetch = resolve
+      })
+    )
+
+    render(<PluginMarketplacePage />)
+    await screen.findByTestId('plugin-cached-x')
+
+    await act(async () => {
+      resolveFetch?.([makeMarketPlugin('plugin-a'), makeMarketPlugin('plugin-b')])
+    })
+    await screen.findByTestId('plugin-plugin-a')
+
+    expect(cancelSpy).toHaveBeenCalledWith(77)
+  })
+
+  it('非 fetch 进度会阻塞卸载，成功进度超时后清除', async () => {
+    const user = userEvent.setup()
+    vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([makeInstalledPlugin('plugin-a', '1.2.0')])
+    await renderPage()
+
+    act(() => {
+      progressHandler?.(makeProgress({
+        operation: 'uninstall',
+        stage: 'loading',
+        plugin_id: 'plugin-a',
+        message: '正在卸载',
+      }))
+    })
+    await user.click(screen.getByText('uninstall-plugin-a'))
+    expect(pluginApi.uninstallPlugin).not.toHaveBeenCalled()
+
+    vi.useFakeTimers()
+    try {
+      act(() => {
+        progressHandler?.(makeProgress({
+          operation: 'fetch',
+          stage: 'success',
+          progress: 100,
+          message: '完成',
+        }))
+        progressHandler?.(makeProgress({
+          operation: 'uninstall',
+          stage: 'success',
+          plugin_id: 'plugin-a',
+          progress: 100,
+        }))
+      })
+      act(() => {
+        vi.advanceTimersByTime(2000)
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+
+    await user.click(screen.getByText('uninstall-plugin-a'))
+    await waitFor(() => expect(pluginApi.uninstallPlugin).toHaveBeenCalledWith('plugin-a'))
+  })
+
+  it('按 Escape 关闭插件详情对话框', async () => {
+    const user = userEvent.setup()
+    await renderPage()
+
+    await user.click(screen.getByText('detail-plugin-a'))
+    expect(await screen.findByTestId('plugin-detail')).toBeInTheDocument()
+
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByTestId('plugin-detail')).not.toBeInTheDocument())
+  })
+
+  it('组件卸载后不再处理延迟的成功进度回调', async () => {
+    await renderPage()
+    vi.useFakeTimers()
+    try {
+      act(() => {
+        progressHandler?.(makeProgress({
+          operation: 'fetch',
+          stage: 'success',
+          progress: 100,
+          message: '完成',
+        }))
+        progressHandler?.(makeProgress({
+          operation: 'install',
+          stage: 'success',
+          plugin_id: 'plugin-a',
+          progress: 100,
+        }))
+      })
+      cleanup()
+      act(() => {
+        vi.advanceTimersByTime(2000)
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('卸载页面时取消尚未完成的进度订阅，卸载后的进度回调不再弹 toast', async () => {
+    let resolveWs: ((unsubscribe: () => Promise<void>) => void) | null = null
+    const unsubscribe = vi.fn(async () => {})
+    vi.mocked(pluginApi.connectPluginProgressWebSocket).mockImplementation(async (onProgress, onError) => {
+      progressHandler = onProgress
+      wsErrorHandler = onError ?? null
+      return new Promise((resolve) => {
+        resolveWs = resolve
+      })
+    })
+
+    const { unmount } = render(<PluginMarketplacePage />)
+    await screen.findByTestId('marketplace-tab')
+    toastMock.mockClear()
+    unmount()
+
+    await act(async () => {
+      resolveWs?.(unsubscribe)
+    })
+    expect(unsubscribe).toHaveBeenCalled()
+
+    act(() => {
+      wsErrorHandler?.(new Error('卸载后的错误'))
+      progressHandler?.(makeProgress({ stage: 'error', error: '卸载后的失败' }))
+    })
+    expect(toastMock).not.toHaveBeenCalled()
+  })
+
+  it('数据加载完成前卸载页面时不再写入状态', async () => {
+    let resolveFetch: ((value: PluginInfo[]) => void) | null = null
+    vi.mocked(pluginApi.fetchPluginList).mockImplementation(
+      () => new Promise((resolve) => {
+        resolveFetch = resolve
+      })
+    )
+    vi.mocked(pluginApi.checkGitStatus).mockResolvedValue({
+      installed: false,
+      error: '不应弹出',
+    })
+
+    const { unmount } = render(<PluginMarketplacePage />)
+    unmount()
+    toastMock.mockClear()
+
+    await act(async () => {
+      resolveFetch?.([makeMarketPlugin('plugin-a')])
+    })
+
+    expect(toastMock).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('marketplace-tab')).not.toBeInTheDocument()
+  })
+
+  it('缓存统计只映射能解析到的插件，缺统计的插件保持空 likes', async () => {
+    vi.mocked(pluginApi.getCachedPluginList).mockReturnValue([
+      makeMarketPlugin('plugin-a'),
+      makeMarketPlugin('plugin-b'),
+    ])
+    vi.mocked(pluginStatsApi.getCachedPluginStatsSummary).mockReturnValue({
+      'plugin-a': {
+        plugin_id: 'plugin-a-stats',
+        likes: 9,
+        dislikes: 0,
+        downloads: 3,
+        rating: 5,
+        rating_count: 1,
+      },
+    })
+
+    render(<PluginMarketplacePage />)
+
+    expect(screen.getByTestId('plugin-plugin-a')).toHaveAttribute('data-likes', '9')
+    expect(screen.getByTestId('plugin-plugin-b')).toHaveAttribute('data-likes', '')
+    await screen.findByTestId('plugin-plugin-a')
   })
 })

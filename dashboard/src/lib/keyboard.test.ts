@@ -182,4 +182,42 @@ describe('isEditableTarget', () => {
     expect(isEditableTarget(textbox)).toBe(true)
     expect(isEditableTarget(plain)).toBe(false)
   })
+
+  it('SELECT 与不可编辑 div 视为不可编辑，空 contentEditable 也不算', () => {
+    const select = document.createElement('select')
+    const button = document.createElement('button')
+    const notEditable = document.createElement('div')
+    Object.defineProperty(notEditable, 'isContentEditable', { configurable: true, value: false })
+
+    expect(isEditableTarget(select)).toBe(false)
+    expect(isEditableTarget(button)).toBe(false)
+    expect(isEditableTarget(notEditable)).toBe(false)
+  })
+})
+
+describe('keyboard 未覆盖的空态与边界', () => {
+  it('platform 为空且 userAgent 也无法识别时视为非 Mac', () => {
+    mockNavigator({ platform: '', userAgent: '' })
+    expect(isMacLikePlatform()).toBe(false)
+  })
+
+  it('iPod platform 识别为 Mac 风格', () => {
+    mockNavigator({ platform: 'iPod' })
+    expect(isMacLikePlatform()).toBe(true)
+  })
+
+  it('escape 主键匹配 Escape，仅修饰键的空快捷键在修饰键按下时成立', () => {
+    mockNavigator({ platform: 'Win32' })
+
+    expect(matchesShortcut(keyEvent({ key: 'Escape' }), ['escape'])).toBe(true)
+    expect(matchesShortcut(keyEvent({ key: 'Escape' }), ['esc'])).toBe(false)
+    expect(matchesShortcut(keyEvent({ key: 'k', ctrlKey: true }), ['mod'])).toBe(true)
+    expect(matchesShortcut(keyEvent({ key: 'k' }), [])).toBe(true)
+  })
+
+  it('Mac 下 enter 标签仍是符号，非单字符默认键保持原样', () => {
+    mockNavigator({ platform: 'MacIntel' })
+    expect(getShortcutKeyLabel('enter')).toBe('↵')
+    expect(getShortcutKeyLabel('Space')).toBe('Space')
+  })
 })

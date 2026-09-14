@@ -634,3 +634,214 @@ describe('MCPSettingsPage 加载与 schema', () => {
     expect(screen.queryByText('尚未暴露任何 Root。')).not.toBeInTheDocument()
   })
 })
+
+function schemaField(name: string) {
+  return {
+    name,
+    type: 'string' as const,
+    label: name,
+    description: '',
+    required: false,
+  }
+}
+
+function schemaNode(overrides: Record<string, unknown> = {}) {
+  return {
+    className: 'Node',
+    classDoc: '',
+    fields: [],
+    nested: {},
+    ...overrides,
+  }
+}
+
+describe('MCPSettingsPage 规范化与表单编辑', () => {
+  it('非对象服务、非数组 env/headers 与 args 映射会按缺省规则落地', async () => {
+    mockMcpConfig({
+      client: { roots: ['not-object'] },
+      servers: [
+        null,
+        {
+          name: 1,
+          enabled: 'yes',
+          transport: 'nope',
+          command: 1,
+          args: ['--foo', null, 3],
+          env: ['not-map'],
+          url: 1,
+          headers: 'nope',
+          http_timeout_seconds: '30',
+          read_timeout_seconds: '300',
+          authorization: ['x'],
+        },
+        {
+          name: 'ok',
+          args: 'not-array',
+          env: { A: null, B: undefined },
+          headers: { H: undefined },
+          authorization: { mode: 'bearer', bearer_token: 1 },
+        },
+      ],
+    })
+
+    renderPage()
+
+    expect(await screen.findByDisplayValue('mcp-server-1')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('mcp-server-2')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('ok')).toBeInTheDocument()
+
+    const argsAreas = screen.getAllByPlaceholderText('每行一个参数') as HTMLTextAreaElement[]
+    expect(argsAreas[1].value).toBe('--foo\n\n3')
+    expect(screen.getByDisplayValue('A')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('B')).toBeInTheDocument()
+    expect(screen.getAllByText('stdio 模式必须填写启动命令').length).toBeGreaterThan(0)
+    expect(screen.getByText(/Bearer 认证必须填写 Token/)).toBeInTheDocument()
+  })
+
+  it('可编辑启动命令、参数、环境变量和读取超时，空超时回退为 0.1', async () => {
+    mockMcpConfig({
+      servers: [
+        makeServer({
+          name: 'local',
+          command: 'uvx',
+          args: ['one'],
+          env: { FOO: 'bar' },
+          read_timeout_seconds: 300,
+        }),
+      ],
+    })
+    renderPage()
+
+    const commandInput = await screen.findByDisplayValue('uvx')
+    fireEvent.change(commandInput, { target: { value: 'npx' } })
+    expect(screen.getByDisplayValue('npx')).toBeInTheDocument()
+
+    const argsArea = screen.getByPlaceholderText('每行一个参数') as HTMLTextAreaElement
+    fireEvent.change(argsArea, { target: { value: 'one\n\n  two  \n' } })
+    expect(argsArea.value).toBe('one\ntwo')
+
+    fireEvent.change(screen.getByDisplayValue('bar'), { target: { value: 'baz' } })
+    expect(screen.getByDisplayValue('baz')).toBeInTheDocument()
+
+    const timeoutInput = screen.getByDisplayValue('300')
+    fireEvent.change(timeoutInput, { target: { value: '' } })
+    expect(screen.getByDisplayValue('0.1')).toBeInTheDocument()
+
+    expect(await screen.findByRole('button', { name: '保存并应用' })).toBeEnabled()
+  })
+
+  it('远程服务可切换认证、编辑 Headers 与 HTTP 超时', async () => {
+    const user = userEvent.setup()
+    mockMcpConfig({
+      servers: [
+        makeServer({
+          name: 'remote',
+          transport: 'streamable_http',
+          command: '',
+          url: 'https://example.com/mcp',
+          headers: { 'X-Trace': '1' },
+          http_timeout_seconds: 30,
+          read_timeout_seconds: 300,
+        }),
+      ],
+    })
+    renderPage()
+
+    await screen.findByDisplayValue('remote')
+    fireEvent.change(screen.getByDisplayValue('1'), { target: { value: '2' } })
+    expect(screen.getByDisplayValue('2')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByDisplayValue('30'), { target: { value: '' } })
+    expect(screen.getByDisplayValue('0.1')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByDisplayValue('300'), { target: { value: '12' } })
+    expect(screen.getByDisplayValue('12')).toBeInTheDocument()
+
+    const comboboxes = screen.getAllByRole('combobox')
+    await user.click(comboboxes[1])
+    await user.click(await screen.findByRole('option', { name: 'bearer' }))
+
+    expect(await screen.findByPlaceholderText('HTTP Bearer Token')).toBeInTheDocument()
+    expect(screen.getByText('Bearer 认证必须填写 Token')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByPlaceholderText('HTTP Bearer Token'), {
+      target: { value: 'secret' },
+    })
+    await waitFor(() => {
+      expect(screen.queryByText('Bearer 认证必须填写 Token')).not.toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: '保存并应用' })).toBeEnabled()
+  })
+
+  it('保存失败时捕获错误并保持可再次保存', async () => {
+    const user = userEvent.setup()
+    vi.mocked(configApi.updateBotConfigSection).mockRejectedValueOnce(new Error('磁盘已满'))
+    renderPage()
+
+    await user.click(await screen.findByText('edit-field'))
+    await user.click(await screen.findByRole('button', { name: '保存并应用' }))
+
+    await waitFor(() => expect(configApi.updateBotConfigSection).toHaveBeenCalled())
+    expect(await screen.findByRole('button', { name: '保存并应用' })).toBeEnabled()
+  })
+
+  it('schema 信封会过滤 servers、elicitation 与 include_context_support', async () => {
+    vi.mocked(configApi.getBotConfigSchema).mockResolvedValue({
+      schema: {
+        className: 'Root',
+        classDoc: '',
+        fields: [],
+        nested: {
+          mcp: schemaNode({
+            className: 'MCP',
+            classDoc: 'MCP 设置',
+            fields: [schemaField('enabled'), schemaField('servers')],
+            nested: {
+              servers: schemaNode({ className: 'Servers' }),
+              other: schemaNode({ className: 'Other' }),
+              client: schemaNode({
+                className: 'Client',
+                fields: [schemaField('elicitation'), schemaField('info')],
+                nested: {
+                  elicitation: schemaNode({ className: 'Elicitation' }),
+                  sampling: schemaNode({
+                    className: 'Sampling',
+                    fields: [schemaField('include_context_support'), schemaField('temperature')],
+                  }),
+                  roots: schemaNode({ className: 'Roots' }),
+                },
+              }),
+            },
+          }),
+        },
+      },
+    } as never)
+
+    renderPage()
+
+    expect(
+      await screen.findByText('尚未配置 MCP 服务。添加一个服务后，MaiSaka 可以调用它暴露的工具。')
+    ).toBeInTheDocument()
+    expect(await screen.findByText('尚未暴露任何 Root。')).toBeInTheDocument()
+    expect(screen.getByText('edit-field')).toBeInTheDocument()
+  })
+
+  it('高级设置按钮在展开与收起之间切换', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    await user.click(await screen.findByRole('button', { name: '高级设置' }))
+    expect(screen.getByRole('button', { name: '收起高级设置' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '收起高级设置' }))
+    expect(screen.getByRole('button', { name: '高级设置' })).toBeInTheDocument()
+  })
+
+  it('配置加载失败且错误非 Error 时展示兜底文案', async () => {
+    vi.mocked(configApi.getBotConfig).mockRejectedValue('offline')
+    renderPage()
+
+    expect(await screen.findByText('加载配置失败')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
+  })
+})
