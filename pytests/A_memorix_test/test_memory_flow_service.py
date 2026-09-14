@@ -573,7 +573,11 @@ async def test_chat_summary_writeback_service_loads_trigger_count_from_summary_m
 
 
 @pytest.mark.asyncio
-async def test_memory_automation_service_auto_starts_and_delegates():
+async def test_memory_automation_service_auto_starts_and_delegates(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(memory_flow_module.ImageMemoryWritebackService, 'start', AsyncMock())
+    monkeypatch.setattr(memory_flow_module.ImageMemoryWritebackService, 'shutdown', AsyncMock())
     events: list[tuple[str, str]] = []
 
     class FakeFactWriteback:
@@ -614,7 +618,12 @@ async def test_memory_automation_service_auto_starts_and_delegates():
 
 
 @pytest.mark.asyncio
-async def test_memory_automation_service_on_incoming_message_auto_starts_only():
+async def test_memory_automation_service_on_incoming_message_auto_starts_only(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(memory_flow_module.ImageMemoryWritebackService, 'start', AsyncMock())
+    monkeypatch.setattr(memory_flow_module.ImageMemoryWritebackService, 'enqueue', AsyncMock())
+    monkeypatch.setattr(memory_flow_module.ImageMemoryWritebackService, 'shutdown', AsyncMock())
     events: list[tuple[str, str]] = []
 
     class FakeFactWriteback:

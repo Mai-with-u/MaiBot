@@ -3866,6 +3866,23 @@ async def list_image_memory_jobs(
     return await memory_service.image_memory(action="jobs", limit=limit, offset=offset, status=status)
 
 
+@router.get("/image-writeback-jobs")
+async def list_image_writeback_jobs(
+    limit: int = Query(25, ge=1, le=200), offset: int = Query(0, ge=0), status: str = '',
+):
+    payload = memory_automation_service.image_writeback.list_jobs(status, limit, offset)
+    for item in payload['items']:
+        session = _find_real_chat_session(item['session_id'])
+        item['chat_name'] = _get_chat_name(session, {}) if session is not None else '来源聊天流已移除'
+    return payload
+
+
+@router.post("/image-writeback-jobs/retry")
+async def retry_image_writeback_jobs():
+    count = memory_automation_service.image_writeback.retry_failed()
+    return {'success': True, 'count': count}
+
+
 @router.post("/images/{asset_id}/search")
 async def search_image_memories(
     asset_id: str, limit: int = Query(8, ge=1, le=100), threshold: float = Query(0.72, ge=-1, le=1),

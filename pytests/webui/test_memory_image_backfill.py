@@ -8,6 +8,32 @@ from src.A_memorix.core.image.asset_store import ImageAssetStore
 from src.webui.routers import memory as routes
 
 
+@pytest.mark.asyncio
+async def test_writeback_jobs_show_real_chat_names_and_retry(monkeypatch, tmp_path):
+    from src.services.image_writeback_journal import ImageWritebackJournal
+    from src.services.memory_flow_service import ImageMemoryWritebackService
+
+    service = ImageMemoryWritebackService(tmp_path / "jobs.sqlite3")
+    journal = ImageWritebackJournal(service._journal_path)
+    try:
+        journal.enqueue("real", "message-1")
+        journal.fail(journal.next_job(), "原图缓存已缺失", max_attempts=1)
+    finally:
+        journal.close()
+    monkeypatch.setattr(routes.memory_automation_service, "image_writeback", service)
+    monkeypatch.setattr(routes, "_find_real_chat_session", lambda key: object() if key == "real" else None)
+    monkeypatch.setattr(routes, "_get_chat_name", lambda *args: "测试读书会")
+
+    payload = await routes.list_image_writeback_jobs(limit=25, offset=0, status="failed")
+    assert payload["total"] == 1
+    assert payload["items"][0]["chat_name"] == "测试读书会"
+    assert payload["items"][0]["last_error"] == "原图缓存已缺失"
+    assert await routes.retry_image_writeback_jobs() == {"success": True, "count": 1}
+    assert service.list_jobs("failed")["total"] == 0
+    assert service.list_jobs("pending")["total"] == 1
+    assert service._worker_task is None
+
+
 class _Image:
     def __init__(self, payload: bytes, *, missing: bool = False) -> None:
         self.payload = payload

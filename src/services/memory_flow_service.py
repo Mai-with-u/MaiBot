@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from json_repair import repair_json
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import asyncio
@@ -10,6 +11,7 @@ import json
 import time
 
 from src.common.logger import get_logger
+from src.common.database.database import ROOT_PATH
 from src.common.message_repository import count_messages, find_messages
 from src.common.data_models.message_component_data_model import TextComponent
 from src.chat.utils.utils import is_bot_self
@@ -18,6 +20,8 @@ from src.person_info.person_info import Person, get_person_id, store_person_memo
 from src.services import memory_service as memory_service_module
 from src.services.memory_service import memory_service
 from src.A_memorix.core.image.component_paths import build_chat_external_ref, iter_message_image_components
+
+from .image_writeback_journal import ImageWritebackJournal
 
 logger = get_logger("memory_flow_service")
 
@@ -668,8 +672,9 @@ class ChatSummaryWritebackService:
 class ImageMemoryWritebackService:
     """把已注册聊天消息中的原始图片按组件路径写入 A_Memorix。"""
 
-    def __init__(self) -> None:
-        self._queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=256)
+    def __init__(self, journal_path: Optional[Path] = None) -> None:
+        self._journal_path = journal_path if journal_path is not None else ROOT_PATH / 'data' / 'image_writeback.sqlite3'
+        self._journal: Optional[ImageWritebackJournal] = None
         self._worker_task: Optional[asyncio.Task] = None
         self._compensation_task: Optional[asyncio.Task] = None
         self._stopping = False
@@ -677,6 +682,10 @@ class ImageMemoryWritebackService:
     async def start(self) -> None:
         if self._worker_task is not None and not self._worker_task.done():
             return
+        if not global_config.a_memorix.image_memory.enabled:
+            return
+        if self._journal is None:
+            self._journal = ImageWritebackJournal(self._journal_path)
         self._stopping = False
         self._worker_task = asyncio.create_task(self._worker_loop(), name="A_Memorix.image_writeback")
         self._compensation_task = asyncio.create_task(
@@ -699,10 +708,33 @@ class ImageMemoryWritebackService:
             except asyncio.CancelledError:
                 pass
 
+        if self._journal is not None:
+            self._journal.close()
+            self._journal = None
+
     async def enqueue(self, message: Any) -> None:
         if not bool(global_config.a_memorix.image_memory.enabled) or self._stopping:
             return
-        await self._queue.put(message)
+        if not any(iter_message_image_components(message.raw_message.components)):
+            return
+        if self._journal is None:
+            raise RuntimeError('图片写回服务尚未启动')
+        self._journal.enqueue(str(message.session_id), str(message.message_id))
+
+    def list_jobs(self, status: str = '', limit: int = 25, offset: int = 0) -> Dict[str, Any]:
+        # 管理服务独立读取任务，不启动消息接收或模型调用。
+        journal = ImageWritebackJournal(self._journal_path)
+        try:
+            return journal.list_jobs(status, limit, offset)
+        finally:
+            journal.close()
+
+    def retry_failed(self) -> int:
+        journal = ImageWritebackJournal(self._journal_path)
+        try:
+            return journal.retry_failed()
+        finally:
+            journal.close()
 
     async def backfill_messages(self, messages: List[Any]) -> Dict[str, int]:
         """同步回填一批历史消息；出现外部引用保证重复执行仍然幂等。"""
@@ -720,15 +752,24 @@ class ImageMemoryWritebackService:
 
     async def _worker_loop(self) -> None:
         while not self._stopping:
-            message = await self._queue.get()
+            if self._journal is None:
+                raise RuntimeError('图片写回任务库未初始化')
+            job = self._journal.next_job()
+            if job is None:
+                await asyncio.sleep(max(0.1, global_config.a_memorix.image_memory.job_poll_interval_seconds))
+                continue
             try:
+                messages = find_messages(session_id=job['session_id'], message_id=job['message_id'], limit=1)
+                if not messages:
+                    raise ValueError('图片入库任务的来源消息不存在')
+                message = messages[0]
                 await self._handle_message(message)
+                self._journal.complete(job['session_id'], job['message_id'])
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.warning(f"图片记忆写入失败: {exc}", exc_info=True)
-            finally:
-                self._queue.task_done()
+                self._journal.fail(job, str(exc), 1 + int(global_config.a_memorix.image_memory.job_max_retries))
+                logger.warning(f"图片记忆写入失败，任务已保留: {exc}", exc_info=True)
 
     async def _compensation_loop(self) -> None:
         """处理持久化的晚到描述任务，进程中断后由租约重新领取。"""

@@ -2557,6 +2557,27 @@ export interface MemoryImageJobPayload {
   lease_until: number
 }
 
+export interface ImageWritebackJob {
+  session_id: string
+  message_id: string
+  chat_name: string
+  status: string
+  attempts: number
+  last_error: string
+}
+
+export async function getImageWritebackJobs(offset = 0): Promise<{
+  success: boolean
+  items: ImageWritebackJob[]
+  total: number
+}> {
+  return requestJson(`/image-writeback-jobs?limit=25&offset=${offset}&status=failed`)
+}
+
+export async function retryImageWritebackJobs(): Promise<{ success: boolean; count: number }> {
+  return requestJson('/image-writeback-jobs/retry', { method: 'POST' })
+}
+
 export async function getMemoryImageJobs(
   status = '',
   offset = 0
