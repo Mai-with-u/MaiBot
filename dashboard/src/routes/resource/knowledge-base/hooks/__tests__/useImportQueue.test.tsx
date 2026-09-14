@@ -389,7 +389,7 @@ describe('useImportQueue WebSocket 进度与断线轮询', () => {
     expect(toastMock).not.toHaveBeenCalled()
   })
 
-  it('WS 断开且开启自动轮询时启用 refetchInterval，连上后关闭', async () => {
+  it('开启自动轮询后无论 WS 是否连接都保持 refetchInterval', async () => {
     vi.mocked(memoryApi.getMemoryImportSettings).mockResolvedValue({
       success: true,
       settings: { poll_interval_ms: 1500 },
@@ -402,7 +402,7 @@ describe('useImportQueue WebSocket 进度与断线轮询', () => {
     await act(async () => {
       wsState.setConnected(true)
     })
-    await waitFor(() => expect(getTasksRefetchInterval(queryClient)).toBe(false))
+    await waitFor(() => expect(getTasksRefetchInterval(queryClient)).toBe(1500))
 
     await act(async () => {
       wsState.setConnected(false)
@@ -426,7 +426,7 @@ describe('useImportQueue WebSocket 进度与断线轮询', () => {
   it('面板从激活切到非激活会退订进度', async () => {
     const { rerender } = renderQueue()
     await waitFor(() => expect(progressState.handlers.length).toBeGreaterThan(0))
-    rerender({ active: false })
+    rerender({ active: false, buildRetryOverrides: undefined })
     await waitFor(() => expect(progressState.handlers).toHaveLength(0))
   })
 
