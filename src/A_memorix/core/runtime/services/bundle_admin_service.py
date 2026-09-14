@@ -433,18 +433,7 @@ class MemoryBundleAdminService(KernelServiceBase):
 
     @staticmethod
     def _paragraph_matches_chat(row: Dict[str, Any], chat_id: str) -> bool:
-        metadata = _json_object(row.get("metadata"))
-        scope_type = str(metadata.get("scope_type", "") or "").strip().lower()
-        if scope_type == "chat" and str(metadata.get("chat_id", "") or "").strip() == chat_id:
-            return True
-        for key in ("chat_ids", "session_ids", "stream_ids"):
-            if chat_id in _string_tokens(metadata.get(key)):
-                return True
-        for key in ("session_id", "stream_id"):
-            if str(metadata.get(key, "") or "").strip() == chat_id:
-                return True
-        source = str(row.get("source", "") or "").strip()
-        return source == f"chat_summary:{chat_id}"
+        return chat_id in MemoryBundleAdminService._paragraph_chat_ids(row)
 
     @staticmethod
     def _paragraph_chat_ids(row: Dict[str, Any]) -> set[str]:

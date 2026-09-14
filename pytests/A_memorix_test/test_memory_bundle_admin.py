@@ -272,6 +272,57 @@ async def test_single_pool_bundle_exports_graph_vectors_with_typed_archive_ids(t
 
 
 @pytest.mark.asyncio
+async def test_bundle_does_not_import_relation_vectors_when_target_disables_them(tmp_path: Path) -> None:
+    source_kernel = _BundleKernel(tmp_path / "relation-vector-source")
+    target_kernel = _BundleKernel(tmp_path / "relation-vector-target")
+    try:
+        paragraph_hash = source_kernel.metadata_store.add_paragraph(
+            "水稻属于禾本科。",
+            source="manual:no-relation-vector",
+        )
+        entity_hashes = [
+            source_kernel.metadata_store.add_entity(name, source_paragraph=paragraph_hash)
+            for name in ("水稻", "禾本科")
+        ]
+        relation_hash = source_kernel.metadata_store.add_relation(
+            "水稻",
+            "属于",
+            "禾本科",
+            source_paragraph=paragraph_hash,
+        )
+        source_kernel.paragraph_vectors.ids.add(paragraph_hash)
+        source_kernel.graph_vectors.ids.update(
+            [
+                *(f"entity:{entity_hash}" for entity_hash in entity_hashes),
+                f"relation:{relation_hash}",
+            ]
+        )
+
+        exported = await MemoryBundleAdminService(source_kernel).memory_bundle_admin(
+            action="export",
+            content_level="knowledge",
+            include_vectors=True,
+            selector={"type": "source", "value": "manual:no-relation-vector"},
+        )
+        target_kernel.relation_vectors_enabled = False
+        target_kernel.current_embedding_fingerprint = {"hash": "test-embedding", "dimension": 2}
+        installed = await MemoryBundleAdminService(target_kernel).memory_bundle_admin(
+            action="import",
+            path=str(_copy_bundle_for_install(exported["path"], target_kernel.data_dir)),
+            scope_type="global",
+        )
+
+        assert installed["vectors"]["imported"] == {"paragraphs": 1, "graph": 2}
+        assert target_kernel.graph_vectors.ids == {
+            *(f"entity:{entity_hash}" for entity_hash in entity_hashes),
+        }
+        assert f"relation:{relation_hash}" not in target_kernel.graph_vectors.ids
+    finally:
+        source_kernel.metadata_store.close()
+        target_kernel.metadata_store.close()
+
+
+@pytest.mark.asyncio
 async def test_import_task_selector_reads_persisted_source_set_report(tmp_path: Path) -> None:
     kernel = _BundleKernel(tmp_path / "history-source")
     kernel.import_task_manager = _HistoryOnlyImportManager()
@@ -428,6 +479,64 @@ async def test_full_bundle_restores_closed_episode_and_profile_with_chat_remap(t
             "knowledge_packages",
         ):
             assert target_kernel.metadata_store.query(f"SELECT * FROM {table}") == []
+    finally:
+        source_kernel.metadata_store.close()
+        target_kernel.metadata_store.close()
+
+
+@pytest.mark.asyncio
+async def test_full_bundle_recovers_legacy_chat_scope_from_summary_source(tmp_path: Path) -> None:
+    source_kernel = _BundleKernel(tmp_path / "legacy-chat-source")
+    target_kernel = _BundleKernel(tmp_path / "legacy-chat-target")
+    try:
+        paragraph_hash = source_kernel.metadata_store.add_paragraph(
+            "旧版摘要没有 chat_id 元数据。",
+            source="chat_summary:chat-old",
+            metadata={},
+        )
+        source_kernel.metadata_store.upsert_fact_claim(
+            scope_type="chat",
+            scope_id="chat-old",
+            fact_key="legacy.with_evidence",
+            value_text="保留",
+            evidence_type="paragraph",
+            evidence_id=paragraph_hash,
+        )
+        source_kernel.metadata_store.upsert_fact_claim(
+            scope_type="chat",
+            scope_id="chat-old",
+            fact_key="legacy.without_evidence",
+            value_text="也保留",
+        )
+
+        source_service = MemoryBundleAdminService(source_kernel)
+        exported = await source_service.memory_bundle_admin(
+            action="export",
+            content_level="full",
+            include_vectors=False,
+            selector={"type": "chat", "chat_id": "chat-old"},
+        )
+        loaded = source_service._load_bundle(Path(exported["path"]))
+        assert {
+            str(row["fact_key"])
+            for row in loaded["state"]["tables"]["fact_claims"]
+        } == {"legacy.with_evidence", "legacy.without_evidence"}
+
+        installed = await MemoryBundleAdminService(target_kernel).memory_bundle_admin(
+            action="import",
+            path=str(_copy_bundle_for_install(exported["path"], target_kernel.data_dir)),
+            scope_type="chat",
+            chat_id="chat-new",
+        )
+
+        assert installed["success"] is True
+        target_facts = target_kernel.metadata_store.query(
+            "SELECT fact_key, scope_id FROM fact_claims ORDER BY fact_key"
+        )
+        assert target_facts == [
+            {"fact_key": "legacy.with_evidence", "scope_id": "chat-new"},
+            {"fact_key": "legacy.without_evidence", "scope_id": "chat-new"},
+        ]
     finally:
         source_kernel.metadata_store.close()
         target_kernel.metadata_store.close()
