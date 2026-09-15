@@ -110,21 +110,20 @@ export const ModelTable = React.memo(function ModelTable({
                   onCheckedChange={onToggleSelectAll}
                 />
               </TableHead>
-              <TableHead className="w-14 text-center">使用</TableHead>
+              <TableHead className="w-14 text-center whitespace-nowrap">使用</TableHead>
               <TableHead>模型名称</TableHead>
               <TableHead>模型标识符</TableHead>
               <TableHead>提供商</TableHead>
-              <TableHead className="w-14 text-center">视觉</TableHead>
-              <TableHead className="text-center">温度</TableHead>
-              <TableHead className="text-right">输入价格</TableHead>
-              <TableHead className="text-right">输出价格</TableHead>
-              <TableHead className="text-right">操作</TableHead>
+              <TableHead className="w-14 text-center whitespace-nowrap">视觉</TableHead>
+              <TableHead className="text-right whitespace-nowrap">输入</TableHead>
+              <TableHead className="text-right whitespace-nowrap">输出</TableHead>
+              <TableHead className="text-right" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {paginatedModels.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={10} className="text-muted-foreground py-8 text-center">
+                <TableCell colSpan={9} className="text-muted-foreground py-8 text-center">
                   {searchQuery ? '未找到匹配的模型' : '暂无模型配置'}
                 </TableCell>
               </TableRow>
@@ -178,13 +177,6 @@ export const ModelTable = React.memo(function ModelTable({
                         aria-label={model.visual ? '已启用视觉' : '未启用视觉'}
                       />
                     </TableCell>
-                    <TableCell className="text-center">
-                      {model.temperature != null ? (
-                        model.temperature
-                      ) : (
-                        <span className="text-muted-foreground">-</span>
-                      )}
-                    </TableCell>
                     <TableCell className="text-right">¥{model.price_in}/M</TableCell>
                     <TableCell className="text-right">¥{model.price_out}/M</TableCell>
                     <TableCell className="text-right">
@@ -192,6 +184,7 @@ export const ModelTable = React.memo(function ModelTable({
                         <Button
                           variant="outline"
                           size="icon"
+                          className="h-8 w-8"
                           onClick={() => onTest(model.name)}
                           disabled={isTesting}
                           title="测试模型"
@@ -204,8 +197,9 @@ export const ModelTable = React.memo(function ModelTable({
                           )}
                         </Button>
                         <Button
-                          variant="default"
+                          variant="outline"
                           size="icon"
+                          className="border-primary! text-primary hover:text-primary h-8 w-8"
                           onClick={() => onEdit(model, actualIndex)}
                           title="编辑"
                           aria-label={`编辑模型 ${model.name}`}
@@ -217,9 +211,10 @@ export const ModelTable = React.memo(function ModelTable({
                           />
                         </Button>
                         <Button
+                          variant="outline"
                           size="icon"
+                          className="border-destructive! text-destructive hover:text-destructive h-8 w-8"
                           onClick={() => onDelete(actualIndex)}
-                          className="bg-red-600 text-white hover:bg-red-700"
                           title="删除"
                           aria-label={`删除模型 ${model.name}`}
                         >

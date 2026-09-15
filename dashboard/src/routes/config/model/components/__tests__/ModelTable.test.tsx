@@ -74,8 +74,8 @@ function renderTable(
 afterEach(() => cleanup())
 
 describe('ModelTable 缺口', () => {
-  it('展示未使用、未启用视觉、空温度和未测试状态', () => {
-    const plain = makeModel('plain', { temperature: null, visual: false })
+  it('展示未使用、未启用视觉与未测试状态，且不展示温度', () => {
+    const plain = makeModel('plain', { temperature: 0.7, visual: false })
     renderTable({
       paginatedModels: [plain],
       allModels: [plain],
@@ -84,7 +84,8 @@ describe('ModelTable 缺口', () => {
 
     expect(screen.getByLabelText('未使用')).toBeInTheDocument()
     expect(screen.getByLabelText('未启用视觉')).toBeInTheDocument()
-    expect(screen.getByText('-')).toBeInTheDocument()
+    expect(screen.queryByText('温度')).not.toBeInTheDocument()
+    expect(screen.queryByText('0.7')).not.toBeInTheDocument()
     expect(screen.getByLabelText('未测试：尚未执行模型能力测试')).toBeInTheDocument()
   })
 

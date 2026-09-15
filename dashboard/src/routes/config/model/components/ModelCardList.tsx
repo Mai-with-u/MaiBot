@@ -134,9 +134,9 @@ export const ModelCardList = React.memo(function ModelCardList({
                   )}
                 </Button>
                 <Button
-                  variant="default"
+                  variant="outline"
                   size="icon"
-                  className="h-8 w-8"
+                  className="border-primary! text-primary hover:text-primary h-8 w-8"
                   onClick={() => onEdit(model, actualIndex)}
                   title="编辑"
                   aria-label={`编辑模型 ${model.name}`}
@@ -144,9 +144,10 @@ export const ModelCardList = React.memo(function ModelCardList({
                   <StreamlineIcon name="edit-pdf-solid" fallback={Pencil} className="h-3.5 w-3.5" />
                 </Button>
                 <Button
+                  variant="outline"
                   size="icon"
                   onClick={() => onDelete(actualIndex)}
-                  className="h-8 w-8 bg-red-600 text-white hover:bg-red-700"
+                  className="border-destructive! text-destructive hover:text-destructive h-8 w-8"
                   title="删除"
                   aria-label={`删除模型 ${model.name}`}
                 >
