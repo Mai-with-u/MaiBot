@@ -65,6 +65,7 @@ export interface PluginManifest {
   license: string
   /** 主应用版本要求 */
   host_application: HostApplication
+  sdk?: HostApplication
   /** 插件主页（可选） */
   homepage_url?: string
   /** 插件仓库地址（可选） */
@@ -90,11 +91,36 @@ export interface PluginManifest {
   locales_path?: string
 }
 
+export interface PluginRelease {
+  version: string
+  tag: string
+  commit: string
+  prerelease: boolean
+  yanked: boolean
+  compatible: boolean
+  reasons: string[]
+  manifest: PluginManifest
+  release_notes: string
+  published_at?: string
+}
+
+export interface PluginReleaseCatalog {
+  id: string
+  manifest_id?: string
+  repositoryUrl: string
+  mode: 'releases' | 'branch'
+  versions: PluginRelease[]
+  recommended_version: string | null
+  sync_error?: string
+  rejected_releases?: Array<{ tag: string; version: string; error: string }>
+}
+
 /**
  * 插件信息（用于市场展示）
  * 包含 manifest 信息和额外的统计数据
  */
 export interface PluginInfo {
+  releases?: PluginReleaseCatalog
   /** 插件唯一标识 */
   id: string
   /** 插件仓库索引中的 ID，用于兼容旧统计数据 */
@@ -117,6 +143,7 @@ export interface PluginInfo {
   installed: boolean
   /** 安装的版本（如果已安装） */
   installed_version?: string
+  installed_release?: { version: string; commit: string; pinned: boolean } | null
   /** 发布时间 */
   published_at: string
   /** 最后更新时间 */

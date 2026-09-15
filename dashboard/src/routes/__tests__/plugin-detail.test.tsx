@@ -155,6 +155,64 @@ async function waitDetailReady() {
   })
 }
 
+function makeReleasePlugin(): PluginInfo {
+  const plugin = makePlugin()
+  plugin.releases = {
+    id: 'plug-1', manifest_id: 'plug-1', repositoryUrl: 'https://github.com/owner/repo',
+    mode: 'releases', recommended_version: '2.0.0',
+    versions: ['2.0.0', '1.0.0'].map((version) => ({
+      version, tag: `v${version}`, commit: version.startsWith('2') ? 'a'.repeat(40) : 'b'.repeat(40),
+      prerelease: false, yanked: false, compatible: true, reasons: [],
+      manifest: { ...plugin.manifest, version, sdk: { min_version: '2.0.0', max_version: '2.99.99' } },
+      release_notes: `${version} 发布说明`,
+    })),
+  }
+  return plugin
+}
+
+describe('插件发布版本选择', () => {
+  it('选择历史版本和锁定后，提交明确版本并按 commit 获取文档', async () => {
+    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([makeReleasePlugin()])
+    renderPage()
+    await waitDetailReady()
+    fireEvent.change(screen.getByRole('combobox', { name: '选择发布版本' }), { target: { value: '1.0.0' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: '安装后锁定此版本，阻止自动更新' }))
+    fireEvent.click(screen.getByRole('button', { name: '安装' }))
+    await waitFor(() => expect(pluginApi.installPlugin).toHaveBeenCalledWith(
+      'plug-1', 'https://github.com/owner/repo.git', 'main', { version: '1.0.0', pinned: true }
+    ))
+    expect(screen.getByText('1.0.0 发布说明')).toBeInTheDocument()
+    expect(httpLib.backendApi.post).toHaveBeenCalledWith('/api/webui/plugins/fetch-raw', expect.objectContaining({
+      body: expect.objectContaining({ branch: 'b'.repeat(40), file_path: 'README.md' }),
+    }))
+  })
+
+  it('没有兼容版本时禁止安装并显示具体原因', async () => {
+    const plugin = makeReleasePlugin()
+    plugin.releases!.recommended_version = null
+    plugin.releases!.versions.forEach((release) => { release.compatible = false; release.reasons = ['SDK 版本不兼容'] })
+    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([plugin])
+    renderPage()
+    await waitDetailReady()
+    expect(screen.getByRole('button', { name: '安装' })).toBeDisabled()
+    expect(screen.getByRole('option', { name: '2.0.0 · SDK 版本不兼容' })).toBeDisabled()
+    expect(pluginApi.installPlugin).not.toHaveBeenCalled()
+  })
+
+  it('已锁定版本不显示自动更新入口', async () => {
+    const installed = makeInstalledPlugin()
+    installed.release = { version: '1.0.0', commit: 'b'.repeat(40), pinned: true }
+    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([makeReleasePlugin()])
+    vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([installed])
+    vi.mocked(pluginApi.checkPluginInstalled).mockReturnValue(true)
+    vi.mocked(pluginApi.getInstalledPluginVersion).mockReturnValue('1.0.0')
+    renderPage()
+    await waitDetailReady()
+    expect(screen.queryByRole('button', { name: '更新' })).not.toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: '安装后锁定此版本，阻止自动更新' })).toBeChecked()
+  })
+})
+
 describe('PluginDetailPage 路由与加载态', () => {
   it('缺少 pluginId 时展示错误卡片，点击返回跳转插件列表', () => {
     routerState.search = {}

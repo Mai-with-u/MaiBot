@@ -15,6 +15,8 @@ from src.common.logger import get_logger
 from src.webui.services.git_mirror_service import get_git_mirror_service
 
 from .progress import update_progress
+from .release_install import install_release, read_release_receipt
+from .releases import resolve_release
 from .schemas import InstallPluginRequest, UninstallPluginRequest, UpdatePluginRequest
 from .support import (
     find_plugin_path_by_id,
@@ -122,6 +124,12 @@ def _exclusive_plugin_operation(
                 raise RuntimeError("插件操作接口缺少有效请求参数")
 
             plugin_id = validate_plugin_id(request.plugin_id)
+            if isinstance(request, (InstallPluginRequest, UpdatePluginRequest)) and request.version is not None:
+                # 登记 ID 和 manifest ID 必须共用同一把锁，防止别名请求并发替换同一目录。
+                token = kwargs.get("maibot_session") if "maibot_session" in kwargs else args[1] if len(args) > 1 else None
+                require_plugin_token(token)
+                entry, _ = await resolve_release(plugin_id, request.version)
+                plugin_id = validate_plugin_id(entry.manifest_id or entry.id)
             with _reserve_plugin_operation(plugin_id, operation):
                 return await func(*args, **kwargs)
 
@@ -408,6 +416,14 @@ async def install_plugin(request: InstallPluginRequest, maibot_session: Optional
 
     try:
         plugin_id = validate_plugin_id(request.plugin_id)
+        if request.version is not None:
+            entry, release = await resolve_release(plugin_id, request.version)
+            if release is not None:
+                return await install_release(
+                    plugin_id, entry, release, updating=False, automatic=request.version == "latest",
+                    pinned=request.pinned, mirror_id=request.mirror_id,
+                )
+            request = request.model_copy(update={"repository_url": entry.repositoryUrl})
         await update_progress(
             stage="loading", progress=5, message=f"开始安装插件: {plugin_id}", operation="install", plugin_id=plugin_id
         )
@@ -634,6 +650,14 @@ async def update_plugin(request: UpdatePluginRequest, maibot_session: Optional[s
 
     try:
         plugin_id = validate_plugin_id(request.plugin_id)
+        if request.version is not None:
+            entry, release = await resolve_release(plugin_id, request.version)
+            if release is not None:
+                return await install_release(
+                    plugin_id, entry, release, updating=True, automatic=request.version == "latest",
+                    pinned=request.pinned, mirror_id=request.mirror_id,
+                )
+            request = request.model_copy(update={"repository_url": entry.repositoryUrl})
         await update_progress(
             stage="loading", progress=5, message=f"开始更新插件: {plugin_id}", operation="update", plugin_id=plugin_id
         )
@@ -650,6 +674,8 @@ async def update_plugin(request: UpdatePluginRequest, maibot_session: Optional[s
             raise HTTPException(status_code=404, detail="插件未安装")
 
         manifest = _read_required_manifest(plugin_path)
+        if read_release_receipt(plugin_path) is not None:
+            raise HTTPException(status_code=409, detail="该插件按发布版本安装，请通过版本选择更新，不能使用分支拉取")
         old_version = str(manifest.get("version", "unknown"))
         old_manifest_id = _require_manifest_plugin_id(manifest)
         await update_progress(
@@ -813,6 +839,7 @@ async def get_installed_plugins(maibot_session: Optional[str] = Cookie(None)) ->
                         "load_error": load_error if effective_load_status == "failed" else "",
                         "circuit_status": circuit_status,
                         "changelog": changelog,
+                        "release": read_release_receipt(plugin_path),
                     }
                 )
             except json.JSONDecodeError as e:

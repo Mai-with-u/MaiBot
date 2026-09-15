@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { MaimaiVersion, PluginLoadProgress } from '../types'
 
-const MARKET_LIST_STORAGE_KEY = 'maibot-plugin-market-list-cache'
+const MARKET_LIST_STORAGE_KEY = 'maibot-plugin-market-list-cache-v2'
 
 // 稳定的 mock：backendApi 方法与 ApiError 类在 vi.resetModules 后保持同一引用
 const httpMocks = vi.hoisted(() => {
@@ -75,6 +75,7 @@ function mockFetchRawSuccess(items: Array<Record<string, unknown>>): void {
 describe('plugin-api/marketplace', () => {
   beforeEach(() => {
     vi.resetModules()
+    httpMocks.backendApi.get.mockResolvedValue({ plugins: [] })
     localStorage.clear()
     vi.spyOn(console, 'warn').mockImplementation(() => {})
   })

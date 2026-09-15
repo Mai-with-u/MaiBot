@@ -11,7 +11,7 @@ type UpdatePluginResult = {
   message: string
   old_version: string
   new_version: string
-  update_mode?: 'git_pull' | 'reinstall_from_backup'
+  update_mode?: 'git_pull' | 'reinstall_from_backup' | 'release'
   backup_path?: string
 }
 
@@ -21,13 +21,15 @@ type UpdatePluginResult = {
 export async function installPlugin(
   pluginId: string,
   repositoryUrl: string,
-  branch: string = 'main'
+  branch: string = 'main',
+  release?: { version: string; pinned: boolean } | null
 ): Promise<{ success: boolean; message: string }> {
   return backendApi.post<{ success: boolean; message: string }>('/api/webui/plugins/install', {
     body: {
       plugin_id: pluginId,
       repository_url: repositoryUrl,
       branch: branch,
+      ...(release === null ? {} : release || (branch === 'main' ? { version: 'latest', pinned: false } : {})),
     },
     errorMessage: '安装插件失败',
   })
@@ -53,13 +55,15 @@ export async function uninstallPlugin(
 export async function updatePlugin(
   pluginId: string,
   repositoryUrl: string,
-  branch: string = 'main'
+  branch: string = 'main',
+  release?: { version: string; pinned: boolean } | null
 ): Promise<UpdatePluginResult> {
   return backendApi.post<UpdatePluginResult>('/api/webui/plugins/update', {
     body: {
       plugin_id: pluginId,
       repository_url: repositoryUrl,
       branch: branch,
+      ...(release === null ? {} : release || (branch === 'main' ? { version: 'latest', pinned: false } : {})),
     },
     errorMessage: '更新插件失败',
   })

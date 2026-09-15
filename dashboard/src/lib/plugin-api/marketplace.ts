@@ -1,4 +1,4 @@
-import type { PluginInfo, PluginType } from '@/types/plugin'
+import type { PluginInfo, PluginReleaseCatalog, PluginType } from '@/types/plugin'
 
 import { ApiError, backendApi } from '@/lib/http'
 import { pluginProgressClient } from '@/lib/plugin-progress-client'
@@ -13,7 +13,7 @@ const PLUGIN_REPO_NAME = 'plugin-repo'
 const PLUGIN_REPO_BRANCH = 'main'
 const PLUGIN_DETAILS_FILE = 'plugin_details.json'
 const PLUGIN_LIST_CACHE_TTL = 5 * 60 * 1000
-const PLUGIN_LIST_STORAGE_KEY = 'maibot-plugin-market-list-cache'
+const PLUGIN_LIST_STORAGE_KEY = 'maibot-plugin-market-list-cache-v2'
 const PLUGIN_TYPES = new Set<PluginType>([
   'adapter',
   'chat',
@@ -59,6 +59,7 @@ interface PluginApiResponse {
       min_version: string
       max_version?: string
     }
+    sdk?: PluginInfo['manifest']['sdk']
     homepage_url?: string
     repository_url?: string
     urls?: {
@@ -114,6 +115,7 @@ function normalizePluginManifest(manifest: PluginApiResponse['manifest']): Plugi
     author: manifest.author || { name: 'Unknown' },
     license: manifest.license || 'Unknown',
     host_application: manifest.host_application || { min_version: '0.0.0' },
+    sdk: manifest.sdk,
     homepage_url: homepageUrl,
     repository_url: repositoryUrl,
     urls: manifest.urls,
@@ -250,6 +252,15 @@ async function fetchPluginListUncached(): Promise<PluginInfo[]> {
   }
 
   const data: PluginApiResponse[] = JSON.parse(result.data)
+  const catalog = await backendApi.get<{ plugins: PluginReleaseCatalog[] }>('/api/webui/plugins/releases', {
+    errorMessage: '获取插件发布版本失败',
+  })
+  // 部分插件只在 Tag 中保留有效清单，即使分支详情同步失败也要保留发布版本入口。
+  for (const entry of catalog.plugins) {
+    if (data.some((item) => item.id === entry.id || item.manifest?.id === entry.manifest_id)) continue
+    const release = entry.versions.find((item) => item.version === entry.recommended_version) || entry.versions[0]
+    if (release) data.push({ id: entry.id, manifest: release.manifest })
+  }
 
   const pluginList = data
     .filter((item) => {
@@ -272,13 +283,20 @@ async function fetchPluginListUncached(): Promise<PluginInfo[]> {
       const manifestId = item.manifest.id?.trim()
       const marketplaceId = item.id?.trim()
       const pluginId = manifestId || marketplaceId!
+      const releases = catalog.plugins.find((entry) => entry.id === marketplaceId || entry.manifest_id === pluginId) || {
+        id: marketplaceId || pluginId, repositoryUrl: item.manifest.urls?.repository || item.manifest.repository_url || '',
+        mode: 'branch' as const, versions: [], recommended_version: null,
+        sync_error: '插件尚未收录到版本索引，请先同步插件中心',
+      }
+      const recommended = releases?.versions.find((release) => release.version === releases.recommended_version)
 
       return {
         id: pluginId,
         marketplace_id: marketplaceId,
         marketplace_order: index,
         stats_ids: uniqueNonEmptyValues([manifestId]),
-        manifest: normalizePluginManifest({ ...item.manifest, id: pluginId }),
+        manifest: normalizePluginManifest({ ...(recommended?.manifest || item.manifest), id: pluginId }),
+        releases,
         assets: normalizePluginAssets(item.assets),
         downloads: 0,
         rating: 0,

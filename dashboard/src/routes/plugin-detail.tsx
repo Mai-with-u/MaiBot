@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -98,7 +99,8 @@ function buildLocalPluginInfo(installedPlugin: InstalledPlugin): PluginInfo {
 async function loadPluginReadme(
   plugin: PluginInfo,
   isInstalled: boolean,
-  signal: AbortSignal
+  signal: AbortSignal,
+  ref: string = 'main'
 ): Promise<string> {
   const repositoryUrl = plugin.manifest.repository_url
   if (!repositoryUrl) {
@@ -139,7 +141,7 @@ async function loadPluginReadme(
       body: {
         owner,
         repo: cleanRepo,
-        branch: 'main',
+        branch: ref,
         file_path: 'README.md',
       },
       errorMessage: '获取 README 失败',
@@ -294,6 +296,7 @@ export function PluginDetailPage({
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const pluginId = pluginIdProp ?? search.pluginId
+  const [selection, setSelection] = useState<{ pluginId?: string; version: string; pinned: boolean } | null>(null)
   const isDialog = mode === 'dialog'
   const containerClassName = isDialog
     ? 'space-y-4 sm:space-y-5 p-4 sm:p-5'
@@ -331,6 +334,11 @@ export function PluginDetailPage({
     },
   })
   const plugin = pluginQuery.data ?? null
+  const versionSelection = selection?.pluginId === pluginId ? selection : null
+  const releaseCatalog = plugin?.releases
+  const selectedRelease = releaseCatalog?.versions.find(
+    (release) => release.version === (versionSelection?.version || releaseCatalog.recommended_version)
+  )
   // 缺少插件 ID 时沿用原文案；其余加载失败由 query 的 error 呈现
   const loading = pluginQuery.isPending && !!pluginId
   const error = !pluginId
@@ -365,12 +373,18 @@ export function PluginDetailPage({
   // 由已安装列表派生安装状态与已安装版本（纯函数，不再用本地 state）
   const isInstalled = plugin ? checkPluginInstalled(plugin.id, installedPlugins) : false
   const installedVersion = plugin ? getInstalledPluginVersion(plugin.id, installedPlugins) : undefined
+  const installedRelease = installedPlugins.find((item) => item.id === plugin?.id)?.release
+  const releaseRequest = releaseCatalog?.mode === 'releases'
+    ? { version: versionSelection?.version || 'latest', pinned: versionSelection?.pinned ?? installedRelease?.pinned ?? false }
+    : plugin?.source === 'local' ? null : undefined
 
   const readmeQuery = useQuery({
-    queryKey: ['plugin-readme', plugin?.id, isInstalled],
+    queryKey: ['plugin-readme', plugin?.id, isInstalled, selectedRelease?.commit],
     enabled: !!plugin && !installedPluginsQuery.isPending,
     staleTime: 5 * 60 * 1000,
-    queryFn: ({ signal }) => loadPluginReadme(plugin!, isInstalled, signal),
+    queryFn: ({ signal }) => loadPluginReadme(
+      plugin!, isInstalled && (!selectedRelease || selectedRelease.version === installedVersion), signal, selectedRelease?.commit
+    ),
   })
   const readme = readmeQuery.isError ? '加载 README 失败' : (readmeQuery.data ?? '')
   const readmeLoading = readmeQuery.isPending
@@ -381,8 +395,8 @@ export function PluginDetailPage({
     staleTime: 5 * 60 * 1000,
     queryFn: ({ signal }) => loadPluginChangelog(plugin!, isInstalled, signal),
   })
-  const changelog = changelogQuery.isError ? '加载更新日志失败' : (changelogQuery.data ?? '')
-  const changelogLoading = changelogQuery.isPending
+  const changelog = selectedRelease ? selectedRelease.release_notes : changelogQuery.isError ? '加载更新日志失败' : (changelogQuery.data ?? '')
+  const changelogLoading = !selectedRelease && changelogQuery.isPending
 
   // 任一写操作成功后，重新拉取已安装列表（前缀失效）
   const invalidateInstalledPlugins = () =>
@@ -391,11 +405,21 @@ export function PluginDetailPage({
   // 检查是否需要更新
   const needsUpdate = () => {
     if (!plugin || !isInstalled || !installedVersion) return false
+    if (releaseCatalog?.mode === 'releases') {
+      if (!selectedRelease) return false
+      if (versionSelection) return selectedRelease.version !== installedVersion || versionSelection.pinned !== (installedRelease?.pinned ?? false)
+      if (installedRelease?.pinned) return false
+      const target = selectedRelease.version.split('.').map(Number)
+      const current = installedVersion.split('.').map(Number)
+      return target.some((value, index) => value > current[index] && target.slice(0, index).every((part, i) => part === current[i]))
+    }
     return installedVersion !== plugin.manifest.version
   }
 
   // 检查兼容性
   const checkCompatibility = () => {
+    if (releaseCatalog?.sync_error) return false
+    if (releaseCatalog?.mode === 'releases') return selectedRelease?.compatible ?? false
     if (!plugin || !maimaiVersion) return true
     return isPluginCompatible(
       plugin.manifest.host_application.min_version,
@@ -409,7 +433,9 @@ export function PluginDetailPage({
     mutationFn: (vars: { plugin: PluginInfo }) => {
       const repositoryUrl =
         vars.plugin.manifest.repository_url || vars.plugin.manifest.urls?.repository || ''
-      return installPlugin(vars.plugin.id, repositoryUrl, 'main')
+      return releaseRequest === undefined
+        ? installPlugin(vars.plugin.id, repositoryUrl, 'main')
+        : installPlugin(vars.plugin.id, repositoryUrl, 'main', releaseRequest)
     },
     meta: { errorTitle: '安装失败' },
     onSuccess: (_data, vars) => {
@@ -451,7 +477,9 @@ export function PluginDetailPage({
     mutationFn: (vars: { plugin: PluginInfo }) => {
       const repositoryUrl =
         vars.plugin.manifest.repository_url || vars.plugin.manifest.urls?.repository || ''
-      return updatePlugin(vars.plugin.id, repositoryUrl, 'main')
+      return releaseRequest === undefined
+        ? updatePlugin(vars.plugin.id, repositoryUrl, 'main')
+        : updatePlugin(vars.plugin.id, repositoryUrl, 'main', releaseRequest)
     },
     meta: { errorTitle: '更新失败' },
     onSuccess: (data, vars) => {
@@ -551,7 +579,7 @@ export function PluginDetailPage({
           {needsUpdate() ? (
             <Button
               className={detailActionButtonClassName}
-              disabled={!gitStatus?.installed || operating}
+              disabled={!gitStatus?.installed || operating || !isCompatible}
               onClick={handleUpdate}
               title={!gitStatus?.installed ? 'Git 未安装' : undefined}
             >
@@ -563,7 +591,7 @@ export function PluginDetailPage({
               ) : (
                 <>
                   <RefreshCw className="h-4 w-4 mr-2" />
-                  更新
+                  {versionSelection ? '安装所选版本' : '更新'}
                 </>
               )}
             </Button>
@@ -661,7 +689,7 @@ export function PluginDetailPage({
                       <div className="flex items-center gap-3 flex-wrap">
                         <CardTitle className="text-2xl">{plugin.manifest.name}</CardTitle>
                         <Badge variant="secondary" className="text-sm">
-                          v{plugin.manifest.version}
+                          v{selectedRelease?.version || plugin.manifest.version}
                         </Badge>
                         <Badge variant="outline" className="text-sm">
                           {getPluginTypeLabel(plugin)}
@@ -693,6 +721,72 @@ export function PluginDetailPage({
               </div>
             </CardHeader>
           </Card>
+
+          {releaseCatalog && (
+            <Card>
+              <CardHeader><CardTitle className="text-lg">安装版本</CardTitle></CardHeader>
+              <CardContent className="space-y-3">
+                {releaseCatalog.sync_error ? (
+                  <p role="alert" className="text-sm text-destructive">版本同步失败：{releaseCatalog.sync_error}</p>
+                ) : releaseCatalog.mode === 'branch' ? (
+                  <p className="text-sm text-muted-foreground">该插件尚无可识别的发布版本，使用分支安装。</p>
+                ) : (
+                  <>
+                    <label className="block space-y-2 text-sm">
+                      <span>选择发布版本</span>
+                      <select
+                        aria-label="选择发布版本"
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-foreground"
+                        value={selectedRelease?.version || ''}
+                        disabled={operating}
+                        onChange={(event) => setSelection({ pluginId, version: event.target.value, pinned: versionSelection?.pinned ?? installedRelease?.pinned ?? false })}
+                      >
+                        {!selectedRelease && <option value="" disabled>没有兼容的稳定版本，请查看其他版本</option>}
+                        {releaseCatalog.versions.map((release) => (
+                          <option key={release.version} value={release.version} disabled={!release.compatible}>
+                            {release.version}{release.version === releaseCatalog.recommended_version ? ' · 推荐' : ''}
+                            {release.prerelease ? ' · 预发布' : ''}{release.yanked ? ' · 已撤回' : ''}
+                            {!release.compatible ? ` · ${release.reasons.join('；')}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" disabled={!selectedRelease || operating}
+                        checked={versionSelection?.pinned ?? installedRelease?.pinned ?? false}
+                        onChange={(event) => selectedRelease && setSelection({ pluginId, version: selectedRelease.version, pinned: event.target.checked })}
+                      />
+                      安装后锁定此版本，阻止自动更新
+                    </label>
+                    <p className="text-sm text-muted-foreground">
+                      当前安装：{installedVersion || '未安装'}{installedRelease?.pinned ? '（已锁定）' : ''}；
+                      推荐版本：{releaseCatalog.recommended_version || '暂无兼容稳定版本'}
+                    </p>
+                    {selectedRelease && (
+                      <p className="text-sm text-muted-foreground">
+                        适配麦麦 {selectedRelease.manifest.host_application.min_version} — {selectedRelease.manifest.host_application.max_version || '不限'}
+                        ；SDK {selectedRelease.manifest.sdk?.min_version} — {selectedRelease.manifest.sdk?.max_version || '不限'}
+                      </p>
+                    )}
+                    {versionSelection && installedVersion && selectedRelease?.version !== installedVersion && (
+                      <p className="text-sm text-muted-foreground">切换版本会备份当前插件目录；降级不会回滚插件数据。</p>
+                    )}
+                    {!releaseCatalog.recommended_version && (
+                      <p role="status" className="text-sm text-muted-foreground">没有兼容的稳定版本；可在列表中查看各版本不兼容的原因，或手动选择兼容的预发布版本。</p>
+                    )}
+                    {!!releaseCatalog.rejected_releases?.length && (
+                      <details className="text-sm text-muted-foreground">
+                        <summary>有 {releaseCatalog.rejected_releases.length} 个发布版本未通过校验</summary>
+                        <ul className="mt-2 space-y-1">
+                          {releaseCatalog.rejected_releases.map((item) => <li key={item.tag}>{item.tag}：{item.error}</li>)}
+                        </ul>
+                      </details>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* 左侧 - 详细信息 */}
@@ -733,7 +827,7 @@ export function PluginDetailPage({
                     <div className="flex items-center gap-2 text-sm">
                       <Package className="h-4 w-4 text-muted-foreground" />
                       <span className="text-muted-foreground">版本:</span>
-                      <span className="font-medium">v{plugin.manifest.version}</span>
+                      <span className="font-medium">v{selectedRelease?.version || plugin.manifest.version}</span>
                     </div>
 
                     <div className="flex items-center gap-2 text-sm">
@@ -786,9 +880,9 @@ export function PluginDetailPage({
                         <span className="text-muted-foreground">支持版本:</span>
                       </div>
                       <div className="text-sm pl-6 font-medium">
-                        {plugin.manifest.host_application.min_version}
-                        {plugin.manifest.host_application.max_version
-                          ? ` - ${plugin.manifest.host_application.max_version}`
+                        {(selectedRelease?.manifest || plugin.manifest).host_application.min_version}
+                        {(selectedRelease?.manifest || plugin.manifest).host_application.max_version
+                          ? ` - ${(selectedRelease?.manifest || plugin.manifest).host_application.max_version}`
                           : ' - 最新版本'}
                       </div>
                     </div>
