@@ -829,6 +829,7 @@ class ManifestValidator:
         validate_python_package_dependencies: bool = True,
         log_errors: bool = True,
         log_compat_warnings: bool = True,
+        force_plugin_compatibility: bool = False,
     ) -> None:
         """初始化 Manifest 校验器。
 
@@ -839,6 +840,7 @@ class ManifestValidator:
             validate_python_package_dependencies: 是否校验 Python 包依赖与当前环境的关系。
             log_errors: 是否输出 Manifest 校验错误；预扫描场景可关闭，由加载边界统一记录。
             log_compat_warnings: 是否输出兼容模式提示；预扫描场景可关闭以避免重复日志。
+            force_plugin_compatibility: 是否跳过插件声明的 Host / SDK 版本范围校验。
         """
         self._project_root: Path = project_root or self._resolve_project_root()
         self._host_version: str = host_version or self._detect_default_host_version(self._project_root)
@@ -846,6 +848,7 @@ class ManifestValidator:
         self._validate_python_package_dependencies: bool = validate_python_package_dependencies
         self._log_errors_enabled: bool = log_errors
         self._log_compat_warnings: bool = log_compat_warnings
+        self._force_plugin_compatibility: bool = force_plugin_compatibility
         self._logged_error_keys: Set[Tuple[str, Tuple[str, ...]]] = set()
         self.errors: List[str] = []
         self.warnings: List[str] = []
@@ -1051,31 +1054,39 @@ class ManifestValidator:
         Args:
             manifest: 已通过结构校验的强类型 Manifest。
         """
-        host_ok, host_message = VersionComparator.is_in_range(
-            self._host_version,
-            manifest.host_application.min_version,
-            manifest.host_application.max_version,
-        )
-        if not host_ok:
-            if VersionComparator.is_same_major_minor_higher_version(
+        if self._force_plugin_compatibility:
+            # 强制兼容模式：不因版本范围拒绝加载，但仍记录插件声明的范围，便于排查异常。
+            self.warnings.append(
+                f"已开启强制插件兼容，跳过版本校验（插件声明 Host {manifest.host_application.min_version} - "
+                f"{manifest.host_application.max_version}、SDK {manifest.sdk.min_version} - "
+                f"{manifest.sdk.max_version}，当前 Host {self._host_version} / SDK {self._sdk_version}）"
+            )
+        else:
+            host_ok, host_message = VersionComparator.is_in_range(
                 self._host_version,
+                manifest.host_application.min_version,
                 manifest.host_application.max_version,
-            ):
-                self.warnings.append(
-                    f"当前版本 {self._host_version} 以兼容模式加载插件"
-                    f"（插件声明的 Host 最高支持版本为 "
-                    f"{VersionComparator.normalize_version(manifest.host_application.max_version)}）"
-                )
-            else:
-                self.errors.append(f"Host 版本不兼容: {host_message} (当前 Host: {self._host_version})")
+            )
+            if not host_ok:
+                if VersionComparator.is_same_major_minor_higher_version(
+                    self._host_version,
+                    manifest.host_application.max_version,
+                ):
+                    self.warnings.append(
+                        f"当前版本 {self._host_version} 以兼容模式加载插件"
+                        f"（插件声明的 Host 最高支持版本为 "
+                        f"{VersionComparator.normalize_version(manifest.host_application.max_version)}）"
+                    )
+                else:
+                    self.errors.append(f"Host 版本不兼容: {host_message} (当前 Host: {self._host_version})")
 
-        sdk_ok, sdk_message = VersionComparator.is_in_range(
-            self._sdk_version,
-            manifest.sdk.min_version,
-            manifest.sdk.max_version,
-        )
-        if not sdk_ok:
-            self.errors.append(f"SDK 版本不兼容: {sdk_message} (当前 SDK: {self._sdk_version})")
+            sdk_ok, sdk_message = VersionComparator.is_in_range(
+                self._sdk_version,
+                manifest.sdk.min_version,
+                manifest.sdk.max_version,
+            )
+            if not sdk_ok:
+                self.errors.append(f"SDK 版本不兼容: {sdk_message} (当前 SDK: {self._sdk_version})")
 
         if self._validate_python_package_dependencies:
             self._validate_python_package_dependencies_against_runtime(manifest)

@@ -26,6 +26,7 @@ from src.platform_io.route_key_factory import RouteKeyFactory
 from src.plugin_runtime import (
     ENV_BLOCKED_PLUGIN_REASONS,
     ENV_EXTERNAL_PLUGIN_IDS,
+    ENV_FORCE_PLUGIN_COMPATIBILITY,
     ENV_HOST_VERSION,
     ENV_IPC_ADDRESS,
     ENV_LOCAL_PLUGIN_SDK_PATH,
@@ -35,6 +36,10 @@ from src.plugin_runtime import (
     ENV_SESSION_TOKEN,
     ENV_TRUSTED_PLUGIN_DIRS,
     detect_host_application_version,
+)
+from src.plugin_runtime.compat_policy import (
+    build_force_plugin_compatibility_env,
+    is_force_plugin_compatibility_enabled,
 )
 from src.plugin_runtime.local_sdk import build_pythonpath_with_local_sdk
 from src.plugin_runtime.protocol.envelope import (
@@ -1776,6 +1781,9 @@ class PluginRunnerSupervisor:
         return {
             ENV_BLOCKED_PLUGIN_REASONS: json.dumps(self._blocked_plugin_reasons, ensure_ascii=False),
             ENV_EXTERNAL_PLUGIN_IDS: json.dumps(self._external_available_plugins, ensure_ascii=False),
+            ENV_FORCE_PLUGIN_COMPATIBILITY: build_force_plugin_compatibility_env(
+                is_force_plugin_compatibility_enabled()
+            ),
             ENV_HOST_VERSION: self._host_version,
             ENV_IPC_ADDRESS: self._transport.get_address(),
             ENV_PLUGIN_DIRS: os.pathsep.join(str(path) for path in self._plugin_dirs),

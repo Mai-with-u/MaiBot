@@ -5068,6 +5068,19 @@ class DebugConfig(ConfigBase):
     )
     """记录模型 prompt cache 统计，用于性能调试。"""
 
+    force_plugin_compatibility: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "强制插件兼容",
+                "en_US": "Force plugin compatibility",
+                "ja_JP": "プラグイン互換を強制",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """跳过插件声明的 Host 和 SDK 版本范围校验，直接加载插件；开启后需重启生效。"""
+
 
 class ExtraPromptItem(ConfigBase):
     platform: str = Field(

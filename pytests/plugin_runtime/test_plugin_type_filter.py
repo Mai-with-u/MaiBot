@@ -55,6 +55,7 @@ def test_plugin_loader_filters_adapters_for_builtin_runtime(tmp_path: Path) -> N
     _write_plugin(third_party_root, "normal-plugin", "extension")
 
     loader = PluginLoader(
+        host_version="1.1.0",
         plugin_type_filter="trusted_or_adapter",
         trusted_plugin_dirs=[str(builtin_root)],
     )
@@ -70,7 +71,7 @@ def test_plugin_loader_skips_adapters_for_third_party_runtime(tmp_path: Path) ->
     _write_plugin(third_party_root, "snowluma-adapter", "adapter")
     _write_plugin(third_party_root, "normal-plugin", "extension")
 
-    loader = PluginLoader(plugin_type_filter="not_adapter")
+    loader = PluginLoader(host_version="1.1.0", plugin_type_filter="not_adapter")
     candidates, duplicates = loader.discover_candidates([str(third_party_root)])
 
     assert duplicates == {}
@@ -82,7 +83,7 @@ def test_plugin_loader_accepts_manifest_type_alias(tmp_path: Path) -> None:
     plugin_root.mkdir()
     _write_plugin_with_type_key(plugin_root, "alias-adapter", "adapter", "type")
 
-    loader = PluginLoader(plugin_type_filter="adapter")
+    loader = PluginLoader(host_version="1.1.0", plugin_type_filter="adapter")
     candidates, duplicates = loader.discover_candidates([str(plugin_root)])
 
     assert duplicates == {}

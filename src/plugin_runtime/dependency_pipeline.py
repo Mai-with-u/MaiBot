@@ -19,6 +19,7 @@ import sys
 from packaging.utils import canonicalize_name
 
 from src.common.logger import get_logger
+from src.plugin_runtime.compat_policy import is_force_plugin_compatibility_enabled
 from src.plugin_runtime.runner.manifest_validator import ManifestValidator, PluginManifest
 
 
@@ -81,6 +82,7 @@ class PluginDependencyPipeline:
             validate_python_package_dependencies=False,
             log_errors=False,
             log_compat_warnings=False,
+            force_plugin_compatibility=is_force_plugin_compatibility_enabled(),
         )
 
     async def execute(

@@ -37,6 +37,7 @@ from src.config.config_utils import compare_versions
 from src.plugin_runtime import (
     ENV_BLOCKED_PLUGIN_REASONS,
     ENV_EXTERNAL_PLUGIN_IDS,
+    ENV_FORCE_PLUGIN_COMPATIBILITY,
     ENV_HOST_VERSION,
     ENV_IPC_ADDRESS,
     ENV_PLUGIN_DIRS,
@@ -45,6 +46,7 @@ from src.plugin_runtime import (
     ENV_SESSION_TOKEN,
     ENV_TRUSTED_PLUGIN_DIRS,
 )
+from src.plugin_runtime.compat_policy import parse_force_plugin_compatibility_env
 from src.plugin_runtime.protocol.envelope import (
     BootstrapPluginPayload,
     ComponentDeclaration,
@@ -402,6 +404,9 @@ class PluginRunner:
             host_version=os.getenv(ENV_HOST_VERSION, ""),
             plugin_type_filter=plugin_type_filter,
             trusted_plugin_dirs=trusted_plugin_dirs or [],
+            force_plugin_compatibility=parse_force_plugin_compatibility_env(
+                os.getenv(ENV_FORCE_PLUGIN_COMPATIBILITY, "")
+            ),
         )
         self._loader.set_blocked_plugin_reasons(self._blocked_plugin_reasons)
         self._start_time: float = time.monotonic()

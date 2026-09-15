@@ -73,6 +73,7 @@ class PluginLoader:
         host_version: str = "",
         plugin_type_filter: str = "",
         trusted_plugin_dirs: Optional[List[str]] = None,
+        force_plugin_compatibility: bool = False,
     ) -> None:
         """初始化插件加载器。
 
@@ -80,10 +81,14 @@ class PluginLoader:
             host_version: Host 版本号，用于 manifest 兼容性校验。
             plugin_type_filter: manifest plugin_type 过滤模式。
             trusted_plugin_dirs: 在过滤模式下始终允许加载的插件根目录。
+            force_plugin_compatibility: 是否跳过插件的 Host / SDK 版本范围校验。
         """
         self._loaded_plugins: Dict[str, PluginMeta] = {}
         self._failed_plugins: Dict[str, str] = {}
-        self._manifest_validator = ManifestValidator(host_version=host_version)
+        self._manifest_validator = ManifestValidator(
+            host_version=host_version,
+            force_plugin_compatibility=force_plugin_compatibility,
+        )
         self._compat_hook_installed = False
         self._blocked_plugin_reasons: Dict[str, str] = {}
         self._plugin_type_filter = str(plugin_type_filter or "").strip().lower()
