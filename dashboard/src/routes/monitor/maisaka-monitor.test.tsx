@@ -70,12 +70,17 @@ vi.mock('@tanstack/react-router', () => ({
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: ({ count, estimateSize }: { count: number; estimateSize: () => number }) => ({
     getTotalSize: () => count * estimateSize(),
+    // end 用于「查找上条」按行位置定位视口内首行，与真实虚拟列表语义保持一致
     getVirtualItems: () =>
-      Array.from({ length: count }, (_, index) => ({
-        index,
-        key: index,
-        start: index * estimateSize(),
-      })),
+      Array.from({ length: count }, (_, index) => {
+        const start = index * estimateSize()
+        return {
+          index,
+          key: index,
+          start,
+          end: start + estimateSize(),
+        }
+      }),
     measureElement: virtualizerMocks.measureElement,
     scrollToIndex: virtualizerMocks.scrollToIndex,
   }),
@@ -701,6 +706,98 @@ describe('阶段状态栏与工具条', () => {
 
     expect(virtualizerMocks.scrollToIndex).not.toHaveBeenCalled()
     expect(scrollToSpy).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' })
+  })
+
+  it('查找上条定位到视口上方最近一条麦麦发送的消息', async () => {
+    const user = userEvent.setup()
+    const timeline = [
+      makeEntry('message.ingested', makeIngested({ content: '第一条' })),
+      makeEntry('message.sent', makeSent({ content: '麦麦的回复', message_id: 'sent-9' })),
+      makeEntry('message.ingested', makeIngested({ content: '第二条' })),
+      makeEntry('message.ingested', makeIngested({ content: '第三条' })),
+    ]
+    setupMonitorState({ timeline })
+    const { container } = render(<MaisakaMonitor />)
+
+    await flushAutoScroll()
+    // 视口停在 300px：第 0/1 行（各 140px）已滚出上方，首行应为 index 2
+    const viewport = findTimelineViewport(container, '第一条')
+    Object.defineProperty(viewport, 'scrollTop', { configurable: true, value: 300 })
+    virtualizerMocks.scrollToIndex.mockClear()
+
+    await user.click(screen.getByRole('button', { name: '查找上条' }))
+
+    expect(virtualizerMocks.scrollToIndex).toHaveBeenCalledWith(1, {
+      align: 'center',
+      behavior: 'smooth',
+    })
+    expect(toastMocks.toast).not.toHaveBeenCalled()
+  })
+
+  it('上方没有麦麦消息时查找上条给出提示', async () => {
+    const user = userEvent.setup()
+    const timeline = [
+      makeEntry('message.ingested', makeIngested({ content: '第一条' })),
+      makeEntry('message.ingested', makeIngested({ content: '第二条' })),
+    ]
+    setupMonitorState({ timeline })
+    const { container } = render(<MaisakaMonitor />)
+
+    await flushAutoScroll()
+    const viewport = findTimelineViewport(container, '第一条')
+    Object.defineProperty(viewport, 'scrollTop', { configurable: true, value: 300 })
+    virtualizerMocks.scrollToIndex.mockClear()
+
+    await user.click(screen.getByRole('button', { name: '查找上条' }))
+
+    expect(virtualizerMocks.scrollToIndex).not.toHaveBeenCalled()
+    expect(toastMocks.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: '上方没有更多麦麦发送的消息' })
+    )
+  })
+
+  it('查找上条平滑滚动起始帧不重新开启自动跟随', async () => {
+    const user = userEvent.setup()
+    // 6 条各 140px：底部位于 scrollTop 640，首行落在 index 4，上方最近一条麦麦消息在 index 1
+    const timeline = [
+      makeEntry('message.ingested', makeIngested({ content: '第一条' })),
+      makeEntry('message.sent', makeSent({ content: '麦麦的回复', message_id: 'sent-9' })),
+      makeEntry('message.ingested', makeIngested({ content: '第二条' })),
+      makeEntry('message.ingested', makeIngested({ content: '第三条' })),
+      makeEntry('message.ingested', makeIngested({ content: '第四条' })),
+      makeEntry('message.ingested', makeIngested({ content: '第五条' })),
+    ]
+    setupMonitorState({ timeline })
+    const { container } = render(<MaisakaMonitor />)
+
+    await flushAutoScroll()
+    const viewport = findTimelineViewport(container, '第一条')
+    Object.defineProperty(viewport, 'scrollHeight', { configurable: true, value: 840 })
+    Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 200 })
+    Object.defineProperty(viewport, 'scrollTop', { configurable: true, value: 640 })
+    fireEvent.scroll(viewport)
+    await waitFor(() => expect(getBackToBottomIcon()).toHaveClass('text-primary'))
+
+    await user.click(screen.getByRole('button', { name: '查找上条' }))
+    expect(virtualizerMocks.scrollToIndex).toHaveBeenCalledWith(1, {
+      align: 'center',
+      behavior: 'smooth',
+    })
+    expect(getBackToBottomIcon()).not.toHaveClass('text-primary')
+
+    // 平滑滚动起始帧：距底部 20px，仍处于阈值内，不应被当成“用户回到底部”而重新跟随
+    Object.defineProperty(viewport, 'scrollTop', { configurable: true, value: 620 })
+    fireEvent.scroll(viewport)
+    expect(getBackToBottomIcon()).not.toHaveClass('text-primary')
+
+    // 离开阈值后解锁，再滚回底部可以正常恢复自动跟随
+    Object.defineProperty(viewport, 'scrollTop', { configurable: true, value: 300 })
+    fireEvent.scroll(viewport)
+    expect(getBackToBottomIcon()).not.toHaveClass('text-primary')
+
+    Object.defineProperty(viewport, 'scrollTop', { configurable: true, value: 640 })
+    fireEvent.scroll(viewport)
+    await waitFor(() => expect(getBackToBottomIcon()).toHaveClass('text-primary'))
   })
 })
 

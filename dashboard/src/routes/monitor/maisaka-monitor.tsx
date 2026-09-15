@@ -16,6 +16,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Clock,
   Eraser,
   FileCode2,
@@ -44,8 +45,8 @@ import { backendApi } from '@/lib/http'
 import { cn } from '@/lib/utils'
 
 import type {
-  MaisakaMessageMedia,
   MaisakaContextSection,
+  MaisakaMessageMedia,
   MaisakaToolCall,
   MessageIngestedEvent,
   MaisakaReplyPreview,
@@ -315,7 +316,6 @@ function SessionSidebar({
 
 // ─── 单条时间线事件渲染 ──────────────────────────────────────
 
-interface MonitorStats {
 /** 上下文分段：token 由该轮真实 prompt token 按字符占比换算 */
 interface MonitorContextSection {
   key: string
@@ -323,10 +323,10 @@ interface MonitorContextSection {
   percent: number
 }
 
+interface MonitorStats {
   messages: number
   cycles: number
   toolCalls: number
-}
   /** 最近一轮 planner 请求的输入 token，即当前上下文占用 */
   contextTokens: number
   /** 与最近一轮 planner 请求对应的上下文分段 */
@@ -464,10 +464,12 @@ function MonitorStatsPanel({ stats }: { stats: MonitorStats }) {
       </div>
     </div>
   )
+}
 
 interface StageStatusPanelProps {
   autoScroll: boolean
   onClearTimeline: () => void
+  onFindPreviousBotMessage: () => void
   onScrollToBottom: () => void
   stats: MonitorStats
   status?: StageStatusInfo
@@ -476,6 +478,7 @@ interface StageStatusPanelProps {
 function MonitorStatusActions({
   autoScroll,
   onClearTimeline,
+  onFindPreviousBotMessage,
   onScrollToBottom,
   stats,
 }: Omit<StageStatusPanelProps, 'status'>) {
@@ -510,6 +513,16 @@ function MonitorStatusActions({
           variant="ghost"
           size="sm"
           className="h-6 shrink-0 px-2 text-[11px]"
+          onClick={onFindPreviousBotMessage}
+          title="查找上条麦麦消息"
+        >
+          <ChevronUp className="mr-1 h-3 w-3" />
+          查找上条
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 shrink-0 px-2 text-[11px]"
           onClick={onScrollToBottom}
           title="回到底部"
         >
@@ -534,6 +547,7 @@ function MonitorStatusActions({
 function StageStatusPanel({
   autoScroll,
   onClearTimeline,
+  onFindPreviousBotMessage,
   onScrollToBottom,
   stats,
   status,
@@ -543,6 +557,7 @@ function StageStatusPanel({
     <MonitorStatusActions
       autoScroll={autoScroll}
       onClearTimeline={onClearTimeline}
+      onFindPreviousBotMessage={onFindPreviousBotMessage}
       onScrollToBottom={onScrollToBottom}
       stats={stats}
     />
@@ -1575,6 +1590,8 @@ export function MaisakaMonitor({ embedded = false, reasoningReturnTo }: MaisakaM
   const [autoScroll, setAutoScroll] = useState(true)
   const [focusedMessageId, setFocusedMessageId] = useState<string | null>(null)
   const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 程序化跳转滚动期间忽略滚动监听，防止自动跟随把视图拉回底部 */
+  const revealScrollLockRef = useRef(false)
   const previousSelectedSessionRef = useRef<string | null | undefined>(undefined)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     const saved = localStorage.getItem('maisaka-monitor-sidebar-collapsed')
@@ -1687,6 +1704,29 @@ export function MaisakaMonitor({ embedded = false, reasoningReturnTo }: MaisakaM
     return indexes
   }, [visibleTimelineEntries])
 
+  /** 滚动到指定时间线位置，并短暂高亮该条消息（供消息跳转与“查找上条”共用） */
+  const revealTimelineMessage = useCallback(
+    (targetIndex: number, messageId: string) => {
+      setAutoScroll(false)
+      // 平滑滚动的开头几帧仍在底部阈值内，锁住滚动监听，避免被当成“用户回到底部”而拉回底部
+      revealScrollLockRef.current = true
+      setFocusedMessageId(messageId)
+      timelineVirtualizer.scrollToIndex(targetIndex, {
+        align: 'center',
+        behavior: 'smooth',
+      })
+      if (focusTimerRef.current !== null) {
+        clearTimeout(focusTimerRef.current)
+      }
+      focusTimerRef.current = setTimeout(() => {
+        setFocusedMessageId(null)
+        revealScrollLockRef.current = false
+        focusTimerRef.current = null
+      }, 1800)
+    },
+    [timelineVirtualizer]
+  )
+
   const handleJumpToMessage = useCallback(
     (messageId: string) => {
       const targetIndex = messageEntryIndexes.get(messageId)
@@ -1699,22 +1739,36 @@ export function MaisakaMonitor({ embedded = false, reasoningReturnTo }: MaisakaM
         return
       }
 
-      setAutoScroll(false)
-      setFocusedMessageId(messageId)
-      timelineVirtualizer.scrollToIndex(targetIndex, {
-        align: 'center',
-        behavior: 'smooth',
-      })
-      if (focusTimerRef.current !== null) {
-        clearTimeout(focusTimerRef.current)
-      }
-      focusTimerRef.current = setTimeout(() => {
-        setFocusedMessageId(null)
-        focusTimerRef.current = null
-      }, 1800)
+      revealTimelineMessage(targetIndex, messageId)
     },
-    [messageEntryIndexes, timelineVirtualizer, toast]
+    [messageEntryIndexes, revealTimelineMessage, toast]
   )
+
+  /** 向上查找当前视口上方最近一条麦麦自己发送的消息并滚动过去 */
+  const handleFindPreviousBotMessage = useCallback(() => {
+    const viewportTop = scrollViewport?.scrollTop ?? 0
+    // 虚拟列表带 overscan，按行位置过滤出视口内第一行，避免选中视口上方的预渲染行
+    const firstVisibleIndex =
+      timelineVirtualizer.getVirtualItems().find((item) => item.end > viewportTop)?.index ?? 0
+
+    for (let index = firstVisibleIndex - 1; index >= 0; index -= 1) {
+      const entry = visibleTimelineEntries[index]
+      if (entry?.type !== 'message.sent') {
+        continue
+      }
+      const data = entry.data as MessageSentEvent
+      if (!data.message_id) {
+        continue
+      }
+      revealTimelineMessage(index, data.message_id)
+      return
+    }
+
+    toast({
+      title: '上方没有更多麦麦发送的消息',
+      description: '已经到达当前时间线里麦麦发送消息的最上方。',
+    })
+  }, [revealTimelineMessage, scrollViewport, timelineVirtualizer, toast, visibleTimelineEntries])
 
   const scrollToBottom = useCallback(
     (behavior: TimelineScrollBehavior = 'smooth') => {
@@ -1756,7 +1810,17 @@ export function MaisakaMonitor({ embedded = false, reasoningReturnTo }: MaisakaM
         scrollViewport ?? e.currentTarget.querySelector('[data-radix-scroll-area-viewport]')
       if (!target) return
       const { scrollTop, scrollHeight, clientHeight } = target as HTMLElement
-      setAutoScroll(scrollHeight - scrollTop - clientHeight < 80)
+      const distanceToBottom = scrollHeight - scrollTop - clientHeight
+
+      // 程序化跳转期间：平滑滚动的起始帧仍在底部阈值内，
+      // 此时既不能重新开启自动跟随（会打断滚动并拉回底部），也不需要关闭
+      if (revealScrollLockRef.current) {
+        if (distanceToBottom < 80) return
+        // 已经离开底部阈值，恢复正常判定
+        revealScrollLockRef.current = false
+      }
+
+      setAutoScroll(distanceToBottom < 80)
     },
     [scrollViewport]
   )
@@ -1899,6 +1963,7 @@ export function MaisakaMonitor({ embedded = false, reasoningReturnTo }: MaisakaM
         <StageStatusPanel
           autoScroll={autoScroll}
           onClearTimeline={clearTimeline}
+          onFindPreviousBotMessage={handleFindPreviousBotMessage}
           onScrollToBottom={() => scrollToBottom('smooth')}
           stats={stats}
           status={selectedStageStatus}
