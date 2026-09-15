@@ -523,6 +523,59 @@ describe('阶段状态栏与工具条', () => {
     expect(screen.getAllByText('工具调用：3').length).toBeGreaterThan(0)
   })
 
+  it('统计浮层展示上下文分段占比与平均缓存命中率', async () => {
+    const user = userEvent.setup()
+    const timeline = [
+      makeEntry(
+        'planner.finalized',
+        makeFinalized({
+          request: {
+            messages: [],
+            selected_history_count: 4,
+            tool_count: 2,
+            context_sections: [
+              { key: 'messages', chars: 900, count: 4 },
+              { key: 'system_prompt', chars: 100, count: 1 },
+            ],
+          },
+          planner: makePlannerBlock({
+            prompt_tokens: 12000,
+            completion_tokens: 300,
+            prompt_cache_hit_tokens: 800,
+            prompt_cache_miss_tokens: 200,
+          }),
+        })
+      ),
+    ]
+    setupMonitorState({ timeline })
+    render(<MaisakaMonitor />)
+
+    await user.hover(screen.getByText('统计'))
+
+    // 上下文总量取最近一轮真实 prompt token，分段按字符占比换算
+    expect((await screen.findAllByText('上下文容量')).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('1.2万 tokens').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('消息').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('90.0%').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('1.1万').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('系统提示词').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('10.0%').length).toBeGreaterThan(0)
+    // 缓存命中率按会话累计命中/未命中 token 计算
+    expect(screen.getAllByText('80%').length).toBeGreaterThan(0)
+  })
+
+  it('无 planner 请求时统计浮层提示暂无上下文数据', async () => {
+    const user = userEvent.setup()
+    setupMonitorState({ timeline: [makeEntry('message.ingested', makeIngested())] })
+    render(<MaisakaMonitor />)
+
+    await user.hover(screen.getByText('统计'))
+
+    expect((await screen.findAllByText('暂无数据')).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/尚无 planner 请求数据/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('消息：1').length).toBeGreaterThan(0)
+  })
+
   it('回到底部按钮触发平滑滚动，清空按钮调用 clearTimeline', async () => {
     const user = userEvent.setup()
     const timeline = [

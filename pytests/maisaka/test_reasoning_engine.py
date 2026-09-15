@@ -16,9 +16,19 @@ from src.llm_models.payload_content.context_item import (
 from src.llm_models.payload_content.native_tool import NativeToolCallSummary
 from src.llm_models.payload_content.tool_option import ToolCall
 from src.maisaka.chat_loop_service import ChatResponse, MaisakaChatLoopService
+from src.maisaka.context.usage import (
+    SECTION_INSTANT_NOTICE,
+    SECTION_MESSAGES,
+    SECTION_SYSTEM_PROMPT,
+    ContextSectionUsage,
+)
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
 from src.maisaka.mode_policy import is_idle_cycle_reason
-from src.maisaka.monitor.events import _serialize_planner_block, _serialize_tool_results
+from src.maisaka.monitor.events import (
+    _serialize_planner_block,
+    _serialize_request_block,
+    _serialize_tool_results,
+)
 from src.maisaka.reasoning_engine import STOP_AFTER_EXECUTION_PAUSE_REASON, MaisakaReasoningEngine
 
 
@@ -219,6 +229,72 @@ def test_tool_stop_request_is_serialized_for_monitor() -> None:
     )
 
     assert tools[0]["stop_after_execution"] is True
+
+
+def test_cache_tokens_and_context_sections_are_serialized_for_monitor() -> None:
+    planner_block = _serialize_planner_block("完成", [], [], 100, 5, 105, 100.0, "", 80, 20)
+    request_block = _serialize_request_block(
+        [{"role": "system", "content": "系统提示词"}],
+        1,
+        2,
+        [ContextSectionUsage("messages", 12, 1)],
+    )
+
+    assert planner_block is not None
+    assert planner_block["prompt_cache_hit_tokens"] == 80
+    assert planner_block["prompt_cache_miss_tokens"] == 20
+    assert request_block is not None
+    assert request_block["context_sections"] == [{"key": "messages", "chars": 12, "count": 1}]
+
+
+@pytest.mark.asyncio
+async def test_chat_loop_reports_context_sections_and_cache_tokens(monkeypatch) -> None:
+    """chat_loop_step 应回报提示词分段用量与缓存命中 token。"""
+
+    class FakeLLMClient:
+        async def generate_response_with_context(self, context_factory, options) -> LLMResponseResult:
+            del options
+            context_factory(None)
+            result = LLMResponseResult.from_portable_output(response="好的", model_name="test-model")
+            result.prompt_tokens = 1000
+            result.completion_tokens = 20
+            result.total_tokens = 1020
+            result.prompt_cache_hit_tokens = 800
+            result.prompt_cache_miss_tokens = 200
+            return result
+
+    class PassthroughRuntimeManager:
+        async def invoke_hook(self, hook_name: str, **kwargs: object) -> SimpleNamespace:
+            del hook_name
+            return SimpleNamespace(kwargs=kwargs)
+
+    service = MaisakaChatLoopService(chat_system_prompt="测试系统提示词")
+    monkeypatch.setattr(service, "_get_llm_chat_client", lambda request_kind: FakeLLMClient())
+    monkeypatch.setattr(
+        MaisakaChatLoopService,
+        "_get_runtime_manager",
+        staticmethod(lambda: PassthroughRuntimeManager()),
+    )
+    monkeypatch.setattr(
+        PromptCLIVisualizer,
+        "build_prompt_section_result",
+        staticmethod(
+            lambda *args, **kwargs: SimpleNamespace(
+                panel=None,
+                preview_access=SimpleNamespace(preview_web_uri=""),
+            )
+        ),
+    )
+
+    response = await service.chat_loop_step([], tool_definitions=[])
+
+    sections = {section.key: section.chars for section in response.context_sections}
+    # 本轮没有历史消息：系统提示词单独成段，末尾的当前时间与提醒归入即时提示
+    assert sections[SECTION_SYSTEM_PROMPT] == len("测试系统提示词")
+    assert sections[SECTION_INSTANT_NOTICE] > 0
+    assert SECTION_MESSAGES not in sections
+    assert response.prompt_cache_hit_tokens == 800
+    assert response.prompt_cache_miss_tokens == 200
 
 
 @pytest.mark.asyncio

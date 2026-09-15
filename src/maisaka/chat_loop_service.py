@@ -55,6 +55,11 @@ from src.maisaka.context.messages import (
     build_model_output_context_messages,
     build_context_items_from_history_entry,
 )
+from src.maisaka.context.usage import (
+    ContextSectionUsage,
+    measure_request_sections,
+    resolve_tool_definition_name,
+)
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
 from src.maisaka.memory.mid_term import is_mid_term_memory_message
 from src.maisaka.focus import focus_mode_manager
@@ -105,6 +110,9 @@ class ChatResponse:
     prompt_section: Optional[RenderableType] = None
     prompt_html_uri: Optional[str] = None
     generation_attempts: tuple[GenerationAttempt, ...] = ()
+    prompt_cache_hit_tokens: int = 0
+    prompt_cache_miss_tokens: int = 0
+    context_sections: tuple[ContextSectionUsage, ...] = ()
 
     @property
     def content(self) -> Optional[str]:
@@ -718,8 +726,6 @@ class MaisakaChatLoopService:
     ) -> None:
         """记录模型 KV cache 命中情况。"""
 
-        if prompt_cache_miss_tokens == 0 and prompt_cache_hit_tokens > 0:
-            prompt_cache_miss_tokens = max(prompt_tokens - prompt_cache_hit_tokens, 0)
         prompt_cache_total_tokens = prompt_cache_hit_tokens + prompt_cache_miss_tokens
         prompt_cache_hit_rate = (
             prompt_cache_hit_tokens / prompt_cache_total_tokens * 100 if prompt_cache_total_tokens > 0 else 0
@@ -896,14 +902,14 @@ class MaisakaChatLoopService:
         tail_user_messages: Sequence[str] | None = None,
         final_user_message: str | None = None,
         system_prompt: Optional[str] = None,
-    ) -> List[ContextItem]:
+    ) -> tuple[List[ContextItem], int]:
         """构造发给大模型的消息列表。
 
         Args:
             selected_history: 已选中的上下文消息列表。
 
         Returns:
-            List[ContextItem]: 发送给大模型的 Context Items。
+            tuple[List[ContextItem], int]: 发送给大模型的 Context Items，以及紧随系统提示词之后的历史消息条数。
         """
 
         items: List[ContextItem] = []
@@ -950,6 +956,9 @@ class MaisakaChatLoopService:
         for boundary_timestamp in deferred_boundary_timestamps:
             self._append_time_user_message(items, boundary_timestamp)
 
+        # 历史上下文到此结束，后续追加的都是当轮即时提示
+        history_item_count = len(items) - 1
+
         normalized_injected_items: List[ContextItem] = []
         current_chat_attention = self._build_current_chat_attention_tail_message()
         final_user_messages = [
@@ -978,7 +987,7 @@ class MaisakaChatLoopService:
                 .build()
             )
 
-        return items
+        return items, history_item_count
 
     async def chat_loop_step(
         self,
@@ -1010,7 +1019,7 @@ class MaisakaChatLoopService:
             max_context_size=max_context_size,
             is_group_chat=self._is_group_chat,
         )
-        built_messages = self._build_request_messages(
+        built_messages, history_item_count = self._build_request_messages(
             selected_history,
             enable_visual_message=enable_visual_message,
             include_day_boundary_time_messages=request_kind == "planner",
@@ -1041,8 +1050,11 @@ class MaisakaChatLoopService:
             return built_messages
 
         all_tools: List[ToolDefinitionInput]
+        tool_provider_types: List[str]
         if tool_definitions is not None:
             all_tools = list(tool_definitions)
+            # 由调用方直接给出的定义无法追溯工具来源
+            tool_provider_types = [""] * len(all_tools)
         elif self._tool_registry is not None:
             availability_context = ToolAvailabilityContext(
                 session_id=self._session_id,
@@ -1051,13 +1063,21 @@ class MaisakaChatLoopService:
             )
             tool_specs = await self._tool_registry.list_tools(availability_context)
             all_tools = [tool_spec.to_llm_definition() for tool_spec in tool_specs]
+            tool_provider_types = [tool_spec.provider_type for tool_spec in tool_specs]
         else:
             availability_context = ToolAvailabilityContext(
                 session_id=self._session_id,
                 stream_id=self._session_id,
                 is_group_chat=self._is_group_chat,
             )
-            all_tools = [*get_builtin_tools(availability_context), *self._extra_tools]
+            builtin_definitions = get_builtin_tools(availability_context)
+            all_tools = [*builtin_definitions, *self._extra_tools]
+            tool_provider_types = ["builtin"] * len(builtin_definitions) + [""] * len(self._extra_tools)
+
+        tool_provider_by_name = {
+            resolve_tool_definition_name(definition): provider_type
+            for definition, provider_type in zip(all_tools, tool_provider_types, strict=True)
+        }
 
         serialized_items = serialize_prompt_items(built_messages)
         before_request_result = await self._get_runtime_manager().invoke_hook(
@@ -1090,6 +1110,18 @@ class MaisakaChatLoopService:
         raw_tool_definitions = before_request_kwargs.get("tool_definitions")
         if isinstance(raw_tool_definitions, list):
             all_tools = [item for item in raw_tool_definitions if isinstance(item, dict)]
+            # hook 只能拿到 OpenAI function 结构，按名称还原工具来源
+            tool_provider_types = [
+                tool_provider_by_name.get(resolve_tool_definition_name(definition), "")
+                for definition in all_tools
+            ]
+
+        context_sections = measure_request_sections(
+            built_messages,
+            history_item_count=history_item_count,
+            tool_definitions=all_tools,
+            tool_provider_types=tool_provider_types,
+        )
 
         prompt_section: RenderableType | None = None
         prompt_html_uri: str | None = None
@@ -1110,11 +1142,15 @@ class MaisakaChatLoopService:
                 logical_turn_id,
             )
         llm_duration_ms = round((time.perf_counter() - llm_started_at) * 1000, 2)
+        prompt_cache_hit_tokens = getattr(generation_result, "prompt_cache_hit_tokens", 0) or 0
+        prompt_cache_miss_tokens = getattr(generation_result, "prompt_cache_miss_tokens", 0) or 0
+        if prompt_cache_miss_tokens == 0 and prompt_cache_hit_tokens > 0:
+            prompt_cache_miss_tokens = max(generation_result.prompt_tokens - prompt_cache_hit_tokens, 0)
         self._log_prompt_cache_usage(
             request_kind=request_kind,
             prompt_tokens=generation_result.prompt_tokens,
-            prompt_cache_hit_tokens=getattr(generation_result, "prompt_cache_hit_tokens", 0) or 0,
-            prompt_cache_miss_tokens=getattr(generation_result, "prompt_cache_miss_tokens", 0) or 0,
+            prompt_cache_hit_tokens=prompt_cache_hit_tokens,
+            prompt_cache_miss_tokens=prompt_cache_miss_tokens,
         )
 
         # Provider 原生推理与 Planner 显式正文语义不同，必须分别保留。
@@ -1193,6 +1229,9 @@ class MaisakaChatLoopService:
             prompt_section=prompt_section,
             prompt_html_uri=prompt_html_uri,
             generation_attempts=generation_result.generation_attempts,
+            prompt_cache_hit_tokens=prompt_cache_hit_tokens,
+            prompt_cache_miss_tokens=prompt_cache_miss_tokens,
+            context_sections=tuple(context_sections),
         )
 
     @staticmethod

@@ -10,6 +10,7 @@ import json
 import time
 
 from src.common.logger import get_logger
+from src.maisaka.context.usage import ContextSectionUsage
 from src.maisaka.display.display_utils import format_tool_call_for_display
 
 logger = get_logger("maisaka_monitor")
@@ -263,10 +264,20 @@ def _serialize_native_tool_calls(tool_calls: List[Any]) -> List[Dict[str, Any]]:
     return serialized_calls
 
 
+def _serialize_context_sections(sections: Optional[List[ContextSectionUsage]]) -> List[Dict[str, Any]]:
+    """标准化提示词分段用量列表。"""
+
+    return [
+        {"key": section.key, "chars": int(section.chars), "count": int(section.count)}
+        for section in list(sections or [])
+    ]
+
+
 def _serialize_request_block(
     messages: Optional[List[Any]],
     selected_history_count: Optional[int],
     tool_count: Optional[int],
+    context_sections: Optional[List[ContextSectionUsage]] = None,
 ) -> Optional[Dict[str, Any]]:
     """标准化请求区块。"""
 
@@ -277,6 +288,7 @@ def _serialize_request_block(
         "messages": _serialize_messages(list(messages or [])),
         "selected_history_count": int(selected_history_count or 0),
         "tool_count": int(tool_count or 0),
+        "context_sections": _serialize_context_sections(context_sections),
     }
 
 
@@ -289,6 +301,8 @@ def _serialize_planner_block(
     total_tokens: Optional[int],
     duration_ms: Optional[float],
     prompt_html_uri: Optional[str] = None,
+    prompt_cache_hit_tokens: Optional[int] = None,
+    prompt_cache_miss_tokens: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     """标准化 planner 结果区块。"""
 
@@ -311,6 +325,8 @@ def _serialize_planner_block(
         "prompt_tokens": int(prompt_tokens or 0),
         "completion_tokens": int(completion_tokens or 0),
         "total_tokens": int(total_tokens or 0),
+        "prompt_cache_hit_tokens": int(prompt_cache_hit_tokens or 0),
+        "prompt_cache_miss_tokens": int(prompt_cache_miss_tokens or 0),
         "duration_ms": float(duration_ms or 0.0),
         "prompt_html_uri": str(prompt_html_uri or ""),
     }
@@ -553,6 +569,9 @@ async def emit_planner_finalized(
     planner_total_tokens: Optional[int],
     planner_duration_ms: Optional[float],
     planner_prompt_html_uri: Optional[str] = None,
+    planner_prompt_cache_hit_tokens: Optional[int] = None,
+    planner_prompt_cache_miss_tokens: Optional[int] = None,
+    planner_context_sections: Optional[List[ContextSectionUsage]] = None,
     tools: Optional[List[Dict[str, Any]]] = None,
     time_records: Optional[Dict[str, float]] = None,
     agent_state: str = "",
@@ -570,6 +589,7 @@ async def emit_planner_finalized(
             planner_request_messages,
             planner_selected_history_count,
             planner_tool_count,
+            planner_context_sections,
         ),
         "planner": _serialize_planner_block(
             planner_content,
@@ -580,6 +600,8 @@ async def emit_planner_finalized(
             planner_total_tokens,
             planner_duration_ms,
             planner_prompt_html_uri,
+            planner_prompt_cache_hit_tokens,
+            planner_prompt_cache_miss_tokens,
         ),
         "tools": _serialize_tool_results(list(tools or [])),
         "interrupted": planner_interrupted,

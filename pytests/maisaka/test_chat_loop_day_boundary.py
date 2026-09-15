@@ -28,7 +28,7 @@ def _build_history_messages(history: List[LLMContextMessage]) -> List[ContextIte
     """构造请求并移除固定的 system 与末尾当前时间消息。"""
 
     service = MaisakaChatLoopService(chat_system_prompt="system")
-    messages = service._build_request_messages(
+    messages, _history_item_count = service._build_request_messages(
         history,
         enable_visual_message=False,
         include_day_boundary_time_messages=True,

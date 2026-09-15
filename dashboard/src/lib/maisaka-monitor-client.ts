@@ -197,6 +197,14 @@ export interface MaisakaRequestBlock {
   messages: MaisakaMessage[]
   selected_history_count: number
   tool_count: number
+  context_sections?: MaisakaContextSection[]
+}
+
+/** 提示词分段用量：字符数与条目数，token 由前端按占比换算 */
+export interface MaisakaContextSection {
+  key: string
+  chars: number
+  count: number
 }
 
 export interface MaisakaNativeToolCall {
@@ -215,6 +223,8 @@ export interface MaisakaPlannerBlock {
   prompt_tokens: number
   completion_tokens: number
   total_tokens: number
+  prompt_cache_hit_tokens?: number
+  prompt_cache_miss_tokens?: number
   duration_ms: number
   prompt_html_uri?: string
 }
