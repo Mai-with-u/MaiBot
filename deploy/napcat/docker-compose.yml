@@ -1,0 +1,19 @@
+# NapCat —— QQ 协议侧，给麦麦当嘴和耳朵
+# 启动：cd ~/dev/maibot/deploy/napcat && docker compose up -d
+# 看登录二维码/Token：docker logs -f napcat
+services:
+  napcat:
+    image: mlikiowa/napcat-docker:latest
+    container_name: napcat
+    restart: unless-stopped
+    network_mode: bridge
+    mac_address: 02:42:ac:11:00:02   # 固化 MAC，避免每次启动被 QQ 当成新设备
+    environment:
+      - NAPCAT_UID=${NAPCAT_UID}
+      - NAPCAT_GID=${NAPCAT_GID}
+    ports:
+      - "127.0.0.1:3001:3001"   # OneBot11 正向 WebSocket，麦麦的适配器连这里
+      - "127.0.0.1:6099:6099"   # WebUI，扫码登录和配置用
+    volumes:
+      - ./napcat/config:/app/napcat/config   # NapCat 配置持久化
+      - ./ntqq:/app/.config/QQ               # QQ 登录态持久化，免得每次扫码
