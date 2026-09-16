@@ -12,7 +12,6 @@ vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: toastMock }) }))
 
 vi.mock('@/lib/memory-api', () => ({
   getMemoryImportSettings: vi.fn(),
-  getMemoryImportPathAliases: vi.fn(),
   getMemoryImportChatTargets: vi.fn(),
   createMemoryUploadImport: vi.fn(),
   createMemoryPasteImport: vi.fn(),
@@ -40,7 +39,6 @@ function renderForm(onCreated = vi.fn()) {
 
 beforeEach(() => {
   vi.mocked(memoryApi.getMemoryImportSettings).mockResolvedValue({ success: true, settings: {} } as never)
-  vi.mocked(memoryApi.getMemoryImportPathAliases).mockResolvedValue({ success: true, path_aliases: {} } as never)
   vi.mocked(memoryApi.getMemoryImportChatTargets).mockResolvedValue({ success: true, data: [] } as never)
 })
 
@@ -191,72 +189,44 @@ describe('useImportForm', () => {
     })
   })
 
-  describe('resolveImportPath', () => {
+  describe('checkImportPath', () => {
     beforeEach(() => {
       vi.mocked(memoryApi.getMemoryImportSettings).mockResolvedValue({ success: true, settings: {} } as never)
     })
 
-    it('别名为空时不发解析请求', async () => {
-      const { result } = renderForm()
-      act(() => result.current.setPathResolveAlias('   '))
-      await act(async () => {
-        await result.current.resolveImportPath()
-      })
-      expect(memoryApi.resolveMemoryImportPath).not.toHaveBeenCalled()
-    })
-
-    it('成功时把解析结果格式化进输出框，空相对路径显示 (空)', async () => {
+    it('成功时返回一行解析结果文案', async () => {
       vi.mocked(memoryApi.resolveMemoryImportPath).mockResolvedValue({
         alias: 'raw',
-        relative_path: '',
-        resolved_path: '/data/raw',
+        relative_path: 'exports',
+        resolved_path: '/data/raw/exports',
         exists: true,
         is_file: false,
         is_dir: true,
       } as never)
       const { result } = renderForm()
 
-      act(() => {
-        result.current.setPathResolveAlias('raw')
-        result.current.setPathResolveRelativePath('')
-        result.current.setPathResolveMustExist(false)
-      })
-      await act(async () => {
-        await result.current.resolveImportPath()
-      })
+      const output = await act(async () =>
+        result.current.checkImportPath('raw', 'exports', true),
+      )
 
       expect(memoryApi.resolveMemoryImportPath).toHaveBeenCalledWith({
         alias: 'raw',
-        relative_path: '',
-        must_exist: false,
+        relative_path: 'exports',
+        must_exist: true,
       })
-      expect(result.current.pathResolveOutput).toBe(
-        [
-          '路径别名: raw',
-          '相对路径: (空)',
-          '解析结果: /data/raw',
-          '是否存在: true',
-          '是否文件: false',
-          '是否目录: true',
-        ].join('\n'),
-      )
-      expect(result.current.resolvingPath).toBe(false)
+      expect(output).toBe('解析到 /data/raw/exports（目录，已存在）')
     })
 
-    it('解析失败写入输出框；非 Error 使用兜底文案', async () => {
+    it('解析失败返回失败文案；非 Error 使用兜底文案', async () => {
       vi.mocked(memoryApi.resolveMemoryImportPath).mockRejectedValueOnce(new Error('别名不存在'))
       const { result } = renderForm()
 
-      await act(async () => {
-        await result.current.resolveImportPath()
-      })
-      expect(result.current.pathResolveOutput).toBe('解析失败：别名不存在')
+      const failed = await act(async () => result.current.checkImportPath('raw', '', false))
+      expect(failed).toBe('解析失败：别名不存在')
 
       vi.mocked(memoryApi.resolveMemoryImportPath).mockRejectedValueOnce('bad')
-      await act(async () => {
-        await result.current.resolveImportPath()
-      })
-      expect(result.current.pathResolveOutput).toBe('解析失败：路径解析失败')
+      const fallback = await act(async () => result.current.checkImportPath('raw', '', false))
+      expect(fallback).toBe('解析失败：路径解析失败')
     })
   })
 })
@@ -696,7 +666,6 @@ describe('useImportForm 空 counts 与默认值', () => {
 
     await waitFor(() => expect(memoryApi.getMemoryImportSettings).toHaveBeenCalled())
     expect(result.current.importSettings).toEqual({})
-    expect(result.current.importAliasKeys).toEqual([])
     expect(result.current.importChatTargets).toEqual([])
 
     act(() => {
@@ -762,35 +731,6 @@ describe('useImportForm 空 counts 与默认值', () => {
       narrative_overlap: 100,
       factual_target_size: 1500,
     })
-  })
-
-  it('路径别名到达后：非法当前值回退到排序后的第一项，合法值保持', async () => {
-    let resolveAliases: (value: unknown) => void = () => {}
-    vi.mocked(memoryApi.getMemoryImportPathAliases).mockReturnValue(
-      new Promise((resolve) => {
-        resolveAliases = resolve
-      }) as never,
-    )
-    const { result, unmount } = renderForm()
-
-    act(() => result.current.setPathResolveAlias('gone'))
-    await act(async () => {
-      resolveAliases({
-        success: true,
-        path_aliases: { zeta: '/z', alpha: '/a', raw: '/r' },
-      })
-    })
-    await waitFor(() => expect(result.current.importAliasKeys).toEqual(['alpha', 'raw', 'zeta']))
-    expect(result.current.pathResolveAlias).toBe('alpha')
-    unmount()
-
-    vi.mocked(memoryApi.getMemoryImportPathAliases).mockResolvedValue({
-      success: true,
-      path_aliases: { raw: '/r', lpmm: '/l' },
-    } as never)
-    const keepRaw = renderForm()
-    await waitFor(() => expect(keepRaw.result.current.importAliasKeys).toEqual(['lpmm', 'raw']))
-    expect(keepRaw.result.current.pathResolveAlias).toBe('raw')
   })
 
   it('用户已改过的其余默认字段不被后续 settings 覆盖', async () => {

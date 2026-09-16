@@ -97,7 +97,27 @@ describe('MemoryDeleteDialog 基础渲染', () => {
     expect(confirmButton).toBeEnabled()
     fireEvent.click(confirmButton)
     expect(onExecute2).toHaveBeenCalledTimes(1)
+    // 未填原因时回传空串，由调用方按默认原因处理
+    expect(onExecute2).toHaveBeenCalledWith('')
     expect(onExecute).not.toHaveBeenCalled()
+  })
+
+  it('确认前可填写删除原因，并随确认回传', () => {
+    const { onExecute } = renderDialog({ preview: makePreview([makePreviewItem(1)]) })
+
+    const reasonInput = screen.getByPlaceholderText('例如：清理测试导入批次，会记录在删除历史里')
+    fireEvent.change(reasonInput, { target: { value: '清理测试批次' } })
+    fireEvent.click(screen.getByRole('button', { name: /确认删除/ }))
+    expect(onExecute).toHaveBeenCalledWith('清理测试批次')
+  })
+
+  it('删除执行成功后隐藏原因输入与确认按钮', () => {
+    renderDialog({ preview: makePreview([makePreviewItem(1)]), result: makeResult() })
+
+    expect(
+      screen.queryByPlaceholderText('例如：清理测试导入批次，会记录在删除历史里'),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /确认删除/ })).not.toBeInTheDocument()
   })
 
   it('错误信息展示在警示框中', () => {

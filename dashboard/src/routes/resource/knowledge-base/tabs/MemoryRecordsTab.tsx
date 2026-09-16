@@ -3,13 +3,13 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle,
+  BookOpen,
   CheckCircle2,
   Database,
   FileText,
   Loader2,
   Network,
   Pencil,
-  Plus,
   RefreshCw,
   RotateCcw,
   Search,
@@ -22,10 +22,18 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import { MemoryFactEditorDialog } from '@/components/memory/MemoryFactEditorDialog'
+import { MemoryMiniTabs } from '@/components/memory/MemoryMiniTabs'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -37,10 +45,9 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { TabsContent } from '@/components/ui/tabs'
+import { Tabs, TabsContent } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import {
-  createMemoryFact,
   getMemoryRecordContext,
   restoreMemoryFact,
   retractMemoryFact,
@@ -58,6 +65,7 @@ const RECORD_LABELS: Record<MemoryRecordType, string> = {
   entity: '实体',
   relation: '关系',
   fact: '事实',
+  episode: '情景记忆',
 }
 
 const ACTION_LABELS: Record<string, string> = {
@@ -137,6 +145,20 @@ const EVIDENCE_STANCE_LABELS: Record<string, string> = {
   refute: 'memory.records.evidenceStance.refute',
 }
 
+const RELATED_TAB_LABELS: Record<string, string> = {
+  paragraphs: '段落',
+  entities: '实体',
+  relations: '关系',
+  facts: '事实',
+  episodes: '情景',
+  profiles: '画像',
+}
+
+const LEDGER_TAB_LABELS: Record<string, string> = {
+  evidence: '证据',
+  transitions: '变更',
+}
+
 function LocalizedEnumLabel({
   value,
   labels,
@@ -179,6 +201,22 @@ function getKnowledgeTypeLabel(record: MemoryRecordPayload): string {
   return KNOWLEDGE_TYPE_LABELS[knowledgeType] ?? knowledgeType
 }
 
+function detailDialogTitle(
+  detail: MemoryRecordContextPayload | undefined,
+  selectedRecord: MemoryRecordPayload | null
+): string {
+  const record = detail?.record ?? selectedRecord
+  if (!record) {
+    return '记录详情'
+  }
+  // 段落的 title 是自动截取的正文预览，与正文区重复，标题改用类型标识
+  if (record.type === 'paragraph') {
+    const knowledge = getKnowledgeTypeLabel(record)
+    return knowledge ? `${RECORD_LABELS.paragraph} · ${knowledge}` : RECORD_LABELS.paragraph
+  }
+  return record.title || RECORD_LABELS[record.type] || '记录详情'
+}
+
 function RecordTypeIcon({ type, className }: { type: MemoryRecordType; className?: string }) {
   const Icon =
     type === 'paragraph'
@@ -187,7 +225,9 @@ function RecordTypeIcon({ type, className }: { type: MemoryRecordType; className
         ? UserRound
         : type === 'relation'
           ? Network
-          : CheckCircle2
+          : type === 'episode'
+            ? BookOpen
+            : CheckCircle2
   return <Icon className={className} />
 }
 
@@ -233,19 +273,20 @@ function RecordButton({
               <LocalizedEnumLabel value={record.status} labels={RECORD_STATUS_LABELS} />
             </Badge>
           ) : null}
-          {record.source ? <span className="max-w-48 truncate">{record.source}</span> : null}
+          {/* 只展示可读来源（聊天流名称 / 人物姓名 / 导入来源），不暴露内部来源标记 */}
+          {record.source_label ? (
+            <span className="max-w-48 truncate">来自 {record.source_label}</span>
+          ) : null}
         </span>
       </span>
     </button>
   )
 }
 
-function RelatedRecords({
-  title,
+function RelatedRecordsList({
   records,
   onSelect,
 }: {
-  title: string
   records: MemoryRecordPayload[]
   onSelect: (record: MemoryRecordPayload) => void
 }) {
@@ -253,22 +294,16 @@ function RelatedRecords({
     return null
   }
   return (
-    <section className="space-y-1.5">
-      <div className="text-muted-foreground flex items-center justify-between px-1 text-xs font-medium">
-        <span>{title}</span>
-        <span>{records.length}</span>
-      </div>
-      <div className="divide-border/60 divide-y rounded-md border">
-        {records.slice(0, 12).map((record) => (
-          <RecordButton
-            key={`${record.type}:${record.id}`}
-            record={record}
-            onSelect={onSelect}
-            compact
-          />
-        ))}
-      </div>
-    </section>
+    <div className="divide-border/60 divide-y rounded-md border">
+      {records.slice(0, 12).map((record) => (
+        <RecordButton
+          key={`${record.type}:${record.id}`}
+          record={record}
+          onSelect={onSelect}
+          compact
+        />
+      ))}
+    </div>
   )
 }
 
@@ -282,6 +317,9 @@ export function MemoryRecordsTab({ onAction }: MemoryRecordsTabProps) {
   const [selectedRecord, setSelectedRecord] = useState<MemoryRecordPayload | null>(null)
   const [factEditorOpen, setFactEditorOpen] = useState(false)
   const [editingFact, setEditingFact] = useState<MemoryRecordPayload | null>(null)
+  // 详情弹窗「关联内容」「事实账本」两组胶囊标签的当前页签；切换记录后自动回退到首个可用页签
+  const [relatedTab, setRelatedTab] = useState('')
+  const [ledgerTab, setLedgerTab] = useState('')
 
   const searchQuery = useQuery({
     queryKey: ['memory-records', query, recordType, includeInactive],
@@ -293,22 +331,48 @@ export function MemoryRecordsTab({ onAction }: MemoryRecordsTabProps) {
       }),
   })
 
-  const effectiveSelectedRecord = selectedRecord ?? searchQuery.data?.items[0] ?? null
-
   const detailQuery = useQuery({
-    queryKey: [
-      'memory-record-context',
-      effectiveSelectedRecord?.type,
-      effectiveSelectedRecord?.id,
-    ],
-    queryFn: () =>
-      getMemoryRecordContext(effectiveSelectedRecord!.type, effectiveSelectedRecord!.id),
-    enabled: Boolean(effectiveSelectedRecord),
+    queryKey: ['memory-record-context', selectedRecord?.type, selectedRecord?.id],
+    queryFn: () => getMemoryRecordContext(selectedRecord!.type, selectedRecord!.id),
+    enabled: Boolean(selectedRecord),
   })
 
   const detail = detailQuery.data
   const error = searchQuery.error ?? detailQuery.error
   const errorText = error instanceof Error ? error.message : error ? '查询记忆失败' : ''
+  // 「关联内容」「事实账本」两组胶囊标签；只保留有内容的页签，计数直接进入标签文案
+  const relatedTabItems = detail
+    ? [
+        { value: 'paragraphs', count: detail.related.paragraphs.length },
+        { value: 'entities', count: detail.related.entities.length },
+        { value: 'relations', count: detail.related.relations.length },
+        { value: 'facts', count: detail.related.facts.length },
+        { value: 'episodes', count: detail.related.episodes.length },
+        { value: 'profiles', count: detail.related.profiles.length },
+      ]
+        .filter((item) => item.count > 0)
+        .map((item) => ({
+          value: item.value,
+          label: `${RELATED_TAB_LABELS[item.value]} ${item.count}`,
+        }))
+    : []
+  const activeRelatedTab = relatedTabItems.some((item) => item.value === relatedTab)
+    ? relatedTab
+    : (relatedTabItems[0]?.value ?? '')
+  const ledgerTabItems = detail
+    ? [
+        { value: 'evidence', count: detail.fact_evidence.length },
+        { value: 'transitions', count: detail.fact_transitions.length },
+      ]
+        .filter((item) => item.count > 0)
+        .map((item) => ({
+          value: item.value,
+          label: `${LEDGER_TAB_LABELS[item.value]} ${item.count}`,
+        }))
+    : []
+  const activeLedgerTab = ledgerTabItems.some((item) => item.value === ledgerTab)
+    ? ledgerTab
+    : (ledgerTabItems[0]?.value ?? '')
   const resultCounts = useMemo(
     () => Object.entries(searchQuery.data?.counts ?? {}).filter(([, count]) => Number(count) > 0),
     [searchQuery.data?.counts]
@@ -324,9 +388,10 @@ export function MemoryRecordsTab({ onAction }: MemoryRecordsTabProps) {
 
   const saveFactMutation = useMutation({
     mutationFn: async (payload: MemoryFactWritePayload) => {
-      const response = editingFact
-        ? await updateMemoryFact(editingFact.id, payload)
-        : await createMemoryFact(payload)
+      if (!editingFact) {
+        throw new Error('没有可更新的事实')
+      }
+      const response = await updateMemoryFact(editingFact.id, payload)
       if (!response.success) {
         throw new Error(response.error || '事实保存失败')
       }
@@ -403,7 +468,9 @@ export function MemoryRecordsTab({ onAction }: MemoryRecordsTabProps) {
       factStatusMutation.mutate({ action: 'restore', claimId: detail.record.id })
       return
     }
-    if (['correct', 'reinforce', 'freeze', 'protect', 'delete'].includes(action)) {
+    // 跳转或改写类动作会离开当前详情，统一关闭弹窗；画像动作可能仅提示不跳转，
+    // 未知动作保持弹窗，均不关闭
+    if (['graph', 'correct', 'reinforce', 'freeze', 'protect', 'delete', 'episode'].includes(action)) {
       setSelectedRecord(null)
     }
     onAction(action, detail.record, detail, targetId)
@@ -428,7 +495,7 @@ export function MemoryRecordsTab({ onAction }: MemoryRecordsTabProps) {
                   id="memory-record-query"
                   value={draftQuery}
                   onChange={(event) => setDraftQuery(event.target.value)}
-                  placeholder="内容、名称、关系、事实或 ID"
+                  placeholder="内容、名称、关系、事实、情节或 ID"
                   className="pl-9"
                 />
               </div>
@@ -451,6 +518,7 @@ export function MemoryRecordsTab({ onAction }: MemoryRecordsTabProps) {
                   <SelectItem value="entity">实体</SelectItem>
                   <SelectItem value="relation">关系</SelectItem>
                   <SelectItem value="fact">事实</SelectItem>
+                  <SelectItem value="episode">情景记忆</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -486,131 +554,110 @@ export function MemoryRecordsTab({ onAction }: MemoryRecordsTabProps) {
         </Alert>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(300px,0.8fr)_minmax(520px,1.6fr)]">
-        <Card className="h-[660px] overflow-hidden">
-          <CardHeader className="border-b pb-3">
-            <div className="flex items-center justify-between gap-3">
-              <CardTitle className="text-sm">查询结果</CardTitle>
-              <div className="flex items-center gap-1.5">
-                {resultCounts.map(([type, count]) => (
-                  <Badge key={type} variant="secondary">
-                    {RECORD_LABELS[type as MemoryRecordType]} {count}
-                  </Badge>
-                ))}
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setEditingFact(null)
-                    setFactEditorOpen(true)
-                  }}
-                >
-                  <Plus className="h-4 w-4" />
-                  新增事实
-                </Button>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  title="刷新查询"
-                  onClick={() => void refreshRecords()}
-                  disabled={searchQuery.isFetching}
-                >
-                  <RefreshCw className={cn('h-4 w-4', searchQuery.isFetching && 'animate-spin')} />
-                </Button>
-              </div>
+      <Card className="h-[660px] overflow-hidden">
+        <CardHeader className="border-b pb-3">
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle className="text-sm">查询结果</CardTitle>
+            <div className="flex items-center gap-1.5">
+              {resultCounts.map(([type, count]) => (
+                <Badge key={type} variant="secondary">
+                  {RECORD_LABELS[type as MemoryRecordType]} {count}
+                </Badge>
+              ))}
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                title="刷新查询"
+                onClick={() => void refreshRecords()}
+                disabled={searchQuery.isFetching}
+              >
+                <RefreshCw className={cn('h-4 w-4', searchQuery.isFetching && 'animate-spin')} />
+              </Button>
             </div>
-          </CardHeader>
-          <ScrollArea className="h-[598px]">
-            <CardContent className="space-y-1 pt-3">
-              {searchQuery.isLoading ? (
-                <div className="text-muted-foreground flex h-40 items-center justify-center gap-2 text-sm">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  正在查询
-                </div>
-              ) : searchQuery.data?.items.length ? (
-                searchQuery.data.items.map((record) => (
-                  <RecordButton
-                    key={`${record.type}:${record.id}`}
-                    record={record}
-                    selected={
-                      record.type === effectiveSelectedRecord?.type &&
-                      record.id === effectiveSelectedRecord.id
-                    }
-                    onSelect={setSelectedRecord}
-                  />
-                ))
-              ) : (
-                <div className="text-muted-foreground flex h-40 items-center justify-center text-sm">
-                  没有匹配记录
-                </div>
-              )}
-            </CardContent>
-          </ScrollArea>
-        </Card>
+          </div>
+        </CardHeader>
+        <ScrollArea className="h-[598px]">
+          <CardContent className="space-y-1 pt-3">
+            {searchQuery.isLoading ? (
+              <div className="text-muted-foreground flex h-40 items-center justify-center gap-2 text-sm">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                正在查询
+              </div>
+            ) : searchQuery.data?.items.length ? (
+              searchQuery.data.items.map((record) => (
+                <RecordButton
+                  key={`${record.type}:${record.id}`}
+                  record={record}
+                  selected={
+                    record.type === selectedRecord?.type && record.id === selectedRecord?.id
+                  }
+                  onSelect={setSelectedRecord}
+                />
+              ))
+            ) : (
+              <div className="text-muted-foreground flex h-40 items-center justify-center text-sm">
+                没有匹配记录
+              </div>
+            )}
+          </CardContent>
+        </ScrollArea>
+      </Card>
 
-        <Card className="h-[660px] overflow-hidden">
-          <CardHeader className="border-b pb-3">
-            <div className="flex min-w-0 flex-col items-start justify-between gap-3 sm:flex-row">
-              <div className="min-w-0 space-y-1">
-                <CardTitle className="text-sm break-words">
-                  {detail?.record.title || effectiveSelectedRecord?.title || '记录详情'}
-                </CardTitle>
-                {effectiveSelectedRecord ? (
-                  <div className="text-muted-foreground font-mono text-[11px] break-all">
-                    {effectiveSelectedRecord.id}
-                  </div>
-                ) : null}
+      <Dialog
+        open={selectedRecord !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedRecord(null)
+          }
+        }}
+      >
+        <DialogContent className="max-h-[85vh] [--dialog-width:64rem]">
+          <DialogHeader className="flex-row items-start justify-between gap-3 space-y-0 pr-4">
+            <DialogTitle className="min-w-0 text-sm leading-6 break-words">
+              {detailDialogTitle(detail, selectedRecord)}
+            </DialogTitle>
+            {detail ? (
+              <div className="flex flex-wrap gap-1.5">
+                {detail.available_actions.map((action) => {
+                  const Icon = ACTION_ICONS[action] ?? Database
+                  return (
+                    <Button
+                      key={action}
+                      type="button"
+                      size="sm"
+                      variant={action === 'delete' || action === 'retract_fact' ? 'destructive' : 'outline'}
+                      onClick={() => triggerAction(action, detail)}
+                      disabled={
+                        factStatusMutation.isPending &&
+                        (action === 'retract_fact' || action === 'restore_fact')
+                      }
+                    >
+                      {factStatusMutation.isPending &&
+                      (action === 'retract_fact' || action === 'restore_fact') ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Icon className="h-3.5 w-3.5" />
+                      )}
+                      {ACTION_LABELS[action] ?? action}
+                    </Button>
+                  )
+                })}
               </div>
-              {detail ? (
-                <div className="flex w-full max-w-full flex-wrap gap-1.5 sm:w-auto sm:justify-end">
-                  {detail.available_actions.map((action) => {
-                    const Icon = ACTION_ICONS[action] ?? Database
-                    return (
-                      <Button
-                        key={action}
-                        type="button"
-                        size="sm"
-                        variant={action === 'delete' || action === 'retract_fact' ? 'destructive' : 'outline'}
-                        onClick={() => triggerAction(action, detail)}
-                        disabled={
-                          factStatusMutation.isPending &&
-                          (action === 'retract_fact' || action === 'restore_fact')
-                        }
-                      >
-                        {factStatusMutation.isPending &&
-                        (action === 'retract_fact' || action === 'restore_fact') ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Icon className="h-3.5 w-3.5" />
-                        )}
-                        {ACTION_LABELS[action] ?? action}
-                      </Button>
-                    )
-                  })}
-                </div>
-              ) : null}
-            </div>
-          </CardHeader>
-          <ScrollArea className="h-[598px]">
-            <CardContent className="space-y-5 pt-4">
-              {!effectiveSelectedRecord ? (
-                <div className="text-muted-foreground flex h-40 items-center justify-center text-sm">
-                  请选择一条记录
-                </div>
-              ) : detailQuery.isLoading ? (
-                <div className="text-muted-foreground flex h-40 items-center justify-center gap-2 text-sm">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  正在派生关联内容
-                </div>
-              ) : detail ? (
+            ) : null}
+          </DialogHeader>
+          <DialogBody contentClassName="space-y-5">
+            {detailQuery.isLoading ? (
+              <div className="text-muted-foreground flex h-40 items-center justify-center gap-2 text-sm">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                正在派生关联内容
+              </div>
+            ) : detail ? (
                 <>
                   <section className="space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
-                      <Badge>{RECORD_LABELS[detail.record.type]}</Badge>
-                      {getKnowledgeTypeLabel(detail.record) ? (
-                        <Badge variant="secondary">{getKnowledgeTypeLabel(detail.record)}</Badge>
+                      {detail.record.type !== 'paragraph' ? (
+                        <Badge>{RECORD_LABELS[detail.record.type]}</Badge>
                       ) : null}
                       <Badge variant="outline">
                         <LocalizedEnumLabel
@@ -627,9 +674,12 @@ export function MemoryRecordsTab({ onAction }: MemoryRecordsTabProps) {
                     <p className="text-sm leading-6 break-words whitespace-pre-wrap">
                       {detail.record.summary || detail.record.title}
                     </p>
-                    {detail.record.source ? (
+                    {detail.record.source_label || detail.record.source ? (
                       <div className="text-muted-foreground text-xs break-all">
-                        来源：{detail.record.source}
+                        来源：{detail.record.source_label || detail.record.source}
+                        {detail.record.source_label && detail.record.source_label !== detail.record.source ? (
+                          <code className="ml-1 text-[11px]">{detail.record.source}</code>
+                        ) : null}
                       </div>
                     ) : null}
                   </section>
@@ -701,156 +751,162 @@ export function MemoryRecordsTab({ onAction }: MemoryRecordsTabProps) {
                     </section>
                   ) : null}
 
-                  <RelatedRecords
-                    title="关联段落"
-                    records={detail.related.paragraphs}
-                    onSelect={setSelectedRecord}
-                  />
-                  <RelatedRecords
-                    title="关联实体"
-                    records={detail.related.entities}
-                    onSelect={setSelectedRecord}
-                  />
-                  <RelatedRecords
-                    title="关联关系"
-                    records={detail.related.relations}
-                    onSelect={setSelectedRecord}
-                  />
-                  <RelatedRecords
-                    title="关联事实"
-                    records={detail.related.facts}
-                    onSelect={setSelectedRecord}
-                  />
-
-                  {detail.related.episodes.length ? (
-                    <section className="space-y-1.5">
-                      <div className="text-muted-foreground px-1 text-xs font-medium">关联情景</div>
-                      <div className="divide-border/60 divide-y rounded-md border">
-                        {detail.related.episodes.map((episode) => (
-                          <button
-                            key={episode.id}
-                            type="button"
-                            className="hover:bg-muted/60 w-full px-3 py-2.5 text-left transition"
-                            onClick={() => triggerAction('episode', detail, episode.id)}
-                          >
-                            <div className="text-sm font-medium break-words">
-                              {episode.title || episode.id}
-                            </div>
-                            <div className="text-muted-foreground mt-1 line-clamp-2 text-xs">
-                              {episode.summary}
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    </section>
-                  ) : null}
-
-                  {detail.related.profiles.length ? (
-                    <section className="space-y-1.5">
-                      <div className="text-muted-foreground px-1 text-xs font-medium">关联画像</div>
-                      <div className="divide-border/60 divide-y rounded-md border">
-                        {detail.related.profiles.map((profile) => (
-                          <button
-                            key={`${profile.person_id}:${profile.profile_version}`}
-                            type="button"
-                            className="hover:bg-muted/60 w-full px-3 py-2.5 text-left transition"
-                            onClick={() =>
-                              triggerAction('profile', detail, profile.person_id)
-                            }
-                          >
-                            <div className="text-sm font-medium">{profile.person_id}</div>
-                            <div className="text-muted-foreground mt-1 line-clamp-2 text-xs">
-                              {profile.profile_text}
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    </section>
-                  ) : null}
-
-                  {detail.fact_evidence.length ? (
-                    <section className="space-y-1.5">
-                      <div className="text-muted-foreground px-1 text-xs font-medium">事实证据</div>
-                      <div className="divide-border/60 divide-y rounded-md border text-xs">
-                        {detail.fact_evidence.map((evidence, index) => (
-                          <div
-                            key={`${evidence.evidence_id || 'evidence'}:${index}`}
-                            className="flex flex-wrap gap-x-3 gap-y-1 px-3 py-2.5"
-                          >
-                            <span>
-                              <LocalizedEnumLabel
-                                value={String(evidence.evidence_type || 'unknown')}
-                                labels={EVIDENCE_TYPE_LABELS}
-                              />
-                            </span>
-                            <span className="font-mono break-all">
-                              {String(evidence.evidence_id || '')}
-                            </span>
-                            <span className="text-muted-foreground">
-                              <LocalizedEnumLabel
-                                value={String(evidence.stance || '')}
-                                labels={EVIDENCE_STANCE_LABELS}
-                              />
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                  ) : null}
-
-                  {detail.fact_transitions.length ? (
-                    <section className="space-y-1.5">
-                      <div className="text-muted-foreground px-1 text-xs font-medium">
-                        状态变更
-                      </div>
-                      <div className="divide-border/60 divide-y rounded-md border text-xs">
-                        {detail.fact_transitions.map((transition, index) => {
-                          const transitionType = String(transition.transition_type || 'unknown')
-                          return (
-                            <div
-                              key={`${String(transition.transition_id || 'transition')}:${index}`}
-                              className="space-y-1.5 px-3 py-2.5"
-                            >
-                              <div className="flex flex-wrap items-center gap-2">
-                                <Badge variant="secondary">
-                                  {FACT_TRANSITION_LABELS[transitionType] ?? transitionType}
-                                </Badge>
-                                {transition.created_at ? (
-                                  <span className="text-muted-foreground">
-                                    {formatTimestamp(Number(transition.created_at))}
-                                  </span>
-                                ) : null}
-                              </div>
-                              {transition.reason ? (
-                                <p className="leading-relaxed break-words">
-                                  {String(transition.reason)}
-                                </p>
-                              ) : null}
-                              {transition.evidence_type || transition.evidence_id ? (
-                                <div className="text-muted-foreground flex flex-wrap gap-x-2 gap-y-1">
-                                  <span>
-                                    <LocalizedEnumLabel
-                                      value={String(transition.evidence_type || 'unknown')}
-                                      labels={EVIDENCE_TYPE_LABELS}
-                                    />
-                                  </span>
-                                  <span className="font-mono break-all">
-                                    {String(transition.evidence_id || '')}
-                                  </span>
+                  {relatedTabItems.length > 0 ? (
+                    <section className="space-y-2">
+                      <div className="text-muted-foreground px-1 text-xs font-medium">关联内容</div>
+                      <Tabs value={activeRelatedTab} onValueChange={setRelatedTab}>
+                        <MemoryMiniTabs items={relatedTabItems} />
+                        <TabsContent value="paragraphs" className="mt-2">
+                          <RelatedRecordsList
+                            records={detail.related.paragraphs}
+                            onSelect={setSelectedRecord}
+                          />
+                        </TabsContent>
+                        <TabsContent value="entities" className="mt-2">
+                          <RelatedRecordsList
+                            records={detail.related.entities}
+                            onSelect={setSelectedRecord}
+                          />
+                        </TabsContent>
+                        <TabsContent value="relations" className="mt-2">
+                          <RelatedRecordsList
+                            records={detail.related.relations}
+                            onSelect={setSelectedRecord}
+                          />
+                        </TabsContent>
+                        <TabsContent value="facts" className="mt-2">
+                          <RelatedRecordsList
+                            records={detail.related.facts}
+                            onSelect={setSelectedRecord}
+                          />
+                        </TabsContent>
+                        <TabsContent value="episodes" className="mt-2">
+                          <div className="divide-border/60 divide-y rounded-md border">
+                            {detail.related.episodes.map((episode) => (
+                              <button
+                                key={episode.id}
+                                type="button"
+                                className="hover:bg-muted/60 w-full px-3 py-2.5 text-left transition"
+                                onClick={() => triggerAction('episode', detail, episode.id)}
+                              >
+                                <div className="text-sm font-medium break-words">
+                                  {episode.title || episode.id}
                                 </div>
-                              ) : null}
-                            </div>
-                          )
-                        })}
-                      </div>
+                                <div className="text-muted-foreground mt-1 line-clamp-2 text-xs">
+                                  {episode.summary}
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        </TabsContent>
+                        <TabsContent value="profiles" className="mt-2">
+                          <div className="divide-border/60 divide-y rounded-md border">
+                            {detail.related.profiles.map((profile) => (
+                              <button
+                                key={`${profile.person_id}:${profile.profile_version}`}
+                                type="button"
+                                className="hover:bg-muted/60 w-full px-3 py-2.5 text-left transition"
+                                onClick={() =>
+                                  triggerAction('profile', detail, profile.person_id)
+                                }
+                              >
+                                <div className="text-sm font-medium">{profile.person_id}</div>
+                                <div className="text-muted-foreground mt-1 line-clamp-2 text-xs">
+                                  {profile.profile_text}
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        </TabsContent>
+                      </Tabs>
+                    </section>
+                  ) : null}
+
+                  {ledgerTabItems.length > 0 ? (
+                    <section className="space-y-2">
+                      <div className="text-muted-foreground px-1 text-xs font-medium">事实账本</div>
+                      <Tabs value={activeLedgerTab} onValueChange={setLedgerTab}>
+                        <MemoryMiniTabs items={ledgerTabItems} />
+                        <TabsContent value="evidence" className="mt-2">
+                          <div className="divide-border/60 divide-y rounded-md border text-xs">
+                            {detail.fact_evidence.map((evidence, index) => (
+                              <div
+                                key={`${evidence.evidence_id || 'evidence'}:${index}`}
+                                className="flex flex-wrap gap-x-3 gap-y-1 px-3 py-2.5"
+                              >
+                                <span>
+                                  <LocalizedEnumLabel
+                                    value={String(evidence.evidence_type || 'unknown')}
+                                    labels={EVIDENCE_TYPE_LABELS}
+                                  />
+                                </span>
+                                <span className="font-mono break-all">
+                                  {String(evidence.evidence_id || '')}
+                                </span>
+                                <span className="text-muted-foreground">
+                                  <LocalizedEnumLabel
+                                    value={String(evidence.stance || '')}
+                                    labels={EVIDENCE_STANCE_LABELS}
+                                  />
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </TabsContent>
+                        <TabsContent value="transitions" className="mt-2">
+                          <div className="divide-border/60 divide-y rounded-md border text-xs">
+                            {detail.fact_transitions.map((transition, index) => {
+                              const transitionType = String(transition.transition_type || 'unknown')
+                              return (
+                                <div
+                                  key={`${String(transition.transition_id || 'transition')}:${index}`}
+                                  className="space-y-1.5 px-3 py-2.5"
+                                >
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <Badge variant="secondary">
+                                      {FACT_TRANSITION_LABELS[transitionType] ?? transitionType}
+                                    </Badge>
+                                    {transition.created_at ? (
+                                      <span className="text-muted-foreground">
+                                        {formatTimestamp(Number(transition.created_at))}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  {transition.reason ? (
+                                    <p className="leading-relaxed break-words">
+                                      {String(transition.reason)}
+                                    </p>
+                                  ) : null}
+                                  {transition.evidence_type || transition.evidence_id ? (
+                                    <div className="text-muted-foreground flex flex-wrap gap-x-2 gap-y-1">
+                                      <span>
+                                        <LocalizedEnumLabel
+                                          value={String(transition.evidence_type || 'unknown')}
+                                          labels={EVIDENCE_TYPE_LABELS}
+                                        />
+                                      </span>
+                                      <span className="font-mono break-all">
+                                        {String(transition.evidence_id || '')}
+                                      </span>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </TabsContent>
+                      </Tabs>
                     </section>
                   ) : null}
                 </>
-              ) : null}
-            </CardContent>
-          </ScrollArea>
-        </Card>
-      </div>
+              ) : (
+                <div className="text-muted-foreground flex h-40 items-center justify-center text-sm">
+                  详情加载失败
+                </div>
+              )}
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
 
       {factEditorOpen ? (
         <MemoryFactEditorDialog

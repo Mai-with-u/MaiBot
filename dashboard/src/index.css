@@ -2063,6 +2063,9 @@
   background-image: none !important;
 }
 
+/* 选中态（data-state="active"）的标签触发器不参与半透明底色压平：
+   否则铁锈红选中底色会被这里靠后的同优先级规则覆盖成近透明底，
+   配上纸色文字后几乎不可见。 */
 :root[data-dashboard-style='future-retro']
   [data-dashboard-shell='true']
   :is(
@@ -2070,7 +2073,7 @@
     [class*='bg-background/'],
     [class*='bg-muted/'],
     [class*='bg-popover/']
-  ) {
+  ):not([data-state='active']) {
   background-color: var(--retro-recessed) !important;
 }
 

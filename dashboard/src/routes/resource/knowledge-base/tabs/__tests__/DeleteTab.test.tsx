@@ -43,8 +43,9 @@ beforeEach(() => {
 function makeSource(overrides: Partial<MemorySourceItemPayload> = {}): MemorySourceItemPayload {
   return {
     source: 'chat:alpha',
+    // 后端来源列表以 count 统计段落数，并回填 paragraph_count 供前端展示
+    count: 3,
     paragraph_count: 3,
-    relation_count: 2,
     ...overrides,
   }
 }
@@ -86,6 +87,8 @@ function makeOperation(
 
 function makeDelete(overrides: Partial<UseMemoryDeleteResult> = {}): UseMemoryDeleteResult {
   return {
+    sourceKindFilter: 'all',
+    setSourceKindFilter: vi.fn(),
     sourceSearch: '',
     setSourceSearch: vi.fn(),
     selectedSources: [],
@@ -95,6 +98,7 @@ function makeDelete(overrides: Partial<UseMemoryDeleteResult> = {}): UseMemoryDe
     openSourceDeletePreview: vi.fn(async () => {}),
     toggleSourceSelection: vi.fn(),
     refreshSources: vi.fn(async () => {}),
+    sourceNameBySource: {},
     operationSearch: '',
     setOperationSearch: vi.fn(),
     operationModeFilter: 'all',
@@ -165,31 +169,42 @@ describe('DeleteTab', () => {
     ).toBeInTheDocument()
   })
 
-  it('来源检索、全选、勾选与预览删除', async () => {
+  it('来源类别切换、深链接限定、全选、勾选与带原因的预览删除', async () => {
     const user = userEvent.setup()
     const filteredSources = [
       makeSource(),
-      makeSource({ source: 'chat:beta', paragraph_count: 0, relation_count: 1 }),
+      makeSource({ source: 'chat:beta', count: 0, paragraph_count: 0 }),
       // 空 source 会进表格，但全选时被 filter(Boolean) 丢掉
-      makeSource({ source: '', paragraph_count: undefined, relation_count: undefined }),
+      makeSource({ source: '', count: 0, paragraph_count: 0 }),
     ]
     const { memoryDelete, rerender } = renderDelete({
-      sourceSearch: 'chat',
+      sourceSearch: 'chat:stream:1',
       filteredSources,
     })
 
     expect(screen.getByText('当前命中 3 个来源')).toBeInTheDocument()
     expect(screen.getByText('chat:alpha')).toBeInTheDocument()
     expect(screen.getByText('chat:beta')).toBeInTheDocument()
-    const sourceTable = screen.getByText('chat:alpha').closest('table')
-    expect(sourceTable).toHaveTextContent('3')
-    expect(sourceTable).toHaveTextContent('2')
-    expect(sourceTable).toHaveTextContent('0')
+    // 段落数按行校验，避免表格内数字混在一起时断言失效
+    expect(screen.getByText('段落数')).toBeInTheDocument()
+    expect(screen.getByText('最后更新')).toBeInTheDocument()
+    expect(screen.getByText('chat:alpha').closest('tr')).toHaveTextContent('3')
+    expect(screen.getByText('chat:beta').closest('tr')).toHaveTextContent('0')
 
-    fireEvent.change(screen.getByPlaceholderText('搜索 source 名称'), {
-      target: { value: 'beta' },
-    })
-    expect(memoryDelete.setSourceSearch).toHaveBeenCalledWith('beta')
+    // 类别用标签页切换，用户不需要猜该输入什么
+    expect(screen.getByRole('tab', { name: '全部' })).toHaveAttribute('data-state', 'active')
+    // 聊天流、聊天记录没有独立标签页，统一收在「其他」里
+    expect(screen.queryByRole('tab', { name: '聊天流' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: '聊天记录' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: '聊天摘要' }))
+    expect(memoryDelete.setSourceKindFilter).toHaveBeenCalledWith('chat_summary')
+    await user.click(screen.getByRole('tab', { name: '其他' }))
+    expect(memoryDelete.setSourceKindFilter).toHaveBeenCalledWith('other')
+
+    // 深链接带入的来源限定以可清除的芯片呈现
+    expect(screen.getByText('chat:stream:1')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '清除限定' }))
+    expect(memoryDelete.setSourceSearch).toHaveBeenCalledWith('')
 
     await user.click(screen.getByRole('button', { name: '全选当前结果' }))
     expect(memoryDelete.setSelectedSources).toHaveBeenCalledWith(['chat:alpha', 'chat:beta'])
@@ -210,8 +225,97 @@ describe('DeleteTab', () => {
       </Tabs>,
     )
     expect(screen.getByText('已选择 1 个来源')).toBeInTheDocument()
+    // 删除原因已移到预览对话框填写，这里只负责发起预览
+    expect(
+      screen.queryByPlaceholderText('例如：清理测试导入批次，会记录在删除历史里'),
+    ).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '预览删除' }))
-    expect(memoryDelete.openSourceDeletePreview).toHaveBeenCalledOnce()
+    expect(memoryDelete.openSourceDeletePreview).toHaveBeenCalledWith()
+  })
+
+  it('来源优先展示聊天流名称与来源类型，裸 source 降级为副标题', () => {
+    renderDelete({
+      filteredSources: [
+        makeSource({
+          source: 'chat_summary:s1',
+          count: 12,
+          paragraph_count: 12,
+          source_kind: 'chat_summary',
+          chat_id: 's1',
+          chat_name: '摸鱼群',
+        }),
+        makeSource({ source: 'import:batch-1', count: 4, paragraph_count: 4 }),
+      ],
+    })
+
+    expect(screen.getByText('摸鱼群')).toBeInTheDocument()
+    // 类型徽章限定在来源行内断言，避免与筛选标签页的同名文案混淆
+    expect(screen.getByText('摸鱼群').closest('tr')).toHaveTextContent('聊天摘要')
+    // 原始 source 仍保留，便于核对具体来源标记
+    expect(screen.getByText('chat_summary:s1')).toBeInTheDocument()
+    // 解析不出聊天流时直接展示原始 source，不额外渲染副标题
+    expect(screen.getByText('import:batch-1')).toBeInTheDocument()
+  })
+
+  it('人物事实来源展示可读姓名，悬停可见 ID 等详情', async () => {
+    const user = userEvent.setup()
+    const personSource = 'person_fact:e1549e1d55b88bcd783dff0d3fe9f4fa'
+    renderDelete({
+      filteredSources: [
+        makeSource({
+          source: personSource,
+          count: 6,
+          paragraph_count: 6,
+          source_kind: 'person_fact',
+          person_id: 'e1549e1d55b88bcd783dff0d3fe9f4fa',
+          person_name: '张三',
+        }),
+      ],
+    })
+
+    // 主标题是可读姓名，不可读的 person_id 降级为副标题
+    expect(screen.getByText('张三')).toBeInTheDocument()
+    expect(screen.getByText(personSource)).toBeInTheDocument()
+
+    await user.hover(screen.getByText('张三'))
+    const tooltip = await screen.findByRole('tooltip')
+    expect(tooltip).toHaveTextContent('人物 ID：e1549e1d55b88bcd783dff0d3fe9f4fa')
+    expect(tooltip).toHaveTextContent(`原始来源：${personSource}`)
+    expect(tooltip).toHaveTextContent('段落数：6')
+  })
+
+  it('切到具体类别后行尾不再重复展示类别徽章', () => {
+    const sources = [
+      makeSource({
+        source: 'person_fact:abc',
+        count: 1,
+        paragraph_count: 1,
+        source_kind: 'person_fact',
+        person_name: '张三',
+      }),
+    ]
+
+    const { rerender } = renderDelete({ sourceKindFilter: 'all', filteredSources: sources })
+    expect(screen.getByText('张三').closest('tr')).toHaveTextContent('人物事实')
+
+    rerender(
+      <Tabs defaultValue="delete">
+        <DeleteTab
+          delete={makeDelete({ sourceKindFilter: 'person_fact', filteredSources: sources })}
+        />
+      </Tabs>,
+    )
+    expect(screen.getByText('张三').closest('tr')).not.toHaveTextContent('人物事实')
+
+    // 「其他」下类别不固定，仍保留徽章以便区分来源
+    rerender(
+      <Tabs defaultValue="delete">
+        <DeleteTab
+          delete={makeDelete({ sourceKindFilter: 'other', filteredSources: sources })}
+        />
+      </Tabs>,
+    )
+    expect(screen.getByText('张三').closest('tr')).toHaveTextContent('人物事实')
   })
 
   it('渲染删除操作列表并选中记录，缺省字段走回退文案', async () => {
@@ -326,6 +430,7 @@ describe('DeleteTab', () => {
       selectedDeleteOperation: operation,
       selectedOperationCounts: { entities: 1, relations: 2, paragraphs: 3, sources: 4 },
       selectedOperationSources: ['chat:alpha', 'chat:beta'],
+      sourceNameBySource: { 'chat:beta': '摸鱼群' },
       selectedOperationItems: items,
       filteredSelectedOperationItems: items,
       pagedSelectedOperationItems: items,
@@ -335,7 +440,12 @@ describe('DeleteTab', () => {
     expect(screen.getAllByText('清理测试批次').length).toBeGreaterThan(0)
     expect(screen.getByText('alice')).toBeInTheDocument()
     expect(screen.getByText('关联来源')).toBeInTheDocument()
+    // 能解析出聊天流时显示实际名称，原始 source 作为副标题保留
+    expect(screen.getByText('摸鱼群')).toBeInTheDocument()
     expect(screen.getByText('chat:beta')).toBeInTheDocument()
+    // 删除范围用可读条目替代直接读原始 JSON
+    expect(screen.getByText('来源 1 个：chat:alpha')).toBeInTheDocument()
+    expect(screen.getByText('查看原始选择器')).toBeInTheDocument()
     expect(document.querySelector('pre')).toHaveTextContent('"sources"')
     expect(screen.getByText(`命中 ${items.length} / ${items.length} 项`)).toBeInTheDocument()
 

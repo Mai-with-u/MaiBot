@@ -23,8 +23,11 @@ export interface UsePendingOperationResult<T> {
   isConfirming: boolean
   /** 暂存一个待定操作并进入等待态 */
   submit: (operation: T) => void
-  /** 确认执行；成功后清空待定，失败保留待定态 */
-  confirm: () => Promise<void>
+  /**
+   * 确认执行；成功后清空待定，失败保留待定态。
+   * 可选传入 transform，把确认对话框内补充的信息合并进待定操作后再执行（不改动原始待定值）。
+   */
+  confirm: (transform?: (operation: T) => T) => Promise<void>
   /** 放弃待定操作 */
   cancel: () => void
 }
@@ -44,19 +47,22 @@ export function usePendingOperation<T>(
     setPending(null)
   }, [])
 
-  const confirm = useCallback(async () => {
-    if (pending === null) {
-      return
-    }
-    setIsConfirming(true)
-    try {
-      await onConfirm(pending)
-      // 执行成功才清空待定、关闭对话框；失败时保留以便重试
-      setPending(null)
-    } finally {
-      setIsConfirming(false)
-    }
-  }, [onConfirm, pending])
+  const confirm = useCallback(
+    async (transform?: (operation: T) => T) => {
+      if (pending === null) {
+        return
+      }
+      setIsConfirming(true)
+      try {
+        await onConfirm(transform ? transform(pending) : pending)
+        // 执行成功才清空待定、关闭对话框；失败时保留以便重试
+        setPending(null)
+      } finally {
+        setIsConfirming(false)
+      }
+    },
+    [onConfirm, pending]
+  )
 
   return {
     pending,

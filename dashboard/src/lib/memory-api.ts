@@ -177,7 +177,7 @@ export interface MemoryGraphParagraphDetailResponsePayload {
   evidence_graph: MemoryEvidenceGraphPayload
 }
 
-export type MemoryRecordType = 'paragraph' | 'entity' | 'relation' | 'fact'
+export type MemoryRecordType = 'paragraph' | 'entity' | 'relation' | 'fact' | 'episode'
 
 export interface MemoryRecordPayload {
   type: MemoryRecordType
@@ -185,6 +185,8 @@ export interface MemoryRecordPayload {
   title: string
   summary: string
   source: string
+  /** 来源的可读标签（聊天流名称 / 人物姓名 / 可读的导入来源）；解析不出时为空串 */
+  source_label?: string
   status: string
   created_at?: number | null
   updated_at?: number | null
@@ -1317,8 +1319,19 @@ export interface MemoryFeedbackCorrectionRollbackPayload {
 export interface MemorySourceItemPayload {
   source: string
   count?: number
+  /** 该来源下的段落数；后端由 count 归一化后回填 */
   paragraph_count?: number
-  relation_count?: number
+  last_updated?: number | null
+  /** 来源类型（chat_summary / chat_stream / chat_history / person_fact），由后端按来源前缀解析 */
+  source_kind?: string
+  /** 来源对应的聊天流 session_id；人物事实等非聊天流来源为空串 */
+  chat_id?: string
+  /** 来源对应的聊天流实际名称；无法识别时为空串 */
+  chat_name?: string
+  /** 人物事实来源对应的 person_id；非人物事实来源为空串 */
+  person_id?: string
+  /** 人物事实来源对应的可读姓名；查不到时为空串 */
+  person_name?: string
   episode_rebuild_blocked?: boolean
   [key: string]: unknown
 }

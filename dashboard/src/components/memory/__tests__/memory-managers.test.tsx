@@ -1237,7 +1237,7 @@ describe('MemoryTimelineManager 范围、筛选与分页', () => {
 
     await waitFor(() => {
       expect(memoryApi.getMemoryTimeline).toHaveBeenCalledWith(
-        expect.objectContaining({ chatId: 'chat-1', types: [], limit: 500 }),
+        expect.objectContaining({ chatId: 'chat-1', types: [], limit: 200 }),
       )
     })
 

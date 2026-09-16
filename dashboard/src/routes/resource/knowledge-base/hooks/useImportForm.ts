@@ -3,11 +3,11 @@
  *
  * 收编导入任务创建相关的表单状态与提交逻辑：
  * - 表单参数（通用参数 + 5 种导入模式各自字段）以本地 state 维护；
- * - 导入设置（settings）/路径别名（path_aliases）/聊天流（chat-targets）走 useQuery，仅在面板激活时拉取；
+ * - 导入设置（settings）/聊天流（chat-targets）走 useQuery，仅在面板激活时拉取；
  * - 服务端默认值在 settings 首次到达时 seed 一次进表单（渲染期版本标记模式，避免 effect 内 setState 级联）；
- * - 文件导入使用服务端固定的目录别名，路径解析工具可在这些目录中选择；
+ * - 各路径类导入模式使用固定的目录别名提交，checkImportPath 供输入框旁的「检查」按钮内联预检同一路径；
  * - submitImportByMode 按当前模式分派到 5 个 submit 函数，创建成功后回调 onCreated 刷新队列；
- * - 写失败弹全局 toast（与原页面一致）；路径解析读失败仅写入输出框。
+ * - 写失败弹全局 toast（与原页面一致）；路径预检读失败以内联文案返回，不弹 toast。
  *
  * 与 useImportQueue 共享 settings 查询（同 queryKey 由 React Query 去重）。
  */
@@ -21,7 +21,6 @@ import {
   createMemoryRawScanImport,
   createMemoryUploadImport,
   getMemoryImportChatTargets,
-  getMemoryImportPathAliases,
   getMemoryImportSettings,
   resolveMemoryImportPath,
   type MemoryImportChatTargetPayload,
@@ -33,9 +32,10 @@ import { useQuery } from '@tanstack/react-query'
 
 import { parseOptionalNonNegativeInt, parseOptionalPositiveInt } from '../utils'
 
-const RAW_IMPORT_ALIAS = 'raw'
-const LPMM_IMPORT_ALIAS = 'lpmm'
-const CONVERTED_IMPORT_ALIAS = 'converted'
+/** 各路径类导入模式提交时使用的固定目录别名，「检查」按钮预检的就是同一别名 */
+export const RAW_IMPORT_ALIAS = 'raw'
+export const LPMM_IMPORT_ALIAS = 'lpmm'
+export const CONVERTED_IMPORT_ALIAS = 'converted'
 
 export type ImportContentCategory = '' | 'narrative' | 'factual' | 'quote' | 'chat_log'
 export type UnifiedImportMode = 'text' | 'file' | 'folder'
@@ -151,16 +151,8 @@ export interface UseImportFormResult {
   /** 构建公共导入参数载荷，供队列重试（retry overrides）复用当前表单参数 */
   buildCommonImportPayload: () => Record<string, unknown>
 
-  pathResolveAlias: string
-  setPathResolveAlias: React.Dispatch<React.SetStateAction<string>>
-  importAliasKeys: string[]
-  pathResolveRelativePath: string
-  setPathResolveRelativePath: React.Dispatch<React.SetStateAction<string>>
-  pathResolveMustExist: boolean
-  setPathResolveMustExist: React.Dispatch<React.SetStateAction<boolean>>
-  resolveImportPath: () => Promise<void>
-  resolvingPath: boolean
-  pathResolveOutput: string
+  /** 预检导入路径（模式固定别名 + 相对路径），返回一行结果文案供输入框旁内联展示 */
+  checkImportPath: (alias: string, relativePath: string, mustExist: boolean) => Promise<string>
 }
 
 export function useImportForm({ active, onCreated }: UseImportFormOptions): UseImportFormResult {
@@ -206,21 +198,10 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
   const [convertDimension, setConvertDimension] = useState('')
   const [convertBatchSize, setConvertBatchSize] = useState('1024')
 
-  const [pathResolveAlias, setPathResolveAlias] = useState('raw')
-  const [pathResolveRelativePath, setPathResolveRelativePath] = useState('')
-  const [pathResolveMustExist, setPathResolveMustExist] = useState(true)
-  const [pathResolveOutput, setPathResolveOutput] = useState('')
-  const [resolvingPath, setResolvingPath] = useState(false)
-
-  // 导入设置 / 路径别名 / 聊天流：仅在面板激活时拉取；settings 与 useImportQueue 共享查询缓存
+  // 导入设置 / 聊天流：仅在面板激活时拉取；settings 与 useImportQueue 共享查询缓存
   const settingsQuery = useQuery({
     queryKey: ['memory-import', 'settings'],
     queryFn: () => getMemoryImportSettings(),
-    enabled: active,
-  })
-  const pathAliasesQuery = useQuery({
-    queryKey: ['memory-import', 'path-aliases'],
-    queryFn: () => getMemoryImportPathAliases(),
     enabled: active,
   })
   const chatTargetsQuery = useQuery({
@@ -230,18 +211,9 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
   })
 
   const importSettings: MemoryImportSettings = settingsQuery.data?.settings ?? {}
-  const importPathAliases = useMemo(
-    () => pathAliasesQuery.data?.path_aliases ?? {},
-    [pathAliasesQuery.data?.path_aliases]
-  )
   const importChatTargets = useMemo(
     () => chatTargetsQuery.data?.data ?? [],
     [chatTargetsQuery.data?.data]
-  )
-
-  const importAliasKeys = useMemo(
-    () => Object.keys(importPathAliases).sort((left, right) => left.localeCompare(right)),
-    [importPathAliases]
   )
 
   // 服务端默认值 seed：settings 首次到达时按默认值回填通用参数与 maibot 源库一次。
@@ -285,20 +257,6 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
         current === '1200' ? defaultFactualTargetSize : current
       )
     }
-  }
-
-  // 路径解析工具只允许选择服务端签发的固定目录别名。
-  const aliasVersion = importAliasKeys.length > 0 ? importAliasKeys.join('|') : null
-  const [linkedAliasVersion, setLinkedAliasVersion] = useState<string | null>(null)
-  if (aliasVersion !== null && aliasVersion !== linkedAliasVersion) {
-    setLinkedAliasVersion(aliasVersion)
-    const pickAlias = (current: string): string => {
-      if (current && importAliasKeys.includes(current)) {
-        return current
-      }
-      return importAliasKeys[0]
-    }
-    setPathResolveAlias((current) => pickAlias(current))
   }
 
   const buildCommonImportPayload = useCallback((): Record<string, unknown> => {
@@ -594,33 +552,24 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
     unifiedImportMode,
   ])
 
-  const resolveImportPath = useCallback(async () => {
-    if (!pathResolveAlias.trim()) {
-      return
-    }
-    try {
-      setResolvingPath(true)
-      const payload = await resolveMemoryImportPath({
-        alias: pathResolveAlias,
-        relative_path: pathResolveRelativePath,
-        must_exist: pathResolveMustExist,
-      })
-      const lines = [
-        `路径别名: ${payload.alias}`,
-        `相对路径: ${payload.relative_path || '(空)'}`,
-        `解析结果: ${payload.resolved_path}`,
-        `是否存在: ${String(payload.exists)}`,
-        `是否文件: ${String(payload.is_file)}`,
-        `是否目录: ${String(payload.is_dir)}`,
-      ]
-      setPathResolveOutput(lines.join('\n'))
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '路径解析失败'
-      setPathResolveOutput(`解析失败：${message}`)
-    } finally {
-      setResolvingPath(false)
-    }
-  }, [pathResolveAlias, pathResolveMustExist, pathResolveRelativePath])
+  /** 路径预检：把后端解析结果格式化成一行文案返回，供输入框旁「检查」按钮内联展示（读失败不弹 toast） */
+  const checkImportPath = useCallback(
+    async (alias: string, relativePath: string, mustExist: boolean): Promise<string> => {
+      try {
+        const payload = await resolveMemoryImportPath({
+          alias,
+          relative_path: relativePath,
+          must_exist: mustExist,
+        })
+        const kindText = payload.is_dir ? '目录' : payload.is_file ? '文件' : '其他'
+        const existText = payload.exists ? '已存在' : '不存在'
+        return `解析到 ${payload.resolved_path}（${kindText}，${existText}）`
+      } catch (error) {
+        return `解析失败：${error instanceof Error ? error.message : '路径解析失败'}`
+      }
+    },
+    [],
+  )
 
   // importErrorText 由各 submit 在写失败时写入；保留引用以便后续扩展（当前由 toast 主要呈现）
 
@@ -689,15 +638,6 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
     submitImportByMode,
     creatingImport,
     buildCommonImportPayload,
-    pathResolveAlias,
-    setPathResolveAlias,
-    importAliasKeys,
-    pathResolveRelativePath,
-    setPathResolveRelativePath,
-    pathResolveMustExist,
-    setPathResolveMustExist,
-    resolveImportPath,
-    resolvingPath,
-    pathResolveOutput,
+    checkImportPath,
   }
 }

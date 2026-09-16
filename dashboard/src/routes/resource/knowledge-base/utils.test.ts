@@ -10,6 +10,7 @@ import type { DeleteOperationItem } from './utils'
 import {
   buildFeedbackImpactSummary,
   describeFeedbackActionLog,
+  describeMemorySource,
   formatDeleteOperationMode,
   formatDeleteOperationStatus,
   formatDeleteOperationTime,
@@ -24,17 +25,20 @@ import {
   getDeleteOperationItemLabel,
   getDeleteOperationItemPreview,
   getDeleteOperationItemSource,
+  getDeleteOperationStatusGroup,
   getFeedbackCorrectionPreview,
   getFeedbackStatusVariant,
   getImportStatusLabel,
   getImportStatusVariant,
   getImportStepLabel,
+  getMemorySourceKindLabel,
   normalizeImportInputMode,
   normalizeProgress,
   parseCommaSeparatedList,
   parseOptionalNonNegativeInt,
   parseOptionalPositiveInt,
   pickFeedbackRelationTriplet,
+  summarizeDeleteSelector,
   summarizeFeedbackActionPayload,
   trimDeleteItemText,
 } from './utils'
@@ -282,11 +286,30 @@ describe('formatDeleteOperationMode', () => {
 describe('formatDeleteOperationStatus', () => {
   it.each([
     ['executed', '已执行'],
+    // completed / pending_cleanup 是清理链路写入的同组状态，不能再漏成原文
+    ['completed', '已执行'],
+    ['pending_cleanup', '已执行'],
+    ['restore_pending', '恢复中'],
     ['restored', '已恢复'],
     ['pending', 'pending'],
     ['', '未知'],
   ] as const)('状态 %s 显示为 %s', (status, label) => {
     expect(formatDeleteOperationStatus(status)).toBe(label)
+  })
+})
+
+describe('getDeleteOperationStatusGroup', () => {
+  it('已知状态归入 applied/restoring/restored 分组', () => {
+    expect(getDeleteOperationStatusGroup('executed')).toBe('applied')
+    expect(getDeleteOperationStatusGroup('completed')).toBe('applied')
+    expect(getDeleteOperationStatusGroup('pending_cleanup')).toBe('applied')
+    expect(getDeleteOperationStatusGroup('restore_pending')).toBe('restoring')
+    expect(getDeleteOperationStatusGroup('restored')).toBe('restored')
+  })
+
+  it('未知与空状态不落入任何分组', () => {
+    expect(getDeleteOperationStatusGroup('mystery')).toBe('')
+    expect(getDeleteOperationStatusGroup('')).toBe('')
   })
 })
 
@@ -965,5 +988,82 @@ describe('describeFeedbackActionLog', () => {
     expect(describeFeedbackActionLog(makeActionLog({ action_type: 'mystery' }))).toBe(
       '记录了一条动作日志'
     )
+  })
+})
+
+describe('记忆来源展示', () => {
+  it('来源类型映射为可读标签，未知类型不展示标签', () => {
+    expect(getMemorySourceKindLabel('chat_summary')).toBe('聊天摘要')
+    expect(getMemorySourceKindLabel('chat_stream')).toBe('聊天流')
+    expect(getMemorySourceKindLabel('chat_history')).toBe('聊天记录')
+    expect(getMemorySourceKindLabel('person_fact')).toBe('人物事实')
+    expect(getMemorySourceKindLabel('')).toBe('')
+    expect(getMemorySourceKindLabel('mystery')).toBe('')
+  })
+
+  it('聊天流名称优先，裸 source 作为副标题保留', () => {
+    expect(
+      describeMemorySource('chat_summary:s1', { sourceKind: 'chat_summary', chatName: '摸鱼群' })
+    ).toEqual({ kindLabel: '聊天摘要', title: '摸鱼群', raw: 'chat_summary:s1' })
+
+    // 解析不出名称时直接展示原始 source，并省略重复的副标题
+    expect(describeMemorySource('chat_summary:s1')).toEqual({
+      kindLabel: '',
+      title: 'chat_summary:s1',
+      raw: '',
+    })
+  })
+
+  it('人物姓名替换不可读的 person_id，聊天流名称优先级更高', () => {
+    // 人物事实来源的前缀后是不可读的 person_id，用后端解析出的姓名作为主标题
+    expect(
+      describeMemorySource('person_fact:e1549e1d55b88bcd783dff0d3fe9f4fa', {
+        sourceKind: 'person_fact',
+        personName: '张三',
+      })
+    ).toEqual({
+      kindLabel: '人物事实',
+      title: '张三',
+      raw: 'person_fact:e1549e1d55b88bcd783dff0d3fe9f4fa',
+    })
+
+    // 两个名称同时给到时以聊天流名称为准（两类来源不会同时命中，只锁定优先级）
+    expect(
+      describeMemorySource('chat_summary:s1', { chatName: '摸鱼群', personName: '张三' })
+    ).toMatchObject({ title: '摸鱼群' })
+  })
+})
+
+describe('删除范围摘要', () => {
+  it('来源与各类 hash 分组生成可读条目', () => {
+    expect(summarizeDeleteSelector({ sources: ['chat:alpha', 'chat:beta'] })).toEqual([
+      '来源 2 个：chat:alpha、chat:beta',
+    ])
+    expect(
+      summarizeDeleteSelector({
+        entity_hashes: ['e1'],
+        relation_hashes: ['r1', 'r2'],
+        paragraph_hashes: ['p1'],
+        hashes: ['h1'],
+      })
+    ).toEqual(['实体 1 个：e1', '关系 2 个：r1、r2', '段落 1 个：p1', '对象 1 个：h1'])
+  })
+
+  it('空选择器与非对象选择器返回空摘要', () => {
+    expect(summarizeDeleteSelector(undefined)).toEqual([])
+    expect(summarizeDeleteSelector({})).toEqual([])
+    expect(summarizeDeleteSelector({ sources: [] })).toEqual([])
+    expect(summarizeDeleteSelector('sources')).toEqual([])
+  })
+
+  it('对象数量超过上限时只列前 8 个，并标注实际上限', () => {
+    const hashes = Array.from({ length: 11 }, (_, index) => `h${index + 1}`)
+    expect(summarizeDeleteSelector({ hashes })).toEqual([
+      '对象 11 个（仅列前 8 个）：h1、h2、h3、h4、h5、h6、h7、h8',
+    ])
+    // 正好 8 个时不需要截断说明
+    expect(summarizeDeleteSelector({ hashes: hashes.slice(0, 8) })).toEqual([
+      '对象 8 个：h1、h2、h3、h4、h5、h6、h7、h8',
+    ])
   })
 })

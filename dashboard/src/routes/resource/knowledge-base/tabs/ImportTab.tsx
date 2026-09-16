@@ -1,42 +1,60 @@
 import { useMemo, useState } from 'react'
 
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Check,
-  ChevronLeft,
-  ChevronRight,
   Loader2,
   MoreHorizontal,
   PackageOpen,
+  Plus,
   RefreshCw,
   Search,
   Upload,
 } from 'lucide-react'
 
+import { MemoryFactEditorDialog } from '@/components/memory/MemoryFactEditorDialog'
 import { MemoryMiniTabs } from '@/components/memory/MemoryMiniTabs'
-import { MemoryProgressIndicator } from '@/components/memory/MemoryProgressIndicator'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
-import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useToast } from '@/hooks/use-toast'
 import { formatChatAccountLabel, formatChatDisplayName } from '@/lib/chat-display'
 import { cn } from '@/lib/utils'
-import type {
-  MemoryImportChatTargetPayload,
-  MemoryImportTaskKind,
+import {
+  createMemoryFact,
+  type MemoryFactWritePayload,
+  type MemoryImportChatTargetPayload,
+  type MemoryImportTaskKind,
 } from '@/lib/memory-api'
 
-import { IMPORT_CHUNK_PAGE_SIZE, IMPORT_KIND_OPTIONS, RUNNING_IMPORT_STATUS } from '../constants'
+import {
+  IMPORT_CONTENT_CATEGORY_OPTIONS,
+  IMPORT_INPUT_MODE_OPTIONS,
+  IMPORT_KIND_OPTIONS,
+} from '../constants'
+import {
+  CONVERTED_IMPORT_ALIAS,
+  LPMM_IMPORT_ALIAS,
+  RAW_IMPORT_ALIAS,
+} from '../hooks/useImportForm'
 import type {
   ImportContentCategory,
   UnifiedImportMode,
@@ -49,30 +67,82 @@ import {
   getImportStatusLabel,
   getImportStatusVariant,
   getImportStepLabel,
+  getImportTaskKindLabel,
   normalizeImportInputMode,
   normalizeProgress,
 } from '../utils'
+import { ImportTaskDetailDialog } from './ImportTaskDetailDialog'
 import { MemoryBundleCard } from './MemoryBundleCard'
 
 const UNIFIED_IMPORT_MODE_OPTIONS = [
-  { value: 'text', label: '文本' },
-  { value: 'file', label: '文件' },
-  { value: 'folder', label: '文件夹' },
+  { value: 'text', label: '文本', description: '粘贴一段文本作为导入内容' },
+  { value: 'file', label: '文件', description: '上传 txt / md / json 文件' },
+  { value: 'folder', label: '文件夹', description: '扫描服务端目录下的文件' },
 ]
 
-function formatChunkSummary(done: unknown, total: unknown, failed: unknown, cancelled: unknown = 0): string {
-  const doneCount = Number(done ?? 0)
-  const totalCount = Number(total ?? 0)
-  const failedCount = Number(failed ?? 0)
-  const cancelledCount = Number(cancelled ?? 0)
-  const parts = [`成功 ${doneCount} / ${totalCount} 分块`]
-  if (failedCount > 0) {
-    parts.push(`失败 ${failedCount}`)
-  }
-  if (cancelledCount > 0) {
-    parts.push(`取消 ${cancelledCount}`)
-  }
-  return parts.join(' · ')
+/** 触发框 + 悬停注释：选中后悬停即可回顾当前选项的说明 */
+function SelectTriggerWithHint({
+  hint,
+  children,
+  ...triggerProps
+}: React.ComponentProps<typeof SelectTrigger> & { hint: string }) {
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <SelectTrigger {...triggerProps}>{children}</SelectTrigger>
+        </TooltipTrigger>
+        {hint ? (
+          <TooltipContent side="right" className="max-w-xs">{hint}</TooltipContent>
+        ) : null}
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
+/** 路径输入框 + 内联「检查」按钮：预检的就是该模式提交时实际使用的别名与相对路径 */
+function PathCheckField({
+  label,
+  value,
+  onChange,
+  alias,
+  mustExist,
+  checkPath,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  alias: string
+  /** 源路径要求已存在（避免扫空目录）；转换目标路径允许创建时不存在 */
+  mustExist: boolean
+  checkPath: (alias: string, relativePath: string, mustExist: boolean) => Promise<string>
+}) {
+  const [checking, setChecking] = useState(false)
+  const [result, setResult] = useState('')
+
+  return (
+    <div className="space-y-1">
+      <Label>{label}</Label>
+      <div className="flex gap-2">
+        <Input value={value} onChange={(event) => onChange(event.target.value)} />
+        <Button
+          type="button"
+          variant="outline"
+          disabled={checking}
+          onClick={() => {
+            void (async () => {
+              setChecking(true)
+              setResult(await checkPath(alias, value, mustExist))
+              setChecking(false)
+            })()
+          }}
+        >
+          {checking ? '检查中…' : '检查'}
+        </Button>
+      </div>
+      {result ? <div className="text-xs text-muted-foreground">{result}</div> : null}
+    </div>
+  )
 }
 
 function compactTextParts(parts: Array<string | null | undefined>): string[] {
@@ -152,26 +222,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
     recentImportTasks,
     selectedImportTaskId,
     selectImportTask,
-    importAutoPolling,
-    setImportAutoPolling,
-    importPollInterval,
     importErrorText,
-    cancelSelectedImportTask,
-    retrySelectedImportTask,
-    selectedImportTaskLoading,
-    selectedImportTaskResolved,
-    selectedImportRetrySummary,
-    selectedImportTaskErrorText,
-    selectedImportFiles,
-    selectedImportFileId,
-    selectImportFile,
-    importChunkTotal,
-    importChunkOffset,
-    moveImportChunkPage,
-    canImportChunkPrev,
-    canImportChunkNext,
-    importChunksLoading,
-    selectedImportChunks,
   } = queue
   const {
     importCreateMode,
@@ -237,20 +288,51 @@ export function ImportTab({ queue, form }: ImportTabProps) {
     setConvertBatchSize,
     submitImportByMode,
     creatingImport,
-    pathResolveAlias,
-    setPathResolveAlias,
-    importAliasKeys,
-    pathResolveRelativePath,
-    setPathResolveRelativePath,
-    pathResolveMustExist,
-    setPathResolveMustExist,
-    resolveImportPath,
-    resolvingPath,
-    pathResolveOutput,
+    checkImportPath,
   } = form
   const [chatTargetQuery, setChatTargetQuery] = useState('')
   const [importParametersOpen, setImportParametersOpen] = useState(false)
-  const [transferMode, setTransferMode] = useState<'import' | 'bundle'>('import')
+  const [transferMode, setTransferMode] = useState<'import' | 'bundle' | 'fact'>('import')
+  const [taskDetailOpen, setTaskDetailOpen] = useState(false)
+  const [factEditorOpen, setFactEditorOpen] = useState(false)
+
+  // 点队列卡片即选中该任务并打开详情弹窗（详情不再常驻页面）
+  const openTaskDetail = (taskId: string) => {
+    setTaskDetailOpen(true)
+    void selectImportTask(taskId)
+  }
+  const queryClient = useQueryClient()
+  const { toast } = useToast()
+
+  const createFactMutation = useMutation({
+    mutationFn: async (payload: MemoryFactWritePayload) => {
+      const response = await createMemoryFact(payload)
+      if (!response.success) {
+        throw new Error(response.error || '事实保存失败')
+      }
+      return response
+    },
+    onSuccess: async (payload) => {
+      setFactEditorOpen(false)
+      // 手动录入的事实要反映到「记忆查询」页，失效相关查询缓存。
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['memory-records'] }),
+        queryClient.invalidateQueries({ queryKey: ['memory-record-context'] }),
+      ])
+      toast({
+        title: payload.replaced ? '事实已修订' : '事实已保存',
+        description: payload.refresh_queued ? '相关人物画像已进入刷新队列。' : undefined,
+      })
+    },
+    onError: (error) => {
+      toast({
+        title: '保存事实失败',
+        description: error instanceof Error ? error.message : String(error),
+        variant: 'destructive',
+      })
+    },
+  })
+
   const selectedImportChatTarget = useMemo(
     () => importChatTargets.find((chat) => chat.chat_id === importCommonChatId.trim()),
     [importChatTargets, importCommonChatId],
@@ -275,10 +357,10 @@ export function ImportTab({ queue, form }: ImportTabProps) {
     >
       <Tabs
         value={transferMode}
-        onValueChange={(value) => setTransferMode(value as 'import' | 'bundle')}
+        onValueChange={(value) => setTransferMode(value as 'import' | 'bundle' | 'fact')}
       >
         <TabsList
-          aria-label="导入导出功能"
+          aria-label="长期记忆写入方式"
           className="border-border/60 bg-muted/30 h-auto w-fit gap-1 rounded-xl border"
         >
           <TabsTrigger value="import">
@@ -288,6 +370,10 @@ export function ImportTab({ queue, form }: ImportTabProps) {
           <TabsTrigger value="bundle">
             <PackageOpen className="mr-2 h-4 w-4" />
             记忆包导入导出
+          </TabsTrigger>
+          <TabsTrigger value="fact">
+            <Plus className="mr-2 h-4 w-4" />
+            新增事实
           </TabsTrigger>
         </TabsList>
       </Tabs>
@@ -301,9 +387,40 @@ export function ImportTab({ queue, form }: ImportTabProps) {
         <div className="order-2 space-y-6 lg:order-1">
           <Card className="rounded-2xl border-border/70 shadow-sm">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Upload className="h-4 w-4" />
-                创建导入任务
+              <CardTitle className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2">
+                  <Upload className="h-4 w-4" />
+                  创建导入任务
+                </span>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="shrink-0"
+                      aria-label="切换导入方式"
+                      title="切换导入方式"
+                    >
+                      <MoreHorizontal className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-60">
+                    <DropdownMenuRadioGroup
+                      value={importCreateMode}
+                      onValueChange={(value) => setImportCreateMode(value as MemoryImportTaskKind)}
+                    >
+                      {IMPORT_KIND_OPTIONS.map((item) => (
+                        <DropdownMenuRadioItem key={item.value} value={item.value} className="items-start">
+                          <span className="flex flex-col">
+                            <span>{item.label}</span>
+                            <span className="text-xs text-muted-foreground">{item.description}</span>
+                          </span>
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -312,11 +429,6 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                 onValueChange={(value) => setImportCreateMode(value as MemoryImportTaskKind)}
                 className="space-y-4"
               >
-                <div className="space-y-2">
-                  <Label>选择导入方式</Label>
-                  <MemoryMiniTabs items={IMPORT_KIND_OPTIONS} />
-                </div>
-
                 <div className="space-y-2">
                   <Label>
                     资料类别 <span className="text-destructive">*</span>
@@ -327,18 +439,24 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                       setImportContentCategory(value as ImportContentCategory)
                     }
                   >
-                    <SelectTrigger
+                    <SelectTriggerWithHint
                       aria-label="资料类别"
-                      aria-required="true"
+                      aria-required
                       aria-invalid={importContentCategoryMissing}
+                      hint={
+                        IMPORT_CONTENT_CATEGORY_OPTIONS.find(
+                          (item) => item.value === importContentCategory
+                        )?.description ?? ''
+                      }
                     >
                       <SelectValue placeholder="请选择资料类别" />
-                    </SelectTrigger>
+                    </SelectTriggerWithHint>
                     <SelectContent>
-                      <SelectItem value="narrative">叙事资料</SelectItem>
-                      <SelectItem value="factual">事实资料</SelectItem>
-                      <SelectItem value="quote">语录与短句</SelectItem>
-                      <SelectItem value="chat_log">聊天记录</SelectItem>
+                      {IMPORT_CONTENT_CATEGORY_OPTIONS.map((item) => (
+                        <SelectItem key={item.value} value={item.value} title={item.description}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   {importContentCategoryMissing ? (
@@ -573,8 +691,11 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="text">文本</SelectItem>
-                            <SelectItem value="json">结构化 JSON</SelectItem>
+                            {IMPORT_INPUT_MODE_OPTIONS.map((item) => (
+                              <SelectItem key={item.value} value={item.value} title={item.description}>
+                                {item.label}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
@@ -603,8 +724,11 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="text">文本</SelectItem>
-                            <SelectItem value="json">结构化 JSON</SelectItem>
+                            {IMPORT_INPUT_MODE_OPTIONS.map((item) => (
+                              <SelectItem key={item.value} value={item.value} title={item.description}>
+                                {item.label}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
@@ -639,18 +763,22 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="text">文本</SelectItem>
-                            <SelectItem value="json">结构化 JSON</SelectItem>
+                            {IMPORT_INPUT_MODE_OPTIONS.map((item) => (
+                              <SelectItem key={item.value} value={item.value} title={item.description}>
+                                {item.label}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="space-y-1">
-                        <Label>相对路径</Label>
-                        <Input
-                          value={rawRelativePath}
-                          onChange={(event) => setRawRelativePath(event.target.value)}
-                        />
-                      </div>
+                      <PathCheckField
+                        label="相对路径"
+                        value={rawRelativePath}
+                        onChange={setRawRelativePath}
+                        alias={RAW_IMPORT_ALIAS}
+                        mustExist
+                        checkPath={checkImportPath}
+                      />
                       <div className="space-y-1">
                         <Label>匹配规则（Glob）</Label>
                         <Input value={rawGlob} onChange={(event) => setRawGlob(event.target.value)} />
@@ -671,10 +799,14 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                 <div className="space-y-3 rounded-xl border bg-background/70 p-4">
                   <div className="text-xs text-muted-foreground">读取 LPMM 内容并抽取关系</div>
                   <div className="grid gap-3">
-                    <div className="space-y-1">
-                      <Label>相对路径</Label>
-                      <Input value={openieRelativePath} onChange={(event) => setOpenieRelativePath(event.target.value)} />
-                    </div>
+                    <PathCheckField
+                      label="相对路径"
+                      value={openieRelativePath}
+                      onChange={setOpenieRelativePath}
+                      alias={LPMM_IMPORT_ALIAS}
+                      mustExist
+                      checkPath={checkImportPath}
+                    />
                   </div>
                   <div className="flex items-center gap-2 text-sm">
                     <Checkbox
@@ -690,17 +822,22 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                 <div className="space-y-3 rounded-xl border bg-background/70 p-4">
                   <div className="text-xs text-muted-foreground">将 LPMM 数据转换到目标目录</div>
                   <div className="grid gap-3">
-                    <div className="space-y-1">
-                      <Label>源相对路径</Label>
-                      <Input value={convertRelativePath} onChange={(event) => setConvertRelativePath(event.target.value)} />
-                    </div>
-                    <div className="space-y-1">
-                      <Label>目标相对路径</Label>
-                      <Input
-                        value={convertTargetRelativePath}
-                        onChange={(event) => setConvertTargetRelativePath(event.target.value)}
-                      />
-                    </div>
+                    <PathCheckField
+                      label="源相对路径"
+                      value={convertRelativePath}
+                      onChange={setConvertRelativePath}
+                      alias={LPMM_IMPORT_ALIAS}
+                      mustExist
+                      checkPath={checkImportPath}
+                    />
+                    <PathCheckField
+                      label="目标相对路径"
+                      value={convertTargetRelativePath}
+                      onChange={setConvertTargetRelativePath}
+                      alias={CONVERTED_IMPORT_ALIAS}
+                      mustExist={false}
+                      checkPath={checkImportPath}
+                    />
                     <div className="space-y-1">
                       <Label>向量维度</Label>
                       <Input
@@ -748,55 +885,6 @@ export function ImportTab({ queue, form }: ImportTabProps) {
               </div>
             </CardContent>
           </Card>
-
-          <Card className="rounded-2xl border-border/70 bg-card/85 shadow-sm">
-            <CardHeader>
-              <CardTitle>路径预检</CardTitle>
-              <CardDescription>在创建文件夹扫描或转换任务前，先确认路径会被解析到哪里。</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-3">
-                <div className="space-y-1">
-                  <Label>路径别名</Label>
-                  <div className="text-xs text-muted-foreground">选择后端允许访问的数据根目录。</div>
-                  <Select value={pathResolveAlias} onValueChange={setPathResolveAlias}>
-                    <SelectTrigger aria-label="import-path-alias">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {importAliasKeys.length > 0 ? importAliasKeys.map((alias) => (
-                        <SelectItem key={alias} value={alias}>{alias}</SelectItem>
-                      )) : (
-                        <SelectItem value="raw">raw</SelectItem>
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <Label>相对路径</Label>
-                  <div className="text-xs text-muted-foreground">填写相对于路径别名的子路径，不需要填写完整磁盘路径。</div>
-                  <Input
-                    value={pathResolveRelativePath}
-                    onChange={(event) => setPathResolveRelativePath(event.target.value)}
-                    placeholder="例如 exports/weekly"
-                  />
-                </div>
-              </div>
-              <div className="flex items-center gap-2 text-sm">
-                <Checkbox checked={pathResolveMustExist} onCheckedChange={(value) => setPathResolveMustExist(Boolean(value))} />
-                要求路径已存在
-              </div>
-              <Button
-                variant="outline"
-                onClick={() => void resolveImportPath()}
-                disabled={resolvingPath || !pathResolveAlias.trim()}
-              >
-                {resolvingPath ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-                解析路径
-              </Button>
-              <Textarea value={pathResolveOutput} readOnly rows={6} placeholder="解析结果会显示在这里" />
-            </CardContent>
-          </Card>
         </div>
 
         <div className="order-1 space-y-6 lg:order-2">
@@ -809,20 +897,6 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                   刷新
                 </Button>
               </div>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <CardDescription className="text-sm">
-                  查看任务是否正在运行、排队等待或已经结束。点击任务卡片可查看详情。
-                </CardDescription>
-                <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                  <Badge variant="outline" className="bg-background/70">运行中 {runningImportTasks.length}</Badge>
-                  <Badge variant="outline" className="bg-background/70">排队中 {queuedImportTasks.length}</Badge>
-                  <Badge variant="outline" className="bg-background/70">最近完成 {recentImportTasks.length}</Badge>
-                </div>
-                <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Checkbox checked={importAutoPolling} onCheckedChange={(value) => setImportAutoPolling(Boolean(value))} />
-                  自动轮询 {importPollInterval}ms
-                </label>
-              </div>
             </CardHeader>
             <CardContent className="space-y-6">
               {importErrorText ? (
@@ -831,13 +905,13 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                 </Alert>
               ) : null}
 
-              <div className="space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm font-medium">运行中</div>
-                  <Badge variant="outline">{runningImportTasks.length}</Badge>
-                </div>
-                {runningImportTasks.length > 0 ? (
-                  <ScrollArea className="h-[208px] rounded-xl border bg-muted/10">
+              {runningImportTasks.length > 0 ? (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-medium">运行中</div>
+                    <Badge variant="outline">{runningImportTasks.length}</Badge>
+                  </div>
+                  <ScrollArea className="h-[208px]">
                     <div className="space-y-2.5 p-2.5">
                       {runningImportTasks.map((task) => {
                         const isSelected = task.task_id === selectedImportTaskId
@@ -845,7 +919,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                           <button
                             key={task.task_id}
                             type="button"
-                            onClick={() => void selectImportTask(task.task_id)}
+                            onClick={() => openTaskDetail(task.task_id)}
                             className={cn(
                               'w-full rounded-xl border p-4 text-left transition-all',
                               isSelected
@@ -858,7 +932,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                                 <div className="break-all font-mono text-[11px] leading-relaxed text-muted-foreground">
                                   {task.task_id}
                                 </div>
-                                <div className="text-sm font-medium">{String(task.task_kind ?? task.mode ?? '-')}</div>
+                                <div className="text-sm font-medium">{getImportTaskKindLabel(String(task.task_kind ?? task.mode ?? '-'))}</div>
                               </div>
                               <Badge variant={getImportStatusVariant(String(task.status ?? ''))}>
                                 {getImportStatusLabel(String(task.status ?? ''))}
@@ -874,18 +948,16 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                       })}
                     </div>
                   </ScrollArea>
-                ) : (
-                  <div className="rounded-xl border bg-muted/20 p-4 text-sm text-muted-foreground">当前没有运行中任务</div>
-                )}
-              </div>
-
-              <div className="space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm font-medium">排队中</div>
-                  <Badge variant="outline">{queuedImportTasks.length}</Badge>
                 </div>
-                {queuedImportTasks.length > 0 ? (
-                  <ScrollArea className="h-[188px] rounded-xl border bg-muted/10">
+              ) : null}
+
+              {queuedImportTasks.length > 0 ? (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-medium">排队中</div>
+                    <Badge variant="outline">{queuedImportTasks.length}</Badge>
+                  </div>
+                  <ScrollArea className="h-[188px]">
                     <div className="space-y-2.5 p-2.5">
                       {queuedImportTasks.map((task) => {
                         const isSelected = task.task_id === selectedImportTaskId
@@ -893,7 +965,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                           <button
                             key={task.task_id}
                             type="button"
-                            onClick={() => void selectImportTask(task.task_id)}
+                            onClick={() => openTaskDetail(task.task_id)}
                             className={cn(
                               'w-full rounded-xl border p-4 text-left transition-all',
                               isSelected
@@ -906,7 +978,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                                 <div className="break-all font-mono text-[11px] leading-relaxed text-muted-foreground">
                                   {task.task_id}
                                 </div>
-                                <div className="text-sm font-medium">{String(task.task_kind ?? task.mode ?? '-')}</div>
+                                <div className="text-sm font-medium">{getImportTaskKindLabel(String(task.task_kind ?? task.mode ?? '-'))}</div>
                               </div>
                               <Badge variant={getImportStatusVariant(String(task.status ?? ''))}>
                                 {getImportStatusLabel(String(task.status ?? ''))}
@@ -921,18 +993,16 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                       })}
                     </div>
                   </ScrollArea>
-                ) : (
-                  <div className="rounded-xl border bg-muted/20 p-4 text-sm text-muted-foreground">当前没有排队任务</div>
-                )}
-              </div>
-
-              <div className="space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm font-medium">最近完成</div>
-                  <Badge variant="secondary">{recentImportTasks.length}</Badge>
                 </div>
-                {recentImportTasks.length > 0 ? (
-                  <ScrollArea className="h-[260px] rounded-xl border bg-muted/10">
+              ) : null}
+
+              {recentImportTasks.length > 0 ? (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-medium">最近完成</div>
+                    <Badge variant="secondary">{recentImportTasks.length}</Badge>
+                  </div>
+                  <ScrollArea className="h-[260px]">
                     <div className="space-y-2.5 p-2.5">
                       {recentImportTasks.map((task) => {
                         const isSelected = task.task_id === selectedImportTaskId
@@ -940,7 +1010,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                           <button
                             key={task.task_id}
                             type="button"
-                            onClick={() => void selectImportTask(task.task_id)}
+                            onClick={() => openTaskDetail(task.task_id)}
                             className={cn(
                               'w-full rounded-xl border p-4 text-left transition-all',
                               isSelected
@@ -953,7 +1023,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                                 <div className="break-all font-mono text-[11px] leading-relaxed text-muted-foreground">
                                   {task.task_id}
                                 </div>
-                                <div className="text-sm font-medium">{String(task.task_kind ?? task.mode ?? '-')}</div>
+                                <div className="text-sm font-medium">{getImportTaskKindLabel(String(task.task_kind ?? task.mode ?? '-'))}</div>
                               </div>
                               <Badge variant={getImportStatusVariant(String(task.status ?? ''))}>
                                 {getImportStatusLabel(String(task.status ?? ''))}
@@ -969,311 +1039,51 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                       })}
                     </div>
                   </ScrollArea>
-                ) : (
-                  <div className="rounded-xl border bg-muted/20 p-4 text-sm text-muted-foreground">暂时没有历史任务</div>
-                )}
-              </div>
+                </div>
+              ) : null}
             </CardContent>
           </Card>
         </div>
       </div>
 
       {transferMode === 'import' ? (
-        <Card className="rounded-2xl border-border/70 bg-card/90 shadow-sm">
-          <CardHeader className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <CardTitle>任务详情</CardTitle>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-label="取消选中导入任务"
-                  onClick={() => void cancelSelectedImportTask()}
-                  disabled={!selectedImportTaskId}
-                >
-                  取消任务
-                </Button>
-                <Button
-                  size="sm"
-                  aria-label="重试选中导入任务"
-                  onClick={() => void retrySelectedImportTask()}
-                  disabled={!selectedImportTaskId}
-                >
-                  重试失败项
-                </Button>
-              </div>
-            </div>
-            <CardDescription>支持文件级和分块级状态观察，可直接在当前页面定位失败原因</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {selectedImportTaskLoading ? (
-              <div className="flex items-center gap-2">
-                <ThinkingIllustration size="sm" />
-              </div>
-            ) : null}
-
-            {!selectedImportTaskResolved ? (
-              <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed bg-muted/15 px-6 py-10 text-center">
-                <div className="rounded-full bg-muted/40 p-3">
-                  <Loader2 className="h-5 w-5 text-muted-foreground" />
-                </div>
-                <div className="space-y-1">
-                  <div className="text-sm font-medium">还没选中任务</div>
-                  <div className="text-xs leading-relaxed text-muted-foreground">
-                    在左侧/上方的导入队列里点击任意任务卡片<br />
-                    即可在这里查看进度、文件状态和分块详情
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <>
-                <div className="space-y-2">
-                  <div className="text-sm font-medium">任务摘要</div>
-                  <div className="overflow-auto rounded-xl border bg-muted/10">
-                    <Table className="min-w-[680px]">
-                      <TableBody>
-                        <TableRow>
-                          <TableCell className="w-[140px] text-muted-foreground">任务 ID</TableCell>
-                          <TableCell className="break-all font-mono text-xs leading-relaxed">
-                            {selectedImportTaskResolved.task_id}
-                          </TableCell>
-                        </TableRow>
-                        <TableRow>
-                          <TableCell className="text-muted-foreground">任务类型</TableCell>
-                          <TableCell>{String(selectedImportTaskResolved.task_kind ?? selectedImportTaskResolved.mode ?? '-')}</TableCell>
-                        </TableRow>
-                        <TableRow>
-                          <TableCell className="text-muted-foreground">状态 / 步骤</TableCell>
-                          <TableCell>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <Badge variant={getImportStatusVariant(String(selectedImportTaskResolved.status ?? ''))}>
-                                {getImportStatusLabel(String(selectedImportTaskResolved.status ?? ''))}
-                              </Badge>
-                              <span className="text-xs text-muted-foreground">
-                                {getImportStepLabel(String(selectedImportTaskResolved.current_step ?? ''))}
-                              </span>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                        <TableRow>
-                          <TableCell className="text-muted-foreground">进度</TableCell>
-                          <TableCell>
-                            <MemoryProgressIndicator
-                              value={normalizeProgress(selectedImportTaskResolved.progress)}
-                              statusLabel={getImportStatusLabel(String(selectedImportTaskResolved.status ?? ''))}
-                              stepLabel={getImportStepLabel(String(selectedImportTaskResolved.current_step ?? ''))}
-                              tone={
-                                String(selectedImportTaskResolved.status ?? '') === 'completed'
-                                  ? 'success'
-                                  : String(selectedImportTaskResolved.status ?? '') === 'failed'
-                                    ? 'destructive'
-                                    : String(selectedImportTaskResolved.status ?? '') === 'completed_with_errors'
-                                      ? 'warning'
-                                      : String(selectedImportTaskResolved.status ?? '') === 'cancelled'
-                                      ? 'muted'
-                                      : 'default'
-                              }
-                              busy={RUNNING_IMPORT_STATUS.has(String(selectedImportTaskResolved.status ?? ''))}
-                              detail={formatChunkSummary(
-                                selectedImportTaskResolved.done_chunks,
-                                selectedImportTaskResolved.total_chunks,
-                                selectedImportTaskResolved.failed_chunks,
-                                selectedImportTaskResolved.cancelled_chunks,
-                              )}
-                            />
-                          </TableCell>
-                        </TableRow>
-                        <TableRow>
-                          <TableCell className="text-muted-foreground">创建时间</TableCell>
-                          <TableCell>{formatImportTime(selectedImportTaskResolved.created_at)}</TableCell>
-                        </TableRow>
-                        <TableRow>
-                          <TableCell className="text-muted-foreground">更新时间</TableCell>
-                          <TableCell>{formatImportTime(selectedImportTaskResolved.updated_at)}</TableCell>
-                        </TableRow>
-                      </TableBody>
-                    </Table>
-                  </div>
-                </div>
-
-                {selectedImportRetrySummary ? (
-                  <div className="space-y-2">
-                    <div className="text-sm font-medium">重试摘要</div>
-                    <div className="overflow-auto rounded-xl border bg-muted/10">
-                      <Table>
-                        <TableBody>
-                          <TableRow>
-                            <TableCell className="w-[220px] text-muted-foreground">按分块重试的文件数</TableCell>
-                            <TableCell>{Number(selectedImportRetrySummary.chunk_retry_files ?? 0)}</TableCell>
-                          </TableRow>
-                          <TableRow>
-                            <TableCell className="text-muted-foreground">按分块重试的分块数</TableCell>
-                            <TableCell>{Number(selectedImportRetrySummary.chunk_retry_chunks ?? 0)}</TableCell>
-                          </TableRow>
-                          <TableRow>
-                            <TableCell className="text-muted-foreground">回退整文件重试数</TableCell>
-                            <TableCell>{Number(selectedImportRetrySummary.file_fallback_files ?? 0)}</TableCell>
-                          </TableRow>
-                          <TableRow>
-                            <TableCell className="text-muted-foreground">跳过文件数</TableCell>
-                            <TableCell>{Number(selectedImportRetrySummary.skipped_files ?? 0)}</TableCell>
-                          </TableRow>
-                        </TableBody>
-                      </Table>
-                    </div>
-                  </div>
-                ) : null}
-
-                {selectedImportTaskErrorText ? (
-                  <Alert variant="destructive">
-                    <AlertDescription>{selectedImportTaskErrorText}</AlertDescription>
-                  </Alert>
-                ) : null}
-
-                <div className="space-y-2.5">
-                  <div className="text-sm font-medium">文件状态</div>
-                  {selectedImportFiles.length > 0 ? (
-                    <ScrollArea className="h-[260px] rounded-xl border bg-muted/10">
-                      <div className="space-y-2.5 p-2.5">
-                        {selectedImportFiles.map((file) => {
-                          const isSelected = file.file_id === selectedImportFileId
-                          return (
-                            <button
-                              key={file.file_id}
-                              type="button"
-                              onClick={() => void selectImportFile(file.file_id)}
-                              className={cn(
-                                'w-full rounded-xl border p-4 text-left transition-all',
-                                isSelected
-                                  ? 'border-primary/70 bg-primary/5 shadow-sm'
-                                  : 'bg-background/80 hover:border-muted-foreground/40 hover:bg-muted/20',
-                              )}
-                            >
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <span className="truncate text-sm font-medium">{file.name || file.file_id}</span>
-                                <Badge variant={getImportStatusVariant(String(file.status ?? ''))}>
-                                  {getImportStatusLabel(String(file.status ?? ''))}
-                                </Badge>
-                              </div>
-                              <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                                <span>{getImportStepLabel(String(file.current_step ?? ''))}</span>
-                                <span>{formatProgressPercent(file.progress)}</span>
-                              </div>
-                              <Progress value={normalizeProgress(file.progress)} className="mt-2 h-1.5" />
-                              <div className="mt-2 text-xs text-muted-foreground">
-                                {formatProgressPercent(file.progress)} · {formatChunkSummary(
-                                  file.done_chunks,
-                                  file.total_chunks,
-                                  file.failed_chunks,
-                                  file.cancelled_chunks,
-                                )}
-                              </div>
-                              {file.error ? (
-                                <div className="mt-2 truncate text-xs text-destructive">{file.error}</div>
-                              ) : null}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </ScrollArea>
-                  ) : (
-                    <div className="rounded-xl border bg-muted/20 p-4 text-sm text-muted-foreground">当前任务没有文件明细</div>
-                  )}
-                </div>
-
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-sm font-medium">分块状态</div>
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Button
-                        size="icon"
-                        variant="outline"
-                        aria-label="上一页分块"
-                        onClick={() => void moveImportChunkPage(-1)}
-                        disabled={!canImportChunkPrev}
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                      </Button>
-                      <span>
-                        {importChunkTotal > 0
-                          ? `${importChunkOffset + 1}-${Math.min(importChunkOffset + IMPORT_CHUNK_PAGE_SIZE, importChunkTotal)}`
-                          : '0-0'}
-                        {' / '}
-                        {importChunkTotal}
-                      </span>
-                      <Button
-                        size="icon"
-                        variant="outline"
-                        aria-label="下一页分块"
-                        onClick={() => void moveImportChunkPage(1)}
-                        disabled={!canImportChunkNext}
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="overflow-auto rounded-xl border bg-background/80">
-                    <Table className="min-w-[700px]">
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="w-[72px]">序号</TableHead>
-                          <TableHead className="w-[108px]">状态</TableHead>
-                          <TableHead className="w-[108px]">步骤</TableHead>
-                          <TableHead className="w-[84px]">进度</TableHead>
-                          <TableHead>错误 / 预览</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {importChunksLoading ? (
-                          <TableRow>
-                            <TableCell colSpan={5} className="text-center text-muted-foreground">
-                              <ThinkingIllustration size="sm" className="mx-auto" />
-                            </TableCell>
-                          </TableRow>
-                        ) : selectedImportChunks.length > 0 ? (
-                          selectedImportChunks.map((chunk) => (
-                            <TableRow key={chunk.chunk_id}>
-                              <TableCell>{chunk.index}</TableCell>
-                              <TableCell>{getImportStatusLabel(String(chunk.status ?? ''))}</TableCell>
-                              <TableCell>{getImportStepLabel(String(chunk.step ?? ''))}</TableCell>
-                              <TableCell>{formatProgressPercent(chunk.progress)}</TableCell>
-                              <TableCell className="max-w-[360px]">
-                                <div className="space-y-2">
-                                  {String(chunk.error ?? '').trim() ? (
-                                    <div className="rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-2 text-sm leading-relaxed text-destructive">
-                                      {String(chunk.error)}
-                                    </div>
-                                  ) : null}
-                                  <details className="rounded-md border bg-muted/20 px-2.5 py-2 text-xs text-muted-foreground">
-                                    <summary className="cursor-pointer font-medium text-foreground">
-                                      {String(chunk.error ?? '').trim() ? '查看分块预览' : '查看内容详情'}
-                                    </summary>
-                                    <div className="mt-2 whitespace-pre-wrap break-words leading-relaxed">
-                                      {String(chunk.content_preview ?? '-') || '-'}
-                                    </div>
-                                  </details>
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          ))
-                        ) : (
-                          <TableRow>
-                            <TableCell colSpan={5} className="text-center text-muted-foreground">
-                              当前页没有分块数据
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
+        <ImportTaskDetailDialog
+          open={taskDetailOpen}
+          onOpenChange={setTaskDetailOpen}
+          queue={queue}
+        />
       ) : null}
+
       {transferMode === 'bundle' ? <MemoryBundleCard chatTargets={importChatTargets} /> : null}
+      {transferMode === 'fact' ? (
+        <div className="max-w-2xl">
+          <Card className="rounded-2xl border-border/70 bg-card/85 shadow-sm">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Plus className="h-4 w-4" />
+                新增事实
+              </CardTitle>
+              <CardDescription>手动录入一条结构化事实，直接写入长期记忆事实账本。</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Button type="button" onClick={() => setFactEditorOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                新增事实
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                事实按「主体 - 谓词 - 客体」成条写入，录入后可在「记忆查询」页继续编辑、撤回或恢复。
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
+      <MemoryFactEditorDialog
+        open={factEditorOpen}
+        onOpenChange={setFactEditorOpen}
+        record={null}
+        saving={createFactMutation.isPending}
+        onSubmit={(payload) => createFactMutation.mutate(payload)}
+      />
     </TabsContent>
   )
 }

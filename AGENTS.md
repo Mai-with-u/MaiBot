@@ -60,7 +60,12 @@
 涉及 Tabs/TabsList/TabsTrigger、Radix 或 motion 动画指示器时，要先确认视觉效果来自 TabsList 容器、TabsTrigger 本体、内部 motion/span，还是父级 header/card/dialog 的 backdrop-filter 或主题覆盖，再做最小范围修改。
 Radix 组件不随便移出上下文，像 TabsTrigger 必须留在 TabsList 里。
 
+# Webui修改和测试
+
 修改完webui，如果是小改动小修复，不用急着npm run build。当完成一个较大功能新增或者较广重构时，才需要运行 npm run build。
+
+不要每次小修改都起全量webui测试，一般只有较大的更改或者明确要求测试，再进行webui的测试，节省开发时间
+
 WebUI 开发服务固定起到 7999 端口。
 
 # 会话 ID 规范

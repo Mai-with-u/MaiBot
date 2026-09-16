@@ -714,11 +714,150 @@ describe('useMemoryDelete 模式切换与校验', () => {
     expect(memoryApi.previewMemoryDelete).toHaveBeenCalledWith({
       mode: 'source',
       selector: { sources: ['chat:alpha'] },
-      reason: 'knowledge_base_source_delete',
       requested_by: 'knowledge_base',
     })
     expect(result.current.deleteDialogTitle).toBe('批量删除来源')
     expect(result.current.deleteDialogOpen).toBe(true)
+  })
+
+  it('「已执行」筛选项按状态分组匹配 completed 操作', async () => {
+    const operations = [
+      makeOperation({ operation_id: 'op-completed', status: 'completed' }),
+      makeOperation({ operation_id: 'op-restored', status: 'restored' }),
+    ]
+    vi.mocked(memoryApi.getMemoryDeleteOperations).mockResolvedValue({
+      success: true,
+      items: operations,
+    })
+    vi.mocked(memoryApi.getMemoryDeleteOperation).mockImplementation(async (operationId) => ({
+      success: true,
+      operation:
+        operations.find((item) => item.operation_id === operationId) ??
+        makeOperation({ operation_id: operationId }),
+    }))
+    const { result } = renderDeleteHook({ active: true })
+
+    await waitForOperations(result, operations.length)
+
+    act(() => result.current.setOperationStatusFilter('executed'))
+    await waitFor(() => expect(result.current.filteredDeleteOperations).toHaveLength(1))
+    expect(result.current.filteredDeleteOperations[0]?.operation_id).toBe('op-completed')
+
+    act(() => result.current.setOperationStatusFilter('restored'))
+    await waitFor(() => expect(result.current.filteredDeleteOperations).toHaveLength(1))
+    expect(result.current.filteredDeleteOperations[0]?.operation_id).toBe('op-restored')
+  })
+
+  it('来源搜索命中聊天流名称，并回填来源名称映射与自定义删除原因', async () => {
+    vi.mocked(memoryApi.getMemorySources).mockResolvedValue({
+      success: true,
+      items: [
+        {
+          source: 'chat_summary:s1',
+          paragraph_count: 3,
+          source_kind: 'chat_summary',
+          chat_id: 's1',
+          chat_name: '摸鱼群',
+        },
+        {
+          source: 'chat_summary:s2',
+          paragraph_count: 1,
+          source_kind: 'chat_summary',
+          chat_id: 's2',
+          chat_name: '测试群',
+        },
+        {
+          source: 'chat_stream:c1',
+          paragraph_count: 2,
+          source_kind: 'chat_stream',
+        },
+        {
+          // 上传/粘贴导入写的 web_import 前缀后端解析不出类别，只能靠「其他」兜住
+          source: 'web_import:notes.txt',
+          paragraph_count: 1,
+        },
+      ],
+      count: 4,
+    })
+    const { result } = renderDeleteHook({ active: true })
+
+    await waitFor(() => expect(result.current.filteredSources).toHaveLength(4))
+    expect(result.current.sourceNameBySource).toEqual({
+      'chat_summary:s1': '摸鱼群',
+      'chat_summary:s2': '测试群',
+    })
+
+    act(() => result.current.setSourceSearch('摸鱼'))
+    expect(result.current.filteredSources.map((item) => item.source)).toEqual(['chat_summary:s1'])
+
+    act(() => result.current.setSourceSearch('聊天摘要'))
+    expect(result.current.filteredSources.map((item) => item.source)).toEqual([
+      'chat_summary:s1',
+      'chat_summary:s2',
+    ])
+
+    // 类别筛选按后端回填的 source_kind 精确匹配，「全部」恢复完整列表
+    act(() => result.current.setSourceSearch(''))
+    act(() => result.current.setSourceKindFilter('chat_summary'))
+    expect(result.current.filteredSources.map((item) => item.source)).toEqual([
+      'chat_summary:s1',
+      'chat_summary:s2',
+    ])
+
+    // 没有独立标签页的类别（聊天流）与解析不出类别的来源一并归入「其他」
+    act(() => result.current.setSourceKindFilter('other'))
+    expect(result.current.filteredSources.map((item) => item.source)).toEqual([
+      'chat_stream:c1',
+      'web_import:notes.txt',
+    ])
+
+    act(() => result.current.setSourceKindFilter('all'))
+    expect(result.current.filteredSources).toHaveLength(4)
+
+    act(() => result.current.toggleSourceSelection('chat_summary:s1', true))
+    await act(async () => {
+      await result.current.openSourceDeletePreview()
+    })
+    // 预览阶段不带原因，原因在对话框确认时才合并进执行请求
+    expect(memoryApi.previewMemoryDelete).toHaveBeenCalledWith({
+      mode: 'source',
+      selector: { sources: ['chat_summary:s1'] },
+      requested_by: 'knowledge_base',
+    })
+
+    await act(async () => {
+      await result.current.executePendingDelete('  清理测试批次  ')
+    })
+    expect(memoryApi.executeMemoryDelete).toHaveBeenCalledWith({
+      mode: 'source',
+      selector: { sources: ['chat_summary:s1'] },
+      requested_by: 'knowledge_base',
+      reason: '清理测试批次',
+    })
+  })
+
+  it('确认删除不填原因时回退到来源删除默认原因', async () => {
+    vi.mocked(memoryApi.getMemorySources).mockResolvedValue({
+      success: true,
+      items: [{ source: 'chat_summary:s1', paragraph_count: 3 }],
+      count: 1,
+    })
+    const { result } = renderDeleteHook({ active: true })
+
+    await waitFor(() => expect(result.current.filteredSources).toHaveLength(1))
+    act(() => result.current.toggleSourceSelection('chat_summary:s1', true))
+    await act(async () => {
+      await result.current.openSourceDeletePreview()
+    })
+    await act(async () => {
+      await result.current.executePendingDelete('   ')
+    })
+    expect(memoryApi.executeMemoryDelete).toHaveBeenCalledWith({
+      mode: 'source',
+      selector: { sources: ['chat_summary:s1'] },
+      requested_by: 'knowledge_base',
+      reason: 'knowledge_base_source_delete',
+    })
   })
 
   it('关闭删除对话框会清空预览态；再次打开只切对话框', async () => {

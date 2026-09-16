@@ -389,7 +389,7 @@ describe('useImportQueue WebSocket 进度与断线轮询', () => {
     expect(toastMock).not.toHaveBeenCalled()
   })
 
-  it('开启自动轮询后无论 WS 是否连接都保持 refetchInterval', async () => {
+  it('激活期间无论 WS 是否连接都保持 refetchInterval 轮询', async () => {
     vi.mocked(memoryApi.getMemoryImportSettings).mockResolvedValue({
       success: true,
       settings: { poll_interval_ms: 1500 },
@@ -408,9 +408,6 @@ describe('useImportQueue WebSocket 进度与断线轮询', () => {
       wsState.setConnected(false)
     })
     await waitFor(() => expect(getTasksRefetchInterval(queryClient)).toBe(1500))
-
-    act(() => result.current.setImportAutoPolling(false))
-    await waitFor(() => expect(getTasksRefetchInterval(queryClient)).toBe(false))
   })
 
   it('poll_interval_ms 低于 200 时轮询间隔钳到 200', async () => {

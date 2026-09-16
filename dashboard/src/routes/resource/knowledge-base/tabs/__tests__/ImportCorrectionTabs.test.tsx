@@ -1,6 +1,8 @@
 /**
  * ImportTab / CorrectionTab：用 mock hook 结果锁定提交、校验、进度与错误 UI。
  */
+import type { ReactElement } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
@@ -224,16 +226,7 @@ function makeForm(overrides: Partial<UseImportFormResult> = {}): UseImportFormRe
     submitImportByMode: vi.fn(async () => {}),
     creatingImport: false,
     buildCommonImportPayload: vi.fn(() => ({})),
-    pathResolveAlias: 'raw',
-    setPathResolveAlias: vi.fn(),
-    importAliasKeys: ['raw', 'lpmm'],
-    pathResolveRelativePath: '',
-    setPathResolveRelativePath: vi.fn(),
-    pathResolveMustExist: false,
-    setPathResolveMustExist: vi.fn(),
-    resolveImportPath: vi.fn(async () => {}),
-    resolvingPath: false,
-    pathResolveOutput: '',
+    checkImportPath: vi.fn(async () => '解析到 /data/lpmm/exports（目录，已存在）'),
     ...overrides,
   }
 }
@@ -246,8 +239,6 @@ function makeQueue(overrides: Partial<UseImportQueueResult> = {}): UseImportQueu
     recentImportTasks: [],
     selectedImportTaskId: '',
     selectImportTask: vi.fn(async () => {}),
-    importAutoPolling: true,
-    setImportAutoPolling: vi.fn(),
     importPollInterval: 1000,
     importErrorText: '',
     cancelSelectedImportTask: vi.fn(async () => {}),
@@ -412,12 +403,20 @@ function renderImport(options: {
 } = {}) {
   const form = makeForm(options.form)
   const queue = makeQueue(options.queue)
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
   const view = render(
-    <Tabs defaultValue="import">
-      <ImportTab form={form} queue={queue} />
-    </Tabs>,
+    <QueryClientProvider client={queryClient}>
+      <Tabs defaultValue="import">
+        <ImportTab form={form} queue={queue} />
+      </Tabs>
+    </QueryClientProvider>,
   )
-  return { ...view, form, queue }
+  // ImportTab 依赖 useQueryClient，rerender 时也要包上 Provider。
+  const rerender = (ui: ReactElement) =>
+    view.rerender(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>)
+  return { ...view, form, queue, rerender }
 }
 
 function renderCorrection(overrides: Partial<UseMemoryCorrectionResult> = {}) {
@@ -482,20 +481,26 @@ const manyChats: MemoryImportChatTargetPayload[] = [
 ]
 
 describe('ImportTab', () => {
-  it('切换到记忆包页时隐藏导入任务详情', async () => {
+  it('导入任务详情以弹窗呈现，切到记忆包页后随之关闭', async () => {
     const user = userEvent.setup()
     renderImport({
       queue: {
+        runningImportTasks: [makeImportTask()],
         selectedImportTaskId: 'task-run-1',
         selectedImportTaskResolved: makeImportTask(),
       },
     })
 
-    expect(screen.getByText('任务详情')).toBeInTheDocument()
-    await user.click(screen.getByRole('tab', { name: '记忆包导入导出' }))
-
-    expect(screen.getByText('记忆包功能面板')).toBeInTheDocument()
+    // 默认不常驻，点队列卡片才打开
     expect(screen.queryByText('任务详情')).not.toBeInTheDocument()
+    await user.click(screen.getByText('task-run-1'))
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '关闭' }))
+    expect(screen.queryByText('任务详情')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: '记忆包导入导出' }))
+    expect(screen.getByText('记忆包功能面板')).toBeInTheDocument()
   })
 
   it('未选资料类别时禁用提交并展示校验文案', async () => {
@@ -736,36 +741,27 @@ describe('ImportTab', () => {
 
   })
 
-  it('路径预检在别名为空时禁用，解析中展示 loading', async () => {
+  it('LPMM 转换两个路径输入框各自内联检查：源用 lpmm、目标用 converted 别名', async () => {
     const user = userEvent.setup()
-    const { form, rerender } = renderImport({
+    const { form } = renderImport({
       form: {
-        importAliasKeys: [],
-        pathResolveRelativePath: 'exports/weekly',
+        importCreateMode: 'lpmm_convert',
+        convertRelativePath: 'raw_source',
+        convertTargetRelativePath: 'converted_target',
+        checkImportPath: vi.fn(async (alias: string) => `解析到 /data/${alias}（目录，已存在）`),
       },
     })
 
-    fireEvent.change(screen.getByPlaceholderText('例如 exports/weekly'), { target: { value: 'a/b' } })
-    expect(form.setPathResolveRelativePath).toHaveBeenCalledWith('a/b')
-    await user.click(checkboxNear('要求路径已存在'))
-    expect(form.setPathResolveMustExist).toHaveBeenCalledWith(true)
-    await user.click(screen.getByRole('button', { name: '解析路径' }))
-    expect(form.resolveImportPath).toHaveBeenCalledOnce()
+    const checkButtons = screen.getAllByRole('button', { name: /^检查/ })
+    expect(checkButtons).toHaveLength(2)
 
-    rerender(
-      <Tabs defaultValue="import">
-        <ImportTab
-          form={makeForm({
-            pathResolveAlias: '   ',
-            resolvingPath: true,
-            pathResolveOutput: '解析失败：路径不存在',
-          })}
-          queue={makeQueue()}
-        />
-      </Tabs>,
-    )
-    expect(screen.getByRole('button', { name: '解析路径' })).toBeDisabled()
-    expect(screen.getByDisplayValue('解析失败：路径不存在')).toBeInTheDocument()
+    await user.click(checkButtons[0])
+    expect(form.checkImportPath).toHaveBeenCalledWith('lpmm', 'raw_source', true)
+    expect(await screen.findByText('解析到 /data/lpmm（目录，已存在）')).toBeInTheDocument()
+
+    await user.click(checkButtons[1])
+    expect(form.checkImportPath).toHaveBeenCalledWith('converted', 'converted_target', false)
+    expect(await screen.findByText('解析到 /data/converted（目录，已存在）')).toBeInTheDocument()
   })
 
   it('展示导入队列进度、错误、空态，并选择任务', async () => {
@@ -785,37 +781,39 @@ describe('ImportTab', () => {
     expect(screen.getByText('抽取中')).toBeInTheDocument()
     await user.click(screen.getByText('task-q-1'))
     expect(queue.selectImportTask).toHaveBeenCalledWith('task-q-1')
+    // 详情弹窗是模态的，关闭后才能继续操作队列
+    await user.click(screen.getByRole('button', { name: '关闭' }))
     await user.click(screen.getByText('task-done-1'))
     expect(queue.selectImportTask).toHaveBeenCalledWith('task-done-1')
+    await user.click(screen.getByRole('button', { name: '关闭' }))
     await user.click(screen.getByRole('button', { name: '刷新' }))
     expect(queue.refreshImportQueue).toHaveBeenCalledOnce()
-    await user.click(screen.getByRole('checkbox', { name: /自动轮询 1000ms/ }))
-    expect(queue.setImportAutoPolling).toHaveBeenCalledWith(false)
 
     rerender(
       <Tabs defaultValue="import">
         <ImportTab form={makeForm()} queue={makeQueue()} />
       </Tabs>,
     )
-    expect(screen.getByText('当前没有运行中任务')).toBeInTheDocument()
-    expect(screen.getByText('当前没有排队任务')).toBeInTheDocument()
-    expect(screen.getByText('暂时没有历史任务')).toBeInTheDocument()
+    expect(screen.queryByText('运行中')).not.toBeInTheDocument()
+    expect(screen.queryByText('排队中')).not.toBeInTheDocument()
+    expect(screen.queryByText('最近完成')).not.toBeInTheDocument()
   })
 
-  it('展示任务详情进度、重试摘要、文件与分块错误', async () => {
+  it('任务详情弹窗展示进度、重试摘要、文件与分块错误', async () => {
     const user = userEvent.setup()
     const running = makeImportTask({
       status: 'running',
+      current_step: 'running',
       done_chunks: 36,
       total_chunks: 120,
       failed_chunks: 2,
       cancelled_chunks: 1,
     })
-    const { queue, rerender } = renderImport({
+    const { queue } = renderImport({
       queue: {
+        runningImportTasks: [running],
         selectedImportTaskId: running.task_id,
         selectedImportTaskResolved: running,
-        selectedImportTaskLoading: true,
         selectedImportRetrySummary: {
           chunk_retry_files: 2,
           chunk_retry_chunks: 5,
@@ -839,81 +837,31 @@ describe('ImportTab', () => {
       },
     })
 
-    expect(screen.getAllByLabelText('加载中').length).toBeGreaterThan(0)
-    expect(screen.getByText('成功 36 / 120 分块 · 失败 2 · 取消 1')).toBeInTheDocument()
-    expect(screen.getByText('任务执行出错')).toBeInTheDocument()
-    expect(screen.getByText('按分块重试的文件数')).toBeInTheDocument()
-    expect(screen.getByText('文件抽取失败')).toBeInTheDocument()
-    expect(screen.getAllByText(/成功 30 \/ 80 分块 · 失败 4 · 取消 2/).length).toBeGreaterThan(0)
-    expect(screen.getByText('1-50 / 120')).toBeInTheDocument()
-    expect(screen.getByText('分块写入失败')).toBeInTheDocument()
-    expect(screen.getByText('查看分块预览')).toBeInTheDocument()
-    expect(screen.getByText('查看内容详情')).toBeInTheDocument()
+    await user.click(screen.getByText('task-run-1'))
+    const dialog = await screen.findByRole('dialog')
 
-    await user.click(screen.getByText('alpha.txt'))
+    expect(within(dialog).getByText('成功 36 / 120 分块 · 失败 2 · 取消 1')).toBeInTheDocument()
+    expect(within(dialog).getByText('任务执行出错')).toBeInTheDocument()
+    expect(within(dialog).getByText('按分块重试的文件数')).toBeInTheDocument()
+    expect(within(dialog).getByText('文件抽取失败')).toBeInTheDocument()
+    expect(within(dialog).getAllByText(/成功 30 \/ 80 分块 · 失败 4 · 取消 2/).length).toBeGreaterThan(0)
+    expect(within(dialog).getByText('1-50 / 120')).toBeInTheDocument()
+    expect(within(dialog).getByText('分块写入失败')).toBeInTheDocument()
+    expect(within(dialog).getByText('查看分块预览')).toBeInTheDocument()
+    expect(within(dialog).getByText('查看内容详情')).toBeInTheDocument()
+
+    await user.click(within(dialog).getByText('alpha.txt'))
     expect(queue.selectImportFile).toHaveBeenCalledWith('file-alpha')
-    await user.click(screen.getByRole('button', { name: '下一页分块' }))
+    await user.click(within(dialog).getByRole('button', { name: '下一页分块' }))
     expect(queue.moveImportChunkPage).toHaveBeenCalledWith(1)
-    expect(screen.getByRole('button', { name: '上一页分块' })).toBeDisabled()
-    await user.click(screen.getByRole('button', { name: '取消选中导入任务' }))
+    expect(within(dialog).getByRole('button', { name: '上一页分块' })).toBeDisabled()
+    await user.click(within(dialog).getByRole('button', { name: '取消选中导入任务' }))
     expect(queue.cancelSelectedImportTask).toHaveBeenCalledOnce()
-    await user.click(screen.getByRole('button', { name: '重试选中导入任务' }))
+    await user.click(within(dialog).getByRole('button', { name: '重试选中导入任务' }))
     expect(queue.retrySelectedImportTask).toHaveBeenCalledOnce()
-
-    const tones: Array<MemoryImportTaskPayload['status']> = [
-      'completed',
-      'failed',
-      'completed_with_errors',
-      'cancelled',
-    ]
-    for (const status of tones) {
-      rerender(
-        <Tabs defaultValue="import">
-          <ImportTab
-            form={makeForm()}
-            queue={makeQueue({
-              selectedImportTaskId: 'task-run-1',
-              selectedImportTaskResolved: makeImportTask({
-                status,
-                current_step: status,
-                failed_chunks: 0,
-                cancelled_chunks: 0,
-              }),
-              selectedImportFiles: [],
-              selectedImportChunks: [],
-              importChunksLoading: status === 'cancelled',
-            })}
-          />
-        </Tabs>,
-      )
-    }
-    expect(screen.getByText('当前任务没有文件明细')).toBeInTheDocument()
-    expect(screen.getAllByLabelText('加载中').length).toBeGreaterThan(0)
-
-    rerender(
-      <Tabs defaultValue="import">
-        <ImportTab
-          form={makeForm()}
-          queue={makeQueue({
-            selectedImportTaskId: 'task-run-1',
-            selectedImportTaskResolved: makeImportTask({ task_kind: undefined, mode: undefined, status: '' }),
-            importChunkTotal: 0,
-          })}
-        />
-      </Tabs>,
-    )
-    expect(screen.getByText('0-0 / 0')).toBeInTheDocument()
-    expect(screen.getByText('当前页没有分块数据')).toBeInTheDocument()
-
-    rerender(
-      <Tabs defaultValue="import">
-        <ImportTab form={makeForm()} queue={makeQueue({ selectedImportTaskId: '' })} />
-      </Tabs>,
-    )
-    expect(screen.getByText('还没选中任务')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '取消选中导入任务' })).toBeDisabled()
   })
 })
+
 
 describe('CorrectionTab', () => {
   it('提交预览并写入表单字段', async () => {

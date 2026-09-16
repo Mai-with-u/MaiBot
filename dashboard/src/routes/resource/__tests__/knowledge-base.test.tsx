@@ -53,14 +53,14 @@ vi.mock('@/components/memory/MemoryDeleteDialog', () => ({
     open: boolean
     preview?: { mode?: string; item_count?: number } | null
     result?: { operation_id?: string } | null
-    onExecute?: () => void
+    onExecute?: (reason: string) => void
     onRestore?: () => void
   }) => (
     open ? (
       <div data-testid="memory-delete-dialog">
         <div>{`preview:${preview?.mode ?? 'none'}:${preview?.item_count ?? 0}`}</div>
         <div>{`result:${result?.operation_id ?? 'none'}`}</div>
-        <button type="button" onClick={onExecute}>执行删除</button>
+        <button type="button" onClick={() => onExecute?.('')}>执行删除</button>
         <button type="button" onClick={onRestore}>执行恢复</button>
       </div>
     ) : null
@@ -236,7 +236,7 @@ function mockImportCompletedWithErrorsDetail(taskId: string): memoryApi.MemoryIm
 }
 
 async function waitForConsoleReady() {
-  await screen.findByRole('tab', { name: '图谱' }, { timeout: 10_000 })
+  await screen.findByRole('tab', { name: '记忆查询' }, { timeout: 10_000 })
 }
 
 async function openMemoryStatusDialog(user: ReturnType<typeof userEvent.setup>) {
@@ -582,15 +582,6 @@ describe('KnowledgeBasePage import workflow', () => {
         default_chunk_concurrency: 4,
         poll_interval_ms: 60_000,
         maibot_source_db_default: 'data/maibot.db',
-      },
-    })
-    vi.mocked(memoryApi.getMemoryImportPathAliases).mockResolvedValue({
-      success: true,
-      path_aliases: {
-        converted: 'data/a-memorix/imports/converted',
-        lpmm: 'data/a-memorix/imports/source/lpmm',
-        maibot: 'data/a-memorix/imports/source/maibot',
-        raw: 'data/a-memorix/imports/source/raw',
       },
     })
     vi.mocked(memoryApi.getMemoryImportChatTargets).mockResolvedValue({
@@ -1206,7 +1197,6 @@ describe('KnowledgeBasePage import workflow', () => {
     expect(await screen.findByRole('button', { name: '创建导入任务' })).toBeInTheDocument()
     expect((await screen.findAllByText('import-run-1')).length).toBeGreaterThan(0)
     expect(memoryApi.getMemoryImportSettings).toHaveBeenCalled()
-    expect(memoryApi.getMemoryImportPathAliases).toHaveBeenCalled()
     expect(memoryApi.getMemoryImportTasks).toHaveBeenCalled()
   })
 
@@ -1567,12 +1557,14 @@ describe('KnowledgeBasePage import workflow', () => {
     await waitFor(() => expect(memoryApi.createMemoryRawScanImport).toHaveBeenCalledTimes(1))
 
     await openImportTab()
-    await user.click(screen.getByRole('tab', { name: 'LPMM OpenIE' }))
+    await user.click(screen.getByRole('button', { name: '切换导入方式' }))
+    await user.click(screen.getByRole('menuitemradio', { name: /LPMM OpenIE/ }))
     await user.click(screen.getByRole('button', { name: '创建导入任务' }))
     await waitFor(() => expect(memoryApi.createMemoryLpmmOpenieImport).toHaveBeenCalledTimes(1))
 
     await openImportTab()
-    await user.click(screen.getByRole('tab', { name: 'LPMM 转换' }))
+    await user.click(screen.getByRole('button', { name: '切换导入方式' }))
+    await user.click(screen.getByRole('menuitemradio', { name: /LPMM 转换/ }))
     await user.click(screen.getByRole('button', { name: '创建导入任务' }))
     await waitFor(() => expect(memoryApi.createMemoryLpmmConvertImport).toHaveBeenCalledTimes(1))
 
@@ -1595,6 +1587,9 @@ describe('KnowledgeBasePage import workflow', () => {
 
     await waitForConsoleReady()
     await user.click(screen.getByRole('tab', { name: '导入导出' }))
+    // 任务详情在弹窗里：先点队列卡片打开
+    await user.click(await screen.findByText('import-run-1'))
+    await screen.findByRole('dialog')
 
     expect(await screen.findByText('alpha.txt')).toBeInTheDocument()
     expect(await screen.findByText('chunk-preview-0')).toBeInTheDocument()
@@ -1625,8 +1620,12 @@ describe('KnowledgeBasePage import workflow', () => {
     await waitForConsoleReady()
     await user.click(screen.getByRole('tab', { name: '导入导出' }))
 
-    expect((await screen.findAllByText('完成（有错误）')).length).toBeGreaterThan(0)
-    expect(await screen.findByText('成功 9 / 12 分块 · 失败 3')).toBeInTheDocument()
+    await user.click(await screen.findByText('import-run-1'))
+    const failedDialog = await screen.findByRole('dialog')
+
+    expect(within(failedDialog).getByText('完成（有错误）')).toBeInTheDocument()
+    // 任务级进度与文件级明细都会给出分块摘要
+    expect(within(failedDialog).getAllByText('成功 9 / 12 分块 · 失败 3').length).toBeGreaterThan(0)
   }, 20_000)
 
   it('supports cancel and retry actions for selected task', async () => {
@@ -1635,12 +1634,14 @@ describe('KnowledgeBasePage import workflow', () => {
 
     await waitForConsoleReady()
     await user.click(screen.getByRole('tab', { name: '导入导出' }))
-    await screen.findByText('任务详情')
+    // 任务详情改为点开队列卡片后的弹窗
+    await user.click(await screen.findByText('import-run-1'))
+    const detailDialog = await screen.findByRole('dialog')
 
-    await user.click(screen.getByRole('button', { name: '取消选中导入任务' }))
+    await user.click(within(detailDialog).getByRole('button', { name: '取消选中导入任务' }))
     await waitFor(() => expect(memoryApi.cancelMemoryImportTask).toHaveBeenCalledWith('import-run-1'))
 
-    await user.click(screen.getByRole('button', { name: '重试选中导入任务' }))
+    await user.click(within(detailDialog).getByRole('button', { name: '重试选中导入任务' }))
     await waitFor(() => expect(memoryApi.retryMemoryImportTask).toHaveBeenCalled())
     const [taskId, retryPayload] = vi.mocked(memoryApi.retryMemoryImportTask).mock.calls[0]
     expect(taskId).toBe('import-run-1')
@@ -1678,7 +1679,7 @@ describe('KnowledgeBasePage import workflow', () => {
       await new Promise((resolve) => setTimeout(resolve, 350))
     })
 
-    expect(screen.getByRole('tab', { name: '图谱' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '导入导出' })).toBeInTheDocument()
     expect(vi.mocked(memoryApi.getMemoryImportTasks).mock.calls.length).toBeGreaterThan(initialCalls)
   }, 20_000)
 
@@ -2003,11 +2004,11 @@ describe('KnowledgeBasePage import workflow', () => {
     await user.click(within(sourceRow).getByRole('checkbox'))
 
     await user.click(screen.getByRole('button', { name: '预览删除' }))
+    // 预览阶段不带原因，原因在对话框确认执行时才合并进请求
     await waitFor(() =>
       expect(memoryApi.previewMemoryDelete).toHaveBeenCalledWith({
         mode: 'source',
         selector: { sources: ['demo-1'] },
-        reason: 'knowledge_base_source_delete',
         requested_by: 'knowledge_base',
       }),
     )
@@ -2085,6 +2086,7 @@ describe('KnowledgeBasePage import workflow', () => {
     await waitForConsoleReady()
     await user.click(screen.getByRole('tab', { name: '记忆查询' }))
     expect(await screen.findAllByText('待删除段落')).not.toHaveLength(0)
+    await user.click(await screen.findByRole('button', { name: /待删除段落/ }))
     await user.click(await screen.findByRole('button', { name: '删除' }))
 
     await waitFor(() =>
@@ -2224,6 +2226,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
+    await user.click(screen.getByRole('tab', { name: '记忆检修' }))
     await user.click(screen.getByRole('tab', { name: '情景记忆' }))
     expect(await screen.findByText('已完成')).toBeInTheDocument()
 
@@ -2249,6 +2252,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
+    await user.click(screen.getByRole('tab', { name: '记忆检修' }))
     await user.click(screen.getByRole('tab', { name: '情景记忆' }))
     const attemptInput = await screen.findByLabelText('最大尝试次数（含首次）')
     await user.clear(attemptInput)
@@ -2277,6 +2281,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
+    await user.click(screen.getByRole('tab', { name: '记忆检修' }))
     await user.click(screen.getByRole('tab', { name: '情景记忆' }))
     await user.click(screen.getByRole('button', { name: '处理来源重建任务' }))
 
@@ -2442,7 +2447,10 @@ describe('KnowledgeBasePage import workflow', () => {
       expect(screen.getByRole('tab', { name: '删除' })).toHaveAttribute('data-state', 'active')
     })
     expect(screen.getByPlaceholderText('搜索 operation / reason / requested_by / source')).toHaveValue('paragraph-missing-op')
-    expect(screen.getByPlaceholderText('搜索 source 名称')).toHaveValue('paragraph-missing-op')
+    // 来源检索输入框已改为类别标签页，深链接带入的来源限定以可清除的芯片呈现
+    expect(screen.getByRole('button', { name: '清除限定' }).closest('div')).toHaveTextContent(
+      'paragraph-missing-op',
+    )
     expect(window.location.search).toContain('tab=delete')
     expect(window.location.search).toContain('paragraph_hash=paragraph-missing-op')
   }, 20_000)
@@ -2604,7 +2612,8 @@ describe('KnowledgeBasePage import workflow', () => {
       )
       renderPage()
       await waitForConsoleReady()
-      expect(screen.getByRole('tab', { name: '图谱' })).toHaveAttribute('data-state', 'active')
+      // 无效 tab 与旧链接 tab=graph 都回落到记忆查询
+      expect(screen.getByRole('tab', { name: '记忆查询' })).toHaveAttribute('data-state', 'active')
     }, 20_000)
 
     it('shows empty runtime status and keeps the console usable', async () => {
@@ -2620,7 +2629,7 @@ describe('KnowledgeBasePage import workflow', () => {
       vi.mocked(memoryApi.getMemoryRuntimeConfig).mockImplementation(() => new Promise(() => {}))
       renderPage()
       expect(await screen.findByRole('status', { name: '加载中' })).toBeInTheDocument()
-      expect(screen.queryByRole('tab', { name: '图谱' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('tab', { name: '记忆查询' })).not.toBeInTheDocument()
     })
 
     it('covers disabled core-unavailable single-pool and dual-not-ready badges', async () => {
@@ -2792,7 +2801,7 @@ describe('KnowledgeBasePage import workflow', () => {
       const user = userEvent.setup()
       renderPage()
       await waitForConsoleReady()
-      expect(screen.getByText('快速开始：先从这三件事入手')).toBeInTheDocument()
+      expect(screen.getByText('快速开始：先从这两件事入手')).toBeInTheDocument()
 
       await user.click(screen.getByRole('button', { name: /导入或导出资料/ }))
       expect(screen.getByRole('tab', { name: '导入导出' })).toHaveAttribute('data-state', 'active')
@@ -2803,11 +2812,15 @@ describe('KnowledgeBasePage import workflow', () => {
       expect(screen.getByRole('tab', { name: '检索调优' })).toHaveAttribute('data-state', 'active')
       expect(window.location.search).toContain('mode=tuning')
 
-      await user.click(screen.getByRole('button', { name: /打开图谱/ }))
-      expect(screen.getByRole('tab', { name: '图谱' })).toHaveAttribute('data-state', 'active')
+      // 图谱入口在右上角省略号，与查看记忆状态并列；标签栏里不再有图谱
+      expect(screen.queryByRole('tab', { name: '图谱' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /打开图谱/ })).not.toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: '更多操作' }))
+      await user.click(await screen.findByRole('menuitem', { name: '打开图谱' }))
+      expect(window.location.search).toContain('tab=graph')
 
       await user.click(screen.getByRole('button', { name: '关闭快速开始' }))
-      expect(screen.queryByText('快速开始：先从这三件事入手')).not.toBeInTheDocument()
+      expect(screen.queryByText('快速开始：先从这两件事入手')).not.toBeInTheDocument()
       expect(window.localStorage.getItem(QUICK_START_KEY)).toBe('true')
     }, 20_000)
 
@@ -2815,7 +2828,7 @@ describe('KnowledgeBasePage import workflow', () => {
       window.localStorage.setItem(QUICK_START_KEY, 'true')
       renderPage()
       await waitForConsoleReady()
-      expect(screen.queryByText('快速开始：先从这三件事入手')).not.toBeInTheDocument()
+      expect(screen.queryByText('快速开始：先从这两件事入手')).not.toBeInTheDocument()
     })
 
     it('refreshes runtime data and runs self-check from the status dialog', async () => {
@@ -2883,7 +2896,8 @@ describe('KnowledgeBasePage import workflow', () => {
       await user.click(screen.getByRole('tab', { name: '审计时间线' }))
       await screen.findByText('事件列表')
       const callsAfterFirstVisit = vi.mocked(memoryApi.getMemoryImportChatTargets).mock.calls.length
-      await user.click(screen.getByRole('tab', { name: '图谱' }))
+      // 图谱已不在标签栏，用另一个标签往返验证已访问面板不会重复加载聊天流
+      await user.click(screen.getByRole('tab', { name: '人物画像' }))
       await user.click(screen.getByRole('tab', { name: '审计时间线' }))
       expect(await screen.findByText('事件列表')).toBeInTheDocument()
       expect(vi.mocked(memoryApi.getMemoryImportChatTargets).mock.calls.length).toBe(callsAfterFirstVisit)
@@ -2954,34 +2968,50 @@ describe('KnowledgeBasePage import workflow', () => {
       await user.click(screen.getByRole('tab', { name: '记忆查询' }))
       expect(await screen.findAllByText('可跳转段落')).not.toHaveLength(0)
 
-      await user.click(await screen.findByRole('button', { name: '修正' }))
+      // 记录详情动作都在弹窗内；画像动作可能保持弹窗打开，重开前先按 Escape 关闭
+      const openDetail = async () => {
+        await user.keyboard('{Escape}')
+        await user.click(await screen.findByRole('button', { name: /可跳转段落/ }))
+        await screen.findByRole('button', { name: '修正' })
+      }
+
+      await openDetail()
+      await user.click(screen.getByRole('button', { name: '修正' }))
       expect(window.location.search).toContain('tab=inspection')
       expect(window.location.search).toContain('mode=correction')
       expect(await screen.findByLabelText('修正内容')).toHaveValue('修正以下记忆：可跳转段落')
 
       await user.click(screen.getByRole('tab', { name: '记忆查询' }))
-      await user.click(await screen.findByRole('button', { name: '强化' }))
+      await openDetail()
+      await user.click(screen.getByRole('button', { name: '强化' }))
       expect(window.location.search).toContain('mode=maintenance')
       expect(window.location.search).toContain('target=paragraph-record-action')
       expect(await screen.findByLabelText('维护目标')).toHaveValue('paragraph-record-action')
 
       await user.click(screen.getByRole('tab', { name: '记忆查询' }))
-      await user.click(await screen.findByRole('button', { name: '保护' }))
+      await openDetail()
+      await user.click(screen.getByRole('button', { name: '保护' }))
       expect(await screen.findByLabelText('维护目标')).toHaveValue('paragraph-record-action')
 
       await user.click(screen.getByRole('tab', { name: '记忆查询' }))
+      await openDetail()
+      await user.click(screen.getByRole('tab', { name: /情景/ }))
       await user.click(await screen.findByText('关联情景一'))
-      expect(window.location.search).toContain('tab=episodes')
+      expect(window.location.search).toContain('tab=inspection')
+      expect(window.location.search).toContain('mode=episodes')
       expect(window.location.search).toContain('episode_id=ep-action-1')
 
       await user.click(screen.getByRole('tab', { name: '记忆查询' }))
+      await openDetail()
+      await user.click(screen.getByRole('tab', { name: /画像/ }))
       await user.click(await screen.findByText('person-action-1'))
       expect(window.location.search).toContain('tab=profiles')
       expect(window.location.search).toContain('person_id=person-action-1')
       expect(await screen.findByText('人物画像查询')).toBeInTheDocument()
 
       await user.click(screen.getByRole('tab', { name: '记忆查询' }))
-      await user.click(await screen.findByRole('button', { name: '图谱' }))
+      await openDetail()
+      await user.click(screen.getByRole('button', { name: '图谱' }))
       expect(window.location.search).toContain('tab=graph')
       expect(window.location.search).toContain('paragraph_hash=paragraph-record-action')
     }, 20_000)
@@ -3004,6 +3034,7 @@ describe('KnowledgeBasePage import workflow', () => {
       await waitForConsoleReady()
       await user.click(screen.getByRole('tab', { name: '记忆查询' }))
       expect(await screen.findAllByText('无人物事实')).not.toHaveLength(0)
+      await user.click(await screen.findByRole('button', { name: /无人物事实/ }))
       await user.click(await screen.findByRole('button', { name: '画像' }))
       expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '缺少人物标识' }))
       await user.click(await screen.findByRole('button', { name: '删除' }))
@@ -3025,6 +3056,7 @@ describe('KnowledgeBasePage import workflow', () => {
       const factView = renderPage()
       await waitForConsoleReady()
       await user.click(screen.getByRole('tab', { name: '记忆查询' }))
+      await user.click(await screen.findByRole('button', { name: /有人物事实/ }))
       await user.click(await screen.findByRole('button', { name: '修正' }))
       expect(await screen.findByLabelText('人物 ID')).toHaveValue('person-fact-1')
       expect(await screen.findByLabelText('修正内容')).toHaveValue('修正以下记忆：有人物事实')
@@ -3066,12 +3098,7 @@ describe('KnowledgeBasePage import workflow', () => {
       renderPage()
       await waitForConsoleReady()
       await user.click(screen.getByRole('tab', { name: '记忆查询' }))
-      await user.click(await screen.findByRole('button', { name: '图谱' }))
-      expect(window.location.search).toContain('tab=graph')
-      expect(window.location.search).toContain('paragraph_hash=related-paragraph-1')
-      await closeParagraphDialog(user)
-
-      await user.click(screen.getByRole('tab', { name: '记忆查询' }))
+      await user.click(await screen.findByRole('button', { name: /待删除实体/ }))
       await user.click(await screen.findByRole('button', { name: '删除' }))
       await waitFor(() =>
         expect(memoryApi.previewMemoryDelete).toHaveBeenCalledWith({
@@ -3085,6 +3112,13 @@ describe('KnowledgeBasePage import workflow', () => {
       expect(dialog).toBeInTheDocument()
       await user.click(screen.getByRole('button', { name: '执行恢复' }))
       expect(memoryApi.restoreMemoryDelete).not.toHaveBeenCalled()
+
+      // 详情弹窗随删除动作关闭，重新点开记录继续跳转图谱
+      await user.click(await screen.findByRole('button', { name: /待删除实体/ }))
+      await user.click(await screen.findByRole('button', { name: '图谱' }))
+      expect(window.location.search).toContain('tab=graph')
+      expect(window.location.search).toContain('paragraph_hash=related-paragraph-1')
+      await closeParagraphDialog(user)
     }, 20_000)
 
     it('routes timeline jumps through inspection tuning and empty graph', async () => {

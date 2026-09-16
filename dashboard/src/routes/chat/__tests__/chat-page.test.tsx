@@ -15,7 +15,13 @@ import type { UserEmojiItem } from '@/lib/user-emoji-api'
 import type { SessionInfo, StageStatusInfo } from '@/routes/monitor/use-maisaka-monitor'
 
 import { ChatPage } from '../index'
-import type { ChatImageAttachment, ChatMessage, ChatRuntimeStatus, ChatTab } from '../types'
+import type {
+  ChatImageAttachment,
+  ChatMessage,
+  ChatRuntimeStatus,
+  ChatTab,
+  ObservedMessagePreview,
+} from '../types'
 
 // ---------- 桩组件 props 类型（只声明页面实际传入且测试用到的字段） ----------
 
@@ -47,6 +53,7 @@ interface SidebarStubProps {
   activeObservedSessionId: string | null
   observedSessions: Map<string, SessionInfo>
   observedStageStatuses: Map<string, StageStatusInfo>
+  observedLatestMessages: Map<string, ObservedMessagePreview>
   userId: string
   userName: string
   isUploadingUserAvatar: boolean
@@ -384,6 +391,7 @@ beforeEach(() => {
   mocks.monitorHook.mockReturnValue({
     sessions: mocks.observedSessions,
     stageStatuses: mocks.observedStageStatuses,
+    allTimeline: [],
     setSelectedSession: mocks.setSelectedObservedSession,
   })
 })

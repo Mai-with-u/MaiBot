@@ -35,6 +35,16 @@ export interface VirtualIdentityConfig {
   groupId: string // 虚拟群 ID，用于持久化历史记录
 }
 
+// 观察聊天流在侧边栏的最新消息预览
+export interface ObservedMessagePreview {
+  // 发言者名称（群聊预览会拼成 "发言者: 内容"）
+  speakerName: string
+  // 消息文本内容，纯媒体消息时为空字符串
+  content: string
+  // 纯媒体消息的占位文案（如 [图片]），有文本内容时为空字符串
+  mediaText: string
+}
+
 export interface ChatRuntimeStatus {
   kind: 'thinking' | 'typing' | 'acting' | 'error'
   stage?: string

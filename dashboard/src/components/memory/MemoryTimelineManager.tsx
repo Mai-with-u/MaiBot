@@ -46,7 +46,8 @@ interface MemoryTimelineManagerProps {
   onJump: (target: MemoryTimelineJumpTargetPayload) => void
 }
 
-const TIMELINE_FETCH_LIMIT = 500
+// 单次拉取量；页面按 5/10/20 条分页展示，200 已足够回溯，避免撑满后端扫描上限
+const TIMELINE_FETCH_LIMIT = 200
 const DEFAULT_TIMELINE_PAGE_SIZE = 5
 const TIMELINE_PAGE_SIZE_OPTIONS = [5, 10, 20]
 

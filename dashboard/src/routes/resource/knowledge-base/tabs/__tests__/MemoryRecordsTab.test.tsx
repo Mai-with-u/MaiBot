@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Tabs } from '@/components/ui/tabs'
 import i18n from '@/i18n'
 import {
-  createMemoryFact,
   getMemoryRecordContext,
   restoreMemoryFact,
   retractMemoryFact,
@@ -22,7 +21,6 @@ vi.mock('@/lib/memory-api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/memory-api')>()
   return {
     ...actual,
-    createMemoryFact: vi.fn(),
     getMemoryRecordContext: vi.fn(),
     restoreMemoryFact: vi.fn(),
     retractMemoryFact: vi.fn(),
@@ -33,7 +31,6 @@ vi.mock('@/lib/memory-api', async (importOriginal) => {
 
 const searchMock = vi.mocked(searchMemoryRecords)
 const contextMock = vi.mocked(getMemoryRecordContext)
-const createFactMock = vi.mocked(createMemoryFact)
 const updateFactMock = vi.mocked(updateMemoryFact)
 const retractFactMock = vi.mocked(retractMemoryFact)
 const restoreFactMock = vi.mocked(restoreMemoryFact)
@@ -103,7 +100,6 @@ beforeEach(async () => {
   await i18n.changeLanguage('zh')
   searchMock.mockReset()
   contextMock.mockReset()
-  createFactMock.mockReset()
   updateFactMock.mockReset()
   retractFactMock.mockReset()
   restoreFactMock.mockReset()
@@ -118,7 +114,6 @@ beforeEach(async () => {
     items: [paragraph],
   })
   contextMock.mockResolvedValue(context)
-  createFactMock.mockResolvedValue({ success: true, claim: { claim_id: 'fact-new' }, refresh_queued: true })
   updateFactMock.mockResolvedValue({ success: true, claim: { claim_id: 'fact-1' }, refresh_queued: true })
   retractFactMock.mockResolvedValue({ success: true, claim: { claim_id: 'fact-1', status: 'retracted' } })
   restoreFactMock.mockResolvedValue({ success: true, claim: { claim_id: 'fact-1', status: 'active' } })
@@ -126,20 +121,73 @@ beforeEach(async () => {
 
 describe('MemoryRecordsTab', () => {
   it('展示权威记录及数据库派生的关联内容', async () => {
+    const user = userEvent.setup()
     renderTab()
 
     expect(await screen.findAllByText('小明喜欢咖啡')).not.toHaveLength(0)
     expect(screen.getAllByText('事实资料')).not.toHaveLength(0)
-    expect(await screen.findByText('关联实体')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /小明喜欢咖啡/ }))
+    // 段落标题去重后展示类型标识，正文区固定可见
+    expect(await screen.findByText('段落 · 事实资料')).toBeInTheDocument()
+    expect(screen.getAllByText('小明喜欢咖啡，并且常在周末尝试新的豆子。').length).toBeGreaterThan(0)
+    expect(screen.getByText('来源：chat_summary:session-01')).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: /实体/ }))
     expect(screen.getByText('小明')).toBeInTheDocument()
     expect(contextMock).toHaveBeenCalledWith('paragraph', 'paragraph-01')
+  })
+
+  it('列表与详情只展示可读来源，不把内部来源标记当来源', async () => {
+    const user = userEvent.setup()
+    const namedParagraph: MemoryRecordPayload = {
+      ...paragraph,
+      source_label: '摸鱼群',
+    }
+    searchMock.mockResolvedValue({
+      success: true,
+      query: '',
+      types: ['paragraph'],
+      include_inactive: false,
+      limit: 80,
+      count: 1,
+      counts: { paragraph: 1 },
+      items: [namedParagraph],
+    })
+    contextMock.mockResolvedValue({ ...context, record: namedParagraph })
+    renderTab()
+
+    // 列表副信息显示「来自 摸鱼群」，不再裸露 chat_summary:<session_id>
+    expect(await screen.findByText('来自 摸鱼群')).toBeInTheDocument()
+    expect(screen.queryByText('chat_summary:session-01')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /小明喜欢咖啡/ }))
+    // 详情里保留可读名称，原始标记降级为等宽次要信息，便于核对
+    expect(await screen.findByText(/^来源：摸鱼群/)).toBeInTheDocument()
+    expect(screen.getByText('chat_summary:session-01')).toBeInTheDocument()
+  })
+
+  it('没有可读来源时不展示来源行', async () => {
+    searchMock.mockResolvedValue({
+      success: true,
+      query: '',
+      types: ['paragraph'],
+      include_inactive: false,
+      limit: 80,
+      count: 1,
+      counts: { paragraph: 1 },
+      items: [{ ...paragraph, source: 'chat_summary:session-01', source_label: '' }],
+    })
+    renderTab()
+
+    expect(await screen.findByText('小明喜欢咖啡')).toBeInTheDocument()
+    expect(screen.queryByText('来自 chat_summary:session-01')).not.toBeInTheDocument()
   })
 
   it('把删除动作交给页面现有删除流程', async () => {
     const user = userEvent.setup()
     const onAction = renderTab()
 
-    await screen.findByText('关联实体')
+    await user.click(await screen.findByRole('button', { name: /小明喜欢咖啡/ }))
+    await screen.findByText('关联内容')
     await user.click(screen.getByRole('button', { name: '删除' }))
 
     await waitFor(() => {
@@ -148,6 +196,7 @@ describe('MemoryRecordsTab', () => {
   })
 
   it('展示事实状态变更和图投影失败原因', async () => {
+    const user = userEvent.setup()
     contextMock.mockResolvedValue({
       ...context,
       fact_transitions: [
@@ -176,7 +225,9 @@ describe('MemoryRecordsTab', () => {
 
     renderTab()
 
-    expect(await screen.findByText('状态变更')).toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: /小明喜欢咖啡/ }))
+    await screen.findByText('关联内容')
+    await user.click(screen.getByRole('tab', { name: /变更/ }))
     expect(screen.getByText('撤回')).toBeInTheDocument()
     expect(screen.getByText('本人确认该信息已经失效')).toBeInTheDocument()
     expect(screen.getByText('图投影状态')).toBeInTheDocument()
@@ -230,11 +281,15 @@ describe('MemoryRecordsTab', () => {
     })
 
     await i18n.changeLanguage('en')
+    const user = userEvent.setup()
     renderTab()
 
+    await user.click(await screen.findByRole('button', { name: /小明 偏好 浅色主题/ }))
     expect(await screen.findAllByText('Inactive')).not.toHaveLength(0)
-    expect(await screen.findByText('事实证据')).toBeInTheDocument()
+    expect(await screen.findByText('事实账本')).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: /事实/ }))
     expect(screen.getByText('Retracted')).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: /证据/ }))
     expect(screen.getByText('Paragraph')).toBeInTheDocument()
     expect(screen.getByText('Support')).toBeInTheDocument()
 
@@ -243,29 +298,6 @@ describe('MemoryRecordsTab', () => {
       expect(screen.getAllByText('已停用')).not.toHaveLength(0)
       expect(screen.getByText('已撤回')).toBeInTheDocument()
       expect(screen.getByText('支持')).toBeInTheDocument()
-    })
-  })
-
-  it('新增结构化事实并刷新数据库记录', async () => {
-    const user = userEvent.setup()
-    renderTab()
-
-    await user.click(await screen.findByRole('button', { name: '新增事实' }))
-    await user.type(screen.getByLabelText('归属 ID'), 'person-1')
-    await user.type(screen.getByLabelText('事实键'), 'favorite_drink')
-    await user.type(screen.getByLabelText('事实内容'), '咖啡')
-    await user.click(screen.getByRole('button', { name: '保存事实' }))
-
-    await waitFor(() => {
-      expect(createFactMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          scope_type: 'person',
-          scope_id: 'person-1',
-          fact_key: 'favorite_drink',
-          value_text: '咖啡',
-          profile_section: 'stable_facts',
-        })
-      )
     })
   })
 
@@ -310,6 +342,11 @@ describe('MemoryRecordsTab', () => {
     })
 
     renderTab()
+    // 详情动作位于弹窗内：先点开记录，编辑保存后弹窗随刷新关闭，再重开继续撤回/恢复
+    const openDetail = async () => {
+      await user.click(await screen.findByRole('button', { name: /饮品偏好: 咖啡/ }))
+    }
+    await openDetail()
     await user.click(await screen.findByRole('button', { name: '编辑' }))
     const valueInput = screen.getByLabelText('事实内容')
     await user.clear(valueInput)
@@ -322,6 +359,7 @@ describe('MemoryRecordsTab', () => {
       )
     })
 
+    await openDetail()
     await user.click(await screen.findByRole('button', { name: '撤回' }))
     expect(confirmSpy).toHaveBeenCalledWith('确认撤回事实“饮品偏好: 咖啡”？')
     await waitFor(() => {
@@ -344,6 +382,7 @@ describe('MemoryRecordsTab', () => {
       items: [{ ...fact, status: 'retracted' }],
     })
     await user.click(screen.getByRole('button', { name: '刷新查询' }))
+    await openDetail()
     await waitFor(() => expect(screen.getByRole('button', { name: '恢复' })).toBeInTheDocument())
     await user.click(screen.getByRole('button', { name: '恢复' }))
     await waitFor(() => {
@@ -416,7 +455,7 @@ describe('MemoryRecordsTab 未覆盖交互', () => {
   it('相同查询会 refetch，新查询、类型和停用会重搜并展示空结果', async () => {
     const user = userEvent.setup()
     renderTab()
-    await screen.findByText('关联实体')
+    await screen.findByText('小明喜欢咖啡')
 
     const initialCalls = searchMock.mock.calls.length
     await user.click(screen.getByRole('button', { name: /^查询$/ }))
@@ -432,7 +471,6 @@ describe('MemoryRecordsTab 未覆盖交互', () => {
     await user.click(screen.getByRole('button', { name: /^查询$/ }))
 
     expect(await screen.findByText('没有匹配记录')).toBeInTheDocument()
-    expect(screen.getByText('请选择一条记录')).toBeInTheDocument()
     await waitFor(() => {
       expect(searchMock).toHaveBeenCalledWith(
         expect.objectContaining({ query: '咖啡', includeInactive: false })
@@ -529,57 +567,22 @@ describe('MemoryRecordsTab 未覆盖交互', () => {
   })
 
   it('详情失败时保留选中记录并展示错误，加载中展示派生状态', async () => {
+    const user = userEvent.setup()
     const pending = deferred<MemoryRecordContextPayload>()
     contextMock.mockImplementation(() => pending.promise)
     renderTab()
+    await user.click(await screen.findByRole('button', { name: /小明喜欢咖啡/ }))
     expect(await screen.findByText('正在派生关联内容')).toBeInTheDocument()
     pending.resolve(context)
-    expect(await screen.findByText('关联实体')).toBeInTheDocument()
+    expect(await screen.findByText('关联内容')).toBeInTheDocument()
 
     cleanup()
     contextMock.mockRejectedValue(new Error('详情不可用'))
     renderTab()
+    await user.click(await screen.findByRole('button', { name: /小明喜欢咖啡/ }))
     expect(await screen.findByText('详情不可用')).toBeInTheDocument()
-    expect(screen.getByText('paragraph-01')).toBeInTheDocument()
-  })
-
-  it('取消事实编辑器，保存失败走错误文案，修订成功不排队刷新', async () => {
-    const user = userEvent.setup()
-    renderTab()
-    await user.click(await screen.findByRole('button', { name: '新增事实' }))
-    expect(screen.getByText('新增结构化事实')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '取消' }))
-    await waitFor(() => {
-      expect(screen.queryByText('新增结构化事实')).not.toBeInTheDocument()
-    })
-
-    await user.click(screen.getByRole('button', { name: '新增事实' }))
-    await user.type(screen.getByLabelText('归属 ID'), 'person-1')
-    await user.type(screen.getByLabelText('事实键'), 'favorite_drink')
-    await user.type(screen.getByLabelText('事实内容'), '咖啡')
-
-    createFactMock.mockResolvedValueOnce({ success: false, error: '范围无效' })
-    await user.click(screen.getByRole('button', { name: '保存事实' }))
-    await waitFor(() => expect(createFactMock).toHaveBeenCalled())
-    expect(screen.getByText('新增结构化事实')).toBeInTheDocument()
-
-    createFactMock.mockResolvedValueOnce({ success: false })
-    await user.click(screen.getByRole('button', { name: '保存事实' }))
-    await waitFor(() => expect(createFactMock).toHaveBeenCalledTimes(2))
-
-    createFactMock.mockRejectedValueOnce('网络中断')
-    await user.click(screen.getByRole('button', { name: '保存事实' }))
-    await waitFor(() => expect(createFactMock).toHaveBeenCalledTimes(3))
-
-    createFactMock.mockResolvedValueOnce({
-      success: true,
-      claim: { claim_id: 'fact-new' },
-      replaced: true,
-    })
-    await user.click(screen.getByRole('button', { name: '保存事实' }))
-    await waitFor(() => {
-      expect(screen.queryByText('新增结构化事实')).not.toBeInTheDocument()
-    })
+    expect(screen.getByText('详情加载失败')).toBeInTheDocument()
+    expect(screen.getAllByText('小明喜欢咖啡').length).toBeGreaterThan(0)
   })
 
   it('取消撤回不调接口，进行中禁用按钮，失败与非 Error 都能走完', async () => {
@@ -606,6 +609,7 @@ describe('MemoryRecordsTab 未覆盖交互', () => {
     confirmSpy.mockReturnValue(true)
     renderTab()
 
+    await user.click(await screen.findByRole('button', { name: /饮品偏好: 咖啡/ }))
     await user.click(await screen.findByRole('button', { name: '撤回' }))
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '撤回' })).toBeDisabled()
@@ -653,6 +657,7 @@ describe('MemoryRecordsTab 未覆盖交互', () => {
       })
 
     renderTab()
+    await user.click(await screen.findByRole('button', { name: /饮品偏好: 咖啡/ }))
     await user.click(await screen.findByRole('button', { name: '恢复' }))
     await waitFor(() => expect(restoreFactMock).toHaveBeenCalledTimes(1))
     await user.click(screen.getByRole('button', { name: '恢复' }))
@@ -671,13 +676,22 @@ describe('MemoryRecordsTab 未覆盖交互', () => {
       available_actions: ['graph', 'correct', 'reinforce', 'freeze', 'protect', 'mystery_action'],
     })
     const onAction = renderTab()
-    await screen.findByText('关联实体')
+    // 除 mystery_action 外的动都会关闭详情弹窗，每步重新点开记录
+    const openDetail = async () => {
+      await user.click(await screen.findByRole('button', { name: /小明喜欢咖啡/ }))
+      await screen.findByText('关联内容')
+    }
+    await openDetail()
 
     await user.click(screen.getByRole('button', { name: 'mystery_action' }))
     await user.click(screen.getByRole('button', { name: '图谱' }))
+    await openDetail()
     await user.click(screen.getByRole('button', { name: '修正' }))
+    await openDetail()
     await user.click(screen.getByRole('button', { name: '强化' }))
+    await openDetail()
     await user.click(screen.getByRole('button', { name: '冻结' }))
+    await openDetail()
     await user.click(screen.getByRole('button', { name: '保护' }))
 
     expect(onAction).toHaveBeenCalledWith('mystery_action', paragraph, expect.anything(), undefined)
@@ -751,28 +765,36 @@ describe('MemoryRecordsTab 未覆盖交互', () => {
       ],
     })
     const onAction = renderTab()
-
+    await user.click(await screen.findByRole('button', { name: /小明喜欢咖啡/ }))
     expect(await screen.findAllByText('仅有创建时间')).not.toHaveLength(0)
     expect(screen.getByText('有冲突')).toBeInTheDocument()
+    // 图投影是告警区块，始终直接展示
     expect(screen.getAllByText('目标：停用').length).toBeGreaterThan(0)
     expect(screen.getByText('处理中')).toBeInTheDocument()
     expect(screen.getByText('待处理')).toBeInTheDocument()
     expect(screen.getByText('有 2 条关系图投影任务未完成')).toBeInTheDocument()
-    expect(screen.getByText('关联段落')).toBeInTheDocument()
-    expect(screen.getByText('关联关系')).toBeInTheDocument()
-    expect(screen.getByText('关联事实')).toBeInTheDocument()
-    expect(screen.getByText('关联情景')).toBeInTheDocument()
-    expect(screen.getByText('关联画像')).toBeInTheDocument()
-    expect(screen.getByText('周末咖啡局')).toBeInTheDocument()
-    expect(screen.getByText('episode-untitled')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: /段落/ }))
+    expect(screen.getByText('关联段落甲')).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: /关系/ }))
+    expect(screen.getByText('关联关系甲')).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: /事实/ }))
+    expect(screen.getByText('关联事实甲')).toBeInTheDocument()
+
+    // 事实账本：证据与变更分页签展示
+    await user.click(screen.getByRole('tab', { name: /证据/ }))
     expect(screen.getAllByText('未知').length).toBeGreaterThan(0)
     expect(screen.getByText('反证')).toBeInTheDocument()
     expect(screen.getAllByText('人工').length).toBeGreaterThan(0)
+    await user.click(screen.getByRole('tab', { name: /变更/ }))
     expect(screen.getByText('mystery')).toBeInTheDocument()
     expect(screen.getByText('无法解析的时间戳')).toBeInTheDocument()
     expect(screen.getByText('only-id')).toBeInTheDocument()
     expect(screen.getByText('无证据')).toBeInTheDocument()
 
+    await user.click(screen.getByRole('tab', { name: /情景/ }))
+    expect(screen.getByText('周末咖啡局')).toBeInTheDocument()
+    expect(screen.getByText('episode-untitled')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /周末咖啡局/ }))
     expect(onAction).toHaveBeenCalledWith(
       'episode',
@@ -780,6 +802,9 @@ describe('MemoryRecordsTab 未覆盖交互', () => {
       expect.anything(),
       'episode-named'
     )
+    // 跳转类动作会关闭详情弹窗，重新打开后继续
+    await user.click(await screen.findByRole('button', { name: /小明喜欢咖啡/ }))
+    await user.click(screen.getByRole('tab', { name: /情景/ }))
     await user.click(screen.getByRole('button', { name: /episode-untitled/ }))
     expect(onAction).toHaveBeenCalledWith(
       'episode',
@@ -787,6 +812,8 @@ describe('MemoryRecordsTab 未覆盖交互', () => {
       expect.anything(),
       'episode-untitled'
     )
+    await user.click(await screen.findByRole('button', { name: /小明喜欢咖啡/ }))
+    await user.click(screen.getByRole('tab', { name: /画像/ }))
     await user.click(screen.getByRole('button', { name: /person-88/ }))
     expect(onAction).toHaveBeenCalledWith(
       'profile',

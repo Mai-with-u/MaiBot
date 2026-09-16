@@ -3,10 +3,12 @@
  *
  * 收编删除相关的服务端状态与交互：
  * - 来源列表（sources）与删除操作列表（operations）走 useQuery，仅在删除面板激活时拉取（enabled: active）；
+ * - 来源列表按后端解析出的 source_kind 分类筛选（sourceKindFilter），深链接带入的来源串仍作为附加关键字限定；
  * - 操作列表搜索/筛选/分页、操作详情、源选择仍以本地 state + 命令式/effect 维持
  *   （这些不是标准 {items,total} 服务端分页，保留原命令式分页态，以最小行为变化为准）；
  * - 删除预览-执行用 usePendingOperation：openSourceDeletePreview 暂存待删请求并打开对话框，
- *   随后拉预览（setDeletePreview）；对话框 onExecute → confirm → onConfirm 执行 executeMemoryDelete；
+ *   随后拉预览（setDeletePreview）；删除原因在对话框内填写，onExecute(reason) → confirm(transform)
+ *   → onConfirm 执行 executeMemoryDelete；
  * - 删除/恢复成功后刷新来源与操作列表。
  *
  * 读失败原由 loadDeletePanel 弹 toast；迁移后查询读失败按 query.ts 约定不弹全局 toast，由 deleteErrorText
@@ -35,8 +37,14 @@ import {
   DELETE_OPERATION_FETCH_LIMIT,
   DELETE_OPERATION_ITEM_PAGE_SIZE,
   DELETE_OPERATION_PAGE_SIZE,
+  MEMORY_SOURCE_KIND_FILTER_ALL,
+  MEMORY_SOURCE_KIND_FILTER_KINDS,
+  MEMORY_SOURCE_KIND_FILTER_OTHER,
 } from '../constants'
-import type { DeleteOperationItem } from '../utils'
+import { getDeleteOperationStatusGroup, getMemorySourceKindLabel, type DeleteOperationItem } from '../utils'
+
+/** 有独立筛选标签页的来源类别；其余类别与无法识别的来源统一归入「其他」 */
+const NAMED_SOURCE_KINDS = new Set<string>(MEMORY_SOURCE_KIND_FILTER_KINDS)
 
 export interface UseMemoryDeleteOptions {
   /** 删除面板是否激活；非激活时不拉取来源/操作列表，不加载操作详情 */
@@ -52,6 +60,10 @@ export interface UseMemoryDeleteOptions {
 }
 
 export interface UseMemoryDeleteResult {
+  /** 来源类别筛选：MEMORY_SOURCE_KIND_FILTER_ALL 表示不过滤类别 */
+  sourceKindFilter: string
+  setSourceKindFilter: React.Dispatch<React.SetStateAction<string>>
+  /** 深链接带入的来源关键字限定；为空表示不额外限定 */
   sourceSearch: string
   setSourceSearch: React.Dispatch<React.SetStateAction<string>>
   selectedSources: string[]
@@ -61,10 +73,13 @@ export interface UseMemoryDeleteResult {
     request: MemoryDeleteRequestPayload,
     options?: { title?: string; description?: string }
   ) => Promise<void>
+  /** 预览来源批量删除（删除原因改在预览对话框内填写） */
   openSourceDeletePreview: () => Promise<void>
   toggleSourceSelection: (source: string, checked: boolean) => void
   /** 仅刷新来源列表（供纠错回退等外部写操作后同步） */
   refreshSources: () => Promise<void>
+  /** 来源 → 聊天流展示名；操作记录里的裸来源用它还原可读名称 */
+  sourceNameBySource: Record<string, string>
 
   operationSearch: string
   setOperationSearch: React.Dispatch<React.SetStateAction<string>>
@@ -105,7 +120,8 @@ export interface UseMemoryDeleteResult {
   deletePreviewLoading: boolean
   deleteExecuting: boolean
   deleteResult: MemoryDeleteExecutePayload | null
-  executePendingDelete: () => Promise<void>
+  /** 执行待定删除；reason 来自预览对话框填写，为空时按默认原因提交 */
+  executePendingDelete: (reason?: string) => Promise<void>
 
   /** 删除数据读取错误文案（查询失败时局部呈现） */
   deleteErrorText: string
@@ -155,6 +171,7 @@ export function useMemoryDelete({
     await sourcesQuery.refetch()
   }, [sourcesQuery])
 
+  const [sourceKindFilter, setSourceKindFilter] = useState(MEMORY_SOURCE_KIND_FILTER_ALL)
   const [sourceSearch, setSourceSearch] = useState(initialSourceSearch)
   const [operationSearch, setOperationSearch] = useState(initialOperationSearch)
   const [operationModeFilter, setOperationModeFilter] = useState('all')
@@ -184,17 +201,44 @@ export function useMemoryDelete({
   const [deleteRestoring, setDeleteRestoring] = useState(false)
   const [deleteResult, setDeleteResult] = useState<MemoryDeleteExecutePayload | null>(null)
 
+  // 来源筛选：先按后端解析出的类别筛（删除页主控件），再按深链接带入的关键字限定
   const filteredSources = useMemo(() => {
     const keyword = sourceSearch.trim().toLowerCase()
-    if (!keyword) {
-      return memorySources
-    }
-    return memorySources.filter((item) =>
-      String(item.source ?? '')
-        .toLowerCase()
-        .includes(keyword)
-    )
-  }, [memorySources, sourceSearch])
+    return memorySources.filter((item) => {
+      const sourceKind = String(item.source_kind ?? '').trim()
+      if (sourceKindFilter === MEMORY_SOURCE_KIND_FILTER_OTHER) {
+        // 「其他」兜住没有独立标签页的类别与解析不出类别的来源，与具名类别互不重叠
+        if (sourceKind && NAMED_SOURCE_KINDS.has(sourceKind)) {
+          return false
+        }
+      } else if (
+        sourceKindFilter !== MEMORY_SOURCE_KIND_FILTER_ALL &&
+        sourceKind !== sourceKindFilter
+      ) {
+        return false
+      }
+      if (!keyword) {
+        return true
+      }
+      return [item.source, item.chat_name, getMemorySourceKindLabel(sourceKind)]
+        .map((value) => String(value ?? '').toLowerCase())
+        .some((value) => value.includes(keyword))
+    })
+  }, [memorySources, sourceKindFilter, sourceSearch])
+
+  // 来源 → 可读展示名（聊天流名称或人物姓名）：删除页与操作详情把裸 source 还原成真实名称
+  const sourceNameBySource = useMemo(() => {
+    const names: Record<string, string> = {}
+    memorySources.forEach((item) => {
+      const source = String(item.source ?? '').trim()
+      const readableName =
+        String(item.chat_name ?? '').trim() || String(item.person_name ?? '').trim()
+      if (source && readableName) {
+        names[source] = readableName
+      }
+    })
+    return names
+  }, [memorySources])
 
   const filteredDeleteOperations = useMemo(() => {
     const keyword = operationSearch.trim().toLowerCase()
@@ -207,7 +251,9 @@ export function useMemoryDelete({
       if (operationModeFilter !== 'all' && mode !== operationModeFilter) {
         return false
       }
-      if (operationStatusFilter !== 'all' && status !== operationStatusFilter) {
+      // 「已执行」筛选项要覆盖后端的 applied 分组（executed / completed / pending_cleanup）
+      const statusGroup = operationStatusFilter === 'executed' ? 'applied' : operationStatusFilter
+      if (operationStatusFilter !== 'all' && getDeleteOperationStatusGroup(status) !== statusGroup) {
         return false
       }
       if (!keyword) {
@@ -419,7 +465,6 @@ export function useMemoryDelete({
       {
         mode: 'source',
         selector: { sources: selectedSources },
-        reason: 'knowledge_base_source_delete',
         requested_by: 'knowledge_base',
       },
       {
@@ -429,9 +474,19 @@ export function useMemoryDelete({
     )
   }, [openDeletePreview, selectedSources, toast])
 
-  const executePendingDelete = useCallback(async () => {
-    await pendingOp.confirm()
-  }, [pendingOp])
+  /**
+   * 执行待定删除；reason 来自预览对话框填写，为空时按来源删除的默认原因提交，
+   * 便于历史记录里仍能按知识库来源删除筛选。
+   */
+  const executePendingDelete = useCallback(
+    async (reason: string = '') => {
+      await pendingOp.confirm((request) => ({
+        ...request,
+        reason: reason.trim() || request.reason || 'knowledge_base_source_delete',
+      }))
+    },
+    [pendingOp]
+  )
 
   const restoreDeleteOperation = useCallback(
     async (operationId: string) => {
@@ -554,6 +609,8 @@ export function useMemoryDelete({
   }, [selectedOperationItemPage, selectedOperationItemPageCount])
 
   return {
+    sourceKindFilter,
+    setSourceKindFilter,
     sourceSearch,
     setSourceSearch,
     selectedSources,
@@ -563,6 +620,7 @@ export function useMemoryDelete({
     openSourceDeletePreview,
     toggleSourceSelection,
     refreshSources,
+    sourceNameBySource,
     operationSearch,
     setOperationSearch,
     operationModeFilter,
