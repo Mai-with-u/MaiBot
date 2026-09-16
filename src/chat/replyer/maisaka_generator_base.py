@@ -644,6 +644,9 @@ class BaseMaisakaReplyGenerator:
         normalized_reply_style = reply_style.strip()
         if not normalized_reply_style:
             return ""
+        if normalized_reply_style not in style_messages:
+            logger.warning(f"reply 工具返回了未知的回复风格 {normalized_reply_style!r}，按默认「正常回复」处理")
+            return style_messages["正常回复"]
         return style_messages[normalized_reply_style]
 
     def _build_history_messages(

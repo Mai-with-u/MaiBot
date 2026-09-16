@@ -1258,6 +1258,7 @@ describe('PluginMarketplacePage 合并、兼容性边界与进度清理', () => 
         ...makeInstalledPlugin('runtime-a', '1.0.0'),
         manifest: { ...makeInstalledPlugin('runtime-a', '1.0.0').manifest, id: 'plugin-a' },
       },
+      // 本地安装记录的清单可能缺少 manifest_version / description / license，页面需补齐默认值
       {
         id: 'local-sparse',
         path: '/plugins/local-sparse',
@@ -1272,7 +1273,7 @@ describe('PluginMarketplacePage 合并、兼容性边界与进度清理', () => 
             repository: 'https://example.com/sparse.git',
           },
         },
-      } as InstalledPlugin,
+      } as unknown as InstalledPlugin,
     ])
 
     await renderPage()

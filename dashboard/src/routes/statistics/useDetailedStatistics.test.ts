@@ -1,7 +1,7 @@
 import { createElement, type ReactNode } from 'react'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor, type RenderHookResult } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { DetailedStatisticsData } from './types'
@@ -103,8 +103,11 @@ function createWrapper() {
 }
 
 async function renderStatisticsHook() {
+  // 动态导入用于绕过模块级统计缓存，因此 Hook 的返回值类型在此处就地推导
   const { useDetailedStatistics } = await import('./useDetailedStatistics')
-  let view!: ReturnType<typeof renderHook>
+  // renderHook 是泛型函数，ReturnType<typeof renderHook> 会把 Result 退化成 unknown，需要显式指定
+  type HookResult = ReturnType<typeof useDetailedStatistics>
+  let view!: RenderHookResult<HookResult, unknown>
   await act(async () => {
     view = renderHook(() => useDetailedStatistics(), { wrapper: createWrapper() })
     await Promise.resolve()

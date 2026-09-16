@@ -466,7 +466,8 @@ describe('schema helpers and remaining payload branches', () => {
       {
         item_type: 'FunctionCallItem',
         meta: { item_id: 'a', logical_turn_id: null, timestamp: '' },
-        tool_call: 'bad',
+        // 故意传入非对象 tool_call，覆盖 isRecord 守卫的拒绝分支
+        tool_call: 'bad' as unknown as Record<string, unknown>,
       },
       {
         item_type: 'FunctionCallItem',

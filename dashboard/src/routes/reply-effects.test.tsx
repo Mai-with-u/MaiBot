@@ -15,11 +15,8 @@ vi.mock('@/lib/http', () => ({ backendApi: { get: vi.fn(), post: vi.fn(), delete
 vi.mock('recharts', async (importOriginal) => {
   const React = await import('react')
   const actual = await importOriginal<typeof import('recharts')>()
-  type TooltipFormatter = (
-    value: number,
-    name: string,
-    item: { payload?: { label?: string; sample?: number } }
-  ) => unknown
+  // 直接复用 recharts 的 formatter 类型：桩组件若自行收窄参数，props 将无法传给真实 Tooltip
+  type TooltipFormatter = NonNullable<React.ComponentProps<typeof actual.Tooltip>['formatter']>
   return {
     ...actual,
     ResponsiveContainer: ({ children }: { children?: React.ReactNode }) => (
@@ -32,10 +29,11 @@ vi.mock('recharts', async (importOriginal) => {
           : children}
       </div>
     ),
+    // 按 recharts 的真实调用约定补全 index / payload，以便覆盖页面 formatter 的各个分支
     Tooltip: (props: { formatter?: TooltipFormatter }) => {
-      props.formatter?.(52, '评分', { payload: { label: 'model-a', sample: 1 } })
-      props.formatter?.(40, '评分', { payload: {} })
-      props.formatter?.(1, 'row', { payload: {} })
+      props.formatter?.(52, '评分', { payload: { label: 'model-a', sample: 1 } }, 0, [])
+      props.formatter?.(40, '评分', { payload: {} }, 1, [])
+      props.formatter?.(1, 'row', { payload: {} }, 2, [])
       return React.createElement(actual.Tooltip, props)
     },
   }

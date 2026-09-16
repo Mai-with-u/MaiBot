@@ -1,4 +1,4 @@
-import type { BackendModule, i18n as I18n, ReadCallback } from 'i18next'
+import type { BackendModule, CallbackError, i18n as I18n, ReadCallback } from 'i18next'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 /**
@@ -12,7 +12,8 @@ vi.mock('../locales/ko.json', async () => {
 let i18n: I18n
 let localeBackend: BackendModule
 
-function readLocale(language: string): Promise<{ err: Error | null | undefined; data: unknown }> {
+// i18next 的 callback 错误类型为 Error | string | null，这里原样透传，由用例自行断言形态
+function readLocale(language: string): Promise<{ err: CallbackError; data: unknown }> {
   return new Promise((resolve, reject) => {
     if (!localeBackend.read) {
       reject(new Error('locale backend 未暴露 read，无法直接覆盖不支持语言分支'))
@@ -67,7 +68,7 @@ describe('i18n locale backend', () => {
     const { err, data } = await readLocale('fr')
 
     expect(err).toBeInstanceOf(Error)
-    expect(err?.message).toBe('不支持的语言：fr')
+    expect((err as Error).message).toBe('不支持的语言：fr')
     expect(data).toBe(false)
   })
 
@@ -75,7 +76,7 @@ describe('i18n locale backend', () => {
     const { err, data } = await readLocale('de-DE')
 
     expect(err).toBeInstanceOf(Error)
-    expect(err?.message).toBe('不支持的语言：de-DE')
+    expect((err as Error).message).toBe('不支持的语言：de-DE')
     expect(data).toBe(false)
   })
 

@@ -1509,7 +1509,8 @@ describe('complexFieldHooks', () => {
       getChatStreamsMock.mockResolvedValue([
         createChatStream({ platform: '', target_id: '1' }),
         createChatStream({ id: 8, platform: 'qq', target_id: '', group_id: '', chat_type: 'group' }),
-        { ...groupChat, id: 3, chat_type: 'unknown' } as ChatStream,
+        // 模拟后端返回未知 chat_type 的历史数据，用于覆盖过滤分支
+        { ...groupChat, id: 3, chat_type: 'unknown' } as unknown as ChatStream,
         groupChat,
         { ...groupChat, id: 9, display_name: '旧版测试群' },
         privateChat,
