@@ -1404,6 +1404,10 @@ export interface MemoryEpisodeActionPayload extends Record<string, unknown> {
 export interface MemoryProfileItemPayload extends Record<string, unknown> {
   person_id: string
   person_name?: string
+  /** 平台侧用户昵称（来自 PersonInfo），用于检索与展示 */
+  user_nickname?: string
+  /** 群名片列表（来自 PersonInfo），用于检索与展示 */
+  group_cardname_list?: string[]
   profile_version?: number
   profile_text?: string
   updated_at?: number | null

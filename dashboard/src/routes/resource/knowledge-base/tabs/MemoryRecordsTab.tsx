@@ -554,30 +554,38 @@ export function MemoryRecordsTab({ onAction }: MemoryRecordsTabProps) {
         </Alert>
       ) : null}
 
-      <Card className="h-[660px] overflow-hidden">
-        <CardHeader className="border-b pb-3">
-          <div className="flex items-center justify-between gap-3">
-            <CardTitle className="text-sm">查询结果</CardTitle>
-            <div className="flex items-center gap-1.5">
-              {resultCounts.map(([type, count]) => (
-                <Badge key={type} variant="secondary">
-                  {RECORD_LABELS[type as MemoryRecordType]} {count}
-                </Badge>
-              ))}
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                title="刷新查询"
-                onClick={() => void refreshRecords()}
-                disabled={searchQuery.isFetching}
+      {/* 结果卡用弹性列布局：头部按内容取高，滚动区吃掉剩余高度，
+          避免头部与滚动区各写死高度后互相留空隙或溢出 */}
+      <Card className="flex h-[660px] flex-col overflow-hidden">
+        <CardHeader
+          data-memory-records-result-header="true"
+          className="border-b sm:flex-row sm:items-center sm:justify-between sm:space-y-0"
+        >
+          <CardTitle className="text-sm">查询结果</CardTitle>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {resultCounts.map(([type, count]) => (
+              <Badge
+                key={type}
+                variant="secondary"
+                className="px-2 py-0.5 text-[11px] leading-4 font-medium"
               >
-                <RefreshCw className={cn('h-4 w-4', searchQuery.isFetching && 'animate-spin')} />
-              </Button>
-            </div>
+                {RECORD_LABELS[type as MemoryRecordType]} {count}
+              </Badge>
+            ))}
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7"
+              title="刷新查询"
+              onClick={() => void refreshRecords()}
+              disabled={searchQuery.isFetching}
+            >
+              <RefreshCw className={cn('h-4 w-4', searchQuery.isFetching && 'animate-spin')} />
+            </Button>
           </div>
         </CardHeader>
-        <ScrollArea className="h-[598px]">
+        <ScrollArea className="min-h-0 flex-1">
           <CardContent className="space-y-1 pt-3">
             {searchQuery.isLoading ? (
               <div className="text-muted-foreground flex h-40 items-center justify-center gap-2 text-sm">

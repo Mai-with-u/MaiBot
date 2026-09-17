@@ -20,6 +20,7 @@ from src.A_memorix.core.image.component_paths import iter_message_image_componen
 from src.A_memorix.runtime_registry import get_runtime_kernel
 from src.chat.message_receive.message import SessionMessage
 from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
+from src.common.data_models.person_info_data_model import parse_group_cardname_json
 from src.common.database.database import get_db_session
 from src.common.database.database_model import ChatSession, Messages, PersonInfo
 from src.person_info.person_info import resolve_person_id_for_memory
@@ -2994,17 +2995,49 @@ async def _profile_query(
     )
 
 
+def _get_person_identities(person_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """批量读取人物的可读身份字段：姓名、平台昵称与群名片。
+
+    画像快照只存不透明的 person_id（哈希），可读身份都在 PersonInfo 上。
+    这里一次性取回，避免逐条查库的 N+1；人物画像检索正是靠这些字段才能按
+    「群名片 / 昵称」这类用户实际会输入的内容命中。
+
+    Returns:
+        dict[str, dict[str, Any]]: person_id -> {person_name, user_nickname, group_cardname_list}；
+        查库失败时返回空字典（身份字段只用于展示与检索补充，缺失不应影响画像主体数据）。
+    """
+    clean_ids = [str(person_id or "").strip() for person_id in person_ids]
+    clean_ids = list(dict.fromkeys(person_id for person_id in clean_ids if person_id))
+    if not clean_ids:
+        return {}
+
+    identities: dict[str, dict[str, Any]] = {}
+    try:
+        with get_db_session(auto_commit=False) as session:
+            statement = select(
+                PersonInfo.person_id,
+                PersonInfo.person_name,
+                PersonInfo.user_nickname,
+                PersonInfo.group_cardname,
+            ).where(col(PersonInfo.person_id).in_(clean_ids))
+            for person_id, person_name, user_nickname, group_cardname in session.exec(statement):
+                # 群名片以 JSON 列表存储，复用统一解析器保证与写入侧一致
+                cardnames = parse_group_cardname_json(group_cardname) or []
+                identities[str(person_id or "").strip()] = {
+                    "person_name": str(person_name or "").strip(),
+                    "user_nickname": str(user_nickname or "").strip(),
+                    "group_cardname_list": [item.group_cardname for item in cardnames],
+                }
+    except Exception:
+        return {}
+    return identities
+
+
 def _get_person_name_for_person_id(person_id: str) -> str:
     clean_person_id = str(person_id or "").strip()
     if not clean_person_id:
         return ""
-    try:
-        with get_db_session(auto_commit=False) as session:
-            statement = select(PersonInfo.person_name).where(col(PersonInfo.person_id) == clean_person_id).limit(1)
-            person_name = session.exec(statement).first()
-            return str(person_name or "").strip()
-    except Exception:
-        return ""
+    return _get_person_identities([clean_person_id]).get(clean_person_id, {}).get("person_name", "")
 
 
 def _enrich_episode_person_name(item: dict) -> dict:
@@ -3032,6 +3065,14 @@ async def _profile_list(limit: int) -> dict:
     if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
         return payload
 
+    # 一次性取回本页所有人物身份，避免逐条查库；身份字段同时用于展示与关键词命中
+    profile_person_ids = [
+        str(item.get("person_id", "") or "").strip()
+        for item in payload["items"]
+        if isinstance(item, dict)
+    ]
+    identities = _get_person_identities(profile_person_ids)
+
     items = []
     for item in payload["items"]:
         if not isinstance(item, dict):
@@ -3039,7 +3080,10 @@ async def _profile_list(limit: int) -> dict:
             continue
         enriched = dict(item)
         person_id = str(enriched.get("person_id", "") or "").strip()
-        enriched["person_name"] = _get_person_name_for_person_id(person_id)
+        identity = identities.get(person_id, {})
+        enriched["person_name"] = identity.get("person_name", "")
+        enriched["user_nickname"] = identity.get("user_nickname", "")
+        enriched["group_cardname_list"] = identity.get("group_cardname_list", [])
         items.append(enriched)
 
     payload = dict(payload)
@@ -3082,10 +3126,18 @@ async def _profile_search(
         elif isinstance(override, str):
             override_text = override
 
+        # 群名片是用户最常用来指代某人的说法，必须参与命中
+        group_cardnames = item.get("group_cardname_list")
+        cardname_text = "\n".join(
+            str(name or "") for name in (group_cardnames if isinstance(group_cardnames, list) else [])
+        )
+
         haystack = "\n".join(
             [
                 str(item.get("person_id", "") or ""),
                 str(item.get("person_name", "") or ""),
+                str(item.get("user_nickname", "") or ""),
+                cardname_text,
                 str(item.get("profile_text", "") or ""),
                 str(item.get("source_note", "") or ""),
                 override_text,

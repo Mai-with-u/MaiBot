@@ -2533,9 +2533,24 @@ describe('KnowledgeBasePage import workflow', () => {
       renderPage()
       await waitForConsoleReady()
 
+      // 默认就停在记忆查询：先切走再切回，才能触发一次真实的标签切换
+      await user.click(screen.getByRole('tab', { name: '导入导出' }))
+      expect(window.location.search).toContain('tab=import')
+
       await user.click(screen.getByRole('tab', { name: '记忆查询' }))
       expect(screen.getByRole('tab', { name: '记忆查询' })).toHaveAttribute('data-state', 'active')
       expect(window.location.search).toContain('tab=records')
+      expect(await screen.findByText('查询结果')).toBeInTheDocument()
+
+      // 记忆查询内部再切到人物画像切面：URL 用 view 参数与检修的 mode 区分
+      await user.click(screen.getByRole('tab', { name: '人物画像' }))
+      expect(screen.getByRole('tab', { name: '人物画像' })).toHaveAttribute('data-state', 'active')
+      expect(window.location.search).toContain('tab=records')
+      expect(window.location.search).toContain('view=profiles')
+      expect(await screen.findByText('人物画像查询')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('tab', { name: '文字记录' }))
+      expect(window.location.search).toContain('view=records')
       expect(await screen.findByText('查询结果')).toBeInTheDocument()
 
       await user.click(screen.getByRole('tab', { name: '导入导出' }))
@@ -2560,6 +2575,11 @@ describe('KnowledgeBasePage import workflow', () => {
       await user.click(screen.getByRole('tab', { name: '状态维护' }))
       expect(window.location.search).toContain('mode=maintenance')
       expect(await screen.findByText('记忆维护操作')).toBeInTheDocument()
+
+      // 画像维护现在是检修的第五个子模式
+      await user.click(screen.getByRole('tab', { name: '画像维护' }))
+      expect(window.location.search).toContain('mode=profiles')
+      expect(await screen.findByText('别名维护')).toBeInTheDocument()
     }, 20_000)
 
     it('reads deep links for records feedback import and legacy tuning', async () => {
@@ -2604,6 +2624,27 @@ describe('KnowledgeBasePage import workflow', () => {
       expect(screen.getByRole('tab', { name: '状态维护' })).toHaveAttribute('data-state', 'active')
       expect(await screen.findByLabelText('维护目标')).toHaveValue('rel-1')
       maintenanceView.unmount()
+
+      // 人物画像已并入记忆查询：旧链接 tab=profiles 落到人物画像切面，并保留 person_id
+      window.history.replaceState(
+        null,
+        '',
+        '/resource/knowledge-base?tab=profiles&person_id=person-legacy-1',
+      )
+      const legacyProfilesView = renderPage()
+      // 定位人物会直接展开画像详情弹窗；弹窗是模态的会隐藏外层标签，
+      // 因此这一步用弹窗作为「页面已就绪」的判据，而不是等标签出现
+      expect(await screen.findByRole('dialog', { name: '画像详情' })).toBeInTheDocument()
+      legacyProfilesView.unmount()
+
+      // 检修子模式同样支持显式 mode=profiles 深链
+      window.history.replaceState(null, '', '/resource/knowledge-base?tab=inspection&mode=profiles')
+      const profilesMaintenanceView = renderPage()
+      await waitForConsoleReady()
+      expect(screen.getByRole('tab', { name: '记忆检修' })).toHaveAttribute('data-state', 'active')
+      expect(screen.getByRole('tab', { name: '画像维护' })).toHaveAttribute('data-state', 'active')
+      expect(await screen.findByText('别名维护')).toBeInTheDocument()
+      profilesMaintenanceView.unmount()
 
       window.history.replaceState(
         null,
@@ -2896,8 +2937,9 @@ describe('KnowledgeBasePage import workflow', () => {
       await user.click(screen.getByRole('tab', { name: '审计时间线' }))
       await screen.findByText('事件列表')
       const callsAfterFirstVisit = vi.mocked(memoryApi.getMemoryImportChatTargets).mock.calls.length
-      // 图谱已不在标签栏，用另一个标签往返验证已访问面板不会重复加载聊天流
-      await user.click(screen.getByRole('tab', { name: '人物画像' }))
+      // 图谱已不在标签栏，用另一个顶层标签往返验证已访问面板不会重复加载聊天流。
+      // 中间标签必须自身不拉取聊天流：导入导出与内容修正都会调 getMemoryImportChatTargets
+      await user.click(screen.getByRole('tab', { name: '纠错历史' }))
       await user.click(screen.getByRole('tab', { name: '审计时间线' }))
       expect(await screen.findByText('事件列表')).toBeInTheDocument()
       expect(vi.mocked(memoryApi.getMemoryImportChatTargets).mock.calls.length).toBe(callsAfterFirstVisit)
@@ -2914,6 +2956,11 @@ describe('KnowledgeBasePage import workflow', () => {
       const user = userEvent.setup()
       renderPage()
       await waitForConsoleReady()
+      // 图谱已从标签栏移到右上角「更多操作」菜单，需先经菜单进入图谱
+      await user.click(screen.getByRole('button', { name: '更多操作' }))
+      await user.click(await screen.findByRole('menuitem', { name: '打开图谱' }))
+      expect(window.location.search).toContain('tab=graph')
+      // 空图谱给出回控制台的入口，点击后落到导入导出
       await user.click(await screen.findByRole('button', { name: '前往长期记忆控制台' }))
       expect(screen.getByRole('tab', { name: '导入导出' })).toHaveAttribute('data-state', 'active')
       expect(window.location.search).toContain('tab=import')
@@ -3005,11 +3052,16 @@ describe('KnowledgeBasePage import workflow', () => {
       await openDetail()
       await user.click(screen.getByRole('tab', { name: /画像/ }))
       await user.click(await screen.findByText('person-action-1'))
-      expect(window.location.search).toContain('tab=profiles')
+      // 人物画像已并入记忆查询：落到 tab=records 的人物画像切面
+      expect(window.location.search).toContain('tab=records')
+      expect(window.location.search).toContain('view=profiles')
       expect(window.location.search).toContain('person_id=person-action-1')
-      expect(await screen.findByText('人物画像查询')).toBeInTheDocument()
+      // 跳到画像会直接展开详情弹窗；先关掉它再继续操作标签
+      expect(await screen.findByRole('dialog', { name: '画像详情' })).toBeInTheDocument()
+      await user.keyboard('{Escape}')
 
-      await user.click(screen.getByRole('tab', { name: '记忆查询' }))
+      // 人物画像切面下要靠内部子标签切回文字记录（外层「记忆查询」此时已是激活态）
+      await user.click(screen.getByRole('tab', { name: '文字记录' }))
       await openDetail()
       await user.click(screen.getByRole('button', { name: '图谱' }))
       expect(window.location.search).toContain('tab=graph')
@@ -3175,9 +3227,12 @@ describe('KnowledgeBasePage import workflow', () => {
       expect(await screen.findByText('跳到画像')).toBeInTheDocument()
 
       await clickTimelineJump(user, '跳到画像')
-      expect(window.location.search).toContain('tab=profiles')
+      expect(window.location.search).toContain('tab=records')
+      expect(window.location.search).toContain('view=profiles')
       expect(window.location.search).toContain('person_id=person-jump-1')
-      expect(await screen.findByText('人物画像查询')).toBeInTheDocument()
+      // 跳到画像会直接展开详情弹窗；先关掉它再继续跳其他目标
+      expect(await screen.findByRole('dialog', { name: '画像详情' })).toBeInTheDocument()
+      await user.keyboard('{Escape}')
 
       await user.click(screen.getByRole('tab', { name: '审计时间线' }))
       await clickTimelineJump(user, '跳到反馈')
