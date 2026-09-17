@@ -24,11 +24,11 @@ async def test_writeback_jobs_show_real_chat_names_and_retry(monkeypatch, tmp_pa
     monkeypatch.setattr(routes, "_find_real_chat_session", lambda key: object() if key == "real" else None)
     monkeypatch.setattr(routes, "_get_chat_name", lambda *args: "测试读书会")
 
-    payload = await routes.list_image_writeback_jobs(limit=25, offset=0, status="failed")
+    payload = routes.list_image_writeback_jobs(limit=25, offset=0, status="failed")
     assert payload["total"] == 1
     assert payload["items"][0]["chat_name"] == "测试读书会"
     assert payload["items"][0]["last_error"] == "原图缓存已缺失"
-    assert await routes.retry_image_writeback_jobs() == {"success": True, "count": 1}
+    assert routes.retry_image_writeback_jobs() == {"success": True, "count": 1}
     assert service.list_jobs("failed")["total"] == 0
     assert service.list_jobs("pending")["total"] == 1
     assert service._worker_task is None

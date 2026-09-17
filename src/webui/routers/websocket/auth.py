@@ -73,7 +73,7 @@ def verify_ws_token(temp_token: str) -> bool:
 
 
 @router.get("/ws-token")
-async def get_ws_token(
+def get_ws_token(
     maibot_session: Optional[str] = Cookie(None),
 ):
     """

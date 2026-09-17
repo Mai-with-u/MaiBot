@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import quote
 
+import os
 import re
 
 from src.chat.message_receive.chat_manager import chat_manager
@@ -45,14 +46,18 @@ def build_preview_chat_dir_name(chat_id: str) -> str:
 
 
 def build_display_path(file_path: Path) -> str:
-    """构造用于展示的路径，项目内文件优先显示相对路径。"""
-    resolved_path = file_path.resolve()
+    """构造用于展示的路径，项目内文件优先显示相对路径。
+
+    这里只做路径字符串规范化，不做 realpath：Windows 上的 realpath 需要访问
+    文件系统，而预览相关路径本身已是绝对路径，解析符号链接对展示没有意义。
+    """
+    absolute_path = Path(os.path.abspath(file_path))
     try:
-        return resolved_path.relative_to(REPO_ROOT).as_posix()
+        return absolute_path.relative_to(REPO_ROOT).as_posix()
     except ValueError:
-        return resolved_path.as_posix()
+        return absolute_path.as_posix()
 
 
 def build_file_uri(file_path: Path) -> str:
-    normalized = file_path.resolve().as_posix()
+    normalized = Path(os.path.abspath(file_path)).as_posix()
     return f"file:///{quote(normalized, safe='/:')}"

@@ -1489,7 +1489,7 @@ async def restart_maibot():
 
 
 @router.get("/status", response_model=StatusResponse)
-async def get_maibot_status():
+def get_maibot_status():
     """
     获取麦麦运行状态
 
@@ -1538,7 +1538,7 @@ async def get_update_notice(force: bool = False) -> UpdateNoticeResponse:
 
 
 @router.post("/update-notice/ack", response_model=UpdateNoticeAckResponse)
-async def ack_update_notice() -> UpdateNoticeAckResponse:
+def ack_update_notice() -> UpdateNoticeAckResponse:
     """确认当前版本的 WebUI 更新公告已展示。"""
 
     try:
@@ -1550,7 +1550,7 @@ async def ack_update_notice() -> UpdateNoticeAckResponse:
 
 
 @router.get("/update-history", response_model=UpdateHistoryResponse)
-async def get_update_history(
+def get_update_history(
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=10)] = 3,
     before_version: str | None = None,
@@ -1682,7 +1682,7 @@ async def list_local_cache_images(
 
 
 @router.get("/local-cache/images/preview", response_model=None)
-async def preview_local_cache_image(
+def preview_local_cache_image(
     target: Annotated[CacheImageTarget, Query(description="缓存类型：images 或 emoji")],
     relative_path: Annotated[str, Query(description="相对于缓存目录的图片路径")],
 ) -> FileResponse:
@@ -1693,7 +1693,7 @@ async def preview_local_cache_image(
 
 
 @router.get("/maisaka-monitor/media/{media_kind}/{media_hash}", response_model=None)
-async def get_maisaka_monitor_media(media_kind: MonitorMediaKind, media_hash: str) -> FileResponse:
+def get_maisaka_monitor_media(media_kind: MonitorMediaKind, media_hash: str) -> FileResponse:
     """返回 MaiSaka 观察面板消息中的原始图片或表情文件。"""
 
     file_path = _resolve_monitor_media_file(media_kind, media_hash)
@@ -1771,7 +1771,7 @@ async def cleanup_local_cache(request: LocalCacheCleanupRequest):
 
 
 @router.post("/reload-config")
-async def reload_config():
+def reload_config():
     """
     热重载配置（不重启进程）
 

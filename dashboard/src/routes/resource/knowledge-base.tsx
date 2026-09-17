@@ -932,39 +932,6 @@ export function KnowledgeBasePage() {
               刷新数据
             </Button>
           </div>
-          <div className="flex justify-end">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  aria-label="更多操作"
-                  title="更多操作"
-                >
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-44">
-                <DropdownMenuItem
-                  className="cursor-pointer gap-2"
-                  onSelect={() => setRuntimeStatusDialogOpen(true)}
-                >
-                  <Activity className="h-4 w-4" />
-                  查看记忆状态
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="cursor-pointer gap-2"
-                  onSelect={() => switchMemoryTab('graph')}
-                >
-                  <Database className="h-4 w-4" />
-                  打开图谱
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-
           <Dialog open={runtimeStatusDialogOpen} onOpenChange={setRuntimeStatusDialogOpen}>
             <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-4xl">
               <DialogHeader>
@@ -1181,57 +1148,91 @@ export function KnowledgeBasePage() {
             onValueChange={(value) => switchMemoryTab(value as MemoryConsoleTab)}
             className="space-y-3"
           >
-            <div className="border-border/40 -mx-4 border-b px-4 pt-0 pb-1.5 xl:-mx-5 xl:px-5">
-              <div className="flex flex-wrap items-center gap-2">
-                <DashboardTabBar
-                  variant="grid"
-                  className="w-full max-w-full grid-cols-3 sm:w-fit sm:auto-cols-max sm:grid-flow-col sm:grid-cols-none"
-                >
-                  {[
-                    {
-                      value: 'records',
-                      label: '记忆查询',
-                      description: '查询数据库权威记录与关联内容',
-                    },
-                    { value: 'images', label: '图片记忆', description: '图片向量、认知与关联记忆' },
-                    { value: 'timeline', label: '审计时间线', description: '核对聊天流记忆变动' },
-                    { value: 'profiles', label: '人物画像', description: '查询和维护人物画像' },
-                  ].map((item) => (
-                    <DashboardTabTrigger
-                      key={item.value}
-                      value={item.value}
-                      title={item.description}
-                      className="px-3 text-xs"
-                    >
-                      {item.label}
-                    </DashboardTabTrigger>
-                  ))}
-                </DashboardTabBar>
-                <DashboardTabBar
-                  variant="grid"
-                  className="w-full max-w-full grid-cols-3 sm:w-fit sm:auto-cols-max sm:grid-flow-col sm:grid-cols-none"
-                >
-                  {[
-                    {
-                      value: 'import',
-                      label: '导入导出',
-                      description: '导入资料并管理可分享记忆包',
-                    },
-                    { value: 'inspection', label: '记忆检修', description: '维护记忆状态并修正记忆内容' },
-                    { value: 'delete', label: '删除', description: '批量删除与历史回溯' },
-                    { value: 'feedback', label: '纠错历史', description: '查看反馈与回滚' },
-                  ].map((item) => (
-                    <DashboardTabTrigger
-                      key={item.value}
-                      value={item.value}
-                      title={item.description}
-                      className="px-3 text-xs"
-                    >
-                      {item.label}
-                    </DashboardTabTrigger>
-                  ))}
-                </DashboardTabBar>
-              </div>
+            <div
+              data-memory-console-tab-row="true"
+              className="border-border/40 -mx-4 flex flex-wrap items-center gap-2 border-b px-4 pt-0 pb-1.5 xl:-mx-5 xl:px-5"
+            >
+              <DashboardTabBar
+                variant="grid"
+                className="w-full max-w-full self-stretch grid-cols-3 sm:w-fit sm:auto-cols-max sm:grid-flow-col sm:grid-cols-none"
+              >
+                {[
+                  {
+                    value: 'records',
+                    label: '记忆查询',
+                    description: '查询数据库权威记录与关联内容',
+                  },
+                  { value: 'images', label: '图片记忆', description: '图片向量、认知与关联记忆' },
+                  { value: 'timeline', label: '审计时间线', description: '核对聊天流记忆变动' },
+                  { value: 'profiles', label: '人物画像', description: '查询和维护人物画像' },
+                ].map((item) => (
+                  <DashboardTabTrigger
+                    key={item.value}
+                    value={item.value}
+                    title={item.description}
+                    className="h-full px-3 text-xs"
+                  >
+                    {item.label}
+                  </DashboardTabTrigger>
+                ))}
+              </DashboardTabBar>
+              <DashboardTabBar
+                variant="grid"
+                className="w-full max-w-full self-stretch grid-cols-3 sm:w-fit sm:auto-cols-max sm:grid-flow-col sm:grid-cols-none"
+              >
+                {[
+                  {
+                    value: 'import',
+                    label: '导入导出',
+                    description: '导入资料并管理可分享记忆包',
+                  },
+                  { value: 'inspection', label: '记忆检修', description: '维护记忆状态并修正记忆内容' },
+                  { value: 'delete', label: '删除', description: '批量删除与历史回溯' },
+                  { value: 'feedback', label: '纠错历史', description: '查看反馈与回滚' },
+                ].map((item) => (
+                  <DashboardTabTrigger
+                    key={item.value}
+                    value={item.value}
+                    title={item.description}
+                    className="h-full px-3 text-xs"
+                  >
+                    {item.label}
+                  </DashboardTabTrigger>
+                ))}
+              </DashboardTabBar>
+
+              {/* 「更多操作」省略号与标签同一行：self-stretch 让标签撑满该行，
+                  h-8 定住行高，标签高度随之与按钮对齐 */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="ml-auto h-8 w-8"
+                    aria-label="更多操作"
+                    title="更多操作"
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  <DropdownMenuItem
+                    className="cursor-pointer gap-2"
+                    onSelect={() => setRuntimeStatusDialogOpen(true)}
+                  >
+                    <Activity className="h-4 w-4" />
+                    查看记忆状态
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="cursor-pointer gap-2"
+                    onSelect={() => switchMemoryTab('graph')}
+                  >
+                    <Database className="h-4 w-4" />
+                    打开图谱
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
 
             {shouldRenderMemoryTab('records') && (

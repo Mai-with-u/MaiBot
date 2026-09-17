@@ -8,6 +8,8 @@ from sqlmodel import col, select
 
 import json
 import re
+import threading
+import time
 
 from src.common.data_models.message_component_data_model import TextComponent
 from src.common.database.database import get_db_session
@@ -20,6 +22,7 @@ from src.maisaka.context.messages import LLMContextMessage, ReferenceMessage, Re
 logger = get_logger("maisaka_jargon_context")
 
 MAX_JARGON_REFERENCE_MATCHES = 10
+_HIGH_FREQUENCY_TERM_TTL_SECONDS = 60.0
 _PLANNER_MESSAGE_PREFIX_RE = re.compile(r"^<message\b[^>]*>\s*", re.IGNORECASE)
 _JARGON_REFERENCE_ITEM_RE = re.compile(r"^\s*(?:\d+\.\s*)?(?P<content>.+?)：")
 _JARGON_REFERENCE_HEADER = "以下黑话来自当前上下文中其他用户消息的机械匹配，仅作理解聊天语境的参考："
@@ -45,6 +48,21 @@ class _JargonMatch:
     high_frequency_term: str
     high_frequency_rank: int
     high_frequency_count: int
+
+
+@dataclass(slots=True)
+class _HighFrequencyTermSummary:
+    """高频词参与打分时实际用到的字段。"""
+
+    term: str
+    rank: int
+    occurrence_count: int
+
+
+# 高频词是慢变量，而每个规划轮次都会读取一次，因此按会话做短 TTL 缓存，
+# 并用锁保护缓存字典，避免缓存被其他线程访问时出现并发写入。
+_high_frequency_terms_cache: dict[str, tuple[float, dict[str, _HighFrequencyTermSummary]]] = {}
+_high_frequency_terms_lock = threading.Lock()
 
 
 def build_jargon_reference_message(
@@ -136,10 +154,8 @@ def match_jargons_for_context(
                 continue
 
             high_frequency_term = high_frequency_terms.get(content_key)
-            high_frequency_rank = int(getattr(high_frequency_term, "rank", 0) or 0) if high_frequency_term else 0
-            high_frequency_count = (
-                int(getattr(high_frequency_term, "occurrence_count", 0) or 0) if high_frequency_term else 0
-            )
+            high_frequency_rank = high_frequency_term.rank if high_frequency_term else 0
+            high_frequency_count = high_frequency_term.occurrence_count if high_frequency_term else 0
             matches_by_content[content_key] = _JargonMatch(
                 content=candidate.content,
                 meaning=candidate.meaning,
@@ -200,22 +216,57 @@ def _load_scoped_jargon_candidates(session_id: str) -> list[_JargonCandidate]:
     return candidates
 
 
-def _load_high_frequency_terms(session_id: str) -> dict[str, HighFrequencyTerm]:
+def _load_high_frequency_terms(session_id: str) -> dict[str, _HighFrequencyTermSummary]:
+    """读取该会话的高频词表，命中短 TTL 缓存时直接返回。
+
+    只取打分实际用到的三个字段，避免为每个词构造完整 ORM 对象。
+    """
+
     normalized_session_id = str(session_id or "").strip()
     if not normalized_session_id:
         return {}
 
+    now = time.monotonic()
+    with _high_frequency_terms_lock:
+        cached = _high_frequency_terms_cache.get(normalized_session_id)
+        if cached is not None and now - cached[0] < _HIGH_FREQUENCY_TERM_TTL_SECONDS:
+            return cached[1]
+
     with get_db_session(auto_commit=False) as session:
-        records = session.exec(
-            select(HighFrequencyTerm).where(col(HighFrequencyTerm.chat_id) == normalized_session_id)
+        rows = session.exec(
+            select(
+                HighFrequencyTerm.term,
+                HighFrequencyTerm.rank,
+                HighFrequencyTerm.occurrence_count,
+            ).where(col(HighFrequencyTerm.chat_id) == normalized_session_id)
         ).all()
 
-    terms_by_key: dict[str, HighFrequencyTerm] = {}
-    for record in records:
-        term_key = _normalize_match_text(record.term)
+    terms_by_key: dict[str, _HighFrequencyTermSummary] = {}
+    for term, rank, occurrence_count in rows:
+        term_key = _normalize_match_text(term)
         if term_key:
-            terms_by_key[term_key] = record
+            terms_by_key[term_key] = _HighFrequencyTermSummary(
+                term=str(term or ""),
+                rank=int(rank or 0),
+                occurrence_count=int(occurrence_count or 0),
+            )
+
+    with _high_frequency_terms_lock:
+        _prune_high_frequency_terms_cache_locked(now)
+        _high_frequency_terms_cache[normalized_session_id] = (now, terms_by_key)
     return terms_by_key
+
+
+def _prune_high_frequency_terms_cache_locked(now: float) -> None:
+    """清理已过期的会话缓存，避免长期运行后残留无用条目。"""
+
+    expired_session_ids = [
+        session_key
+        for session_key, (cached_at, _) in _high_frequency_terms_cache.items()
+        if now - cached_at >= _HIGH_FREQUENCY_TERM_TTL_SECONDS
+    ]
+    for session_key in expired_session_ids:
+        _high_frequency_terms_cache.pop(session_key, None)
 
 
 def _extract_jargon_reference_contents_from_text(content: str) -> set[str]:

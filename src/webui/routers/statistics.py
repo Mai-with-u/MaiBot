@@ -18,7 +18,7 @@ router = APIRouter(prefix="/statistics", tags=["statistics"], dependencies=[Depe
 
 
 @router.get("/detailed", response_model=DetailedStatisticsData)
-async def get_detailed_statistics() -> DetailedStatisticsData:
+def get_detailed_statistics() -> DetailedStatisticsData:
     """获取与 HTML 报告同源的详细统计快照。"""
 
     snapshot = get_detailed_statistics_snapshot()

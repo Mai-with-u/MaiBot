@@ -50,7 +50,7 @@ def model_config_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 @pytest.mark.asyncio
 async def test_create_and_list_model_config_version(model_config_workspace) -> None:
-    response = await config_routes.create_model_config_version(
+    response = config_routes.create_model_config_version(
         config_routes.ModelConfigVersionCreateRequest(label="测试副本")
     )
 
@@ -58,7 +58,7 @@ async def test_create_and_list_model_config_version(model_config_workspace) -> N
     assert response.version.label == "测试副本"
     assert response.version.active is False
 
-    versions_response = await config_routes.list_model_config_versions()
+    versions_response = config_routes.list_model_config_versions()
 
     assert versions_response.active_version.active is True
     assert versions_response.active_version.label == "默认配置"
@@ -69,7 +69,7 @@ async def test_create_and_list_model_config_version(model_config_workspace) -> N
 
 @pytest.mark.asyncio
 async def test_activate_model_config_version_archives_current_and_reloads(model_config_workspace) -> None:
-    version_response = await config_routes.create_model_config_version(
+    version_response = config_routes.create_model_config_version(
         config_routes.ModelConfigVersionCreateRequest(label="备用副本")
     )
     _write_model_config(model_config_workspace.active_path, "changed-active-model")
@@ -83,7 +83,7 @@ async def test_activate_model_config_version_archives_current_and_reloads(model_
     assert "active-model" in model_config_workspace.active_path.read_text(encoding="utf-8")
     assert model_config_workspace.reload_calls == [["model"]]
 
-    versions_response = await config_routes.list_model_config_versions()
+    versions_response = config_routes.list_model_config_versions()
     assert versions_response.active_version.label == "备用副本"
     labels = {version.label for version in versions_response.versions}
     assert "备用副本" not in labels

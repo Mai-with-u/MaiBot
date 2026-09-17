@@ -69,7 +69,7 @@ def _serialize_account(account, online_pairs: set[tuple[str, str]]) -> BotPlatfo
 
 
 @router.get("", response_model=BotPlatformAccountListResponse)
-async def list_bot_platform_accounts() -> BotPlatformAccountListResponse:
+def list_bot_platform_accounts() -> BotPlatformAccountListResponse:
     online_pairs = _online_account_pairs()
     return BotPlatformAccountListResponse(
         data=[_serialize_account(account, online_pairs) for account in bot_account_service.list_accounts()]
@@ -85,10 +85,10 @@ def _mutate_account(account_id: int, *, disabled: bool) -> BotPlatformAccountMut
 
 
 @router.post("/{account_id}/disable", response_model=BotPlatformAccountMutationResponse)
-async def disable_bot_platform_account(account_id: int) -> BotPlatformAccountMutationResponse:
+def disable_bot_platform_account(account_id: int) -> BotPlatformAccountMutationResponse:
     return _mutate_account(account_id, disabled=True)
 
 
 @router.post("/{account_id}/restore", response_model=BotPlatformAccountMutationResponse)
-async def restore_bot_platform_account(account_id: int) -> BotPlatformAccountMutationResponse:
+def restore_bot_platform_account(account_id: int) -> BotPlatformAccountMutationResponse:
     return _mutate_account(account_id, disabled=False)

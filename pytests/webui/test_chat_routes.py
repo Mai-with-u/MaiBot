@@ -55,7 +55,7 @@ async def test_get_persons_by_platform_serializes_before_session_closes(monkeypa
 
     monkeypatch.setattr(routes, "get_db_session", fake_get_db_session)
 
-    response = await routes.get_persons_by_platform(platform="qq", limit=50)
+    response = routes.get_persons_by_platform(platform="qq", limit=50)
 
     assert response == {
         "success": True,

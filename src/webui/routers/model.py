@@ -110,7 +110,7 @@ class _SingleModelTestOrchestrator(LLMOrchestrator):
 
 
 @router.get("/client-types")
-async def get_registered_client_types():
+def get_registered_client_types():
     """返回当前主程序与插件已注册的 LLM Provider client_type。"""
     for client_type in MODEL_FETCHER_CONFIG:
         ensure_client_type_loaded(client_type)

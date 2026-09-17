@@ -28,6 +28,26 @@ _STATISTICS_REPORT_PATH_ENV = "MAIBOT_STATISTICS_REPORT_PATH"
 _DEFAULT_STATISTICS_REPORT_PATH = "maibot_statistics.html"
 _MANUAL_INSTALL_COMMAND = f"pip install {_DASHBOARD_PACKAGE_NAME}"
 
+# 同步路由端点由 Starlette 交给 anyio 线程池执行，anyio 默认上限是 40；
+# 底层 SQLite 连接池只有 5 条常驻 + 10 条溢出连接，并发过高会让线程排队等连接，
+# 因此把同步端点的并发数限制在连接池容量以内。
+MAX_CONCURRENT_SYNC_ENDPOINTS = 8
+
+
+def limit_sync_endpoint_concurrency() -> int:
+    """把同步路由端点的并发数限制在 SQLite 连接池容量以内，并返回生效值。
+
+    必须在目标事件循环内调用：anyio 的线程池上限是按事件循环保存的，在循环外设置
+    不会作用到 WebUI 自己的循环上。
+    """
+
+    import anyio.to_thread
+
+    limiter = anyio.to_thread.current_default_thread_limiter()
+    if limiter.total_tokens > MAX_CONCURRENT_SYNC_ENDPOINTS:
+        limiter.total_tokens = MAX_CONCURRENT_SYNC_ENDPOINTS
+    return int(limiter.total_tokens)
+
 
 def _resolve_safe_static_file_path(static_path: Path, full_path: str) -> Path | None:
     static_root = static_path.resolve()

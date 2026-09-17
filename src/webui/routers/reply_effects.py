@@ -214,7 +214,7 @@ def _filtered_rows(
 
 
 @router.get("/overview")
-async def get_reply_effect_overview(
+def get_reply_effect_overview(
     session_id: str = "",
     strategy: str = "",
     model_name: str = "",
@@ -277,7 +277,7 @@ async def get_reply_effect_overview(
 
 
 @router.get("")
-async def list_reply_effects(
+def list_reply_effects(
     session_id: str = "",
     strategy: str = "",
     model_name: str = "",
@@ -315,7 +315,7 @@ async def list_reply_effects(
 
 
 @router.post("/compare")
-async def compare_reply_effect_projects(request: ReplyEffectComparisonRequest) -> dict[str, Any]:
+def compare_reply_effect_projects(request: ReplyEffectComparisonRequest) -> dict[str, Any]:
     """对当前筛选范围内的两个版本项目执行双侧 Welch t 检验。"""
 
     rows = _filtered_rows(
@@ -356,7 +356,7 @@ async def compare_reply_effect_projects(request: ReplyEffectComparisonRequest) -
 
 
 @router.get("/prompt-versions/{prompt_fingerprint}")
-async def get_prompt_version_detail(
+def get_prompt_version_detail(
     prompt_fingerprint: str,
     model_name: str = "",
     session_id: str = "",
@@ -417,7 +417,7 @@ async def get_prompt_version_detail(
 
 
 @router.get("/export")
-async def export_reply_effects() -> Response:
+def export_reply_effects() -> Response:
     """导出全部评分记录，供另一套 MaiBot 直接导入。"""
 
     rows = _filtered_rows()
@@ -523,7 +523,7 @@ async def clear_reply_effects() -> dict[str, int | bool]:
 
 
 @router.get("/{effect_id}")
-async def get_reply_effect_detail(effect_id: str) -> dict[str, Any]:
+def get_reply_effect_detail(effect_id: str) -> dict[str, Any]:
     with get_db_session(auto_commit=False) as session:
         row = session.get(MaisakaReplyEffect, effect_id)
     if row is None:

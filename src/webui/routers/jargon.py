@@ -753,7 +753,7 @@ def build_jargon_list_select() -> Any:
 
 
 @router.get("/list", response_model=JargonListResponse)
-async def get_jargon_list(
+def get_jargon_list(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量"),
     search: Optional[str] = Query(None, description="搜索关键词"),
@@ -826,7 +826,7 @@ async def get_jargon_list(
 
 
 @router.get("/chats", response_model=ChatListResponse)
-async def get_chat_list(include_empty: bool = Query(False, description="是否包含没有黑话记录的聊天流")) -> ChatListResponse:
+def get_chat_list(include_empty: bool = Query(False, description="是否包含没有黑话记录的聊天流")) -> ChatListResponse:
     """获取可用于黑话新增、编辑和筛选的聊天流列表。
 
     Returns:
@@ -891,7 +891,7 @@ async def get_chat_list(include_empty: bool = Query(False, description="是否�
 
 
 @router.get("/stats/summary", response_model=JargonStatsResponse)
-async def get_jargon_stats() -> JargonStatsResponse:
+def get_jargon_stats() -> JargonStatsResponse:
     """获取黑话统计数据。
 
     Returns:
@@ -950,7 +950,7 @@ async def get_jargon_stats() -> JargonStatsResponse:
 
 
 @router.post("/export", response_model=JargonExportResponse)
-async def export_jargons(request: JargonExportRequest) -> JargonExportResponse:
+def export_jargons(request: JargonExportRequest) -> JargonExportResponse:
     """导出黑话记录，可选携带 platform/id/type 形式的聊天目标信息。"""
 
     try:
@@ -998,7 +998,7 @@ async def export_jargons(request: JargonExportRequest) -> JargonExportResponse:
 
 
 @router.post("/import", response_model=JargonImportResponse)
-async def import_jargons(request: JargonImportRequest) -> JargonImportResponse:
+def import_jargons(request: JargonImportRequest) -> JargonImportResponse:
     """将黑话 JSON 导入到用户选择的一个或多个真实聊天流。"""
 
     try:
@@ -1073,7 +1073,7 @@ async def import_jargons(request: JargonImportRequest) -> JargonImportResponse:
 
 
 @router.get("/{jargon_id}", response_model=JargonDetailResponse)
-async def get_jargon_detail(jargon_id: int) -> JargonDetailResponse:
+def get_jargon_detail(jargon_id: int) -> JargonDetailResponse:
     """获取黑话详情。
 
     Args:
@@ -1101,7 +1101,7 @@ async def get_jargon_detail(jargon_id: int) -> JargonDetailResponse:
 
 
 @router.post("/", response_model=JargonCreateResponse)
-async def create_jargon(request: JargonCreateRequest) -> JargonCreateResponse:
+def create_jargon(request: JargonCreateRequest) -> JargonCreateResponse:
     """创建黑话。
 
     Args:
@@ -1168,7 +1168,7 @@ async def create_jargon(request: JargonCreateRequest) -> JargonCreateResponse:
 
 
 @router.patch("/{jargon_id}", response_model=JargonUpdateResponse)
-async def update_jargon(jargon_id: int, request: JargonUpdateRequest) -> JargonUpdateResponse:
+def update_jargon(jargon_id: int, request: JargonUpdateRequest) -> JargonUpdateResponse:
     """增量更新黑话。
 
     Args:
@@ -1220,7 +1220,7 @@ async def update_jargon(jargon_id: int, request: JargonUpdateRequest) -> JargonU
 
 
 @router.delete("/{jargon_id}", response_model=JargonDeleteResponse)
-async def delete_jargon(jargon_id: int) -> JargonDeleteResponse:
+def delete_jargon(jargon_id: int) -> JargonDeleteResponse:
     """删除黑话。
 
     Args:
@@ -1250,7 +1250,7 @@ async def delete_jargon(jargon_id: int) -> JargonDeleteResponse:
 
 
 @router.post("/batch/delete", response_model=JargonDeleteResponse)
-async def batch_delete_jargons(request: BatchDeleteRequest) -> JargonDeleteResponse:
+def batch_delete_jargons(request: BatchDeleteRequest) -> JargonDeleteResponse:
     """批量删除黑话。
 
     Args:
@@ -1283,7 +1283,7 @@ async def batch_delete_jargons(request: BatchDeleteRequest) -> JargonDeleteRespo
 
 
 @router.post("/batch/set-jargon", response_model=JargonUpdateResponse)
-async def batch_set_jargon_status(
+def batch_set_jargon_status(
     ids: Annotated[List[int], Query(description="黑话ID列表")],
     is_jargon: Annotated[bool, Query(description="是否是黑话")],
 ) -> JargonUpdateResponse:

@@ -322,7 +322,7 @@ async def _stream_ai_search_events(request: AISearchRequest) -> AsyncIterator[st
 
 
 @router.post("/ai/stream")
-async def stream_search_with_ai(request: AISearchRequest) -> StreamingResponse:
+def stream_search_with_ai(request: AISearchRequest) -> StreamingResponse:
     """流式返回 AI 搜索的操作过程与最终结果。"""
 
     return StreamingResponse(

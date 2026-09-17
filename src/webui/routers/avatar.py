@@ -254,7 +254,7 @@ async def update_webui_user_avatar(
 
 
 @router.get("")
-async def get_webui_avatar(
+def get_webui_avatar(
     platform: str = Query(...),
     user_id: str | None = Query(default=None),
     group_id: str | None = Query(default=None),

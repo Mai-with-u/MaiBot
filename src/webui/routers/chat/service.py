@@ -1,6 +1,7 @@
 """WebUI 聊天运行时服务。"""
 
 from dataclasses import dataclass
+import asyncio
 import base64
 import binascii
 import time
@@ -858,7 +859,9 @@ async def send_initial_chat_state(
 
     history_group_id = get_active_history_group_id(virtual_config)
     history_user_id = None if history_group_id else user_id
-    history = chat_history.get_history(
+    # 历史消息查询是同步 SQLite 读取，放到工作线程执行，避免阻塞 WebUI 事件循环。
+    history = await asyncio.to_thread(
+        chat_history.get_history,
         50,
         group_id=history_group_id,
         user_id=history_user_id,
@@ -1334,11 +1337,17 @@ async def enable_virtual_identity(
                 "timestamp": time.time(),
             },
         )
+        # 历史消息查询是同步 SQLite 读取，放到工作线程执行，避免阻塞 WebUI 事件循环。
+        group_history = await asyncio.to_thread(
+            chat_history.get_history,
+            50,
+            current_virtual_config.group_id,
+        )
         await chat_manager.send_message(
             session_id,
             {
                 "type": "history",
-                "messages": chat_history.get_history(50, current_virtual_config.group_id),
+                "messages": group_history,
                 "group_id": current_virtual_config.group_id,
             },
         )
@@ -1375,11 +1384,17 @@ async def disable_virtual_identity(session_id: str, normalized_user_id: str) -> 
             "timestamp": time.time(),
         },
     )
+    # 历史消息查询是同步 SQLite 读取，放到工作线程执行，避免阻塞 WebUI 事件循环。
+    private_history = await asyncio.to_thread(
+        chat_history.get_history,
+        50,
+        user_id=normalized_user_id,
+    )
     await chat_manager.send_message(
         session_id,
         {
             "type": "history",
-            "messages": chat_history.get_history(50, user_id=normalized_user_id),
+            "messages": private_history,
             "group_id": None,
         },
     )

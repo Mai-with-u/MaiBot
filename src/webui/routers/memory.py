@@ -3612,7 +3612,7 @@ async def _stage_upload_files(files: list[UploadFile]) -> tuple[Path, list[dict[
 
 
 @router.get("/records/search")
-async def search_memory_records(
+def search_memory_records(
     query: str = Query(""),
     types: str = Query(""),
     limit: int = Query(50, ge=1, le=200),
@@ -3669,7 +3669,7 @@ async def restore_memory_fact(claim_id: str, payload: FactStatusRequest):
 
 
 @router.get("/records/{record_type}/{record_id}")
-async def get_memory_record_context(
+def get_memory_record_context(
     record_type: str,
     record_id: str,
     limit: int = Query(50, ge=1, le=200),
@@ -4372,7 +4372,7 @@ async def list_image_memory_jobs(
 
 
 @router.get("/image-writeback-jobs")
-async def list_image_writeback_jobs(
+def list_image_writeback_jobs(
     limit: int = Query(25, ge=1, le=200), offset: int = Query(0, ge=0), status: str = '',
 ):
     payload = memory_automation_service.image_writeback.list_jobs(status, limit, offset)
@@ -4383,7 +4383,7 @@ async def list_image_writeback_jobs(
 
 
 @router.post("/image-writeback-jobs/retry")
-async def retry_image_writeback_jobs():
+def retry_image_writeback_jobs():
     count = memory_automation_service.image_writeback.retry_failed()
     return {'success': True, 'count': count}
 
@@ -4421,7 +4421,7 @@ async def search_image_memories(
 
 
 @router.get("/images/{asset_id}/content", response_class=FileResponse)
-async def get_image_memory_content(asset_id: str) -> FileResponse:
+def get_image_memory_content(asset_id: str) -> FileResponse:
     """从内容寻址资产库返回已登记图片，不接受客户端提供文件路径。"""
 
     kernel = get_runtime_kernel()

@@ -37,7 +37,7 @@ class MCPConnectionTestResponse(BaseModel):
 
 
 @router.get("/status")
-async def get_mcp_status() -> dict[str, Any]:
+def get_mcp_status() -> dict[str, Any]:
     """读取主事件循环维护的 MCP 共享服务状态快照。"""
 
     return get_mcp_service().get_status_snapshot()

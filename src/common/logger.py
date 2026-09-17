@@ -138,12 +138,13 @@ class TimestampedFileHandler(logging.Handler):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.current_file = self.log_dir / f"app_{timestamp}.log.jsonl"
         self.current_stream = open(self.current_file, "a", encoding=self.encoding)
+        # 追加模式下流位置就是文件已有字节数；后续由 emit 累加写入量，
+        # 避免每条日志都去文件系统确认一次大小。
+        self._written_bytes = self.current_stream.tell()
 
     def _should_rollover(self):
         """检查是否需要轮转"""
-        if self.current_file and self.current_file.exists():
-            return self.current_file.stat().st_size >= self.max_bytes
-        return False
+        return self._written_bytes >= self.max_bytes
 
     def _do_rollover(self):
         """执行轮转：关闭当前文件，创建新文件"""
@@ -189,6 +190,8 @@ class TimestampedFileHandler(logging.Handler):
                     msg = self.format(record)
                     self.current_stream.write(msg + "\n")
                     self.current_stream.flush()
+                    # flush 之后流位置即文件当前字节数，用它更新写入量。
+                    self._written_bytes = self.current_stream.tell()
 
         except Exception:
             self.handleError(record)

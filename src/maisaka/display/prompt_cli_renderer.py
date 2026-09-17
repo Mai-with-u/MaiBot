@@ -10,6 +10,7 @@ from urllib.parse import quote
 
 import hashlib
 import json
+import os
 
 from rich.console import Group, RenderableType
 from rich.panel import Panel
@@ -95,8 +96,10 @@ def _select_webui_local_host(hosts: Any) -> str:
 
 
 def _resolve_prompt_preview_route_target(file_path: Path) -> PromptPreviewRouteTarget | None:
+    # 预览目录与预览文件路径都已是绝对路径，这里只做字符串规范化，
+    # 不做 realpath：Windows 上 realpath 需要访问文件系统，开销远高于路径计算。
     try:
-        relative_path = file_path.resolve().relative_to(PromptPreviewLogger._BASE_DIR.resolve())
+        relative_path = Path(os.path.abspath(file_path)).relative_to(PromptPreviewLogger._BASE_DIR)
     except ValueError:
         return None
 

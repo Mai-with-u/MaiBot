@@ -1482,7 +1482,7 @@ def _apply_prompt_generator_config_blocks(blocks: List[PromptGeneratorConfigBloc
 
 
 @router.get("/prompts", response_model=PromptCatalogResponse)
-async def list_prompt_files():
+def list_prompt_files():
     """列出 prompts 目录下的语言和 Prompt 文件。"""
 
     try:
@@ -1530,7 +1530,7 @@ async def list_prompt_files():
 
 
 @router.get("/prompts/{language}/{filename}", response_model=PromptFileResponse)
-async def get_prompt_file(language: str, filename: str):
+def get_prompt_file(language: str, filename: str):
     """读取指定语言下的 Prompt 文件内容。"""
 
     prompt_path = _safe_prompt_path(language, filename)
@@ -1562,7 +1562,7 @@ async def get_prompt_file(language: str, filename: str):
 
 
 @router.get("/prompts/{language}/{filename}/default", response_model=PromptFileResponse)
-async def get_default_prompt_file(language: str, filename: str):
+def get_default_prompt_file(language: str, filename: str):
     """只读获取内置 Prompt 模板内容，不读取或修改用户自定义覆盖。"""
 
     prompt_path = _safe_prompt_path(language, filename)
@@ -1587,7 +1587,7 @@ async def get_default_prompt_file(language: str, filename: str):
 
 
 @router.get("/prompts/{language}/{filename}/versions", response_model=PromptVersionListResponse)
-async def list_prompt_versions(language: str, filename: str):
+def list_prompt_versions(language: str, filename: str):
     """列出指定 Prompt 的自定义版本。"""
 
     prompt_path = _safe_prompt_path(language, filename)
@@ -1603,7 +1603,7 @@ async def list_prompt_versions(language: str, filename: str):
 
 
 @router.get("/prompts/{language}/{filename}/versions/{version_id}", response_model=PromptVersionFileResponse)
-async def get_prompt_version_file(language: str, filename: str, version_id: str):
+def get_prompt_version_file(language: str, filename: str, version_id: str):
     """读取指定 Prompt 自定义版本内容。"""
 
     prompt_path = _safe_prompt_path(language, filename)
@@ -1636,7 +1636,7 @@ async def get_prompt_version_file(language: str, filename: str, version_id: str)
 
 
 @router.post("/prompts/{language}/{filename}/versions/{version_id}/activate", response_model=PromptFileResponse)
-async def activate_prompt_version(language: str, filename: str, version_id: str):
+def activate_prompt_version(language: str, filename: str, version_id: str):
     """启用指定 Prompt 自定义版本。"""
 
     prompt_path = _safe_prompt_path(language, filename)
@@ -1674,7 +1674,7 @@ async def activate_prompt_version(language: str, filename: str, version_id: str)
 
 
 @router.delete("/prompts/{language}/{filename}/versions/{version_id}", response_model=PromptFileResponse)
-async def delete_prompt_version(language: str, filename: str, version_id: str):
+def delete_prompt_version(language: str, filename: str, version_id: str):
     """删除指定 Prompt 自定义版本；删除当前启用版本时恢复默认 Prompt。"""
 
     prompt_path = _safe_prompt_path(language, filename)
@@ -1734,7 +1734,7 @@ async def delete_prompt_version(language: str, filename: str, version_id: str):
 
 
 @router.put("/prompts/{language}/{filename}", response_model=PromptFileResponse)
-async def update_prompt_file(language: str, filename: str, request: PromptUpdateRequest):
+def update_prompt_file(language: str, filename: str, request: PromptUpdateRequest):
     """更新指定语言下的 Prompt 文件内容。"""
 
     prompt_path = _safe_prompt_path(language, filename)
@@ -1774,7 +1774,7 @@ async def update_prompt_file(language: str, filename: str, request: PromptUpdate
 
 
 @router.delete("/prompts/{language}/{filename}", response_model=PromptFileResponse)
-async def reset_prompt_file(language: str, filename: str):
+def reset_prompt_file(language: str, filename: str):
     """删除用户自定义覆盖，恢复使用内置 Prompt 模板。"""
 
     prompt_path = _safe_prompt_path(language, filename)
@@ -1804,7 +1804,7 @@ async def reset_prompt_file(language: str, filename: str):
 
 
 @router.get("/maisaka-prompt-preview", response_class=FileResponse)
-async def get_maisaka_prompt_preview(path: str = Query(..., description="logs/maisaka_prompt 下的相对预览路径")):
+def get_maisaka_prompt_preview(path: str = Query(..., description="logs/maisaka_prompt 下的相对预览路径")):
     """打开 MaiSaka 监控中生成的 Prompt 预览。"""
 
     preview_path = _safe_maisaka_prompt_preview_path(path)
@@ -1862,7 +1862,7 @@ async def generate_prompt_persona(request: PromptGeneratorRequest):
 
 
 @router.post("/prompt-generator/apply", response_model=PromptGeneratorApplyResponse)
-async def apply_prompt_generator_blocks(request: PromptGeneratorApplyRequest):
+def apply_prompt_generator_blocks(request: PromptGeneratorApplyRequest):
     """把人设生成器产出的配置块写入 bot_config.toml。"""
 
     try:
@@ -1875,7 +1875,7 @@ async def apply_prompt_generator_blocks(request: PromptGeneratorApplyRequest):
 
 
 @router.get("/schema/bot")
-async def get_bot_config_schema():
+def get_bot_config_schema():
     """获取麦麦主程序配置架构"""
     try:
         # Config 类包含所有子配置
@@ -1887,19 +1887,19 @@ async def get_bot_config_schema():
 
 
 @compat_router.get("/schema")
-async def get_compat_bot_config_schema():
+def get_compat_bot_config_schema():
     """兼容旧版 /api/config/schema，返回主程序配置架构。"""
-    return await get_bot_config_schema()
+    return get_bot_config_schema()
 
 
 @compat_router.get("/schema/bot")
-async def get_compat_bot_config_schema_alias():
+def get_compat_bot_config_schema_alias():
     """兼容旧版 /api/config/schema/bot。"""
-    return await get_bot_config_schema()
+    return get_bot_config_schema()
 
 
 @router.get("/schema/model")
-async def get_model_config_schema():
+def get_model_config_schema():
     """获取模型配置架构（包含提供商和模型任务配置）"""
     try:
         schema = _get_cached_schema("model", ModelConfig)
@@ -1913,7 +1913,7 @@ async def get_model_config_schema():
 
 
 @router.get("/schema/section/{section_name}")
-async def get_config_section_schema(section_name: str):
+def get_config_section_schema(section_name: str):
     """
     获取指定配置节的架构
 
@@ -1990,7 +1990,7 @@ async def get_config_section_schema(section_name: str):
 
 
 @router.get("/bot")
-async def get_bot_config():
+def get_bot_config():
     """获取麦麦主程序配置"""
     try:
         config_path = os.path.join(CONFIG_DIR, "bot_config.toml")
@@ -2009,7 +2009,7 @@ async def get_bot_config():
 
 
 @router.get("/model")
-async def get_model_config():
+def get_model_config():
     """获取模型配置（包含提供商和模型任务配置）"""
     try:
         config_path = os.path.join(CONFIG_DIR, "model_config.toml")
@@ -2028,7 +2028,7 @@ async def get_model_config():
 
 
 @router.get("/model/versions", response_model=ModelConfigVersionListResponse)
-async def list_model_config_versions():
+def list_model_config_versions():
     """列出模型配置文件副本。"""
 
     active_path = _active_model_config_path()
@@ -2048,7 +2048,7 @@ async def list_model_config_versions():
 
 
 @router.post("/model/versions", response_model=ModelConfigVersionResponse)
-async def create_model_config_version(request: ModelConfigVersionCreateRequest):
+def create_model_config_version(request: ModelConfigVersionCreateRequest):
     """将当前启用的模型配置保存为一个未启用副本。"""
 
     active_path = _active_model_config_path()
@@ -2058,7 +2058,7 @@ async def create_model_config_version(request: ModelConfigVersionCreateRequest):
 
 
 @router.patch("/model/versions/{version_id}", response_model=ModelConfigVersionResponse)
-async def update_model_config_version(version_id: str, request: ModelConfigVersionUpdateRequest):
+def update_model_config_version(version_id: str, request: ModelConfigVersionUpdateRequest):
     """更新模型配置文件副本展示名称。"""
 
     normalized_version_id = _safe_model_config_version_id(version_id)
@@ -2076,7 +2076,7 @@ async def update_model_config_version(version_id: str, request: ModelConfigVersi
 
 
 @router.delete("/model/versions/{version_id}")
-async def delete_model_config_version(version_id: str):
+def delete_model_config_version(version_id: str):
     """删除未启用的模型配置文件副本。"""
 
     normalized_version_id = _safe_model_config_version_id(version_id)
@@ -2143,7 +2143,7 @@ async def activate_model_config_version(version_id: str, request: ModelConfigVer
 
 
 @router.post("/bot")
-async def update_bot_config(config_data: ConfigBody):
+def update_bot_config(config_data: ConfigBody):
     """更新麦麦主程序配置"""
     try:
         config_data = _coerce_config_numeric_values(config_data, Config)
@@ -2197,7 +2197,7 @@ async def update_model_config(config_data: ConfigBody):
 
 
 @router.post("/bot/section/{section_name}")
-async def update_bot_config_section(section_name: str, section_data: SectionBody):
+def update_bot_config_section(section_name: str, section_data: SectionBody):
     """更新麦麦主程序配置的指定节（保留注释和格式）"""
     try:
         # 读取现有配置
@@ -2249,7 +2249,7 @@ async def update_bot_config_section(section_name: str, section_data: SectionBody
 
 
 @router.get("/bot/raw")
-async def get_bot_config_raw():
+def get_bot_config_raw():
     """获取麦麦主程序配置的原始 TOML 内容"""
     try:
         config_path = os.path.join(CONFIG_DIR, "bot_config.toml")
@@ -2268,7 +2268,7 @@ async def get_bot_config_raw():
 
 
 @router.post("/bot/raw")
-async def update_bot_config_raw(raw_content: RawContentBody):
+def update_bot_config_raw(raw_content: RawContentBody):
     """更新麦麦主程序配置（直接保存原始 TOML 内容，会先验证格式）"""
     try:
         # 验证 TOML 格式
@@ -2298,15 +2298,15 @@ async def update_bot_config_raw(raw_content: RawContentBody):
 
 
 @compat_router.get("/raw")
-async def get_compat_bot_config_raw():
+def get_compat_bot_config_raw():
     """兼容旧版 /api/config/raw，读取主程序原始 TOML。"""
-    return await get_bot_config_raw()
+    return get_bot_config_raw()
 
 
 @compat_router.post("/raw")
-async def update_compat_bot_config_raw(raw_content: RawContentBody):
+def update_compat_bot_config_raw(raw_content: RawContentBody):
     """兼容旧版 /api/config/raw，写入主程序原始 TOML。"""
-    return await update_bot_config_raw(raw_content)
+    return update_bot_config_raw(raw_content)
 
 
 @router.post("/model/section/{section_name}")
@@ -2458,7 +2458,7 @@ def _to_relative_path(path: str) -> str:
 
 
 @router.get("/adapter-config/path")
-async def get_adapter_config_path():
+def get_adapter_config_path():
     """获取保存的适配器配置文件路径"""
     try:
         # 从 data/webui.json 读取路径偏好
@@ -2500,7 +2500,7 @@ async def get_adapter_config_path():
 
 
 @router.post("/adapter-config/path")
-async def save_adapter_config_path(data: PathBody):
+def save_adapter_config_path(data: PathBody):
     """保存适配器配置文件路径偏好"""
     try:
         path = data.get("path")
@@ -2542,7 +2542,7 @@ async def save_adapter_config_path(data: PathBody):
 
 
 @router.get("/adapter-config")
-async def get_adapter_config(path: str):
+def get_adapter_config(path: str):
     """从指定路径读取适配器配置文件"""
     try:
         if not path:
@@ -2569,7 +2569,7 @@ async def get_adapter_config(path: str):
 
 
 @router.post("/adapter-config")
-async def save_adapter_config(data: PathBody):
+def save_adapter_config(data: PathBody):
     """保存适配器配置到指定路径"""
     try:
         path = data.get("path")

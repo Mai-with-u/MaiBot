@@ -143,7 +143,7 @@ def person_to_response(person: PersonInfo) -> PersonInfoResponse:
 
 
 @router.get("/list", response_model=PersonListResponse)
-async def get_person_list(
+def get_person_list(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量"),
     search: Optional[str] = Query(None, description="搜索关键词"),
@@ -225,7 +225,7 @@ async def get_person_list(
 
 
 @router.get("/{person_id}", response_model=PersonDetailResponse)
-async def get_person_detail(person_id: str) -> PersonDetailResponse:
+def get_person_detail(person_id: str) -> PersonDetailResponse:
     """获取人物详细信息。
 
     Args:
@@ -254,7 +254,7 @@ async def get_person_detail(person_id: str) -> PersonDetailResponse:
 
 
 @router.patch("/{person_id}", response_model=PersonUpdateResponse)
-async def update_person(
+def update_person(
     person_id: str,
     request: PersonUpdateRequest,
 ) -> PersonUpdateResponse:
@@ -308,7 +308,7 @@ async def update_person(
 
 
 @router.delete("/{person_id}", response_model=PersonDeleteResponse)
-async def delete_person(person_id: str) -> PersonDeleteResponse:
+def delete_person(person_id: str) -> PersonDeleteResponse:
     """删除人物信息。
 
     Args:
@@ -342,7 +342,7 @@ async def delete_person(person_id: str) -> PersonDeleteResponse:
 
 
 @router.get("/stats/summary")
-async def get_person_stats() -> Dict[str, Any]:
+def get_person_stats() -> Dict[str, Any]:
     """获取人物信息统计数据。
 
     Returns:
@@ -371,7 +371,7 @@ async def get_person_stats() -> Dict[str, Any]:
 
 
 @router.post("/batch/delete", response_model=BatchDeleteResponse)
-async def batch_delete_persons(
+def batch_delete_persons(
     request: BatchDeleteRequest,
 ) -> BatchDeleteResponse:
     """批量删除人物信息。

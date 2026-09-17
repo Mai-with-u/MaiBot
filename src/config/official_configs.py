@@ -4911,6 +4911,32 @@ class LogConfig(ConfigBase):
     )
     """每个聊天最多保留多少条回复效果记录。"""
 
+    event_loop_watchdog_enabled: bool = Field(
+        default=True,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "事件循环卡顿看门狗",
+                "en_US": "Event loop lag watchdog",
+                "ja_JP": "イベントループ遅延ウォッチドッグ",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """是否记录事件循环卡顿；主循环与 WebUI 循环各有一份，用于排查界面卡顿。"""
+
+    event_loop_watchdog_warn_seconds: float = Field(
+        default=0.5,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "卡顿告警阈值（秒）",
+                "en_US": "Lag warning threshold (seconds)",
+                "ja_JP": "遅延警告しきい値（秒）",
+            },
+            "x-widget": "input",
+        },
+    )
+    """事件循环唤醒延迟超过该秒数时记录一条警告日志。"""
+
     suppress_libraries: list[str] = Field(
         default_factory=lambda: [
             "faiss",

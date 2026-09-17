@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 from rich.traceback import install
 
@@ -54,6 +54,7 @@ class MainSystem:
         self.server: Server | None = None
         self.webui_server: ThreadedWebUIServer | None = None  # 独立线程中的 WebUI 服务器
         self._message_handlers_registered = False
+        self.watchdog_task: Optional[asyncio.Task[None]] = None
 
     def _ensure_message_server(self) -> None:
         """按需初始化消息 API，避免阻塞主启动链路的早期阶段。"""
@@ -200,6 +201,11 @@ class MainSystem:
         await async_task_manager.add_task(TelemetryHeartBeatTask())
         await async_task_manager.add_task(TelemetryStatsUploadTask())
 
+        # 主循环卡顿看门狗；WebUI 循环另有一份，挂在 WebUI 服务器启动处。
+        from src.common.event_loop_watchdog import start_watchdog
+
+        self.watchdog_task = start_watchdog("main")
+
         try:
             init_time = int(1000 * (time.time() - init_start_time))
             logger.info(t("startup.initialization_completed_cycles", init_time=init_time))
@@ -257,6 +263,9 @@ async def main() -> None:
     finally:
         if system.webui_server:
             await system.webui_server.shutdown()
+        if system.watchdog_task is not None:
+            system.watchdog_task.cancel()
+            system.watchdog_task = None
         from src.A_memorix.host_service import a_memorix_host_service
         from src.chat.image_system.image_manager import image_manager
         from src.emoji_system.emoji_manager import emoji_manager

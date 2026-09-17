@@ -41,6 +41,7 @@ class WebUIServer:
         self._app = create_app(host=self.hosts[0], port=port, enable_static=True)
         self.app = _ASGIProxy(self._app)
         self._server: Optional[Any] = None
+        self._watchdog_task: Optional["asyncio.Task[None]"] = None
         self._reload_callback_registered = False
         self._register_config_reload = register_config_reload
 
@@ -148,6 +149,16 @@ class WebUIServer:
 
         self._maybe_register_reload_callback()
 
+        # 必须在本循环内设置：anyio 的线程池上限按事件循环保存。
+        from src.webui.app import limit_sync_endpoint_concurrency
+
+        logger.info(f"同步路由端点并发上限: {limit_sync_endpoint_concurrency()}")
+
+        # 看门狗同样必须挂在本循环上：实测先卡住的往往正是 WebUI 这个循环。
+        from src.common.event_loop_watchdog import start_watchdog
+
+        self._watchdog_task = start_watchdog("webui")
+
         for host in self.hosts:
             assert_port_available(
                 host=host,
@@ -200,6 +211,9 @@ class WebUIServer:
 
     async def shutdown(self):
         """关闭服务器"""
+        if self._watchdog_task is not None:
+            self._watchdog_task.cancel()
+            self._watchdog_task = None
         if self._server:
             logger.info("正在关闭 WebUI 服务器...")
             self._server.should_exit = True

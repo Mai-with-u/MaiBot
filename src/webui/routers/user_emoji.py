@@ -112,7 +112,7 @@ def save_user_emoji(user_id: str, content_type: str, image_bytes: bytes) -> Path
 
 
 @router.get("")
-async def get_user_emojis(user_id: str = Query(...)):
+def get_user_emojis(user_id: str = Query(...)):
     """获取当前 WebUI 本地用户保存的表情包。"""
 
     return {
@@ -138,7 +138,7 @@ async def add_user_emoji(
 
 
 @router.get("/{emoji_id}/content")
-async def get_user_emoji_content(
+def get_user_emoji_content(
     emoji_id: str,
     user_id: str = Query(...),
 ):
@@ -156,7 +156,7 @@ async def get_user_emoji_content(
 
 
 @router.delete("/{emoji_id}")
-async def delete_user_emoji(
+def delete_user_emoji(
     emoji_id: str,
     user_id: str = Query(...),
 ):

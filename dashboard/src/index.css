@@ -2678,6 +2678,13 @@
   padding: 0.25rem 0.625rem;
 }
 
+/* 记忆控制台标签行：去掉列表纵向内边距，让标签铺满该行高度，
+   与同行右侧 2rem 高的「更多操作」按钮对齐 */
+.memory-console-density [data-memory-console-tab-row='true'] [data-dashboard-tabs-list='true'] {
+  gap: 0.25rem;
+  padding-block: 0;
+}
+
 .memory-console-density th {
   height: 2.25rem;
   padding-left: 0.75rem;

@@ -396,7 +396,7 @@ async def _save_upload_file(file: UploadFile, target_path: Path) -> None:
 
 
 @router.post("/export", response_model=DataTransferJobResponse)
-async def create_data_export(request: DataExportRequest, background_tasks: BackgroundTasks) -> DataTransferJobResponse:
+def create_data_export(request: DataExportRequest, background_tasks: BackgroundTasks) -> DataTransferJobResponse:
     """创建 MaiBot 数据导出任务。"""
     job = _new_job("export")
     background_tasks.add_task(_run_export_job, job.job_id, request)
@@ -404,13 +404,13 @@ async def create_data_export(request: DataExportRequest, background_tasks: Backg
 
 
 @router.get("/jobs/{job_id}", response_model=DataTransferJobResponse)
-async def get_data_transfer_job(job_id: str) -> DataTransferJobResponse:
+def get_data_transfer_job(job_id: str) -> DataTransferJobResponse:
     """查询导入或导出任务进度。"""
     return _get_job_or_404(job_id).to_response()
 
 
 @router.get("/export/{job_id}/download", response_model=None)
-async def download_data_export(job_id: str) -> FileResponse:
+def download_data_export(job_id: str) -> FileResponse:
     """下载已完成的数据导出压缩包。"""
     job = _get_job_or_404(job_id, "export")
     if job.status != "completed" or job.file_path is None or not job.file_path.is_file():
@@ -423,7 +423,7 @@ async def download_data_export(job_id: str) -> FileResponse:
 
 
 @router.post("/export/{job_id}/cancel", response_model=DataTransferJobResponse)
-async def cancel_data_export(job_id: str) -> DataTransferJobResponse:
+def cancel_data_export(job_id: str) -> DataTransferJobResponse:
     """取消正在执行的数据导出任务。"""
     job = _get_job_or_404(job_id, "export")
     if job.status in {"completed", "failed", "cancelled"}:
@@ -470,7 +470,7 @@ async def create_data_import(
 
 
 @router.delete("/jobs/{job_id}", response_model=dict[str, bool])
-async def delete_data_transfer_job(job_id: str) -> dict[str, bool]:
+def delete_data_transfer_job(job_id: str) -> dict[str, bool]:
     """清理任务记录和已生成的临时文件。"""
     job = _get_job_or_404(job_id)
     if job.file_path is not None:

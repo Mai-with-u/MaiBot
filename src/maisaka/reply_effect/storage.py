@@ -6,8 +6,11 @@ from typing import Dict, List
 
 import gzip
 import json
+import os
+import threading
 import time
 
+from sqlalchemy import func
 from sqlalchemy.exc import OperationalError
 from sqlmodel import col, delete, select
 
@@ -26,12 +29,63 @@ LEGACY_RETRYABLE_EVALUATION_ERRORS = {
 }
 logger = get_logger("maisaka_reply_effect_storage")
 
+# 清理时留出的余量：达到上限后再多写入这么多条才真正删除，
+# 避免刚好压在上限上时每一次写入都触发一次删除。
+_TRIM_SLACK_RECORDS = 64
+
+
+class _SessionRecordCounter:
+    """按会话记录回复效果的实际条数，用于判断是否真的需要清理。
+
+    上限可能被配置得很大，甚至大到永远不可能触发；而 save_record 会在每次状态
+    变更时被调用。这里只在首次接触某个会话时向数据库确认一次条数，之后仅对真正
+    新插入的行递增，从而避免每次写入都去查一遍数据库。
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._counts: Dict[str, int] = {}
+
+    def known_count(self, session_id: str) -> int | None:
+        """返回已记录的条数；尚未记录过时返回 ``None``。"""
+
+        with self._lock:
+            return self._counts.get(session_id)
+
+    def seed(self, session_id: str, count: int) -> None:
+        """记录首次从数据库确认到的真实条数。"""
+
+        with self._lock:
+            self._counts[session_id] = count
+
+    def increment(self, session_id: str) -> int:
+        """新插入一行后递增，并返回递增后的条数。"""
+
+        with self._lock:
+            next_count = self._counts.get(session_id, 0) + 1
+            self._counts[session_id] = next_count
+            return next_count
+
+    def reset(self, session_id: str, count: int) -> None:
+        """清理完成后记录新的条数。"""
+
+        with self._lock:
+            self._counts[session_id] = count
+
+    def forget_all(self) -> None:
+        """数据库记录被整体清空时丢弃全部计数。"""
+
+        with self._lock:
+            self._counts.clear()
+
+
+_session_record_counter = _SessionRecordCounter()
+
 
 class ReplyEffectStorage:
     """负责回复效果记录的独立 JSON 文件存储。"""
 
     _DEFAULT_MAX_RECORDS_PER_CHAT = 256
-    _TRIM_COUNT = 100
     _CLEARED_EFFECT_IDS: set[str] = set()
 
     def __init__(self, base_dir: Path | None = None) -> None:
@@ -140,6 +194,8 @@ class ReplyEffectStorage:
         finalized_at = datetime.fromisoformat(record.finalized_at) if record.finalized_at else None
         with get_db_session() as session:
             row = session.get(MaisakaReplyEffect, record.effect_id)
+            # 同一 effect_id 会随状态变更被反复写入，只有首次写入才增加记录条数。
+            inserted = row is None
             if row is None:
                 row = MaisakaReplyEffect(
                     effect_id=record.effect_id,
@@ -164,20 +220,63 @@ class ReplyEffectStorage:
             row.record_json = "{}"
             row.record_blob = encode_record_payload(payload)
             session.add(row)
-        ReplyEffectStorage._trim_database_records(record.session.session_id)
+        ReplyEffectStorage._trim_database_records(record.session.session_id, inserted=inserted)
 
     @staticmethod
-    def _trim_database_records(session_id: str) -> None:
-        max_records = ReplyEffectStorage._get_max_records_per_chat()
+    def _count_session_records(session_id: str) -> int:
+        """向数据库确认该会话当前的记录条数。"""
+
+        statement = (
+            select(func.count())
+            .select_from(MaisakaReplyEffect)
+            .where(col(MaisakaReplyEffect.session_id) == session_id)
+        )
+        with get_db_session(auto_commit=False) as session:
+            return int(session.exec(statement).one() or 0)
+
+    @staticmethod
+    def _delete_overflow_records(session_id: str, max_records: int) -> None:
+        """保留最新的若干条记录，其余用一条语句一次删除。"""
+
+        retained_effect_ids = (
+            select(MaisakaReplyEffect.effect_id)
+            .where(col(MaisakaReplyEffect.session_id) == session_id)
+            .order_by(
+                col(MaisakaReplyEffect.created_at).desc(),
+                col(MaisakaReplyEffect.effect_id).desc(),
+            )
+            .limit(max_records)
+        )
         with get_db_session() as session:
-            rows = session.exec(
-                select(MaisakaReplyEffect)
-                .where(MaisakaReplyEffect.session_id == session_id)
-                .order_by(col(MaisakaReplyEffect.created_at).desc())
-                .offset(max_records)
-            ).all()
-            for row in rows:
-                session.delete(row)
+            session.exec(
+                delete(MaisakaReplyEffect).where(
+                    col(MaisakaReplyEffect.session_id) == session_id,
+                    col(MaisakaReplyEffect.effect_id).not_in(retained_effect_ids),
+                )
+            )
+
+    @staticmethod
+    def _trim_database_records(session_id: str, *, inserted: bool) -> None:
+        """按会话裁剪历史记录，并尽量避免无谓的数据库查询。
+
+        上限可能大到永远触发不了，因此先看内存里记着的条数：只有确实可能超限时
+        才查库确认；删除时留出一批余量，避免刚好压在上限上时每次写入都删一次。
+        """
+
+        max_records = ReplyEffectStorage._get_max_records_per_chat()
+        known_count = _session_record_counter.known_count(session_id)
+        if known_count is None:
+            # 首次接触该会话：这次查询已经包含刚写入的行，无需再递增
+            known_count = ReplyEffectStorage._count_session_records(session_id)
+            _session_record_counter.seed(session_id, known_count)
+        elif inserted:
+            known_count = _session_record_counter.increment(session_id)
+
+        if known_count <= max_records + _TRIM_SLACK_RECORDS:
+            return
+
+        ReplyEffectStorage._delete_overflow_records(session_id, max_records)
+        _session_record_counter.reset(session_id, max_records)
 
     @staticmethod
     def read_json(file_path: Path) -> Dict[str, object]:
@@ -196,6 +295,8 @@ class ReplyEffectStorage:
             effect_ids = list(session.exec(select(MaisakaReplyEffect.effect_id)).all())
             self._CLEARED_EFFECT_IDS.update(effect_ids)
             session.exec(delete(MaisakaReplyEffect))
+        # 数据库记录已被整体清空，内存里记的条数不再成立。
+        _session_record_counter.forget_all()
 
         removed_files = 0
         for pattern in ("*.json", "*.json.gz"):
@@ -240,24 +341,31 @@ class ReplyEffectStorage:
         return next(iter(sorted(chat_dir.glob(f"*_{safe_effect_id}.json"), reverse=True)), None)
 
     def _trim_overflow(self, chat_dir: Path) -> None:
-        """超过容量时删除最旧的回复效果记录。"""
+        """超过容量时删除最旧的回复效果记录，最终恰好保留上限数量。
+
+        文件名以毫秒时间戳开头，按文件名排序等价于按时间排序，因此不需要为每个
+        文件查询修改时间；os.scandir 的 DirEntry 已带类型信息，也无需额外 stat。
+        """
 
         max_records = self._get_max_records_per_chat()
-        files = [
-            file_path
-            for pattern in ("*.json", "*.json.gz")
-            for file_path in chat_dir.glob(pattern)
-            if file_path.is_file()
-        ]
-        if len(files) <= max_records:
+        try:
+            with os.scandir(chat_dir) as entries:
+                names = [
+                    entry.name
+                    for entry in entries
+                    if entry.is_file()
+                    and (entry.name.endswith(".json") or entry.name.endswith(".json.gz"))
+                ]
+        except FileNotFoundError:
             return
 
-        sorted_files = sorted(files, key=lambda file_path: file_path.stat().st_mtime)
-        overflow_count = len(files) - max_records
-        trim_count = min(len(sorted_files), max(self._TRIM_COUNT, overflow_count))
-        for old_file in sorted_files[:trim_count]:
+        if len(names) <= max_records:
+            return
+
+        names.sort()
+        for name in names[: len(names) - max_records]:
             try:
-                old_file.unlink()
+                (chat_dir / name).unlink()
             except FileNotFoundError:
                 continue
 

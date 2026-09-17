@@ -68,6 +68,14 @@ Radix 组件不随便移出上下文，像 TabsTrigger 必须留在 TabsList 里
 
 WebUI 开发服务固定起到 7999 端口。
 
+# 事件循环规范
+不要阻塞事件循环。同一进程里有两个事件循环（bot 主循环、WebUI 独立线程的循环），任何一个被同步工作占住，界面上对应的一侧就会整体卡住。
+
+- 路由处理器只做同步工作（查数据库、读文件、算数据）时写成普通 `def`，不要写 `async def`：FastAPI 会把 `def` 端点交给线程池执行，而 `async def` 会占用事件循环。只有确实需要 `await`，或需要「当前有运行中的事件循环」（`asyncio.create_task`、`asyncio.get_running_loop` 等）时，才写 `async def`。
+- `async def` 函数体内不要直接调用同步阻塞接口：`get_db_session()`、`session.exec()`、`find_messages()`、`metadata_store.query()`、批量文件读写等，应放进 `asyncio.to_thread(...)`。
+- WebUI 同步端点的并发数由 `src/webui/app.py` 的 `limit_sync_endpoint_concurrency()` 限制在 SQLite 连接池容量以内，新增同步端点不需要再单独控制并发。
+- 主循环与 WebUI 循环各挂一个卡顿看门狗（`src/common/event_loop_watchdog.py`）。日志里出现「事件循环卡顿: loop=... 迟到=...s」即可看出是哪一侧被阻塞、卡了多久。
+
 # 会话 ID 规范
 除聊天流创建/注册链路外，业务模块不应自行调用 `SessionUtils.calculate_session_id` 计算资源归属 ID。表达学习、黑话、记忆、WebUI、配置匹配等模块应通过 `chat_manager` 的内部接口，基于 platform、目标 ID 和聊天类型解析已存在的真实聊天流；如果解析不到真实 `ChatSession.session_id`，不要把自行计算的 fallback hash 写入数据库。
 

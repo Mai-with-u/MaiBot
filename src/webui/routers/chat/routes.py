@@ -1184,7 +1184,7 @@ def _delete_chat_session_scope(session_id: str) -> Dict[str, Any]:
 
 
 @router.get("/history")
-async def get_chat_history(
+def get_chat_history(
     limit: int = Query(default=50, ge=1, le=200),
     user_id: Optional[str] = Query(default=None),
     group_id: Optional[str] = Query(default=None),
@@ -1202,7 +1202,7 @@ async def get_chat_history(
 
 
 @router.get("/platforms")
-async def get_available_platforms() -> Dict[str, object]:
+def get_available_platforms() -> Dict[str, object]:
     """获取可用平台列表。"""
     try:
         with get_db_session() as session:
@@ -1221,7 +1221,7 @@ async def get_available_platforms() -> Dict[str, object]:
 
 
 @router.get("/persons")
-async def get_persons_by_platform(
+def get_persons_by_platform(
     platform: str = Query(..., description="平台名称"),
     search: Optional[str] = Query(default=None, description="搜索关键词"),
     limit: int = Query(default=50, ge=1, le=200),
@@ -1262,7 +1262,7 @@ async def get_persons_by_platform(
 
 
 @router.get("/sessions")
-async def get_chat_sessions(
+def get_chat_sessions(
     limit: int = Query(default=200, ge=1, le=1000),
 ) -> Dict[str, object]:
     """获取已存在的聊天流列表。"""
@@ -1303,7 +1303,7 @@ async def get_chat_sessions(
 
 
 @router.get("/resolve-target")
-async def resolve_chat_target(
+def resolve_chat_target(
     platform: str = Query(..., description="平台名称"),
     item_id: str = Query(..., description="群号或用户 ID"),
     rule_type: str = Query(default="group", description="聊天类型：group/private"),
@@ -1317,14 +1317,14 @@ async def resolve_chat_target(
 
 
 @router.post("/resolve-targets")
-async def resolve_chat_targets(request: ChatTargetResolveBatchRequest) -> Dict[str, object]:
+def resolve_chat_targets(request: ChatTargetResolveBatchRequest) -> Dict[str, object]:
     """批量按配置目标解析真实聊天流，用于配置页即时校验。"""
 
     return {"success": True, "results": _resolve_chat_targets(request.targets[:200])}
 
 
 @router.get("/sessions/{session_id}")
-async def get_chat_session_detail(session_id: str) -> Dict[str, object]:
+def get_chat_session_detail(session_id: str) -> Dict[str, object]:
     """获取单个聊天流详情。"""
 
     normalized_session_id = str(session_id or "").strip()
@@ -1343,7 +1343,7 @@ async def get_chat_session_detail(session_id: str) -> Dict[str, object]:
 
 
 @router.delete("/sessions/{session_id}")
-async def delete_chat_session(session_id: str) -> Dict[str, object]:
+def delete_chat_session(session_id: str) -> Dict[str, object]:
     """删除聊天流及所有与该 session_id 直接关联的数据。"""
 
     normalized_session_id = str(session_id or "").strip()
@@ -1471,14 +1471,14 @@ async def update_chat_session_adapter_policy(
 
 
 @router.get("/adapters/policy/defaults")
-async def get_adapter_policy_defaults() -> Dict[str, object]:
+def get_adapter_policy_defaults() -> Dict[str, object]:
     """返回群聊和私聊的适配器全局默认动作。"""
 
     return {"success": True, "defaults": get_adapter_policy_manager().get_default_actions()}
 
 
 @router.put("/adapters/policy/defaults")
-async def update_adapter_policy_defaults(request: AdapterPolicyDefaultsUpdateRequest) -> Dict[str, object]:
+def update_adapter_policy_defaults(request: AdapterPolicyDefaultsUpdateRequest) -> Dict[str, object]:
     """更新群聊和私聊的适配器全局默认动作。"""
 
     manager = get_adapter_policy_manager()
@@ -1491,7 +1491,7 @@ async def update_adapter_policy_defaults(request: AdapterPolicyDefaultsUpdateReq
 
 
 @router.get("/adapters/plugins/{plugin_id}/policy")
-async def get_adapter_plugin_policy(plugin_id: str) -> Dict[str, object]:
+def get_adapter_plugin_policy(plugin_id: str) -> Dict[str, object]:
     """返回指定适配器插件在主程序侧的群聊与私聊规则。"""
 
     normalized_plugin_id = str(plugin_id or "").strip()
@@ -1512,7 +1512,7 @@ async def get_adapter_plugin_policy(plugin_id: str) -> Dict[str, object]:
 
 
 @router.put("/adapters/plugins/{plugin_id}/policy")
-async def update_adapter_plugin_policy(
+def update_adapter_plugin_policy(
     plugin_id: str,
     request: AdapterHostPolicyUpdateRequest,
 ) -> Dict[str, object]:
@@ -1559,7 +1559,7 @@ async def delete_chat_session_prompt(session_id: str, index: int) -> Dict[str, o
 
 
 @router.delete("/history")
-async def clear_chat_history(
+def clear_chat_history(
     user_id: Optional[str] = Query(default=None),
     group_id: Optional[str] = Query(default=None),
 ) -> Dict[str, object]:
@@ -1576,7 +1576,7 @@ async def clear_chat_history(
 
 
 @router.get("/info")
-async def get_chat_info() -> Dict[str, object]:
+def get_chat_info() -> Dict[str, object]:
     """获取聊天室信息。"""
     return {
         "bot_name": global_config.bot.nickname,

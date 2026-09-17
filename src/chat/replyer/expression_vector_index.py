@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 
 import asyncio
+import copy
 import json
 import os
+import threading
 import time
 import uuid
 
@@ -436,8 +438,8 @@ def _atomic_write_text(path: Path, content: str) -> None:
         temporary_path.unlink(missing_ok=True)
 
 
-def _load_index_payload(index_path: Path) -> dict[str, Any] | None:
-    """读取生成索引；损坏内容会被明确记录，并交由数据库重建。"""
+def _read_and_parse_index_payload(index_path: Path) -> dict[str, Any] | None:
+    """实际读取并解析索引 JSON，不做任何缓存。"""
 
     if not index_path.exists():
         return None
@@ -457,6 +459,103 @@ def _load_index_payload(index_path: Path) -> dict[str, Any] | None:
         )
         return None
     return payload
+
+
+# 按「路径 + mtime」缓存解析结果。索引 JSON 有 11MB，解析一次约 110ms；而历史
+# 补建扫描、指纹比对等只读流程会反复读取同一份内容，每次重新解析会长时间占用 GIL，
+# 进而阻塞两个事件循环。缓存条目在文件变更时自动失效。
+_index_payload_cache: Dict[Path, tuple[float, dict[str, Any]]] = {}
+_index_payload_cache_lock = threading.Lock()
+
+
+def _load_index_payload(index_path: Path) -> dict[str, Any] | None:
+    """读取生成索引（带 mtime 缓存）；损坏内容会被明确记录，并交由数据库重建。
+
+    返回的对象由缓存持有，调用方不得原地修改；需要改写的场景请使用
+    ``_load_mutable_index_payload``。
+    """
+
+    try:
+        mtime = index_path.stat().st_mtime
+    except OSError:
+        # 文件不存在或无法访问，交给非缓存路径给出明确日志。
+        return _read_and_parse_index_payload(index_path)
+
+    with _index_payload_cache_lock:
+        cached = _index_payload_cache.get(index_path)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
+
+    payload = _read_and_parse_index_payload(index_path)
+    if payload is None:
+        return None
+
+    with _index_payload_cache_lock:
+        _index_payload_cache[index_path] = (mtime, payload)
+    return payload
+
+
+def _load_mutable_index_payload(index_path: Path) -> dict[str, Any] | None:
+    """读取一份可安全改写的索引副本，用于会写回文件的流程。
+
+    深拷贝需要约 115ms，因此仅在真正要改写索引的调用点付出这份成本。
+    """
+
+    payload = _load_index_payload(index_path)
+    if payload is None:
+        return None
+    return copy.deepcopy(payload)
+
+
+# 补建流程会在同一轮里多次判断「哪些表达缺向量」，每次都全表读取 expressions
+# 会重复付出约 45ms 的扫描与对象构造成本。这里做短 TTL 快照，让同一轮内的多次
+# 判断复用同一份数据；TTL 很短，且补充新表达本就是按周期进行的，不影响时效性。
+_EXPRESSION_ROWS_TTL_SECONDS = 5.0
+_expression_rows_cache: tuple[float, List[tuple[Any, ...]]] | None = None
+_expression_rows_cache_lock = threading.Lock()
+
+
+def _load_expression_rows_snapshot() -> List[tuple[Any, ...]]:
+    """读取 expressions 表的关键列，命中短 TTL 快照时直接复用。"""
+
+    global _expression_rows_cache
+
+    now = time.monotonic()
+    with _expression_rows_cache_lock:
+        cached = _expression_rows_cache
+        if cached is not None and now - cached[0] < _EXPRESSION_ROWS_TTL_SECONDS:
+            return cached[1]
+
+    from sqlmodel import select
+
+    from src.common.database.database import get_db_session
+    from src.common.database.database_model import Expression
+
+    with get_db_session(auto_commit=False) as session:
+        rows = session.exec(
+            select(
+                Expression.id,
+                Expression.situation,
+                Expression.style,
+                Expression.count,
+                Expression.session_id,
+                Expression.checked,
+                Expression.modified_by,
+            ).order_by(Expression.id)
+        ).all()
+
+    materialized = [tuple(row) for row in rows]
+    with _expression_rows_cache_lock:
+        _expression_rows_cache = (now, materialized)
+    return materialized
+
+
+def _invalidate_expression_rows_snapshot() -> None:
+    """丢弃行快照，供明确需要立刻读到最新数据的场景使用。"""
+
+    global _expression_rows_cache
+    with _expression_rows_cache_lock:
+        _expression_rows_cache = None
 
 
 class ExpressionVectorIndex:
@@ -961,10 +1060,7 @@ class ExpressionVectorIndex:
     ) -> ExpressionHistoryBackfillSelection:
         """从数据库读取一批缺失或过期的历史表达。"""
 
-        from sqlmodel import select
-
-        from src.common.database.database import get_db_session
-        from src.common.database.database_model import Expression, ModifiedBy
+        from src.common.database.database_model import ModifiedBy
 
         payload = _load_index_payload(index_path)
         indexed_by_id: Dict[int, dict[str, Any]] = {}
@@ -986,20 +1082,7 @@ class ExpressionVectorIndex:
         deferred_count = 0
         isolated_count = 0
         now_timestamp = time.time()
-        with get_db_session(auto_commit=False) as session:
-            statement = (
-                select(
-                    Expression.id,
-                    Expression.situation,
-                    Expression.style,
-                    Expression.count,
-                    Expression.session_id,
-                    Expression.checked,
-                    Expression.modified_by,
-                )
-                .order_by(Expression.id)
-            )
-            rows = session.exec(statement).all()
+        rows = _load_expression_rows_snapshot()
 
         for row in rows:
             expression_id, situation, style, count, session_id, checked, modified_by = row
@@ -1059,22 +1142,9 @@ class ExpressionVectorIndex:
     def _load_current_expression_fingerprints() -> Dict[int, str]:
         """读取当前数据库中仍有效的表达方式指纹，用于清理过期索引项。"""
 
-        from sqlmodel import select
-
-        from src.common.database.database import get_db_session
-        from src.common.database.database_model import Expression
-
         fingerprints: Dict[int, str] = {}
-        with get_db_session(auto_commit=False) as session:
-            rows = session.exec(
-                select(
-                    Expression.id,
-                    Expression.situation,
-                    Expression.style,
-                )
-            ).all()
-
-        for expression_id, situation, style in rows:
+        for row in _load_expression_rows_snapshot():
+            expression_id, situation, style = row[0], row[1], row[2]
             if expression_id is None:
                 continue
             normalized_situation = normalize_text(situation)
@@ -1599,7 +1669,8 @@ class ExpressionVectorIndex:
         previous_profile_cluster_centers: Dict[str, np.ndarray] = {}
         prior_changes_since_recluster = 0
         prior_changed_expression_ids: set[int] = set()
-        existing_payload = await asyncio.to_thread(_load_index_payload, index_path)
+        # 这份 payload 会被改写并写回索引文件，必须取独立副本，不能改到缓存对象上。
+        existing_payload = await asyncio.to_thread(_load_mutable_index_payload, index_path)
 
         if existing_payload is None:
             from src.common.database.database import DATABASE_URL
@@ -2361,6 +2432,16 @@ class ExpressionVectorIndex:
             )
             if selection.items:
                 return False
+
+            # 聚类成熟度只依赖索引 payload 的 cluster_maintenance 字段，不需要向量数据。
+            # 索引已稳定时先短路返回，避免为了确认「无需处理」而付出深拷贝 payload 与
+            # 加载向量阵列的代价——空转轮次会周期性地走到这里。
+            current_payload = await asyncio.to_thread(_load_index_payload, index_path)
+            if current_payload is not None and (
+                self._resolve_cluster_state(current_payload, profile_marker=profile.marker)
+                == CLUSTER_STATE_STABLE
+            ):
+                return True
 
             current_fingerprints = await asyncio.to_thread(
                 self._load_current_expression_fingerprints
