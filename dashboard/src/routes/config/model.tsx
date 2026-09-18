@@ -1179,72 +1179,107 @@ function ModelConfigPageContent() {
           {selectedModelTestResult && (
             <DialogBody viewportClassName="max-h-[70vh] pr-3 sm:pr-4">
               <div className="space-y-4 py-2 text-sm">
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <div>
-                    <span className="text-muted-foreground">测试状态</span>
-                    <p className={selectedModelTestResult.success ? 'font-medium text-green-600' : 'font-medium text-destructive'}>
-                      {selectedModelTestResult.success ? '通过' : '未通过'}
-                    </p>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">耗时</span>
-                    <p className="font-medium">
-                      {selectedModelTestResult.latency_ms != null ? `${(selectedModelTestResult.latency_ms / 1000).toFixed(2)}s` : '-'}
-                    </p>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">工具调用</span>
-                    <p className={selectedModelTestResult.tool_call_ok ? 'font-medium text-green-600' : 'font-medium text-destructive'}>
-                      {selectedModelTestResult.tool_call_ok ? '已返回测试工具调用' : '未返回测试工具调用'}
-                    </p>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">视觉测试</span>
-                    <p className="font-medium">
-                      {selectedModelTestResult.visual_tested ? '已附加测试图片' : '未附加图片'}
-                    </p>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Prompt tokens</span>
-                    <p className="font-medium tabular-nums">{selectedModelTestResult.prompt_tokens}</p>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Completion tokens</span>
-                    <p className="font-medium tabular-nums">{selectedModelTestResult.completion_tokens}</p>
-                  </div>
-                </div>
+                {(() => {
+                  const isEmbeddingTest =
+                    selectedModelTestResult.test_kind === 'text_embedding' ||
+                    selectedModelTestResult.test_kind === 'image_embedding' ||
+                    (selectedModelTestResult.embedding_pairs?.length ?? 0) > 0
+                  return (
+                    <>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <div>
+                          <span className="text-muted-foreground">测试状态</span>
+                          <p className={selectedModelTestResult.success ? 'font-medium text-green-600' : 'font-medium text-destructive'}>
+                            {selectedModelTestResult.success ? '通过' : '未通过'}
+                          </p>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">耗时</span>
+                          <p className="font-medium">
+                            {selectedModelTestResult.latency_ms != null ? `${(selectedModelTestResult.latency_ms / 1000).toFixed(2)}s` : '-'}
+                          </p>
+                        </div>
+                        {!isEmbeddingTest && (
+                          <>
+                            <div>
+                              <span className="text-muted-foreground">工具调用</span>
+                              <p className={selectedModelTestResult.tool_call_ok ? 'font-medium text-green-600' : 'font-medium text-destructive'}>
+                                {selectedModelTestResult.tool_call_ok ? '已返回测试工具调用' : '未返回测试工具调用'}
+                              </p>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">视觉测试</span>
+                              <p className="font-medium">
+                                {selectedModelTestResult.visual_tested ? '已附加测试图片' : '未附加图片'}
+                              </p>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Prompt tokens</span>
+                              <p className="font-medium tabular-nums">{selectedModelTestResult.prompt_tokens}</p>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Completion tokens</span>
+                              <p className="font-medium tabular-nums">{selectedModelTestResult.completion_tokens}</p>
+                            </div>
+                          </>
+                        )}
+                      </div>
 
-                {selectedModelTestResult.error && (
-                  <div>
-                    <h4 className="mb-2 text-sm font-semibold">完整错误信息</h4>
-                    <pre className="bg-muted overflow-auto rounded-md p-3 text-xs break-all whitespace-pre-wrap">
-                      {selectedModelTestResult.error}
-                    </pre>
-                  </div>
-                )}
+                      {selectedModelTestResult.error && (
+                        <div>
+                          <h4 className="mb-2 text-sm font-semibold">完整错误信息</h4>
+                          <pre className="bg-muted overflow-auto rounded-md p-3 text-xs break-all whitespace-pre-wrap">
+                            {selectedModelTestResult.error}
+                          </pre>
+                        </div>
+                      )}
 
-                <div>
-                  <h4 className="mb-2 text-sm font-semibold">工具调用返回</h4>
-                  <pre className="bg-muted max-h-56 overflow-auto rounded-md p-3 text-xs whitespace-pre-wrap">
-                    {JSON.stringify(selectedModelTestResult.tool_calls, null, 2)}
-                  </pre>
-                </div>
+                      {isEmbeddingTest && (selectedModelTestResult.embedding_pairs?.length ?? 0) > 0 && (
+                        <div>
+                          <h4 className="mb-2 text-sm font-semibold">
+                            嵌入对比结果{selectedModelTestResult.embedding_dimension ? `（向量维度 ${selectedModelTestResult.embedding_dimension}）` : ''}
+                          </h4>
+                          <div className="space-y-1">
+                            {selectedModelTestResult.embedding_pairs!.map((pair) => (
+                              <div
+                                key={pair.label}
+                                className="bg-muted flex items-center justify-between gap-3 rounded-md px-3 py-2 text-xs"
+                              >
+                                <span className="min-w-0 truncate">{pair.label}</span>
+                                <span className="tabular-nums font-medium">{pair.similarity.toFixed(4)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
-                <div>
-                  <h4 className="mb-2 text-sm font-semibold">模型文本返回</h4>
-                  <pre className="bg-muted max-h-56 overflow-auto rounded-md p-3 text-xs whitespace-pre-wrap">
-                    {selectedModelTestResult.response || '（无文本返回）'}
-                  </pre>
-                </div>
+                      {!isEmbeddingTest && selectedModelTestResult.tool_calls.length > 0 && (
+                        <div>
+                          <h4 className="mb-2 text-sm font-semibold">工具调用返回</h4>
+                          <pre className="bg-muted max-h-56 overflow-auto rounded-md p-3 text-xs whitespace-pre-wrap">
+                            {JSON.stringify(selectedModelTestResult.tool_calls, null, 2)}
+                          </pre>
+                        </div>
+                      )}
 
-                {selectedModelTestResult.reasoning && (
-                  <div>
-                    <h4 className="mb-2 text-sm font-semibold">推理内容</h4>
-                    <pre className="bg-muted max-h-56 overflow-auto rounded-md p-3 text-xs whitespace-pre-wrap">
-                      {selectedModelTestResult.reasoning}
-                    </pre>
-                  </div>
-                )}
+                      <div>
+                        <h4 className="mb-2 text-sm font-semibold">{isEmbeddingTest ? '测试结果' : '模型文本返回'}</h4>
+                        <pre className="bg-muted max-h-56 overflow-auto rounded-md p-3 text-xs whitespace-pre-wrap">
+                          {selectedModelTestResult.response || '（无文本返回）'}
+                        </pre>
+                      </div>
+
+                      {selectedModelTestResult.reasoning && (
+                        <div>
+                          <h4 className="mb-2 text-sm font-semibold">推理内容</h4>
+                          <pre className="bg-muted max-h-56 overflow-auto rounded-md p-3 text-xs whitespace-pre-wrap">
+                            {selectedModelTestResult.reasoning}
+                          </pre>
+                        </div>
+                      )}
+                    </>
+                  )
+                })()}
               </div>
             </DialogBody>
           )}

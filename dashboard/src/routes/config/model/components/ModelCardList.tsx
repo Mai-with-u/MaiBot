@@ -47,8 +47,12 @@ function getModelTestStatus(result: ModelTestResult | undefined, isTesting: bool
   }
 
   if (result.success) {
+    const isEmbeddingTest = result.test_kind === 'text_embedding' || result.test_kind === 'image_embedding'
+    const summary = isEmbeddingTest
+      ? `测试通过：嵌入向量正常${result.embedding_dimension ? `（维度 ${result.embedding_dimension}）` : ''}`
+      : `测试通过：文本${result.visual_tested ? '、视觉' : ''}与工具调用正常`
     return {
-      description: `测试通过：文本${result.visual_tested ? '、视觉' : ''}与工具调用正常${
+      description: `${summary}${
         result.latency_ms != null ? `，耗时 ${(result.latency_ms / 1000).toFixed(2)}s` : ''
       }`,
       className: 'border-green-500',

@@ -4,13 +4,15 @@
 提供从各个 AI 厂商 API 获取可用模型列表的代理接口
 """
 
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
-import base64
+import io
+import math
 import os
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from PIL import Image
 from pydantic import BaseModel, Field
 
 import httpx
@@ -75,6 +77,16 @@ class ModelTestToolCall(BaseModel):
     arguments: Dict[str, Any] = Field(default_factory=dict)
 
 
+class ModelTestEmbeddingPair(BaseModel):
+    """嵌入对比测试的单组相似度结果。"""
+
+    label: str
+    """对比说明，例如「相近文本」「不同图片」。"""
+
+    similarity: float
+    """两组向量的余弦相似度，保留 4 位小数。"""
+
+
 class ModelTestResponse(BaseModel):
     """单个模型测试响应。"""
 
@@ -90,6 +102,12 @@ class ModelTestResponse(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    test_kind: str = "chat"
+    """测试类型：`chat` / `text_embedding` / `image_embedding`。"""
+    embedding_dimension: int | None = None
+    """嵌入向量维度；仅嵌入测试返回。"""
+    embedding_pairs: List[ModelTestEmbeddingPair] = Field(default_factory=list)
+    """嵌入对比相似度结果；仅嵌入测试返回。"""
 
 
 class _SingleModelTestOrchestrator(LLMOrchestrator):
@@ -428,67 +446,129 @@ async def _test_embedding_model(model_name: str) -> ModelTestResponse:
     return await _test_text_embedding_model(model_name)
 
 
+_EMBEDDING_TEST_TEXTS = ("今天天气真好", "今日天气十分晴朗", "猫在键盘上散步")
+"""嵌入测试样例文本：前两句语义相近，用于对比相近/无关文本的相似度差异。"""
+
+
+def _build_solid_png(color: Tuple[int, int, int]) -> bytes:
+    """生成指定颜色的纯色 PNG 测试图片。"""
+    buffer = io.BytesIO()
+    Image.new("RGB", (32, 32), color).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _cosine_similarity(left: List[float], right: List[float]) -> float:
+    """计算两个嵌入向量的余弦相似度，保留 4 位小数。"""
+    if len(left) != len(right):
+        raise ValueError(f"两次嵌入返回的向量维度不一致: {len(left)} vs {len(right)}")
+    dot_product = sum(a * b for a, b in zip(left, right, strict=True))
+    left_norm = math.sqrt(sum(a * a for a in left))
+    right_norm = math.sqrt(sum(b * b for b in right))
+    if left_norm == 0 or right_norm == 0:
+        return 0.0
+    return round(dot_product / (left_norm * right_norm), 4)
+
+
 async def _test_text_embedding_model(model_name: str) -> ModelTestResponse:
-    """对文本嵌入模型执行嵌入测试。"""
+    """对文本嵌入模型执行嵌入测试，并对比相近/无关文本的相似度。"""
     start_time = time.time()
     try:
         orchestrator = _SingleModelTestOrchestrator(model_name=model_name)
-        result = await orchestrator.get_embedding("MaiBot 模型可用性测试")
-        latency_ms = round((time.time() - start_time) * 1000, 2)
+        embeddings = []
+        for text in _EMBEDDING_TEST_TEXTS:
+            result = await orchestrator.get_embedding(text)
+            embeddings.append(result.embedding)
+        dimension = len(embeddings[0])
         return ModelTestResponse(
             success=True,
-            model_name=result.model_name or model_name,
+            model_name=model_name,
             visual_tested=False,
             tool_call_ok=False,
-            response=f"嵌入向量维度: {len(result.embedding)}",
-            latency_ms=latency_ms,
+            response=f"嵌入向量维度: {dimension}",
+            latency_ms=round((time.time() - start_time) * 1000, 2),
+            test_kind="text_embedding",
+            embedding_dimension=dimension,
+            embedding_pairs=[
+                ModelTestEmbeddingPair(
+                    label=f"相近文本：「{_EMBEDDING_TEST_TEXTS[0]}」×「{_EMBEDDING_TEST_TEXTS[1]}」",
+                    similarity=_cosine_similarity(embeddings[0], embeddings[1]),
+                ),
+                ModelTestEmbeddingPair(
+                    label=f"无关文本：「{_EMBEDDING_TEST_TEXTS[0]}」×「{_EMBEDDING_TEST_TEXTS[2]}」",
+                    similarity=_cosine_similarity(embeddings[0], embeddings[2]),
+                ),
+            ],
         )
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"嵌入模型测试失败: model={model_name}, error={e}", exc_info=True)
-        latency_ms = round((time.time() - start_time) * 1000, 2)
         return ModelTestResponse(
             success=False,
             model_name=model_name,
             visual_tested=False,
             tool_call_ok=False,
-            latency_ms=latency_ms,
+            latency_ms=round((time.time() - start_time) * 1000, 2),
             error=_format_model_test_error(e),
+            test_kind="text_embedding",
         )
 
 
 async def _test_image_embedding_model(model_name: str) -> ModelTestResponse:
-    """对图片嵌入模型发送测试图片，验证图片嵌入链路。"""
+    """对图片嵌入模型发送测试图片，并对比相同/不同图片的相似度。"""
     start_time = time.time()
     try:
         orchestrator = _SingleModelTestOrchestrator(model_name=model_name)
-        result = await orchestrator.get_image_embedding(
-            base64.b64decode(MODEL_TEST_IMAGE_BASE64),
+        red_png = _build_solid_png((196, 42, 42))
+        blue_png = _build_solid_png((42, 68, 196))
+        red_first = await orchestrator.get_image_embedding(
+            red_png,
             mime_type="image/png",
             preprocess_version="webui_model_test_v1",
         )
-        latency_ms = round((time.time() - start_time) * 1000, 2)
+        red_second = await orchestrator.get_image_embedding(
+            red_png,
+            mime_type="image/png",
+            preprocess_version="webui_model_test_v1",
+        )
+        blue = await orchestrator.get_image_embedding(
+            blue_png,
+            mime_type="image/png",
+            preprocess_version="webui_model_test_v1",
+        )
+        dimension = len(red_first.embedding)
         return ModelTestResponse(
             success=True,
-            model_name=result.model_name or model_name,
+            model_name=model_name,
             visual_tested=False,
             tool_call_ok=False,
-            response=f"图片嵌入向量维度: {len(result.embedding)}",
-            latency_ms=latency_ms,
+            response=f"图片嵌入向量维度: {dimension}",
+            latency_ms=round((time.time() - start_time) * 1000, 2),
+            test_kind="image_embedding",
+            embedding_dimension=dimension,
+            embedding_pairs=[
+                ModelTestEmbeddingPair(
+                    label="相同图片（一致性）",
+                    similarity=_cosine_similarity(red_first.embedding, red_second.embedding),
+                ),
+                ModelTestEmbeddingPair(
+                    label="不同图片（区分度）",
+                    similarity=_cosine_similarity(red_first.embedding, blue.embedding),
+                ),
+            ],
         )
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"图片嵌入模型测试失败: model={model_name}, error={e}", exc_info=True)
-        latency_ms = round((time.time() - start_time) * 1000, 2)
         return ModelTestResponse(
             success=False,
             model_name=model_name,
             visual_tested=False,
             tool_call_ok=False,
-            latency_ms=latency_ms,
+            latency_ms=round((time.time() - start_time) * 1000, 2),
             error=_format_model_test_error(e),
+            test_kind="image_embedding",
         )
 
 

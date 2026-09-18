@@ -413,6 +413,16 @@ export interface ModelTestToolCall {
 }
 
 /**
+ * 嵌入对比测试的单组相似度结果
+ */
+export interface ModelTestEmbeddingPair {
+  /** 对比说明，例如「相近文本」「不同图片」 */
+  label: string
+  /** 两组向量的余弦相似度 */
+  similarity: number
+}
+
+/**
  * 单个模型测试结果
  */
 export interface ModelTestResult {
@@ -428,6 +438,12 @@ export interface ModelTestResult {
   prompt_tokens: number
   completion_tokens: number
   total_tokens: number
+  /** 测试类型：chat / text_embedding / image_embedding */
+  test_kind?: string
+  /** 嵌入向量维度；仅嵌入测试返回 */
+  embedding_dimension?: number | null
+  /** 嵌入对比相似度结果；仅嵌入测试返回 */
+  embedding_pairs?: ModelTestEmbeddingPair[]
 }
 
 /**
