@@ -37,14 +37,19 @@ class TestRequestedReplyStyleBoundary:
         assert "简短回复" in warnings[0]
 
     @pytest.mark.parametrize(
-        "style",
-        ["简短表达", "长回复"],
+        ("style", "expected"),
+        [
+            ("简短表达", "请简短的回复，允许句子残缺，奇怪表达，倒装，省略，符合口语习惯，符合省力随意回复习惯"),
+            ("长回复", "可以针对问题做出较为详细的评论和说明"),
+        ],
     )
-    def test_in_enum_styles_keep_their_prompt_requirement(self, style: str) -> None:
-        """合法 enum 值行为零变化：仍返回对应的篇幅要求文本。"""
-        message = build_style_message(style)
-        assert message  # 非「正常回复」的空串
-        assert message == build_style_message(style)
+    def test_in_enum_styles_keep_their_prompt_requirement(self, style: str, expected: str) -> None:
+        """合法 enum 值行为零变化：仍返回各自对应的篇幅要求文本。
+
+        断言确切文本而非自比较——若两个风格的提示被交换或一起改动，自比较测试仍会
+        通过，钉不住映射本身。
+        """
+        assert build_style_message(style) == expected
 
     def test_normal_and_empty_styles_return_empty_message(self) -> None:
         """「正常回复」与空值/纯空白维持现状：不附加篇幅要求。"""
