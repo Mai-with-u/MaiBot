@@ -23,14 +23,14 @@ _update_progress = None
 
 def _validate_mirror_prefix(url: str, field_name: str) -> str:
     try:
-        return validate_public_url(url)
+        return validate_public_url(url, allow_fake_ip=True)
     except ValueError as e:
         raise ValueError(f"{field_name} 非法: {e}") from e
 
 
 def _validate_custom_outbound_url(url: str) -> str:
     try:
-        return validate_public_url(url)
+        return validate_public_url(url, allow_fake_ip=True)
     except ValueError as e:
         raise ValueError(f"目标 URL 非法: {e}") from e
 
@@ -450,6 +450,7 @@ class GitMirrorService:
             mirrors_to_try = self.config.get_enabled_mirrors()
 
         total_mirrors = len(mirrors_to_try)
+        validation_errors: List[str] = []
 
         # 依次尝试每个镜像源
         for index, mirror in enumerate(mirrors_to_try, 1):
@@ -484,6 +485,9 @@ class GitMirrorService:
                         logger.warning(f"推送进度失败: {e}")
                 return result
 
+            if result.get("status_code") == 400:
+                validation_errors.append(f"{mirror['id']}: {result['error']}")
+
             # 失败，记录日志并推送失败信息
             logger.warning(f"镜像源 {mirror['id']} 失败: {result.get('error')}")
 
@@ -500,7 +504,12 @@ class GitMirrorService:
                     logger.warning(f"推送进度失败: {e}")
 
         # 所有镜像源都失败
-        return {"success": False, "error": "所有镜像源均失败", "mirror_used": None, "attempts": len(mirrors_to_try)}
+        return {
+            "success": False,
+            "error": "所有镜像源均失败" + ("；" + "；".join(validation_errors) if validation_errors else ""),
+            "mirror_used": None,
+            "attempts": len(mirrors_to_try),
+        }
 
     async def _fetch_raw_from_mirror(
         self, owner: str, repo: str, branch: str, file_path: str, mirror: Dict[str, Any]
@@ -530,7 +539,7 @@ class GitMirrorService:
             attempts += 1
             try:
                 logger.debug(f"尝试 #{attempt + 1}: {url}")
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False) as client:
                     response = await client.get(url)
                     response.raise_for_status()
 
@@ -692,6 +701,7 @@ class GitMirrorService:
             mirrors_to_try = self.config.get_enabled_mirrors()
 
         total_mirrors = len(mirrors_to_try)
+        validation_errors: List[str] = []
 
         # 依次尝试每个镜像源
         for index, mirror in enumerate(mirrors_to_try, 1):
@@ -725,6 +735,8 @@ class GitMirrorService:
             )
             if result["success"]:
                 return result
+            if result.get("status_code") == 400:
+                validation_errors.append(f"{mirror['id']}: {result['error']}")
             logger.warning(f"镜像源 {mirror['id']} 克隆失败: {result.get('error')}")
 
             if _update_progress and index < total_mirrors:
@@ -745,7 +757,12 @@ class GitMirrorService:
                     logger.warning(f"推送进度失败: {e}")
 
         # 所有镜像源都失败
-        return {"success": False, "error": "所有镜像源克隆均失败", "mirror_used": None, "attempts": len(mirrors_to_try)}
+        return {
+            "success": False,
+            "error": "所有镜像源克隆均失败" + ("；" + "；".join(validation_errors) if validation_errors else ""),
+            "mirror_used": None,
+            "attempts": len(mirrors_to_try),
+        }
 
     async def _clone_from_mirror(
         self,
