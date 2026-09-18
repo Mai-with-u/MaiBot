@@ -23,6 +23,26 @@ display_name = "回复"
 advanced = false
 description = "Maisaka 回复生成模板，负责根据人格、表达风格、群聊注意事项和待回复上下文生成最终回复。"
 
+[retro_replyer]
+display_name = "复古回复"
+advanced = true
+description = "复古模式（experimental.replyer_retro_prompt）下的群聊回复模板，把全部回复指令集中在一份模板里，整段作为一条消息发送。"
+
+[retro_replyer_light]
+display_name = "复古回复（简短）"
+advanced = true
+description = "复古模式下的群聊简短回复模板，对应旧版 think_level=0 的轻量回复。"
+
+[retro_private_replyer]
+display_name = "复古私聊回复"
+advanced = true
+description = "复古模式下的私聊回复模板，按旧版方式集中回复指令。"
+
+[retro_private_replyer_self]
+display_name = "复古私聊补充回复"
+advanced = true
+description = "复古模式下的私聊补充回复模板，用于在麦麦自己刚刚的发言基础上继续补充。"
+
 [default_expressor]
 display_name = "改写器"
 advanced = true

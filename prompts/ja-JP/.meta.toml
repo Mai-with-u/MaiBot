@@ -23,6 +23,26 @@ display_name = "Replyer"
 advanced = false
 description = "Maisaka の返信生成テンプレート。人格、表現スタイル、グループチャット上の注意点、返信対象の文脈から最終返信を生成する。"
 
+[retro_replyer]
+display_name = "レトロ返信"
+advanced = true
+description = "レトロモード（experimental.replyer_retro_prompt）のグループチャット返信テンプレート。返信指示をひとつのテンプレートにまとめ、そのまま 1 通のメッセージとして送信する。"
+
+[retro_replyer_light]
+display_name = "レトロ返信（短め）"
+advanced = true
+description = "レトロモードのグループチャット短め返信テンプレート。旧版の think_level=0 の軽量返信に対応する。"
+
+[retro_private_replyer]
+display_name = "レトロ個人チャット返信"
+advanced = true
+description = "レトロモードの個人チャット返信テンプレート。旧版の方式で返信指示をまとめる。"
+
+[retro_private_replyer_self]
+display_name = "レトロ個人チャット補足返信"
+advanced = true
+description = "レトロモードの個人チャット補足返信テンプレート。直前に自分が送った発言に続けて補足するときに使う。"
+
 [default_expressor]
 display_name = "既定表現器"
 advanced = true

@@ -4,6 +4,7 @@
 
 ## Maisaka
 
+- 新增实验性复古回复模式 `experimental.replyer_retro_prompt`（默认关闭）：开启后 replyer 按旧版（0.12.x）的方式组织提示词，把全部回复指令集中在一份完整模板里用块占位符填充，群聊、群聊简短回复、私聊、私聊补充自己发言各用一套模板，整段模板作为唯一一条 user 消息发送，聊天记录渲染成纯文本填入模板；模板位于 `prompts/<locale>/retro_*.prompt`，可在 WebUI 提示词面板中修改。
 - 图片嵌入自动兼容百炼与豆包官方地址：`client_type=openai` 时按 Provider 地址切换各自原生多模态嵌入协议，无需再配置 image_embedding_input/image_embedding_body 模板；显式模板仍优先生效，并补充精确的图片向量协议指纹。
 - 新增内置三维建模工具，支持基础几何体组合、OBJ/STL/PLY/GLB 静态网格导入、部件编辑和 GLB/STL 导出；模型按聊天流隔离并保留编辑前版本。
 - 新增三维模型 CPU 预览渲染，PNG 图片返回 Planner 上下文，支持看图后继续修改及通过现有发图能力展示预览。

@@ -23,6 +23,26 @@ display_name = "Replyer"
 advanced = false
 description = "Maisaka reply generation template that creates the final reply from persona, expression style, chat notes, and reply context."
 
+[retro_replyer]
+display_name = "Retro reply"
+advanced = true
+description = "Group chat reply template for retro mode (experimental.replyer_retro_prompt), which puts all reply instructions into a single template sent as one message."
+
+[retro_replyer_light]
+display_name = "Retro reply (short)"
+advanced = true
+description = "Short group chat reply template for retro mode, matching the legacy light reply used when think_level=0."
+
+[retro_private_replyer]
+display_name = "Retro private reply"
+advanced = true
+description = "Private chat reply template for retro mode, organizing all reply instructions the legacy way."
+
+[retro_private_replyer_self]
+display_name = "Retro private follow-up reply"
+advanced = true
+description = "Private chat follow-up template for retro mode, used to keep adding to a message Mai just sent."
+
 [default_expressor]
 display_name = "Default Expressor"
 advanced = true

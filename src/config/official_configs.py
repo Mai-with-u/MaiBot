@@ -1008,6 +1008,19 @@ class ExperimentalConfig(ConfigBase):
     )
     """开启后，reply 动作可通过 attach_pic、attach_emoji、attach_at 参数附加图片、表情包或 at。"""
 
+    replyer_retro_prompt: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "复古回复提示词",
+                "en_US": "Retro reply prompt",
+                "ja_JP": "レトロ返信プロンプト",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """按旧版（0.12.x）的方式组织 replyer 提示词：全部回复指令集中在一份完整模板里，用块占位符填充，群聊/私聊/简短回复各用一套模板，并整段作为一条 user 消息发送。"""
+
     emotion_trait: Literal["rational_calm", "neutral", "sentimental"] = Field(
         default="neutral",
         json_schema_extra={
