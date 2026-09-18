@@ -46,6 +46,68 @@ afterEach(() => {
 })
 
 describe('useModelAutoSave', () => {
+  it.each([
+    ['start_time', '22:00'],
+    ['end_time', '06:00'],
+    ['price_in', 0],
+    ['price_out', 0],
+    ['cache_price_in', 0],
+  ] as const)('仅修改时段 %s 也触发自动保存，清空后保存空数组', async (field, value) => {
+    vi.useFakeTimers()
+    updateModelConfigSectionMock.mockResolvedValue({})
+    const enqueueWrite = createWriteQueue()
+    const onUnsavedChange = vi.fn()
+    const initialModels: ModelInfo[] = [{
+      ...createModel('timed'),
+      cache: false,
+      price_periods: [{
+        start_time: '23:00',
+        end_time: '07:00',
+        price_in: 1,
+        price_out: 2,
+        cache_price_in: 0.2,
+      }],
+    }]
+    const { result, rerender } = renderHook(
+      ({ models }: { models: ModelInfo[] }) => useModelAutoSave({
+        models,
+        taskConfig: null,
+        enqueueWrite,
+        debounceMs: 100,
+        onUnsavedChange,
+      }),
+      { initialProps: { models: initialModels } }
+    )
+    act(() => {
+      result.current.resetSnapshots(initialModels, null)
+      result.current.initialLoadRef.current = false
+    })
+    rerender({ models: structuredClone(initialModels) })
+    await act(async () => vi.advanceTimersByTimeAsync(100))
+    expect(updateModelConfigSectionMock).not.toHaveBeenCalled()
+
+    const nextModels = initialModels.map((model) => ({
+      ...model,
+      price_periods: model.price_periods?.map((period) => ({ ...period, [field]: value })),
+    }))
+    rerender({ models: nextModels })
+    expect(onUnsavedChange).toHaveBeenLastCalledWith(true)
+    await act(async () => vi.advanceTimersByTimeAsync(100))
+    expect(updateModelConfigSectionMock).toHaveBeenCalledTimes(1)
+    expect(updateModelConfigSectionMock).toHaveBeenLastCalledWith('models', [
+      expect.objectContaining({ cache: false, price_periods: nextModels[0].price_periods }),
+    ])
+    expect(onUnsavedChange).toHaveBeenLastCalledWith(false)
+
+    rerender({ models: [{ ...nextModels[0], price_periods: [] }] })
+    await act(async () => vi.advanceTimersByTimeAsync(100))
+    expect(updateModelConfigSectionMock).toHaveBeenCalledTimes(2)
+    expect(updateModelConfigSectionMock).toHaveBeenLastCalledWith('models', [
+      expect.objectContaining({ price_periods: [] }),
+    ])
+    expect(onUnsavedChange).toHaveBeenLastCalledWith(false)
+  })
+
   it('模型和任务配置并发保存时汇总保存中与未保存状态', async () => {
     vi.useFakeTimers()
     const modelsSave = createDeferred<Record<string, unknown>>()

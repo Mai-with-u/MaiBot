@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ModelConfigPage } from '../model'
 import { modelListCache } from '../model/constants'
+import type { ModelInfo } from '../model/types'
 import * as configApi from '@/lib/config-api'
 import * as configSearchNavigation from '@/lib/config-search-navigation'
 
@@ -547,6 +548,139 @@ describe('ModelConfigPage 特征化', () => {
     expect(savedConfig.models[0].name).toBe('renamed-gpt-4')
     expect(savedConfig.model_task_config.replyer.model_list).toEqual(['renamed-gpt-4'])
     expect(savedConfig.model_task_config.embedding.model_list).toEqual(['old-embed-model'])
+    expect(configApi.updateModelConfigSection).not.toHaveBeenCalled()
+  })
+
+  it('分时价格保存零价、跨午夜和缓存价，回填后可删除所有时段', async () => {
+    const user = userEvent.setup()
+    const periods = [{
+      start_time: '23:00',
+      end_time: '07:00',
+      price_in: 0.5,
+      price_out: 1,
+      cache_price_in: 0.1,
+    }]
+    const timedConfig = {
+      ...baseConfig(),
+      models: [{ ...baseConfig().models[0], price_in: 2, price_out: 4, cache: true, price_periods: periods }],
+    }
+    vi.mocked(configApi.getModelConfigCached).mockResolvedValue(timedConfig as never)
+    vi.mocked(configApi.getModelConfig).mockResolvedValue(timedConfig as never)
+    await renderModelPage()
+    await openConfigurationTab(user)
+    expect(screen.getAllByText('1 个价格时段')).toHaveLength(2)
+    expect(within(getModelTable()).getByRole('columnheader', { name: '默认输入' })).toBeInTheDocument()
+    await user.click(within(getModelTable()).getByRole('button', { name: '编辑模型 gpt-4' }))
+    const dialog = await screen.findByRole('dialog', { name: '编辑模型' })
+    expect(within(dialog).getByLabelText('时段 1 开始时间')).toHaveAttribute('type', 'time')
+    expect(within(dialog).getByLabelText('时段 1 开始时间')).toHaveValue('23:00')
+    expect(within(dialog).getByText('次日')).toBeInTheDocument()
+    for (const label of ['输入价格', '输出价格', '缓存价格']) {
+      fireEvent.change(within(dialog).getByLabelText(`时段 1 ${label}`), { target: { value: '0' } })
+    }
+    await user.click(within(dialog).getByRole('button', { name: '高级设置' }))
+    const cacheSwitch = within(dialog).getByRole('switch', { name: '支持缓存' })
+    await user.click(cacheSwitch)
+    expect(within(dialog).queryByLabelText('时段 1 缓存价格')).not.toBeInTheDocument()
+    await user.click(cacheSwitch)
+    expect(within(dialog).getByLabelText('时段 1 缓存价格')).toHaveValue(0)
+    await user.click(cacheSwitch)
+    await user.click(within(dialog).getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(configApi.updateModelConfig).toHaveBeenCalledTimes(1))
+    const saved = vi.mocked(configApi.updateModelConfig).mock.calls[0][0] as { models: ModelInfo[] }
+    expect(saved.models[0]).toMatchObject({
+      cache: false,
+      price_in: 2,
+      price_out: 4,
+      price_periods: [{ start_time: '23:00', end_time: '07:00', price_in: 0, price_out: 0, cache_price_in: 0 }],
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '编辑模型' })).not.toBeInTheDocument())
+    await user.click(within(getModelTable()).getByRole('button', { name: '编辑模型 gpt-4' }))
+    const reopened = await screen.findByRole('dialog', { name: '编辑模型' })
+    expect(within(reopened).getByLabelText('时段 1 输入价格')).toHaveValue(0)
+    expect(within(reopened).queryByLabelText('时段 1 缓存价格')).not.toBeInTheDocument()
+    await user.click(within(reopened).getByRole('button', { name: '删除时段 1' }))
+    await user.click(within(reopened).getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(configApi.updateModelConfig).toHaveBeenCalledTimes(2))
+    expect(configApi.updateModelConfig).toHaveBeenLastCalledWith(expect.objectContaining({
+      models: [expect.objectContaining({ price_periods: [] })],
+    }))
+    expect(screen.queryByText('1 个价格时段')).not.toBeInTheDocument()
+  })
+
+  it('新增分时时段显示准确错误，跨午夜相邻可保存且缺失缓存价默认零', async () => {
+    const user = userEvent.setup()
+    await renderModelPage()
+    await openConfigurationTab(user)
+    await user.click(within(getModelTable()).getByRole('button', { name: '编辑模型 gpt-4' }))
+    const dialog = await screen.findByRole('dialog', { name: '编辑模型' })
+    const change = (label: string, value: string) => {
+      fireEvent.change(within(dialog).getByLabelText(label), { target: { value } })
+    }
+    const save = () => user.click(within(dialog).getByRole('button', { name: '保存' }))
+    await user.click(within(dialog).getByRole('button', { name: '添加时段' }))
+    await save()
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('时段 1 的开始时间必须为 HH:MM')
+    change('时段 1 开始时间', '23:00')
+    change('时段 1 结束时间', '23:00')
+    await save()
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('开始时间与结束时间不能相同')
+    change('时段 1 结束时间', '07:00')
+    change('时段 1 输入价格', '')
+    await save()
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('时段 1 的输入价格必须为非负有限数值')
+    change('时段 1 输入价格', '-1')
+    await save()
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('时段 1 的输入价格必须为非负有限数值')
+    change('时段 1 输入价格', '0')
+    await user.click(within(dialog).getByRole('button', { name: '添加时段' }))
+    change('时段 2 开始时间', '06:00')
+    change('时段 2 结束时间', '09:00')
+    await save()
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('时段 1 与时段 2 重叠')
+    expect(configApi.updateModelConfig).not.toHaveBeenCalled()
+    change('时段 2 开始时间', '07:00')
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
+    await save()
+    await waitFor(() => expect(configApi.updateModelConfig).toHaveBeenCalledTimes(1))
+    expect(configApi.updateModelConfig).toHaveBeenCalledWith(expect.objectContaining({
+      models: [expect.objectContaining({
+        cache: false,
+        price_periods: [
+          { start_time: '23:00', end_time: '07:00', price_in: 0, price_out: 0, cache_price_in: 0 },
+          { start_time: '07:00', end_time: '09:00', price_in: 0, price_out: 0, cache_price_in: 0 },
+        ],
+      })],
+    }))
+  })
+
+  it('取消分时价格编辑不会污染原配置，再次打开恢复已保存时段', async () => {
+    const user = userEvent.setup()
+    const periods = [{ start_time: '23:00', end_time: '07:00', price_in: 1, price_out: 2, cache_price_in: 0.3 }]
+    const timedConfig = {
+      ...baseConfig(),
+      models: [{ ...baseConfig().models[0], cache: true, price_periods: periods }],
+    }
+    vi.mocked(configApi.getModelConfigCached).mockResolvedValue(timedConfig as never)
+    vi.mocked(configApi.getModelConfig).mockResolvedValue(timedConfig as never)
+    await renderModelPage()
+    await openConfigurationTab(user)
+    await user.click(within(getModelTable()).getByRole('button', { name: '编辑模型 gpt-4' }))
+    const dialog = await screen.findByRole('dialog', { name: '编辑模型' })
+    fireEvent.change(within(dialog).getByLabelText('时段 1 开始时间'), { target: { value: '22:00' } })
+    fireEvent.change(within(dialog).getByLabelText('时段 1 缓存价格'), { target: { value: '9' } })
+    expect(periods[0]).toMatchObject({ start_time: '23:00', cache_price_in: 0.3 })
+    await user.click(within(dialog).getByRole('button', { name: '添加时段' }))
+    await user.click(within(dialog).getByRole('button', { name: '删除时段 1' }))
+    await user.click(within(dialog).getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '编辑模型' })).not.toBeInTheDocument())
+    await user.click(within(getModelTable()).getByRole('button', { name: '编辑模型 gpt-4' }))
+    const reopened = await screen.findByRole('dialog', { name: '编辑模型' })
+    expect(within(reopened).getByLabelText('时段 1 开始时间')).toHaveValue('23:00')
+    expect(within(reopened).getByLabelText('时段 1 缓存价格')).toHaveValue(0.3)
+    expect(within(reopened).queryByLabelText('时段 2 开始时间')).not.toBeInTheDocument()
+    expect(configApi.updateModelConfig).not.toHaveBeenCalled()
     expect(configApi.updateModelConfigSection).not.toHaveBeenCalled()
   })
 
@@ -1223,7 +1357,7 @@ describe('ModelConfigPage 特征化', () => {
 
     await user.click(screen.getByRole('button', { name: '筛选厂商 empty-vendor' }))
     expect(screen.getByText('0 个模型')).toBeInTheDocument()
-    expect(screen.getByText('Base URL：https://empty.example/v1')).toBeInTheDocument()
+    expect(screen.getByText('https://empty.example/v1')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '测试厂商 empty-vendor 连接' }))
     await waitFor(() => expect(configApi.testProviderConnection).toHaveBeenCalledWith('empty-vendor'))

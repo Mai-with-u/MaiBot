@@ -175,14 +175,17 @@ export const ModelCardList = React.memo(function ModelCardList({
                 </p>
               </div>
               <div>
-                <span className="text-muted-foreground text-xs">输入价格</span>
+                <span className="text-muted-foreground text-xs">默认输入价格</span>
                 <p className="font-medium">¥{model.price_in}/M</p>
               </div>
               <div>
-                <span className="text-muted-foreground text-xs">输出价格</span>
+                <span className="text-muted-foreground text-xs">默认输出价格</span>
                 <p className="font-medium">¥{model.price_out}/M</p>
               </div>
             </div>
+            {!!model.price_periods?.length && (
+              <p className="text-xs text-muted-foreground">{model.price_periods.length} 个价格时段</p>
+            )}
           </div>
         )
       })}

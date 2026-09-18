@@ -37,7 +37,7 @@ import type {
 import { useToast } from '@/hooks/use-toast'
 import type { ConfigSchema } from '@/types/config-schema'
 
-import type { ModelInfo, ModelTaskConfig, ProviderConfig, TaskConfig } from '../types'
+import type { ModelInfo, ModelPricePeriod, ModelTaskConfig, ProviderConfig, TaskConfig } from '../types'
 import type { APIProvider, DeleteConfirmState } from '../../modelProvider/types'
 import { cleanProviderData } from '../../modelProvider/utils'
 import { findTemplateByBaseUrl } from '../../providerTemplates'
@@ -70,6 +70,60 @@ export interface ModelFormErrors {
   name?: string
   api_provider?: string
   model_identifier?: string
+  price_periods?: string
+}
+
+function validatePricePeriods(periods: ModelPricePeriod[] = []): string | undefined {
+  const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/
+  const segments: { start: number; end: number; index: number }[] = []
+  const priceFields = [
+    ['price_in', '输入价格'],
+    ['price_out', '输出价格'],
+    ['cache_price_in', '缓存价格'],
+  ] as const
+
+  for (const [index, period] of periods.entries()) {
+    for (const [field, label] of [
+      ['start_time', '开始时间'],
+      ['end_time', '结束时间'],
+    ] as const) {
+      if (typeof period[field] !== 'string' || period[field].length !== 5 || !timePattern.test(period[field])) {
+        return `时段 ${index + 1} 的${label}必须为 HH:MM（00:00-23:59）`
+      }
+    }
+    if (period.start_time === period.end_time) {
+      return `时段 ${index + 1} 的开始时间与结束时间不能相同`
+    }
+    for (const [field, label] of priceFields) {
+      if (!Number.isFinite(period[field]) || period[field] < 0) {
+        return `时段 ${index + 1} 的${label}必须为非负有限数值（可为 0）`
+      }
+    }
+
+    const [startHour, startMinute] = period.start_time.split(':').map(Number)
+    const [endHour, endMinute] = period.end_time.split(':').map(Number)
+    const start = startHour * 60 + startMinute
+    const end = endHour * 60 + endMinute
+    // 跨午夜拆成同一天内的两个左闭右开区间；结束于午夜时不添加空区间。
+    if (start < end) {
+      segments.push({ start, end, index })
+    } else {
+      segments.push({ start, end: 1440, index })
+      if (end > 0) segments.push({ start: 0, end, index })
+    }
+  }
+
+  segments.sort((a, b) => a.start - b.start)
+  for (let i = 1; i < segments.length; i += 1) {
+    const previous = segments[i - 1]
+    const current = segments[i]
+    if (current.start < previous.end) {
+      const first = Math.min(previous.index, current.index) + 1
+      const second = Math.max(previous.index, current.index) + 1
+      return `时段 ${first} 与时段 ${second} 重叠，请调整时间（相邻时段可以共用边界）`
+    }
+  }
+  return undefined
 }
 
 interface ProviderSaveBarrierCheckpoint {
@@ -429,6 +483,7 @@ export function useModelConfig() {
       price_out: model.price_out ?? 0,
       cache: model.cache ?? false,
       cache_price_in: model.cache_price_in ?? 0,
+      price_periods: model.price_periods?.map((period) => ({ ...period })),
       send_temperature: model.send_temperature ?? true,
       visual: model.visual ?? false,
       force_stream_mode: model.force_stream_mode ?? false,
@@ -873,7 +928,10 @@ export function useModelConfig() {
       const defaultProvider = preferredProvider || providers[0] || ''
 
       setEditingModel(
-        model || {
+        model ? {
+          ...model,
+          price_periods: model.price_periods?.map((period) => ({ ...period })),
+        } : {
           model_identifier: '',
           name: '',
           api_provider: defaultProvider,
@@ -881,6 +939,7 @@ export function useModelConfig() {
           price_out: 0,
           cache: isDeepSeekTemplateProvider(defaultProvider),
           cache_price_in: 0,
+          price_periods: [],
           temperature: null,
           send_temperature: true,
           max_tokens: null,
@@ -980,6 +1039,8 @@ export function useModelConfig() {
     if (!editingModel.model_identifier?.trim()) {
       errors.model_identifier = '请输入模型标识符'
     }
+    const pricePeriodsError = validatePricePeriods(editingModel.price_periods)
+    if (pricePeriodsError) errors.price_periods = pricePeriodsError
 
     if (Object.keys(errors).length > 0) {
       setFormErrors(errors)
@@ -998,6 +1059,7 @@ export function useModelConfig() {
       price_out: editingModel.price_out ?? 0,
       cache: editingModel.cache ?? false,
       cache_price_in: editingModel.cache_price_in ?? 0,
+      price_periods: editingModel.price_periods?.map((period) => ({ ...period })),
       send_temperature: editingModel.send_temperature ?? true,
       visual: editingModel.visual ?? false,
       force_stream_mode: editingModel.force_stream_mode ?? false,

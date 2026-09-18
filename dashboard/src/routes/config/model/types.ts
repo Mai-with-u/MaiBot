@@ -2,6 +2,15 @@
  * Model 配置页面类型定义
  */
 
+/** 每日重复的分时价格，时间按服务器本地时间解释。 */
+export interface ModelPricePeriod {
+  start_time: string
+  end_time: string
+  price_in: number
+  price_out: number
+  cache_price_in: number
+}
+
 /**
  * 模型信息
  */
@@ -13,6 +22,7 @@ export interface ModelInfo {
   price_out: number | null
   cache?: boolean
   cache_price_in?: number | null
+  price_periods?: ModelPricePeriod[]
   temperature?: number | null // 模型级别温度，覆盖任务配置中的温度
   send_temperature?: boolean // 是否发送由 MaiBot 管理的 temperature 参数
   max_tokens?: number | null // 模型级别最大token数，覆盖任务配置中的max_tokens
@@ -59,4 +69,5 @@ export interface FormErrors {
   name?: string
   api_provider?: string
   model_identifier?: string
+  price_periods?: string
 }

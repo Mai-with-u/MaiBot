@@ -99,7 +99,7 @@ import { ProviderSidebar } from './modelProvider/ProviderSidebar'
 import type { APIProvider } from './modelProvider/types'
 
 // 导入模块化的类型定义和组件
-import type { ModelInfo } from './model/types'
+import type { ModelInfo, ModelPricePeriod } from './model/types'
 
 const MODEL_CONFIG_TABS = ['configuration', 'tasks'] as const
 type ModelConfigTab = (typeof MODEL_CONFIG_TABS)[number]
@@ -501,6 +501,14 @@ function ModelConfigPageContent() {
         }
       : null
     )
+  }
+
+  const updatePricePeriods = (updater: (periods: ModelPricePeriod[]) => ModelPricePeriod[]) => {
+    setEditingModel((previousModel) => previousModel
+      ? { ...previousModel, price_periods: updater(previousModel.price_periods ?? []) }
+      : null
+    )
+    setFormErrors((previous) => ({ ...previous, price_periods: undefined }))
   }
 
   // 打开模型编辑对话框：重置高级设置可见性后委托核心 hook
@@ -908,6 +916,7 @@ function ModelConfigPageContent() {
               testingModels={testingModels}
               modelTestResults={modelTestResults}
               searchQuery={searchQuery}
+              onAdd={() => openEditDialog(null, null, modelProviderFilter || undefined)}
             />
           </div>
 
@@ -1596,7 +1605,8 @@ function ModelConfigPageContent() {
               </div>
             </div>
 
-            <div className={`grid grid-cols-1 gap-3 sm:gap-4 ${editingModel?.cache ? 'md:grid-cols-3' : 'sm:grid-cols-2'}`}>
+            <fieldset className={`grid min-w-0 grid-cols-1 gap-3 sm:gap-4 ${editingModel?.cache ? 'md:grid-cols-3' : 'sm:grid-cols-2'}`}>
+              <legend className="mb-2 text-sm font-medium">默认价格</legend>
               <div className="grid gap-2">
                 <Label htmlFor="price_in">输入价格 (¥/M token)</Label>
                 <Input
@@ -1658,7 +1668,122 @@ function ModelConfigPageContent() {
                   />
                 </div>
               )}
-            </div>
+            </fieldset>
+
+            <section aria-labelledby="price-periods-heading" className="min-w-0 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <h3
+                    id="price-periods-heading"
+                    className="text-sm font-medium"
+                    title="按成功请求尝试的开始时间计价；包含开始、不包含结束，支持跨午夜。无时段或时段外使用默认价格。"
+                  >
+                    分时价格
+                  </h3>
+                  <p className="text-xs text-muted-foreground">每日 · 服务器本地时间 · ¥/M token</p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 shrink-0 gap-1"
+                  onClick={() => updatePricePeriods((periods) => [...periods, {
+                    start_time: '',
+                    end_time: '',
+                    price_in: editingModel?.price_in ?? 0,
+                    price_out: editingModel?.price_out ?? 0,
+                    cache_price_in: editingModel?.cache_price_in ?? 0,
+                  }])}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  添加时段
+                </Button>
+              </div>
+              {editingModel?.price_periods?.map((period, index) => (
+                <fieldset key={index} className="min-w-0 border-t pt-2">
+                  <legend className="sr-only">时段 {index + 1}</legend>
+                  <div className="flex items-end gap-2">
+                    <div className="grid min-w-0 flex-1 gap-2 md:grid-cols-2">
+                      <div className="grid min-w-0 grid-cols-2 gap-2">
+                        {([
+                          ['start_time', '开始时间'],
+                          ['end_time', '结束时间'],
+                        ] as const).map(([field, label]) => (
+                          <div key={field} className="grid min-w-0 gap-1">
+                            <Label htmlFor={`price-period-${index}-${field}`} className="text-xs">
+                              {label}
+                              {field === 'end_time' && period.end_time && period.end_time < period.start_time && (
+                                <span className="ml-1 text-muted-foreground">次日</span>
+                              )}
+                            </Label>
+                            <Input
+                              id={`price-period-${index}-${field}`}
+                              aria-label={`时段 ${index + 1} ${label}`}
+                              aria-describedby={formErrors.price_periods ? 'price-periods-error' : undefined}
+                              type="time"
+                              step="60"
+                              required
+                              className="h-8 min-w-0 px-2 text-xs"
+                              value={period[field]}
+                              onChange={(event) => {
+                                const value = event.target.value
+                                updatePricePeriods((periods) => periods.map((item, itemIndex) =>
+                                  itemIndex === index ? { ...item, [field]: value } : item
+                                ))
+                              }}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                      <div className={`grid min-w-0 gap-2 ${editingModel.cache ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                        {([
+                          ['price_in', '输入价格'],
+                          ['price_out', '输出价格'],
+                          ['cache_price_in', '缓存价格'],
+                        ] as const).filter(([field]) => field !== 'cache_price_in' || editingModel.cache).map(([field, label]) => (
+                          <div key={field} className="grid min-w-0 gap-1">
+                            <Label htmlFor={`price-period-${index}-${field}`} className="text-xs">{label}</Label>
+                            <Input
+                              id={`price-period-${index}-${field}`}
+                              aria-label={`时段 ${index + 1} ${label}`}
+                              aria-describedby={formErrors.price_periods ? 'price-periods-error' : undefined}
+                              type="number"
+                              min="0"
+                              step="any"
+                              required
+                              className="h-8 min-w-0 px-2 text-xs"
+                              value={Number.isFinite(period[field]) ? period[field] : ''}
+                              onChange={(event) => {
+                                const value = event.target.valueAsNumber
+                                updatePricePeriods((periods) => periods.map((item, itemIndex) =>
+                                  itemIndex === index ? { ...item, [field]: value } : item
+                                ))
+                              }}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0 text-destructive hover:text-destructive"
+                      title={`删除时段 ${index + 1}`}
+                      aria-label={`删除时段 ${index + 1}`}
+                      onClick={() => updatePricePeriods((periods) => periods.filter((_, itemIndex) => itemIndex !== index))}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </fieldset>
+              ))}
+              {formErrors.price_periods && (
+                <p id="price-periods-error" role="alert" className="text-xs text-destructive">
+                  {formErrors.price_periods}
+                </p>
+              )}
+            </section>
 
             {deepSeekClientType && (
               <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">

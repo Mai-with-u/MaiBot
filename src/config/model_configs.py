@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any
+from typing import Any, List, Tuple
 
 from src.common.i18n import t
 
@@ -208,6 +208,30 @@ class APIProvider(ConfigBase):
         super().model_post_init(context)
 
 
+class ModelPricePeriod(ConfigBase):
+    """每天重复的模型价格时段。"""
+
+    start_time: str = Field(pattern=r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
+    """开始时间，服务器本地时间 HH:MM，包含该时刻。"""
+
+    end_time: str = Field(pattern=r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
+    """结束时间，服务器本地时间 HH:MM，不包含该时刻；早于开始时间表示跨午夜。"""
+
+    price_in: float = Field(ge=0, allow_inf_nan=False)
+    """该时段的普通输入价格，单位：元 / M token。"""
+
+    price_out: float = Field(ge=0, allow_inf_nan=False)
+    """该时段的输出价格，单位：元 / M token。"""
+
+    cache_price_in: float = Field(ge=0, allow_inf_nan=False)
+    """该时段的缓存命中输入价格，单位：元 / M token；仅当模型 cache=true 时使用。"""
+
+    def model_post_init(self, context: Any = None) -> None:
+        if self.start_time == self.end_time:
+            raise ValueError("价格时段的开始时间和结束时间不能相同")
+        super().model_post_init(context)
+
+
 class ModelInfo(ConfigBase):
     """单个模型信息配置类"""
 
@@ -276,6 +300,12 @@ class ModelInfo(ConfigBase):
     )
     """输出价格 (用于API调用统计, 单位：元/ M token) (可选, 若无该字段, 默认值为0)"""
 
+    price_periods: List[ModelPricePeriod] = Field(default_factory=list)
+    """分时价格组合，每天按服务器本地时间重复，以成功请求尝试的开始时间计价。
+    每项包含 start_time、end_time（HH:MM）、price_in、price_out、cache_price_in，价格单位：元 / M token。
+    时段包含开始、不包含结束，支持跨午夜，开始和结束不能相同，时段之间不能重叠。
+    未匹配时段时使用模型默认价格；空列表表示全天使用默认价格。缓存单价仅在 cache=true 时使用。"""
+
     temperature: float | None = Field(
         default=None,
         json_schema_extra={
@@ -339,6 +369,20 @@ class ModelInfo(ConfigBase):
             raise ValueError(t("config.model_name_empty"))
         if not self.api_provider:
             raise ValueError(t("config.model_api_provider_empty"))
+
+        # 将跨午夜的时段拆开，统一检查半开区间是否重叠。
+        intervals: List[Tuple[str, str, int]] = []
+        for index, period in enumerate(self.price_periods, start=1):
+            if period.start_time < period.end_time:
+                intervals.append((period.start_time, period.end_time, index))
+            else:
+                intervals.append((period.start_time, "24:00", index))
+                if period.end_time != "00:00":
+                    intervals.append(("00:00", period.end_time, index))
+        intervals.sort()
+        for previous, current in zip(intervals, intervals[1:], strict=False):
+            if current[0] < previous[1]:
+                raise ValueError(f"价格时段 {previous[2]} 与 {current[2]} 重叠")
         return super().model_post_init(context)
 
 

@@ -77,6 +77,7 @@ export const DEFAULT_MODEL_INFO = {
   price_out: 0,
   cache: false,
   cache_price_in: 0,
+  price_periods: [],
   temperature: null,
   max_tokens: null,
   visual: false,

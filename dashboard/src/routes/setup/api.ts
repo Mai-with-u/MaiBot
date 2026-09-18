@@ -2,6 +2,7 @@
 
 import { authApi, backendApi } from '@/lib/http'
 import { PROVIDER_TEMPLATES } from '@/routes/config/providerTemplates'
+import type { ModelPricePeriod } from '@/routes/config/model/types'
 
 import type {
   ApiProviderSetupConfig,
@@ -17,6 +18,7 @@ interface ModelInfo {
   price_in?: number
   cache?: boolean
   cache_price_in?: number
+  price_periods?: ModelPricePeriod[]
   price_out?: number
   force_stream_mode?: boolean
   visual?: boolean

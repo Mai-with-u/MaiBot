@@ -138,6 +138,7 @@ export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAuto
       price_out: model.price_out ?? 0,
       cache: model.cache ?? false,
       cache_price_in: model.cache_price_in ?? 0,
+      price_periods: model.price_periods?.map((period) => ({ ...period })),
       visual: model.visual ?? false,
       force_stream_mode: model.force_stream_mode ?? false,
       extra_params: model.extra_params ?? {},
