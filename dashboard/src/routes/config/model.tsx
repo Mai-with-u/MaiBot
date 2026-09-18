@@ -776,15 +776,16 @@ function ModelConfigPageContent() {
                   className="pl-9"
                 />
               </div>
+              {/* 桌面端时添加模型按钮位于表格表头，此处仅在移动端卡片视图显示。
+                  data-tour 引导目标只在桌面端表头按钮上，避免 Joyride 定位到隐藏元素 */}
               <Button
                 onClick={() => openEditDialog(null, null, modelProviderFilter || undefined)}
                 size="sm"
                 variant="outline"
-                className="w-full shrink-0 sm:w-auto"
-                data-tour="add-model-button"
+                className="w-full shrink-0 sm:w-auto md:hidden"
               >
                 <Plus className="mr-2 h-4 w-4" strokeWidth={2} fill="none" />
-                <span className="text-sm">添加模型</span>
+                <span className="text-sm">添加</span>
               </Button>
               {searchQuery && (
                 <p className="text-sm text-muted-foreground whitespace-nowrap">
@@ -843,7 +844,7 @@ function ModelConfigPageContent() {
                       </span>
                     </div>
                     <p className="text-muted-foreground mt-1 truncate text-xs" title={selectedProviderInfo.base_url}>
-                      Base URL：{selectedProviderInfo.base_url}
+                      {selectedProviderInfo.base_url}
                     </p>
                   </div>
                   <div className="flex shrink-0 gap-1">
@@ -867,7 +868,7 @@ function ModelConfigPageContent() {
                       type="button"
                       variant="outline"
                       size="icon"
-                      className="h-8 w-8"
+                      className="border-primary! text-primary hover:text-primary h-8 w-8"
                       onClick={() => openProviderDialog(selectedProviderInfo, selectedProviderIndex)}
                       title="编辑厂商"
                       aria-label={`编辑厂商 ${selectedProviderInfo.name}`}
@@ -878,7 +879,7 @@ function ModelConfigPageContent() {
                       type="button"
                       variant="outline"
                       size="icon"
-                      className="text-destructive hover:text-destructive h-8 w-8"
+                      className="border-destructive! text-destructive hover:text-destructive h-8 w-8"
                       onClick={() => openProviderDeleteDialog(selectedProviderIndex)}
                       title="删除厂商"
                       aria-label={`删除厂商 ${selectedProviderInfo.name}`}
