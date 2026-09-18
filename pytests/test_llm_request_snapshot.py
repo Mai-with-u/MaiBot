@@ -272,6 +272,7 @@ async def test_openai_image_embedding_uses_explicit_data_uri_protocol() -> None:
 @pytest.mark.asyncio
 async def test_image_embedding_rejects_missing_protocol_before_network() -> None:
     client = object.__new__(OpenaiClient)
+    client.api_provider = _build_provider()
     request = ImageEmbeddingRequest(
         model_info=_build_model(), image_bytes=b"image", mime_type="image/png", preprocess_version="identity_v1",
     )

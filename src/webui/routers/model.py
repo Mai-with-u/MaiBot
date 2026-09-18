@@ -6,6 +6,7 @@
 
 from typing import Any, Dict, List, Optional, Set
 
+import base64
 import os
 import time
 
@@ -143,8 +144,10 @@ async def test_model_capability(request: ModelTestRequest):
     if model_config is None:
         raise HTTPException(status_code=404, detail=f"未找到模型: {model_name}")
 
-    # 嵌入模型不支持 chat/completions 接口，需改用嵌入接口测试
-    if model_name in _get_embedding_task_model_names():
+    # 嵌入模型不支持 chat/completions 接口，需改用嵌入接口测试：
+    # 除命中 embedding 任务配置外，模型名称带 embed/embedding 时也按嵌入模型处理，
+    # 避免图片嵌入等未挂到 embedding 任务的向量模型误走聊天测试
+    if model_name in _get_task_model_names("embedding") or _looks_like_embedding_model(model_name):
         return await _test_embedding_model(model_name)
 
     visual_enabled = bool(model_config.get("visual", False))
@@ -384,11 +387,19 @@ def _get_model_config(model_name: str) -> Optional[Dict]:
         return None
 
 
-def _get_embedding_task_model_names() -> Set[str]:
-    """从 model_config.toml 获取嵌入任务配置的模型名称集合。
+def _looks_like_embedding_model(model_name: str) -> bool:
+    """按模型名称判断是否为嵌入模型（名称带 embed/embedding 即命中）。"""
+    return "embed" in model_name.lower()
+
+
+def _get_task_model_names(task_key: str) -> Set[str]:
+    """从 model_config.toml 获取指定任务配置的模型名称集合。
+
+    Args:
+        task_key: 任务配置键名，如 `embedding`、`image_embedding`。
 
     Returns:
-        嵌入任务 model_list 中的模型名称集合，读取失败时返回空集合。
+        任务 model_list 中的模型名称集合，读取失败时返回空集合。
     """
     config_path = os.path.join(CONFIG_DIR, "model_config.toml")
     if not os.path.exists(config_path):
@@ -398,19 +409,27 @@ def _get_embedding_task_model_names() -> Set[str]:
         with open(config_path, "r", encoding="utf-8") as f:
             config_data = tomlkit.load(f)
 
-        task_config = config_data.get("model_task_config", {}).get("embedding", {})
+        task_config = config_data.get("model_task_config", {}).get(task_key, {})
         return {str(name) for name in task_config.get("model_list", [])}
     except Exception as e:
-        logger.error(f"读取嵌入任务配置失败: {e}")
+        logger.error(f"读取任务 '{task_key}' 配置失败: {e}")
         return set()
 
 
 async def _test_embedding_model(model_name: str) -> ModelTestResponse:
-    """对嵌入任务中的模型执行嵌入测试。
+    """对嵌入模型执行向量嵌入测试。
 
     嵌入模型不支持 chat/completions 接口，直接发对话测试会被服务商拒绝，
-    因此改为调用嵌入接口验证可用性。
+    因此改为调用嵌入接口验证可用性。图片嵌入模型（在 image_embedding 任务
+    中，或名称带 vision）改发测试图片，验证图片嵌入链路。
     """
+    if model_name in _get_task_model_names("image_embedding") or "vision" in model_name.lower():
+        return await _test_image_embedding_model(model_name)
+    return await _test_text_embedding_model(model_name)
+
+
+async def _test_text_embedding_model(model_name: str) -> ModelTestResponse:
+    """对文本嵌入模型执行嵌入测试。"""
     start_time = time.time()
     try:
         orchestrator = _SingleModelTestOrchestrator(model_name=model_name)
@@ -428,6 +447,40 @@ async def _test_embedding_model(model_name: str) -> ModelTestResponse:
         raise
     except Exception as e:
         logger.error(f"嵌入模型测试失败: model={model_name}, error={e}", exc_info=True)
+        latency_ms = round((time.time() - start_time) * 1000, 2)
+        return ModelTestResponse(
+            success=False,
+            model_name=model_name,
+            visual_tested=False,
+            tool_call_ok=False,
+            latency_ms=latency_ms,
+            error=_format_model_test_error(e),
+        )
+
+
+async def _test_image_embedding_model(model_name: str) -> ModelTestResponse:
+    """对图片嵌入模型发送测试图片，验证图片嵌入链路。"""
+    start_time = time.time()
+    try:
+        orchestrator = _SingleModelTestOrchestrator(model_name=model_name)
+        result = await orchestrator.get_image_embedding(
+            base64.b64decode(MODEL_TEST_IMAGE_BASE64),
+            mime_type="image/png",
+            preprocess_version="webui_model_test_v1",
+        )
+        latency_ms = round((time.time() - start_time) * 1000, 2)
+        return ModelTestResponse(
+            success=True,
+            model_name=result.model_name or model_name,
+            visual_tested=False,
+            tool_call_ok=False,
+            response=f"图片嵌入向量维度: {len(result.embedding)}",
+            latency_ms=latency_ms,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"图片嵌入模型测试失败: model={model_name}, error={e}", exc_info=True)
         latency_ms = round((time.time() - start_time) * 1000, 2)
         return ModelTestResponse(
             success=False,

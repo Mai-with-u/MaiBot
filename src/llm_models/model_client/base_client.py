@@ -125,6 +125,10 @@ class APIResponse:
     request_wire_payload: Any = field(default=None, repr=False)
     """本次成功请求的最终 wire 载荷，仅用于缓存诊断和可观测性。"""
 
+    request_protocol_hash: str | None = None
+    """图片嵌入客户端计算的原生协议指纹；仅原生图片嵌入协议分支填充，
+    编排器据此透传给上层，其余场景保持 None 并沿用默认指纹算法。"""
+
     @property
     def content(self) -> str | None:
         """只读派生模型可见正文。"""

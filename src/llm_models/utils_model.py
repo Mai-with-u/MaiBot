@@ -605,12 +605,11 @@ class LLMOrchestrator:
                 session_id=self._resolve_effective_session_id(session_id),
                 time_cost=time.time() - start_time,
             )
-        return LLMEmbeddingResult(
-            embedding=response.embedding,
-            model_name=model_info.name,
-            model_identifier=model_info.model_identifier,
-            api_provider=model_info.api_provider,
-            request_protocol_hash=hashlib.sha256(
+        # 原生图片嵌入协议分支由客户端提供精确指纹；其余场景沿用默认算法，
+        # 避免旧模板/插件路径的既有图片索引失效
+        protocol_hash = response.request_protocol_hash
+        if not protocol_hash:
+            protocol_hash = hashlib.sha256(
                 json.dumps(
                     {
                         "input": model_info.extra_params.get("image_embedding_input", "{data_uri}"),
@@ -622,7 +621,13 @@ class LLMOrchestrator:
                     ensure_ascii=False,
                     separators=(",", ":"),
                 ).encode("utf-8")
-            ).hexdigest(),
+            ).hexdigest()
+        return LLMEmbeddingResult(
+            embedding=response.embedding,
+            model_name=model_info.name,
+            model_identifier=model_info.model_identifier,
+            api_provider=model_info.api_provider,
+            request_protocol_hash=protocol_hash,
         )
 
     def _resolve_effective_temperature(

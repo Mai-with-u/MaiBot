@@ -85,6 +85,13 @@ from .base_client import (
     UsageTuple,
     client_registry,
 )
+from .image_embedding_protocols import (
+    build_native_image_embedding_diagnostic_payload,
+    build_native_image_embedding_fingerprint,
+    build_native_image_embedding_request,
+    parse_native_image_embedding_response,
+    resolve_native_image_embedding_protocol,
+)
 from ..request_snapshot import (
     attach_request_snapshot,
     has_request_snapshot,
@@ -1660,12 +1667,28 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
             raise
 
     async def get_image_embedding(self, request: ImageEmbeddingRequest) -> APIResponse:
-        """调用 OpenAI 兼容的图片嵌入扩展协议。"""
+        """调用图片嵌入协议。
+
+        显式配置 `image_embedding_input` / `image_embedding_body` 时走 OpenAI 兼容模板协议；
+        否则官方百炼/豆包地址自动切换对应原生多模态嵌入协议，其他地址要求模板配置。
+        """
+
+        extra_params = dict(request.extra_params)
+        if "image_embedding_input" in extra_params or "image_embedding_body" in extra_params:
+            return await self._get_openai_compatible_image_embedding(request, extra_params)
+        native_protocol = resolve_native_image_embedding_protocol(self.api_provider.base_url)
+        if native_protocol is not None:
+            return await self._get_native_image_embedding(request, native_protocol)
+        raise ValueError("图片嵌入必须配置 Provider 对应的 image_embedding_input 或 image_embedding_body")
+
+    async def _get_openai_compatible_image_embedding(
+        self,
+        request: ImageEmbeddingRequest,
+        extra_params: Dict[str, Any],
+    ) -> APIResponse:
+        """调用 OpenAI 兼容的图片嵌入扩展协议（模板由 extra_params 提供）。"""
 
         model_info = request.model_info
-        extra_params = dict(request.extra_params)
-        if "image_embedding_input" not in extra_params and "image_embedding_body" not in extra_params:
-            raise ValueError("图片嵌入必须配置 Provider 对应的 image_embedding_input 或 image_embedding_body")
         validate_image_embedding_transport(self.api_provider.base_url)
         input_template = extra_params.pop("image_embedding_input", None)
         body_template = extra_params.pop("image_embedding_body", None)
@@ -1733,6 +1756,88 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
             internal_request=serialize_image_embedding_request_snapshot(request),
             model_info=model_info,
             operation="embeddings.create.image",
+            provider_request=provider_request,
+            trace_context=request.trace_context,
+        )
+        attach_request_snapshot(wrapped_error, snapshot_path)
+        raise wrapped_error
+
+    async def _get_native_image_embedding(self, request: ImageEmbeddingRequest, protocol: str) -> APIResponse:
+        """调用百炼/豆包官方原生多模态图片嵌入协议。
+
+        复用同一个 AsyncOpenAI 客户端向原生端点的完整 URL 发送请求：
+        绝对地址由 SDK 原样使用，鉴权头、默认 headers/query、超时与连接池均不变，
+        共享 `base_url` 不被修改，聊天与文本嵌入请求不受影响。
+        """
+
+        model_info = request.model_info
+        validate_image_embedding_transport(self.api_provider.base_url)
+        native_request = build_native_image_embedding_request(
+            protocol,
+            base_url=self.api_provider.base_url,
+            model_identifier=model_info.model_identifier,
+            image_bytes=request.image_bytes,
+            mime_type=request.mime_type,
+            extra_params=request.extra_params,
+        )
+        provider_request = {
+            "base_url": self.api_provider.base_url,
+            "endpoint": urlparse(native_request.endpoint_url).path,
+            "method": "POST",
+            "operation": f"{protocol}_image_embedding",
+            "request_kwargs": {
+                "extra_headers": native_request.extra_headers or None,
+                "extra_query": native_request.extra_query or None,
+                "image": {
+                    "byte_size": len(request.image_bytes),
+                    "mime_type": request.mime_type,
+                },
+                "model": model_info.model_identifier,
+                # 写入快照前用占位符替换 Data URI，避免原图 Base64 落盘
+                "payload": build_native_image_embedding_diagnostic_payload(native_request.payload),
+            },
+        }
+        options: Dict[str, Any] = {}
+        if native_request.extra_headers:
+            options["headers"] = native_request.extra_headers
+        if native_request.extra_query:
+            options["params"] = native_request.extra_query
+        try:
+            raw_response = await self.client.post(
+                native_request.endpoint_url,
+                cast_to=object,
+                body=native_request.payload,
+                options=options,
+            )
+        except APIConnectionError as exc:
+            wrapped_error: Exception = NetworkConnectionError(str(exc))
+        except APIStatusError as exc:
+            wrapped_error = RespNotOkException(exc.status_code, _build_api_status_message(exc))
+        else:
+            try:
+                parsed = parse_native_image_embedding_response(protocol, raw_response)
+            except Exception as exc:
+                wrapped_error = RespParseException(raw_response, f"图片嵌入响应解析失败: {exc}")
+            else:
+                response = APIResponse(
+                    embedding=parsed.embedding,
+                    raw_data=raw_response,
+                    request_protocol_hash=build_native_image_embedding_fingerprint(
+                        native_request,
+                        model_info.model_identifier,
+                    ),
+                )
+                if parsed.usage is not None:
+                    response.usage = self._build_usage_record(model_info, parsed.usage)
+                return response
+
+        snapshot_path = save_failed_request_snapshot(
+            api_provider=self.api_provider,
+            client_type="openai",
+            error=wrapped_error,
+            internal_request=serialize_image_embedding_request_snapshot(request),
+            model_info=model_info,
+            operation=provider_request["operation"],
             provider_request=provider_request,
             trace_context=request.trace_context,
         )
