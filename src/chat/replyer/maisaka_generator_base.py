@@ -644,6 +644,17 @@ class BaseMaisakaReplyGenerator:
         normalized_reply_style = reply_style.strip()
         if not normalized_reply_style:
             return ""
+        # reply_style 来自模型对 reply 工具的调用，是未经清洗的外部输入：模型可能
+        # 吐出 schema enum 之外的同义值（例如「简短回复」，而 enum 里是「简短表达」）。
+        # 这里只负责拼接篇幅提示，越界值不该把整轮回复带崩——按「正常回复」（不附加
+        # 篇幅要求）处理，同时记录越界值，让模型的工具参数质量问题可被观察而非被静默
+        # 掩盖（issue #2051）。
+        if normalized_reply_style not in style_messages:
+            logger.warning(
+                f"reply 工具返回了未支持的篇幅风格 {normalized_reply_style!r}，按『正常回复』处理；"
+                f"当前支持: {sorted(style_messages)}"
+            )
+            return style_messages["正常回复"]
         return style_messages[normalized_reply_style]
 
     def _build_history_messages(
