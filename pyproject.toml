@@ -40,6 +40,7 @@ dependencies = [
     "sqlmodel>=0.0.24",
     "structlog>=25.4.0",
     "tomlkit>=0.13.3",
+    "trimesh>=4.12.2,<5",
     "typing-extensions",
     "uvicorn>=0.35.0",
     "watchfiles>=1.1.1",

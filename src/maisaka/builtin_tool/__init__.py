@@ -8,11 +8,19 @@ from typing import Dict, List, Literal, Optional
 from src.config.config import global_config
 from src.core.tooling import ToolAvailabilityContext, ToolExecutionContext, ToolExecutionResult, ToolInvocation, ToolSpec
 from src.llm_models.payload_content.tool_option import ToolDefinitionInput
-
 from src.maisaka.focus import focus_mode_manager
+
 from .context import BuiltinToolRuntimeContext
 from .fetch_history import get_tool_spec as get_fetch_history_tool_spec
 from .fetch_history import handle_tool as handle_fetch_history_tool
+from .model_3d import (
+    TOOL_NAMES as MODEL_3D_TOOL_NAMES,
+    get_create_tool_spec as get_create_3d_model_tool_spec,
+    get_edit_tool_spec as get_edit_3d_model_tool_spec,
+    get_inspect_tool_spec as get_inspect_3d_model_tool_spec,
+    get_render_tool_spec as get_render_3d_model_tool_spec,
+    handle_tool as handle_model_3d_tool,
+)
 from .query_memory import get_tool_spec as get_query_memory_tool_spec
 from .query_memory import handle_tool as handle_query_memory_tool
 from .query_image_memory import get_tool_spec as get_query_image_memory_tool_spec
@@ -107,6 +115,19 @@ BUILTIN_TOOL_ENTRIES: List[BuiltinToolEntry] = [
     ),
     BuiltinToolEntry("send_emoji", get_send_emoji_tool_spec, handle_send_emoji_tool, stage="action"),
     BuiltinToolEntry("send_image", get_send_image_tool_spec, handle_send_image_tool, stage="action"),
+    # 三维建模参数较长，延迟到 tool_search 发现后再提供 schema，避免默认占用上下文。
+    BuiltinToolEntry(
+        "create_3d_model", get_create_3d_model_tool_spec, handle_model_3d_tool, stage="action", visibility="deferred"
+    ),
+    BuiltinToolEntry(
+        "inspect_3d_model", get_inspect_3d_model_tool_spec, handle_model_3d_tool, stage="action", visibility="deferred"
+    ),
+    BuiltinToolEntry(
+        "edit_3d_model", get_edit_3d_model_tool_spec, handle_model_3d_tool, stage="action", visibility="deferred"
+    ),
+    BuiltinToolEntry(
+        "render_3d_model", get_render_3d_model_tool_spec, handle_model_3d_tool, stage="action", visibility="deferred"
+    ),
     BuiltinToolEntry("tool_search", get_tool_search_tool_spec, handle_tool_search_tool, stage="action"),
     BuiltinToolEntry(
         "fetch_history",
@@ -144,6 +165,8 @@ def _is_builtin_tool_enabled_by_config(entry: BuiltinToolEntry) -> bool:
         return False
     if entry.name in {"fetch_history", "switch_chat"}:
         return bool(global_config.experimental.focus_mode)
+    if entry.name in MODEL_3D_TOOL_NAMES:
+        return bool(global_config.experimental.enable_3d_modeling)
     return True
 
 

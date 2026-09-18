@@ -1131,6 +1131,19 @@ class ExperimentalConfig(ConfigBase):
     )
     """当前关注的聊天多久没继续处理后，允许被其他聊天唤醒。"""
 
+    enable_3d_modeling: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "3D 建模工具",
+                "en_US": "3D modeling tools",
+                "ja_JP": "3D モデリングツール",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """开启后，Planner 可通过 tool_search 发现并使用 create_3d_model、inspect_3d_model、edit_3d_model、render_3d_model 四个三维建模工具。"""
+
 
 class MessageReceiveConfig(ConfigBase):
     """消息接收配置类"""
