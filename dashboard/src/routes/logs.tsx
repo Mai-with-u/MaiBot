@@ -149,220 +149,207 @@ function formatLogLevel(level: LogEntry['level']) {
 }
 
 function clampNumber(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value))
+  return Math.min(Math.max(value, min), max)
 }
 
-function isFontSize(value: string): value is FontSize {
-  return value in fontSizeConfig
+function normalizeStoredActiveTab(value: unknown): LogViewerTab | null {
+  if (value === 'terminal' || value === 'reasoning' || value === 'statistics') {
+    return value
+  }
+  return null
 }
 
-function isLogLevelFilter(value: string): value is LogLevelFilter {
-  return value === 'all' || value in levelPriority
+function getInitialActiveTab(): LogViewerTab {
+  if (typeof window === 'undefined') {
+    return 'terminal'
+  }
+
+  const storedTab = normalizeStoredActiveTab(localStorage.getItem(LOG_VIEWER_ACTIVE_TAB_KEY))
+  if (storedTab) {
+    return storedTab
+  }
+
+  const hash = window.location.hash.replace(/^#/, '')
+  return normalizeStoredActiveTab(hash) ?? 'terminal'
 }
 
-const legacyModuleDisplayNames: Record<string, string> = {
-  '_maibot_plugin_maibot_team_mai_statstic_plugin.client_statistics_service': 'Mai统计客户端服务',
-  '_maibot_plugin_maibot_team_mai_statstic_plugin.plugin_store_service': 'Mai统计存储服务',
-  '<runner>': '插件运行器',
-  async_task_manager: '异步任务管理',
-  chat: '所见',
-  chat_manager: '聊天管理器',
-  chat_utils: '聊天工具',
-  emoji: '表情包',
-  expression_vector_index: '表达向量索引',
-  image: '图片',
-  image_cache_cleanup: '图片缓存清理',
-  local_storage: '本地存储',
-  maisaka_monitor_event_store: '麦麦监控事件',
-  maisaka_runtime: 'MaiSaka',
-  maisaka_turn_scheduler: '读空气',
-  model_utils: '模型工具',
-  person_info: '人物',
-  'plugin.github.sengokucola.statistics-chart-plugin': '统计图表插件',
-  'plugin.local.replyer-regex-guard': '回复正则保护插件',
-  'plugin.maibot-team.mai-statstic-plugin': 'Mai统计插件',
-  'plugin.maibot-team.maibot-helper': '麦麦助手插件',
-  'plugin.maibot-team.snowluma-adapter': 'SnowLuma适配器',
-  'plugin.self_identity_plugin': '自我认知插件',
-  'plugin.sengokucola.deepseek-thinking-marker': 'DeepSeek思考标记插件',
-  'webui.api': 'WebUI接口',
-  'webui.unified_ws': 'WebUI统一连接',
-  'webui.ws_auth': 'WebUI鉴权连接',
-  webui: 'WebUI',
+function getLevelColor(level: LogEntry['level']) {
+  switch (level) {
+    case 'DEBUG':
+      return 'text-gray-400 dark:text-gray-500'
+    case 'INFO':
+      return 'text-green-400 dark:text-green-500'
+    case 'WARNING':
+      return 'text-yellow-400 dark:text-yellow-500'
+    case 'ERROR':
+      return 'text-red-400 dark:text-red-500'
+    case 'CRITICAL':
+      return 'text-red-300 dark:text-red-400 font-bold'
+    default:
+      return 'text-gray-300 dark:text-gray-400'
+  }
 }
 
-function getModuleDisplayName(log: LogEntry): string {
-  const backendDisplayName = log.moduleDisplayName?.trim()
-  if (backendDisplayName && backendDisplayName !== log.module) return backendDisplayName
-  if (legacyModuleDisplayNames[log.module]) return legacyModuleDisplayNames[log.module]
-  if (log.module.includes('site-packages.watchfiles')) return '文件变更监控'
-  if (log.module.startsWith('_maibot_plugin_')) return '插件运行器'
-  return backendDisplayName || log.module
+function formatLogModule(log: LogEntry) {
+  if (log.line_no !== undefined) {
+    return `${log.module}:${log.line_no}`
+  }
+  return log.module
 }
 
-function loadStoredLogViewerTab(): LogViewerTab {
-  if (typeof window === 'undefined') return 'terminal'
-
-  const storedTab = localStorage.getItem(LOG_VIEWER_ACTIVE_TAB_KEY)
-  return storedTab === 'reasoning' || storedTab === 'statistics' ? storedTab : 'terminal'
+interface TerminalViewProps {
+  toolbarContainerId?: string
+  toolbarVisible?: boolean
 }
 
-interface LogTerminalPaneProps {
-  toolbarContainerId: string
-  toolbarVisible: boolean
-}
-
-function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPaneProps) {
+function TerminalView({
+  toolbarContainerId = 'log-terminal-toolbar',
+  toolbarVisible = true,
+}: TerminalViewProps) {
   const [logs, setLogs] = useState<LogEntry[]>([])
-  const [searchQuery, setSearchQuery] = useState('')
-  const [levelFilter, setLevelFilter] = useState<LogLevelFilter>(() => {
-    const savedLevelFilter = getSetting('logLevelFilter')
-    return isLogLevelFilter(savedLevelFilter) ? savedLevelFilter : 'INFO'
+  const [isConnected, setIsConnected] = useState(false)
+  const [autoScroll, setAutoScroll] = useState<boolean>(() =>
+    getSetting<boolean>('logAutoScroll', true)
+  )
+  const [search, setSearch] = useState('')
+  const [levelFilter, setLevelFilter] = useState<LogLevelFilter>(() =>
+    getSetting<LogLevelFilter>('logLevelFilter', 'INFO')
+  )
+  const [hiddenModules, setHiddenModules] = useState<Set<string>>(() => {
+    const saved = getSetting<string>('logModuleFilter', 'all')
+    if (saved === 'all') return new Set()
+    try {
+      const parsed = JSON.parse(saved)
+      return Array.isArray(parsed) ? new Set(parsed) : new Set()
+    } catch {
+      return new Set()
+    }
   })
-  const [storedModuleFilter, setStoredModuleFilter] = useState<string>(() =>
-    getSetting('logModuleFilter')
+  const [knownModules, setKnownModules] = useState<Map<string, string>>(() => new Map())
+  const [dateRange, setDateRange] = useState<{
+    from: Date | undefined
+    to: Date | undefined
+  }>({
+    from: undefined,
+    to: undefined,
+  })
+  const [filtersOpen, setFiltersOpen] = useState<boolean>(() =>
+    getSetting<boolean>('logFiltersOpen', false)
   )
-  const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined)
-  const [dateTo, setDateTo] = useState<Date | undefined>(undefined)
-  const [autoScroll, setAutoScroll] = useState(() => getSetting('logAutoScroll'))
-  const [connected, setConnected] = useState(false)
-  const [fontSize, setFontSize] = useState<FontSize>(() => {
-    const savedFontSize = getSetting('logFontSize')
-    return isFontSize(savedFontSize) ? savedFontSize : 'xs'
-  }) // 默认使用小字号以显示更多信息
-  const [lineSpacing, setLineSpacing] = useState(() =>
-    clampNumber(getSetting('logLineSpacing'), LINE_SPACING_MIN, LINE_SPACING_MAX)
-  ) // 行间距，默认4px（紧凑）
-  const [columnWidthExtra, setColumnWidthExtra] = useState(() =>
-    clampNumber(getSetting('logColumnWidthExtra'), COLUMN_WIDTH_EXTRA_MIN, COLUMN_WIDTH_EXTRA_MAX)
+  const [fontSize, setFontSize] = useState<FontSize>(() =>
+    getSetting<FontSize>('logFontSize', 'sm')
   )
-  const [filtersOpen, setFiltersOpen] = useState(() => getSetting('logFiltersOpen'))
+  const [lineSpacing, setLineSpacing] = useState<number>(() =>
+    getSetting<number>('logLineSpacing', 4)
+  )
+  const [columnWidthExtra, setColumnWidthExtra] = useState<number>(() =>
+    getSetting<number>('logColumnWidthExtra', 0)
+  )
   const [toolbarRoot, setToolbarRoot] = useState<HTMLElement | null>(null)
+
   const parentRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     setToolbarRoot(document.getElementById(toolbarContainerId))
   }, [toolbarContainerId])
 
-  // 订阅全局 WebSocket 连接
   useEffect(() => {
-    // 日志管理器会批量推送快照，避免每条日志都触发一次 React 更新。
-    const unsubscribeLogs = logWebSocket.onLog((nextLogs) => {
-      setLogs(nextLogs)
-    })
-    setLogs(logWebSocket.getAllLogs())
+    const handleLog = (log: LogEntry) => {
+      setLogs((prev) => [...prev.slice(-999), log])
+      setKnownModules((prev) => {
+        if (!prev.has(log.module)) {
+          const next = new Map(prev)
+          next.set(log.module, log.module_name || log.module)
+          return next
+        }
+        return prev
+      })
+    }
 
-    // 订阅连接状态
-    const unsubscribeConnection = logWebSocket.onConnectionChange((isConnected) => {
-      setConnected(isConnected)
-    })
+    const handleBatch = (batchLogs: LogEntry[]) => {
+      setLogs((prev) => [...prev, ...batchLogs].slice(-1000))
+      setKnownModules((prev) => {
+        let changed = false
+        const next = new Map(prev)
+        for (const log of batchLogs) {
+          if (!next.has(log.module)) {
+            next.set(log.module, log.module_name || log.module)
+            changed = true
+          }
+        }
+        return changed ? next : prev
+      })
+    }
 
-    // 清理订阅
+    const unsubscribeLog = logWebSocket.subscribe(handleLog)
+    const unsubscribeBatch = logWebSocket.subscribeBatch(handleBatch)
+    const unsubscribeStatus = logWebSocket.subscribeStatus(setIsConnected)
+
+    logWebSocket.connect()
+
     return () => {
-      unsubscribeLogs()
-      unsubscribeConnection()
+      unsubscribeLog()
+      unsubscribeBatch()
+      unsubscribeStatus()
     }
   }, [])
 
-  // 模块标识用于稳定过滤，后端下发的中文别名仅用于界面展示。
-  const uniqueModules = useMemo(() => {
-    const modules = new Map<string, string>()
-    for (const log of logs) {
-      const module = log.module.trim()
-      if (module) {
-        modules.set(module, getModuleDisplayName(log))
-      }
-    }
-    return Array.from(modules, ([id, displayName]) => ({ id, displayName })).sort((a, b) =>
-      a.displayName.localeCompare(b.displayName, 'zh-CN')
-    )
-  }, [logs])
+  const availableModules = useMemo(() => {
+    return Array.from(knownModules.entries())
+      .map(([id, displayName]) => ({ id, displayName }))
+      .sort((a, b) => a.displayName.localeCompare(b.displayName, 'zh-CN'))
+  }, [knownModules])
 
-  const hiddenModules = useMemo(() => {
-    if (storedModuleFilter === 'all') return new Set<string>()
-
-    try {
-      const parsed = JSON.parse(storedModuleFilter)
-      if (Array.isArray(parsed) && parsed.every((module) => typeof module === 'string')) {
-        return new Set<string>(parsed)
-      }
-    } catch {
-      // 兼容旧版单选设置：旧值代表只显示该模块。
-    }
-
-    if (!uniqueModules.some(({ id }) => id === storedModuleFilter)) return new Set<string>()
-
-    return new Set(uniqueModules.filter(({ id }) => id !== storedModuleFilter).map(({ id }) => id))
-  }, [storedModuleFilter, uniqueModules])
-
-  // 日志级别颜色映射
-  const getLevelColor = (level: LogEntry['level']) => {
-    switch (level) {
-      case 'DEBUG':
-        return 'text-muted-foreground'
-      case 'INFO':
-        return 'text-blue-500 dark:text-blue-400'
-      case 'WARNING':
-        return 'text-yellow-600 dark:text-yellow-500'
-      case 'ERROR':
-        return 'text-red-600 dark:text-red-500'
-      case 'CRITICAL':
-        return 'text-red-700 dark:text-red-400 font-bold'
-      default:
-        return 'text-foreground'
-    }
+  const clearLogs = () => {
+    setLogs([])
   }
 
-  // 清空日志
-  const handleClear = () => {
-    logWebSocket.clearLogs() // 清空全局缓存
-  }
-
-  // 导出日志为 TXT 格式
-  const handleExport = () => {
-    // 格式化日志为文本
-    const logText = filteredLogs
-      .map((log) => `${log.timestamp} [${log.level.padEnd(8)}] [${log.module}] ${log.message}`)
+  const exportLogs = () => {
+    const content = filteredLogs
+      .map(
+        (log) =>
+          `[${log.timestamp}] [${log.level}] [${log.module}${log.line_no !== undefined ? `:${log.line_no}` : ''}] ${log.message}`
+      )
       .join('\n')
 
-    const dataBlob = new Blob([logText], { type: 'text/plain;charset=utf-8' })
-    const url = URL.createObjectURL(dataBlob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `logs-${format(new Date(), 'yyyy-MM-dd-HHmmss')}.txt`
-    link.click()
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `logs-${format(new Date(), 'yyyy-MM-dd-HHmmss')}.txt`
+    a.click()
     URL.revokeObjectURL(url)
   }
 
-  // 切换自动滚动
-  const toggleAutoScroll = () => {
-    const nextAutoScroll = !autoScroll
-    setAutoScroll(nextAutoScroll)
-    setSetting('logAutoScroll', nextAutoScroll)
+  const handleToggleAutoScroll = () => {
+    const nextValue = !autoScroll
+    setAutoScroll(nextValue)
+    setSetting('logAutoScroll', nextValue)
   }
 
-  const handleLevelFilterChange = useCallback((level: LogLevelFilter) => {
-    setLevelFilter(level)
-    setSetting('logLevelFilter', level)
+  const handleLevelFilterChange = useCallback((value: LogLevelFilter) => {
+    setLevelFilter(value)
+    setSetting('logLevelFilter', value)
   }, [])
 
-  const saveHiddenModules = useCallback((modules: Set<string>) => {
-    const value = modules.size === 0 ? 'all' : JSON.stringify(Array.from(modules).sort())
-    setStoredModuleFilter(value)
-    setSetting('logModuleFilter', value)
+  const persistHiddenModules = useCallback((nextHidden: Set<string>) => {
+    const serialized =
+      nextHidden.size === 0 ? 'all' : JSON.stringify(Array.from(nextHidden).sort())
+    setHiddenModules(nextHidden)
+    setSetting('logModuleFilter', serialized)
   }, [])
 
-  const toggleModuleVisibility = useCallback(
-    (module: string) => {
-      const nextHiddenModules = new Set(hiddenModules)
-      if (nextHiddenModules.has(module)) {
-        nextHiddenModules.delete(module)
+  const toggleModule = useCallback(
+    (moduleId: string) => {
+      const next = new Set(hiddenModules)
+      if (next.has(moduleId)) {
+        next.delete(moduleId)
       } else {
-        nextHiddenModules.add(module)
+        next.add(moduleId)
       }
-      saveHiddenModules(nextHiddenModules)
+      persistHiddenModules(next)
     },
-    [hiddenModules, saveHiddenModules]
+    [hiddenModules, persistHiddenModules]
   )
 
   const handleFiltersOpenChange = useCallback((open: boolean) => {
@@ -375,67 +362,59 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
     setSetting('logFontSize', size)
   }
 
-  const handleLineSpacingChange = ([value]: number[]) => {
-    const nextValue = clampNumber(value, LINE_SPACING_MIN, LINE_SPACING_MAX)
-    setLineSpacing(nextValue)
-    setSetting('logLineSpacing', nextValue)
+  const handleLineSpacingChange = ([val]: number[]) => {
+    const clamped = clampNumber(val, LINE_SPACING_MIN, LINE_SPACING_MAX)
+    setLineSpacing(clamped)
+    setSetting('logLineSpacing', clamped)
   }
 
-  const handleColumnWidthExtraChange = ([value]: number[]) => {
-    const nextValue = clampNumber(value, COLUMN_WIDTH_EXTRA_MIN, COLUMN_WIDTH_EXTRA_MAX)
-    setColumnWidthExtra(nextValue)
-    setSetting('logColumnWidthExtra', nextValue)
+  const handleColumnWidthExtraChange = ([val]: number[]) => {
+    const clamped = clampNumber(val, COLUMN_WIDTH_EXTRA_MIN, COLUMN_WIDTH_EXTRA_MAX)
+    setColumnWidthExtra(clamped)
+    setSetting('logColumnWidthExtra', clamped)
   }
 
-  const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Escape' && searchQuery) {
-      event.preventDefault()
-      setSearchQuery('')
+  const handleSearchKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape' && search) {
+      e.preventDefault()
+      setSearch('')
     }
   }
 
-  // 清除时间筛选
-  const clearDateFilter = () => {
-    setDateFrom(undefined)
-    setDateTo(undefined)
+  const clearDateRange = () => {
+    setDateRange({ from: undefined, to: undefined })
   }
 
-  const resetFilters = () => {
-    setSearchQuery('')
-    setDateFrom(undefined)
-    setDateTo(undefined)
+  const resetAllFilters = () => {
+    setSearch('')
+    setDateRange({ from: undefined, to: undefined })
     handleLevelFilterChange('INFO')
-    saveHiddenModules(new Set())
+    persistHiddenModules(new Set())
   }
 
-  // 过滤日志
   const filteredLogs = useMemo(() => {
     return logs.filter((log) => {
-      // 搜索过滤
       const matchesSearch =
-        searchQuery === '' ||
-        log.message.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        log.module.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        getModuleDisplayName(log).toLowerCase().includes(searchQuery.toLowerCase())
+        search === '' ||
+        log.message.toLowerCase().includes(search.toLowerCase()) ||
+        log.module.toLowerCase().includes(search.toLowerCase()) ||
+        formatLogModule(log).toLowerCase().includes(search.toLowerCase())
 
-      // 级别过滤：选择某个级别时显示该级别及以上的日志
       const matchesLevel =
         levelFilter === 'all' || levelPriority[log.level] >= levelPriority[levelFilter]
 
-      // 模块过滤
       const matchesModule = !hiddenModules.has(log.module)
 
-      // 时间过滤
       let matchesDate = true
-      if (dateFrom || dateTo) {
+      if (dateRange.from || dateRange.to) {
         const logDate = new Date(log.timestamp)
-        if (dateFrom) {
-          const fromDate = new Date(dateFrom)
+        if (dateRange.from) {
+          const fromDate = new Date(dateRange.from)
           fromDate.setHours(0, 0, 0, 0)
           matchesDate = matchesDate && logDate >= fromDate
         }
-        if (dateTo) {
-          const toDate = new Date(dateTo)
+        if (dateRange.to) {
+          const toDate = new Date(dateRange.to)
           toDate.setHours(23, 59, 59, 999)
           matchesDate = matchesDate && logDate <= toDate
         }
@@ -443,68 +422,54 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
 
       return matchesSearch && matchesLevel && matchesModule && matchesDate
     })
-  }, [logs, searchQuery, levelFilter, hiddenModules, dateFrom, dateTo])
+  }, [logs, search, levelFilter, hiddenModules, dateRange])
 
-  // 虚拟滚动配置 - 根据字号和行间距动态计算行高
-  const estimatedRowHeight = fontSizeConfig[fontSize].rowHeight + lineSpacing
-  const logColumnLayout = logColumnLayoutConfig[fontSize]
-  const timestampWidth = logColumnLayout.timestampWidth + columnWidthExtra
-  const levelWidth = logColumnLayout.levelWidth + Math.round(columnWidthExtra * 0.5)
-  const moduleWidth = logColumnLayout.moduleWidth + columnWidthExtra
+  const dynamicRowHeight = fontSizeConfig[fontSize].rowHeight + lineSpacing
+  const activeLayout = logColumnLayoutConfig[fontSize]
+  const dynamicTimestampWidth = activeLayout.timestampWidth + columnWidthExtra
+  const dynamicLevelWidth = activeLayout.levelWidth + Math.round(columnWidthExtra * 0.5)
+  const dynamicModuleWidth = activeLayout.moduleWidth + columnWidthExtra
 
-  // TanStack Virtual 与 React Compiler 不兼容，保持现有虚拟列表实现
-  // eslint-disable-next-line react-hooks/incompatible-library
   const rowVirtualizer = useVirtualizer({
     count: filteredLogs.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => estimatedRowHeight,
-    overscan: 50, // 增加预渲染数量以减少快速滚动时的空白
+    estimateSize: () => dynamicRowHeight,
+    overscan: 50,
   })
 
-  // 用于追踪是否是程序触发的滚动
   const isAutoScrollingRef = useRef(false)
-  // 用于追踪上一次的日志数量
-  const prevLogCountRef = useRef(filteredLogs.length)
+  const prevLogsCountRef = useRef(filteredLogs.length)
 
-  // 检测用户滚动行为，当用户向上滚动时禁用自动滚动
   useEffect(() => {
-    const scrollElement = parentRef.current
-    if (!scrollElement) return
+    const el = parentRef.current
+    if (!el) return
 
     const handleScroll = () => {
-      // 如果是程序触发的滚动，忽略
       if (isAutoScrollingRef.current) return
-
-      const { scrollTop, scrollHeight, clientHeight } = scrollElement
+      const { scrollTop, scrollHeight, clientHeight } = el
       const distanceFromBottom = scrollHeight - scrollTop - clientHeight
 
-      // 如果距离底部超过 100px，说明用户在向上查看，禁用自动滚动
       if (distanceFromBottom > 100 && autoScroll) {
         setAutoScroll(false)
-      }
-      // 如果用户滚动到接近底部（小于 50px），可以重新启用自动滚动
-      else if (distanceFromBottom < 50 && !autoScroll) {
+      } else if (distanceFromBottom < 50 && !autoScroll) {
         setAutoScroll(true)
       }
     }
 
-    scrollElement.addEventListener('scroll', handleScroll, { passive: true })
-    return () => scrollElement.removeEventListener('scroll', handleScroll)
+    el.addEventListener('scroll', handleScroll, { passive: true })
+    return () => el.removeEventListener('scroll', handleScroll)
   }, [autoScroll])
 
-  // 自动滚动到底部
   useEffect(() => {
-    // 只有在日志数量增加时才滚动（避免删除日志时触发）
-    const logCountIncreased = filteredLogs.length > prevLogCountRef.current
-    prevLogCountRef.current = filteredLogs.length
+    const hasNewLogs = filteredLogs.length > prevLogsCountRef.current
+    prevLogsCountRef.current = filteredLogs.length
 
-    if (autoScroll && filteredLogs.length > 0 && logCountIncreased) {
+    if (autoScroll && filteredLogs.length > 0 && hasNewLogs) {
       isAutoScrollingRef.current = true
       rowVirtualizer.scrollToIndex(filteredLogs.length - 1, {
         align: 'end',
         behavior: 'auto',
       })
-      // 稍后重置标志，给滚动事件处理一些时间
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           isAutoScrollingRef.current = false
@@ -516,6 +481,7 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
   const toolbarContent = (
     <Collapsible open={filtersOpen} onOpenChange={handleFiltersOpenChange}>
       <div className="grid w-full gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(620px,760px)]">
+        {/* 模块 Tag 选择栏 */}
         <div
           className={cn(
             'flex min-h-9 min-w-0 flex-wrap content-start items-start gap-1.5',
@@ -525,21 +491,21 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
           )}
           aria-label="模块显示筛选"
         >
-          {uniqueModules.map(({ id, displayName }) => {
-            const visible = !hiddenModules.has(id)
+          {availableModules.map(({ id, displayName }) => {
+            const isVisible = !hiddenModules.has(id)
             return (
               <button
                 key={id}
                 type="button"
-                aria-pressed={visible}
-                aria-label={`${visible ? '隐藏' : '显示'} ${displayName}`}
-                title={`${visible ? '隐藏' : '显示'} ${displayName}（${id}）`}
-                onClick={() => toggleModuleVisibility(id)}
+                aria-pressed={isVisible}
+                aria-label={`${isVisible ? '隐藏' : '显示'} ${displayName}`}
+                title={`${isVisible ? '隐藏' : '显示'} ${displayName}（${id}）`}
+                onClick={() => toggleModule(id)}
                 className={cn(
                   'h-7 max-w-full border px-2 text-xs font-medium transition-colors',
                   'focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:outline-none',
                   'active:translate-y-px',
-                  visible
+                  isVisible
                     ? 'border-primary/60 bg-primary/10 text-foreground hover:bg-primary/20'
                     : 'border-border/60 bg-muted/30 text-muted-foreground/45 hover:text-muted-foreground'
                 )}
@@ -550,23 +516,24 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
           })}
         </div>
 
+        {/* 控制按钮与搜索栏 */}
         <div className="flex min-w-0 flex-col gap-2">
           <div className="flex w-full flex-wrap items-center gap-1.5 lg:justify-end">
             <div className="relative min-w-[180px] flex-1 lg:max-w-64">
               <Search className="text-muted-foreground absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2" />
               <Input
                 placeholder="搜索日志..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={handleSearchKeyDown}
                 className="h-8 pr-8 pl-8 text-xs sm:text-sm"
               />
-              {searchQuery && (
+              {search && (
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
-                  onClick={() => setSearchQuery('')}
+                  onClick={() => setSearch('')}
                   className="absolute top-1/2 right-0.5 h-7 w-7 -translate-y-1/2"
                   title="清空搜索"
                   aria-label="清空搜索"
@@ -579,17 +546,18 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
             <Button
               variant={autoScroll ? 'default' : 'outline'}
               size="sm"
-              onClick={toggleAutoScroll}
+              onClick={handleToggleAutoScroll}
               className="h-8 px-2"
               title={autoScroll ? '自动滚动' : '已暂停'}
             >
-              {autoScroll ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+              {autoScroll ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
               <span className="ml-1 text-xs">{autoScroll ? '滚动' : '暂停'}</span>
             </Button>
+
             <Button
               variant="outline"
               size="sm"
-              onClick={handleClear}
+              onClick={clearLogs}
               disabled={logs.length === 0}
               className="h-8 px-2"
               title="清空日志"
@@ -597,10 +565,11 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
               <Trash2 className="h-3.5 w-3.5" />
               <span className="ml-1 text-xs">清空</span>
             </Button>
+
             <Button
               variant="outline"
               size="sm"
-              onClick={handleExport}
+              onClick={exportLogs}
               disabled={filteredLogs.length === 0}
               className="h-8 px-2"
               title="导出日志"
@@ -631,10 +600,10 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
                 <span
                   className={cn(
                     'h-2 w-2 rounded-full',
-                    connected ? 'animate-pulse bg-green-500' : 'bg-red-500'
+                    isConnected ? 'animate-pulse bg-green-500' : 'bg-red-500'
                   )}
                 />
-                {connected ? '已连接' : '未连接'}
+                {isConnected ? '已连接' : '未连接'}
               </span>
               <span>
                 <span className="font-mono">
@@ -645,8 +614,8 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
             </div>
           </div>
 
+          {/* 折叠的高级筛选 */}
           <CollapsibleContent className="w-full space-y-2">
-            {/* 级别筛选 */}
             <div className="flex flex-col gap-2 sm:flex-row sm:gap-2">
               <Select
                 value={levelFilter}
@@ -669,7 +638,7 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
               <Button
                 variant="outline"
                 size="sm"
-                onClick={resetFilters}
+                onClick={resetAllFilters}
                 className="h-8 w-full sm:w-auto"
                 title="重置筛选"
               >
@@ -678,7 +647,6 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
               </Button>
             </div>
 
-            {/* 时间筛选 */}
             <div className="flex flex-col gap-2 sm:flex-row sm:gap-2">
               <Popover>
                 <PopoverTrigger asChild>
@@ -687,20 +655,24 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
                     size="sm"
                     className={cn(
                       'h-8 w-full justify-start text-left font-normal sm:flex-1',
-                      !dateFrom && 'text-muted-foreground'
+                      !dateRange.from && 'text-muted-foreground'
                     )}
                   >
                     <CalendarIcon className="mr-1.5 h-3.5 w-3.5" />
                     <span className="text-xs">
-                      {dateFrom ? format(dateFrom, 'PP', { locale: zhCN }) : '开始日期'}
+                      {dateRange.from ? (
+                        format(dateRange.from, 'PP', { locale: zhCN })
+                      ) : (
+                        '开始日期'
+                      )}
                     </span>
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-auto p-0" align="start">
                   <Calendar
                     mode="single"
-                    selected={dateFrom}
-                    onSelect={setDateFrom}
+                    selected={dateRange.from}
+                    onSelect={(date) => setDateRange((prev) => ({ ...prev, from: date }))}
                     initialFocus
                     locale={zhCN}
                   />
@@ -714,31 +686,35 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
                     size="sm"
                     className={cn(
                       'h-8 w-full justify-start text-left font-normal sm:flex-1',
-                      !dateTo && 'text-muted-foreground'
+                      !dateRange.to && 'text-muted-foreground'
                     )}
                   >
                     <CalendarIcon className="mr-1.5 h-3.5 w-3.5" />
                     <span className="text-xs">
-                      {dateTo ? format(dateTo, 'PP', { locale: zhCN }) : '结束日期'}
+                      {dateRange.to ? (
+                        format(dateRange.to, 'PP', { locale: zhCN })
+                      ) : (
+                        '结束日期'
+                      )}
                     </span>
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-auto p-0" align="start">
                   <Calendar
                     mode="single"
-                    selected={dateTo}
-                    onSelect={setDateTo}
+                    selected={dateRange.to}
+                    onSelect={(date) => setDateRange((prev) => ({ ...prev, to: date }))}
                     initialFocus
                     locale={zhCN}
                   />
                 </PopoverContent>
               </Popover>
 
-              {(dateFrom || dateTo) && (
+              {(dateRange.from || dateRange.to) && (
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={clearDateFilter}
+                  onClick={clearDateRange}
                   className="h-8 w-full sm:w-auto"
                 >
                   <X className="h-3.5 w-3.5 sm:mr-1" />
@@ -747,9 +723,8 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
               )}
             </div>
 
-            {/* 显示设置 */}
+            {/* 布局与外观微调控制条 */}
             <div className="border-border/50 flex flex-col gap-2 border-t pt-2 sm:flex-row sm:items-center sm:gap-3">
-              {/* 字号调整 */}
               <div className="flex items-center gap-2">
                 <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
                   <Type className="h-3.5 w-3.5" />
@@ -770,7 +745,6 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
                 </div>
               </div>
 
-              {/* 行间距调整 */}
               <div className="flex max-w-[200px] flex-1 items-center gap-2">
                 <span className="text-muted-foreground text-xs whitespace-nowrap">行距</span>
                 <Slider
@@ -811,16 +785,16 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
       {toolbarPortal}
 
       {/* 日志终端 - 占据剩余所有空间 */}
-      <div className="min-h-0 flex-1 px-2 pb-2 sm:px-3 sm:pb-3 lg:px-4 lg:pt-2 lg:pb-4">
+      <div className="min-h-[260px] flex-1 px-2 pb-2 sm:px-3 sm:pb-3 lg:px-4 lg:pt-2 lg:pb-4">
         <Card
           className="h-full overflow-hidden border-[#24170f]/70 dark:border-[#1d120c]/80"
           style={{ backgroundColor: '#633312' }}
         >
+          {/* 日志列表卡片内容 */}
           <div
             ref={parentRef}
             className={cn(
               'h-full overflow-auto selection:bg-[#5a3924] selection:text-[#fff2df]',
-              // 自定义滚动条样式
               '[&::-webkit-scrollbar]:w-2.5',
               '[&::-webkit-scrollbar-track]:bg-transparent',
               '[&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full',
@@ -845,9 +819,10 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
               ) : (
                 rowVirtualizer.getVirtualItems().map((virtualRow) => {
                   const log = filteredLogs[virtualRow.index]
-                  const timestampText = formatLogTimestamp(log.timestamp)
-                  const levelText = formatLogLevel(log.level)
-                  const moduleTextStyle = getModuleTextStyle(log)
+                  const formattedTimestamp = formatLogTimestamp(log.timestamp)
+                  const formattedLevel = formatLogLevel(log.level)
+                  const moduleStyle = getModuleTextStyle(log)
+
                   return (
                     <div
                       key={virtualRow.key}
@@ -860,85 +835,73 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
                         paddingBottom: `${lineSpacing / 2}px`,
                       }}
                     >
-                      {/* 移动端：垂直布局 */}
+                      {/* 移动端紧凑排版 (< sm) */}
                       <div className="flex flex-col gap-0.5 sm:hidden">
-                        {/* 第一行：时间戳和级别 */}
                         <div className="flex items-center gap-2">
                           <span className="text-[10px] text-gray-500 dark:text-gray-600">
-                            {timestampText}
+                            {formattedTimestamp}
                           </span>
-                          <span
-                            className={cn('text-[10px] font-semibold', getLevelColor(log.level))}
-                          >
-                            [{levelText}]
+                          <span className={cn('text-[10px] font-semibold', getLevelColor(log.level))}>
+                            [{formattedLevel}]
                           </span>
                         </div>
-                        {/* 第二行：模块名 */}
                         <div
                           className={cn(
                             'truncate text-[10px]',
-                            !moduleTextStyle && 'text-cyan-400 dark:text-cyan-500'
+                            !moduleStyle && 'text-cyan-400 dark:text-cyan-500'
                           )}
-                          style={moduleTextStyle}
+                          style={moduleStyle}
                         >
-                          {getModuleDisplayName(log)}
+                          {formatLogModule(log)}
                         </div>
-                        {/* 第三行：消息内容 */}
                         <div
                           className={cn(
                             'text-[10px] break-words whitespace-pre-wrap',
-                            !moduleTextStyle && 'text-gray-300 dark:text-gray-400'
+                            !moduleStyle && 'text-gray-300 dark:text-gray-400'
                           )}
-                          style={moduleTextStyle}
+                          style={moduleStyle}
                         >
                           {log.message}
                         </div>
                       </div>
 
-                      {/* 平板/桌面端：水平布局 */}
-                      <div className={cn('hidden items-start sm:flex', logColumnLayout.gapClass)}>
-                        {/* 时间戳 */}
+                      {/* 宽屏桌面端并排排版 (>= sm) */}
+                      <div className={cn('hidden items-start sm:flex', activeLayout.gapClass)}>
                         <span
                           className={cn(
                             'flex-shrink-0 text-gray-500 dark:text-gray-600',
-                            logColumnLayout.timestampClass
+                            activeLayout.timestampClass
                           )}
-                          style={{ width: timestampWidth }}
+                          style={{ width: dynamicTimestampWidth }}
                         >
-                          {timestampText}
+                          {formattedTimestamp}
                         </span>
-
-                        {/* 日志级别 */}
                         <span
                           className={cn(
                             'flex-shrink-0 font-semibold',
-                            logColumnLayout.levelClass,
+                            activeLayout.levelClass,
                             getLevelColor(log.level)
                           )}
-                          style={{ width: levelWidth }}
+                          style={{ width: dynamicLevelWidth }}
                         >
-                          [{levelText}]
+                          [{formattedLevel}]
                         </span>
-
-                        {/* 模块名 */}
                         <span
                           className={cn(
                             'flex-shrink-0 truncate',
-                            logColumnLayout.moduleClass,
-                            !moduleTextStyle && 'text-cyan-400 dark:text-cyan-500'
+                            activeLayout.moduleClass,
+                            !moduleStyle && 'text-cyan-400 dark:text-cyan-500'
                           )}
-                          style={{ ...moduleTextStyle, width: moduleWidth }}
+                          style={{ ...moduleStyle, width: dynamicModuleWidth }}
                         >
-                          {getModuleDisplayName(log)}
+                          {formatLogModule(log)}
                         </span>
-
-                        {/* 消息内容 */}
                         <span
                           className={cn(
                             'flex-1 break-words whitespace-pre-wrap',
-                            !moduleTextStyle && 'text-gray-300 dark:text-gray-400'
+                            !moduleStyle && 'text-gray-300 dark:text-gray-400'
                           )}
-                          style={moduleTextStyle}
+                          style={moduleStyle}
                         >
                           {log.message}
                         </span>
@@ -955,23 +918,21 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
   )
 }
 
-interface LogViewerPageProps {
+export interface LogViewerPageProps {
   defaultTab?: LogViewerTab
 }
 
 export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
-  const [activeTab, setActiveTab] = useState<LogViewerTab>(
-    () => defaultTab ?? loadStoredLogViewerTab()
-  )
+  const [activeTab, setActiveTab] = useState<LogViewerTab>(() => defaultTab ?? getInitialActiveTab())
   const [topbarTabsRoot, setTopbarTabsRoot] = useState<HTMLElement | null>(null)
-  const [topbarTabsCompact, setTopbarTabsCompact] = useState(false)
-  const topbarTabsCompactRef = useRef(false)
+  const [compactSwitcher, setCompactSwitcher] = useState(false)
+  const compactSwitcherRef = useRef(false)
   const [reasoningToolbarVisible, setReasoningToolbarVisible] = useState(activeTab === 'reasoning')
-  const [showSwitchHint, setShowSwitchHint] = useState(() =>
-    typeof window === 'undefined'
-      ? false
-      : localStorage.getItem(LOG_VIEWER_SWITCH_HINT_DISMISSED_KEY) !== 'true'
-  )
+  const [showSwitchHint, setShowSwitchHint] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    return localStorage.getItem(LOG_VIEWER_SWITCH_HINT_DISMISSED_KEY) !== 'true'
+  })
+
   const toolbarContainerId = 'log-terminal-toolbar'
   const topbarTabsContainerId = 'log-viewer-topbar-tabs'
   const reasoningTopbarActionsContainerId = 'reasoning-topbar-actions'
@@ -980,13 +941,12 @@ export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
     const frameId = requestAnimationFrame(() => {
       setTopbarTabsRoot(document.getElementById(topbarTabsContainerId))
     })
-
     return () => cancelAnimationFrame(frameId)
-  }, [])
+  }, [topbarTabsContainerId])
 
   useEffect(() => {
-    topbarTabsCompactRef.current = topbarTabsCompact
-  }, [topbarTabsCompact])
+    compactSwitcherRef.current = compactSwitcher
+  }, [compactSwitcher])
 
   useEffect(() => {
     localStorage.setItem(LOG_VIEWER_ACTIVE_TAB_KEY, activeTab)
@@ -1000,29 +960,34 @@ export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
       cancelAnimationFrame(frameId)
       frameId = requestAnimationFrame(() => {
         const workspaceTabs = document.querySelector('[data-dashboard-workspace-tabs="true"]')
-        const workspaceTabsMeasure = document.querySelector(
+        const measureWorkspaceTabs = document.querySelector(
           '[data-dashboard-workspace-tabs-measure="true"]'
         )
-        const measureEl = topbarTabsRoot.querySelector('[data-log-viewer-switcher-measure="true"]')
+        const switcherMeasure = topbarTabsRoot.querySelector(
+          '[data-log-viewer-switcher-measure="true"]'
+        )
+
         if (
           !(workspaceTabs instanceof HTMLElement) ||
-          !(workspaceTabsMeasure instanceof HTMLElement) ||
-          !(measureEl instanceof HTMLElement)
+          !(measureWorkspaceTabs instanceof HTMLElement) ||
+          !(switcherMeasure instanceof HTMLElement)
         ) {
-          setTopbarTabsCompact(false)
+          setCompactSwitcher(false)
           return
         }
 
-        const rootRect = topbarTabsRoot.getBoundingClientRect()
-        const measureRect = measureEl.getBoundingClientRect()
+        const topbarRect = topbarTabsRoot.getBoundingClientRect()
+        const switcherRect = switcherMeasure.getBoundingClientRect()
         const workspaceRect = workspaceTabs.getBoundingClientRect()
-        const workspaceMeasureRect = workspaceTabsMeasure.getBoundingClientRect()
-        const fullWorkspaceTabsLeft = workspaceRect.right - workspaceMeasureRect.width
-        const gap = fullWorkspaceTabsLeft - (rootRect.left + measureRect.width)
-        const threshold = topbarTabsCompactRef.current
+        const measureTabsRect = measureWorkspaceTabs.getBoundingClientRect()
+
+        const availableSpace =
+          workspaceRect.right - measureTabsRect.width - (topbarRect.left + switcherRect.width)
+        const threshold = compactSwitcherRef.current
           ? TOPBAR_SWITCH_EXPAND_GAP
           : TOPBAR_SWITCH_COMPACT_GAP
-        setTopbarTabsCompact(gap < threshold)
+
+        setCompactSwitcher(availableSpace < threshold)
       })
     }
 
@@ -1037,11 +1002,11 @@ export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
     if (workspaceTabs instanceof HTMLElement) {
       resizeObserver.observe(workspaceTabs)
     }
-    const workspaceTabsMeasure = document.querySelector(
+    const measureWorkspaceTabs = document.querySelector(
       '[data-dashboard-workspace-tabs-measure="true"]'
     )
-    if (workspaceTabsMeasure instanceof HTMLElement) {
-      resizeObserver.observe(workspaceTabsMeasure)
+    if (measureWorkspaceTabs instanceof HTMLElement) {
+      resizeObserver.observe(measureWorkspaceTabs)
     }
 
     return () => {
@@ -1051,8 +1016,8 @@ export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
     }
   }, [activeTab, reasoningToolbarVisible, topbarTabsRoot])
 
-  const renderTopbarSwitcherMeasure = () => {
-    const showReasoningRefresh = activeTab === 'reasoning' && !reasoningToolbarVisible
+  const renderMeasureTabSwitcher = () => {
+    const showReasoningActionsPlaceholder = activeTab === 'reasoning' && !reasoningToolbarVisible
 
     return (
       <div
@@ -1074,48 +1039,48 @@ export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
             <span>详细统计</span>
           </div>
         </div>
-        {showReasoningRefresh && <div className="h-9 w-9" />}
+        {showReasoningActionsPlaceholder && <div className="h-9 w-9" />}
       </div>
     )
   }
 
-  const renderTabSwitcher = (includeTopbarActions = false, compact = false) => {
-    const labelClassName = includeTopbarActions && compact ? 'sr-only' : undefined
+  const renderTabSwitcher = (isTopbar = false, isCompact = false) => {
+    const labelClass = isTopbar && isCompact ? 'sr-only' : undefined
 
     return (
       <div className="flex min-w-0 items-center gap-2">
         <TabsList
-          data-log-viewer-switcher={includeTopbarActions ? 'true' : undefined}
-          data-log-viewer-switcher-compact={includeTopbarActions && compact ? 'true' : undefined}
+          data-log-viewer-switcher={isTopbar ? 'true' : undefined}
+          data-log-viewer-switcher-compact={isTopbar && isCompact ? 'true' : undefined}
         >
           <TabsTrigger value="terminal" className="gap-1.5" aria-label="终端">
             <Terminal className="h-4 w-4" />
-            <span className={labelClassName}>终端</span>
+            <span className={labelClass}>终端</span>
           </TabsTrigger>
           <TabsTrigger value="reasoning" className="gap-1.5" aria-label="推理过程">
             <BrainCircuit className="h-4 w-4" />
-            <span className={labelClassName}>推理过程</span>
+            <span className={labelClass}>推理过程</span>
           </TabsTrigger>
           <TabsTrigger value="statistics" className="gap-1.5" aria-label="详细统计">
             <BarChart3 className="h-4 w-4" />
-            <span className={labelClassName}>详细统计</span>
+            <span className={labelClass}>详细统计</span>
           </TabsTrigger>
         </TabsList>
-        {includeTopbarActions && (
-          <div id={reasoningTopbarActionsContainerId} className="hidden items-center sm:flex" />
-        )}
+        {isTopbar && <div id={reasoningTopbarActionsContainerId} className="hidden items-center sm:flex" />}
       </div>
     )
   }
+
   const topbarTabsPortal = topbarTabsRoot
     ? createPortal(
         <>
-          {renderTabSwitcher(true, topbarTabsCompact)}
-          {renderTopbarSwitcherMeasure()}
+          {renderTabSwitcher(true, compactSwitcher)}
+          {renderMeasureTabSwitcher()}
         </>,
         topbarTabsRoot
       )
     : null
+
   const dismissSwitchHint = () => {
     localStorage.setItem(LOG_VIEWER_SWITCH_HINT_DISMISSED_KEY, 'true')
     setShowSwitchHint(false)
@@ -1130,13 +1095,15 @@ export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
       {topbarTabsPortal}
       <div
         className={cn(
-          'flex shrink-0 flex-wrap items-center justify-between gap-2 border-b px-3 py-1 lg:px-4',
+          'flex shrink-0 flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 border-b px-3 py-1.5 lg:px-4',
           ((activeTab === 'reasoning' && !reasoningToolbarVisible) || activeTab === 'statistics') &&
             'sm:hidden'
         )}
       >
-        <div className="sm:hidden">{renderTabSwitcher()}</div>
-        <div id={toolbarContainerId} className="flex min-w-0 flex-1 justify-end" />
+        {/* 移动端下 Tab 独占置顶一行，不再和右侧面板同层并排 */}
+        <div className="sm:hidden flex justify-start">{renderTabSwitcher()}</div>
+        {/* 移动端宽度占满 100%，桌面端恢复原状 */}
+        <div id={toolbarContainerId} className="flex min-w-0 w-full sm:w-auto sm:flex-1 justify-start sm:justify-end" />
       </div>
       {showSwitchHint && (
         <div className="shrink-0 border-b px-3 py-2 lg:px-4">
@@ -1161,12 +1128,8 @@ export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
           </div>
         </div>
       )}
-
       <TabsContent value="terminal" className="m-0 min-h-0 flex-1 overflow-hidden">
-        <LogTerminalPane
-          toolbarContainerId={toolbarContainerId}
-          toolbarVisible={activeTab === 'terminal'}
-        />
+        <TerminalView toolbarContainerId={toolbarContainerId} toolbarVisible={activeTab === 'terminal'} />
       </TabsContent>
       <TabsContent value="reasoning" className="m-0 min-h-0 flex-1 overflow-hidden p-2 lg:p-4">
         <ReasoningProcessPage
