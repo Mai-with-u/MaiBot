@@ -613,6 +613,18 @@ class ChatReplyTimingConfig(ConfigBase):
     )
     """控制新消息何时进入 Planner。"""
 
+    strip_assistant_messages: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "过滤历史助手消息",
+                "en_US": "Strip assistant messages in planner",
+                "ja_JP": "プランナーでアシスタントメッセージを除去",
+            },
+        },
+    )
+    """启用后在向 Planner 模型发送请求前过滤掉历史中的 assistant 消息，避免因包含未调用工具的推理内容影响模型正常决策。"""
+
     planner_interrupt_max_consecutive_count: int = Field(
         default=0,
         ge=0,
