@@ -811,7 +811,7 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
       {toolbarPortal}
 
       {/* 日志终端 - 占据剩余所有空间 */}
-      <div className="min-h-0 flex-1 px-2 pb-2 sm:px-3 sm:pb-3 lg:px-4 lg:pt-2 lg:pb-4">
+      <div className="min-h-[260px] flex-1 px-2 pb-2 sm:px-3 sm:pb-3 lg:px-4 lg:pt-2 lg:pb-4">
         <Card
           className="h-full overflow-hidden border-[#24170f]/70 dark:border-[#1d120c]/80"
           style={{ backgroundColor: '#633312' }}
@@ -1130,13 +1130,15 @@ export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
       {topbarTabsPortal}
       <div
         className={cn(
-          'flex shrink-0 flex-wrap items-center justify-between gap-2 border-b px-3 py-1 lg:px-4',
+          'flex shrink-0 flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 border-b px-3 py-1.5 lg:px-4',
           ((activeTab === 'reasoning' && !reasoningToolbarVisible) || activeTab === 'statistics') &&
             'sm:hidden'
         )}
       >
-        <div className="sm:hidden">{renderTabSwitcher()}</div>
-        <div id={toolbarContainerId} className="flex min-w-0 flex-1 justify-end" />
+        {/* 移动端下 Tab 独占置顶一行，不再和右侧面板同层并排 */}
+        <div className="sm:hidden flex justify-start">{renderTabSwitcher()}</div>
+        {/* 移动端宽度占满 100%，桌面端恢复原状 */}
+        <div id={toolbarContainerId} className="flex min-w-0 w-full sm:w-auto sm:flex-1 justify-start sm:justify-end" />
       </div>
       {showSwitchHint && (
         <div className="shrink-0 border-b px-3 py-2 lg:px-4">
