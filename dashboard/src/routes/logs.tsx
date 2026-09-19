@@ -125,4 +125,1052 @@ const levelPriority: Record<LogEntry['level'], number> = {
 
 function formatLogTimestamp(timestamp: string) {
   const normalized = timestamp.trim()
-  const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})([ T].*)$/)\n  if (!match) {\n    return timestamp\n  }\n\n  return `${match[2]}-${match[3]}${match[4].replace(/^T/, ' ')}`\n}\n\nfunction getModuleTextStyle(log: LogEntry) {\n  if (!log.moduleColor) {\n    return undefined\n  }\n\n  return {\n    color: log.moduleColor,\n    fontWeight: log.moduleBold ? 700 : undefined,\n  }\n}\n\nfunction formatLogLevel(level: LogEntry['level']) {\n  return level.slice(0, 4)\n}\n\nfunction clampNumber(value: number, min: number, max: number) {\n  return Math.min(max, Math.max(min, value))\n}\n\nfunction isFontSize(value: string): value is FontSize {\n  return value in fontSizeConfig\n}\n\nfunction isLogLevelFilter(value: string): value is LogLevelFilter {\n  return value === 'all' || value in levelPriority\n}\n\nconst legacyModuleDisplayNames: Record<string, string> = {\n  '_maibot_plugin_maibot_team_mai_statstic_plugin.client_statistics_service': 'Mai统计客户端服务',\n  '_maibot_plugin_maibot_team_mai_statstic_plugin.plugin_store_service': 'Mai统计存储服务',\n  '<runner>': '插件运行器',\n  async_task_manager: '异步任务管理',\n  chat: '所见',\n  chat_manager: '聊天管理器',\n  chat_utils: '聊天工具',\n  emoji: '表情包',\n  expression_vector_index: '表达向量索引',\n  image: '图片',\n  image_cache_cleanup: '图片缓存清理',\n  local_storage: '本地存储',\n  maisaka_monitor_event_store: '麦麦监控事件',\n  maisaka_runtime: 'MaiSaka',\n  maisaka_turn_scheduler: '读空气',\n  model_utils: '模型工具',\n  person_info: '人物',\n  'plugin.github.sengokucola.statistics-chart-plugin': '统计图表插件',\n  'plugin.local.replyer-regex-guard': '回复正则保护插件',\n  'plugin.maibot-team.mai-statstic-plugin': 'Mai统计插件',\n  'plugin.maibot-team.maibot-helper': '麦麦助手插件',\n  'plugin.maibot-team.snowluma-adapter': 'SnowLuma适配器',\n  'plugin.self_identity_plugin': '自我认知插件',\n  'plugin.sengokucola.deepseek-thinking-marker': 'DeepSeek思考标记插件',\n  'webui.api': 'WebUI接口',\n  'webui.unified_ws': 'WebUI统一连接',\n  'webui.ws_auth': 'WebUI鉴权连接',\n  webui: 'WebUI',\n}\n\nfunction getModuleDisplayName(log: LogEntry): string {\n  const backendDisplayName = log.moduleDisplayName?.trim()\n  if (backendDisplayName && backendDisplayName !== log.module) return backendDisplayName\n  if (legacyModuleDisplayNames[log.module]) return legacyModuleDisplayNames[log.module]\n  if (log.module.includes('site-packages.watchfiles')) return '文件变更监控'\n  if (log.module.startsWith('_maibot_plugin_')) return '插件运行器'\n  return backendDisplayName || log.module\n}\n\nfunction loadStoredLogViewerTab(): LogViewerTab {\n  if (typeof window === 'undefined') return 'terminal'\n\n  const storedTab = localStorage.getItem(LOG_VIEWER_ACTIVE_TAB_KEY)\n  return storedTab === 'reasoning' || storedTab === 'statistics' ? storedTab : 'terminal'\n}\n\ninterface LogTerminalPaneProps {\n  toolbarContainerId: string\n  toolbarVisible: boolean\n}\n\nfunction LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPaneProps) {\n  const [logs, setLogs] = useState<LogEntry[]>([])\n  const [searchQuery, setSearchQuery] = useState('')\n  const [levelFilter, setLevelFilter] = useState<LogLevelFilter>(() => {\n    const savedLevelFilter = getSetting('logLevelFilter')\n    return isLogLevelFilter(savedLevelFilter) ? savedLevelFilter : 'all'\n  })\n  const [fontSize, setFontSize] = useState<FontSize>(() => {\n    const savedFontSize = getSetting('logFontSize')\n    return isFontSize(savedFontSize) ? savedFontSize : 'xs'\n  })\n  const [lineSpacing, setLineSpacing] = useState<number>(() => {\n    const saved = getSetting('logLineSpacing')\n    return typeof saved === 'number' ? clampNumber(saved, LINE_SPACING_MIN, LINE_SPACING_MAX) : 4\n  })\n  const [columnWidthExtra, setColumnWidthExtra] = useState<number>(() => {\n    const saved = getSetting('logColumnWidthExtra')\n    return typeof saved === 'number'\n      ? clampNumber(saved, COLUMN_WIDTH_EXTRA_MIN, COLUMN_WIDTH_EXTRA_MAX)\n      : 0\n  })\n  const [hiddenModules, setHiddenModules] = useState<Set<string>>(() => {\n    try {\n      const stored = localStorage.getItem('log-hidden-modules')\n      return stored ? new Set(JSON.parse(stored)) : new Set()\n    } catch {\n      return new Set()\n    }\n  })\n  const [filtersOpen, setFiltersOpen] = useState<boolean>(() =>\n    Boolean(getSetting('logFiltersOpen', false))\n  )\n  const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined)\n  const [dateTo, setDateTo] = useState<Date | undefined>(undefined)\n  const [autoScroll, setAutoScroll] = useState(true)\n  const [isConnected, setIsConnected] = useState(false)\n  const [toolbarRoot, setToolbarRoot] = useState<HTMLElement | null>(null)\n\n  const parentRef = useRef<HTMLDivElement>(null)\n\n  useEffect(() => {\n    setToolbarRoot(document.getElementById(toolbarContainerId))\n  }, [toolbarContainerId])\n\n  // 保存隐藏的模块列表到 localStorage\n  const saveHiddenModules = useCallback((modules: Set<string>) => {\n    setHiddenModules(modules)\n    try {\n      localStorage.setItem('log-hidden-modules', JSON.stringify([...modules]))\n    } catch {\n      // 忽略保存错误\n    }\n  }, [])\n\n  // 切换模块显示状态\n  const toggleModuleVisibility = useCallback(\n    (moduleId: string) => {\n      const newHidden = new Set(hiddenModules)\n      if (newHidden.has(moduleId)) {\n        newHidden.delete(moduleId)\n      } else {\n        newHidden.add(moduleId)\n      }\n      saveHiddenModules(newHidden)\n    },\n    [hiddenModules, saveHiddenModules]\n  )\n\n  // 提取所有不重复的模块列表，附带展示名（优先取最新出现的展示名）\n  const uniqueModules = useMemo(() => {\n    const moduleMap = new Map<string, string>()\n    logs.forEach((log) => {\n      moduleMap.set(log.module, getModuleDisplayName(log))\n    })\n    return Array.from(moduleMap.entries()).map(([id, displayName]) => ({\n      id,\n      displayName,\n    }))\n  }, [logs])\n\n  // 导出日志\n  const exportLogs = useCallback(() => {\n    const text = logs\n      .map((log) => `[${log.timestamp}] [${log.level}] [${log.module}] ${log.message}`)\n      .join('\\n')\n    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })\n    const url = URL.createObjectURL(blob)\n    const a = document.createElement('a')\n    a.href = url\n    a.download = `maibot-logs-${format(new Date(), 'yyyyMMdd-HHmmss')}.log`\n    a.click()\n    URL.revokeObjectURL(url)\n  }, [logs])\n\n  // 清空日志\n  const clearLogs = useCallback(() => {\n    setLogs([])\n  }, [])\n\n  // 订阅 WebSocket 日志\n  useEffect(() => {\n    const unsubscribeLogs = logWebSocket.subscribe((newLog) => {\n      setLogs((prev) => [...prev, newLog])\n    })\n\n    const unsubscribeStatus = logWebSocket.subscribeStatus((status) => {\n      setIsConnected(status)\n    })\n\n    // 连接 WebSocket\n    logWebSocket.connect()\n\n    return () => {\n      unsubscribeLogs()\n      unsubscribeStatus()\n    }\n  }, [])\n\n  // 快速过滤级别\n  const handleLevelFilterChange = useCallback((value: string) => {\n    const filter = value as LogLevelFilter\n    setLevelFilter(filter)\n    setSetting('logLevelFilter', filter)\n  }, [])\n\n  const handleFiltersOpenChange = useCallback((open: boolean) => {\n    setFiltersOpen(open)\n    setSetting('logFiltersOpen', open)\n  }, [])\n\n  const handleFontSizeChange = (size: FontSize) => {\n    setFontSize(size)\n    setSetting('logFontSize', size)\n  }\n\n  const handleLineSpacingChange = ([value]: number[]) => {\n    const nextValue = clampNumber(value, LINE_SPACING_MIN, LINE_SPACING_MAX)\n    setLineSpacing(nextValue)\n    setSetting('logLineSpacing', nextValue)\n  }\n\n  const handleColumnWidthExtraChange = ([value]: number[]) => {\n    const nextValue = clampNumber(value, COLUMN_WIDTH_EXTRA_MIN, COLUMN_WIDTH_EXTRA_MAX)\n    setColumnWidthExtra(nextValue)\n    setSetting('logColumnWidthExtra', nextValue)\n  }\n\n  const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {\n    if (event.key === 'Escape' && searchQuery) {\n      event.preventDefault()\n      setSearchQuery('')\n    }\n  }\n\n  // 清除时间筛选\n  const clearDateFilter = () => {\n    setDateFrom(undefined)\n    setDateTo(undefined)\n  }\n\n  const resetFilters = () => {\n    setSearchQuery('')\n    setDateFrom(undefined)\n    setDateTo(undefined)\n    handleLevelFilterChange('INFO')\n    saveHiddenModules(new Set())\n  }\n\n  // 过滤日志\n  const filteredLogs = useMemo(() => {\n    return logs.filter((log) => {\n      // 搜索过滤\n      const matchesSearch =\n        searchQuery === '' ||\n        log.message.toLowerCase().includes(searchQuery.toLowerCase()) ||\n        log.module.toLowerCase().includes(searchQuery.toLowerCase()) ||\n        getModuleDisplayName(log).toLowerCase().includes(searchQuery.toLowerCase())\n\n      // 级别过滤：选择某个级别时显示该级别及以上的日志\n      const matchesLevel =\n        levelFilter === 'all' || levelPriority[log.level] >= levelPriority[levelFilter]\n\n      // 模块过滤\n      const matchesModule = !hiddenModules.has(log.module)\n\n      // 时间过滤\n      let matchesDate = true\n      if (dateFrom || dateTo) {\n        const logDate = new Date(log.timestamp)\n        if (dateFrom && logDate < dateFrom) matchesDate = false\n        if (dateTo) {\n          const endOfDay = new Date(dateTo)\n          endOfDay.setHours(23, 59, 59, 999)\n          if (logDate > endOfDay) matchesDate = false\n        }\n      }\n\n      return matchesSearch && matchesLevel && matchesModule && matchesDate\n    })\n  }, [logs, searchQuery, levelFilter, hiddenModules, dateFrom, dateTo])\n\n  // 虚拟滚动配置 - 根据字号和行间距动态计算行高\n  const estimatedRowHeight = fontSizeConfig[fontSize].rowHeight + lineSpacing\n  const logColumnLayout = logColumnLayoutConfig[fontSize]\n  const timestampWidth = logColumnLayout.timestampWidth + columnWidthExtra\n  const levelWidth = logColumnLayout.levelWidth + Math.round(columnWidthExtra * 0.5)\n  const moduleWidth = logColumnLayout.moduleWidth + columnWidthExtra\n\n  // TanStack Virtual 与 React Compiler 不兼容，保持现有虚拟列表实现\n  // eslint-disable-next-line react-hooks/incompatible-library\n  const rowVirtualizer = useVirtualizer({\n    count: filteredLogs.length,\n    getScrollElement: () => parentRef.current,\n    estimateSize: () => estimatedRowHeight,\n    overscan: 50, // 增加预渲染数量以减少快速滚动时的空白\n  })\n\n  // 用于追踪是否是程序触发的滚动\n  const isAutoScrollingRef = useRef(false)\n  // 用于追踪上一次的日志数量\n  const prevLogCountRef = useRef(filteredLogs.length)\n\n  // 检测用户滚动行为，当用户向上滚动时禁用自动滚动\n  useEffect(() => {\n    const scrollElement = parentRef.current\n    if (!scrollElement) return\n\n    const handleScroll = () => {\n      // 如果是程序触发的滚动，忽略\n      if (isAutoScrollingRef.current) return\n\n      const { scrollTop, scrollHeight, clientHeight } = scrollElement\n      const distanceFromBottom = scrollHeight - scrollTop - clientHeight\n\n      // 如果距离底部超过 100px，说明用户在向上查看，禁用自动滚动\n      if (distanceFromBottom > 100 && autoScroll) {\n        setAutoScroll(false)\n      }\n      // 如果用户滚动到接近底部（小于 50px），可以重新启用自动滚动\n      else if (distanceFromBottom < 50 && !autoScroll) {\n        setAutoScroll(true)\n      }\n    }\n\n    scrollElement.addEventListener('scroll', handleScroll, { passive: true })\n    return () => scrollElement.removeEventListener('scroll', handleScroll)\n  }, [autoScroll])\n\n  // 自动滚动到底部\n  useEffect(() => {\n    // 只有在日志数量增加时才滚动（避免删除日志时触发）\n    const logCountIncreased = filteredLogs.length > prevLogCountRef.current\n    prevLogCountRef.current = filteredLogs.length\n\n    if (autoScroll && filteredLogs.length > 0 && logCountIncreased) {\n      isAutoScrollingRef.current = true\n      rowVirtualizer.scrollToIndex(filteredLogs.length - 1, {\n        align: 'end',\n        behavior: 'auto',\n      })\n      // 稍后重置标志，给滚动事件处理一些时间\n      requestAnimationFrame(() => {\n        requestAnimationFrame(() => {\n          isAutoScrollingRef.current = false\n        })\n      })\n    }\n  }, [filteredLogs.length, autoScroll, rowVirtualizer])\n\n  // 工具栏内容\n  const toolbarContent = (\n    <Collapsible open={filtersOpen} onOpenChange={handleFiltersOpenChange}>\n      <div className=\"grid w-full gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(620px,760px)]\">\n        <div\n          className={cn(\n            'flex min-h-9 min-w-0 flex-wrap content-start items-start gap-1.5',\n            'overflow-y-auto pr-1',\n            'max-h-24 sm:max-h-28 lg:max-h-32'\n          )}\n          role=\"group\"\n          aria-label=\"模块显示筛选\"\n        >\n          {uniqueModules.map(({ id, displayName }) => {\n            const visible = !hiddenModules.has(id)\n            return (\n              <button\n                key={id}\n                type=\"button\"\n                aria-pressed={visible}\n                aria-label={`${visible ? '隐藏' : '显示'} ${displayName}`}\n                title={`${visible ? '隐藏' : '显示'} ${displayName}（${id}）`}\n                onClick={() => toggleModuleVisibility(id)}\n                className={cn(\n                  'h-7 max-w-full border px-2 text-xs font-medium transition-colors',\n                  'focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:outline-none',\n                  'active:translate-y-px',\n                  visible\n                    ? 'border-primary/60 bg-primary/10 text-foreground hover:bg-primary/20'\n                    : 'border-border/60 bg-muted/30 text-muted-foreground/45 hover:text-muted-foreground'\n                )}\n              >\n                <span className=\"truncate\">{displayName}</span>\n              </button>\n            )\n          })}\n        </div>\n\n        <div className=\"flex min-w-0 flex-col gap-2\">\n          <div className=\"flex w-full flex-wrap items-center gap-1.5 lg:justify-end\">\n            <div className=\"relative min-w-[180px] flex-1 lg:max-w-64\">\n              <Search className=\"text-muted-foreground absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2\" />\n              <Input\n                placeholder=\"搜索日志… (Esc 清除)\"\n                value={searchQuery}\n                onChange={(e) => setSearchQuery(e.target.value)}\n                onKeyDown={handleSearchKeyDown}\n                className=\"h-8 pl-8 text-xs\"\n              />\n              {searchQuery && (\n                <Button\n                  variant=\"ghost\"\n                  size=\"sm\"\n                  onClick={() => setSearchQuery('')}\n                  className=\"text-muted-foreground hover:text-foreground absolute top-1/2 right-1 h-6 w-6 -translate-y-1/2 p-0\"\n                  aria-label=\"清除搜索\"\n                >\n                  <X className=\"h-3.5 w-3.5\" />\n                </Button>\n              )}\n            </div>\n\n            <Button\n              variant={autoScroll ? 'default' : 'outline'}\n              size=\"sm\"\n              onClick={() => setAutoScroll(!autoScroll)}\n              className=\"h-8 px-2\"\n              title={autoScroll ? '自动滚动' : '已暂停'}\n            >\n              {autoScroll ? <Pause className=\"h-3.5 w-3.5\" /> : <Play className=\"h-3.5 w-3.5\" />}\n              <span className=\"ml-1 text-xs\">{autoScroll ? '滚动' : '暂停'}</span>\n            </Button>\n\n            <Button\n              variant=\"outline\"\n              size=\"sm\"\n              onClick={clearLogs}\n              className=\"h-8 px-2\"\n              title=\"清空当前日志显示\"\n            >\n              <Trash2 className=\"h-3.5 w-3.5\" />\n              <span className=\"ml-1 text-xs\">清空</span>\n            </Button>\n\n            <Button\n              variant=\"outline\"\n              size=\"sm\"\n              onClick={exportLogs}\n              className=\"h-8 px-2\"\n              title=\"导出当前日志为文本文件\"\n            >\n              <Download className=\"h-3.5 w-3.5\" />\n              <span className=\"ml-1 text-xs\">导出</span>\n            </Button>\n\n            <CollapsibleTrigger asChild>\n              <Button\n                variant=\"outline\"\n                size=\"sm\"\n                className=\"h-8 px-2\"\n                title={filtersOpen ? '收起高级筛选' : '展开高级筛选'}\n              >\n                <Filter className=\"h-3.5 w-3.5\" />\n                <span className=\"ml-1 text-xs\">筛选</span>\n                {filtersOpen ? (\n                  <ChevronUp className=\"ml-0.5 h-3.5 w-3.5\" />\n                ) : (\n                  <ChevronDown className=\"ml-0.5 h-3.5 w-3.5\" />\n                )}\n              </Button>\n            </CollapsibleTrigger>\n\n            <div className=\"text-muted-foreground ml-auto flex items-center gap-2 text-xs whitespace-nowrap lg:ml-1\">\n              <span className=\"flex items-center gap-1.5\">\n                <span\n                  className={cn(\n                    'h-2 w-2 rounded-full',\n                    isConnected ? 'animate-pulse bg-green-500' : 'bg-red-500'\n                  )}\n                />\n                <span className=\"hidden sm:inline\">{isConnected ? '已连接' : '未连接'}</span>\n              </span>\n              <span>\n                {filteredLogs.length}/{logs.length}\n              </span>\n            </div>\n          </div>\n\n          <CollapsibleContent className=\"w-full space-y-2\">\n            {/* 级别筛选 */}\n            <div className=\"flex flex-col gap-2 sm:flex-row sm:gap-2\">\n              <Select value={levelFilter} onValueChange={handleLevelFilterChange}>\n                <SelectTrigger className=\"h-8 w-full text-xs sm:w-28\">\n                  <SelectValue placeholder=\"日志级别\" />\n                </SelectTrigger>\n                <SelectContent>\n                  <SelectItem value=\"all\">全部级别</SelectItem>\n                  <SelectItem value=\"DEBUG\">DEBUG 及以上</SelectItem>\n                  <SelectItem value=\"INFO\">INFO 及以上</SelectItem>\n                  <SelectItem value=\"WARNING\">WARN 及以上</SelectItem>\n                  <SelectItem value=\"ERROR\">ERROR 及以上</SelectItem>\n                  <SelectItem value=\"CRITICAL\">CRITICAL</SelectItem>\n                </SelectContent>\n              </Select>\n\n              <Button\n                variant=\"outline\"\n                size=\"sm\"\n                onClick={resetFilters}\n                className=\"h-8 w-full sm:w-auto\"\n                title=\"重置筛选\"\n              >\n                <X className=\"h-3.5 w-3.5 sm:mr-1\" />\n                <span className=\"text-xs\">重置</span>\n              </Button>\n            </div>\n\n            {/* 时间筛选 */}\n            <div className=\"flex flex-col gap-2 sm:flex-row sm:gap-2\">\n              <Popover>\n                <PopoverTrigger asChild>\n                  <Button\n                    variant=\"outline\"\n                    size=\"sm\"\n                    className={cn(\n                      'h-8 w-full justify-start text-left text-xs font-normal sm:w-36',\n                      !dateFrom && 'text-muted-foreground'\n                    )}\n                  >\n                    <CalendarIcon className=\"mr-1.5 h-3.5 w-3.5\" />\n                    {dateFrom ? format(dateFrom, 'yyyy-MM-dd') : '起始日期'}\n                  </Button>\n                </PopoverTrigger>\n                <PopoverContent className=\"w-auto p-0\" align=\"start\">\n                  <Calendar\n                    mode=\"single\"\n                    selected={dateFrom}\n                    onSelect={setDateFrom}\n                    initialFocus\n                    locale={zhCN}\n                  />\n                </PopoverContent>\n              </Popover>\n\n              <Popover>\n                <PopoverTrigger asChild>\n                  <Button\n                    variant=\"outline\"\n                    size=\"sm\"\n                    className={cn(\n                      'h-8 w-full justify-start text-left text-xs font-normal sm:w-36',\n                      !dateTo && 'text-muted-foreground'\n                    )}\n                  >\n                    <CalendarIcon className=\"mr-1.5 h-3.5 w-3.5\" />\n                    {dateTo ? format(dateTo, 'yyyy-MM-dd') : '结束日期'}\n                  </Button>\n                </PopoverTrigger>\n                <PopoverContent className=\"w-auto p-0\" align=\"start\">\n                  <Calendar\n                    mode=\"single\"\n                    selected={dateTo}\n                    onSelect={setDateTo}\n                    initialFocus\n                    locale={zhCN}\n                  />\n                </PopoverContent>\n              </Popover>\n\n              {(dateFrom || dateTo) && (\n                <Button\n                  variant=\"outline\"\n                  size=\"sm\"\n                  onClick={clearDateFilter}\n                  className=\"h-8 w-full sm:w-auto\"\n                >\n                  <X className=\"h-3.5 w-3.5 sm:mr-1\" />\n                  <span className=\"text-xs\">清除日期</span>\n                </Button>\n              )}\n            </div>\n\n            {/* 显示设置 */}\n            <div className=\"border-border/50 flex flex-col gap-2 border-t pt-2 sm:flex-row sm:items-center sm:gap-3\">\n              {/* 字号调整 */}\n              <div className=\"flex items-center gap-2\">\n                <div className=\"text-muted-foreground flex items-center gap-1.5 text-xs\">\n                  <Type className=\"h-3.5 w-3.5\" />\n                  <span>字号</span>\n                </div>\n                <div className=\"flex items-center gap-1\">\n                  {(['xs', 'sm', 'base'] as const).map((size) => (\n                    <Button\n                      key={size}\n                      variant={fontSize === size ? 'default' : 'outline'}\n                      size=\"sm\"\n                      onClick={() => handleFontSizeChange(size)}\n                      className=\"h-7 w-7 p-0 text-xs\"\n                    >\n                      {fontSizeConfig[size].label}\n                    </Button>\n                  ))}\n                </div>\n              </div>\n\n              {/* 行间距调整 */}\n              <div className=\"flex max-w-[200px] flex-1 items-center gap-2\">\n                <span className=\"text-muted-foreground text-xs whitespace-nowrap\">行距</span>\n                <Slider\n                  value={[lineSpacing]}\n                  onValueChange={handleLineSpacingChange}\n                  min={LINE_SPACING_MIN}\n                  max={LINE_SPACING_MAX}\n                  step={1}\n                  className=\"flex-1\"\n                />\n                <span className=\"text-muted-foreground w-7 text-xs\">{lineSpacing}px</span>\n              </div>\n\n              {/* 列宽调整 */}\n              <div className=\"flex max-w-[220px] flex-1 items-center gap-2\">\n                <span className=\"text-muted-foreground text-xs whitespace-nowrap\">列宽</span>\n                <Slider\n                  value={[columnWidthExtra]}\n                  onValueChange={handleColumnWidthExtraChange}\n                  min={COLUMN_WIDTH_EXTRA_MIN}\n                  max={COLUMN_WIDTH_EXTRA_MAX}\n                  step={4}\n                  className=\"flex-1\"\n                />\n                <span className=\"text-muted-foreground w-9 text-xs\">+{columnWidthExtra}px</span>\n              </div>\n            </div>\n          </CollapsibleContent>\n        </div>\n      </div>\n    </Collapsible>\n  )\n\n  const toolbarPortal =\n    toolbarVisible && toolbarRoot ? createPortal(toolbarContent, toolbarRoot) : null\n\n  return (\n    <div className=\"flex h-full flex-col overflow-hidden bg-background\">\n      {toolbarPortal}\n\n      {/* 日志终端 - 占据剩余所有空间 */}\n      <div className=\"min-h-[260px] flex-1 px-2 pb-2 sm:px-3 sm:pb-3 lg:px-4 lg:pt-2 lg:pb-4\">\n        <Card\n          className=\"h-full overflow-hidden border-[#24170f]/70 dark:border-[#1d120c]/80\"\n          style={{ backgroundColor: '#633312' }}\n        >\n          <div\n            ref={parentRef}\n            className={cn(\n              'h-full overflow-auto selection:bg-[#5a3924] selection:text-[#fff2df]',\n              // 自定义滚动条样式\n              '[&::-webkit-scrollbar]:w-2.5',\n              '[&::-webkit-scrollbar-track]:bg-transparent',\n              '[&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full',\n              '[&::-webkit-scrollbar-thumb:hover]:bg-muted-foreground/50'\n            )}\n          >\n            <div\n              style={{\n                height: `${rowVirtualizer.getTotalSize()}px`,\n                width: '100%',\n                position: 'relative',\n                fontFamily:\n                  'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace',\n              }}\n            >\n              {filteredLogs.length === 0 ? (\n                <div className=\"text-muted-foreground flex h-32 items-center justify-center text-sm\">\n                  {logs.length === 0 ? '暂无日志' : '无匹配日志'}\n                </div>\n              ) : (\n                rowVirtualizer.getVirtualItems().map((virtualRow) => {\n                  const log = filteredLogs[virtualRow.index]\n                  const timestampText = formatLogTimestamp(log.timestamp)\n                  const levelText = formatLogLevel(log.level)\n                  const moduleTextStyle = getModuleTextStyle(log)\n                  return (\n                    <div\n                      key={virtualRow.key}\n                      className={cn(\n                        'hover:bg-[#43230c]/75 border-b border-[#3b200b]/40',\n                        fontSizeConfig[fontSize].class\n                      )}\n                      style={{\n                        position: 'absolute',\n                        top: 0,\n                        left: 0,\n                        width: '100%',\n                        transform: `translateY(${virtualRow.start}px)`,\n                        paddingTop: `${lineSpacing / 2}px`,\n                        paddingBottom: `${lineSpacing / 2}px`,\n                      }}\n                    >\n                      {/* 移动端：垂直布局 */}\n                      <div className=\"flex flex-col gap-0.5 sm:hidden\">\n                        {/* 第一行：时间戳和级别 */}\n                        <div className=\"flex items-center gap-2\">\n                          <span className=\"text-[10px] text-gray-500 dark:text-gray-600\">\n                            {timestampText}\n                          </span>\n                          <span\n                            className={cn('text-[10px] font-semibold', getLevelColor(log.level))}\n                          >\n                            [{levelText}]\n                          </span>\n                        </div>\n                        {/* 第二行：模块名 */}\n                        <div\n                          className={cn(\n                            'truncate text-[10px]',\n                            !moduleTextStyle && 'text-cyan-400 dark:text-cyan-500'\n                          )}\n                          style={moduleTextStyle}\n                        >\n                          {getModuleDisplayName(log)}\n                        </div>\n                        {/* 第三行：消息内容 */}\n                        <div\n                          className={cn(\n                            'text-[10px] break-words whitespace-pre-wrap',\n                            !moduleTextStyle && 'text-gray-300 dark:text-gray-400'\n                          )}\n                          style={moduleTextStyle}\n                        >\n                          {log.message}\n                        </div>\n                      </div>\n\n                      {/* 平板/桌面端：水平布局 */}\n                      <div className={cn('hidden items-start sm:flex', logColumnLayout.gapClass)}>\n                        {/* 时间戳 */}\n                        <span\n                          className={cn(\n                            'flex-shrink-0 text-gray-500 dark:text-gray-600',\n                            logColumnLayout.timestampClass\n                          )}\n                          style={{ width: timestampWidth }}\n                        >\n                          {timestampText}\n                        </span>\n\n                        {/* 日志级别 */}\n                        <span\n                          className={cn(\n                            'flex-shrink-0 font-semibold',\n                            logColumnLayout.levelClass,\n                            getLevelColor(log.level)\n                          )}\n                          style={{ width: levelWidth }}\n                        >\n                          [{levelText}]\n                        </span>\n\n                        {/* 模块名 */}\n                        <span\n                          className={cn(\n                            'flex-shrink-0 truncate',\n                            logColumnLayout.moduleClass,\n                            !moduleTextStyle && 'text-cyan-400 dark:text-cyan-500'\n                          )}\n                          style={{ ...moduleTextStyle, width: moduleWidth }}\n                        >\n                          {getModuleDisplayName(log)}\n                        </span>\n\n                        {/* 消息内容 */}\n                        <span\n                          className={cn(\n                            'flex-1 break-words whitespace-pre-wrap',\n                            !moduleTextStyle && 'text-gray-300 dark:text-gray-400'\n                          )}\n                          style={moduleTextStyle}\n                        >\n                          {log.message}\n                        </span>\n                      </div>\n                    </div>\n                  )\n                })\n              )}\n            </div>\n          </div>\n        </Card>\n      </div>\n    </div>\n  )\n}\n\nfunction getLevelColor(level: LogEntry['level']) {\n  switch (level) {\n    case 'DEBUG':\n      return 'text-gray-400 dark:text-gray-500'\n    case 'INFO':\n      return 'text-blue-400 dark:text-blue-500'\n    case 'WARNING':\n      return 'text-yellow-400 dark:text-yellow-500'\n    case 'ERROR':\n      return 'text-red-400 dark:text-red-500'\n    case 'CRITICAL':\n      return 'text-red-600 dark:text-red-400 font-bold'\n    default:\n      return 'text-gray-300 dark:text-gray-400'\n  }\n}\n\ninterface LogViewerPageProps {\n  defaultTab?: LogViewerTab\n}\n\nexport function LogViewerPage({ defaultTab }: LogViewerPageProps) {\n  const [activeTab, setActiveTab] = useState<LogViewerTab>(\n    () => defaultTab ?? loadStoredLogViewerTab()\n  )\n  const [topbarTabsRoot, setTopbarTabsRoot] = useState<HTMLElement | null>(null)\n  const [topbarTabsCompact, setTopbarTabsCompact] = useState(false)\n  const topbarTabsCompactRef = useRef(false)\n  const [reasoningToolbarVisible, setReasoningToolbarVisible] = useState(activeTab === 'reasoning')\n  const [showSwitchHint, setShowSwitchHint] = useState(() =>\n    typeof window === 'undefined'\n      ? false\n      : localStorage.getItem(LOG_VIEWER_SWITCH_HINT_DISMISSED_KEY) !== 'true'\n  )\n  const toolbarContainerId = 'log-terminal-toolbar'\n  const topbarTabsContainerId = 'log-viewer-topbar-tabs'\n  const reasoningTopbarActionsContainerId = 'reasoning-topbar-actions'\n\n  useEffect(() => {\n    const frameId = requestAnimationFrame(() => {\n      setTopbarTabsRoot(document.getElementById(topbarTabsContainerId))\n    })\n\n    return () => cancelAnimationFrame(frameId)\n  }, [])\n\n  useEffect(() => {\n    topbarTabsCompactRef.current = topbarTabsCompact\n  }, [topbarTabsCompact])\n\n  useEffect(() => {\n    if (!topbarTabsRoot) return\n\n    let frameId: number | null = null\n\n    const updateCompactState = () => {\n      if (frameId !== null) {\n        cancelAnimationFrame(frameId)\n      }\n      cancelAnimationFrame(frameId)\n      frameId = requestAnimationFrame(() => {\n        const workspaceTabs = document.querySelector('[data-dashboard-workspace-tabs=\"true\"]')\n        const workspaceTabsMeasure = document.querySelector(\n          '[data-dashboard-workspace-tabs-measure=\"true\"]'\n        )\n        const measureEl = topbarTabsRoot.querySelector('[data-log-viewer-switcher-measure=\"true\"]')\n        if (\n          !(workspaceTabs instanceof HTMLElement) ||\n          !(workspaceTabsMeasure instanceof HTMLElement) ||\n          !(measureEl instanceof HTMLElement)\n        ) {\n          setTopbarTabsCompact(false)\n          return\n        }\n\n        const rootRect = topbarTabsRoot.getBoundingClientRect()\n        const measureRect = measureEl.getBoundingClientRect()\n        const workspaceRect = workspaceTabs.getBoundingClientRect()\n        const workspaceMeasureRect = workspaceTabsMeasure.getBoundingClientRect()\n        const fullWorkspaceTabsLeft = workspaceRect.right - workspaceMeasureRect.width\n        const gap = fullWorkspaceTabsLeft - (rootRect.left + measureRect.width)\n        const threshold = topbarTabsCompactRef.current\n          ? TOPBAR_SWITCH_EXPAND_GAP\n          : TOPBAR_SWITCH_COMPACT_GAP\n        setTopbarTabsCompact(gap < threshold)\n      })\n    }\n\n    updateCompactState()\n\n    const resizeObserver = new ResizeObserver(() => {\n      updateCompactState()\n    })\n\n    resizeObserver.observe(topbarTabsRoot)\n    const workspaceTabs = document.querySelector('[data-dashboard-workspace-tabs=\"true\"]')\n    if (workspaceTabs instanceof HTMLElement) {\n      resizeObserver.observe(workspaceTabs)\n    }\n    const workspaceTabsMeasure = document.querySelector(\n      '[data-dashboard-workspace-tabs-measure=\"true\"]'\n    )\n    if (workspaceTabsMeasure instanceof HTMLElement) {\n      resizeObserver.observe(workspaceTabsMeasure)\n    }\n\n    return () => {\n      if (frameId !== null) {\n        cancelAnimationFrame(frameId)\n      }\n      resizeObserver.disconnect()\n    }\n  }, [activeTab, reasoningToolbarVisible, topbarTabsRoot])\n\n  const renderTopbarSwitcherMeasure = () => {\n    const showReasoningRefresh = activeTab === 'reasoning' && !reasoningToolbarVisible\n\n    return (\n      <div\n        data-log-viewer-switcher-measure=\"true\"\n        aria-hidden=\"true\"\n        className=\"pointer-events-none invisible absolute top-0 left-0 flex items-center gap-2 opacity-0\"\n      >\n        <div className=\"bg-muted inline-flex h-9 items-center justify-center rounded-lg p-1\">\n          <div className=\"flex items-center gap-1.5 px-3 py-1 text-sm font-medium\">\n            <Terminal className=\"h-4 w-4\" />\n            <span>终端</span>\n          </div>\n          <div className=\"flex items-center gap-1.5 px-3 py-1 text-sm font-medium\">\n            <BrainCircuit className=\"h-4 w-4\" />\n            <span>推理过程</span>\n          </div>\n          <div className=\"flex items-center gap-1.5 px-3 py-1 text-sm font-medium\">\n            <BarChart3 className=\"h-4 w-4\" />\n            <span>详细统计</span>\n          </div>\n        </div>\n        {showReasoningRefresh && <div className=\"h-9 w-9\" />}\n      </div>\n    )\n  }\n\n  const renderTabSwitcher = (includeTopbarActions = false, compact = false) => {\n    const labelClassName = includeTopbarActions && compact ? 'sr-only' : undefined\n\n    return (\n      <div className=\"flex min-w-0 items-center gap-2\">\n        <TabsList\n          className={cn(\n            'bg-muted/80 inline-flex h-9 items-center justify-start rounded-lg p-1',\n            reasoningToolbarVisible && 'border-primary/20'\n          )}\n        >\n          <TabsTrigger value=\"terminal\" className=\"gap-1.5\" aria-label=\"终端\">\n            <Terminal className=\"h-4 w-4\" />\n            <span className={labelClassName}>终端</span>\n          </TabsTrigger>\n          <TabsTrigger value=\"reasoning\" className=\"gap-1.5\" aria-label=\"推理过程\">\n            <BrainCircuit className=\"h-4 w-4\" />\n            <span className={labelClassName}>推理过程</span>\n          </TabsTrigger>\n          <TabsTrigger value=\"statistics\" className=\"gap-1.5\" aria-label=\"详细统计\">\n            <BarChart3 className=\"h-4 w-4\" />\n            <span className={labelClassName}>详细统计</span>\n          </TabsTrigger>\n        </TabsList>\n        {includeTopbarActions && (\n          <div id={reasoningTopbarActionsContainerId} className=\"flex items-center gap-1\" />\n        )}\n      </div>\n    )\n  }\n  const topbarTabsPortal = topbarTabsRoot\n    ? createPortal(\n        <>\n          {renderTabSwitcher(true, topbarTabsCompact)}\n          {renderTopbarSwitcherMeasure()}\n        </>,\n        topbarTabsRoot\n      )\n    : null\n  const dismissSwitchHint = () => {\n    localStorage.setItem(LOG_VIEWER_SWITCH_HINT_DISMISSED_KEY, 'true')\n    setShowSwitchHint(false)\n  }\n\n  return (\n    <Tabs\n      value={activeTab}\n      onValueChange={(value) => setActiveTab(value as LogViewerTab)}\n      className=\"flex h-full flex-col overflow-hidden\"\n    >\n      {topbarTabsPortal}\n      <div\n        className={cn(\n          'flex shrink-0 flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 border-b px-3 py-1.5 lg:px-4',\n          ((activeTab === 'reasoning' && !reasoningToolbarVisible) || activeTab === 'statistics') &&\n            'sm:hidden'\n        )}\n      >\n        {/* 移动端下 Tab 独占置顶一行，不再和右侧面板同层并排 */}\n        <div className=\"sm:hidden flex justify-start\">{renderTabSwitcher()}</div>\n        {/* 移动端宽度占满 100%，桌面端恢复原状 */}\n        <div id={toolbarContainerId} className=\"flex min-w-0 w-full sm:w-auto sm:flex-1 justify-start sm:justify-end\" />\n      </div>\n      {showSwitchHint && (\n        <div className=\"shrink-0 border-b px-3 py-2 lg:px-4\">\n          <div className=\"text-muted-foreground flex items-center justify-between gap-3 text-xs\">\n            <span>已将「推理过程」和「详细统计」移至此处。</span>\n            <Button\n              variant=\"ghost\"\n              size=\"sm\"\n              className=\"h-6 px-2 text-xs\"\n              onClick={dismissSwitchHint}\n            >\n              我知道了\n            </Button>\n          </div>\n        </div>\n      )}\n\n      <TabsContent value=\"terminal\" className=\"m-0 min-h-0 flex-1 overflow-hidden\">\n        <LogTerminalPane\n          toolbarContainerId={toolbarContainerId}\n          toolbarVisible={activeTab === 'terminal'}\n        />\n      </TabsContent>\n      <TabsContent value=\"reasoning\" className=\"m-0 min-h-0 flex-1 overflow-hidden\">\n        <ReasoningProcessPage\n          topbarActionsContainerId={reasoningTopbarActionsContainerId}\n          onToolbarContentVisibleChange={setReasoningToolbarVisible}\n        />\n      </TabsContent>\n      <TabsContent value=\"statistics\" className=\"m-0 min-h-0 flex-1 overflow-y-auto\">\n        <Suspense\n          fallback={\n            <div className=\"text-muted-foreground flex h-full items-center justify-center text-sm\">\n              正在加载详细统计…\n            </div>\n          }\n        >\n          <StatisticsPage />\n        </Suspense>\n      </TabsContent>\n    </Tabs>\n  )\n}\n\nexport function ReasoningLogViewerPage() {\n  return <LogViewerPage defaultTab=\"reasoning\" />\n}\n\nexport function StatisticsLogViewerPage() {\n  return <LogViewerPage defaultTab=\"statistics\" />\n}\n
+  const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})([ T].*)$/)
+  if (!match) {
+    return timestamp
+  }
+
+  return `${match[2]}-${match[3]}${match[4].replace(/^T/, ' ')}`
+}
+
+function getModuleTextStyle(log: LogEntry) {
+  if (!log.moduleColor) {
+    return undefined
+  }
+
+  return {
+    color: log.moduleColor,
+    fontWeight: log.moduleBold ? 700 : undefined,
+  }
+}
+
+function formatLogLevel(level: LogEntry['level']) {
+  return level.slice(0, 4)
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value))
+}
+
+function isFontSize(value: string): value is FontSize {
+  return value in fontSizeConfig
+}
+
+function isLogLevelFilter(value: string): value is LogLevelFilter {
+  return value === 'all' || value in levelPriority
+}
+
+const legacyModuleDisplayNames: Record<string, string> = {
+  '_maibot_plugin_maibot_team_mai_statstic_plugin.client_statistics_service': 'Mai统计客户端服务',
+  '_maibot_plugin_maibot_team_mai_statstic_plugin.plugin_store_service': 'Mai统计存储服务',
+  '<runner>': '插件运行器',
+  async_task_manager: '异步任务管理',
+  chat: '所见',
+  chat_manager: '聊天管理器',
+  chat_utils: '聊天工具',
+  emoji: '表情包',
+  expression_vector_index: '表达向量索引',
+  image: '图片',
+  image_cache_cleanup: '图片缓存清理',
+  local_storage: '本地存储',
+  maisaka_monitor_event_store: '麦麦监控事件',
+  maisaka_runtime: 'MaiSaka',
+  maisaka_turn_scheduler: '读空气',
+  model_utils: '模型工具',
+  person_info: '人物',
+  'plugin.github.sengokucola.statistics-chart-plugin': '统计图表插件',
+  'plugin.local.replyer-regex-guard': '回复正则保护插件',
+  'plugin.maibot-team.mai-statstic-plugin': 'Mai统计插件',
+  'plugin.maibot-team.maibot-helper': '麦麦助手插件',
+  'plugin.maibot-team.snowluma-adapter': 'SnowLuma适配器',
+  'plugin.self_identity_plugin': '自我认知插件',
+  'plugin.sengokucola.deepseek-thinking-marker': 'DeepSeek思考标记插件',
+  'webui.api': 'WebUI接口',
+  'webui.unified_ws': 'WebUI统一连接',
+  'webui.ws_auth': 'WebUI鉴权连接',
+  webui: 'WebUI',
+}
+
+function getModuleDisplayName(log: LogEntry): string {
+  const backendDisplayName = log.moduleDisplayName?.trim()
+  if (backendDisplayName && backendDisplayName !== log.module) return backendDisplayName
+  if (legacyModuleDisplayNames[log.module]) return legacyModuleDisplayNames[log.module]
+  if (log.module.includes('site-packages.watchfiles')) return '文件变更监控'
+  if (log.module.startsWith('_maibot_plugin_')) return '插件运行器'
+  return backendDisplayName || log.module
+}
+
+function loadStoredLogViewerTab(): LogViewerTab {
+  if (typeof window === 'undefined') return 'terminal'
+
+  const storedTab = localStorage.getItem(LOG_VIEWER_ACTIVE_TAB_KEY)
+  return storedTab === 'reasoning' || storedTab === 'statistics' ? storedTab : 'terminal'
+}
+
+interface LogTerminalPaneProps {
+  toolbarContainerId: string
+  toolbarVisible: boolean
+}
+
+function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPaneProps) {
+  const [logs, setLogs] = useState<LogEntry[]>([])
+  const [searchQuery, setSearchQuery] = useState('')
+  const [levelFilter, setLevelFilter] = useState<LogLevelFilter>(() => {
+    const savedLevelFilter = getSetting('logLevelFilter')
+    return isLogLevelFilter(savedLevelFilter) ? savedLevelFilter : 'INFO'
+  })
+  const [storedModuleFilter, setStoredModuleFilter] = useState<string>(() =>
+    getSetting('logModuleFilter')
+  )
+  const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined)
+  const [dateTo, setDateTo] = useState<Date | undefined>(undefined)
+  const [autoScroll, setAutoScroll] = useState(() => getSetting('logAutoScroll'))
+  const [connected, setConnected] = useState(false)
+  const [fontSize, setFontSize] = useState<FontSize>(() => {
+    const savedFontSize = getSetting('logFontSize')
+    return isFontSize(savedFontSize) ? savedFontSize : 'xs'
+  })
+  const [lineSpacing, setLineSpacing] = useState<number>(() => {
+    const saved = getSetting('logLineSpacing')
+    return typeof saved === 'number' ? clampNumber(saved, LINE_SPACING_MIN, LINE_SPACING_MAX) : 4
+  })
+  const [columnWidthExtra, setColumnWidthExtra] = useState<number>(() => {
+    const saved = getSetting('logColumnWidthExtra')
+    return typeof saved === 'number'
+      ? clampNumber(saved, COLUMN_WIDTH_EXTRA_MIN, COLUMN_WIDTH_EXTRA_MAX)
+      : 0
+  })
+  const [hiddenModules, setHiddenModules] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem('log-hidden-modules')
+      return stored ? new Set(JSON.parse(stored)) : new Set()
+    } catch {
+      return new Set()
+    }
+  })
+  const [filtersOpen, setFiltersOpen] = useState<boolean>(() =>
+    Boolean(getSetting('logFiltersOpen', false))
+  )
+  const [toolbarRoot, setToolbarRoot] = useState<HTMLElement | null>(null)
+
+  const parentRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    setToolbarRoot(document.getElementById(toolbarContainerId))
+  }, [toolbarContainerId])
+
+  useEffect(() => {
+    setStoredModuleFilter(getSetting('logModuleFilter'))
+  }, [])
+
+  // 保存隐藏的模块列表到 localStorage
+  const saveHiddenModules = useCallback((modules: Set<string>) => {
+    setHiddenModules(modules)
+    try {
+      localStorage.setItem('log-hidden-modules', JSON.stringify([...modules]))
+    } catch {
+      // 忽略保存错误
+    }
+  }, [])
+
+  // 切换模块显示状态
+  const toggleModuleVisibility = useCallback(
+    (moduleId: string) => {
+      const newHidden = new Set(hiddenModules)
+      if (newHidden.has(moduleId)) {
+        newHidden.delete(moduleId)
+      } else {
+        newHidden.add(moduleId)
+      }
+      saveHiddenModules(newHidden)
+    },
+    [hiddenModules, saveHiddenModules]
+  )
+
+  // 提取所有不重复的模块列表，附带展示名（优先取最新出现的展示名）
+  const uniqueModules = useMemo(() => {
+    const moduleMap = new Map<string, string>()
+    logs.forEach((log) => {
+      moduleMap.set(log.module, getModuleDisplayName(log))
+    })
+    return Array.from(moduleMap.entries()).map(([id, displayName]) => ({ id, displayName }))
+  }, [logs])
+
+  // 导出日志
+  const exportLogs = useCallback(() => {
+    const text = logs
+      .map((log) => `[${log.timestamp}] [${log.level}] [${log.module}] ${log.message}`)
+      .join('\n')
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `maibot-logs-${format(new Date(), 'yyyyMMdd-HHmmss')}.log`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [logs])
+
+  // 清空日志
+  const clearLogs = useCallback(() => {
+    setLogs([])
+  }, [])
+
+  // 订阅 WebSocket 日志
+  useEffect(() => {
+    const unsubscribeLogs = logWebSocket.subscribe((newLog) => {
+      setLogs((prev) => [...prev, newLog])
+    })
+
+    const unsubscribeStatus = logWebSocket.subscribeStatus((status) => {
+      setConnected(status)
+    })
+
+    // 连接 WebSocket
+    logWebSocket.connect()
+
+    return () => {
+      unsubscribeLogs()
+      unsubscribeStatus()
+    }
+  }, [])
+
+  // 快速过滤级别
+  const handleLevelFilterChange = useCallback((value: string) => {
+    const filter = value as LogLevelFilter
+    setLevelFilter(filter)
+    setSetting('logLevelFilter', filter)
+  }, [])
+
+  const handleFiltersOpenChange = useCallback((open: boolean) => {
+    setFiltersOpen(open)
+    setSetting('logFiltersOpen', open)
+  }, [])
+
+  const handleFontSizeChange = (size: FontSize) => {
+    setFontSize(size)
+    setSetting('logFontSize', size)
+  }
+
+  const handleLineSpacingChange = ([value]: number[]) => {
+    const nextValue = clampNumber(value, LINE_SPACING_MIN, LINE_SPACING_MAX)
+    setLineSpacing(nextValue)
+    setSetting('logLineSpacing', nextValue)
+  }
+
+  const handleColumnWidthExtraChange = ([value]: number[]) => {
+    const nextValue = clampNumber(value, COLUMN_WIDTH_EXTRA_MIN, COLUMN_WIDTH_EXTRA_MAX)
+    setColumnWidthExtra(nextValue)
+    setSetting('logColumnWidthExtra', nextValue)
+  }
+
+  const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape' && searchQuery) {
+      event.preventDefault()
+      setSearchQuery('')
+    }
+  }
+
+  // 清除时间筛选
+  const clearDateFilter = () => {
+    setDateFrom(undefined)
+    setDateTo(undefined)
+  }
+
+  const resetFilters = () => {
+    setSearchQuery('')
+    setDateFrom(undefined)
+    setDateTo(undefined)
+    handleLevelFilterChange('INFO')
+    saveHiddenModules(new Set())
+  }
+
+  // 过滤日志
+  const filteredLogs = useMemo(() => {
+    return logs.filter((log) => {
+      // 搜索过滤
+      const matchesSearch =
+        searchQuery === '' ||
+        log.message.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        log.module.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        getModuleDisplayName(log).toLowerCase().includes(searchQuery.toLowerCase())
+
+      // 级别过滤：选择某个级别时显示该级别及以上的日志
+      const matchesLevel =
+        levelFilter === 'all' || levelPriority[log.level] >= levelPriority[levelFilter]
+
+      // 模块过滤
+      const matchesModule = !hiddenModules.has(log.module)
+
+      // 时间过滤
+      let matchesDate = true
+      if (dateFrom || dateTo) {
+        const logDate = new Date(log.timestamp)
+        if (dateFrom && logDate < dateFrom) matchesDate = false
+        if (dateTo) {
+          const endOfDay = new Date(dateTo)
+          endOfDay.setHours(23, 59, 59, 999)
+          if (logDate > endOfDay) matchesDate = false
+        }
+      }
+
+      return matchesSearch && matchesLevel && matchesModule && matchesDate
+    })
+  }, [logs, searchQuery, levelFilter, hiddenModules, dateFrom, dateTo])
+
+  // 虚拟滚动配置 - 根据字号和行间距动态计算行高
+  const estimatedRowHeight = fontSizeConfig[fontSize].rowHeight + lineSpacing
+  const logColumnLayout = logColumnLayoutConfig[fontSize]
+  const timestampWidth = logColumnLayout.timestampWidth + columnWidthExtra
+  const levelWidth = logColumnLayout.levelWidth + Math.round(columnWidthExtra * 0.5)
+  const moduleWidth = logColumnLayout.moduleWidth + columnWidthExtra
+
+  // TanStack Virtual 与 React Compiler 不兼容，保持现有虚拟列表实现
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const rowVirtualizer = useVirtualizer({
+    count: filteredLogs.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => estimatedRowHeight,
+    overscan: 50, // 增加预渲染数量以减少快速滚动时的空白
+  })
+
+  // 用于追踪是否是程序触发的滚动
+  const isAutoScrollingRef = useRef(false)
+  // 用于追踪上一次的日志数量
+  const prevLogCountRef = useRef(filteredLogs.length)
+
+  // 检测用户滚动行为，当用户向上滚动时禁用自动滚动
+  useEffect(() => {
+    const scrollElement = parentRef.current
+    if (!scrollElement) return
+
+    const handleScroll = () => {
+      // 如果是程序触发的滚动，忽略
+      if (isAutoScrollingRef.current) return
+
+      const { scrollTop, scrollHeight, clientHeight } = scrollElement
+      const distanceFromBottom = scrollHeight - scrollTop - clientHeight
+
+      // 如果距离底部超过 100px，说明用户在向上查看，禁用自动滚动
+      if (distanceFromBottom > 100 && autoScroll) {
+        setAutoScroll(false)
+      }
+      // 如果用户滚动到接近底部（小于 50px），可以重新启用自动滚动
+      else if (distanceFromBottom < 50 && !autoScroll) {
+        setAutoScroll(true)
+      }
+    }
+
+    scrollElement.addEventListener('scroll', handleScroll, { passive: true })
+    return () => scrollElement.removeEventListener('scroll', handleScroll)
+  }, [autoScroll])
+
+  // 自动滚动到底部
+  useEffect(() => {
+    // 只有在日志数量增加时才滚动（避免删除日志时触发）
+    const logCountIncreased = filteredLogs.length > prevLogCountRef.current
+    prevLogCountRef.current = filteredLogs.length
+
+    if (autoScroll && filteredLogs.length > 0 && logCountIncreased) {
+      isAutoScrollingRef.current = true
+      rowVirtualizer.scrollToIndex(filteredLogs.length - 1, {
+        align: 'end',
+        behavior: 'auto',
+      })
+      // 稍后重置标志，给滚动事件处理一些时间
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          isAutoScrollingRef.current = false
+        })
+      })
+    }
+  }, [filteredLogs.length, autoScroll, rowVirtualizer])
+
+  // 工具栏内容
+  const toolbarContent = (
+    <Collapsible open={filtersOpen} onOpenChange={handleFiltersOpenChange}>
+      <div className="grid w-full gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(620px,760px)]">
+        <div
+          className={cn(
+            'flex min-h-9 min-w-0 flex-wrap content-start items-start gap-1.5',
+            'overflow-y-auto pr-1',
+            'max-h-24 sm:max-h-28 lg:max-h-32'
+          )}
+          role="group"
+          aria-label="模块显示筛选"
+        >
+          {uniqueModules.map(({ id, displayName }) => {
+            const visible = !hiddenModules.has(id)
+            return (
+              <button
+                key={id}
+                type="button"
+                aria-pressed={visible}
+                aria-label={`${visible ? '隐藏' : '显示'} ${displayName}`}
+                title={`${visible ? '隐藏' : '显示'} ${displayName}（${id}）`}
+                onClick={() => toggleModuleVisibility(id)}
+                className={cn(
+                  'h-7 max-w-full border px-2 text-xs font-medium transition-colors',
+                  'focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:outline-none',
+                  'active:translate-y-px',
+                  visible
+                    ? 'border-primary/60 bg-primary/10 text-foreground hover:bg-primary/20'
+                    : 'border-border/60 bg-muted/30 text-muted-foreground/45 hover:text-muted-foreground'
+                )}
+              >
+                <span className="truncate">{displayName}</span>
+              </button>
+            )
+          })}
+        </div>
+
+        <div className="flex min-w-0 flex-col gap-2">
+          <div className="flex w-full flex-wrap items-center gap-1.5 lg:justify-end">
+            <div className="relative min-w-[180px] flex-1 lg:max-w-64">
+              <Search className="text-muted-foreground absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2" />
+              <Input
+                placeholder="搜索日志… (Esc 清除)"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={handleSearchKeyDown}
+                className="h-8 pl-8 text-xs"
+              />
+              {searchQuery && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSearchQuery('')}
+                  className="text-muted-foreground hover:text-foreground absolute top-1/2 right-1 h-6 w-6 -translate-y-1/2 p-0"
+                  aria-label="清除搜索"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </div>
+
+            <Button
+              variant={autoScroll ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setAutoScroll(!autoScroll)}
+              className="h-8 px-2"
+              title={autoScroll ? '自动滚动' : '已暂停'}
+            >
+              {autoScroll ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+              <span className="ml-1 text-xs">{autoScroll ? '滚动' : '暂停'}</span>
+            </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={clearLogs}
+              className="h-8 px-2"
+              title="清空当前日志显示"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              <span className="ml-1 text-xs">清空</span>
+            </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={exportLogs}
+              className="h-8 px-2"
+              title="导出当前日志为文本文件"
+            >
+              <Download className="h-3.5 w-3.5" />
+              <span className="ml-1 text-xs">导出</span>
+            </Button>
+
+            <CollapsibleTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-2"
+                title={filtersOpen ? '收起高级筛选' : '展开高级筛选'}
+              >
+                <Filter className="h-3.5 w-3.5" />
+                <span className="ml-1 text-xs">筛选</span>
+                {filtersOpen ? (
+                  <ChevronUp className="ml-0.5 h-3.5 w-3.5" />
+                ) : (
+                  <ChevronDown className="ml-0.5 h-3.5 w-3.5" />
+                )}
+              </Button>
+            </CollapsibleTrigger>
+
+            <div className="text-muted-foreground ml-auto flex items-center gap-2 text-xs whitespace-nowrap lg:ml-1">
+              <span className="flex items-center gap-1.5">
+                <span
+                  className={cn(
+                    'h-2 w-2 rounded-full',
+                    connected ? 'animate-pulse bg-green-500' : 'bg-red-500'
+                  )}
+                />
+                <span className="hidden sm:inline">{connected ? '已连接' : '未连接'}</span>
+              </span>
+              <span>
+                {filteredLogs.length}/{logs.length}
+              </span>
+            </div>
+          </div>
+
+          <CollapsibleContent className="w-full space-y-2">
+            {/* 级别筛选 */}
+            <div className="flex flex-col gap-2 sm:flex-row sm:gap-2">
+              <Select value={levelFilter} onValueChange={handleLevelFilterChange}>
+                <SelectTrigger className="h-8 w-full text-xs sm:w-28">
+                  <SelectValue placeholder="日志级别" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部级别</SelectItem>
+                  <SelectItem value="DEBUG">DEBUG 及以上</SelectItem>
+                  <SelectItem value="INFO">INFO 及以上</SelectItem>
+                  <SelectItem value="WARNING">WARN 及以上</SelectItem>
+                  <SelectItem value="ERROR">ERROR 及以上</SelectItem>
+                  <SelectItem value="CRITICAL">CRITICAL</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={resetFilters}
+                className="h-8 w-full sm:w-auto"
+                title="重置筛选"
+              >
+                <X className="h-3.5 w-3.5 sm:mr-1" />
+                <span className="text-xs">重置</span>
+              </Button>
+            </div>
+
+            {/* 时间筛选 */}
+            <div className="flex flex-col gap-2 sm:flex-row sm:gap-2">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className={cn(
+                      'h-8 w-full justify-start text-left text-xs font-normal sm:w-36',
+                      !dateFrom && 'text-muted-foreground'
+                    )}
+                  >
+                    <CalendarIcon className="mr-1.5 h-3.5 w-3.5" />
+                    {dateFrom ? format(dateFrom, 'yyyy-MM-dd') : '起始日期'}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={dateFrom}
+                    onSelect={setDateFrom}
+                    initialFocus
+                    locale={zhCN}
+                  />
+                </PopoverContent>
+              </Popover>
+
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className={cn(
+                      'h-8 w-full justify-start text-left text-xs font-normal sm:w-36',
+                      !dateTo && 'text-muted-foreground'
+                    )}
+                  >
+                    <CalendarIcon className="mr-1.5 h-3.5 w-3.5" />
+                    {dateTo ? format(dateTo, 'yyyy-MM-dd') : '结束日期'}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={dateTo}
+                    onSelect={setDateTo}
+                    initialFocus
+                    locale={zhCN}
+                  />
+                </PopoverContent>
+              </Popover>
+
+              {(dateFrom || dateTo) && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={clearDateFilter}
+                  className="h-8 w-full sm:w-auto"
+                >
+                  <X className="h-3.5 w-3.5 sm:mr-1" />
+                  <span className="text-xs">清除日期</span>
+                </Button>
+              )}
+            </div>
+
+            {/* 显示设置 */}
+            <div className="border-border/50 flex flex-col gap-2 border-t pt-2 sm:flex-row sm:items-center sm:gap-3">
+              {/* 字号调整 */}
+              <div className="flex items-center gap-2">
+                <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
+                  <Type className="h-3.5 w-3.5" />
+                  <span>字号</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  {(['xs', 'sm', 'base'] as const).map((size) => (
+                    <Button
+                      key={size}
+                      variant={fontSize === size ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => handleFontSizeChange(size)}
+                      className="h-7 w-7 p-0 text-xs"
+                    >
+                      {fontSizeConfig[size].label}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 行间距调整 */}
+              <div className="flex max-w-[200px] flex-1 items-center gap-2">
+                <span className="text-muted-foreground text-xs whitespace-nowrap">行距</span>
+                <Slider
+                  value={[lineSpacing]}
+                  onValueChange={handleLineSpacingChange}
+                  min={LINE_SPACING_MIN}
+                  max={LINE_SPACING_MAX}
+                  step={1}
+                  className="flex-1"
+                />
+                <span className="text-muted-foreground w-7 text-xs">{lineSpacing}px</span>
+              </div>
+
+              {/* 列宽调整 */}
+              <div className="flex max-w-[220px] flex-1 items-center gap-2">
+                <span className="text-muted-foreground text-xs whitespace-nowrap">列宽</span>
+                <Slider
+                  value={[columnWidthExtra]}
+                  onValueChange={handleColumnWidthExtraChange}
+                  min={COLUMN_WIDTH_EXTRA_MIN}
+                  max={COLUMN_WIDTH_EXTRA_MAX}
+                  step={4}
+                  className="flex-1"
+                />
+                <span className="text-muted-foreground w-9 text-xs">+{columnWidthExtra}</span>
+              </div>
+            </div>
+          </CollapsibleContent>
+        </div>
+      </div>
+    </Collapsible>
+  )
+
+  const toolbarPortal =
+    toolbarVisible && toolbarRoot ? createPortal(toolbarContent, toolbarRoot) : null
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden bg-background">
+      {toolbarPortal}
+
+      {/* 日志终端 - 占据剩余所有空间 */}
+      <div className="min-h-[260px] flex-1 px-2 pb-2 sm:px-3 sm:pb-3 lg:px-4 lg:pt-2 lg:pb-4">
+        <Card
+          className="h-full overflow-hidden border-[#24170f]/70 dark:border-[#1d120c]/80"
+          style={{ backgroundColor: '#633312' }}
+        >
+          <div
+            ref={parentRef}
+            className={cn(
+              'h-full overflow-auto selection:bg-[#5a3924] selection:text-[#fff2df]',
+              // 自定义滚动条样式
+              '[&::-webkit-scrollbar]:w-2.5',
+              '[&::-webkit-scrollbar-track]:bg-transparent',
+              '[&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full',
+              '[&::-webkit-scrollbar-thumb:hover]:bg-muted-foreground/50'
+            )}
+          >
+            <div
+              style={{
+                height: `${rowVirtualizer.getTotalSize()}px`,
+                width: '100%',
+                position: 'relative',
+                fontFamily:
+                  'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+              }}
+            >
+              {filteredLogs.length === 0 ? (
+                <div className="text-muted-foreground flex h-32 items-center justify-center text-sm">
+                  {logs.length === 0 ? '暂无日志' : '无匹配日志'}
+                </div>
+              ) : (
+                rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                  const log = filteredLogs[virtualRow.index]
+                  const timestampText = formatLogTimestamp(log.timestamp)
+                  const levelText = formatLogLevel(log.level)
+                  const moduleTextStyle = getModuleTextStyle(log)
+                  return (
+                    <div
+                      key={virtualRow.key}
+                      className={cn(
+                        'hover:bg-[#43230c]/75 border-b border-[#3b200b]/40',
+                        fontSizeConfig[fontSize].class
+                      )}
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        transform: `translateY(${virtualRow.start}px)`,
+                        paddingTop: `${lineSpacing / 2}px`,
+                        paddingBottom: `${lineSpacing / 2}px`,
+                      }}
+                    >
+                      {/* 移动端：垂直布局 */}
+                      <div className="flex flex-col gap-0.5 sm:hidden">
+                        {/* 第一行：时间戳和级别 */}
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-gray-500 dark:text-gray-600">
+                            {timestampText}
+                          </span>
+                          <span
+                            className={cn('text-[10px] font-semibold', getLevelColor(log.level))}
+                          >
+                            [{levelText}]
+                          </span>
+                        </div>
+                        {/* 第二行：模块名 */}
+                        <div
+                          className={cn(
+                            'truncate text-[10px]',
+                            !moduleTextStyle && 'text-cyan-400 dark:text-cyan-500'
+                          )}
+                          style={moduleTextStyle}
+                        >
+                          {getModuleDisplayName(log)}
+                        </div>
+                        {/* 第三行：消息内容 */}
+                        <div
+                          className={cn(
+                            'text-[10px] break-words whitespace-pre-wrap',
+                            !moduleTextStyle && 'text-gray-300 dark:text-gray-400'
+                          )}
+                          style={moduleTextStyle}
+                        >
+                          {log.message}
+                        </div>
+                      </div>
+
+                      {/* 平板/桌面端：水平布局 */}
+                      <div className={cn('hidden items-start sm:flex', logColumnLayout.gapClass)}>
+                        {/* 时间戳 */}
+                        <span
+                          className={cn(
+                            'flex-shrink-0 text-gray-500 dark:text-gray-600',
+                            logColumnLayout.timestampClass
+                          )}
+                          style={{ width: timestampWidth }}
+                        >
+                          {timestampText}
+                        </span>
+
+                        {/* 日志级别 */}
+                        <span
+                          className={cn(
+                            'flex-shrink-0 font-semibold',
+                            logColumnLayout.levelClass,
+                            getLevelColor(log.level)
+                          )}
+                          style={{ width: levelWidth }}
+                        >
+                          [{levelText}]
+                        </span>
+
+                        {/* 模块名 */}
+                        <span
+                          className={cn(
+                            'flex-shrink-0 truncate',
+                            logColumnLayout.moduleClass,
+                            !moduleTextStyle && 'text-cyan-400 dark:text-cyan-500'
+                          )}
+                          style={{ ...moduleTextStyle, width: moduleWidth }}
+                        >
+                          {getModuleDisplayName(log)}
+                        </span>
+
+                        {/* 消息内容 */}
+                        <span
+                          className={cn(
+                            'flex-1 break-words whitespace-pre-wrap',
+                            !moduleTextStyle && 'text-gray-300 dark:text-gray-400'
+                          )}
+                          style={moduleTextStyle}
+                        >
+                          {log.message}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </div>
+        </Card>
+      </div>
+    </div>
+  )
+}
+
+function getLevelColor(level: LogEntry['level']) {
+  switch (level) {
+    case 'DEBUG':
+      return 'text-gray-400 dark:text-gray-500'
+    case 'INFO':
+      return 'text-blue-400 dark:text-blue-500'
+    case 'WARNING':
+      return 'text-yellow-400 dark:text-yellow-500'
+    case 'ERROR':
+      return 'text-red-400 dark:text-red-500'
+    case 'CRITICAL':
+      return 'text-red-600 dark:text-red-400 font-bold'
+    default:
+      return 'text-gray-300 dark:text-gray-400'
+  }
+}
+
+interface LogViewerPageProps {
+  defaultTab?: LogViewerTab
+}
+
+export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
+  const [activeTab, setActiveTab] = useState<LogViewerTab>(
+    () => defaultTab ?? loadStoredLogViewerTab()
+  )
+  const [topbarTabsRoot, setTopbarTabsRoot] = useState<HTMLElement | null>(null)
+  const [topbarTabsCompact, setTopbarTabsCompact] = useState(false)
+  const topbarTabsCompactRef = useRef(false)
+  const [reasoningToolbarVisible, setReasoningToolbarVisible] = useState(activeTab === 'reasoning')
+  const [showSwitchHint, setShowSwitchHint] = useState(() =>
+    typeof window === 'undefined'
+      ? false
+      : localStorage.getItem(LOG_VIEWER_SWITCH_HINT_DISMISSED_KEY) !== 'true'
+  )
+  const toolbarContainerId = 'log-terminal-toolbar'
+  const topbarTabsContainerId = 'log-viewer-topbar-tabs'
+  const reasoningTopbarActionsContainerId = 'reasoning-topbar-actions'
+
+  useEffect(() => {
+    const frameId = requestAnimationFrame(() => {
+      setTopbarTabsRoot(document.getElementById(topbarTabsContainerId))
+    })
+
+    return () => cancelAnimationFrame(frameId)
+  }, [])
+
+  useEffect(() => {
+    topbarTabsCompactRef.current = topbarTabsCompact
+  }, [topbarTabsCompact])
+
+  useEffect(() => {
+    if (!topbarTabsRoot) return
+
+    let frameId: number | null = null
+
+    const updateCompactState = () => {
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId)
+      }
+      cancelAnimationFrame(frameId)
+      frameId = requestAnimationFrame(() => {
+        const workspaceTabs = document.querySelector('[data-dashboard-workspace-tabs="true"]')
+        const workspaceTabsMeasure = document.querySelector(
+          '[data-dashboard-workspace-tabs-measure="true"]'
+        )
+        const measureEl = topbarTabsRoot.querySelector('[data-log-viewer-switcher-measure="true"]')
+        if (
+          !(workspaceTabs instanceof HTMLElement) ||
+          !(workspaceTabsMeasure instanceof HTMLElement) ||
+          !(measureEl instanceof HTMLElement)
+        ) {
+          setTopbarTabsCompact(false)
+          return
+        }
+
+        const rootRect = topbarTabsRoot.getBoundingClientRect()
+        const measureRect = measureEl.getBoundingClientRect()
+        const workspaceRect = workspaceTabs.getBoundingClientRect()
+        const workspaceMeasureRect = workspaceTabsMeasure.getBoundingClientRect()
+        const fullWorkspaceTabsLeft = workspaceRect.right - workspaceMeasureRect.width
+        const gap = fullWorkspaceTabsLeft - (rootRect.left + measureRect.width)
+        const threshold = topbarTabsCompactRef.current
+          ? TOPBAR_SWITCH_EXPAND_GAP
+          : TOPBAR_SWITCH_COMPACT_GAP
+        setTopbarTabsCompact(gap < threshold)
+      })
+    }
+
+    updateCompactState()
+
+    const resizeObserver = new ResizeObserver(() => {
+      updateCompactState()
+    })
+
+    resizeObserver.observe(topbarTabsRoot)
+    const workspaceTabs = document.querySelector('[data-dashboard-workspace-tabs="true"]')
+    if (workspaceTabs instanceof HTMLElement) {
+      resizeObserver.observe(workspaceTabs)
+    }
+    const workspaceTabsMeasure = document.querySelector(
+      '[data-dashboard-workspace-tabs-measure="true"]'
+    )
+    if (workspaceTabsMeasure instanceof HTMLElement) {
+      resizeObserver.observe(workspaceTabsMeasure)
+    }
+
+    return () => {
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId)
+      }
+      resizeObserver.disconnect()
+    }
+  }, [activeTab, reasoningToolbarVisible, topbarTabsRoot])
+
+  const renderTopbarSwitcherMeasure = () => {
+    const showReasoningRefresh = activeTab === 'reasoning' && !reasoningToolbarVisible
+
+    return (
+      <div
+        data-log-viewer-switcher-measure="true"
+        aria-hidden="true"
+        className="pointer-events-none invisible absolute top-0 left-0 flex items-center gap-2 opacity-0"
+      >
+        <div className="bg-muted inline-flex h-9 items-center justify-center rounded-lg p-1">
+          <div className="flex items-center gap-1.5 px-3 py-1 text-sm font-medium">
+            <Terminal className="h-4 w-4" />
+            <span>终端</span>
+          </div>
+          <div className="flex items-center gap-1.5 px-3 py-1 text-sm font-medium">
+            <BrainCircuit className="h-4 w-4" />
+            <span>推理过程</span>
+          </div>
+          <div className="flex items-center gap-1.5 px-3 py-1 text-sm font-medium">
+            <BarChart3 className="h-4 w-4" />
+            <span>详细统计</span>
+          </div>
+        </div>
+        {showReasoningRefresh && <div className="h-9 w-9" />}
+      </div>
+    )
+  }
+
+  const renderTabSwitcher = (includeTopbarActions = false, compact = false) => {
+    const labelClassName = includeTopbarActions && compact ? 'sr-only' : undefined
+
+    return (
+      <div className="flex min-w-0 items-center gap-2">
+        <TabsList
+          className={cn(
+            'bg-muted/80 inline-flex h-9 items-center justify-start rounded-lg p-1',
+            reasoningToolbarVisible && 'border-primary/20'
+          )}
+        >
+          <TabsTrigger value="terminal" className="gap-1.5" aria-label="终端">
+            <Terminal className="h-4 w-4" />
+            <span className={labelClassName}>终端</span>
+          </TabsTrigger>
+          <TabsTrigger value="reasoning" className="gap-1.5" aria-label="推理过程">
+            <BrainCircuit className="h-4 w-4" />
+            <span className={labelClassName}>推理过程</span>
+          </TabsTrigger>
+          <TabsTrigger value="statistics" className="gap-1.5" aria-label="详细统计">
+            <BarChart3 className="h-4 w-4" />
+            <span className={labelClassName}>详细统计</span>
+          </TabsTrigger>
+        </TabsList>
+        {includeTopbarActions && (
+          <div id={reasoningTopbarActionsContainerId} className="flex items-center gap-1" />
+        )}
+      </div>
+    )
+  }
+  const topbarTabsPortal = topbarTabsRoot
+    ? createPortal(
+        <>
+          {renderTabSwitcher(true, topbarTabsCompact)}
+          {renderTopbarSwitcherMeasure()}
+        </>,
+        topbarTabsRoot
+      )
+    : null
+  const dismissSwitchHint = () => {
+    localStorage.setItem(LOG_VIEWER_SWITCH_HINT_DISMISSED_KEY, 'true')
+    setShowSwitchHint(false)
+  }
+
+  return (
+    <Tabs
+      value={activeTab}
+      onValueChange={(value) => setActiveTab(value as LogViewerTab)}
+      className="flex h-full flex-col overflow-hidden"
+    >
+      {topbarTabsPortal}
+      <div
+        className={cn(
+          'flex shrink-0 flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 border-b px-3 py-1.5 lg:px-4',
+          ((activeTab === 'reasoning' && !reasoningToolbarVisible) || activeTab === 'statistics') &&
+            'sm:hidden'
+        )}
+      >
+        {/* 移动端下 Tab 独占置顶一行，不再和右侧面板同层并排 */}
+        <div className="sm:hidden flex justify-start">{renderTabSwitcher()}</div>
+        {/* 移动端宽度占满 100%，桌面端恢复原状 */}
+        <div id={toolbarContainerId} className="flex min-w-0 w-full sm:w-auto sm:flex-1 justify-start sm:justify-end" />
+      </div>
+      {showSwitchHint && (
+        <div className="shrink-0 border-b px-3 py-2 lg:px-4">
+          <div className="text-muted-foreground flex items-center justify-between gap-3 text-xs">
+            <span>已将「推理过程」和「详细统计」移至此处。</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs"
+              onClick={dismissSwitchHint}
+            >
+              我知道了
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <TabsContent value="terminal" className="m-0 min-h-0 flex-1 overflow-hidden">
+        <LogTerminalPane
+          toolbarContainerId={toolbarContainerId}
+          toolbarVisible={activeTab === 'terminal'}
+        />
+      </TabsContent>
+      <TabsContent value="reasoning" className="m-0 min-h-0 flex-1 overflow-hidden">
+        <ReasoningProcessPage
+          topbarActionsContainerId={reasoningTopbarActionsContainerId}
+          onToolbarContentVisibleChange={setReasoningToolbarVisible}
+        />
+      </TabsContent>
+      <TabsContent value="statistics" className="m-0 min-h-0 flex-1 overflow-y-auto">
+        <Suspense
+          fallback={
+            <div className="text-muted-foreground flex h-full items-center justify-center text-sm">
+              正在加载详细统计…
+            </div>
+          }
+        >
+          <StatisticsPage />
+        </Suspense>
+      </TabsContent>
+    </Tabs>
+  )
+}
+
+export function ReasoningLogViewerPage() {
+  return <LogViewerPage defaultTab="reasoning" />
+}
+
+export function StatisticsLogViewerPage() {
+  return <LogViewerPage defaultTab="statistics" />
+}
