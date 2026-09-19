@@ -1140,12 +1140,6 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
             if wrapped_error is exc:
                 raise
             raise wrapped_error from exc
-        except (UnknownFunctionCallArgumentError, UnsupportedFunctionError, FunctionInvocationError) as exc:
-            raise RespParseException(None, f"Gemini 工具调用参数错误: {exc}") from exc
-        except EmptyResponseException:
-            raise
-        except Exception as exc:
-            raise NetworkConnectionError(str(exc)) from exc
 
     async def _execute_embedding_request(
         self,
