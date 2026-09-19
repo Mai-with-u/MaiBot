@@ -149,82 +149,76 @@ function formatLogLevel(level: LogEntry['level']) {
 }
 
 function clampNumber(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max)
+  return Math.min(max, Math.max(min, value))
 }
 
-function normalizeStoredActiveTab(value: unknown): LogViewerTab | null {
-  if (value === 'terminal' || value === 'reasoning' || value === 'statistics') {
-    return value
-  }
-  return null
+function isFontSize(value: string): value is FontSize {
+  return value in fontSizeConfig
 }
 
-function getInitialActiveTab(): LogViewerTab {
-  if (typeof window === 'undefined') {
-    return 'terminal'
-  }
-
-  const storedTab = normalizeStoredActiveTab(localStorage.getItem(LOG_VIEWER_ACTIVE_TAB_KEY))
-  if (storedTab) {
-    return storedTab
-  }
-
-  const hash = window.location.hash.replace(/^#/, '')
-  return normalizeStoredActiveTab(hash) ?? 'terminal'
+function isLogLevelFilter(value: string): value is LogLevelFilter {
+  return value === 'all' || value in levelPriority
 }
 
-function getLevelColor(level: LogEntry['level']) {
-  switch (level) {
-    case 'DEBUG':
-      return 'text-gray-400 dark:text-gray-500'
-    case 'INFO':
-      return 'text-green-400 dark:text-green-500'
-    case 'WARNING':
-      return 'text-yellow-400 dark:text-yellow-500'
-    case 'ERROR':
-      return 'text-red-400 dark:text-red-500'
-    case 'CRITICAL':
-      return 'text-red-300 dark:text-red-400 font-bold'
-    default:
-      return 'text-gray-300 dark:text-gray-400'
-  }
+const legacyModuleDisplayNames: Record<string, string> = {
+  '_maibot_plugin_maibot_team_mai_statstic_plugin.client_statistics_service': 'Mai统计客户端服务',
+  '_maibot_plugin_maibot_team_mai_statstic_plugin.plugin_store_service': 'Mai统计存储服务',
+  '<runner>': '插件运行器',
+  async_task_manager: '异步任务管理',
+  chat: '所见',
+  chat_manager: '聊天管理器',
+  chat_utils: '聊天工具',
+  emoji: '表情包',
+  expression_vector_index: '表达向量索引',
+  image: '图片',
+  image_cache_cleanup: '图片缓存清理',
+  local_storage: '本地存储',
+  maisaka_monitor_event_store: '麦麦监控事件',
+  maisaka_runtime: 'MaiSaka',
+  maisaka_turn_scheduler: '读空气',
+  model_utils: '模型工具',
+  person_info: '人物',
+  'plugin.github.sengokucola.statistics-chart-plugin': '统计图表插件',
+  'plugin.local.replyer-regex-guard': '回复正则保护插件',
+  'plugin.maibot-team.mai-statstic-plugin': 'Mai统计插件',
+  'plugin.maibot-team.maibot-helper': '麦麦助手插件',
+  'plugin.maibot-team.snowluma-adapter': 'SnowLuma适配器',
+  'plugin.self_identity_plugin': '自我认知插件',
+  'plugin.sengokucola.deepseek-thinking-marker': 'DeepSeek思考标记插件',
+  'webui.api': 'WebUI接口',
+  'webui.unified_ws': 'WebUI统一连接',
+  'webui.ws_auth': 'WebUI鉴权连接',
+  webui: 'WebUI',
 }
 
-function formatLogModule(log: LogEntry) {
-  if (log.line_no !== undefined) {
-    return `${log.module}:${log.line_no}`
-  }
-  return log.module
+function getModuleDisplayName(log: LogEntry): string {
+  const backendDisplayName = log.moduleDisplayName?.trim()
+  if (backendDisplayName && backendDisplayName !== log.module) return backendDisplayName
+  if (legacyModuleDisplayNames[log.module]) return legacyModuleDisplayNames[log.module]
+  if (log.module.includes('site-packages.watchfiles')) return '文件变更监控'
+  if (log.module.startsWith('_maibot_plugin_')) return '插件运行器'
+  return backendDisplayName || log.module
 }
 
-interface TerminalViewProps {
-  toolbarContainerId?: string
-  toolbarVisible?: boolean
+function loadStoredLogViewerTab(): LogViewerTab {
+  if (typeof window === 'undefined') return 'terminal'
+
+  const storedTab = localStorage.getItem(LOG_VIEWER_ACTIVE_TAB_KEY)
+  return storedTab === 'reasoning' || storedTab === 'statistics' ? storedTab : 'terminal'
 }
 
-function TerminalView({
-  toolbarContainerId = 'log-terminal-toolbar',
-  toolbarVisible = true,
-}: TerminalViewProps) {
+interface LogTerminalPaneProps {
+  toolbarContainerId: string
+  toolbarVisible: boolean
+}
+
+function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPaneProps) {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [isConnected, setIsConnected] = useState(false)
-  const [autoScroll, setAutoScroll] = useState<boolean>(() =>
-    getSetting<boolean>('logAutoScroll', true)
-  )
+  const [autoScroll, setAutoScroll] = useState(true)
   const [search, setSearch] = useState('')
-  const [levelFilter, setLevelFilter] = useState<LogLevelFilter>(() =>
-    getSetting<LogLevelFilter>('logLevelFilter', 'INFO')
-  )
-  const [hiddenModules, setHiddenModules] = useState<Set<string>>(() => {
-    const saved = getSetting<string>('logModuleFilter', 'all')
-    if (saved === 'all') return new Set()
-    try {
-      const parsed = JSON.parse(saved)
-      return Array.isArray(parsed) ? new Set(parsed) : new Set()
-    } catch {
-      return new Set()
-    }
-  })
+  const [levelFilter, setLevelFilter] = useState<LogLevelFilter>('INFO')
+  const [hiddenModules, setHiddenModules] = useState<Set<string>>(new Set())
   const [knownModules, setKnownModules] = useState<Map<string, string>>(() => new Map())
   const [dateRange, setDateRange] = useState<{
     from: Date | undefined
@@ -233,64 +227,74 @@ function TerminalView({
     from: undefined,
     to: undefined,
   })
-  const [filtersOpen, setFiltersOpen] = useState<boolean>(() =>
-    getSetting<boolean>('logFiltersOpen', false)
-  )
-  const [fontSize, setFontSize] = useState<FontSize>(() =>
-    getSetting<FontSize>('logFontSize', 'sm')
-  )
-  const [lineSpacing, setLineSpacing] = useState<number>(() =>
-    getSetting<number>('logLineSpacing', 4)
-  )
-  const [columnWidthExtra, setColumnWidthExtra] = useState<number>(() =>
-    getSetting<number>('logColumnWidthExtra', 0)
-  )
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [fontSize, setFontSize] = useState<FontSize>('sm')
+  const [lineSpacing, setLineSpacing] = useState(4)
+  const [columnWidthExtra, setColumnWidthExtra] = useState(0)
   const [toolbarRoot, setToolbarRoot] = useState<HTMLElement | null>(null)
 
   const parentRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const savedAutoScroll = getSetting<boolean>('logAutoScroll', true)
+    const savedLevelFilter = getSetting<string>('logLevelFilter', 'INFO')
+    const savedModuleFilter = getSetting<string>('logModuleFilter', 'all')
+    const savedFiltersOpen = getSetting<boolean>('logFiltersOpen', false)
+    const savedFontSize = getSetting<string>('logFontSize', 'sm')
+    const savedLineSpacing = getSetting<number>('logLineSpacing', 4)
+    const savedColumnWidthExtra = getSetting<number>('logColumnWidthExtra', 0)
+
+    setAutoScroll(savedAutoScroll)
+    if (isLogLevelFilter(savedLevelFilter)) {
+      setLevelFilter(savedLevelFilter)
+    }
+
+    if (savedModuleFilter !== 'all') {
+      try {
+        const parsed = JSON.parse(savedModuleFilter)
+        if (Array.isArray(parsed)) {
+          setHiddenModules(new Set(parsed))
+        }
+      } catch {
+        // 忽略解析错误
+      }
+    }
+
+    setFiltersOpen(savedFiltersOpen)
+    if (isFontSize(savedFontSize)) {
+      setFontSize(savedFontSize)
+    }
+    setLineSpacing(clampNumber(savedLineSpacing, LINE_SPACING_MIN, LINE_SPACING_MAX))
+    setColumnWidthExtra(
+      clampNumber(savedColumnWidthExtra, COLUMN_WIDTH_EXTRA_MIN, COLUMN_WIDTH_EXTRA_MAX)
+    )
+  }, [])
 
   useEffect(() => {
     setToolbarRoot(document.getElementById(toolbarContainerId))
   }, [toolbarContainerId])
 
   useEffect(() => {
-    const handleLog = (log: LogEntry) => {
-      setLogs((prev) => [...prev.slice(-999), log])
-      setKnownModules((prev) => {
-        if (!prev.has(log.module)) {
-          const next = new Map(prev)
-          next.set(log.module, log.module_name || log.module)
-          return next
-        }
-        return prev
-      })
-    }
-
-    const handleBatch = (batchLogs: LogEntry[]) => {
-      setLogs((prev) => [...prev, ...batchLogs].slice(-1000))
+    const unsubscribe = logWebSocket.onLog((newLogs) => {
+      setLogs((prev) => [...prev, ...newLogs].slice(-1000))
       setKnownModules((prev) => {
         let changed = false
         const next = new Map(prev)
-        for (const log of batchLogs) {
+        for (const log of newLogs) {
           if (!next.has(log.module)) {
-            next.set(log.module, log.module_name || log.module)
+            next.set(log.module, getModuleDisplayName(log))
             changed = true
           }
         }
         return changed ? next : prev
       })
-    }
+    })
 
-    const unsubscribeLog = logWebSocket.subscribe(handleLog)
-    const unsubscribeBatch = logWebSocket.subscribeBatch(handleBatch)
-    const unsubscribeStatus = logWebSocket.subscribeStatus(setIsConnected)
-
-    logWebSocket.connect()
+    const unsubscribeConnection = logWebSocket.onConnectionChange(setIsConnected)
 
     return () => {
-      unsubscribeLog()
-      unsubscribeBatch()
-      unsubscribeStatus()
+      unsubscribe()
+      unsubscribeConnection()
     }
   }, [])
 
@@ -302,14 +306,12 @@ function TerminalView({
 
   const clearLogs = () => {
     setLogs([])
+    logWebSocket.clearBuffer()
   }
 
   const exportLogs = () => {
     const content = filteredLogs
-      .map(
-        (log) =>
-          `[${log.timestamp}] [${log.level}] [${log.module}${log.line_no !== undefined ? `:${log.line_no}` : ''}] ${log.message}`
-      )
+      .map((log) => `[${log.timestamp}] [${log.level}] [${log.module}] ${log.message}`)
       .join('\n')
 
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
@@ -394,11 +396,12 @@ function TerminalView({
 
   const filteredLogs = useMemo(() => {
     return logs.filter((log) => {
+      const displayName = knownModules.get(log.module) || getModuleDisplayName(log)
       const matchesSearch =
         search === '' ||
         log.message.toLowerCase().includes(search.toLowerCase()) ||
         log.module.toLowerCase().includes(search.toLowerCase()) ||
-        formatLogModule(log).toLowerCase().includes(search.toLowerCase())
+        displayName.toLowerCase().includes(search.toLowerCase())
 
       const matchesLevel =
         levelFilter === 'all' || levelPriority[log.level] >= levelPriority[levelFilter]
@@ -422,7 +425,7 @@ function TerminalView({
 
       return matchesSearch && matchesLevel && matchesModule && matchesDate
     })
-  }, [logs, search, levelFilter, hiddenModules, dateRange])
+  }, [logs, search, levelFilter, hiddenModules, dateRange, knownModules])
 
   const dynamicRowHeight = fontSizeConfig[fontSize].rowHeight + lineSpacing
   const activeLayout = logColumnLayoutConfig[fontSize]
@@ -438,7 +441,6 @@ function TerminalView({
   })
 
   const isAutoScrollingRef = useRef(false)
-  const prevLogsCountRef = useRef(filteredLogs.length)
 
   useEffect(() => {
     const el = parentRef.current
@@ -461,10 +463,7 @@ function TerminalView({
   }, [autoScroll])
 
   useEffect(() => {
-    const hasNewLogs = filteredLogs.length > prevLogsCountRef.current
-    prevLogsCountRef.current = filteredLogs.length
-
-    if (autoScroll && filteredLogs.length > 0 && hasNewLogs) {
+    if (autoScroll && filteredLogs.length > 0) {
       isAutoScrollingRef.current = true
       rowVirtualizer.scrollToIndex(filteredLogs.length - 1, {
         align: 'end',
@@ -550,7 +549,7 @@ function TerminalView({
               className="h-8 px-2"
               title={autoScroll ? '自动滚动' : '已暂停'}
             >
-              {autoScroll ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+              <Play className={cn('h-3.5 w-3.5', !autoScroll && 'opacity-50')} />
               <span className="ml-1 text-xs">{autoScroll ? '滚动' : '暂停'}</span>
             </Button>
 
@@ -841,7 +840,15 @@ function TerminalView({
                           <span className="text-[10px] text-gray-500 dark:text-gray-600">
                             {formattedTimestamp}
                           </span>
-                          <span className={cn('text-[10px] font-semibold', getLevelColor(log.level))}>
+                          <span
+                            className={cn('text-[10px] font-semibold', {
+                              'text-blue-400 dark:text-blue-500': log.level === 'DEBUG',
+                              'text-green-400 dark:text-green-500': log.level === 'INFO',
+                              'text-yellow-400 dark:text-yellow-500': log.level === 'WARNING',
+                              'text-red-400 dark:text-red-500': log.level === 'ERROR',
+                              'text-purple-400 dark:text-purple-500': log.level === 'CRITICAL',
+                            })}
+                          >
                             [{formattedLevel}]
                           </span>
                         </div>
@@ -852,7 +859,7 @@ function TerminalView({
                           )}
                           style={moduleStyle}
                         >
-                          {formatLogModule(log)}
+                          {knownModules.get(log.module) || getModuleDisplayName(log)}
                         </div>
                         <div
                           className={cn(
@@ -880,7 +887,13 @@ function TerminalView({
                           className={cn(
                             'flex-shrink-0 font-semibold',
                             activeLayout.levelClass,
-                            getLevelColor(log.level)
+                            {
+                              'text-blue-400 dark:text-blue-500': log.level === 'DEBUG',
+                              'text-green-400 dark:text-green-500': log.level === 'INFO',
+                              'text-yellow-400 dark:text-yellow-500': log.level === 'WARNING',
+                              'text-red-400 dark:text-red-500': log.level === 'ERROR',
+                              'text-purple-400 dark:text-purple-500': log.level === 'CRITICAL',
+                            }
                           )}
                           style={{ width: dynamicLevelWidth }}
                         >
@@ -894,7 +907,7 @@ function TerminalView({
                           )}
                           style={{ ...moduleStyle, width: dynamicModuleWidth }}
                         >
-                          {formatLogModule(log)}
+                          {knownModules.get(log.module) || getModuleDisplayName(log)}
                         </span>
                         <span
                           className={cn(
@@ -918,17 +931,17 @@ function TerminalView({
   )
 }
 
-export interface LogViewerPageProps {
+interface LogViewerPageProps {
   defaultTab?: LogViewerTab
 }
 
 export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
-  const [activeTab, setActiveTab] = useState<LogViewerTab>(() => defaultTab ?? getInitialActiveTab())
+  const [activeTab, setActiveTab] = useState<LogViewerTab>(() => defaultTab ?? loadStoredLogViewerTab())
   const [topbarTabsRoot, setTopbarTabsRoot] = useState<HTMLElement | null>(null)
-  const [compactSwitcher, setCompactSwitcher] = useState(false)
-  const compactSwitcherRef = useRef(false)
+  const [topbarTabsCompact, setTopbarTabsCompact] = useState(false)
+  const topbarTabsCompactRef = useRef(false)
   const [reasoningToolbarVisible, setReasoningToolbarVisible] = useState(activeTab === 'reasoning')
-  const [showSwitchHint, setShowSwitchHint] = useState<boolean>(() => {
+  const [showSwitchHint, setShowSwitchHint] = useState(() => {
     if (typeof window === 'undefined') return false
     return localStorage.getItem(LOG_VIEWER_SWITCH_HINT_DISMISSED_KEY) !== 'true'
   })
@@ -945,8 +958,8 @@ export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
   }, [topbarTabsContainerId])
 
   useEffect(() => {
-    compactSwitcherRef.current = compactSwitcher
-  }, [compactSwitcher])
+    topbarTabsCompactRef.current = topbarTabsCompact
+  }, [topbarTabsCompact])
 
   useEffect(() => {
     localStorage.setItem(LOG_VIEWER_ACTIVE_TAB_KEY, activeTab)
@@ -972,7 +985,7 @@ export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
           !(measureWorkspaceTabs instanceof HTMLElement) ||
           !(switcherMeasure instanceof HTMLElement)
         ) {
-          setCompactSwitcher(false)
+          setTopbarTabsCompact(false)
           return
         }
 
@@ -983,11 +996,11 @@ export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
 
         const availableSpace =
           workspaceRect.right - measureTabsRect.width - (topbarRect.left + switcherRect.width)
-        const threshold = compactSwitcherRef.current
+        const threshold = topbarTabsCompactRef.current
           ? TOPBAR_SWITCH_EXPAND_GAP
           : TOPBAR_SWITCH_COMPACT_GAP
 
-        setCompactSwitcher(availableSpace < threshold)
+        setTopbarTabsCompact(availableSpace < threshold)
       })
     }
 
@@ -1044,14 +1057,14 @@ export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
     )
   }
 
-  const renderTabSwitcher = (isTopbar = false, isCompact = false) => {
-    const labelClass = isTopbar && isCompact ? 'sr-only' : undefined
+  const renderTabSwitcher = (includeTopbarActions = false, compact = false) => {
+    const labelClass = includeTopbarActions && compact ? 'sr-only' : undefined
 
     return (
       <div className="flex min-w-0 items-center gap-2">
         <TabsList
-          data-log-viewer-switcher={isTopbar ? 'true' : undefined}
-          data-log-viewer-switcher-compact={isTopbar && isCompact ? 'true' : undefined}
+          data-log-viewer-switcher={includeTopbarActions ? 'true' : undefined}
+          data-log-viewer-switcher-compact={includeTopbarActions && compact ? 'true' : undefined}
         >
           <TabsTrigger value="terminal" className="gap-1.5" aria-label="终端">
             <Terminal className="h-4 w-4" />
@@ -1066,7 +1079,9 @@ export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
             <span className={labelClass}>详细统计</span>
           </TabsTrigger>
         </TabsList>
-        {isTopbar && <div id={reasoningTopbarActionsContainerId} className="hidden items-center sm:flex" />}
+        {includeTopbarActions && (
+          <div id={reasoningTopbarActionsContainerId} className="hidden items-center sm:flex" />
+        )}
       </div>
     )
   }
@@ -1074,7 +1089,7 @@ export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
   const topbarTabsPortal = topbarTabsRoot
     ? createPortal(
         <>
-          {renderTabSwitcher(true, compactSwitcher)}
+          {renderTabSwitcher(true, topbarTabsCompact)}
           {renderMeasureTabSwitcher()}
         </>,
         topbarTabsRoot
@@ -1129,7 +1144,10 @@ export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
         </div>
       )}
       <TabsContent value="terminal" className="m-0 min-h-0 flex-1 overflow-hidden">
-        <TerminalView toolbarContainerId={toolbarContainerId} toolbarVisible={activeTab === 'terminal'} />
+        <LogTerminalPane
+          toolbarContainerId={toolbarContainerId}
+          toolbarVisible={activeTab === 'terminal'}
+        />
       </TabsContent>
       <TabsContent value="reasoning" className="m-0 min-h-0 flex-1 overflow-hidden p-2 lg:p-4">
         <ReasoningProcessPage
