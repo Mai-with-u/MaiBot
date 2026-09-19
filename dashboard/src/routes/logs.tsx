@@ -214,104 +214,164 @@ interface LogTerminalPaneProps {
 
 function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPaneProps) {
   const [logs, setLogs] = useState<LogEntry[]>([])
-  const [isConnected, setIsConnected] = useState(false)
-  const [autoScroll, setAutoScroll] = useState(true)
-  const [search, setSearch] = useState('')
-  const [levelFilter, setLevelFilter] = useState<LogLevelFilter>('INFO')
-  const [hiddenModules, setHiddenModules] = useState<Set<string>>(new Set())
-  const [knownModules, setKnownModules] = useState<Map<string, string>>(() => new Map())
-  const [dateRange, setDateRange] = useState<{
-    from: Date | undefined
-    to: Date | undefined
-  }>({
-    from: undefined,
-    to: undefined,
+  const [searchQuery, setSearchQuery] = useState('')
+  const [levelFilter, setLevelFilter] = useState<LogLevelFilter>(() => {
+    const savedLevelFilter = getSetting('logLevelFilter')
+    return isLogLevelFilter(savedLevelFilter) ? savedLevelFilter : 'INFO'
   })
-  const [filtersOpen, setFiltersOpen] = useState(false)
-  const [fontSize, setFontSize] = useState<FontSize>('sm')
-  const [lineSpacing, setLineSpacing] = useState(4)
-  const [columnWidthExtra, setColumnWidthExtra] = useState(0)
+  const [storedModuleFilter, setStoredModuleFilter] = useState<string>(() =>
+    getSetting('logModuleFilter')
+  )
+  const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined)
+  const [dateTo, setDateTo] = useState<Date | undefined>(undefined)
+  const [autoScroll, setAutoScroll] = useState(() => getSetting('logAutoScroll'))
+  const [connected, setConnected] = useState(false)
+  const [fontSize, setFontSize] = useState<FontSize>(() => {
+    const savedFontSize = getSetting('logFontSize')
+    return isFontSize(savedFontSize) ? savedFontSize : 'xs'
+  }) // 默认使用小字号以显示更多信息
+  const [lineSpacing, setLineSpacing] = useState(() =>
+    clampNumber(getSetting('logLineSpacing'), LINE_SPACING_MIN, LINE_SPACING_MAX)
+  ) // 行间距，默认4px（紧凑）
+  const [columnWidthExtra, setColumnWidthExtra] = useState(() =>
+    clampNumber(getSetting('logColumnWidthExtra'), COLUMN_WIDTH_EXTRA_MIN, COLUMN_WIDTH_EXTRA_MAX)
+  )
+  const [filtersOpen, setFiltersOpen] = useState(() => getSetting('logFiltersOpen'))
   const [toolbarRoot, setToolbarRoot] = useState<HTMLElement | null>(null)
-
   const parentRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const savedAutoScroll = getSetting<boolean>('logAutoScroll', true)
-    const savedLevelFilter = getSetting<string>('logLevelFilter', 'INFO')
-    const savedModuleFilter = getSetting<string>('logModuleFilter', 'all')
-    const savedFiltersOpen = getSetting<boolean>('logFiltersOpen', false)
-    const savedFontSize = getSetting<string>('logFontSize', 'sm')
-    const savedLineSpacing = getSetting<number>('logLineSpacing', 4)
-    const savedColumnWidthExtra = getSetting<number>('logColumnWidthExtra', 0)
-
-    setAutoScroll(savedAutoScroll)
-    if (isLogLevelFilter(savedLevelFilter)) {
-      setLevelFilter(savedLevelFilter)
-    }
-
-    if (savedModuleFilter !== 'all') {
-      try {
-        const parsed = JSON.parse(savedModuleFilter)
-        if (Array.isArray(parsed)) {
-          setHiddenModules(new Set(parsed))
-        }
-      } catch {
-        // 忽略解析错误
-      }
-    }
-
-    setFiltersOpen(savedFiltersOpen)
-    if (isFontSize(savedFontSize)) {
-      setFontSize(savedFontSize)
-    }
-    setLineSpacing(clampNumber(savedLineSpacing, LINE_SPACING_MIN, LINE_SPACING_MAX))
-    setColumnWidthExtra(
-      clampNumber(savedColumnWidthExtra, COLUMN_WIDTH_EXTRA_MIN, COLUMN_WIDTH_EXTRA_MAX)
-    )
-  }, [])
 
   useEffect(() => {
     setToolbarRoot(document.getElementById(toolbarContainerId))
   }, [toolbarContainerId])
 
+  // 订阅全局 WebSocket 连接
   useEffect(() => {
-    const unsubscribe = logWebSocket.onLog((newLogs) => {
-      setLogs((prev) => [...prev, ...newLogs].slice(-1000))
-      setKnownModules((prev) => {
-        let changed = false
-        const next = new Map(prev)
-        for (const log of newLogs) {
-          if (!next.has(log.module)) {
-            next.set(log.module, getModuleDisplayName(log))
-            changed = true
-          }
-        }
-        return changed ? next : prev
-      })
+    // 日志管理器会批量推送快照，避免每条日志都触发一次 React 更新。
+    const unsubscribeLogs = logWebSocket.onLog((nextLogs) => {
+      setLogs(nextLogs)
     })
 
-    const unsubscribeConnection = logWebSocket.onConnectionChange(setIsConnected)
+    const unsubscribeConnection = logWebSocket.onConnectionChange((isConnected) => {
+      setConnected(isConnected)
+    })
 
     return () => {
-      unsubscribe()
+      unsubscribeLogs()
       unsubscribeConnection()
     }
   }, [])
 
-  const availableModules = useMemo(() => {
-    return Array.from(knownModules.entries())
-      .map(([id, displayName]) => ({ id, displayName }))
-      .sort((a, b) => a.displayName.localeCompare(b.displayName, 'zh-CN'))
-  }, [knownModules])
+  // 解析并缓存已隐藏的模块名集合
+  const hiddenModules = useMemo(() => {
+    if (!storedModuleFilter || storedModuleFilter === 'all') {
+      return new Set<string>()
+    }
+    try {
+      const parsed = JSON.parse(storedModuleFilter)
+      if (Array.isArray(parsed)) {
+        return new Set<string>(parsed)
+      }
+    } catch {
+      // 解析失败时降级为不隐藏
+    }
+    return new Set<string>()
+  }, [storedModuleFilter])
 
-  const clearLogs = () => {
+  // 动态收集当前日志中出现过的所有模块
+  const availableModules = useMemo(() => {
+    const moduleMap = new Map<string, string>()
+    for (const log of logs) {
+      if (!moduleMap.has(log.module)) {
+        moduleMap.set(log.module, getModuleDisplayName(log))
+      }
+    }
+    return Array.from(moduleMap.entries()).map(([module, displayName]) => ({
+      module,
+      displayName,
+    }))
+  }, [logs])
+
+  // 过滤日志
+  const filteredLogs = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+
+    return logs.filter((log) => {
+      // 模块过滤
+      if (hiddenModules.has(log.module)) {
+        return false
+      }
+
+      // 日志级别过滤
+      if (levelFilter !== 'all') {
+        const minPriority = levelPriority[levelFilter]
+        const currentPriority = levelPriority[log.level] ?? 0
+        if (currentPriority < minPriority) {
+          return false
+        }
+      }
+
+      // 文本搜索（同时匹配模块名、显示名和消息内容）
+      if (query) {
+        const moduleMatch = log.module.toLowerCase().includes(query)
+        const displayNameMatch = getModuleDisplayName(log).toLowerCase().includes(query)
+        const messageMatch = log.message.toLowerCase().includes(query)
+        if (!moduleMatch && !displayNameMatch && !messageMatch) {
+          return false
+        }
+      }
+
+      // 日期范围过滤
+      if (dateFrom || dateTo) {
+        const logDate = new Date(log.timestamp)
+        if (dateFrom) {
+          const fromDate = new Date(dateFrom)
+          fromDate.setHours(0, 0, 0, 0)
+          if (logDate < fromDate) return false
+        }
+        if (dateTo) {
+          const toDate = new Date(dateTo)
+          toDate.setHours(23, 59, 59, 999)
+          if (logDate > toDate) return false
+        }
+      }
+
+      return true
+    })
+  }, [logs, hiddenModules, levelFilter, searchQuery, dateFrom, dateTo])
+
+  // 动态行高 = 字号基础高度 + 行间距
+  const dynamicRowHeight = fontSizeConfig[fontSize].rowHeight + lineSpacing
+
+  // 虚拟列表
+  const rowVirtualizer = useVirtualizer({
+    count: filteredLogs.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => dynamicRowHeight,
+    overscan: 20,
+  })
+
+  // 自动滚动到底部（使用虚拟列表的 scrollToIndex）
+  useEffect(() => {
+    if (autoScroll && filteredLogs.length > 0) {
+      rowVirtualizer.scrollToIndex(filteredLogs.length - 1, {
+        align: 'end',
+        behavior: 'auto',
+      })
+    }
+  }, [filteredLogs.length, autoScroll, rowVirtualizer])
+
+  // 清空日志（仅清空当前前端显示）
+  const handleClear = () => {
     setLogs([])
-    logWebSocket.clearBuffer()
   }
 
-  const exportLogs = () => {
+  // 导出日志
+  const handleExport = () => {
     const content = filteredLogs
-      .map((log) => `[${log.timestamp}] [${log.level}] [${log.module}] ${log.message}`)
+      .map(
+        (log) =>
+          `[${log.timestamp}] [${log.level}] [${log.module}${log.line_no !== undefined ? `:${log.line_no}` : ''}] ${log.message}`
+      )
       .join('\n')
 
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
@@ -319,168 +379,96 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
     const a = document.createElement('a')
     a.href = url
     a.download = `logs-${format(new Date(), 'yyyy-MM-dd-HHmmss')}.txt`
+    document.body.appendChild(a)
     a.click()
+    document.body.removeChild(a)
     URL.revokeObjectURL(url)
   }
 
-  const handleToggleAutoScroll = () => {
-    const nextValue = !autoScroll
-    setAutoScroll(nextValue)
-    setSetting('logAutoScroll', nextValue)
+  // 切换模块显示状态
+  const toggleModule = (module: string) => {
+    const next = new Set(hiddenModules)
+    if (next.has(module)) {
+      next.delete(module)
+    } else {
+      next.add(module)
+    }
+    const serialized = next.size === 0 ? 'all' : JSON.stringify(Array.from(next))
+    setStoredModuleFilter(serialized)
+    setSetting('logModuleFilter', serialized)
   }
 
-  const handleLevelFilterChange = useCallback((value: LogLevelFilter) => {
+  // 切换自动滚动
+  const handleToggleAutoScroll = () => {
+    const next = !autoScroll
+    setAutoScroll(next)
+    setSetting('logAutoScroll', next)
+  }
+
+  // 切换级别过滤
+  const handleLevelFilterChange = (value: LogLevelFilter) => {
     setLevelFilter(value)
     setSetting('logLevelFilter', value)
-  }, [])
+  }
 
-  const persistHiddenModules = useCallback((nextHidden: Set<string>) => {
-    const serialized =
-      nextHidden.size === 0 ? 'all' : JSON.stringify(Array.from(nextHidden).sort())
-    setHiddenModules(nextHidden)
-    setSetting('logModuleFilter', serialized)
-  }, [])
+  // 切换字号
+  const handleFontSizeChange = (value: FontSize) => {
+    setFontSize(value)
+    setSetting('logFontSize', value)
+  }
 
-  const toggleModule = useCallback(
-    (moduleId: string) => {
-      const next = new Set(hiddenModules)
-      if (next.has(moduleId)) {
-        next.delete(moduleId)
-      } else {
-        next.add(moduleId)
-      }
-      persistHiddenModules(next)
-    },
-    [hiddenModules, persistHiddenModules]
-  )
+  // 调整行间距
+  const handleLineSpacingChange = (values: number[]) => {
+    const next = clampNumber(values[0] ?? 4, LINE_SPACING_MIN, LINE_SPACING_MAX)
+    setLineSpacing(next)
+    setSetting('logLineSpacing', next)
+  }
 
-  const handleFiltersOpenChange = useCallback((open: boolean) => {
+  // 调整列宽增量
+  const handleColumnWidthExtraChange = (values: number[]) => {
+    const next = clampNumber(
+      values[0] ?? 0,
+      COLUMN_WIDTH_EXTRA_MIN,
+      COLUMN_WIDTH_EXTRA_MAX
+    )
+    setColumnWidthExtra(next)
+    setSetting('logColumnWidthExtra', next)
+  }
+
+  // 切换筛选展开/收起
+  const handleFiltersOpenChange = (open: boolean) => {
     setFiltersOpen(open)
     setSetting('logFiltersOpen', open)
-  }, [])
-
-  const handleFontSizeChange = (size: FontSize) => {
-    setFontSize(size)
-    setSetting('logFontSize', size)
   }
 
-  const handleLineSpacingChange = ([val]: number[]) => {
-    const clamped = clampNumber(val, LINE_SPACING_MIN, LINE_SPACING_MAX)
-    setLineSpacing(clamped)
-    setSetting('logLineSpacing', clamped)
-  }
-
-  const handleColumnWidthExtraChange = ([val]: number[]) => {
-    const clamped = clampNumber(val, COLUMN_WIDTH_EXTRA_MIN, COLUMN_WIDTH_EXTRA_MAX)
-    setColumnWidthExtra(clamped)
-    setSetting('logColumnWidthExtra', clamped)
-  }
-
-  const handleSearchKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Escape' && search) {
-      e.preventDefault()
-      setSearch('')
-    }
-  }
-
-  const clearDateRange = () => {
-    setDateRange({ from: undefined, to: undefined })
-  }
-
-  const resetAllFilters = () => {
-    setSearch('')
-    setDateRange({ from: undefined, to: undefined })
+  // 重置所有筛选
+  const handleResetFilters = () => {
+    setSearchQuery('')
     handleLevelFilterChange('INFO')
-    persistHiddenModules(new Set())
+    setStoredModuleFilter('all')
+    setSetting('logModuleFilter', 'all')
+    setDateFrom(undefined)
+    setDateTo(undefined)
   }
 
-  const filteredLogs = useMemo(() => {
-    return logs.filter((log) => {
-      const displayName = knownModules.get(log.module) || getModuleDisplayName(log)
-      const matchesSearch =
-        search === '' ||
-        log.message.toLowerCase().includes(search.toLowerCase()) ||
-        log.module.toLowerCase().includes(search.toLowerCase()) ||
-        displayName.toLowerCase().includes(search.toLowerCase())
-
-      const matchesLevel =
-        levelFilter === 'all' || levelPriority[log.level] >= levelPriority[levelFilter]
-
-      const matchesModule = !hiddenModules.has(log.module)
-
-      let matchesDate = true
-      if (dateRange.from || dateRange.to) {
-        const logDate = new Date(log.timestamp)
-        if (dateRange.from) {
-          const fromDate = new Date(dateRange.from)
-          fromDate.setHours(0, 0, 0, 0)
-          matchesDate = matchesDate && logDate >= fromDate
-        }
-        if (dateRange.to) {
-          const toDate = new Date(dateRange.to)
-          toDate.setHours(23, 59, 59, 999)
-          matchesDate = matchesDate && logDate <= toDate
-        }
-      }
-
-      return matchesSearch && matchesLevel && matchesModule && matchesDate
-    })
-  }, [logs, search, levelFilter, hiddenModules, dateRange, knownModules])
-
-  const dynamicRowHeight = fontSizeConfig[fontSize].rowHeight + lineSpacing
-  const activeLayout = logColumnLayoutConfig[fontSize]
-  const dynamicTimestampWidth = activeLayout.timestampWidth + columnWidthExtra
-  const dynamicLevelWidth = activeLayout.levelWidth + Math.round(columnWidthExtra * 0.5)
-  const dynamicModuleWidth = activeLayout.moduleWidth + columnWidthExtra
-
-  const rowVirtualizer = useVirtualizer({
-    count: filteredLogs.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => dynamicRowHeight,
-    overscan: 50,
-  })
-
-  const isAutoScrollingRef = useRef(false)
-
-  useEffect(() => {
-    const el = parentRef.current
-    if (!el) return
-
-    const handleScroll = () => {
-      if (isAutoScrollingRef.current) return
-      const { scrollTop, scrollHeight, clientHeight } = el
-      const distanceFromBottom = scrollHeight - scrollTop - clientHeight
-
-      if (distanceFromBottom > 100 && autoScroll) {
-        setAutoScroll(false)
-      } else if (distanceFromBottom < 50 && !autoScroll) {
-        setAutoScroll(true)
-      }
+  // 键盘快捷键处理
+  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') {
+      setSearchQuery('')
     }
+  }
 
-    el.addEventListener('scroll', handleScroll, { passive: true })
-    return () => el.removeEventListener('scroll', handleScroll)
-  }, [autoScroll])
+  // 动态列宽计算
+  const currentLayout = logColumnLayoutConfig[fontSize]
+  const dynamicTimestampWidth = currentLayout.timestampWidth + columnWidthExtra
+  const dynamicLevelWidth = currentLayout.levelWidth + Math.round(columnWidthExtra * 0.5)
+  const dynamicModuleWidth = currentLayout.moduleWidth + columnWidthExtra
 
-  useEffect(() => {
-    if (autoScroll && filteredLogs.length > 0) {
-      isAutoScrollingRef.current = true
-      rowVirtualizer.scrollToIndex(filteredLogs.length - 1, {
-        align: 'end',
-        behavior: 'auto',
-      })
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          isAutoScrollingRef.current = false
-        })
-      })
-    }
-  }, [filteredLogs.length, autoScroll, rowVirtualizer])
-
+  // 工具栏内容
   const toolbarContent = (
     <Collapsible open={filtersOpen} onOpenChange={handleFiltersOpenChange}>
       <div className="grid w-full gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(620px,760px)]">
-        {/* 模块 Tag 选择栏 */}
+        {/* 模块标签筛选栏 */}
         <div
           className={cn(
             'flex min-h-9 min-w-0 flex-wrap content-start items-start gap-1.5',
@@ -490,49 +478,55 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
           )}
           aria-label="模块显示筛选"
         >
-          {availableModules.map(({ id, displayName }) => {
-            const isVisible = !hiddenModules.has(id)
-            return (
-              <button
-                key={id}
-                type="button"
-                aria-pressed={isVisible}
-                aria-label={`${isVisible ? '隐藏' : '显示'} ${displayName}`}
-                title={`${isVisible ? '隐藏' : '显示'} ${displayName}（${id}）`}
-                onClick={() => toggleModule(id)}
-                className={cn(
-                  'h-7 max-w-full border px-2 text-xs font-medium transition-colors',
-                  'focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:outline-none',
-                  'active:translate-y-px',
-                  isVisible
-                    ? 'border-primary/60 bg-primary/10 text-foreground hover:bg-primary/20'
-                    : 'border-border/60 bg-muted/30 text-muted-foreground/45 hover:text-muted-foreground'
-                )}
-              >
-                <span className="block max-w-40 truncate">{displayName}</span>
-              </button>
-            )
-          })}
+          {availableModules.length === 0 ? (
+            <span className="text-muted-foreground self-center px-1 text-xs">等待日志数据...</span>
+          ) : (
+            availableModules.map(({ module, displayName }) => {
+              const isHidden = hiddenModules.has(module)
+              return (
+                <button
+                  key={module}
+                  type="button"
+                  aria-pressed={!isHidden}
+                  aria-label={`${isHidden ? '显示' : '隐藏'} ${displayName}`}
+                  title={`${isHidden ? '显示' : '隐藏'} ${displayName}（${module}）`}
+                  onClick={() => toggleModule(module)}
+                  className={cn(
+                    'h-7 max-w-full border px-2 text-xs font-medium transition-colors',
+                    'focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:outline-none',
+                    'active:translate-y-px',
+                    !isHidden
+                      ? 'border-primary/60 bg-primary/10 text-foreground hover:bg-primary/20'
+                      : 'border-border/60 bg-muted/30 text-muted-foreground/45 hover:text-muted-foreground'
+                  )}
+                >
+                  <span className="block max-w-40 truncate">{displayName}</span>
+                </button>
+              )
+            })
+          )}
         </div>
 
         {/* 控制按钮与搜索栏 */}
         <div className="flex min-w-0 flex-col gap-2">
+          {/* 第一行：搜索、滚动、清空、导出、筛选、状态 */}
           <div className="flex w-full flex-wrap items-center gap-1.5 lg:justify-end">
+            {/* 搜索框 */}
             <div className="relative min-w-[180px] flex-1 lg:max-w-64">
               <Search className="text-muted-foreground absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2" />
               <Input
                 placeholder="搜索日志..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                onKeyDown={handleSearchKeyDown}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={handleKeyDown}
                 className="h-8 pr-8 pl-8 text-xs sm:text-sm"
               />
-              {search && (
+              {searchQuery && (
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
-                  onClick={() => setSearch('')}
+                  onClick={() => setSearchQuery('')}
                   className="absolute top-1/2 right-0.5 h-7 w-7 -translate-y-1/2"
                   title="清空搜索"
                   aria-label="清空搜索"
@@ -542,6 +536,7 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
               )}
             </div>
 
+            {/* 自动滚动切换 */}
             <Button
               variant={autoScroll ? 'default' : 'outline'}
               size="sm"
@@ -549,14 +544,15 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
               className="h-8 px-2"
               title={autoScroll ? '自动滚动' : '已暂停'}
             >
-              <Play className={cn('h-3.5 w-3.5', !autoScroll && 'opacity-50')} />
+              {autoScroll ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
               <span className="ml-1 text-xs">{autoScroll ? '滚动' : '暂停'}</span>
             </Button>
 
+            {/* 清空日志 */}
             <Button
               variant="outline"
               size="sm"
-              onClick={clearLogs}
+              onClick={handleClear}
               disabled={logs.length === 0}
               className="h-8 px-2"
               title="清空日志"
@@ -565,10 +561,11 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
               <span className="ml-1 text-xs">清空</span>
             </Button>
 
+            {/* 导出日志 */}
             <Button
               variant="outline"
               size="sm"
-              onClick={exportLogs}
+              onClick={handleExport}
               disabled={filteredLogs.length === 0}
               className="h-8 px-2"
               title="导出日志"
@@ -577,6 +574,7 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
               <span className="ml-1 text-xs">导出</span>
             </Button>
 
+            {/* 筛选折叠切换 */}
             <CollapsibleTrigger asChild>
               <Button
                 variant="outline"
@@ -594,15 +592,16 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
               </Button>
             </CollapsibleTrigger>
 
+            {/* 连接状态与日志计数 */}
             <div className="text-muted-foreground ml-auto flex items-center gap-2 text-xs whitespace-nowrap lg:ml-1">
               <span className="flex items-center gap-1.5">
                 <span
                   className={cn(
                     'h-2 w-2 rounded-full',
-                    isConnected ? 'animate-pulse bg-green-500' : 'bg-red-500'
+                    connected ? 'animate-pulse bg-green-500' : 'bg-red-500'
                   )}
                 />
-                {isConnected ? '已连接' : '未连接'}
+                {connected ? '已连接' : '未连接'}
               </span>
               <span>
                 <span className="font-mono">
@@ -613,12 +612,13 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
             </div>
           </div>
 
-          {/* 折叠的高级筛选 */}
+          {/* 第二行：高级筛选（级别、日期、字号、间距） */}
           <CollapsibleContent className="w-full space-y-2">
+            {/* 级别筛选 */}
             <div className="flex flex-col gap-2 sm:flex-row sm:gap-2">
               <Select
                 value={levelFilter}
-                onValueChange={(value) => handleLevelFilterChange(value as LogLevelFilter)}
+                onValueChange={(val) => handleLevelFilterChange(val as LogLevelFilter)}
               >
                 <SelectTrigger className="h-8 w-full text-xs sm:flex-1">
                   <Filter className="mr-1.5 h-3.5 w-3.5" />
@@ -634,10 +634,11 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
                 </SelectContent>
               </Select>
 
+              {/* 重置筛选 */}
               <Button
                 variant="outline"
                 size="sm"
-                onClick={resetAllFilters}
+                onClick={handleResetFilters}
                 className="h-8 w-full sm:w-auto"
                 title="重置筛选"
               >
@@ -646,7 +647,9 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
               </Button>
             </div>
 
+            {/* 日期范围 */}
             <div className="flex flex-col gap-2 sm:flex-row sm:gap-2">
+              {/* 开始日期 */}
               <Popover>
                 <PopoverTrigger asChild>
                   <Button
@@ -654,30 +657,27 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
                     size="sm"
                     className={cn(
                       'h-8 w-full justify-start text-left font-normal sm:flex-1',
-                      !dateRange.from && 'text-muted-foreground'
+                      !dateFrom && 'text-muted-foreground'
                     )}
                   >
                     <CalendarIcon className="mr-1.5 h-3.5 w-3.5" />
                     <span className="text-xs">
-                      {dateRange.from ? (
-                        format(dateRange.from, 'PP', { locale: zhCN })
-                      ) : (
-                        '开始日期'
-                      )}
+                      {dateFrom ? format(dateFrom, 'PP', { locale: zhCN }) : '开始日期'}
                     </span>
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-auto p-0" align="start">
                   <Calendar
                     mode="single"
-                    selected={dateRange.from}
-                    onSelect={(date) => setDateRange((prev) => ({ ...prev, from: date }))}
+                    selected={dateFrom}
+                    onSelect={setDateFrom}
                     initialFocus
                     locale={zhCN}
                   />
                 </PopoverContent>
               </Popover>
 
+              {/* 结束日期 */}
               <Popover>
                 <PopoverTrigger asChild>
                   <Button
@@ -685,35 +685,34 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
                     size="sm"
                     className={cn(
                       'h-8 w-full justify-start text-left font-normal sm:flex-1',
-                      !dateRange.to && 'text-muted-foreground'
+                      !dateTo && 'text-muted-foreground'
                     )}
                   >
                     <CalendarIcon className="mr-1.5 h-3.5 w-3.5" />
                     <span className="text-xs">
-                      {dateRange.to ? (
-                        format(dateRange.to, 'PP', { locale: zhCN })
-                      ) : (
-                        '结束日期'
-                      )}
+                      {dateTo ? format(dateTo, 'PP', { locale: zhCN }) : '结束日期'}
                     </span>
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-auto p-0" align="start">
                   <Calendar
                     mode="single"
-                    selected={dateRange.to}
-                    onSelect={(date) => setDateRange((prev) => ({ ...prev, to: date }))}
+                    selected={dateTo}
+                    onSelect={setDateTo}
                     initialFocus
                     locale={zhCN}
                   />
                 </PopoverContent>
               </Popover>
 
-              {(dateRange.from || dateRange.to) && (
+              {(dateFrom || dateTo) && (
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={clearDateRange}
+                  onClick={() => {
+                    setDateFrom(undefined)
+                    setDateTo(undefined)
+                  }}
                   className="h-8 w-full sm:w-auto"
                 >
                   <X className="h-3.5 w-3.5 sm:mr-1" />
@@ -722,28 +721,30 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
               )}
             </div>
 
-            {/* 布局与外观微调控制条 */}
+            {/* 字号选择、行间距与列宽微调 */}
             <div className="border-border/50 flex flex-col gap-2 border-t pt-2 sm:flex-row sm:items-center sm:gap-3">
+              {/* 字号 */}
               <div className="flex items-center gap-2">
                 <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
                   <Type className="h-3.5 w-3.5" />
                   <span>字号</span>
                 </div>
                 <div className="flex gap-1">
-                  {(Object.keys(fontSizeConfig) as FontSize[]).map((size) => (
+                  {(Object.keys(fontSizeConfig) as FontSize[]).map((key) => (
                     <Button
-                      key={size}
-                      variant={fontSize === size ? 'default' : 'outline'}
+                      key={key}
+                      variant={fontSize === key ? 'default' : 'outline'}
                       size="sm"
-                      onClick={() => handleFontSizeChange(size)}
+                      onClick={() => handleFontSizeChange(key)}
                       className="h-6 px-2 text-xs"
                     >
-                      {fontSizeConfig[size].label}
+                      {fontSizeConfig[key].label}
                     </Button>
                   ))}
                 </div>
               </div>
 
+              {/* 行间距 */}
               <div className="flex max-w-[200px] flex-1 items-center gap-2">
                 <span className="text-muted-foreground text-xs whitespace-nowrap">行距</span>
                 <Slider
@@ -757,6 +758,7 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
                 <span className="text-muted-foreground w-7 text-xs">{lineSpacing}px</span>
               </div>
 
+              {/* 列宽 */}
               <div className="flex max-w-[220px] flex-1 items-center gap-2">
                 <span className="text-muted-foreground text-xs whitespace-nowrap">列宽</span>
                 <Slider
@@ -859,7 +861,7 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
                           )}
                           style={moduleStyle}
                         >
-                          {knownModules.get(log.module) || getModuleDisplayName(log)}
+                          {getModuleDisplayName(log)}
                         </div>
                         <div
                           className={cn(
@@ -873,11 +875,11 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
                       </div>
 
                       {/* 宽屏桌面端并排排版 (>= sm) */}
-                      <div className={cn('hidden items-start sm:flex', activeLayout.gapClass)}>
+                      <div className={cn('hidden items-start sm:flex', currentLayout.gapClass)}>
                         <span
                           className={cn(
                             'flex-shrink-0 text-gray-500 dark:text-gray-600',
-                            activeLayout.timestampClass
+                            currentLayout.timestampClass
                           )}
                           style={{ width: dynamicTimestampWidth }}
                         >
@@ -886,7 +888,7 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
                         <span
                           className={cn(
                             'flex-shrink-0 font-semibold',
-                            activeLayout.levelClass,
+                            currentLayout.levelClass,
                             {
                               'text-blue-400 dark:text-blue-500': log.level === 'DEBUG',
                               'text-green-400 dark:text-green-500': log.level === 'INFO',
@@ -902,12 +904,12 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
                         <span
                           className={cn(
                             'flex-shrink-0 truncate',
-                            activeLayout.moduleClass,
+                            currentLayout.moduleClass,
                             !moduleStyle && 'text-cyan-400 dark:text-cyan-500'
                           )}
                           style={{ ...moduleStyle, width: dynamicModuleWidth }}
                         >
-                          {knownModules.get(log.module) || getModuleDisplayName(log)}
+                          {getModuleDisplayName(log)}
                         </span>
                         <span
                           className={cn(
