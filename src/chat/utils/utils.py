@@ -421,12 +421,7 @@ def split_into_sentences_w_remove_punctuation(text: str) -> list[str]:
 
         # 检查是否可以与下一段合并
         # 条件：不是最后一段，且随机数小于合并概率，且当前段有内容（避免合并空段）
-        if (
-            idx + 1 < len(segments)
-            and current_content
-            and current_sep != "\n"
-            and random.random() < merge_probability
-        ):
+        if idx + 1 < len(segments) and current_content and current_sep != "\n" and random.random() < merge_probability:
             next_content, next_sep = segments[idx + 1]
             # 合并: (内容1 + 分隔符1 + 内容2, 分隔符2)
             # 只有当下一段也有内容时才合并文本，否则只传递分隔符
@@ -601,12 +596,17 @@ def process_llm_response_segments(
         logger.warning(f"回复过长 ({len(cleaned_text)} 字符)，返回默认回复")
         return [ProcessedResponseSegment(_get_random_default_reply())]
 
-    typo_generator = ChineseTypoGenerator(
-        error_rate=global_config.chinese_typo.error_rate,
-        min_freq=global_config.chinese_typo.min_freq,
-        tone_error_rate=global_config.chinese_typo.tone_error_rate,
-        word_replace_rate=global_config.chinese_typo.word_replace_rate,
-    )
+    # 仅在启用错别字功能时才构建生成器（其内部拼音表/字频表为进程级共享缓存，
+    # 首次构建后实例化开销极小；功能关闭时完全不构建）
+    typo_enabled = global_config.chinese_typo.enable and enable_chinese_typo
+    typo_generator = None
+    if typo_enabled:
+        typo_generator = ChineseTypoGenerator(
+            error_rate=global_config.chinese_typo.error_rate,
+            min_freq=global_config.chinese_typo.min_freq,
+            tone_error_rate=global_config.chinese_typo.tone_error_rate,
+            word_replace_rate=global_config.chinese_typo.word_replace_rate,
+        )
 
     if global_config.response_splitter.enable and enable_splitter:
         split_sentences = split_into_sentences_w_remove_punctuation(cleaned_text)
@@ -615,7 +615,7 @@ def process_llm_response_segments(
 
     segments: list[ProcessedResponseSegment] = []
     for sentence in split_sentences:
-        if global_config.chinese_typo.enable and enable_chinese_typo:
+        if typo_enabled:
             typoed_text, typo_corrections = typo_generator.create_typo_sentence(sentence)
             if typo_corrections:
                 # 50%概率新增正确字/词，50%概率用正确分句替换错别字分句
@@ -1057,5 +1057,3 @@ def parse_keywords_string(keywords_input) -> list[str]:
 
     # 如果没有分隔符，返回单个关键词
     return [keywords_str] if keywords_str else []
-
-

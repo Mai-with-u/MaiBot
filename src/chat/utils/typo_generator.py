@@ -2,20 +2,47 @@
 错别字生成器 - 基于拼音和字频的中文错别字生成工具
 """
 
+from collections import defaultdict
+from pathlib import Path
+from pypinyin import Style, pinyin
+
+import itertools
+import jieba
 import json
 import math
 import os
 import random
 import time
-import jieba
-
-from collections import defaultdict
-from pathlib import Path
-from pypinyin import Style, pinyin
 
 from src.common.logger import get_logger
 
 logger = get_logger("typo_gen")
+
+# 模块级共享缓存：拼音表与字频表与实例参数无关，且构建开销大
+# （拼音表需要约 2 万次 pypinyin 调用，字频表需读取 370KB JSON），
+# 因此全进程只构建一次，所有 ChineseTypoGenerator 实例共享只读数据，
+# 避免每次回复都重复构建导致事件循环卡顿数百毫秒
+_shared_pinyin_dict: dict[str, list[str]] | None = None
+_shared_char_frequency: dict[str, float] | None = None
+
+
+def _get_shared_pinyin_dict() -> dict[str, list[str]]:
+    """获取进程级共享的拼音-汉字映射表（懒加载，仅构建一次）。"""
+
+    global _shared_pinyin_dict
+    if _shared_pinyin_dict is None:
+        # 转为普通 dict，避免 defaultdict 的写时插入行为污染共享数据
+        _shared_pinyin_dict = dict(ChineseTypoGenerator._create_pinyin_dict())
+    return _shared_pinyin_dict
+
+
+def _get_shared_char_frequency() -> dict[str, float]:
+    """获取进程级共享的字频表（懒加载，仅构建一次）。"""
+
+    global _shared_char_frequency
+    if _shared_char_frequency is None:
+        _shared_char_frequency = ChineseTypoGenerator._load_or_create_char_frequency()
+    return _shared_char_frequency
 
 
 class ChineseTypoGenerator:
@@ -36,14 +63,15 @@ class ChineseTypoGenerator:
         self.word_replace_rate = word_replace_rate
         self.max_freq_diff = max_freq_diff
 
-        # 加载数据
+        # 加载数据：拼音表与字频表使用进程级共享缓存，避免每次实例化都重复构建
         # print("正在加载汉字数据库，请稍候...")
         # logger.info("正在加载汉字数据库，请稍候...")
 
-        self.pinyin_dict = self._create_pinyin_dict()
-        self.char_frequency = self._load_or_create_char_frequency()
+        self.pinyin_dict = _get_shared_pinyin_dict()
+        self.char_frequency = _get_shared_char_frequency()
 
-    def _load_or_create_char_frequency(self):
+    @staticmethod
+    def _load_or_create_char_frequency():
         """
         加载或创建汉字频率字典
         """
@@ -64,7 +92,7 @@ class ChineseTypoGenerator:
                 word, freq = line.strip().split()[:2]
                 # 对词中的每个字进行频率累加
                 for char in word:
-                    if self._is_chinese_char(char):
+                    if ChineseTypoGenerator._is_chinese_char(char):
                         char_freq[char] += int(freq)
 
         # 归一化频率值
@@ -72,6 +100,7 @@ class ChineseTypoGenerator:
         normalized_freq = {char: freq / max_freq * 1000 for char, freq in char_freq.items()}
 
         # 保存到缓存文件
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
         with open(cache_file, "w", encoding="utf-8") as f:
             json.dump(normalized_freq, f, ensure_ascii=False, indent=2)
 
@@ -177,10 +206,10 @@ class ChineseTypoGenerator:
         # 有一定概率使用错误声调
         if random.random() < self.tone_error_rate:
             wrong_tone_py = self._get_similar_tone_pinyin(py)
-            homophones.extend(self.pinyin_dict[wrong_tone_py])
+            homophones.extend(self.pinyin_dict.get(wrong_tone_py, []))
 
         # 添加正确声调的同音字
-        homophones.extend(self.pinyin_dict[py])
+        homophones.extend(self.pinyin_dict.get(py, []))
 
         if not homophones:
             return None
@@ -247,39 +276,34 @@ class ChineseTypoGenerator:
             candidates.append(chars)
 
         # 生成所有可能的组合
-        import itertools
-
         all_combinations = itertools.product(*candidates)
 
-        # 获取jieba词典和词频信息
-        dict_path = os.path.join(os.path.dirname(jieba.__file__), "dict.txt")
-        valid_words = {}  # 改用字典存储词语及其频率
-        with open(dict_path, "r", encoding="utf-8") as f:
-            for line in f:
-                parts = line.strip().split()
-                if len(parts) >= 2:
-                    word_text = parts[0]
-                    word_freq = float(parts[1])  # 获取词频
-                    valid_words[word_text] = word_freq
+        # 使用 jieba 已加载的内存词典查询词频，避免每次触发整词替换都重新解析 dict.txt（约 4.8MB）
+        jieba.initialize()  # 幂等操作，确保词典已加载
+        word_freq_dict = jieba.dt.FREQ
 
         # 获取原词的词频作为参考
-        original_word_freq = valid_words.get(word, 0)
+        original_word_freq = word_freq_dict.get(word, 0)
         min_word_freq = original_word_freq * 0.1  # 设置最小词频为原词频的10%
 
         # 过滤和计算频率
         homophones = []
         for combo in all_combinations:
             new_word = "".join(combo)
-            if new_word != word and new_word in valid_words:
-                new_word_freq = valid_words[new_word]
-                # 只保留词频达到阈值的词
-                if new_word_freq >= min_word_freq:
-                    # 计算词的平均字频（考虑字频和词频）
-                    char_avg_freq = sum(self.char_frequency.get(c, 0) for c in new_word) / len(new_word)
-                    # 综合评分：结合词频和字频
-                    combined_score = new_word_freq * 0.7 + char_avg_freq * 0.3
-                    if combined_score >= self.min_freq:
-                        homophones.append((new_word, combined_score))
+            if new_word == word:
+                continue
+            new_word_freq = word_freq_dict.get(new_word, 0)
+            # FREQ 中词频为 0 的项是 jieba 的前缀片段而非真实词条，需排除
+            if new_word_freq <= 0:
+                continue
+            # 只保留词频达到阈值的词
+            if new_word_freq >= min_word_freq:
+                # 计算词的平均字频（考虑字频和词频）
+                char_avg_freq = sum(self.char_frequency.get(c, 0) for c in new_word) / len(new_word)
+                # 综合评分：结合词频和字频
+                combined_score = new_word_freq * 0.7 + char_avg_freq * 0.3
+                if combined_score >= self.min_freq:
+                    homophones.append((new_word, combined_score))
 
         # 按综合分数排序并限制返回数量
         sorted_homophones = sorted(homophones, key=lambda x: x[1], reverse=True)
