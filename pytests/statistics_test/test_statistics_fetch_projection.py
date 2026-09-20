@@ -35,7 +35,9 @@ def _message(
     )
 
 
-def _usage(timestamp: datetime, *, cost: float = 0.0, prompt_tokens: int = 0, completion_tokens: int = 0) -> dict:
+def _usage(
+    timestamp: datetime, *, cost: float = 0.0, prompt_tokens: int = 0, completion_tokens: int = 0
+) -> dict[str, object]:
     return {
         "timestamp": timestamp,
         "cost": cost,
