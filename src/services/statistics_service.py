@@ -788,10 +788,22 @@ def fetch_model_duration_aggregates_since(query_start_time: datetime) -> list[di
     ]
 
 
-def fetch_messages_since(query_start_time: datetime) -> list[Messages]:
-    """获取指定时间之后的消息记录。"""
+def fetch_messages_since(query_start_time: datetime) -> list[Any]:
+    """获取指定时间之后的消息记录。
+
+    只投影统计任务实际消费的 6 个字段（timestamp/platform/user_id/group_id/
+    group_name/user_nickname），避免把 raw_content、additional_config 等大列
+    整行载入内存导致统计任务周期性内存暴涨。
+    """
     with get_db_session(auto_commit=False) as session:
-        statement = select(Messages).where(col(Messages.timestamp) >= query_start_time)
+        statement = select(
+            Messages.timestamp,
+            Messages.platform,
+            Messages.user_id,
+            Messages.group_id,
+            Messages.group_name,
+            Messages.user_nickname,
+        ).where(col(Messages.timestamp) >= query_start_time)
         return list(session.exec(statement).all())
 
 
