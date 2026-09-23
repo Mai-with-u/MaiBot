@@ -22,6 +22,7 @@ import {
   MCPServersHook,
   MultipleReplyStyleHook,
   RegexRulesHook,
+  TalkValueDisabledByJevHook,
 } from '../complexFieldHooks'
 import * as botAccountsApi from '@/lib/bot-accounts-api'
 import { getChatStreams, resolveChatTargets, type ChatStream } from '@/lib/chat-management-api'
@@ -1696,6 +1697,57 @@ describe('complexFieldHooks', () => {
         <HiddenFieldHook fieldPath="hidden" onChange={vi.fn()} schema={fieldSchema} value={null} />,
       )
       expect(container).toBeEmptyDOMElement()
+    })
+
+    it('TalkValueDisabledByJevHook 在非 Jev 模式下原样渲染字段', () => {
+      render(
+        <TalkValueDisabledByJevHook
+          fieldPath="chat.reply_timing.talk_value"
+          onChange={vi.fn()}
+          parentValues={{ reply_trigger_mode: 'frequency' }}
+          schema={fieldSchema}
+          value={0.5}
+        >
+          <span>群聊频率滑块</span>
+        </TalkValueDisabledByJevHook>,
+      )
+
+      expect(screen.getByText('群聊频率滑块')).toBeInTheDocument()
+      expect(screen.queryByText(/Jev 决策模式下回复频率不可用/)).not.toBeInTheDocument()
+    })
+
+    it.each(['jev', 'jev_batch'])('TalkValueDisabledByJevHook 在 %s 模式下置灰并提示', (mode) => {
+      render(
+        <TalkValueDisabledByJevHook
+          fieldPath="chat.reply_timing.talk_value"
+          onChange={vi.fn()}
+          parentValues={{ reply_trigger_mode: mode }}
+          schema={fieldSchema}
+          value={0.5}
+        >
+          <span>群聊频率滑块</span>
+        </TalkValueDisabledByJevHook>,
+      )
+
+      // 字段仍然可见，便于用户看到当前配置值
+      expect(screen.getByText('群聊频率滑块')).toBeInTheDocument()
+      expect(screen.getByText(/Jev 决策模式下回复频率不可用，是否回复由 Jev 判断结果决定。/)).toBeInTheDocument()
+    })
+
+    it('ChatTalkValueRulesHook 在 Jev 模式下置灰规则列表并提示', () => {
+      render(
+        <ChatTalkValueRulesHook
+          fieldPath="chat.reply_timing.talk_value_rules"
+          onChange={vi.fn()}
+          parentValues={{ reply_trigger_mode: 'jev_batch', enable_talk_value_rules: true }}
+          schema={fieldSchema}
+          nestedSchema={talkRuleSchema}
+          value={[]}
+        />,
+      )
+
+      expect(screen.getByText(/Jev 决策模式下动态发言频率规则不可用，规则不会参与判断。/)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: '添加发言频率规则' })).not.toBeInTheDocument()
     })
 
     it('ChatPromptsHook 添加条目并按行编辑剩余 prompt 字段', async () => {

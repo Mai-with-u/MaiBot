@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent,
+  type ReactNode,
+} from 'react'
 
 import {
   AlertCircle,
@@ -8,6 +15,7 @@ import {
   ExternalLink,
   EyeOff,
   GripVertical,
+  Info,
   Plus,
   RotateCcw,
   Trash2,
@@ -2767,20 +2775,45 @@ export const FocusWhitelistHook = createListItemEditorHook({
   },
 })
 
-/** Jev 决策触发模式下不使用回复频率控制，这些字段保持隐藏。 */
+export const HiddenFieldHook: FieldHookComponent = () => null
+
+/** Jev 决策触发模式下不使用回复频率控制，这些字段保持可见但不可操作。 */
 const isJevReplyTriggerMode = (parentValues?: Record<string, unknown>): boolean => {
   const triggerMode = parentValues?.reply_trigger_mode
   return triggerMode === 'jev' || triggerMode === 'jev_batch'
 }
 
+/** Jev 决策下回复频率控制整体停用，这里给出统一说明文案。 */
+const REPLY_FREQUENCY_DISABLED_HINT = 'Jev 决策模式下回复频率不可用，是否回复由 Jev 判断结果决定。'
+
+const REPLY_FREQUENCY_RULES_DISABLED_HINT = 'Jev 决策模式下动态发言频率规则不可用，规则不会参与判断。'
+
 /**
- * 回复频率字段的条件隐藏 Hook。
+ * 用置灰容器包裹字段渲染，并附加不可用说明。
  *
- * 选择「Jev决策」或「定量Jev决策」时，群聊/私聊频率与动态发言频率规则
- * 整体停用，不渲染这些字段，避免误以为它们仍在生效。
+ * 保留字段可见是为了让用户看到当前配置值，同时通过禁用指针事件与降低透明度
+ * 明确传达「这里改了也不生效」。
+ */
+const renderReplyFrequencyDisabled = (content: ReactNode, hint: string): ReactNode => (
+  <div className="min-w-0" aria-disabled>
+    <div className="pointer-events-none select-none opacity-60">{content}</div>
+    <p className="mt-1 flex items-start gap-1 text-xs text-muted-foreground">
+      <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+      <span>{hint}</span>
+    </p>
+  </div>
+)
+
+/**
+ * 回复频率字段的置灰 Hook。
+ *
+ * 选择「Jev决策」或「定量Jev决策」时，群聊/私聊频率与动态发言频率开关
+ * 整体停用，字段置灰不可操作并给出说明。
  */
 export const TalkValueDisabledByJevHook: FieldHookComponent = ({ children, parentValues }) =>
-  isJevReplyTriggerMode(parentValues) ? null : <>{children}</>
+  isJevReplyTriggerMode(parentValues)
+    ? renderReplyFrequencyDisabled(children, REPLY_FREQUENCY_DISABLED_HINT)
+    : <>{children}</>
 
 const RawChatTalkValueRulesHook = createListItemEditorHook({
   addLabel: '添加发言频率规则',
@@ -2823,9 +2856,13 @@ const RawChatTalkValueRulesHook = createListItemEditorHook({
   },
 })
 
-/** Jev 决策触发时连规则列表一起隐藏，其余情况仍使用完整规则编辑器。 */
+/** Jev 决策触发时规则列表一并置灰，其余情况仍使用完整规则编辑器。 */
 export const ChatTalkValueRulesHook: FieldHookComponent = (props) =>
-  isJevReplyTriggerMode(props.parentValues) ? null : <RawChatTalkValueRulesHook {...props} />
+  isJevReplyTriggerMode(props.parentValues) ? (
+    renderReplyFrequencyDisabled(<RawChatTalkValueRulesHook {...props} />, REPLY_FREQUENCY_RULES_DISABLED_HINT)
+  ) : (
+    <RawChatTalkValueRulesHook {...props} />
+  )
 
 export const BotPlatformAccountsHook: FieldHookComponent = ({
   onChange,
