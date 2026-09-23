@@ -2800,14 +2800,15 @@ const MESSAGE_TRIGGER_COUNT_DISABLED_HINT = '只有「定量Jev决策」使用�
 /**
  * 用置灰容器包裹字段渲染，并附加不可用说明。
  *
- * 保留字段可见是为了让用户看到当前配置值；容器使用 `inert` 让整棵子树
- * 既不可点击也不可聚焦，配合透明度与灰度明确传达「这里改了也不生效」。
+ * 保留字段可见是为了让用户看到当前配置值；容器用 `fieldset disabled` 停用原生
+ * 控件，配合透明度与灰度明确传达「这里改了也不生效」，同时字段名称和值仍留在
+ * 无障碍树里，屏幕阅读器可以正常朗读。
  */
 const renderDisabledField = (content: ReactNode, hint: string): ReactNode => (
   <div className="min-w-0" aria-disabled data-config-disabled="true">
-    <div className="pointer-events-none opacity-40 grayscale select-none" inert>
+    <fieldset className="pointer-events-none opacity-40 grayscale select-none" disabled aria-disabled="true">
       {content}
-    </div>
+    </fieldset>
     <p className="mt-1 flex items-start gap-1 text-xs text-muted-foreground">
       <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
       <span>{hint}</span>
@@ -2839,7 +2840,9 @@ export const MessageTriggerCountHook: FieldHookComponent = ({ children, parentVa
 const RawChatTalkValueRulesHook = createListItemEditorHook({
   addLabel: '添加发言频率规则',
   addButtonPlacement: 'none',
-  collapseWhen: ({ parentValues }) => parentValues?.enable_talk_value_rules === false,
+  // Jev 决策模式下展开按钮不可操作，此时不再默认折叠，保证已有规则仍可查看。
+  collapseWhen: ({ parentValues }) =>
+    parentValues?.enable_talk_value_rules === false && !isJevReplyTriggerMode(parentValues),
   collapsedText: '动态发言频率规则未启用，规则列表已折叠。展开后仍可查看或编辑已有规则。',
   expandLabel: '展开规则',
   collapseLabel: '折叠规则',

@@ -35,7 +35,7 @@ def _build_runtime(*, pending_count: int, trigger_threshold: int, is_group_chat:
         enqueued=[],
         deferred=[],
     )
-    runtime._get_pending_message_count = lambda: pending_count
+    runtime._get_pending_message_count = lambda: len(runtime.message_cache) - runtime._last_processed_index
     runtime._get_effective_reply_frequency = lambda: 1.0
     runtime._is_reply_frequency_silent = lambda: False
     runtime._has_forced_turn_trigger = lambda: False
@@ -234,6 +234,90 @@ def test_frequency_trigger_mode_keeps_frequency_control(monkeypatch) -> None:
             assert is_reply_frequency_control_enabled() is expected, mode
     finally:
         monkeypatch.setattr(global_config.chat.reply_timing, "reply_trigger_mode", original_mode, raising=False)
+
+
+@pytest.mark.asyncio
+async def test_jev_does_not_resubmit_without_new_messages(monkeypatch, scheduler_factory) -> None:
+    """没有新消息时不再重复提交，避免反复把同一批消息送给 Jev。"""
+
+    _set_trigger_mode(monkeypatch, "jev")
+    scheduler, runtime = scheduler_factory(pending_count=2, trigger_threshold=3)
+    scheduler._jev_gate.should_reply = False
+
+    scheduler.schedule_message_turn()
+    await _drain_jev_task(scheduler)
+    assert scheduler._jev_gate.calls == [2]
+
+    # 没有新消息时再次调度：不应重复提交同一批消息
+    scheduler.schedule_message_turn()
+    await _drain_jev_task(scheduler)
+    assert scheduler._jev_gate.calls == [2]
+
+    # 新消息到达后才再次提交；窗口内含积压消息，供 Jev 判断上下文
+    runtime.message_cache.append(object())
+    scheduler.schedule_message_turn()
+    await _drain_jev_task(scheduler)
+    assert scheduler._jev_gate.calls == [2, 3]
+
+
+@pytest.mark.asyncio
+async def test_jev_submission_window_is_capped(monkeypatch, scheduler_factory) -> None:
+    """积压很多时只提交最近一段消息，请求体不会随积压量无限增长。"""
+
+    from src.maisaka.turn_scheduler import JEV_MAX_SUBMISSION_WINDOW
+
+    _set_trigger_mode(monkeypatch, "jev")
+    backlog = JEV_MAX_SUBMISSION_WINDOW + 30
+    scheduler, runtime = scheduler_factory(pending_count=backlog, trigger_threshold=3)
+    scheduler._jev_gate.should_reply = False
+
+    scheduler.schedule_message_turn()
+    await _drain_jev_task(scheduler)
+
+    assert scheduler._jev_gate.calls == [JEV_MAX_SUBMISSION_WINDOW]
+
+
+@pytest.mark.asyncio
+async def test_jev_batch_threshold_counts_only_new_messages(monkeypatch, scheduler_factory) -> None:
+    """定量 Jev 决策只按上次判断之后的新消息计数。"""
+
+    _set_trigger_mode(monkeypatch, "jev_batch")
+    scheduler, runtime = scheduler_factory(pending_count=3, trigger_threshold=2)
+    scheduler._jev_gate.should_reply = False
+
+    scheduler.schedule_message_turn()
+    await _drain_jev_task(scheduler)
+    assert len(scheduler._jev_gate.calls) == 1
+
+    # 积压仍有 3 条但都已评估过，第 4 条到达后只新增 1 条，未达到阈值 2，不应触发
+    runtime.message_cache.append(object())
+    scheduler.schedule_message_turn()
+    await _drain_jev_task(scheduler)
+    assert len(scheduler._jev_gate.calls) == 1
+
+    # 再补一条，新消息达到阈值 2，才再次判断
+    runtime.message_cache.append(object())
+    scheduler.schedule_message_turn()
+    await _drain_jev_task(scheduler)
+    assert len(scheduler._jev_gate.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_jev_backlog_limit_lets_planner_collect(monkeypatch, scheduler_factory) -> None:
+    """未消费消息达到上限时放行一次 Planner，避免消息缓存无界增长。"""
+
+    from src.maisaka.turn_scheduler import JEV_MAX_PENDING_BACKLOG
+
+    _set_trigger_mode(monkeypatch, "jev")
+    scheduler, runtime = scheduler_factory(pending_count=JEV_MAX_PENDING_BACKLOG, trigger_threshold=3)
+    scheduler._jev_gate.should_reply = False
+
+    scheduler.schedule_message_turn()
+    await _drain_jev_task(scheduler)
+
+    # 直接放行 Planner，不再调用 Jev
+    assert runtime.enqueued == [True]
+    assert scheduler._jev_gate.calls == []
 
 
 async def _drain_jev_task(scheduler: MessageTurnScheduler) -> None:

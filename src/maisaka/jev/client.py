@@ -130,7 +130,7 @@ def build_jev_client_from_config() -> JevClient:
         JevClient: 可直接使用的 Jev 客户端。
 
     Raises:
-        JevConfigError: 未配置 API Key 或基础地址。
+        JevConfigError: 未配置 API Key、基础地址，或基础地址不是 https。
     """
 
     jev_config = global_config.chat.jev
@@ -141,6 +141,9 @@ def build_jev_client_from_config() -> JevClient:
     base_url = jev_config.base_url.strip()
     if not base_url:
         raise JevConfigError("尚未配置 Jev API 地址，请在「聊天 - Jev 决策」中填写后再启用 Jev 决策回复触发模式")
+    # 请求会携带 Bearer API Key 与聊天内容，明文 http 会把凭据和对话暴露在链路上；自建网关同样需要 https。
+    if not base_url.lower().startswith("https://"):
+        raise JevConfigError(f"Jev API 地址必须使用 https，当前配置为: {base_url}")
 
     return JevClient(
         api_key=api_key,

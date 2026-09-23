@@ -153,3 +153,23 @@ def test_build_client_requires_base_url(monkeypatch) -> None:
 
     with pytest.raises(JevConfigError):
         build_jev_client_from_config()
+
+
+@pytest.mark.parametrize("insecure_url", ["http://api.typesafe.ai/v1", "http://127.0.0.1:8080/v1", "api.typesafe.ai"])
+def test_build_client_rejects_non_https_base_url(monkeypatch, insecure_url: str) -> None:
+    """请求会带上 Bearer API Key 与聊天内容，明文地址必须被拒绝。"""
+
+    monkeypatch.setattr("src.maisaka.jev.client.global_config.chat.jev.api_key", "test-key")
+    monkeypatch.setattr("src.maisaka.jev.client.global_config.chat.jev.base_url", insecure_url)
+
+    with pytest.raises(JevConfigError, match="https"):
+        build_jev_client_from_config()
+
+
+def test_build_client_accepts_https_base_url(monkeypatch) -> None:
+    monkeypatch.setattr("src.maisaka.jev.client.global_config.chat.jev.api_key", "test-key")
+    monkeypatch.setattr("src.maisaka.jev.client.global_config.chat.jev.base_url", "https://api.typesafe.ai/v1")
+
+    client = build_jev_client_from_config()
+
+    assert isinstance(client, JevClient)

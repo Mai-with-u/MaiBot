@@ -19,6 +19,12 @@ if TYPE_CHECKING:
 
 logger = get_logger("maisaka_turn_scheduler")
 
+# 单次提交给 Jev 的待处理消息上限：长期判定不回复时，请求体不会随积压量无限增长。
+JEV_MAX_SUBMISSION_WINDOW = 50
+
+# 未消费待处理消息的安全上限：达到后放行一次 Planner，让消息缓存能够被裁剪。
+JEV_MAX_PENDING_BACKLOG = 100
+
 
 class MessageTurnScheduler:
     """决定外部消息何时进入 Maisaka 内部循环。"""
@@ -30,6 +36,8 @@ class MessageTurnScheduler:
         self._jev_gate = JevTurnGate(runtime)
         self._jev_decision_in_flight: bool = False
         self._jev_decision_task: Optional[asyncio.Task[None]] = None
+        # 待处理队列中已经交给 Jev 判断过的条数；只有其后的新消息才会再次触发判断。
+        self._jev_evaluated_pending_count: int = 0
 
     def score_reply_necessity(
         self,
@@ -149,6 +157,10 @@ class MessageTurnScheduler:
 
         Jev 判断需要一次外部 HTTP 请求，而 ``schedule_message_turn`` 是同步入口，
         因此这里只负责起任务，真正的决策在 ``_run_jev_decision`` 中完成。
+
+        已经判断过的消息不会重复提交：``_jev_evaluated_pending_count`` 记录待处理
+        队列中已被评估的条数，只有其后的新消息才会再次触发判断，避免长期判定不回复
+        时反复把同一批消息送给 Jev。
         """
 
         runtime = self._runtime
@@ -160,11 +172,28 @@ class MessageTurnScheduler:
         if pending_count <= 0:
             return
 
+        # 待处理队列被 Planner 消费后会缩短，游标同步收敛，避免指向已消费的消息。
+        self._jev_evaluated_pending_count = min(self._jev_evaluated_pending_count, pending_count)
+        new_message_count = pending_count - self._jev_evaluated_pending_count
+        if new_message_count <= 0:
+            logger.debug(f"{runtime.log_prefix} {self._build_schedule_detail()}[没有新消息，跳过 Jev 判断]")
+            return
+
+        # 未消费消息堆积过多时放行一次 Planner：Planner 收集消息后消息缓存才能被裁剪，
+        # 否则 Jev 长期判定不回复会让 message_cache 无界增长。
+        if pending_count >= JEV_MAX_PENDING_BACKLOG:
+            logger.warning(
+                f"{runtime.log_prefix} {self._build_schedule_detail()}"
+                f"[未消费消息达到上限 {JEV_MAX_PENDING_BACKLOG}，放行一次 Planner]"
+            )
+            runtime._enqueue_message_turn()
+            return
+
         trigger_threshold = runtime._get_message_trigger_threshold()
-        if is_jev_batch_trigger_enabled() and pending_count < trigger_threshold:
-            # 定量 Jev 决策复用频率门的空窗补偿逻辑：消息不足时靠空窗时间折算触发，避免永远等不到第 N 条。
+        if is_jev_batch_trigger_enabled() and new_message_count < trigger_threshold:
+            # 定量 Jev 决策只统计上次判断之后的新消息，并复用频率门的空窗补偿逻辑。
             frequency_result = self._frequency_threshold_gate.evaluate(
-                pending_count=pending_count,
+                pending_count=new_message_count,
                 trigger_threshold=trigger_threshold,
             )
             logger.info(
@@ -188,23 +217,23 @@ class MessageTurnScheduler:
             pending_messages = runtime.message_cache[runtime._last_processed_index :]
             if not pending_messages:
                 return
-            result = await self._jev_gate.evaluate(
-                pending_messages=pending_messages,
-            )
-            if result.should_trigger:
+            # 只提交最近一段消息：积压很多时既保留近期上下文，又让请求体保持有界。
+            submission_window = pending_messages[-JEV_MAX_SUBMISSION_WINDOW:]
+            result = await self._jev_gate.evaluate(pending_messages=submission_window)
+            # await 期间可能有 @ 等强制触发入队、或 Planner 已经消费了这批消息，
+            # 这里必须重新确认状态，避免重复投递内部 turn 或使用过期判定。
+            if result.should_trigger and runtime._running and not runtime._message_turn_scheduled:
                 runtime._enqueue_message_turn()
         except Exception as exc:
             # Jev 是外部 HTTP 依赖，请求失败时不能让整个消息链路崩掉；这里记录完整错误并放弃本轮触发。
             logger.error(f"{runtime.log_prefix} Jev 决策失败，本轮不进入 Planner: {exc}", exc_info=True)
         finally:
             self._jev_decision_in_flight = False
-            # 判断期间又到达的新消息不会自动重跑，这里补一次调度，避免消息被静默丢弃。
-            if (
-                runtime._running
-                and not runtime._message_turn_scheduled
-                and runtime._get_pending_message_count() > evaluated_pending_count
-            ):
-                self._schedule_jev_decision()
+            self._jev_evaluated_pending_count = max(self._jev_evaluated_pending_count, evaluated_pending_count)
+            # 判断期间又到达的新消息不会自动重跑，这里回到完整调度入口补一次，
+            # 让 focus 准入、wait 早退和空闲退避等既有判断继续生效。
+            if runtime._running and not runtime._message_turn_scheduled:
+                self.schedule_message_turn()
 
     def _build_schedule_detail(self) -> str:
         """构造调度日志用的模式与消息数说明。

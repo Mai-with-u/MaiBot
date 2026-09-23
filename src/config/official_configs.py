@@ -1005,7 +1005,7 @@ class ChatConfig(ConfigBase):
             "label": {
                 "zh_CN": "Jev 决策",
                 "en_US": "Jev decision",
-                "ja_JP": "Jev 决策",
+                "ja_JP": "Jev 返信判断",
             },
         },
     )
