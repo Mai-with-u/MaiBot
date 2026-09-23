@@ -1,7 +1,8 @@
 """Jev 决策触发调度测试。"""
 
-import asyncio
 from types import SimpleNamespace
+import asyncio
+import time
 
 import pytest
 
@@ -201,7 +202,9 @@ def test_jev_trigger_mode_disables_frequency_control(monkeypatch) -> None:
     from src.maisaka.mode_policy import is_reply_frequency_control_enabled
     from src.maisaka.runtime import MaisakaHeartFlowChatting
 
-    monkeypatch.setattr("src.maisaka.runtime.is_reply_frequency_control_enabled", lambda: False)
+    # 直接改触发模式，让 runtime 与 mode_policy 读到同一份配置；
+    # 不能只 patch runtime 模块里的同名函数，否则断言读到的是另一个对象。
+    monkeypatch.setattr(global_config.chat.reply_timing, "reply_trigger_mode", "jev", raising=False)
 
     class _FrequencyProbe:
         _get_effective_reply_frequency = MaisakaHeartFlowChatting._get_effective_reply_frequency
@@ -318,6 +321,47 @@ async def test_jev_backlog_limit_lets_planner_collect(monkeypatch, scheduler_fac
     # 直接放行 Planner，不再调用 Jev
     assert runtime.enqueued == [True]
     assert scheduler._jev_gate.calls == []
+
+
+@pytest.mark.asyncio
+async def test_jev_batch_triggers_on_idle_compensation(monkeypatch, scheduler_factory) -> None:
+    """定量 Jev 决策在空窗补偿满足时必须继续判断，不能被提前返回吞掉。"""
+
+    _set_trigger_mode(monkeypatch, "jev_batch")
+    scheduler, runtime = scheduler_factory(pending_count=1, trigger_threshold=3)
+    # 平均间隔 1s 且已空窗 100s：空窗折算量封顶为 threshold-1，等效消息数刚好达到阈值
+    runtime._get_recent_average_external_message_interval = lambda: 1.0
+    runtime._last_external_message_received_at = time.time() - 100
+
+    scheduler.schedule_message_turn()
+    await _drain_jev_task(scheduler)
+
+    assert len(scheduler._jev_gate.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_jev_failure_keeps_messages_unevaluated_and_defers_retry(monkeypatch, scheduler_factory) -> None:
+    """评估失败时保留待处理消息，并安排延迟重试而不是立即重试。"""
+
+    from src.maisaka.turn_scheduler import JEV_FAILURE_RETRY_DELAY_SECONDS
+
+    _set_trigger_mode(monkeypatch, "jev")
+    scheduler, runtime = scheduler_factory(pending_count=1, trigger_threshold=3)
+
+    class _FailingGate:
+        async def evaluate(self, *, pending_messages):
+            raise RuntimeError("jev api unavailable")
+
+    scheduler._jev_gate = _FailingGate()
+
+    scheduler.schedule_message_turn()
+    await _drain_jev_task(scheduler)
+
+    # 失败不推进游标：这批消息仍算未评估，下次新消息到来时还会重试
+    assert scheduler._jev_evaluated_pending_count == 0
+    assert runtime.enqueued == []
+    # 安排的是延迟重试，而不是立即重跑
+    assert runtime.deferred == [JEV_FAILURE_RETRY_DELAY_SECONDS]
 
 
 async def _drain_jev_task(scheduler: MessageTurnScheduler) -> None:

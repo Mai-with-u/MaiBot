@@ -1,7 +1,7 @@
 """Maisaka 消息触发调度。"""
 
-import asyncio
 from typing import Optional, Sequence, TYPE_CHECKING
+import asyncio
 
 from src.chat.message_receive.message import SessionMessage
 from src.common.logger import get_logger
@@ -24,6 +24,9 @@ JEV_MAX_SUBMISSION_WINDOW = 50
 
 # 未消费待处理消息的安全上限：达到后放行一次 Planner，让消息缓存能够被裁剪。
 JEV_MAX_PENDING_BACKLOG = 100
+
+# Jev 请求失败后重新尝试判断的延迟秒数，避免不可用时形成紧密重试循环。
+JEV_FAILURE_RETRY_DELAY_SECONDS = 30.0
 
 
 class MessageTurnScheduler:
@@ -199,9 +202,11 @@ class MessageTurnScheduler:
             logger.info(
                 f"{runtime.log_prefix} 回复频率调度: {self._build_schedule_detail()}[{frequency_result.detail}]"
             )
-            if frequency_result.decision == "delay" and frequency_result.delay_seconds is not None:
-                runtime._defer_message_turn_check(frequency_result.delay_seconds)
-            return
+            if not frequency_result.should_trigger:
+                if frequency_result.decision == "delay" and frequency_result.delay_seconds is not None:
+                    runtime._defer_message_turn_check(frequency_result.delay_seconds)
+                return
+            # 空窗补偿判定可以触发时不能提前返回，要继续走下面的 Jev 判断。
 
         logger.info(f"{runtime.log_prefix} 回复频率调度: {self._build_schedule_detail()}[Jev 决策中]")
         self._jev_decision_in_flight = True
@@ -211,29 +216,36 @@ class MessageTurnScheduler:
         """执行一次 Jev 判断，并按结果决定是否进入 Planner。"""
 
         runtime = self._runtime
+        evaluation_succeeded = False
+        should_retry = False
         try:
-            if not runtime._running:
-                return
-            pending_messages = runtime.message_cache[runtime._last_processed_index :]
-            if not pending_messages:
-                return
             # 只提交最近一段消息：积压很多时既保留近期上下文，又让请求体保持有界。
-            submission_window = pending_messages[-JEV_MAX_SUBMISSION_WINDOW:]
-            result = await self._jev_gate.evaluate(pending_messages=submission_window)
-            # await 期间可能有 @ 等强制触发入队、或 Planner 已经消费了这批消息，
-            # 这里必须重新确认状态，避免重复投递内部 turn 或使用过期判定。
-            if result.should_trigger and runtime._running and not runtime._message_turn_scheduled:
-                runtime._enqueue_message_turn()
+            pending_messages = runtime.message_cache[runtime._last_processed_index :] if runtime._running else []
+            if pending_messages:
+                submission_window = pending_messages[-JEV_MAX_SUBMISSION_WINDOW:]
+                result = await self._jev_gate.evaluate(pending_messages=submission_window)
+                evaluation_succeeded = True
+                # await 期间可能有 @ 等强制触发入队、或 Planner 已经消费了这批消息，
+                # 这里必须重新确认状态，避免重复投递内部 turn 或使用过期判定。
+                if result.should_trigger and runtime._running and not runtime._message_turn_scheduled:
+                    runtime._enqueue_message_turn()
         except Exception as exc:
+            should_retry = True
             # Jev 是外部 HTTP 依赖，请求失败时不能让整个消息链路崩掉；这里记录完整错误并放弃本轮触发。
             logger.error(f"{runtime.log_prefix} Jev 决策失败，本轮不进入 Planner: {exc}", exc_info=True)
         finally:
             self._jev_decision_in_flight = False
-            self._jev_evaluated_pending_count = max(self._jev_evaluated_pending_count, evaluated_pending_count)
-            # 判断期间又到达的新消息不会自动重跑，这里回到完整调度入口补一次，
-            # 让 focus 准入、wait 早退和空闲退避等既有判断继续生效。
-            if runtime._running and not runtime._message_turn_scheduled:
-                self.schedule_message_turn()
+            if evaluation_succeeded:
+                # 只有真正完成判断的消息才算已评估，之后不再重复提交给 Jev。
+                self._jev_evaluated_pending_count = max(self._jev_evaluated_pending_count, evaluated_pending_count)
+                # 判断期间又到达的新消息不会自动重跑，这里回到完整调度入口补一次，
+                # 让 focus 准入、wait 早退和空闲退避等既有判断继续生效。
+                if runtime._running and not runtime._message_turn_scheduled:
+                    self.schedule_message_turn()
+            elif should_retry and runtime._running:
+                # 失败时不推进游标、保留待处理消息，但也不立即重试，改为延迟重试，
+                # 避免 Jev 不可用时形成紧密的重试循环。
+                runtime._defer_message_turn_check(JEV_FAILURE_RETRY_DELAY_SECONDS)
 
     def _build_schedule_detail(self) -> str:
         """构造调度日志用的模式与消息数说明。

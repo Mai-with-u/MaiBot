@@ -1,4 +1,6 @@
 import {
+  createContext,
+  useContext,
   useEffect,
   useRef,
   useState,
@@ -1859,6 +1861,7 @@ function TalkValueTimelineOverview({
   ) => void
   onRemoveItem: (index: number) => void
 }) {
+  const disabled = useContext(DisabledFieldContext)
   const timelineItems = buildTalkTimelineItems(items)
   const timelineGroups = groupTalkTimelineItems(timelineItems)
   const dragFrameRef = useRef<number | null>(null)
@@ -2143,7 +2146,13 @@ function TalkValueTimelineOverview({
                             min={0}
                             max={1}
                             step={0.01}
-                            onValueChange={(values) => onItemFieldChange(item.index, 'value', values[0])}
+                            disabled={disabled}
+                            onValueChange={(values) => {
+                              if (disabled) {
+                                return
+                              }
+                              onItemFieldChange(item.index, 'value', values[0])
+                            }}
                             data-dashboard-slider="config"
                             data-dashboard-slider-value-format="fixed-2"
                           />
@@ -2187,6 +2196,7 @@ function TalkValueGroupedRuleEditor({
   ) => void
   onRemoveItem: (index: number) => void
 }) {
+  const disabled = useContext(DisabledFieldContext)
   const timelineGroups = groupTalkTimelineItems(buildTalkTimelineItems(items))
   if (timelineGroups.length === 0) {
     return (
@@ -2325,7 +2335,13 @@ function TalkValueGroupedRuleEditor({
                         min={0}
                         max={1}
                         step={0.01}
-                        onValueChange={(values) => onItemFieldChange(item.index, 'value', values[0])}
+                        disabled={disabled}
+                        onValueChange={(values) => {
+                          if (disabled) {
+                            return
+                          }
+                          onItemFieldChange(item.index, 'value', values[0])
+                        }}
                         data-dashboard-slider="config"
                         data-dashboard-slider-value-format="fixed-2"
                       />
@@ -2798,6 +2814,14 @@ const REPLY_FREQUENCY_RULES_DISABLED_HINT = 'Jev 决策模式下动态发言频�
 const MESSAGE_TRIGGER_COUNT_DISABLED_HINT = '只有「定量Jev决策」使用消息触发数量，其他回复触发模式下不可用。'
 
 /**
+ * 置灰容器向下传递的禁用态。
+ *
+ * `fieldset disabled` 只停用原生表单控件，Radix 组件（例如 Slider 渲染的
+ * `span[role="slider"]`）不受影响，需要由内部组件自行读取并传入 `disabled`。
+ */
+const DisabledFieldContext = createContext(false)
+
+/**
  * 用置灰容器包裹字段渲染，并附加不可用说明。
  *
  * 保留字段可见是为了让用户看到当前配置值；容器用 `fieldset disabled` 停用原生
@@ -2806,9 +2830,11 @@ const MESSAGE_TRIGGER_COUNT_DISABLED_HINT = '只有「定量Jev决策」使用�
  */
 const renderDisabledField = (content: ReactNode, hint: string): ReactNode => (
   <div className="min-w-0" aria-disabled data-config-disabled="true">
-    <fieldset className="pointer-events-none opacity-40 grayscale select-none" disabled aria-disabled="true">
-      {content}
-    </fieldset>
+    <DisabledFieldContext.Provider value={true}>
+      <fieldset className="pointer-events-none opacity-40 grayscale select-none" disabled aria-disabled="true">
+        {content}
+      </fieldset>
+    </DisabledFieldContext.Provider>
     <p className="mt-1 flex items-start gap-1 text-xs text-muted-foreground">
       <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
       <span>{hint}</span>
