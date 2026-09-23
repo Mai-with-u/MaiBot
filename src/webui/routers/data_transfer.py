@@ -260,7 +260,12 @@ def _run_export_job(job_id: str, request: DataExportRequest) -> None:
             archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
             for file_path, archive_name, _ in files:
                 _raise_if_cancelled(job)
-                _write_archive_file(archive, file_path, archive_name, job)
+                try:
+                    _write_archive_file(archive, file_path, archive_name, job)
+                except OSError as exc:
+                    # 与扫描阶段保持一致：单个文件读取失败（如 Windows 持锁的
+                    # SQLite WAL 文件）只跳过该文件，不让整个导出任务失败。
+                    logger.warning(f"跳过无法读取的文件: {file_path}, error={exc}")
                 job.processed_files += 1
                 _update_progress(job)
 
