@@ -21,6 +21,7 @@ export {
   HiddenFieldHook,
   MCPRootItemsHook,
   MCPServersHook,
+  MessageTriggerCountHook,
   MultipleReplyStyleHook,
   RegexRulesHook,
   TalkValueDisabledByJevHook,

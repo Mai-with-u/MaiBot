@@ -165,13 +165,10 @@ async def test_frequency_mode_does_not_touch_jev_gate(monkeypatch, scheduler_fac
     assert runtime.enqueued == [True]
 
 
-def test_message_trigger_threshold_uses_integer_config_for_jev_mode(monkeypatch) -> None:
-    """Jev 决策与频率触发都应直接读取整数消息数量配置。"""
+def test_message_trigger_threshold_only_uses_integer_config_for_jev_batch(monkeypatch) -> None:
+    """只有定量 Jev 决策读取整数消息数量，其余模式仍走各自阈值。"""
 
     from src.maisaka.runtime import MaisakaHeartFlowChatting
-
-    monkeypatch.setattr("src.maisaka.runtime.is_jev_decision_enabled", lambda: True)
-    monkeypatch.setattr("src.maisaka.runtime.get_reply_trigger_mode", lambda: "jev")
 
     class _ThresholdProbe:
         _get_message_trigger_threshold = MaisakaHeartFlowChatting._get_message_trigger_threshold
@@ -180,7 +177,20 @@ def test_message_trigger_threshold_uses_integer_config_for_jev_mode(monkeypatch)
             return 1.0
 
     monkeypatch.setattr(global_config.chat.reply_timing, "message_trigger_count", 7, raising=False)
-    assert _ThresholdProbe()._get_message_trigger_threshold() == 7
+
+    def threshold_for(mode: str) -> int:
+        monkeypatch.setattr("src.maisaka.runtime.is_jev_batch_trigger_enabled", lambda: mode == "jev_batch")
+        monkeypatch.setattr("src.maisaka.runtime.is_jev_trigger_enabled", lambda: mode == "jev")
+        monkeypatch.setattr("src.maisaka.runtime.is_reply_necessity_trigger_enabled", lambda: mode == "reply_necessity")
+        return _ThresholdProbe()._get_message_trigger_threshold()
+
+    # 定量 Jev 决策直接使用配置条数
+    assert threshold_for("jev_batch") == 7
+    # 逐条 Jev 决策每条消息都判断，阈值固定为 1
+    assert threshold_for("jev") == 1
+    # 频率触发与必要性触发仍按回复频率折算（频率 1.0 时均为 1）
+    assert threshold_for("frequency") == 1
+    assert threshold_for("reply_necessity") == 1
 
 
 def test_jev_trigger_mode_disables_frequency_control(monkeypatch) -> None:

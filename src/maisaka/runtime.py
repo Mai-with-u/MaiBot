@@ -47,9 +47,10 @@ from src.maisaka.display.runtime_mixin import MaisakaRuntimeDisplayMixin
 from src.maisaka.display.stage_status_board import remove_stage_status, update_stage_status
 from src.maisaka.focus import MaisakaFocusRuntimeMixin, focus_mode_manager
 from src.maisaka.mode_policy import (
-    get_reply_trigger_mode,
-    is_jev_decision_enabled,
+    is_jev_batch_trigger_enabled,
+    is_jev_trigger_enabled,
     is_reply_frequency_control_enabled,
+    is_reply_necessity_trigger_enabled,
 )
 from src.maisaka.monitor.events import (
     emit_message_ingested,
@@ -1138,16 +1139,20 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
     def _get_message_trigger_threshold(self) -> int:
         """根据回复触发模式折算出触发一轮循环所需的消息数。
 
-        频率触发、Jev 决策与定量 Jev 决策直接使用配置的整数消息数量；
-        必要性触发仍按回复频率折算，让消息积压速度参与必要性压力分。
+        只有定量 Jev 决策使用配置的整数消息数量；频率触发与必要性触发仍按
+        回复频率折算，逐条 Jev 决策每条消息都会判断、不使用条数阈值。
         """
-        if is_jev_decision_enabled() or get_reply_trigger_mode() == "frequency":
+        if is_jev_batch_trigger_enabled():
             return max(1, int(global_config.chat.reply_timing.message_trigger_count))
+        if is_jev_trigger_enabled():
+            return 1
 
         effective_frequency = min(1.0, self._get_effective_reply_frequency())
         if effective_frequency <= 0:
             return 0
-        return max(1, int(ceil(1.0 / (effective_frequency * effective_frequency))))
+        if is_reply_necessity_trigger_enabled():
+            return max(1, int(ceil(1.0 / (effective_frequency * effective_frequency))))
+        return max(1, int(ceil(1.0 / effective_frequency)))
 
     def _get_pending_message_count(self) -> int:
         """统计当前尚未进入内部循环的新消息数量。"""

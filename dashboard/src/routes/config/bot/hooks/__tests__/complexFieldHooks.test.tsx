@@ -20,6 +20,7 @@ import {
   KeywordRulesHook,
   MCPRootItemsHook,
   MCPServersHook,
+  MessageTriggerCountHook,
   MultipleReplyStyleHook,
   RegexRulesHook,
   TalkValueDisabledByJevHook,
@@ -1717,7 +1718,7 @@ describe('complexFieldHooks', () => {
     })
 
     it.each(['jev', 'jev_batch'])('TalkValueDisabledByJevHook 在 %s 模式下置灰并提示', (mode) => {
-      render(
+      const { container } = render(
         <TalkValueDisabledByJevHook
           fieldPath="chat.reply_timing.talk_value"
           onChange={vi.fn()}
@@ -1732,10 +1733,43 @@ describe('complexFieldHooks', () => {
       // 字段仍然可见，便于用户看到当前配置值
       expect(screen.getByText('群聊频率滑块')).toBeInTheDocument()
       expect(screen.getByText(/Jev 决策模式下回复频率不可用，是否回复由 Jev 判断结果决定。/)).toBeInTheDocument()
+      // 字段被包进置灰容器，子控件不可点击
+      const disabledWrapper = container.querySelector('[data-config-disabled="true"]')
+      expect(disabledWrapper).not.toBeNull()
+      expect(disabledWrapper?.querySelector('.pointer-events-none')).not.toBeNull()
+    })
+
+    it('MessageTriggerCountHook 仅在定量 Jev 决策下可编辑', () => {
+      const renderField = (mode: string) =>
+        render(
+          <MessageTriggerCountHook
+            fieldPath="chat.reply_timing.message_trigger_count"
+            onChange={vi.fn()}
+            parentValues={{ reply_trigger_mode: mode }}
+            schema={fieldSchema}
+            value={3}
+          >
+            <span>消息触发数量输入框</span>
+          </MessageTriggerCountHook>,
+        )
+
+      const { container: batchContainer, unmount } = renderField('jev_batch')
+      expect(batchContainer.querySelector('[data-config-disabled="true"]')).toBeNull()
+      expect(screen.queryByText(/只有「定量Jev决策」使用消息触发数量/)).not.toBeInTheDocument()
+      unmount()
+
+      for (const mode of ['frequency', 'reply_necessity', 'jev']) {
+        const { container, unmount: unmountMode } = renderField(mode)
+        expect(container.querySelector('[data-config-disabled="true"]')).not.toBeNull()
+        expect(
+          screen.getByText(/只有「定量Jev决策」使用消息触发数量，其他回复触发模式下不可用。/),
+        ).toBeInTheDocument()
+        unmountMode()
+      }
     })
 
     it('ChatTalkValueRulesHook 在 Jev 模式下置灰规则列表并提示', () => {
-      render(
+      const { container } = render(
         <ChatTalkValueRulesHook
           fieldPath="chat.reply_timing.talk_value_rules"
           onChange={vi.fn()}
@@ -1747,7 +1781,10 @@ describe('complexFieldHooks', () => {
       )
 
       expect(screen.getByText(/Jev 决策模式下动态发言频率规则不可用，规则不会参与判断。/)).toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: '添加发言频率规则' })).not.toBeInTheDocument()
+      // 规则编辑器仍渲染，但被包进置灰容器
+      const disabledWrapper = container.querySelector('[data-config-disabled="true"]')
+      expect(disabledWrapper).not.toBeNull()
+      expect(disabledWrapper?.querySelector('.pointer-events-none')).not.toBeNull()
     })
 
     it('ChatPromptsHook 添加条目并按行编辑剩余 prompt 字段', async () => {

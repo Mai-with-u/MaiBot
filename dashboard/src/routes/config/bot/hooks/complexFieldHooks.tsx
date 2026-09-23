@@ -2777,9 +2777,15 @@ export const FocusWhitelistHook = createListItemEditorHook({
 
 export const HiddenFieldHook: FieldHookComponent = () => null
 
+/** 读取当前回复触发模式。 */
+const resolveReplyTriggerMode = (parentValues?: Record<string, unknown>): string => {
+  const triggerMode = parentValues?.reply_trigger_mode
+  return typeof triggerMode === 'string' ? triggerMode : ''
+}
+
 /** Jev 决策触发模式下不使用回复频率控制，这些字段保持可见但不可操作。 */
 const isJevReplyTriggerMode = (parentValues?: Record<string, unknown>): boolean => {
-  const triggerMode = parentValues?.reply_trigger_mode
+  const triggerMode = resolveReplyTriggerMode(parentValues)
   return triggerMode === 'jev' || triggerMode === 'jev_batch'
 }
 
@@ -2788,15 +2794,20 @@ const REPLY_FREQUENCY_DISABLED_HINT = 'Jev 决策模式下回复频率不可用�
 
 const REPLY_FREQUENCY_RULES_DISABLED_HINT = 'Jev 决策模式下动态发言频率规则不可用，规则不会参与判断。'
 
+/** 消息触发数量只服务于定量 Jev 决策，其余模式都不可用。 */
+const MESSAGE_TRIGGER_COUNT_DISABLED_HINT = '只有「定量Jev决策」使用消息触发数量，其他回复触发模式下不可用。'
+
 /**
  * 用置灰容器包裹字段渲染，并附加不可用说明。
  *
- * 保留字段可见是为了让用户看到当前配置值，同时通过禁用指针事件与降低透明度
- * 明确传达「这里改了也不生效」。
+ * 保留字段可见是为了让用户看到当前配置值；容器使用 `inert` 让整棵子树
+ * 既不可点击也不可聚焦，配合透明度与灰度明确传达「这里改了也不生效」。
  */
-const renderReplyFrequencyDisabled = (content: ReactNode, hint: string): ReactNode => (
-  <div className="min-w-0" aria-disabled>
-    <div className="pointer-events-none select-none opacity-60">{content}</div>
+const renderDisabledField = (content: ReactNode, hint: string): ReactNode => (
+  <div className="min-w-0" aria-disabled data-config-disabled="true">
+    <div className="pointer-events-none opacity-40 grayscale select-none" inert>
+      {content}
+    </div>
     <p className="mt-1 flex items-start gap-1 text-xs text-muted-foreground">
       <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
       <span>{hint}</span>
@@ -2812,8 +2823,18 @@ const renderReplyFrequencyDisabled = (content: ReactNode, hint: string): ReactNo
  */
 export const TalkValueDisabledByJevHook: FieldHookComponent = ({ children, parentValues }) =>
   isJevReplyTriggerMode(parentValues)
-    ? renderReplyFrequencyDisabled(children, REPLY_FREQUENCY_DISABLED_HINT)
+    ? renderDisabledField(children, REPLY_FREQUENCY_DISABLED_HINT)
     : <>{children}</>
+
+/**
+ * 消息触发数量的置灰 Hook。
+ *
+ * 该配置只被「定量Jev决策」使用，其余触发模式下置灰不可操作。
+ */
+export const MessageTriggerCountHook: FieldHookComponent = ({ children, parentValues }) =>
+  resolveReplyTriggerMode(parentValues) === 'jev_batch'
+    ? <>{children}</>
+    : renderDisabledField(children, MESSAGE_TRIGGER_COUNT_DISABLED_HINT)
 
 const RawChatTalkValueRulesHook = createListItemEditorHook({
   addLabel: '添加发言频率规则',
@@ -2859,7 +2880,7 @@ const RawChatTalkValueRulesHook = createListItemEditorHook({
 /** Jev 决策触发时规则列表一并置灰，其余情况仍使用完整规则编辑器。 */
 export const ChatTalkValueRulesHook: FieldHookComponent = (props) =>
   isJevReplyTriggerMode(props.parentValues) ? (
-    renderReplyFrequencyDisabled(<RawChatTalkValueRulesHook {...props} />, REPLY_FREQUENCY_RULES_DISABLED_HINT)
+    renderDisabledField(<RawChatTalkValueRulesHook {...props} />, REPLY_FREQUENCY_RULES_DISABLED_HINT)
   ) : (
     <RawChatTalkValueRulesHook {...props} />
   )

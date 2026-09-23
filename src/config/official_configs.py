@@ -631,7 +631,7 @@ class ChatReplyTimingConfig(ConfigBase):
             "x-input-width": "7.5rem",
         },
     )
-    """频率触发与定量 Jev 决策下，累计多少条新消息后进入 Planner。"""
+    """定量 Jev 决策下，累计多少条新消息后统一交给 Jev 判断是否回复。"""
 
     planner_interrupt_max_consecutive_count: int = Field(
         default=0,

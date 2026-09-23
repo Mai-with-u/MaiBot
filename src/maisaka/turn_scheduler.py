@@ -209,15 +209,17 @@ class MessageTurnScheduler:
     def _build_schedule_detail(self) -> str:
         """构造调度日志用的模式与消息数说明。
 
-        Jev 决策下回复频率控制已停用，不再输出频率数值，改为标注触发模式。
+        Jev 决策下回复频率控制已停用，不再输出频率数值；逐条 Jev 决策也不使用
+        条数阈值，因此只展示待处理消息数。
         """
 
         runtime = self._runtime
         pending_count = runtime._get_pending_message_count()
-        trigger_threshold = runtime._get_message_trigger_threshold()
-        mode_label = "Jev决策" if is_jev_trigger_enabled() else "定量Jev决策"
+        if is_jev_trigger_enabled():
+            return f"[Jev决策][逐条判断 待处理={pending_count}]"
+        if is_jev_batch_trigger_enabled():
+            return f"[定量Jev决策][{pending_count}/{runtime._get_message_trigger_threshold()} 消息]"
         return (
-            f"[{mode_label}][{pending_count}/{trigger_threshold} 消息]"
-            if is_jev_decision_enabled()
-            else f"[频率: {runtime._get_effective_reply_frequency():.3f}][{pending_count}/{trigger_threshold} 消息]"
+            f"[频率: {runtime._get_effective_reply_frequency():.3f}]"
+            f"[{pending_count}/{runtime._get_message_trigger_threshold()} 消息]"
         )
