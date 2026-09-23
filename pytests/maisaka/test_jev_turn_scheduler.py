@@ -183,6 +183,47 @@ def test_message_trigger_threshold_uses_integer_config_for_jev_mode(monkeypatch)
     assert _ThresholdProbe()._get_message_trigger_threshold() == 7
 
 
+def test_jev_trigger_mode_disables_frequency_control(monkeypatch) -> None:
+    """选择 Jev 决策后，频率滑块与分聊天流规则都不再生效。"""
+
+    from src.maisaka.mode_policy import is_reply_frequency_control_enabled
+    from src.maisaka.runtime import MaisakaHeartFlowChatting
+
+    monkeypatch.setattr("src.maisaka.runtime.is_reply_frequency_control_enabled", lambda: False)
+
+    class _FrequencyProbe:
+        _get_effective_reply_frequency = MaisakaHeartFlowChatting._get_effective_reply_frequency
+
+        def _get_base_reply_frequency(self) -> float:
+            return 0.0
+
+        def _is_focus_mode_active_for_current_chat(self) -> bool:
+            return False
+
+    def resolve_group_talk_value(*args, **kwargs) -> float:
+        raise AssertionError("Jev 决策下不应再读取分聊天流频率规则")
+
+    monkeypatch.setattr("src.maisaka.runtime.ChatConfigUtils.get_talk_value", resolve_group_talk_value)
+
+    # 频率为 0（原本的静默接收）在 Jev 决策下也必须返回满频率，让 Jev 全权决定
+    assert _FrequencyProbe()._get_effective_reply_frequency() == 1.0
+    assert is_reply_frequency_control_enabled() is False
+
+
+def test_frequency_trigger_mode_keeps_frequency_control(monkeypatch) -> None:
+    """频率触发与必要性触发仍由频率控制决定。"""
+
+    from src.maisaka.mode_policy import is_reply_frequency_control_enabled
+
+    original_mode = global_config.chat.reply_timing.reply_trigger_mode
+    try:
+        for mode, expected in (("frequency", True), ("reply_necessity", True), ("jev", False), ("jev_batch", False)):
+            monkeypatch.setattr(global_config.chat.reply_timing, "reply_trigger_mode", mode, raising=False)
+            assert is_reply_frequency_control_enabled() is expected, mode
+    finally:
+        monkeypatch.setattr(global_config.chat.reply_timing, "reply_trigger_mode", original_mode, raising=False)
+
+
 async def _drain_jev_task(scheduler: MessageTurnScheduler) -> None:
     """等待 Jev 决策任务结束；未起任务时让出一次事件循环。"""
 

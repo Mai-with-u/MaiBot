@@ -2645,47 +2645,6 @@ export const MultipleReplyStyleHook = createStringListHook({
   placeholder: '输入一种备用表达风格',
 })
 
-export const ChatTalkValueRulesHook = createListItemEditorHook({
-  addLabel: '添加发言频率规则',
-  addButtonPlacement: 'none',
-  collapseWhen: ({ parentValues }) => parentValues?.enable_talk_value_rules === false,
-  collapsedText: '动态发言频率规则未启用，规则列表已折叠。展开后仍可查看或编辑已有规则。',
-  expandLabel: '展开规则',
-  collapseLabel: '折叠规则',
-  helperText: '可按平台/聊天流/时段分别配置发言频率。平台和聊天流都空表示全局；只填平台或聊天流表示对应默认值；* 表示通配覆盖。时间留空表示兜底，* 表示强制全天。',
-  emptyText: '尚未配置任何规则，将使用全局默认频率。',
-  collapseButtonDisplay: 'icon',
-  fieldRows: [
-    ['platform', 'item_id', 'rule_type'],
-    ['time', 'value'],
-  ],
-  normalizeItems: normalizeTalkRuleItems,
-  renderItems: ({
-    emptyText,
-    items,
-    onAddItem,
-    onItemFieldChange,
-    onItemsChange,
-    onRemoveItem,
-  }) => (
-    <TalkValueRuleEditor
-      emptyText={emptyText}
-      items={items}
-      onAddItem={onAddItem}
-      onItemFieldChange={onItemFieldChange}
-      onItemsChange={onItemsChange}
-      onRemoveItem={onRemoveItem}
-    />
-  ),
-  itemTitle: (item) => {
-    const rawTime = typeof item.time === 'string' ? item.time.trim() : ''
-    const time = rawTime === '' ? '兜底' : rawTime === '*' ? '强制全天' : rawTime
-    const value =
-      typeof item.value === 'number' ? item.value.toFixed(2) : '—'
-    return `${platformLabel(item)} · ${ruleTypeLabel(item.rule_type)} · ${time} · 频率 ${value}`
-  },
-})
-
 export const ChatPromptsHook = createListItemEditorHook({
   addLabel: '添加额外 Prompt',
   helperText: '为指定平台和聊天流添加额外提示。platform、item_id 和 prompt 同时留空时表示空条目；填写任意一项后这三项都需要填写。',
@@ -2808,7 +2767,65 @@ export const FocusWhitelistHook = createListItemEditorHook({
   },
 })
 
-export const HiddenFieldHook: FieldHookComponent = () => null
+/** Jev 决策触发模式下不使用回复频率控制，这些字段保持隐藏。 */
+const isJevReplyTriggerMode = (parentValues?: Record<string, unknown>): boolean => {
+  const triggerMode = parentValues?.reply_trigger_mode
+  return triggerMode === 'jev' || triggerMode === 'jev_batch'
+}
+
+/**
+ * 回复频率字段的条件隐藏 Hook。
+ *
+ * 选择「Jev决策」或「定量Jev决策」时，群聊/私聊频率与动态发言频率规则
+ * 整体停用，不渲染这些字段，避免误以为它们仍在生效。
+ */
+export const TalkValueDisabledByJevHook: FieldHookComponent = ({ children, parentValues }) =>
+  isJevReplyTriggerMode(parentValues) ? null : <>{children}</>
+
+const RawChatTalkValueRulesHook = createListItemEditorHook({
+  addLabel: '添加发言频率规则',
+  addButtonPlacement: 'none',
+  collapseWhen: ({ parentValues }) => parentValues?.enable_talk_value_rules === false,
+  collapsedText: '动态发言频率规则未启用，规则列表已折叠。展开后仍可查看或编辑已有规则。',
+  expandLabel: '展开规则',
+  collapseLabel: '折叠规则',
+  helperText: '可按平台/聊天流/时段分别配置发言频率。平台和聊天流都空表示全局；只填平台或聊天流表示对应默认值；* 表示通配覆盖。时间留空表示兜底，* 表示强制全天。',
+  emptyText: '尚未配置任何规则，将使用全局默认频率。',
+  collapseButtonDisplay: 'icon',
+  fieldRows: [
+    ['platform', 'item_id', 'rule_type'],
+    ['time', 'value'],
+  ],
+  normalizeItems: normalizeTalkRuleItems,
+  renderItems: ({
+    emptyText,
+    items,
+    onAddItem,
+    onItemFieldChange,
+    onItemsChange,
+    onRemoveItem,
+  }) => (
+    <TalkValueRuleEditor
+      emptyText={emptyText}
+      items={items}
+      onAddItem={onAddItem}
+      onItemFieldChange={onItemFieldChange}
+      onItemsChange={onItemsChange}
+      onRemoveItem={onRemoveItem}
+    />
+  ),
+  itemTitle: (item) => {
+    const rawTime = typeof item.time === 'string' ? item.time.trim() : ''
+    const time = rawTime === '' ? '兜底' : rawTime === '*' ? '强制全天' : rawTime
+    const value =
+      typeof item.value === 'number' ? item.value.toFixed(2) : '—'
+    return `${platformLabel(item)} · ${ruleTypeLabel(item.rule_type)} · ${time} · 频率 ${value}`
+  },
+})
+
+/** Jev 决策触发时连规则列表一起隐藏，其余情况仍使用完整规则编辑器。 */
+export const ChatTalkValueRulesHook: FieldHookComponent = (props) =>
+  isJevReplyTriggerMode(props.parentValues) ? null : <RawChatTalkValueRulesHook {...props} />
 
 export const BotPlatformAccountsHook: FieldHookComponent = ({
   onChange,

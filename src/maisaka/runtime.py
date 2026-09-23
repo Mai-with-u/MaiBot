@@ -49,6 +49,7 @@ from src.maisaka.focus import MaisakaFocusRuntimeMixin, focus_mode_manager
 from src.maisaka.mode_policy import (
     get_reply_trigger_mode,
     is_jev_decision_enabled,
+    is_reply_frequency_control_enabled,
 )
 from src.maisaka.monitor.events import (
     emit_message_ingested,
@@ -1000,7 +1001,14 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         )
 
     def _get_effective_reply_frequency(self) -> float:
-        """返回当前会话生效的回复频率。"""
+        """返回当前会话生效的回复频率。
+
+        启用 Jev 决策触发时回复频率控制整体停用，直接返回满频率：
+        此时「群聊频率」「私聊频率」滑块与分聊天流频率规则都不再参与判断，
+        频率为 0 的静默接收也不会生效，是否发言只取决于 Jev 的判断结果。
+        """
+        if not is_reply_frequency_control_enabled():
+            return 1.0
         if self._is_focus_mode_active_for_current_chat():
             return 1.0
 

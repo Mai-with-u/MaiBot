@@ -23,6 +23,7 @@ export {
   MCPServersHook,
   MultipleReplyStyleHook,
   RegexRulesHook,
+  TalkValueDisabledByJevHook,
 } from './complexFieldHooks'
 export { AMemorixRetrievalChatsHook } from './AMemorixRetrievalChatsHook'
 export { AMemorixRetrievalFilterGroupHook } from './AMemorixRetrievalFilterGroupHook'

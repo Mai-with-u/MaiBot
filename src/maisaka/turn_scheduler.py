@@ -9,6 +9,7 @@ from src.maisaka.focus import focus_mode_manager
 from src.maisaka.mode_policy import (
     is_jev_batch_trigger_enabled,
     is_jev_decision_enabled,
+    is_jev_trigger_enabled,
     is_reply_necessity_trigger_enabled,
 )
 from src.maisaka.turn_gates import FrequencyThresholdTurnGate, JevTurnGate, ReplyNecessityTurnGate
@@ -115,7 +116,6 @@ class MessageTurnScheduler:
             return
 
         trigger_threshold = runtime._get_message_trigger_threshold()
-        schedule_detail = f"[频率: {formatted_frequency}][{pending_count}/{trigger_threshold} 消息]"
         if is_reply_necessity_trigger_enabled():
             if self.should_trigger_by_reply_necessity(
                 pending_messages=runtime.message_cache[runtime._last_processed_index :],
@@ -130,6 +130,7 @@ class MessageTurnScheduler:
             self._schedule_jev_decision()
             return
 
+        schedule_detail = f"[频率: {formatted_frequency}][{pending_count}/{trigger_threshold} 消息]"
         logger.info(f"{runtime.log_prefix} 回复频率调度: {schedule_detail}")
         frequency_result = self._frequency_threshold_gate.evaluate(
             pending_count=pending_count,
@@ -206,10 +207,17 @@ class MessageTurnScheduler:
                 self._schedule_jev_decision()
 
     def _build_schedule_detail(self) -> str:
-        """构造调度日志用的频率与消息数说明。"""
+        """构造调度日志用的模式与消息数说明。
+
+        Jev 决策下回复频率控制已停用，不再输出频率数值，改为标注触发模式。
+        """
 
         runtime = self._runtime
-        effective_frequency = runtime._get_effective_reply_frequency()
         pending_count = runtime._get_pending_message_count()
         trigger_threshold = runtime._get_message_trigger_threshold()
-        return f"[频率: {effective_frequency:.3f}][{pending_count}/{trigger_threshold} 消息]"
+        mode_label = "Jev决策" if is_jev_trigger_enabled() else "定量Jev决策"
+        return (
+            f"[{mode_label}][{pending_count}/{trigger_threshold} 消息]"
+            if is_jev_decision_enabled()
+            else f"[频率: {runtime._get_effective_reply_frequency():.3f}][{pending_count}/{trigger_threshold} 消息]"
+        )
