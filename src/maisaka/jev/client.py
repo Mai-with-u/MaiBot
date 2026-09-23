@@ -164,7 +164,9 @@ def _parse_evaluation_payload(response_payload: Any) -> JevEvaluationResult:
     usage_dict = usage if isinstance(usage, dict) else {}
     return JevEvaluationResult(
         model=str(response_payload.get("model") or ""),
-        answers={str(question_id): _parse_answer(question_id, raw_answer) for question_id, raw_answer in raw_answers.items()},
+        answers={
+            str(question_id): _parse_answer(question_id, raw_answer) for question_id, raw_answer in raw_answers.items()
+        },
         input_tokens=_read_int_token(usage_dict.get("input_tokens")),
         output_tokens=_read_int_token(usage_dict.get("output_tokens")),
     )

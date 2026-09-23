@@ -82,7 +82,9 @@ def _set_trigger_mode(monkeypatch, mode: str) -> None:
         lambda: mode in ("jev", "jev_batch"),
     )
     monkeypatch.setattr("src.maisaka.turn_scheduler.is_jev_batch_trigger_enabled", lambda: mode == "jev_batch")
-    monkeypatch.setattr("src.maisaka.turn_scheduler.is_reply_necessity_trigger_enabled", lambda: mode == "reply_necessity")
+    monkeypatch.setattr(
+        "src.maisaka.turn_scheduler.is_reply_necessity_trigger_enabled", lambda: mode == "reply_necessity"
+    )
 
 
 @pytest.mark.asyncio
