@@ -104,6 +104,45 @@ def test_build_reply_questions_localizes_chat_type() -> None:
     assert "private chat" in questions["reply_action"]["instructions"]
 
 
+def test_build_reply_questions_injects_persona_and_behavior_style() -> None:
+    """Jev 判断复用麦麦的人格设定与行为风格，换人格时无需另写提示词。"""
+
+    from src.config.config import global_config
+
+    personality = global_config.personality.personality.strip()
+    behavior_style = global_config.personality.behavior_style.strip()
+
+    instructions = build_reply_questions(is_group_chat=True)["reply_action"]["instructions"]
+
+    assert personality in instructions
+    assert behavior_style in instructions
+    # 不允许残留未渲染的占位符
+    assert "{" not in instructions and "}" not in instructions
+
+
+def test_jev_prompt_placeholders_match_across_locales() -> None:
+    """三语提示词必须使用同一组占位符，避免某个语言渲染失败。"""
+
+    from src.common.prompt_i18n import PROMPTS_ROOT, extract_prompt_placeholders
+
+    expected = {"bot_name", "chat_type", "personality", "behavior_style"}
+    for locale in ("zh-CN", "en-US", "ja-JP"):
+        prompt_path = PROMPTS_ROOT / locale / "jev_reply_decision.prompt"
+        placeholders = extract_prompt_placeholders(prompt_path.read_text(encoding="utf-8"))
+        assert placeholders == expected, locale
+
+
+def test_jev_prompt_leans_toward_replying() -> None:
+    """判断提示词应整体偏向参与，并让人设优先于默认倾向。"""
+
+    instructions = build_reply_questions(is_group_chat=True)["reply_action"]["instructions"]
+
+    assert "偏向积极参与" in instructions
+    assert "拿不准" in instructions
+    # 人设与行动准则是首要依据
+    assert "先按上面的人设和行动准则" in instructions
+
+
 def test_parse_reply_answer_marks_reply_as_trigger() -> None:
     decision = parse_reply_answer(_build_result(REPLY_ACTION, probability=0.83), pending_count=1)
 

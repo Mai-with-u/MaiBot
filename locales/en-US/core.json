@@ -7,6 +7,6 @@
   },
   "jev.chat_type.group": "group chat",
   "jev.chat_type.private": "private chat",
-  "jev.criteria.reply": "MaiBot should speak up: the message is directed at MaiBot, asks a question or @-mentions it, the topic is waiting for MaiBot to chime in, or MaiBot has a natural and worthwhile brief response.",
-  "jev.criteria.ignore": "MaiBot should stay quiet: conversation between other people, unrelated small talk, system notices, flooding or pure emoji, already answered questions, and abuse, advertising or sensitive requests."
+  "jev.criteria.reply": "Should speak up: can say something natural, brief and human that follows the current topic; was asked a question, @-mentioned, called by name, or asked for help; or can join in naturally with a reaction, a joke, or useful information.",
+  "jev.criteria.ignore": "Should stay quiet: genuinely nothing to add, cannot join the thread, or speaking would make things awkward; an already answered question, flooding, bare emoji or system notices; and abuse, personal attacks, harassment, advertising or sensitive requests."
 }

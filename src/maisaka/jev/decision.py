@@ -122,6 +122,9 @@ def build_reply_state(
 def build_reply_questions(*, is_group_chat: bool) -> dict[str, dict[str, Any]]:
     """构造 Jev 回复决策问题表。
 
+    判断提示词复用麦麦自身的「人格设定」与「行为风格」，让 Jev 按当前人设
+    决定是否发言，因此换人格时不需要另外维护一份 Jev 专用提示词。
+
     Args:
         is_group_chat: 当前会话是否为群聊，用于渲染对应场景的判断提示词。
 
@@ -130,10 +133,13 @@ def build_reply_questions(*, is_group_chat: bool) -> dict[str, dict[str, Any]]:
     """
 
     bot_name = global_config.bot.nickname.strip()
+    personality_config = global_config.personality
     instructions = load_prompt(
         "jev_reply_decision",
         bot_name=bot_name,
         chat_type=t("jev.chat_type.group") if is_group_chat else t("jev.chat_type.private"),
+        personality=personality_config.personality.strip(),
+        behavior_style=personality_config.behavior_style.strip(),
     )
     return {
         REPLY_QUESTION_ID: {
