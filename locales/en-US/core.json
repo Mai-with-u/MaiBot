@@ -4,5 +4,9 @@
   "core.tasks_cancelled": {
     "one": "Cancelled {count} task",
     "other": "Cancelled {count} tasks"
-  }
+  },
+  "jev.chat_type.group": "group chat",
+  "jev.chat_type.private": "private chat",
+  "jev.criteria.reply": "MaiBot should speak up: the message is directed at MaiBot, asks a question or @-mentions it, the topic is waiting for MaiBot to chime in, or MaiBot has a natural and worthwhile brief response.",
+  "jev.criteria.ignore": "MaiBot should stay quiet: conversation between other people, unrelated small talk, system notices, flooding or pure emoji, already answered questions, and abuse, advertising or sensitive requests."
 }

@@ -4,5 +4,9 @@
   "core.tasks_cancelled": {
     "one": "已取消 {count} 个任务",
     "other": "已取消 {count} 个任务"
-  }
+  },
+  "jev.chat_type.group": "群聊",
+  "jev.chat_type.private": "私聊",
+  "jev.criteria.reply": "麦麦应该发言回复：消息与麦麦直接相关、被提问或被 @、话题在等麦麦接话，或麦麦有自然且有价值的简短回应。",
+  "jev.criteria.ignore": "麦麦不应该发言：别人之间的对话、与麦麦无关的闲聊、系统通知、刷屏或纯表情、已回答过的问题，以及辱骂、广告和敏感请求。"
 }

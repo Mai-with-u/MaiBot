@@ -22,6 +22,24 @@ def is_reply_necessity_trigger_enabled() -> bool:
     return get_reply_trigger_mode() == "reply_necessity"
 
 
+def is_jev_trigger_enabled() -> bool:
+    """判断是否启用逐条 Jev 决策触发门。"""
+
+    return get_reply_trigger_mode() == "jev"
+
+
+def is_jev_batch_trigger_enabled() -> bool:
+    """判断是否启用到量 Jev 决策触发门。"""
+
+    return get_reply_trigger_mode() == "jev_batch"
+
+
+def is_jev_decision_enabled() -> bool:
+    """判断当前是否使用 Jev 决策决定是否进入 Planner。"""
+
+    return get_reply_trigger_mode() in ("jev", "jev_batch")
+
+
 def is_idle_cycle_reason(cycle_end_reason: str) -> bool:
     """判断整轮结束原因是否属于空闲退避。"""
 

@@ -1,12 +1,17 @@
 """Maisaka 消息触发调度。"""
 
-from typing import Sequence, TYPE_CHECKING
+import asyncio
+from typing import Optional, Sequence, TYPE_CHECKING
 
 from src.chat.message_receive.message import SessionMessage
 from src.common.logger import get_logger
 from src.maisaka.focus import focus_mode_manager
-from src.maisaka.mode_policy import is_reply_necessity_trigger_enabled
-from src.maisaka.turn_gates import FrequencyThresholdTurnGate, ReplyNecessityTurnGate
+from src.maisaka.mode_policy import (
+    is_jev_batch_trigger_enabled,
+    is_jev_decision_enabled,
+    is_reply_necessity_trigger_enabled,
+)
+from src.maisaka.turn_gates import FrequencyThresholdTurnGate, JevTurnGate, ReplyNecessityTurnGate
 
 if TYPE_CHECKING:
     from src.maisaka.runtime import MaisakaHeartFlowChatting
@@ -21,6 +26,9 @@ class MessageTurnScheduler:
         self._runtime = runtime
         self._reply_necessity_gate = ReplyNecessityTurnGate(runtime)
         self._frequency_threshold_gate = FrequencyThresholdTurnGate(runtime)
+        self._jev_gate = JevTurnGate(runtime)
+        self._jev_decision_in_flight: bool = False
+        self._jev_decision_task: Optional[asyncio.Task[None]] = None
 
     def score_reply_necessity(
         self,
@@ -118,6 +126,10 @@ class MessageTurnScheduler:
                 runtime._enqueue_message_turn()
             return
 
+        if is_jev_decision_enabled():
+            self._schedule_jev_decision()
+            return
+
         logger.info(f"{runtime.log_prefix} 回复频率调度: {schedule_detail}")
         frequency_result = self._frequency_threshold_gate.evaluate(
             pending_count=pending_count,
@@ -130,3 +142,74 @@ class MessageTurnScheduler:
 
         if frequency_result.decision == "delay" and frequency_result.delay_seconds is not None:
             runtime._defer_message_turn_check(frequency_result.delay_seconds)
+
+    def _schedule_jev_decision(self) -> None:
+        """为 Jev 决策模式安排一次异步判断。
+
+        Jev 判断需要一次外部 HTTP 请求，而 ``schedule_message_turn`` 是同步入口，
+        因此这里只负责起任务，真正的决策在 ``_run_jev_decision`` 中完成。
+        """
+
+        runtime = self._runtime
+        if self._jev_decision_in_flight:
+            logger.debug(f"{runtime.log_prefix} {self._build_schedule_detail()}[Jev 决策进行中，跳过本次调度]")
+            return
+
+        pending_count = runtime._get_pending_message_count()
+        if pending_count <= 0:
+            return
+
+        trigger_threshold = runtime._get_message_trigger_threshold()
+        if is_jev_batch_trigger_enabled() and pending_count < trigger_threshold:
+            # 定量 Jev 决策复用频率门的空窗补偿逻辑：消息不足时靠空窗时间折算触发，避免永远等不到第 N 条。
+            frequency_result = self._frequency_threshold_gate.evaluate(
+                pending_count=pending_count,
+                trigger_threshold=trigger_threshold,
+            )
+            logger.info(
+                f"{runtime.log_prefix} 回复频率调度: {self._build_schedule_detail()}[{frequency_result.detail}]"
+            )
+            if frequency_result.decision == "delay" and frequency_result.delay_seconds is not None:
+                runtime._defer_message_turn_check(frequency_result.delay_seconds)
+            return
+
+        logger.info(f"{runtime.log_prefix} 回复频率调度: {self._build_schedule_detail()}[Jev 决策中]")
+        self._jev_decision_in_flight = True
+        self._jev_decision_task = asyncio.create_task(self._run_jev_decision(pending_count))
+
+    async def _run_jev_decision(self, evaluated_pending_count: int) -> None:
+        """执行一次 Jev 判断，并按结果决定是否进入 Planner。"""
+
+        runtime = self._runtime
+        try:
+            if not runtime._running:
+                return
+            pending_messages = runtime.message_cache[runtime._last_processed_index :]
+            if not pending_messages:
+                return
+            result = await self._jev_gate.evaluate(
+                pending_messages=pending_messages,
+            )
+            if result.should_trigger:
+                runtime._enqueue_message_turn()
+        except Exception as exc:
+            # Jev 是外部 HTTP 依赖，请求失败时不能让整个消息链路崩掉；这里记录完整错误并放弃本轮触发。
+            logger.error(f"{runtime.log_prefix} Jev 决策失败，本轮不进入 Planner: {exc}", exc_info=True)
+        finally:
+            self._jev_decision_in_flight = False
+            # 判断期间又到达的新消息不会自动重跑，这里补一次调度，避免消息被静默丢弃。
+            if (
+                runtime._running
+                and not runtime._message_turn_scheduled
+                and runtime._get_pending_message_count() > evaluated_pending_count
+            ):
+                self._schedule_jev_decision()
+
+    def _build_schedule_detail(self) -> str:
+        """构造调度日志用的频率与消息数说明。"""
+
+        runtime = self._runtime
+        effective_frequency = runtime._get_effective_reply_frequency()
+        pending_count = runtime._get_pending_message_count()
+        trigger_threshold = runtime._get_message_trigger_threshold()
+        return f"[频率: {effective_frequency:.3f}][{pending_count}/{trigger_threshold} 消息]"

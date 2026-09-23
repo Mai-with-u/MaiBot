@@ -152,3 +152,8 @@ description = "用于在上下文裁切时，将被移出的聊天记录概括�
 display_name = "WebUI AI 搜索"
 advanced = true
 description = "用于根据自然语言意图从 WebUI 提供的真实页面与配置候选中选择搜索结果。"
+
+[jev_reply_decision]
+display_name = "Jev 回复决策"
+advanced = false
+description = "Jev 决策回复触发模式下，用于判断麦麦当前是否应该在聊天中发言的模板。"

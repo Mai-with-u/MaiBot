@@ -157,3 +157,8 @@ description = "Advanced memory retrieval prompt header used by the ReAct-style m
 display_name = "WebUI AI Search"
 advanced = true
 description = "Selects relevant results from real WebUI page and configuration candidates based on natural-language intent."
+
+[jev_reply_decision]
+display_name = "Jev Reply Decision"
+advanced = false
+description = "Template used by the Jev decision reply trigger mode to judge whether MaiBot should speak up in the current chat."
