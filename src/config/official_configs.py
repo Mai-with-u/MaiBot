@@ -23,11 +23,15 @@ OVERSIZED_IMAGE_HANDLE_METHOD_DESCRIPTIONS = {
 REPLY_TRIGGER_MODE_OPTION_DESCRIPTIONS = {
     "frequency": "按照新消息数量决定思考",
     "reply_necessity": "综合新消息数量、内容、过往发言决定思考",
+    "jev": "每条新消息都交给 Jev 模型判断是否需要回复",
+    "jev_batch": "累计到设定的新消息数量后，统一交给 Jev 模型判断是否回复",
 }
 
 REPLY_TRIGGER_MODE_OPTION_LABELS = {
     "frequency": "频率触发",
     "reply_necessity": "必要性触发",
+    "jev": "Jev决策",
+    "jev_batch": "定量Jev决策",
 }
 
 EMOTION_TRAIT_OPTION_LABELS = {
@@ -596,7 +600,7 @@ class ChatReplyTimingConfig(ConfigBase):
     )
     """开启后，被 @ 时会尽量回复。"""
 
-    reply_trigger_mode: Literal["frequency", "reply_necessity"] = Field(
+    reply_trigger_mode: Literal["frequency", "reply_necessity", "jev", "jev_batch"] = Field(
         default="frequency",
         json_schema_extra={
             "label": {
@@ -612,6 +616,22 @@ class ChatReplyTimingConfig(ConfigBase):
         },
     )
     """控制新消息何时进入 Planner。"""
+
+    message_trigger_count: int = Field(
+        default=3,
+        ge=1,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "消息触发数量",
+                "en_US": "Message trigger count",
+                "ja_JP": "メッセージトリガー数",
+            },
+            "x-widget": "input",
+            "x-layout": "inline-right",
+            "x-input-width": "7.5rem",
+        },
+    )
+    """定量 Jev 决策下，累计多少条新消息后统一交给 Jev 判断是否回复。"""
 
     planner_interrupt_max_consecutive_count: int = Field(
         default=0,
@@ -809,6 +829,85 @@ class ChatReplyStyleConfig(ConfigBase):
     """给指定群聊或私聊额外补充聊天要求；有特殊群规或语气要求时再加。"""
 
 
+class JevConfig(ConfigBase):
+    """Jev 决策模型配置类"""
+
+    __ui_label__ = "Jev 决策"
+    __ui_icon__ = "brain"
+
+    api_key: str = Field(
+        default="",
+        json_schema_extra={
+            "label": {
+                "zh_CN": "Jev API Key",
+                "en_US": "Jev API Key",
+                "ja_JP": "Jev APIキー",
+            },
+            "x-widget": "password",
+        },
+    )
+    """TypeSafe Jev 模型的 API Key，在 https://console.typesafe.ai/keys 获取。"""
+
+    base_url: str = Field(
+        default="https://api.typesafe.ai/v1",
+        json_schema_extra={
+            "label": {
+                "zh_CN": "API 地址",
+                "en_US": "API base URL",
+                "ja_JP": "API アドレス",
+            },
+            "x-widget": "input",
+        },
+    )
+    """Jev API 基础地址；使用自建网关时可以改写。"""
+
+    model: str = Field(
+        default="jev-latest",
+        json_schema_extra={
+            "label": {
+                "zh_CN": "模型名称",
+                "en_US": "Model",
+                "ja_JP": "モデル名",
+            },
+            "x-widget": "input",
+        },
+    )
+    """Jev 模型名称，默认为 jev-latest。"""
+
+    timeout_seconds: float = Field(
+        default=20,
+        ge=1,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "超时时间（秒）",
+                "en_US": "Timeout (seconds)",
+                "ja_JP": "タイムアウト（秒）",
+            },
+            "x-widget": "input",
+            "x-layout": "inline-right",
+            "x-input-width": "7.5rem",
+        },
+    )
+    """单次调用 Jev 的超时时间；超时视为本次不回复。"""
+
+    context_message_count: int = Field(
+        default=10,
+        ge=0,
+        le=50,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "上下文消息数",
+                "en_US": "Context messages",
+                "ja_JP": "コンテキストメッセージ数",
+            },
+            "x-widget": "input",
+            "x-layout": "inline-right",
+            "x-input-width": "7.5rem",
+        },
+    )
+    """判断时附带最近多少条聊天记录作为上下文；填 0 表示只判断待处理消息本身。"""
+
+
 class ChatConfig(ConfigBase):
     """聊天配置类"""
 
@@ -899,6 +998,18 @@ class ChatConfig(ConfigBase):
 
     reply_style: ChatReplyStyleConfig = Field(default_factory=ChatReplyStyleConfig)
     """如何回复、引用回复与聊天 Prompt 配置。"""
+
+    jev: JevConfig = Field(
+        default_factory=JevConfig,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "Jev 决策",
+                "en_US": "Jev decision",
+                "ja_JP": "Jev 返信判断",
+            },
+        },
+    )
+    """Jev 决策模型的接口与上下文配置，仅在回复触发模式选择 Jev 决策时生效。"""
 
 
 class AttentionDriftConfig(ConfigBase):

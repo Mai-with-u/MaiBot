@@ -72,8 +72,10 @@ import {
   HiddenFieldHook,
   MCPRootItemsHook,
   MCPServersHook,
+  MessageTriggerCountHook,
   MultipleReplyStyleHook,
   RegexRulesHook,
+  TalkValueDisabledByJevHook,
   useAutoSave,
 } from './bot/hooks'
 import { CoreSettings } from './bot/CoreSettings'
@@ -379,6 +381,10 @@ function BotConfigPageContent() {
       ['bot.platforms', HiddenFieldHook, 'hidden'],
       ['personality.multiple_reply_style', MultipleReplyStyleHook],
       ['chat.reply_style.chat_prompts', ChatPromptsHook],
+      ['chat.reply_timing.talk_value', TalkValueDisabledByJevHook, 'wrapper'],
+      ['chat.reply_timing.private_talk_value', TalkValueDisabledByJevHook, 'wrapper'],
+      ['chat.reply_timing.enable_talk_value_rules', TalkValueDisabledByJevHook, 'wrapper'],
+      ['chat.reply_timing.message_trigger_count', MessageTriggerCountHook, 'wrapper'],
       ['chat.reply_timing.talk_value_rules', ChatTalkValueRulesHook],
       ['experimental.focus_chat_whitelist', FocusWhitelistHook],
       ['experimental.focus_groups', BehaviorFocusGroupsHook],

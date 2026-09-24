@@ -157,3 +157,8 @@ description = "ReAct 形式の記憶検索フローで使用する高度な記�
 display_name = "WebUI AI 検索"
 advanced = true
 description = "自然言語の意図に基づき、WebUI が提供する実在のページと設定候補から関連結果を選択します。"
+
+[jev_reply_decision]
+display_name = "Jev 返信判断"
+advanced = false
+description = "Jev 返信判断モードで、Maisaka が今のチャットで発言すべきかを判断するためのテンプレート。"

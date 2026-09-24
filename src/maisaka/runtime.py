@@ -46,7 +46,12 @@ from src.maisaka.context.messages import (
 from src.maisaka.display.runtime_mixin import MaisakaRuntimeDisplayMixin
 from src.maisaka.display.stage_status_board import remove_stage_status, update_stage_status
 from src.maisaka.focus import MaisakaFocusRuntimeMixin, focus_mode_manager
-from src.maisaka.mode_policy import is_reply_necessity_trigger_enabled
+from src.maisaka.mode_policy import (
+    is_jev_batch_trigger_enabled,
+    is_jev_trigger_enabled,
+    is_reply_frequency_control_enabled,
+    is_reply_necessity_trigger_enabled,
+)
 from src.maisaka.monitor.events import (
     emit_message_ingested,
     emit_message_sent,
@@ -997,7 +1002,14 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         )
 
     def _get_effective_reply_frequency(self) -> float:
-        """返回当前会话生效的回复频率。"""
+        """返回当前会话生效的回复频率。
+
+        启用 Jev 决策触发时回复频率控制整体停用，直接返回满频率：
+        此时「群聊频率」「私聊频率」滑块与分聊天流频率规则都不再参与判断，
+        频率为 0 的静默接收也不会生效，是否发言只取决于 Jev 的判断结果。
+        """
+        if not is_reply_frequency_control_enabled():
+            return 1.0
         if self._is_focus_mode_active_for_current_chat():
             return 1.0
 
@@ -1125,7 +1137,16 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         return snapshot
 
     def _get_message_trigger_threshold(self) -> int:
-        """根据回复触发模式和频率折算出触发一轮循环所需的消息数。"""
+        """根据回复触发模式折算出触发一轮循环所需的消息数。
+
+        只有定量 Jev 决策使用配置的整数消息数量；频率触发与必要性触发仍按
+        回复频率折算，逐条 Jev 决策每条消息都会判断、不使用条数阈值。
+        """
+        if is_jev_batch_trigger_enabled():
+            return max(1, int(global_config.chat.reply_timing.message_trigger_count))
+        if is_jev_trigger_enabled():
+            return 1
+
         effective_frequency = min(1.0, self._get_effective_reply_frequency())
         if effective_frequency <= 0:
             return 0

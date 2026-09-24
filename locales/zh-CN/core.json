@@ -4,5 +4,9 @@
   "core.tasks_cancelled": {
     "one": "已取消 {count} 个任务",
     "other": "已取消 {count} 个任务"
-  }
+  },
+  "jev.chat_type.group": "群聊",
+  "jev.chat_type.private": "私聊",
+  "jev.criteria.reply": "应该发言：能顺着当前话题说出自然、简短、像真人的话；被提问、被 @、被叫名字、被请求帮忙；或者能自然接话、有共鸣、有梗可接、能补充信息。",
+  "jev.criteria.ignore": "不应该发言：确实接不上、无话可说，或者开口会让场面变尴尬；已经答过的问题、纯刷屏或纯表情、系统通知；以及辱骂、人身攻击、恶意骚扰、广告和敏感请求。"
 }

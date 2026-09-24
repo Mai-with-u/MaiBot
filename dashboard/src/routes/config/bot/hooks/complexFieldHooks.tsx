@@ -1,4 +1,13 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react'
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent,
+  type ReactNode,
+} from 'react'
 
 import {
   AlertCircle,
@@ -8,6 +17,7 @@ import {
   ExternalLink,
   EyeOff,
   GripVertical,
+  Info,
   Plus,
   RotateCcw,
   Trash2,
@@ -1851,6 +1861,7 @@ function TalkValueTimelineOverview({
   ) => void
   onRemoveItem: (index: number) => void
 }) {
+  const disabled = useContext(DisabledFieldContext)
   const timelineItems = buildTalkTimelineItems(items)
   const timelineGroups = groupTalkTimelineItems(timelineItems)
   const dragFrameRef = useRef<number | null>(null)
@@ -2135,7 +2146,13 @@ function TalkValueTimelineOverview({
                             min={0}
                             max={1}
                             step={0.01}
-                            onValueChange={(values) => onItemFieldChange(item.index, 'value', values[0])}
+                            disabled={disabled}
+                            onValueChange={(values) => {
+                              if (disabled) {
+                                return
+                              }
+                              onItemFieldChange(item.index, 'value', values[0])
+                            }}
                             data-dashboard-slider="config"
                             data-dashboard-slider-value-format="fixed-2"
                           />
@@ -2179,6 +2196,7 @@ function TalkValueGroupedRuleEditor({
   ) => void
   onRemoveItem: (index: number) => void
 }) {
+  const disabled = useContext(DisabledFieldContext)
   const timelineGroups = groupTalkTimelineItems(buildTalkTimelineItems(items))
   if (timelineGroups.length === 0) {
     return (
@@ -2317,7 +2335,13 @@ function TalkValueGroupedRuleEditor({
                         min={0}
                         max={1}
                         step={0.01}
-                        onValueChange={(values) => onItemFieldChange(item.index, 'value', values[0])}
+                        disabled={disabled}
+                        onValueChange={(values) => {
+                          if (disabled) {
+                            return
+                          }
+                          onItemFieldChange(item.index, 'value', values[0])
+                        }}
                         data-dashboard-slider="config"
                         data-dashboard-slider-value-format="fixed-2"
                       />
@@ -2645,47 +2669,6 @@ export const MultipleReplyStyleHook = createStringListHook({
   placeholder: '输入一种备用表达风格',
 })
 
-export const ChatTalkValueRulesHook = createListItemEditorHook({
-  addLabel: '添加发言频率规则',
-  addButtonPlacement: 'none',
-  collapseWhen: ({ parentValues }) => parentValues?.enable_talk_value_rules === false,
-  collapsedText: '动态发言频率规则未启用，规则列表已折叠。展开后仍可查看或编辑已有规则。',
-  expandLabel: '展开规则',
-  collapseLabel: '折叠规则',
-  helperText: '可按平台/聊天流/时段分别配置发言频率。平台和聊天流都空表示全局；只填平台或聊天流表示对应默认值；* 表示通配覆盖。时间留空表示兜底，* 表示强制全天。',
-  emptyText: '尚未配置任何规则，将使用全局默认频率。',
-  collapseButtonDisplay: 'icon',
-  fieldRows: [
-    ['platform', 'item_id', 'rule_type'],
-    ['time', 'value'],
-  ],
-  normalizeItems: normalizeTalkRuleItems,
-  renderItems: ({
-    emptyText,
-    items,
-    onAddItem,
-    onItemFieldChange,
-    onItemsChange,
-    onRemoveItem,
-  }) => (
-    <TalkValueRuleEditor
-      emptyText={emptyText}
-      items={items}
-      onAddItem={onAddItem}
-      onItemFieldChange={onItemFieldChange}
-      onItemsChange={onItemsChange}
-      onRemoveItem={onRemoveItem}
-    />
-  ),
-  itemTitle: (item) => {
-    const rawTime = typeof item.time === 'string' ? item.time.trim() : ''
-    const time = rawTime === '' ? '兜底' : rawTime === '*' ? '强制全天' : rawTime
-    const value =
-      typeof item.value === 'number' ? item.value.toFixed(2) : '—'
-    return `${platformLabel(item)} · ${ruleTypeLabel(item.rule_type)} · ${time} · 频率 ${value}`
-  },
-})
-
 export const ChatPromptsHook = createListItemEditorHook({
   addLabel: '添加额外 Prompt',
   helperText: '为指定平台和聊天流添加额外提示。platform、item_id 和 prompt 同时留空时表示空条目；填写任意一项后这三项都需要填写。',
@@ -2809,6 +2792,127 @@ export const FocusWhitelistHook = createListItemEditorHook({
 })
 
 export const HiddenFieldHook: FieldHookComponent = () => null
+
+/** 读取当前回复触发模式。 */
+const resolveReplyTriggerMode = (parentValues?: Record<string, unknown>): string => {
+  const triggerMode = parentValues?.reply_trigger_mode
+  return typeof triggerMode === 'string' ? triggerMode : ''
+}
+
+/** Jev 决策触发模式下不使用回复频率控制，这些字段保持可见但不可操作。 */
+const isJevReplyTriggerMode = (parentValues?: Record<string, unknown>): boolean => {
+  const triggerMode = resolveReplyTriggerMode(parentValues)
+  return triggerMode === 'jev' || triggerMode === 'jev_batch'
+}
+
+/** Jev 决策下回复频率控制整体停用，这里给出统一说明文案。 */
+const REPLY_FREQUENCY_DISABLED_HINT = 'Jev 决策模式下回复频率不可用，是否回复由 Jev 判断结果决定。'
+
+const REPLY_FREQUENCY_RULES_DISABLED_HINT = 'Jev 决策模式下动态发言频率规则不可用，规则不会参与判断。'
+
+/** 消息触发数量只服务于定量 Jev 决策，其余模式都不可用。 */
+const MESSAGE_TRIGGER_COUNT_DISABLED_HINT = '只有「定量Jev决策」使用消息触发数量，其他回复触发模式下不可用。'
+
+/**
+ * 置灰容器向下传递的禁用态。
+ *
+ * `fieldset disabled` 只停用原生表单控件，Radix 组件（例如 Slider 渲染的
+ * `span[role="slider"]`）不受影响，需要由内部组件自行读取并传入 `disabled`。
+ */
+const DisabledFieldContext = createContext(false)
+
+/**
+ * 用置灰容器包裹字段渲染，并附加不可用说明。
+ *
+ * 保留字段可见是为了让用户看到当前配置值；容器用 `fieldset disabled` 停用原生
+ * 控件，配合透明度与灰度明确传达「这里改了也不生效」，同时字段名称和值仍留在
+ * 无障碍树里，屏幕阅读器可以正常朗读。
+ */
+const renderDisabledField = (content: ReactNode, hint: string): ReactNode => (
+  <div className="min-w-0" aria-disabled data-config-disabled="true">
+    <DisabledFieldContext.Provider value={true}>
+      <fieldset className="pointer-events-none opacity-40 grayscale select-none" disabled aria-disabled="true">
+        {content}
+      </fieldset>
+    </DisabledFieldContext.Provider>
+    <p className="mt-1 flex items-start gap-1 text-xs text-muted-foreground">
+      <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+      <span>{hint}</span>
+    </p>
+  </div>
+)
+
+/**
+ * 回复频率字段的置灰 Hook。
+ *
+ * 选择「Jev决策」或「定量Jev决策」时，群聊/私聊频率与动态发言频率开关
+ * 整体停用，字段置灰不可操作并给出说明。
+ */
+export const TalkValueDisabledByJevHook: FieldHookComponent = ({ children, parentValues }) =>
+  isJevReplyTriggerMode(parentValues)
+    ? renderDisabledField(children, REPLY_FREQUENCY_DISABLED_HINT)
+    : <>{children}</>
+
+/**
+ * 消息触发数量的置灰 Hook。
+ *
+ * 该配置只被「定量Jev决策」使用，其余触发模式下置灰不可操作。
+ */
+export const MessageTriggerCountHook: FieldHookComponent = ({ children, parentValues }) =>
+  resolveReplyTriggerMode(parentValues) === 'jev_batch'
+    ? <>{children}</>
+    : renderDisabledField(children, MESSAGE_TRIGGER_COUNT_DISABLED_HINT)
+
+const RawChatTalkValueRulesHook = createListItemEditorHook({
+  addLabel: '添加发言频率规则',
+  addButtonPlacement: 'none',
+  // Jev 决策模式下展开按钮不可操作，此时不再默认折叠，保证已有规则仍可查看。
+  collapseWhen: ({ parentValues }) =>
+    parentValues?.enable_talk_value_rules === false && !isJevReplyTriggerMode(parentValues),
+  collapsedText: '动态发言频率规则未启用，规则列表已折叠。展开后仍可查看或编辑已有规则。',
+  expandLabel: '展开规则',
+  collapseLabel: '折叠规则',
+  helperText: '可按平台/聊天流/时段分别配置发言频率。平台和聊天流都空表示全局；只填平台或聊天流表示对应默认值；* 表示通配覆盖。时间留空表示兜底，* 表示强制全天。',
+  emptyText: '尚未配置任何规则，将使用全局默认频率。',
+  collapseButtonDisplay: 'icon',
+  fieldRows: [
+    ['platform', 'item_id', 'rule_type'],
+    ['time', 'value'],
+  ],
+  normalizeItems: normalizeTalkRuleItems,
+  renderItems: ({
+    emptyText,
+    items,
+    onAddItem,
+    onItemFieldChange,
+    onItemsChange,
+    onRemoveItem,
+  }) => (
+    <TalkValueRuleEditor
+      emptyText={emptyText}
+      items={items}
+      onAddItem={onAddItem}
+      onItemFieldChange={onItemFieldChange}
+      onItemsChange={onItemsChange}
+      onRemoveItem={onRemoveItem}
+    />
+  ),
+  itemTitle: (item) => {
+    const rawTime = typeof item.time === 'string' ? item.time.trim() : ''
+    const time = rawTime === '' ? '兜底' : rawTime === '*' ? '强制全天' : rawTime
+    const value =
+      typeof item.value === 'number' ? item.value.toFixed(2) : '—'
+    return `${platformLabel(item)} · ${ruleTypeLabel(item.rule_type)} · ${time} · 频率 ${value}`
+  },
+})
+
+/** Jev 决策触发时规则列表一并置灰，其余情况仍使用完整规则编辑器。 */
+export const ChatTalkValueRulesHook: FieldHookComponent = (props) =>
+  isJevReplyTriggerMode(props.parentValues) ? (
+    renderDisabledField(<RawChatTalkValueRulesHook {...props} />, REPLY_FREQUENCY_RULES_DISABLED_HINT)
+  ) : (
+    <RawChatTalkValueRulesHook {...props} />
+  )
 
 export const BotPlatformAccountsHook: FieldHookComponent = ({
   onChange,

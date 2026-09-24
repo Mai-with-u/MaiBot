@@ -21,8 +21,10 @@ export {
   HiddenFieldHook,
   MCPRootItemsHook,
   MCPServersHook,
+  MessageTriggerCountHook,
   MultipleReplyStyleHook,
   RegexRulesHook,
+  TalkValueDisabledByJevHook,
 } from './complexFieldHooks'
 export { AMemorixRetrievalChatsHook } from './AMemorixRetrievalChatsHook'
 export { AMemorixRetrievalFilterGroupHook } from './AMemorixRetrievalFilterGroupHook'

@@ -7,6 +7,9 @@ import time
 
 from src.chat.message_receive.message import SessionMessage
 from src.chat.utils.utils import is_bot_self
+from src.common.logger import get_logger
+from src.config.config import global_config
+from src.maisaka.jev import build_jev_client_from_config, decide_reply_with_jev
 from src.maisaka.reply_necessity import (
     REPLY_NECESSITY_TRIGGER_SCORE,
     ReplyNecessityInput,
@@ -17,6 +20,7 @@ from src.maisaka.reply_necessity import (
 if TYPE_CHECKING:
     from src.maisaka.runtime import MaisakaHeartFlowChatting
 
+logger = get_logger("maisaka_turn_gates")
 
 TurnGateDecision = Literal["trigger", "wait", "delay"]
 
@@ -113,6 +117,42 @@ class ReplyNecessityTurnGate:
             if message.source == "guided_reply":
                 recent_self_count += 1
         return recent_self_count, recent_total_count
+
+
+class JevTurnGate:
+    """按 Jev 决策决定是否进入 Planner。"""
+
+    def __init__(self, runtime: "MaisakaHeartFlowChatting") -> None:
+        self._runtime = runtime
+
+    async def evaluate(
+        self,
+        *,
+        pending_messages: Sequence[SessionMessage],
+    ) -> TurnGateResult:
+        """返回 Jev 决策门控的触发判定。
+
+        Args:
+            pending_messages: 当前待处理消息。
+
+        Returns:
+            TurnGateResult: Jev 给出的触发判定。
+        """
+
+        client = build_jev_client_from_config()
+        decision = await decide_reply_with_jev(
+            client=client,
+            is_group_chat=self._runtime.chat_stream.is_group_session,
+            pending_messages=pending_messages,
+            chat_history=self._runtime._chat_history,
+            context_message_count=global_config.chat.jev.context_message_count,
+        )
+        decision_label = "进入Planner" if decision.should_reply else "等待更多消息"
+        logger.info(f"{self._runtime.log_prefix} {decision.detail} 判定={decision_label}")
+        return TurnGateResult(
+            decision="trigger" if decision.should_reply else "wait",
+            detail=decision.detail,
+        )
 
 
 class FrequencyThresholdTurnGate:

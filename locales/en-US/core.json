@@ -4,5 +4,9 @@
   "core.tasks_cancelled": {
     "one": "Cancelled {count} task",
     "other": "Cancelled {count} tasks"
-  }
+  },
+  "jev.chat_type.group": "group chat",
+  "jev.chat_type.private": "private chat",
+  "jev.criteria.reply": "Should speak up: can say something natural, brief and human that follows the current topic; was asked a question, @-mentioned, called by name, or asked for help; or can join in naturally with a reaction, a joke, or useful information.",
+  "jev.criteria.ignore": "Should stay quiet: genuinely nothing to add, cannot join the thread, or speaking would make things awkward; an already answered question, flooding, bare emoji or system notices; and abuse, personal attacks, harassment, advertising or sensitive requests."
 }

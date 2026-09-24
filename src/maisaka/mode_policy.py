@@ -22,6 +22,35 @@ def is_reply_necessity_trigger_enabled() -> bool:
     return get_reply_trigger_mode() == "reply_necessity"
 
 
+def is_jev_trigger_enabled() -> bool:
+    """判断是否启用逐条 Jev 决策触发门。"""
+
+    return get_reply_trigger_mode() == "jev"
+
+
+def is_jev_batch_trigger_enabled() -> bool:
+    """判断是否启用到量 Jev 决策触发门。"""
+
+    return get_reply_trigger_mode() == "jev_batch"
+
+
+def is_jev_decision_enabled() -> bool:
+    """判断当前是否使用 Jev 决策决定是否进入 Planner。"""
+
+    return get_reply_trigger_mode() in ("jev", "jev_batch")
+
+
+def is_reply_frequency_control_enabled() -> bool:
+    """判断当前是否启用回复频率控制。
+
+    频率控制包含群聊/私聊频率滑块与分聊天流频率规则，只在频率触发与
+    必要性触发下生效。Jev 决策与定量 Jev 决策完全由 Jev 的判断结果决定
+    是否发言，不再叠加频率控制。
+    """
+
+    return not is_jev_decision_enabled()
+
+
 def is_idle_cycle_reason(cycle_end_reason: str) -> bool:
     """判断整轮结束原因是否属于空闲退避。"""
 

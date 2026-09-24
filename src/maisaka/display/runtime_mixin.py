@@ -15,6 +15,7 @@ from src.cli.console import console
 from src.common.logger import get_logger
 from src.config.config import global_config
 from src.llm_models.payload_content.context_item import AssistantMessageItem, ContextItemMeta, ContextTextPart
+from src.maisaka.mode_policy import is_jev_batch_trigger_enabled, is_reply_frequency_control_enabled
 
 from .display_utils import build_tool_call_summary_lines, format_token_count
 from .prompt_cli_renderer import PromptCLIVisualizer
@@ -30,6 +31,17 @@ class ToolPromptAccessPanel:
 
 class MaisakaRuntimeDisplayMixin:
     """Rich terminal rendering and runtime log helpers."""
+
+    def _build_reply_control_display_line(self) -> str:
+        """构造终端展示用的一句话回复控制说明。
+
+        Jev 决策触发时回复频率控制整体停用，避免把停用的频率数值误读成实际配置。
+        """
+
+        if not is_reply_frequency_control_enabled():
+            mode_label = "定量Jev决策" if is_jev_batch_trigger_enabled() else "Jev决策"
+            return f"回复控制：{mode_label}（回复频率控制已停用）"
+        return f"当前回复频率：{self._format_reply_frequency_for_display(self._get_effective_reply_frequency())}"
 
     def _render_context_usage_panel(
         self,
@@ -53,7 +65,7 @@ class MaisakaRuntimeDisplayMixin:
         body_lines = [
             f"聊天流名称：{getattr(self, 'session_name', self.session_id)}",
             f"聊天流ID：{self.session_id}",
-            f"当前回复频率：{self._format_reply_frequency_for_display(self._get_effective_reply_frequency())}",
+            self._build_reply_control_display_line(),
         ]
 
         panel_title = "MaiSaka 循环"
