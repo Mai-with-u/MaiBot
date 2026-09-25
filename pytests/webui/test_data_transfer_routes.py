@@ -104,6 +104,43 @@ def test_export_excludes_a_memorix_runtime_writer_lock(monkeypatch, tmp_path) ->
         assert "data/.a_memorix_runtime_writer.lock" not in names
 
 
+def test_export_skips_locked_file_and_completes(monkeypatch, tmp_path) -> None:
+    client = _build_client(monkeypatch, tmp_path)
+    project_root = data_transfer._PROJECT_ROOT
+    database_path = project_root / "data" / "MaiBot.db"
+    locked_path = project_root / "data" / "MaiBot.db-wal"
+    database_path.write_text("db", encoding="utf-8")
+    locked_path.write_text("locked", encoding="utf-8")
+    original_open = Path.open
+
+    def fail_if_locked(path: Path, *args, **kwargs):
+        if path == locked_path:
+            raise PermissionError("模拟 Windows 持锁文件无法读取")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", fail_if_locked)
+
+    response = client.post(
+        "/data-transfer/export",
+        json={"include_plugins": False, "include_logs": False},
+    )
+    assert response.status_code == 200
+    job_id = response.json()["job_id"]
+
+    status_response = client.get(f"/data-transfer/jobs/{job_id}")
+    assert status_response.status_code == 200
+    assert status_response.json()["status"] == "completed"
+
+    download_response = client.get(f"/data-transfer/export/{job_id}/download")
+    assert download_response.status_code == 200
+    archive_path = tmp_path / "export-with-locked-file.zip"
+    archive_path.write_bytes(download_response.content)
+    with zipfile.ZipFile(archive_path) as archive:
+        names = set(archive.namelist())
+        assert "data/MaiBot.db" in names
+        assert "data/MaiBot.db-wal" not in names
+
+
 def test_cancel_export_marks_job_cancelled_immediately(monkeypatch, tmp_path) -> None:
     client = _build_client(monkeypatch, tmp_path)
     job = data_transfer._new_job("export")
