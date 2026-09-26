@@ -688,6 +688,60 @@ def test_corrupt_generated_index_is_treated_as_missing(tmp_path) -> None:
     assert vector_index._load_snapshot(index_path) is None
 
 
+@pytest.mark.parametrize("changed_field", ["name", "identifier", "provider"])
+@pytest.mark.asyncio
+async def test_embedding_profile_cache_invalidates_when_model_config_changes(tmp_path, monkeypatch, changed_field) -> None:
+    """热切换 embedding 后应立即探测新模型，不再复用旧向量空间标定。"""
+
+    from src.services import embedding_service
+
+    configured_model = {"name": "old-embedding", "identifier": "old-id", "provider": "old-provider"}
+    probe_calls = []
+
+    def get_model_config():
+        model = SimpleNamespace(
+            name=configured_model["name"],
+            model_identifier=configured_model["identifier"],
+            api_provider=configured_model["provider"],
+        )
+        return SimpleNamespace(
+            models=[model],
+            model_task_config=SimpleNamespace(embedding=SimpleNamespace(model_list=[model.name])),
+        )
+
+    class FakeEmbeddingServiceClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def embed_texts(self, _texts, **_kwargs):
+            probe_calls.append(configured_model["name"])
+            return [
+                SimpleNamespace(
+                    embedding=embedding,
+                    model_name=configured_model["name"],
+                    model_identifier=configured_model["identifier"],
+                    api_provider=configured_model["provider"],
+                )
+                for embedding in ([1.0, 0.0], [0.0, 1.0], [-1.0, 0.0])
+            ]
+
+    monkeypatch.setattr(vector_index_module.config_manager, "get_model_config", get_model_config)
+    monkeypatch.setattr(embedding_service, "EmbeddingServiceClient", FakeEmbeddingServiceClient)
+    vector_index = ExpressionVectorIndex()
+    index_path = str(tmp_path / "expression_vector_index.json")
+
+    old_profile = await vector_index.get_current_embedding_profile(index_path=index_path)
+    assert await vector_index.get_current_embedding_profile(index_path=index_path) is old_profile
+    assert probe_calls == ["old-embedding"]
+
+    configured_model[changed_field] = f"new-{changed_field}"
+    new_profile = await vector_index.get_current_embedding_profile(index_path=index_path)
+
+    assert new_profile.model_name == configured_model["name"]
+    assert new_profile.marker != old_profile.marker
+    assert probe_calls == ["old-embedding", configured_model["name"]]
+
+
 def test_atomic_write_text_replaces_content_without_leaving_temporary_file(tmp_path) -> None:
     """JSON 索引写入应使用唯一临时文件，并且只暴露完整的新内容。"""
 

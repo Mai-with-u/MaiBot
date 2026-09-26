@@ -4925,7 +4925,7 @@ class LogConfig(ConfigBase):
     """每个聊天最多保留多少条回复效果记录。"""
 
     event_loop_watchdog_enabled: bool = Field(
-        default=True,
+        default=False,
         json_schema_extra={
             "label": {
                 "zh_CN": "事件循环卡顿看门狗",

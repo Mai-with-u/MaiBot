@@ -17,6 +17,7 @@ import uuid
 import numpy as np
 
 from src.common.logger import get_logger
+from src.config.config import config_manager
 
 logger = get_logger("expression_vector_index")
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -565,7 +566,9 @@ class ExpressionVectorIndex:
         self._snapshot: ExpressionVectorIndexSnapshot | None = None
         self._update_lock = asyncio.Lock()
         self._profile_lock = asyncio.Lock()
-        self._profile_cache: tuple[float, ExpressionEmbeddingProfile] | None = None
+        self._profile_cache: Tuple[
+            float, ExpressionEmbeddingProfile, Tuple[Tuple[str, str, str], ...]
+        ] | None = None
         self._profile_drift_candidate: ExpressionEmbeddingProfile | None = None
         self._profile_drift_confirmations = 0
         self._history_backfill_task: asyncio.Task[None] | None = None
@@ -591,6 +594,18 @@ class ExpressionVectorIndex:
 
         self._profile_drift_candidate = None
         self._profile_drift_confirmations = 0
+
+    @staticmethod
+    def _configured_embedding_identity() -> Tuple[Tuple[str, str, str], ...]:
+        """读取当前 embedding 任务实际配置，用于在热重载后立刻淘汰旧 profile。"""
+
+        model_config = config_manager.get_model_config()
+        models_by_name = {model.name: model for model in model_config.models}
+        identity: List[Tuple[str, str, str]] = []
+        for model_name in model_config.model_task_config.embedding.model_list:
+            model = models_by_name[model_name]
+            identity.append((model.name, model.model_identifier, model.api_provider))
+        return tuple(identity)
 
     def _resolve_embedding_profile_candidate(
         self,
@@ -655,16 +670,18 @@ class ExpressionVectorIndex:
         """用固定探针解析当前 embedding 后端 profile，并做短时缓存。"""
 
         now = time.monotonic()
+        configured_identity = self._configured_embedding_identity()
         if self._profile_cache is not None:
-            cached_at, cached_profile = self._profile_cache
-            if now - cached_at <= EMBEDDING_PROFILE_CACHE_SECONDS:
+            cached_at, cached_profile, cached_identity = self._profile_cache
+            if cached_identity == configured_identity and now - cached_at <= EMBEDDING_PROFILE_CACHE_SECONDS:
                 return cached_profile
 
         async with self._profile_lock:
             now = time.monotonic()
+            configured_identity = self._configured_embedding_identity()
             if self._profile_cache is not None:
-                cached_at, cached_profile = self._profile_cache
-                if now - cached_at <= EMBEDDING_PROFILE_CACHE_SECONDS:
+                cached_at, cached_profile, cached_identity = self._profile_cache
+                if cached_identity == configured_identity and now - cached_at <= EMBEDDING_PROFILE_CACHE_SECONDS:
                     return cached_profile
 
             from src.services.embedding_service import EmbeddingServiceClient
@@ -685,7 +702,7 @@ class ExpressionVectorIndex:
                 persisted_profile=persisted_profile,
                 candidate_profile=candidate_profile,
             )
-            self._profile_cache = (time.monotonic(), profile)
+            self._profile_cache = (time.monotonic(), profile, configured_identity)
             logger.info(
                 f"表达向量 embedding profile 已标定: marker={profile.marker[:12]} "
                 f"model={profile.model_name} identifier={profile.model_identifier} "

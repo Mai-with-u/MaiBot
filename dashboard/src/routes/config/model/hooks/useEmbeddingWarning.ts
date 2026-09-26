@@ -69,7 +69,7 @@ export function useEmbeddingWarning(
       }
       toast({
         title: '嵌入模型已选择',
-        description: '配置将在 2 秒后自动保存；保存后建议重新生成知识库向量',
+        description: '配置将在 2 秒后自动保存',
       })
     },
   })

@@ -2352,20 +2352,12 @@ function ModelConfigPageContent() {
       <AlertDialog open={embeddingWarning.isOpen} onOpenChange={embeddingWarning.setOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-amber-500" />
-              更换嵌入模型警告
-            </AlertDialogTitle>
+            <AlertDialogTitle className="sr-only">更换嵌入模型警告</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3 text-sm">
                 <p>
-                  <strong className="text-foreground">注意：</strong>更换嵌入模型可能会影响知识库的匹配精度！
+                  <strong className="text-foreground">注意：</strong>更换嵌入模型可能需要一定时间来重建记忆和表达库，此过程完全自动，但是需要在后台耗费一定时间
                 </p>
-                <ul className="space-y-2 ml-4 list-disc text-muted-foreground">
-                  <li>不同的嵌入模型会产生不同的向量表示</li>
-                  <li>这可能导致现有知识库的检索结果不准确</li>
-                  <li>建议更换嵌入模型后重新生成所有知识库的向量</li>
-                </ul>
                 <p className="text-foreground font-medium">
                   确定要更换嵌入模型吗？
                 </p>
