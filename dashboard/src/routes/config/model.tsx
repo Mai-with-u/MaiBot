@@ -2375,7 +2375,7 @@ function ModelConfigPageContent() {
           <AlertDialogFooter>
             <AlertDialogCancel onClick={embeddingWarning.cancel}>取消</AlertDialogCancel>
             <AlertDialogAction
-              onClick={embeddingWarning.confirm}
+              onClick={() => void embeddingWarning.confirm()}
               className="bg-amber-600 hover:bg-amber-700"
             >
               确认更换

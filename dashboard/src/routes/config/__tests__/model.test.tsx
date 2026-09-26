@@ -470,6 +470,19 @@ describe('ModelConfigPage 特征化', () => {
   })
 
   describe('embedding 换模型警告', () => {
+    it('确认后应用选中的模型', async () => {
+      const user = userEvent.setup()
+      await renderModelPage()
+      await user.click(screen.getByRole('tab', { name: '功能分配' }))
+      await user.click(await screen.findByText('change-embedding'))
+      expect(await screen.findByText('更换嵌入模型警告')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: '确认更换' }))
+      await waitFor(() =>
+        expect(screen.getByTestId('task-models')).toHaveTextContent('new-embed-model')
+      )
+    })
+
     it('取消则不应用变更', async () => {
       const user = userEvent.setup()
       await renderModelPage()

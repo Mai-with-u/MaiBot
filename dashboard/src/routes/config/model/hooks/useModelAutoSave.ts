@@ -24,6 +24,8 @@ interface UseModelAutoSaveOptions {
   onSavingChange?: (saving: boolean) => void
   /** 未保存变更回调 */
   onUnsavedChange?: (hasUnsaved: boolean) => void
+  /** 自动保存失败时通知页面 */
+  onSaveError?: (domain: 'models' | 'taskConfig', error: unknown) => void
 }
 
 export interface ModelSaveBarrierCheckpoint {
@@ -78,6 +80,7 @@ export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAuto
     debounceMs = 2000,
     onSavingChange,
     onUnsavedChange,
+    onSaveError,
   } = options
 
   const modelsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -251,6 +254,7 @@ export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAuto
           }
         } catch (error) {
           console.error('自动保存模型列表失败:', error)
+          onSaveError?.('models', error)
           if (generation === generationsRef.current.models) {
             setDomainDirty('models', true)
           }
@@ -260,7 +264,7 @@ export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAuto
         }
       })
     },
-    [cleanModelForSave, enqueueWrite, setDomainDirty, updateSavingCount]
+    [cleanModelForSave, enqueueWrite, onSaveError, setDomainDirty, updateSavingCount]
   )
 
   const queueTaskConfigSave = useCallback(
@@ -280,6 +284,7 @@ export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAuto
           }
         } catch (error) {
           console.error('自动保存任务配置失败:', error)
+          onSaveError?.('taskConfig', error)
           if (generation === generationsRef.current.taskConfig) {
             setDomainDirty('taskConfig', true)
           }
@@ -289,7 +294,7 @@ export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAuto
         }
       })
     },
-    [enqueueWrite, setDomainDirty, updateSavingCount]
+    [enqueueWrite, onSaveError, setDomainDirty, updateSavingCount]
   )
 
   // 监听 models 变化。

@@ -249,6 +249,17 @@ export function useModelConfig() {
     return operationPromise
   }, [])
 
+  const handleAutoSaveError = useCallback(
+    (domain: 'models' | 'taskConfig', error: unknown) => {
+      toast({
+        title: domain === 'taskConfig' ? '功能分配保存失败' : '模型列表保存失败',
+        description: error instanceof Error ? error.message : String(error),
+        variant: 'destructive',
+      })
+    },
+    [toast]
+  )
+
   // 自动保存 models / taskConfig（沿用既有 hook）
   const {
     cancelPendingTimers: cancelModelAutoSaveTimers,
@@ -262,6 +273,7 @@ export function useModelConfig() {
     enqueueWrite: enqueueConfigWrite,
     onSavingChange: setModelAutoSaving,
     onUnsavedChange: setModelHasUnsavedChanges,
+    onSaveError: handleAutoSaveError,
   })
 
   const cancelProviderAutoSaveTimer = useCallback(() => {

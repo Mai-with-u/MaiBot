@@ -612,7 +612,7 @@ describe('useModelConfig 任务配置与 embedding', () => {
       await result.current.embeddingWarning.confirm()
     })
     expect(result.current.taskConfig?.embedding.model_list).toEqual(['embed'])
-    expect(lastToast()).toEqual(expect.objectContaining({ title: '嵌入模型已更新' }))
+    expect(lastToast()).toEqual(expect.objectContaining({ title: '嵌入模型已选择' }))
 
     act(() => {
       result.current.updateTaskConfig('embedding', 'model_list', ['embed'])
