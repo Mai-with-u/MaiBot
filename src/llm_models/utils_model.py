@@ -77,7 +77,6 @@ DATA_URI_RETRY_MARGIN_BYTES = 128 * 1024
 MIN_COMPRESSED_IMAGE_TARGET_SIZE_BYTES = 512 * 1024
 EMPTY_TASK_FALLBACKS = {
     "expression_use": "utils",
-    "image_embedding": "embedding",
     "learner": "utils",
     "mid_memory": "planner",
 }
@@ -150,6 +149,8 @@ class LLMOrchestrator:
                 fallback_task_config = getattr(model_task_config, fallback_task_name, None)
                 if isinstance(fallback_task_config, TaskConfig):
                     return fallback_task_config
+            if self.task_name == "image_embedding":
+                raise ValueError("图片嵌入任务未配置模型，请在 image_embedding 中指定支持图片嵌入的模型")
         return task_config
 
     def _refresh_task_config(self) -> TaskConfig:

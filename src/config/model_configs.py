@@ -540,4 +540,4 @@ class ModelTaskConfig(ConfigBase):
             "advanced": True,
         },
     )
-    """图片嵌入模型；留空时复用 embedding 任务，所选模型必须实现图片输入到向量的协议"""
+    """图片嵌入模型；留空时不启用图片嵌入，所选模型必须实现图片输入到向量的协议"""
