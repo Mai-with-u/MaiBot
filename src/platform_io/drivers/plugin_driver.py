@@ -149,7 +149,9 @@ class PluginPlatformDriver(PlatformIODriver):
         """
 
         if getattr(response, "error", None):
-            error = response.error.get("message", "消息网关发送失败")
+            error = _extract_gateway_error(response.error) or (
+                f"消息网关发送失败（驱动未回传错误信息）raw={response.error!r}"
+            )
             return DeliveryReceipt(
                 internal_message_id=internal_message_id,
                 route_key=route_key,
@@ -168,7 +170,12 @@ class PluginPlatformDriver(PlatformIODriver):
                 status=DeliveryStatus.FAILED,
                 driver_id=self.driver_id,
                 driver_kind=self.descriptor.kind,
-                error=str(payload.get("result", "消息网关发送失败")) if isinstance(payload, dict) else "消息网关发送失败",
+                error=(
+                    _extract_gateway_error(
+                        payload.get("result") if isinstance(payload, dict) else None
+                    )
+                    or f"消息网关调用未被接受（payload.success 为假）raw={payload!r}"
+                ),
             )
 
         result = payload.get("result") if isinstance(payload, dict) else None
@@ -180,7 +187,10 @@ class PluginPlatformDriver(PlatformIODriver):
                     status=DeliveryStatus.FAILED,
                     driver_id=self.driver_id,
                     driver_kind=self.descriptor.kind,
-                    error=str(result.get("error", "消息网关发送失败")),
+                    error=(
+                        _extract_gateway_error(result.get("error"))
+                        or f"消息网关返回失败（result.success 为假）raw={result!r}"
+                    ),
                     metadata=result.get("metadata", {}) if isinstance(result.get("metadata"), dict) else {},
                 )
             external_message_id = str(result.get("external_message_id") or result.get("message_id") or "") or None
@@ -211,3 +221,29 @@ class PluginPlatformDriver(PlatformIODriver):
             driver_id=self.driver_id,
             driver_kind=self.descriptor.kind,
         )
+
+
+def _extract_gateway_error(raw: Any) -> str:
+    """从网关回传结构里提取可读错误文本。
+
+    ``dict.get(key, default)`` 的默认值只在「键不存在」时生效；上游返回
+    ``{"error": ""}`` 这类空串/None 时，取到的就是空值，失败原因在赋值那一行
+    就已经丢失，下游日志只能打印 ``error=``。这里统一按「空即视为未提供」处理。
+
+    Args:
+        raw: 网关回传的原始错误结构，可能是 str / dict / None / 其它。
+
+    Returns:
+        str: 去掉首尾空白后的错误文本；无从提取时返回空串（由调用方补兜底描述）。
+    """
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, dict):
+        for key in ("message", "error", "detail", "reason", "msg"):
+            value = raw.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+    return str(raw).strip()
