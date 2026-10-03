@@ -251,11 +251,14 @@ async def test_extension_failure_and_never_ready_adapter_do_not_block_recovery(r
 
 
 @pytest.mark.asyncio
-async def test_ready_inactive_adapter_is_not_forced_back_online(runtime) -> None:
+async def test_ready_explicitly_disabled_adapter_is_not_forced_back_online(runtime) -> None:
     supervisor, boundary = runtime
     await _seed_loaded(supervisor, [_QQ, _IRC])
     boundary.startups.append(
-        _Startup(RunnerReadyPayload(loaded_plugins=[_IRC], inactive_plugins=[_QQ]), {_IRC: "adapter"})
+        _Startup(
+            RunnerReadyPayload(loaded_plugins=[_IRC], inactive_plugins=[_QQ], explicitly_disabled_plugins=[_QQ]),
+            {_IRC: "adapter"},
+        )
     )
 
     assert await supervisor._restart_runner("health_check_failed") is True
@@ -269,7 +272,7 @@ async def test_ready_inactive_adapter_is_not_forced_back_online(runtime) -> None
 @pytest.mark.parametrize(
     "operation", ["reload_single", "reload_batch", "unload_success", "unload_partial", "unload_failure"]
 )
-async def test_operator_inactive_or_successful_unload_removes_pending_target(runtime, operation: str) -> None:
+async def test_operator_disable_or_successful_unload_removes_pending_target(runtime, operation: str) -> None:
     supervisor, boundary = runtime
     await _seed_loaded(supervisor, [_QQ])
     boundary.startups.append(_Startup(RunnerReadyPayload(failed_plugins=[_QQ])))
@@ -288,6 +291,7 @@ async def test_operator_inactive_or_successful_unload_removes_pending_target(run
             requested_plugin_id=_QQ,
             unloaded_plugins=[_QQ],
             inactive_plugins=[_QQ],
+            explicitly_disabled_plugins=[_QQ],
         )
         assert await supervisor.reload_plugin(_QQ) is True
     elif operation == "reload_batch":
@@ -296,6 +300,7 @@ async def test_operator_inactive_or_successful_unload_removes_pending_target(run
             requested_plugin_ids=[_QQ, _EXTENSION],
             unloaded_plugins=[_QQ],
             inactive_plugins=[_QQ],
+            explicitly_disabled_plugins=[_QQ],
         )
         assert await supervisor.reload_plugins([_QQ, _EXTENSION]) is True
     else:
@@ -441,4 +446,138 @@ async def test_failed_adapter_recovery_respects_restart_budget(runtime) -> None:
     assert len(boundary.spawned) == 3
     assert supervisor._restart_count == 3
     assert supervisor._adapter_recovery_targets == {_QQ}
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("report_disabled_dependency", [False, True])
+async def test_ready_dependency_blocked_adapter_keeps_target_and_failed_restart_count(
+    runtime, report_disabled_dependency: bool
+) -> None:
+    supervisor, boundary = runtime
+    await _seed_loaded(supervisor, [_QQ, _IRC])
+    supervisor._restart_count = 1
+    boundary.startups.append(
+        _Startup(
+            RunnerReadyPayload(
+                loaded_plugins=[_IRC],
+                inactive_plugins=[_EXTENSION, _QQ],
+                explicitly_disabled_plugins=[_EXTENSION] if report_disabled_dependency else [],
+            ),
+            {_IRC: "adapter"},
+        )
+    )
+
+    assert await supervisor._restart_runner("health_check_failed") is False
+    assert supervisor._adapter_recovery_targets == {_QQ, _IRC}
+    assert supervisor._restart_count == 2
+    assert supervisor._runner_process is None
+    assert boundary.spawned[0].returncode is not None
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["reload_single", "reload_batch"])
+@pytest.mark.parametrize("explicitly_disabled", [False, True])
+async def test_reload_inactive_adapter_only_drops_target_when_explicitly_disabled(
+    runtime, operation: str, explicitly_disabled: bool
+) -> None:
+    supervisor, boundary = runtime
+    await _seed_loaded(supervisor, [_QQ])
+    supervisor._adapter_recovery_targets = {_QQ}
+    supervisor._restart_count = 1
+    result_fields = {
+        "success": True,
+        "unloaded_plugins": [_QQ],
+        "inactive_plugins": [_QQ],
+        "explicitly_disabled_plugins": [_QQ] if explicitly_disabled else [],
+    }
+    if operation == "reload_single":
+        boundary.result = ReloadPluginResultPayload(requested_plugin_id=_QQ, **result_fields)
+        assert await supervisor.reload_plugin(_QQ) is True
+    else:
+        await _register(supervisor, _EXTENSION, "extension")
+        result_fields["reloaded_plugins"] = [_EXTENSION]
+        boundary.result = ReloadPluginsResultPayload(requested_plugin_ids=[_QQ, _EXTENSION], **result_fields)
+        assert await supervisor.reload_plugins([_QQ, _EXTENSION]) is True
+
+    assert supervisor.get_plugin_load_statuses()[_QQ] == "inactive"
+    assert supervisor._adapter_recovery_targets == (set() if explicitly_disabled else {_QQ})
+    assert supervisor._restart_count == 1
+    boundary.startups.append(_Startup(RunnerReadyPayload()))
+    assert await supervisor._restart_runner("runner_process_missing") is explicitly_disabled
+    assert supervisor._restart_count == (0 if explicitly_disabled else 2)
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["reload_single", "reload_batch"])
+@pytest.mark.parametrize("transition", ["loaded", "failed", "inactive"])
+async def test_reload_clears_stale_disabled_classification(runtime, operation: str, transition: str) -> None:
+    supervisor, boundary = runtime
+    await _ready(supervisor, RunnerReadyPayload(inactive_plugins=[_QQ], explicitly_disabled_plugins=[_QQ]))
+    supervisor._adapter_recovery_targets = {_QQ}
+    result_fields = {
+        "success": transition != "failed",
+        "reloaded_plugins": [_QQ] if transition == "loaded" else [],
+        "inactive_plugins": [_QQ] if transition == "inactive" else [],
+        "failed_plugins": {_QQ: "initialization failed"} if transition == "failed" else {},
+    }
+    if transition == "loaded":
+        await _register(supervisor, _QQ)
+    if operation == "reload_single":
+        boundary.result = ReloadPluginResultPayload(requested_plugin_id=_QQ, **result_fields)
+        assert await supervisor.reload_plugin(_QQ) is (transition != "failed")
+    else:
+        await _register(supervisor, _EXTENSION, "extension")
+        result_fields["reloaded_plugins"].append(_EXTENSION)
+        boundary.result = ReloadPluginsResultPayload(requested_plugin_ids=[_QQ, _EXTENSION], **result_fields)
+        assert await supervisor.reload_plugins([_QQ, _EXTENSION]) is (transition != "failed")
+
+    assert supervisor.get_plugin_load_statuses()[_QQ] == ("success" if transition == "loaded" else transition)
+    assert supervisor._runner_ready_payloads.explicitly_disabled_plugins == []
+    assert supervisor._adapter_recovery_targets == {_QQ}
+    if transition == "loaded":
+        supervisor._validate_adapter_recovery(supervisor._runner_ready_payloads)
+        payload = UnregisterPluginPayload(plugin_id=_QQ, reason="connection_lost")
+        response = await supervisor._handle_unregister_plugin(
+            _request("plugin.unregister_plugin", payload.model_dump())
+        )
+        assert response.error is None
+    # A subsequent loss of registration must not retain the old disabled
+    # exemption, even after the adapter was successfully loaded once.
+    with pytest.raises(RuntimeError, match=_QQ):
+        supervisor._validate_adapter_recovery(supervisor._runner_ready_payloads)
+    assert supervisor._adapter_recovery_targets == {_QQ}
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("success", [False, True])
+async def test_unload_clears_disabled_ledger_only_for_plugins_actually_unloaded(runtime, success: bool) -> None:
+    supervisor, boundary = runtime
+    await _ready(supervisor, RunnerReadyPayload(inactive_plugins=[_QQ], explicitly_disabled_plugins=[_QQ]))
+    supervisor._adapter_recovery_targets = {_QQ}
+    boundary.result = UnloadPluginsResultPayload(
+        success=success,
+        requested_plugin_ids=[_QQ],
+        unloaded_plugins=[_QQ] if success else [],
+        failed_plugins={} if success else {_QQ: "unload refused"},
+    )
+
+    result = await supervisor.unload_plugins([_QQ], reason="local_operator_offline")
+
+    assert result.success is success
+    assert supervisor._adapter_recovery_targets == (set() if success else {_QQ})
+    assert supervisor._runner_ready_payloads.explicitly_disabled_plugins == ([] if success else [_QQ])
+    if success:
+        assert _QQ not in supervisor.get_plugin_load_statuses()
+        # If the plugin later becomes a recovery target, a past unload/disable
+        # must not silently exempt it from the next recovery validation.
+        supervisor._adapter_recovery_targets = {_QQ}
+        with pytest.raises(RuntimeError, match=_QQ):
+            supervisor._validate_adapter_recovery(supervisor._runner_ready_payloads)
+        assert supervisor._adapter_recovery_targets == {_QQ}
+    else:
+        assert supervisor.get_plugin_load_statuses()[_QQ] == "inactive"
     await supervisor.stop()

@@ -343,6 +343,7 @@ class PluginRunnerSupervisor:
         self,
         reloaded_plugins: List[str],
         inactive_plugins: List[str],
+        explicitly_disabled_plugins: List[str],
         failed_plugins: Dict[str, str],
     ) -> None:
         """把插件重载结果合并到最近一次加载状态中。"""
@@ -350,32 +351,39 @@ class PluginRunnerSupervisor:
         loaded_set = set(self._runner_ready_payloads.loaded_plugins)
         failed_set = set(self._runner_ready_payloads.failed_plugins)
         inactive_set = set(self._runner_ready_payloads.inactive_plugins)
+        disabled_set = set(self._runner_ready_payloads.explicitly_disabled_plugins)
         failure_reasons = dict(self._runner_ready_payloads.failed_plugin_reasons)
 
         for plugin_id in reloaded_plugins:
             loaded_set.add(plugin_id)
             failed_set.discard(plugin_id)
             inactive_set.discard(plugin_id)
+            disabled_set.discard(plugin_id)
             failure_reasons.pop(plugin_id, None)
 
         for plugin_id in inactive_plugins:
-            self._adapter_recovery_targets.discard(plugin_id)
             inactive_set.add(plugin_id)
             loaded_set.discard(plugin_id)
             failed_set.discard(plugin_id)
+            disabled_set.discard(plugin_id)
             failure_reasons.pop(plugin_id, None)
 
         for plugin_id, reason in failed_plugins.items():
             failed_set.add(plugin_id)
             loaded_set.discard(plugin_id)
             inactive_set.discard(plugin_id)
+            disabled_set.discard(plugin_id)
             failure_reasons[plugin_id] = str(reason or "").strip() or "插件重载失败"
+
+        disabled_set.update(explicitly_disabled_plugins)
+        self._adapter_recovery_targets.difference_update(explicitly_disabled_plugins)
 
         self._runner_ready_payloads = RunnerReadyPayload(
             loaded_plugins=sorted(loaded_set),
             failed_plugins=sorted(failed_set),
             failed_plugin_reasons=failure_reasons,
             inactive_plugins=sorted(inactive_set),
+            explicitly_disabled_plugins=sorted(disabled_set),
         )
 
     def _apply_plugin_unload_result(self, unloaded_plugins: List[str]) -> None:
@@ -392,6 +400,9 @@ class PluginRunnerSupervisor:
                 if plugin_id not in unloaded_set
             },
             inactive_plugins=sorted(set(self._runner_ready_payloads.inactive_plugins) - unloaded_set),
+            explicitly_disabled_plugins=sorted(
+                set(self._runner_ready_payloads.explicitly_disabled_plugins) - unloaded_set
+            ),
         )
 
     @property
@@ -740,6 +751,7 @@ class PluginRunnerSupervisor:
         self._apply_plugin_reload_result(
             reloaded_plugins=result.reloaded_plugins,
             inactive_plugins=result.inactive_plugins,
+            explicitly_disabled_plugins=result.explicitly_disabled_plugins,
             failed_plugins=result.failed_plugins,
         )
         if not result.success:
@@ -797,6 +809,7 @@ class PluginRunnerSupervisor:
         self._apply_plugin_reload_result(
             reloaded_plugins=result.reloaded_plugins,
             inactive_plugins=result.inactive_plugins,
+            explicitly_disabled_plugins=result.explicitly_disabled_plugins,
             failed_plugins=result.failed_plugins,
         )
         if not result.success:
@@ -2061,7 +2074,7 @@ class PluginRunnerSupervisor:
 
     def _validate_adapter_recovery(self, payload: RunnerReadyPayload) -> None:
         """初始化完成不代表恢复成功；主动禁用的适配器不应自动恢复。"""
-        self._adapter_recovery_targets.difference_update(payload.inactive_plugins)
+        self._adapter_recovery_targets.difference_update(payload.explicitly_disabled_plugins)
         missing_adapters = self._get_missing_recovery_adapters(payload.loaded_plugins)
         if missing_adapters:
             failure_details = "; ".join(

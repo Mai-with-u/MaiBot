@@ -445,6 +445,7 @@ class PluginRunner:
         failed_plugin_reasons: Dict[str, str] = dict(self._loader.failed_plugins)
         failed_plugins: Set[str] = set(failed_plugin_reasons)
         inactive_plugins: Set[str] = set()
+        explicitly_disabled_plugins: Set[str] = set()
         available_plugin_versions: Dict[str, str] = dict(self._external_available_plugins)
         for meta in plugins:
             unsatisfied_dependencies = [
@@ -473,6 +474,7 @@ class PluginRunner:
                 continue
             if activation_status == PluginActivationStatus.INACTIVE:
                 inactive_plugins.add(meta.plugin_id)
+                explicitly_disabled_plugins.add(meta.plugin_id)
                 continue
             failed_plugins.add(meta.plugin_id)
             failed_plugin_reasons[meta.plugin_id] = "插件初始化失败"
@@ -486,6 +488,7 @@ class PluginRunner:
             successful_plugins,
             sorted(failed_plugins),
             sorted(inactive_plugins),
+            sorted(explicitly_disabled_plugins),
             failed_plugin_reasons,
         )
 
@@ -1745,6 +1748,7 @@ class PluginRunner:
             reloaded_plugins=batch_result.reloaded_plugins,
             unloaded_plugins=batch_result.unloaded_plugins,
             inactive_plugins=batch_result.inactive_plugins,
+            explicitly_disabled_plugins=batch_result.explicitly_disabled_plugins,
             failed_plugins=batch_result.failed_plugins,
         )
 
@@ -1877,6 +1881,7 @@ class PluginRunner:
         }
         reloaded_plugins: List[str] = []
         inactive_plugins: List[str] = []
+        explicitly_disabled_plugins: List[str] = []
         inactive_plugin_ids: Set[str] = set()
 
         for load_plugin_id in load_order:
@@ -1925,6 +1930,7 @@ class PluginRunner:
             if activated == PluginActivationStatus.INACTIVE:
                 inactive_plugin_ids.add(load_plugin_id)
                 inactive_plugins.append(load_plugin_id)
+                explicitly_disabled_plugins.append(load_plugin_id)
                 continue
 
             available_plugins[load_plugin_id] = meta.version
@@ -1969,6 +1975,7 @@ class PluginRunner:
                 reloaded_plugins=[],
                 unloaded_plugins=unloaded_plugins,
                 inactive_plugins=[],
+                explicitly_disabled_plugins=[],
                 failed_plugins=self._finalize_failed_reload_messages(failed_plugins, rollback_failures),
             )
 
@@ -1982,6 +1989,7 @@ class PluginRunner:
             reloaded_plugins=reloaded_plugins,
             unloaded_plugins=unloaded_plugins,
             inactive_plugins=inactive_plugins,
+            explicitly_disabled_plugins=explicitly_disabled_plugins,
             failed_plugins=failed_plugins,
         )
 
@@ -1990,6 +1998,7 @@ class PluginRunner:
         loaded_plugins: List[str],
         failed_plugins: List[str],
         inactive_plugins: List[str],
+        explicitly_disabled_plugins: List[str],
         failed_plugin_reasons: Dict[str, str] | None = None,
     ) -> None:
         """通知 Host 当前 Runner 已完成插件初始化。
@@ -1998,6 +2007,7 @@ class PluginRunner:
             loaded_plugins: 成功初始化的插件列表。
             failed_plugins: 初始化失败的插件列表。
             inactive_plugins: 因禁用或依赖不可用而未激活的插件列表。
+            explicitly_disabled_plugins: 仅因插件自身配置禁用而未激活的插件列表。
             failed_plugin_reasons: 初始化失败的插件及原因。
         """
         payload = RunnerReadyPayload(
@@ -2005,6 +2015,7 @@ class PluginRunner:
             failed_plugins=failed_plugins,
             failed_plugin_reasons=failed_plugin_reasons or {},
             inactive_plugins=inactive_plugins,
+            explicitly_disabled_plugins=explicitly_disabled_plugins,
         )
         await self._rpc_client.send_request(
             "runner.ready",
