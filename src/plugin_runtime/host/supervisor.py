@@ -187,6 +187,8 @@ class PluginRunnerSupervisor:
         self._blocked_plugin_reasons: Dict[str, str] = {}
         self._runner_ready_events: asyncio.Event = asyncio.Event()
         self._runner_ready_payloads: RunnerReadyPayload = RunnerReadyPayload()
+        # 恢复目标属于整个重试周期，不随单轮 Runner 注册状态清理而丢失。
+        self._adapter_recovery_targets: set[str] = set()
         self._health_task: Optional[asyncio.Task[None]] = None
         self._stderr_drain_task: Optional[asyncio.Task[None]] = None
         self._restart_count: int = 0
@@ -341,6 +343,7 @@ class PluginRunnerSupervisor:
         self,
         reloaded_plugins: List[str],
         inactive_plugins: List[str],
+        explicitly_disabled_plugins: List[str],
         failed_plugins: Dict[str, str],
     ) -> None:
         """把插件重载结果合并到最近一次加载状态中。"""
@@ -348,37 +351,46 @@ class PluginRunnerSupervisor:
         loaded_set = set(self._runner_ready_payloads.loaded_plugins)
         failed_set = set(self._runner_ready_payloads.failed_plugins)
         inactive_set = set(self._runner_ready_payloads.inactive_plugins)
+        disabled_set = set(self._runner_ready_payloads.explicitly_disabled_plugins)
         failure_reasons = dict(self._runner_ready_payloads.failed_plugin_reasons)
 
         for plugin_id in reloaded_plugins:
             loaded_set.add(plugin_id)
             failed_set.discard(plugin_id)
             inactive_set.discard(plugin_id)
+            disabled_set.discard(plugin_id)
             failure_reasons.pop(plugin_id, None)
 
         for plugin_id in inactive_plugins:
             inactive_set.add(plugin_id)
             loaded_set.discard(plugin_id)
             failed_set.discard(plugin_id)
+            disabled_set.discard(plugin_id)
             failure_reasons.pop(plugin_id, None)
 
         for plugin_id, reason in failed_plugins.items():
             failed_set.add(plugin_id)
             loaded_set.discard(plugin_id)
             inactive_set.discard(plugin_id)
+            disabled_set.discard(plugin_id)
             failure_reasons[plugin_id] = str(reason or "").strip() or "插件重载失败"
+
+        disabled_set.update(explicitly_disabled_plugins)
+        self._adapter_recovery_targets.difference_update(explicitly_disabled_plugins)
 
         self._runner_ready_payloads = RunnerReadyPayload(
             loaded_plugins=sorted(loaded_set),
             failed_plugins=sorted(failed_set),
             failed_plugin_reasons=failure_reasons,
             inactive_plugins=sorted(inactive_set),
+            explicitly_disabled_plugins=sorted(disabled_set),
         )
 
     def _apply_plugin_unload_result(self, unloaded_plugins: List[str]) -> None:
         """从最近一次 Runner 加载状态中移除已卸载插件。"""
 
         unloaded_set = set(unloaded_plugins)
+        self._adapter_recovery_targets.difference_update(unloaded_set)
         self._runner_ready_payloads = RunnerReadyPayload(
             loaded_plugins=sorted(set(self._runner_ready_payloads.loaded_plugins) - unloaded_set),
             failed_plugins=sorted(set(self._runner_ready_payloads.failed_plugins) - unloaded_set),
@@ -388,6 +400,9 @@ class PluginRunnerSupervisor:
                 if plugin_id not in unloaded_set
             },
             inactive_plugins=sorted(set(self._runner_ready_payloads.inactive_plugins) - unloaded_set),
+            explicitly_disabled_plugins=sorted(
+                set(self._runner_ready_payloads.explicitly_disabled_plugins) - unloaded_set
+            ),
         )
 
     @property
@@ -536,6 +551,7 @@ class PluginRunnerSupervisor:
 
         self._running = True
         self._restart_count = 0
+        self._adapter_recovery_targets.clear()
         self._clear_runner_state()
         startup_warning: Optional[str] = None
 
@@ -564,6 +580,7 @@ class PluginRunnerSupervisor:
             return
 
         self._running = False
+        self._adapter_recovery_targets.clear()
         self._rpc_server.abort_pending_requests("PluginRunnerSupervisor 正在停止")
 
         if self._health_task is not None:
@@ -734,6 +751,7 @@ class PluginRunnerSupervisor:
         self._apply_plugin_reload_result(
             reloaded_plugins=result.reloaded_plugins,
             inactive_plugins=result.inactive_plugins,
+            explicitly_disabled_plugins=result.explicitly_disabled_plugins,
             failed_plugins=result.failed_plugins,
         )
         if not result.success:
@@ -791,6 +809,7 @@ class PluginRunnerSupervisor:
         self._apply_plugin_reload_result(
             reloaded_plugins=result.reloaded_plugins,
             inactive_plugins=result.inactive_plugins,
+            explicitly_disabled_plugins=result.explicitly_disabled_plugins,
             failed_plugins=result.failed_plugins,
         )
         if not result.success:
@@ -1970,8 +1989,21 @@ class PluginRunnerSupervisor:
 
             try:
                 health = await self._request_runner_health(timeout_ms)
+                restart_reason: Optional[str] = None
                 if not health.healthy:
-                    restarted = await self._restart_runner(reason="health_check_unhealthy")
+                    restart_reason = "health_check_unhealthy"
+                elif self._adapter_recovery_targets:
+                    missing_adapters = self._get_missing_recovery_adapters(health.loaded_plugins)
+                    if missing_adapters:
+                        self._logger.warning(
+                            f"Runner RPC 正常但原有适配器未恢复: {', '.join(missing_adapters)}"
+                        )
+                        restart_reason = "adapter_recovery_incomplete"
+                    else:
+                        self._adapter_recovery_targets.clear()
+                        self._restart_count = 0
+                if restart_reason is not None:
+                    restarted = await self._restart_runner(reason=restart_reason)
                     if not restarted:
                         if self._should_keep_health_loop_after_restart_failure():
                             continue
@@ -2035,6 +2067,22 @@ class PluginRunnerSupervisor:
         )
         return True
 
+    def _get_missing_recovery_adapters(self, loaded_plugin_ids: List[str]) -> List[str]:
+        """同时核对 Runner 加载结果与 Host 注册事实。"""
+        restored_adapters = set(loaded_plugin_ids) & set(self.get_loaded_plugin_ids_by_type(_ADAPTER_PLUGIN_TYPE))
+        return sorted(self._adapter_recovery_targets - restored_adapters)
+
+    def _validate_adapter_recovery(self, payload: RunnerReadyPayload) -> None:
+        """初始化完成不代表恢复成功；主动禁用的适配器不应自动恢复。"""
+        self._adapter_recovery_targets.difference_update(payload.explicitly_disabled_plugins)
+        missing_adapters = self._get_missing_recovery_adapters(payload.loaded_plugins)
+        if missing_adapters:
+            failure_details = "; ".join(
+                f"{plugin_id}: {payload.failed_plugin_reasons.get(plugin_id, '未完成加载或注册')}"
+                for plugin_id in missing_adapters
+            )
+            raise RuntimeError(f"Runner 原有适配器未恢复: {failure_details}")
+
     async def _restart_runner(self, reason: str) -> bool:
         """在 Runner 异常时执行整进程级重启。
 
@@ -2054,29 +2102,42 @@ class PluginRunnerSupervisor:
             self._logger.error(f"Runner 自动重启次数已达上限，停止重启。reason={reason}")
             return False
 
+        self._adapter_recovery_targets.update(
+            set(self.get_loaded_plugin_ids_by_type(_ADAPTER_PLUGIN_TYPE))
+            & set(self._runner_ready_payloads.loaded_plugins)
+        )
+
         self._restart_count += 1
         self._logger.warning(f"准备重启 Runner，第 {self._restart_count} 次，reason={reason}")
 
         await self._shutdown_runner(reason=reason)
-        if is_shutdown_requested():
+        if not self._running or is_shutdown_requested():
             self._logger.info(f"关停流程已开始，取消 Runner 重启: reason={reason}")
             return False
 
         try:
             await self._spawn_runner()
             await self._wait_for_runner_connection(timeout_sec=self._runner_spawn_timeout)
-            await self._wait_for_runner_ready(timeout_sec=self._runner_spawn_timeout)
+            if not self._running or is_shutdown_requested():
+                await self._shutdown_runner(reason="restart_cancelled")
+                return False
+            payload = await self._wait_for_runner_ready(timeout_sec=self._runner_spawn_timeout)
+            if not self._running or is_shutdown_requested():
+                await self._shutdown_runner(reason="restart_cancelled")
+                return False
+            self._validate_adapter_recovery(payload)
         except Exception as exc:
             await self._shutdown_runner(reason="restart_failed")
             self._logger.error(f"Runner 重启失败: {exc}", exc_info=True)
             return False
 
         self._restart_count = 0
+        self._adapter_recovery_targets.clear()
         self._logger.info("Runner 已成功重启")
         return True
 
     def _clear_runner_state(self) -> None:
-        """清理当前 Runner 对应的 Host 侧注册状态。"""
+        """清理单轮 Runner 注册状态，保留尚未完成的适配器恢复目标。"""
         if any(registration.llm_providers for registration in self._registered_plugins.values()):
             from src.llm_models.model_client.base_client import client_registry
 
