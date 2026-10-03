@@ -165,8 +165,6 @@ async def _reload(runner: PluginRunner, operation: str, plugin_ids: list[str]):
 async def test_startup_distinguishes_self_disable_from_transitive_dependency_blocking(activation_runtime) -> None:
     runner, transport, paths = activation_runtime
     _configure(paths[_DEPENDENCY], enabled=False)
-    # This config is not observed: activation is skipped due to the dependency.
-    _configure(paths[_CHILD], enabled=False)
 
     await runner.run()
 
@@ -179,6 +177,25 @@ async def test_startup_distinguishes_self_disable_from_transitive_dependency_blo
     assert transport.registered == {_UNRELATED}
     assert runner._loader.list_plugins() == [_UNRELATED]
     assert runner._loader.get_plugin(_UNRELATED).instance.loads == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("disabled_plugin_id", [_ADAPTER, _CHILD])
+async def test_startup_self_disable_takes_precedence_over_inactive_dependencies(
+    activation_runtime, disabled_plugin_id: str
+) -> None:
+    runner, transport, paths = activation_runtime
+    _configure(paths[_DEPENDENCY], enabled=False)
+    _configure(paths[disabled_plugin_id], enabled=False)
+
+    await runner.run()
+
+    assert transport.ready is not None
+    assert set(transport.ready.inactive_plugins) == {_DEPENDENCY, _ADAPTER, _CHILD}
+    assert set(transport.ready.explicitly_disabled_plugins) == {_DEPENDENCY, disabled_plugin_id}
+    assert transport.ready.failed_plugins == []
+    assert transport.registered == {_UNRELATED}
+    assert runner._loader.list_plugins() == [_UNRELATED]
 
 
 @pytest.mark.asyncio
@@ -211,6 +228,32 @@ async def test_reload_classifies_only_the_disabled_root_not_its_dependents(
         assert old_metas[plugin_id].instance.unloads == 1
     assert runner._loader.get_plugin(_UNRELATED) is old_metas[_UNRELATED]
     assert old_metas[_UNRELATED].instance.unloads == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["single", "batch"])
+async def test_reload_reports_self_disable_even_when_dependency_is_also_disabled(
+    activation_runtime, operation: str
+) -> None:
+    runner, transport, paths = activation_runtime
+    await runner.run()
+    old_metas = {plugin_id: runner._loader.get_plugin(plugin_id) for plugin_id in paths}
+    _configure(paths[_DEPENDENCY], enabled=False)
+    _configure(paths[_ADAPTER], enabled=False)
+    requested_ids = [_DEPENDENCY] if operation == "single" else [_DEPENDENCY, _UNRELATED]
+
+    result = await _reload(runner, operation, requested_ids)
+
+    assert result.success is True
+    assert set(result.inactive_plugins) == {_DEPENDENCY, _ADAPTER, _CHILD}
+    assert set(result.explicitly_disabled_plugins) == {_DEPENDENCY, _ADAPTER}
+    assert result.failed_plugins == {}
+    assert result.reloaded_plugins == ([_UNRELATED] if operation == "batch" else [])
+    assert transport.registered == {_UNRELATED}
+    assert runner._loader.list_plugins() == [_UNRELATED]
+    for plugin_id in (_DEPENDENCY, _ADAPTER, _CHILD):
+        assert old_metas[plugin_id].instance.loads == 1
+        assert old_metas[plugin_id].instance.unloads == 1
 
 
 @pytest.mark.asyncio
