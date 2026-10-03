@@ -15,7 +15,6 @@ import asyncio
 import base64
 import hashlib
 import time
-import traceback
 from datetime import datetime
 
 from src.chat.message_receive.chat_manager import BotChatSession
@@ -811,14 +810,23 @@ def _log_platform_io_failures(delivery_batch: DeliveryBatch) -> None:
     Args:
         delivery_batch: Platform IO 返回的批量回执。
     """
+    failed_receipts = list(delivery_batch.failed_receipts)
     failed_details = (
         "; ".join(
-            f"driver={receipt.driver_id} status={receipt.status} error={receipt.error}"
-            for receipt in delivery_batch.failed_receipts
+            f"driver={receipt.driver_id}"
+            f" status={getattr(receipt.status, 'value', receipt.status)}"
+            f" internal_id={receipt.internal_message_id}"
+            f" external_id={receipt.external_message_id or '-'}"
+            f" error={receipt.error!r}"
+            f" metadata={receipt.metadata!r}"
+            for receipt in failed_receipts
         )
-        or "未命中任何发送路由"
+        or "未命中任何发送路由（注意：无可归因的失败回执，不等于发送成功）"
     )
-    logger.warning(f"[SendService] Platform IO 发送失败: platform={delivery_batch.route_key.platform} {failed_details}")
+    logger.warning(
+        "[SendService] Platform IO 发送失败: "
+        f"platform={delivery_batch.route_key.platform} failed={len(failed_receipts)} {failed_details}"
+    )
 
 
 async def _send_via_platform_io(
@@ -869,14 +877,13 @@ async def _send_via_platform_io(
     try:
         await platform_io_manager.ensure_send_pipeline_ready()
     except Exception as exc:
-        logger.error(f"[SendService] 准备 Platform IO 发送管线失败: {exc}")
-        logger.debug(traceback.format_exc())
+        logger.error(f"[SendService] 准备 Platform IO 发送管线失败: {exc}", exc_info=True)
         return None
 
     try:
         route_key = platform_io_manager.build_route_key_from_message(message)
     except Exception as exc:
-        logger.warning(f"[SendService] 根据消息构造 Platform IO 路由键失败: {exc}")
+        logger.warning(f"[SendService] 根据消息构造 Platform IO 路由键失败: {exc}", exc_info=True)
         return None
 
     try:
@@ -893,8 +900,7 @@ async def _send_via_platform_io(
             metadata={"show_log": False},
         )
     except Exception as exc:
-        logger.error(f"[SendService] Platform IO 发送异常: {exc}")
-        logger.debug(traceback.format_exc())
+        logger.error(f"[SendService] Platform IO 发送异常: {exc}", exc_info=True)
         return None
 
     sent = bool(delivery_batch.has_success)
@@ -1133,11 +1139,15 @@ async def _send_to_target_with_message(
             logger.debug(f"[SendService] 成功发送消息到 {stream_id}")
             return sent_message
 
-        logger.error("[SendService] 发送消息失败")
+        logger.error(
+            "[SendService] 发送消息失败: "
+            f"stream_id={stream_id} "
+            f"message_id={outbound_message.message_id} "
+            f"message={_build_outbound_log_preview(outbound_message)}"
+        )
         return None
     except Exception as exc:
-        logger.error(f"[SendService] 发送消息时出错: {exc}")
-        traceback.print_exc()
+        logger.exception(f"[SendService] 发送消息时出错: {exc}")
         return None
 
 
