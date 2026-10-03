@@ -19,7 +19,7 @@ dependencies = [
     "jieba>=0.42.1",
     "json-repair>=0.60.1,<0.61",
     "maim-message==0.6.8",
-    "maibot-dashboard==1.8.1.dev20261003468",
+    "maibot-dashboard==1.8.1",
     "maibot-plugin-sdk>=2.9.0",
     "mcp>=1.28.1,<2",
     "msgpack>=1.2.1",

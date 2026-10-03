@@ -17,6 +17,22 @@ export interface DataTransferJob {
   download_url: string | null
   manifest: Record<string, unknown> | null
   error: string | null
+  completed_at?: number | null
+  expires_at?: number | null
+  archive_bytes?: number
+}
+
+export async function getDataExportHistory(): Promise<DataTransferJob[]> {
+  return backendApi.get<DataTransferJob[]>('/api/webui/data-transfer/exports', {
+    cache: 'no-store',
+    errorMessage: '获取导出历史失败',
+  })
+}
+
+export async function deleteDataExport(jobId: string): Promise<void> {
+  await backendApi.delete(`/api/webui/data-transfer/jobs/${encodeURIComponent(jobId)}`, {
+    errorMessage: '删除导出记录失败',
+  })
 }
 
 export interface DataExportOptions {
@@ -52,19 +68,13 @@ export async function downloadDataExport(job: DataTransferJob): Promise<void> {
   if (!job.download_url) {
     throw new Error('导出任务还没有可下载文件')
   }
-  const blob = await backendApi.get<Blob>(job.download_url, {
-    parse: 'blob',
-    cache: 'no-store',
-    errorMessage: '下载导出文件失败',
-  })
-  const objectUrl = URL.createObjectURL(blob)
+  // 让浏览器直接流式下载大文件，避免先把整个压缩包收成 Blob 才触发保存。
   const link = document.createElement('a')
-  link.href = objectUrl
+  link.href = await resolveApiPath(job.download_url)
   link.download = job.filename || 'maibot-data.zip'
   document.body.appendChild(link)
   link.click()
   link.remove()
-  URL.revokeObjectURL(objectUrl)
 }
 
 export async function cancelDataExportJob(jobId: string): Promise<DataTransferJob> {

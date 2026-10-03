@@ -1,5 +1,5 @@
 import type { Dispatch, SetStateAction } from 'react'
-import { Archive, Download, RefreshCw, Upload, X } from 'lucide-react'
+import { Archive, Download, RefreshCw, Trash2, Upload, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
 import { Badge } from '@/components/ui/badge'
@@ -16,6 +16,8 @@ import {
   createDataExportJob,
   createDataImportJob,
   downloadDataExport,
+  deleteDataExport,
+  getDataExportHistory,
   getDataTransferJob,
   type DataTransferJob,
 } from '@/lib/data-transfer-api'
@@ -67,6 +69,40 @@ export function DataTransferPage() {
   const [exportIncludeLogs, setExportIncludeLogs] = useState(false)
   const [exportJob, setExportJob] = useState<DataTransferJob | null>(null)
   const [exportCreating, setExportCreating] = useState(false)
+  const [exportHistory, setExportHistory] = useState<DataTransferJob[]>([])
+  const [historyError, setHistoryError] = useState<string | null>(null)
+
+  const refreshExportHistory = useCallback(async () => {
+    try {
+      setExportHistory(await getDataExportHistory())
+      setHistoryError(null)
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : '获取导出历史失败')
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshExportHistory()
+  }, [refreshExportHistory, exportJob?.status])
+
+  const handleHistoryDownload = async (job: DataTransferJob) => {
+    try {
+      await downloadDataExport(job)
+    } catch (error) {
+      toast({ title: '下载失败', description: error instanceof Error ? error.message : '无法下载', variant: 'destructive' })
+    }
+  }
+
+  const handleDeleteExport = async (job: DataTransferJob) => {
+    try {
+      await deleteDataExport(job.job_id)
+      if (exportJob?.job_id === job.job_id) setExportJob(null)
+      await refreshExportHistory()
+      toast({ title: '已删除导出记录和压缩包' })
+    } catch (error) {
+      toast({ title: '删除失败', description: error instanceof Error ? error.message : '无法删除', variant: 'destructive' })
+    }
+  }
   const [importFile, setImportFile] = useState<File | null>(null)
   const [importConfig, setImportConfig] = useState(true)
   const [importData, setImportData] = useState(true)
@@ -292,7 +328,7 @@ export function DataTransferPage() {
                         取消导出
                       </Button>
                     )}
-                    {exportJob.status === 'completed' && (
+                    {exportJob.status === 'completed' && exportJob.download_url && (
                       <Button
                         variant="outline"
                         size="sm"
@@ -305,6 +341,41 @@ export function DataTransferPage() {
                     )}
                   </div>
                 )}
+                <div className="space-y-3 border-t pt-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-sm font-medium">导出历史</h3>
+                    <Button variant="ghost" size="sm" onClick={() => void refreshExportHistory()}>
+                      <RefreshCw className="mr-2 h-4 w-4" />刷新
+                    </Button>
+                  </div>
+                  <p className="text-muted-foreground text-xs">压缩包保留 24 小时，下载后重新计时；刷新页面仍可重新下载。</p>
+                  {historyError && <p className="text-destructive text-sm">{historyError}</p>}
+                  {!historyError && exportHistory.length === 0 && <p className="text-muted-foreground text-sm">暂无导出记录</p>}
+                  {exportHistory.map((job) => (
+                    <div key={job.job_id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3">
+                      <div className="min-w-0 space-y-1">
+                        <p className="break-all text-sm font-medium">{job.filename}</p>
+                        <p className="text-muted-foreground text-xs">
+                          {formatStorageBytes(job.archive_bytes ?? 0)}
+                          {job.completed_at != null && ` · 完成于 ${new Date(job.completed_at * 1000).toLocaleString()}`}
+                        </p>
+                        <p className="text-muted-foreground text-xs">
+                          {job.download_url && job.expires_at != null
+                            ? `保留至 ${new Date(job.expires_at * 1000).toLocaleString()}`
+                            : '文件已过期或已删除'}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="sm" disabled={!job.download_url} onClick={() => void handleHistoryDownload(job)}>
+                          <Download className="mr-2 h-4 w-4" />下载
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => void handleDeleteExport(job)}>
+                          <Trash2 className="mr-2 h-4 w-4" />删除
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               <div className="space-y-4 rounded-lg border p-4">

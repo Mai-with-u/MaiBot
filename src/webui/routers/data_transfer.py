@@ -2,15 +2,22 @@
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from starlette.types import Receive, Scope, Send
 
+import asyncio
+import anyio
 import json
+import os
+import re
 import shutil
 import tempfile
+import threading
+import time
 import uuid
 import zipfile
 
@@ -32,9 +39,17 @@ _EXPORT_DIRS: dict[str, Path] = {
 _REQUIRED_EXPORT_PARTS = ("config", "data")
 _OPTIONAL_EXPORT_PARTS = ("plugins", "logs")
 _ALLOWED_IMPORT_PARTS = set(_EXPORT_DIRS)
-_EXCLUDED_EXPORT_PATHS = {"data/.a_memorix_runtime_writer.lock"}
+_EXCLUDED_EXPORT_PATHS = {
+    "data/.a_memorix_runtime_writer.lock",
+    "data/a-memorix/.a_memorix_runtime_writer.lock",
+}
+_EXCLUDED_EXPORT_DIR_PREFIXES = ("data/prompt_imgs/",)
 _TRANSFER_TEMP_DIR = Path(tempfile.gettempdir()) / "maibot_webui_transfer"
 _CHUNK_SIZE = 1024 * 1024
+_EXPORT_RETENTION_SECONDS = 24 * 60 * 60
+_TEMP_CLEANUP_INTERVAL_SECONDS = 60 * 60
+_TEMP_ENTRY_PATTERN = re.compile(r"(?P<job_id>[0-9a-f]{32})(?:\.zip|-upload\.zip|-snapshots-[a-z0-9_]+)")
+_temp_cleanup_lock = threading.RLock()
 
 TransferJobStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
 
@@ -73,6 +88,9 @@ class DataTransferJobResponse(BaseModel):
     download_url: str | None = None
     manifest: dict[str, Any] | None = None
     error: str | None = None
+    completed_at: float | None = None
+    expires_at: float | None = None
+    archive_bytes: int = 0
 
 
 class _TransferJob:
@@ -93,10 +111,15 @@ class _TransferJob:
         self.manifest: dict[str, Any] | None = None
         self.error: str | None = None
         self.cancel_requested = False
+        self.worker_active = False
+        self.active_downloads = 0
+        self.expires_at: float | None = None
+        self.completed_at: float | None = None
+        self.archive_bytes = 0
 
     def to_response(self) -> DataTransferJobResponse:
         download_url = None
-        if self.kind == "export" and self.status == "completed":
+        if self.kind == "export" and self.status == "completed" and self.file_path is not None:
             download_url = f"/api/webui/data-transfer/export/{self.job_id}/download"
 
         return DataTransferJobResponse(
@@ -113,10 +136,143 @@ class _TransferJob:
             download_url=download_url,
             manifest=self.manifest,
             error=self.error,
+            completed_at=self.completed_at,
+            expires_at=self.expires_at,
+            archive_bytes=self.archive_bytes,
         )
 
 
 _jobs: dict[str, _TransferJob] = {}
+
+
+def _save_export_history(job: _TransferJob) -> None:
+    """持久化已完成导出，刷新页面或重启后仍能恢复下载入口和保留期限。"""
+    record_path = _TRANSFER_TEMP_DIR / f"{job.job_id}.export.json"
+    temporary_path = record_path.with_suffix(".tmp")
+    temporary_path.write_text(job.to_response().model_dump_json(), encoding="utf-8")
+    os.replace(temporary_path, record_path)
+
+
+def _restore_export_history() -> None:
+    for record_path in _TRANSFER_TEMP_DIR.glob("*.export.json"):
+        job_id = record_path.name.removesuffix(".export.json")
+        if re.fullmatch(r"[0-9a-f]{32}", job_id) is None or job_id in _jobs or record_path.is_symlink():
+            continue
+        record = DataTransferJobResponse.model_validate_json(record_path.read_text(encoding="utf-8"))
+        if record.job_id != job_id or record.kind != "export" or record.status != "completed":
+            raise ValueError(f"导出历史记录无效: {record_path}")
+        job = _TransferJob(job_id, "export")
+        job.status = "completed"
+        job.progress = 100
+        job.message = record.message
+        job.filename = record.filename
+        job.manifest = record.manifest
+        job.total_files = record.total_files
+        job.processed_files = record.processed_files
+        job.total_bytes = record.total_bytes
+        job.processed_bytes = record.processed_bytes
+        job.completed_at = record.completed_at
+        job.expires_at = record.expires_at
+        job.archive_bytes = record.archive_bytes
+        archive_path = _TRANSFER_TEMP_DIR / f"{job_id}.zip"
+        if archive_path.is_file() and not archive_path.is_symlink():
+            job.file_path = archive_path
+        else:
+            job.message = "导出文件已过期或已删除"
+        _jobs[job_id] = job
+    _recover_legacy_export_history()
+
+
+def _recover_legacy_export_history() -> None:
+    """为升级前已完整生成的包补历史记录；半成品不能获得下载入口。"""
+    for archive_path in _TRANSFER_TEMP_DIR.glob("*.zip"):
+        job_id = archive_path.stem
+        if re.fullmatch(r"[0-9a-f]{32}", job_id) is None or job_id in _jobs or archive_path.is_symlink():
+            continue
+        try:
+            with zipfile.ZipFile(archive_path) as archive:
+                manifest = _load_archive_manifest(archive)
+                entries = [item for item in archive.infolist() if item.filename != "manifest.json"]
+                expected_files = sum(part["file_count"] for part in manifest["parts"].values())
+                expected_bytes = sum(part["total_bytes"] for part in manifest["parts"].values())
+                if len(entries) != expected_files or sum(item.file_size for item in entries) != expected_bytes:
+                    continue
+        except (OSError, zipfile.BadZipFile, HTTPException, KeyError, TypeError, ValueError) as exc:
+            logger.warning(f"旧导出包无法恢复历史记录: {archive_path.name}, error={exc}")
+            continue
+        stat = archive_path.stat()
+        job = _TransferJob(job_id, "export")
+        job.status = "completed"
+        job.progress = 100
+        job.message = "导出完成"
+        job.file_path = archive_path
+        job.filename = f"maibot-data-{datetime.fromtimestamp(stat.st_mtime).strftime('%Y%m%d-%H%M%S')}.zip"
+        job.manifest = manifest
+        job.total_files = job.processed_files = expected_files
+        job.total_bytes = job.processed_bytes = expected_bytes
+        job.completed_at = stat.st_mtime
+        job.expires_at = stat.st_mtime + _EXPORT_RETENTION_SECONDS
+        job.archive_bytes = stat.st_size
+        _save_export_history(job)
+        _jobs[job_id] = job
+
+
+def _remove_transfer_temp_path(path: Path) -> bool:
+    """仅删除迁移专用临时目录中的直接子项，并显式记录清理失败。"""
+    try:
+        if path.is_symlink() or path.resolve().parent != _TRANSFER_TEMP_DIR.resolve():
+            raise ValueError(f"数据迁移临时路径超出清理范围: {path}")
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+        return True
+    except OSError as exc:
+        logger.warning(f"清理数据迁移临时文件失败: {path}, error={exc}")
+        return False
+
+
+def cleanup_transfer_temp_files() -> int:
+    """清理失败任务、过期下载文件和重启后遗留的迁移临时项。"""
+    with _temp_cleanup_lock:
+        if not _TRANSFER_TEMP_DIR.exists():
+            return 0
+        _restore_export_history()
+        now = time.time()
+        deleted = 0
+        for path in _TRANSFER_TEMP_DIR.iterdir():
+            match = _TEMP_ENTRY_PATTERN.fullmatch(path.name)
+            if match is None or path.is_symlink():
+                continue
+            job = _jobs.get(match["job_id"])
+            if job is not None:
+                # 取消状态可能先于后台写入停止；下载传输期间也不能删除包。
+                if job.worker_active or job.status in {"pending", "running"} or job.active_downloads:
+                    continue
+                if job.status == "completed" and job.expires_at is not None and now < job.expires_at:
+                    continue
+            elif now - path.stat().st_mtime < _EXPORT_RETENTION_SECONDS:
+                # 重启丢失内存任务记录后，仍给新近生成的包保留一段时间。
+                continue
+            if _remove_transfer_temp_path(path):
+                deleted += 1
+                if job is not None and job.file_path == path:
+                    job.file_path = None
+                    if job.status == "completed":
+                        job.message = "导出文件已过期，请重新导出"
+        if deleted:
+            logger.info(f"数据迁移临时文件清理完成: {deleted} 项")
+        return deleted
+
+
+async def periodic_transfer_temp_cleanup() -> None:
+    """启动时和每小时在线程池巡检，不阻塞事件循环。"""
+    while True:
+        try:
+            await asyncio.to_thread(cleanup_transfer_temp_files)
+        except Exception:
+            logger.exception("数据迁移临时目录巡检失败")
+        await asyncio.sleep(_TEMP_CLEANUP_INTERVAL_SECONDS)
 
 
 def _new_job(kind: Literal["export", "import"]) -> _TransferJob:
@@ -127,6 +283,9 @@ def _new_job(kind: Literal["export", "import"]) -> _TransferJob:
 
 
 def _get_job_or_404(job_id: str, kind: Literal["export", "import"] | None = None) -> _TransferJob:
+    if job_id not in _jobs and kind == "export":
+        with _temp_cleanup_lock:
+            _restore_export_history()
     job = _jobs.get(job_id)
     if job is None or (kind is not None and job.kind != kind):
         raise HTTPException(status_code=404, detail="未找到指定的数据迁移任务")
@@ -147,13 +306,15 @@ def _raise_if_cancelled(job: _TransferJob) -> None:
     raise _ExportCancelled
 
 
-def _iter_export_files(root: Path, archive_root: str, job: _TransferJob) -> list[tuple[Path, str, int]]:
+def _iter_export_files(
+    root: Path, archive_root: str, job: _TransferJob, excluded_paths: Optional[Set[Path]] = None,
+) -> list[tuple[Path, str, int]]:
     if not root.exists():
         return []
     if root.is_file():
         _raise_if_cancelled(job)
         archive_name = f"{archive_root}/{root.name}"
-        if archive_name in _EXCLUDED_EXPORT_PATHS:
+        if archive_name in _EXCLUDED_EXPORT_PATHS or archive_name.startswith(_EXCLUDED_EXPORT_DIR_PREFIXES):
             return []
         stat = root.stat()
         return [(root, archive_name, stat.st_size)]
@@ -162,6 +323,8 @@ def _iter_export_files(root: Path, archive_root: str, job: _TransferJob) -> list
     root_resolved = root.resolve()
     for file_path in root.rglob("*"):
         _raise_if_cancelled(job)
+        if excluded_paths and any(path == file_path or path in file_path.parents for path in excluded_paths):
+            continue
         if not file_path.is_file() or file_path.is_symlink():
             continue
         try:
@@ -170,12 +333,57 @@ def _iter_export_files(root: Path, archive_root: str, job: _TransferJob) -> list
             relative_path = resolved_path.relative_to(root_resolved).as_posix()
             archive_name = f"{archive_root}/{relative_path}"
             # 运行时写者锁不包含业务数据，Windows 下持锁读取还会触发 PermissionError。
-            if archive_name in _EXCLUDED_EXPORT_PATHS:
+            # 推理预览图片只用于查看历史推理，默认不随业务数据导出。
+            if archive_name in _EXCLUDED_EXPORT_PATHS or archive_name.startswith(_EXCLUDED_EXPORT_DIR_PREFIXES):
                 continue
             files.append((resolved_path, archive_name, resolved_path.stat().st_size))
         except (OSError, RuntimeError, ValueError) as exc:
             logger.warning(f"跳过无法导出的文件: {file_path}, error={exc}")
     return files
+
+
+def _stage_graph_snapshots(
+    destination: Path, job: _TransferJob,
+) -> Tuple[list[tuple[Path, str, int]], Set[Path]]:
+    """提前固定有效图快照及其指针，避免长时间压缩期间旧 generation 被轮换删除。"""
+    data_root = _EXPORT_DIRS["data"].resolve()
+    files: list[tuple[Path, str, int]] = []
+    excluded: Set[Path] = set()
+    for pointer_path in data_root.rglob("graph_snapshot.json"):
+        _raise_if_cancelled(job)
+        if pointer_path.is_symlink():
+            continue
+        graph_root = pointer_path.parent
+        relative_root = graph_root.relative_to(data_root)
+        for attempt in range(3):
+            # 重试仅处理复制期间 generation 被轮换的竞争；其他读写错误立即暴露。
+            try:
+                pointer_bytes = pointer_path.read_bytes()
+                pointer: Dict[str, Any] = json.loads(pointer_bytes)
+                generation = pointer["generation"]
+                if not isinstance(generation, str) or re.fullmatch(r"graph-[0-9a-f]{32}", generation) is None:
+                    raise ValueError(f"图快照 generation 无效: {pointer_path}")
+                source = graph_root / "graph_snapshots" / generation
+                staged_root = destination / str(attempt) / relative_root
+                staged_snapshot = staged_root / "graph_snapshots" / generation
+                metadata = json.loads((source / "graph_metadata.json").read_bytes())
+                staged_snapshot.mkdir(parents=True)
+                snapshot_names = ["graph_metadata.json"]
+                if metadata["has_adjacency"]:
+                    snapshot_names.append("graph_adjacency.npz")
+                for name in snapshot_names:
+                    _raise_if_cancelled(job)
+                    shutil.copyfile(source / name, staged_snapshot / name)
+                # 指针与复制的 generation 一起导出，不再读取后续切换的在线指针。
+                (staged_root / "graph_snapshot.json").write_bytes(pointer_bytes)
+                archive_root = f"data/{relative_root.as_posix()}" if relative_root.parts else "data"
+                files.extend(_iter_export_files(staged_root, archive_root, job))
+                excluded.update({pointer_path, graph_root / "graph_snapshots"})
+                break
+            except FileNotFoundError:
+                if attempt == 2:
+                    raise
+    return files, excluded
 
 
 def _build_manifest(parts: list[str], files: list[tuple[Path, str, int]]) -> dict[str, Any]:
@@ -212,22 +420,28 @@ def _update_progress(job: _TransferJob) -> None:
 
 def _write_archive_file(archive: zipfile.ZipFile, file_path: Path, archive_name: str, job: _TransferJob) -> int:
     written_bytes = 0
-    with file_path.open("rb") as source_file, archive.open(archive_name, "w") as target_file:
-        while True:
-            _raise_if_cancelled(job)
-            chunk = source_file.read(_CHUNK_SIZE)
-            if not chunk:
-                break
-            target_file.write(chunk)
-            written_bytes += len(chunk)
-            job.processed_bytes += len(chunk)
-            _update_progress(job)
+    try:
+        with file_path.open("rb") as source_file, archive.open(archive_name, "w") as target_file:
+            while True:
+                _raise_if_cancelled(job)
+                chunk = source_file.read(_CHUNK_SIZE)
+                if not chunk:
+                    break
+                target_file.write(chunk)
+                written_bytes += len(chunk)
+                job.processed_bytes += len(chunk)
+                _update_progress(job)
+    except OSError as exc:
+        # Windows 字节区域锁可能直到 read 时才报错，补齐路径以便准确定位。
+        raise OSError(exc.errno, f"导出文件失败 ({archive_name}): {exc.strerror}", str(file_path)) from exc
     return written_bytes
 
 
 def _run_export_job(job_id: str, request: DataExportRequest) -> None:
     job = _get_job_or_404(job_id, "export")
     archive_path: Path | None = None
+    snapshot_directory = None
+    job.worker_active = True
     try:
         _raise_if_cancelled(job)
         job.status = "running"
@@ -239,10 +453,13 @@ def _run_export_job(job_id: str, request: DataExportRequest) -> None:
         if request.include_logs:
             parts.append("logs")
 
-        files: list[tuple[Path, str, int]] = []
+        snapshot_directory = tempfile.TemporaryDirectory(prefix=f"{job_id}-snapshots-", dir=_TRANSFER_TEMP_DIR)
+        job.message = "正在固定记忆图快照"
+        files, excluded_paths = _stage_graph_snapshots(Path(snapshot_directory.name), job)
+        job.message = "正在扫描需要导出的文件"
         for part in parts:
             _raise_if_cancelled(job)
-            files.extend(_iter_export_files(_EXPORT_DIRS[part], part, job))
+            files.extend(_iter_export_files(_EXPORT_DIRS[part], part, job, excluded_paths))
 
         job.total_files = len(files)
         job.total_bytes = sum(file_size for _, _, file_size in files)
@@ -265,15 +482,16 @@ def _run_export_job(job_id: str, request: DataExportRequest) -> None:
                 _update_progress(job)
 
         _raise_if_cancelled(job)
+        job.expires_at = time.time() + _EXPORT_RETENTION_SECONDS
         job.status = "completed"
         job.progress = 100
         job.message = "导出完成"
+        job.completed_at = time.time()
+        job.archive_bytes = archive_path.stat().st_size
+        with _temp_cleanup_lock:
+            _save_export_history(job)
     except _ExportCancelled:
-        if archive_path is not None:
-            try:
-                archive_path.unlink(missing_ok=True)
-            except OSError as exc:
-                logger.warning(f"清理已取消导出文件失败: {archive_path}, error={exc}")
+        pass
     except HTTPException as exc:
         logger.warning(f"导出 MaiBot 数据失败: {exc.detail}")
         job.status = "failed"
@@ -284,6 +502,15 @@ def _run_export_job(job_id: str, request: DataExportRequest) -> None:
         job.status = "failed"
         job.error = str(exc)
         job.message = "导出失败"
+    finally:
+        try:
+            if snapshot_directory is not None:
+                snapshot_directory.cleanup()
+        finally:
+            if job.status != "completed" and archive_path is not None:
+                if _remove_transfer_temp_path(archive_path):
+                    job.file_path = None
+            job.worker_active = False
 
 
 def _safe_zip_member_path(member_name: str) -> tuple[str, str]:
@@ -409,17 +636,74 @@ def get_data_transfer_job(job_id: str) -> DataTransferJobResponse:
     return _get_job_or_404(job_id).to_response()
 
 
+@router.get("/exports", response_model=List[DataTransferJobResponse])
+def list_data_exports() -> List[DataTransferJobResponse]:
+    """列出已完成导出，包括已过期记录；扫描仅访问小型历史元数据。"""
+    with _temp_cleanup_lock:
+        _restore_export_history()
+        jobs = sorted(
+            (job for job in _jobs.values() if job.kind == "export" and job.status == "completed"),
+            key=lambda job: job.completed_at or 0,
+            reverse=True,
+        )
+        for job in jobs:
+            if job.file_path is not None and not job.file_path.is_file():
+                job.file_path = None
+                job.message = "导出文件已过期或已删除"
+        return [job.to_response() for job in jobs]
+
+
 @router.get("/export/{job_id}/download", response_model=None)
 def download_data_export(job_id: str) -> FileResponse:
     """下载已完成的数据导出压缩包。"""
-    job = _get_job_or_404(job_id, "export")
-    if job.status != "completed" or job.file_path is None or not job.file_path.is_file():
-        raise HTTPException(status_code=400, detail="导出任务尚未完成或文件已失效")
-    return FileResponse(
-        job.file_path,
-        media_type="application/zip",
-        filename=job.filename or "maibot-data.zip",
-    )
+    with _temp_cleanup_lock:
+        job = _get_job_or_404(job_id, "export")
+        if job.status != "completed" or job.file_path is None or not job.file_path.is_file():
+            raise HTTPException(status_code=400, detail="导出任务尚未完成或文件已失效")
+        job.active_downloads += 1
+        job.expires_at = time.time() + _EXPORT_RETENTION_SECONDS
+        return _ExportDownloadResponse(
+            job.file_path,
+            job=job,
+            media_type="application/zip",
+            filename=job.filename or "maibot-data.zip",
+        )
+
+
+class _ExportDownloadResponse(FileResponse):
+    """下载完成或连接中断时都释放清理保护。"""
+
+    def __init__(self, path: Path, *, job: _TransferJob, **kwargs: Any) -> None:
+        super().__init__(path, **kwargs)
+        self.job = job
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            # FileResponse 不主动消费 http.disconnect；部分 ASGI 服务器在连接断开后
+            # 不会立刻让 send 报错，因此必须监听断开并取消仍在读取大文件的响应。
+            async with anyio.create_task_group() as tasks:
+                async def watch_disconnect() -> None:
+                    while True:
+                        message = await receive()
+                        if message["type"] == "http.disconnect":
+                            tasks.cancel_scope.cancel()
+                            return
+
+                tasks.start_soon(watch_disconnect)
+                try:
+                    await super().__call__(scope, receive, send)
+                finally:
+                    tasks.cancel_scope.cancel()
+        finally:
+            await asyncio.shield(asyncio.to_thread(_finish_export_download, self.job))
+
+
+def _finish_export_download(job: _TransferJob) -> None:
+    with _temp_cleanup_lock:
+        job.active_downloads -= 1
+        job.expires_at = time.time() + _EXPORT_RETENTION_SECONDS
+        if job.completed_at is not None:
+            _save_export_history(job)
 
 
 @router.post("/export/{job_id}/cancel", response_model=DataTransferJobResponse)
@@ -472,11 +756,13 @@ async def create_data_import(
 @router.delete("/jobs/{job_id}", response_model=dict[str, bool])
 def delete_data_transfer_job(job_id: str) -> dict[str, bool]:
     """清理任务记录和已生成的临时文件。"""
-    job = _get_job_or_404(job_id)
-    if job.file_path is not None:
-        try:
-            job.file_path.unlink(missing_ok=True)
-        except OSError as exc:
-            logger.warning(f"清理数据迁移任务文件失败: {job.file_path}, error={exc}")
-    _jobs.pop(job_id, None)
+    with _temp_cleanup_lock:
+        _restore_export_history()
+        job = _get_job_or_404(job_id)
+        if job.worker_active or job.status in {"pending", "running"} or job.active_downloads:
+            raise HTTPException(status_code=409, detail="任务仍在处理或下载中，请稍后删除")
+        if job.file_path is not None and not _remove_transfer_temp_path(job.file_path):
+            raise HTTPException(status_code=500, detail="删除导出文件失败，请查看日志")
+        (_TRANSFER_TEMP_DIR / f"{job_id}.export.json").unlink(missing_ok=True)
+        _jobs.pop(job_id, None)
     return {"success": True}

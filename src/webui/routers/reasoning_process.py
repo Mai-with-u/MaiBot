@@ -9,7 +9,6 @@ import json
 import mimetypes
 import os
 import re
-import shutil
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -28,6 +27,7 @@ from src.llm_models.request_snapshot import (
     serialize_generation_attempt,
     serialize_context_item_snapshot,
 )
+from src.maisaka.display.prompt_preview_logger import PromptPreviewLogger
 from src.services.llm_service import generate as generate_llm_response
 from src.services.bot_account_service import get_all_bot_account_pairs
 from src.services.service_task_resolver import get_available_models
@@ -1968,8 +1968,7 @@ def clear_reasoning_prompt_stage(stage: str):
     if not stage_dir.is_dir():
         raise HTTPException(status_code=400, detail="推理过程路径不是目录")
 
-    deleted_files = sum(1 for path in stage_dir.rglob("*") if path.is_file())
-    shutil.rmtree(stage_dir)
+    deleted_files = PromptPreviewLogger.clear_stage(stage_dir)
     return ReasoningPromptClearStageResponse(stage=stage_name, deleted_files=deleted_files)
 
 

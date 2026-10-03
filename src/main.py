@@ -219,11 +219,15 @@ class MainSystem:
             from src.chat.image_system.image_cache_cleanup import periodic_image_cache_cleanup
             from src.emoji_system.emoji_cache_cleanup import periodic_emoji_cache_cleanup
             from src.emoji_system.emoji_manager import emoji_manager
+            from src.maisaka.display.prompt_preview_logger import PromptPreviewLogger
             from src.services.image_path_maintenance_service import (
                 run_image_path_maintenance_background,
                 should_schedule_image_path_maintenance_background,
             )
+            from src.webui.routers.data_transfer import periodic_transfer_temp_cleanup
 
+            # 在独立线程中巡检推理图片，空闲时也能清理旧版本遗留的孤立缓存。
+            PromptPreviewLogger.start()
             self._register_message_handlers()
             if self.app is None or self.server is None:
                 raise RuntimeError("消息服务未初始化")
@@ -232,6 +236,7 @@ class MainSystem:
                 emoji_manager.periodic_emoji_maintenance(),
                 periodic_emoji_cache_cleanup(),
                 periodic_image_cache_cleanup(),
+                periodic_transfer_temp_cleanup(),
                 self.app.run(),
                 self.server.run(),
             ]
