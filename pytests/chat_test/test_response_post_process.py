@@ -1,5 +1,7 @@
 """回复后处理元数据测试。"""
 
+import pytest
+
 from src.chat.utils import utils as chat_utils
 from src.chat.utils.utils import ProcessedResponseSegment
 
@@ -10,8 +12,54 @@ class _FixedTypoGenerator:
     def __init__(self, **_kwargs: object) -> None:
         pass
 
-    def create_typo_sentence(self, _sentence: str) -> tuple[str, str]:
-        return "今田见", "天"
+    def create_typo_sentence(self, sentence: str) -> tuple[str, str]:
+        return sentence.replace("今天见", "今田见"), "天"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["rule", "llm"])
+@pytest.mark.parametrize("config_enabled,call_enabled", [(False, True), (True, False), (False, False)])
+async def test_disabled_typo_skips_construction(monkeypatch, mode, config_enabled, call_enabled) -> None:
+    def unexpected_constructor(**_kwargs):
+        pytest.fail("关闭错别字功能时不应构建生成器")
+
+    async def split_with_llm(_text):
+        return [("今天见", "")]
+
+    monkeypatch.setattr(chat_utils, "ChineseTypoGenerator", unexpected_constructor)
+    monkeypatch.setattr(chat_utils, "split_text_with_llm", split_with_llm)
+    monkeypatch.setattr(chat_utils.global_config.response_post_process, "enable_response_post_process", True)
+    monkeypatch.setattr(chat_utils.global_config.response_splitter, "mode", mode)
+    monkeypatch.setattr(chat_utils.global_config.response_splitter, "enable", True)
+    monkeypatch.setattr(chat_utils.global_config.chinese_typo, "enable", config_enabled)
+
+    segments = await chat_utils.process_llm_response_segments_async("今天见", enable_chinese_typo=call_enabled)
+
+    assert segments == [ProcessedResponseSegment("今天见")]
+
+
+@pytest.mark.asyncio
+async def test_llm_split_preserves_typo_correction_metadata(monkeypatch) -> None:
+    async def split_with_llm(text):
+        return [(text, "")]
+
+    monkeypatch.setattr(chat_utils, "split_text_with_llm", split_with_llm)
+    monkeypatch.setattr(chat_utils, "ChineseTypoGenerator", _FixedTypoGenerator)
+    monkeypatch.setattr(chat_utils.global_config.response_post_process, "enable_response_post_process", True)
+    monkeypatch.setattr(chat_utils.global_config.response_splitter, "mode", "llm")
+    monkeypatch.setattr(chat_utils.global_config.response_splitter, "max_split_num", 3)
+    monkeypatch.setattr(chat_utils.global_config.response_splitter, "max_sentence_num", 3)
+    monkeypatch.setattr(chat_utils.global_config.chinese_typo, "enable", True)
+    monkeypatch.setattr(chat_utils.global_config.chinese_typo, "enable_correction_quote", True)
+    monkeypatch.setattr(chat_utils.global_config.chinese_typo, "correction_quote_probability", 1.0)
+    monkeypatch.setattr(chat_utils.random, "random", lambda: 0.0)
+
+    segments = await chat_utils.process_llm_response_segments_async("今天见，")
+
+    assert segments == [
+        ProcessedResponseSegment("今田见，"),
+        ProcessedResponseSegment("天", quote_previous=True),
+    ]
 
 
 def test_typo_correction_marks_quote_previous(monkeypatch) -> None:
