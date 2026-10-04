@@ -264,7 +264,12 @@ async def replay_precise_selector(
 
     def context_factory(_client: object) -> list[Any]:
         del _client
-        return [item for message in raw_messages for item in _build_context_items_from_dict(message)]
+        logical_turn_by_call_id: dict[str, str] = {}
+        return [
+            item
+            for message in raw_messages
+            for item in _build_context_items_from_dict(message, logical_turn_by_call_id)
+        ]
 
     response = await llm_client.generate_response_with_context(
         context_factory,
