@@ -287,7 +287,13 @@ class MCPService:
                 self._closed = True
 
             if managers:
-                await asyncio.gather(*(manager.close() for manager in managers), return_exceptions=True)
+                close_results = await asyncio.gather(
+                    *(manager.close() for manager in managers),
+                    return_exceptions=True,
+                )
+                for close_result in close_results:
+                    if isinstance(close_result, BaseException):
+                        logger.error(f"关闭 MCP 管理器失败: {close_result}", exc_info=close_result)
             self._update_status_snapshot(None, initialized=False)
 
 

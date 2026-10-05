@@ -6,6 +6,7 @@ MaiSaka - 单个 MCP 服务器连接管理
 from __future__ import annotations
 
 from contextlib import AsyncExitStack
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Callable, Optional, cast
 
@@ -13,6 +14,7 @@ import asyncio
 import httpx
 
 from src.cli.console import console
+from src.common.logger import get_logger
 from src.core.tooling import ToolExecutionResult
 
 from .config import MCPClientRuntimeConfig, MCPServerRuntimeConfig
@@ -86,9 +88,47 @@ except ImportError:
     tolerant_stdio_client = None  # type: ignore[assignment]
     McpError = Exception  # type: ignore[assignment,misc]
 
+logger = get_logger("mcp_connection")
+
+# 等待连接所有者任务正常关闭的最短时限：stdio 传输关闭时会等待子进程退出、必要时再终止进程树，
+# 正常情况下数秒内即可完成
+MIN_CLOSE_TIMEOUT_SECONDS = 10.0
+
+
+def _format_exception_message(exc: BaseException) -> str:
+    """提取异常的可读信息。
+
+    anyio 的 TaskGroup 会把子任务异常包装为异常组，这里展开为其中的原始异常信息。
+
+    Args:
+        exc: 需要描述的异常。
+
+    Returns:
+        str: 可读的异常信息。
+    """
+
+    if isinstance(exc, BaseExceptionGroup):
+        return "; ".join(_format_exception_message(sub_exception) for sub_exception in exc.exceptions)
+    return str(exc).strip() or exc.__class__.__name__
+
+
+@dataclass(slots=True)
+class _ConnectionLifecycle:
+    """单次连接的所有者任务及其同步原语。"""
+
+    task: "asyncio.Task[None]"
+    ready: "asyncio.Future[None]"
+    close_requested: asyncio.Event
+
 
 class MCPConnection:
-    """管理单个 MCP 服务器的连接生命周期。"""
+    """管理单个 MCP 服务器的连接生命周期。
+
+    传输层与 ``ClientSession`` 内部使用 anyio 的 TaskGroup / CancelScope，anyio 要求它们必须在
+    进入时所在的同一个任务里退出。因此每个连接由一个常驻的所有者任务负责完整生命周期：在该任务内
+    进入传输与会话、完成初始化，然后等待关闭信号，最后仍在该任务内退出全部上下文。``connect()``
+    与 ``close()`` 可以在任意任务中调用，它们只负责启动、通知并等待所有者任务。
+    """
 
     def __init__(
         self,
@@ -123,7 +163,7 @@ class MCPConnection:
 
         self._http_client: Optional[httpx.AsyncClient] = None
         self._session_id_getter: Optional[Callable[[], str | None]] = None
-        self._exit_stack = AsyncExitStack()
+        self._lifecycle: Optional[_ConnectionLifecycle] = None
 
     @property
     def session_id(self) -> str:
@@ -140,6 +180,9 @@ class MCPConnection:
     async def connect(self) -> bool:
         """连接到 MCP 服务器并发现可用能力。
 
+        建连在独立的所有者任务中完成，当前任务只等待其就绪或失败。建连被取消（例如外层超时）时，
+        会先让所有者任务在自身任务内回滚已进入的上下文，再继续向上传播取消。
+
         Returns:
             bool: `True` 表示连接成功，`False` 表示失败。
         """
@@ -152,43 +195,111 @@ class MCPConnection:
         if self.session is not None:
             return True
 
-        self.last_error = ""
-        try:
-            await self._exit_stack.__aenter__()
-            read_stream, write_stream = await self._connect_transport()
-            session = await self._create_client_session(read_stream, write_stream)
-            self.session = session
-            initialize_result = await session.initialize()
-            self.server_capabilities = getattr(initialize_result, "capabilities", None)
-            self.protocol_version = str(getattr(initialize_result, "protocolVersion", "") or "")
+        if self._lifecycle is not None:
+            if not self._lifecycle.task.done():
+                raise RuntimeError(f"MCP 服务器 '{self.config.name}' 的连接正在建立中，不能重复连接")
+            # 上一次连接已在运行期异常中断，所有者任务已结束并记录过中断原因
+            self._lifecycle = None
 
-            await self._load_server_features()
+        self.last_error = ""
+        ready: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        close_requested = asyncio.Event()
+        lifecycle = _ConnectionLifecycle(
+            task=asyncio.create_task(
+                self._run_lifecycle(ready, close_requested),
+                name=f"mcp_connection:{self.config.name}",
+            ),
+            ready=ready,
+            close_requested=close_requested,
+        )
+        self._lifecycle = lifecycle
+        try:
+            await asyncio.wait((lifecycle.ready, lifecycle.task), return_when=asyncio.FIRST_COMPLETED)
+        except asyncio.CancelledError:
+            # 建连被取消（如外层超时）：先让所有者任务在自身任务内回滚已进入的上下文，再继续传播取消
+            await self.close()
+            raise
+
+        if lifecycle.close_requested.is_set():
+            # 建连期间已被 close()：所有者任务的回收与异常记录由 close() 负责
+            self.last_error = "连接在建立过程中被关闭"
+            return False
+        if lifecycle.ready.done():
             return True
 
+        # 所有者任务在就绪前结束即建连失败，已进入的上下文已在所有者任务内退出
+        self._lifecycle = None
+        try:
+            lifecycle.task.result()
         except Exception as exc:
-            self.last_error = str(exc).strip() or exc.__class__.__name__
-            console.print(f"[warning]⚠️ MCP 服务器 '{self.config.name}' 连接失败: {exc}[/warning]")
-            await self.close()
+            self.last_error = _format_exception_message(exc)
+            logger.error(f"MCP 服务器 '{self.config.name}' 连接失败: {self.last_error}", exc_info=exc)
             return False
+        raise RuntimeError(f"MCP 服务器 '{self.config.name}' 的连接任务在就绪前意外结束")
 
-    async def _connect_transport(self) -> tuple[Any, Any]:
+    async def _run_lifecycle(self, ready: "asyncio.Future[None]", close_requested: asyncio.Event) -> None:
+        """连接所有者任务：在同一任务内进入并退出传输与会话的全部异步上下文。
+
+        Args:
+            ready: 建连与能力发现完成后置为完成，用于通知 ``connect()``。
+            close_requested: ``close()`` 发出的关闭信号。
+
+        Raises:
+            Exception: 建连阶段与关闭阶段的异常，分别交给等待中的 ``connect()`` 与 ``close()`` 记录。
+        """
+
+        try:
+            async with AsyncExitStack() as exit_stack:
+                try:
+                    read_stream, write_stream = await self._connect_transport(exit_stack)
+                    session = await self._create_client_session(exit_stack, read_stream, write_stream)
+                    self.session = session
+                    initialize_result = await session.initialize()
+                    self.server_capabilities = getattr(initialize_result, "capabilities", None)
+                    self.protocol_version = str(getattr(initialize_result, "protocolVersion", "") or "")
+
+                    await self._load_server_features()
+                except Exception:
+                    # 建连失败：先在本任务内按正常路径退出已进入的上下文，再把原始异常交给 connect()；
+                    # 若退出时再次失败，建连异常会作为新异常的上下文一并保留
+                    await exit_stack.aclose()
+                    raise
+
+                ready.set_result(None)
+                await close_requested.wait()
+        except Exception as exc:
+            if not ready.done() or close_requested.is_set():
+                raise
+            # 运行期传输异常（如子进程输出无法解码、远程流断开）没有调用方在等待，必须在此完整记录
+            self.last_error = _format_exception_message(exc)
+            logger.error(f"MCP 服务器 '{self.config.name}' 连接异常中断: {self.last_error}", exc_info=exc)
+        finally:
+            self._reset_connection_state()
+
+    async def _connect_transport(self, exit_stack: AsyncExitStack) -> tuple[Any, Any]:
         """根据配置建立底层传输连接。
+
+        Args:
+            exit_stack: 所有者任务持有的上下文栈。
 
         Returns:
             tuple[Any, Any]: 读写流对象。
         """
 
         if self.config.transport_type == "stdio":
-            return await self._connect_stdio()
+            return await self._connect_stdio(exit_stack)
         if self.config.transport_type == "streamable_http":
-            return await self._connect_streamable_http()
+            return await self._connect_streamable_http(exit_stack)
         if self.config.transport_type == "sse":
-            return await self._connect_sse()
+            return await self._connect_sse(exit_stack)
 
         raise ValueError(f"MCP 服务器 '{self.config.name}' 使用了未知传输类型: {self.config.transport}")
 
-    async def _connect_stdio(self) -> tuple[Any, Any]:
+    async def _connect_stdio(self, exit_stack: AsyncExitStack) -> tuple[Any, Any]:
         """建立 stdio 传输连接。
+
+        Args:
+            exit_stack: 所有者任务持有的上下文栈。
 
         Returns:
             tuple[Any, Any]: 读写流对象。
@@ -205,10 +316,13 @@ class MCPConnection:
             env=self.config.env,
         )
         # 容错包装：丢弃违规 server 写到 stdout 的非 JSON 噪声以防 initialize 失败；详见 stdio_filter.py。
-        return await self._exit_stack.enter_async_context(tolerant_stdio_client(params))
+        return await exit_stack.enter_async_context(tolerant_stdio_client(params))
 
-    async def _connect_streamable_http(self) -> tuple[Any, Any]:
+    async def _connect_streamable_http(self, exit_stack: AsyncExitStack) -> tuple[Any, Any]:
         """建立 Streamable HTTP 传输连接。
+
+        Args:
+            exit_stack: 所有者任务持有的上下文栈。
 
         Returns:
             tuple[Any, Any]: 读写流对象。
@@ -220,7 +334,7 @@ class MCPConnection:
             raise ValueError(f"MCP 服务器 '{self.config.name}' 缺少 Streamable HTTP url 配置")
 
         if STREAMABLE_HTTP_USES_LEGACY_CLIENT:
-            read_stream, write_stream, session_id_getter = await self._exit_stack.enter_async_context(
+            read_stream, write_stream, session_id_getter = await exit_stack.enter_async_context(
                 streamable_http_client(
                     url=self.config.url,
                     headers=self.config.build_http_headers(),
@@ -231,8 +345,8 @@ class MCPConnection:
                 )
             )
         else:
-            self._http_client = await self._exit_stack.enter_async_context(self._build_http_client())
-            read_stream, write_stream, session_id_getter = await self._exit_stack.enter_async_context(
+            self._http_client = await exit_stack.enter_async_context(self._build_http_client())
+            read_stream, write_stream, session_id_getter = await exit_stack.enter_async_context(
                 streamable_http_client(
                     url=self.config.url,
                     http_client=self._http_client,
@@ -242,8 +356,11 @@ class MCPConnection:
         self._session_id_getter = session_id_getter
         return read_stream, write_stream
 
-    async def _connect_sse(self) -> tuple[Any, Any]:
+    async def _connect_sse(self, exit_stack: AsyncExitStack) -> tuple[Any, Any]:
         """建立 SSE 传输连接。
+
+        Args:
+            exit_stack: 所有者任务持有的上下文栈。
 
         Returns:
             tuple[Any, Any]: 读写流对象。
@@ -254,7 +371,7 @@ class MCPConnection:
         if not self.config.url:
             raise ValueError(f"MCP 服务器 '{self.config.name}' 缺少 SSE url 配置")
 
-        read_stream, write_stream = await self._exit_stack.enter_async_context(
+        read_stream, write_stream = await exit_stack.enter_async_context(
             sse_client(
                 url=self.config.url,
                 headers=self.config.build_http_headers(),
@@ -297,10 +414,11 @@ class MCPConnection:
             ),
         )
 
-    async def _create_client_session(self, read_stream: Any, write_stream: Any) -> Any:
+    async def _create_client_session(self, exit_stack: AsyncExitStack, read_stream: Any, write_stream: Any) -> Any:
         """创建并返回 MCP `ClientSession`。
 
         Args:
+            exit_stack: 所有者任务持有的上下文栈。
             read_stream: 底层读取流。
             write_stream: 底层写入流。
 
@@ -334,7 +452,7 @@ class MCPConnection:
                 f"[warning]⚠️ MCP 服务器 '{self.config.name}' 已启用 elicitation 配置，但宿主未提供 elicitation 回调，当前不会声明该能力[/warning]"
             )
 
-        session = await self._exit_stack.enter_async_context(
+        session = await exit_stack.enter_async_context(
             ClientSession(
                 read_stream,
                 write_stream,
@@ -609,10 +727,11 @@ class MCPConnection:
                 read_timeout_seconds=timedelta(seconds=self.config.read_timeout_seconds),
             )
         except Exception as exc:
+            # 部分异常（如流已关闭时的 ClosedResourceError）没有消息文本，需要用异常类名补全
             return ToolExecutionResult(
                 tool_name=tool_name,
                 success=False,
-                error_message=f"MCP 工具 '{tool_name}' 执行失败: {exc}",
+                error_message=f"MCP 工具 '{tool_name}' 执行失败: {_format_exception_message(exc)}",
                 metadata={"server_name": self.config.name},
             )
 
@@ -675,12 +794,55 @@ class MCPConnection:
         return build_resource_read_result(result, uri=uri, server_name=self.config.name)
 
     async def close(self) -> None:
-        """关闭连接并释放资源。"""
+        """关闭连接并释放资源。
 
-        try:
-            await self._exit_stack.aclose()
-        except Exception as exc:
-            console.print(f"[warning]⚠️ MCP 服务器 '{self.config.name}' 关闭连接失败: {exc}[/warning]")
+        可在任意任务中调用：只向所有者任务发出关闭信号，并等待它在自身任务内退出全部上下文。
+        所有者任务超过时限仍未退出时会被取消，取消引发的上下文回滚同样发生在所有者任务内。
+        """
+
+        lifecycle = self._lifecycle
+        if lifecycle is None:
+            return
+        self._lifecycle = None
+
+        lifecycle.close_requested.set()
+        if not lifecycle.ready.done():
+            # 尚未完成建连：无需等待初始化结束，直接取消所有者任务
+            lifecycle.task.cancel()
+        else:
+            close_timeout_seconds = self._get_close_timeout_seconds()
+            done, _pending = await asyncio.wait((lifecycle.task,), timeout=close_timeout_seconds)
+            if not done:
+                logger.warning(
+                    f"MCP 服务器 '{self.config.name}' 的连接在 {close_timeout_seconds:g} 秒内未完成关闭，"
+                    "正在取消其所有者任务"
+                )
+                lifecycle.task.cancel()
+        await asyncio.wait((lifecycle.task,))
+
+        if lifecycle.task.cancelled():
+            return
+        close_error = lifecycle.task.exception()
+        if close_error is not None:
+            logger.error(
+                f"MCP 服务器 '{self.config.name}' 关闭连接失败: {_format_exception_message(close_error)}",
+                exc_info=close_error,
+            )
+
+    def _get_close_timeout_seconds(self) -> float:
+        """返回等待所有者任务正常退出的时限，超时后会取消该任务。
+
+        Returns:
+            float: 等待秒数。
+        """
+
+        if self.config.transport_type == "stdio":
+            return MIN_CLOSE_TIMEOUT_SECONDS
+        # HTTP 类传输关闭时可能需要向服务端发送会话终止请求，受 HTTP 超时约束
+        return max(MIN_CLOSE_TIMEOUT_SECONDS, self.config.http_timeout_seconds + 5.0)
+
+    def _reset_connection_state(self) -> None:
+        """清空已结束连接的会话与能力状态。"""
 
         self.session = None
         self.server_capabilities = None
@@ -691,4 +853,3 @@ class MCPConnection:
         self.protocol_version = ""
         self._http_client = None
         self._session_id_getter = None
-        self._exit_stack = AsyncExitStack()

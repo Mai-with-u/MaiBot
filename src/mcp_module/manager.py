@@ -5,11 +5,12 @@ MaiSaka - MCP 管理器
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 import asyncio
 
 from src.cli.console import console
+from src.common.logger import get_logger
 from src.core.tooling import (
     ToolExecutionResult,
     ToolInvocation,
@@ -39,6 +40,8 @@ from .models import (
 
 if TYPE_CHECKING:
     from src.config.official_configs import MCPConfig
+
+logger = get_logger("mcp_manager")
 
 # 内置工具名称集合 —— MCP 工具不允许与这些名称冲突
 BUILTIN_TOOL_NAMES = frozenset(
@@ -139,6 +142,8 @@ class MCPManager:
         """
 
         self._server_configs = {config.name: config for config in configs}
+        # 本轮创建的全部连接，用于在整体建连被中断时回收尚未登记到 self._connections 的连接
+        created_connections: List[MCPConnection] = []
 
         async def connect_one(config: MCPServerRuntimeConfig) -> tuple[MCPServerRuntimeConfig, MCPConnection, bool]:
             """并行建立一个服务连接，但保持后续注册顺序稳定。"""
@@ -149,6 +154,7 @@ class MCPManager:
                 self._host_callbacks,
                 discover_extended_features=self._discover_extended_features,
             )
+            created_connections.append(connection)
             connect_timeout_seconds = (
                 min(60.0, max(5.0, config.http_timeout_seconds + 5.0))
                 if config.transport != "stdio"
@@ -160,12 +166,19 @@ class MCPManager:
                     timeout=connect_timeout_seconds,
                 )
             except TimeoutError:
+                # 超时取消 connect() 时，它已在所有者任务内回滚传输与会话，这里只需记录原因
                 connection.last_error = f"连接超过 {connect_timeout_seconds:g} 秒"
-                await connection.close()
+                logger.warning(f"MCP 服务器 '{config.name}' {connection.last_error}，已放弃连接")
                 success = False
             return config, connection, success
 
-        connection_results = await asyncio.gather(*(connect_one(config) for config in configs))
+        try:
+            connection_results = await asyncio.gather(*(connect_one(config) for config in configs))
+        except BaseException:
+            # 整体建连被取消（如 reload 任务被取消）或某个建连意外抛错时，已成功建连的其他连接尚未登记到
+            # self._connections，之后的 close() 也回收不到，必须在此关闭；对已关闭的连接调用 close() 是空操作
+            await self._close_connections(created_connections)
+            raise
         for config, connection, success in connection_results:
             if not success:
                 self._connection_errors[config.name] = connection.last_error or "连接失败"
@@ -641,16 +654,29 @@ class MCPManager:
 
         return len(self._resource_to_server)
 
+    @staticmethod
+    async def _close_connections(connections: List[MCPConnection]) -> None:
+        """并发关闭一组连接，并记录每个连接关闭失败的原因。
+
+        Args:
+            connections: 需要关闭的连接列表。
+        """
+
+        close_results = await asyncio.gather(
+            *(connection.close() for connection in connections),
+            return_exceptions=True,
+        )
+        for connection, close_result in zip(connections, close_results, strict=True):
+            if isinstance(close_result, BaseException):
+                logger.error(
+                    f"MCP 服务器 '{connection.config.name}' 连接关闭失败: {close_result}",
+                    exc_info=close_result,
+                )
+
     async def close(self) -> None:
         """关闭所有 MCP 服务器连接。"""
 
-        close_results = await asyncio.gather(
-            *(connection.close() for connection in self._connections.values()),
-            return_exceptions=True,
-        )
-        for close_result in close_results:
-            if isinstance(close_result, Exception):
-                console.print(f"[warning]⚠️ MCP 连接关闭失败: {close_result}[/warning]")
+        await self._close_connections(list(self._connections.values()))
         self._connections.clear()
         self._connection_errors.clear()
         self._server_configs.clear()

@@ -272,7 +272,9 @@ MODULE_ALIASES = {
     "maisaka_tool_post_execution": "工具执行后处理",
     "maisaka_visual_mode": "麦麦视觉模式",
     # 平台、MCP 与插件运行时
+    "mcp_connection": "MCP连接",
     "mcp_host_llm_bridge": "MCP模型桥接",
+    "mcp_manager": "MCP管理器",
     "mcp_service": "MCP服务",
     "platform_io.adapter_policy": "平台适配策略",
     "platform_io.manager": "平台接入管理",

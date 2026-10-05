@@ -8,8 +8,8 @@ MCP stdio 协议规定 stdout 仅可承载 JSON-RPC 消息，所有日志/状态
 非 JSON 行时会把 ``Exception`` 对象写回 read_stream，使 ``ClientSession``
 将其视为致命错误并终止 ``initialize`` 协商。
 
-本模块提供 :func:`tolerant_stdio_client`：行为与官方 ``stdio_client`` 完全一致，
-唯一差异在于在解析层先按 JSON 起始符做廉价预筛、解析失败的行只记录告警后丢弃，
+本模块提供 :func:`tolerant_stdio_client`：行为与官方 ``stdio_client`` 基本一致，
+主要差异在于在解析层先按 JSON 起始符做廉价预筛、解析失败的行只记录告警后丢弃，
 不向上层流注入异常。这样违规服务器仍可正常握手，合规服务器行为不变。
 
 注意：本模块依赖 ``mcp.client.stdio`` 中的若干非公开符号
@@ -63,6 +63,8 @@ async def tolerant_stdio_client(
         - 仅对以 ``{`` 或 ``[`` 开头的非空行尝试 JSON-RPC 解析。
         - 预筛失败或 pydantic 校验失败的行通过 ``logger.warning`` 记录后直接丢弃，
           不会以 ``Exception`` 对象的形式注入 read_stream。
+        - ``ClientSession`` 退出、接收端已关闭后服务器才写出的消息按正常关停丢弃，
+          不会让读取任务以 ``BrokenResourceError`` 结束并导致子进程被强制终止。
         - 进程生命周期、stdin 关闭流程、平台兼容的进程组终止策略与官方实现完全一致。
     """
 
@@ -123,7 +125,9 @@ async def tolerant_stdio_client(
                             )
                             continue
                         await read_stream_writer.send(SessionMessage(message))
-        except anyio.ClosedResourceError:
+        except (anyio.ClosedResourceError, anyio.BrokenResourceError):
+            # BrokenResourceError：ClientSession 已退出并关闭了接收端（如就绪前关闭连接，或关闭时在途请求的
+            # 响应晚到），之后服务器写出的消息已无人接收，按正常关停处理，不能让它打断子进程的正常退出
             await anyio.lowlevel.checkpoint()
 
     async def stdin_writer() -> None:
