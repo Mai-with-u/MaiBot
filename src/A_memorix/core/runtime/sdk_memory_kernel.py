@@ -586,6 +586,10 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
         service = self._dual_vector_state_service
         return type(service)._reload_dual_vector_stores_from_disk(service)
 
+    def _prepare_empty_dual_generation(self) -> None:
+        service = self._vector_recovery_service
+        return type(service)._prepare_empty_dual_generation(service)
+
     def _try_recover_dual_ready_manifest(self) -> bool:
         service = self._dual_vector_state_service
         return type(service)._try_recover_dual_ready_manifest(service)

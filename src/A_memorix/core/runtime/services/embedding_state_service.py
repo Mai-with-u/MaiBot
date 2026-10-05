@@ -347,6 +347,16 @@ class MemoryEmbeddingStateService(KernelServiceBase):
         assert self.vector_store is not None
         if not self.vector_store.has_data():
             if require_existing:
+                if self._dual_vector_pools_config_enabled():
+                    # 双池配置下 reload 失败分两种情形：缺少 ready manifest，或两个池在
+                    # 磁盘上都是空的。后者是等待 Embedding 指纹确认的空世代，可以按空
+                    # 双池重新启用向量通道；若池内已有数据却加载不出来，说明世代真的
+                    # 损坏，继续按不可用暴露给上层。
+                    paragraph_store = self._make_vector_store(self._paragraph_vector_dir())
+                    graph_store = self._make_vector_store(self._graph_vector_dir())
+                    if not paragraph_store.has_data() and not graph_store.has_data():
+                        self._prepare_empty_dual_generation()
+                        return
                 raise VectorStoreIntegrityError(
                     "未找到可加载的向量世代：双池未就绪且旧单池元数据不存在",
                     error_code="vector_generation_missing",

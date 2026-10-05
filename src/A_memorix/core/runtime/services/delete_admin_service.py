@@ -19,6 +19,10 @@ class _VectorCleanupRollbackError(RuntimeError):
     """向量清理 checkpoint 无法恢复，后续同池任务必须停止。"""
 
 
+class _VectorCleanupPoolUnavailableError(RuntimeError):
+    """当前运行时没有任何可写的清理向量池，删除语义只能按无向量收敛。"""
+
+
 class MemoryDeleteAdminService(KernelServiceBase):
     async def memory_delete_admin(self, *, action: str, **kwargs) -> Dict[str, Any]:
         await self.initialize()
@@ -119,6 +123,27 @@ class MemoryDeleteAdminService(KernelServiceBase):
             )
         return jobs
 
+    @staticmethod
+    def _missing_vector_store_error_type(resource_type: str) -> str:
+        """渠道级向量池缺失统一使用该错误类型标记，避免与池内错误混淆。"""
+        return f"{resource_type} 向量存储未初始化"
+
+    def _resolve_vector_delete_without_pool(
+        self,
+        *,
+        resource_type: str,
+        resource_ids: Sequence[str],
+    ) -> None:
+        """清理任务执行期三个向量池都不可用时，按现有权威状态收敛任务。
+
+        运行时没有可用向量池意味着目标向量既读不到也写不了：关系向量状态收敛为
+        ``none`` 后任务可以完成，渠道恢复后不会留下永远无法消费的 pending 任务；
+        其余资源类型没有独立的向量状态账本，直接完成任务。
+        """
+        for resource_id in resource_ids:
+            if resource_type == "relation":
+                self.metadata_store.set_relation_vector_state(resource_id, "none")
+
     def _cleanup_vector_store(self, resource_type: str) -> Any:
         """返回 Outbox 资源唯一负责的向量池。"""
         if not self._dual_vector_pools_enabled():
@@ -130,7 +155,8 @@ class MemoryDeleteAdminService(KernelServiceBase):
         else:
             raise ValueError(f"未知向量资源类型: {resource_type}")
         if target_store is None:
-            raise RuntimeError(f"{resource_type} 向量存储未初始化")
+            # 渠道整体不可用时三个池引用都会被清空，交由调用方按"无向量"收敛任务。
+            raise _VectorCleanupPoolUnavailableError(self._missing_vector_store_error_type(resource_type))
         return target_store
 
     async def process_pending_storage_cleanup_jobs(
@@ -282,7 +308,17 @@ class MemoryDeleteAdminService(KernelServiceBase):
                     if not resource_ids:
                         complete_job(job)
                         continue
-                    target_store = self._cleanup_vector_store(resource_type)
+                    try:
+                        target_store = self._cleanup_vector_store(resource_type)
+                    except _VectorCleanupPoolUnavailableError:
+                        # 向量通道整体不可用：此时不存在可删除的向量，按无向量收敛任务，
+                        # 否则渠道恢复前该任务会以固定退避无限重试并持续刷日志。
+                        self._resolve_vector_delete_without_pool(
+                            resource_type=resource_type,
+                            resource_ids=resource_ids,
+                        )
+                        complete_job(job)
+                        continue
                     batch = pending_vector_batches.get(id(target_store))
                     if batch is None:
                         # 先提交进入清理前的合法缓冲区，再以该提交作为精确回滚基线。
@@ -357,7 +393,12 @@ class MemoryDeleteAdminService(KernelServiceBase):
                         raise ValueError(f"未知 vector_upsert 资源类型: {resource_type}")
                     if item is None:
                         raise RuntimeError(f"{resource_type} 权威资源不存在")
-                    target_store = self._cleanup_vector_store(resource_type)
+                    try:
+                        target_store = self._cleanup_vector_store(resource_type)
+                    except _VectorCleanupPoolUnavailableError:
+                        # 无可用向量池时不能写入，任务直接完成而不是留下永远无法消费的 pending。
+                        complete_job(job)
+                        continue
                     upsert_checkpoint = {"token": ""}
 
                     def before_vector_write(
