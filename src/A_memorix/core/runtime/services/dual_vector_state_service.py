@@ -49,6 +49,37 @@ class MemoryDualVectorStateService(KernelServiceBase):
             return None
         return payload if isinstance(payload, dict) else None
 
+    @staticmethod
+    def _persisted_pool_has_vectors(vector_dir: Path) -> bool:
+        """按磁盘上的池 metadata 判断该池是否真的存着向量。
+
+        manifest 里的计数只是写 manifest 那一刻的快照：空世代发布之后，段落回填会
+        继续往池里写向量，而 manifest 计数不会跟着更新。因此判断「池是否为空」不能
+        只信 manifest，必须回到池自己的 metadata 上数一遍。
+        """
+        meta_path = vector_dir / "vectors_metadata.json"
+        if not meta_path.exists():
+            return False
+        try:
+            payload = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning(f"读取向量池 metadata 失败，按有数据处理: dir={vector_dir}, err={exc}")
+            return True
+        if not isinstance(payload, dict):
+            return True
+        known_hashes = payload.get("known_hashes") or []
+        deleted_ids = payload.get("deleted_ids") or []
+        try:
+            return int(len(known_hashes)) - int(len(deleted_ids)) > 0
+        except Exception:  # noqa: BLE001
+            return True
+
+    def _dual_vector_ready_pools_are_empty(self) -> bool:
+        """两个池在磁盘上都确实没有向量。"""
+        return not self._persisted_pool_has_vectors(self._paragraph_vector_dir()) and not self._persisted_pool_has_vectors(
+            self._graph_vector_dir()
+        )
+
     def _dual_vector_ready(self, *, expected_dimension: Optional[int] = None) -> bool:
         manifest = self._read_dual_vector_ready_manifest()
         if not manifest or manifest.get("status") != "ready":
@@ -65,10 +96,14 @@ class MemoryDualVectorStateService(KernelServiceBase):
         current_fingerprint = self._current_embedding_fingerprint_for_validation()
         manifest_fingerprint = self._normalize_embedding_fingerprint(manifest.get("embedding_fingerprint"))
         if current_fingerprint is None or manifest_fingerprint is None:
+            # 完整性恢复出来的空世代允许暂时缺少可校验指纹，但这个豁免只能用在「池里
+            # 确实一个向量都没有」时：空世代发布后回填会往池里写向量而 manifest 计数
+            # 不更新，否则之后每次重启都会绕过指纹校验，换模型也照样按旧向量检索。
             empty_recovery_generation = (
                 paragraph_count == 0
                 and graph_count == 0
                 and str(manifest.get("generation_reason", "") or "") == "integrity_recovery"
+                and self._dual_vector_ready_pools_are_empty()
             )
             if not empty_recovery_generation:
                 logger.warning("双池 ready manifest 缺少可校验 embedding 指纹，保持单池降级")
