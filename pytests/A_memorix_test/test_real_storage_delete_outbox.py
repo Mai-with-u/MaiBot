@@ -1224,3 +1224,85 @@ async def test_completed_vector_jobs_are_durable_before_graph_job_across_hard_ex
         assert verified.metadata_store.get_delete_operation(operation_id)["status"] == "restored"
     finally:
         await _close_runtime(verified)
+
+
+@pytest.mark.asyncio
+async def test_unavailable_pool_defers_cleanup_jobs(tmp_path: Path) -> None:
+    """目标向量池不可用时，清理任务必须退回队列而不是记失败或标完成。
+
+    `_disable_vector_channel` 只清空池引用、不动磁盘上的向量文件，所以删除与写入义务
+    必须保留：任务退回 `pending`、推后 `next_attempt_at`、**不计入 attempt_count**，
+    等通道恢复后由同一批任务完成。按 Outbox 协议，`vector_delete` 属于
+    `pending_cleanup`、`vector_upsert` 属于 `restore_pending` 且只授权真实存在的活跃
+    资源，因此这里用真实段落 hash，分别建 operation。
+    """
+    kernel = await _open_runtime(tmp_path / "defer_runtime")
+    try:
+        store = kernel.metadata_store
+        paragraph_hash = store.add_paragraph(content="待恢复向量写入的段落", source="test")
+        # 模拟向量池整体不可用：三个池引用被清空，磁盘文件不受影响。
+        kernel._disable_vector_channel(RuntimeError("simulated unavailable pool"))
+
+        delete_operation = "op_defer_delete"
+        upsert_operation = "op_defer_upsert"
+        with store.transaction(immediate=True) as conn:
+            for operation_id, status, mode in (
+                (delete_operation, "pending_cleanup", "relation"),
+                (upsert_operation, "restore_pending", "paragraph_restore"),
+            ):
+                conn.execute(
+                    """
+                    INSERT INTO delete_operations
+                        (operation_id, mode, selector, reason, requested_by, status, created_at)
+                    VALUES (?, ?, '{}', 'test', 'pytest', ?, ?)
+                    """,
+                    (operation_id, mode, status, 1.0),
+                )
+
+        store.enqueue_storage_cleanup_jobs(
+            operation_id=delete_operation,
+            jobs=[
+                {
+                    "resource_type": "relation",
+                    "resource_id": "batch",
+                    "action": "vector_delete",
+                    "payload": {"relation_hashes": ["a" * 64]},
+                    "expected_state": {"operation_status": "pending_cleanup"},
+                }
+            ],
+        )
+        store.enqueue_storage_cleanup_jobs(
+            operation_id=upsert_operation,
+            jobs=[
+                {
+                    "resource_type": "paragraph",
+                    "resource_id": paragraph_hash,
+                    "action": "vector_upsert",
+                    "payload": {"item": {"hash": paragraph_hash}},
+                    "expected_state": {"operation_status": "restore_pending"},
+                }
+            ],
+        )
+
+        for operation_id, action in (
+            (delete_operation, "vector_delete"),
+            (upsert_operation, "vector_upsert"),
+        ):
+            result = await kernel._delete_admin_service.process_pending_storage_cleanup_jobs(
+                operation_id=operation_id
+            )
+            assert result["claimed"] == 1
+            assert result["deferred"] == 1, f"{action} 应被延后: {result}"
+            assert result["failed"] == 0
+            assert result["completed"] == 0
+
+            rows = store.list_storage_cleanup_jobs(operation_id=operation_id)
+            assert len(rows) == 1
+            row = rows[0]
+            assert row["action"] == action
+            assert row["status"] == "pending"
+            assert int(row["attempt_count"]) == 0
+            assert row["lease_token"] is None
+            assert float(row["next_attempt_at"]) > float(row["updated_at"])
+    finally:
+        await _close_runtime(kernel)
