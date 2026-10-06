@@ -345,11 +345,14 @@ class MemoryEmbeddingStateService(KernelServiceBase):
         「有向量文件、无 metadata」的中间态，legacy vectors.npy 同样代表已有向量。
         发布空世代前必须把这些都视为有数据，否则空世代会接管仍有向量的池。二进制
         只有非空才算数据：中断的写入可能留下零长度文件，那不是可用世代。
+
+        旧单池世代还可能只留下 ``vectors.index`` / ``vectors_metadata.pkl``（它们
+        出现在 ``_clear_legacy_single_vector_files_after_dual_ready`` 的清理清单里，
+        说明双池接管前确实存在这两种产物）；只要还在，就不能把目录当成空目录。
         """
-        if (vector_dir / "vectors_metadata.json").exists():
-            return True
-        if (vector_dir / "vectors.npy").exists():
-            return True
+        for name in ("vectors_metadata.json", "vectors.npy", "vectors.index", "vectors_metadata.pkl"):
+            if (vector_dir / name).exists():
+                return True
         for name in ("vectors.bin", "vectors_ids.bin"):
             path = vector_dir / name
             if path.exists() and path.stat().st_size > 0:

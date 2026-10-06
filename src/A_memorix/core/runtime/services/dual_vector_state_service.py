@@ -50,16 +50,36 @@ class MemoryDualVectorStateService(KernelServiceBase):
         return payload if isinstance(payload, dict) else None
 
     @staticmethod
-    def _persisted_pool_has_vectors(vector_dir: Path) -> bool:
+    def _pool_dir_has_persisted_files(vector_dir: Path) -> bool:
+        """该池目录里是否残留任何持久化向量文件（用于 metadata 缺失时的判定）。
+
+        判定口径与 ``MemoryEmbeddingStateService._vector_dir_has_persisted_files`` 一致：
+        metadata、legacy ``vectors.npy``、非空的二进制对，以及旧单池清理清单里的
+        ``vectors.index`` / ``vectors_metadata.pkl`` 都算残留产物。磁盘上只有这类文件
+        但没有 metadata 时，世代同样存在，不能判成空池。
+        """
+        for name in ("vectors_metadata.json", "vectors.npy", "vectors.index", "vectors_metadata.pkl"):
+            if (vector_dir / name).exists():
+                return True
+        for name in ("vectors.bin", "vectors_ids.bin"):
+            path = vector_dir / name
+            if path.exists() and path.stat().st_size > 0:
+                return True
+        return False
+
+    @classmethod
+    def _persisted_pool_has_vectors(cls, vector_dir: Path) -> bool:
         """按磁盘上的池 metadata 判断该池是否真的存着向量。
 
         manifest 里的计数只是写 manifest 那一刻的快照：空世代发布之后，段落回填会
         继续往池里写向量，而 manifest 计数不会跟着更新。因此判断「池是否为空」不能
-        只信 manifest，必须回到池自己的 metadata 上数一遍。
+        只信 manifest，必须回到池自己的 metadata 上数一遍。metadata 缺失时不能直接
+        判空：压缩或写入中断会留下「仍有 vectors.bin、没有 metadata」的中间态，这种
+        池同样不是空池，必须继续挡住空世代豁免。
         """
         meta_path = vector_dir / "vectors_metadata.json"
         if not meta_path.exists():
-            return False
+            return cls._pool_dir_has_persisted_files(vector_dir)
         try:
             payload = json.loads(meta_path.read_text(encoding="utf-8"))
         except Exception as exc:
