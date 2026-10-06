@@ -1085,6 +1085,7 @@ async def test_completed_vector_jobs_are_durable_before_graph_job_across_hard_ex
             "completed": 1,
             "cancelled": 0,
             "failed": 0,
+            "deferred": 0,
             "deleted_vectors": 1,
             "operations": {
                 operation_id: {

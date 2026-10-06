@@ -2044,3 +2044,122 @@ async def test_filter_current_effective_hits_uses_stored_metadata_after_fuzzy_ch
         {"hash": "r-stored", "type": "relation", "content": "", "metadata": {}},
     ]
     assert kernel._filter_current_effective_hits(hits) == []
+
+
+@pytest.mark.asyncio
+async def test_empty_vectors_dir_after_boot_recovers_into_empty_dual_generation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """双池已就绪后向量文件消失，恢复时只允许在「根目录没有任何持久化文件」时发布空世代。
+
+    这是新分支唯一可达的真实场景：启动时双池正常加载（指纹已 observed），随后磁盘上的
+    向量文件被清掉（例如数据目录被外部清理），此时再走指纹恢复入口。根目录、paragraph、
+    graph 都没有残留文件，才允许发布空双池世代并重新启用通道；只要还有残留向量文件，
+    就必须继续按不可用暴露，避免空世代接管仍有向量的池。
+    """
+    data_dir = tmp_path / "a_memorix_data"
+    vectors_dir = data_dir / "vectors"
+    vectors_dir.mkdir(parents=True, exist_ok=True)
+
+    fake_embedding_manager = _FallbackEmbeddingManager(
+        candidates=("fake-embedding",),
+        successful_model="fake-embedding",
+        initial_observed_model="fake-embedding",
+    )
+    monkeypatch.setattr(
+        kernel_module,
+        "create_embedding_api_adapter",
+        lambda **kwargs: fake_embedding_manager,
+    )
+
+    async def no_background_tasks() -> None:
+        # 手动驱动恢复入口，避免后台探测与断言并发。
+        pass
+
+    # 先造出一份可加载的双池世代
+    store = VectorStore(
+        dimension=fake_embedding_manager.default_dimension,
+        data_dir=vectors_dir / "paragraph",
+    )
+    store.add(
+        np.ones((1, fake_embedding_manager.default_dimension), dtype=np.float32),
+        ["p-existing"],
+    )
+    store.save(embedding_fingerprint=fake_embedding_manager.get_embedding_fingerprint())
+    graph_store = VectorStore(
+        dimension=fake_embedding_manager.default_dimension,
+        data_dir=vectors_dir / "graph",
+    )
+    graph_store.add(
+        np.ones((1, fake_embedding_manager.default_dimension), dtype=np.float32),
+        ["entity:e-existing"],
+    )
+    graph_store.save(embedding_fingerprint=fake_embedding_manager.get_embedding_fingerprint())
+    (vectors_dir / "dual_ready.json").write_text(
+        json.dumps(
+            {
+                "status": "ready",
+                "version": 1,
+                "mode": "dual",
+                "dimension": fake_embedding_manager.default_dimension,
+                "paragraph_vectors": 1,
+                "graph_vectors": 1,
+                "embedding_fingerprint": fake_embedding_manager.get_embedding_fingerprint(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = _dual_kernel_config(data_dir, fake_embedding_manager.default_dimension)
+    kernel = SDKMemoryKernel(plugin_root=tmp_path / "plugin_root", config=config)
+    monkeypatch.setattr(kernel, "_start_background_tasks", no_background_tasks)
+    try:
+        await kernel.initialize()
+        assert kernel._dual_vector_pools_enabled() is True
+
+        # 模拟磁盘上的向量文件被清空，但进程内的池对象仍然存在
+        for child in sorted(vectors_dir.rglob("*"), reverse=True):
+            if child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()
+        assert list(vectors_dir.iterdir()) == []
+        # 复现通道被停用后的恢复入口：只有 embedding_fingerprint_unavailable 这一状态
+        # 允许重新尝试加载世代，因此这里显式进入该状态（等价于启动时指纹尚未确认）。
+        kernel._disable_vector_channel(RuntimeError("simulated on-disk vector loss"))
+        kernel._vector_health["error_code"] = "embedding_fingerprint_unavailable"
+        kernel._set_runtime_capability("vector_read", False)
+        kernel._set_runtime_capability("vector_write", False)
+
+        result = await kernel.memory_runtime_admin(action="recover_embedding")
+
+        # 根目录已无任何持久化文件：允许发布空双池世代，通道重新可用
+        assert result["success"] is True
+        assert result["recovered"] is True
+        assert kernel._dual_vector_pools_enabled() is True
+        assert kernel._vector_health["state"] == "healthy"
+        assert kernel._dual_vector_ready_manifest_path().exists()
+    finally:
+        await kernel.shutdown()
+
+    # 反过来：根目录留有残留向量文件时，不允许发布空世代
+    residue_vectors = tmp_path / "residue_data" / "vectors"
+    residue_vectors.mkdir(parents=True, exist_ok=True)
+    (residue_vectors / "vectors.bin").write_bytes(b"\x00" * 32)
+    (residue_vectors / "vectors_ids.bin").write_bytes(b"\x00" * 8)
+    residue_kernel = SDKMemoryKernel(
+        plugin_root=tmp_path / "plugin_root_residue",
+        config=_dual_kernel_config(tmp_path / "residue_data", fake_embedding_manager.default_dimension),
+    )
+    monkeypatch.setattr(residue_kernel, "_start_background_tasks", no_background_tasks)
+    try:
+        await residue_kernel.initialize()
+        residue_kernel._disable_vector_channel(RuntimeError("simulated on-disk vector loss"))
+        residue_kernel._vector_health["error_code"] = "embedding_fingerprint_unavailable"
+        residue_result = await residue_kernel.memory_runtime_admin(action="recover_embedding")
+        assert residue_kernel._dual_vector_pools_enabled() is False
+        assert residue_result["vector_available"] is False
+        assert not residue_kernel._dual_vector_ready_manifest_path().exists()
+    finally:
+        await residue_kernel.shutdown()
