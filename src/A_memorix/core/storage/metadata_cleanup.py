@@ -407,6 +407,45 @@ class MetadataCleanupMixin:
         self._conn.commit()
         return cursor.rowcount > 0
 
+    def defer_storage_cleanup_job(
+        self,
+        *,
+        job_id: int,
+        worker_token: str,
+        reason: str,
+        retry_delay_seconds: float,
+    ) -> bool:
+        """把任务退回待执行队列，且不计入失败退避。
+
+        用于目标存储整体不可用这类外部阻塞：任务需要保留可恢复的删除或写入义务，
+        不应该因为依赖暂时缺席而被记成一次执行失败。领取任务时
+        ``claim_storage_cleanup_jobs`` 已经加过一次 ``attempt_count``，这里在租约
+        匹配的同一次更新中把它还原，保证反复延期不会把退避次数推高。
+        """
+        now = datetime.now().timestamp()
+        cursor = self._conn.execute(
+            """
+            UPDATE storage_cleanup_jobs
+            SET status = 'pending',
+                lease_token = NULL,
+                lease_until = NULL,
+                attempt_count = MAX(COALESCE(attempt_count, 1) - 1, 0),
+                next_attempt_at = ?,
+                updated_at = ?,
+                last_error = ?
+            WHERE job_id = ? AND status = 'running' AND lease_token = ?
+            """,
+            (
+                now + max(0.0, float(retry_delay_seconds)),
+                now,
+                str(reason or "")[:2000],
+                int(job_id),
+                str(worker_token or "").strip(),
+            ),
+        )
+        self._conn.commit()
+        return cursor.rowcount > 0
+
     def list_storage_cleanup_jobs(
         self,
         *,
