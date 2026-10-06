@@ -2823,6 +2823,13 @@ class VectorStore:
             logger.info("VectorStore cleared.")
 
     def has_data(self) -> bool:
+        """判断磁盘上是否已提交该池的持久化数据（以 metadata 提交点为准）。
+
+        目录里可能残留「有向量文件、无 metadata」的中间态，但那是加载器的完整性问题，
+        不能在这里放宽成「有数据」：调用方依赖 metadata 缺失把世代判定为
+        ``vector_generation_missing``，好让 WebUI 提示用户重建。需要检查残留文件的
+        调用方应使用各自的私有 helper。
+        """
         with self._lock:
             self._raise_if_cleanup_checkpoint_broken_unlocked()
             return (self.data_dir / "vectors_metadata.json").exists()

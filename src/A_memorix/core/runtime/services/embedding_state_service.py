@@ -337,6 +337,25 @@ class MemoryEmbeddingStateService(KernelServiceBase):
         except Exception as exc:
             logger.warning(f"登记 paragraph 向量回填任务失败: {exc}")
 
+    @staticmethod
+    def _vector_dir_has_persisted_files(vector_dir: Path) -> bool:
+        """判断向量目录在磁盘上是否残留任何持久化向量文件。
+
+        ``VectorStore.has_data()`` 只认 metadata 提交点；但压缩或写入中断可能留下
+        「有向量文件、无 metadata」的中间态，legacy vectors.npy 同样代表已有向量。
+        发布空世代前必须把这些都视为有数据，否则空世代会接管仍有向量的池。二进制
+        只有非空才算数据：中断的写入可能留下零长度文件，那不是可用世代。
+        """
+        if (vector_dir / "vectors_metadata.json").exists():
+            return True
+        if (vector_dir / "vectors.npy").exists():
+            return True
+        for name in ("vectors.bin", "vectors_ids.bin"):
+            path = vector_dir / name
+            if path.exists() and path.stat().st_size > 0:
+                return True
+        return False
+
     def _load_vector_stores_for_runtime(self, *, require_existing: bool = False) -> None:
         """启动和指纹恢复共用加载规则，仅在双池未就绪时校验旧单池。"""
         if self._dual_vector_pools_config_enabled() and self._reload_dual_vector_stores_from_disk():
@@ -347,6 +366,16 @@ class MemoryEmbeddingStateService(KernelServiceBase):
         assert self.vector_store is not None
         if not self.vector_store.has_data():
             if require_existing:
+                if self._dual_vector_pools_config_enabled():
+                    # 双池配置下 reload 失败分两种情形：缺少 ready manifest，或两个池在
+                    # 磁盘上都是空的。后者是等待 Embedding 指纹确认的空世代，可以按空
+                    # 双池重新启用向量通道；若池内已有数据却加载不出来，说明世代真的
+                    # 损坏，继续按不可用暴露给上层。旧单池根目录也要一起检查：只剩二进制、
+                    # 丢了 metadata 的旧单池同样不是空池，发布空双池会让它永远不再被读取。
+                    vector_dirs = (self._vectors_root(), self._paragraph_vector_dir(), self._graph_vector_dir())
+                    if not any(self._vector_dir_has_persisted_files(path) for path in vector_dirs):
+                        self._prepare_empty_dual_generation()
+                        return
                 raise VectorStoreIntegrityError(
                     "未找到可加载的向量世代：双池未就绪且旧单池元数据不存在",
                     error_code="vector_generation_missing",

@@ -499,6 +499,11 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
         service = self._embedding_state_service
         return type(service)._paragraph_vector_backfill_max_retry(service)
 
+    def _vector_dir_has_persisted_files(self, vector_dir: Path) -> bool:
+        """代理到 embedding 状态服务：判断向量目录是否残留持久化向量文件。"""
+        service = self._embedding_state_service
+        return type(service)._vector_dir_has_persisted_files(vector_dir)
+
     def _vector_pool_mode(self) -> str:
         service = self._dual_vector_state_service
         return type(service)._vector_pool_mode(service)
@@ -585,6 +590,11 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
     def _reload_dual_vector_stores_from_disk(self) -> bool:
         service = self._dual_vector_state_service
         return type(service)._reload_dual_vector_stores_from_disk(service)
+
+    def _prepare_empty_dual_generation(self) -> None:
+        """代理到向量恢复服务：生成空的双池世代并写出 ready manifest。"""
+        service = self._vector_recovery_service
+        return type(service)._prepare_empty_dual_generation(service)
 
     def _try_recover_dual_ready_manifest(self) -> bool:
         service = self._dual_vector_state_service
