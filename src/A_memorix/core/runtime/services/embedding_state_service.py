@@ -350,19 +350,20 @@ class MemoryEmbeddingStateService(KernelServiceBase):
 
         - 旧单池世代的 ``vectors.index`` / ``vectors_metadata.pkl``（它们出现在
           ``_clear_legacy_single_vector_files_after_dual_ready`` 的清理清单里）；
-        - compaction 备份 ``vectors.bin.compaction.bak`` / ``vectors_ids.bin.compaction.bak``：
-          compaction journal 仍在、metadata 尚未提交时，``VectorStore`` 会从这两个
-          备份恢复向量，所以它们存在就说明这个目录里有可恢复的向量。
+        - compaction 备份 ``vectors.bin.compaction.bak`` / ``vectors_ids.bin.compaction.bak``，
+          但**仅当 ``vectors_compaction.json`` 存在时**才算：``VectorStore`` 只在读得到
+          journal 时才会用备份恢复向量（``_recover_interrupted_compaction_unlocked`` 读不到
+          journal 就直接返回），而 ``_finalize_compaction_transaction_unlocked`` 先删 journal
+          再删备份，因此中断可能留下「没有 journal 的过期备份」——那种备份不可恢复，不能
+          当成数据，否则会让空世代恢复永远无法进行。
         """
         for name in ("vectors_metadata.json", "vectors.npy", "vectors.index", "vectors_metadata.pkl"):
             if (vector_dir / name).exists():
                 return True
-        for name in (
-            "vectors.bin",
-            "vectors_ids.bin",
-            "vectors.bin.compaction.bak",
-            "vectors_ids.bin.compaction.bak",
-        ):
+        bin_names = ["vectors.bin", "vectors_ids.bin"]
+        if (vector_dir / "vectors_compaction.json").exists():
+            bin_names += ["vectors.bin.compaction.bak", "vectors_ids.bin.compaction.bak"]
+        for name in bin_names:
             path = vector_dir / name
             if path.exists() and path.stat().st_size > 0:
                 return True

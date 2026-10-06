@@ -14,6 +14,7 @@ from src.A_memorix.core.runtime.sdk_memory_kernel import SDKMemoryKernel
 from src.A_memorix.core.storage.graph_store import HAS_SCIPY, GraphStore
 from src.A_memorix.core.storage.metadata_store import MetadataStore
 from src.A_memorix.core.storage.vector_store import HAS_FAISS, VectorStore
+from pytests.A_memorix_test.test_vector_rebuild_runtime import _dual_kernel_config
 
 
 pytestmark = pytest.mark.skipif(
@@ -1304,5 +1305,101 @@ async def test_unavailable_pool_defers_cleanup_jobs(tmp_path: Path) -> None:
             assert int(row["attempt_count"]) == 0
             assert row["lease_token"] is None
             assert float(row["next_attempt_at"]) > float(row["updated_at"])
+    finally:
+        await _close_runtime(kernel)
+
+
+@pytest.mark.asyncio
+async def test_dual_ready_unavailable_target_pool_defers_cleanup_jobs(tmp_path: Path) -> None:
+    """双池就绪但目标池不可用时，必须按资源类型选池后延后，而不是回退到单池。
+
+    与上一个用例的区别：这里保持 `_dual_vector_pools_ready` 为真（不用
+    `_disable_vector_channel`，它会把该标记清掉并退化成单池分支），只清掉目标池与
+    legacy 回退引用，用于覆盖双池目标选择这条路径。
+    """
+    embedding = OfflineDeterministicEmbedding(EMBEDDING_DIMENSION)
+    await embedding.initialize()
+    kernel = SDKMemoryKernel(
+        plugin_root=Path.cwd(),
+        config=_dual_kernel_config(tmp_path / "defer_dual", EMBEDDING_DIMENSION),
+    )
+    await kernel.initialize()
+    await kernel._stop_background_tasks()
+    try:
+        kernel.embedding_manager = embedding
+        # 建出双池对象并按 ready 处理
+        kernel._reload_dual_vector_stores_from_disk()
+        kernel._dual_vector_pools_ready = True
+        assert kernel._dual_vector_pools_enabled() is True
+
+        store = kernel.metadata_store
+        paragraph_hash = store.add_paragraph(content="双池下待恢复向量写入的段落", source="test")
+
+        # 保持双池 ready，只让两个目标池与 legacy 回退都不可用
+        legacy_store = kernel.vector_store
+        kernel.vector_store = None
+        kernel.paragraph_vector_store = None
+        kernel.graph_vector_store = None
+
+        delete_operation = "op_dual_defer_delete"
+        upsert_operation = "op_dual_defer_upsert"
+        with store.transaction(immediate=True) as conn:
+            for operation_id, status, mode in (
+                (delete_operation, "pending_cleanup", "relation"),
+                (upsert_operation, "restore_pending", "paragraph_restore"),
+            ):
+                conn.execute(
+                    """
+                    INSERT INTO delete_operations
+                        (operation_id, mode, selector, reason, requested_by, status, created_at)
+                    VALUES (?, ?, '{}', 'test', 'pytest', ?, ?)
+                    """,
+                    (operation_id, mode, status, 1.0),
+                )
+
+        store.enqueue_storage_cleanup_jobs(
+            operation_id=delete_operation,
+            jobs=[
+                {
+                    "resource_type": "relation",
+                    "resource_id": "batch",
+                    "action": "vector_delete",
+                    "payload": {"relation_hashes": ["c" * 64]},
+                    "expected_state": {"operation_status": "pending_cleanup"},
+                }
+            ],
+        )
+        store.enqueue_storage_cleanup_jobs(
+            operation_id=upsert_operation,
+            jobs=[
+                {
+                    "resource_type": "paragraph",
+                    "resource_id": paragraph_hash,
+                    "action": "vector_upsert",
+                    "payload": {"item": {"hash": paragraph_hash}},
+                    "expected_state": {"operation_status": "restore_pending"},
+                }
+            ],
+        )
+
+        # 双池路由：relation 选 graph 池、paragraph 选 paragraph 池；两者都不可用，
+        # 因此任务必须被延后（若错误回退到 legacy 单池，就会走成 completed）。
+        for operation_id, action in (
+            (delete_operation, "vector_delete"),
+            (upsert_operation, "vector_upsert"),
+        ):
+            result = await kernel._delete_admin_service.process_pending_storage_cleanup_jobs(
+                operation_id=operation_id
+            )
+            assert result["deferred"] == 1, f"双池下 {action} 应被延后: {result}"
+            assert result["failed"] == 0
+            assert result["completed"] == 0
+            row = store.list_storage_cleanup_jobs(operation_id=operation_id)[0]
+            assert row["action"] == action
+            assert row["status"] == "pending"
+            assert int(row["attempt_count"]) == 0
+            assert row["lease_token"] is None
+        # 复原引用，保证 shutdown 走正常持久化路径
+        kernel.vector_store = legacy_store
     finally:
         await _close_runtime(kernel)

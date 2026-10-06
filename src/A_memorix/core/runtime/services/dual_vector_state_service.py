@@ -57,18 +57,16 @@ class MemoryDualVectorStateService(KernelServiceBase):
         metadata、legacy ``vectors.npy``、非空的二进制对、旧单池清理清单里的
         ``vectors.index`` / ``vectors_metadata.pkl``，以及 compaction 备份
         ``vectors.bin.compaction.bak`` / ``vectors_ids.bin.compaction.bak``
-        （journal 仍在时 ``VectorStore`` 会从备份恢复向量）都算残留产物。
+        （**仅当 ``vectors_compaction.json`` 存在时** —— journal 缺失时备份不可恢复）。
         磁盘上只有这类文件但没有 metadata 时，世代同样存在，不能判成空池。
         """
         for name in ("vectors_metadata.json", "vectors.npy", "vectors.index", "vectors_metadata.pkl"):
             if (vector_dir / name).exists():
                 return True
-        for name in (
-            "vectors.bin",
-            "vectors_ids.bin",
-            "vectors.bin.compaction.bak",
-            "vectors_ids.bin.compaction.bak",
-        ):
+        bin_names = ["vectors.bin", "vectors_ids.bin"]
+        if (vector_dir / "vectors_compaction.json").exists():
+            bin_names += ["vectors.bin.compaction.bak", "vectors_ids.bin.compaction.bak"]
+        for name in bin_names:
             path = vector_dir / name
             if path.exists() and path.stat().st_size > 0:
                 return True
