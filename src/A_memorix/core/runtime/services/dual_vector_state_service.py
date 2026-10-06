@@ -54,14 +54,21 @@ class MemoryDualVectorStateService(KernelServiceBase):
         """该池目录里是否残留任何持久化向量文件（用于 metadata 缺失时的判定）。
 
         判定口径与 ``MemoryEmbeddingStateService._vector_dir_has_persisted_files`` 一致：
-        metadata、legacy ``vectors.npy``、非空的二进制对，以及旧单池清理清单里的
-        ``vectors.index`` / ``vectors_metadata.pkl`` 都算残留产物。磁盘上只有这类文件
-        但没有 metadata 时，世代同样存在，不能判成空池。
+        metadata、legacy ``vectors.npy``、非空的二进制对、旧单池清理清单里的
+        ``vectors.index`` / ``vectors_metadata.pkl``，以及 compaction 备份
+        ``vectors.bin.compaction.bak`` / ``vectors_ids.bin.compaction.bak``
+        （journal 仍在时 ``VectorStore`` 会从备份恢复向量）都算残留产物。
+        磁盘上只有这类文件但没有 metadata 时，世代同样存在，不能判成空池。
         """
         for name in ("vectors_metadata.json", "vectors.npy", "vectors.index", "vectors_metadata.pkl"):
             if (vector_dir / name).exists():
                 return True
-        for name in ("vectors.bin", "vectors_ids.bin"):
+        for name in (
+            "vectors.bin",
+            "vectors_ids.bin",
+            "vectors.bin.compaction.bak",
+            "vectors_ids.bin.compaction.bak",
+        ):
             path = vector_dir / name
             if path.exists() and path.stat().st_size > 0:
                 return True
