@@ -92,7 +92,8 @@ class MemoryDualVectorStateService(KernelServiceBase):
             return True
         if not isinstance(payload, dict):
             return True
-        known_hashes = payload.get("known_hashes") or []
+        # 与 VectorStore 读取旧元数据时的口径保持一致：没有 known_hashes 就回退读 ids。
+        known_hashes = payload.get("known_hashes", payload.get("ids", [])) or []
         deleted_ids = payload.get("deleted_ids") or []
         try:
             return int(len(known_hashes)) - int(len(deleted_ids)) > 0

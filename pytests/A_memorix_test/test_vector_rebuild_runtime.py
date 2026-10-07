@@ -2163,3 +2163,104 @@ async def test_empty_vectors_dir_after_boot_recovers_into_empty_dual_generation(
         assert not residue_kernel._dual_vector_ready_manifest_path().exists()
     finally:
         await residue_kernel.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_empty_generation_manifest_exemption_requires_pools_to_stay_empty(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """空世代之后一旦真的写入了向量，重启必须重新校验指纹并报不匹配。
+
+    `_dual_vector_ready` 对「计数为 0 且 generation_reason=integrity_recovery」的 manifest
+    不校验指纹；而空世代发布后段落回填会继续往池里写向量，此时 manifest 计数不会更新。
+    因此那个豁免只能建立在「池里确实没有向量」之上：本用例走完整流程 —— 清空根目录 →
+    指纹恢复发布空世代 → 段落回填写入向量 → 重启并换成同维度的另一个模型 —— 断言最终
+    报 `v2_fingerprint_mismatch` 且 `vector_read` 关闭；若豁免被无条件放行，这里会拿到
+    `healthy`，测试即失败。
+    """
+    data_dir = tmp_path / "exemption_data"
+    (data_dir / "vectors").mkdir(parents=True, exist_ok=True)
+
+    first_embedding = _FallbackEmbeddingManager(
+        candidates=("model-alpha",),
+        successful_model="model-alpha",
+    )
+    monkeypatch.setattr(
+        kernel_module,
+        "create_embedding_api_adapter",
+        lambda **kwargs: first_embedding,
+    )
+
+    async def no_background_tasks() -> None:
+        # 手动驱动恢复入口，避免后台探测与断言并发。
+        pass
+
+    def make_kernel(root_name: str) -> SDKMemoryKernel:
+        kernel = SDKMemoryKernel(
+            plugin_root=tmp_path / root_name,
+            config=_dual_kernel_config(data_dir, first_embedding.default_dimension),
+        )
+        monkeypatch.setattr(kernel, "_start_background_tasks", no_background_tasks)
+        return kernel
+
+    # 1) 启动后清空 vectors/；2) 走指纹恢复，发布空世代
+    first_kernel = make_kernel("exemption_plugin_first")
+    try:
+        await first_kernel.initialize()
+        for child in sorted((data_dir / "vectors").rglob("*"), reverse=True):
+            if child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()
+        first_kernel._disable_vector_channel(RuntimeError("simulated empty vectors dir"))
+        first_kernel._vector_health["error_code"] = "embedding_fingerprint_unavailable"
+
+        result = await first_kernel.memory_runtime_admin(action="recover_embedding")
+        assert result["success"] is True
+        assert first_kernel._dual_vector_pools_enabled() is True
+        assert first_kernel._dual_vector_ready_manifest_path().exists()
+        manifest = json.loads(first_kernel._dual_vector_ready_manifest_path().read_text(encoding="utf-8"))
+        assert manifest["paragraph_vectors"] == 0
+        assert manifest["graph_vectors"] == 0
+
+        # 3) 段落回填写入向量：池里现在有向量，而 manifest 计数仍是 0
+        paragraph_store = first_kernel.paragraph_vector_store
+        assert paragraph_store is not None
+        paragraph_store.add(
+            np.ones((1, first_embedding.default_dimension), dtype=np.float32),
+            ["p-backfilled"],
+        )
+        first_kernel._save_vector_store(paragraph_store)
+        stored = json.loads(
+            (data_dir / "vectors" / "paragraph" / "vectors_metadata.json").read_text(encoding="utf-8")
+        )
+        assert len(stored["known_hashes"]) == 1
+    finally:
+        await first_kernel.shutdown()
+
+    # 4) 重启并换成同维度的另一个模型（启动时即已确认指纹，才能走到指纹比对）
+    class _ObservedOtherModelEmbedding(_FallbackEmbeddingManager):
+        """启动时就把指纹标记为 observed 的另一个同维度模型。"""
+
+        def __init__(self) -> None:
+            super().__init__(
+                candidates=("model-beta",),
+                successful_model="model-beta",
+                initial_observed_model="model-beta",
+            )
+
+    second_embedding = _ObservedOtherModelEmbedding()
+    monkeypatch.setattr(
+        kernel_module,
+        "create_embedding_api_adapter",
+        lambda **kwargs: second_embedding,
+    )
+    second_kernel = make_kernel("exemption_plugin_second")
+    try:
+        await second_kernel.initialize()
+        assert second_kernel._dual_vector_pools_enabled() is False
+        assert second_kernel._vector_health["error_code"] == "v2_fingerprint_mismatch"
+        assert second_kernel._runtime_capabilities["vector_read"] is False
+    finally:
+        await second_kernel.shutdown()
