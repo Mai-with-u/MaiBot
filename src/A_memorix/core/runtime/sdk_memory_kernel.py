@@ -130,6 +130,8 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
         self._last_maintenance_at: Optional[float] = None
         self._request_dedup_tasks: Dict[str, asyncio.Task] = {}
         self._vector_rebuild_lock = asyncio.Lock()
+        self._vector_rebuild_configuration_key: Optional[str] = None
+        self._vector_rebuild_fingerprint: Optional[Dict[str, Any]] = None
         self._active_vector_space_id = ""
         self._target_vector_space_id = ""
         self._vector_space_inputs: Dict[str, str] = {}
@@ -549,6 +551,7 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
         stats: Dict[str, Dict[str, int]],
         migration_stats: Dict[str, Dict[str, int]],
         generation_reason: str = "",
+        build_fingerprint: Optional[Dict[str, Any]] = None,
     ) -> None:
         service = self._dual_vector_state_service
         return type(service)._write_dual_vector_ready_manifest(
@@ -556,6 +559,7 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
             stats=stats,
             migration_stats=migration_stats,
             generation_reason=generation_reason,
+            build_fingerprint=build_fingerprint,
         )
 
     def _remove_dual_vector_ready_manifest(self) -> None:

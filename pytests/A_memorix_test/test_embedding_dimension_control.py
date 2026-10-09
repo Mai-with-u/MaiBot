@@ -303,3 +303,52 @@ async def test_failed_batch_finishes_inflight_calls_and_caches_successes(monkeyp
     assert vectors.shape == (2, 4)
     assert calls.count("bad") == 2
     assert calls.count("good") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("active", ["A", "B"])
+async def test_rebuild_identity_reuses_vector_fingerprint_and_ignores_unused_backups(monkeypatch, active):
+    adapter = EmbeddingAPIAdapter(default_dimension=8)
+    candidates = ["A", "B", "C"]
+    models = {
+        name: SimpleNamespace(name=name, api_provider=f"provider-{name}", model_identifier=name, extra_params={})
+        for name in candidates
+    }
+    providers = {
+        info.api_provider: SimpleNamespace(base_url="https://example.test", client_type="openai", api_key="old")
+        for info in models.values()
+    }
+    monkeypatch.setattr(adapter, "_resolve_candidate_model_names", lambda: list(candidates))
+    monkeypatch.setattr(adapter, "_find_model_info", lambda name: models[name])
+    monkeypatch.setattr(adapter, "_find_provider", lambda name: providers[name])
+    monkeypatch.setattr(api_adapter_module.client_registry, "get_client_class_instance", lambda provider: object())
+    async def request(client, model_info, text, extra_params):
+        if active == "B" and model_info.name == "A":
+            raise RuntimeError("primary unavailable")
+        return SimpleNamespace(embedding=[1.0] * 8)
+    monkeypatch.setattr(adapter, "_request_with_retry", request)
+    await adapter._get_embedding_direct("test")
+    baseline = adapter.get_embedding_configuration_key()
+    assert baseline == adapter.get_embedding_fingerprint()["hash"]
+
+    candidates[:] = ["A", "C", "B"]
+    assert adapter.get_embedding_configuration_key() == baseline
+    assert adapter.get_embedding_fingerprint()["hash"] == baseline
+    candidates[:] = ["A", "B", "C"]
+    providers[models[active].api_provider].api_key = "new"
+    assert adapter.get_embedding_configuration_key() == baseline
+
+    # 同 URL、同维度，仅更换当前模型的提供商名称，也按正常指纹规则判为变化。
+    providers["new-provider"] = providers[models[active].api_provider]
+    models[active].api_provider = "new-provider"
+    changed = adapter.get_embedding_configuration_key()
+    assert changed != baseline
+    await adapter._get_embedding_direct("test")
+    assert adapter.get_embedding_fingerprint()["hash"] == changed
+
+    # 首选模型换成 C，即使旧模型仍在备用列表中，也须立即检测而非等待旧请求完成。
+    candidates[:] = ["C", "A", "B"]
+    new_primary = adapter.get_embedding_configuration_key()
+    assert new_primary != changed
+    await adapter._get_embedding_direct("test")
+    assert adapter.get_embedding_fingerprint()["hash"] == new_primary

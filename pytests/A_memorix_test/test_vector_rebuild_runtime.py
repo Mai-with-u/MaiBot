@@ -24,6 +24,9 @@ class _FakeEmbeddingManager:
         self.encode_calls: list[Any] = []
         self.detect_calls = 0
 
+    def get_embedding_configuration_key(self) -> str:
+        return f"{self.model_name}:{self.default_dimension}"
+
     async def _detect_dimension(self) -> int:
         self.detect_calls += 1
         return self.default_dimension
@@ -2194,3 +2197,93 @@ def test_checkpoint_rejects_changed_text_and_model_and_preserves_other_models(tm
     first.discard()
     assert first.read("paragraph", [("id", "text")]) == {}
     assert "id" in second.read("paragraph", [("id", "text")])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["single", "dual"])
+@pytest.mark.parametrize("new_dimension", [8, 12])
+@pytest.mark.parametrize("during_request", [False, True])
+@pytest.mark.parametrize("via_sync", [False, True])
+async def test_model_switch_discards_old_build_and_restarts(
+    monkeypatch, tmp_path, mode, new_dimension, during_request, via_sync,
+):
+    from src.config.config import config_manager
+
+    embedding = _FakeEmbeddingManager()
+    monkeypatch.setattr(kernel_module, "create_embedding_api_adapter", lambda **kwargs: embedding)
+    monkeypatch.setattr(kernel_module, "run_embedding_runtime_self_check", _fake_runtime_self_check)
+    config = _kernel_config(tmp_path / "data", 8)
+    config["retrieval"]["vector_pools"]["mode"] = mode
+    kernel = SDKMemoryKernel(plugin_root=tmp_path, config=config)
+    async def no_background():
+        pass
+    monkeypatch.setattr(kernel, "_start_background_tasks", no_background)
+    await kernel.initialize()
+    for text in ("first", "second"):
+        kernel.metadata_store.add_paragraph(text, source="test")
+    old_root = kernel._vectors_root()
+    old_model = embedding.model_name
+    original = embedding.encode_batch
+    calls = []
+    pending = asyncio.Event()
+    old_cancelled = False
+
+    def switch():
+        embedding.model_name = "new-model"
+        embedding.default_dimension = new_dimension
+
+    async def encode(texts, **kwargs):
+        nonlocal old_cancelled, old_root
+        if embedding.model_name == old_model and texts == ["first"]:
+            old_root = kernel._vectors_root()
+        calls.append((embedding.model_name, list(texts)))
+        if embedding.model_name == old_model and texts == ["second"]:
+            assert (old_root / "rebuild_checkpoint.sqlite3").exists()
+            if during_request:
+                pending.set()
+                try:
+                    await asyncio.Future()
+                except asyncio.CancelledError:
+                    old_cancelled = True
+                    raise
+            else:
+                switch()
+        return await original(texts, **kwargs)
+    monkeypatch.setattr(embedding, "encode_batch", encode)
+    task = asyncio.create_task(
+        kernel._vector_space_service.synchronize(force=True, batch_size=1, include_relations=False)
+        if via_sync else kernel.memory_runtime_admin(
+            action="rebuild_all_vectors", batch_size=1, include_relations=False,
+        )
+    )
+    try:
+        if during_request:
+            await asyncio.wait_for(pending.wait(), timeout=5)
+            switch()
+            registrations = [
+                entry for entry in config_manager._reload_callbacks
+                if entry.callback.__name__ == "on_reload"
+            ]
+            assert len(registrations) == 1
+            await asyncio.to_thread(
+                asyncio.run, config_manager._invoke_reload_callback(registrations[0].callback, ["model"]),
+            )
+        result = await asyncio.wait_for(task, timeout=15)
+        assert result["success"] is True
+        assert result["done"] == 2
+        assert old_cancelled is during_request
+        assert calls == [
+            (old_model, ["first"]), (old_model, ["second"]),
+            ("new-model", ["first"]), ("new-model", ["second"]),
+        ]
+        assert not (old_root / "rebuild_checkpoint.sqlite3").exists()
+        assert not list(old_root.glob("dual_build_*"))
+        assert not list(old_root.glob("single_build_*"))
+        store = kernel.paragraph_vector_store if mode == "dual" else kernel.vector_store
+        assert store.dimension == new_dimension
+        assert not any(entry.callback.__name__ == "on_reload" for entry in config_manager._reload_callbacks)
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await kernel.shutdown()

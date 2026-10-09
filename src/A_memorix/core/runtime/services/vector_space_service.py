@@ -13,6 +13,7 @@ import time
 from src.common.logger import get_logger
 
 from .base import KernelServiceBase
+from .vector_rebuild_checkpoint import EmbeddingConfigurationChanged
 
 logger = get_logger("A_Memorix.VectorSpaces")
 
@@ -165,6 +166,19 @@ class MemoryVectorSpaceService(KernelServiceBase):
             return {"success": True, "deleted": space_id}
 
     async def synchronize(
+        self, *, force: bool = False, batch_size: Optional[int] = None,
+        include_relations: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        while True:
+            try:
+                return await self._synchronize_once(
+                    force=force, batch_size=batch_size, include_relations=include_relations,
+                )
+            except EmbeddingConfigurationChanged:
+                # 旧任务已退出并释放构建锁；确认新模型身份后立即重开一轮。
+                self.embedding_dimension = await self._detect_current_embedding_dimension_for_rebuild()
+
+    async def _synchronize_once(
         self,
         *,
         force: bool = False,

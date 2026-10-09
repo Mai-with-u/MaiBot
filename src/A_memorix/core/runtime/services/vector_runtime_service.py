@@ -11,18 +11,25 @@ import time
 import numpy as np
 
 from src.common.logger import get_logger
+from src.config.config import config_manager
 
 from ...storage import VectorStore
 from ...utils.relation_write_service import RelationWriteService
 from ...utils.runtime_payloads import optional_int
 from ..search_runtime_initializer import build_search_runtime
 from .base import KernelServiceBase
-from .vector_rebuild_checkpoint import VectorRebuildCheckpoint
+from .vector_rebuild_checkpoint import EmbeddingConfigurationChanged, VectorRebuildCheckpoint
 
 logger = get_logger("A_Memorix.SDKMemoryKernel")
 
 
 class MemoryVectorRuntimeService(KernelServiceBase):
+    def _ensure_rebuild_embedding_unchanged(self) -> None:
+        if self._vector_rebuild_configuration_key is not None and (
+            self.embedding_manager.get_embedding_configuration_key() != self._vector_rebuild_configuration_key
+        ):
+            raise EmbeddingConfigurationChanged("嵌入模型已切换，停止旧向量构建")
+
     def _advance_vector_rebuild_progress(self, *, done: int = 0, failed: int = 0) -> None:
         status = self._dual_vector_auto_migration_status
         stage = str(status.get("stage", ""))
@@ -443,6 +450,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
         failed_ids: List[str] = []
         safe_batch_size = max(1, int(batch_size))
         for start in range(0, len(items), safe_batch_size):
+            self._ensure_rebuild_embedding_unchanged()
             batch = list(items[start : start + safe_batch_size])
             if checkpoint is not None:
                 restored = await self._vector_space_service.run_io(checkpoint.read, item_type, batch)
@@ -465,6 +473,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                     embeddings = await encoder(texts, batch_size=safe_batch_size)
                 else:
                     embeddings = await self.embedding_manager.encode(texts)
+                self._ensure_rebuild_embedding_unchanged()
                 embedding_array = np.asarray(embeddings, dtype=np.float32)
                 if embedding_array.ndim == 1:
                     embedding_array = embedding_array.reshape(1, -1)
@@ -476,6 +485,8 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                 done += len(ids)
                 done_ids.extend(ids)
                 self._advance_vector_rebuild_progress(done=len(ids))
+            except EmbeddingConfigurationChanged:
+                raise
             except Exception as exc:
                 last_error = str(exc)[:500]
                 failed += len(ids)
@@ -657,11 +668,13 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                     fingerprint is not None and self._vector_space_service.space_id(fingerprint) != previous_space_id
                 )
             if not switch_space:
-                return await self._rebuild_all_vectors_locked(
-                    batch_size=batch_size,
-                    include_relations=include_relations,
-                    dry_run=dry_run,
-                )
+                try:
+                    return await self._rebuild_all_vectors_locked(
+                        batch_size=batch_size, include_relations=include_relations, dry_run=dry_run,
+                    )
+                except EmbeddingConfigurationChanged:
+                    switch_space = True
+        self.embedding_dimension = await self._detect_current_embedding_dimension_for_rebuild()
         # 手动重建也应落到当前模型的目录，保留原模型的库以供切回。
         return await self._vector_space_service.synchronize(
             force=True,
@@ -688,10 +701,31 @@ class MemoryVectorRuntimeService(KernelServiceBase):
             task="sync" if self._target_vector_space_id else "rebuild",
             started_at=time.time(), finished_at=None, last_error="",
         )
+        root = self._vectors_root()
+        self._vector_rebuild_configuration_key = (
+            self.embedding_manager.get_embedding_configuration_key() if self.embedding_manager is not None else None
+        )
+        loop = asyncio.get_running_loop()
+        model_changed = False
+        build_task = asyncio.create_task(self._execute_vector_rebuild_locked(
+            batch_size=batch_size, include_relations=include_relations, reuse_space=reuse_space,
+        ))
+
+        def on_reload(changed_scopes: Sequence[str]) -> None:
+            nonlocal model_changed
+            if build_task.done():
+                return
+            try:
+                self._ensure_rebuild_embedding_unchanged()
+            except EmbeddingConfigurationChanged:
+                model_changed = True
+                # 配置热更新也可能来自 WebUI 线程，只在构建所属循环取消任务。
+                loop.call_soon_threadsafe(build_task.cancel)
+
+        config_manager.register_reload_callback(on_reload)
         try:
-            result = await self._execute_vector_rebuild_locked(
-                batch_size=batch_size, include_relations=include_relations, reuse_space=reuse_space,
-            )
+            result = await build_task
+            self._ensure_rebuild_embedding_unchanged()
             status["success"] = bool(result.get("success"))
             status["stage"] = "completed" if status["success"] else "failed"
             status["last_error"] = "; ".join(result.get("errors") or []) or str(result.get("error") or "")
@@ -700,9 +734,25 @@ class MemoryVectorRuntimeService(KernelServiceBase):
             )
             return result
         except BaseException as exc:
+            if model_changed or isinstance(exc, EmbeddingConfigurationChanged):
+                def discard_old_build() -> None:
+                    (root / "rebuild_checkpoint.sqlite3").unlink(missing_ok=True)
+                    for path in root.iterdir():
+                        if path.is_dir() and path.name.startswith(("dual_build_", "single_build_")):
+                            if path.resolve().parent != root.resolve():
+                                raise RuntimeError("临时构建目录超出向量库目录")
+                            self._drop_dual_build_root(path)
+                await self._vector_space_service.run_io(discard_old_build)
+                status.update(stage="cancelled", last_error="嵌入模型已切换，重新构建")
+                if isinstance(exc, asyncio.CancelledError) and self._background_stopping:
+                    raise
+                raise EmbeddingConfigurationChanged(status["last_error"]) from exc
             status.update(stage="cancelled" if isinstance(exc, asyncio.CancelledError) else "failed", last_error=str(exc))
             raise
         finally:
+            config_manager.unregister_reload_callback(on_reload)
+            self._vector_rebuild_configuration_key = None
+            self._vector_rebuild_fingerprint = None
             status.update(running=False, finished_at=time.time(), updated_at=time.time())
 
     async def _execute_vector_rebuild_locked(
@@ -807,6 +857,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
         fingerprint = self._current_embedding_fingerprint()
         if fingerprint is None or not fingerprint.get("hash"):
             raise RuntimeError("重建检查点需要已确认的模型指纹")
+        self._vector_rebuild_fingerprint = dict(fingerprint)
         checkpoint = await self._vector_space_service.run_io(
             VectorRebuildCheckpoint,
             self._vectors_root() / "rebuild_checkpoint.sqlite3",
@@ -1030,6 +1081,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
 
             await self._vector_space_service.run_io(update_relation_states)
 
+        self._ensure_rebuild_embedding_unchanged()
         done_total = sum(int(item["done"]) for item in stats.values())
         failed_total = sum(int(item["failed"]) for item in stats.values())
         if failed_total:
@@ -1063,17 +1115,19 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                             build_paragraph_vector_store.warmup_index, force_train=True
                         )
                         self._update_dual_vector_auto_migration_stage("paragraph_pool_save")
-                        await self._vector_space_service.run_io(self._save_vector_store, build_paragraph_vector_store)
+                        await self._vector_space_service.run_io(build_paragraph_vector_store.save, embedding_fingerprint=fingerprint)
                     if build_graph_vector_store is not None:
                         self._update_dual_vector_auto_migration_stage("graph_pool_warmup")
                         await self._vector_space_service.run_io(build_graph_vector_store.warmup_index, force_train=True)
                         self._update_dual_vector_auto_migration_stage("graph_pool_save")
-                        await self._vector_space_service.run_io(self._save_vector_store, build_graph_vector_store)
+                        await self._vector_space_service.run_io(build_graph_vector_store.save, embedding_fingerprint=fingerprint)
+                    self._ensure_rebuild_embedding_unchanged()
                     self._update_dual_vector_auto_migration_stage("activate_dirs")
                     await self._vector_space_service.run_io(self._activate_dual_vector_build_dirs, dual_build_root)
                     self._update_dual_vector_auto_migration_stage("write_manifest")
                     await self._vector_space_service.run_io(
-                        self._write_dual_vector_ready_manifest, stats=stats, migration_stats=migration_stats
+                        self._write_dual_vector_ready_manifest, stats=stats, migration_stats=migration_stats,
+                        build_fingerprint=fingerprint
                     )
                     self._update_dual_vector_auto_migration_stage("reload_dual_stores")
                     activation_ok = await self._vector_space_service.run_io(self._reload_dual_vector_stores_from_disk)
@@ -1090,6 +1144,8 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                                 errors.append(str(item))
                         self._update_dual_vector_auto_migration_stage("clear_legacy_single_pool")
                         await self._vector_space_service.run_io(self._clear_legacy_single_vector_files_after_dual_ready)
+                except EmbeddingConfigurationChanged:
+                    raise
                 except Exception as exc:
                     activation_ok = False
                     self._dual_vector_pools_ready = False
@@ -1118,7 +1174,8 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                 await self._vector_space_service.run_io(self.vector_store.warmup_index, force_train=True)
 
                 def activate_single_pool() -> None:
-                    self._save_vector_store(self.vector_store)
+                    self._ensure_rebuild_embedding_unchanged()
+                    self.vector_store.save(embedding_fingerprint=fingerprint)
                     # 空库 save 不生成二进制文件，也必须覆盖旧库的成对文件。
                     for filename in ("vectors.bin", "vectors_ids.bin"):
                         (single_build_root / filename).touch(exist_ok=True)
@@ -1126,7 +1183,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                         path.replace(self._vectors_root() / path.name)
                     shutil.rmtree(single_build_root)
                     self.vector_store = self._make_vector_store(self._vectors_root())
-                    self.vector_store.load(expected_embedding_fingerprint=self._current_embedding_fingerprint())
+                    self.vector_store.load(expected_embedding_fingerprint=fingerprint)
                     self.vector_store.warmup_index(force_train=True)
 
                 await self._vector_space_service.run_io(activate_single_pool)
@@ -1149,6 +1206,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
 
         self._update_dual_vector_auto_migration_stage("self_check")
         report = await self._refresh_runtime_self_check(sample_text="A_Memorix vector rebuild self check")
+        self._ensure_rebuild_embedding_unchanged()
         if bool(report.get("ok", False)) and not errors:
             self._set_embedding_degraded(active=False, checked_at=float(report.get("checked_at") or time.time()))
         else:

@@ -63,6 +63,7 @@ class EmbeddingAPIAdapter:
         self._total_errors = 0
         self._total_time = 0.0
         self._last_success_model_name = ""
+        self._last_success_primary_model_name = ""
         self._last_success_provider_name = ""
         self._last_success_dimension: Optional[int] = None
         self._last_configuration_key = ""
@@ -117,12 +118,17 @@ class EmbeddingAPIAdapter:
         except Exception:
             return ""
 
-    def get_embedding_fingerprint(self, *, dimension: Optional[int] = None) -> Dict[str, Any]:
+    def get_embedding_fingerprint(
+        self, *, dimension: Optional[int] = None, model_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """返回当前适配器所用向量空间的精简指纹。"""
         effective_dimension = max(1, int(dimension or self._last_success_dimension or self.get_embedding_dimension()))
-        model_token = str(self._last_success_model_name or "").strip()
-        provider_token = str(self._last_success_provider_name or "").strip()
-        source = "observed" if model_token else "configured"
+        model_token = str(model_name if model_name is not None else self._last_success_model_name).strip()
+        provider_token = (
+            self._resolve_model_provider_name(model_token) if model_name is not None
+            else str(self._last_success_provider_name).strip()
+        )
+        source = "observed" if model_name is None and model_token else "configured"
         candidate_names = [
             str(item or "").strip() for item in self._resolve_candidate_model_names() if str(item or "").strip()
         ]
@@ -323,6 +329,7 @@ class EmbeddingAPIAdapter:
                     source=f"embedding 模型 {candidate_name}",
                 )
                 self._last_success_model_name = str(candidate_name or "").strip()
+                self._last_success_primary_model_name = candidate_names[0]
                 self._last_success_provider_name = str(model_info.api_provider or "").strip()
                 self._last_success_dimension = int(vector.size)
                 return vector.tolist()
@@ -333,6 +340,15 @@ class EmbeddingAPIAdapter:
         if last_exc is not None:
             logger.error(f"通过直接 Client 获取 Embedding 失败: {last_exc}")
         return None
+
+    def get_embedding_configuration_key(self) -> str:
+        """复用向量库指纹规则；首选模型变化立即生效，备用顺序不改变当前身份。"""
+        candidates = self._resolve_candidate_model_names()
+        primary = candidates[0] if candidates else "auto"
+        model = self._last_success_model_name
+        if model not in candidates or primary != self._last_success_primary_model_name:
+            model = primary
+        return self.get_embedding_fingerprint(model_name=model)["hash"]
 
     def _dimension_cache_key(self) -> str:
         models = []
@@ -376,6 +392,7 @@ class EmbeddingAPIAdapter:
         if cached_detection is not None:
             self._dimension, self._last_success_model_name, self._last_success_provider_name = cached_detection
             self._last_success_dimension = self._dimension if self._last_success_model_name else None
+            self._last_success_primary_model_name = self._resolve_candidate_model_names()[0]
             self._dimension_detected = True
             logger.debug(f"嵌入维度命中进程缓存: {self._dimension}")
             return self._dimension

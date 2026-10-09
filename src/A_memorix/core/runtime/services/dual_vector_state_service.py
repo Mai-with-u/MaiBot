@@ -95,9 +95,16 @@ class MemoryDualVectorStateService(KernelServiceBase):
         stats: Dict[str, Dict[str, int]],
         migration_stats: Dict[str, Dict[str, int]],
         generation_reason: str = "",
+        build_fingerprint: Optional[Dict[str, Any]] = None,
     ) -> None:
-        current_dimension = self._current_embedding_status_dimension()
-        embedding_fingerprint = self._current_embedding_fingerprint(dimension=current_dimension)
+        current_dimension = (
+            int(build_fingerprint["dimension"]) if build_fingerprint is not None
+            else self._current_embedding_status_dimension()
+        )
+        embedding_fingerprint = (
+            build_fingerprint if build_fingerprint is not None
+            else self._current_embedding_fingerprint(dimension=current_dimension)
+        )
         payload = {
             "status": "ready",
             "version": 1,
@@ -297,7 +304,13 @@ class MemoryDualVectorStateService(KernelServiceBase):
     def _save_vector_store(self, store: Optional[VectorStore]) -> None:
         if store is None:
             return
-        store.save(embedding_fingerprint=self._current_embedding_fingerprint())
+        if self._vector_rebuild_configuration_key is not None:
+            self._vector_runtime_service._ensure_rebuild_embedding_unchanged()
+        fingerprint = (
+            self._vector_rebuild_fingerprint if self._vector_rebuild_fingerprint is not None
+            else self._current_embedding_fingerprint()
+        )
+        store.save(embedding_fingerprint=fingerprint)
 
     def _reload_dual_vector_stores_from_disk(self) -> bool:
         current_dimension = self._current_embedding_status_dimension()
