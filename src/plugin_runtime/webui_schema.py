@@ -28,7 +28,7 @@ class DataReference(StrictModel):
 class Parameter(StrictModel):
     type: Literal["string", "integer", "number", "boolean"]
     required: bool = False
-    max_length: int = Field(default=4000, ge=1, le=4000)
+    max_length: int = Field(default=4000, ge=1, le=65536)
     minimum: Optional[float] = None
     maximum: Optional[float] = None
     choices: List[Scalar] = Field(default_factory=list, max_length=100)
@@ -68,6 +68,7 @@ class APIBinding(StrictModel):
     parameters: Dict[Identifier, Parameter] = Field(default_factory=dict, max_length=30)
     confirmation: Optional[Label] = None
     arguments: Dict[Identifier, DataReference] = Field(default_factory=dict, max_length=30)
+    clear_selection: Optional[Identifier] = None
 
     @model_validator(mode="after")
     def validate_bindings(self) -> "APIBinding":
@@ -111,7 +112,7 @@ class VisibilityCondition(StrictModel):
 
 class WebUINode(StrictModel):
     type: Literal[
-        "stack", "grid", "card", "tabs", "text", "stat", "table", "chart", "gallery", "image", "pagination", "input", "select", "switch", "date", "button", "dialog", "collapsible", "repeat", "upload"
+        "stack", "grid", "card", "tabs", "text", "stat", "table", "chart", "gallery", "image", "pagination", "input", "select", "choice", "multi_select", "checkbox", "switch", "date", "button", "dialog", "collapsible", "repeat", "upload"
     ]
     label: Optional[Label] = None
     value: Union[Text, int, float, bool, DataReference, None] = None
@@ -152,6 +153,9 @@ class WebUINode(StrictModel):
             "chart": {"value", "chart_type", "x", "y"},
             "input": {"name", "value"},
             "select": {"name", "value", "options"},
+            "choice": {"name", "value", "options"},
+            "multi_select": {"selection", "value"},
+            "checkbox": {"selection", "value"},
             "switch": {"name", "value"},
             "date": {"name", "value"},
             "button": {"action", "variant"},
@@ -181,14 +185,16 @@ class WebUINode(StrictModel):
             raise ValueError("table.detail 必须同时声明 selection")
         if self.type == "chart" and (self.x is None or self.y is None):
             raise ValueError("chart 必须声明 x 和 y 字段")
-        if self.type in {"input", "select", "switch", "date"}:
+        if self.type in {"multi_select", "checkbox"} and (self.selection is None or not isinstance(self.value, DataReference)):
+            raise ValueError("多选组件必须声明 selection 并绑定数据")
+        if self.type in {"input", "select", "choice", "switch", "date"}:
             if self.name is None or isinstance(self.value, DataReference):
                 raise ValueError("输入组件必须声明 name，默认值必须为标量")
             if self.type == "switch" and type(self.value) is not bool:
                 raise ValueError("switch 默认值必须为布尔值")
-            if self.type in {"date", "select"} and self.value is not None and not isinstance(self.value, str):
+            if self.type in {"date", "select", "choice"} and self.value is not None and not isinstance(self.value, str):
                 raise ValueError("日期和选择组件默认值必须为字符串")
-            if self.type == "select" and (
+            if self.type in {"select", "choice"} and (
                 not self.options or self.value not in [None, *[o.value for o in self.options]]
             ):
                 raise ValueError("select 默认值必须属于 options")
@@ -228,9 +234,9 @@ class WebUIPage(StrictModel):
             count += 1
             if depth > 8 or count > 200:
                 raise ValueError("页面超过 8 层或 200 个组件")
-            if items and (node.name is not None and node.type != "repeat" or node.selection is not None):
+            if items and (node.name is not None and node.type != "repeat" or node.selection is not None and node.type != "checkbox"):
                 raise ValueError("repeat 内不能声明输入、弹窗或行选择，以免产生重复状态")
-            if node.selection is not None:
+            if node.selection is not None and node.type != "checkbox":
                 if node.selection in selections:
                     raise ValueError("行选择名称重复")
                 selections.add(node.selection)
@@ -273,9 +279,13 @@ class WebUIPage(StrictModel):
             if binding.arguments:
                 raise ValueError("动态 arguments 仅适用于 actions；queries 参数来自表单")
         for binding in self.actions.values():
+            if binding.clear_selection is not None and binding.clear_selection not in selections:
+                raise ValueError("clear_selection 必须引用已声明的选择组")
             for reference in binding.arguments.values():
                 validate_reference(reference, frozenset(repeat_names))
         for node, items in nodes:
+            if node.type == "checkbox" and node.selection not in selections:
+                raise ValueError("checkbox 必须引用已声明的多选组")
             if isinstance(node.value, DataReference):
                 validate_reference(node.value, items)
             if node.when is not None:

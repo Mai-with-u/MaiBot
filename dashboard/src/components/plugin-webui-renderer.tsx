@@ -38,6 +38,7 @@ interface RendererProps {
   busy: boolean
   pendingData?: boolean
   selectionRevision?: number
+  clearSelection?: string | null
   galleryPreferences?: Record<string, string>
   onChange: (name: string, value: Scalar) => void
   onAction: (name: string, contexts?: DataContexts) => void
@@ -52,6 +53,8 @@ interface InteractionState {
   openDialog: string | null
   select: (name: string, row: Record<string, unknown>, detail?: string | null) => void
   close: () => void
+  multiple: Record<string, string[]>
+  updateMultiple: (name: string, ids: string[]) => void
 }
 const InteractionContext = createContext<InteractionState | null>(null)
 
@@ -152,6 +155,46 @@ function NodeRenderer({ node, ...props }: Omit<RendererProps, 'nodes'> & { node:
     )
 
   switch (node.type) {
+    case 'choice': {
+      const selected = node.options.find(option => option.value === fieldValue)
+      return <>
+        <Button variant="outline" disabled={props.busy} onClick={() => setExpanded(true)}>
+          {node.label}：{selected?.label ?? '请选择'}
+        </Button>
+        <Dialog open={expanded} onOpenChange={setExpanded}>
+          <DialogContent aria-describedby={undefined}>
+            <DialogHeader><DialogTitle>{node.label}</DialogTitle></DialogHeader>
+            <div className="grid grid-cols-2 gap-3">
+              {node.options.map(option => <Button key={option.value}
+                variant={option.value === fieldValue ? 'default' : 'outline'} disabled={props.busy}
+                onClick={() => { change(option.value); setExpanded(false) }}>{option.label}</Button>)}
+            </div>
+          </DialogContent>
+        </Dialog>
+      </>
+    }
+    case 'checkbox': {
+      const ids = interaction.multiple[node.selection!] ?? []
+      const imageId = String(value)
+      return <label className="flex items-center gap-2 text-xs">
+        <input type="checkbox" disabled={props.busy || (!ids.includes(imageId) && ids.length >= 1000)}
+          checked={ids.includes(imageId)} onChange={event => interaction.updateMultiple(node.selection!,
+            event.target.checked ? [...ids, imageId] : ids.filter(id => id !== imageId))} />
+        {node.label ?? '选择'}
+      </label>
+    }
+    case 'multi_select': {
+      if (!Array.isArray(value)) throw new Error('Multi-select data must be an array')
+      const ids = interaction.multiple[node.selection!] ?? []
+      return <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm">已选 {ids.length} 张（跨页保留，每批最多1000张）</span>
+        <Button variant="outline" size="sm" disabled={props.busy} onClick={() =>
+          interaction.updateMultiple(node.selection!, [...new Set([...ids, ...value.map(row => String(row.id))])].slice(0, 1000))}>全选本页</Button>
+        <Button variant="outline" size="sm" disabled={props.busy} onClick={() =>
+          interaction.updateMultiple(node.selection!, ids.filter(id => !value.some(row => String(row.id) === id)))}>取消本页</Button>
+        <Button variant="outline" size="sm" disabled={props.busy} onClick={() => interaction.updateMultiple(node.selection!, [])}>清空选择</Button>
+      </div>
+    }
     case 'image': {
       const source = galleryThumbnail(value)
       return source ? <img src={source} alt={node.label ?? ''} loading="lazy" decoding="async"
@@ -636,17 +679,22 @@ function NodesRenderer({ nodes, ...props }: RendererProps) {
 
 export function PluginWebUIRenderer(props: RendererProps) {
   const [selection, setSelection] = useState<Record<string, unknown>>({})
+  const [multiple, setMultiple] = useState<Record<string, string[]>>({})
   const [openDialog, setOpenDialog] = useState<string | null>(null)
+  const combinedSelection = { ...selection, ...Object.fromEntries(Object.entries(multiple).map(([name, ids]) => [name, { ids: ids.join(','), count: ids.length }])) }
   useEffect(() => {
     setSelection({})
     setOpenDialog(null)
+    if (props.clearSelection) setMultiple(previous => ({ ...previous, [props.clearSelection!]: [] }))
   }, [props.selectionRevision])
   if (!props.pendingData)
-    validateRenderSize(props.nodes, props.data, { selection, item: props.items }, openDialog)
+    validateRenderSize(props.nodes, props.data, { selection: combinedSelection, item: props.items }, openDialog)
   return (
     <InteractionContext.Provider
       value={{
-        selection,
+        selection: combinedSelection,
+        multiple,
+        updateMultiple: (name, ids) => setMultiple(previous => ({ ...previous, [name]: ids })),
         openDialog,
         select: (name, row, detail) => {
           setSelection((previous) => ({ ...previous, [name]: row }))

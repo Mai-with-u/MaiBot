@@ -25,6 +25,7 @@ export interface APIBinding {
   parameters: Record<string, Parameter>
   confirmation: string | null
   arguments?: Record<string, DataReference>
+  clear_selection?: string | null
 }
 export interface WebUINode {
   type:
@@ -41,6 +42,9 @@ export interface WebUINode {
     | 'pagination'
     | 'input'
     | 'select'
+    | 'choice'
+    | 'multi_select'
+    | 'checkbox'
     | 'switch'
     | 'date'
     | 'button'

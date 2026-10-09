@@ -26,6 +26,33 @@ function node(overrides: Partial<WebUINode>): WebUINode {
 }
 
 describe('plugin WebUI renderer', () => {
+  it('opens choice buttons in a dialog', () => {
+    const change = vi.fn()
+    render(<PluginWebUIRenderer nodes={[node({type: 'choice', name: 'label', label: 'Upload identity', value: 'self', options: [{label: 'Bot', value: 'self'}, {label: 'Other', value: 'other'}]})]}
+      data={{}} values={{label: 'self'}} busy={false} onChange={change} onAction={vi.fn()} />)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', {name: 'Upload identity：Bot'}))
+    fireEvent.click(screen.getByRole('button', {name: 'Other'}))
+    expect(change).toHaveBeenCalledWith('label', 'other')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('keeps multi-selection across pages and clears after a successful batch', () => {
+    const action = vi.fn()
+    const nodes = [node({type: 'multi_select', selection: 'batch', value: {source: 'pictures', field: 'rows'}}),
+      node({type: 'repeat', name: 'picture', value: {source: 'pictures', field: 'rows'}, children: [node({type: 'checkbox', selection: 'batch', value: {scope: 'item', source: 'picture', field: 'id'}})]}),
+      node({type: 'button', action: 'apply', label: 'Apply'})]
+    const props = {nodes, values: {}, busy: false, onChange: vi.fn(), onAction: action}
+    const view = render(<PluginWebUIRenderer {...props} data={{pictures: {rows: [{id: 'one'}]}}} selectionRevision={0} />)
+    fireEvent.click(screen.getByRole('checkbox'))
+    view.rerender(<PluginWebUIRenderer {...props} data={{pictures: {rows: [{id: 'two'}]}}} selectionRevision={1} />)
+    fireEvent.click(screen.getByRole('checkbox'))
+    fireEvent.click(screen.getByRole('button', {name: 'Apply'}))
+    expect(action.mock.calls[0][1].selection.batch).toEqual({ids: 'one,two', count: 2})
+    view.rerender(<PluginWebUIRenderer {...props} data={{pictures: {rows: [{id: 'two'}]}}} selectionRevision={2} clearSelection="batch" />)
+    expect(screen.getByRole('checkbox')).not.toBeChecked()
+  })
+
   it('renders plugin text as text without interpreting HTML', () => {
     const content = '<img src=x onerror=alert(1)>'
     const { container } = render(

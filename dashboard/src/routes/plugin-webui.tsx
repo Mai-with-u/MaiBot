@@ -32,7 +32,7 @@ function initialValues(nodes: WebUINode[]): Record<string, Scalar> {
     const node = pending.pop()!
     if (node.type === 'pagination' && node.name !== null) values[node.name] = 1
     if (
-      ['input', 'select', 'switch', 'date'].includes(node.type) &&
+      ['input', 'select', 'choice', 'switch', 'date'].includes(node.type) &&
       node.name !== null &&
       (node.value === null || typeof node.value !== 'object')
     )
@@ -85,6 +85,7 @@ function ExtensionPage({ pluginId, page }: { pluginId: string; page: WebUIPage }
   } | null>(null)
   const [revision, setRevision] = useState(0)
   const [selectionRevision, setSelectionRevision] = useState(0)
+  const [clearSelection, setClearSelection] = useState<string | null>(null)
   const renderFailed = useRef(false)
   const alive = useRef(true)
   const controller = useRef<AbortController | null>(null)
@@ -116,16 +117,19 @@ function ExtensionPage({ pluginId, page }: { pluginId: string; page: WebUIPage }
     [page, pluginId]
   )
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (clearError = true) => {
     if (busyRef.current) return
     busyRef.current = true
     setBusy(true)
-    setError(null)
+    if (clearError) setError(null)
     controller.current = new AbortController()
     const operation = controller.current
     try {
       await loadQueries(operation.signal)
-      if (alive.current && !operation.signal.aborted) setSelectionRevision((value) => value + 1)
+      if (alive.current && !operation.signal.aborted) {
+        setClearSelection(null)
+        setSelectionRevision((value) => value + 1)
+      }
     } catch (error) {
       if (alive.current && !operation.signal.aborted) setError(String(error))
     } finally {
@@ -149,7 +153,7 @@ function ExtensionPage({ pluginId, page }: { pluginId: string; page: WebUIPage }
   useEffect(() => {
     const seconds = page.poll_interval_seconds ?? 0
     if (seconds < 3) return
-    const timer = window.setInterval(() => { if (!busyRef.current) void refresh() }, seconds * 1000)
+    const timer = window.setInterval(() => { if (!busyRef.current) void refresh(false) }, seconds * 1000)
     return () => window.clearInterval(timer)
   }, [page.poll_interval_seconds, refresh])
 
@@ -172,7 +176,10 @@ function ExtensionPage({ pluginId, page }: { pluginId: string; page: WebUIPage }
       await invokePluginWebUI(pluginId, page.id, 'actions', name, args, confirmed, operation.signal)
       if (alive.current && !operation.signal.aborted) setMessage(t('pluginWebUI.completed'))
       await loadQueries(operation.signal)
-      if (alive.current && !operation.signal.aborted) setSelectionRevision((value) => value + 1)
+      if (alive.current && !operation.signal.aborted) {
+        setClearSelection(binding.clear_selection ?? null)
+        setSelectionRevision((value) => value + 1)
+      }
     } catch (error) {
       if (alive.current && !operation.signal.aborted) setError(String(error))
     } finally {
@@ -232,6 +239,7 @@ function ExtensionPage({ pluginId, page }: { pluginId: string; page: WebUIPage }
               busy={busy}
               pendingData={!loaded}
               selectionRevision={selectionRevision}
+              clearSelection={clearSelection}
               galleryPreferences={galleryPreferences.current}
               onUpload={async (name, file, progress) => {
                 const args = argumentsFor(page.actions[name], valuesRef.current)
