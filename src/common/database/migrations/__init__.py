@@ -44,6 +44,8 @@ from .builtin import (
     V39_SCHEMA_VERSION,
     V40_SCHEMA_VERSION,
     V41_SCHEMA_VERSION,
+    V42_SCHEMA_VERSION,
+    V43_SCHEMA_VERSION,
     build_default_migration_registry,
     build_default_schema_version_resolver,
 )
@@ -139,6 +141,8 @@ __all__ = [
     "V39_SCHEMA_VERSION",
     "V40_SCHEMA_VERSION",
     "V41_SCHEMA_VERSION",
+    "V42_SCHEMA_VERSION",
+    "V43_SCHEMA_VERSION",
     "MigrationExecutionContext",
     "MigrationPlan",
     "MigrationPlanner",

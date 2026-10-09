@@ -47,6 +47,7 @@ from .v38_to_v39 import migrate_v38_to_v39
 from .v39_to_v40 import migrate_v39_to_v40
 from .v40_to_v41 import migrate_v40_to_v41
 from .v41_to_v42 import BEHAVIOR_TABLES, migrate_v41_to_v42
+from .v42_to_v43 import migrate_v42_to_v43
 from .version_store import SQLiteUserVersionStore
 
 EMPTY_SCHEMA_VERSION = 0
@@ -92,7 +93,8 @@ V39_SCHEMA_VERSION = 39
 V40_SCHEMA_VERSION = 40
 V41_SCHEMA_VERSION = 41
 V42_SCHEMA_VERSION = 42
-LATEST_SCHEMA_VERSION = 42
+V43_SCHEMA_VERSION = 43
+LATEST_SCHEMA_VERSION = 43
 
 _LEGACY_V1_EXCLUSIVE_TABLES = (
     "chat_streams",
@@ -695,7 +697,8 @@ class LatestSchemaVersionDetector(BaseSchemaVersionDetector):
             return V39_SCHEMA_VERSION
         if not all(snapshot.has_column("mai_messages", name) for name in ("account_id", "scope")):
             return V40_SCHEMA_VERSION
-        return LATEST_SCHEMA_VERSION if behavior_removed else V41_SCHEMA_VERSION
+        # v43 只压缩文件，结构与 v42 相同；未标记版本的库仍需执行瘦身迁移。
+        return V42_SCHEMA_VERSION if behavior_removed else V41_SCHEMA_VERSION
 
 
 class V38SchemaVersionDetector(BaseSchemaVersionDetector):
@@ -1950,6 +1953,14 @@ def build_default_migration_registry() -> MigrationRegistry:
                 name="v41_to_v42",
                 description="彻底移除行为学习数据表。",
                 handler=migrate_v41_to_v42,
+            ),
+            MigrationStep(
+                version_from=V42_SCHEMA_VERSION,
+                version_to=V43_SCHEMA_VERSION,
+                name="v42_to_v43",
+                description="压缩移除行为学习表后的数据库，回收磁盘空间。",
+                handler=migrate_v42_to_v43,
+                transactional=False,
             ),
         ]
     )
