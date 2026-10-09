@@ -51,6 +51,63 @@ class MemoryDualVectorStateService(KernelServiceBase):
             return None
         return payload if isinstance(payload, dict) else None
 
+    @staticmethod
+    def _pool_dir_has_persisted_files(vector_dir: Path) -> bool:
+        """该池目录里是否残留任何持久化向量文件（用于 metadata 缺失时的判定）。
+
+        判定口径与 ``MemoryEmbeddingStateService._vector_dir_has_persisted_files`` 一致：
+        metadata、legacy ``vectors.npy``、非空的二进制对、旧单池清理清单里的
+        ``vectors.index`` / ``vectors_metadata.pkl``，以及 compaction 备份
+        ``vectors.bin.compaction.bak`` / ``vectors_ids.bin.compaction.bak``
+        （**仅当 ``vectors_compaction.json`` 存在时** —— journal 缺失时备份不可恢复）。
+        磁盘上只有这类文件但没有 metadata 时，世代同样存在，不能判成空池。
+        """
+        for name in ("vectors_metadata.json", "vectors.npy", "vectors.index", "vectors_metadata.pkl"):
+            if (vector_dir / name).exists():
+                return True
+        bin_names = ["vectors.bin", "vectors_ids.bin"]
+        if (vector_dir / "vectors_compaction.json").exists():
+            bin_names += ["vectors.bin.compaction.bak", "vectors_ids.bin.compaction.bak"]
+        for name in bin_names:
+            path = vector_dir / name
+            if path.exists() and path.stat().st_size > 0:
+                return True
+        return False
+
+    @classmethod
+    def _persisted_pool_has_vectors(cls, vector_dir: Path) -> bool:
+        """按磁盘上的池 metadata 判断该池是否真的存着向量。
+
+        manifest 里的计数只是写 manifest 那一刻的快照：空世代发布之后，段落回填会
+        继续往池里写向量，而 manifest 计数不会跟着更新。因此判断「池是否为空」不能
+        只信 manifest，必须回到池自己的 metadata 上数一遍。metadata 缺失时不能直接
+        判空：压缩或写入中断会留下「仍有 vectors.bin、没有 metadata」的中间态，这种
+        池同样不是空池，必须继续挡住空世代豁免。
+        """
+        meta_path = vector_dir / "vectors_metadata.json"
+        if not meta_path.exists():
+            return cls._pool_dir_has_persisted_files(vector_dir)
+        try:
+            payload = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning(f"读取向量池 metadata 失败，按有数据处理: dir={vector_dir}, err={exc}")
+            return True
+        if not isinstance(payload, dict):
+            return True
+        # 与 VectorStore 读取旧元数据时的口径保持一致：没有 known_hashes 就回退读 ids。
+        known_hashes = payload.get("known_hashes", payload.get("ids", [])) or []
+        deleted_ids = payload.get("deleted_ids") or []
+        try:
+            return int(len(known_hashes)) - int(len(deleted_ids)) > 0
+        except Exception:  # noqa: BLE001
+            return True
+
+    def _dual_vector_ready_pools_are_empty(self) -> bool:
+        """两个池在磁盘上都确实没有向量。"""
+        return not self._persisted_pool_has_vectors(self._paragraph_vector_dir()) and not self._persisted_pool_has_vectors(
+            self._graph_vector_dir()
+        )
+
     def _dual_vector_ready(self, *, expected_dimension: Optional[int] = None) -> bool:
         manifest = self._read_dual_vector_ready_manifest()
         if not manifest or manifest.get("status") != "ready":
@@ -67,10 +124,14 @@ class MemoryDualVectorStateService(KernelServiceBase):
         current_fingerprint = self._current_embedding_fingerprint_for_validation()
         manifest_fingerprint = self._normalize_embedding_fingerprint(manifest.get("embedding_fingerprint"))
         if current_fingerprint is None or manifest_fingerprint is None:
+            # 完整性恢复出来的空世代允许暂时缺少可校验指纹，但这个豁免只能用在「池里
+            # 确实一个向量都没有」时：空世代发布后回填会往池里写向量而 manifest 计数
+            # 不更新，否则之后每次重启都会绕过指纹校验，换模型也照样按旧向量检索。
             empty_recovery_generation = (
                 paragraph_count == 0
                 and graph_count == 0
                 and str(manifest.get("generation_reason", "") or "") == "integrity_recovery"
+                and self._dual_vector_ready_pools_are_empty()
             )
             if not empty_recovery_generation:
                 logger.warning("双池 ready manifest 缺少可校验 embedding 指纹，保持单池降级")

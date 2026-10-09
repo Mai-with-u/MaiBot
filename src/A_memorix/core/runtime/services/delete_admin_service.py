@@ -14,13 +14,21 @@ from .base import KernelServiceBase
 
 logger = get_logger("A_Memorix.SDKMemoryKernel")
 
+# 目标向量池整体不可用时，Outbox 任务退回队列的固定等待窗口。
+_CLEANUP_POOL_UNAVAILABLE_RETRY_SECONDS = 300.0
+
 
 class _VectorCleanupRollbackError(RuntimeError):
     """向量清理 checkpoint 无法恢复，后续同池任务必须停止。"""
 
 
+class _VectorCleanupPoolUnavailableError(RuntimeError):
+    """当前运行时没有任何可写的清理向量池，任务只能退回队列等待恢复。"""
+
+
 class MemoryDeleteAdminService(KernelServiceBase):
     async def memory_delete_admin(self, *, action: str, **kwargs) -> Dict[str, Any]:
+        """长期记忆删除管理入口：按 action 分发预览、执行、恢复与清理操作。"""
         await self.initialize()
         act = str(action or "").strip().lower()
         mode = str(kwargs.get("mode", "") or "").strip().lower()
@@ -89,6 +97,7 @@ class MemoryDeleteAdminService(KernelServiceBase):
         entity_hashes: Sequence[str],
         relation_hashes: Sequence[str],
     ) -> List[Dict[str, Any]]:
+        """按资源类型生成向量删除任务，并在有资源变更时追加图重建任务。"""
         jobs: List[Dict[str, Any]] = []
         resource_groups = (
             ("paragraph", tokens(paragraph_hashes)),
@@ -119,6 +128,11 @@ class MemoryDeleteAdminService(KernelServiceBase):
             )
         return jobs
 
+    @staticmethod
+    def _missing_vector_store_error_type(resource_type: str) -> str:
+        """渠道级向量池缺失统一使用该错误类型标记，避免与池内错误混淆。"""
+        return f"{resource_type} 向量存储未初始化"
+
     def _cleanup_vector_store(self, resource_type: str) -> Any:
         """返回 Outbox 资源唯一负责的向量池。"""
         if not self._dual_vector_pools_enabled():
@@ -130,7 +144,9 @@ class MemoryDeleteAdminService(KernelServiceBase):
         else:
             raise ValueError(f"未知向量资源类型: {resource_type}")
         if target_store is None:
-            raise RuntimeError(f"{resource_type} 向量存储未初始化")
+            # 渠道整体不可用时三个池引用都会被清空；调用方必须把任务退回队列，
+            # 因为 _disable_vector_channel 不动磁盘文件，向量义务依然存在。
+            raise _VectorCleanupPoolUnavailableError(self._missing_vector_store_error_type(resource_type))
         return target_store
 
     async def process_pending_storage_cleanup_jobs(
@@ -163,10 +179,12 @@ class MemoryDeleteAdminService(KernelServiceBase):
         completed = 0
         cancelled = 0
         failed = 0
+        deferred = 0
         deleted_vectors = 0
         pending_vector_batches: Dict[int, Dict[str, Any]] = {}
 
         def fail_job(job: Dict[str, Any], exc: Exception) -> None:
+            """记录真实执行失败，并按其尝试次数计算退避后重新排队。"""
             nonlocal failed
             retry_count = max(1, int(job.get("attempt_count", 1) or 1))
             retry_delay = min(300.0, float(2 ** min(retry_count - 1, 8)))
@@ -182,7 +200,19 @@ class MemoryDeleteAdminService(KernelServiceBase):
                 f"action={job.get('action')}, err={exc}"
             )
 
+        def defer_job(job: Dict[str, Any], exc: Exception) -> None:
+            """目标存储整体不可用时退回任务：保留义务、不计失败、不刷屏。"""
+            nonlocal deferred
+            self.metadata_store.defer_storage_cleanup_job(
+                job_id=int(job["job_id"]),
+                worker_token=worker_token,
+                reason=str(exc),
+                retry_delay_seconds=_CLEANUP_POOL_UNAVAILABLE_RETRY_SECONDS,
+            )
+            deferred += 1
+
         def complete_job(job: Dict[str, Any], *, status: str = "completed") -> None:
+            """把任务结算为完成或取消；租约失效时必须直接暴露错误。"""
             nonlocal cancelled, completed
             changed = self.metadata_store.complete_storage_cleanup_job(
                 job_id=int(job["job_id"]),
@@ -282,7 +312,13 @@ class MemoryDeleteAdminService(KernelServiceBase):
                     if not resource_ids:
                         complete_job(job)
                         continue
-                    target_store = self._cleanup_vector_store(resource_type)
+                    try:
+                        target_store = self._cleanup_vector_store(resource_type)
+                    except _VectorCleanupPoolUnavailableError as exc:
+                        # 渠道整体不可用不代表向量不存在：磁盘文件仍在，通道恢复后会重新
+                        # 加载。任务退回队列保留删除义务，避免向量永久残留。
+                        defer_job(job, exc)
+                        continue
                     batch = pending_vector_batches.get(id(target_store))
                     if batch is None:
                         # 先提交进入清理前的合法缓冲区，再以该提交作为精确回滚基线。
@@ -357,7 +393,13 @@ class MemoryDeleteAdminService(KernelServiceBase):
                         raise ValueError(f"未知 vector_upsert 资源类型: {resource_type}")
                     if item is None:
                         raise RuntimeError(f"{resource_type} 权威资源不存在")
-                    target_store = self._cleanup_vector_store(resource_type)
+                    try:
+                        target_store = self._cleanup_vector_store(resource_type)
+                    except _VectorCleanupPoolUnavailableError as exc:
+                        # 无可用向量池时不能写入，但义务必须保留：恢复任务退回队列，
+                        # 通道恢复后仍需补写向量，否则关系会一直停在 pending。
+                        defer_job(job, exc)
+                        continue
                     upsert_checkpoint = {"token": ""}
 
                     def before_vector_write(
@@ -366,6 +408,7 @@ class MemoryDeleteAdminService(KernelServiceBase):
                         current_store: Any = target_store,
                         checkpoint: Dict[str, str] = upsert_checkpoint,
                     ) -> None:
+                        """embedding 写入前的同步钩子：校验权威状态并建立回滚 checkpoint。"""
                         # embedding await 已结束；从此处到 save/commit 均为同步区间。
                         assert_authority(current_job, current_resource_ids, phase="写入")
                         self._save_vector_store(current_store)
@@ -451,6 +494,7 @@ class MemoryDeleteAdminService(KernelServiceBase):
             "completed": completed,
             "cancelled": cancelled,
             "failed": failed,
+            "deferred": deferred,
             "deleted_vectors": deleted_vectors,
             "operations": operation_summaries,
         }
