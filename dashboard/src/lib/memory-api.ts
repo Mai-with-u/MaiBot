@@ -310,6 +310,10 @@ export interface MemoryVectorStoreSnapshot {
 }
 
 export interface MemoryVectorMigrationProgress extends Record<string, unknown> {
+  retrying?: boolean
+  paragraph_failed?: number
+  entity_failed?: number
+  relation_failed?: number
   total?: number
   processed?: number
   percent?: number
@@ -318,6 +322,7 @@ export interface MemoryVectorMigrationProgress extends Record<string, unknown> {
 }
 
 export interface MemoryVectorAutoMigrationStatus {
+  task?: 'sync' | 'rebuild'
   running?: boolean
   attempted?: boolean
   success?: boolean

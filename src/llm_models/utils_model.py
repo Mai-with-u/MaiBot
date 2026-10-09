@@ -576,7 +576,7 @@ class LLMOrchestrator:
                 request_type=self.request_type,
                 task_name=self.task_name,
                 session_id=self._resolve_effective_session_id(session_id),
-                time_cost=time.time() - start_time,
+                time_cost=max(0.0, time.time() - start_time - response.rate_limit_wait_seconds),
             )
         if not embedding:
             raise RuntimeError("获取embedding失败")
@@ -1024,6 +1024,8 @@ class LLMOrchestrator:
         model_info = request.model_info
         original_response_request = request if isinstance(request, ResponseRequest) else None
         active_request: ClientRequest = request
+        if isinstance(active_request, EmbeddingRequest):
+            active_request.retry_handled_externally = True
 
         async def ensure_attempt_snapshot(error: Exception) -> None:
             """确保内置或插件 Provider 的每次失败都有统一快照记录。"""

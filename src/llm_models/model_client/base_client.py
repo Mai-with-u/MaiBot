@@ -115,6 +115,9 @@ class APIResponse:
     embedding: List[float] | None = None
     """嵌入向量"""
 
+    rate_limit_wait_seconds: float = 0.0
+    """本次逻辑请求累计的嵌入限速等待时间，不计入模型耗时。"""
+
     usage: UsageRecord | None = None
     """使用情况 (prompt_tokens, completion_tokens, total_tokens)"""
 
@@ -241,6 +244,7 @@ class RequestTraceContext:
     model_attempt: int = 0
     snapshot_path: str = ""
     current_attempt_started_at: float = 0.0
+    rate_limit_wait_seconds: float = 0.0
     generation_attempts: List[GenerationAttempt] = field(default_factory=list)
 
     def replace_attempt_status(self, attempt_number: int, status: str) -> None:
@@ -306,6 +310,7 @@ class EmbeddingRequest:
     embedding_input: str
     extra_params: Dict[str, Any] = field(default_factory=dict)
     trace_context: RequestTraceContext | None = None
+    retry_handled_externally: bool = False
 
 
 @dataclass(slots=True)

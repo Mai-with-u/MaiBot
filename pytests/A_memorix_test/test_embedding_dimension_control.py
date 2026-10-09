@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import asyncio
+
 import numpy as np
 import pytest
 
@@ -281,3 +283,23 @@ async def test_encode_batch_keeps_batch_local_indexes_when_cache_hits_previous_b
     assert np.array_equal(embeddings[0], embeddings[2])
     assert embeddings[1][0] == float(ord("B"))
     assert embeddings[3][0] == float(ord("C"))
+
+
+@pytest.mark.asyncio
+async def test_failed_batch_finishes_inflight_calls_and_caches_successes(monkeypatch):
+    adapter = EmbeddingAPIAdapter(default_dimension=4, enable_cache=True)
+    monkeypatch.setattr(EmbeddingAPIAdapter, "_GLOBAL_TEXT_EMBEDDING_CACHE", {})
+    calls = []
+    async def encode(text, dimensions=None):
+        calls.append(text)
+        if text == "bad" and calls.count("bad") == 1:
+            return None
+        await asyncio.sleep(0)
+        return [1.0] * 4
+    monkeypatch.setattr(adapter, "_get_embedding_direct", encode)
+    with pytest.raises(RuntimeError):
+        await adapter._encode_batch_internal(["bad", "good"], batch_size=2, dimensions=4)
+    vectors = await adapter._encode_batch_internal(["bad", "good"], batch_size=2, dimensions=4)
+    assert vectors.shape == (2, 4)
+    assert calls.count("bad") == 2
+    assert calls.count("good") == 1

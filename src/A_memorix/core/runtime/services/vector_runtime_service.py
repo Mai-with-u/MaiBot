@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+import asyncio
 import shutil
 import tempfile
 import time
@@ -16,11 +17,30 @@ from ...utils.relation_write_service import RelationWriteService
 from ...utils.runtime_payloads import optional_int
 from ..search_runtime_initializer import build_search_runtime
 from .base import KernelServiceBase
+from .vector_rebuild_checkpoint import VectorRebuildCheckpoint
 
 logger = get_logger("A_Memorix.SDKMemoryKernel")
 
 
 class MemoryVectorRuntimeService(KernelServiceBase):
+    def _advance_vector_rebuild_progress(self, *, done: int = 0, failed: int = 0) -> None:
+        status = self._dual_vector_auto_migration_status
+        stage = str(status.get("stage", ""))
+        prefix = {
+            "paragraphs_start": "paragraph",
+            "entities_start": "entity",
+            "relations_start": "relation",
+        }.get(stage)
+        if status.get("running") and prefix is not None:
+            progress = status.get("progress") or {}
+            self._update_dual_vector_auto_migration_stage(
+                stage,
+                **{
+                    f"{prefix}_done": int(progress.get(f"{prefix}_done", 0)) + done,
+                    f"{prefix}_failed": int(progress.get(f"{prefix}_failed", 0)) + failed,
+                },
+            )
+
     def _vector_rebuild_status(self) -> Dict[str, Any]:
         stored_dimension = self._stored_vector_dimension()
         if self._vector_persist_blocked_until_rebuild and self._vector_rebuild_source_dimension is not None:
@@ -384,6 +404,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
         batch_size: int,
         vector_store: Optional[VectorStore] = None,
         item_type: str = "paragraph",
+        checkpoint: Optional[VectorRebuildCheckpoint] = None,
     ) -> tuple[int, int, str, List[str], List[str]]:
         target_store = vector_store or self.vector_store
         source_store = self._vector_space_sources.get("single")
@@ -408,6 +429,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                 batch_size=batch_size,
                 vector_store=target_store,
                 item_type=item_type,
+                checkpoint=checkpoint,
             )
             return copied + done, failed, error, copied_ids + done_ids, failed_ids
         if target_store is None or self.embedding_manager is None:
@@ -422,6 +444,19 @@ class MemoryVectorRuntimeService(KernelServiceBase):
         safe_batch_size = max(1, int(batch_size))
         for start in range(0, len(items), safe_batch_size):
             batch = list(items[start : start + safe_batch_size])
+            if checkpoint is not None:
+                restored = await self._vector_space_service.run_io(checkpoint.read, item_type, batch)
+                if restored:
+                    restored_ids = list(restored)
+                    await self._vector_space_service.run_io(
+                        target_store.add, vectors=np.asarray(list(restored.values())), ids=restored_ids,
+                    )
+                    done += len(restored_ids)
+                    done_ids.extend(restored_ids)
+                    self._advance_vector_rebuild_progress(done=len(restored_ids))
+                    batch = [(item_id, text) for item_id, text in batch if item_id not in restored]
+            if not batch:
+                continue
             ids = [item_id for item_id, _ in batch]
             texts = [text for _, text in batch]
             try:
@@ -435,15 +470,19 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                     embedding_array = embedding_array.reshape(1, -1)
                 if embedding_array.shape[0] != len(ids):
                     raise ValueError(f"embedding 返回数量异常: expected={len(ids)}, got={embedding_array.shape[0]}")
-                target_store.add(vectors=embedding_array, ids=ids)
+                await self._vector_space_service.run_io(target_store.add, vectors=embedding_array, ids=ids)
+                if checkpoint is not None:
+                    await self._vector_space_service.run_io(checkpoint.write, item_type, batch, embedding_array)
                 done += len(ids)
                 done_ids.extend(ids)
+                self._advance_vector_rebuild_progress(done=len(ids))
             except Exception as exc:
                 last_error = str(exc)[:500]
                 failed += len(ids)
                 failed_ids.extend(ids)
+                self._advance_vector_rebuild_progress(failed=len(ids))
                 logger.warning(f"重建向量批次失败: start={start}, count={len(ids)}, error={last_error}")
-        return done, failed, last_error, done_ids, failed_ids
+        return done, failed, last_error if failed else "", done_ids, failed_ids
 
     def _copy_rebuild_vectors_from_store(
         self,
@@ -494,6 +533,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                 if vector_array.ndim == 1:
                     vector_array = vector_array.reshape(1, -1)
                 added = int(target_store.add(vectors=vector_array, ids=target_ids) or 0)
+                self._advance_vector_rebuild_progress(done=len(target_ids))
                 if added < len(target_ids):
                     logger.debug(f"复制旧向量到新池时存在已写入项: requested={len(target_ids)} added={added}")
         except Exception as exc:
@@ -511,6 +551,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
         target_store: Optional[VectorStore],
         target_id_prefix: str = "",
         source_store: Optional[VectorStore] = None,
+        checkpoint: Optional[VectorRebuildCheckpoint] = None,
     ) -> tuple[int, int, str, List[str], List[str], Dict[str, int]]:
         item_type = target_id_prefix or "paragraph"
         text_by_id = {item_id: text for item_id, text in items}
@@ -562,6 +603,8 @@ class MemoryVectorRuntimeService(KernelServiceBase):
             items=encode_items,
             batch_size=batch_size,
             vector_store=target_store,
+            item_type=item_type,
+            checkpoint=checkpoint,
         )
 
         def _source_id(target_id: str) -> str:
@@ -634,10 +677,47 @@ class MemoryVectorRuntimeService(KernelServiceBase):
         dry_run: bool = False,
         reuse_space: bool = False,
     ) -> Dict[str, Any]:
+        """为自动同步和手动重建发布同一份逐批进度；取消和失败也保留最终状态。"""
+        if dry_run:
+            return await self._execute_vector_rebuild_locked(
+                batch_size=batch_size, include_relations=include_relations, dry_run=True, reuse_space=reuse_space,
+            )
+        status = self._dual_vector_auto_migration_status
+        status.update(
+            running=True, attempted=True, success=False, stage="prepare_rebuild", progress={},
+            task="sync" if self._target_vector_space_id else "rebuild",
+            started_at=time.time(), finished_at=None, last_error="",
+        )
+        try:
+            result = await self._execute_vector_rebuild_locked(
+                batch_size=batch_size, include_relations=include_relations, reuse_space=reuse_space,
+            )
+            status["success"] = bool(result.get("success"))
+            status["stage"] = "completed" if status["success"] else "failed"
+            status["last_error"] = "; ".join(result.get("errors") or []) or str(result.get("error") or "")
+            status["progress"] = self._normalize_dual_vector_auto_migration_progress(
+                status["progress"], completed=True, success=status["success"],
+            )
+            return result
+        except BaseException as exc:
+            status.update(stage="cancelled" if isinstance(exc, asyncio.CancelledError) else "failed", last_error=str(exc))
+            raise
+        finally:
+            status.update(running=False, finished_at=time.time(), updated_at=time.time())
+
+    async def _execute_vector_rebuild_locked(
+        self,
+        *,
+        batch_size: Optional[int] = None,
+        include_relations: Optional[bool] = None,
+        dry_run: bool = False,
+        reuse_space: bool = False,
+    ) -> Dict[str, Any]:
         """在持有向量重建锁时重建全部有效对象的向量。
 
-        单池模式会原地清理并重建；双池模式先写入独立构建目录，只有编码无失败且
-        向量数量校验通过后才切换目录和 ready manifest。重建期间 embedding 保持
+        单池和双池均先写入独立构建目录；失败项整轮结束后补算，只有编码无失败且
+        向量数量校验通过后才切换目录和 ready manifest。成功批次另存检查点供重启恢复。
+        重建期间 embedding 保持
         降级状态，完成后重新组装检索运行时并通过自检决定是否解除持久化阻断。
         ``dry_run`` 只统计目标数量，不修改运行时和磁盘状态。
         """
@@ -708,18 +788,13 @@ class MemoryVectorRuntimeService(KernelServiceBase):
         if not dual_mode:
             self._dual_vector_pools_ready = False
             await self._vector_space_service.run_io(self._remove_dual_vector_ready_manifest)
-            if reuse_space:
-                single_build_root = Path(
-                    await self._vector_space_service.run_io(
-                        tempfile.mkdtemp,
-                        prefix="single_build_",
-                        dir=self._vectors_root(),
-                    )
+            # 单池也在临时目录构建，补算最终失败时仍保留旧库。
+            single_build_root = Path(
+                await self._vector_space_service.run_io(
+                    tempfile.mkdtemp, prefix="single_build_", dir=self._vectors_root(),
                 )
-                self.vector_store = self._make_vector_store(single_build_root)
-            else:
-                self.vector_store = self._make_vector_store(self._vectors_root())
-                await self._vector_space_service.run_io(self.vector_store.clear)
+            )
+            self.vector_store = self._make_vector_store(single_build_root)
             self.paragraph_vector_store = self._make_vector_store(self._paragraph_vector_dir())
             self.graph_vector_store = self._make_vector_store(self._graph_vector_dir())
             self._refresh_relation_write_service()
@@ -729,6 +804,16 @@ class MemoryVectorRuntimeService(KernelServiceBase):
             )
             build_paragraph_vector_store = self._make_vector_store(paragraph_data_dir)
             build_graph_vector_store = self._make_vector_store(graph_data_dir)
+        fingerprint = self._current_embedding_fingerprint()
+        if fingerprint is None or not fingerprint.get("hash"):
+            raise RuntimeError("重建检查点需要已确认的模型指纹")
+        checkpoint = await self._vector_space_service.run_io(
+            VectorRebuildCheckpoint,
+            self._vectors_root() / "rebuild_checkpoint.sqlite3",
+            str(fingerprint["hash"]),
+            int(self.embedding_dimension),
+        )
+        retry_groups = []
         stats = {
             "paragraphs": {"done": 0, "failed": 0},
             "entities": {"done": 0, "failed": 0},
@@ -739,7 +824,6 @@ class MemoryVectorRuntimeService(KernelServiceBase):
             "entities": {"copied": 0, "encoded": 0, "missing": 0},
             "relations": {"copied": 0, "encoded": 0, "missing": 0},
         }
-        errors: List[str] = []
         paragraph_where = self._active_row_filter_sql("paragraphs")
         entity_where = self._active_row_filter_sql("entities")
         relation_where = self._active_row_filter_sql("relations")
@@ -763,19 +847,19 @@ class MemoryVectorRuntimeService(KernelServiceBase):
             done, failed, error, _done_ids, _failed_ids, copy_stats = await self._copy_or_encode_dual_rebuild_vectors(
                 items=paragraph_items,
                 batch_size=safe_batch_size,
+                checkpoint=checkpoint,
                 target_store=build_paragraph_vector_store,
                 source_store=legacy_source_store,
             )
             migration_stats["paragraphs"] = copy_stats
-            if error:
-                errors.append(f"paragraph_pool:{error}")
         else:
             done, failed, error, _done_ids, _failed_ids = await self._encode_and_add_rebuild_vectors(
                 items=paragraph_items,
                 batch_size=safe_batch_size,
+                checkpoint=checkpoint,
             )
-            if error:
-                errors.append(error)
+        retry_groups.append(("paragraphs", "paragraph", paragraph_items, _failed_ids,
+                             build_paragraph_vector_store if dual_mode else self.vector_store))
         stats["paragraphs"] = {"done": done, "failed": failed}
         self._update_dual_vector_auto_migration_stage(
             "paragraphs_done",
@@ -803,21 +887,21 @@ class MemoryVectorRuntimeService(KernelServiceBase):
             done, failed, error, _done_ids, _failed_ids, copy_stats = await self._copy_or_encode_dual_rebuild_vectors(
                 items=entity_items,
                 batch_size=safe_batch_size,
+                checkpoint=checkpoint,
                 target_store=build_graph_vector_store,
                 target_id_prefix="entity",
                 source_store=legacy_source_store,
             )
             migration_stats["entities"] = copy_stats
-            if error:
-                errors.append(f"entity_graph_pool:{error}")
         else:
             done, failed, error, _done_ids, _failed_ids = await self._encode_and_add_rebuild_vectors(
                 items=entity_items,
                 batch_size=safe_batch_size,
+                checkpoint=checkpoint,
                 item_type="entity",
             )
-            if error:
-                errors.append(error)
+        retry_groups.append(("entities", "entity", entity_items, _failed_ids,
+                             build_graph_vector_store if dual_mode else self.vector_store))
         stats["entities"] = {"done": done, "failed": failed}
         self._update_dual_vector_auto_migration_stage(
             "entities_done",
@@ -853,21 +937,21 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                 done, failed, error, done_ids, failed_ids, copy_stats = await self._copy_or_encode_dual_rebuild_vectors(
                     items=relation_items,
                     batch_size=safe_batch_size,
+                    checkpoint=checkpoint,
                     target_store=build_graph_vector_store,
                     target_id_prefix="relation",
                     source_store=legacy_source_store,
                 )
                 migration_stats["relations"] = copy_stats
-                if error:
-                    errors.append(f"relation_graph_pool:{error}")
             else:
                 done, failed, error, done_ids, failed_ids = await self._encode_and_add_rebuild_vectors(
                     items=relation_items,
                     batch_size=safe_batch_size,
+                    checkpoint=checkpoint,
                     item_type="relation",
                 )
-                if error:
-                    errors.append(error)
+            retry_groups.append(("relations", "relation", relation_items, failed_ids,
+                                 build_graph_vector_store if dual_mode else self.vector_store))
             stats["relations"] = {"done": done, "failed": failed}
             self._update_dual_vector_auto_migration_stage(
                 "relations_done",
@@ -876,6 +960,38 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                 relation_migration=dict(migration_stats.get("relations") or {}),
             )
 
+        # 整轮完成后，只补算首次处理仍失败的对象；补算失败才判定本轮失败。
+        errors: List[str] = []
+        for group, item_type, items, pending_ids, target_store in retry_groups:
+            if not pending_ids:
+                continue
+            pending = set(pending_ids)
+            retry_items = [
+                (f"{item_type}:{item_id}" if dual_mode and item_type != "paragraph" else item_id, text)
+                for item_id, text in items if item_id in pending
+            ]
+            prefix = "paragraph" if group == "paragraphs" else "entity" if group == "entities" else "relation"
+            self._update_dual_vector_auto_migration_stage(
+                f"{group}_start", retrying=True, **{f"{prefix}_failed": 0},
+            )
+            retried, remaining, retry_error, retry_done_ids, retry_failed_ids = await self._encode_and_add_rebuild_vectors(
+                items=retry_items, batch_size=safe_batch_size, vector_store=target_store,
+                item_type=item_type, checkpoint=checkpoint,
+            )
+            stats[group]["done"] += retried
+            stats[group]["failed"] = remaining
+            if remaining:
+                errors.append(f"{group}:{retry_error}")
+            self._update_dual_vector_auto_migration_stage(
+                f"{group}_done", retrying=False,
+                **{f"{prefix}_done": stats[group]["done"], f"{prefix}_failed": remaining},
+            )
+            if group == "relations":
+                done_ids.extend(item_id.split(":", 1)[1] if dual_mode else item_id for item_id in retry_done_ids)
+                failed_ids = [item_id.split(":", 1)[1] if dual_mode else item_id for item_id in retry_failed_ids]
+                error = retry_error
+
+        if relation_enabled:
             def update_relation_states() -> None:
                 conn = self.metadata_store.get_connection()
                 cursor = conn.cursor()
@@ -916,6 +1032,8 @@ class MemoryVectorRuntimeService(KernelServiceBase):
 
         done_total = sum(int(item["done"]) for item in stats.values())
         failed_total = sum(int(item["failed"]) for item in stats.values())
+        if failed_total:
+            await self._vector_space_service.run_io(checkpoint.discard)
         activation_ok = True
         if dual_mode:
             expected_paragraph_vectors = int(stats["paragraphs"]["done"])
@@ -991,12 +1109,19 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                 await self._vector_space_service.run_io(self._reload_dual_vector_stores_from_disk)
             self._refresh_relation_write_service()
         else:
-            self._update_dual_vector_auto_migration_stage("single_pool_warmup")
-            await self._vector_space_service.run_io(self.vector_store.warmup_index, force_train=True)
-            if single_build_root is not None:
+            if failed_total:
+                await self._vector_space_service.run_io(self._drop_dual_build_root, single_build_root)
+                self.vector_store = self._make_vector_store(self._vectors_root())
+                await self._vector_space_service.run_io(self.vector_store.load)
+            elif single_build_root is not None:
+                self._update_dual_vector_auto_migration_stage("single_pool_warmup")
+                await self._vector_space_service.run_io(self.vector_store.warmup_index, force_train=True)
 
                 def activate_single_pool() -> None:
                     self._save_vector_store(self.vector_store)
+                    # 空库 save 不生成二进制文件，也必须覆盖旧库的成对文件。
+                    for filename in ("vectors.bin", "vectors_ids.bin"):
+                        (single_build_root / filename).touch(exist_ok=True)
                     for path in single_build_root.iterdir():
                         path.replace(self._vectors_root() / path.name)
                     shutil.rmtree(single_build_root)
@@ -1037,6 +1162,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
             failed_total == 0 and bool(report.get("ok", False)) and (not dual_mode or activation_ok) and not errors
         )
         if rebuild_success:
+            await self._vector_space_service.run_io(checkpoint.discard)
             self._vector_space_inputs = {}
             for item_type, items in (
                 ("paragraph", paragraph_items),

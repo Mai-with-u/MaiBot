@@ -533,15 +533,21 @@ class EmbeddingAPIAdapter:
                     return batch_index, vector
 
             tasks = [encode_with_semaphore(text, index, offset + index) for index, text in uncached_items]
-            results = await asyncio.gather(*tasks)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            errors = [result for result in results if isinstance(result, BaseException)]
             normalized_results: List[Tuple[int, np.ndarray]] = []
-            for batch_index, vector in results:
+            for result in results:
+                if isinstance(result, BaseException):
+                    continue
+                batch_index, vector = result
                 normalized_results.append((batch_index, vector))
                 if self.enable_cache:
                     text = batch[batch_index]
                     cache_key = self._embedding_cache_key(text, dimensions)
                     self._GLOBAL_TEXT_EMBEDDING_CACHE[cache_key] = vector.copy()
 
+            if errors:
+                raise errors[0]
             batch_results.extend(normalized_results)
             batch_results.sort(key=lambda item: item[0])
             all_embeddings.extend(emb for _, emb in batch_results)

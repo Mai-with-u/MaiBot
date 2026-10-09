@@ -44,6 +44,32 @@ function memoryRow(
   if (data.memory_enabled === false) {
     return { label: '记忆库构建', detail: '长期记忆未启用', percent: 0 }
   }
+  const build = data.vector_pools?.auto_migration
+  if (build?.running || build?.stage === 'failed' || build?.stage === 'cancelled') {
+    const progress = build.progress
+    const processed = progress?.processed || 0
+    const total = progress?.total || 0
+    const failed = (progress?.paragraph_failed || 0) + (progress?.entity_failed || 0) + (progress?.relation_failed || 0)
+    const stages: Record<string, string> = {
+      prepare_rebuild: '准备数据',
+      paragraphs_start: '段落向量', paragraphs_done: '段落向量完成',
+      entities_start: '实体向量', entities_done: '实体向量完成',
+      relations_start: '关系向量', relations_done: '关系向量完成',
+      activation_check: '校验数量', paragraph_pool_warmup: '构建段落索引',
+      graph_pool_warmup: '构建图谱索引', paragraph_pool_save: '保存段落向量',
+      graph_pool_save: '保存图谱向量', activate_dirs: '切换向量库',
+      write_manifest: '登记向量库', reload_dual_stores: '加载向量库',
+      runtime_rebuild: '更新检索服务', self_check: '校验检索服务', persist: '保存结果',
+    }
+    const task = build.task === 'sync' ? '模型向量库同步' : '向量重建'
+    const state = build.running ? `中 · ${progress?.retrying ? '补算失败项 · ' : ''}${stages[build.stage || ''] || '处理中'}`
+      : build.stage === 'cancelled' ? '已取消' : '失败'
+    return {
+      label: '记忆库构建',
+      detail: `${task}${state}${total ? ` · 已处理 ${processed}/${total}` : ''}${failed ? ` · ${failed} 条${build.running ? '待补算' : '失败'}` : ''}`,
+      percent: Math.min(99, progress?.percent || 0),
+    }
+  }
   const fingerprintModel = data.embedding_fingerprint?.model
   if (selectedEmbeddingModel && !fingerprintModel) {
     return { label: '记忆库构建', detail: '记忆探针尚未确认当前模型', percent: 0 }
@@ -55,7 +81,7 @@ function memoryRow(
     return { label: '记忆库构建', detail: '需要在长期记忆页重建向量', percent: 0 }
   }
   if (data.embedding_degraded) {
-    return { label: '记忆库构建', detail: '嵌入服务不可用', percent: 0 }
+    return { label: '记忆库构建', detail: data.embedding_degraded_reason || '嵌入服务不可用', percent: 0 }
   }
 
   const pending = data.paragraph_vector_backfill_pending || 0
