@@ -10,7 +10,7 @@ import random
 from sqlalchemy.engine import Connection
 
 from src.common.logger import get_logger
-from src.learners.behavior_generic_tags import is_behavior_generic_tag
+from .behavior_generic_tags import is_behavior_generic_tag
 
 from .models import MigrationExecutionContext
 from .schema import SQLiteSchemaInspector

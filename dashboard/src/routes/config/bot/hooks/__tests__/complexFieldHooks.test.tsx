@@ -5,9 +5,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import {
   AliasNamesHook,
   AMemorixSharedMemoryGroupsHook,
-  BehaviorFocusGroupsHook,
-  BehaviorGroupsHook,
-  BehaviorLearningListHook,
+  FocusGroupsHook,
   BotPlatformAccountsHook,
   ChatPromptsHook,
   ChatTalkValueRulesHook,
@@ -592,8 +590,8 @@ describe('complexFieldHooks', () => {
       const onChange = vi.fn()
 
       render(
-        <BehaviorLearningListHook
-          fieldPath="behavior.learning_list"
+        <JargonLearningListHook
+          fieldPath="jargon.learning_list"
           onChange={onChange}
           schema={fieldSchema}
           value={[
@@ -1349,24 +1347,6 @@ describe('complexFieldHooks', () => {
       })
     })
 
-    it('行为共享组空成员和 Focus 组标题走各自文案', async () => {
-      const user = userEvent.setup()
-      const onChange = vi.fn()
-
-      render(
-        <BehaviorGroupsHook
-          fieldPath="behavior.behavior_groups"
-          onChange={onChange}
-          schema={fieldSchema}
-          value={[{ behavior_groups: [] }]}
-        />,
-      )
-      expect(screen.getByText('行为共享组')).toBeInTheDocument()
-      expect(screen.getByText('这个行为共享组还没有成员。')).toBeInTheDocument()
-
-      await user.click(screen.getByLabelText('删除行为共享组 1'))
-      expect(onChange).toHaveBeenLastCalledWith([])
-    })
 
     it('兼容 expression_groups 字段，并补全空平台聊天流的平台值', async () => {
       const onChange = vi.fn()
@@ -1420,8 +1400,8 @@ describe('complexFieldHooks', () => {
       const user = userEvent.setup()
       const onChange = vi.fn()
       render(
-        <BehaviorFocusGroupsHook
-          fieldPath="behavior.focus_groups"
+        <FocusGroupsHook
+          fieldPath="experimental.focus_groups"
           onChange={onChange}
           schema={fieldSchema}
           value={[]}

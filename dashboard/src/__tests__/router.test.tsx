@@ -51,7 +51,6 @@ vi.mock('@/routes/resource/emoji/index.tsx', () => ({ EmojiManagementPage: StubP
 vi.mock('@/routes/resource/expression/index.tsx', () => ({ ExpressionManagementPage: StubPage }))
 vi.mock('@/routes/person', () => ({ PersonManagementPage: StubPage }))
 vi.mock('@/routes/resource/jargon/index.tsx', () => ({ JargonManagementPage: StubPage }))
-vi.mock('@/routes/resource/behavior/index.tsx', () => ({ BehaviorLearningPage: StubPage }))
 vi.mock('@/routes/resource/knowledge-graph/index.tsx', () => ({ KnowledgeGraphPage: StubPage }))
 vi.mock('@/routes/resource/knowledge-base', () => ({ KnowledgeBasePage: StubPage }))
 vi.mock('@/routes/monitor/index.tsx', () => ({ PlannerMonitorPage: StubPage }))
@@ -90,7 +89,6 @@ const expectedPaths = [
   '/resource/emoji',
   '/resource/expression',
   '/resource/jargon',
-  '/resource/behavior',
   '/resource/person',
   '/resource/knowledge-graph',
   '/resource/knowledge-base',

@@ -130,6 +130,7 @@ class WebUINode(StrictModel):
     max_items: int = Field(default=50, ge=1, le=100)
     default_open: bool = False
     image_max_edge: Optional[int] = Field(default=None, ge=1, le=8192)
+    compact: bool = False
 
     @model_validator(mode="after")
     def validate_component(self) -> "WebUINode":
@@ -137,7 +138,7 @@ class WebUINode(StrictModel):
         allowed = {
             "stack": {"children"},
             "grid": {"children", "columns"},
-            "card": {"children"},
+            "card": {"children", "compact"},
             "tabs": {"children"},
             "text": {"value"},
             "stat": {"value"},

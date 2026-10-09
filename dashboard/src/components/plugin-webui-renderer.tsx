@@ -44,6 +44,7 @@ interface RendererProps {
   onUpload?: (name: string, file: File, progress: (percent: number) => void) => Promise<unknown>
   onUploadComplete?: () => Promise<void>
   items?: Record<string, unknown>
+  compact?: boolean
 }
 
 interface InteractionState {
@@ -134,7 +135,7 @@ function NodeRenderer({ node, ...props }: Omit<RendererProps, 'nodes'> & { node:
   const awaitingData = props.pendingData && node.value !== null && typeof node.value === 'object'
   const visible = props.pendingData && node.when ? false : nodeVisible(node, props.data, contexts)
   const value = awaitingData || !visible ? null : resolveNodeValue(node, props.data, contexts)
-  const children = <NodesRenderer {...props} nodes={node.children} />
+  const children = <NodesRenderer {...props} compact={props.compact || node.compact} nodes={node.children} />
   const fieldValue = node.name === null ? null : props.values[node.name]
   const change = (next: Scalar) => {
     if (node.name !== null) props.onChange(node.name, next)
@@ -154,7 +155,7 @@ function NodeRenderer({ node, ...props }: Omit<RendererProps, 'nodes'> & { node:
     case 'image': {
       const source = galleryThumbnail(value)
       return source ? <img src={source} alt={node.label ?? ''} loading="lazy" decoding="async"
-        className="h-72 w-full object-contain bg-muted rounded-md" /> :
+        className={`${props.compact ? 'h-40' : 'h-72'} w-full object-contain bg-muted rounded-md`} /> :
         <p className="text-muted-foreground text-sm">{t('pluginWebUI.empty')}</p>
     }
     case 'upload':
@@ -217,7 +218,7 @@ function NodeRenderer({ node, ...props }: Omit<RendererProps, 'nodes'> & { node:
         <section>
           {heading}
           <div
-            className={`grid grid-cols-1 gap-4 ${columns[node.columns as keyof typeof columns]}`}
+            className={props.compact ? `grid gap-1 ${({1:'grid-cols-1',2:'grid-cols-2',3:'grid-cols-3',4:'grid-cols-4'})[node.columns as 1|2|3|4]}` : `grid grid-cols-1 gap-4 ${columns[node.columns as keyof typeof columns]}`}
           >
             {children}
           </div>
@@ -226,13 +227,13 @@ function NodeRenderer({ node, ...props }: Omit<RendererProps, 'nodes'> & { node:
     }
     case 'card':
       return (
-        <Card>
+        <Card className={node.compact ? 'py-0 gap-0' : undefined}>
           {node.label && (
             <CardHeader>
               <CardTitle>{node.label}</CardTitle>
             </CardHeader>
           )}
-          <CardContent className="space-y-4 pt-6">{children}</CardContent>
+          <CardContent className={node.compact ? 'p-2 sm:p-2 space-y-1' : 'space-y-4 pt-6'}>{children}</CardContent>
         </Card>
       )
     case 'tabs':
@@ -254,7 +255,7 @@ function NodeRenderer({ node, ...props }: Omit<RendererProps, 'nodes'> & { node:
       )
     case 'text':
       return (
-        <div className="space-y-2">
+        <div className={props.compact ? 'space-y-0 text-xs' : 'space-y-2'}>
           {heading}
           <p className="text-muted-foreground break-words whitespace-pre-wrap">{display(value)}</p>
         </div>
@@ -328,6 +329,8 @@ function NodeRenderer({ node, ...props }: Omit<RendererProps, 'nodes'> & { node:
     case 'button':
       return (
         <Button
+          size={props.compact ? 'sm' : 'default'}
+          className={props.compact ? 'h-7 px-1 text-xs' : undefined}
           disabled={props.busy}
           variant={
             node.variant === 'danger'

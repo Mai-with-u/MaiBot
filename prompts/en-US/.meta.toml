@@ -1,13 +1,3 @@
-[behavior_scene_analyze]
-display_name = "Behavior Scene Analysis"
-advanced = true
-description = "Splits recent chat context into reusable behavior-scene segments and extracts domain tags, behavior needs, and interaction traits."
-
-[consolidate_behavior]
-display_name = "Behavior Consolidation"
-advanced = true
-description = "Finds semantically duplicated behavior patterns and outputs keeper and merge plans for consolidation."
-
 [maisaka_chat]
 display_name = "Planner"
 advanced = false
@@ -73,11 +63,6 @@ display_name = "Emoji Selection"
 advanced = true
 description = "Template for choosing the most suitable emoji or sticker from a grid according to context and tone."
 
-[evaluate_behavior_feedback]
-display_name = "Behavior Feedback Evaluation"
-advanced = true
-description = "Template for evaluating whether a selected behavior was actually adopted and what conversational outcome it produced."
-
 [expression_evaluation]
 display_name = "Expression Evaluation"
 advanced = true
@@ -127,11 +112,6 @@ description = "Template for learning expression style from chat content."
 display_name = "Jargon Learning"
 advanced = true
 description = "Extracts group-specific jargon candidates from real chat and lets the jargon miner update meanings and co-occurrence profiles."
-
-[learn_behavior]
-display_name = "Behavior Learning"
-advanced = true
-description = "Extracts reusable scene-behavior-outcome patterns from real chat, covering both observed behavior and self feedback."
 
 [maisaka_chat_focus]
 display_name = "Focus Planner"

@@ -112,7 +112,6 @@ function makeFile(overrides: Partial<ReasoningPromptFile> = {}): ReasoningPrompt
     action_preview: null,
     display_title: '测试记录',
     related_json_paths: [],
-    has_behavior_choice_insert: false,
     model_name: 'gpt-test',
     duration_ms: 10,
     prompt_tokens: 1,

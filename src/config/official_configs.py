@@ -955,19 +955,6 @@ class ExperimentalConfig(ConfigBase):
     __ui_advanced__ = True
     __ui_order__ = 140
 
-    enable_behavior_learning: bool = Field(
-        default=False,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "启用行为学习",
-                "en_US": "Enable behavior learning",
-                "ja_JP": "行動学習を有効化",
-            },
-            "x-widget": "switch",
-        },
-    )
-    """让麦麦从聊天中学习什么时候该怎么回应的经验。"""
-
     replyer_retro_prompt: bool = Field(
         default=False,
         json_schema_extra={
@@ -1000,40 +987,6 @@ class ExperimentalConfig(ConfigBase):
 
     attention_drift: AttentionDriftConfig = Field(default_factory=AttentionDriftConfig)
     """注意力漂移实验模式；让麦麦在群聊/私聊中表现出更活跃的联想和轻微话题漂移。"""
-
-    behavior_learning_list: list["LearningItem"] = Field(
-        default_factory=lambda: [
-            LearningItem(
-                platform="",
-                item_id="",
-                type="group",
-                use=True,
-                learn=True,
-            )
-        ],
-        json_schema_extra={
-            "label": {
-                "zh_CN": "行为学习配置",
-                "en_US": "Behavior learning settings",
-                "ja_JP": "行動学習設定",
-            },
-            "x-widget": "custom",
-        },
-    )
-    """配置哪些聊天会学习和使用行为经验；默认规则不够时再单独添加。"""
-
-    behavior_groups: list["ChatStreamGroup"] = Field(
-        default_factory=list,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "行为共享组",
-                "en_US": "Behavior sharing groups",
-                "ja_JP": "行動共有グループ",
-            },
-            "x-widget": "custom",
-        },
-    )
-    """_wrap_让多个群聊或私聊共享学到的行为经验。"""
 
     focus_mode: bool = Field(
         default=False,

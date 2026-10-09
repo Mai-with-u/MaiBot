@@ -64,6 +64,7 @@ export interface WebUINode {
   max_items?: number
   default_open?: boolean
   image_max_edge?: number | null
+  compact?: boolean
   when?: VisibilityCondition | null
 }
 export interface VisibilityCondition {

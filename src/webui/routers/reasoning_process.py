@@ -51,7 +51,6 @@ REPLAY_IMAGE_ROOTS = (
 ALLOWED_SUFFIXES = {".txt", ".html", ".json"}
 SESSION_CHAT_TYPES = ("group", "private")
 ALL_GROUP_SESSIONS = "__all_group_chats__"
-BEHAVIOR_REFERENCE_MARKER = "[行为表现参考]"
 PROMPT_METADATA_MARKER = "[请求信息]"
 PROMPT_SEPARATOR = "=" * 80
 # 工具推理记录相对发起它的请求最多晚多久（毫秒），以及定位调用 ID 需要读取的文件头长度
@@ -256,7 +255,6 @@ class ReasoningPromptFile(BaseModel):
     action_preview: str | None = None
     display_title: str | None = None
     related_json_paths: list[str] = Field(default_factory=list)
-    has_behavior_choice_insert: bool = False
     model_name: str | None = None
     duration_ms: float | None = None
     prompt_tokens: int | None = None
@@ -983,26 +981,6 @@ def _load_prompt_message_avatar_map(relative_path: str, content: str) -> dict[st
         message_ids=message_ids,
         session_info=_resolve_content_session_info(relative_path),
     )
-
-
-def _json_payload_has_behavior_reference(payload: dict[str, Any]) -> bool:
-    serialized_payload = json.dumps(payload, ensure_ascii=False, default=str)
-    return BEHAVIOR_REFERENCE_MARKER in serialized_payload
-
-
-def _prompt_record_has_behavior_reference(
-    *,
-    stage_name: str,
-    json_payload: dict[str, Any] | None,
-    json_file_path: Path | None,
-) -> bool:
-    if stage_name != "planner":
-        return False
-
-    if json_payload is None and json_file_path is not None:
-        json_payload = _load_prompt_json(json_file_path)
-
-    return json_payload is not None and _json_payload_has_behavior_reference(json_payload)
 
 
 def _extract_prompt_metadata_from_json_payload(payload: dict[str, Any]) -> dict[str, object]:
@@ -1893,11 +1871,6 @@ def _hydrate_prompt_file_record(
         metadata_missing = not hydrated_record.get("model_name") or hydrated_record.get("duration_ms") is None
 
     html_file_path = _resolve_record_file_path(hydrated_record, "html_path", {".html"})
-    hydrated_record["has_behavior_choice_insert"] = _prompt_record_has_behavior_reference(
-        stage_name=stage_name,
-        json_payload=json_payload,
-        json_file_path=json_file_path,
-    )
     if html_file_path is not None and metadata_missing:
         _merge_prompt_metadata(hydrated_record, _extract_prompt_metadata(html_file_path))
 

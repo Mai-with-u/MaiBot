@@ -2528,8 +2528,6 @@ const normalizeExpressionGroups = (value: unknown): ExpressionGroupValue[] => {
       rawMembers = source.expression_groups
     } else if (Array.isArray(source.jargon_groups)) {
       rawMembers = source.jargon_groups
-    } else if (Array.isArray(source.behavior_groups)) {
-      rawMembers = source.behavior_groups
     }
     const members = rawMembers.map(normalizeExpressionTarget)
     return { targets: members }
@@ -2873,32 +2871,6 @@ export const JargonLearningListHook = createListItemEditorHook({
       onItemFieldChange={onItemFieldChange}
       onRemoveItem={onRemoveItem}
       usePlatformSelect
-    />
-  ),
-  itemTitle: (item) => {
-    return `${learningScopeLabel(item)} · ${ruleTypeLabel(item.type)} · ${learningFlagLabel(item)}`
-  },
-})
-
-export const BehaviorLearningListHook = createListItemEditorHook({
-  addLabel: '添加行为学习规则',
-  addButtonPlacement: 'none',
-  infoText: '可以单独为每个聊天开启行为经验的学习和使用；平台和聊天流 ID 都留空表示全局默认，只填平台表示平台默认；越具体的规则越优先，* 与留空等价。',
-  emptyText: '尚未配置任何行为学习规则。',
-  fallbackNestedSchema: LEARNING_ITEM_FALLBACK_SCHEMA,
-  renderItems: ({
-    emptyText,
-    items,
-    onAddItem,
-    onItemFieldChange,
-    onRemoveItem,
-  }) => (
-    <LearningRuleEditor
-      emptyText={emptyText}
-      items={items}
-      onAddItem={onAddItem}
-      onItemFieldChange={onItemFieldChange}
-      onRemoveItem={onRemoveItem}
     />
   ),
   itemTitle: (item) => {
@@ -3294,7 +3266,6 @@ export const RegexRulesHook = createListItemEditorHook({
 export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, onParentChange, parentValues, schema, value }) => {
   const groups = normalizeExpressionGroups(value)
   const isJargonGroup = fieldPath?.includes('jargon') ?? false
-  const isBehaviorGroup = fieldPath?.includes('behavior') ?? false
   const isSharedMemoryGroup = fieldPath?.includes('shared_memory_groups') ?? false
   const isFocusGroup = fieldPath?.includes('focus_groups') ?? false
   const displaysAsSection =
@@ -3306,12 +3277,10 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
     ? '共享记忆组'
     : isFocusGroup
       ? 'Focus 共享组'
-      : isBehaviorGroup
-        ? '行为共享组'
-        : isJargonGroup
-          ? '黑话共享组'
-          : '表达共享组'
-  const learnedContentLabel = isBehaviorGroup ? '行为经验' : isJargonGroup ? '黑话' : '表达方式'
+      : isJargonGroup
+        ? '黑话共享组'
+        : '表达共享组'
+  const learnedContentLabel = isJargonGroup ? '黑话' : '表达方式'
   const supportsWildcardTargets = !isSharedMemoryGroup
   const groupScopeOptions = supportsWildcardTargets ? GROUP_SCOPE_OPTIONS : EXACT_GROUP_SCOPE_OPTIONS
   const helperText = isSharedMemoryGroup
@@ -3694,10 +3663,6 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
 
 export const JargonGroupsHook = ExpressionGroupsHook
 
-export const BehaviorGroupsHook = ExpressionGroupsHook
-
-export const BehaviorFocusGroupsHook = ExpressionGroupsHook
-
 export const AMemorixSharedMemoryGroupsHook = ExpressionGroupsHook
 
 export const MCPRootItemsHook = createJsonFieldHook({
@@ -3711,3 +3676,5 @@ export const MCPServersHook = createJsonFieldHook({
   helperText: 'MCP 服务器配置结构较复杂，使用 JSON 编辑。',
   placeholder: '[\n  {\n    "name": "example-server",\n    "enabled": true,\n    "transport": "stdio",\n    "command": "uvx",\n    "args": ["example-server"],\n    "env": {},\n    "url": "",\n    "headers": {},\n    "http_timeout_seconds": 30.0,\n    "read_timeout_seconds": 300.0,\n    "authorization": {\n      "mode": "none",\n      "bearer_token": ""\n    }\n  }\n]',
 })
+
+export const FocusGroupsHook = ExpressionGroupsHook

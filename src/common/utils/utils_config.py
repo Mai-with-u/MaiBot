@@ -46,64 +46,6 @@ class ExpressionConfigUtils:
         return next(iter(session_ids), None)
 
 
-class BehaviorConfigUtils:
-    @staticmethod
-    def _find_behavior_config_item(session_id: Optional[str] = None):
-        return ChatConfigUtils.find_learning_config_item(
-            global_config.experimental.behavior_learning_list,
-            session_id,
-        )
-
-    @staticmethod
-    def get_behavior_config_for_chat(session_id: Optional[str] = None) -> tuple[bool, bool]:
-        """
-        根据聊天会话 ID 获取行为表现配置。
-
-        没有任何匹配配置的新聊天流会自动启用行为表现调用，学习总开关由 experimental.enable_behavior_learning 控制。
-        """
-
-        enable_behavior_learning = bool(global_config.experimental.enable_behavior_learning)
-        config_item = BehaviorConfigUtils._find_behavior_config_item(session_id)
-        if config_item is None:
-            return True, enable_behavior_learning
-
-        return (
-            config_item.use,
-            config_item.learn and enable_behavior_learning,
-        )
-
-    @staticmethod
-    def resolve_behavior_group_scope(session_id: Optional[str]) -> tuple[set[str], bool]:
-        """解析当前会话可共享行为经验的会话范围，以及是否命中全平台全目标通配。"""
-        related_session_ids = {session_id} if session_id else set()
-        has_global_share = False
-        if not session_id:
-            return related_session_ids, has_global_share
-
-        for behavior_group in global_config.experimental.behavior_groups:
-            target_items = behavior_group.targets
-            group_session_ids: set[str] = set()
-            contains_current_session = False
-
-            for target_item in target_items:
-                platform = str(target_item.platform or "").strip()
-                item_id = str(target_item.item_id or "").strip()
-                if not platform or not item_id:
-                    continue
-
-                target_session_ids = ChatConfigUtils.get_target_session_ids_with_wildcards(target_item)
-                group_session_ids.update(target_session_ids)
-                if ChatConfigUtils.target_matches_session_with_wildcards(target_item, session_id):
-                    contains_current_session = True
-                    if platform == "*" and item_id == "*":
-                        has_global_share = True
-
-            if contains_current_session:
-                related_session_ids.update(group_session_ids)
-
-        return related_session_ids, has_global_share
-
-
 class JargonConfigUtils:
     @staticmethod
     def get_target_session_ids_with_wildcards(target_item) -> set[str]:

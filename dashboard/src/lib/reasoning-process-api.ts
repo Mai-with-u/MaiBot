@@ -20,7 +20,6 @@ export type ReasoningPromptFile = {
   action_preview: string | null
   display_title: string | null
   related_json_paths: string[]
-  has_behavior_choice_insert: boolean
   model_name: string | null
   duration_ms: number | null
   prompt_tokens: number | null

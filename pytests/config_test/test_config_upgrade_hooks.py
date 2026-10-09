@@ -286,9 +286,9 @@ def test_learning_rule_merge_hook_drops_dead_defaults_and_skips_clean_config():
     ) == [_learning_rule("", "", "group", False)]
 
     clean_config = {
-        "jargon": {"learning_list": [_learning_rule("", "", "group", True), _learning_rule("qq", "", "group", True)]},
-        "experimental": {"behavior_learning_list": [_learning_rule("qq", "*", "group", True)]},
+        "expression": {"learning_list": [_learning_rule("", "", "group", True), _learning_rule("qq", "", "group", True)]},
+        "jargon": {"learning_list": [_learning_rule("qq", "*", "group", True)]},
     }
     result = apply_config_upgrade_hooks(clean_config, "bot_config.toml", "8.14.59", "8.14.60")
-    assert result.reason == "8.14.60:experimental.behavior_learning_list"
-    assert result.data["experimental"]["behavior_learning_list"] == [_learning_rule("qq", "", "group", True)]
+    assert result.reason == "8.14.60:jargon.learning_list"
+    assert result.data["jargon"]["learning_list"] == [_learning_rule("qq", "", "group", True)]

@@ -73,7 +73,6 @@ from src.maisaka.visual.mode_utils import resolve_enable_visual_planner
 
 PLANNER_TOOL_HINT_SOURCE = "planner_tool_hint"
 REQUEST_TYPE_BY_REQUEST_KIND = {
-    "behavior_scenario_analyzer": "behavior.scenario_analyzer",
     "emotion": "emoji.selector",
     "expression_selector": "expression.selector",
     "planner": "maisaka.planner",
@@ -88,7 +87,6 @@ PROMPT_PREVIEW_CATEGORY_BY_REQUEST_KIND = {
     "planner": "planner",
     "reply_effect_judge": "reply_effect_judge",
     "expression_selector": "expression_selector",
-    "behavior_scenario_analyzer": "behavior_scenario_analyzer",
     "emotion": "emotion",
     "sub_agent": "sub_agent",
 }
@@ -1477,7 +1475,7 @@ class MaisakaChatLoopService:
             return [
                 message
                 for message in selected_history
-                if message.source != "behavior_pattern" and not is_mid_term_memory_message(message)
+                if not is_mid_term_memory_message(message)
             ]
 
         return selected_history
@@ -1486,6 +1484,6 @@ class MaisakaChatLoopService:
     def _resolve_enable_visual_message(request_kind: str) -> bool:
         if request_kind == "planner":
             return resolve_enable_visual_planner()
-        if request_kind in {"expression_selector", "reply_effect_judge", "behavior_scenario_analyzer"}:
+        if request_kind in {"expression_selector", "reply_effect_judge"}:
             return False
         return True

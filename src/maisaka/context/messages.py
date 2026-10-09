@@ -510,7 +510,6 @@ def _build_item_from_sequence(
 class ReferenceMessageType(str, Enum):
     """参考消息类型。"""
 
-    BEHAVIOR_PATTERN = "behavior_pattern"
     CONTEXT_RESTORE = "context_restore"
     CUSTOM = "custom"
     JARGON = "jargon"

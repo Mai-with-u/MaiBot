@@ -1,13 +1,3 @@
-[behavior_scene_analyze]
-display_name = "行動シーン分析"
-advanced = true
-description = "直近のチャット文脈を再利用可能な行動シーン断片に分割し、領域タグ、行動ニーズ、相互作用の特徴を抽出するテンプレート。"
-
-[consolidate_behavior]
-display_name = "行動表現の統合"
-advanced = true
-description = "行動表現ライブラリ内の意味的に重複する項目を見つけ、保持対象と統合対象のプランを出力するテンプレート。"
-
 [maisaka_chat]
 display_name = "Planner"
 advanced = false
@@ -73,11 +63,6 @@ display_name = "絵文字選択"
 advanced = true
 description = "文脈と現在の語調に合わせて、絵文字やスタンプのグリッドから最適なものを選ぶためのテンプレート。"
 
-[evaluate_behavior_feedback]
-display_name = "行動フィードバック評価"
-advanced = true
-description = "選択された行動が実際に採用されたか、採用後にどのような会話結果が生じたかを評価するテンプレート。"
-
 [expression_evaluation]
 display_name = "表現評価"
 advanced = true
@@ -127,11 +112,6 @@ description = "チャット内容から表現スタイルを学習するため�
 display_name = "隠語学習"
 advanced = true
 description = "実際のチャットからグループ固有の隠語候補を抽出し、意味と共起分布を更新するためのテンプレート。"
-
-[learn_behavior]
-display_name = "行動表現学習"
-advanced = true
-description = "実際のチャットから再利用可能なシーン・行動・結果のパターンを抽出し、観察学習と自己フィードバックを扱うテンプレート。"
 
 [maisaka_chat_focus]
 display_name = "Focus Planner"

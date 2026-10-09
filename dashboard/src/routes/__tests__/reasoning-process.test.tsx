@@ -295,7 +295,6 @@ function makeItem(overrides: Partial<ReasoningPromptFile> = {}): ReasoningPrompt
     action_preview: '动作：安排晚饭',
     display_title: '晚饭计划',
     related_json_paths: [],
-    has_behavior_choice_insert: false,
     model_name: 'gpt-test',
     duration_ms: 250,
     prompt_tokens: 10,
@@ -315,7 +314,6 @@ const plannerAltItem = makeItem({
   text_path: '/data/planner/lunch.txt',
   json_path: '/data/planner/lunch.json',
   html_path: null,
-  has_behavior_choice_insert: true,
   duration_ms: 12.3,
   size: 512,
   timestamp: null,
@@ -661,7 +659,6 @@ describe('ReasoningProcessPage 浏览筛选与分页', () => {
     })
     expect(await screen.findByText('晚饭计划')).toBeInTheDocument()
     expect(screen.getByText('午饭计划')).toBeInTheDocument()
-    expect(screen.getByLabelText('包含行为表现参考')).toBeInTheDocument()
     expect(screen.getAllByText('gpt-test').length).toBeGreaterThan(0)
     expect(screen.getByText('250 ms')).toBeInTheDocument()
     expect(screen.getByText('12.3 ms')).toBeInTheDocument()

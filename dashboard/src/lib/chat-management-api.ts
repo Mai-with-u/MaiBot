@@ -184,7 +184,6 @@ export interface ChatStreamDetail {
   group_id: string | null
   user_id: string | null
   expression: ChatLearningStatus
-  behavior?: ChatLearningStatus
   jargon: ChatLearningStatus
   talk_frequency: ChatTalkFrequencyDetail
   prompts: ChatPromptDetail
@@ -371,7 +370,7 @@ export async function deleteChatStreamTalkFrequency(
 
 export async function updateChatStreamLearning(
   sessionId: string,
-  kind: 'expression' | 'jargon' | 'behavior',
+  kind: 'expression' | 'jargon',
   payload: UpdateLearningPayload
 ): Promise<ChatStreamDetail> {
   const result = await backendApi.put<ChatStreamDetailResponse>(

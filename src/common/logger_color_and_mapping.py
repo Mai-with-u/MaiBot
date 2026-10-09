@@ -236,12 +236,6 @@ MODULE_ALIASES = {
     "update_notice": "更新通知",
     "voice_utils": "语音工具",
     # 聊天、学习与表达
-    "behavior_learner": "行为学习",
-    "behavior_pattern_maintenance": "行为模式维护",
-    "behavior_pattern_store": "行为模式存储",
-    "behavior_scenario": "行为场景",
-    "behavior_scene_cluster": "行为场景聚类",
-    "behavior_selector": "行为选择",
     "chat_message": "聊天消息",
     "emoji_maisaka_tool": "表情包工具",
     "event_helpers": "聊天事件工具",

@@ -549,7 +549,6 @@ def _merge_wildcard_learning_rules_into_defaults(data: Dict[str, Any]) -> List[s
     for section_name, list_key in (
         ("expression", "learning_list"),
         ("jargon", "learning_list"),
-        ("experimental", "behavior_learning_list"),
     ):
         section = _as_dict(data.get(section_name))
         if section is not None and _merge_wildcard_learning_rules(section, list_key):

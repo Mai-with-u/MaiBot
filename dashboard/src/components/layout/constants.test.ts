@@ -124,13 +124,12 @@ describe('menuSections 菜单结构', () => {
     )
   })
 
-  it('行为学习与回复效果入口分别受特性开关控制', () => {
+  it('回复效果入口受特性开关控制', () => {
     const flaggedItems = allItems.filter((item) => item.featureFlag !== undefined)
 
-    expect(flaggedItems).toHaveLength(2)
+    expect(flaggedItems).toHaveLength(1)
     expect(flaggedItems).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ path: '/resource/behavior', featureFlag: 'behaviorLearning' }),
         expect.objectContaining({ path: '/reply-effects', featureFlag: 'replyEffects' }),
       ])
     )

@@ -15,10 +15,6 @@ from src.chat.heart_flow.heartflow_manager import heartflow_manager
 from src.chat.message_receive.chat_manager import chat_manager as core_chat_manager
 from src.common.database.database import get_db_session
 from src.common.database.database_model import (
-    BehaviorAction,
-    BehaviorExperiencePath,
-    BehaviorOutcome,
-    BehaviorSceneCluster,
     ChatSession,
     Expression,
     HighFrequencyTerm,
@@ -30,7 +26,6 @@ from src.common.database.database_model import (
 )
 from src.common.logger import get_logger
 from src.common.utils.utils_config import (
-    BehaviorConfigUtils,
     ChatConfigUtils,
     ExpressionConfigUtils,
     JargonConfigUtils,
@@ -792,7 +787,6 @@ async def _save_chat_learning_rule(chat_session: ChatSession, kind: str, request
     learning_config_map = {
         "expression": ("expression", "learning_list"),
         "jargon": ("jargon", "learning_list"),
-        "behavior": ("experimental", "behavior_learning_list"),
     }
     config_target = learning_config_map.get(kind)
     if config_target is None:
@@ -835,8 +829,6 @@ async def _save_chat_learning_rule(chat_session: ChatSession, kind: str, request
         rules[replace_index] = next_rule
 
     config_section[field_name] = rules
-    if kind == "behavior" and request.learn:
-        config_section["enable_behavior_learning"] = True
     save_toml_with_format(config_data, str(config_path))
 
     if not await config_manager.reload_config(changed_scopes=["bot"], changed_sections=[section_name]):
@@ -944,7 +936,6 @@ def _chat_session_detail_to_response(chat_session: ChatSession) -> Dict[str, Any
     core_chat_manager.get_existing_session_by_session_id(session_id)
 
     expression_use, expression_learn = ExpressionConfigUtils.get_expression_config_for_chat(session_id)
-    behavior_use, behavior_learn = BehaviorConfigUtils.get_behavior_config_for_chat(session_id)
     jargon_use, jargon_learn = JargonConfigUtils.get_jargon_config_for_chat(session_id)
     return {
         "session_id": session_id,
@@ -958,11 +949,6 @@ def _chat_session_detail_to_response(chat_session: ChatSession) -> Dict[str, Any
             "use": expression_use,
             "learn": expression_learn,
             "matched_rule": _target_config_to_dict(ExpressionConfigUtils._find_expression_config_item(session_id)),
-        },
-        "behavior": {
-            "use": behavior_use,
-            "learn": behavior_learn,
-            "matched_rule": _target_config_to_dict(BehaviorConfigUtils._find_behavior_config_item(session_id)),
         },
         "jargon": {
             "use": jargon_use,
@@ -1114,10 +1100,6 @@ SESSION_DELETE_TABLES = [
     ("messages", "消息", Messages, "session_id"),
     ("expressions", "表达", Expression, "session_id"),
     ("tool_records", "工具调用记录", ToolRecord, "session_id"),
-    ("behavior_experience_paths", "行为经验路径", BehaviorExperiencePath, "session_id"),
-    ("behavior_scene_clusters", "行为场景簇", BehaviorSceneCluster, "session_id"),
-    ("behavior_actions", "行为动作", BehaviorAction, "session_id"),
-    ("behavior_outcomes", "行为结果", BehaviorOutcome, "session_id"),
     ("statistics_message_hourly", "消息统计", StatisticsMessageHourly, "chat_id"),
     ("high_frequency_terms", "高频词", HighFrequencyTerm, "chat_id"),
     ("chat_sessions", "聊天流记录", ChatSession, "session_id"),

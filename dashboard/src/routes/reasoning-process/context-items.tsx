@@ -31,11 +31,6 @@ const ITEM_JSON_PANEL_STYLE: CSSProperties = {
 }
 
 const STAGE_LABELS: Record<string, string> = {
-  behavior_consolidator: '行为整合',
-  behavior_feedback: '行为反馈',
-  behavior_learner: '行为学习',
-  behavior_scenario_analyzer: '行为场景分析',
-  behavior_selector: '行为选择',
   emotion: '表情包发送',
   expression_learner: '表达学习',
   expression_selection: '表达选择',

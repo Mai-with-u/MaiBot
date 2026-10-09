@@ -1,13 +1,3 @@
-[behavior_scene_analyze]
-display_name = "行为场景分析"
-advanced = true
-description = "用于将最近聊天上下文拆分为可复用的行为场景片段，并提取领域标签、行为需求和互动特征。"
-
-[consolidate_behavior]
-display_name = "行为表现整合"
-advanced = true
-description = "用于识别行为表现库中的语义重复条目，并输出可合并的 keeper 与 merge 方案。"
-
 [maisaka_chat]
 display_name = "规划器"
 advanced = false
@@ -73,11 +63,6 @@ display_name = "表情包选择"
 advanced = true
 description = "用于从表情包拼图中按上下文和当前语气选择最合适表情包的模板。"
 
-[evaluate_behavior_feedback]
-display_name = "行为反馈评估"
-advanced = true
-description = "用于评估已采用行为是否被真实执行，以及执行后的对话结果和奖励反馈。"
-
 [expression_evaluation]
 display_name = "表达评价"
 advanced = true
@@ -127,11 +112,6 @@ description = "用于从聊天内容中学习表达风格的模板。"
 display_name = "黑话学习"
 advanced = true
 description = "用于从真实聊天内容中抽取群内黑话候选，并交给黑话矿工更新含义和共现分布。"
-
-[learn_behavior]
-display_name = "行为表现学习"
-advanced = true
-description = "用于从真实聊天中抽取可复用的场景-行为-结果模式，支持观察学习和自身反馈。"
 
 [maisaka_chat_focus]
 display_name = "Focus 规划器"

@@ -20,7 +20,7 @@ export interface MenuItem {
   external?: boolean
   searchDescription?: string
   tourId?: string
-  featureFlag?: 'behaviorLearning' | 'replyEffects'
+  featureFlag?: 'replyEffects'
 }
 
 export interface MenuSection {
