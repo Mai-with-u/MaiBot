@@ -1,11 +1,15 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { PluginWebUIRenderer } from '@/components/plugin-webui-renderer'
 import { resolveNodeValue, validateRenderSize } from '@/lib/plugin-webui'
-import type { WebUINode } from '@/lib/plugin-webui'
+import type { Scalar, WebUINode } from '@/lib/plugin-webui'
 
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
+beforeAll(() => {
+  URL.createObjectURL = vi.fn(() => 'blob:preview')
+  URL.revokeObjectURL = vi.fn()
+})
 
 function node(overrides: Partial<WebUINode>): WebUINode {
   return {
@@ -34,6 +38,28 @@ describe('plugin WebUI renderer', () => {
     expect(screen.getByText('Add negative examples first')).toBeInTheDocument()
   })
 
+  it('cancels an upload batch and retries only unsuccessful files with frozen arguments', async () => {
+    let attempts = 0
+    const upload = vi.fn((_name: string, _file: File, _progress: (percent: number) => void,
+      _values?: Record<string, Scalar>, signal?: AbortSignal) => {
+      if (++attempts === 1) return Promise.resolve({message: 'Server accepted'})
+      if (attempts === 2) return new Promise((_resolve, reject) => signal!.addEventListener('abort', () => reject(new Error('Cancelled')), {once: true}))
+      return Promise.resolve({})
+    })
+    render(<PluginWebUIRenderer nodes={[node({type: 'upload', label: 'Files', action: 'upload', manual_upload: true})]}
+      data={{}} values={{identity: 'other'}} busy={false} onChange={vi.fn()} onAction={vi.fn()} onUpload={upload} />)
+    const files = ['a.png', 'b.png', 'c.png'].map(name => new File(['image'], name, {type: 'image/png'}))
+    fireEvent.change(screen.getByLabelText('Files'), {target: {files}})
+    fireEvent.click(screen.getByRole('button', {name: '开始上传'}))
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(2))
+    fireEvent.click(screen.getByRole('button', {name: '取消上传'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: '重试失败及未发送文件'})).toBeInTheDocument())
+    expect(screen.getByText('Server accepted')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', {name: '重试失败及未发送文件'}))
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(4))
+    expect(upload.mock.calls.slice(2).map(call => call[1].name)).toEqual(['b.png', 'c.png'])
+    expect(upload.mock.calls[2][3]).toEqual({identity: 'other'})
+  })
   it('renders progress and button choices with dynamic action labels', () => {
     const change = vi.fn()
     render(<PluginWebUIRenderer nodes={[
@@ -47,6 +73,21 @@ describe('plugin WebUI renderer', () => {
     expect(change).toHaveBeenCalledWith('identity', 'other')
     expect(screen.getByRole('button', {name: 'Uninstall CPU'})).toBeInTheDocument()
   })
+  it('selects files inside the upload dialog and waits for explicit upload', async () => {
+    const upload = vi.fn().mockResolvedValue({ added: true })
+    render(<PluginWebUIRenderer nodes={[node({type: 'button', label: 'Upload pictures', detail: 'upload'}), node({type: 'dialog', name: 'upload', label: 'Upload pictures', children: [
+      node({type: 'upload', label: 'Choose files', action: 'upload', manual_upload: true})
+    ]})]} data={{}} values={{upload_label: 'other'}} busy={false} onChange={vi.fn()} onAction={vi.fn()} onUpload={upload} />)
+    expect(screen.queryByLabelText('Choose files')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', {name: 'Upload pictures'}))
+    const file = new File(['image'], 'sample.png', {type: 'image/png'})
+    fireEvent.change(screen.getByLabelText('Choose files'), {target: {files: [file]}})
+    expect(upload).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', {name: '开始上传'}))
+    await waitFor(() => expect(upload).toHaveBeenCalledWith('upload', file, expect.any(Function), {upload_label: 'other'}, expect.any(AbortSignal)))
+    await waitFor(() => expect(screen.getByText('sample.png: 100%')).toBeInTheDocument())
+  })
+
   it('opens an ordinary dialog containing a button selection', () => {
     const change = vi.fn()
     render(<PluginWebUIRenderer nodes={[

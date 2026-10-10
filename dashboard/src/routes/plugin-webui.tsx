@@ -280,10 +280,10 @@ function ExtensionPage({ pluginId, page }: { pluginId: string; page: WebUIPage }
               selectionRevision={selectionRevision}
               clearSelection={clearSelection}
               galleryPreferences={galleryPreferences.current}
-              onUpload={async (name, file, progress) => {
-                const args = argumentsFor(page.actions[name], valuesRef.current)
+              onUpload={async (name, file, progress, batchValues, signal) => {
+                const args = argumentsFor(page.actions[name], batchValues ?? valuesRef.current)
                 delete args.upload_id
-                return uploadPluginWebUI(pluginId, page.id, name, file, args, progress)
+                return uploadPluginWebUI(pluginId, page.id, name, file, args, progress, signal)
               }}
               onUploadComplete={async () => { if (alive.current) await refresh() }}
               onChange={(name, value) => {

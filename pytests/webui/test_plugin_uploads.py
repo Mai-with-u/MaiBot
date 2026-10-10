@@ -51,7 +51,9 @@ def test_upload_declaration_and_legacy_compatibility():
         WebUIExtension.model_validate(raw)
     raw["pages"][0]["content"] = [dict(type="text", value="legacy")]
     assert WebUIExtension.model_validate(raw).required_capabilities == []
-    assert len(load_webui_extension("plugins/mai_recog_self").pages) == 4
+    assert {page.id for page in load_webui_extension("plugins/mai_recog_self").pages} == {
+        "images", "training", "models", "test", "environment"
+    }
 
 
 def test_token_ownership_expiry_and_single_claim(tmp_path, monkeypatch):

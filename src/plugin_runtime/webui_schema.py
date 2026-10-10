@@ -135,6 +135,8 @@ class WebUINode(StrictModel):
     default_open: bool = False
     image_max_edge: Optional[int] = Field(default=None, ge=1, le=8192)
     compact: bool = False
+    manual_upload: bool = False
+    submit_label: Optional[Label] = None
 
     @model_validator(mode="after")
     def validate_component(self) -> "WebUINode":
@@ -162,7 +164,7 @@ class WebUINode(StrictModel):
             "switch": {"name", "value"},
             "date": {"name", "value"},
             "button": {"action", "variant", "value", "detail"},
-            "upload": {"action", "image_max_edge"},
+            "upload": {"action", "image_max_edge", "manual_upload", "submit_label"},
         }[self.type]
         if self.type in {"button", "upload", "input", "select", "switch", "date", "checkbox", "multi_select"}:
             allowed |= {"disabled_when", "disabled_reason"}

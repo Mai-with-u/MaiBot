@@ -69,6 +69,8 @@ export interface WebUINode {
   default_open?: boolean
   image_max_edge?: number | null
   compact?: boolean
+  manual_upload?: boolean
+  submit_label?: string | null
   when?: VisibilityCondition | null
   disabled_when?: VisibilityCondition | null
   disabled_reason?: string | null
@@ -289,12 +291,17 @@ export async function invokePluginWebUI(
 
 export async function uploadPluginWebUI(
   pluginId: string, pageId: string, name: string, file: File,
-  args: Record<string, Scalar>, onProgress: (percent: number) => void
+  args: Record<string, Scalar>, onProgress: (percent: number) => void, signal?: AbortSignal
 ): Promise<unknown> {
   const path = [pluginId, pageId, 'uploads', name].map(encodeURIComponent).join('/')
   const url = await resolveApiPath(`/api/webui/plugins/runtime/webui/${path}`)
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
+    const abort = () => xhr.abort()
+    if (signal?.aborted) { reject(new DOMException('Upload cancelled', 'AbortError')); return }
+    signal?.addEventListener('abort', abort, { once: true })
+    xhr.onloadend = () => signal?.removeEventListener('abort', abort)
+    xhr.onabort = () => reject(new DOMException('Upload cancelled; received files remain saved', 'AbortError'))
     xhr.open('POST', url)
     xhr.withCredentials = true
     xhr.timeout = 120000

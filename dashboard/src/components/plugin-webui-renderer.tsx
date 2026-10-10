@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useId, useState } from 'react'
+import { createContext, useContext, useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts'
 
@@ -42,7 +42,7 @@ interface RendererProps {
   galleryPreferences?: Record<string, string>
   onChange: (name: string, value: Scalar) => void
   onAction: (name: string, contexts?: DataContexts) => void
-  onUpload?: (name: string, file: File, progress: (percent: number) => void) => Promise<unknown>
+  onUpload?: (name: string, file: File, progress: (percent: number) => void, values?: Record<string, Scalar>, signal?: AbortSignal) => Promise<unknown>
   onUploadComplete?: () => Promise<void>
   items?: Record<string, unknown>
   compact?: boolean
@@ -84,36 +84,88 @@ function galleryLink(value: unknown): string | undefined {
   }
 }
 
-function UploadControl({ label, action, busy, upload, complete, maxEdge }: {
-  label: string; action: string; busy: boolean; upload: RendererProps['onUpload']; complete: RendererProps['onUploadComplete']; maxEdge?: number | null
+function UploadControl({ label, action, busy, upload, complete, maxEdge, manual, values, submitLabel }: {
+  label: string; action: string; busy: boolean; upload: RendererProps['onUpload']; complete: RendererProps['onUploadComplete']; maxEdge?: number | null; manual?: boolean; values: Record<string, Scalar>; submitLabel?: string | null
 }) {
   const id = useId()
   const [running, setRunning] = useState(false)
+  const controller = useRef<AbortController | null>(null)
+  const retry = useRef<{ files: File[]; values: Record<string, Scalar> }>({ files: [], values: {} })
+  useEffect(() => () => controller.current?.abort(), [])
+  const [files, setFiles] = useState<File[]>([])
+  const input = useRef<HTMLInputElement>(null)
+  const [previews, setPreviews] = useState<string[]>([])
+  useEffect(() => {
+    const urls = files.map(file => URL.createObjectURL(file))
+    setPreviews(urls)
+    return () => urls.forEach(url => URL.revokeObjectURL(url))
+  }, [files])
   const [status, setStatus] = useState<Array<{ name: string; progress: number; error?: string; note?: string }>>([])
+  const start = async (files: File[], batchValues = { ...values }) => {
+    const operation = new AbortController()
+    controller.current = operation
+    const failed: File[] = []
+    retry.current = { files: [], values: batchValues }
+    setStatus(files.map(file => ({ name: file.name, progress: 0 })))
+    setRunning(true)
+    const update = (index: number, change: { progress?: number; error?: string; note?: string }) =>
+      setStatus(rows => rows.map((row, i) => i === index ? { ...row, ...change } : row))
+    try {
+      for (const [index, file] of files.entries()) {
+        if (operation.signal.aborted) {
+          failed.push(file)
+          update(index, { error: '已取消，未发送' })
+          continue
+        }
+        try {
+          const prepared: PreparedImage = maxEdge ? await prepareUploadImage(file, maxEdge) : { file }
+          if (operation.signal.aborted) throw new DOMException('已取消', 'AbortError')
+          if (prepared.file.size > 20 * 1024 * 1024) throw new Error('File exceeds 20 MiB')
+          if (prepared.note) update(index, { note: prepared.note })
+          const response = await upload!(action, prepared.file, percent => update(index, { progress: percent }), batchValues, operation.signal)
+          if (response && typeof response === 'object' && 'message' in response && typeof response.message === 'string')
+            update(index, { note: [prepared.note, response.message].filter(Boolean).join(' · ') })
+          update(index, { progress: 100 })
+        } catch (error) { failed.push(file); update(index, { error: String(error) }) }
+      }
+      retry.current = { files: failed, values: batchValues }
+      await complete?.()
+    } finally { setRunning(false) }
+  }
   return <div className="space-y-2">
     <Label htmlFor={id}>{label}</Label>
     {!upload && <p role="alert">Host does not support file_upload</p>}
-    <Input id={id} type="file" multiple accept="image/jpeg,image/png,image/webp" disabled={busy || running || !upload}
+    {manual && <div className="rounded-md border-2 border-dashed p-5 text-center space-y-2"
+      onDragOver={event => event.preventDefault()} onDrop={event => {
+        event.preventDefault()
+        if (!busy && !running && upload) { setFiles(Array.from(event.dataTransfer.files)); setStatus([]) }
+      }}><Button variant="outline" disabled={busy || running || !upload} onClick={() => input.current?.click()}>选择图片</Button>
+      <p className="text-xs text-muted-foreground">也可以将多张图片拖到这里</p></div>}
+    <Input ref={input} className={manual ? 'hidden' : undefined} id={id} type="file" multiple accept="image/jpeg,image/png,image/webp" disabled={busy || running || !upload}
       onChange={async (event) => {
-        const files = Array.from(event.target.files ?? [])
+        const selected = Array.from(event.target.files ?? [])
         event.target.value = ''
-        setStatus(files.map(file => ({ name: file.name, progress: 0 })))
-        setRunning(true)
-        const update = (index: number, change: { progress?: number; error?: string; note?: string }) =>
-          setStatus(rows => rows.map((row, i) => i === index ? { ...row, ...change } : row))
-        try {
-          for (const [index, file] of files.entries()) {
-            try {
-              const prepared: PreparedImage = maxEdge ? await prepareUploadImage(file, maxEdge) : { file }
-              if (prepared.file.size > 20 * 1024 * 1024) throw new Error('File exceeds 20 MiB')
-              if (prepared.note) update(index, { note: prepared.note })
-              await upload!(action, prepared.file, percent => update(index, { progress: percent }))
-              update(index, { progress: 100 })
-            } catch (error) { update(index, { error: String(error) }) }
-          }
-          await complete?.()
-        } finally { setRunning(false) }
+        if (manual) { setFiles(selected); setStatus([]) }
+        else await start(selected)
       }} />
+    {manual && <>
+      <div className="grid grid-cols-3 gap-2 max-h-64 overflow-y-auto">{files.map((file,index) =>
+        <div key={index} className="border rounded p-1 text-xs">
+          {previews[index] && <img className="h-24 w-full object-contain" src={previews[index]} alt={file.name} />}
+          <p className="truncate" title={file.name}>{file.name}</p>
+          <Button size="sm" variant="ghost" disabled={running} onClick={() => setFiles(previous => previous.filter((_,i) => i!==index))}>移除</Button>
+        </div>)}</div>
+      <p className="text-sm text-muted-foreground">已选 {files.length} 个文件，确认后点击{submitLabel ?? '开始上传'}。</p>
+      <Button disabled={busy || running || !upload || files.length === 0} onClick={async () => {
+        const selected = files
+        setFiles([])
+        await start(selected)
+      }}>{submitLabel ?? '开始上传'}</Button>
+    </>}
+    {running && <Button variant="outline" onClick={() => controller.current?.abort()}>取消上传</Button>}
+    {!running && retry.current.files.length > 0 && <Button variant="outline" disabled={busy || !upload}
+      onClick={() => void start(retry.current.files, retry.current.values)}>重试失败及未发送文件</Button>}
+    <p className="text-xs text-muted-foreground">关闭弹窗会取消尚未完成的上传；服务器已接收的文件保留，重试可能复用已有文件。</p>
     {status.map((row, index) => <div key={index} role={row.error ? 'alert' : 'status'}>
       {row.name}: {row.error ?? `${row.progress}%`}
       {row.note && <span className="ml-2 text-muted-foreground">{row.note}</span>}
@@ -192,7 +244,7 @@ function NodeRenderer({ node, ...props }: Omit<RendererProps, 'nodes'> & { node:
         <p className="text-muted-foreground text-sm">{t('pluginWebUI.empty')}</p>
     }
     case 'upload':
-      return <UploadControl label={node.label!} action={node.action!} busy={disabled} upload={props.onUpload} complete={props.onUploadComplete} maxEdge={node.image_max_edge} />
+      return <UploadControl label={node.label!} action={node.action!} busy={disabled} upload={props.onUpload} complete={props.onUploadComplete} maxEdge={node.image_max_edge} manual={node.manual_upload} values={props.values} submitLabel={node.submit_label} />
     case 'dialog':
       return (
         <Dialog
