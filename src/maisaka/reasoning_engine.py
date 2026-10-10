@@ -129,6 +129,8 @@ class CycleRuntimeState:
     """一轮内部循环中逐步积累的运行产物。"""
 
     planner_duration_ms: float = 0.0
+    planner_started_at: Optional[float] = None
+    planner_ended_at: Optional[float] = None
     current_stage_started_at: float = 0.0
     action_tool_count: int = 0
     response: Optional[ChatResponse] = None
@@ -499,6 +501,8 @@ class MaisakaReasoningEngine:
             planner_completion_tokens=response.completion_tokens,
             planner_total_tokens=response.total_tokens,
             planner_duration_ms=state.planner_duration_ms,
+            planner_started_at=state.planner_started_at,
+            planner_ended_at=state.planner_ended_at,
             planner_prompt_html_uri=response.prompt_html_uri,
             planner_prompt_cache_hit_tokens=response.prompt_cache_hit_tokens,
             planner_prompt_cache_miss_tokens=response.prompt_cache_miss_tokens,
@@ -520,6 +524,7 @@ class MaisakaReasoningEngine:
         """准备上下文并执行一次 Planner 请求。"""
 
         planner_started_at = time.time()
+        state.planner_started_at = planner_started_at
         self._runtime._update_stage_status("Planner", "组织上下文并请求模型", round_text=round_text)
         action_tool_definitions, deferred_tools_reminder = await self._build_action_tool_definitions()
         try:
@@ -544,13 +549,16 @@ class MaisakaReasoningEngine:
         )
         state.current_stage_started_at = planner_started_at
         state.action_tool_count = len(action_tool_definitions)
-        response = await self._run_interruptible_planner(
-            injected_user_messages=injected_user_messages or None,
-            tail_user_messages=self._runtime.build_focus_tail_user_messages() or None,
-            tool_definitions=action_tool_definitions,
-        )
+        try:
+            response = await self._run_interruptible_planner(
+                injected_user_messages=injected_user_messages or None,
+                tail_user_messages=self._runtime.build_focus_tail_user_messages() or None,
+                tool_definitions=action_tool_definitions,
+            )
+        finally:
+            state.planner_ended_at = time.time()
+            state.planner_duration_ms = (state.planner_ended_at - planner_started_at) * 1000
         state.response = response
-        state.planner_duration_ms = (time.time() - planner_started_at) * 1000
 
     async def _refresh_mid_term_memory_reference_for_continuation(self, cycle_detail: CycleDetail) -> None:
         """在一次连续 Planner 循环开始前刷新一次聊天回想参考。"""
@@ -807,6 +815,8 @@ class MaisakaReasoningEngine:
             planner_completion_tokens=response.completion_tokens if response is not None else None,
             planner_total_tokens=response.total_tokens if response is not None else None,
             planner_duration_ms=state.planner_duration_ms if response is not None else None,
+            planner_started_at=state.planner_started_at,
+            planner_ended_at=state.planner_ended_at,
             planner_prompt_html_uri=response.prompt_html_uri if response is not None else None,
             planner_prompt_cache_hit_tokens=response.prompt_cache_hit_tokens if response is not None else None,
             planner_prompt_cache_miss_tokens=response.prompt_cache_miss_tokens if response is not None else None,
@@ -1888,6 +1898,7 @@ class MaisakaReasoningEngine:
         if self._runtime._tool_registry is None:
             total_tool_count = len(tool_calls)
             for tool_index, tool_call in enumerate(tool_calls, start=1):
+                tool_started_at = time.time()
                 self._log_tool_call_source(tool_call, stage=f"Planner {tool_index}/{total_tool_count}")
                 invocation = self._build_tool_invocation(tool_call, latest_thought)
                 result = ToolExecutionResult(
@@ -1895,6 +1906,7 @@ class MaisakaReasoningEngine:
                     success=False,
                     error_message="统一工具注册表尚未初始化。",
                 )
+                tool_ended_at = time.time()
                 await self._record_tool_execution_effects(invocation, result, None)
                 self._append_tool_execution_result(tool_call, result)
                 await self._append_tool_display_results(
@@ -1906,6 +1918,7 @@ class MaisakaReasoningEngine:
                     duration_ms=0.0,
                     tool_spec=None,
                 )
+                tool_monitor_results[-1].update(started_at=tool_started_at, ended_at=tool_ended_at)
                 next_call_id = tool_calls[tool_index].call_id if tool_index < total_tool_count else ""
                 await self._emit_planner_progress(cycle_detail, state, tool_monitor_results, next_call_id)
             return False, "", tool_result_summaries, tool_monitor_results
@@ -1927,11 +1940,12 @@ class MaisakaReasoningEngine:
             tool_started_at = time.time()
             is_unexpanded_tool = not self._runtime.is_action_tool_currently_available(invocation.tool_name)
             result = await self._runtime._tool_registry.invoke(invocation, execution_context)
+            tool_ended_at = time.time()
             if invocation.tool_name != "wait":
                 self._runtime._reset_consecutive_wait_count(f"tool:{invocation.tool_name}")
             if is_unexpanded_tool and not result.success:
                 result = self._append_deferred_tool_parameter_hint(result)
-            tool_duration_ms = (time.time() - tool_started_at) * 1000
+            tool_duration_ms = (tool_ended_at - tool_started_at) * 1000
             await self._record_tool_execution_effects(
                 invocation,
                 result,
@@ -1950,6 +1964,7 @@ class MaisakaReasoningEngine:
                 duration_ms=tool_duration_ms,
                 tool_spec=tool_spec_map.get(invocation.tool_name),
             )
+            tool_monitor_results[-1].update(started_at=tool_started_at, ended_at=tool_ended_at)
             next_call_id = tool_calls[tool_index].call_id if tool_index < total_tool_count else ""
             await self._emit_planner_progress(cycle_detail, state, tool_monitor_results, next_call_id)
 

@@ -726,9 +726,11 @@ export function renderMessageTagMeta(
 export function NaturalLanguageText({
   text,
   avatarMap = {},
+  trailingMessageHasImages = false,
 }: {
   text: string
   avatarMap?: ReasoningPromptMessageAvatarMap
+  trailingMessageHasImages?: boolean
 }) {
   const blocks = parseNaturalTextBlocks(text)
   const baseClassName = 'text-foreground text-sm leading-6 whitespace-pre-wrap'
@@ -758,7 +760,9 @@ export function NaturalLanguageText({
             className="border-primary/60 border-l-2 pl-2"
           >
             {renderMessageTagMeta(block.attrs, avatarMap)}
-            <pre className={baseClassName}>{block.body || '空消息'}</pre>
+            {(block.body || !trailingMessageHasImages || index !== blocks.length - 1) && (
+              <pre className={baseClassName}>{block.body || '空消息'}</pre>
+            )}
           </div>
         )
       })}
@@ -893,7 +897,13 @@ export function ContextItemCard({
         )}
         {contentBlocks.map((block, blockIndex) =>
           block.type === 'text' ? (
-            <NaturalLanguageText key={blockIndex} text={block.text} avatarMap={avatarMap} />
+            <NaturalLanguageText
+              key={blockIndex}
+              text={block.text}
+              avatarMap={avatarMap}
+              // 紧随其后的图片属于文本末尾的消息，不能仅因正文为空就显示“空消息”。
+              trailingMessageHasImages={contentBlocks[blockIndex + 1]?.type === 'images'}
+            />
           ) : (
             <div key={blockIndex} className="grid gap-2 sm:grid-cols-2">
               {block.images.map((image, imageIndex) => (

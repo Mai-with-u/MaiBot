@@ -224,11 +224,15 @@ def test_tool_stop_request_is_serialized_for_monitor() -> None:
                 "tool_name": "test_tool",
                 "success": True,
                 "stop_after_execution": True,
+                "started_at": 100.25,
+                "ended_at": 102.75,
             }
         ]
     )
 
     assert tools[0]["stop_after_execution"] is True
+    assert tools[0]["started_at"] == 100.25
+    assert tools[0]["ended_at"] == 102.75
 
 
 def test_cache_tokens_and_context_sections_are_serialized_for_monitor() -> None:

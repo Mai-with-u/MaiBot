@@ -248,6 +248,8 @@ export interface MaisakaTimingGateBlock {
 }
 
 export interface MaisakaFinalizedToolResult {
+  started_at?: number
+  ended_at?: number
   tool_call_id: string
   tool_name: string
   model_name?: string
@@ -266,6 +268,8 @@ export interface MaisakaFinalizedToolResult {
 }
 
 export interface PlannerFinalizedEvent {
+  planner_started_at?: number | null
+  planner_ended_at?: number | null
   session_id: string
   cycle_id: number
   run_id?: string

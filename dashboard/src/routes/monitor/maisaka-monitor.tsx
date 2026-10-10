@@ -97,6 +97,30 @@ function formatTimestamp(ts: number): string {
   })
 }
 
+function EventTimestamp({
+  timestamp,
+  durationMs,
+  startedAt,
+  endedAt,
+}: {
+  timestamp?: number
+  durationMs?: number
+  startedAt?: number | null
+  endedAt?: number | null
+}) {
+  // 独立完成事件可用结束时间和耗时还原区间；快照必须使用实际记录的起止时间。
+  const end = endedAt ?? (durationMs !== undefined ? timestamp : undefined)
+  const start =
+    startedAt ?? (end != null && durationMs !== undefined ? end - durationMs / 1000 : undefined)
+  return (
+    <span className="text-muted-foreground text-xs opacity-65 whitespace-nowrap">
+      {start != null && end != null
+        ? `${formatTimestamp(start)}-${formatTimestamp(end)}`
+        : '起止时间未记录'}
+    </span>
+  )
+}
+
 function formatRelativeTime(ts: number): string {
   const diff = Date.now() / 1000 - ts
   if (diff < 10) return '刚刚'
@@ -979,7 +1003,7 @@ function MessageMediaContent({
 
   if (!hasContent && !hasMedia) {
     return (
-      <p className="text-foreground/80 text-sm leading-relaxed wrap-break-word whitespace-pre-wrap">
+      <p className="text-foreground/80 text-[14.5px] leading-relaxed wrap-break-word whitespace-pre-wrap">
         {emptyLabel}
       </p>
     )
@@ -988,7 +1012,7 @@ function MessageMediaContent({
   return (
     <div className="space-y-1.5">
       {hasContent && (
-        <p className="text-foreground/80 text-sm leading-relaxed wrap-break-word whitespace-pre-wrap">
+        <p className="text-foreground/80 text-[14.5px] leading-relaxed wrap-break-word whitespace-pre-wrap">
           {normalizedContent}
         </p>
       )}
@@ -1016,8 +1040,8 @@ function MessageIngestedCard({
       <MessageAvatar data={data} kind="ingested" />
       <div className="min-w-0 flex-1">
         <div className="mb-1 flex items-center gap-2">
-          <span className="text-sm font-medium">{data.speaker_name}</span>
-          <span className="text-muted-foreground text-xs">{formatTimestamp(data.timestamp)}</span>
+          <span className="text-[13px] font-medium">{data.speaker_name}</span>
+          <span className="text-muted-foreground text-xs opacity-65">{formatTimestamp(data.timestamp)}</span>
         </div>
         <div
           data-maisaka-user-bubble="true"
@@ -1043,8 +1067,8 @@ function MessageSentCard({
       <MessageAvatar data={data} kind="sent" />
       <div className="min-w-0 flex-1">
         <div className="mb-1 flex items-center gap-2">
-          <span className="text-sm font-medium">{data.speaker_name || '麦麦'}</span>
-          <span className="text-muted-foreground text-xs">{formatTimestamp(data.timestamp)}</span>
+          <span className="text-[13px] font-medium">{data.speaker_name || '麦麦'}</span>
+          <span className="text-muted-foreground text-xs opacity-65">{formatTimestamp(data.timestamp)}</span>
         </div>
         <div
           data-maisaka-user-bubble="true"
@@ -1082,6 +1106,7 @@ function TimingGateCard({ data }: { data: TimingGateResultEvent }) {
       <div className="min-w-0 flex-1">
         <div className="mb-1 flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">反应</span>
+          <EventTimestamp timestamp={data.timestamp} durationMs={data.duration_ms} />
           <Badge variant="outline" className="text-[10px]">
             react
           </Badge>
@@ -1181,6 +1206,7 @@ function PlannerInterruptedCard({ data }: { data: PlannerFinalizedEvent }) {
       <div className="flex items-center gap-2 text-sm">
         <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
         <span className="font-medium">Planner 被新消息打断</span>
+        <EventTimestamp startedAt={data.planner_started_at} endedAt={data.planner_ended_at} />
         <Badge variant="outline" className="ml-auto text-[10px]">
           #{data.cycle_id}
         </Badge>
@@ -1204,6 +1230,7 @@ function PlannerResponseCard({ data }: { data: PlannerResponseEvent }) {
       <div className="min-w-0 flex-1">
         <div className="mb-1 flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">规划器思考</span>
+          <EventTimestamp timestamp={data.timestamp} durationMs={data.duration_ms} />
           <span className="text-muted-foreground text-xs">{formatMs(data.duration_ms)}</span>
           <Badge variant="outline" className="text-[10px]">
             {data.prompt_tokens}+{data.completion_tokens} tokens
@@ -1243,6 +1270,7 @@ function PlannerFinalizedCard({
         <div data-maisaka-trace-meta="true" className="flex flex-wrap items-center gap-2">
           <Brain className="h-4 w-4 text-emerald-500" />
           <CardTitle className="text-sm font-medium">Planner</CardTitle>
+          <EventTimestamp startedAt={data.planner_started_at} endedAt={data.planner_ended_at} />
           <ModelNameBadge modelName={planner?.model_name} />
           <Badge variant="outline" className="ml-auto text-xs font-normal">
             {formatMs(planner?.duration_ms ?? 0)}
@@ -1592,6 +1620,7 @@ function PlannerToolResultCard({
           <span className="text-foreground text-sm font-medium">
             {formatWaitToolText(tool.tool_args)}
           </span>
+          <EventTimestamp startedAt={tool.started_at} endedAt={tool.ended_at} />
           <span className="text-muted-foreground ml-auto text-[10px]">#{index + 1}</span>
           {canOpenReasoning && (
             <Button
@@ -1618,6 +1647,7 @@ function PlannerToolResultCard({
           <span className="text-foreground font-mono text-sm font-semibold">
             {tool.tool_name || 'unknown'}
           </span>
+          <EventTimestamp startedAt={tool.started_at} endedAt={tool.ended_at} />
           <ModelNameBadge modelName={tool.model_name} />
           {tool.status && (
             <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
@@ -1795,6 +1825,7 @@ function PlannerToolCallsBlock({
         <div className="flex items-center gap-2 text-sm">
           <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
           <span className="font-medium">本轮思考暂时结束</span>
+          <EventTimestamp startedAt={finishTools[0]?.started_at} endedAt={finishTools[0]?.ended_at} />
           <span className="text-muted-foreground">等待新的消息。</span>
         </div>
       </div>
@@ -1814,6 +1845,9 @@ function PlannerToolCallsBlock({
               : regularTools.map((tool) => tool.tool_name || 'unknown').join('、')}
           </CardTitle>
           <ModelNameBadge modelName={singleTool?.model_name} />
+          {singleTool && !singleTool.status && (
+            <EventTimestamp startedAt={singleTool.started_at} endedAt={singleTool.ended_at} />
+          )}
           {singleTool?.status && (
             <Badge variant="secondary" className="px-1.5 text-[10px]">
               {singleTool.status === 'running' ? '执行中' : '等待执行'}
@@ -1903,6 +1937,8 @@ function PlannerNativeToolCallsBlock({ data }: { data: PlannerFinalizedEvent }) 
         <div data-maisaka-trace-meta="true" className="flex items-center gap-2">
           <Globe2 className="h-4 w-4 text-sky-500" />
           <CardTitle className="text-sm font-medium">Provider 原生工具</CardTitle>
+          <span className="text-muted-foreground text-xs opacity-65">推理区间</span>
+          <EventTimestamp startedAt={data.planner_started_at} endedAt={data.planner_ended_at} />
           <Badge variant="secondary" className="ml-auto text-[10px]">
             {nativeToolCalls.length} 次
           </Badge>
@@ -1967,6 +2003,7 @@ function ToolExecutionCard({ data }: { data: ToolExecutionEvent }) {
       <div className="min-w-0 flex-1">
         <div className="mb-1 flex flex-wrap items-center gap-2">
           <span className="font-mono text-sm font-medium">{data.tool_name}</span>
+          <EventTimestamp timestamp={data.timestamp} durationMs={data.duration_ms} />
           {data.success ? (
             <CheckCircle2 className="h-3.5 w-3.5 text-teal-500" />
           ) : (
@@ -2060,7 +2097,7 @@ function ReplierResponseCard({ data }: { data: ReplierResponseEvent }) {
               <XCircle className="h-3 w-3" /> 失败
             </Badge>
           )}
-          <span className="text-muted-foreground text-xs">{formatTimestamp(data.timestamp)}</span>
+          <EventTimestamp timestamp={data.timestamp} durationMs={data.duration_ms} />
         </div>
         {data.content && (
           <CollapsibleText text={data.content} maxLines={6} className="text-foreground/90" />
