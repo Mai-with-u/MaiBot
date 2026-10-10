@@ -35,6 +35,7 @@ from src.common.logger import get_logger
 from src.config.model_configs import APIProvider, ReasoningParseMode, ToolArgumentParseMode
 from src.llm_models.exceptions import (
     EmptyResponseException,
+    InterruptedStreamOutput,
     NetworkConnectionError,
     ReqAbortException,
     RespNotOkException,
@@ -1254,6 +1255,19 @@ class _OpenAIStreamAccumulator:
         for state in self.tool_call_states.values():
             state.close()
 
+    def snapshot_interrupted_output(self) -> InterruptedStreamOutput:
+        """提取原始片段，避免用完整响应解析器解析半截工具参数。"""
+
+        return InterruptedStreamOutput(
+            reasoning=self.reasoning_buffer.getvalue(),
+            content=self.content_buffer.getvalue(),
+            tool_calls=[
+                {"name": state.function_name or "尚未收到名称", "arguments": state.arguments_buffer.getvalue()}
+                for _, state in sorted(self.tool_call_states.items())
+            ],
+            model_name=self.model_name or "",
+        )
+
 
 async def _default_stream_response_handler(
     resp_stream: AsyncStream[ChatCompletionChunk],
@@ -1307,6 +1321,12 @@ async def _default_stream_response_handler(
             model_name = response.raw_data.get("model")
         _log_length_truncation(accumulator.finish_reason, model_name, max_tokens, trace_context)
         return response, usage_record
+    except (asyncio.CancelledError, ReqAbortException) as exc:
+        if interrupt_flag is not None and interrupt_flag.is_set():
+            raise ReqAbortException(
+                "请求被外部信号中断", partial_output=accumulator.snapshot_interrupted_output()
+            ) from exc
+        raise
     finally:
         accumulator.close()
 
@@ -1628,7 +1648,11 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                         AsyncStream[ChatCompletionChunk],
                         await await_task_with_interrupt(stream_task, request.interrupt_flag),
                     )
-                    return await active_stream_handler(raw_response, request.interrupt_flag)
+                    try:
+                        return await active_stream_handler(raw_response, request.interrupt_flag)
+                    finally:
+                        # 包括取消路径，及时关闭连接，不保留已失效的响应流。
+                        await raw_response.close()
 
                 active_response_parser = (
                     response_parser

@@ -1,4 +1,27 @@
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Dict, List
+
+
+@dataclass
+class InterruptedStreamOutput:
+    """仅供诊断展示的流式片段，不作为可执行的模型响应。"""
+
+    reasoning: str
+    content: str
+    tool_calls: List[Dict[str, str]]
+    model_name: str = ""
+
+    def display_text(self) -> str:
+        """保留未完成的原始文本和工具参数，不尝试修复或执行。"""
+
+        sections = []
+        if self.reasoning:
+            sections.append(f"[已接收的 reasoning 片段]\n{self.reasoning}")
+        if self.content:
+            sections.append(f"[已接收的正文片段]\n{self.content}")
+        for call in self.tool_calls:
+            sections.append(f"[未执行的工具调用片段：{call['name']}]\n{call['arguments']}")
+        return "\n\n".join(sections)
 
 
 # 常见Error Code Mapping (以OpenAI API为例)
@@ -33,9 +56,10 @@ class ImageEmbeddingUnsupportedError(Exception):
 class ReqAbortException(Exception):
     """请求异常退出，常见于请求被中断或取消"""
 
-    def __init__(self, message: str | None = None):
+    def __init__(self, message: str | None = None, partial_output: InterruptedStreamOutput | None = None):
         super().__init__(message)
         self.message = message
+        self.partial_output = partial_output
 
     def __str__(self):
         return self.message or "请求因未知原因异常终止"

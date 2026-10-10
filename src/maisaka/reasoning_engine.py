@@ -613,6 +613,12 @@ class MaisakaReasoningEngine:
         )
         interrupted_at = time.time()
         interrupted_text = "Planner 收到新消息，开始重新决策"
+        partial_output = exc.partial_output
+        partial_text = partial_output.display_text() if partial_output is not None else ""
+        if partial_text:
+            interrupted_text = f"[Planner 已被新消息打断，以下为未完成输出]\n\n{partial_text}"
+        else:
+            interrupted_text += "（中断前尚未收到可展示的输出片段）"
         interrupted_response = ChatResponse(
             output_items=(
                 ContextItemBuilder()
@@ -628,7 +634,7 @@ class MaisakaReasoningEngine:
             built_message_count=0,
             completion_tokens=0,
             total_tokens=0,
-            model_name="",
+            model_name=partial_output.model_name if partial_output is not None else "",
             prompt_section=None,
         )
         extra_lines = [
