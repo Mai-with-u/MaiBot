@@ -669,9 +669,15 @@ async def _prepare_message_for_platform_io(
     if set_reply or not message.processed_plain_text:
         message.processed_plain_text = _build_processed_plain_text(message)
     if typing:
+        # 纯图片分段与表情包一样使用固定等待，避免按图片描述长度模拟打字。
+        components = message.raw_message.components
+        is_image = any(isinstance(component, ImageComponent) for component in components) and not any(
+            isinstance(component, TextComponent) and component.text.strip() for component in components
+        )
         typing_time = calculate_typing_time(
             input_string=message.processed_plain_text or "",
             is_emoji=message.is_emoji,
+            is_image=is_image,
         )
         await asyncio.sleep(typing_time)
 
