@@ -647,17 +647,18 @@ function NodeRenderer({ node, ...props }: Omit<RendererProps, 'nodes'> & { node:
           {heading}
           <ChartContainer
             className="h-72 w-full"
-            config={{ [y]: { label: node.label ?? y, color: 'var(--primary)' } }}
+            config={{ [y]: { label: node.label ?? y, color: 'hsl(var(--chart-1))' } }}
           >
             {node.chart_type === 'bar' ? (
               <BarChart data={value}>
                 {chartChildren}
-                <Bar dataKey={y} fill="var(--primary)" isAnimationActive={false} />
+                <Bar dataKey={y} fill={`var(--color-${y})`} isAnimationActive={false} />
               </BarChart>
             ) : (
               <LineChart data={value}>
                 {chartChildren}
-                <Line dataKey={y} stroke="var(--primary)" dot={false} isAnimationActive={false} />
+                <Line dataKey={y} stroke={`var(--color-${y})`} strokeWidth={2}
+                  dot={{ r: 3, fill: `var(--color-${y})` }} isAnimationActive={false} />
               </LineChart>
             )}
           </ChartContainer>
