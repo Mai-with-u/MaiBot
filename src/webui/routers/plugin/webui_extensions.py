@@ -80,7 +80,7 @@ async def _list_extensions() -> Dict[str, Any]:
 def _serialize_extensions(extensions: Dict[str, Tuple[PluginSupervisor, WebUIExtension]]) -> Dict[str, Any]:
     return {
         "success": True,
-        "capabilities": ["file_upload_v1"],
+        "capabilities": ["file_upload", "interactive_controls"],
         "extensions": [
             {"plugin_id": plugin_id, **extension.model_dump(mode="json")}
             for plugin_id, (_, extension) in sorted(extensions.items())

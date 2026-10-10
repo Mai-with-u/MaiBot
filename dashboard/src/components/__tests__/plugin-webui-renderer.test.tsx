@@ -26,15 +26,37 @@ function node(overrides: Partial<WebUINode>): WebUINode {
 }
 
 describe('plugin WebUI renderer', () => {
-  it('opens choice buttons in a dialog', () => {
+  it('keeps unavailable actions visible with an explanation', () => {
+    render(<PluginWebUIRenderer nodes={[node({type: 'button', label: 'Train', action: 'train',
+      disabled_when: {reference: {source: 'runtime', field: 'ready'}, operator: 'equals', expected: false}, disabled_reason: 'Add negative examples first'})]}
+      data={{runtime: {ready: false}}} values={{}} busy={false} onChange={vi.fn()} onAction={vi.fn()} />)
+    expect(screen.getByRole('button', {name: 'Train'})).toBeDisabled()
+    expect(screen.getByText('Add negative examples first')).toBeInTheDocument()
+  })
+
+  it('renders progress and button choices with dynamic action labels', () => {
     const change = vi.fn()
-    render(<PluginWebUIRenderer nodes={[node({type: 'choice', name: 'label', label: 'Upload identity', value: 'self', options: [{label: 'Bot', value: 'self'}, {label: 'Other', value: 'other'}]})]}
-      data={{}} values={{label: 'self'}} busy={false} onChange={change} onAction={vi.fn()} />)
+    render(<PluginWebUIRenderer nodes={[
+      node({type: 'progress', label: 'Training progress', value: 42}),
+      node({type: 'select', presentation: 'buttons', name: 'identity', label: 'Identity', value: 'self', options: [{label: 'Self',value: 'self'},{label: 'Other',value: 'other'}]}),
+      node({type: 'button', label: 'Manage', action: 'manage', value: {source: 'runtime', field: 'label'}}),
+    ]} data={{runtime: {label: 'Uninstall CPU'}}} values={{identity: 'self'}} busy={false} onChange={change} onAction={vi.fn()} />)
+    expect(screen.getByRole('progressbar', {name: 'Training progress'})).toHaveAttribute('value', '42')
+    expect(screen.getByRole('radio', {name: 'Self'})).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(screen.getByRole('radio', {name: 'Other'}))
+    expect(change).toHaveBeenCalledWith('identity', 'other')
+    expect(screen.getByRole('button', {name: 'Uninstall CPU'})).toBeInTheDocument()
+  })
+  it('opens an ordinary dialog containing a button selection', () => {
+    const change = vi.fn()
+    render(<PluginWebUIRenderer nodes={[
+      node({type: 'button', label: 'Choose identity', detail: 'identity'}),
+      node({type: 'dialog', name: 'identity', label: 'Identity', children: [node({type: 'select', presentation: 'buttons', name: 'label', value: 'self', options: [{label: 'Bot', value: 'self'}, {label: 'Other', value: 'other'}]})]})
+    ]} data={{}} values={{label: 'self'}} busy={false} onChange={change} onAction={vi.fn()} />)
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', {name: 'Upload identity：Bot'}))
-    fireEvent.click(screen.getByRole('button', {name: 'Other'}))
+    fireEvent.click(screen.getByRole('button', {name: 'Choose identity'}))
+    fireEvent.click(screen.getByRole('radio', {name: 'Other'}))
     expect(change).toHaveBeenCalledWith('label', 'other')
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   it('keeps multi-selection across pages and clears after a successful batch', () => {

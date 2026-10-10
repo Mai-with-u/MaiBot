@@ -31,7 +31,7 @@ def test_supported_static_formats(format, suffix):
 
 def declaration():
     return dict(
-        required_capabilities=["file_upload_v1"],
+        required_capabilities=["file_upload"],
         pages=[
             dict(
                 id="images",
@@ -45,7 +45,7 @@ def declaration():
 
 def test_upload_declaration_and_legacy_compatibility():
     raw = declaration()
-    assert WebUIExtension.model_validate(raw).required_capabilities == ["file_upload_v1"]
+    assert WebUIExtension.model_validate(raw).required_capabilities == ["file_upload"]
     del raw["required_capabilities"]
     with pytest.raises(ValidationError):
         WebUIExtension.model_validate(raw)

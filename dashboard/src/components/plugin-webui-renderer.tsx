@@ -26,7 +26,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { nodeVisible, resolveNodeValue, validateRenderSize } from '@/lib/plugin-webui'
+import { conditionMatches, nodeVisible, resolveNodeValue, validateRenderSize } from '@/lib/plugin-webui'
 import type { DataContexts, Scalar, WebUINode } from '@/lib/plugin-webui'
 import { prepareUploadImage } from '@/lib/upload-image'
 import type { PreparedImage } from '@/lib/upload-image'
@@ -52,6 +52,7 @@ interface InteractionState {
   selection: Record<string, unknown>
   openDialog: string | null
   select: (name: string, row: Record<string, unknown>, detail?: string | null) => void
+  open: (name: string) => void
   close: () => void
   multiple: Record<string, string[]>
   updateMultiple: (name: string, ids: string[]) => void
@@ -91,7 +92,7 @@ function UploadControl({ label, action, busy, upload, complete, maxEdge }: {
   const [status, setStatus] = useState<Array<{ name: string; progress: number; error?: string; note?: string }>>([])
   return <div className="space-y-2">
     <Label htmlFor={id}>{label}</Label>
-    {!upload && <p role="alert">Host does not support file_upload_v1</p>}
+    {!upload && <p role="alert">Host does not support file_upload</p>}
     <Input id={id} type="file" multiple accept="image/jpeg,image/png,image/webp" disabled={busy || running || !upload}
       onChange={async (event) => {
         const files = Array.from(event.target.files ?? [])
@@ -143,6 +144,8 @@ function NodeRenderer({ node, ...props }: Omit<RendererProps, 'nodes'> & { node:
   const change = (next: Scalar) => {
     if (node.name !== null) props.onChange(node.name, next)
   }
+  const disabledByRule = !props.pendingData && !!node.disabled_when && conditionMatches(node.disabled_when, props.data, contexts)
+  const disabled = props.busy || (!!props.pendingData && !!node.disabled_when) || disabledByRule
   const heading = node.label ? <Label htmlFor={id}>{node.label}</Label> : null
 
   if (!visible) return null
@@ -155,29 +158,16 @@ function NodeRenderer({ node, ...props }: Omit<RendererProps, 'nodes'> & { node:
     )
 
   switch (node.type) {
-    case 'choice': {
-      const selected = node.options.find(option => option.value === fieldValue)
-      return <>
-        <Button variant="outline" disabled={props.busy} onClick={() => setExpanded(true)}>
-          {node.label}：{selected?.label ?? '请选择'}
-        </Button>
-        <Dialog open={expanded} onOpenChange={setExpanded}>
-          <DialogContent aria-describedby={undefined}>
-            <DialogHeader><DialogTitle>{node.label}</DialogTitle></DialogHeader>
-            <div className="grid grid-cols-2 gap-3">
-              {node.options.map(option => <Button key={option.value}
-                variant={option.value === fieldValue ? 'default' : 'outline'} disabled={props.busy}
-                onClick={() => { change(option.value); setExpanded(false) }}>{option.label}</Button>)}
-            </div>
-          </DialogContent>
-        </Dialog>
-      </>
+    case 'progress': {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 100) throw new Error('Invalid progress percentage')
+      return <div className="space-y-1"><div className="flex justify-between text-xs">{heading}<span>{value}%</span></div>
+        <progress className="w-full h-2 accent-primary" value={value} max={100} aria-label={node.label ?? '进度'} /></div>
     }
     case 'checkbox': {
       const ids = interaction.multiple[node.selection!] ?? []
       const imageId = String(value)
       return <label className="flex items-center gap-2 text-xs">
-        <input type="checkbox" disabled={props.busy || (!ids.includes(imageId) && ids.length >= 1000)}
+        <input type="checkbox" disabled={disabled || (!ids.includes(imageId) && ids.length >= 1000)}
           checked={ids.includes(imageId)} onChange={event => interaction.updateMultiple(node.selection!,
             event.target.checked ? [...ids, imageId] : ids.filter(id => id !== imageId))} />
         {node.label ?? '选择'}
@@ -187,12 +177,12 @@ function NodeRenderer({ node, ...props }: Omit<RendererProps, 'nodes'> & { node:
       if (!Array.isArray(value)) throw new Error('Multi-select data must be an array')
       const ids = interaction.multiple[node.selection!] ?? []
       return <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm">已选 {ids.length} 张（跨页保留，每批最多1000张）</span>
-        <Button variant="outline" size="sm" disabled={props.busy} onClick={() =>
+        <span className="text-sm">已选 {ids.length} 项（跨页保留，每批最多1000项）</span>
+        <Button variant="outline" size="sm" disabled={disabled} onClick={() =>
           interaction.updateMultiple(node.selection!, [...new Set([...ids, ...value.map(row => String(row.id))])].slice(0, 1000))}>全选本页</Button>
-        <Button variant="outline" size="sm" disabled={props.busy} onClick={() =>
+        <Button variant="outline" size="sm" disabled={disabled} onClick={() =>
           interaction.updateMultiple(node.selection!, ids.filter(id => !value.some(row => String(row.id) === id)))}>取消本页</Button>
-        <Button variant="outline" size="sm" disabled={props.busy} onClick={() => interaction.updateMultiple(node.selection!, [])}>清空选择</Button>
+        <Button variant="outline" size="sm" disabled={disabled} onClick={() => interaction.updateMultiple(node.selection!, [])}>清空选择</Button>
       </div>
     }
     case 'image': {
@@ -202,7 +192,7 @@ function NodeRenderer({ node, ...props }: Omit<RendererProps, 'nodes'> & { node:
         <p className="text-muted-foreground text-sm">{t('pluginWebUI.empty')}</p>
     }
     case 'upload':
-      return <UploadControl label={node.label!} action={node.action!} busy={props.busy} upload={props.onUpload} complete={props.onUploadComplete} maxEdge={node.image_max_edge} />
+      return <UploadControl label={node.label!} action={node.action!} busy={disabled} upload={props.onUpload} complete={props.onUploadComplete} maxEdge={node.image_max_edge} />
     case 'dialog':
       return (
         <Dialog
@@ -319,7 +309,7 @@ function NodeRenderer({ node, ...props }: Omit<RendererProps, 'nodes'> & { node:
           {heading}
           <Input
             id={id}
-            disabled={props.busy}
+            disabled={disabled}
             type={
               node.type === 'date' ? 'date' : typeof node.value === 'number' ? 'number' : 'text'
             }
@@ -340,7 +330,7 @@ function NodeRenderer({ node, ...props }: Omit<RendererProps, 'nodes'> & { node:
         <div className="flex items-center gap-3">
           <Switch
             id={id}
-            disabled={props.busy}
+            disabled={disabled}
             checked={fieldValue === true}
             onCheckedChange={change}
           />
@@ -348,11 +338,16 @@ function NodeRenderer({ node, ...props }: Omit<RendererProps, 'nodes'> & { node:
         </div>
       )
     case 'select':
+      if (node.presentation === 'buttons') return <fieldset className="space-y-2"><legend className="text-sm">{node.label}</legend>
+        <div className="flex flex-wrap gap-2" role="radiogroup">{node.options.map(option => <Button key={option.value} type="button" role="radio"
+          aria-checked={fieldValue===option.value} variant={fieldValue===option.value?'default':'outline'} disabled={disabled}
+          onClick={() => change(option.value)}>{option.label}</Button>)}</div>
+        {disabledByRule && node.disabled_reason && <p className="text-xs text-muted-foreground">{node.disabled_reason}</p>}</fieldset>
       return (
         <div className="space-y-2">
           {heading}
           <Select
-            disabled={props.busy}
+            disabled={disabled}
             value={typeof fieldValue === 'string' ? fieldValue : undefined}
             onValueChange={change}
           >
@@ -371,10 +366,10 @@ function NodeRenderer({ node, ...props }: Omit<RendererProps, 'nodes'> & { node:
       )
     case 'button':
       return (
-        <Button
+        <div className="inline-flex flex-col gap-1"><Button
           size={props.compact ? 'sm' : 'default'}
           className={props.compact ? 'h-7 px-1 text-xs' : undefined}
-          disabled={props.busy}
+          disabled={disabled}
           variant={
             node.variant === 'danger'
               ? 'destructive'
@@ -383,11 +378,12 @@ function NodeRenderer({ node, ...props }: Omit<RendererProps, 'nodes'> & { node:
                 : 'default'
           }
           onClick={() => {
-            if (node.action !== null) props.onAction(node.action, contexts)
+            if (node.detail) interaction.open(node.detail)
+            else if (node.action !== null) props.onAction(node.action, contexts)
           }}
         >
-          {node.label}
-        </Button>
+          {node.value === null || node.value === undefined ? node.label : display(value)}
+        </Button>{disabledByRule && node.disabled_reason && <span className="text-xs text-muted-foreground">{node.disabled_reason}</span>}</div>
       )
     case 'pagination': {
       if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -419,14 +415,14 @@ function NodeRenderer({ node, ...props }: Omit<RendererProps, 'nodes'> & { node:
           <div className="flex gap-2">
             <Button
               variant="outline"
-              disabled={props.busy || current === 1}
+              disabled={disabled || current === 1}
               onClick={() => change(current - 1)}
             >
               {t('pluginWebUI.previous')}
             </Button>
             <Button
               variant="outline"
-              disabled={props.busy || current === pages}
+              disabled={disabled || current === pages}
               onClick={() => change(current + 1)}
             >
               {t('pluginWebUI.next')}
@@ -684,8 +680,6 @@ export function PluginWebUIRenderer(props: RendererProps) {
   const [openDialog, setOpenDialog] = useState<string | null>(null)
   const combinedSelection = { ...selection, ...Object.fromEntries(Object.entries(multiple).map(([name, ids]) => [name, { ids: ids.join(','), count: ids.length }])) }
   useEffect(() => {
-    setSelection({})
-    setOpenDialog(null)
     if (props.clearSelection) setMultiple(previous => ({ ...previous, [props.clearSelection!]: [] }))
   }, [props.selectionRevision])
   if (!props.pendingData)
@@ -701,6 +695,7 @@ export function PluginWebUIRenderer(props: RendererProps) {
           setSelection((previous) => ({ ...previous, [name]: row }))
           if (detail) setOpenDialog(detail)
         },
+        open: name => setOpenDialog(name),
         close: () => setOpenDialog(null),
       }}
     >

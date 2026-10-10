@@ -112,7 +112,7 @@ class VisibilityCondition(StrictModel):
 
 class WebUINode(StrictModel):
     type: Literal[
-        "stack", "grid", "card", "tabs", "text", "stat", "table", "chart", "gallery", "image", "pagination", "input", "select", "choice", "multi_select", "checkbox", "switch", "date", "button", "dialog", "collapsible", "repeat", "upload"
+        "stack", "grid", "card", "tabs", "text", "stat", "progress", "table", "chart", "gallery", "image", "pagination", "input", "select", "multi_select", "checkbox", "switch", "date", "button", "dialog", "collapsible", "repeat", "upload"
     ]
     label: Optional[Label] = None
     value: Union[Text, int, float, bool, DataReference, None] = None
@@ -126,6 +126,9 @@ class WebUINode(StrictModel):
     x: Optional[Identifier] = None
     y: Optional[Identifier] = None
     when: Optional[VisibilityCondition] = None
+    disabled_when: Optional[VisibilityCondition] = None
+    disabled_reason: Optional[Label] = None
+    presentation: Literal["dropdown", "buttons"] = "dropdown"
     selection: Optional[Identifier] = None
     detail: Optional[Identifier] = None
     max_items: int = Field(default=50, ge=1, le=100)
@@ -143,6 +146,7 @@ class WebUINode(StrictModel):
             "tabs": {"children"},
             "text": {"value"},
             "stat": {"value"},
+            "progress": {"value"},
             "table": {"value", "columns", "selection", "detail"},
             "dialog": {"name", "children"},
             "collapsible": {"children", "default_open"},
@@ -152,15 +156,16 @@ class WebUINode(StrictModel):
             "pagination": {"value", "name"},
             "chart": {"value", "chart_type", "x", "y"},
             "input": {"name", "value"},
-            "select": {"name", "value", "options"},
-            "choice": {"name", "value", "options"},
+            "select": {"name", "value", "options", "presentation"},
             "multi_select": {"selection", "value"},
             "checkbox": {"selection", "value"},
             "switch": {"name", "value"},
             "date": {"name", "value"},
-            "button": {"action", "variant"},
+            "button": {"action", "variant", "value", "detail"},
             "upload": {"action", "image_max_edge"},
         }[self.type]
+        if self.type in {"button", "upload", "input", "select", "switch", "date", "checkbox", "multi_select"}:
+            allowed |= {"disabled_when", "disabled_reason"}
         # RPC 的 model_dump 会带上默认字段；只允许非适用字段保持协议默认值。
         for name in self.model_fields_set - common - allowed:
             field = type(self).model_fields[name]
@@ -181,25 +186,30 @@ class WebUINode(StrictModel):
             raise ValueError("dialog/repeat 必须声明 name")
         if self.type in {"dialog", "collapsible"} and self.label is None:
             raise ValueError("详情和折叠容器必须声明 label")
-        if self.detail is not None and self.selection is None:
+        if self.type == "table" and self.detail is not None and self.selection is None:
             raise ValueError("table.detail 必须同时声明 selection")
         if self.type == "chart" and (self.x is None or self.y is None):
             raise ValueError("chart 必须声明 x 和 y 字段")
+        if self.type == "progress" and not isinstance(self.value, DataReference):
+            if type(self.value) not in {int, float} or not math.isfinite(self.value) or not 0 <= self.value <= 100:
+                raise ValueError("progress 必须为0至100的有限数值或数据引用")
         if self.type in {"multi_select", "checkbox"} and (self.selection is None or not isinstance(self.value, DataReference)):
             raise ValueError("多选组件必须声明 selection 并绑定数据")
-        if self.type in {"input", "select", "choice", "switch", "date"}:
+        if self.type in {"input", "select", "switch", "date"}:
             if self.name is None or isinstance(self.value, DataReference):
                 raise ValueError("输入组件必须声明 name，默认值必须为标量")
             if self.type == "switch" and type(self.value) is not bool:
                 raise ValueError("switch 默认值必须为布尔值")
-            if self.type in {"date", "select", "choice"} and self.value is not None and not isinstance(self.value, str):
+            if self.type in {"date", "select"} and self.value is not None and not isinstance(self.value, str):
                 raise ValueError("日期和选择组件默认值必须为字符串")
-            if self.type in {"select", "choice"} and (
+            if self.type == "select" and (
                 not self.options or self.value not in [None, *[o.value for o in self.options]]
             ):
                 raise ValueError("select 默认值必须属于 options")
-        if self.type in {"button", "upload"} and (self.action is None or self.label is None):
-            raise ValueError("button 必须声明 action 和 label")
+        if self.type == "button" and (self.label is None or (self.action is None) == (self.detail is None)):
+            raise ValueError("button 必须声明 label，且 action/detail 二选一")
+        if self.type == "upload" and (self.action is None or self.label is None):
+            raise ValueError("upload 必须声明 action 和 label")
         if self.type == "tabs" and (not self.children or any(child.label is None for child in self.children)):
             raise ValueError("tabs 子节点必须有 label")
         return self
@@ -290,6 +300,8 @@ class WebUIPage(StrictModel):
                 validate_reference(node.value, items)
             if node.when is not None:
                 validate_reference(node.when.reference, items)
+            if node.disabled_when is not None:
+                validate_reference(node.disabled_when.reference, items)
             if node.detail is not None and node.detail not in dialogs:
                 raise ValueError(f"未声明的详情弹窗: {node.detail}")
             if node.action is not None:
@@ -300,7 +312,7 @@ class WebUIPage(StrictModel):
 
 class WebUIExtension(StrictModel):
     schema_version: Literal[1] = 1
-    required_capabilities: List[Literal["file_upload_v1"]] = Field(default_factory=list, max_length=1)
+    required_capabilities: List[Literal["file_upload", "interactive_controls"]] = Field(default_factory=list, max_length=2)
     workspace_title: Optional[Label] = None
     pages: List[WebUIPage] = Field(min_length=1, max_length=20)
 
@@ -318,8 +330,8 @@ class WebUIExtension(StrictModel):
         pending = [node for page in self.pages for node in page.content]
         while pending:
             node = pending.pop()
-            if node.type == "upload" and "file_upload_v1" not in self.required_capabilities:
-                raise ValueError("upload 需要声明 required_capabilities: file_upload_v1")
+            if node.type == "upload" and "file_upload" not in self.required_capabilities:
+                raise ValueError("upload 需要声明 required_capabilities: file_upload")
             pending.extend(node.children)
         if len({page.id for page in self.pages}) != len(self.pages):
             raise ValueError("页面 ID 重复")

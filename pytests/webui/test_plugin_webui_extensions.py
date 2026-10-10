@@ -46,6 +46,26 @@ def declaration():
     }
 
 
+def test_generic_dialog_trigger_and_select_presentation():
+    raw = declaration()
+    raw["pages"][0]["content"] = [
+        {"type": "button", "label": "上传", "detail": "upload",
+         "disabled_when": {"reference": {"source": "summary", "field": "ready"}, "operator": "equals", "expected": False},
+         "disabled_reason": "环境尚未准备好"},
+        {"type": "dialog", "name": "upload", "label": "上传", "children": [
+            {"type": "select", "name": "identity", "presentation": "buttons", "value": "self",
+             "options": [{"label": "是自己", "value": "self"}, {"label": "不是自己", "value": "other"}]}]},
+    ]
+    assert WebUIExtension.model_validate(raw).pages[0].content[0].detail == "upload"
+    raw["pages"][0]["content"][0]["action"] = "reset"
+    with pytest.raises(ValidationError):
+        WebUIExtension.model_validate(raw)
+    del raw["pages"][0]["content"][0]["action"]
+    raw["pages"][0]["content"][0]["detail"] = "missing"
+    with pytest.raises(ValidationError):
+        WebUIExtension.model_validate(raw)
+
+
 @pytest.mark.parametrize("columns", [0, 5])
 def test_gallery_requires_bounded_columns(columns):
     raw = declaration()

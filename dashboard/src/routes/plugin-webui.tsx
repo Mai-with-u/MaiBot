@@ -22,6 +22,7 @@ import {
   refreshPluginWebUI,
   resolveReference,
   usePluginWebUI,
+  extensionPath,
 } from '@/lib/plugin-webui'
 import type { APIBinding, DataContexts, Scalar, WebUIPage, WebUINode } from '@/lib/plugin-webui'
 
@@ -32,12 +33,30 @@ function initialValues(nodes: WebUINode[]): Record<string, Scalar> {
     const node = pending.pop()!
     if (node.type === 'pagination' && node.name !== null) values[node.name] = 1
     if (
-      ['input', 'select', 'choice', 'switch', 'date'].includes(node.type) &&
+      ['input', 'select', 'switch', 'date'].includes(node.type) &&
       node.name !== null &&
       (node.value === null || typeof node.value !== 'object')
     )
       values[node.name] = node.value
     pending.push(...node.children)
+  }
+  return values
+}
+
+function pageValues(page: WebUIPage): Record<string, Scalar> {
+  const values = initialValues(page.content)
+  // Navigation parameters belong to this browser page, never plugin-wide settings.
+  const search = new URLSearchParams(window.location.search)
+  for (const binding of Object.values(page.queries)) {
+    for (const [name, parameter] of Object.entries(binding.parameters)) {
+      const raw = search.get(name)
+      if (raw === null) continue
+      if (parameter.type === 'boolean') { if (raw === 'true' || raw === 'false') values[name] = raw === 'true' }
+      else if (parameter.type === 'integer' || parameter.type === 'number') {
+        const value = Number(raw)
+        if (Number.isFinite(value) && (parameter.type !== 'integer' || Number.isSafeInteger(value))) values[name] = value
+      } else values[name] = raw
+    }
   }
   return values
 }
@@ -69,8 +88,9 @@ function argumentsFor(
 }
 
 function ExtensionPage({ pluginId, page }: { pluginId: string; page: WebUIPage }) {
+  const registry = usePluginWebUI()
   const { t } = useTranslation()
-  const [values, setValues] = useState(() => initialValues(page.content))
+  const [values, setValues] = useState(() => pageValues(page))
   const valuesRef = useRef(values)
   const galleryPreferences = useRef<Record<string, string>>({})
   const [data, setData] = useState<Record<string, unknown>>({})
@@ -119,8 +139,9 @@ function ExtensionPage({ pluginId, page }: { pluginId: string; page: WebUIPage }
 
   const refresh = useCallback(async (clearError = true) => {
     if (busyRef.current) return
-    busyRef.current = true
-    setBusy(true)
+    if (!clearError && controller.current) return
+    controller.current?.abort()
+    if (clearError) { busyRef.current = true; setBusy(true) }
     if (clearError) setError(null)
     controller.current = new AbortController()
     const operation = controller.current
@@ -128,12 +149,12 @@ function ExtensionPage({ pluginId, page }: { pluginId: string; page: WebUIPage }
       await loadQueries(operation.signal)
       if (alive.current && !operation.signal.aborted) {
         setClearSelection(null)
-        setSelectionRevision((value) => value + 1)
       }
     } catch (error) {
       if (alive.current && !operation.signal.aborted) setError(String(error))
     } finally {
       if (controller.current === operation) {
+        controller.current = null
         busyRef.current = false
         if (alive.current) setBusy(false)
       }
@@ -170,20 +191,38 @@ function ExtensionPage({ pluginId, page }: { pluginId: string; page: WebUIPage }
     setBusy(true)
     setError(null)
     setMessage(null)
+    controller.current?.abort()
     controller.current = new AbortController()
     const operation = controller.current
     try {
-      await invokePluginWebUI(pluginId, page.id, 'actions', name, args, confirmed, operation.signal)
+      const result = await invokePluginWebUI(pluginId, page.id, 'actions', name, args, confirmed, operation.signal)
       if (alive.current && !operation.signal.aborted) setMessage(t('pluginWebUI.completed'))
       await loadQueries(operation.signal)
       if (alive.current && !operation.signal.aborted) {
         setClearSelection(binding.clear_selection ?? null)
         setSelectionRevision((value) => value + 1)
       }
+      if (result && typeof result === 'object' && 'navigate_page' in result && typeof result.navigate_page === 'string' &&
+        registry.extensions.find(e => e.plugin_id === pluginId)?.pages.some(p => p.id === result.navigate_page)) {
+        const target = registry.extensions.find(e => e.plugin_id === pluginId)!.pages.find(p => p.id === result.navigate_page)!
+        const parameters = new Set(Object.values(target.queries).flatMap(binding => Object.keys(binding.parameters)))
+        const search = new URLSearchParams()
+        if ('navigate_params' in result && result.navigate_params && typeof result.navigate_params === 'object')
+          for (const [key, value] of Object.entries(result.navigate_params))
+            if (parameters.has(key) && ['string', 'number', 'boolean'].includes(typeof value)) search.set(key, String(value))
+        const destination = extensionPath(pluginId, target.id) + (search.size ? `?${search}` : '')
+        if (target.id === page.id) {
+          window.history.replaceState(null, '', destination)
+          valuesRef.current = pageValues(page)
+          setValues(valuesRef.current)
+          await loadQueries(operation.signal)
+        } else window.location.assign(destination)
+      }
     } catch (error) {
       if (alive.current && !operation.signal.aborted) setError(String(error))
     } finally {
       if (controller.current === operation) {
+        controller.current = null
         busyRef.current = false
         if (alive.current) setBusy(false)
       }

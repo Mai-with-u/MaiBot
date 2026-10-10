@@ -33,6 +33,6 @@ describe('plugin multipart upload control', () => {
     render(<PluginWebUIRenderer nodes={[uploadNode]} data={{}} values={{}} busy={false}
       onChange={vi.fn()} onAction={vi.fn()} />)
     expect(screen.getByLabelText('Upload images')).toBeDisabled()
-    expect(screen.getByRole('alert')).toHaveTextContent('file_upload_v1')
+    expect(screen.getByRole('alert')).toHaveTextContent('file_upload')
   })
 })

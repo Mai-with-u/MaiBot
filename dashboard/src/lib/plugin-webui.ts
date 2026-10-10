@@ -35,6 +35,7 @@ export interface WebUINode {
     | 'tabs'
     | 'text'
     | 'stat'
+    | 'progress'
     | 'table'
     | 'chart'
     | 'gallery'
@@ -42,7 +43,6 @@ export interface WebUINode {
     | 'pagination'
     | 'input'
     | 'select'
-    | 'choice'
     | 'multi_select'
     | 'checkbox'
     | 'switch'
@@ -70,6 +70,9 @@ export interface WebUINode {
   image_max_edge?: number | null
   compact?: boolean
   when?: VisibilityCondition | null
+  disabled_when?: VisibilityCondition | null
+  disabled_reason?: string | null
+  presentation?: 'dropdown' | 'buttons'
 }
 export interface VisibilityCondition {
   reference: DataReference
@@ -362,20 +365,23 @@ export function nodeVisible(
   data: Record<string, unknown>,
   contexts: DataContexts = {}
 ): boolean {
-  if (!node.when) return true
-  const value = resolveReference(node.when.reference, data, contexts)
+  return !node.when || conditionMatches(node.when, data, contexts)
+}
+
+export function conditionMatches(condition: VisibilityCondition, data: Record<string, unknown>, contexts: DataContexts = {}): boolean {
+  const value = resolveReference(condition.reference, data, contexts)
   const empty =
     value == null ||
     value === '' ||
     (Array.isArray(value) && value.length === 0) ||
     (typeof value === 'object' && value !== null && Object.keys(value).length === 0)
-  switch (node.when.operator) {
+  switch (condition.operator) {
     case 'empty':
       return empty
     case 'not_empty':
       return !empty
     case 'equals':
-      return value === node.when.expected
+      return value === condition.expected
     case 'truthy':
       return Boolean(value)
   }
