@@ -27,6 +27,7 @@ from src.config.config import global_config
 from src.core.tooling import ToolExecutionResult
 from src.maisaka.context.message_adapter import format_speaker_content
 from src.maisaka.context.emoji_candidates import EmojiCandidateMessage
+from src.maisaka.context.image_attachment import resolve_context_image
 from src.maisaka.context.message_id_alias import to_display_message_id
 from src.maisaka.context.messages import SessionBackedMessage
 from src.maisaka.context.planner_messages import (
@@ -35,8 +36,6 @@ from src.maisaka.context.planner_messages import (
     extract_quote_ids_from_message_sequence,
 )
 from src.plugin_runtime.integration import get_plugin_runtime_manager
-
-from .image_attachment import resolve_image_attachment
 
 if TYPE_CHECKING:
     from src.maisaka.reasoning_engine import MaisakaReasoningEngine
@@ -319,7 +318,7 @@ class BuiltinToolRuntimeContext:
         except (TypeError, ValueError) as exc:
             raise ValueError(f"图片序号无效：index={raw_index}") from exc
 
-        return await resolve_image_attachment(self, target_message_id, image_index)
+        return await resolve_context_image(self.runtime, target_message_id, image_index)
 
     async def _resolve_emoji_attachment(self, raw_index: Any) -> EmojiComponent:
         """把 attach_emoji 参数解析为表情包组件。"""
