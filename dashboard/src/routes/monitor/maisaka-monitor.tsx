@@ -2235,6 +2235,52 @@ function FlowStepRow({
 
 // ─── 时间线入口渲染器 ──────────────────────────────────────────
 
+function ContextTrimCard({ data }: { data: FlowStepEvent }) {
+  const trim = data.trim
+  const labels = {
+    pending: '准备学习', running: '正在构建', completed: '已完成',
+    skipped: '未提交学习', cancelled: '已取消', disabled: '未启用', failed: '失败',
+  }
+  return (
+    <div className='border border-border bg-muted/20 px-3 py-2 text-sm'>
+      <div className='flex flex-wrap items-center gap-x-4 gap-y-1'>
+        <span className='font-medium'>上下文裁切</span>
+        {trim && <span>裁切 {trim.removed_count} 条 · 保留 {trim.remaining_count} 条</span>}
+        <span className='text-xs text-muted-foreground'>{formatTimestamp(data.timestamp)}</span>
+        {trim && <span className='ml-auto text-xs text-muted-foreground'>{labels[trim.learning.status]}</span>}
+      </div>
+      {!trim && <p className='mt-1 text-muted-foreground'>{data.detail}</p>}
+      {trim?.learning.detail && <p className='mt-1 text-xs text-muted-foreground'>{trim.learning.detail}</p>}
+      {trim?.learning.learners.map(learner => (
+        <div key={learner.name} className='mt-2'>
+          <div className='flex flex-wrap items-center gap-x-3 text-xs'>
+            <span>{learner.name}</span>
+            <span className='text-muted-foreground'>{labels[learner.status]}</span>
+            <span className='text-muted-foreground'>{learner.detail}</span>
+          </div>
+          {learner.contents.length > 0 && (
+            <div className='mt-1 text-xs'>
+              <ul className='space-y-1 pl-3'>
+                {learner.contents.slice(0, 3).map((content, index) => <li key={index}>{content}</li>)}
+              </ul>
+              {learner.contents.length > 3 && (
+                <details className='mt-1'>
+                  <summary className='cursor-pointer text-muted-foreground' data-maisaka-expand>
+                    其余 {learner.contents.length - 3} 条
+                  </summary>
+                  <ul className='mt-1 max-h-48 space-y-1 overflow-auto pl-3'>
+                    {learner.contents.slice(3).map((content, index) => <li key={index}>{content}</li>)}
+                  </ul>
+                </details>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function TimelineEventRenderer({
   entry,
   onJumpToMessage,
@@ -2251,6 +2297,7 @@ function TimelineEventRenderer({
   switch (entry.type) {
     case 'flow.step': {
       const data = entry.data as FlowStepEvent
+      if (data.step === 'context.trimmed') return <ContextTrimCard data={data} />
       return <FlowStepRow compact title={data.title} detail={data.detail} timestamp={data.timestamp} />
     }
     case 'llm.retry': {

@@ -1,7 +1,7 @@
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterable, Sequence
+from typing import Iterable, List, Optional, Sequence
 
 from sqlmodel import select
 
@@ -244,6 +244,7 @@ def update_high_frequency_terms_from_context_messages(
     limit: int = 1000,
     min_count: int = 2,
     max_terms: int = 1000,
+    learned_contents: Optional[List[str]] = None,
 ) -> int:
     """从 Maisaka 裁切上下文消息批次中提取格式化用户消息，并增量更新高频词词库。"""
 
@@ -268,6 +269,8 @@ def update_high_frequency_terms_from_context_messages(
             generated_at=generated_at,
             max_terms=max_terms,
         )
+        if learned_contents is not None:
+            learned_contents.extend(f"{item.term}（{item.count} 次）" for item in terms)
 
     return updated_count
 

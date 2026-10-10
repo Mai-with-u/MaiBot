@@ -446,6 +446,9 @@ function isMessageEntry(entry: TimelineEntry) {
 function getEntryLookupKey(entry: TimelineEntry): string | null {
   const data = entry.data as unknown as Record<string, unknown>
   if (isMessageEntry(entry)) return JSON.stringify([entry.sessionId, data.message_id])
+  if (entry.type === 'flow.step' && data.step === 'context.trimmed') {
+    return JSON.stringify([entry.sessionId, data.run_id, data.cycle_id, 'context.trimmed'])
+  }
   if (
     (entry.type === 'planner.progress' || entry.type === 'planner.finalized') &&
     typeof data.run_id === 'string' &&
@@ -731,10 +734,16 @@ function handleMonitorEvent(event: MaisakaMonitorEvent) {
     return
   }
 
-  if (event.type === 'planner.progress' || event.type === 'planner.finalized') {
+  if (
+    event.type === 'planner.progress' || event.type === 'planner.finalized' ||
+    (event.type === 'flow.step' && dataRecord.step === 'context.trimmed')
+  ) {
     const cycleId = dataRecord.cycle_id
     const runId = dataRecord.run_id
-    const entryId = plannerEntryIds.get(JSON.stringify([sessionId, runId, cycleId]))
+    const key = event.type === 'flow.step'
+      ? [sessionId, runId, cycleId, 'context.trimmed']
+      : [sessionId, runId, cycleId]
+    const entryId = mutableEntryIds.get(JSON.stringify(key))
     const existing = entryId ? entriesById.get(entryId) : undefined
     if (existing) {
       // 回放与实时推送可能交错；旧版本不能把正在执行/已完成的轮次回滚。

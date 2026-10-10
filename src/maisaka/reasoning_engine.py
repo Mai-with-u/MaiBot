@@ -1339,12 +1339,34 @@ class MaisakaReasoningEngine:
         self._runtime._chat_history = final_history
         if process_result.removed_count <= 0:
             return
+        # 常规收尾不单独展示，仅在确实裁切上下文后记录附加处理。
+        # 捕获本次运行与轮次，后台学习结束时可能已进入下一轮。
+        run_id = self._runtime._monitor_run_id
+        cycle_id = cycle_detail.cycle_id
+
+        async def report_learning(learning: Dict[str, Any]) -> None:
+            await emit_flow_step(
+                session_id=self._runtime.session_id,
+                run_id=run_id,
+                cycle_id=cycle_id,
+                step="context.trimmed",
+                title="上下文裁切",
+                detail=f"已裁切 {process_result.removed_count} 条，保留 {process_result.remaining_context_count} 条上下文。",
+                trim={
+                    "removed_count": process_result.removed_count,
+                    "remaining_count": process_result.remaining_context_count,
+                    "learning": learning,
+                },
+            )
+
+        await report_learning({"status": "pending", "detail": "准备学习", "learners": []})
         self._runtime._log_history_trimmed(
             process_result.removed_count,
             process_result.remaining_context_count,
         )
-        if process_result.removed_messages:
-            asyncio.create_task(self._runtime._trigger_trimmed_history_learning(process_result.removed_messages))
+        await self._runtime._trigger_trimmed_history_learning(
+            process_result.removed_messages, on_progress=report_learning
+        )
 
     @staticmethod
     def _calculate_similarity(text1: str, text2: str) -> float:

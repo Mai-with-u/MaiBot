@@ -275,6 +275,8 @@ class ExpressionLearner:
     async def learn_from_context_messages(
         self,
         context_messages: Sequence["LLMContextMessage"],
+        *,
+        learned_contents: Optional[List[str]] = None,
     ) -> bool:
         """从 Maisaka 被裁切的上下文消息中学习表达方式。
 
@@ -294,6 +296,7 @@ class ExpressionLearner:
 
         return await self._learn_from_session_messages(
             source_messages,
+            learned_contents=learned_contents,
         )
 
     @staticmethod
@@ -336,6 +339,8 @@ class ExpressionLearner:
     async def _learn_from_session_messages(
         self,
         pending_messages: List["SessionMessage"],
+        *,
+        learned_contents: Optional[List[str]] = None,
     ) -> bool:
         """对一批真实会话消息执行表达学习。"""
 
@@ -370,6 +375,7 @@ class ExpressionLearner:
             return await self._run_learning_batch(
                 pending_messages,
                 learning_session_id=learning_session_id,
+                learned_contents=learned_contents,
             )
         finally:
             await expression_learning_batch_gate.release(learning_session_id)
@@ -379,6 +385,7 @@ class ExpressionLearner:
         pending_messages: List["SessionMessage"],
         *,
         learning_session_id: str,
+        learned_contents: Optional[List[str]] = None,
     ) -> bool:
         """执行已经获得并发闸门的表达学习批次。"""
 
@@ -404,6 +411,8 @@ class ExpressionLearner:
             response = generation_result.response
         except Exception as e:
             logger.error(f"学习表达方式失败: {e}")
+            if learned_contents is not None:
+                raise
             return False
 
         expressions: List[Tuple[str, str, str]]
@@ -483,6 +492,8 @@ class ExpressionLearner:
             )
             if expression is not None:
                 written_expressions.append(expression)
+                if learned_contents is not None:
+                    learned_contents.append(f"{situation} → {style}")
 
         if written_expressions:
             await self._sync_expression_vector_index_batch(written_expressions)

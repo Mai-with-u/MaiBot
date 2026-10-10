@@ -145,6 +145,8 @@ class JargonLearner:
         self,
         context_messages: Sequence["LLMContextMessage"],
         jargon_miner: JargonMiner,
+        *,
+        learned_contents: Optional[List[str]] = None,
     ) -> bool:
         """从 Maisaka 被裁切的上下文消息中学习黑话候选。"""
 
@@ -156,7 +158,9 @@ class JargonLearner:
             logger.debug(f"裁切历史可学习消息不足: 可学习={len(source_items)} 阈值={self.min_messages_for_extraction}")
             return False
 
-        return await self._learn_from_sources(source_items, jargon_miner=jargon_miner)
+        return await self._learn_from_sources(
+            source_items, jargon_miner=jargon_miner, learned_contents=learned_contents
+        )
 
     @staticmethod
     def _extract_learning_sources_from_context(
@@ -384,6 +388,7 @@ class JargonLearner:
         pending_messages: Sequence["SessionMessage"] | Sequence[JargonLearningSourceItem],
         *,
         jargon_miner: JargonMiner,
+        learned_contents: Optional[List[str]] = None,
     ) -> bool:
         """对一批上下文素材执行黑话学习。"""
 
@@ -419,6 +424,7 @@ class JargonLearner:
                 pending_messages,
                 learning_session_id=learning_session_id,
                 jargon_miner=jargon_miner,
+                learned_contents=learned_contents,
             )
         finally:
             await jargon_learning_batch_gate.release(learning_session_id)
@@ -429,6 +435,7 @@ class JargonLearner:
         *,
         learning_session_id: str,
         jargon_miner: JargonMiner,
+        learned_contents: Optional[List[str]] = None,
     ) -> bool:
         """执行已经获得并发闸门的黑话学习批次。"""
 
@@ -459,6 +466,8 @@ class JargonLearner:
             response = generation_result.response
         except Exception as e:
             logger.error(f"学习黑话失败: {e}")
+            if learned_contents is not None:
+                raise
             return False
 
         jargon_entries = parse_jargon_response(response)
@@ -492,7 +501,9 @@ class JargonLearner:
             jargon_miner.session_id = learning_session_id
             jargon_miner.session_name = self._get_session_display_name(learning_session_id)
         try:
-            return await self._process_jargon_entries(jargon_entries, source_items, jargon_miner)
+            return await self._process_jargon_entries(
+                jargon_entries, source_items, jargon_miner, learned_contents=learned_contents
+            )
         finally:
             jargon_miner.session_id = original_jargon_session_id
             jargon_miner.session_name = original_jargon_session_name
@@ -748,6 +759,8 @@ class JargonLearner:
         jargon_entries: List[Tuple[str, str]],
         messages: Sequence[JargonLearningSourceItem],
         jargon_miner: JargonMiner,
+        *,
+        learned_contents: Optional[List[str]] = None,
     ) -> bool:
         """处理黑话条目，并路由到 JargonMiner。"""
 
@@ -848,6 +861,9 @@ class JargonLearner:
             return False
 
         saved, updated = await jargon_miner.process_extracted_entries(entries)
+        # 展示本批交给黑话矿工处理的候选，不能把候选数量当成新增词条数量。
+        if learned_contents is not None:
+            learned_contents.extend(str(entry["content"]) for entry in entries)
         self._log_jargon_update_process(
             status="persisted" if saved + updated > 0 else "no_database_change",
             jargon_miner=jargon_miner,
