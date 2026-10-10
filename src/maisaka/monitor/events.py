@@ -455,6 +455,30 @@ async def emit_stage_removed(
     })
 
 
+async def emit_flow_step(
+    *,
+    session_id: str,
+    run_id: str,
+    step: str,
+    title: str,
+    detail: str,
+    cycle_id: Optional[int] = None,
+    trim: Optional[Dict[str, Any]] = None,
+) -> None:
+    """广播可回放的思考流程节点，可携带裁切及后台学习进度。"""
+
+    await _broadcast("flow.step", {
+        "session_id": session_id,
+        "run_id": run_id,
+        "cycle_id": cycle_id,
+        "step": step,
+        "title": title,
+        "detail": detail,
+        "timestamp": time.time(),
+        **({"trim": trim} if trim is not None else {}),
+    })
+
+
 async def emit_llm_retry(
     *,
     session_id: str,

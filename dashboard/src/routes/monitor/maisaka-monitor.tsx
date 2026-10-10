@@ -34,6 +34,7 @@ import {
   MessageCircle,
   PauseCircle,
   Search,
+  Share,
   Smile,
   Timer,
   UserRound,
@@ -59,6 +60,9 @@ import { backendApi } from '@/lib/http'
 import { cn } from '@/lib/utils'
 
 import type {
+  FlowStepEvent,
+  LlmErrorEvent,
+  LlmRetryEvent,
   MaisakaContextSection,
   MaisakaFinalizedToolResult,
   MaisakaMessageMedia,
@@ -112,11 +116,13 @@ function EventTimestamp({
   const end = endedAt ?? (durationMs !== undefined ? timestamp : undefined)
   const start =
     startedAt ?? (end != null && durationMs !== undefined ? end - durationMs / 1000 : undefined)
+  const recordedTime = start ?? end ?? timestamp
+  if (recordedTime == null) return null
   return (
     <span className="text-muted-foreground text-xs opacity-65 whitespace-nowrap">
       {start != null && end != null
         ? `${formatTimestamp(start)}-${formatTimestamp(end)}`
-        : '起止时间未记录'}
+        : formatTimestamp(recordedTime)}
     </span>
   )
 }
@@ -1577,11 +1583,61 @@ function ToolResultImages({ images }: { images: MaisakaFinalizedToolResult['imag
   )
 }
 
+/** 倒计时只刷新等待条目，避免每秒重绘整个时间线。 */
+function WaitToolLabel({ args, waitUntil }: { args?: Record<string, unknown>; waitUntil?: number }) {
+  const [now, setNow] = useState(() => Date.now() / 1000)
+  useEffect(() => {
+    if (waitUntil === undefined) return
+    const timer = window.setInterval(() => setNow(Date.now() / 1000), 1000)
+    return () => window.clearInterval(timer)
+  }, [waitUntil])
+  const remaining = waitUntil === undefined ? undefined : Math.max(0, Math.ceil(waitUntil - now))
+  return (
+    <span className="inline-flex items-center gap-2">
+      <Hourglass
+        className={cn('h-4 w-4 text-teal-500', remaining !== undefined && remaining > 0 && 'animate-spin')}
+        style={{ animationDuration: '3s' }}
+      />
+      <span>{remaining === undefined ? formatWaitToolText(args) : `等待 ${remaining} 秒`}</span>
+    </span>
+  )
+}
+
+function ToolDiscoveryBlock({ tools }: { tools: DisplayTool[] }) {
+  if (!tools.some((tool) => tool.newly_discovered_tool_names?.length)) return null
+  return (
+    <TooltipProvider>
+      <div className="flex flex-wrap gap-2">
+        {tools.flatMap((tool) => (tool.newly_discovered_tool_names ?? []).map((name) => (
+          <Tooltip key={`${tool.tool_call_id}-${name}`}>
+            <TooltipTrigger asChild>
+              <button type="button" className={TOOL_PARAMETER_CLASS_NAME}>
+                {name}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-h-80 max-w-xl overflow-y-auto p-3 text-xs">
+              <p className="mb-2">搜索关键词：{String(tool.tool_args.query ?? '')}</p>
+              <pre className="font-mono break-words whitespace-pre-wrap">
+                {typeof tool.detail === 'string' ? tool.detail : JSON.stringify(tool.detail ?? {
+                  matched_tool_names: tool.matched_tool_names,
+                  newly_discovered_tool_names: tool.newly_discovered_tool_names,
+                  summary: tool.summary,
+                }, null, 2)}
+              </pre>
+            </TooltipContent>
+          </Tooltip>
+        )))}
+      </div>
+    </TooltipProvider>
+  )
+}
+
 function PlannerToolResultCard({
   tool,
   index,
   hideSourceLabel = false,
   hideHeader = false,
+  waitUntil,
   onOpenReasoning,
   messages,
   onJumpToMessage,
@@ -1592,6 +1648,7 @@ function PlannerToolResultCard({
   hideSourceLabel?: boolean
   /** 单个工具时名称、耗时与推理入口已合并到卡片标题行 */
   hideHeader?: boolean
+  waitUntil?: number
   onOpenReasoning: (promptHtmlUri: string) => void
 }) {
   const argumentEntries = Object.entries(tool.tool_args ?? {})
@@ -1606,32 +1663,32 @@ function PlannerToolResultCard({
   const sourceLabel = getToolCallSourceLabel(tool.tool_call_source, tool.tool_call_source_label)
   const promptHtmlUri = tool.prompt_html_uri?.trim() ?? ''
   const canOpenReasoning = Boolean(promptHtmlUri && parsePromptHtmlReasoningTarget(promptHtmlUri))
-  const isToolSearch = tool.tool_name === 'tool_search'
-  const searchQuery = typeof tool.tool_args?.query === 'string' ? tool.tool_args.query : ''
-  const activatedTools = tool.matched_tool_names
-  const newlyDiscoveredTools = new Set(tool.newly_discovered_tool_names)
 
+  const isToolSearch = tool.tool_name === 'tool_search'
   if (isWaitTool(tool.tool_name)) {
     if (hideHeader) return <ToolResultImages images={tool.images} />
     return (
-      <div className="space-y-1.5">
+      <div
+        data-maisaka-active-tool={tool.tool_call_id}
+        className="space-y-1.5"
+      >
         <div data-maisaka-trace-meta="true" className="flex flex-wrap items-center gap-1.5">
-          <Hourglass className="text-muted-foreground h-3.5 w-3.5" />
           <span className="text-foreground text-sm font-medium">
-            {formatWaitToolText(tool.tool_args)}
+            <WaitToolLabel key={waitUntil} args={tool.tool_args} waitUntil={waitUntil} />
           </span>
-          <EventTimestamp startedAt={tool.started_at} endedAt={tool.ended_at} />
+          <EventTimestamp startedAt={tool.started_at} />
           <span className="text-muted-foreground ml-auto text-[10px]">#{index + 1}</span>
           {canOpenReasoning && (
             <Button
               variant="ghost"
               size="sm"
-              className="h-6 px-1.5 text-[10px]"
+              className="h-6 w-6 p-0"
               onClick={() => onOpenReasoning(promptHtmlUri)}
+              aria-label="查看推理"
+              data-maisaka-reasoning-button="true"
               title="查看这个工具对应的推理"
             >
-              <FileCode2 className="mr-1 h-3 w-3" />
-              推理
+              <Share className="h-3.5 w-3.5" />
             </Button>
           )}
         </div>
@@ -1641,9 +1698,15 @@ function PlannerToolResultCard({
   }
 
   return (
-    <div className="space-y-1.5">
+    <div
+      data-maisaka-active-tool={!hideHeader && tool.status === 'running' ? tool.tool_call_id : undefined}
+      className="space-y-1.5"
+    >
       {!hideHeader && (
-        <div data-maisaka-trace-meta="true" className="flex flex-wrap items-center gap-1.5">
+        <div
+          data-maisaka-trace-meta="true"
+          className="flex flex-wrap items-center gap-1.5"
+        >
           <span className="text-foreground font-mono text-sm font-semibold">
             {tool.tool_name || 'unknown'}
           </span>
@@ -1674,7 +1737,7 @@ function PlannerToolResultCard({
             </Badge>
           )}
           {tool.duration_ms > 0 && (
-            <span className="text-muted-foreground text-xs font-medium">
+            <span className="text-muted-foreground text-xs font-normal opacity-65">
               {formatMs(tool.duration_ms)}
             </span>
           )}
@@ -1683,28 +1746,23 @@ function PlannerToolResultCard({
             <Button
               variant="ghost"
               size="sm"
-              className="h-6 px-1.5 text-[10px]"
+              className="h-6 w-6 p-0"
               onClick={() => onOpenReasoning(promptHtmlUri)}
+              aria-label="查看推理"
+              data-maisaka-reasoning-button="true"
               title="查看这个工具对应的推理"
             >
-              <FileCode2 className="mr-1 h-3 w-3" />
-              推理
+              <Share className="h-3.5 w-3.5" />
             </Button>
           )}
         </div>
       )}
 
       <div className="space-y-1.5">
-        {isToolSearch && searchQuery && (
-          <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="text-muted-foreground">搜索工具：</span>
-            <span className="text-foreground font-mono">{searchQuery}</span>
-            {!tool.status && <ToolFullJsonBlock tool={tool} />}
-          </div>
-        )}
         {tool.tool_name === 'reply' && (
           <ReplyToolArguments tool={tool} messages={messages} onJumpToMessage={onJumpToMessage} />
         )}
+        {isToolSearch && !tool.status && tool.success && <ToolDiscoveryBlock tools={[tool]} />}
         {!isToolSearch && tool.tool_name !== 'reply' && argumentEntries.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">
             {argumentEntries.map(([name, value]) => (
@@ -1714,35 +1772,15 @@ function PlannerToolResultCard({
           </div>
         )}
 
-        {!tool.status && isToolSearch && tool.success && activatedTools ? (
-          <div className="flex flex-wrap items-start gap-x-2 text-xs">
-            <span className="text-muted-foreground shrink-0">激活工具：</span>
-            {activatedTools.length > 0 ? (
-              <div className="flex flex-col gap-0.5">
-                {activatedTools.map((name) => (
-                  <div key={name} className="flex flex-wrap items-center gap-2">
-                    <span className="text-foreground font-mono">{name}</span>
-                    <span className="text-muted-foreground text-[10px]">
-                      {newlyDiscoveredTools.has(name) ? '本次新发现' : '此前已发现'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <span className="text-muted-foreground">未找到匹配工具</span>
-            )}
-          </div>
-        ) : (
-          !tool.status && (
-            <div className="flex flex-wrap items-baseline gap-x-1.5">
-              <span className="text-muted-foreground shrink-0 text-[10px] leading-4 font-medium">
+        {!tool.status && (!isToolSearch || !tool.success) && (
+            <div className="flex flex-wrap items-baseline gap-x-1.5 font-normal opacity-65">
+              <span className="text-muted-foreground shrink-0 text-[10px] leading-4">
                 执行结果
               </span>
               <p className="text-muted-foreground min-w-0 flex-1 text-xs leading-4 break-words whitespace-pre-wrap">
                 {tool.summary || '未返回结果摘要。'}
               </p>
             </div>
-          )
         )}
         <ToolResultImages images={tool.images} />
       </div>
@@ -1756,9 +1794,11 @@ function PlannerToolCallsBlock({
   onOpenReasoning,
   messages,
   onJumpToMessage,
+  waitUntil,
 }: ReplyToolMessageProps & {
   data: PlannerFinalizedEvent
   isProgress: boolean
+  waitUntil?: number
   onOpenReasoning: (promptHtmlUri: string) => void
 }) {
   const toolCalls = data.planner?.tool_calls ?? []
@@ -1833,20 +1873,30 @@ function PlannerToolCallsBlock({
   }
 
   return (
-    <Card data-maisaka-trace-card="true" className="border-l-4 border-l-teal-500/60">
+    <Card
+      data-maisaka-trace-card="true"
+      data-maisaka-active-tool={singleTool && (singleTool.status === 'running' || (singleToolIsWait && data.final_state.agent_state === 'wait')) ? singleTool.tool_call_id : undefined}
+      className="border-l-4 border-l-teal-500/60"
+    >
       <CardHeader className="space-y-2 px-4 py-2">
-        <div data-maisaka-trace-meta="true" className="flex flex-wrap items-center gap-2">
-          <ToolIcon className="h-4 w-4 text-teal-500" />
+        <div
+          data-maisaka-trace-meta="true"
+          className="flex flex-wrap items-center gap-2"
+        >
+          {!singleToolIsWait && <ToolIcon className="h-4 w-4 text-teal-500" />}
           <CardTitle
             className={cn('text-sm font-semibold', !singleToolIsWait && 'font-mono')}
           >
             {singleToolIsWait
-              ? formatWaitToolText(singleTool?.tool_args)
+              ? <WaitToolLabel key={waitUntil} args={singleTool?.tool_args} waitUntil={waitUntil} />
               : regularTools.map((tool) => tool.tool_name || 'unknown').join('、')}
           </CardTitle>
           <ModelNameBadge modelName={singleTool?.model_name} />
           {singleTool && !singleTool.status && (
-            <EventTimestamp startedAt={singleTool.started_at} endedAt={singleTool.ended_at} />
+            <EventTimestamp
+              startedAt={singleTool.started_at}
+              endedAt={singleToolIsWait ? undefined : singleTool.ended_at}
+            />
           )}
           {singleTool?.status && (
             <Badge variant="secondary" className="px-1.5 text-[10px]">
@@ -1859,7 +1909,7 @@ function PlannerToolCallsBlock({
             </Badge>
           )}
           {singleTool && !singleToolIsWait && singleTool.duration_ms > 0 && (
-            <span className="text-muted-foreground text-xs font-medium">
+            <span className="text-muted-foreground text-xs font-normal opacity-65">
               {formatMs(singleTool.duration_ms)}
             </span>
           )}
@@ -1886,12 +1936,13 @@ function PlannerToolCallsBlock({
             <Button
               variant="ghost"
               size="sm"
-              className={cn('h-6 px-1.5 text-[10px]', !sharedSourceLabel && 'ml-auto')}
+              className={cn('h-6 w-6 p-0', !sharedSourceLabel && 'ml-auto')}
               onClick={() => onOpenReasoning(singleToolPromptHtmlUri)}
+              aria-label="查看推理"
+              data-maisaka-reasoning-button="true"
               title="查看这个工具对应的推理"
             >
-              <FileCode2 className="mr-1 h-3 w-3" />
-              推理
+              <Share className="h-3.5 w-3.5" />
             </Button>
           )}
         </div>
@@ -1914,6 +1965,7 @@ function PlannerToolCallsBlock({
                 index={idx}
                 hideSourceLabel={Boolean(sharedSourceLabel)}
                 hideHeader={Boolean(singleTool)}
+                waitUntil={isWaitTool(tool.tool_name) ? waitUntil : undefined}
                 onOpenReasoning={onOpenReasoning}
               />
             </div>
@@ -2127,6 +2179,60 @@ function ReplierResponseCard({ data }: { data: ReplierResponseEvent }) {
   )
 }
 
+/** 普通流程节点用横线和右侧文字分隔，异常与轮次结果保留完整说明。 */
+function FlowStepRow({
+  title,
+  detail,
+  timestamp,
+  warning = false,
+  compact = false,
+  twoLine = false,
+}: {
+  title: string
+  detail: string
+  timestamp: number
+  warning?: boolean
+  compact?: boolean
+  twoLine?: boolean
+}) {
+  if (compact) {
+    return (
+      <div className="text-muted-foreground flex items-center gap-3 py-1 text-[11px]">
+        <span aria-hidden="true" className="border-border/60 min-w-0 flex-1 border-t" />
+        <span className="shrink-0" title={detail}>{title}</span>
+      </div>
+    )
+  }
+  return (
+    <div
+      className={cn(
+        'rounded-md border px-3 py-2',
+        warning ? 'border-amber-500/40 bg-amber-500/5' : 'bg-muted/30'
+      )}
+    >
+      <div className={cn('flex items-center gap-2 text-xs', !twoLine && 'flex-wrap')}>
+        {warning ? (
+          <AlertCircle className="h-3.5 w-3.5 text-amber-500" />
+        ) : (
+          <Activity className="text-muted-foreground h-3.5 w-3.5" />
+        )}
+        <span className={cn('font-medium', twoLine && 'min-w-0 truncate')} title={twoLine ? title : undefined}>{title}</span>
+        {twoLine ? (
+          <span className="text-muted-foreground shrink-0 opacity-65">{formatTimestamp(timestamp)}</span>
+        ) : <EventTimestamp timestamp={timestamp} />}
+      </div>
+      {detail && (
+        <p
+          className={cn('text-muted-foreground mt-1 text-xs leading-5', twoLine ? 'truncate' : 'break-words whitespace-pre-wrap')}
+          title={twoLine ? detail : undefined}
+        >
+          {detail}
+        </p>
+      )}
+    </div>
+  )
+}
+
 // ─── 时间线入口渲染器 ──────────────────────────────────────────
 
 function TimelineEventRenderer({
@@ -2134,13 +2240,43 @@ function TimelineEventRenderer({
   onJumpToMessage,
   onOpenReasoning,
   messages,
+  waitUntil,
 }: {
   entry: TimelineEntry
+  waitUntil?: number
   messages?: Map<string, MonitorMessage>
   onJumpToMessage: (messageId: string) => void
   onOpenReasoning: (promptHtmlUri: string) => void
 }) {
   switch (entry.type) {
+    case 'flow.step': {
+      const data = entry.data as FlowStepEvent
+      return <FlowStepRow compact title={data.title} detail={data.detail} timestamp={data.timestamp} />
+    }
+    case 'llm.retry': {
+      const data = entry.data as LlmRetryEvent
+      return (
+        <FlowStepRow
+          warning
+          twoLine
+          title={`模型请求重试 ${data.attempt}/${data.max_attempts} · ${data.model_name} · ${data.task_name}`}
+          detail={`${data.retry_interval} 秒后重试 · ${data.reason.replace(/\s+/g, ' ')}`}
+          timestamp={data.timestamp}
+        />
+      )
+    }
+    case 'llm.error': {
+      const data = entry.data as LlmErrorEvent
+      return (
+        <FlowStepRow
+          warning
+          twoLine
+          title={`模型请求失败 · ${data.model_name} · ${data.task_name}`}
+          detail={data.message.replace(/\s+/g, ' ')}
+          timestamp={data.timestamp}
+        />
+      )
+    }
     case 'message.ingested':
       return (
         <MessageIngestedCard
@@ -2157,29 +2293,38 @@ function TimelineEventRenderer({
     case 'planner.response':
       return <PlannerResponseCard data={entry.data as PlannerResponseEvent} />
     case 'planner.finalized':
-    case 'planner.progress':
-      if (isPlannerInterrupted(entry.data as PlannerFinalizedEvent)) {
-        return <PlannerInterruptedCard data={entry.data as PlannerFinalizedEvent} />
+    case 'planner.progress': {
+      const data = entry.data as PlannerFinalizedEvent
+      const endDetail = data.final_state.end_detail
+      if (isPlannerInterrupted(data)) {
+        return <PlannerInterruptedCard data={data} />
       }
-      if ((entry.data as PlannerFinalizedEvent).timing_gate?.result?.action === 'no_action') {
+      if (data.timing_gate?.result?.action === 'no_action') {
         return null
       }
       return (
         <div className="space-y-2">
-          <PlannerFinalizedCard
-            data={entry.data as PlannerFinalizedEvent}
-            onOpenReasoning={onOpenReasoning}
-          />
-          <PlannerNativeToolCallsBlock data={entry.data as PlannerFinalizedEvent} />
+          <PlannerFinalizedCard data={data} onOpenReasoning={onOpenReasoning} />
+          <PlannerNativeToolCallsBlock data={data} />
           <PlannerToolCallsBlock
             messages={messages}
             onJumpToMessage={onJumpToMessage}
-            data={entry.data as PlannerFinalizedEvent}
+            data={data}
             isProgress={entry.type === 'planner.progress'}
+            waitUntil={waitUntil}
             onOpenReasoning={onOpenReasoning}
           />
+          {entry.type === 'planner.finalized' && data.final_state.end_reason !== 'tool_pause:wait' && endDetail && (
+            <FlowStepRow
+              title="轮次结果"
+              detail={endDetail}
+              timestamp={entry.timestamp}
+              warning={data.final_state.end_reason === 'cycle_error'}
+            />
+          )}
         </div>
       )
+    }
     case 'tool.execution':
       return <ToolExecutionCard data={entry.data as ToolExecutionEvent} />
     case 'replier.response':
@@ -2257,6 +2402,17 @@ const MonitorTimeline = memo(function MonitorTimeline({
     const visibleEntries: TimelineEntry[] = []
 
     for (const entry of timeline) {
+      // 隐藏模型请求和旧账本中的常规收尾、等待结束提示，实际裁切由 context.trimmed 展示。
+      if (entry.type === 'flow.step') {
+        const data = entry.data as FlowStepEvent
+        if (
+          data.step === 'planner.requested' ||
+          data.step === 'wait.completed' ||
+          data.step === 'cycle.finishing'
+        ) {
+          continue
+        }
+      }
       if (entry.type === 'timing_gate.result') {
         const data = entry.data as TimingGateResultEvent
         if (data.action === 'no_action') {
@@ -2286,6 +2442,9 @@ const MonitorTimeline = memo(function MonitorTimeline({
       if (
         entry.type === 'message.ingested' ||
         entry.type === 'message.sent' ||
+        entry.type === 'flow.step' ||
+        entry.type === 'llm.retry' ||
+        entry.type === 'llm.error' ||
         entry.type === 'tool.execution' ||
         entry.type === 'replier.response'
       ) {
@@ -2296,6 +2455,14 @@ const MonitorTimeline = memo(function MonitorTimeline({
     return visibleEntries
   }, [timeline])
 
+  const latestPlannerEntry = useMemo(() => {
+    for (let index = timeline.length - 1; index >= 0; index -= 1) {
+      const entry = timeline[index]
+      if (entry.type === 'planner.progress' || entry.type === 'planner.finalized') return entry
+    }
+  }, [timeline])
+  const activeWaitUntil =
+    selectedStageStatus?.agentState === 'wait' ? selectedStageStatus.waitUntil : undefined
   // TanStack Virtual 与 React Compiler 不兼容，保持现有虚拟列表实现
   // eslint-disable-next-line react-hooks/incompatible-library
   const timelineVirtualizer = useVirtualizer({
@@ -2594,10 +2761,20 @@ const MonitorTimeline = memo(function MonitorTimeline({
                   const entryData = entry.data as unknown as Record<string, unknown>
                   const entryMessageId =
                     typeof entryData.message_id === 'string' ? entryData.message_id : undefined
-                  // 推理与推理、推理与消息之间用细横线分隔，连续消息之间不加
+                  // 连续消息不加分隔线；流程节点和工具已有横线，不再重复。
                   const previousEntry = visibleTimelineEntries[virtualItem.index - 1]
+                  const previousPlanner =
+                    previousEntry?.type === 'planner.finalized' || previousEntry?.type === 'planner.progress'
+                      ? previousEntry.data as PlannerFinalizedEvent
+                      : undefined
+                  const followsTool = Boolean(
+                    previousPlanner?.tools.length || previousPlanner?.planner?.tool_calls.length
+                  )
                   const showDivider =
                     Boolean(previousEntry) &&
+                    !followsTool &&
+                    entry.type !== 'flow.step' &&
+                    previousEntry.type !== 'flow.step' &&
                     !(isMessageTimelineEntry(entry) && isMessageTimelineEntry(previousEntry))
                   return (
                     <div
@@ -2630,6 +2807,7 @@ const MonitorTimeline = memo(function MonitorTimeline({
                         <TimelineEventRenderer
                           messages={monitorMessages}
                           entry={entry}
+                          waitUntil={entry.id === latestPlannerEntry?.id ? activeWaitUntil : undefined}
                           onJumpToMessage={handleJumpToMessage}
                           onOpenReasoning={handleOpenReasoning}
                         />

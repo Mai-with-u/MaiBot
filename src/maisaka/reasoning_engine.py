@@ -87,6 +87,7 @@ from src.maisaka.memory.mid_term import (
     is_mid_term_memory_reference_message,
 )
 from src.maisaka.monitor.events import (
+    emit_flow_step,
     emit_planner_snapshot,
 )
 from src.maisaka.memory.person_profile import build_person_profile_injection_messages
@@ -512,6 +513,20 @@ class MaisakaReasoningEngine:
             run_id=self._runtime._monitor_run_id,
         )
 
+    async def _emit_flow_step(
+        self, step: str, title: str, detail: str, *, cycle_id: Optional[int] = None
+    ) -> None:
+        """使用当前真实会话与运行标识记录轻量流程节点。"""
+
+        await emit_flow_step(
+            session_id=self._runtime.session_id,
+            run_id=self._runtime._monitor_run_id,
+            cycle_id=cycle_id,
+            step=step,
+            title=title,
+            detail=detail,
+        )
+
     async def _run_planner_request(
         self,
         *,
@@ -525,7 +540,7 @@ class MaisakaReasoningEngine:
 
         planner_started_at = time.time()
         state.planner_started_at = planner_started_at
-        self._runtime._update_stage_status("Planner", "组织上下文并请求模型", round_text=round_text)
+        self._runtime._update_stage_status("组织上下文", "整理消息、参考信息与可用工具", round_text=round_text)
         action_tool_definitions, deferred_tools_reminder = await self._build_action_tool_definitions()
         try:
             jargon_reference_message = self._refresh_jargon_reference_message()
@@ -549,6 +564,13 @@ class MaisakaReasoningEngine:
         )
         state.current_stage_started_at = planner_started_at
         state.action_tool_count = len(action_tool_definitions)
+        self._runtime._update_stage_status("Planner", "等待模型响应", round_text=round_text)
+        await self._emit_flow_step(
+            "planner.requested",
+            f"{round_text} · 请求模型",
+            f"上下文已整理：历史 {len(self._runtime._chat_history)} 条，可用工具 {state.action_tool_count} 个。",
+            cycle_id=self._runtime._cycle_counter,
+        )
         try:
             response = await self._run_interruptible_planner(
                 injected_user_messages=injected_user_messages or None,
@@ -674,6 +696,10 @@ class MaisakaReasoningEngine:
         pending_round_messages = self._runtime._collect_pending_messages()
         if pending_round_messages:
             await self._ingest_messages(pending_round_messages)
+            await self._emit_flow_step(
+                "messages.merged", "接入新消息", f"已合并 {len(pending_round_messages)} 条新消息，准备下一轮思考。",
+                cycle_id=self._runtime._cycle_counter,
+            )
             logger.info(
                 f"{self._runtime.log_prefix} 内部轮次开始前已合并新消息: "
                 f"消息数={len(pending_round_messages)} 回合={round_index + 1}"
@@ -687,6 +713,10 @@ class MaisakaReasoningEngine:
         round_text = f"第 {round_index + 1}/{self._runtime._max_internal_rounds} 轮"
         self._runtime._log_cycle_started(cycle_detail, round_index)
         self._runtime._update_stage_status("启动循环", f"循环 {cycle_detail.cycle_id}", round_text=round_text)
+        await self._emit_flow_step(
+            "cycle.started", f"开始{round_text}思考", "准备参考信息并整理本轮上下文。",
+            cycle_id=cycle_detail.cycle_id,
+        )
         return cycle_detail, round_text
 
     async def _refresh_visual_placeholders_for_cycle(self, cycle_detail: CycleDetail) -> None:
@@ -743,6 +773,7 @@ class MaisakaReasoningEngine:
                 logger.warning(f"{self._runtime.log_prefix} 主动触发缺少对应的触发消息，跳过本轮")
                 return TurnStartContext([], None, timeout_triggered, proactive_triggered, silent_reply_frequency)
             await self._runtime.restore_proactive_user_context()
+            await self._emit_flow_step("turn.proactive", "主动思考触发", "按已安排的主动触发继续判断当前对话。")
             if self._runtime._has_pending_wait_tool_call():
                 wait_message = self._build_wait_completed_message(has_new_messages=False)
                 continuation_logical_turn_id = wait_message.logical_turn_id
@@ -926,6 +957,12 @@ class MaisakaReasoningEngine:
                             cached_messages = interrupt_result.retry_messages
                             trigger_message = interrupt_result.retry_messages[-1]
                             continue
+                        except asyncio.CancelledError:
+                            state.cycle_end = CycleEnd("cancelled", "思考任务已取消，本轮结束。")
+                            raise
+                        except Exception as exc:
+                            state.cycle_end = CycleEnd("cycle_error", f"本轮处理异常：{exc}")
+                            raise
                         finally:
                             state.cycle_end = await self._finalize_cycle(
                                 cycle_detail=cycle_detail,
@@ -939,7 +976,10 @@ class MaisakaReasoningEngine:
                     if self._runtime._agent_state == self._runtime._STATE_RUNNING:
                         self._runtime._enter_stop_state()
                     if self._runtime._running:
-                        self._runtime._update_stage_status("空闲", "本轮处理结束")
+                        if self._runtime._agent_state == self._runtime._STATE_WAIT:
+                            self._runtime._update_stage_status("等待", "等待后继续思考")
+                        else:
+                            self._runtime._update_stage_status("空闲", "本轮处理结束")
         except asyncio.CancelledError:
             self._runtime._log_internal_loop_cancelled()
             raise
@@ -989,6 +1029,7 @@ class MaisakaReasoningEngine:
             trigger_labels.append("proactive")
         trigger_text = " ".join(trigger_labels) if trigger_labels else "无新消息"
         logger.info(f"{self._runtime.log_prefix} 回复频率为 0，静默接收并完成历史维护，不进入 Planner；{trigger_text}")
+        await self._emit_flow_step("turn.silent", "本轮静默处理", "回复频率为 0，已接收消息并维护历史，不进入思考。")
 
     def _drain_ready_turn_triggers(
         self,

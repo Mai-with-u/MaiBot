@@ -142,8 +142,9 @@ function BotStatusFlipCard({
     0
   )
   const formatOnlineTime = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600)
-    const minutes = Math.round((seconds % 3600) / 60)
+    const totalMinutes = Math.round(seconds / 60)
+    const hours = Math.floor(totalMinutes / 60)
+    const minutes = totalMinutes % 60
     return t('home.time.hoursMinutes', { hours, minutes })
   }
   const faceClassName =

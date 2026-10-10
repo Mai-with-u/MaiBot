@@ -419,6 +419,45 @@ describe('MaisakaMonitor 空态与侧边栏', () => {
   })
 })
 
+describe('思考流程节点', () => {
+  it('按时间线显示流程节点、模型重试和最终失败', () => {
+    setupMonitorState({ timeline: [
+      makeEntry('flow.step', {
+        session_id: 's1', run_id: 'r1', cycle_id: 1, step: 'planner.requested',
+        title: '第 1/8 轮 · 请求模型', detail: '上下文已整理：历史 12 条，可用工具 4 个。', timestamp: nowSec(),
+      }),
+      makeEntry('llm.retry', {
+        session_id: 's1', task_name: 'planner', request_type: 'planner', model_name: '测试模型',
+        attempt: 2, max_attempts: 3, reason: '请求超时', retry_interval: 5, timestamp: nowSec(),
+      }),
+      makeEntry('llm.error', {
+        session_id: 's1', task_name: 'planner', request_type: 'planner', model_name: '测试模型',
+        message: '重试次数已用尽', timestamp: nowSec(),
+      }),
+    ] })
+    render(<MaisakaMonitor />)
+    expect(screen.getByText('第 1/8 轮 · 请求模型')).toBeInTheDocument()
+    expect(screen.getByTitle('上下文已整理：历史 12 条，可用工具 4 个。')).toBeInTheDocument()
+    expect(screen.getByText('模型请求重试 2/3')).toBeInTheDocument()
+    expect(screen.getByText(/请求超时.*5 秒后重试/s)).toBeInTheDocument()
+    expect(screen.getByText('模型请求失败')).toBeInTheDocument()
+    expect(screen.getByText(/重试次数已用尽/)).toBeInTheDocument()
+  })
+
+  it('轮次结束后显示真实结束原因，执行中不提前展示结果', () => {
+    const data = makeFinalized({ final_state: {
+      time_records: {}, agent_state: 'wait', end_reason: 'tool_pause:wait',
+      end_detail: 'Planner 调用 wait，本轮暂停并在等待结束后继续判断。',
+    } })
+    setupMonitorState({ timeline: [makeEntry('planner.progress', data)] })
+    render(<MaisakaMonitor />)
+    expect(screen.queryByText('轮次结果')).not.toBeInTheDocument()
+    setupMonitorState({ timeline: [makeEntry('planner.finalized', data)] })
+    expect(screen.getByText('轮次结果')).toBeInTheDocument()
+    expect(screen.getByText(data.final_state.end_detail!)).toBeInTheDocument()
+  })
+})
+
 describe('会话侧边栏', () => {
   it('会话按最近活跃排序，展示事件数、相对时间、阶段与等待圆点', () => {
     const sessions = new Map<string, SessionInfo>([

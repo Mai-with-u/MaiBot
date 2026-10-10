@@ -66,6 +66,30 @@ export interface StageSnapshotEvent {
   timestamp: number
 }
 
+export interface FlowStepEvent {
+  session_id: string
+  run_id: string
+  cycle_id: number | null
+  step: string
+  title: string
+  detail: string
+  timestamp: number
+  trim?: {
+    removed_count: number
+    remaining_count: number
+    learning: {
+      status: 'pending' | 'running' | 'completed' | 'skipped' | 'cancelled' | 'failed'
+      detail: string
+      learners: {
+        name: string
+        status: 'running' | 'completed' | 'disabled' | 'failed' | 'cancelled'
+        detail: string
+        contents: string[]
+      }[]
+    }
+  }
+}
+
 export interface LlmRetryEvent {
   session_id: string
   platform?: string
@@ -315,6 +339,7 @@ export type MaisakaMonitorEvent =
   | { type: 'stage.status'; data: StageStatusEvent }
   | { type: 'stage.removed'; data: StageRemovedEvent }
   | { type: 'stage.snapshot'; data: StageSnapshotEvent }
+  | { type: 'flow.step'; data: FlowStepEvent }
   | { type: 'llm.retry'; data: LlmRetryEvent }
   | { type: 'llm.error'; data: LlmErrorEvent }
   | { type: 'message.ingested'; data: MessageIngestedEvent }
