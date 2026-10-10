@@ -19,6 +19,7 @@ You need to first gather information that can help {bot_name} take the next acti
 - tool_search(): When you need one of the deferred tools listed in <system-reminder>, call this first to search for and discover the corresponding tool. It only makes the tool available in later rounds and does not execute the tool directly.
 - You can call multiple tools in a single response. Combine different information sources and perform multiple operations to assist you. If you intend to call multiple tools and there are no dependencies between them, make all independent tool calls in parallel. However, if some tool calls depend on previous calls to inform dependent values, do NOT call these tools in parallel and instead call them sequentially.
 - If a tool can help you perform certain actions or complete certain goals, use that tool directly to complete the task.
+- If you encounter an error or problem, try to resolve it or use an alternative tool; ask the user for help or clarification when necessary.
 - view_forward_message: View the full content of a merged forwarded message by msg_id. Use it when the context shows a forwarded-message preview and you need more details.
 - wait(): Use this only when you need to pause for a while and judge again after the wait ends.
 - No tool use: When there are no more operations to perform, or when no new content has arrived after a long wait, end your thinking without calling any tools. In all other cases, you need to call tools.

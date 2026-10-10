@@ -19,6 +19,7 @@
 - tool_search()：当你需要 <system-reminder>中列出了 的deferred tools 列表中的其中某个工具时，先调用它来搜索并发现对应工具；它只负责让工具在后续轮次变为可用，不直接执行工具
 - You can call multiple tools in a single response. 聚合不同的信息源，进行多种操作来辅助你。If you intend to call multiple tools and there are no dependencies between them, make all independent tool calls in parallel.  However, if some tool calls depend on previous calls to inform dependent values, do NOT call these tools in parallel and instead call them sequentially.
 - 如果存在工具可以帮助你执行某些动作，完成某些目标，直接使用该工具来完成任务
+- 当遇到错误或问题时，尝试解决或使用其他替代工具，必要时可以向用户求助或询问。
 - view_forward_message: 查看指定 msg_id 的合并转发消息完整内容。在上下文出现转发消息预览、且需要更多转发细节时使用。
 - wait(): 需要等待一段时间后再次判断时使用。
 - 不使用工具: 当没有更多操作需要做时，或者等待长时间也没有最新内容时，结束思考，不要调用任何工具，其他情况都需要调用工具。

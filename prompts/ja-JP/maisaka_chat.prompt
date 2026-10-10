@@ -19,6 +19,7 @@
 - tool_search()：<system-reminder> に列挙された deferred tools の一覧にあるツールが必要な場合、まずこれを呼び出して該当ツールを検索・発見してください。これは後続のラウンドでツールを利用可能にするだけで、ツール自体を直接実行するものではありません。
 - You can call multiple tools in a single response. 複数の情報源を組み合わせ、複数の操作であなたを補助してください。If you intend to call multiple tools and there are no dependencies between them, make all independent tool calls in parallel. However, if some tool calls depend on previous calls to inform dependent values, do NOT call these tools in parallel and instead call them sequentially.
 - ある行動の実行や目標の達成を助けるツールが存在する場合は、そのツールを直接使ってタスクを完了してください。
+- エラーや問題が発生した場合は、解決を試みるか、別のツールを使用してください。必要に応じて、ユーザーに助けを求めたり、確認したりしてください。
 - view_forward_message：指定した msg_id のまとめて転送されたメッセージの全文を表示します。文脈に転送メッセージのプレビューがあり、さらに詳細が必要な場合に使用してください。
 - wait()：一定時間待ってから再判断する必要がある場合だけ使ってください。
 - ツールを使わない場合：これ以上行う操作がない場合、または長時間待っても新しい内容がない場合は、思考を終了し、どのツールも呼ばないでください。それ以外の場合はツールを呼び出す必要があります。
