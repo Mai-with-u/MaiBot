@@ -1521,8 +1521,8 @@
   background-color: var(--mil-panel);
   background-image: var(--mil-speck);
   background-size: 5px 5px;
-  border-right: 2px solid var(--mil-line);
-  box-shadow: inset 2px 0 0 var(--mil-hi), inset -2px 0 0 var(--mil-lo);
+  border-right: 0;
+  box-shadow: none;
 }
 
 :root[data-dashboard-style='millennium'] [data-chat-workspace-sidebar='true'] > div:first-child {
@@ -2131,34 +2131,36 @@
   width: 34px;
 }
 
-/* ---------- 麦麦聊天：右侧对话区是一个模块，工具栏是一排小键帽 ---------- */
+/* ---------- 麦麦聊天：右侧对话区与侧栏平铺相接，工具栏是一排小键帽 ---------- */
 
 :root[data-dashboard-style='millennium'] [data-chat-observed-session] {
   display: flex;
   flex-direction: column;
-  padding: 1rem 1.25rem 1.5rem 1rem;
+  padding: 0;
 }
 
 :root[data-dashboard-style='millennium'] [data-chat-observed-session] > div {
   background-color: var(--mil-panel);
   background-image: var(--mil-speck);
   background-size: 5px 5px;
-  border: 2px solid var(--mil-line);
-  box-shadow:
-    inset 2px 2px 0 var(--mil-hi),
-    inset -2px -2px 0 var(--mil-lo),
-    0 5px 0 var(--mil-drop);
+  border: 0;
+  box-shadow: none;
   flex: 1 1 auto;
   height: auto;
   min-height: 0;
-  padding: 0.75rem 0.875rem 0.875rem;
+  padding: 0;
 }
 
 :root[data-dashboard-style='millennium'] [data-maisaka-toolbar='true'] {
   background: none;
   gap: 0.5rem;
-  margin-bottom: 0.625rem;
-  padding: 0 0 4px;
+  margin-bottom: 0.25rem;
+  padding: 0;
+}
+
+:root[data-dashboard-style='millennium'] [data-chat-observed-session] [data-maisaka-toolbar='true'] {
+  margin-bottom: 0;
+  padding: 0.75rem 0.75rem 0.5rem;
 }
 
 :root[data-dashboard-style='millennium']
@@ -2171,12 +2173,12 @@
   color: var(--mil-ink);
   font-size: 0.75rem;
   font-weight: 700;
-  height: 2rem;
-  padding: 0 0.625rem 3px;
+  height: 1.75rem;
+  padding: 0 0.5rem 3px;
 }
 
 :root[data-dashboard-style='millennium'] [data-maisaka-toolbar='true'] [data-dashboard-button='true'].w-6 {
-  width: 2rem;
+  width: 1.75rem;
 }
 
 :root[data-dashboard-style='millennium'] [data-maisaka-toolbar='true'] div.group span {
@@ -2184,24 +2186,56 @@
   font-weight: 700;
 }
 
-:root[data-dashboard-style='millennium'] [data-maisaka-toolbar='true'] [data-dashboard-badge='true'] {
+:root[data-dashboard-style='millennium']
+  :is([data-maisaka-toolbar='true'], [data-maisaka-floating-status='true'])
+  [data-dashboard-badge='true'] {
   font-size: 0.75rem;
   padding: 3px 8px;
 }
 
-:root[data-dashboard-style='millennium'] [data-maisaka-toolbar='true'] :is(p, span.text-muted-foreground) {
+:root[data-dashboard-style='millennium']
+  :is([data-maisaka-toolbar='true'], [data-maisaka-floating-status='true'])
+  :is(p, span.text-muted-foreground) {
   color: var(--mil-print);
   font-size: 0.75rem;
   font-weight: 700;
 }
 
-/* 对话记录屏幕：按设计稿的下沉边框 */
+:root[data-dashboard-style='millennium'] [data-maisaka-floating-status='true'] {
+  background-color: var(--mil-panel);
+  background-image: var(--mil-speck);
+  background-size: 5px 5px;
+  border: 2px solid var(--mil-line);
+  box-shadow: var(--mil-bevel);
+}
+
+/* 推理跳转沿用工具栏的小键帽，覆盖标题行对普通按钮的无框样式。 */
+:root:root[data-dashboard-style='millennium']
+  [data-maisaka-reasoning-button='true'][data-dashboard-button='true'] {
+  background-color: var(--mil-key);
+  color: var(--mil-ink);
+  box-shadow:
+    inset 0 0 0 2px var(--mil-line),
+    inset 0 -5px 0 var(--mil-key-side) !important;
+  height: 1.75rem !important;
+  min-height: 1.75rem !important;
+  width: 1.75rem;
+  padding: 0 0 3px !important;
+}
+
+/* 对话记录屏幕使用与侧栏列表相同的下凹边框，留出窄边以完整显示四周阴影。 */
 :root[data-dashboard-style='millennium']
   [data-chat-observed-session]
-  [data-dashboard-card='true']:not([data-dashboard-card='true'] [data-dashboard-card='true']) {
+  [data-maisaka-timeline='true'] {
   border: 2px solid var(--mil-line);
   box-shadow: var(--mil-sunk);
-  margin: 4px;
+  margin: 4px 6px 4px 4px;
+}
+
+:root[data-dashboard-style='millennium']
+  [data-maisaka-timeline='true']
+  [data-dashboard-scrollbar='true'][data-orientation='vertical'] {
+  width: 8px;
 }
 
 /* ---------- 表格行内的操作键 ---------- */

@@ -21,7 +21,6 @@ import {
   Clock,
   Database,
   Eraser,
-  FileCode2,
   Forward,
   Globe2,
   History,
@@ -42,6 +41,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import type { Key, ReactNode } from 'react'
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
@@ -559,6 +559,7 @@ interface StageStatusPanelProps {
   onScrollToBottom: () => void
   stats: MonitorStats
   status?: StageStatusInfo
+  hideStatus?: boolean
 }
 
 interface ChatActiveContext {
@@ -747,8 +748,8 @@ function StageStatusPanel({
   onScrollToBottom,
   stats,
   status,
+  hideStatus = false,
 }: StageStatusPanelProps) {
-  const agentStateLabel = status ? getAgentStateLabel(status.agentState) : null
   const actions = (
     <MonitorStatusActions
       autoScroll={autoScroll}
@@ -775,6 +776,65 @@ function StageStatusPanel({
   return (
     <div data-maisaka-toolbar="true" className="bg-background mb-1.5 flex min-w-0 items-center gap-2 overflow-x-auto rounded-md px-2 py-1">
       {actions}
+      {!hideStatus && <StageStatusContent status={status} />}
+    </div>
+  )
+}
+
+function ToolExecutionElapsed({ startedAt }: { startedAt: number }) {
+  const [now, setNow] = useState(() => Date.now() / 1000)
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now() / 1000), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+  const seconds = Math.max(0, Math.floor(now - startedAt))
+  return <span>已执行 {seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`}</span>
+}
+
+function FloatingToolStatus({ status, args }: { status: StageStatusInfo; args: Record<string, unknown> }) {
+  const [expanded, setExpanded] = useState(false)
+  const reducedMotion = useReducedMotion()
+  return (
+    <div
+      data-maisaka-floating-status="true"
+      className="bg-background/95 border-border pointer-events-auto max-w-full rounded-md border shadow-lg backdrop-blur-sm"
+    >
+      <button
+        type="button"
+        className="flex w-full cursor-pointer flex-wrap items-center gap-2 px-3 py-2 text-left"
+        aria-label="查看当前工具调用参数"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <StageStatusContent status={status} floating />
+        <ChevronDown className={cn('text-muted-foreground h-3 w-3 transition-transform', expanded && 'rotate-180')} />
+      </button>
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: reducedMotion ? 0 : 0.18 }}
+            className="overflow-hidden"
+          >
+            <div className="flex max-h-60 flex-wrap gap-2 overflow-auto border-t px-3 py-2">
+              {Object.entries(args).map(([name, value]) => (
+                <ToolArgumentBlock key={name} name={name} value={value} />
+              ))}
+              {Object.keys(args).length === 0 && <span className="text-muted-foreground text-xs">无参数</span>}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+function StageStatusContent({ status, floating = false }: { status: StageStatusInfo; floating?: boolean }) {
+  const agentStateLabel = getAgentStateLabel(status.agentState)
+  return (
+    <>
       <div className="flex shrink-0 items-center gap-1.5">
         <Badge variant="default" className="gap-1 border-0! px-1.5 text-[10px]">
           <Activity className="h-2.5 w-2.5" />
@@ -794,13 +854,15 @@ function StageStatusPanel({
           </Badge>
         )}
         <span className="text-muted-foreground ml-auto text-[11px]">
-          更新于 {formatRelativeTime(status.updatedAt)}
+          {floating ? (
+            <ToolExecutionElapsed key={status.stageStartedAt} startedAt={status.stageStartedAt} />
+          ) : `更新于 ${formatRelativeTime(status.updatedAt)}`}
         </span>
       </div>
       {status.detail && (
         <p className="text-muted-foreground shrink-0 text-xs whitespace-nowrap">{status.detail}</p>
       )}
-    </div>
+    </>
   )
 }
 
@@ -1253,7 +1315,7 @@ function ModelNameBadge({ modelName }: { modelName?: string | null }) {
   if (!modelName) return null
 
   return (
-    <Badge variant="outline" className="min-w-0 max-w-full text-[10px] font-normal" title={modelName}>
+    <Badge variant="outline" className="text-muted-foreground min-w-0 max-w-full text-[10px] font-normal opacity-65" title={modelName}>
       <span className="max-w-64 truncate">模型: {modelName}</span>
     </Badge>
   )
@@ -1278,16 +1340,16 @@ function PlannerFinalizedCard({
           <CardTitle className="text-sm font-medium">Planner</CardTitle>
           <EventTimestamp startedAt={data.planner_started_at} endedAt={data.planner_ended_at} />
           <ModelNameBadge modelName={planner?.model_name} />
-          <Badge variant="outline" className="ml-auto text-xs font-normal">
+          <Badge variant="outline" className="text-muted-foreground ml-auto text-xs font-normal opacity-65">
             {formatMs(planner?.duration_ms ?? 0)}
           </Badge>
           {data.request && (
-            <Badge variant="secondary" className="text-[10px]">
+            <Badge variant="outline" className="text-muted-foreground text-[10px] opacity-65">
               上下文 {data.request.selected_history_count} 条 / 可用工具 {data.request.tool_count}
             </Badge>
           )}
           {planner && (planner.prompt_tokens > 0 || planner.completion_tokens > 0) && (
-            <Badge variant="outline" className="text-[10px]">
+            <Badge variant="outline" className="text-muted-foreground text-[10px] opacity-65">
               {planner.prompt_tokens}+{planner.completion_tokens} tokens
             </Badge>
           )}
@@ -1295,12 +1357,13 @@ function PlannerFinalizedCard({
             <Button
               variant="ghost"
               size="sm"
-              className="h-6 px-2 text-[10px]"
+              className="h-6 w-6 p-0"
               onClick={() => onOpenReasoning(promptHtmlUri)}
+              aria-label="查看推理"
+              data-maisaka-reasoning-button="true"
               title="在推理过程页查看对应记录"
             >
-              <FileCode2 className="mr-1 h-3 w-3" />
-              推理
+              <Share className="h-3.5 w-3.5" />
             </Button>
           )}
         </div>
@@ -1336,6 +1399,15 @@ type ReplyToolMessageProps = {
 }
 
 /** reply 的 at 和附图参数引用的是消息编号，按真实消息解析发送者与媒体。 */
+function ReplyArgumentRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-1 items-baseline gap-2 rounded-md border px-2.5 py-1.5 text-xs leading-5">
+      <span className="text-muted-foreground shrink-0">{label}：</span>
+      <div className="min-w-0 break-words whitespace-pre-wrap">{children}</div>
+    </div>
+  )
+}
+
 function ReplyToolArguments({
   tool,
   messages,
@@ -1362,6 +1434,7 @@ function ReplyToolArguments({
     'attach_pic',
     'expression_intent',
     'reply_reference',
+    'reply_style',
     'set_quote',
   ])
 
@@ -1369,16 +1442,18 @@ function ReplyToolArguments({
     <div className="space-y-2 text-xs">
       <div className="flex flex-wrap items-center gap-2">
         {messageId && (
-          <div className="min-w-0 max-w-xl [&>button]:mb-0 [&>div]:mb-0">
-          <ReplyPreviewBlock
-            onJumpToMessage={onJumpToMessage}
-            replyTo={{
-              message_id: messageId,
-              sender_name: message?.speaker_name ?? '',
-              content: message?.content ?? '',
-            }}
-          />
-          </div>
+          <ReplyArgumentRow label="回复对象">
+            <button
+              type="button"
+              className="text-left hover:underline"
+              title={`跳转到消息 #${messageId}`}
+              onClick={() => onJumpToMessage?.(messageId)}
+            >
+              {message?.speaker_name && `${message.speaker_name} `}
+              <span className="text-muted-foreground">#{messageId}</span>
+              {message?.content && ` · ${message.content}`}
+            </button>
+          </ReplyArgumentRow>
         )}
         {atTargets.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">
@@ -1427,12 +1502,7 @@ function ReplyToolArguments({
         </details>
       )}
       {typeof args.reply_reference === 'string' && args.reply_reference.trim() && (
-        <div className="bg-muted/50 rounded-md px-2.5 py-2">
-          <span className="text-muted-foreground mb-1 block">回复参考信息</span>
-          <p className="leading-5 break-words whitespace-pre-wrap">
-            {args.reply_reference}
-          </p>
-        </div>
+        <ReplyArgumentRow label="回复参考信息">{args.reply_reference}</ReplyArgumentRow>
       )}
       {pictures.length > 0 && (
         <div className="space-y-1.5">
@@ -1478,11 +1548,15 @@ function ReplyToolArguments({
       {Object.entries(args)
         .filter(([name]) => !handledArguments.has(name))
         .map(([name, value]) => (
-          <ToolArgumentBlock key={name} name={name} value={value} />
+          <ReplyArgumentRow key={name} label={name}>
+            {formatToolValue(value)}
+          </ReplyArgumentRow>
         ))}
     </div>
   )
 }
+
+const TOOL_PARAMETER_CLASS_NAME = 'border-border text-muted-foreground inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-md border bg-transparent px-2 py-1 font-mono text-xs'
 
 function ToolArgumentBlock({ name, value }: { name: string; value: unknown }) {
   const formattedValue = formatToolValue(value)
@@ -1490,12 +1564,12 @@ function ToolArgumentBlock({ name, value }: { name: string; value: unknown }) {
 
   return (
     <div
-      className="bg-background/60 flex h-6 max-w-full min-w-0 items-center gap-1.5 rounded-md border px-2 text-xs"
+      className={TOOL_PARAMETER_CLASS_NAME}
       title={`${name} (${getValueTypeLabel(value)}): ${formattedValue}`}
     >
-      <span className="text-foreground shrink-0 font-mono font-semibold">{name}</span>
-      <span className="text-muted-foreground shrink-0">=</span>
-      <span className="text-muted-foreground max-w-72 min-w-0 truncate font-mono text-[11px]">
+      <span className="shrink-0">{name}</span>
+      <span className="shrink-0">=</span>
+      <span className="max-w-72 min-w-0 truncate">
         {inlineValue}
       </span>
     </div>
@@ -1517,6 +1591,7 @@ function ToolFullJsonBlock({
     tool_name: string
   }
 }) {
+  const [expanded, setExpanded] = useState(false)
   const payload = {
     tool_call_id: tool.tool_call_id,
     tool_name: tool.tool_name,
@@ -1530,18 +1605,24 @@ function ToolFullJsonBlock({
   }
 
   return (
-    <details className="group contents text-xs">
-      <summary
+    <>
+      <button
+        type="button"
         className="text-muted-foreground hover:text-foreground ml-auto flex h-6 cursor-pointer list-none items-center gap-1 px-1.5 text-[10px]"
         title="完整调用 JSON"
+        data-maisaka-expand="true"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
       >
-        <ChevronRight className="h-2.5 w-2.5 shrink-0 transition-transform group-open:rotate-90" />
+        <ChevronRight className={cn('h-2.5 w-2.5 shrink-0 transition-transform', expanded && 'rotate-90')} />
         <span>JSON</span>
-      </summary>
-      <pre className="bg-background/60 text-muted-foreground basis-full rounded-md border px-2.5 py-1.5 font-mono text-[11px] leading-4 break-words whitespace-pre-wrap">
-        {JSON.stringify(payload, null, 2)}
-      </pre>
-    </details>
+      </button>
+      {expanded && (
+        <pre className="bg-background/60 text-muted-foreground w-full min-w-0 basis-full rounded-md border px-2.5 py-1.5 font-mono text-[11px] leading-4 break-words whitespace-pre-wrap">
+          {JSON.stringify(payload, null, 2)}
+        </pre>
+      )}
+    </>
   )
 }
 
@@ -2391,6 +2472,53 @@ interface MaisakaMonitorProps {
   reasoningReturnTo?: string
 }
 
+/** 虚拟列表会卸载屏外工具，重新挂载时也需要重新观察其可见性。 */
+function useActiveToolVisible(viewport: HTMLDivElement | null, toolCallId?: string) {
+  const [visibility, setVisibility] = useState<{ id?: string; visible: boolean }>({ visible: false })
+  useLayoutEffect(() => {
+    if (!viewport || !toolCallId) return
+    let target: Element | null | undefined
+    const update = (visible: boolean) =>
+      setVisibility((current) =>
+        current.id === toolCallId && current.visible === visible ? current : { id: toolCallId, visible }
+      )
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.target === target) update(entry.isIntersecting)
+      },
+      { root: viewport }
+    )
+    const observeTarget = () => {
+      const nextTarget = Array.from(viewport.querySelectorAll('[data-maisaka-active-tool]'))
+        .find((element) => element.getAttribute('data-maisaka-active-tool') === toolCallId) ?? null
+      if (nextTarget === target) return
+      observer.disconnect()
+      target = nextTarget
+      if (target) {
+        const bounds = target.getBoundingClientRect()
+        const view = viewport.getBoundingClientRect()
+        update(bounds.bottom > view.top && bounds.top < view.bottom)
+        observer.observe(target)
+      } else {
+        update(false)
+      }
+    }
+    observeTarget()
+    const mutations = new MutationObserver(observeTarget)
+    mutations.observe(viewport, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['data-maisaka-active-tool'],
+    })
+    return () => {
+      observer.disconnect()
+      mutations.disconnect()
+    }
+  }, [viewport, toolCallId])
+  return visibility.id === toolCallId && visibility.visible
+}
+
 const MonitorTimeline = memo(function MonitorTimeline({
   embedded = false,
   reasoningReturnTo,
@@ -2510,6 +2638,18 @@ const MonitorTimeline = memo(function MonitorTimeline({
   }, [timeline])
   const activeWaitUntil =
     selectedStageStatus?.agentState === 'wait' ? selectedStageStatus.waitUntil : undefined
+  const latestPlannerData = latestPlannerEntry?.data as PlannerFinalizedEvent | undefined
+  // 工具是否在执行由当前调用 ID 决定，不依赖工具名或阶段文案（Replyer 会覆盖阶段名称）。
+  const activeToolCallId = selectedStageStatus?.agentState === 'wait'
+    ? latestPlannerData?.tools.find((tool) => isWaitTool(tool.tool_name))?.tool_call_id
+    : latestPlannerEntry?.type === 'planner.progress' ? latestPlannerData?.active_tool_call_id : undefined
+  const executingTool = Boolean(activeToolCallId)
+  const activeToolArgs = latestPlannerData?.planner?.tool_calls.find((tool) => tool.id === activeToolCallId)?.arguments
+    ?? latestPlannerData?.tools.find((tool) => tool.tool_call_id === activeToolCallId)?.tool_args
+    ?? {}
+  const activeToolVisible = useActiveToolVisible(scrollViewport, activeToolCallId)
+  const reducedMotion = useReducedMotion()
+
   // TanStack Virtual 与 React Compiler 不兼容，保持现有虚拟列表实现
   // eslint-disable-next-line react-hooks/incompatible-library
   const timelineVirtualizer = useVirtualizer({
@@ -2519,6 +2659,12 @@ const MonitorTimeline = memo(function MonitorTimeline({
     getItemKey: (index) => visibleTimelineEntries[index]?.id ?? index,
     overscan: 8,
   })
+
+  useLayoutEffect(() => {
+    // 只补偿完全在视口上方的条目；正在查看的条目展开时，保持按钮位置不动。
+    timelineVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) =>
+      item.end <= (instance.scrollOffset ?? 0)
+  }, [timelineVirtualizer])
 
   const messageEntryIndexes = useMemo(() => {
     const indexes = new Map<string, number>()
@@ -2779,15 +2925,31 @@ const MonitorTimeline = memo(function MonitorTimeline({
         onScrollToBottom={() => scrollToBottom('smooth')}
         stats={stats}
         status={selectedStageStatus}
+        hideStatus={executingTool}
       />
 
       <Card
+        data-maisaka-timeline="true"
         className={cn(
-          'min-w-0 flex-1 overflow-hidden',
+          'relative min-w-0 flex-1 overflow-hidden',
           embedded ? 'min-h-0' : 'min-h-[420px] lg:min-h-0'
         )}
       >
-        <ScrollArea className="h-full" ref={scrollRef} onScrollCapture={handleScroll}>
+        <ScrollArea
+          className="h-full"
+          viewportClassName="[overflow-anchor:none]"
+          ref={scrollRef}
+          onScrollCapture={handleScroll}
+          onClickCapture={(event) => {
+            if (!(event.target instanceof Element) || !event.target.closest('[data-maisaka-expand]') || !scrollViewport) return
+            // 用户主动展开内容后停止跟随底部，避免新消息把展开入口推离视野。
+            const anchor = timelineVirtualizer.getVirtualItems().find((item) => item.end > scrollViewport.scrollTop)
+            scrollAnchorRef.current = anchor
+              ? { key: anchor.key, offset: scrollViewport.scrollTop - anchor.start }
+              : null
+            setAutoScroll(false)
+          }}
+        >
           <div className="min-w-0 p-4">
             {visibleTimelineEntries.length === 0 ? (
               <div className="text-muted-foreground flex flex-col items-center justify-center gap-3 py-20">
@@ -2866,6 +3028,20 @@ const MonitorTimeline = memo(function MonitorTimeline({
             )}
           </div>
         </ScrollArea>
+        <AnimatePresence>
+          {executingTool && !activeToolVisible && selectedStageStatus && (
+            <motion.div
+              key="current-tool-status"
+              initial={{ opacity: 0, y: reducedMotion ? 0 : 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: reducedMotion ? 0 : 12 }}
+              transition={{ duration: reducedMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+              className="pointer-events-none absolute right-4 bottom-3 left-4 z-20 flex justify-center"
+            >
+              <FloatingToolStatus key={activeToolCallId} status={selectedStageStatus} args={activeToolArgs} />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </Card>
     </div>
   )
