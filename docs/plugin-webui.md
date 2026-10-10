@@ -184,12 +184,12 @@ async def save_limit(self, limit: int):
 
 ## 通用文件上传与后台任务轮询（宿主1.3.6）
 
-声明兼容现有 schema_version=1。使用上传的扩展增加 `required_capabilities: ["file_upload_v1"]`，宿主注册表同时返回 capabilities；旧宿主会拒绝未知声明，前端遇到缺失能力明确提示升级。插件 manifest 要求 SDK2.11.0 与宿主1.3.6；SDK发布前，本地开发通过 `MAIBOT_PLUGIN_SDK_PATH` 使用新SDK，主程序依然兼容PyPI的2.10.0。
+声明兼容现有 schema_version=1。使用上传的扩展增加 `required_capabilities: ["file_upload"]`，宿主注册表同时返回 capabilities；旧宿主会拒绝未知声明，前端遇到缺失能力明确提示升级。插件 manifest 要求 SDK2.11.0 与宿主1.3.6；SDK发布前，本地开发通过 `MAIBOT_PLUGIN_SDK_PATH` 使用新SDK，主程序依然兼容PyPI的2.10.0。
 
 ```json
 {
   "schema_version": 1,
-  "required_capabilities": ["file_upload_v1"],
+  "required_capabilities": ["file_upload"],
   "pages": [{
     "id": "images", "title": "图片",
     "actions": {"add": {"api": "receive_image", "parameters": {"upload_id": {"type": "string", "required": true}}}},
@@ -203,3 +203,19 @@ async def save_limit(self, limit: int):
 首版仅JPEG/PNG/静态WebP，每文件20MiB、4000万像素；不支持压缩包/动画/客户端自定义路径。输入格式错误返回422，超限请求413，未登录401，未开放上传操作403。插件卸载或API下线后拒绝调用。
 
 `poll_interval_seconds` 可在页面声明为3至60秒，0（默认）不轮询；只调用queries，页面离开时停止，操作忙碌时跳过。插件必须保证queries只读，训练action冻结快照、启动独立子进程后立即返回任务编号，不阻塞网关10秒预算。缩略图、分页与每响应512KiB限制保持不变。
+
+### 交互组件能力
+
+本次宿主注册表新增 `interactive_controls`。使用以下新增交互的插件将其加入 `required_capabilities`，与上传能力并列；旧宿主明确提示不兼容，旧声明继续有效。需同步部署前端构建。
+
+- `select.presentation`：默认 `dropdown`，可用 `buttons` 展示选项按钮，仍复用同一套 `name`、`value` 和 `options`。
+- `progress`：`value` 为0至100的有限数值或数据引用，显示进度条和百分比。
+- `button.value`：可引用动态按钮文案，保留必填 `label` 作为声明标签。
+- `upload.submit_label`：手动上传按钮文案，例如“开始识别”；手动上传支持拖入文件、预览及逐张移除，参数在开始时冻结。
+- action可返回 `{"navigate_page":"images"}`。前端只导航到同一个插件已声明的页面，不接受URL或跨插件页面。此字段不影响普通action返回值。
+
+依赖检查、训练、安装等长操作应由插件后台进程执行，查询只读取缓存和状态。任务/版本界面应返回可读字段，技术JSON可放在折叠区域。
+
+上传和选择弹窗统一复用普通 `button.detail` 与顶层 `dialog.name`，按钮只能声明 `action` 或 `detail` 之一。`upload` 支持取消和重试失败文件，重试保持原批参数，关闭弹窗取消未完成请求；已接收文件保留。逐文件反馈来自插件的字符串 `message`，不由渲染器猜测业务含义。
+
+输入和按钮支持 `disabled_when`，格式同 `when`；按钮支持 `disabled_reason`，禁用时展示原因。后台轮询不禁用按钮，操作会取消旧后台查询。导航返回 `navigate_params` 时，仅目标页面查询声明的标量参数写入当前页面URL，报告选择不再依赖共享插件设置。
