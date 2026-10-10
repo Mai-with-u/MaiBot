@@ -422,6 +422,7 @@ class LLMOrchestrator:
         raise_when_empty: bool = True,
         interrupt_flag: asyncio.Event | None = None,
         session_id: str = "",
+        force_stream_mode: bool = False,
     ) -> LLMResponseResult:
         """异步生成文本响应。
 
@@ -433,6 +434,7 @@ class LLMOrchestrator:
             response_format: 响应格式约束。
             raise_when_empty: 保留字段，当前版本暂未单独使用。
             interrupt_flag: 外部中断标记；被设置时会尽快终止请求。
+            force_stream_mode: 仅为当前请求强制流式，不修改共享模型配置。
 
         Returns:
             LLMResponseResult: 统一文本响应结果对象。
@@ -457,6 +459,7 @@ class LLMOrchestrator:
             tool_options=tool_built,
             response_format=response_format,
             interrupt_flag=interrupt_flag,
+            force_stream_mode=force_stream_mode,
             session_id=session_id,
         )
         response = execution_result.api_response
@@ -492,6 +495,7 @@ class LLMOrchestrator:
         raise_when_empty: bool = True,
         interrupt_flag: asyncio.Event | None = None,
         session_id: str = "",
+        force_stream_mode: bool = False,
     ) -> LLMResponseResult:
         """基于外部消息工厂异步生成响应。
 
@@ -503,6 +507,7 @@ class LLMOrchestrator:
             response_format: 响应格式约束。
             raise_when_empty: 保留字段，当前版本暂未单独使用。
             interrupt_flag: 外部中断标记；被设置时会尽快终止请求。
+            force_stream_mode: 仅为当前请求强制流式，不修改共享模型配置。
 
         Returns:
             LLMResponseResult: 统一文本响应结果对象。
@@ -522,6 +527,7 @@ class LLMOrchestrator:
             tool_options=tool_built,
             response_format=response_format,
             interrupt_flag=interrupt_flag,
+            force_stream_mode=force_stream_mode,
             session_id=session_id,
         )
         response = execution_result.api_response
@@ -1308,6 +1314,7 @@ class LLMOrchestrator:
         audio_base64: str | None = None,
         interrupt_flag: asyncio.Event | None = None,
         session_id: str = "",
+        force_stream_mode: bool = False,
     ) -> LLMExecutionResult:
         """执行一次完整的模型调度请求。
 
@@ -1323,6 +1330,7 @@ class LLMOrchestrator:
             embedding_input: 嵌入输入文本。
             audio_base64: Base64 编码的音频数据。
             interrupt_flag: 外部中断标记。
+            force_stream_mode: 仅为当前响应请求强制流式。
 
         Returns:
             LLMExecutionResult: 单次模型执行结果对象。
@@ -1342,20 +1350,23 @@ class LLMOrchestrator:
                 exclude_models=failed_models_this_request,
                 model_name=model_name,
             )
+            if request_type == RequestType.RESPONSE and force_stream_mode:
+                # 请求级副本也覆盖重试及候选模型切换，避免改变其他任务的流式设置。
+                model_info = model_info.model_copy(update={"force_stream_mode": True})
             last_model_name = model_info.name
             trace_context.model_attempt = 0
             context_items: List[ContextItem] = []
-            if context_factory:
-                parameter_count = len(inspect.signature(context_factory).parameters)
-                if parameter_count >= 2:
-                    context_result = context_factory(client, model_info)
-                else:
-                    context_result = context_factory(client)
-                if inspect.isawaitable(context_result):
-                    context_items = await context_result
-                else:
-                    context_items = context_result
             try:
+                if context_factory:
+                    parameter_count = len(inspect.signature(context_factory).parameters)
+                    if parameter_count >= 2:
+                        context_result = context_factory(client, model_info)
+                    else:
+                        context_result = context_factory(client)
+                    if inspect.isawaitable(context_result):
+                        context_items = await context_result
+                    else:
+                        context_items = context_result
                 if request_type == RequestType.RESPONSE and context_items:
                     # 图片解码、缩放及切图在线程池执行，避免阻塞 Bot 或 WebUI 事件循环。
                     context_items = await asyncio.to_thread(normalize_context_images, context_items)
@@ -1398,7 +1409,7 @@ class LLMOrchestrator:
                     request_started_at=datetime.fromtimestamp(trace_context.current_attempt_started_at),
                 )
 
-            except ReqAbortException as e:
+            except (ReqAbortException, asyncio.CancelledError) as e:
                 self._adjust_model_usage(model_info.name, usage_penalty_delta=-1)
                 if self.request_type.startswith("maisaka."):
                     logger.debug(

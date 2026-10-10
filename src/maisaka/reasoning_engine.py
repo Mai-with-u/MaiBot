@@ -31,6 +31,7 @@ from src.core.tooling import (
     ToolSpec,
 )
 from src.llm_models.exceptions import ReqAbortException, RespNotOkException
+from src.llm_models.model_client.adapter_base import await_task_with_interrupt
 from src.llm_models.payload_content.context_item import (
     ContextImagePart,
     ContextItemBuilder,
@@ -194,14 +195,21 @@ class MaisakaReasoningEngine:
         self._runtime._bind_planner_interrupt_flag(interrupt_flag)
         self._runtime._chat_loop_service.set_interrupt_flag(interrupt_flag)
         try:
-            return await self._runtime._chat_loop_service.chat_loop_step(
-                self._runtime._chat_history,
-                injected_user_messages=injected_user_messages,
-                tail_user_messages=tail_user_messages,
-                tool_definitions=tool_definitions,
-                max_context_size=self._runtime._max_context_size,
-                logical_turn_id=self._active_logical_turn_id,
+            if global_config.experimental.planner_message_steering and self._runtime._has_pending_messages():
+                # 覆盖整理上下文到绑定中断标记之间收到消息的窗口。
+                interrupt_flag.set()
+            planner_task = asyncio.create_task(
+                self._runtime._chat_loop_service.chat_loop_step(
+                    self._runtime._chat_history,
+                    injected_user_messages=injected_user_messages,
+                    tail_user_messages=tail_user_messages,
+                    tool_definitions=tool_definitions,
+                    max_context_size=self._runtime._max_context_size,
+                    logical_turn_id=self._active_logical_turn_id,
+                )
             )
+            # 在完整请求期间监听中断，流暂时没有数据时也能取消，不采用迟到的输出。
+            return await await_task_with_interrupt(planner_task, interrupt_flag)
         except ReqAbortException:
             interrupted = True
             raise
@@ -652,14 +660,17 @@ class MaisakaReasoningEngine:
         if not self._runtime._has_pending_messages() or round_index >= self._runtime._max_internal_rounds:
             return PlannerInterruptResult(interrupted_response, extra_lines, [])
 
-        await self._runtime._wait_for_message_quiet_period()
-        self._runtime._mark_message_turn_unscheduled()
-        interrupted_messages = self._runtime._collect_pending_messages()
+        if global_config.experimental.planner_message_steering:
+            interrupted_messages = await self._ingest_pending_steering_messages()
+        else:
+            await self._runtime._wait_for_message_quiet_period()
+            self._runtime._mark_message_turn_unscheduled()
+            interrupted_messages = self._runtime._collect_pending_messages()
+            await self._ingest_messages(interrupted_messages)
         if not interrupted_messages:
             return PlannerInterruptResult(interrupted_response, extra_lines, [])
 
-        await self._ingest_messages(interrupted_messages)
-        logger.info(f"{self._runtime.log_prefix} 保持活跃状态，直接重试 Planner: 回合={round_index + 2}")
+        logger.info(f"{self._runtime.log_prefix} 保持活跃状态，直接重试 Planner: 回合={round_index + 1}")
         return PlannerInterruptResult(interrupted_response, extra_lines, interrupted_messages)
 
     @staticmethod
@@ -692,11 +703,33 @@ class MaisakaReasoningEngine:
 
         return CycleEnd("max_rounds", f"已达到内部思考轮次上限 {max_internal_rounds}，本轮处理结束。")
 
+    async def _ingest_pending_steering_messages(self) -> List[SessionMessage]:
+        """立即接入待处理消息，沿用当前思考循环，不等待连发消息静默。"""
+
+        if not self._runtime._has_pending_messages():
+            return []
+
+        self._runtime._mark_message_turn_unscheduled()
+        self._runtime._clear_message_debounce_required()
+        messages = self._runtime._collect_pending_messages()
+        await self._ingest_messages(messages)
+        logger.info(f"{self._runtime.log_prefix} 思考中消息引导已接入 {len(messages)} 条新消息")
+        if messages:
+            await self._emit_flow_step(
+                "messages.merged", "接入新消息", f"已将 {len(messages)} 条新消息接入当前思考，供下一轮判断。",
+                cycle_id=self._runtime._cycle_counter,
+            )
+        return messages
+
     async def _collect_pending_messages_before_next_round(self, round_index: int) -> list[SessionMessage]:
         """在后续内部轮次开始前合并新消息。"""
 
         if round_index <= 0 or not self._runtime._has_pending_messages():
             return []
+
+        if global_config.experimental.planner_message_steering:
+            # 工具结束后整理上下文期间仍可能收到消息，在下一次模型请求前补齐。
+            return await self._ingest_pending_steering_messages()
 
         await self._runtime._wait_for_message_quiet_period()
         pending_round_messages = self._runtime._collect_pending_messages()
@@ -749,13 +782,21 @@ class MaisakaReasoningEngine:
             self._runtime._agent_state == self._runtime._STATE_WAIT
             and not (timeout_triggered or proactive_triggered)
             and not silent_reply_frequency
+            and not (
+                global_config.experimental.planner_message_steering
+                and message_triggered
+                and self._runtime._has_pending_messages()
+            )
         ):
             self._runtime._mark_message_turn_unscheduled()
             logger.debug(f"{self._runtime.log_prefix} 当前仍处于 wait 状态，忽略消息触发并继续等待超时")
             return TurnStartContext([], None, timeout_triggered, proactive_triggered, silent_reply_frequency)
 
         if message_triggered:
-            await self._runtime._wait_for_message_quiet_period()
+            if global_config.experimental.planner_message_steering:
+                self._runtime._clear_message_debounce_required()
+            else:
+                await self._runtime._wait_for_message_quiet_period()
             self._runtime._mark_message_turn_unscheduled()
 
         cached_messages = self._runtime._collect_pending_messages() if self._runtime._has_pending_messages() else []

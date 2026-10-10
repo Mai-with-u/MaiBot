@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING
 
 from src.common.logger import get_logger
+from src.config.config import global_config
 from src.maisaka.focus import focus_mode_manager
 from src.maisaka.mode_policy import is_dynamic_reply_trigger_enabled
 
@@ -38,6 +39,17 @@ class MessageTurnScheduler:
 
         if runtime._agent_state == runtime._STATE_WAIT:
             if not runtime._is_reply_frequency_silent():
+                if global_config.experimental.planner_message_steering:
+                    if runtime._get_pending_message_count() <= 0 or runtime._message_turn_scheduled:
+                        return
+                    # 快速反应时直接续接挂起的 wait，不再经过群聊频率与退避门控。
+                    runtime._cancel_wait_timeout_task()
+                    runtime._clear_message_debounce_required()
+                    # 保留挂起状态到消费触发时，避免原工具批次收尾清掉 wait 调用关联。
+                    runtime._update_stage_status("等待已打断", "收到新消息，准备继续思考")
+                    logger.info(f"{runtime.log_prefix} 快速反应模式收到新消息，提前结束 wait 并进入 Planner")
+                    runtime._enqueue_message_turn()
+                    return
                 if runtime.chat_stream.is_group_session:
                     return
                 logger.info(f"{runtime.log_prefix} 私聊 wait 期间收到新消息，结束等待并进入 Planner")

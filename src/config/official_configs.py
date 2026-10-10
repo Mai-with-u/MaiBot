@@ -955,6 +955,19 @@ class ExperimentalConfig(ConfigBase):
     __ui_advanced__ = True
     __ui_order__ = 140
 
+    planner_message_steering: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "快速反应模式",
+                "en_US": "Quick reaction mode",
+                "ja_JP": "即応モード",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """强制 Planner 使用流式请求；思考或输出期间收到新消息立即中断并重新请求，wait 等待也可被新消息提前结束。不等待静默窗口，也不限制连续打断次数。"""
+
     replyer_retro_prompt: bool = Field(
         default=False,
         json_schema_extra={

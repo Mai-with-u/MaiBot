@@ -2,6 +2,7 @@
 
 from typing import Optional
 
+from src.config.config import global_config
 from src.core.tooling import ToolExecutionContext, ToolExecutionResult, ToolInvocation, ToolSpec
 
 from .context import BuiltinToolRuntimeContext
@@ -12,7 +13,7 @@ def get_tool_spec() -> ToolSpec:
 
     return ToolSpec(
         name="wait",
-        description="暂停当前对话并固定等待一段时间。",
+        description="暂停当前对话并等待一段时间；快速反应模式下，新消息可提前结束等待。",
         parameters_schema={
             "type": "object",
             "properties": {
@@ -60,10 +61,14 @@ async def handle_tool(
             },
         )
 
+    wait_detail = (
+        f"当前对话循环进入等待状态，最多等待 {wait_seconds} 秒；新消息可提前结束等待并继续思考。"
+        if global_config.experimental.planner_message_steering
+        else f"当前对话循环进入等待状态，将固定等待 {wait_seconds} 秒；期间收到的新消息不会提前打断本次等待。"
+    )
     return tool_ctx.build_success_result(
         invocation.tool_name,
-        f"当前对话循环进入等待状态，将固定等待 {wait_seconds} 秒；期间收到的新消息不会提前打断本次等待。"
-        f"连续 wait 次数：{current_count}/{max_count}。",
+        f"{wait_detail}连续 wait 次数：{current_count}/{max_count}。",
         metadata={
             "pause_execution": True,
             "consecutive_wait_count": current_count,

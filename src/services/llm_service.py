@@ -297,6 +297,7 @@ class LLMServiceClient:
             response_format=active_options.response_format,
             raise_when_empty=active_options.raise_when_empty,
             interrupt_flag=active_options.interrupt_flag,
+            force_stream_mode=active_options.force_stream_mode,
             session_id=self._resolve_effective_session_id(session_id),
         )
         self._record_cache_stats(result, prompt_text=prompt_text, session_id=session_id)
@@ -346,6 +347,7 @@ class LLMServiceClient:
             response_format=active_options.response_format,
             raise_when_empty=active_options.raise_when_empty,
             interrupt_flag=active_options.interrupt_flag,
+            force_stream_mode=active_options.force_stream_mode,
             session_id=self._resolve_effective_session_id(session_id),
         )
         self._record_cache_stats(result, prompt_text=prompt_text_holder.get("prompt_text"), session_id=session_id)

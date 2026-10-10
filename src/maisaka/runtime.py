@@ -119,14 +119,14 @@ class PlannerInterruptController:
         if not interrupted:
             self._consecutive_count = 0
 
-    def request(self, *, max_consecutive_count: int) -> str:
+    def request(self, *, max_consecutive_count: Optional[int]) -> str:
         """尝试发起打断，返回 request/duplicate/limit/idle。"""
 
         if self._flag is None:
             return "idle"
         if self._requested:
             return "duplicate"
-        if self._consecutive_count >= max_consecutive_count:
+        if max_consecutive_count is not None and self._consecutive_count >= max_consecutive_count:
             return "limit"
 
         self._requested = True
@@ -288,6 +288,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
             wait_until=(
                 self._pending_wait_started_at + self._pending_wait_seconds
                 if self._agent_state == self._STATE_WAIT
+                and self._wait_timeout_task is not None
                 and self._pending_wait_started_at is not None
                 and self._pending_wait_seconds is not None
                 else None
@@ -961,12 +962,14 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         return False
 
     def _request_planner_interrupt_for_message(self, message: SessionMessage) -> None:
-        """在运行中的 Planner 可打断时，按连续打断限制发起一次中断。"""
-
+        """打断运行中的 Planner；实验性消息引导不限制连续打断次数。"""
         if self._agent_state != self._STATE_RUNNING:
             return
 
-        planner_interrupt_max_count = self._planner_interrupt_max_consecutive_count
+        planner_interrupt_max_count = (
+            None if global_config.experimental.planner_message_steering else self._planner_interrupt_max_consecutive_count
+        )
+        limit_label = "不限" if planner_interrupt_max_count is None else str(planner_interrupt_max_count)
         request_result = self._planner_interrupt.request(max_consecutive_count=planner_interrupt_max_count)
         if request_result == "idle":
             return
@@ -977,7 +980,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
                 f"{self.log_prefix} 收到新消息，但当前请求已发起过一次规划器打断，"
                 f"本次不重复打断; 消息编号={message.message_id} "
                 f"连续打断次数={consecutive_count}/"
-                f"{planner_interrupt_max_count}"
+                f"{limit_label}"
             )
             return
 
@@ -986,7 +989,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
                 f"{self.log_prefix} 收到新消息，但已达到规划器连续打断上限，"
                 f"将等待当前请求自然完成; 消息编号={message.message_id} "
                 f"连续打断次数={consecutive_count}/"
-                f"{planner_interrupt_max_count}"
+                f"{limit_label}"
             )
             return
 
@@ -995,7 +998,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
             f"消息编号={message.message_id} 缓存条数={len(self.message_cache)} "
             f"时间戳={time.time():.3f} "
             f"连续打断次数={consecutive_count}/"
-            f"{planner_interrupt_max_count}"
+            f"{limit_label}"
         )
 
     def _get_effective_reply_frequency(self) -> float:
@@ -1864,6 +1867,9 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
             self._wait_timeout_task = asyncio.create_task(
                 self._schedule_wait_timeout(seconds=seconds, tool_call_id=tool_call_id)
             )
+        if global_config.experimental.planner_message_steering and self._has_pending_messages():
+            # 工具执行期间收到的消息也能唤醒刚进入的 wait，避免漏掉已有新输入。
+            self._schedule_message_turn()
 
     def _cancel_wait_timeout_task(self) -> None:
         """取消当前 wait 对应的超时任务。"""
@@ -1903,6 +1909,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         started_at = self._pending_wait_started_at
         requested_seconds = self._pending_wait_seconds
         elapsed_seconds = max(0.0, time.time() - started_at) if started_at is not None else 0.0
+        self._cancel_wait_timeout_task()
         self._pending_wait_tool_call_id = None
         self._pending_wait_logical_turn_id = None
         self._pending_wait_started_at = None
