@@ -172,7 +172,7 @@ export type DashboardStyleConfig = {
   futureRetro: FutureRetroStyleConfig
 }
 
-export const DEFAULT_DASHBOARD_STYLE: DashboardStyle = 'future-retro'
+export const DEFAULT_DASHBOARD_STYLE: DashboardStyle = 'millennium'
 
 export const DEFAULT_FUTURE_RETRO_STYLE_CONFIG: FutureRetroStyleConfig = {
   paperWarmth: 100,

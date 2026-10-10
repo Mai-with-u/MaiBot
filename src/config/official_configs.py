@@ -5277,7 +5277,7 @@ class WebUIConfig(ConfigBase):
     """WebUI 运行模式；普通使用保持 production。"""
 
     webui_style: int = Field(
-        default=1,
+        default=2,
         ge=0,
         le=2,
         json_schema_extra={
