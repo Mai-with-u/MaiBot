@@ -583,7 +583,7 @@ def process_llm_response_segments(
         protected_text = text
         kaomoji_mapping = {}
     # 提取被 () 或 [] 或 （）包裹且包含中文的内容
-    pattern = re.compile(r"[(\[（](?=.*[一-鿿]).*?[)\]）]")
+    pattern = re.compile(r"[(\[（][^()[\]（）]*[一-鿿][^()[\]（）]*[)\]）]")
     _extracted_contents = pattern.findall(protected_text)  # 在保护后的文本上查找
     # 去除 () 和 [] 及其包裹的内容
     cleaned_text = pattern.sub("", protected_text)
