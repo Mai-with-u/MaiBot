@@ -7,15 +7,19 @@ from fastapi import APIRouter, Cookie, HTTPException
 from packaging.version import Version
 from pydantic import BaseModel, Field, ValidationError
 import asyncio
+import json
 
 import httpx
 
+from src.common.logger import get_logger
 from src.config.config import MMC_VERSION
 from src.plugin_runtime.runner.manifest_validator import ManifestValidator
 from src.webui.services.git_mirror_service import get_git_mirror_service
 from src.webui.services.plugin_market_service import request_market_detail, use_github_market_data
 
 from .support import require_plugin_token
+
+logger = get_logger("webui.plugin_releases")
 
 router = APIRouter()
 
@@ -51,7 +55,119 @@ _cache: Optional[PluginReleaseIndex] = None
 _cache_time = 0.0
 
 
+def validate_release_entry(entry: PluginReleaseEntry) -> None:
+    """校验单条版本索引条目的字段一致性。
+
+    Args:
+        entry: 版本索引中的插件条目。
+
+    Raises:
+        ValueError: 安装模式与版本列表不匹配、版本重复、Tag 或 manifest ID 不匹配。
+    """
+    if bool(entry.versions or entry.rejected_releases) != (entry.mode == "releases"):
+        raise ValueError(f"版本索引安装模式不匹配：{entry.id}")
+    seen = set()
+    for release in entry.versions:
+        if release.version in seen or release.manifest.get("version") != release.version:
+            raise ValueError(f"版本索引版本重复或 manifest 不匹配：{entry.id}")
+        if release.tag not in (release.version, f"v{release.version}"):
+            raise ValueError(f"版本索引 Tag 不匹配：{entry.id}")
+        if release.manifest.get("manifest_version") == 2 and release.manifest.get("id") != entry.manifest_id:
+            raise ValueError(f"版本索引 manifest ID 不匹配：{entry.id}")
+        seen.add(release.version)
+
+
+def parse_release_index(payload: str) -> Tuple[List[PluginReleaseEntry], List[str]]:
+    """解析版本索引原始文本，逐条隔离条目级错误。
+
+    Args:
+        payload: 插件版本索引 JSON 文本。
+
+    Returns:
+        Tuple[List[PluginReleaseEntry], List[str]]: 可用条目，以及被跳过条目的说明。
+
+    Raises:
+        ValueError: 顶层结构无效（JSON 无法解析、schema_version 不是 1、plugins 不是数组）。
+    """
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"JSON 解析失败：{exc}") from exc
+    schema_version = data.get("schema_version") if isinstance(data, dict) else None
+    plugins = data.get("plugins") if isinstance(data, dict) else None
+    if isinstance(schema_version, bool) or schema_version != 1 or not isinstance(plugins, list):
+        raise ValueError('顶层结构无效：需要 {"schema_version": 1, "plugins": [...]}')
+
+    entries: List[PluginReleaseEntry] = []
+    notices: List[str] = []
+    for raw in plugins:
+        try:
+            entry = PluginReleaseEntry.model_validate(raw)
+            validate_release_entry(entry)
+        except (ValidationError, ValueError, KeyError) as exc:
+            notices.append(f"跳过无效的插件版本索引条目：{exc}")
+            continue
+        entries.append(entry)
+    return entries, notices
+
+
+def deduplicate_release_entries(
+    entries: List[PluginReleaseEntry],
+) -> Tuple[List[PluginReleaseEntry], List[str]]:
+    """按插件 ID 与 manifest ID 去重，保证每个别名只解析到一条可用记录。
+
+    同一插件出现多条记录时优先保留没有 sync_error 的记录。若候选记录同时与多条已有记录冲突
+    （其中存在可用记录），则直接跳过候选记录且**不做任何删除**，避免已有记录被移除后候选又被跳过、
+    导致插件从索引里消失。
+
+    Args:
+        entries: 已通过字段校验的索引条目。
+
+    Returns:
+        Tuple[List[PluginReleaseEntry], List[str]]: 去重后的条目，以及被跳过或被替换记录的说明。
+    """
+    kept: Dict[str, PluginReleaseEntry] = {}
+    alias_owner: Dict[str, str] = {}
+    notices: List[str] = []
+
+    def _release_aliases(entry_id: str) -> None:
+        for key, owner in list(alias_owner.items()):
+            if owner == entry_id:
+                alias_owner.pop(key, None)
+
+    for entry in entries:
+        keys = {alias.casefold() for alias in (entry.id, entry.manifest_id) if alias}
+        previous_entries: List[PluginReleaseEntry] = []
+        seen_owners: set = set()
+        for key in keys:
+            owner = alias_owner.get(key)
+            if owner is None or owner in seen_owners:
+                continue
+            seen_owners.add(owner)
+            previous = kept.get(owner)
+            if previous is not None:
+                previous_entries.append(previous)
+        if any(previous.sync_error is None for previous in previous_entries):
+            notices.append(f"跳过插件版本索引条目（插件 ID 冲突：{'/'.join(sorted(keys))}）：{entry.id}")
+            continue
+        for previous in previous_entries:
+            kept.pop(previous.id, None)
+            _release_aliases(previous.id)
+        if previous_entries:
+            replaced = "/".join(sorted(previous.id for previous in previous_entries))
+            notices.append(f"版本索引同名记录以可用记录替换同步失败记录：{replaced} → {entry.id}")
+        kept[entry.id] = entry
+        for key in keys:
+            alias_owner[key] = entry.id
+    return list(kept.values()), notices
+
+
 async def load_release_index() -> PluginReleaseIndex:
+    """加载插件版本索引，单条脏数据不影响其余条目。
+
+    Returns:
+        PluginReleaseIndex: 已剔除无效与冲突条目的版本索引。
+    """
     global _cache, _cache_time
     if _cache is not None and monotonic() - _cache_time < 5 * 60:
         return _cache
@@ -61,29 +177,15 @@ async def load_release_index() -> PluginReleaseIndex:
     if not response.get("success"):
         raise HTTPException(status_code=502, detail=f"获取插件版本索引失败：{response.get('error', '未知错误')}")
     try:
-        index = PluginReleaseIndex.model_validate_json(response["data"])
-        aliases: Dict[str, str] = {}
-        for entry in index.plugins:
-            for alias in {entry.id, entry.manifest_id} - {None}:
-                if entry.sync_error:
-                    continue
-                key = alias.casefold()
-                if key in aliases and aliases[key] != entry.id:
-                    raise ValueError(f"版本索引插件 ID 冲突：{alias}")
-                aliases[key] = entry.id
-            seen = set()
-            for release in entry.versions:
-                if release.version in seen or release.manifest.get("version") != release.version:
-                    raise ValueError(f"版本索引版本重复或 manifest 不匹配：{entry.id}")
-                if release.tag not in (release.version, f"v{release.version}"):
-                    raise ValueError(f"版本索引 Tag 不匹配：{entry.id}")
-                if release.manifest.get("manifest_version") == 2 and release.manifest.get("id") != entry.manifest_id:
-                    raise ValueError(f"版本索引 manifest ID 不匹配：{entry.id}")
-                seen.add(release.version)
-            if bool(entry.versions or entry.rejected_releases) != (entry.mode == "releases"):
-                raise ValueError(f"版本索引安装模式不匹配：{entry.id}")
-    except (ValidationError, ValueError, KeyError) as exc:
+        entries, notices = parse_release_index(response["data"])
+    except ValueError as exc:
         raise HTTPException(status_code=502, detail=f"插件版本索引无效：{exc}") from exc
+    entries, dedup_notices = deduplicate_release_entries(entries)
+    for notice in notices + dedup_notices:
+        logger.warning(notice)
+    if notices or dedup_notices:
+        logger.warning(f"插件版本索引共忽略 {len(notices) + len(dedup_notices)} 条记录，其余 {len(entries)} 条已加载")
+    index = PluginReleaseIndex(schema_version=1, plugins=entries)
     _cache, _cache_time = index, monotonic()
     return index
 
@@ -121,17 +223,7 @@ def parse_market_release_entry(data: Dict[str, Any], plugin_id: Optional[str] = 
     })
     if plugin_id is not None and plugin_id.casefold() not in {entry.id.casefold(), (entry.manifest_id or "").casefold()}:
         raise ValueError("插件中心返回的插件 ID 与请求不一致")
-    if bool(entry.versions or entry.rejected_releases) != (entry.mode == "releases"):
-        raise ValueError(f"版本索引安装模式不匹配：{entry.id}")
-    seen = set()
-    for release in entry.versions:
-        if release.version in seen or release.manifest.get("version") != release.version:
-            raise ValueError(f"版本索引版本重复或 manifest 不匹配：{entry.id}")
-        if release.tag not in (release.version, f"v{release.version}"):
-            raise ValueError(f"版本索引 Tag 不匹配：{entry.id}")
-        if release.manifest.get("manifest_version") == 2 and release.manifest.get("id") != entry.manifest_id:
-            raise ValueError(f"版本索引 manifest ID 不匹配：{entry.id}")
-        seen.add(release.version)
+    validate_release_entry(entry)
     return entry
 
 

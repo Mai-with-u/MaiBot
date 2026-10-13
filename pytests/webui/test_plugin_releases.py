@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
@@ -440,3 +440,90 @@ def test_missing_plugin_dependency_blocks_install(local_install):
     response = install(client)
     assert response.status_code == 400 and "插件依赖不满足" in response.text
     assert support.resolve_installed_plugin_path("example.demo") is None
+
+def raw_release(version: str = "1.0.0", **overrides: Any) -> Dict[str, Any]:
+    return {
+        "version": version, "tag": f"v{version}", "commit": "a" * 40, "prerelease": False,
+        "manifest": manifest(version), **overrides,
+    }
+
+
+def raw_entry(
+    entry_id: str, mode: str = "branch", versions: Optional[List[Dict[str, Any]]] = None, **overrides: Any
+) -> Dict[str, Any]:
+    data: Dict[str, Any] = {
+        "id": entry_id, "manifest_id": entry_id, "repositoryUrl": "https://github.com/example/demo",
+        "mode": mode, "versions": versions if versions is not None else [],
+    }
+    data.update(overrides)
+    return data
+
+
+def index_payload(plugins: List[Dict[str, Any]]) -> str:
+    return json.dumps({"schema_version": 1, "plugins": plugins}, ensure_ascii=False)
+
+
+def fake_mirror(monkeypatch, payload: str):
+    class Mirror:
+        async def fetch_raw_file(self, **_kwargs):
+            return {"success": True, "data": payload}
+
+    monkeypatch.setattr(releases, "get_git_mirror_service", lambda: Mirror())
+    monkeypatch.setattr(releases, "_cache", None)
+    monkeypatch.setattr(releases, "_cache_time", 0.0)
+
+
+def test_index_skips_entries_with_invalid_fields(monkeypatch, caplog):
+    """缺少必填字段或版本号格式非法的条目只跳过该条，其余条目照常加载。"""
+    fake_mirror(monkeypatch, index_payload([
+        raw_entry("bad.schema", repositoryUrl="not-a-url"),
+        raw_entry("bad.version", mode="releases", versions=[raw_release("1.0")]),
+        raw_entry("bad.mode", mode="releases"),
+        raw_entry("ok.demo"),
+    ]))
+    with caplog.at_level("WARNING"):
+        index = asyncio.run(releases.load_release_index())
+    assert [item.id for item in index.plugins] == ["ok.demo"]
+    assert "跳过无效的插件版本索引条目" in caplog.text
+
+
+def test_index_skips_statement_invalid_json_with_502(monkeypatch):
+    """整份索引 JSON 无法解析时仍然返回 502。"""
+    fake_mirror(monkeypatch, "{not json")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(releases.load_release_index())
+    assert exc.value.status_code == 502
+
+
+def test_index_keeps_one_usable_entry_per_alias(monkeypatch):
+    """同名记录优先保留可用记录，保证每个别名只解析到一条记录。"""
+    fake_mirror(monkeypatch, index_payload([
+        raw_entry("example.demo", sync_error="Tag 被修改"),
+        raw_entry("legacy.demo", manifest_id="example.demo"),
+    ]))
+    index = asyncio.run(releases.load_release_index())
+    assert [item.id for item in index.plugins] == ["legacy.demo"]
+    resolved = asyncio.run(releases.load_plugin_release_entry("example.demo"))
+    assert resolved is not None and resolved.id == "legacy.demo"
+
+
+def test_index_deduplicates_same_id_records(monkeypatch):
+    """两条完全相同的 ID 只保留一条，避免索引顺序决定安装目标。"""
+    fake_mirror(monkeypatch, index_payload([
+        raw_entry("example.demo"),
+        raw_entry("example.demo"),
+    ]))
+    index = asyncio.run(releases.load_release_index())
+    assert [item.id for item in index.plugins] == ["example.demo"]
+
+
+def test_index_keeps_entries_when_conflict_cannot_be_resolved(monkeypatch):
+    """候选记录同时撞上可用记录时只跳过候选，不得删除已有记录（否则插件会从索引里消失）。"""
+    fake_mirror(monkeypatch, index_payload([
+        raw_entry("example.demo"),
+        raw_entry("dup.demo", manifest_id="dup.alias", sync_error="Tag 被修改"),
+        raw_entry("dup.demo", manifest_id="example.demo"),
+    ]))
+    index = asyncio.run(releases.load_release_index())
+    assert sorted(item.id for item in index.plugins) == ["dup.demo", "example.demo"]
+    assert asyncio.run(releases.load_plugin_release_entry("dup.alias")) is not None
