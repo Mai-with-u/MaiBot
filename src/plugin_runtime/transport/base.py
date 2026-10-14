@@ -9,13 +9,19 @@
 
 import asyncio
 import contextlib
+import os
 import struct
 from abc import ABC, abstractmethod
 from typing import Awaitable, Callable
 
 # 分帧常量
 FRAME_HEADER_SIZE = 4  # 4 字节长度前缀
-MAX_FRAME_SIZE = 16 * 1024 * 1024  # 16 MB 最大帧大小
+# 单帧上限。默认 64 MB。
+# 插件侧的入站消息会把图片以 base64 内联（例如一条含多张图的合并转发可以到 40 MB 以上），
+# 16 MB 会让整条消息被拒收，且宿主侧只留下一条「后台任务异常」，看不出是哪条消息、多大。
+# 可用环境变量覆盖（单位字节）；需要恢复旧行为时设为 16777216 即可：
+#   MAIBOT_PLUGIN_MAX_FRAME_SIZE=16777216
+MAX_FRAME_SIZE = int(os.environ.get("MAIBOT_PLUGIN_MAX_FRAME_SIZE") or 64 * 1024 * 1024)
 
 
 class ConnectionClosed(Exception):
