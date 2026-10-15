@@ -115,7 +115,7 @@ export const ModelCardList = React.memo(function ModelCardList({
                   />
                 </div>
                 <p
-                  className="text-muted-foreground text-[11px] leading-snug break-all"
+                  className="text-muted-foreground line-clamp-2 text-[11px] leading-snug break-all"
                   title={model.model_identifier}
                 >
                   {model.model_identifier}
@@ -159,7 +159,7 @@ export const ModelCardList = React.memo(function ModelCardList({
                 </Button>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-x-2 gap-y-1.5 text-xs">
+            <div className="grid min-w-0 grid-cols-2 gap-x-2 gap-y-1.5 text-xs [&>div]:min-w-0">
               <div>
                 <span className="text-muted-foreground text-xs">提供商</span>
                 <p className="truncate font-medium">{model.api_provider}</p>

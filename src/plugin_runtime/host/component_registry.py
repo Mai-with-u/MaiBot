@@ -74,6 +74,19 @@ def _normalize_chat_scope(raw_value: Any) -> ComponentChatScope:
     return "all"
 
 
+def _normalize_platforms(raw_platforms: Any, component_name: str) -> Set[str]:
+    """注册时校验 Tool 和回复扩展的平台声明，不依赖调用方使用哪个 SDK。"""
+    if raw_platforms is None:
+        raw_platforms = []
+    elif isinstance(raw_platforms, str):
+        raw_platforms = [raw_platforms]
+    if not isinstance(raw_platforms, list) or any(
+        not isinstance(platform, str) or not platform.strip() for platform in raw_platforms
+    ):
+        raise ValueError(f"{component_name} platforms 必须是非空平台名称字符串或字符串列表；省略、None 或 [] 表示不限平台")
+    return {platform.strip().lower() for platform in raw_platforms}
+
+
 class StatusDict(TypedDict):
     total: int
     action: int
@@ -128,13 +141,14 @@ class ComponentEntry:
         }
 
 class ReplyExtensionEntry(ComponentEntry):
-    """随 reply 注册的命名空间参数和回复处理器。"""
+    """随 reply 注册的命名空间参数和回复处理器，platforms 与 Tool 作用域规则一致。"""
 
     def __init__(
         self, name: str, component_type: str, plugin_id: str, metadata: Dict[str, Any],
         chat_scope: str = "all", allowed_session: Optional[List[str]] = None,
     ) -> None:
         super().__init__(name, component_type, plugin_id, metadata, chat_scope, allowed_session)
+        self.platforms: Set[str] = _normalize_platforms(metadata.get("platforms"), "ReplyExtension")
         if not name.strip() or chat_scope.strip().lower() not in {"all", "group", "private"}:
             raise ValueError("回复扩展名称不能为空，chat_scope 必须是 all/group/private")
         self.parameters_schema: Dict[str, Any] = validate_parameter_schema(metadata.get("parameters_schema"))
@@ -198,16 +212,7 @@ class ToolEntry(ComponentEntry):
         chat_scope: str = "all",
         allowed_session: Optional[List[str]] = None,
     ) -> None:
-        raw_platforms = metadata.get("platforms")
-        if raw_platforms is None:
-            raw_platforms = []
-        elif isinstance(raw_platforms, str):
-            raw_platforms = [raw_platforms]
-        if not isinstance(raw_platforms, list) or any(
-            not isinstance(platform, str) or not platform.strip() for platform in raw_platforms
-        ):
-            raise ValueError("Tool platforms 必须是非空平台名称字符串或字符串列表；省略、None 或 [] 表示不限平台")
-        self.platforms: Set[str] = {platform.strip().lower() for platform in raw_platforms}
+        self.platforms: Set[str] = _normalize_platforms(metadata.get("platforms"), "Tool")
         self.description: str = str(
             metadata.get("description", "") or metadata.get("brief_description", "") or f"工具 {name}"
         ).strip()
@@ -944,8 +949,8 @@ class ComponentRegistry:
         group_id: Optional[str] = None,
         platform: Optional[str] = None,
     ):
-        # 无上下文的查询用于组件清单；有平台上下文时过滤 Tool 的适用平台。
-        if isinstance(component, ToolEntry) and component.platforms and platform is not None:
+        # 无上下文的查询用于组件清单；有平台上下文时过滤 Tool 和回复扩展的适用平台。
+        if isinstance(component, (ToolEntry, ReplyExtensionEntry)) and component.platforms and platform is not None:
             if platform.strip().lower() not in component.platforms:
                 return False
         if session_id and session_id in component.disabled_session:

@@ -144,7 +144,8 @@ class MainSystem:
         a_memorix_task = asyncio.create_task(a_memorix_host_service.start(), name="a_memorix_start")
 
         await asyncio.sleep(0)
-        prompt_manager.load_prompts()
+        # 模板扫描、路径解析和文件读取在线程中完成，避免占住主循环导致 Runner 握手超时。
+        await asyncio.to_thread(prompt_manager.load_prompts)
 
         from src.emoji_system.emoji_manager import emoji_manager
 

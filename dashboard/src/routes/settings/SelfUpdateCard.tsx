@@ -38,7 +38,7 @@ function formatTime(timestamp: number): string {
 }
 
 function formatRevision(version: string, commit: string): string {
-  return `${version} (${commit.slice(0, 8)})`
+  return commit ? `${version} (${commit.slice(0, 8)})` : version
 }
 
 /** 主程序自更新卡片：检查官方仓库的新版本，并在确认后更新、重启。 */
@@ -127,7 +127,9 @@ function SelfUpdateCardContent() {
             <p className="mt-1 text-xs sm:text-sm text-muted-foreground break-all">
               {t('settings.selfUpdate.current', { version: status.current_version })}
               {status.branch && ` · ${status.branch}`}
-              {status.current_commit && ` · ${status.current_commit.slice(0, 8)}`}
+              {status.deployment_type === 'package'
+                ? ' · PyPI'
+                : status.current_commit && ` · ${status.current_commit.slice(0, 8)}`}
             </p>
           )}
         </div>
@@ -179,7 +181,9 @@ function SelfUpdateCardContent() {
         {status?.supported && (
           <p className="text-muted-foreground break-all">
             {status.source_name && `${t('settings.selfUpdate.source', { name: status.source_name })} · `}
-            {t('settings.selfUpdate.sourceHint')}
+            {t(status.deployment_type === 'package'
+              ? 'settings.selfUpdate.packageSourceHint'
+              : 'settings.selfUpdate.sourceHint')}
           </p>
         )}
       </div>
@@ -196,9 +200,10 @@ interface AvailableUpdateProps {
 
 function AvailableUpdate({ status, busy, applying, onApply }: AvailableUpdateProps) {
   const { t } = useTranslation()
+  const packaged = status.deployment_type === 'package'
   const versionChanged =
     status.latest_version !== null && status.latest_version !== status.current_version
-  const targetLabel = formatRevision(
+  const targetLabel = packaged ? status.latest_version ?? status.current_version : formatRevision(
     status.latest_version ?? status.current_version,
     status.latest_commit ?? ''
   )
@@ -211,12 +216,12 @@ function AvailableUpdate({ status, busy, applying, onApply }: AvailableUpdatePro
             ? t('settings.selfUpdate.newVersion', { version: status.latest_version })
             : t('settings.selfUpdate.newCommits', { count: status.behind })}
         </p>
-        <p className="text-muted-foreground">
+        {!packaged && <p className="text-muted-foreground">
           {t('settings.selfUpdate.behind', { branch: status.branch, count: status.behind })}
-        </p>
+        </p>}
       </div>
 
-      <ul className="max-h-40 space-y-1 overflow-y-auto rounded-md bg-background/60 p-2">
+      {!packaged && <ul className="max-h-40 space-y-1 overflow-y-auto rounded-md bg-background/60 p-2">
         {status.commits.map((commit) => (
           <li key={commit.short_id} className="flex gap-2">
             <code className="shrink-0 text-muted-foreground">{commit.short_id}</code>
@@ -228,7 +233,7 @@ function AvailableUpdate({ status, busy, applying, onApply }: AvailableUpdatePro
             {t('settings.selfUpdate.moreCommits', { count: status.commits.length })}
           </li>
         )}
-      </ul>
+      </ul>}
 
       {status.dependencies_changed && status.dependency_tool && (
         <p className="text-muted-foreground">
@@ -271,7 +276,9 @@ function AvailableUpdate({ status, busy, applying, onApply }: AvailableUpdatePro
             <AlertDialogTitle>
               {t('settings.selfUpdate.confirmTitle', { version: targetLabel })}
             </AlertDialogTitle>
-            <AlertDialogDescription>{t('settings.selfUpdate.confirmDesc')}</AlertDialogDescription>
+            <AlertDialogDescription>{t(packaged
+              ? 'settings.selfUpdate.packageConfirmDesc'
+              : 'settings.selfUpdate.confirmDesc')}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t('settings.selfUpdate.cancel')}</AlertDialogCancel>

@@ -44,6 +44,19 @@ export interface JargonChatListResponse {
   data: JargonChatInfo[]
 }
 
+export interface JargonGroupInfo {
+  index: number
+  name: string
+  session_ids: string[]
+  members: JargonChatInfo[]
+  is_global: boolean
+}
+
+export interface JargonGroupListResponse {
+  success: boolean
+  data: JargonGroupInfo[]
+}
+
 /**
  * 黑话导出的聊天目标信息
  */

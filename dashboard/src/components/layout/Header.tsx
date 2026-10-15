@@ -7,7 +7,6 @@ import {
   Database,
   FileText,
   Globe,
-  LogOut,
   Moon,
   MoreHorizontal,
   Search,
@@ -44,7 +43,6 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toggleThemeWithTransition } from '@/components/use-theme'
 import { useBackground } from '@/hooks/use-background'
-import { logout } from '@/lib/auth'
 import { isElectron } from '@/lib/runtime'
 import { ThemeProviderContext } from '@/lib/theme-context'
 import { cn } from '@/lib/utils'
@@ -99,7 +97,6 @@ type HeaderActionId =
   | 'language'
   | 'theme'
   | 'collapse'
-  | 'logout'
   | 'extensions'
 
 export function Header({
@@ -146,7 +143,7 @@ export function Header({
   const workspaceTabsKey = workspaceTabs.map((tab) => `${tab.value}:${tab.labelKey}`).join('|')
   const { themeConfig } = useContext(ThemeProviderContext)
   // 千禧风格的顶栏要放得下键帽，比其它风格高一截；高度由动画驱动，所以在这里按风格取值。
-  const expandedTopbarHeight = themeConfig.dashboardStyle === 'millennium' ? 70 : 42
+  const expandedTopbarHeight = themeConfig.dashboardStyle === 'millennium' ? 52 : 42
   // 原版风格和千禧一样用顶栏里的按钮收起顶栏，不再显示顶栏下沿的滑条。
   const isModernStyle = themeConfig.dashboardStyle === 'modern'
   const currentLang = i18nInstance.language || 'zh'
@@ -284,10 +281,6 @@ export function Header({
     }
   }, [workspaceMode, workspaceTabsKey, themeConfig.dashboardStyle])
 
-  const handleLogout = async () => {
-    await logout()
-  }
-
   const activeHeaderAction: HeaderActionId | null = languageMenuOpen ? 'language' : null
   const highlightedHeaderAction =
     hoveredWorkspace === null ? (hoveredHeaderAction ?? activeHeaderAction) : null
@@ -401,31 +394,6 @@ export function Header({
       )}
       <div className={cn(topbarCollapsed ? 'hidden' : 'contents')}>
         <div className="relative z-10 flex h-full min-h-0 items-center justify-between gap-2">
-          {/* 千禧风格下此槽位占据实际布局宽度：宽度从 0 展开，把工作区键平滑推开而不是瞬间挤开。
-              隐藏态左侧留出侧栏宽度，工作区键停在设置工作区时的位置，入场/退场只做一次单向移动。 */}
-          <motion.div
-            id="log-viewer-topbar-tabs"
-            className={cn(
-              'absolute top-1/2 left-0 hidden min-w-0 shrink-0 -translate-y-1/2 items-center [&>*]:shrink-0',
-              workspaceMode === 'logs' && 'sm:flex',
-              // 展开/收起过程中裁掉尚未露出的部分；静止后放开，避免裁掉键帽阴影。
-              !(logSwitcherShown && logSwitcherSettled) && 'pointer-events-none overflow-x-clip'
-            )}
-            initial={false}
-            animate={
-              logSwitcherShown
-                ? { opacity: 1, width: 'auto', marginLeft: 0 }
-                : { opacity: 0, width: 0, marginLeft: logSwitcherInset }
-            }
-            transition={
-              logSwitcherShown
-                ? // 宽度动画跑在主线程：等日志页挂载、上滑完成后再展开，避开最重的那几帧
-                  { duration: 0.36, delay: 0.28, ease: [0.22, 1, 0.36, 1] }
-                : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }
-            }
-            onAnimationComplete={() => setLogSwitcherSettled(logSwitcherShown)}
-          />
-
           <div className="flex min-w-0 shrink-0 items-center gap-2 sm:gap-4">
 
             {/* 固定模式显示左折线；悬浮模式展开后由侧栏内的右折线切回固定模式。
@@ -644,6 +612,31 @@ export function Header({
                   <Search className="h-4 w-4" />
                 </button>
               </form>
+              {/* 千禧风格下日志切换槽位放在搜索框右侧，并参与正常布局；其他风格保留左侧定位。
+                  宽度从 0 展开，入场/退场只做一次单向移动。 */}
+              <motion.div
+                id="log-viewer-topbar-tabs"
+                className={cn(
+                  'absolute top-1/2 left-0 hidden min-w-0 shrink-0 -translate-y-1/2 items-center [&>*]:shrink-0',
+                  workspaceMode === 'logs' && 'sm:flex',
+                  // 展开/收起过程中裁掉尚未露出的部分；静止后放开，避免裁掉键帽阴影。
+                  !(logSwitcherShown && logSwitcherSettled) && 'pointer-events-none overflow-x-clip'
+                )}
+                initial={false}
+                animate={
+                  logSwitcherShown
+                    ? { opacity: 1, width: 'auto', marginLeft: 0 }
+                    : { opacity: 0, width: 0, marginLeft: themeConfig.dashboardStyle === 'millennium' ? 0 : logSwitcherInset }
+                }
+                transition={
+                  logSwitcherShown
+                    ? // 宽度动画跑在主线程：等日志页挂载、上滑完成后再展开，避开最重的那几帧
+                      { duration: 0.36, delay: 0.28, ease: [0.22, 1, 0.36, 1] }
+                    : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }
+                }
+                onAnimationComplete={() => setLogSwitcherSettled(logSwitcherShown)}
+              />
+
               {/* 后端切换按钮（仅 Electron） */}
             {isElectron() && (
               <>
@@ -815,30 +808,6 @@ export function Header({
               </Button>
             )}
 
-            {/* 分隔线 */}
-            <div className="bg-border hidden h-6 w-px sm:block" />
-
-            {/* 登出按钮 */}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => {
-                setHoveredHeaderAction('logout')
-                void handleLogout()
-              }}
-              title={t('header.logout')}
-              aria-label={t('header.logout')}
-              data-dashboard-header-action="true"
-              data-header-action-highlighted={
-                highlightedHeaderAction === 'logout' ? 'true' : 'false'
-              }
-              onPointerEnter={() => handleHeaderActionEnter('logout')}
-              onPointerLeave={handleHeaderActionLeave}
-              className="relative isolate hidden border-0 bg-transparent shadow-none sm:inline-flex"
-            >
-              {renderHeaderActionPill('logout')}
-              <LogOut className="h-4 w-4" />
-            </Button>
             </LayoutGroup>
 
             <DropdownMenu>
@@ -895,10 +864,6 @@ export function Header({
                     ))}
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
-                <DropdownMenuItem onClick={handleLogout} className="cursor-pointer gap-2">
-                  <LogOut className="h-4 w-4" />
-                  {t('header.logoutLabel')}
-                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>

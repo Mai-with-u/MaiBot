@@ -134,6 +134,10 @@ def run_runner_process():
 
     def apply_update() -> bool:
         result = apply_pending_update(logger)
+        if PACKAGED_INSTALL and result is not None and result.rollback_error:
+            # 依赖恢复未完成时不能继续启动 Worker，避免把半更新的环境当成旧版运行。
+            logger.critical(f"包更新回滚失败，已停止启动；请手动修复工具环境: {result.rollback_error}")
+            raise SystemExit(1)
         return result is not None and result.success
 
     # run_runner 会给子进程加上 Worker 标记；自更新成功后改由新代码的 Runner 接手。

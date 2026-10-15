@@ -1106,8 +1106,6 @@ export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
   }, [activeTab, reasoningToolbarVisible, topbarTabsRoot])
 
   const renderTopbarSwitcherMeasure = () => {
-    const showReasoningRefresh = activeTab === 'reasoning' && !reasoningToolbarVisible
-
     return (
       <div
         data-log-viewer-switcher-measure="true"
@@ -1128,13 +1126,17 @@ export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
             <span>详细统计</span>
           </div>
         </div>
-        {showReasoningRefresh && <div className="h-9 w-9" />}
       </div>
     )
   }
 
   const renderTabSwitcher = (includeTopbarActions = false, compact = false) => {
-    const labelClassName = compact ? 'sr-only' : undefined
+    const labelClassName = compact
+      ? includeTopbarActions
+        ? 'pointer-events-none absolute top-full left-1/2 z-50 mt-2 origin-top -translate-x-1/2 scale-y-0 whitespace-nowrap rounded-md border bg-popover px-3 py-2 text-xs text-popover-foreground opacity-0 shadow-md transition-[transform,opacity] duration-150 group-hover:scale-y-100 group-hover:opacity-100 group-focus-visible:scale-y-100 group-focus-visible:opacity-100 motion-reduce:transition-none'
+        : 'sr-only'
+      : undefined
+    const triggerClassName = cn('group relative gap-1.5', includeTopbarActions && compact && 'h-9 w-9 p-0')
 
     return (
       <div className="flex min-w-0 items-center gap-2">
@@ -1142,15 +1144,15 @@ export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
           data-log-viewer-switcher={includeTopbarActions ? 'true' : undefined}
           data-log-viewer-switcher-compact={includeTopbarActions && compact ? 'true' : undefined}
         >
-          <TabsTrigger value="terminal" className="gap-1.5" aria-label="终端">
+          <TabsTrigger value="terminal" className={triggerClassName} aria-label="终端">
             <Terminal className="h-4 w-4" />
             <span className={labelClassName}>终端</span>
           </TabsTrigger>
-          <TabsTrigger value="reasoning" className="gap-1.5" aria-label="推理过程">
+          <TabsTrigger value="reasoning" className={triggerClassName} aria-label="推理过程">
             <BrainCircuit className="h-4 w-4" />
             <span className={labelClassName}>推理过程</span>
           </TabsTrigger>
-          <TabsTrigger value="statistics" className="gap-1.5" aria-label="详细统计">
+          <TabsTrigger value="statistics" className={triggerClassName} aria-label="详细统计">
             <BarChart3 className="h-4 w-4" />
             <span className={labelClassName}>详细统计</span>
           </TabsTrigger>
@@ -1201,13 +1203,13 @@ export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
         <div id={toolbarContainerId} className="flex min-w-0 flex-1 justify-end" />
       </div>
       {showSwitchHint && (
-        // 提示说的是桌面顶栏左上角的切换，手机上切换就在页面顶部，不需要这条提示
+        // 提示说的是桌面顶栏的切换，手机上切换就在页面顶部，不需要这条提示
         <div className="shrink-0 border-b px-3 py-2 max-lg:hidden lg:px-4">
           <div className="border-primary/30 bg-primary/5 flex items-start gap-2 rounded-md border px-3 py-2 text-sm">
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
               <span className="text-foreground font-medium">小提示</span>
               <span className="text-muted-foreground">
-                可以在左上角切换「终端」「推理过程」和「详细统计」。
+                可以在顶栏切换「终端」「推理过程」和「详细统计」。
               </span>
             </div>
             <Button

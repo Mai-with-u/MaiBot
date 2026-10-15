@@ -4,6 +4,8 @@ from typing import Awaitable, Callable, Optional
 
 from sqlmodel import select
 
+import asyncio
+
 from src.chat.message_receive.message import SessionMessage
 from src.common.data_models.message_component_data_model import EmojiComponent, ForwardNodeComponent, ImageComponent
 from src.common.database.database import get_db_session
@@ -38,7 +40,9 @@ async def refresh_chat_history_visual_placeholders(
 
         original_message = history_message.original_message
         if original_message is None:
-            visual_components_updated = _refresh_pending_visual_components(history_message.raw_message.components)
+            visual_components_updated = await asyncio.to_thread(
+                _refresh_pending_visual_components, history_message.raw_message.components
+            )
             if not visual_components_updated:
                 continue
 
@@ -46,7 +50,9 @@ async def refresh_chat_history_visual_placeholders(
             refreshed_count += 1
             continue
 
-        visual_components_updated = _refresh_pending_visual_components(original_message.raw_message.components)
+        visual_components_updated = await asyncio.to_thread(
+            _refresh_pending_visual_components, original_message.raw_message.components
+        )
         if visual_components_updated:
             await original_message.process(
                 enable_heavy_media_analysis=False,

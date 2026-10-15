@@ -58,6 +58,7 @@ from src.maisaka.context.planner_messages import extract_quote_ids_from_message_
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
 from src.maisaka.memory.mid_term import is_mid_term_memory_message
 from src.maisaka.visual.message_limiter import limit_latest_images_in_messages
+from src.maisaka.visual.mode_utils import resolve_enable_visual_planner
 from src.plugin_runtime.hook_payloads import deserialize_prompt_items, serialize_prompt_items
 
 from .maisaka_expression_selector import maisaka_expression_selector
@@ -1009,6 +1010,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         selected_expressions: Optional[List[Dict[str, Any]]] = None,
         sub_agent_runner: Optional[Callable[[str], Awaitable[str]]] = None,
         reply_tool_args: Optional[Dict[str, Any]] = None,
+        image_recognition_refresher: Optional[Callable[[List[LLMContextMessage]], Awaitable[int]]] = None,
     ) -> Tuple[bool, ReplyGenerationResult]:
         def finalize(success_value: bool) -> Tuple[bool, ReplyGenerationResult]:
             self._persist_reply_preview(result, stream_id=stream_id, reply_reason=reply_reason)
@@ -1163,6 +1165,17 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                 api_provider = getattr(_client, "api_provider", None)
                 active_client_type = str(getattr(api_provider, "client_type", "") or "")
                 prompt_started_at = time.perf_counter()
+                enable_visual_message = self._resolve_enable_visual_message(model_info)
+                # 视觉 planner 不等待识图；纯文本 replyer 在实际模型选定后补做相同的刷新和等待。
+                if (
+                    not enable_visual_message
+                    and resolve_enable_visual_planner()
+                    and image_recognition_refresher is not None
+                ):
+                    await image_recognition_refresher(chat_history)
+                    filtered_history[:] = [
+                        message for message in chat_history if self._should_keep_replyer_history_message(message)
+                    ]
                 # 视觉请求构建会解码、缩放和编码图片，在工作线程中执行，避免阻塞聊天事件循环。
                 built_request_messages = await asyncio.to_thread(
                     self._build_request_messages,
@@ -1172,7 +1185,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                     expression_habits=merged_expression_habits,
                     reply_requirements=reply_requirements_for_attempt,
                     stream_id=stream_id,
-                    enable_visual_message=self._resolve_enable_visual_message(model_info),
+                    enable_visual_message=enable_visual_message,
                     reply_tool_args=dict(reply_tool_args_for_attempt),
                     think_level=think_level,
                 )

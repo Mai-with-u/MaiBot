@@ -182,7 +182,7 @@ class MemoryEmbeddingStateService(KernelServiceBase):
         return bool(self._cfg("embedding.fallback.allow_metadata_only_write", True))
 
     def _embedding_probe_interval_seconds(self) -> float:
-        return max(10.0, float(self._cfg("embedding.fallback.probe_interval_seconds", 180) or 180))
+        return max(10.0, float(self._cfg("embedding.fallback.probe_interval_seconds", 600) or 600))
 
     def _paragraph_vector_backfill_enabled(self) -> bool:
         return bool(self._cfg("embedding.paragraph_vector_backfill.enabled", True))

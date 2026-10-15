@@ -26,6 +26,7 @@ vi.mock('@/lib/jargon-api', () => ({
   exportJargons: vi.fn(),
   getJargonChatList: vi.fn(),
   getJargonDetail: vi.fn(),
+  getJargonGroups: vi.fn().mockResolvedValue({ success: true, data: [] }),
   getJargonList: vi.fn(),
   getJargonStats: vi.fn(),
 }))

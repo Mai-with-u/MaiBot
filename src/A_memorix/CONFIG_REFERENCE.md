@@ -30,7 +30,7 @@ quantization_type = "int8"
 
 [embedding.fallback]
 enabled = true
-probe_interval_seconds = 180
+probe_interval_seconds = 600
 allow_metadata_only_write = true
 
 [embedding.paragraph_vector_backfill]
@@ -172,7 +172,7 @@ default_sample_size = 24
 - `embedding.quantization_type`
 : 当前主路径仅建议 `int8`。
 - `embedding.fallback.enabled` (默认 `true`)
-- `embedding.fallback.probe_interval_seconds` (默认 `180`)
+- `embedding.fallback.probe_interval_seconds` (默认 `600`)
 - `embedding.fallback.allow_metadata_only_write` (默认 `true`)
 - `embedding.paragraph_vector_backfill.enabled` (默认 `true`)
 - `embedding.paragraph_vector_backfill.interval_seconds` (默认 `60`)

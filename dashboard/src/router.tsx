@@ -130,14 +130,23 @@ const emojiManagementRoute = createRoute({
   ),
 })
 
-// 资源管理路由 - 表达方式管理
+// 资源管理路由 - 学习（表达方式与黑话）
+const learningRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/resource/learning',
+  validateSearch: (search: Record<string, unknown>): { tab: 'expression' | 'jargon' } => ({
+    tab: search.tab === 'jargon' ? 'jargon' : 'expression',
+  }),
+  component: lazyRouteComponent(() => import('./routes/resource/learning'), 'LearningPage'),
+})
+
+// 旧表达方式地址进入学习页的表达页签。
 const expressionManagementRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/resource/expression',
-  component: lazyRouteComponent(
-    () => import('./routes/resource/expression/index.tsx'),
-    'ExpressionManagementPage'
-  ),
+  beforeLoad: () => {
+    throw redirect({ to: '/resource/learning', search: { tab: 'expression' }, replace: true })
+  },
 })
 
 // 资源管理路由 - 人物信息管理
@@ -147,14 +156,13 @@ const personManagementRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/person'), 'PersonManagementPage'),
 })
 
-// 资源管理路由 - 黑话管理
+// 旧黑话地址进入学习页的黑话页签。
 const jargonManagementRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/resource/jargon',
-  component: lazyRouteComponent(
-    () => import('./routes/resource/jargon/index.tsx'),
-    'JargonManagementPage'
-  ),
+  beforeLoad: () => {
+    throw redirect({ to: '/resource/learning', search: { tab: 'jargon' }, replace: true })
+  },
 })
 
 // 资源管理路由 - 知识库图谱可视化
@@ -385,6 +393,7 @@ const routeTree = rootRoute.addChildren([
     modelConfigRoute,
     promptManagementRoute,
     emojiManagementRoute,
+    learningRoute,
     expressionManagementRoute,
     jargonManagementRoute,
     personManagementRoute,

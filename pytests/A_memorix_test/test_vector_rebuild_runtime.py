@@ -2132,11 +2132,13 @@ async def test_rebuild_retries_failures_after_all_other_items(monkeypatch, tmp_p
         assert result["done"] == (1 if permanent else 2)
         assert result["failed"] == (1 if permanent else 0)
         assert bool(result["errors"]) is permanent
+        assert result["skipped"] == (1 if permanent else 0)
         checkpoint = VectorRebuildCheckpoint(
             kernel._vectors_root() / "rebuild_checkpoint.sqlite3",
             embedding.get_embedding_fingerprint()["hash"], 8,
         )
-        assert checkpoint.read("paragraph", [(first_id, "first"), (second_id, "second")]) == {}
+        restored = checkpoint.read("paragraph", [(first_id, "first"), (second_id, "second")])
+        assert set(restored) == ({second_id} if permanent else set())
     finally:
         await kernel.shutdown()
 
@@ -2286,4 +2288,111 @@ async def test_model_switch_discards_old_build_and_restarts(
         if not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+        await kernel.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["single", "dual"])
+@pytest.mark.parametrize("good_count", [56, 57, 58])
+async def test_partial_rebuild_preserves_good_items_and_skips_after_restart(monkeypatch, tmp_path, mode, good_count):
+    embedding = _FakeEmbeddingManager()
+    monkeypatch.setattr(kernel_module, "create_embedding_api_adapter", lambda **kwargs: embedding)
+    monkeypatch.setattr(kernel_module, "run_embedding_runtime_self_check", _fake_runtime_self_check)
+    config = _kernel_config(tmp_path / "data", 8)
+    config["retrieval"]["vector_pools"]["mode"] = mode
+
+    async def no_background():
+        pass
+
+    original = embedding.encode_batch
+    calls = []
+
+    async def encode(texts, **kwargs):
+        calls.extend(texts)
+        if any("bad" in text for text in texts):
+            raise RuntimeError("bad input")
+        return await original(texts, **kwargs)
+
+    monkeypatch.setattr(embedding, "encode_batch", encode)
+    kernel = SDKMemoryKernel(plugin_root=tmp_path, config=config)
+    monkeypatch.setattr(kernel, "_start_background_tasks", no_background)
+    await kernel.initialize()
+    good_id = kernel.metadata_store.add_paragraph("good", source="test")
+    for index in range(good_count - 1):
+        kernel.metadata_store.add_paragraph(f"good {index}", source="test")
+    skipped = {
+        "paragraph": kernel.metadata_store.add_paragraph("bad paragraph", source="test"),
+        "entity": kernel.metadata_store.add_entity("bad entity"),
+        "relation": kernel.metadata_store.add_relation("user", "likes", "bad relation"),
+    }
+    try:
+        result = await kernel.memory_runtime_admin(action="rebuild_all_vectors", batch_size=32)
+        # 3/59 超限，3/60 恰好 5%，3/61 低于上限。
+        if good_count == 56:
+            assert result["success"] is False
+            assert "vector_failure_limit_exceeded" in result["errors"][0]
+            for kind, item_id in skipped.items():
+                assert not kernel._vector_space_service.is_skipped(kind, item_id)
+            return
+        assert result["success"] is True
+        assert result["done"] == good_count
+        assert result["skipped"] == 3
+        assert good_id in kernel._paragraph_store()
+        assert skipped["paragraph"] not in kernel._paragraph_store()
+        assert kernel._runtime_capabilities["vector_read"] is True
+        for kind, item_id in skipped.items():
+            assert kernel._vector_space_service.is_skipped(kind, item_id)
+        # 原始记忆仍保留。
+        assert skipped["paragraph"] in kernel.metadata_store.get_paragraphs_by_hashes([skipped["paragraph"]])
+    finally:
+        await kernel.shutdown()
+
+    restarted = SDKMemoryKernel(plugin_root=tmp_path, config=config)
+    monkeypatch.setattr(restarted, "_start_background_tasks", no_background)
+    await restarted.initialize()
+    calls.clear()
+    try:
+        for kind, item_id in skipped.items():
+            assert restarted._vector_space_service.is_skipped(kind, item_id)
+        result = await restarted.memory_runtime_admin(action="rebuild_all_vectors", batch_size=32)
+        assert result["success"] is True
+        assert result["skipped"] == 3
+        assert not any("bad" in text for text in calls)
+        assert good_id in restarted._paragraph_store()
+        # 周期探测和缺失向量补齐均不能重新请求跳过项。
+        await restarted._recover_embedding_once()
+        if mode == "dual":
+            await restarted._backfill_missing_dual_vector_pool_entries(batch_size=32)
+        assert not any("bad" in text for text in calls)
+    finally:
+        await restarted.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["dimension", "storage"])
+async def test_rebuild_does_not_skip_integrity_or_storage_errors(monkeypatch, tmp_path, failure):
+    embedding = _FakeEmbeddingManager()
+    monkeypatch.setattr(kernel_module, "create_embedding_api_adapter", lambda **kwargs: embedding)
+    monkeypatch.setattr(kernel_module, "run_embedding_runtime_self_check", _fake_runtime_self_check)
+    kernel = SDKMemoryKernel(plugin_root=tmp_path, config=_kernel_config(tmp_path / "data", 8))
+
+    async def no_background():
+        pass
+
+    monkeypatch.setattr(kernel, "_start_background_tasks", no_background)
+    await kernel.initialize()
+    item_id = kernel.metadata_store.add_paragraph("good", source="test")
+    if failure == "dimension":
+        async def wrong_dimension(texts, **kwargs):
+            return np.ones((len(texts), 3), dtype=np.float32)
+        monkeypatch.setattr(embedding, "encode_batch", wrong_dimension)
+    else:
+        def fail_write(*args, **kwargs):
+            raise OSError("disk full")
+        monkeypatch.setattr(VectorStore, "add", fail_write)
+    try:
+        with pytest.raises((ValueError, OSError)):
+            await kernel.memory_runtime_admin(action="rebuild_all_vectors", include_relations=False)
+        assert not kernel._vector_space_service.is_skipped("paragraph", item_id)
+    finally:
         await kernel.shutdown()

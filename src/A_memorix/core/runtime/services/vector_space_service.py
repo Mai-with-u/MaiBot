@@ -55,6 +55,15 @@ class MemoryVectorSpaceService(KernelServiceBase):
     def record_input(self, item_type: str, item_id: str, text: str) -> None:
         self._vector_space_inputs[f"{item_type}:{item_id}"] = self.input_hash(text)
 
+    def is_skipped(self, item_type: str, item_id: str) -> bool:
+        # 图池使用带类型前缀的 ID；跳过标记随当前模型库持久化，不随文本变化自动重试。
+        item_id = item_id.removeprefix(f"{item_type}:")
+        return f"skipped:{item_type}:{item_id}" in self._vector_space_inputs
+
+    def skip_input(self, item_type: str, item_id: str, reason: str) -> None:
+        item_id = item_id.removeprefix(f"{item_type}:")
+        self._vector_space_inputs[f"skipped:{item_type}:{item_id}"] = reason[:500]
+
     async def run_io(self, function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """取消时先等当前文件操作结束，避免关机后线程继续改动向量目录。"""
         worker = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))

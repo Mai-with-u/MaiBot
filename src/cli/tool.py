@@ -6,8 +6,9 @@ from typing import Optional, Sequence
 import argparse
 import os
 import runpy
+import sys
 
-from src.common.paths import INSTANCE_DIRECTORY_ENV
+from src.common.paths import INSTANCE_DIRECTORY_ENV, PACKAGED_INSTALL
 from src.common.version import read_project_version
 
 
@@ -54,7 +55,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("填写模型配置后，执行 maibot run --directory <实例目录>")
         return 0
     os.environ.pop("MAIBOT_INITIALIZE_ONLY", None)
-    runpy.run_module("src.runtime", run_name="__main__")
+    if PACKAGED_INSTALL and (Path(sys.prefix) / "uv-receipt.toml").is_file():
+        from src.common.package_update import PACKAGE_RUNNER_ENV, register_instance
+
+        # 只有最外层 CLI 持有租约；Runner/Worker 重启沿用实例环境。
+        with register_instance(directory):
+            os.environ[PACKAGE_RUNNER_ENV] = "1"
+            runpy.run_module("src.runtime", run_name="__main__")
+    else:
+        runpy.run_module("src.runtime", run_name="__main__")
     return 0
 
 

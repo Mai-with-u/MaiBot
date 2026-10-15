@@ -106,7 +106,6 @@ function makeTabProps(
     searchQuery: '',
     pluginTypeFilter: 'all',
     showCompatibleOnly: false,
-    hideInstalledPlugins: true,
     sortBy: 'default' as MarketplaceSortKey,
     gitStatus,
     maimaiVersion,
@@ -233,7 +232,7 @@ describe('MarketplaceTab 安装入口', () => {
 })
 
 describe('MarketplaceTab 过滤', () => {
-  it('跳过无 manifest、本地来源，以及隐藏已安装开关打开时的已安装插件', () => {
+  it('跳过无 manifest 和本地来源，保留已安装市场插件', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const visible = makePlugin('visible')
     const installed = makePlugin('installed', { installed: true })
@@ -250,14 +249,15 @@ describe('MarketplaceTab 过滤', () => {
 
     renderTab([visible, installed, local, noManifest])
 
-    expect(getDisplayedPluginNames()).toEqual(['插件-visible'])
+    expect(getDisplayedPluginNames()).toEqual(expect.arrayContaining(['插件-visible', '插件-installed']))
+    expect(getDisplayedPluginNames()).toHaveLength(2)
     expect(warnSpy).toHaveBeenCalledWith('[过滤] 跳过无 manifest 的插件:', 'ghost')
   })
 
-  it('关闭隐藏已安装后展示市场已安装插件，本地插件仍排除', () => {
+  it('默认展示市场已安装插件，本地插件仍排除', () => {
     const installedMarket = makePlugin('installed-market', { installed: true })
     const local = makePlugin('local-only', { source: 'local', installed: true })
-    renderTab([installedMarket, local], { hideInstalledPlugins: false })
+    renderTab([installedMarket, local])
 
     expect(getDisplayedPluginNames()).toEqual(['插件-installed-market'])
     expect(screen.queryByText('插件-local-only')).not.toBeInTheDocument()

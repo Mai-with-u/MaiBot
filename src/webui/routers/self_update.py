@@ -67,6 +67,7 @@ class SelfUpdateStatusResponse(BaseModel):
     """自更新状态。"""
 
     supported: bool
+    deployment_type: str = "git"
     repository_url: str
     current_version: str
     current_commit: Optional[str] = None
@@ -91,7 +92,7 @@ class SelfUpdateStatusResponse(BaseModel):
 class SelfUpdateApplyRequest(BaseModel):
     """执行更新请求。"""
 
-    expected_commit: str = Field(description="界面上确认过的目标提交，更新只会进行到这个提交")
+    expected_commit: str = Field(description="界面确认的更新目标：源码版为提交 SHA，包安装版为正式版本号")
 
 
 class SelfUpdateApplyResponse(BaseModel):
@@ -106,7 +107,8 @@ def _build_status_response(check: UpdateCheck) -> SelfUpdateStatusResponse:
     last_result = read_last_result()
     return SelfUpdateStatusResponse(
         supported=local.blocker is None,
-        repository_url=OFFICIAL_REPOSITORY_URL,
+        deployment_type=local.deployment_type,
+        repository_url="https://pypi.org/project/maibot/" if local.deployment_type == "package" else OFFICIAL_REPOSITORY_URL,
         current_version=local.version,
         current_commit=local.commit,
         branch=local.branch,
@@ -160,8 +162,9 @@ def check_self_update() -> SelfUpdateStatusResponse:
 
     global _last_check
 
-    # 确保镜像源配置已生成默认列表；自更新与插件市场读取同一份配置。
-    get_git_mirror_service()
+    # 源码更新与插件市场共用镜像；包安装只访问 PyPI。
+    if inspect_local().deployment_type == "git":
+        get_git_mirror_service()
     try:
         check = check_for_update()
     except SelfUpdateError as e:

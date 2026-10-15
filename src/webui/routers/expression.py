@@ -1002,9 +1002,16 @@ def get_chat_list(
                 chat_session = session.exec(select(ChatSession).where(col(ChatSession.session_id) == session_id)).first()
                 chat_by_id[session_id] = build_chat_info(session_id, session, chat_session)
 
-        # 按名称排序
-        chat_list = list(chat_by_id.values())
-        chat_list.sort(key=lambda x: x.chat_name)
+            # 聚合每个聊天的最新消息时间，避免逐聊天查询消息历史。
+            latest_message_times = dict(session.exec(
+                select(Messages.session_id, func.max(Messages.timestamp))
+                .where(col(Messages.session_id).in_(chat_by_id))
+                .group_by(col(Messages.session_id))
+            ).all())
+
+        # 有消息的聊天按时间倒序；无消息的聊天排在最后，同一时间按名称稳定排序。
+        chat_list = sorted(chat_by_id.values(), key=lambda item: (item.chat_name, item.chat_id))
+        chat_list.sort(key=lambda item: latest_message_times.get(item.chat_id, datetime.min), reverse=True)
 
         return ChatListResponse(success=True, data=chat_list)
 

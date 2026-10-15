@@ -210,7 +210,7 @@
         "probe_interval_seconds": {
           "name": "probe_interval_seconds",
           "type": "integer",
-          "default": 180,
+          "default": 600,
           "description": "探测间隔秒数",
           "label": "探测间隔（秒）",
           "ui_type": "number",

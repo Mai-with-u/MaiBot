@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from src.common.i18n import set_locale
+from src.common import prompt_i18n
 from src.common.prompt_i18n import (
     PROMPTS_ROOT,
     clear_prompt_cache,
@@ -171,6 +172,35 @@ description = "用于生成回复的主模板"
     assert metadata.display_name == "回复器"
     assert metadata.advanced is True
     assert metadata.description == "用于生成回复的主模板"
+
+
+def test_shared_metadata_parsed_once_per_scan_and_refreshed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prompts_root = tmp_path / "prompts"
+    write_prompt(prompts_root, "zh-CN", "replyer", "reply")
+    write_prompt(prompts_root, "zh-CN", "planner", "plan")
+    metadata_path = prompts_root / "zh-CN" / ".meta.toml"
+    metadata_path.write_text('[replyer]\ndisplay_name = "Before"\n[planner]\nadvanced = true\n', encoding="utf-8")
+    parse_calls = 0
+    original_parse = prompt_i18n.parse_toml
+
+    def counted_parse(content: str):
+        nonlocal parse_calls
+        parse_calls += 1
+        return original_parse(content)
+
+    monkeypatch.setattr(prompt_i18n, "parse_toml", counted_parse)
+    templates = list_prompt_templates(prompts_root=prompts_root)
+    assert parse_calls == 1
+    assert templates["replyer"].metadata.display_name == "Before"
+    assert templates["planner"].metadata.advanced is True
+
+    metadata_path.write_text('[replyer]\ndisplay_name = "After"\n', encoding="utf-8")
+    templates = list_prompt_templates(prompts_root=prompts_root)
+    assert parse_calls == 2
+    assert templates["replyer"].metadata.display_name == "After"
+    assert templates["planner"].metadata.advanced is False
 
 
 def test_list_prompt_templates_loads_prompt_specific_metadata(tmp_path: Path) -> None:

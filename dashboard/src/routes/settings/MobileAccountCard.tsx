@@ -4,10 +4,9 @@ import { useTranslation } from 'react-i18next'
 import { LANGUAGE_CODES, LANGUAGE_NAMES } from '@/components/layout/language-options'
 import type { LanguageCode } from '@/components/layout/language-options'
 import { Card } from '@/components/ui/card'
-import { logout } from '@/lib/auth'
 
 /**
- * 手机端的语言与退出登录：桌面端在顶栏里，手机上顶栏隐藏后收进「WebUI 设置」页底部。
+ * 手机端的语言切换：桌面端在顶栏里，手机上顶栏隐藏后收进「WebUI 设置」页底部。
  */
 export function MobileAccountCard() {
   const { t, i18n } = useTranslation()
@@ -36,15 +35,6 @@ export function MobileAccountCard() {
             ))}
           </select>
         </label>
-      </Card>
-      <Card className="overflow-hidden p-0">
-        <button
-          type="button"
-          onClick={() => void logout()}
-          className="text-destructive flex h-12 w-full items-center justify-center text-base"
-        >
-          {t('header.logoutLabel')}
-        </button>
       </Card>
     </div>
   )

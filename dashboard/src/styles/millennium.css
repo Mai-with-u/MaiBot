@@ -181,9 +181,15 @@
   width: auto;
 }
 
-/* 桌面侧栏铭牌与顶栏同步收起到 16px，导航随之上移。 */
+/* 桌面侧栏铭牌与顶栏展开时同为 52px，同步收起到 16px，导航随之上移。 */
 @media (min-width: 1024px) {
+  /* 顶栏固定为 52px，侧栏局部同步高度，避免已保存的主题尺寸覆盖默认 token。 */
+  :root[data-dashboard-style='millennium'] [data-dashboard-sidebar='true'] {
+    --layout-sidebar-logo-height: 52px;
+  }
+
   :root[data-dashboard-style='millennium'] [data-dashboard-logo-area='true'] {
+    height: var(--layout-sidebar-logo-height);
     overflow: hidden;
     transition: height 180ms cubic-bezier(0.22, 1, 0.36, 1);
   }
@@ -246,6 +252,7 @@
   align-items: stretch;
   border: 2px solid var(--mil-line);
   gap: 0;
+  translate: none;
   transform: none;
 }
 
@@ -376,8 +383,8 @@
   box-shadow: var(--mil-keycap);
   color: var(--mil-ink);
   font-weight: 700;
-  height: 2.875rem;
-  padding-bottom: 5px;
+  height: 2.25rem;
+  padding-bottom: 3px;
   padding-top: 0;
   transform: none;
 }
@@ -385,22 +392,25 @@
 :root[data-dashboard-style='millennium']
   [data-dashboard-header='true']
   [data-dashboard-tabs-trigger='true'] {
-  padding-left: 0.875rem;
-  padding-right: 0.875rem;
+  padding-left: 0.625rem;
+  padding-right: 0.625rem;
+  box-shadow:
+    inset 0 0 0 2px var(--mil-line), inset 0 -5px 0 var(--mil-key-side),
+    inset 3px 3px 0 var(--mil-key-hi);
 }
 
 :root[data-dashboard-style='millennium']
   [data-dashboard-header='true']
   [data-dashboard-tabs-trigger='true']
   span {
-  font-size: 0.875rem;
+  font-size: 0.75rem;
   letter-spacing: 0;
 }
 
 :root[data-dashboard-style='millennium']
   [data-dashboard-header='true']
   [data-dashboard-header-action='true'] {
-  width: 2.875rem;
+  width: 2.25rem;
 }
 
 :root[data-dashboard-style='millennium']
@@ -527,6 +537,26 @@
   font-size: 0.8125rem;
   font-weight: 700;
   letter-spacing: 0.14em;
+}
+
+:root[data-dashboard-style='millennium']
+  [data-plugin-market-card='true']
+  [data-dashboard-card-title='true'] {
+  color: var(--mil-ink);
+  font-size: 0.9375rem;
+}
+
+:root[data-dashboard-style='millennium']
+  [data-plugin-market-card='true'][data-plugin-installed='true'] {
+  border-color: var(--mil-hot);
+}
+
+/* 市场卡片减少标题区与统计区之间的留白。 */
+:root[data-dashboard-style='millennium']
+  [data-plugin-market-card='true']
+  > [data-dashboard-card-header='true'] {
+  margin-bottom: 0.375rem;
+  padding: 0.625rem 0.75rem 0.5rem;
 }
 
 /* ---------- 键帽：按钮 ---------- */
@@ -1340,7 +1370,7 @@
     [data-plugin-market-card='true']
   ) {
   border-radius: 0 !important;
-  box-shadow: 0 5px 0 var(--mil-drop) !important;
+  box-shadow: 0 var(--plugin-market-depth, 5px) 0 var(--mil-drop) !important;
 }
 
 :root[data-dashboard-style='millennium']
@@ -2033,7 +2063,7 @@
   color: var(--mil-on-ink);
 }
 
-/* 日志视图切换占据实际布局宽度，不再通过固定偏移挤占工作区键和搜索框。 */
+/* 日志视图切换在搜索框右侧占据实际布局宽度。 */
 :root[data-dashboard-style='millennium'] [data-dashboard-header='true'] #log-viewer-topbar-tabs {
   position: static;
   /* Tailwind 4 的位移使用独立 translate 属性，需与 transform 一并清除。 */
@@ -2815,12 +2845,23 @@
   color: var(--mil-ink);
 }
 
-/* 顶栏图标键：通用规则把它们固定成 2rem，这里按设计稿放大到和工作区键一样高 */
+/* 顶栏功能键缩为 36px，收薄键帽底边，让右侧工具区更紧凑。 */
 :root[data-dashboard-style='millennium']
   [data-dashboard-header='true']
   [data-dashboard-header-action='true'] {
-  height: 2.875rem !important;
-  width: 2.875rem !important;
+  height: 2.25rem !important;
+  width: 2.25rem !important;
+  padding-bottom: 3px;
+  box-shadow:
+    inset 0 0 0 2px var(--mil-line), inset 0 -5px 0 var(--mil-key-side),
+    inset 3px 3px 0 var(--mil-key-hi);
+}
+
+:root[data-dashboard-style='millennium']
+  [data-dashboard-header='true']
+  [data-dashboard-header-action='true'][data-header-action-highlighted='true'] {
+  box-shadow: var(--mil-pressed);
+  padding-bottom: 2px;
 }
 
 /* ---------- 首页模块的标题条：通栏、带刻线，和设计稿一致 ---------- */
@@ -3293,9 +3334,21 @@
 /* 手绘图标的路径和替换规则统一登记在 src/components/ui/millennium-icon-set.ts，
    替换图标库图标用的样式由它在启动时生成，这里不再手写。 */
 
-/* 下沉屏幕阴影上下各外扩 4px，扣除后让视觉高度与工作区键对齐。 */
+/* 搜索框收窄到 240px；阴影上下外扩 4px，视觉高度与右侧 36px 功能键对齐。 */
+:root[data-dashboard-style='millennium'] [data-dashboard-header-search='true'] {
+  max-width: 15rem;
+}
+
 :root[data-dashboard-style='millennium'] [data-dashboard-header-search='true'] input {
-  height: calc(2.875rem - 8px);
+  height: calc(2.25rem - 8px);
+  padding-left: 0.625rem;
+  padding-right: 2rem;
+  font-size: 0.75rem;
+}
+
+:root[data-dashboard-style='millennium'] [data-dashboard-header-search='true'] button {
+  height: 1.5rem;
+  width: 1.5rem;
 }
 
 /* 搜索结果沿用聊天记录的下沉屏幕材质，外框保留机壳颗粒底纹。 */

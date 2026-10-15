@@ -3145,8 +3145,8 @@
   ) {
   border-radius: var(--visual-radius-lg);
   box-shadow:
-    0 3px 0 rgb(63 45 24 / 0.2),
-    0 5px 9px rgb(63 45 24 / 0.12) !important;
+    0 var(--plugin-market-depth, 3px) 0 rgb(63 45 24 / 0.2),
+    0 var(--plugin-market-shadow-y, 5px) var(--plugin-market-shadow-blur, 9px) rgb(63 45 24 / 0.12) !important;
 }
 
 :root
@@ -3163,8 +3163,66 @@
     [data-plugin-market-card='true']
   ) {
   box-shadow:
-    0 3px 0 rgb(0 0 0 / 0.42),
-    0 6px 10px rgb(0 0 0 / 0.26) !important;
+    0 var(--plugin-market-depth, 3px) 0 rgb(0 0 0 / 0.42),
+    0 var(--plugin-market-shadow-y, 6px) var(--plugin-market-shadow-blur, 10px) rgb(0 0 0 / 0.26) !important;
+}
+
+/* 已安装插件以橙色描边区分，保持卡片尺寸不变。 */
+:root [data-plugin-market-card='true'][data-plugin-installed='true'] {
+  border-color: #ea580c;
+}
+
+/* 超长插件名在卡片悬停时往返滚动，起点与终点稍作停留以便阅读。 */
+@keyframes plugin-title-scroll {
+  0%, 15% {
+    transform: translateX(0);
+  }
+
+  85%, 100% {
+    transform: translateX(var(--plugin-title-scroll-distance));
+  }
+}
+
+[data-plugin-market-card='true']:is(:hover, :focus-within)
+  [data-plugin-title-overflow='true']
+  [data-plugin-title-text='true'] {
+  width: max-content;
+  max-width: none;
+  overflow: visible;
+  animation: plugin-title-scroll var(--plugin-title-scroll-duration) linear infinite alternate;
+}
+
+/* 卡片下沉时同步收短厚度与投影，保持各主题原有的材质。 */
+[data-plugin-market-card='true'] {
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  [data-plugin-market-card='true']:hover {
+    --plugin-market-depth: 1px;
+    --plugin-market-shadow-y: 2px;
+    --plugin-market-shadow-blur: 3px;
+    transform: perspective(900px) translateY(2px) rotateX(0.6deg) scale(0.997);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-plugin-market-card='true']:is(:hover, :focus-within)
+    [data-plugin-title-overflow='true']
+    [data-plugin-title-text='true'] {
+    width: auto;
+    max-width: 100%;
+    overflow: hidden;
+    animation: none;
+  }
+
+  [data-plugin-market-card='true'] {
+    transition: none;
+  }
+
+  [data-plugin-market-card='true']:hover {
+    transform: none;
+  }
 }
 
 :root[data-dashboard-style='future-retro']

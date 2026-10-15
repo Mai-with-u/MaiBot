@@ -1866,7 +1866,7 @@ class AMemorixEmbeddingFallbackConfig(ConfigBase):
     """是否启用回退机制"""
 
     probe_interval_seconds: int = Field(
-        default=180,
+        default=600,
         ge=10,
         json_schema_extra={
             "label": {

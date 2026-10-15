@@ -71,7 +71,6 @@ interface MarketplaceTabStubProps {
   plugins: PluginInfo[]
   searchQuery: string
   pluginTypeFilter: string
-  hideInstalledPlugins: boolean
   sortBy: string
   pluginStats: Record<string, { likes: number }>
   onInstall: (plugin: PluginInfo) => void
@@ -93,7 +92,6 @@ vi.mock('../MarketplaceTab', () => ({
       data-search={props.searchQuery}
       data-type-filter={props.pluginTypeFilter}
       data-sort-by={props.sortBy}
-      data-hide-installed={String(props.hideInstalledPlugins)}
     >
       {props.plugins.map((plugin) => {
         const stats = props.pluginStats[plugin.manifest?.id ?? plugin.id]
@@ -755,7 +753,6 @@ describe('PluginMarketplacePage 视图状态与交互', () => {
         searchQuery: '预置搜索',
         pluginTypeFilter: 'chat',
         marketplaceSortBy: 'downloads',
-        showInstalledPlugins: true,
       })
     )
     await renderPage()
@@ -764,8 +761,6 @@ describe('PluginMarketplacePage 视图状态与交互', () => {
     const tab = screen.getByTestId('marketplace-tab')
     expect(tab).toHaveAttribute('data-type-filter', 'chat')
     expect(tab).toHaveAttribute('data-sort-by', 'downloads')
-    // showInstalledPlugins=true 时不隐藏已安装插件
-    expect(tab).toHaveAttribute('data-hide-installed', 'false')
 
     // 非法的类型/排序值回退为默认值
     cleanup()
@@ -790,20 +785,6 @@ describe('PluginMarketplacePage 视图状态与交互', () => {
     await renderPage({ embedded: true })
     await user.click(screen.getByRole('button', { name: '设置' }))
     expect(navigateMock).toHaveBeenCalledWith({ to: '/plugin-mirrors/embed' })
-  })
-
-  it('显示已安装开关切换后计数包含已安装插件', async () => {
-    const user = userEvent.setup()
-    vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([makeInstalledPlugin('plugin-a', '1.2.0')])
-    await renderPage()
-
-    expect(getCountBadgeText()).toBe('全部插件 1')
-    expect(screen.getByTestId('marketplace-tab')).toHaveAttribute('data-hide-installed', 'true')
-
-    await user.click(screen.getByRole('switch', { name: '显示已安装' }))
-
-    expect(getCountBadgeText()).toBe('全部插件 2')
-    expect(screen.getByTestId('marketplace-tab')).toHaveAttribute('data-hide-installed', 'false')
   })
 
   it('点击详情打开插件详情对话框并可关闭', async () => {
@@ -1440,12 +1421,11 @@ describe('PluginMarketplacePage 合并、兼容性边界与进度清理', () => 
     expect(screen.getByTestId('plugin-plugin-a')).toHaveAttribute('data-needs-update', 'false')
   })
 
-  it('非法会话字段回退搜索词与显示已安装开关', async () => {
+  it('非法会话字段回退搜索词', async () => {
     window.sessionStorage.setItem(
       PLUGIN_MARKET_VIEW_STATE_KEY,
       JSON.stringify({
         searchQuery: 123,
-        showInstalledPlugins: 'yes',
         pluginTypeFilter: 'all',
         marketplaceSortBy: 'default',
       })
@@ -1454,7 +1434,6 @@ describe('PluginMarketplacePage 合并、兼容性边界与进度清理', () => 
     await renderPage()
 
     expect(screen.getByPlaceholderText('搜索插件...')).toHaveValue('')
-    expect(screen.getByTestId('marketplace-tab')).toHaveAttribute('data-hide-installed', 'true')
   })
 
   it('恢复并持久化滚动位置', async () => {

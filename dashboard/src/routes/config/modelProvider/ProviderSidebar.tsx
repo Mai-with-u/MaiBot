@@ -57,7 +57,23 @@ export function ProviderSidebar({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain p-2 lg:h-0">
+      <div className="min-w-0 p-2 lg:hidden">
+        <select
+          className="border-input bg-background h-9 w-full min-w-0 rounded-md border px-3 text-sm"
+          aria-label="模型厂商"
+          value={selectedProvider}
+          onChange={(event) => onSelectProvider(event.target.value)}
+        >
+          <option value="">全部 · {totalModels}</option>
+          {sortedProviders.map(({ provider }) => (
+            <option key={provider.name} value={provider.name}>
+              {provider.name} · {modelCounts.get(provider.name) ?? 0}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="hidden min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain p-2 lg:block lg:h-0">
         <button
           type="button"
           className={cn(

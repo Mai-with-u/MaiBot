@@ -1,6 +1,23 @@
-# 使用 uv tool 安装 MaiBot（本地试用）
+# 使用 uv tool 安装 MaiBot
 
-当前先提供本地构建和安装方式，尚未发布到 PyPI。
+从 PyPI 安装正式版：
+
+```bash
+uv tool install --python 3.13 maibot
+mkdir my-maibot
+cd my-maibot
+maibot init
+```
+
+填写 `config/model_config.toml` 中的模型配置后执行 `maibot run`，按提示确认协议，并打开 `http://127.0.0.1:8001/` 登录 WebUI。
+
+PyPI 来源的 uv 工具安装支持在 WebUI「设置 → 关于 → 主程序更新」检查正式版本、更新并重启。更新前会在 `data/self_update/backups` 备份配置、SQLite 数据库及已安装依赖的版本；安装验证失败时尝试恢复原包和依赖。新版本启动后执行的数据库迁移不会自动回退，如需降级，应恢复对应的数据备份。
+
+自动更新需要通过 `maibot run` 启动，且启动环境的 PATH 中能找到 uv。同一工具环境还有其他实例运行时，先停止其他实例再更新。自定义依赖约束、本地 wheel、URL 和可编辑安装继续通过原安装方式更新。
+
+也可以停止使用该工具环境的所有实例后，执行 `uv tool upgrade maibot`。如果安装时固定了版本，WebUI 更新会同步固定到你确认的新版本；要恢复命令行跟随正式版，执行 `uv tool install --force --python 3.13 maibot`。
+
+## 本地构建和安装
 
 在源码仓库目录构建：
 
@@ -35,7 +52,7 @@ maibot run --directory ./my-maibot
 uv tool install --force --reinstall-package maibot --python 3.12 ./dist/maibot-1.3.8-py3-none-any.whl
 ```
 
-将上例中的文件名替换为新构建的 wheel。下次启动会按插件声明检查和补装缺失依赖。安装版不执行 Git 自更新；WebUI 会说明需要通过工具安装方式升级。未来发布到 PyPI 后可提供 `uv tool upgrade maibot`。
+将上例中的文件名替换为新构建的 wheel。下次启动会按插件声明检查和补装缺失依赖。本地 wheel 安装不从 PyPI 自动更新；要使用 WebUI 自动更新，先停止实例，再执行 `uv tool install --force --python 3.13 maibot` 切换为 PyPI 安装。
 
 源码部署和 OneKey 继续运行原来的 `python bot.py`。没有设置 `MAIBOT_INSTANCE_DIR` 时，配置和数据仍放在仓库目录；该环境变量供 CLI 传递实例目录给子进程使用。
 

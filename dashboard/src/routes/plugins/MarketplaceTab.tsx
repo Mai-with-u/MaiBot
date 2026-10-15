@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 
 import type {
   GitStatus,
@@ -39,7 +39,6 @@ interface MarketplaceTabProps {
   searchQuery: string
   pluginTypeFilter: string
   showCompatibleOnly: boolean
-  hideInstalledPlugins: boolean
   sortBy: MarketplaceSortKey
   gitStatus: GitStatus | null
   maimaiVersion: MaimaiVersion | null
@@ -57,6 +56,13 @@ interface MarketplaceTabProps {
   needsUpdate: (plugin: PluginInfo) => boolean
   getStatusBadge: (plugin: PluginInfo) => React.JSX.Element | null
   getIncompatibleReason: (plugin: PluginInfo) => string | null
+}
+
+function getMarketplaceColumnCount(): number {
+  if (window.matchMedia('(min-width: 1280px)').matches) return 4
+  if (window.matchMedia('(min-width: 768px)').matches) return 3
+  if (window.matchMedia('(min-width: 640px)').matches) return 2
+  return 1
 }
 
 function getPluginIdentity(plugin: PluginInfo): string {
@@ -248,12 +254,11 @@ function selectSurprisePlugins(
     .slice(0, SURPRISE_PLUGIN_COUNT)
 }
 
-export function MarketplaceTab({
+export const MarketplaceTab = memo(function MarketplaceTab({
   plugins,
   searchQuery,
   pluginTypeFilter,
   showCompatibleOnly,
-  hideInstalledPlugins,
   sortBy,
   gitStatus,
   maimaiVersion,
@@ -271,6 +276,13 @@ export function MarketplaceTab({
   getStatusBadge,
   getIncompatibleReason,
 }: MarketplaceTabProps) {
+  const [columnCount, setColumnCount] = useState(getMarketplaceColumnCount)
+  useEffect(() => {
+    const queries = [640, 768, 1280].map((width) => window.matchMedia(`(min-width: ${width}px)`))
+    const updateColumns = () => setColumnCount(getMarketplaceColumnCount())
+    queries.forEach((query) => query.addEventListener('change', updateColumns))
+    return () => queries.forEach((query) => query.removeEventListener('change', updateColumns))
+  }, [])
   const [surpriseSeed] = useState(() => {
     // 同一浏览器会话沿用抽选种子，返回市场或重挂载时不重新抽选推荐位。
     const savedSeed = sessionStorage.getItem(SURPRISE_SEED_STORAGE_KEY)
@@ -342,10 +354,6 @@ export function MarketplaceTab({
       return false
     }
 
-    if (hideInstalledPlugins && plugin.installed) {
-      return false
-    }
-
     // 搜索过滤
     const matchesSearch =
       searchQuery === '' ||
@@ -407,6 +415,10 @@ export function MarketplaceTab({
     (plugin) => !surprisePluginIds.has(getPluginIdentity(plugin))
   )
   const displayPlugins = [...surprisePlugins, ...mainPlugins]
+  const pluginRows: PluginInfo[][] = []
+  for (let index = 0; index < displayPlugins.length; index += columnCount) {
+    pluginRows.push(displayPlugins.slice(index, index + columnCount))
+  }
   const isAnyPluginInstalling = Object.values(pluginProgressById).some(
     (progress) => progress.operation === 'install' && progress.stage === 'loading'
   )
@@ -434,8 +446,17 @@ export function MarketplaceTab({
   )
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 2xl:grid-cols-4">
-      {displayPlugins.map(renderPluginCard)}
+    // 各行内部共享网格轨道；屏幕外行交给浏览器跳过布局和绘制，保留 DOM 与滚动状态。
+    <div className="flex flex-col gap-3">
+      {pluginRows.map((row) => (
+        <div
+          key={getPluginIdentity(row[0])}
+          className="-m-2 grid grid-cols-1 gap-3 p-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4"
+          style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}
+        >
+          {row.map(renderPluginCard)}
+        </div>
+      ))}
     </div>
   )
-}
+})

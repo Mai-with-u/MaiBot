@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -168,6 +169,7 @@ function LocalizedEnumLabel({ value, labels }: { value: string; labels: Record<s
 }
 
 interface MemoryRecordsTabProps {
+  searchModeTabs?: ReactNode
   onCorrectionPlan?: (planId: string, requestText: string) => void
   onAction: (
     action: string,
@@ -245,6 +247,7 @@ function RecordButton({
   return (
     <button
       type="button"
+      data-memory-record-button="true"
       onClick={() => onSelect(record)}
       className={cn(
         // 不带 border 类：retro 主题会把所有 .border 强制描边，列表内每条都会多出一圈框线
@@ -320,7 +323,7 @@ function RelatedRecordsList({
   )
 }
 
-export function MemoryRecordsTab({ onAction, onCorrectionPlan }: MemoryRecordsTabProps) {
+export function MemoryRecordsTab({ onAction, onCorrectionPlan, searchModeTabs }: MemoryRecordsTabProps) {
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const [draftQuery, setDraftQuery] = useState('')
@@ -574,13 +577,14 @@ export function MemoryRecordsTab({ onAction, onCorrectionPlan }: MemoryRecordsTa
     >
       {/* 搜索栏不套卡片外框，直接贴在结果卡片上方 */}
       <form
-        className="grid min-w-0 grid-cols-2 shrink-0 gap-3 lg:grid-cols-[minmax(0,1fr)_160px_auto_auto] lg:items-center"
+        className="flex min-w-0 shrink-0 flex-wrap items-center gap-3"
         onSubmit={(event) => {
           event.preventDefault()
           submitSearch()
         }}
       >
-        <div className="relative col-span-2 min-w-0 lg:col-span-1">
+        {searchModeTabs}
+        <div className="relative min-w-[12rem] flex-1">
           <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
           <Input
             id="memory-record-query"
@@ -599,7 +603,7 @@ export function MemoryRecordsTab({ onAction, onCorrectionPlan }: MemoryRecordsTa
             setRecordType(value as 'all' | MemoryRecordType)
           }}
         >
-          <SelectTrigger id="memory-record-type" aria-label="记录类型" className="col-span-2 h-9 min-w-0 lg:col-span-1">
+          <SelectTrigger id="memory-record-type" aria-label="记录类型" className="h-9 w-40 min-w-0">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -673,7 +677,7 @@ export function MemoryRecordsTab({ onAction, onCorrectionPlan }: MemoryRecordsTa
               id="memory-record-select-all"
               data-memory-record-checkbox="true"
               className="h-3.5 w-3.5 [&_svg]:size-2.5"
-              aria-label="全选当前结果"
+              aria-label="全选"
               checked={allChecked ? true : checkedRecords.length > 0 ? 'indeterminate' : false}
               disabled={!records.length || searchQuery.isFetching}
               onCheckedChange={(checked) =>
@@ -684,26 +688,23 @@ export function MemoryRecordsTab({ onAction, onCorrectionPlan }: MemoryRecordsTa
                 )
               }
             />
-            全选当前结果
+            全选
           </label>
-          <span
-            className={cn(
-              'text-sm',
-              checkedRecords.length ? 'font-medium' : 'text-muted-foreground'
-            )}
-            aria-live="polite"
-          >
-            已选 {checkedRecords.length} 条
-          </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2"
-            disabled={!checkedRecords.length}
-            onClick={() => setCheckedKeys(new Set())}
-          >
-            清空选择
-          </Button>
+          {checkedRecords.length > 0 ? (
+            <>
+              <span className="text-sm font-medium" aria-live="polite">
+                已选 {checkedRecords.length} 条
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2"
+                onClick={() => setCheckedKeys(new Set())}
+              >
+                清空选择
+              </Button>
+            </>
+          ) : null}
           <Button
             size="sm"
             className="h-7 px-2.5"
@@ -797,6 +798,7 @@ export function MemoryRecordsTab({ onAction, onCorrectionPlan }: MemoryRecordsTa
       </Card>
 
       <Dialog
+        modal={false}
         open={selectedRecord !== null}
         onOpenChange={(open) => {
           if (!open) {
@@ -804,7 +806,22 @@ export function MemoryRecordsTab({ onAction, onCorrectionPlan }: MemoryRecordsTa
           }
         }}
       >
-        <DialogContent className="max-h-[85vh] [--dialog-width:64rem]">
+        <DialogContent
+          side="right"
+          hideOverlay
+          className="[--dialog-width:36rem]"
+          onInteractOutside={(event) => {
+            // 焦点移出或点击其他记录时保持浮层打开，直接切换详情，避免重复播放入场动画。
+            const originalEvent = event.detail.originalEvent
+            const target = originalEvent.target
+            if (
+              originalEvent.type === 'focusin' ||
+              (target instanceof Element && target.closest('[data-memory-record-button="true"]'))
+            ) {
+              event.preventDefault()
+            }
+          }}
+        >
           <DialogHeader className="flex-row items-start justify-between gap-3 space-y-0 pr-4">
             <DialogTitle className="min-w-0 text-sm leading-6 break-words">
               {detailDialogTitle(detail, selectedRecord)}

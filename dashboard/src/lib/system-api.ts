@@ -106,6 +106,11 @@ export async function getUpdateHistory(
 }
 
 export type SelfUpdateBlocker =
+  | 'uv_missing'
+  | 'not_uv_tool'
+  | 'package_runner_missing'
+  | 'other_instances_running'
+  | 'package_busy'
   | 'git_missing'
   | 'not_git_repo'
   | 'detached_head'
@@ -141,6 +146,7 @@ export interface SelfUpdateResult {
 
 export interface SelfUpdateStatus {
   supported: boolean
+  deployment_type?: 'git' | 'package'
   repository_url: string
   current_version: string
   current_commit: string | null

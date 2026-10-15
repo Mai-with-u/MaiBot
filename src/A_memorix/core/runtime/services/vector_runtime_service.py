@@ -133,7 +133,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
         encode_items: List[tuple[str, str]] = []
         paragraph_map = self.metadata_store.get_paragraphs_by_hashes(pending_hashes)
         for paragraph_hash in pending_hashes:
-            if paragraph_hash in target_store:
+            if paragraph_hash in target_store or self._vector_space_service.is_skipped("paragraph", paragraph_hash):
                 done_hashes.append(paragraph_hash)
                 continue
             paragraph = paragraph_map.get(paragraph_hash)
@@ -413,6 +413,10 @@ class MemoryVectorRuntimeService(KernelServiceBase):
         item_type: str = "paragraph",
         checkpoint: Optional[VectorRebuildCheckpoint] = None,
     ) -> tuple[int, int, str, List[str], List[str]]:
+        items = [
+            (item_id, text) for item_id, text in items
+            if not self._vector_space_service.is_skipped(item_type, item_id)
+        ]
         target_store = vector_store or self.vector_store
         source_store = self._vector_space_sources.get("single")
         if source_store is not None and vector_store is None:
@@ -473,18 +477,6 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                     embeddings = await encoder(texts, batch_size=safe_batch_size)
                 else:
                     embeddings = await self.embedding_manager.encode(texts)
-                self._ensure_rebuild_embedding_unchanged()
-                embedding_array = np.asarray(embeddings, dtype=np.float32)
-                if embedding_array.ndim == 1:
-                    embedding_array = embedding_array.reshape(1, -1)
-                if embedding_array.shape[0] != len(ids):
-                    raise ValueError(f"embedding 返回数量异常: expected={len(ids)}, got={embedding_array.shape[0]}")
-                await self._vector_space_service.run_io(target_store.add, vectors=embedding_array, ids=ids)
-                if checkpoint is not None:
-                    await self._vector_space_service.run_io(checkpoint.write, item_type, batch, embedding_array)
-                done += len(ids)
-                done_ids.extend(ids)
-                self._advance_vector_rebuild_progress(done=len(ids))
             except EmbeddingConfigurationChanged:
                 raise
             except Exception as exc:
@@ -493,6 +485,23 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                 failed_ids.extend(ids)
                 self._advance_vector_rebuild_progress(failed=len(ids))
                 logger.warning(f"重建向量批次失败: start={start}, count={len(ids)}, error={last_error}")
+                continue
+            self._ensure_rebuild_embedding_unchanged()
+            embedding_array = np.asarray(embeddings, dtype=np.float32)
+            if embedding_array.ndim == 1:
+                embedding_array = embedding_array.reshape(1, -1)
+            if embedding_array.ndim != 2 or embedding_array.shape[1] != self.embedding_dimension:
+                raise ValueError(f"embedding 返回维度异常: {embedding_array.shape}")
+            if not np.isfinite(embedding_array).all():
+                raise ValueError("embedding 返回非有限值")
+            if embedding_array.shape[0] != len(ids):
+                raise ValueError(f"embedding 返回数量异常: expected={len(ids)}, got={embedding_array.shape[0]}")
+            await self._vector_space_service.run_io(target_store.add, vectors=embedding_array, ids=ids)
+            if checkpoint is not None:
+                await self._vector_space_service.run_io(checkpoint.write, item_type, batch, embedding_array)
+            done += len(ids)
+            done_ids.extend(ids)
+            self._advance_vector_rebuild_progress(done=len(ids))
         return done, failed, last_error if failed else "", done_ids, failed_ids
 
     def _copy_rebuild_vectors_from_store(
@@ -565,6 +574,10 @@ class MemoryVectorRuntimeService(KernelServiceBase):
         checkpoint: Optional[VectorRebuildCheckpoint] = None,
     ) -> tuple[int, int, str, List[str], List[str], Dict[str, int]]:
         item_type = target_id_prefix or "paragraph"
+        items = [
+            (item_id, text) for item_id, text in items
+            if not self._vector_space_service.is_skipped(item_type, item_id)
+        ]
         text_by_id = {item_id: text for item_id, text in items}
         space_source = self._vector_space_sources.get("graph" if target_id_prefix else "paragraph")
         single_source = self._vector_space_sources.get("single")
@@ -765,8 +778,9 @@ class MemoryVectorRuntimeService(KernelServiceBase):
     ) -> Dict[str, Any]:
         """在持有向量重建锁时重建全部有效对象的向量。
 
-        单池和双池均先写入独立构建目录；失败项整轮结束后补算，只有编码无失败且
-        向量数量校验通过后才切换目录和 ready manifest。成功批次另存检查点供重启恢复。
+        单池和双池均先写入独立构建目录；失败项整轮结束后逐条补算，仍失败则跳过。
+        累计跳过比例不超过 5% 且成功向量数量校验通过后才切换目录和 ready manifest。
+        成功批次另存检查点供重启恢复。
         重建期间 embedding 保持
         降级状态，完成后重新组装检索运行时并通过自检决定是否解除持久化阻断。
         ``dry_run`` 只统计目标数量，不修改运行时和磁盘状态。
@@ -838,7 +852,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
         if not dual_mode:
             self._dual_vector_pools_ready = False
             await self._vector_space_service.run_io(self._remove_dual_vector_ready_manifest)
-            # 单池也在临时目录构建，补算最终失败时仍保留旧库。
+            # 单池也在临时目录构建，全部失败或完整性校验失败时仍保留旧库。
             single_build_root = Path(
                 await self._vector_space_service.run_io(
                     tempfile.mkdtemp, prefix="single_build_", dir=self._vectors_root(),
@@ -1011,7 +1025,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                 relation_migration=dict(migration_stats.get("relations") or {}),
             )
 
-        # 整轮完成后，只补算首次处理仍失败的对象；补算失败才判定本轮失败。
+        # 整轮完成后逐条补算，避免一条坏文本使同批成功对象也被永久跳过。
         errors: List[str] = []
         for group, item_type, items, pending_ids, target_store in retry_groups:
             if not pending_ids:
@@ -1026,13 +1040,15 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                 f"{group}_start", retrying=True, **{f"{prefix}_failed": 0},
             )
             retried, remaining, retry_error, retry_done_ids, retry_failed_ids = await self._encode_and_add_rebuild_vectors(
-                items=retry_items, batch_size=safe_batch_size, vector_store=target_store,
+                items=retry_items, batch_size=1, vector_store=target_store,
                 item_type=item_type, checkpoint=checkpoint,
             )
             stats[group]["done"] += retried
             stats[group]["failed"] = remaining
+            for item_id in retry_failed_ids:
+                self._vector_space_service.skip_input(item_type, item_id, retry_error)
             if remaining:
-                errors.append(f"{group}:{retry_error}")
+                logger.warning(f"向量重建跳过 {group} {remaining} 条，不再自动重试: {retry_error}")
             self._update_dual_vector_auto_migration_stage(
                 f"{group}_done", retrying=False,
                 **{f"{prefix}_done": stats[group]["done"], f"{prefix}_failed": remaining},
@@ -1084,8 +1100,17 @@ class MemoryVectorRuntimeService(KernelServiceBase):
         self._ensure_rebuild_embedding_unchanged()
         done_total = sum(int(item["done"]) for item in stats.values())
         failed_total = sum(int(item["failed"]) for item in stats.values())
-        if failed_total:
-            await self._vector_space_service.run_io(checkpoint.discard)
+        skipped_total = sum(
+            self._vector_space_service.is_skipped(item_type, item_id)
+            for _group, item_type, items, _pending_ids, _store in retry_groups
+            for item_id, _text in items
+        )
+        # 已持久化的跳过项也计入比例，避免多次重建逐步绕过 5% 上限。
+        if skipped_total * 20 > done_total + skipped_total:
+            errors.append(
+                f"vector_failure_limit_exceeded: 跳过 {skipped_total}/{done_total + skipped_total} 条，"
+                "失败比例超过 5%，不启用本轮向量库"
+            )
         activation_ok = True
         if dual_mode:
             expected_paragraph_vectors = int(stats["paragraphs"]["done"])
@@ -1104,7 +1129,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                 expected_graph_vectors=expected_graph_vectors,
             )
             if (
-                failed_total == 0
+                not errors
                 and actual_paragraph_vectors == expected_paragraph_vectors
                 and actual_graph_vectors == expected_graph_vectors
             ):
@@ -1155,7 +1180,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                     await self._vector_space_service.run_io(self._reload_dual_vector_stores_from_disk)
             else:
                 activation_ok = False
-                if failed_total == 0:
+                if not errors:
                     errors.append(
                         "dual_pool_activation:vector_count_mismatch "
                         f"paragraph={actual_paragraph_vectors}/{expected_paragraph_vectors}, "
@@ -1165,7 +1190,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                 await self._vector_space_service.run_io(self._reload_dual_vector_stores_from_disk)
             self._refresh_relation_write_service()
         else:
-            if failed_total:
+            if errors:
                 await self._vector_space_service.run_io(self._drop_dual_build_root, single_build_root)
                 self.vector_store = self._make_vector_store(self._vectors_root())
                 await self._vector_space_service.run_io(self.vector_store.load)
@@ -1217,18 +1242,21 @@ class MemoryVectorRuntimeService(KernelServiceBase):
             )
 
         rebuild_success = (
-            failed_total == 0 and bool(report.get("ok", False)) and (not dual_mode or activation_ok) and not errors
+            bool(report.get("ok", False)) and (not dual_mode or activation_ok) and not errors
         )
         if rebuild_success:
             await self._vector_space_service.run_io(checkpoint.discard)
-            self._vector_space_inputs = {}
+            self._vector_space_inputs = {
+                key: value for key, value in self._vector_space_inputs.items() if key.startswith("skipped:")
+            }
             for item_type, items in (
                 ("paragraph", paragraph_items),
                 ("entity", entity_items),
                 ("relation", relation_items if relation_enabled else []),
             ):
                 for item_id, text in items:
-                    self._vector_space_service.record_input(item_type, item_id, text)
+                    if not self._vector_space_service.is_skipped(item_type, item_id):
+                        self._vector_space_service.record_input(item_type, item_id, text)
             await self._vector_space_service.run_io(self._vector_space_service._save_inputs)
         elapsed_ms = (time.time() - started) * 1000.0
         if not rebuild_success:
@@ -1250,7 +1278,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                 copy_progress={},
             )
         self._update_dual_vector_auto_migration_stage(
-            "persist", rebuild_success=rebuild_success, errors=list(errors[:5])
+            "persist", rebuild_success=rebuild_success, skipped=skipped_total, errors=list(errors[:5])
         )
         await self._vector_space_service.run_io(self._persist, force_vectors=rebuild_success)
         return {
@@ -1262,6 +1290,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
             "total": int(total),
             "done": int(done_total),
             "failed": int(failed_total),
+            "skipped": int(skipped_total),
             "errors": errors[:5],
             "elapsed_ms": elapsed_ms,
             "self_check": report,

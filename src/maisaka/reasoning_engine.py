@@ -1243,28 +1243,34 @@ class MaisakaReasoningEngine:
                     f"{self._runtime.log_prefix} 回填图片或表情二进制数据失败，Maisaka 将退化为文本占位: {result}"
                 )
 
-    async def _refresh_chat_history_visual_placeholders(self) -> int:
-        """在进入新一轮规划前，尝试用已完成的识图结果刷新历史占位。"""
+    async def _refresh_chat_history_visual_placeholders(
+        self,
+        *,
+        chat_history: Optional[List[LLMContextMessage]] = None,
+        wait_for_text_model: bool = False,
+    ) -> int:
+        """规划或回复前刷新历史占位；纯文本回复器可复用规划器的识图等待。"""
 
-        refreshed_count = await self._refresh_chat_history_visual_placeholders_once()
-        wait_seconds = self._resolve_image_recognition_wait_seconds()
+        history = self._runtime._chat_history if chat_history is None else chat_history
+        refreshed_count = await self._refresh_chat_history_visual_placeholders_once(history)
+        wait_seconds = self._resolve_image_recognition_wait_seconds(wait_for_text_model=wait_for_text_model)
         if wait_seconds <= 0:
             return refreshed_count
 
         deadline = time.monotonic() + wait_seconds
-        while has_pending_image_recognition(self._runtime._chat_history):
+        while await asyncio.to_thread(has_pending_image_recognition, history):
             remaining_seconds = deadline - time.monotonic()
             if remaining_seconds <= 0:
                 break
 
             await asyncio.sleep(min(0.2, remaining_seconds))
-            refreshed_count += await self._refresh_chat_history_visual_placeholders_once()
+            refreshed_count += await self._refresh_chat_history_visual_placeholders_once(history)
 
-        refreshed_count += await self._refresh_chat_history_visual_placeholders_once()
+        refreshed_count += await self._refresh_chat_history_visual_placeholders_once(history)
         return refreshed_count
 
-    def _resolve_image_recognition_wait_seconds(self) -> float:
-        if resolve_enable_visual_planner():
+    def _resolve_image_recognition_wait_seconds(self, *, wait_for_text_model: bool = False) -> float:
+        if not wait_for_text_model and resolve_enable_visual_planner():
             return 0.0
 
         try:
@@ -1274,9 +1280,9 @@ class MaisakaReasoningEngine:
 
         return max(0.0, wait_seconds)
 
-    async def _refresh_chat_history_visual_placeholders_once(self) -> int:
+    async def _refresh_chat_history_visual_placeholders_once(self, chat_history: List[LLMContextMessage]) -> int:
         return await refresh_chat_history_visual_placeholders(
-            chat_history=self._runtime._chat_history,
+            chat_history=chat_history,
             build_history_message=lambda message, source_kind: self._build_history_message(
                 message,
                 source_kind=source_kind,

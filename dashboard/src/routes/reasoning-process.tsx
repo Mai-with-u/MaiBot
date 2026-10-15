@@ -1034,7 +1034,7 @@ export function ReasoningProcessPage({
   const selectedTokenText = selected
     ? formatTokenUsage(selected.prompt_tokens, selected.completion_tokens, selected.total_tokens)
     : ''
-  const renderRefreshButton = (variant: 'default' | 'topbar' | 'toolbar' = 'default') => (
+  const renderRefreshButton = (variant: 'default' | 'toolbar' = 'default') => (
     <Button
       variant="outline"
       size="sm"
@@ -1044,7 +1044,6 @@ export function ReasoningProcessPage({
       disabled={loading}
       className={cn(
         'shrink-0 p-0',
-        variant === 'topbar' && 'h-9 w-9',
         variant === 'toolbar' && 'h-8 w-8',
         variant === 'default' && 'h-9 w-9 sm:h-10 sm:w-10'
       )}
@@ -1190,11 +1189,10 @@ export function ReasoningProcessPage({
       ? createPortal(toolbarContent, toolbarRoot)
       : null
   const topbarActionsPortal =
-    embedded && toolbarVisible && topbarActionsRoot && (returnTo || !browsingStage)
+    embedded && toolbarVisible && topbarActionsRoot && returnTo
       ? createPortal(
           <div className="flex items-center gap-2">
             {renderReturnButton(true)}
-            {!browsingStage && renderRefreshButton('topbar')}
           </div>,
           topbarActionsRoot
         )
@@ -1334,6 +1332,11 @@ export function ReasoningProcessPage({
       )}
       {toolbarPortal}
       {topbarActionsPortal}
+      {embedded && !browsingStage && (
+        <div className="flex shrink-0 justify-end px-2 pt-2 sm:px-3">
+          {renderRefreshButton('toolbar')}
+        </div>
+      )}
 
       <AlertDialog
         open={Boolean(pendingClearStage)}

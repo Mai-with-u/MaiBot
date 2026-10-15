@@ -564,7 +564,7 @@ const millenniumBaseVisual = {
 } satisfies Partial<VisualTokens>
 
 const millenniumBaseLayout = {
-  'sidebar-logo-height': '4.375rem',
+  'sidebar-logo-height': '52px',
   'sidebar-nav-item-gap': '0.625rem',
   'sidebar-nav-item-height': '2.875rem',
   'sidebar-nav-item-collapsed-width': '2.875rem',

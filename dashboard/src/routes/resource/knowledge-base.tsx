@@ -73,6 +73,7 @@ import { ImagesTab } from './knowledge-base/tabs/ImagesTab'
 import { MemoryRecordsTab } from './knowledge-base/tabs/MemoryRecordsTab'
 import { ProfileMaintenancePanel } from './knowledge-base/tabs/ProfileMaintenancePanel'
 import { ProfileSearchPanel } from './knowledge-base/tabs/ProfileSearchPanel'
+import { MemorySearchModeTabs } from './knowledge-base/tabs/MemorySearchModeTabs'
 import { TuningTab } from './knowledge-base/tabs/TuningTab'
 import { KnowledgeGraphPage } from './knowledge-graph'
 
@@ -1176,7 +1177,7 @@ export function KnowledgeBasePage() {
           </Dialog>
 
           <Tabs
-            value={activeTab}
+            value={activeTab === 'profiles' ? 'records' : activeTab}
             onValueChange={(value) => switchMemoryTab(value as MemoryConsoleTab)}
             className={isFixedMemoryPage ? 'flex min-w-0 flex-col gap-2 lg:min-h-0 lg:flex-1 lg:overflow-hidden' : 'min-w-0 space-y-3'}
           >
@@ -1191,10 +1192,9 @@ export function KnowledgeBasePage() {
                 {[
                   {
                     value: 'records',
-                    label: '文字记录',
-                    description: '查询权威记录与关联内容',
+                    label: '记忆查询',
+                    description: '查询文字记录、关联内容与人物画像',
                   },
-                  { value: 'profiles', label: '人物画像', description: '按身份检索人物画像快照' },
                   { value: 'images', label: '图片记忆', description: '图片向量、认知与关联记忆' },
                   { value: 'timeline', label: '记忆流', description: '核对聊天流记忆变动' },
                 ].map((item) => (
@@ -1290,28 +1290,44 @@ export function KnowledgeBasePage() {
               </DropdownMenu>
             </div>
 
-            {/* 文字记录自带 TabsContent，直接绑定顶层标签；人物画像使用独立面板。 */}
-            {shouldRenderMemoryTab('records') && (
-              <MemoryRecordsTab
-                onAction={handleMemoryRecordAction}
-                onCorrectionPlan={(planId, requestText) => {
-                  memoryCorrection.setRequestText(requestText)
-                  memoryCorrection.setScope('memory')
-                  memoryCorrection.setPersonId('')
-                  memoryCorrection.setPersonKeyword('')
-                  memoryCorrection.setChatId('')
-                  memoryCorrection.setSelectedPlanId(planId)
-                  memoryCorrection.setPlanSearch(planId)
-                  setInspectionMode('correction')
-                  switchMemoryTab('inspection', { mode: 'correction', plan_id: planId })
+            {/* 查询类型在搜索栏内切换；保留 records / profiles 地址和各自的查询状态。 */}
+            <TabsContent
+              value="records"
+              forceMount
+              className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden"
+            >
+              <Tabs
+                value={activeTab}
+                onValueChange={(value) => {
+                  memoryProfile.setDetailOpen(false)
+                  switchMemoryTab(value as MemoryConsoleTab)
                 }}
-              />
-            )}
-            {shouldRenderMemoryTab('profiles') && (
-              <TabsContent value="profiles" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden">
-                <ProfileSearchPanel profile={memoryProfile} />
-              </TabsContent>
-            )}
+                className="flex min-h-0 flex-1 flex-col overflow-hidden"
+              >
+                {shouldRenderMemoryTab('records') && (
+                  <MemoryRecordsTab
+                    searchModeTabs={<MemorySearchModeTabs />}
+                    onAction={handleMemoryRecordAction}
+                    onCorrectionPlan={(planId, requestText) => {
+                      memoryCorrection.setRequestText(requestText)
+                      memoryCorrection.setScope('memory')
+                      memoryCorrection.setPersonId('')
+                      memoryCorrection.setPersonKeyword('')
+                      memoryCorrection.setChatId('')
+                      memoryCorrection.setSelectedPlanId(planId)
+                      memoryCorrection.setPlanSearch(planId)
+                      setInspectionMode('correction')
+                      switchMemoryTab('inspection', { mode: 'correction', plan_id: planId })
+                    }}
+                  />
+                )}
+                {shouldRenderMemoryTab('profiles') && (
+                  <TabsContent value="profiles" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden">
+                    <ProfileSearchPanel profile={memoryProfile} searchModeTabs={<MemorySearchModeTabs />} />
+                  </TabsContent>
+                )}
+              </Tabs>
+            </TabsContent>
 
             {shouldRenderMemoryTab('images') && <ImagesTab toolbarTarget={imagesToolbarTarget} />}
 

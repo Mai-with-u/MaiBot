@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict
 from tomlkit import parse as parse_toml
 
 import json
@@ -174,7 +174,7 @@ def _extract_template_metadata(metadata: dict[str, Any], prompt_name: str) -> di
     return metadata if any(key in metadata for key in ("display_name", "advanced", "description")) else {}
 
 
-def _load_prompt_metadata(prompt_path: Path) -> PromptMetadata:
+def _load_prompt_metadata(prompt_path: Path, metadata_cache: Dict[Path, Dict[str, Any]]) -> PromptMetadata:
     prompt_name = prompt_path.stem
     metadata_sources = (
         prompt_path.with_name(f"{prompt_name}.meta.toml"),
@@ -185,7 +185,9 @@ def _load_prompt_metadata(prompt_path: Path) -> PromptMetadata:
 
     merged_metadata: dict[str, Any] = {}
     for metadata_path in reversed(metadata_sources):
-        raw_metadata = _read_metadata_file(metadata_path)
+        if metadata_path not in metadata_cache:
+            metadata_cache[metadata_path] = _read_metadata_file(metadata_path)
+        raw_metadata = metadata_cache[metadata_path]
         merged_metadata.update(_extract_template_metadata(raw_metadata, prompt_name))
 
     return _coerce_metadata(merged_metadata)
@@ -193,12 +195,16 @@ def _load_prompt_metadata(prompt_path: Path) -> PromptMetadata:
 
 def _scan_prompt_directory(directory: Path, prompts_root: Path) -> dict[str, PromptTemplateInfo]:
     prompt_paths: dict[str, PromptTemplateInfo] = {}
+    # 同一轮扫描共享解析结果；下次扫描重新读取，确保元信息修改立即生效。
+    metadata_cache: Dict[Path, Dict[str, Any]] = {}
     for prompt_path in iter_prompt_files(directory):
         prompt_name = prompt_path.stem
         existing_info = prompt_paths.get(prompt_name)
         if existing_info is not None:
             _raise_duplicate_prompt_name(prompt_name, existing_info.path, prompt_path, prompts_root)
-        prompt_paths[prompt_name] = PromptTemplateInfo(path=prompt_path, metadata=_load_prompt_metadata(prompt_path))
+        prompt_paths[prompt_name] = PromptTemplateInfo(
+            path=prompt_path, metadata=_load_prompt_metadata(prompt_path, metadata_cache)
+        )
     return prompt_paths
 
 

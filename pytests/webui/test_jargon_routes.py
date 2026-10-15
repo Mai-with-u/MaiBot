@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from src.common.database.database_model import ChatSession, Jargon, JargonCreatedBy
+from src.common.database.database_model import ChatSession, Jargon, JargonCreatedBy, Messages
 from src.webui.dependencies import require_auth
 from src.webui.routers.jargon import router as jargon_router
 
@@ -622,6 +622,7 @@ def test_get_chat_list_includes_chat_session_without_jargon(client: TestClient, 
             "session_id": sample_chat_session.session_id,
             "chat_name": sample_chat_session.group_name,
             "platform": sample_chat_session.platform,
+            "account_id": sample_chat_session.account_id,
             "is_group": True,
         }
     ]
@@ -769,3 +770,86 @@ def test_list_jargons_multiple_filters(client: TestClient, sample_jargons, sampl
     data = response.json()
     assert data["total"] == 1
     assert data["data"][0]["content"] == "yyds"
+
+
+def test_groups_resolve_jargon_config_members(client, sample_chat_session, monkeypatch):
+    target = SimpleNamespace(platform="qq", item_id="123456789")
+    monkeypatch.setattr(
+        "src.webui.routers.jargon.global_config",
+        SimpleNamespace(jargon=SimpleNamespace(jargon_groups=[
+            SimpleNamespace(targets=[target]),
+            SimpleNamespace(targets=[]),
+            SimpleNamespace(targets=[SimpleNamespace(platform="*", item_id="*")]),
+        ])),
+    )
+    monkeypatch.setattr(
+        "src.webui.routers.jargon.JargonConfigUtils.get_target_session_ids_with_wildcards",
+        lambda target: {sample_chat_session.session_id},
+    )
+
+    response = client.get("/api/webui/jargon/groups")
+    assert response.status_code == 200
+    groups = response.json()["data"]
+    assert groups[0]["session_ids"] == [sample_chat_session.session_id]
+    assert groups[0]["members"][0]["chat_name"] == "测试群"
+    assert groups[1]["session_ids"] == []
+    assert groups[1]["is_global"] is False
+    assert groups[2]["is_global"] is True
+
+
+def test_list_filters_any_group_member_without_duplicate_rows(client, sample_jargons, sample_chat_session):
+    response = client.get("/api/webui/jargon/list", params=[
+        ("session_ids", "missing-chat"),
+        ("session_ids", sample_chat_session.session_id),
+        ("session_ids", sample_chat_session.session_id),
+    ])
+    assert response.status_code == 200
+    assert response.json()["total"] == 3
+    assert {item["id"] for item in response.json()["data"]} == {1, 2, 3}
+
+    response = client.get("/api/webui/jargon/list", params={"session_ids": "missing-chat"})
+    assert response.status_code == 200
+    assert response.json()["total"] == 0
+
+
+@pytest.mark.parametrize("domain", ["jargon", "expression"])
+def test_learning_chats_sort_by_latest_message(client, app, session, monkeypatch, domain):
+    from src.webui.routers import expression, jargon
+
+    chat_ids = ["sort_a_empty", "sort_b_old", "sort_c_new"]
+    for index, chat_id in enumerate(chat_ids):
+        session.add(ChatSession(
+            session_id=chat_id,
+            platform="qq",
+            group_id=str(index),
+            group_name=chat_id,
+            # 故意让会话活跃时间与实际消息顺序相反。
+            last_active_timestamp=datetime(2026, 10, 15 - index),
+        ))
+        session.add(Jargon(
+            content=chat_id,
+            meaning="排序验证",
+            session_id_dict=json.dumps({chat_id: 1}),
+        ))
+    for chat_id, day in [(chat_ids[1], 1), (chat_ids[2], 3), (chat_ids[2], 2)]:
+        session.add(Messages(
+            message_id=f"{chat_id}-{day}",
+            session_id=chat_id,
+            timestamp=datetime(2026, 10, day),
+            platform="qq",
+            user_id="user",
+            user_nickname="测试用户",
+            raw_content=b"",
+        ))
+    session.commit()
+
+    if domain == "expression":
+        app.include_router(expression.router, prefix="/api/webui")
+        monkeypatch.setattr(expression, "get_db_session", jargon.get_db_session)
+        monkeypatch.setattr(expression, "get_visible_expression_chat_ids", lambda *_: set(chat_ids))
+        monkeypatch.setattr(expression.ExpressionConfigUtils, "get_expression_config_for_chat", lambda _: (True, True))
+
+    response = client.get(f"/api/webui/{domain}/chats")
+    assert response.status_code == 200
+    id_key = "session_id" if domain == "jargon" else "chat_id"
+    assert [item[id_key] for item in response.json()["data"]] == list(reversed(chat_ids))

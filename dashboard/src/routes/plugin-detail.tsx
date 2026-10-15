@@ -288,10 +288,18 @@ async function loadPluginChangelog(
 
 interface PluginDetailPageProps {
   embedded?: boolean
-  mode?: 'page' | 'dialog'
+  mode?: 'page' | 'dialog' | 'panel'
   onClose?: () => void
   onInstalledPluginsChange?: (installed: InstalledPlugin[]) => void
   pluginId?: string
+  /** 进入动画期间推迟文档请求与渲染，避免 Markdown 解析抢占滑动帧。 */
+  deferContent?: boolean
+  initialPlugin?: PluginInfo
+  initialRuntime?: {
+    gitStatus: GitStatus
+    maimaiVersion: MaimaiVersion
+    installedPlugins: InstalledPlugin[]
+  }
 }
 
 export function PluginDetailPage({
@@ -300,6 +308,9 @@ export function PluginDetailPage({
   onClose,
   onInstalledPluginsChange,
   pluginId: pluginIdProp,
+  deferContent = false,
+  initialPlugin,
+  initialRuntime,
 }: PluginDetailPageProps) {
   const navigate = useNavigate()
   const pluginsRoute: '/plugins' | '/plugins/embed' = embedded ? '/plugins/embed' : '/plugins'
@@ -309,12 +320,17 @@ export function PluginDetailPage({
   const pluginId = pluginIdProp ?? search.pluginId
   const [selection, setSelection] = useState<{ pluginId?: string; version: string } | null>(null)
   const isDialog = mode === 'dialog'
-  const containerClassName = isDialog
-    ? 'space-y-4 sm:space-y-5 p-4 sm:p-5'
-    : 'space-y-4 sm:space-y-6 p-4 sm:p-6'
-  const detailScrollClassName = isDialog
-    ? 'h-[min(68vh,720px)]'
-    : 'h-[calc(100vh-200px)] sm:h-[calc(100vh-220px)]'
+  const isPanel = mode === 'panel'
+  const containerClassName = isPanel
+    ? 'flex h-full min-h-0 flex-col gap-4 p-3 sm:p-4'
+    : isDialog
+      ? 'space-y-4 sm:space-y-5 p-4 sm:p-5'
+      : 'space-y-4 sm:space-y-6 p-4 sm:p-6'
+  const detailScrollClassName = isPanel
+    ? 'min-h-0 flex-1'
+    : isDialog
+      ? 'h-[min(68vh,720px)]'
+      : 'h-[calc(100vh-200px)] sm:h-[calc(100vh-220px)]'
   const handleBack = () => {
     if (onClose) {
       onClose()
@@ -328,12 +344,14 @@ export function PluginDetailPage({
     queryKey: ['plugin-detail', pluginId],
     enabled: !!pluginId,
     staleTime: 5 * 60 * 1000,
+    // 市场已有的元数据先用于首屏；完整详情仍独立请求并暴露错误。
+    placeholderData: initialPlugin?.id === pluginId ? initialPlugin : undefined,
     queryFn: async () => {
       // 从兼容列表进入详情时直接获取该插件，避免先补下载全部插件列表。
-      const cachedPlugin = getCachedPluginList(true)?.find(
+      const cachedPlugin = initialPlugin?.id === pluginId ? initialPlugin : getCachedPluginList(true)?.find(
         (p) => p.id === pluginId || p.marketplace_id === pluginId
       )
-      if (cachedPlugin?.market_data_source === 'service') return fetchPluginDetail(cachedPlugin)
+      if (cachedPlugin) return fetchPluginDetail(cachedPlugin)
       const list = await fetchPluginList()
       const foundPlugin = list.find((p) => p.id === pluginId || p.marketplace_id === pluginId)
       if (foundPlugin) {
@@ -380,14 +398,23 @@ export function PluginDetailPage({
       {
         queryKey: ['plugin-git-status'],
         queryFn: () => checkGitStatus(),
+        initialData: initialRuntime?.gitStatus,
+        initialDataUpdatedAt: 0,
+        staleTime: 30_000,
       },
       {
         queryKey: ['plugin-maimai-version'],
         queryFn: () => getMaimaiVersion(),
+        initialData: initialRuntime?.maimaiVersion,
+        initialDataUpdatedAt: 0,
+        staleTime: 30_000,
       },
       {
         queryKey: ['plugin-installed-list'],
         queryFn: () => getInstalledPlugins({ forceRefresh: true }),
+        initialData: initialRuntime?.installedPlugins,
+        initialDataUpdatedAt: 0,
+        staleTime: 30_000,
       },
     ],
   })
@@ -407,23 +434,23 @@ export function PluginDetailPage({
 
   const readmeQuery = useQuery({
     queryKey: ['plugin-readme', plugin?.id, isInstalled, selectedRelease?.commit],
-    enabled: !!plugin && installedPluginsQuery.isSuccess,
+    enabled: !!plugin && !deferContent && !pluginQuery.isPlaceholderData && installedPluginsQuery.isSuccess,
     staleTime: 5 * 60 * 1000,
     queryFn: ({ signal }) => loadPluginReadme(
       plugin!, isInstalled && (!selectedRelease || selectedRelease.version === installedVersion), signal, selectedRelease?.commit
     ),
   })
   const readme = readmeQuery.isError ? '加载 README 失败' : (readmeQuery.data ?? '')
-  const readmeLoading = readmeQuery.isPending
+  const readmeLoading = deferContent || readmeQuery.isPending
 
   const changelogQuery = useQuery({
     queryKey: ['plugin-changelog', plugin?.id, isInstalled, plugin?.manifest.changelog, plugin?.changelog],
-    enabled: !!plugin && installedPluginsQuery.isSuccess,
+    enabled: !!plugin && !deferContent && !pluginQuery.isPlaceholderData && installedPluginsQuery.isSuccess,
     staleTime: 5 * 60 * 1000,
     queryFn: ({ signal }) => loadPluginChangelog(plugin!, isInstalled, signal),
   })
   const changelog = selectedRelease ? selectedRelease.release_notes : changelogQuery.isError ? '加载更新日志失败' : (changelogQuery.data ?? '')
-  const changelogLoading = !selectedRelease && changelogQuery.isPending
+  const changelogLoading = deferContent || (!selectedRelease && changelogQuery.isPending)
 
   // 任一写操作成功后，重新拉取已安装列表，并同步详情与外层市场的安装状态。
   const refreshInstalledPlugins = async () => {
@@ -525,22 +552,24 @@ export function PluginDetailPage({
   // 任一写操作进行中即视为操作中（保持按钮禁用 / loading 语义）
   const operating =
     installMutation.isPending || uninstallMutation.isPending || updateMutation.isPending
+  // 首屏元数据用于阅读，安装等操作要等完整详情到达后再开放。
+  const detailPending = pluginQuery.isPlaceholderData
 
   // 安装插件
   const handleInstall = () => {
-    if (!plugin || !gitStatus?.installed) return
+    if (!plugin || !gitStatus?.installed || detailPending) return
     installMutation.mutate({ plugin })
   }
 
   // 卸载插件
   const handleUninstall = () => {
-    if (!plugin) return
+    if (!plugin || detailPending) return
     uninstallMutation.mutate({ plugin })
   }
 
   // 更新插件
   const handleUpdate = () => {
-    if (!plugin || !gitStatus?.installed) return
+    if (!plugin || !gitStatus?.installed || detailPending) return
     updateMutation.mutate({ plugin })
   }
 
@@ -549,17 +578,19 @@ export function PluginDetailPage({
   if (loading) {
     return (
       <div className={containerClassName}>
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-2">
           <Button 
             variant="ghost" 
             size="icon"
             onClick={handleBack}
+            className="h-10 w-10 shrink-0 [&_svg]:size-5"
+            aria-label="返回插件市场"
           >
             <ArrowLeft className="h-5 w-5" />
           </Button>
           {!isDialog && (
             <div>
-              <h1 className="text-2xl sm:text-3xl font-bold">插件详情</h1>
+              <h1 className="text-lg! font-semibold! leading-snug!">{plugin?.manifest.name || '正在加载插件'}</h1>
             </div>
           )}
         </div>
@@ -573,17 +604,19 @@ export function PluginDetailPage({
   if (error || !plugin) {
     return (
       <div className={containerClassName}>
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-2">
           <Button 
             variant="ghost" 
             size="icon"
             onClick={handleBack}
+            className="h-10 w-10 shrink-0 [&_svg]:size-5"
+            aria-label="返回插件市场"
           >
             <ArrowLeft className="h-5 w-5" />
           </Button>
           {!isDialog && (
             <div>
-              <h1 className="text-2xl sm:text-3xl font-bold">插件详情</h1>
+              <h1 className="text-lg! font-semibold! leading-snug!">{plugin?.manifest.name || '插件加载失败'}</h1>
             </div>
           )}
         </div>
@@ -600,15 +633,15 @@ export function PluginDetailPage({
   }
 
   const isCompatible = checkCompatibility()
-  const detailActionButtonClassName = 'h-auto min-h-16 px-5 text-base'
+  const detailActionButtonClassName = 'h-10! shrink-0 px-4 text-sm'
   const detailActionButtons = (
-    <div className="flex min-w-32 shrink-0 flex-col gap-2 sm:min-w-36 sm:flex-row">
+    <div className="flex shrink-0 flex-wrap items-center gap-2">
       {isInstalled ? (
         <>
           {needsUpdate() ? (
             <Button
               className={detailActionButtonClassName}
-              disabled={!gitStatus?.installed || operating || !isCompatible}
+              disabled={!gitStatus?.installed || operating || detailPending || !isCompatible}
               onClick={handleUpdate}
               title={!gitStatus?.installed ? 'Git 未安装' : undefined}
             >
@@ -628,7 +661,7 @@ export function PluginDetailPage({
           <Button
             className={detailActionButtonClassName}
             variant="destructive"
-            disabled={!gitStatus?.installed || operating}
+            disabled={!gitStatus?.installed || operating || detailPending}
             onClick={handleUninstall}
             title={!gitStatus?.installed ? 'Git 未安装' : undefined}
           >
@@ -648,7 +681,7 @@ export function PluginDetailPage({
       ) : (
         <Button
           className={detailActionButtonClassName}
-          disabled={!gitStatus?.installed || !isCompatible || operating}
+          disabled={!gitStatus?.installed || !isCompatible || operating || detailPending}
           onClick={handleInstall}
           title={
             !gitStatus?.installed
@@ -677,23 +710,22 @@ export function PluginDetailPage({
   return (
     <div className={containerClassName}>
       {/* 页面标题和返回按钮 */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
+      <div className="flex shrink-0 flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-2">
           <Button 
             variant="ghost" 
             size="icon"
             onClick={handleBack}
-            className="h-8 w-8 shrink-0"
+            className="h-10 w-10 shrink-0 [&_svg]:size-5"
+            aria-label="返回插件市场"
+            title="返回插件市场"
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
           {!isDialog && (
-            <div>
-              <h1 className="text-2xl sm:text-3xl font-bold">插件详情</h1>
-              <p className="text-muted-foreground mt-1 sm:mt-2 text-sm sm:text-base">
-                {plugin.manifest.name}
-              </p>
-            </div>
+            <h1 className="min-w-0 truncate text-lg! font-semibold! leading-snug!" title={plugin.manifest.name}>
+              {plugin.manifest.name}
+            </h1>
           )}
         </div>
       </div>
@@ -746,42 +778,38 @@ export function PluginDetailPage({
                     </div>
                   </div>
                 </div>
-                {detailActionButtons}
               </div>
             </CardHeader>
-            {releaseCatalog && (
-              <CardContent className="space-y-3 border-t pt-4">
-                <h3 className="text-lg font-semibold">安装版本</h3>
-                {releaseCatalog.sync_error ? (
+            <CardContent className="space-y-3 pt-4">
+              <div className="flex min-w-0 items-center justify-end gap-3">
+                {releaseCatalog?.mode === 'releases' && !releaseCatalog.sync_error && (
+                  <select
+                    aria-label="选择发布版本"
+                    className="h-10 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-foreground"
+                    value={selectedRelease?.version || ''}
+                    disabled={operating || detailPending}
+                    onChange={(event) => setSelection({ pluginId, version: event.target.value })}
+                  >
+                    {!selectedRelease && <option value="" disabled>没有兼容的稳定版本，请查看其他版本</option>}
+                    {releaseCatalog.versions.map((release) => (
+                      <option key={release.version} value={release.version} disabled={!release.compatible}>
+                        {release.version}{release.version === releaseCatalog.recommended_version ? ' · 推荐' : ''}
+                        {release.prerelease ? ' · 预发布' : ''}{release.yanked ? ' · 已撤回' : ''}
+                        {!release.compatible ? ` · ${shortenReleaseReasons(release.reasons)}` : ''}
+                        {` · 更新于 ${formatPluginUpdateDate(release.published_at)}`}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {detailActionButtons}
+              </div>
+              {releaseCatalog && (
+                releaseCatalog.sync_error ? (
                   <p role="alert" className="text-sm text-destructive">版本同步失败：{releaseCatalog.sync_error}</p>
                 ) : releaseCatalog.mode === 'branch' ? (
                   <p className="text-sm text-muted-foreground">该插件尚无可识别的发布版本，使用分支安装。</p>
                 ) : (
                   <>
-                    <label className="block space-y-2 text-sm">
-                      <span>选择发布版本</span>
-                      <select
-                        aria-label="选择发布版本"
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-foreground"
-                        value={selectedRelease?.version || ''}
-                        disabled={operating}
-                        onChange={(event) => setSelection({ pluginId, version: event.target.value })}
-                      >
-                        {!selectedRelease && <option value="" disabled>没有兼容的稳定版本，请查看其他版本</option>}
-                        {releaseCatalog.versions.map((release) => (
-                          <option key={release.version} value={release.version} disabled={!release.compatible}>
-                            {release.version}{release.version === releaseCatalog.recommended_version ? ' · 推荐' : ''}
-                            {release.prerelease ? ' · 预发布' : ''}{release.yanked ? ' · 已撤回' : ''}
-                            {!release.compatible ? ` · ${shortenReleaseReasons(release.reasons)}` : ''}
-                            {` · 更新于 ${formatPluginUpdateDate(release.published_at)}`}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <p className="text-sm text-muted-foreground">
-                      当前安装：{installedVersion || '未安装'}；
-                      推荐版本：{releaseCatalog.recommended_version || '暂无兼容稳定版本'}
-                    </p>
                     {selectedRelease && (
                       <p className="text-sm text-muted-foreground">
                         适配麦麦 {selectedRelease.manifest.host_application.min_version} — {selectedRelease.manifest.host_application.max_version || '不限'}
@@ -807,9 +835,9 @@ export function PluginDetailPage({
                       </details>
                     )}
                   </>
-                )}
-              </CardContent>
-            )}
+                )
+              )}
+            </CardContent>
           </Card>
 
           <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-3">
@@ -868,7 +896,7 @@ export function PluginDetailPage({
                   <p className="mb-3 text-xs text-muted-foreground">
                     最新更新：{formatPluginUpdateDate(latestPluginUpdate)}
                   </p>
-                  {plugin.manifest.id && <PluginStats pluginId={plugin.manifest.id} />}
+                  {!deferContent && plugin.manifest.id && <PluginStats pluginId={plugin.manifest.id} />}
                 </CardContent>
               </Card>
 

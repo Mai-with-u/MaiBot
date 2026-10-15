@@ -41,6 +41,8 @@ interface DialogContentProps extends React.ComponentPropsWithoutRef<
   hideCloseButton?: boolean
   /** 无遮罩的覆盖面板，与 Dialog modal={false} 配合允许操作背景页面。 */
   hideOverlay?: boolean
+  /** 单独调整遮罩样式，例如操作确认框关闭进出场动画。 */
+  overlayClassName?: string
   /** 回车触发主操作按钮 */
   confirmOnEnter?: boolean
   /** 右侧覆盖面板；默认保持居中弹窗和手机底部弹层。 */
@@ -62,6 +64,7 @@ const DialogContent = React.forwardRef<
       preventOutsideClose = false,
       hideCloseButton = false,
       hideOverlay = false,
+      overlayClassName,
       confirmOnEnter = false,
       side = 'center',
       onKeyDownCapture,
@@ -70,13 +73,13 @@ const DialogContent = React.forwardRef<
     ref
   ) => (
     <DialogPortal>
-      {!hideOverlay && <DialogOverlay />}
+      {!hideOverlay && <DialogOverlay className={overlayClassName} />}
       <DialogPrimitive.Content
         ref={ref}
         data-dashboard-dialog-content="true"
         data-dashboard-dialog-side={side}
         className={cn(
-          'bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed z-50 flex flex-col gap-4 overflow-hidden border p-6 shadow-lg duration-200',
+          'bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed z-50 flex flex-col gap-4 overflow-hidden border p-6 shadow-lg outline-none duration-200',
           side === 'right'
             ? 'top-20 right-4 max-h-[min(75dvh,48rem)] w-[min(calc(100vw-2rem),var(--dialog-width,32rem))] rounded-none pb-[max(1.5rem,env(safe-area-inset-bottom))] [animation-fill-mode:both] data-[state=open]:animate-slide-in-from-right data-[state=closed]:animate-slide-out-to-right motion-reduce:animate-none'
             : 'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] top-[50%] left-[50%] max-h-[calc(100vh-2rem)] w-[min(calc(100vw-2rem),var(--dialog-width,32rem))] translate-x-[-50%] translate-y-[-50%] sm:rounded-lg',

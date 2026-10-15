@@ -386,7 +386,7 @@ describe('插件标签页过滤', () => {
     }
   }
 
-  it('MarketplaceTab 排除本地插件和已安装插件，并按下载量排序', () => {
+  it('MarketplaceTab 排除本地插件并保留已安装插件，按下载量排序', () => {
     const low = makePlugin('low', { downloads: 1 })
     const high = makePlugin('high', { downloads: 100 })
     const local = makePlugin('local', { source: 'local' })
@@ -397,12 +397,12 @@ describe('插件标签页过滤', () => {
       high: makeStats('high', { downloads: 100 }),
     }
     render(
-      <MarketplaceTab {...props} hideInstalledPlugins sortBy="downloads" pluginProgressById={{}} />
+      <MarketplaceTab {...props} sortBy="downloads" pluginProgressById={{}} />
     )
 
     const names = screen.getAllByText(/^插件-(high|low)$/).map((element) => element.textContent)
     expect(names).toEqual(['插件-high', '插件-low'])
     expect(screen.queryByText('插件-local')).not.toBeInTheDocument()
-    expect(screen.queryByText('插件-installed')).not.toBeInTheDocument()
+    expect(screen.getByText('插件-installed')).toBeInTheDocument()
   })
 })

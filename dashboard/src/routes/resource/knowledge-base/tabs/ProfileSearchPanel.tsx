@@ -6,11 +6,13 @@
  * 覆写与自动画像切换、原始响应），详情不再常驻占位。
  * 支撑证据的纠错、别名维护、画像覆写属于检修动作，在记忆检修的 ProfileMaintenancePanel。
  */
-import { ArrowLeftRight, ChevronDown, Loader2, RefreshCw, Search } from 'lucide-react'
+import { ArrowLeftRight, ChevronDown, Loader2, RefreshCw, Search, UserRound } from 'lucide-react'
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react'
+import type { ReactNode } from 'react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
   Dialog,
@@ -23,14 +25,6 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { cn } from '@/lib/utils'
@@ -40,9 +34,10 @@ import type { UseMemoryProfileConsoleResult } from '../hooks/useMemoryProfileCon
 
 export interface ProfileSearchPanelProps {
   profile: UseMemoryProfileConsoleResult
+  searchModeTabs?: ReactNode
 }
 
-export function ProfileSearchPanel({ profile }: ProfileSearchPanelProps) {
+export function ProfileSearchPanel({ profile, searchModeTabs }: ProfileSearchPanelProps) {
   const {
     queryMode,
     setQueryMode,
@@ -79,7 +74,7 @@ export function ProfileSearchPanel({ profile }: ProfileSearchPanelProps) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
-      {/* 查询栏放在列表卡之外（与文字记录一致），列表卡只含滚动列表，滚动时顶线与边框不会被带走 */}
+      {/* 查询栏放在列表卡之外（与文字记录一致），滚动时列表边框不会被带走 */}
       <div className="shrink-0 space-y-3">
         {/* 精确/模糊合成一个无文字切换按钮，放在输入框同一行末尾；
               点一次换成另一种，再点一次换回来。
@@ -88,8 +83,15 @@ export function ProfileSearchPanel({ profile }: ProfileSearchPanelProps) {
         {/* 精确/模糊合成一个无文字切换按钮：按钮固定在行尾不参与滚动，
               只有左侧输入区在 overflow-hidden 的窗口里纵向滚动。
               popLayout 让退场内容脱离文档流，容器高度始终由新内容决定，不会先塌再长。 */}
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="relative min-w-0 basis-[calc(100%_-_4rem)] flex-1 overflow-hidden sm:basis-0">
+        <form
+          className="flex min-w-0 flex-wrap items-center gap-3"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void submitQuery()
+          }}
+        >
+          {searchModeTabs}
+          <div className="relative min-w-[12rem] flex-1 overflow-hidden">
             <AnimatePresence initial={false} mode="popLayout">
               <motion.div
                 key={queryMode}
@@ -106,6 +108,7 @@ export function ProfileSearchPanel({ profile }: ProfileSearchPanelProps) {
                       <Label htmlFor="profile-platform" className="sr-only">平台</Label>
                       <Input
                         id="profile-platform"
+                        className="h-9"
                         value={queryPlatform}
                         onChange={(event) => setQueryPlatform(event.target.value)}
                         placeholder="例如 qq、telegram、webui"
@@ -115,6 +118,7 @@ export function ProfileSearchPanel({ profile }: ProfileSearchPanelProps) {
                       <Label htmlFor="profile-user-id" className="sr-only">用户账号</Label>
                       <Input
                         id="profile-user-id"
+                        className="h-9"
                         value={queryUserId}
                         onChange={(event) => setQueryUserId(event.target.value)}
                         placeholder="输入平台侧 user_id"
@@ -122,11 +126,13 @@ export function ProfileSearchPanel({ profile }: ProfileSearchPanelProps) {
                     </div>
                   </>
                 ) : (
-                  <div className="min-w-0 flex-1">
+                  <div className="relative min-w-0 flex-1">
                     {/* 关键词由后端解析：姓名、平台昵称、群名片与 person_id 都走这一个入口 */}
                     <Label htmlFor="profile-keyword" className="sr-only">人物关键词</Label>
+                    <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
                     <Input
                       id="profile-keyword"
+                      className="h-9 pl-9"
                       value={queryKeyword}
                       onChange={(event) => setQueryKeyword(event.target.value)}
                       placeholder="人物名称、群名片或 person_id"
@@ -140,7 +146,7 @@ export function ProfileSearchPanel({ profile }: ProfileSearchPanelProps) {
             type="button"
             variant="outline"
             size="icon"
-            className="shrink-0"
+            className="h-9 w-9 shrink-0"
             aria-label={queryMode === 'exact' ? '切换为模糊查询' : '切换为精确查询'}
             title={
               queryMode === 'exact'
@@ -152,16 +158,15 @@ export function ProfileSearchPanel({ profile }: ProfileSearchPanelProps) {
             <ArrowLeftRight className="h-4 w-4" />
           </Button>
           <div className="flex shrink-0 flex-wrap items-end gap-2">
-            <Button onClick={() => void submitQuery()} disabled={querying}>
+            <Button type="submit" className="h-9" disabled={querying}>
               <Search className="mr-2 h-4 w-4" />
               查询
             </Button>
-            <Button variant="outline" onClick={() => void loadProfiles()} disabled={loading}>
-              <RefreshCw className={cn('mr-2 h-4 w-4', loading && 'animate-spin')} />
-              查看画像库
+            <Button type="button" size="icon" className="h-9 w-9" title="查看画像库" aria-label="查看画像库" onClick={() => void loadProfiles()} disabled={loading}>
+              <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
             </Button>
           </div>
-        </div>
+        </form>
 
         {querying ? (
           <div className="text-muted-foreground flex items-center gap-2 text-sm">
@@ -171,75 +176,69 @@ export function ProfileSearchPanel({ profile }: ProfileSearchPanelProps) {
         ) : null}
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <ScrollArea
-          aria-label="人物画像列表"
-          data-memory-delete-screen="true"
-          className="h-[60dvh] min-h-0 flex-none rounded-lg border bg-background lg:h-auto lg:flex-1 [&_[data-dashboard-table-wrapper]]:overflow-visible">
-          <Table>
-            <TableHeader className="bg-background sticky top-0 z-10 [&_th]:shadow-[inset_0_1px_0_var(--mil-line,var(--border)),inset_0_-1px_0_var(--mil-line,var(--border))] [&_tr]:border-b-0">
-              <TableRow>
-                <TableHead>人物</TableHead>
-                <TableHead>版本</TableHead>
-                <TableHead>更新时间</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {profiles.length > 0 ? (
+      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <CardHeader className="mb-0! shrink-0 flex-row items-center justify-end space-y-0 border-b-0! shadow-none!">
+          <span className="text-muted-foreground text-xs">人物画像 {profiles.length}</span>
+        </CardHeader>
+        <div className="flex min-h-0 flex-1 flex-col px-3 pb-3 sm:px-4 sm:pb-4">
+          <ScrollArea
+            aria-label="人物画像列表"
+            data-memory-delete-screen="true"
+            className="bg-background h-[60dvh] min-h-0 flex-none rounded-lg border lg:h-auto lg:flex-1"
+          >
+            <CardContent className="space-y-2 border-0! pt-3 shadow-none!">
+              {loading ? (
+                <div className="text-muted-foreground flex h-40 items-center justify-center text-sm">
+                  <ThinkingIllustration size="sm" className="mx-auto" />
+                </div>
+              ) : profiles.length > 0 ? (
                 profiles.map((item) => (
-                  <TableRow
+                  <button
                     key={item.person_id}
+                    type="button"
+                    data-memory-record-row="true"
                     data-profile-person-row="true"
                     className={cn(
-                      'cursor-pointer',
-                      selectedPersonId === item.person_id && 'bg-muted/60'
+                      'hover:bg-muted/60 focus-visible:ring-ring flex w-full min-w-0 items-start gap-3 rounded-md border px-3 py-2.5 text-left transition focus-visible:ring-2 focus-visible:outline-none',
+                      selectedPersonId === item.person_id && 'bg-primary/5'
                     )}
                     onClick={() => selectProfile(item.person_id)}
                   >
-                    <TableCell>
-                      <div className="font-medium break-all">
+                    <span className="mt-0.5 flex w-12 flex-none flex-col items-center gap-1">
+                      <span className="bg-muted flex h-7 w-7 items-center justify-center rounded-md">
+                        <UserRound className="h-3.5 w-3.5" />
+                      </span>
+                      <span className="text-muted-foreground text-xs font-medium whitespace-nowrap">画像</span>
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-medium break-words">
                         {item.person_name || item.person_id}
-                      </div>
-                      {item.person_name ? (
-                        <div className="text-muted-foreground mt-0.5 font-mono text-xs break-all">
-                          {item.person_id}
-                        </div>
-                      ) : null}
+                      </span>
                       {describeProfileIdentity(item).length > 0 ? (
-                        <div className="text-muted-foreground mt-1 text-xs break-all">
+                        <span className="text-muted-foreground mt-1 line-clamp-2 block text-xs leading-relaxed">
                           {describeProfileIdentity(item).join(' · ')}
-                        </div>
+                        </span>
                       ) : null}
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {item.has_manual_override ? (
-                          <Badge variant="secondary">画像覆写</Badge>
-                        ) : null}
+                      <span className="text-muted-foreground mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                        <span>版本 {Number(item.profile_version ?? 0)}</span>
+                        <span>{formatMemoryTime(item.updated_at)}</span>
+                        {item.has_manual_override ? <Badge variant="secondary">画像覆写</Badge> : null}
                         {item.source_note && !item.source_note.startsWith('sdk_memory_kernel.') ? (
                           <Badge variant="outline">{item.source_note}</Badge>
                         ) : null}
-                      </div>
-                    </TableCell>
-                    <TableCell>{Number(item.profile_version ?? 0)}</TableCell>
-                    <TableCell>{formatMemoryTime(item.updated_at)}</TableCell>
-                  </TableRow>
+                      </span>
+                    </span>
+                  </button>
                 ))
               ) : (
-                <TableRow>
-                  <TableCell colSpan={3} className="text-muted-foreground text-center">
-                    {loading ? (
-                      <ThinkingIllustration size="sm" className="mx-auto" />
-                    ) : profileListMode === 'search' ? (
-                      '没有匹配的人物画像'
-                    ) : (
-                      '还没有人物画像快照'
-                    )}
-                  </TableCell>
-                </TableRow>
+                <div className="text-muted-foreground flex h-40 items-center justify-center text-sm">
+                  {profileListMode === 'search' ? '没有匹配的人物画像' : '还没有人物画像快照'}
+                </div>
               )}
-            </TableBody>
-          </Table>
-        </ScrollArea>
-      </div>
+            </CardContent>
+          </ScrollArea>
+        </div>
+      </Card>
 
       {/* 画像详情从右侧滑入覆盖页面，关闭后保留列表的选择与滚动位置。 */}
       <Dialog modal={false} open={detailOpen} onOpenChange={setDetailOpen}>

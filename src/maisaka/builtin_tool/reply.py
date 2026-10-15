@@ -450,6 +450,12 @@ async def handle_tool(
             stream_id=tool_ctx.runtime.session_id,
             reply_message=target_message,
             chat_history=replyer_chat_history,
+            image_recognition_refresher=lambda history: (
+                tool_ctx.runtime._reasoning_engine._refresh_chat_history_visual_placeholders(
+                    chat_history=history,
+                    wait_for_text_model=True,
+                )
+            ),
             reply_tool_args=reply_tool_args,
             sub_agent_runner=lambda system_prompt: _run_expression_selector(
                 tool_ctx,

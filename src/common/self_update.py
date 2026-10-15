@@ -21,6 +21,17 @@ import sys
 import time
 import tomllib
 
+from .package_update import (
+    PACKAGE_RUNNER_ENV,
+    SelfUpdateError,
+    ensure_other_instances_stopped,
+    fetch_releases,
+    latest_release,
+    release_exists,
+    run_update,
+    tool_environment,
+    version_tuple,
+)
 from .paths import PACKAGED_INSTALL, SOURCE_ROOT, get_instance_root
 from .version import read_project_version
 
@@ -50,7 +61,11 @@ _GIT_STALL_OPTIONS = ("-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=
 _COMMIT_FIELD_SEPARATOR = "\x1f"
 
 BLOCKER_MESSAGES: Dict[str, str] = {
-    "package_install": "安装版请停止 MaiBot 后执行 uv tool upgrade maibot",
+    "uv_missing": "未找到 uv，请将 uv 加入 MaiBot 启动环境的 PATH",
+    "not_uv_tool": "当前不是 PyPI 来源的 uv tool 安装，请使用原安装工具更新",
+    "package_runner_missing": "请通过 maibot run 启动，才能自动更新并重启",
+    "other_instances_running": "同一工具环境还有其他实例运行，请先停止它们再更新",
+    "package_busy": "工具环境正在更新，请稍后重试",
     "git_missing": "未找到 Git，无法自更新",
     "not_git_repo": "当前部署不是 Git 仓库（如 Docker 镜像或压缩包），请按对应部署方式更新",
     "detached_head": "当前不在任何分支上（分离头指针），无法自更新",
@@ -60,15 +75,6 @@ BLOCKER_MESSAGES: Dict[str, str] = {
     "no_dependency_tool": "本次更新包含依赖变更，但未找到可用的依赖安装方式（uv 或 pip）",
     "python_requirement_changed": "本次更新修改了 Python 版本要求，请手动更新",
 }
-
-
-class SelfUpdateError(Exception):
-    """自更新流程中的可预期失败。"""
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
 
 
 @dataclass
@@ -81,6 +87,7 @@ class LocalState:
     commit: Optional[str] = None
     dirty_files: List[str] = field(default_factory=list)
     dependency_tool: Optional[str] = None
+    deployment_type: str = "git"
 
 
 @dataclass
@@ -276,7 +283,13 @@ def inspect_local(root: Path = PROJECT_ROOT) -> LocalState:
     """读取本地仓库状态；只执行只读的 Git 命令。"""
 
     if PACKAGED_INSTALL:
-        return LocalState(version=read_project_version(), blocker="package_install")
+        state = LocalState(version=read_project_version(), dependency_tool="uv", deployment_type="package")
+        try:
+            environment = tool_environment()
+            ensure_other_instances_stopped(environment, root)
+        except SelfUpdateError as exc:
+            state.blocker = exc.code
+        return state
     version, _ = _parse_pyproject((root / "pyproject.toml").read_text(encoding="utf-8"))
     state = LocalState(version=version, dependency_tool=detect_dependency_tool(root))
     if shutil.which("git") is None:
@@ -321,6 +334,14 @@ def _collect_apply_blockers(root: Path, local: LocalState, target: str, changed:
 def evaluate_update(local: LocalState, target: str, checked_at: float, root: Path = PROJECT_ROOT) -> UpdateCheck:
     """基于已经取回的目标提交计算更新结论，不联网。"""
 
+    if local.deployment_type == "package":
+        newer = version_tuple(target) > version_tuple(local.version)
+        return UpdateCheck(
+            local=local, checked_at=checked_at, latest_commit=target, latest_version=target,
+            behind=int(newer), dependencies_changed=newer,
+            blockers=[local.blocker] if local.blocker else [],
+            source=UpdateSource(id="pypi", name="PyPI", url="https://pypi.org/project/maibot/"),
+        )
     if local.commit is None:
         raise ValueError("本地仓库状态缺少当前提交，无法评估更新")
 
@@ -411,6 +432,8 @@ def check_for_update(root: Path = PROJECT_ROOT) -> UpdateCheck:
     local = inspect_local(root)
     if local.blocker is not None:
         return UpdateCheck(local=local, blockers=[local.blocker])
+    if local.deployment_type == "package":
+        return evaluate_update(local, latest_release(local.version), time.time(), root)
     if local.branch is None:
         raise ValueError("本地仓库状态缺少当前分支，无法检查更新")
     target, source = _fetch_branch_head(root, local.branch)
@@ -425,6 +448,23 @@ def request_update(expected_commit: str, root: Path = PROJECT_ROOT) -> PendingUp
     expected_commit 是用户在界面上确认过的目标提交；Runner 只会更新到这个提交。
     """
 
+    if PACKAGED_INSTALL:
+        local = inspect_local(root)
+        if local.blocker:
+            raise SelfUpdateError(local.blocker, BLOCKER_MESSAGES[local.blocker])
+        if version_tuple(expected_commit) <= version_tuple(local.version):
+            raise SelfUpdateError("already_up_to_date", "目标版本必须高于当前版本")
+        if not release_exists(fetch_releases(), expected_commit):
+            raise SelfUpdateError("unknown_version", "PyPI 上没有这个可用的正式版本，请重新检查")
+        pending = PendingUpdate(expected_commit, local.version, "pypi", time.time())
+        path = _pending_path(root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with path.open("x", encoding="utf-8") as output:
+                json.dump(asdict(pending), output)
+        except FileExistsError as exc:
+            raise SelfUpdateError("package_busy", "已有更新请求，请等待更新完成") from exc
+        return pending
     if _COMMIT_PATTERN.fullmatch(expected_commit) is None:
         raise SelfUpdateError("invalid_commit", "目标提交格式不正确")
 
@@ -563,10 +603,23 @@ def apply_pending_update(logger: Any, root: Path = PROJECT_ROOT) -> Optional[Upd
         result.branch = pending.branch
         result.from_commit = pending.base_commit
         result.to_commit = pending.target_commit
-        _execute_update(pending, result, logger, root)
+        if PACKAGED_INSTALL:
+            result.from_version = pending.base_commit
+            result.to_version = pending.target_commit
+            # 包安装没有 Git 提交，结果显示只使用版本号。
+            result.from_commit = result.to_commit = ""
+            if pending.branch != "pypi" or not 0 <= time.time() - pending.requested_at <= PENDING_MAX_AGE_SECONDS:
+                raise SelfUpdateError("stale_request", "更新请求已过期或不属于包安装，请重新检查更新")
+            if os.environ.get(PACKAGE_RUNNER_ENV) != "1":
+                raise SelfUpdateError("package_runner_missing", BLOCKER_MESSAGES["package_runner_missing"])
+            result = UpdateResult(**run_update(root, pending.base_commit, pending.target_commit, asdict(result)))
+        else:
+            _execute_update(pending, result, logger, root)
     except SelfUpdateError as exc:
         result.error_code = exc.code
         result.error = exc.message
+        if PACKAGED_INSTALL and exc.code == "package_updater_failed":
+            result.rollback_error = "独立更新进程未返回结果，无法确认环境状态，请手动检查工具环境"
     except (OSError, TypeError, ValueError, subprocess.SubprocessError) as exc:
         result.error_code = "unexpected_error"
         result.error = f"{type(exc).__name__}: {exc}"

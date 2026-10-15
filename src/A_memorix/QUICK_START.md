@@ -55,7 +55,7 @@ quantization_type = "int8"
 
 [embedding.fallback]
 enabled = true
-probe_interval_seconds = 180
+probe_interval_seconds = 600
 allow_metadata_only_write = true
 
 [embedding.paragraph_vector_backfill]

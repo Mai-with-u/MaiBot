@@ -665,7 +665,15 @@ function ModelConfigPageContent() {
   }
 
   return (
-    <div className="h-full overflow-y-auto lg:overflow-hidden">
+    <div
+      className="h-full overflow-y-auto lg:overflow-hidden"
+      onScroll={(event) => {
+        // 小屏由整页滚动触发追加模型，桌面端仍由列表自身触发。
+        if (activeTab === 'configuration' && !window.matchMedia('(min-width: 1024px)').matches) {
+          handleModelListScroll(event)
+        }
+      }}
+    >
       <div
         data-model-config-page="true"
         className="flex min-h-full flex-col gap-4 p-4 sm:gap-6 sm:p-6 lg:h-full lg:overflow-hidden"
@@ -882,7 +890,7 @@ function ModelConfigPageContent() {
           </div>
 
           <div
-            className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-1 lg:h-0"
+            className="min-h-0 pb-1 lg:h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain"
             data-config-field-path="models"
             onScroll={handleModelListScroll}
           >
@@ -987,7 +995,7 @@ function ModelConfigPageContent() {
           className="mt-0 flex min-h-0 flex-1 flex-col gap-3 overflow-visible lg:overflow-hidden"
         >
           {taskConfig && taskConfigSchema && selectedTaskField && (
-            <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-4 lg:overflow-hidden">
+            <div className="grid min-h-0 gap-4 lg:flex-1 lg:grid-cols-4 lg:overflow-hidden">
               <aside className="flex min-h-0 flex-col overflow-hidden rounded-lg border lg:h-full">
                 <div className="flex items-center justify-between gap-2 border-b px-3 py-2.5">
                   <h2 className="text-sm font-semibold">模型类别</h2>
@@ -1003,7 +1011,28 @@ function ModelConfigPageContent() {
                     </Button>
                   )}
                 </div>
-                <div className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain p-2 lg:h-0">
+                {/* 移动端用紧凑选择器，避免类别列表占满屏幕并接管页面纵向滚动。 */}
+                <div className="min-w-0 p-2 lg:hidden">
+                  <Select value={selectedTaskField.name} onValueChange={setSelectedTaskName}>
+                    <SelectTrigger className="w-full min-w-0" aria-label="模型类别">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {visibleTaskFields.map((field) => {
+                        const assignedCount = taskConfig[field.name]?.model_list.length ?? 0
+
+                        return (
+                          <SelectItem key={field.name} value={field.name}>
+                            {resolveFieldLabel(field, i18n.language)}
+                            {field.advanced ? ' · 高级' : ''}
+                            {assignedCount > 0 ? ` · 已配置 ${assignedCount}` : ' · 未配置'}
+                          </SelectItem>
+                        )
+                      })}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="hidden min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain p-2 lg:block lg:h-0">
                   <AnimatePresence initial={false}>
                     {visibleTaskFields.map((field) => {
                       const isSelected = field.name === selectedTaskField.name
@@ -1071,7 +1100,7 @@ function ModelConfigPageContent() {
                 </div>
               </aside>
 
-              <section className="min-h-0 min-w-0 overflow-y-auto overscroll-contain rounded-lg border px-4 lg:col-span-3 lg:h-full">
+              <section className="min-h-0 min-w-0 rounded-lg border px-4 lg:col-span-3 lg:h-full lg:overflow-y-auto lg:overscroll-contain">
                 <AnimatePresence mode="wait" initial={false}>
                   <motion.div
                     key={selectedTaskField.name}

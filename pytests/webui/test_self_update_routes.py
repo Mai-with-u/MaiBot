@@ -1,6 +1,7 @@
 """自更新路由：状态缓存、登记更新后才重启、登记失败不重启。"""
 
 from typing import List
+from unittest.mock import Mock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -85,6 +86,24 @@ def test_unsupported_deployment_reports_blocker(client, monkeypatch):
     )
     status = test_client.get("/api/webui/system/self-update/status").json()
     assert (status["supported"], status["blockers"], status["can_apply"]) == (False, ["not_git_repo"], False)
+
+
+def test_package_status_reuses_cached_version_and_pypi_source(client, monkeypatch):
+    from src.common.self_update import evaluate_update
+
+    test_client, _ = client
+    local = LocalState(version="1.3.8", dependency_tool="uv", deployment_type="package")
+    monkeypatch.setattr(self_update_router, "inspect_local", lambda: local)
+    monkeypatch.setattr(self_update_router, "evaluate_update", evaluate_update)
+    monkeypatch.setattr(self_update_router, "check_for_update", lambda: evaluate_update(local, "1.3.9", 123.0))
+    mirror = Mock(side_effect=AssertionError("包安装不应初始化 Git 镜像"))
+    monkeypatch.setattr(self_update_router, "get_git_mirror_service", mirror)
+    checked = test_client.post("/api/webui/system/self-update/check").json()
+    assert checked["can_apply"] and checked["deployment_type"] == "package"
+    assert (checked["source_id"], checked["latest_version"]) == ("pypi", "1.3.9")
+    status = test_client.get("/api/webui/system/self-update/status").json()
+    assert status["can_apply"] and status["latest_commit"] == "1.3.9"
+    assert status["repository_url"] == "https://pypi.org/project/maibot/"
 
 
 def test_apply_registers_request_then_restarts(client, monkeypatch):
