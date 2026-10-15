@@ -280,10 +280,7 @@ async def test_description_refresh_preserves_text_only_policy_and_context_identi
     assert visual_loads == ([], [])
     image_description.assert_called_once_with("pending-image")
     emoji_description.assert_called_once_with("pending-emoji")
-    cast(AsyncMock, message.process).assert_awaited_once_with(
-        enable_heavy_media_analysis=False,
-        enable_voice_transcription=False,
-    )
+    cast(AsyncMock, message.process).assert_not_awaited()
     refreshed = history[0]
     assert isinstance(refreshed, SessionBackedMessage)
     assert refreshed.allow_visual is False
@@ -296,3 +293,58 @@ async def test_description_refresh_preserves_text_only_policy_and_context_identi
     assert "[表情包: 开心挥手]" in get_item_text(refreshed_item)
     assert "[图片，识别中.....]" not in refreshed.visible_text
     assert "小猫趴在窗台上" in refreshed.visible_text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allow_visual", [False, True])
+async def test_partial_description_refresh_preserves_unrecognized_media(
+    allow_visual: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    visual_loads: Tuple[List[str], List[str]],
+) -> None:
+    """使用真实消息处理方法，确保部分描述命中时不会重新识别或清空其他媒体。"""
+    ready_image = ImageComponent(binary_hash="ready-image")
+    pending_image = ImageComponent(binary_hash="pending-image")
+    pending_emoji = EmojiComponent(binary_hash="pending-emoji")
+    # 模拟已加载的媒体，保留各自缓存键，避免相同测试图片在构造时得到相同哈希。
+    for component in (ready_image, pending_image, pending_emoji):
+        component.binary_data = _PNG_BYTES
+    source = _message("partial-refresh", [ready_image, pending_image, pending_emoji])
+    message = SessionMessage(source.message_id, source.timestamp, platform="test-platform")
+    message.session_id = source.session_id
+    message.message_info = source.message_info
+    message.raw_message = source.raw_message
+    message.processed_plain_text = source.processed_plain_text
+    runtime = _FetchHistoryRuntime([message])
+    history = await runtime.build_session_messages_as_user_history([message], allow_visual=allow_visual)
+    original_item = history[0].to_context_item()
+    assert isinstance(original_item, UserMessageItem)
+
+    monkeypatch.setattr(
+        "src.maisaka.visual.chat_history_refresher._lookup_cached_image_description",
+        lambda image_hash: "小猫" if image_hash == "ready-image" else "",
+    )
+    monkeypatch.setattr("src.maisaka.visual.chat_history_refresher._lookup_cached_emoji_description", lambda _: "")
+    image_recognition = AsyncMock(return_value=None)
+    emoji_recognition = AsyncMock(return_value=None)
+    monkeypatch.setattr("src.chat.image_system.image_manager.image_manager.get_image_description", image_recognition)
+    monkeypatch.setattr("src.emoji_system.emoji_manager.emoji_manager.get_emoji_description", emoji_recognition)
+
+    refreshed_count = await runtime._reasoning_engine._refresh_chat_history_visual_placeholders_once(history)
+
+    image_recognition.assert_not_awaited()
+    emoji_recognition.assert_not_awaited()
+    assert refreshed_count == 1
+    assert visual_loads == ([], [])
+    assert ready_image.content == "[图片：小猫]"
+    assert pending_image.content == pending_emoji.content == ""
+    assert all(component.binary_data == _PNG_BYTES for component in (ready_image, pending_image, pending_emoji))
+    refreshed = history[0]
+    assert isinstance(refreshed, SessionBackedMessage)
+    assert refreshed.allow_visual is allow_visual
+    assert "[图片：小猫]" in refreshed.visible_text
+    assert "[图片，识别中.....]" in refreshed.visible_text
+    refreshed_item = refreshed.to_context_item()
+    assert isinstance(refreshed_item, UserMessageItem)
+    assert refreshed_item.meta == original_item.meta
+    assert sum(isinstance(part, ContextImagePart) for part in refreshed_item.parts) == (3 if allow_visual else 0)

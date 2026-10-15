@@ -53,12 +53,7 @@ async def refresh_chat_history_visual_placeholders(
         visual_components_updated = await asyncio.to_thread(
             _refresh_pending_visual_components, original_message.raw_message.components
         )
-        if visual_components_updated:
-            await original_message.process(
-                enable_heavy_media_analysis=False,
-                enable_voice_transcription=False,
-            )
-
+        # 直接从更新后的组件构建文字，避免整条 process 重处理尚未识别的媒体并清空其二进制。
         refreshed_visible_text = build_visible_text(original_message, history_message.source_kind)
         if not visual_components_updated and refreshed_visible_text == history_message.visible_text:
             continue
