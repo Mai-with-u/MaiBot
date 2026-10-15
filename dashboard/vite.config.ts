@@ -1,20 +1,42 @@
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import path from 'path'
 
 import { dashboardVersionDefine } from './app-version'
 
+// vitest 运行期间会在源码目录旁留下瞬时临时文件（原子写的 `.tmp-*`、`.tmpdir/` 目录），
+// Windows 上这些文件常处于占用状态，Vite 监听它们会抛 EBUSY。
+const VITEST_TEMP_WATCH_IGNORED = [
+  '**/.tmp-*',
+  '**/.*.tmpdir',
+  '**/.*.tmpdir/**',
+  '**/*.tmp',
+]
+
+// chokidar 对 EBUSY 等错误会 emit 'error'，而 Vite dev server 未监听该事件，
+// 单个文件监听失败（Node 的 'error' 无监听即抛出）会直接打挂 dev 服务。
+function watchErrorGuard(): Plugin {
+  return {
+    name: 'watch-error-guard',
+    configureServer(server) {
+      server.watcher.on('error', (error: Error) => {
+        server.config.logger.warn(`文件监听出错，已忽略: ${error.message}`)
+      })
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [tailwindcss(), react()],
+  plugins: [tailwindcss(), react(), watchErrorGuard()],
   define: dashboardVersionDefine,
   server: {
     host: '127.0.0.1',
     port: 7999,
     watch: {
       // 依赖目录的本地备份不应进入 Vite 文件监听，否则会占用大量句柄并导致服务无响应。
-      ignored: ['**/node_modules.mixed-backup-*/**'],
+      ignored: ['**/node_modules.mixed-backup-*/**', ...VITEST_TEMP_WATCH_IGNORED],
     },
     allowedHosts: ['sengokucolad.tail1e46b9.ts.net'],
     proxy: {
@@ -40,100 +62,27 @@ export default defineConfig({
     dedupe: ['@codemirror/state', '@codemirror/view'],
   },
   optimizeDeps: {
-    include: ['react', 'react-dom'],
+    // 设置页及其懒加载编辑器在启动时预构建，避免首次访问时重新优化依赖，
+    // 使正在加载的模块请求因依赖版本变化返回 504 Outdated Optimize Dep。
+    include: [
+      'react',
+      'react-dom',
+      '@radix-ui/react-accordion',
+      '@codemirror/lang-css',
+      '@codemirror/lang-json',
+      '@codemirror/lang-python',
+      '@codemirror/language',
+      '@codemirror/legacy-modes/mode/toml',
+      '@codemirror/lint',
+      '@codemirror/state',
+      '@codemirror/theme-one-dark',
+      '@codemirror/view',
+      '@uiw/react-codemirror',
+    ],
   },
   build: {
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          // React 核心库
-          'react-vendor': ['react', 'react-dom', 'react/jsx-runtime'],
-          
-          // TanStack Router
-          'router': ['@tanstack/react-router', '@tanstack/react-virtual'],
-          
-          // Radix UI 组件库
-          radix: [
-            '@radix-ui/react-dialog',
-            '@radix-ui/react-select',
-            '@radix-ui/react-checkbox',
-            '@radix-ui/react-label',
-            '@radix-ui/react-slot',
-            '@radix-ui/react-toast',
-            '@radix-ui/react-tooltip',
-            '@radix-ui/react-alert-dialog',
-            '@radix-ui/react-avatar',
-            '@radix-ui/react-collapsible',
-            '@radix-ui/react-context-menu',
-            '@radix-ui/react-popover',
-            '@radix-ui/react-progress',
-            '@radix-ui/react-scroll-area',
-            '@radix-ui/react-separator',
-            '@radix-ui/react-slider',
-            '@radix-ui/react-switch',
-            '@radix-ui/react-tabs',
-          ],
-          
-          // 图标库
-          'icons': ['lucide-react'],
-          
-          // 图表库
-          'charts': ['recharts'],
-          
-          // CodeMirror 编辑器（较大，单独分包）
-          'codemirror': [
-            '@uiw/react-codemirror',
-            '@codemirror/lang-javascript',
-            '@codemirror/lang-json',
-            '@codemirror/lang-python',
-            '@codemirror/lint',
-            '@codemirror/theme-one-dark',
-          ],
-          
-          // ReactFlow 流程图（较大，单独分包）
-          'reactflow': ['reactflow', 'dagre'],
-          
-          // Markdown 渲染（较大，单独分包）
-          'markdown': [
-            'react-markdown',
-            'remark-gfm',
-            'remark-math',
-            'rehype-katex',
-            'katex',
-          ],
-          
-          // 文件上传（Uppy）
-          'uppy': [
-            '@uppy/core',
-            '@uppy/dashboard',
-            '@uppy/react',
-            '@uppy/xhr-upload',
-          ],
-          
-          // 拖拽功能
-          'dnd': [
-            '@dnd-kit/core',
-            '@dnd-kit/sortable',
-            '@dnd-kit/utilities',
-          ],
-          
-          // 工具库
-          'utils': [
-            'date-fns',
-            'clsx',
-            'tailwind-merge',
-            'class-variance-authority',
-          ],
-          
-          // 其他
-          'misc': [
-            'react-joyride',
-            'react-day-picker',
-            'cmdk',
-          ],
-        },
-      },
-    },
+    // 让 Rollup 按实际依赖关系分包，避免手动拆分的 Router/Radix 包互相导入，
+    // 导致生产版在 React 初始化前访问 forwardRef 而白屏。
     chunkSizeWarningLimit: 500, // 降低警告阈值，便于发现大块
   },
 })

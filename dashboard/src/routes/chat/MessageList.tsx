@@ -14,6 +14,8 @@ import { useTranslation } from 'react-i18next'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useResolvedAvatarUrl } from '@/lib/avatar-url'
+import { ImageGalleryProvider, type GalleryImage } from '@/components/image-gallery'
+import { useVirtualizerUnmountGuard } from '@/lib/use-virtualizer-unmount-guard'
 import { cn } from '@/lib/utils'
 
 import { ChatScrollContext, type ChatScrollContextValue } from './ChatScrollContext'
@@ -168,6 +170,25 @@ export function MessageList({
   runtimeStatus,
 }: MessageListProps) {
   const { t } = useTranslation()
+  // 当前会话里的图片与表情，按出现顺序排列，供大图预览切换上一张/下一张。
+  const galleryImages = useMemo(() => {
+    const images = new Map<string, GalleryImage>()
+    for (const message of messages) {
+      if (message.message_type !== 'rich') continue
+      for (const segment of message.segments ?? []) {
+        if (segment.type !== 'image' && segment.type !== 'emoji') continue
+        const src = String(segment.data)
+        if (!images.has(src)) {
+          images.set(src, {
+            src,
+            alt: segment.type === 'emoji' ? t('chat.media.emoji') : t('chat.media.image'),
+          })
+        }
+      }
+    }
+    return Array.from(images.values())
+  }, [messages, t])
+
   const viewportRef = useRef<HTMLDivElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map())
@@ -175,7 +196,6 @@ export function MessageList({
   const highlightFrameRef = useRef<number | null>(null)
   const highlightTimerRef = useRef<number | null>(null)
   const highlightedElementRef = useRef<HTMLDivElement | null>(null)
-  const previousMessagesRef = useRef(messages)
   const scrollAnchorsRef = useRef<ScrollAnchor[]>([])
   const [playingMessageIds, setPlayingMessageIds] = useState<Set<string>>(
     () => new Set()
@@ -252,32 +272,13 @@ export function MessageList({
     overscan: 8,
     rangeExtractor,
   })
+  useVirtualizerUnmountGuard(rowVirtualizer)
   const virtualListSize = rowVirtualizer.getTotalSize()
 
   useLayoutEffect(() => {
-    const previousMessages = previousMessagesRef.current
-    previousMessagesRef.current = messages
-
-    if (
-      isNearBottomRef.current ||
-      previousMessages.length !== messages.length ||
-      messages.length === 0
-    ) {
-      return
-    }
-
-    const firstRetainedIndex = previousMessages.findIndex(
-      (message) => message.id === messages[0].id
-    )
-    if (firstRetainedIndex <= 0) {
-      return
-    }
-
-    const retainedMessageCount = previousMessages.length - firstRetainedIndex
-    const retainedSequenceMatches = previousMessages
-      .slice(firstRetainedIndex)
-      .every((message, index) => message.id === messages[index]?.id)
-    if (!retainedSequenceMatches || retainedMessageCount >= messages.length) {
+    // 用户不在底部时，任何列表变化（加载历史、收到新消息、虚拟行重新测量）都必须
+    // 保持当前可见消息相对视口的位置，避免内容高度变化造成视觉跳动。
+    if (isNearBottomRef.current || messages.length === 0) {
       return
     }
 
@@ -296,7 +297,7 @@ export function MessageList({
       viewport.scrollTop += offsetDelta
     }
     captureScrollAnchors()
-  }, [captureScrollAnchors, messageIndexById, messages])
+  }, [captureScrollAnchors, messageIndexById, messages, virtualListSize])
 
   useEffect(() => {
     if (!isNearBottomRef.current) {
@@ -412,6 +413,7 @@ export function MessageList({
   }
 
   return (
+    <ImageGalleryProvider images={galleryImages}>
     <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
       <ScrollArea
         className="h-full w-full"
@@ -563,5 +565,6 @@ export function MessageList({
         </ChatScrollContext.Provider>
       </ScrollArea>
     </div>
+    </ImageGalleryProvider>
   )
 }

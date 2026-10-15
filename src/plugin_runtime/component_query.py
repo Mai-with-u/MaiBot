@@ -956,6 +956,13 @@ class ComponentQueryService:
 
         supervisor, entry = matched_entry
         tool_entry = cast("ToolEntry", entry)
+        # 执行受限工具必须带真实平台上下文，不能通过省略上下文绕过可见性过滤。
+        if tool_entry.platforms and (context is None or context.platform.strip().lower() not in tool_entry.platforms):
+            return ToolExecutionResult(
+                tool_name=tool_entry.name,
+                success=False,
+                error_message="当前平台不在插件工具的 platforms 作用域内。",
+            )
         invoke_payload = self._build_tool_invocation_payload(tool_entry, invocation, context)
 
         try:

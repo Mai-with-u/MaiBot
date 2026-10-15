@@ -109,20 +109,6 @@ describe('ImagesTab 图片详情请求顺序', () => {
     expect(api.retryWriteback).not.toHaveBeenCalled()
   })
 
-  it('默认收起技术操作，空状态可打开维护入口', async () => {
-    api.getList.mockResolvedValue({ success: true, items: [] })
-    const scroll = vi.fn()
-    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(scroll)
-    renderTab()
-    const entry = await screen.findByRole('button', { name: '查看历史图片回填' })
-    const maintenance = screen.getByText('高级维护 · 历史图片回填与故障处理').closest('details')
-    expect(maintenance).not.toHaveAttribute('open')
-    fireEvent.click(entry)
-    expect(maintenance).toHaveAttribute('open')
-    expect(scroll).toHaveBeenCalled()
-    vi.restoreAllMocks()
-  })
-
   it('说明修正显示原文和范围提示，并保存新说明', async () => {
     api.getDetail.mockResolvedValue(detail(firstAsset, '旧说明'))
     api.saveObservation.mockImplementation(async () => {
@@ -208,23 +194,6 @@ describe('ImagesTab 图片详情请求顺序', () => {
     fireEvent.click(await screen.findByRole('button', { name: '检索匹配图片' }))
     expect(await screen.findByText('详情-asset-b')).toBeInTheDocument()
     expect(screen.getByText('相似图片 · 0.9000')).toBeInTheDocument()
-  })
-
-  it('先展示资产选择与相似检索，再展示次级维护区', async () => {
-    api.getDetail.mockResolvedValue(detail(firstAsset, '第一张图片详情'))
-    renderTab()
-
-    const assetHeading = (await screen.findAllByText('已记住的图片'))[1]
-    // 相似检索在详情弹窗内：打开弹窗确认检索区存在
-    fireEvent.click((await screen.findAllByRole('button', { name: /图片记忆/ }))[0])
-    await screen.findByText('相似图片')
-
-    // 关闭弹窗后，主页只保留图片列表与次级维护区
-    fireEvent.keyDown(document.body, { key: 'Escape' })
-    const maintenanceHeading = screen.getByText('图片维护')
-    expect(
-      assetHeading.compareDocumentPosition(maintenanceHeading) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
   })
 
   it('按聊天筛选重置页码并携带 chat_id 请求', async () => {

@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from html import escape
 from os import getenv
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, DefaultDict, cast
 
 import asyncio
 import concurrent.futures
@@ -122,22 +122,27 @@ class StatPeriodData(TypedDict):
     requests_by_user: defaultdict[str, int]
     requests_by_model: defaultdict[str, int]
     requests_by_module: defaultdict[str, int]
+    requests_by_task: DefaultDict[str, int]
     in_tokens_by_type: defaultdict[str, int]
     in_tokens_by_user: defaultdict[str, int]
     in_tokens_by_model: defaultdict[str, int]
     in_tokens_by_module: defaultdict[str, int]
+    in_tokens_by_task: DefaultDict[str, int]
     out_tokens_by_type: defaultdict[str, int]
     out_tokens_by_user: defaultdict[str, int]
     out_tokens_by_model: defaultdict[str, int]
     out_tokens_by_module: defaultdict[str, int]
+    out_tokens_by_task: DefaultDict[str, int]
     tokens_by_type: defaultdict[str, int]
     tokens_by_user: defaultdict[str, int]
     tokens_by_model: defaultdict[str, int]
     tokens_by_module: defaultdict[str, int]
+    tokens_by_task: DefaultDict[str, int]
     costs_by_type: defaultdict[str, float]
     costs_by_user: defaultdict[str, float]
     costs_by_model: defaultdict[str, float]
     costs_by_module: defaultdict[str, float]
+    costs_by_task: DefaultDict[str, float]
     costs_by_chat: defaultdict[str, float]
     cache_hit_tokens: int
     cache_miss_tokens: int
@@ -145,10 +150,12 @@ class StatPeriodData(TypedDict):
     cache_hit_tokens_by_user: defaultdict[str, int]
     cache_hit_tokens_by_model: defaultdict[str, int]
     cache_hit_tokens_by_module: defaultdict[str, int]
+    cache_hit_tokens_by_task: DefaultDict[str, int]
     cache_miss_tokens_by_type: defaultdict[str, int]
     cache_miss_tokens_by_user: defaultdict[str, int]
     cache_miss_tokens_by_model: defaultdict[str, int]
     cache_miss_tokens_by_module: defaultdict[str, int]
+    cache_miss_tokens_by_task: DefaultDict[str, int]
     time_costs_by_type: defaultdict[str, list[float]]
     time_costs_by_user: defaultdict[str, list[float]]
     time_costs_by_model: defaultdict[str, list[float]]
@@ -157,10 +164,12 @@ class StatPeriodData(TypedDict):
     avg_time_costs_by_user: defaultdict[str, float]
     avg_time_costs_by_model: defaultdict[str, float]
     avg_time_costs_by_module: defaultdict[str, float]
+    avg_time_costs_by_task: DefaultDict[str, float]
     std_time_costs_by_type: defaultdict[str, float]
     std_time_costs_by_user: defaultdict[str, float]
     std_time_costs_by_model: defaultdict[str, float]
     std_time_costs_by_module: defaultdict[str, float]
+    std_time_costs_by_task: DefaultDict[str, float]
     online_time: float
     total_messages: int
     messages_by_chat: defaultdict[str, int]
@@ -176,22 +185,27 @@ REQ_CNT_BY_TYPE = "requests_by_type"
 REQ_CNT_BY_USER = "requests_by_user"
 REQ_CNT_BY_MODEL = "requests_by_model"
 REQ_CNT_BY_MODULE = "requests_by_module"
+REQ_CNT_BY_TASK = "requests_by_task"
 IN_TOK_BY_TYPE = "in_tokens_by_type"
 IN_TOK_BY_USER = "in_tokens_by_user"
 IN_TOK_BY_MODEL = "in_tokens_by_model"
 IN_TOK_BY_MODULE = "in_tokens_by_module"
+IN_TOK_BY_TASK = "in_tokens_by_task"
 OUT_TOK_BY_TYPE = "out_tokens_by_type"
 OUT_TOK_BY_USER = "out_tokens_by_user"
 OUT_TOK_BY_MODEL = "out_tokens_by_model"
 OUT_TOK_BY_MODULE = "out_tokens_by_module"
+OUT_TOK_BY_TASK = "out_tokens_by_task"
 TOTAL_TOK_BY_TYPE = "tokens_by_type"
 TOTAL_TOK_BY_USER = "tokens_by_user"
 TOTAL_TOK_BY_MODEL = "tokens_by_model"
 TOTAL_TOK_BY_MODULE = "tokens_by_module"
+TOTAL_TOK_BY_TASK = "tokens_by_task"
 COST_BY_TYPE = "costs_by_type"
 COST_BY_USER = "costs_by_user"
 COST_BY_MODEL = "costs_by_model"
 COST_BY_MODULE = "costs_by_module"
+COST_BY_TASK = "costs_by_task"
 COST_BY_CHAT = "costs_by_chat"
 GLOBAL_COST_SESSION_KEY = "__global__"
 CACHE_HIT_TOK = "cache_hit_tokens"
@@ -200,10 +214,12 @@ CACHE_HIT_TOK_BY_TYPE = "cache_hit_tokens_by_type"
 CACHE_HIT_TOK_BY_USER = "cache_hit_tokens_by_user"
 CACHE_HIT_TOK_BY_MODEL = "cache_hit_tokens_by_model"
 CACHE_HIT_TOK_BY_MODULE = "cache_hit_tokens_by_module"
+CACHE_HIT_TOK_BY_TASK = "cache_hit_tokens_by_task"
 CACHE_MISS_TOK_BY_TYPE = "cache_miss_tokens_by_type"
 CACHE_MISS_TOK_BY_USER = "cache_miss_tokens_by_user"
 CACHE_MISS_TOK_BY_MODEL = "cache_miss_tokens_by_model"
 CACHE_MISS_TOK_BY_MODULE = "cache_miss_tokens_by_module"
+CACHE_MISS_TOK_BY_TASK = "cache_miss_tokens_by_task"
 TIME_COST_BY_TYPE = "time_costs_by_type"
 TIME_COST_BY_USER = "time_costs_by_user"
 TIME_COST_BY_MODEL = "time_costs_by_model"
@@ -212,10 +228,12 @@ AVG_TIME_COST_BY_TYPE = "avg_time_costs_by_type"
 AVG_TIME_COST_BY_USER = "avg_time_costs_by_user"
 AVG_TIME_COST_BY_MODEL = "avg_time_costs_by_model"
 AVG_TIME_COST_BY_MODULE = "avg_time_costs_by_module"
+AVG_TIME_COST_BY_TASK = "avg_time_costs_by_task"
 STD_TIME_COST_BY_TYPE = "std_time_costs_by_type"
 STD_TIME_COST_BY_USER = "std_time_costs_by_user"
 STD_TIME_COST_BY_MODEL = "std_time_costs_by_model"
 STD_TIME_COST_BY_MODULE = "std_time_costs_by_module"
+STD_TIME_COST_BY_TASK = "std_time_costs_by_task"
 ONLINE_TIME = "online_time"
 TOTAL_MSG_CNT = "total_messages"
 MSG_CNT_BY_CHAT = "messages_by_chat"
@@ -527,46 +545,6 @@ class StatisticOutputTask(AsyncTask):
         except Exception as e:
             logger.exception(f"输出统计数据过程中发生异常，错误信息：{e}")
 
-    async def run_async_background(self):
-        """
-        备选方案：完全异步后台运行统计输出
-        使用此方法可以让统计任务完全非阻塞
-        """
-
-        async def _async_collect_and_output():
-            try:
-                import concurrent.futures
-
-                now = datetime.now()
-                self._ensure_all_time_start_time(now)
-                loop = asyncio.get_event_loop()
-
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    logger.info("正在后台收集统计数据...")
-
-                    stats = await loop.run_in_executor(executor, self._collect_all_statistics, now)
-                    try:
-                        await refresh_dashboard_statistics_cache()
-                    except Exception as e:
-                        logger.warning(f"刷新 WebUI 统计缓存失败，将继续生成 HTML 报告: {e}")
-                    logger.info("统计数据收集完成")
-
-                    # 创建并发的输出任务
-                    output_tasks = [
-                        loop.run_in_executor(executor, self._statistic_console_output, stats, now),
-                        loop.run_in_executor(executor, self._generate_html_report, stats, now),
-                    ]
-
-                    # 等待所有输出任务完成
-                    await asyncio.gather(*output_tasks)
-
-                logger.info("统计数据后台输出完成")
-            except Exception as e:
-                logger.exception(f"后台统计数据输出过程中发生异常：{e}")
-
-        # 创建后台任务，立即返回
-        asyncio.create_task(_async_collect_and_output())
-
     # -- 以下为统计数据收集方法 --
 
     @staticmethod
@@ -579,10 +557,12 @@ class StatisticOutputTask(AsyncTask):
         avg_time_costs_by_user: defaultdict[str, float] = defaultdict(float)
         avg_time_costs_by_model: defaultdict[str, float] = defaultdict(float)
         avg_time_costs_by_module: defaultdict[str, float] = defaultdict(float)
+        avg_time_costs_by_task: DefaultDict[str, float] = defaultdict(float)
         std_time_costs_by_type: defaultdict[str, float] = defaultdict(float)
         std_time_costs_by_user: defaultdict[str, float] = defaultdict(float)
         std_time_costs_by_model: defaultdict[str, float] = defaultdict(float)
         std_time_costs_by_module: defaultdict[str, float] = defaultdict(float)
+        std_time_costs_by_task: DefaultDict[str, float] = defaultdict(float)
 
         return {
             TOTAL_REQ_CNT: 0,
@@ -590,23 +570,28 @@ class StatisticOutputTask(AsyncTask):
             REQ_CNT_BY_USER: defaultdict(int),
             REQ_CNT_BY_MODEL: defaultdict(int),
             REQ_CNT_BY_MODULE: defaultdict(int),
+            REQ_CNT_BY_TASK: defaultdict(int),
             IN_TOK_BY_TYPE: defaultdict(int),
             IN_TOK_BY_USER: defaultdict(int),
             IN_TOK_BY_MODEL: defaultdict(int),
             IN_TOK_BY_MODULE: defaultdict(int),
+            IN_TOK_BY_TASK: defaultdict(int),
             OUT_TOK_BY_TYPE: defaultdict(int),
             OUT_TOK_BY_USER: defaultdict(int),
             OUT_TOK_BY_MODEL: defaultdict(int),
             OUT_TOK_BY_MODULE: defaultdict(int),
+            OUT_TOK_BY_TASK: defaultdict(int),
             TOTAL_TOK_BY_TYPE: defaultdict(int),
             TOTAL_TOK_BY_USER: defaultdict(int),
             TOTAL_TOK_BY_MODEL: defaultdict(int),
             TOTAL_TOK_BY_MODULE: defaultdict(int),
+            TOTAL_TOK_BY_TASK: defaultdict(int),
             TOTAL_COST: 0.0,
             COST_BY_TYPE: defaultdict(float),
             COST_BY_USER: defaultdict(float),
             COST_BY_MODEL: defaultdict(float),
             COST_BY_MODULE: defaultdict(float),
+            COST_BY_TASK: defaultdict(float),
             COST_BY_CHAT: defaultdict(float),
             CACHE_HIT_TOK: 0,
             CACHE_MISS_TOK: 0,
@@ -614,10 +599,12 @@ class StatisticOutputTask(AsyncTask):
             CACHE_HIT_TOK_BY_USER: defaultdict(int),
             CACHE_HIT_TOK_BY_MODEL: defaultdict(int),
             CACHE_HIT_TOK_BY_MODULE: defaultdict(int),
+            CACHE_HIT_TOK_BY_TASK: defaultdict(int),
             CACHE_MISS_TOK_BY_TYPE: defaultdict(int),
             CACHE_MISS_TOK_BY_USER: defaultdict(int),
             CACHE_MISS_TOK_BY_MODEL: defaultdict(int),
             CACHE_MISS_TOK_BY_MODULE: defaultdict(int),
+            CACHE_MISS_TOK_BY_TASK: defaultdict(int),
             TIME_COST_BY_TYPE: time_costs_by_type,
             TIME_COST_BY_USER: time_costs_by_user,
             TIME_COST_BY_MODEL: time_costs_by_model,
@@ -626,10 +613,12 @@ class StatisticOutputTask(AsyncTask):
             AVG_TIME_COST_BY_USER: avg_time_costs_by_user,
             AVG_TIME_COST_BY_MODEL: avg_time_costs_by_model,
             AVG_TIME_COST_BY_MODULE: avg_time_costs_by_module,
+            AVG_TIME_COST_BY_TASK: avg_time_costs_by_task,
             STD_TIME_COST_BY_TYPE: std_time_costs_by_type,
             STD_TIME_COST_BY_USER: std_time_costs_by_user,
             STD_TIME_COST_BY_MODEL: std_time_costs_by_model,
             STD_TIME_COST_BY_MODULE: std_time_costs_by_module,
+            STD_TIME_COST_BY_TASK: std_time_costs_by_task,
             ONLINE_TIME: 0.0,
             TOTAL_MSG_CNT: 0,
             MSG_CNT_BY_CHAT: defaultdict(int),
@@ -676,6 +665,7 @@ class StatisticOutputTask(AsyncTask):
                 "user": defaultdict(lambda: {"count": 0.0, "mean": 0.0, "m2": 0.0}),
                 "model": defaultdict(lambda: {"count": 0.0, "mean": 0.0, "m2": 0.0}),
                 "module": defaultdict(lambda: {"count": 0.0, "mean": 0.0, "m2": 0.0}),
+                "task": defaultdict(lambda: {"count": 0.0, "mean": 0.0, "m2": 0.0}),
             }
             for period_key, _ in collect_period
         }
@@ -700,11 +690,14 @@ class StatisticOutputTask(AsyncTask):
 
                         # 提取模块名：如果请求类型包含"."，取第一个"."之前的部分
                         module_name = request_type.split(".")[0] if "." in request_type else request_type
+                        # 历史记录可能没有任务名，单独归为未记录，不根据请求前缀或当前配置推断。
+                        task_name = cast(str | None, record.get("task_name")) or "未记录"
 
                         StatisticOutputTask._add_defaultdict_int(stats[period_key], REQ_CNT_BY_TYPE, request_type, 1)
                         StatisticOutputTask._add_defaultdict_int(stats[period_key], REQ_CNT_BY_USER, user_id, 1)
                         StatisticOutputTask._add_defaultdict_int(stats[period_key], REQ_CNT_BY_MODEL, model_name, 1)
                         StatisticOutputTask._add_defaultdict_int(stats[period_key], REQ_CNT_BY_MODULE, module_name, 1)
+                        StatisticOutputTask._add_defaultdict_int(stats[period_key], REQ_CNT_BY_TASK, task_name, 1)
 
                         prompt_tokens = cast(int | None, record["prompt_tokens"]) or 0
                         completion_tokens = cast(int | None, record["completion_tokens"]) or 0
@@ -731,6 +724,9 @@ class StatisticOutputTask(AsyncTask):
                         StatisticOutputTask._add_defaultdict_int(
                             stats[period_key], IN_TOK_BY_MODULE, module_name, prompt_tokens
                         )
+                        StatisticOutputTask._add_defaultdict_int(
+                            stats[period_key], IN_TOK_BY_TASK, task_name, prompt_tokens
+                        )
 
                         StatisticOutputTask._add_defaultdict_int(
                             stats[period_key], OUT_TOK_BY_TYPE, request_type, completion_tokens
@@ -744,6 +740,9 @@ class StatisticOutputTask(AsyncTask):
                         StatisticOutputTask._add_defaultdict_int(
                             stats[period_key], OUT_TOK_BY_MODULE, module_name, completion_tokens
                         )
+                        StatisticOutputTask._add_defaultdict_int(
+                            stats[period_key], OUT_TOK_BY_TASK, task_name, completion_tokens
+                        )
 
                         StatisticOutputTask._add_defaultdict_int(
                             stats[period_key], TOTAL_TOK_BY_TYPE, request_type, total_tokens
@@ -756,6 +755,9 @@ class StatisticOutputTask(AsyncTask):
                         )
                         StatisticOutputTask._add_defaultdict_int(
                             stats[period_key], TOTAL_TOK_BY_MODULE, module_name, total_tokens
+                        )
+                        StatisticOutputTask._add_defaultdict_int(
+                            stats[period_key], TOTAL_TOK_BY_TASK, task_name, total_tokens
                         )
 
                         StatisticOutputTask._add_int_stat(stats[period_key], CACHE_HIT_TOK, prompt_cache_hit_tokens)
@@ -773,6 +775,9 @@ class StatisticOutputTask(AsyncTask):
                             stats[period_key], CACHE_HIT_TOK_BY_MODULE, module_name, prompt_cache_hit_tokens
                         )
                         StatisticOutputTask._add_defaultdict_int(
+                            stats[period_key], CACHE_HIT_TOK_BY_TASK, task_name, prompt_cache_hit_tokens
+                        )
+                        StatisticOutputTask._add_defaultdict_int(
                             stats[period_key], CACHE_MISS_TOK_BY_TYPE, request_type, prompt_cache_miss_tokens
                         )
                         StatisticOutputTask._add_defaultdict_int(
@@ -784,6 +789,9 @@ class StatisticOutputTask(AsyncTask):
                         StatisticOutputTask._add_defaultdict_int(
                             stats[period_key], CACHE_MISS_TOK_BY_MODULE, module_name, prompt_cache_miss_tokens
                         )
+                        StatisticOutputTask._add_defaultdict_int(
+                            stats[period_key], CACHE_MISS_TOK_BY_TASK, task_name, prompt_cache_miss_tokens
+                        )
 
                         cost = cast(float | None, record["cost"]) or 0.0
                         StatisticOutputTask._add_float_stat(stats[period_key], TOTAL_COST, cost)
@@ -791,6 +799,7 @@ class StatisticOutputTask(AsyncTask):
                         StatisticOutputTask._add_defaultdict_float(stats[period_key], COST_BY_USER, user_id, cost)
                         StatisticOutputTask._add_defaultdict_float(stats[period_key], COST_BY_MODEL, model_name, cost)
                         StatisticOutputTask._add_defaultdict_float(stats[period_key], COST_BY_MODULE, module_name, cost)
+                        StatisticOutputTask._add_defaultdict_float(stats[period_key], COST_BY_TASK, task_name, cost)
                         StatisticOutputTask._add_defaultdict_float(stats[period_key], COST_BY_CHAT, chat_cost_key, cost)
 
                         # 收集time_cost数据
@@ -801,6 +810,7 @@ class StatisticOutputTask(AsyncTask):
                                 ("user", user_id),
                                 ("model", model_name),
                                 ("module", module_name),
+                                ("task", task_name),
                             ]:
                                 item_stats = duration_stats[period_key][category][item_name]
                                 item_stats["count"] += 1
@@ -816,6 +826,7 @@ class StatisticOutputTask(AsyncTask):
                 ("user", REQ_CNT_BY_USER, AVG_TIME_COST_BY_USER, STD_TIME_COST_BY_USER),
                 ("model", REQ_CNT_BY_MODEL, AVG_TIME_COST_BY_MODEL, STD_TIME_COST_BY_MODEL),
                 ("module", REQ_CNT_BY_MODULE, AVG_TIME_COST_BY_MODULE, STD_TIME_COST_BY_MODULE),
+                ("task", REQ_CNT_BY_TASK, AVG_TIME_COST_BY_TASK, STD_TIME_COST_BY_TASK),
             ]:
                 category_data = cast(dict[str, int], stats[period_key].get(request_count_key, {}))
                 avg_cost_data = cast(dict[str, float], stats[period_key].get(avg_key, {}))
@@ -942,7 +953,11 @@ class StatisticOutputTask(AsyncTask):
         last_all_time_stat: dict[str, object] | None = None
 
         try:
-            if "last_full_statistics" in local_storage:
+            # 新增任务维度后旧缓存缺少此数据，首次刷新重新收集完整历史。
+            if (
+                "last_full_statistics" in local_storage
+                and REQ_CNT_BY_TASK in local_storage["last_full_statistics"]["stat_data"]
+            ):
                 # 如果存在上次完整统计数据，则使用该数据进行增量统计
                 last_stat = cast(dict[str, object], local_storage["last_full_statistics"])
 
@@ -1041,6 +1056,7 @@ class StatisticOutputTask(AsyncTask):
             "user": defaultdict(lambda: {"count": 0.0, "sum": 0.0, "sum_sq": 0.0}),
             "model": defaultdict(lambda: {"count": 0.0, "sum": 0.0, "sum_sq": 0.0}),
             "module": defaultdict(lambda: {"count": 0.0, "sum": 0.0, "sum_sq": 0.0}),
+            "task": defaultdict(lambda: {"count": 0.0, "sum": 0.0, "sum_sq": 0.0}),
         }
 
         records = fetch_model_duration_aggregates_since(self.all_time_start_time)
@@ -1050,6 +1066,8 @@ class StatisticOutputTask(AsyncTask):
             model_assign_name = cast(str | None, record["model_assign_name"])
             model_name = model_assign_name or cast(str | None, record["model_name"]) or "unknown"
             module_name = request_type.split(".")[0] if "." in request_type else request_type
+            # 历史记录可能没有任务名，单独归为未记录，不根据请求前缀或当前配置推断。
+            task_name = cast(str | None, record.get("task_name")) or "未记录"
             count = float(cast(int, record["count"]))
             time_cost_sum = cast(float, record["sum"])
             time_cost_sq_sum = cast(float, record["sum_sq"])
@@ -1059,6 +1077,7 @@ class StatisticOutputTask(AsyncTask):
                 ("user", user_id),
                 ("model", model_name),
                 ("module", module_name),
+                ("task", task_name),
             ]:
                 item_stats = duration_stats[category][item_name]
                 item_stats["count"] += count
@@ -1070,6 +1089,7 @@ class StatisticOutputTask(AsyncTask):
             ("user", AVG_TIME_COST_BY_USER, STD_TIME_COST_BY_USER),
             ("model", AVG_TIME_COST_BY_MODEL, STD_TIME_COST_BY_MODEL),
             ("module", AVG_TIME_COST_BY_MODULE, STD_TIME_COST_BY_MODULE),
+            ("task", AVG_TIME_COST_BY_TASK, STD_TIME_COST_BY_TASK),
         ]:
             avg_data = cast(defaultdict[str, float], stat_data[avg_key])
             std_data = cast(defaultdict[str, float], stat_data[std_key])
@@ -1395,6 +1415,17 @@ class StatisticOutputTask(AsyncTask):
                 AVG_TIME_COST_BY_MODULE,
                 STD_TIME_COST_BY_MODULE,
             ),
+            "task": (
+                REQ_CNT_BY_TASK,
+                IN_TOK_BY_TASK,
+                OUT_TOK_BY_TASK,
+                TOTAL_TOK_BY_TASK,
+                CACHE_HIT_TOK_BY_TASK,
+                CACHE_MISS_TOK_BY_TASK,
+                COST_BY_TASK,
+                AVG_TIME_COST_BY_TASK,
+                STD_TIME_COST_BY_TASK,
+            ),
             "request_type": (
                 REQ_CNT_BY_TYPE,
                 IN_TOK_BY_TYPE,
@@ -1556,6 +1587,7 @@ class StatisticOutputTask(AsyncTask):
                     ),
                     models=self._build_breakdown_rows(stat_data, "model"),
                     modules=self._build_breakdown_rows(stat_data, "module"),
+                    task_groups=self._build_breakdown_rows(stat_data, "task"),
                     request_types=self._build_breakdown_rows(stat_data, "request_type"),
                     chats=[
                         DetailedChatStatistics(
@@ -3136,57 +3168,3 @@ class StatisticOutputTask(AsyncTask):
             </script>
         </div>
         """
-
-
-class AsyncStatisticOutputTask(AsyncTask):
-    """完全异步的统计输出任务 - 更高性能版本"""
-
-    def __init__(self, record_file_path: str | None = None):
-        # 启动后立即运行，之后每15分钟输出一次统计数据
-        super().__init__(
-            task_name="Async Statistics Data Output Task",
-            wait_before_start=0,
-            run_interval=StatisticOutputTask.RUN_INTERVAL_SECONDS,
-        )
-
-        # 直接复用 StatisticOutputTask 的初始化逻辑
-        temp_stat_task = StatisticOutputTask(record_file_path)
-        self.name_mapping = temp_stat_task.name_mapping
-        self.record_file_path = temp_stat_task.record_file_path
-        self.stat_period = temp_stat_task.stat_period
-        self._statistic_task = temp_stat_task
-
-    async def run(self):
-        """完全异步执行统计任务"""
-
-        async def _async_collect_and_output():
-            try:
-                now = datetime.now()
-                loop = asyncio.get_event_loop()
-
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    logger.info("正在后台收集统计数据...")
-
-                    # 数据收集任务
-                    stats = await loop.run_in_executor(executor, self._statistic_task._collect_all_statistics, now)
-                    try:
-                        await refresh_dashboard_statistics_cache()
-                    except Exception as e:
-                        logger.warning(f"刷新 WebUI 统计缓存失败，将继续生成 HTML 报告: {e}")
-                    logger.info("统计数据收集完成")
-
-                    # 创建并发的输出任务
-                    output_tasks = [
-                        loop.run_in_executor(executor, self._statistic_task._statistic_console_output, stats, now),
-                        loop.run_in_executor(executor, self._statistic_task._generate_html_report, stats, now),
-                    ]
-
-                    # 等待所有输出任务完成
-                    await asyncio.gather(*output_tasks)
-
-                logger.info("统计数据后台输出完成")
-            except Exception as e:
-                logger.exception(f"后台统计数据输出过程中发生异常：{e}")
-
-        # 创建后台任务，立即返回
-        asyncio.create_task(_async_collect_and_output())

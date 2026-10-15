@@ -1,7 +1,7 @@
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterable, Sequence
+from typing import Iterable, List, Optional, Sequence
 
 from sqlmodel import select
 
@@ -13,11 +13,11 @@ from src.common.database.database_model import HighFrequencyTerm
 from src.common.data_models.message_component_data_model import TextComponent
 
 from src.maisaka.context.messages import SessionBackedMessage
+from src.services.bot_account_service import is_bot_self
 
 _URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
 _CQ_CODE_RE = re.compile(r"\[CQ:[^\]]+\]")
 _MENTION_RE = re.compile(r"@\S+")
-_PLANNER_MESSAGE_PREFIX_RE = re.compile(r"^<message\b[^>]*>\s*", re.IGNORECASE)
 _TECH_TERM_RE = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z][A-Za-z0-9_+./#-]{1,})(?![A-Za-z0-9_])")
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 _LATIN_RE = re.compile(r"[a-zA-Z]")
@@ -244,8 +244,9 @@ def update_high_frequency_terms_from_context_messages(
     limit: int = 1000,
     min_count: int = 2,
     max_terms: int = 1000,
+    learned_contents: Optional[List[str]] = None,
 ) -> int:
-    """从 Maisaka 裁切上下文消息批次中提取格式化用户消息，并增量更新高频词词库。"""
+    """从 Maisaka 裁切批次的原始用户正文增量更新高频词词库。"""
 
     texts_by_chat_id = _extract_user_texts_by_chat_id_from_context(context_messages)
     if not texts_by_chat_id:
@@ -268,6 +269,8 @@ def update_high_frequency_terms_from_context_messages(
             generated_at=generated_at,
             max_terms=max_terms,
         )
+        if learned_contents is not None:
+            learned_contents.extend(f"{item.term}（{item.count} 次）" for item in terms)
 
     return updated_count
 
@@ -301,7 +304,8 @@ def _build_message_word_frequency_terms(
         word_counter.update(tokens)
         phrase_counter.update(phrases)
         word_message_counter.update(set(tokens))
-        phrase_message_counter.update(set(phrases))
+        # 同名词既可能来自分词，也可能来自词组拼接；消息覆盖数只能计一次。
+        phrase_message_counter.update(set(phrases) - set(tokens))
 
     total_term_count = sum(word_counter.values()) + sum(phrase_counter.values())
     terms = _build_frequency_items(
@@ -380,6 +384,14 @@ def _extract_user_texts_by_chat_id_from_context(context_messages: Sequence[objec
         if context_message.source_kind != "user":
             continue
 
+        # 通知也以 user 来源进入规划器，但事件描述不是用户发言；
+        # 学习必须读取原始组件，不能把规划器包装、工具展开内容当作正文。
+        original_message = context_message.original_message
+        if original_message is None or original_message.is_notify:
+            continue
+        if is_bot_self(original_message.platform, original_message.message_info.user_info.user_id):
+            continue
+
         chat_id = _extract_chat_id_from_context_message(context_message)
         if not chat_id:
             continue
@@ -391,7 +403,7 @@ def _extract_user_texts_by_chat_id_from_context(context_messages: Sequence[objec
                 continue
             seen_message_keys.add(message_key)
 
-        text = _extract_text_from_maisaka_components(context_message.raw_message.components)
+        text = _extract_text_from_maisaka_components(original_message.raw_message.components)
         if not text:
             continue
 
@@ -407,16 +419,13 @@ def _extract_chat_id_from_context_message(context_message: SessionBackedMessage)
 
 
 def _extract_text_from_maisaka_components(components: Sequence[object]) -> str:
+    """只提取原始文本组件，不学习引用、转发、图片描述等非正文内容。"""
     text_parts: list[str] = []
-    is_first_text_component = True
     for component in components:
         if not isinstance(component, TextComponent):
             continue
 
         text = component.text
-        if is_first_text_component:
-            text = _PLANNER_MESSAGE_PREFIX_RE.sub("", text, count=1)
-            is_first_text_component = False
         if text.strip():
             text_parts.append(text)
     return " ".join(" ".join(text_parts).split()).strip()
@@ -537,24 +546,13 @@ def _build_frequency_items(
     min_count: int,
     limit: int,
 ) -> list[WordFrequencyItem]:
-    items = []
-    items.extend(
-        _counter_to_items(
-            counter=word_counter,
-            message_counter=word_message_counter,
-            message_count=message_count,
-            total_term_count=total_term_count,
-            min_count=min_count,
-        )
-    )
-    items.extend(
-        _counter_to_items(
-            counter=phrase_counter,
-            message_counter=phrase_message_counter,
-            message_count=message_count,
-            total_term_count=total_term_count,
-            min_count=min_count,
-        )
+    # 词库按 term 唯一，必须先合并两种提取来源，再筛选和取前 limit 条。
+    items = _counter_to_items(
+        counter=word_counter + phrase_counter,
+        message_counter=word_message_counter + phrase_message_counter,
+        message_count=message_count,
+        total_term_count=total_term_count,
+        min_count=min_count,
     )
 
     return sorted(items, key=_frequency_item_sort_key)[:limit]

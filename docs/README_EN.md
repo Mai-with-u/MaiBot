@@ -62,7 +62,7 @@ MaiSaka is more than just a bot, and more than a "helpful assistant" that comple
 
 <div align="center">
   <br>
-  <img src="../depends-data/webui-showcase.jpg" width="90%" alt="MaiBot WebUI Interface" style="box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+  <img src="../depends-data/webui-millennium-showcase.png" width="90%" alt="MaiBot WebUI Millennium theme in light and dark modes" style="box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
 </div>
 
 ---
@@ -73,7 +73,7 @@ MaiSaka is more than just a bot, and more than a "helpful assistant" that comple
 
 - **Download**: Visit the [Release](https://github.com/Mai-with-u/MaiBot/releases/) page to get the latest version.
 
-- **[Deployment Guide](https://docs.mai-mai.org/manual/deployment/)**
+- **[Deployment Guide](https://docs.mai-mai.org/manual/)**
 
 - **Easy-to-use MaiBot launcher (Windows/macOS)**: [Maibot-OK](https://github.com/Mai-with-u/MaiBotOneKey/releases/)
 
@@ -143,11 +143,17 @@ Contributions are welcome. Please read the [Contribution Guide](CONTRIBUTE.md) f
 
 ## 📊 Repository Status
 
-![Alt](../depends-data/repository-metrics.svg "MaiBot Repository Status")
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://status.maibot.top/card/repo.svg?theme=night">
+  <img src="https://status.maibot.top/card/repo.svg" alt="MaiBot Repository Status" width="100%">
+</picture>
 
 ### Star History
 
-![Star History](../depends-data/star-history.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://status.maibot.top/card/stars.svg?theme=night">
+  <img src="https://status.maibot.top/card/stars.svg" alt="Star History" width="100%">
+</picture>
 
 ---
 

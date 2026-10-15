@@ -1,9 +1,9 @@
 """v38 schema 升级到 v39：无损压缩回复效果完整记录。"""
 
-from pathlib import Path
 
 import gzip
 
+from src.common.paths import get_instance_root
 from src.common.logger import get_logger
 from src.common.reply_effect_record_codec import decode_record_payload, encode_record_payload
 
@@ -12,7 +12,7 @@ from .schema import SQLiteSchemaInspector
 
 logger = get_logger("database_migration")
 
-_REPLY_EFFECT_BASE_DIR = Path(__file__).resolve().parents[4] / "logs" / "maisaka_reply_effect"
+_REPLY_EFFECT_BASE_DIR = get_instance_root() / "logs" / "maisaka_reply_effect"
 
 
 def migrate_v38_to_v39(context: MigrationExecutionContext) -> None:

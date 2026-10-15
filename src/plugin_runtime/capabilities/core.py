@@ -1,6 +1,7 @@
 ﻿from datetime import datetime
 from typing import Any, Dict, List, Tuple
 
+import asyncio
 import base64
 
 from src.common.logger import get_logger
@@ -209,6 +210,39 @@ def _normalize_context_segments(raw_segments: Any) -> List[Dict[str, Any]]:
 
 class RuntimeCoreCapabilityMixin:
     """插件运行时的核心能力混入。"""
+
+    async def _cap_maisaka_context_resolve_image(self, plugin_id: str, capability: str, args: Dict[str, Any]) -> Any:
+        """读取现有运行上下文中的图片，不创建会话或查询其他聊天流。"""
+
+        del plugin_id, capability
+        from src.chat.heart_flow.heartflow_manager import heartflow_manager
+        from src.maisaka.context.image_attachment import resolve_context_image
+        from src.plugin_runtime.transport.base import MAX_FRAME_SIZE
+
+        stream_id = args.get("stream_id")
+        source_id = args.get("source_id")
+        index = args.get("index", 0)
+        if not isinstance(stream_id, str) or not stream_id.strip():
+            return {"success": False, "error": "缺少必要参数 stream_id"}
+        if not isinstance(source_id, str) or not source_id.strip():
+            return {"success": False, "error": "缺少必要参数 source_id"}
+        if type(index) is not int or index < 0:
+            return {"success": False, "error": "index 必须是非负整数"}
+        runtime = heartflow_manager.heartflow_chat_list.get(stream_id.strip())
+        if runtime is None:
+            return {"success": False, "error": "该聊天流没有现存的 Maisaka 上下文"}
+        try:
+            image = await resolve_context_image(runtime, source_id, index)
+            # Base64 会膨胀约三分之一，预留 RPC 包装字段空间，避免写出超大帧。
+            if ((len(image.binary_data) + 2) // 3) * 4 > MAX_FRAME_SIZE - 65536:
+                raise ValueError("图片超过插件 RPC 单帧体积上限")
+            encoded = await asyncio.to_thread(base64.b64encode, image.binary_data)
+            return {"success": True, "image": {
+                "binary_data_base64": encoded.decode("ascii"),
+                "binary_hash": image.binary_hash,
+            }}
+        except (ValueError, OSError) as exc:
+            return {"success": False, "error": str(exc)}
 
     async def _cap_maisaka_context_append(self, plugin_id: str, capability: str, args: Dict[str, Any]) -> Any:
         """向指定 Maisaka 聊天运行时插入一条图文上下文消息。"""

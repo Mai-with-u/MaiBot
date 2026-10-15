@@ -35,6 +35,7 @@ from src.common.logger import get_logger
 from src.config.model_configs import APIProvider, ReasoningParseMode, ToolArgumentParseMode
 from src.llm_models.exceptions import (
     EmptyResponseException,
+    InterruptedStreamOutput,
     NetworkConnectionError,
     ReqAbortException,
     RespNotOkException,
@@ -81,15 +82,18 @@ from .base_client import (
     AudioTranscriptionRequest,
     EmbeddingRequest,
     ImageEmbeddingRequest,
+    RequestTraceContext,
     ResponseRequest,
     UsageTuple,
     client_registry,
 )
 from .image_embedding_protocols import (
+    build_compatible_image_embedding_fingerprint,
     build_native_image_embedding_diagnostic_payload,
     build_native_image_embedding_fingerprint,
     build_native_image_embedding_request,
     parse_native_image_embedding_response,
+    resolve_compatible_image_embedding_input,
     resolve_native_image_embedding_protocol,
 )
 from ..request_snapshot import (
@@ -157,6 +161,28 @@ CHAT_COMPLETIONS_RESERVED_EXTRA_BODY_KEYS = {
     "tools",
 }
 """由当前客户端显式承载、不应再落入 `extra_body` 的字段集合。"""
+
+_SDK_AUTH_PLACEHOLDER_API_KEY = "maibot-sdk-auth-disabled"
+"""鉴权不交给 SDK 时传给 `AsyncOpenAI` 的占位密钥。
+
+OpenAI SDK 2.34+ 构造时拒绝空 `api_key`，且每次请求要么带 `Authorization` 头、要么显式省略它；
+占位密钥只用于通过构造校验，它生成的 `Authorization` 头会被自定义鉴权头覆盖或在请求时被省略。"""
+
+_AUTHORIZATION_HEADER = "Authorization"
+
+
+def _canonicalize_authorization_header(headers: Dict[str, str]) -> Dict[str, str]:
+    """把任意大小写的 Authorization 请求头统一为标准写法。
+
+    SDK 按精确键名合并请求头：大小写不同的同名头会与占位密钥生成的 `Authorization` 头同时发出，
+    或被请求级的省略标记误删，所以先统一键名。
+    """
+
+    return {
+        (_AUTHORIZATION_HEADER if key.lower() == _AUTHORIZATION_HEADER.lower() else key): value
+        for key, value in headers.items()
+    }
+
 
 _MODELS_REQUIRING_MAX_COMPLETION_TOKENS: Set[Tuple[str, str]] = set()
 """记录本进程内已确认「仅支持 max_completion_tokens」的模型，键为 (base_url, model_identifier)。
@@ -380,36 +406,28 @@ def _get_portable_text_part(part: Any) -> str | None:
     return None
 
 
-def _convert_text_only_message_content(
-    message: SystemMessageItem | AssistantMessageItem,
-) -> str | List[ChatCompletionContentPartTextParam]:
+def _convert_text_only_message_content(message: SystemMessageItem | AssistantMessageItem) -> str:
     """将仅允许文本的消息转换为 OpenAI 兼容内容。
+
+    部分 OpenAI 兼容服务（如阿里云百炼）只接受字符串形式的 system content，
+    因此无论消息由几个文本片段组成，都按顺序直接拼接为一个字符串发送。
 
     Args:
         message: 内部统一消息对象。
 
     Returns:
-        str | List[ChatCompletionContentPartTextParam]: 文本内容结构。
+        str: 拼接后的文本内容。
 
     Raises:
         ValueError: 当消息中包含非文本片段时抛出。
     """
-    if not message.parts:
-        return ""
-    if len(message.parts) == 1 and (single_part_text := _get_portable_text_part(message.parts[0])) is not None:
-        return single_part_text
-
-    content: List[ChatCompletionContentPartTextParam] = []
+    text_parts: List[str] = []
     for part in message.parts:
         part_text = _get_portable_text_part(part)
         if part_text is None:
             raise ValueError(f"{message.role.value} 消息仅支持文本片段")
-        if not part_text.strip():
-            continue
-        content.append(_build_text_content_part(part_text))
-    if not content:
-        return ""
-    return content
+        text_parts.append(part_text)
+    return "".join(text_parts)
 
 
 def _convert_user_message_content(message: UserMessageItem) -> str | List[ChatCompletionContentPartParam]:
@@ -421,8 +439,13 @@ def _convert_user_message_content(message: UserMessageItem) -> str | List[ChatCo
     Returns:
         str | List[ChatCompletionContentPartParam]: 用户消息内容结构。
     """
-    if len(message.parts) == 1 and isinstance(message.parts[0], ContextTextPart):
-        return message.parts[0].text
+    # 纯文本消息统一发送字符串：部分 OpenAI 兼容服务（如阿里云百炼）只接受字符串 content，
+    # 收到多段 text 数组会返回 400 "Input should be a valid string"。
+    # 文本片段是同一条消息按组件顺序切分出的连续内容，片段自身已带有所需的空白与换行，
+    # 因此与 get_item_text 一致地直接拼接，不额外插入分隔符；含图片时仍需使用数组。
+    text_parts = [part.text for part in message.parts if isinstance(part, ContextTextPart)]
+    if len(text_parts) == len(message.parts):
+        return "".join(text_parts)
 
     content: List[ChatCompletionContentPartParam] = []
     for part in message.parts:
@@ -605,22 +628,30 @@ def _convert_tool_options(tool_options: List[ToolOption]) -> List[ChatCompletion
 
 
 def _extract_usage_record(usage: Any) -> UsageTuple | None:
-    """从响应对象中提取 usage 三元组。
+    """从响应对象中提取 usage 元组，并判断供应商是否上报了 Prompt 缓存用量。
 
     Args:
         usage: OpenAI SDK 返回的 usage 对象。
 
     Returns:
-        UsageTuple | None: `(prompt_tokens, completion_tokens, total_tokens)`。
+        UsageTuple | None: `(prompt_tokens, completion_tokens, total_tokens,
+        prompt_cache_hit_tokens, prompt_cache_miss_tokens, prompt_cache_reported)`。
     """
     if usage is None:
         return None
     prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
-    prompt_cache_hit_tokens = getattr(usage, "prompt_cache_hit_tokens", 0) or 0
-    prompt_cache_miss_tokens = getattr(usage, "prompt_cache_miss_tokens", 0) or 0
+    # 用 None 哨兵区分「字段缺失」与「字段为 0」：StepFun 等供应商只在命中时返回缓存字段
+    reported_hit_tokens = getattr(usage, "prompt_cache_hit_tokens", None)
+    reported_miss_tokens = getattr(usage, "prompt_cache_miss_tokens", None)
     prompt_tokens_details = getattr(usage, "prompt_tokens_details", None)
-    if prompt_cache_hit_tokens == 0 and prompt_tokens_details is not None:
-        prompt_cache_hit_tokens = getattr(prompt_tokens_details, "cached_tokens", 0) or 0
+    reported_cached_tokens = (
+        getattr(prompt_tokens_details, "cached_tokens", None) if prompt_tokens_details is not None else None
+    )
+    prompt_cache_reported = (
+        reported_hit_tokens is not None or reported_miss_tokens is not None or reported_cached_tokens is not None
+    )
+    prompt_cache_hit_tokens = reported_hit_tokens or reported_cached_tokens or 0
+    prompt_cache_miss_tokens = reported_miss_tokens or 0
     if prompt_cache_miss_tokens == 0 and prompt_cache_hit_tokens > 0:
         prompt_cache_miss_tokens = max(prompt_tokens - prompt_cache_hit_tokens, 0)
     return (
@@ -629,6 +660,7 @@ def _extract_usage_record(usage: Any) -> UsageTuple | None:
         getattr(usage, "total_tokens", 0) or 0,
         prompt_cache_hit_tokens,
         prompt_cache_miss_tokens,
+        prompt_cache_reported,
     )
 
 
@@ -891,15 +923,21 @@ def _extract_content_blocks(
     return reasoning_content, content, tool_calls or None
 
 
-def _log_length_truncation(finish_reason: str | None, model_name: str | None) -> None:
-    """记录因长度截断导致的告警日志。
-
-    Args:
-        finish_reason: OpenAI 兼容接口返回的完成原因。
-        model_name: 上游返回的模型标识。
-    """
+def _log_length_truncation(
+    finish_reason: str | None,
+    model_name: str | None,
+    max_tokens: int | None,
+    trace_context: RequestTraceContext | None,
+) -> None:
+    """记录因长度截断导致的告警日志。"""
     if finish_reason == "length":
-        logger.info(f"模型{model_name or ''}因为超过最大 max_token 限制，可能仅输出部分内容，可视情况调整")
+        task_name = trace_context.task_name if trace_context else "未知"
+        request_type = trace_context.request_type if trace_context else "未知"
+        limit = str(max_tokens) if max_tokens is not None else "未指定（由服务商决定）"
+        logger.info(
+            f"模型{model_name or ''}因为达到最大输出 token 限制（max_tokens={limit}，"
+            f"任务={task_name}，请求类型={request_type}），可能仅输出部分内容，可视情况调整"
+        )
 
 
 def _apply_xml_tool_call_fallback(
@@ -1217,6 +1255,19 @@ class _OpenAIStreamAccumulator:
         for state in self.tool_call_states.values():
             state.close()
 
+    def snapshot_interrupted_output(self) -> InterruptedStreamOutput:
+        """提取原始片段，避免用完整响应解析器解析半截工具参数。"""
+
+        return InterruptedStreamOutput(
+            reasoning=self.reasoning_buffer.getvalue(),
+            content=self.content_buffer.getvalue(),
+            tool_calls=[
+                {"name": state.function_name or "尚未收到名称", "arguments": state.arguments_buffer.getvalue()}
+                for _, state in sorted(self.tool_call_states.items())
+            ],
+            model_name=self.model_name or "",
+        )
+
 
 async def _default_stream_response_handler(
     resp_stream: AsyncStream[ChatCompletionChunk],
@@ -1226,6 +1277,8 @@ async def _default_stream_response_handler(
     tool_argument_parse_mode: ToolArgumentParseMode,
     reasoning_key: str,
     logical_turn_id: str,
+    max_tokens: int | None,
+    trace_context: RequestTraceContext | None,
 ) -> Tuple[APIResponse, UsageTuple | None]:
     """处理 OpenAI 兼容流式响应。
 
@@ -1266,8 +1319,14 @@ async def _default_stream_response_handler(
         model_name = None
         if isinstance(response.raw_data, dict):
             model_name = response.raw_data.get("model")
-        _log_length_truncation(accumulator.finish_reason, model_name)
+        _log_length_truncation(accumulator.finish_reason, model_name, max_tokens, trace_context)
         return response, usage_record
+    except (asyncio.CancelledError, ReqAbortException) as exc:
+        if interrupt_flag is not None and interrupt_flag.is_set():
+            raise ReqAbortException(
+                "请求被外部信号中断", partial_output=accumulator.snapshot_interrupted_output()
+            ) from exc
+        raise
     finally:
         accumulator.close()
 
@@ -1279,6 +1338,8 @@ def _default_normal_response_parser(
     tool_argument_parse_mode: ToolArgumentParseMode,
     reasoning_key: str,
     logical_turn_id: str,
+    max_tokens: int | None,
+    trace_context: RequestTraceContext | None,
 ) -> Tuple[APIResponse, UsageTuple | None]:
     """解析 OpenAI 兼容的非流式响应。
 
@@ -1344,7 +1405,7 @@ def _default_normal_response_parser(
     usage_record = _extract_usage_record(getattr(resp, "usage", None))
 
     finish_reason = getattr(resp.choices[0], "finish_reason", None)
-    _log_length_truncation(finish_reason, getattr(resp, "model", None))
+    _log_length_truncation(finish_reason, getattr(resp, "model", None), max_tokens, trace_context)
     content, reasoning_content, resolved_tool_calls = _apply_xml_tool_call_fallback(
         content,
         reasoning_content,
@@ -1386,16 +1447,37 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
         self.reasoning_parse_mode = _normalize_reasoning_parse_mode(api_provider.reasoning_parse_mode)
         self.reasoning_key = _build_reasoning_key(api_provider)
         self.tool_argument_parse_mode = _normalize_tool_argument_parse_mode(api_provider.tool_argument_parse_mode)
+        default_headers = _canonicalize_authorization_header(client_config.default_headers)
+        # api_key 为空表示鉴权不交给 SDK（none/header/query 或自定义 Bearer 前缀）；
+        # 此时若没有自定义 Authorization 头覆盖占位密钥，每次请求都要显式省略它
+        self._omit_sdk_authorization = not client_config.api_key and _AUTHORIZATION_HEADER not in default_headers
         self.client = AsyncOpenAI(
-            api_key=client_config.api_key,
+            api_key=client_config.api_key or _SDK_AUTH_PLACEHOLDER_API_KEY,
             organization=api_provider.organization,
             project=api_provider.project,
             base_url=client_config.base_url,
             timeout=api_provider.timeout,
-            max_retries=api_provider.max_retry,
-            default_headers=client_config.default_headers or None,
+            # 重试统一由 LLMOrchestrator 外层循环按 api_provider.max_retry 负责（计数、日志、retry_interval）；
+            # SDK 内部再重试会与外层嵌套，使超时请求被重复发送并重复计费输出 token（#1769）
+            max_retries=0,
+            default_headers=default_headers or None,
             default_query=client_config.default_query or None,
         )
+
+    def _build_request_headers(self, extra_headers: Dict[str, str]) -> Dict[str, str | Omit] | None:
+        """构造单次请求的附加请求头。
+
+        Args:
+            extra_headers: 模型 `extra_params` 中声明的附加请求头。
+
+        Returns:
+            Dict[str, str | Omit] | None: 传给 SDK 的 `extra_headers`；鉴权不交给 SDK 时
+            会显式省略占位密钥生成的 `Authorization` 头。
+        """
+        request_headers: Dict[str, str | Omit] = dict(_canonicalize_authorization_header(extra_headers))
+        if self._omit_sdk_authorization:
+            request_headers.setdefault(_AUTHORIZATION_HEADER, omit)
+        return request_headers or None
 
     def _build_default_stream_response_handler(
         self,
@@ -1421,6 +1503,8 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                 tool_argument_parse_mode=self.tool_argument_parse_mode,
                 reasoning_key=self.reasoning_key,
                 logical_turn_id=request.logical_turn_id,
+                max_tokens=request.max_tokens,
+                trace_context=request.trace_context,
             )
 
         return default_stream_handler
@@ -1447,6 +1531,8 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                 tool_argument_parse_mode=self.tool_argument_parse_mode,
                 reasoning_key=self.reasoning_key,
                 logical_turn_id=request.logical_turn_id,
+                max_tokens=request.max_tokens,
+                trace_context=request.trace_context,
             )
 
         return default_response_parser
@@ -1521,6 +1607,10 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                         if "max_tokens" in extra_body or "max_completion_tokens" in extra_body
                         else _coerce_openai_argument(request.max_tokens)
                     )
+                effective_max_tokens = extra_body.get(
+                    "max_completion_tokens",
+                    extra_body.get("max_tokens", None if max_tokens_argument is omit else max_tokens_argument),
+                )
                 snapshot_provider_request["request_kwargs"] = {
                     "extra_body": extra_body or None,
                     "extra_headers": request_overrides.extra_headers or None,
@@ -1535,6 +1625,11 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                 }
 
                 if model_info.force_stream_mode:
+                    active_stream_handler = (
+                        stream_response_handler
+                        if request.stream_response_handler is not None
+                        else self._build_default_stream_response_handler(request.copy_with(max_tokens=effective_max_tokens))
+                    )
                     stream_task: asyncio.Task[AsyncStream[ChatCompletionChunk]] = asyncio.create_task(
                         self.client.chat.completions.create(
                             model=model_info.model_identifier,
@@ -1544,7 +1639,7 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                             max_tokens=max_tokens_argument,
                             stream=True,
                             response_format=openai_response_format,
-                            extra_headers=request_overrides.extra_headers or None,
+                            extra_headers=self._build_request_headers(request_overrides.extra_headers),
                             extra_query=request_overrides.extra_query or None,
                             extra_body=extra_body or None,
                         )
@@ -1553,8 +1648,17 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                         AsyncStream[ChatCompletionChunk],
                         await await_task_with_interrupt(stream_task, request.interrupt_flag),
                     )
-                    return await stream_response_handler(raw_response, request.interrupt_flag)
+                    try:
+                        return await active_stream_handler(raw_response, request.interrupt_flag)
+                    finally:
+                        # 包括取消路径，及时关闭连接，不保留已失效的响应流。
+                        await raw_response.close()
 
+                active_response_parser = (
+                    response_parser
+                    if request.async_response_parser is not None
+                    else self._build_default_response_parser(request.copy_with(max_tokens=effective_max_tokens))
+                )
                 completion_task: asyncio.Task[ChatCompletion] = asyncio.create_task(
                     self.client.chat.completions.create(
                         model=model_info.model_identifier,
@@ -1564,7 +1668,7 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                         max_tokens=max_tokens_argument,
                         stream=False,
                         response_format=openai_response_format,
-                        extra_headers=request_overrides.extra_headers or None,
+                        extra_headers=self._build_request_headers(request_overrides.extra_headers),
                         extra_query=request_overrides.extra_query or None,
                         extra_body=extra_body or None,
                     )
@@ -1573,7 +1677,7 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                     ChatCompletion,
                     await await_task_with_interrupt(completion_task, request.interrupt_flag),
                 )
-                return response_parser(raw_response)
+                return active_response_parser(raw_response)
 
             # 已知仅支持 max_completion_tokens 的模型直接走对应分支；否则先按常规发送，
             # 命中「max_tokens 不被支持」的 400 错误时自动改用 max_completion_tokens 重试并记忆。
@@ -1608,7 +1712,8 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
             }
             return response, usage_record
         except (EmptyResponseException, RespParseException) as exc:
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=self.api_provider,
                 client_type="openai",
                 error=exc,
@@ -1621,7 +1726,8 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
             attach_request_snapshot(exc, snapshot_path)
             raise
         except APIConnectionError as exc:
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=self.api_provider,
                 client_type="openai",
                 error=exc,
@@ -1635,7 +1741,8 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
             attach_request_snapshot(wrapped_error, snapshot_path)
             raise wrapped_error from exc
         except APIStatusError as exc:
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=self.api_provider,
                 client_type="openai",
                 error=exc,
@@ -1653,7 +1760,8 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
         except Exception as exc:
             if has_request_snapshot(exc):
                 raise
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=self.api_provider,
                 client_type="openai",
                 error=exc,
@@ -1670,7 +1778,7 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
         """调用图片嵌入协议。
 
         显式配置 `image_embedding_input` / `image_embedding_body` 时走 OpenAI 兼容模板协议；
-        否则官方百炼/豆包地址自动切换对应原生多模态嵌入协议，其他地址要求模板配置。
+        否则官方百炼/豆包地址切换原生协议，硅基流动地址自动使用其兼容图片输入模板。
         """
 
         extra_params = dict(request.extra_params)
@@ -1679,6 +1787,14 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
         native_protocol = resolve_native_image_embedding_protocol(self.api_provider.base_url)
         if native_protocol is not None:
             return await self._get_native_image_embedding(request, native_protocol)
+        compatible_input = resolve_compatible_image_embedding_input(self.api_provider.base_url)
+        if compatible_input is not None:
+            extra_params["image_embedding_input"] = compatible_input
+            response = await self._get_openai_compatible_image_embedding(request, extra_params)
+            response.request_protocol_hash = build_compatible_image_embedding_fingerprint(
+                compatible_input, request.extra_params
+            )
+            return response
         raise ValueError("图片嵌入必须配置 Provider 对应的 image_embedding_input 或 image_embedding_body")
 
     async def _get_openai_compatible_image_embedding(
@@ -1729,7 +1845,7 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
             raw_response = await self.client.embeddings.create(
                 model=model_info.model_identifier,
                 input=cast(Any, image_input),
-                extra_headers=request_overrides.extra_headers or None,
+                extra_headers=self._build_request_headers(request_overrides.extra_headers),
                 extra_query=request_overrides.extra_query or None,
                 extra_body=request_overrides.extra_body or None,
             )
@@ -1749,7 +1865,8 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                     response.usage = self._build_usage_record(model_info, usage_record)
                 return response
 
-        snapshot_path = save_failed_request_snapshot(
+        snapshot_path = await asyncio.to_thread(
+            save_failed_request_snapshot,
             api_provider=self.api_provider,
             client_type="openai",
             error=wrapped_error,
@@ -1798,8 +1915,9 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
             },
         }
         options: Dict[str, Any] = {}
-        if native_request.extra_headers:
-            options["headers"] = native_request.extra_headers
+        request_headers = self._build_request_headers(native_request.extra_headers)
+        if request_headers:
+            options["headers"] = request_headers
         if native_request.extra_query:
             options["params"] = native_request.extra_query
         try:
@@ -1831,7 +1949,8 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                     response.usage = self._build_usage_record(model_info, parsed.usage)
                 return response
 
-        snapshot_path = save_failed_request_snapshot(
+        snapshot_path = await asyncio.to_thread(
+            save_failed_request_snapshot,
             api_provider=self.api_provider,
             client_type="openai",
             error=wrapped_error,
@@ -1881,12 +2000,13 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
             raw_response = await self.client.embeddings.create(
                 model=model_info.model_identifier,
                 input=embedding_input,
-                extra_headers=request_overrides.extra_headers or None,
+                extra_headers=self._build_request_headers(request_overrides.extra_headers),
                 extra_query=request_overrides.extra_query or None,
                 extra_body=request_overrides.extra_body or None,
             )
         except APIConnectionError as exc:
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=self.api_provider,
                 client_type="openai",
                 error=exc,
@@ -1900,7 +2020,8 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
             attach_request_snapshot(wrapped_error, snapshot_path)
             raise wrapped_error from exc
         except APIStatusError as exc:
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=self.api_provider,
                 client_type="openai",
                 error=exc,
@@ -1916,7 +2037,8 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
         except Exception as exc:
             if has_request_snapshot(exc):
                 raise
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=self.api_provider,
                 client_type="openai",
                 error=exc,
@@ -1932,7 +2054,8 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
         response = APIResponse()
         if not raw_response.data:
             exc = RespParseException(raw_response, "嵌入响应解析失败，缺少 embeddings 数据。")
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=self.api_provider,
                 client_type="openai",
                 error=exc,
@@ -1991,12 +2114,13 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
             raw_response = await self.client.audio.transcriptions.create(
                 model=model_info.model_identifier,
                 file=audio_file,
-                extra_headers=request_overrides.extra_headers or None,
+                extra_headers=self._build_request_headers(request_overrides.extra_headers),
                 extra_query=request_overrides.extra_query or None,
                 extra_body=request_overrides.extra_body or None,
             )
         except APIConnectionError as exc:
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=self.api_provider,
                 client_type="openai",
                 error=exc,
@@ -2010,7 +2134,8 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
             attach_request_snapshot(wrapped_error, snapshot_path)
             raise wrapped_error from exc
         except APIStatusError as exc:
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=self.api_provider,
                 client_type="openai",
                 error=exc,
@@ -2026,7 +2151,8 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
         except Exception as exc:
             if has_request_snapshot(exc):
                 raise
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=self.api_provider,
                 client_type="openai",
                 error=exc,
@@ -2042,7 +2168,8 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
         transcription_text = raw_response if isinstance(raw_response, str) else getattr(raw_response, "text", None)
         if not isinstance(transcription_text, str):
             exc = RespParseException(raw_response, "音频转写响应解析失败，缺少文本内容。")
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=self.api_provider,
                 client_type="openai",
                 error=exc,

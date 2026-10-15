@@ -23,7 +23,9 @@
 
         const dashboardStyle = localStorage.getItem('maibot-theme-dashboard-style');
         document.documentElement.dataset.dashboardStyle =
-          dashboardStyle === 'modern' ? 'modern' : 'future-retro';
+          ['modern', 'future-retro', 'millennium'].includes(dashboardStyle)
+            ? dashboardStyle
+            : 'millennium';
       })();
     </script>
   </head>

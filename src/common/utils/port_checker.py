@@ -4,6 +4,9 @@ import socket
 
 
 PORT_CONFLICT_ERRNOS = {48, 98, 10048}
+# 本机不存在该地址或不支持该地址族（EADDRNOTAVAIL: macOS 49 / Linux 99 / Windows 10049；
+# EAFNOSUPPORT: macOS 47 / Linux 97 / Windows 10047），例如系统禁用 IPv6 后绑定 ::1，不属于端口占用
+ADDRESS_UNAVAILABLE_ERRNOS = {47, 49, 97, 99, 10047, 10049}
 
 
 def _detect_socket_family(host: str) -> socket.AddressFamily:
@@ -25,7 +28,17 @@ def is_port_conflict_error(error: OSError) -> bool:
     return "address already in use" in message or "已被占用" in message
 
 
+def is_address_unavailable_error(error: OSError) -> bool:
+    """判断绑定错误是否为本机不可用的地址（而非端口占用）。"""
+    return error.errno in ADDRESS_UNAVAILABLE_ERRNOS
+
+
 def check_port_available(host: str, port: int, *, allow_reuse_addr: bool = False) -> bool:
+    """检查端口是否可绑定。
+
+    仅端口冲突返回 False；其余绑定错误（如本机不存在该地址）原样抛出，由调用方决定如何处理，
+    避免把非占用问题误报为「端口已被占用」。
+    """
     family = _detect_socket_family(host)
     test_host = _normalize_test_host(host)
 
@@ -36,8 +49,10 @@ def check_port_available(host: str, port: int, *, allow_reuse_addr: bool = False
                 test_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             test_socket.bind((test_host, port))
             return True
-    except OSError:
-        return False
+    except OSError as error:
+        if is_port_conflict_error(error):
+            return False
+        raise
 
 
 def build_port_conflict_message(service_name: str, host: str, port: int) -> str:

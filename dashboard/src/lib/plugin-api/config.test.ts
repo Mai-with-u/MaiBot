@@ -61,6 +61,17 @@ function makeComponent(name: string): PluginRuntimeComponent {
 }
 
 describe('getPluginConfigBundle', () => {
+  it('配置错误时返回源文件和具体错误，允许 schema 为 null', async () => {
+    getMock.mockResolvedValue({
+      success: true, schema: null, config: {}, raw_config: 'timeout = "broken"\n',
+      config_error: 'timeout: expected integer',
+    })
+    await expect(getPluginConfigBundle('demo')).resolves.toMatchObject({
+      schema: null, config: {}, rawConfig: 'timeout = "broken"\n', configError: 'timeout: expected integer',
+    })
+    getMock.mockResolvedValue({ success: true, schema: null, config: {}, raw_config: '' })
+    await expect(getPluginConfigBundle('demo')).rejects.toBeInstanceOf(ApiError)
+  })
   it('成功时把响应字段映射为 PluginConfigBundle', async () => {
     const schema = makeSchema('demo')
     getMock.mockResolvedValue({

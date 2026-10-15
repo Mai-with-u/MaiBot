@@ -1,13 +1,18 @@
 """独立的 WebUI 服务器。"""
 
-from typing import Any, Optional, Sequence
+from typing import Any, List, Optional, Sequence
 
 import asyncio
 import sys
 import threading
 
 from src.common.logger import get_logger
-from src.common.utils.port_checker import assert_port_available, is_port_conflict_error, log_port_conflict
+from src.common.utils.port_checker import (
+    assert_port_available,
+    is_address_unavailable_error,
+    is_port_conflict_error,
+    log_port_conflict,
+)
 
 logger = get_logger("webui_server")
 
@@ -59,7 +64,8 @@ class WebUIServer:
         if config_manager is None:
             return
 
-        config_manager.register_reload_callback(self.reload_app)
+        # WebUI 应用仅在创建时固化 webui 配置节（anti_crawler_mode），其余配置节变更无需重建
+        config_manager.register_reload_callback(self.reload_app, sections=("webui",))
         self._reload_callback_registered = True
 
     def _maybe_unregister_reload_callback(self) -> None:
@@ -82,11 +88,11 @@ class WebUIServer:
         self.app.set_app(self._app)
         logger.info("WebUI 应用已热重载")
 
-    def _create_bound_sockets(self) -> list:
+    def _create_bound_sockets(self, hosts: List[str]) -> list:
         import socket as _socket
 
         sockets = []
-        for host in self.hosts:
+        for host in hosts:
             addr_info_list = _socket.getaddrinfo(host, self.port, _socket.AF_UNSPEC, _socket.SOCK_STREAM)
             for af, socktype, proto, _, sa in addr_info_list:
                 sock = None
@@ -113,13 +119,38 @@ class WebUIServer:
 
         return sockets
 
-    def _log_bind_addresses(self) -> None:
+    def _filter_bindable_hosts(self) -> List[str]:
+        """预检各监听地址的端口，返回可用于绑定的地址。
+
+        端口被占用时报错中止；本机不存在的地址（如系统禁用 IPv6 后的 ::1）只记录警告并跳过该地址，
+        是否还有可绑定的地址由调用方在实际绑定后判断。
+        """
+        bindable_hosts: List[str] = []
+        for host in self.hosts:
+            try:
+                assert_port_available(
+                    host=host,
+                    port=self.port,
+                    service_name="WebUI 服务器",
+                    logger=logger,
+                    config_hint="webui.port (config/bot_config.toml)",
+                    allow_reuse_addr=True,
+                )
+            except OSError as e:
+                if not is_address_unavailable_error(e):
+                    raise
+                logger.warning(f"⚠️ WebUI 监听地址 {host}:{self.port} 在本机不可用，已跳过: {e}")
+                continue
+            bindable_hosts.append(host)
+        return bindable_hosts
+
+    def _log_bind_addresses(self, hosts: List[str]) -> None:
         has_v4_localhost = False
         has_v6_localhost = False
         has_v4_wildcard = False
         has_v6_wildcard = False
 
-        for host in self.hosts:
+        for host in hosts:
             if ":" in host:
                 logger.info(f"🌐 访问地址: http://[{host}]:{self.port}")
                 if host == "::":
@@ -159,17 +190,8 @@ class WebUIServer:
 
         self._watchdog_task = start_watchdog("webui")
 
-        for host in self.hosts:
-            assert_port_available(
-                host=host,
-                port=self.port,
-                service_name="WebUI 服务器",
-                logger=logger,
-                config_hint="webui.port (config/bot_config.toml)",
-                allow_reuse_addr=True,
-            )
-
-        sockets = self._create_bound_sockets()
+        bindable_hosts = self._filter_bindable_hosts()
+        sockets = self._create_bound_sockets(bindable_hosts)
         if not sockets:
             logger.error("❌ WebUI 无法绑定到任何指定地址")
             raise OSError("WebUI 无法绑定到任何指定地址")
@@ -184,8 +206,8 @@ class WebUIServer:
         self._server = UvicornServer(config=config)
 
         logger.info("🌐 WebUI 服务器启动中...")
-        self._log_bind_addresses()
-        if len(self.hosts) > 1:
+        self._log_bind_addresses(bindable_hosts)
+        if len(bindable_hosts) > 1:
             logger.info("🔗 WebUI 已绑定到多个地址")
 
         try:
@@ -308,7 +330,8 @@ class ThreadedWebUIServer:
         if config_manager is None:
             return
 
-        config_manager.register_reload_callback(self.reload_app)
+        # WebUI 应用仅在创建时固化 webui 配置节（anti_crawler_mode），其余配置节变更无需重建
+        config_manager.register_reload_callback(self.reload_app, sections=("webui",))
         self._reload_callback_registered = True
 
     def _maybe_unregister_reload_callback(self) -> None:

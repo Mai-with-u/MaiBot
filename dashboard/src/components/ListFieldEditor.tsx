@@ -9,7 +9,7 @@
  * - 动态增删项
  */
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import {
   DndContext,
   closestCenter,
@@ -90,6 +90,10 @@ export interface ListFieldEditorProps {
   disabled?: boolean
   /** 新项的占位符文字 */
   placeholder?: string
+  /** 列表为空时的提示文字 */
+  emptyText?: string
+  /** 在文本项输入框后展示补充信息，不修改列表保存值 */
+  renderItemSuffix?: (value: unknown, index: number) => ReactNode
 }
 
 // ============ 可排序项组件 ============
@@ -105,6 +109,7 @@ interface SortableItemProps {
   disabled?: boolean
   canRemove: boolean
   placeholder?: string
+  renderItemSuffix?: (value: unknown, index: number) => ReactNode
 }
 
 function SortableItem({
@@ -118,6 +123,7 @@ function SortableItem({
   disabled,
   canRemove,
   placeholder,
+  renderItemSuffix,
 }: SortableItemProps) {
   const {
     attributes,
@@ -158,7 +164,7 @@ function SortableItem({
       </button>
 
       {/* 内容区域 */}
-      <div className="flex-1 min-w-0">
+      <div className={cn('flex-1 min-w-0', renderItemSuffix && itemType === 'string' && 'flex items-center gap-2')}>
         {itemType === 'object' && itemFields ? (
           <ObjectItemEditor
             value={value as Record<string, unknown>}
@@ -182,8 +188,10 @@ function SortableItem({
             onChange={(e) => onChange(e.target.value)}
             placeholder={placeholder ?? `第 ${index + 1} 项`}
             disabled={disabled}
+            className={renderItemSuffix ? 'w-32 min-w-0 shrink-0 sm:w-40' : undefined}
           />
         )}
+        {itemType === 'string' && renderItemSuffix?.(value, index)}
       </div>
 
       {/* 删除按钮 */}
@@ -408,6 +416,8 @@ export function ListFieldEditor({
   maxItems,
   disabled,
   placeholder,
+  emptyText = '暂无数据，点击下方按钮添加',
+  renderItemSuffix,
 }: ListFieldEditorProps) {
   // 确保 value 是数组
   const items: unknown[] = useMemo(() => {
@@ -530,7 +540,7 @@ export function ListFieldEditor({
       {items.length === 0 ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground py-4 justify-center border border-dashed rounded-md">
           <AlertCircle className="h-4 w-4" />
-          <span>暂无数据，点击下方按钮添加</span>
+          <span>{emptyText}</span>
         </div>
       ) : (
         <DndContext
@@ -556,6 +566,7 @@ export function ListFieldEditor({
                   disabled={disabled}
                   canRemove={canRemove}
                   placeholder={placeholder}
+                  renderItemSuffix={renderItemSuffix}
                 />
               ))}
             </div>

@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Iterable
-from urllib.error import HTTPError
-from urllib.request import urlopen
 
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 import json
 import os
+import subprocess
+import sys
 import time
 
 import tomlkit
@@ -19,7 +20,6 @@ PACKAGE_NAME = os.environ.get("DASHBOARD_PACKAGE_NAME", "maibot-dashboard")
 DASHBOARD_PACKAGE_PATH = Path("dashboard/package.json")
 PYPROJECT_PATH = Path("pyproject.toml")
 REQUIREMENTS_PATH = Path("requirements.txt")
-PYPI_VERSION_JSON_URL = f"https://pypi.org/pypi/{PACKAGE_NAME}/{{version}}/json"
 CHECK_INTERVAL_SECONDS = 15
 MAX_CHECK_ATTEMPTS = 40
 
@@ -58,35 +58,40 @@ def get_target_stable_version() -> Version:
 
 
 def wait_for_published_version(target_version: Version) -> None:
-    version_url = PYPI_VERSION_JSON_URL.format(version=target_version)
+    # JSON/Simple 索引可见不等于 uv 能解析；使用同一解析器、索引配置和 Python 范围确认。
+    # 临时项目只探测 Dashboard，不修改真实依赖声明、锁文件或虚拟环境。
+    document = tomlkit.parse(PYPROJECT_PATH.read_text(encoding="utf-8"))
+    probe = tomlkit.document()
+    probe["project"] = {
+        "name": "maibot-dashboard-release-probe",
+        "version": "0.0.0",
+        "requires-python": document["project"]["requires-python"],
+        "dependencies": [f"{PACKAGE_NAME}=={target_version}"],
+    }
+    if "tool" in document and "uv" in document["tool"]:
+        probe["tool"] = {"uv": document["tool"]["uv"].unwrap()}
 
-    for attempt in range(1, MAX_CHECK_ATTEMPTS + 1):
-        print(f"检查 PyPI 上的 {PACKAGE_NAME}=={target_version}（第 {attempt}/{MAX_CHECK_ATTEMPTS} 次）")
-
-        pypi_data = None
-        try:
-            with urlopen(version_url, timeout=30) as response:
-                pypi_data = json.load(response)
-        except HTTPError as error:
-            if error.code != 404:
-                raise
-            print(f"PyPI 上暂未找到 {PACKAGE_NAME}=={target_version}")
-
-        if pypi_data is not None:
-            release_files = pypi_data["urls"]
-            if release_files and any(not release_file.get("yanked", False) for release_file in release_files):
-                print(f"PyPI 已发布 dashboard 正式版本: {target_version}")
+    with TemporaryDirectory(prefix="maibot-dashboard-release-") as probe_dir:
+        (Path(probe_dir) / "pyproject.toml").write_text(tomlkit.dumps(probe), encoding="utf-8")
+        command = [
+            "uv", "lock", "--project", probe_dir, "--python", sys.executable,
+            "--upgrade-package", PACKAGE_NAME, "--refresh-package", PACKAGE_NAME,
+        ]
+        for attempt in range(1, MAX_CHECK_ATTEMPTS + 1):
+            print(f"确认 uv 可解析 {PACKAGE_NAME}=={target_version}（第 {attempt}/{MAX_CHECK_ATTEMPTS} 次）", flush=True)
+            result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+            if result.returncode == 0:
+                print(f"uv 已成功解析 Dashboard 正式版本: {target_version}", flush=True)
                 return
-
-            print(f"PyPI 上的 {PACKAGE_NAME}=={target_version} 没有可用的未撤回文件")
-
-        if attempt < MAX_CHECK_ATTEMPTS:
-            time.sleep(CHECK_INTERVAL_SECONDS)
-
-    raise RuntimeError(
-        f"等待 {MAX_CHECK_ATTEMPTS * CHECK_INTERVAL_SECONDS} 秒后，"
-        f"PyPI 上仍未找到可用的 {PACKAGE_NAME}=={target_version}"
-    )
+            details = (result.stderr + "\n" + result.stdout).strip()
+            # 仅等待目标版本缺失这一发布同步状态；配置、网络和其他依赖错误立即暴露。
+            missing_version = f"no version of {canonicalize_name(PACKAGE_NAME)}=={target_version}" in details.lower()
+            if result.returncode != 1 or not missing_version:
+                raise RuntimeError(f"uv 检查失败，不能作为发布同步延迟重试:\n{details}")
+            print(details, flush=True)
+            if attempt < MAX_CHECK_ATTEMPTS:
+                time.sleep(CHECK_INTERVAL_SECONDS)
+        raise RuntimeError(f"经过 {MAX_CHECK_ATTEMPTS} 次检查，uv 仍无法解析 {PACKAGE_NAME}=={target_version}:\n{details}")
 
 
 def update_pyproject(target_version: Version) -> bool:

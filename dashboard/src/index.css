@@ -151,32 +151,11 @@
   animation: expression-actions-menu-exit 160ms ease-in;
 }
 
-@keyframes toast-countdown {
-  from {
-    transform: scaleX(1);
-  }
-
-  to {
-    transform: scaleX(0);
-  }
-}
-
-.toast-progress {
-  animation-name: toast-countdown;
-  animation-timing-function: linear;
-  animation-fill-mode: forwards;
-}
-
 [data-config-search-highlight='true'] {
   outline: 2px solid hsl(var(--primary));
   outline-offset: 4px;
   border-radius: var(--visual-radius-md);
   transition: outline-color 180ms ease-out;
-}
-
-[data-dashboard-toast='true']:hover .toast-progress,
-[data-dashboard-toast='true']:focus-within .toast-progress {
-  animation-play-state: paused;
 }
 
 @keyframes future-retro-gear-rotate {
@@ -250,11 +229,14 @@
 /* JetBrains Mono 字体 - 用于代码编辑器 */
 @keyframes config-tab-enter {
   from {
+    max-width: 0;
+    padding-inline: 0;
     opacity: 0;
-    transform: translateX(-0.5rem);
+    transform: translateX(-0.75rem);
   }
 
   to {
+    max-width: 16rem;
     opacity: 1;
     transform: translateX(0);
   }
@@ -703,19 +685,32 @@
   animation: future-retro-gear-rotate 150s linear infinite;
 }
 
+/* 偏移量按齿轮自身尺寸计算，避免竖屏下 vh 偏移大于 vw 尺寸导致齿轮整体移出画面 */
 .auth-retro-gear--primary {
-  left: max(-30rem, -32vw);
-  top: max(-24rem, -34vh);
-  width: min(72vw, 52rem);
+  --auth-gear-size: min(72vw, 52rem);
+  left: calc(var(--auth-gear-size) * -0.5);
+  top: calc(var(--auth-gear-size) * -0.36);
+  width: var(--auth-gear-size);
 }
 
 .auth-retro-gear--secondary {
-  right: max(-28rem, -30vw);
-  bottom: max(-30rem, -42vh);
-  width: min(84vw, 60rem);
+  --auth-gear-size: min(84vw, 60rem);
+  right: calc(var(--auth-gear-size) * -0.45);
+  bottom: calc(var(--auth-gear-size) * -0.4);
+  width: var(--auth-gear-size);
   opacity: 0.22;
   animation-duration: 210s;
   animation-direction: reverse;
+}
+
+@media (max-aspect-ratio: 3/4) {
+  .auth-retro-gear--primary {
+    --auth-gear-size: min(100vw, 52rem);
+  }
+
+  .auth-retro-gear--secondary {
+    --auth-gear-size: min(120vw, 60rem);
+  }
 }
 
 .auth-retro-gear__body {
@@ -1067,6 +1062,76 @@
   z-index: 1;
 }
 
+/* 聊天监控里的推理卡片：去掉外框与装饰，只保留内容。
+   :root:root 提高优先级，压过未来复古主题对卡片边框的 !important 规则。 */
+:root:root [data-maisaka-trace-card='true'][data-dashboard-card='true'] {
+  border-width: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+/* 用户发言气泡：无框线，深色底纹 */
+:root:root [data-maisaka-user-bubble='true'] {
+  border-width: 0 !important;
+  box-shadow: none !important;
+}
+
+:root:root[data-dashboard-style='future-retro'] [data-maisaka-user-bubble='true'] {
+  border-radius: 2px !important;
+  background-color: color-mix(in srgb, var(--retro-ink) 9%, transparent) !important;
+}
+
+/* 推理与推理、推理与消息之间的细横线（由时间线行统一绘制） */
+:root[data-dashboard-style='future-retro'] [data-maisaka-timeline-divider='true'] {
+  border-color: color-mix(in srgb, var(--retro-line) 45%, transparent) !important;
+}
+
+:root[data-dashboard-style='future-retro']
+  [data-maisaka-trace-card='true'][data-dashboard-card='true']::before,
+:root[data-dashboard-style='future-retro']
+  [data-maisaka-trace-card='true'][data-dashboard-card='true']::after {
+  display: none !important;
+  content: none !important;
+}
+
+[data-maisaka-trace-card='true'] > [data-dashboard-card-header='true'] {
+  padding-block: 0.5rem !important;
+  padding-inline: 0 !important;
+}
+
+/* 推理、工具等卡片的字号整体小一号。 */
+[data-maisaka-trace-card='true'] .text-sm {
+  font-size: 0.75rem !important;
+  line-height: 1.125rem !important;
+}
+
+[data-maisaka-trace-card='true'] .text-xs {
+  font-size: 0.6875rem !important;
+  line-height: 1rem !important;
+}
+
+[data-maisaka-trace-card='true'] .text-\[11px\] {
+  font-size: 0.625rem !important;
+}
+
+[data-maisaka-trace-card='true'] .text-\[10px\] {
+  font-size: 0.5625rem !important;
+}
+
+/* 卡片标题行里的徽章与按钮统一高度，且不带外框。 */
+:root:root
+  [data-maisaka-trace-meta='true']
+  > :is([data-dashboard-badge='true'], [data-dashboard-button='true']) {
+  box-sizing: border-box !important;
+  height: 1.375rem !important;
+  min-height: 1.375rem !important;
+  padding-block: 0 !important;
+  border-width: 0 !important;
+  box-shadow: none !important;
+  line-height: 1 !important;
+}
+
 [data-maibot-status-glow='true'] {
   opacity: 0;
   transform: scale(0.92);
@@ -1412,6 +1477,25 @@
   font-weight: 800;
 }
 
+/* 现代主题的工作区标签保持内容宽度，避免顶栏压缩时图标和文字挤到相邻标签。 */
+:root[data-dashboard-style='modern']
+  [data-dashboard-header='true']
+  div:has(> [data-dashboard-workspace-tabs='true']) {
+  flex-shrink: 0;
+}
+
+:root[data-dashboard-style='modern'] [data-dashboard-workspace-tabs='true'] {
+  width: max-content;
+  flex-shrink: 0;
+}
+
+:root[data-dashboard-style='modern']
+  [data-dashboard-workspace-tabs='true']
+  [data-dashboard-tabs-trigger='true'],
+:root[data-dashboard-style='modern'] [data-dashboard-workspace-tabs='true'] svg {
+  flex-shrink: 0;
+}
+
 :root[data-dashboard-style='future-retro'] [data-dashboard-workspace-tabs='true'] {
   border: 0 !important;
   background: transparent !important;
@@ -1423,6 +1507,13 @@
   [data-dashboard-workspace-tabs='true']
   [data-dashboard-tabs-trigger='true'][data-state='active'] {
   background: transparent !important;
+}
+
+/* 顶部工作区标签（麦麦 / 日志）文字较短，左右边距收紧 */
+:root[data-dashboard-style='future-retro']
+  [data-dashboard-workspace-tabs='true']
+  [data-dashboard-tabs-trigger='true'] {
+  padding-inline: 0.7rem !important;
 }
 
 :root[data-dashboard-style='future-retro']
@@ -1573,12 +1664,32 @@
   box-shadow: none !important;
 }
 
+/* 未选中为描边凹陷方块，选中/半选才填充锈红，避免未选中看起来像已选中 */
 :root[data-dashboard-style='future-retro'] [data-dashboard-checkbox='true'] {
-  border: 0 !important;
+  border: var(--retro-stroke) solid var(--retro-line) !important;
   border-radius: 0 !important;
-  background: var(--retro-rust) !important;
+  background: var(--retro-recessed) !important;
   box-shadow: none !important;
   color: var(--retro-paper) !important;
+}
+
+:root[data-dashboard-style='future-retro']
+  [data-dashboard-checkbox='true']:is([data-state='checked'], [data-state='indeterminate']) {
+  border-color: var(--retro-rust) !important;
+  background: var(--retro-rust) !important;
+}
+
+:root[data-dashboard-style='future-retro']
+  [data-dashboard-checkbox='true'][data-state='indeterminate']
+  [data-dashboard-checkbox-indicator='true']::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 8px;
+  height: 3px;
+  background: var(--retro-paper);
+  transform: translate(-50%, -50%);
 }
 
 :root[data-dashboard-style='future-retro'] [data-dashboard-checkbox='true']:focus-visible {
@@ -1953,15 +2064,24 @@
 :root[data-dashboard-style='future-retro']
   [data-dashboard-slider='config']
   [data-dashboard-slider-thumb='true'] {
-  min-width: 2.5rem !important;
-  height: 2rem !important;
+  min-width: 2rem !important;
+  height: 1.75rem !important;
   width: auto !important;
+  padding: 0 0.375rem !important;
+  font-size: 1rem;
 }
 
 :root[data-dashboard-style='future-retro']
   [data-dashboard-slider='config']
   [data-dashboard-slider-value='true'] {
   display: inline !important;
+  font-size: 1rem !important;
+}
+
+:root[data-dashboard-style='future-retro']
+  [data-dashboard-slider='config']
+  [data-dashboard-slider-value-tail='true'] {
+  font-size: 0.5rem;
 }
 
 :root[data-dashboard-style='future-retro'] [data-dashboard-nav-item='true'] {
@@ -2044,19 +2164,6 @@
   backdrop-filter: blur(10px) saturate(140%) !important;
 }
 
-:root[data-dashboard-style='future-retro'] [data-focus-companion='true'] .focus-local-glass {
-  background-color: rgb(255 246 230 / 68%);
-  box-shadow: none;
-  -webkit-backdrop-filter: blur(22px) !important;
-  backdrop-filter: blur(22px) !important;
-}
-
-:root[data-dashboard-style='future-retro'] [data-focus-companion='true'] .focus-local-glass-input {
-  background-color: rgb(255 246 230 / 58%);
-  -webkit-backdrop-filter: blur(16px) !important;
-  backdrop-filter: blur(16px) !important;
-}
-
 :root[data-dashboard-style='future-retro']
   [data-dashboard-shell='true']
   :is([class*='bg-gradient-'], [class*='from-'], [class*='via-'], [class*='to-']) {
@@ -2127,6 +2234,15 @@
 :root[data-dashboard-style='future-retro'] .bg-background,
 :root[data-dashboard-style='future-retro'] .bg-popover {
   background-color: transparent;
+}
+
+/* 模型表格操作列固定右缘、统计表名称列固定左缘：retro 主题下 .bg-background 为透明，需用纸面实色遮盖滚动内容。
+   放在 .bg-background 透明规则之后，避免被其覆盖。 */
+:root[data-dashboard-style='future-retro'] [data-model-config-action-cell='true'],
+:root[data-dashboard-style='future-retro'] [data-statistics-sticky-cell='true'] {
+  background-color: var(--retro-paper) !important;
+  background-image: var(--retro-paper-brightness-overlay), var(--retro-paper-texture) !important;
+  background-size: auto, var(--retro-paper-texture-size) !important;
 }
 
 :root[data-dashboard-style='future-retro'] .text-muted-foreground {
@@ -2218,6 +2334,16 @@
   width: 0.5rem;
   height: 0.5rem;
   background: var(--retro-paper);
+}
+
+/* 记忆记录行勾选后用锈红描边标出，需压过上面 .border 的统一线色 */
+:root[data-dashboard-style='future-retro'] [data-memory-record-row='true'] {
+  border-radius: 0 !important;
+}
+
+:root[data-dashboard-style='future-retro'] [data-memory-record-row='true'][data-checked='true'] {
+  border-color: var(--retro-rust) !important;
+  background: color-mix(in srgb, var(--retro-rust) 7%, transparent) !important;
 }
 
 /* Card carries Tailwind's border class, so keep its retro frame color after the generic border override. */
@@ -2613,8 +2739,8 @@
   padding-bottom: 0.625rem;
 }
 
-/* 记忆查询结果头部：单行「标题 + 计数徽标 + 刷新」，收紧纵向留白，
-   让头部高度由这一行控件决定而不是被内边距撑高 */
+/* 记忆查询结果头部：单行「多选操作 + 计数小字」，收紧纵向留白，
+   让头部高度由控件决定而不是被内边距撑高 */
 .memory-console-density
   [data-dashboard-card-header='true'][data-memory-records-result-header='true'] {
   padding: 0.5rem 0.75rem;
@@ -2689,6 +2815,71 @@
    与同行右侧 2rem 高的「更多操作」按钮对齐 */
 .memory-console-density [data-memory-console-tab-row='true'] [data-dashboard-tabs-list='true'] {
   gap: 0.25rem;
+  padding-block: 0;
+}
+
+/* 桌面列表共用剩余视口高度；手机让搜索与表单随整页滚动，列表保留独立浏览高度。 */
+@media (min-width: 1024px) {
+  [data-dashboard-main='true']:has([data-memory-fixed-page='true']) {
+    overflow: hidden;
+  }
+}
+
+@media (max-width: 1023px) {
+  /* 网格/弹性子项默认的 min-width:auto 会被长 ID、按钮和输入框撑开。 */
+  [data-memory-console-page='true'] :is(.grid, .flex) > :is(div, form, section),
+  [data-memory-console-page='true'] [role='tabpanel'],
+  [data-memory-console-page='true'] [data-dashboard-card='true'] {
+    min-width: 0;
+  }
+
+  [data-memory-console-page='true'] :is(input, textarea, [data-dashboard-select-trigger='true']) {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  [data-memory-console-page='true'] [data-dashboard-card='true'] {
+    overflow-wrap: anywhere;
+  }
+
+  [data-memory-console-page='true'] [data-memory-console-tab-row='true'] {
+    margin-inline: 0;
+    padding-inline: 0;
+  }
+
+  [data-memory-console-page='true'] [data-memory-records-result-header='true'] > .ml-auto {
+    width: 100%;
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 1023px) {
+  [data-dashboard-workspace-content='true']:has([data-memory-fixed-page='true']) {
+    height: 100%;
+    min-height: 0;
+  }
+
+  [data-dashboard-workspace-content='true'] > div:has([data-memory-fixed-page='true']) {
+    flex: 1;
+    min-height: 0;
+  }
+}
+
+.memory-console-density [data-memory-timeline-panel='true'] > [data-dashboard-card-content='true'] {
+  padding: 0.5rem 0.75rem;
+}
+
+.memory-console-density [data-memory-timeline-pagination='true'] [data-dashboard-button='true'] {
+  height: 1.75rem;
+  min-width: 1.75rem;
+  padding-inline: 0.5rem;
+  font-size: 0.75rem;
+}
+
+.memory-console-density [data-memory-timeline-filters='true']
+  :is([data-dashboard-select-trigger='true'], [data-dashboard-date-time-trigger='true']) {
+  height: 2rem;
+  min-height: 2rem;
   padding-block: 0;
 }
 
@@ -2888,15 +3079,6 @@
   }
 }
 
-@keyframes chat-management-text-scroll {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(calc(var(--scroll-container-width) - 100%));
-  }
-}
-
 @media (min-width: 1024px) {
   [data-home-summary-cards='true'][data-home-row-sizing='custom'] {
     grid-template-rows: var(--home-card-grid-rows);
@@ -2963,8 +3145,8 @@
   ) {
   border-radius: var(--visual-radius-lg);
   box-shadow:
-    0 3px 0 rgb(63 45 24 / 0.2),
-    0 5px 9px rgb(63 45 24 / 0.12) !important;
+    0 var(--plugin-market-depth, 3px) 0 rgb(63 45 24 / 0.2),
+    0 var(--plugin-market-shadow-y, 5px) var(--plugin-market-shadow-blur, 9px) rgb(63 45 24 / 0.12) !important;
 }
 
 :root
@@ -2981,8 +3163,66 @@
     [data-plugin-market-card='true']
   ) {
   box-shadow:
-    0 3px 0 rgb(0 0 0 / 0.42),
-    0 6px 10px rgb(0 0 0 / 0.26) !important;
+    0 var(--plugin-market-depth, 3px) 0 rgb(0 0 0 / 0.42),
+    0 var(--plugin-market-shadow-y, 6px) var(--plugin-market-shadow-blur, 10px) rgb(0 0 0 / 0.26) !important;
+}
+
+/* 已安装插件以橙色描边区分，保持卡片尺寸不变。 */
+:root [data-plugin-market-card='true'][data-plugin-installed='true'] {
+  border-color: #ea580c;
+}
+
+/* 超长插件名在卡片悬停时往返滚动，起点与终点稍作停留以便阅读。 */
+@keyframes plugin-title-scroll {
+  0%, 15% {
+    transform: translateX(0);
+  }
+
+  85%, 100% {
+    transform: translateX(var(--plugin-title-scroll-distance));
+  }
+}
+
+[data-plugin-market-card='true']:is(:hover, :focus-within)
+  [data-plugin-title-overflow='true']
+  [data-plugin-title-text='true'] {
+  width: max-content;
+  max-width: none;
+  overflow: visible;
+  animation: plugin-title-scroll var(--plugin-title-scroll-duration) linear infinite alternate;
+}
+
+/* 卡片下沉时同步收短厚度与投影，保持各主题原有的材质。 */
+[data-plugin-market-card='true'] {
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  [data-plugin-market-card='true']:hover {
+    --plugin-market-depth: 1px;
+    --plugin-market-shadow-y: 2px;
+    --plugin-market-shadow-blur: 3px;
+    transform: perspective(900px) translateY(2px) rotateX(0.6deg) scale(0.997);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-plugin-market-card='true']:is(:hover, :focus-within)
+    [data-plugin-title-overflow='true']
+    [data-plugin-title-text='true'] {
+    width: auto;
+    max-width: 100%;
+    overflow: hidden;
+    animation: none;
+  }
+
+  [data-plugin-market-card='true'] {
+    transition: none;
+  }
+
+  [data-plugin-market-card='true']:hover {
+    transform: none;
+  }
 }
 
 :root[data-dashboard-style='future-retro']
@@ -3048,8 +3288,12 @@
     [data-model-config-table-surface='true'] [data-dashboard-table-header='true'],
     [data-model-config-table-surface='true'] [data-dashboard-table-body='true'],
     [data-model-config-table-surface='true'] [data-dashboard-table-row='true'],
-    [data-model-config-table-surface='true'] [data-dashboard-table-head='true'],
-    [data-model-config-table-surface='true'] [data-dashboard-table-cell='true']
+    [data-model-config-table-surface='true'] [data-dashboard-table-head='true']:not(
+      [data-model-config-action-cell='true']
+    ),
+    [data-model-config-table-surface='true'] [data-dashboard-table-cell='true']:not(
+      [data-model-config-action-cell='true']
+    )
   ) {
   background: transparent !important;
   background-color: transparent !important;

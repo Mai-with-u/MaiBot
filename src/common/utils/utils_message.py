@@ -1,5 +1,4 @@
 from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from maim_message import MessageBase, Seg
@@ -14,6 +13,7 @@ import re
 import asyncio
 import threading
 
+from src.common.paths import get_instance_root
 from src.common.data_models.message_component_data_model import (
     AtComponent,
     DictComponent,
@@ -289,7 +289,7 @@ class MessageUtils:
             session.add(existing_record)
             return
 
-        image_dir = Path(__file__).parent.parent.parent.parent / "data" / "images"
+        image_dir = get_instance_root() / "data" / "images"
         image_dir.mkdir(parents=True, exist_ok=True)
         image_format = MessageUtils._detect_image_format(component.binary_data)
         image_path = image_dir / f"{image_hash}.{image_format}"

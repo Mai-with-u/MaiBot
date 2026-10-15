@@ -9,6 +9,9 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }))
 
+// 更新卡片会请求后端，由自己的测试覆盖。
+vi.mock('../SelfUpdateCard', () => ({ SelfUpdateCard: () => null }))
+
 afterEach(() => cleanup())
 
 const TECH_STACK_ITEMS = [

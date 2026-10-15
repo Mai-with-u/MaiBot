@@ -26,6 +26,15 @@ def _resolve_ip_addresses(hostname: str, port: int) -> Set[ipaddress.IPv4Address
     return resolved_addresses
 
 
+def _is_ip_literal(hostname: str) -> bool:
+    # inet_aton 同时识别十进制整数、十六进制及缩写 IPv4，避免把它们当域名放行。
+    try:
+        socket.inet_aton(hostname)
+        return True
+    except OSError:
+        return ":" in hostname  # URL 中带冒号的主机名是 IPv6 字面量。
+
+
 def _is_unsafe_ip_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """判断地址是否在任何 WebUI 出站场景中都不应访问。"""
     return any(
@@ -60,11 +69,14 @@ def validate_public_url(
     allowed_schemes: Iterable[str] = ("http", "https"),
     require_public_network: bool | None = None,
     allow_configured_private_network: bool = False,
+    allow_fake_ip: bool = False,
 ) -> str:
     """校验 WebUI 出站 URL。
 
     已保存的模型厂商配置可显式允许回环或私网目标，但链路本地、组播、
-    保留地址和未指定地址始终禁止。任意 URL 入口仍只允许公网目标。
+    保留地址和未指定地址始终禁止。默认只允许公网目标。
+    allow_fake_ip 供插件市场的 HTTPS 域名使用，允许解析为 198.18.0.0/15。
+    此选项不检测 TUN，不允许直接填写 Fake-IP；其他调用者默认保持原检查。
     """
     normalized_url = url.strip()
     if not normalized_url:
@@ -103,6 +115,13 @@ def validate_public_url(
 
     if enforce_public_network:
         for address in _resolve_ip_addresses(parsed.hostname, port):
+            if (
+                allow_fake_ip
+                and parsed.scheme.lower() == "https"
+                and not _is_ip_literal(parsed.hostname)
+                and address in ipaddress.ip_network("198.18.0.0/15")
+            ):
+                continue
             is_forbidden = (
                 _is_unsafe_ip_address(address)
                 if allow_configured_private_network

@@ -1,0 +1,201 @@
+name: Publish MaiBot
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '正式版本号，必须与待发布提交一致，例如 1.3.9'
+        required: true
+        type: string
+      ref:
+        description: '待发布提交 SHA、分支或已有 tag'
+        required: true
+        default: main
+        type: string
+      publish:
+        description: '上传 PyPI 并创建 GitHub Release（关闭时只构建验证）'
+        default: false
+        type: boolean
+      resume_run_id:
+        description: '复用此前运行的原产物；上传后失败时填写原 Actions run ID，不重新构建'
+        required: false
+        default: ''
+        type: string
+
+# 防止两次正式发布同时创建同一个 tag 或向同一个项目上传。
+concurrency:
+  group: publish-maibot
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-and-check:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.manifest.outputs.version }}
+      tag: ${{ steps.manifest.outputs.tag }}
+      commit: ${{ steps.manifest.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: '0.13.0'
+      - name: Find validated artifact from this run
+        id: recovery
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          find_artifact() {
+            gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$1/artifacts" \
+              --jq ".artifacts[] | select(.name == \"maibot-$RELEASE_VERSION\" and .expired == false) | .id"
+          }
+          RUN_ID="$GITHUB_RUN_ID"
+          ID=$(find_artifact "$RUN_ID")
+          if [ -z "$ID" ] && [ -n "$RESUME_RUN_ID" ]; then
+            [[ "$RESUME_RUN_ID" =~ ^[0-9]+$ ]]
+            RUN_ID="$RESUME_RUN_ID"
+            ID=$(find_artifact "$RUN_ID")
+            if [ -z "$ID" ]; then
+              echo "原 run 中没有可用的对应版本产物，禁止重新构建已上传的版本" >&2
+              exit 1
+            fi
+          fi
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          if [ -n "$ID" ]; then
+            echo 'reuse=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'reuse=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Restore original validated artifact on retry
+        if: steps.recovery.outputs.reuse == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: maibot-${{ inputs.version }}
+          path: release-dist
+          run-id: ${{ steps.recovery.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Check out source to release
+        if: steps.recovery.outputs.reuse != 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check version, Dashboard availability and changelog
+        if: steps.recovery.outputs.reuse != 'true'
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: uv run --no-project --with packaging python .github/scripts/maibot_release.py prepare --version "$RELEASE_VERSION"
+      - name: Build wheel and sdist from the fixed source commit
+        if: steps.recovery.outputs.reuse != 'true'
+        working-directory: source
+        run: uv build --out-dir ../release-dist/dist
+      - name: Audit package resources and metadata
+        if: steps.recovery.outputs.reuse != 'true'
+        run: |
+          uv run --no-project --with packaging python .github/scripts/maibot_release.py audit
+          uvx --from twine twine check --strict release-dist/dist/*
+      - name: Verify clean uv tool installation and idempotent init
+        if: steps.recovery.outputs.reuse != 'true'
+        run: uv run --no-project --with packaging python .github/scripts/maibot_release.py smoke
+      - name: Verify artifact and expose fixed release identity
+        id: manifest
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: uv run --no-project --with packaging python .github/scripts/maibot_release.py verify --version "$RELEASE_VERSION"
+      - name: Ensure existing tag belongs to the same source commit
+        env:
+          RELEASE_TAG: ${{ steps.manifest.outputs.tag }}
+          SOURCE_COMMIT: ${{ steps.manifest.outputs.commit }}
+        run: |
+          set -euo pipefail
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$SOURCE_COMMIT"
+          fi
+      - name: Save validated files and release notes for retry
+        if: steps.recovery.outputs.reuse != 'true' || steps.recovery.outputs.run_id != github.run_id
+        uses: actions/upload-artifact@v4
+        with:
+          name: maibot-${{ inputs.version }}
+          path: release-dist/
+          if-no-files-found: error
+          retention-days: 90
+
+  publish-pypi:
+    needs: build-and-check
+    if: inputs.publish
+    runs-on: ubuntu-24.04
+    environment: maibot
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: '0.13.0'
+      - uses: actions/download-artifact@v4
+        with:
+          name: maibot-${{ needs.build-and-check.outputs.version }}
+          path: release-dist
+      - name: Reject conflicting PyPI files before upload
+        run: uv run --no-project --with packaging python .github/scripts/maibot_release.py pypi-check
+      - name: Upload the validated distributions using Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: release-dist/dist/
+          # 预先验证同名文件的 SHA256；只跳过完全相同的文件，补齐部分上传。
+          skip-existing: true
+      - name: Verify all files on PyPI before creating a release
+        run: uv run --no-project --with packaging python .github/scripts/maibot_release.py pypi-verify
+
+  create-release:
+    needs: [build-and-check, publish-pypi]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: '0.13.0'
+      - uses: actions/download-artifact@v4
+        with:
+          name: maibot-${{ needs.build-and-check.outputs.version }}
+          path: release-dist
+      - name: Verify the original artifact again
+        run: uv run --no-project --with packaging python .github/scripts/maibot_release.py verify
+      - name: Create release only after PyPI upload succeeds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build-and-check.outputs.tag }}
+          SOURCE_COMMIT: ${{ needs.build-and-check.outputs.commit }}
+        run: |
+          set -euo pipefail
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$SOURCE_COMMIT"
+          fi
+          RELEASES=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[].tag_name')
+          if printf '%s\n' "$RELEASES" | grep -Fxq "$RELEASE_TAG"; then
+            test "$(gh release view "$RELEASE_TAG" --json isDraft,isPrerelease --jq '.isDraft == false and .isPrerelease == false')" = 'true'
+            echo "Release $RELEASE_TAG 已存在，保留原内容"
+          else
+            gh release create "$RELEASE_TAG" --target "$SOURCE_COMMIT" \
+              --title "$RELEASE_TAG" --notes-file release-dist/notes.md
+          fi

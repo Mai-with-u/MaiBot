@@ -1,6 +1,6 @@
 """进程级 MCP 共享服务回归测试。"""
 
-from typing import Any
+from typing import Any, Callable
 
 import pytest
 
@@ -21,6 +21,9 @@ class _FakeManager:
 
     def get_tool_specs(self) -> list[ToolSpec]:
         return [ToolSpec(name=f"{self.name}_tool")]
+
+    def add_status_change_callback(self, callback: Callable[[], None]) -> None:
+        self.status_change_callback = callback
 
     def get_status_snapshot(self) -> dict[str, Any]:
         return {
@@ -132,3 +135,27 @@ async def test_service_closes_old_manager_after_configuration_change(
 
     await service.close()
     assert created_managers[1].close_count == 1
+
+
+@pytest.mark.asyncio
+async def test_retired_manager_status_callback_cannot_overwrite_current_snapshot(monkeypatch) -> None:
+    """热切换后旧连接退出的通知不能覆盖当前连接状态。"""
+    managers: list[_FakeManager] = []
+
+    async def create_manager(cls, config, **kwargs):
+        manager = _FakeManager(config.servers[0].name)
+        managers.append(manager)
+        return manager
+
+    monkeypatch.setattr(MCPManager, "from_app_config", classmethod(create_manager))
+    service = MCPService()
+    try:
+        await service.reload(MCPConfig(servers=[MCPServerItemConfig(name="old", command="server")]))
+        await service.reload(MCPConfig(servers=[MCPServerItemConfig(name="new", command="server")]))
+        managers[0].status_change_callback()
+        assert service.get_status_snapshot()["servers"][0]["name"] == "new"
+        await service.close()
+        managers[1].status_change_callback()
+        assert not service.get_status_snapshot()["initialized"]
+    finally:
+        await service.close()

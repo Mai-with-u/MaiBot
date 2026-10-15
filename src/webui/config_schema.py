@@ -165,7 +165,6 @@ AMEMORIX_EXCLUDED_FIELD_PATHS: set[str] = {
     "a_memorix.integration.heuristic_memory_group_to_private_enabled",
     "a_memorix.integration.heuristic_memory_private_to_group_enabled",
     "a_memorix.person_profile.evidence_classification_max_tokens",
-    "a_memorix.person_profile.evidence_classification_temperature",
     "a_memorix.person_profile.max_retry",
     "a_memorix.person_profile.refresh_debounce_seconds",
     "a_memorix.person_profile.refresh_queue_batch_size",

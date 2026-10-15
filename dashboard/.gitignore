@@ -1,1 +1,4 @@
 coverage/
+
+# Vite dependency optimization cache
+.vite/

@@ -24,9 +24,6 @@ from .base import KernelServiceBase
 
 logger = get_logger("A_Memorix.SDKMemoryKernel")
 
-_TRUSTED_FACT_ORIGINS = {"manual_confirmed", "server_verified", "trusted_import"}
-
-
 class MemoryIngestService(KernelServiceBase):
     """协调段落元数据、向量、实体关系和后续派生任务的写入。"""
 
@@ -41,9 +38,8 @@ class MemoryIngestService(KernelServiceBase):
     ) -> List[str]:
         """把原子人物事实登记为有证据的结构化 claim。
 
-        文本始终采用已落库段落正文。只有人工确认、服务端校验或可信迁移
-        明确标记的结构化 claim 才能进入稳定投影；其余模型改写只登记为
-        summary_derived + uncertain，不得取代稳定事实。
+        文本始终采用已落库段落正文，稳定性和画像分类采用提取结果。
+        来源标记记录事实出处，不再作为稳定画像的额外准入条件。
         """
 
         assert self.metadata_store is not None
@@ -54,14 +50,15 @@ class MemoryIngestService(KernelServiceBase):
 
         raw_claim = metadata.get("fact_claim")
         claim_spec = dict(raw_claim) if isinstance(raw_claim, dict) else {}
+        raw_confidence = claim_spec.get("confidence")
+        confidence = 1.0 if raw_confidence is None else float(raw_confidence)
         evidence_source = str(metadata.get("evidence_source", "") or "").strip()
         trust = str(claim_spec.get("trust", "") or "").strip().casefold()
-        trusted = trust in _TRUSTED_FACT_ORIGINS
         default_authority = {
             "manual_confirmed": "manual",
             "server_verified": "direct_user",
             "trusted_import": "imported",
-        }.get(trust, "summary_derived")
+        }.get(trust, "direct_user" if evidence_source == "user_supported" else "summary_derived")
         claim_ids: List[str] = []
         for person_id in person_ids:
             person_token = str(person_id or "").strip()
@@ -70,32 +67,16 @@ class MemoryIngestService(KernelServiceBase):
             result = self.metadata_store.upsert_fact_claim(
                 scope_type="person",
                 scope_id=person_token,
-                fact_key=(
-                    str(claim_spec.get("fact_key", "") or f"statement:{paragraph_token}")
-                    if trusted
-                    else f"statement:{paragraph_token}"
-                ),
+                fact_key=str(claim_spec.get("fact_key") or f"statement:{paragraph_token}"),
                 value_text=statement,
-                polarity=str(claim_spec.get("polarity", "positive") or "positive") if trusted else "positive",
-                cardinality=str(claim_spec.get("cardinality", "set") or "set") if trusted else "set",
-                stability=str(claim_spec.get("stability", "stable") or "stable") if trusted else "uncertain",
-                profile_section=(
-                    str(claim_spec.get("profile_section", "stable_facts") or "stable_facts")
-                    if trusted
-                    else "uncertain_notes"
-                ),
-                authority=(
-                    str(claim_spec.get("authority", default_authority) or default_authority)
-                    if trusted
-                    else "summary_derived"
-                ),
-                confidence=(
-                    float(claim_spec.get("confidence", 1.0) or 1.0)
-                    if trusted
-                    else min(0.5, float(claim_spec.get("confidence", 0.5) or 0.5))
-                ),
-                valid_from=claim_spec.get("valid_from") if trusted else None,
-                valid_to=claim_spec.get("valid_to") if trusted else None,
+                polarity=str(claim_spec.get("polarity", "positive")),
+                cardinality=str(claim_spec.get("cardinality", "set")),
+                stability=str(claim_spec.get("stability", "stable")),
+                profile_section=str(claim_spec.get("profile_section", "stable_facts")),
+                authority=str(claim_spec.get("authority", default_authority)),
+                confidence=confidence,
+                valid_from=claim_spec.get("valid_from"),
+                valid_to=claim_spec.get("valid_to"),
                 evidence_type="paragraph",
                 evidence_id=paragraph_token,
                 evidence_stance="support",
@@ -107,11 +88,25 @@ class MemoryIngestService(KernelServiceBase):
                     "trust": trust,
                 },
                 supersedes_claim_ids=claim_spec.get("supersedes_claim_ids")
-                if trusted and isinstance(claim_spec.get("supersedes_claim_ids"), list)
+                if isinstance(claim_spec.get("supersedes_claim_ids"), list)
                 else [],
                 reason=str(claim_spec.get("reason", "") or "person_fact_ingest"),
                 observed_at=timestamp,
             )
+            if result.get("idempotent") and (
+                result.get("stability") != claim_spec.get("stability", "stable")
+                or result.get("profile_section") != claim_spec.get("profile_section", "stable_facts")
+            ):
+                self.metadata_store.update_fact_claim_classification(
+                    str(result["claim_id"]),
+                    stability=str(claim_spec.get("stability", "stable") or "stable"),
+                    profile_section=str(claim_spec.get("profile_section", "stable_facts") or "stable_facts"),
+                    authority=default_authority,
+                    confidence=confidence,
+                    valid_from=result.get("valid_from"),
+                    valid_to=result.get("valid_to"),
+                    reason="person_fact_reverified",
+                )
             claim_ids.append(str(result["claim_id"]))
         return claim_ids
 
@@ -216,6 +211,7 @@ class MemoryIngestService(KernelServiceBase):
             if getattr(embedding, "ndim", 1) == 1:
                 embedding = embedding.reshape(1, -1)
             target_store.add(vectors=embedding, ids=[token])
+            self._vector_space_service.record_input("paragraph", token, text)
             if token not in target_store:
                 raise RuntimeError("段落向量写入后成员校验失败")
             return {
@@ -355,8 +351,37 @@ class MemoryIngestService(KernelServiceBase):
         if not content:
             return {"stored_ids": [], "skipped_ids": [external_token], "reason": "empty_text"}
 
-        existing_ref = self.metadata_store.get_external_memory_ref(external_token)
+        existing_ref = await asyncio.to_thread(self.metadata_store.get_external_memory_ref, external_token)
         if existing_ref:
+            if source_type == "person_fact":
+                paragraph_hash = str(existing_ref.get("paragraph_hash", "") or "")
+                paragraph = await asyncio.to_thread(self.metadata_store.get_paragraph, paragraph_hash)
+                # 幂等重放只重新分类原段落，不能用同一来源 ID 写入不同正文。
+                if paragraph is None or normalize_text(paragraph["content"]) != content:
+                    raise ValueError(f"person_fact external_id={external_token} 与已保存的段落正文不一致")
+                claim_ids = self._write_person_fact_claims(
+                    paragraph_hash=paragraph_hash,
+                    content=content,
+                    person_ids=tokens(person_ids),
+                    metadata=coerce_metadata_dict(metadata),
+                    timestamp=timestamp,
+                )
+                if (metadata or {}).get("evidence_message_ids"):
+                    self.metadata_store.update_paragraph_metadata(
+                        paragraph_hash,
+                        {"evidence_message_ids": metadata["evidence_message_ids"]},
+                        merge=True,
+                    )
+                for person_id in tokens(person_ids):
+                    self._enqueue_person_profile_refresh(person_id, reason="person_fact_reverified")
+                self._persist()
+                return {
+                    "success": True,
+                    "stored_ids": [paragraph_hash],
+                    "skipped_ids": [],
+                    "fact_claim_ids": claim_ids,
+                    "detail": "person_fact_reverified",
+                }
             return {
                 "stored_ids": [],
                 "skipped_ids": [str(existing_ref.get("paragraph_hash", "") or "")],
@@ -583,12 +608,14 @@ class MemoryIngestService(KernelServiceBase):
                         await heartbeat_task
                     except Exception as heartbeat_exc:
                         logger.warning(f"Episode 来源租约心跳异常: source={source}, error={heartbeat_exc}")
-                publish_result = self.metadata_store.publish_episode_source_rebuild(
+                publish_result = await asyncio.to_thread(
+                    self.metadata_store.publish_episode_source_rebuild,
                     source,
                     lease_token=lease_token,
                     claimed_revision=claimed_revision,
                     generation_hash=generation_hash,
                     episodes_payloads=list(plan.get("payloads") or []),
+                    empty_group_fingerprints=list(plan.get("empty_group_fingerprints") or []),
                 )
                 if not bool(publish_result.get("published")):
                     is_superseded = bool(publish_result.get("superseded"))

@@ -7,7 +7,7 @@ Messages labeled {bot_name}(you) are your own messages, please tell them apart:
 
 {reply_target_block}.
 {planner_reasoning}
-{group_chat_attention_block}{identity}You are chatting in a group. Read the chat log above, and reply in a casual, everyday and fairly short way.
+You are chatting in a group. Read the chat log above, and reply in a casual, everyday and fairly short way.
 {keywords_reaction_prompt}
 Please pay attention to what the chat is about, and do not reply too methodically.
 {reply_style}

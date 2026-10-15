@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { ArrowLeft, Check, CheckCircle2, ImageIcon, Plus, Upload, X } from 'lucide-react'
 import Dashboard from '@uppy/react/dashboard'
 import Uppy from '@uppy/core'
@@ -61,10 +62,13 @@ export function EmojiDetailDialog({
   emoji,
   open,
   onOpenChange,
+  actions,
 }: {
   emoji: Emoji | null
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** 详情底部的操作按钮；手机上表情包卡片不再带操作栏，由这里提供 */
+  actions?: ReactNode
 }) {
   if (!emoji) return null
 
@@ -190,6 +194,7 @@ export function EmojiDetailDialog({
             </div>
           </div>
         </DialogBody>
+        {actions && <DialogFooter>{actions}</DialogFooter>}
       </DialogContent>
     </Dialog>
   )

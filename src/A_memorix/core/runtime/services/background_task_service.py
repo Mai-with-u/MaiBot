@@ -370,15 +370,7 @@ class MemoryBackgroundTaskService(KernelServiceBase):
     async def _embedding_probe_loop(self) -> None:
         try:
             while not self._background_stopping:
-                startup_deferred = self._is_startup_self_check_deferred()
-                vector_fingerprint_pending = (
-                    str(self._vector_health.get("error_code", "") or "")
-                    == "embedding_fingerprint_unavailable"
-                )
-                should_probe = (
-                    (self._embedding_fallback_enabled() or startup_deferred or vector_fingerprint_pending)
-                    and (self._is_embedding_degraded() or startup_deferred or vector_fingerprint_pending)
-                )
+                should_probe = self.embedding_manager is not None
                 if should_probe:
                     try:
                         await self._recover_embedding_once()

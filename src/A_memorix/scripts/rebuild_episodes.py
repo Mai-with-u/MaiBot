@@ -123,12 +123,14 @@ async def _run_rebuilds(store: MetadataStore, plugin_config: Dict[str, Any], sou
             finally:
                 heartbeat_stop.set()
                 await heartbeat_task
-            result = store.publish_episode_source_rebuild(
+            result = await asyncio.to_thread(
+                store.publish_episode_source_rebuild,
                 source,
                 lease_token=lease_token,
                 claimed_revision=claimed_revision,
                 generation_hash=generation_hash,
                 episodes_payloads=list(plan.get("payloads") or []),
+                empty_group_fingerprints=list(plan.get("empty_group_fingerprints") or []),
             )
             if not bool(result.get("published")):
                 reason = "superseded" if bool(result.get("superseded")) else "lease_lost_or_claim_mismatch"

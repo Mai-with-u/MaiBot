@@ -64,7 +64,7 @@ def build_argument_parser() -> ArgumentParser:
     parser.add_argument("--index-json", default=DEFAULT_INDEX_JSON, help="表达向量索引 JSON。")
     parser.add_argument("--output-dir", default="data/analysis", help="输出目录。")
     parser.add_argument("--limit", type=int, default=30, help="最多处理多少条样本；0 表示全部。")
-    parser.add_argument("--selector-task-name", default="expression_use", help="精细选择器使用的任务名。")
+    parser.add_argument("--selector-task-name", default="fast_model", help="精细选择器使用的任务名。")
     parser.add_argument("--selector-max-tokens", type=int, default=4096, help="精细选择器最大输出 token。")
     parser.add_argument("--vector-pool-size", type=int, default=50, help="向量召回交给精细选择器的候选数。")
     parser.add_argument("--cluster-pool-size", type=int, default=16, help="向量召回扫描的近邻簇数量。")
@@ -264,7 +264,12 @@ async def replay_precise_selector(
 
     def context_factory(_client: object) -> list[Any]:
         del _client
-        return [item for message in raw_messages for item in _build_context_items_from_dict(message)]
+        logical_turn_by_call_id: dict[str, str] = {}
+        return [
+            item
+            for message in raw_messages
+            for item in _build_context_items_from_dict(message, logical_turn_by_call_id)
+        ]
 
     response = await llm_client.generate_response_with_context(
         context_factory,

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from sqlmodel import col, select
 
@@ -514,6 +514,7 @@ async def store_person_memory_from_answer(
     person_id: str = "",
     evidence_source: str = "user_supported",
     evidence_message_ids: Optional[List[str]] = None,
+    fact_claim: Optional[Dict[str, Any]] = None,
 ) -> None:
     """将人物事实写入长期记忆系统。
 
@@ -578,6 +579,7 @@ async def store_person_memory_from_answer(
                 "writeback_source": "memory_flow_service",
                 "evidence_source": str(evidence_source or "user_supported"),
                 "evidence_message_ids": evidence_message_ids or [],
+                **({"fact_claim": fact_claim} if fact_claim is not None else {}),
             },
             respect_filter=True,
             user_id=session_user_id,

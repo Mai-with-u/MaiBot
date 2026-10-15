@@ -191,7 +191,6 @@ describe('SearchDialog', () => {
           error: '移除无依据技术项',
         })
         return {
-          success: true,
           cached: false,
           model_name: 'test-utils-model',
           answer: '可以在 **人格设置** 中调整麦麦的性格描述。',
@@ -206,13 +205,11 @@ describe('SearchDialog', () => {
           results: [
             {
               id: 'c2',
-              score: 0.98,
               reason: '这里用于调整麦麦的人格与身份',
             },
           ],
-          prompt_tokens: 100,
-          completion_tokens: 20,
           total_tokens: 120,
+          grounding_error: '',
         }
       }
     )
@@ -369,7 +366,6 @@ describe('SearchDialog', () => {
 
   it('Ctrl+Enter 触发 AI 搜索；无结果时方向键与 Enter 不导航', async () => {
     searchWithAIStreamMock.mockResolvedValue({
-      success: true,
       cached: false,
       model_name: 'test-utils-model',
       answer: '',
@@ -377,9 +373,8 @@ describe('SearchDialog', () => {
       sources: [],
       expanded_terms: [],
       results: [],
-      prompt_tokens: 1,
-      completion_tokens: 1,
       total_tokens: 2,
+      grounding_error: '',
     })
     const user = userEvent.setup()
     render(<SearchDialog open onOpenChange={onOpenChangeMock} />)
@@ -451,7 +446,6 @@ describe('SearchDialog', () => {
 
   it('Meta+Enter 触发 AI 搜索，鼠标移入结果会更新选中项', async () => {
     searchWithAIStreamMock.mockResolvedValue({
-      success: true,
       cached: false,
       model_name: 'test-utils-model',
       answer: '',
@@ -459,9 +453,8 @@ describe('SearchDialog', () => {
       sources: [],
       expanded_terms: [],
       results: [],
-      prompt_tokens: 1,
-      completion_tokens: 1,
       total_tokens: 2,
+      grounding_error: '',
     })
     const user = userEvent.setup()
     render(<SearchDialog open onOpenChange={onOpenChangeMock} />)
@@ -717,7 +710,7 @@ describe('SearchDialog', () => {
           type: 'progress',
           stage: 'tool',
           status: 'failed',
-          tool: 'read_webui_documents',
+          tool: 'read_official_docs',
           error: '读取失败',
         })
         onProgress({
@@ -730,7 +723,6 @@ describe('SearchDialog', () => {
         onProgress({ type: 'progress', stage: 'tool', status: 'started' })
         onProgress({ type: 'progress', stage: 'completed', status: 'completed' })
         return {
-          success: true,
           cached: true,
           model_name: 'test-utils-model',
           answer: '',
@@ -738,12 +730,11 @@ describe('SearchDialog', () => {
           sources: [],
           expanded_terms: ['性格'],
           results: [
-            { id: 'missing-id', score: 1, reason: '幽灵结果' },
-            { id: 'c2', score: 0.5, reason: '' },
+            { id: 'missing-id', reason: '幽灵结果' },
+            { id: 'c2', reason: '' },
           ],
-          prompt_tokens: 1,
-          completion_tokens: 1,
           total_tokens: 2,
+          grounding_error: '',
         }
       }
     )
@@ -821,17 +812,15 @@ describe('SearchDialog', () => {
           signal.addEventListener('abort', () => resolve(), { once: true })
         })
         return {
-          success: true,
           cached: false,
           model_name: 'test-utils-model',
           answer: '不该出现的回答',
           suggestions: ['不该出现的建议'],
           sources: [],
           expanded_terms: [],
-          results: [{ id: 'c0', score: 1, reason: '迟到推荐' }],
-          prompt_tokens: 1,
-          completion_tokens: 1,
+          results: [{ id: 'c0', reason: '迟到推荐' }],
           total_tokens: 2,
+          grounding_error: '',
         }
       }
     )

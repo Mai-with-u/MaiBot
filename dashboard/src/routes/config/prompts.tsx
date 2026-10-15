@@ -43,6 +43,10 @@ import {
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
+import { MOBILE_GLASS_CLASS } from '@/components/layout/mobile-glass'
+import { MobileHeaderActions } from '@/components/layout/MobileHeaderActions'
+import { useMobileTitleOverride } from '@/components/layout/mobile-nav-context'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { useToast } from '@/hooks/use-toast'
 import {
   activatePromptVersion,
@@ -253,6 +257,9 @@ export function PromptManagementPage() {
   const [catalog, setCatalog] = useState<PromptCatalog | null>(null)
   const [language, setLanguage] = useState('zh-CN')
   const [filename, setFilename] = useState('')
+  // 手机：先看文件列表，点进文件才进入编辑页
+  const isMobileViewport = useMediaQuery('(max-width: 1023.98px)')
+  const [mobileEditing, setMobileEditing] = useState(false)
   const [content, setContent] = useState('')
   const [savedContent, setSavedContent] = useState('')
   const [loadingCatalog, setLoadingCatalog] = useState(true)
@@ -616,11 +623,49 @@ export function PromptManagementPage() {
     }
   }
 
+  const mobileEditorOpen = isMobileViewport && mobileEditing && Boolean(filename)
+  // 编辑页的大标题换成文件名
+  useMobileTitleOverride(mobileEditorOpen ? filename.replace(/\.prompt$/, '') : null)
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 p-3 sm:gap-4 sm:p-6">
+      {/* 手机页头右上角：编辑页返回文件列表 */}
+      {mobileEditorOpen && (
+        <MobileHeaderActions>
+          <button
+            type="button"
+            onClick={() => setMobileEditing(false)}
+            data-mobile-header-text-button="true"
+            className={cn('h-11 rounded-full px-4 text-[15px]', MOBILE_GLASS_CLASS)}
+          >
+            文件列表
+          </button>
+        </MobileHeaderActions>
+      )}
+      {/* 手机编辑页：有未保存修改时浮出保存条 */}
+      {mobileEditorOpen && hasUnsavedChanges && (
+        <div
+          data-mobile-save-bar="true"
+          className={cn(
+            'fixed inset-x-4 bottom-[calc(var(--mobile-dock-height,0px)+8px)] z-30 flex h-[60px] items-center gap-2 rounded-full pr-2 pl-5',
+            MOBILE_GLASS_CLASS
+          )}
+        >
+          <span className="flex-1 text-[15px] font-medium">有未保存修改</span>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving || loadingFile}
+            className="bg-foreground text-background h-11 rounded-full px-5 text-[15px] font-semibold disabled:opacity-50"
+          >
+            {saving ? '保存中' : selectedCustomVersion ? '保存修改' : '保存为新版本'}
+          </button>
+        </div>
+      )}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center justify-between gap-2">
-          <h1 className="text-xl font-bold sm:text-2xl md:text-3xl">Prompt管理</h1>
+          {/* 手机页头已经显示标题 */}
+          <h1 className="text-xl font-bold max-lg:hidden sm:text-2xl md:text-3xl">Prompt管理</h1>
         </div>
         <div className="flex min-w-0 items-center gap-1.5 sm:flex-wrap sm:gap-2">
           <Select value={language} onValueChange={handleLanguageChange} disabled={loadingCatalog}>
@@ -677,8 +722,14 @@ export function PromptManagementPage() {
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-3 lg:grid-cols-[18rem_minmax(0,1fr)] lg:grid-rows-1 lg:gap-4">
-        <Card className="flex max-h-52 min-h-0 flex-col overflow-hidden sm:max-h-none">
+      <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-3 max-lg:grid-rows-1 lg:grid-cols-[18rem_minmax(0,1fr)] lg:grid-rows-1 lg:gap-4">
+        {/* 手机上文件列表与编辑器分成两级页面 */}
+        <Card
+          className={cn(
+            'flex max-h-52 min-h-0 flex-col overflow-hidden max-lg:max-h-none sm:max-h-none',
+            isMobileViewport && mobileEditing && 'hidden'
+          )}
+        >
           <CardHeader className="shrink-0 p-3 pb-2 sm:p-6 sm:pb-3">
             <div className="flex items-center gap-2">
               <div className="text-foreground flex h-10 shrink-0 items-center px-1 text-4xl leading-none font-bold sm:h-9">
@@ -707,7 +758,10 @@ export function PromptManagementPage() {
                   <button
                     key={file.name}
                     type="button"
-                    onClick={() => setFilename(file.name)}
+                    onClick={() => {
+                      setFilename(file.name)
+                      setMobileEditing(true)
+                    }}
                     className={cn(
                       'w-full rounded-md px-3 py-2 text-left text-sm transition-colors',
                       'hover:bg-accent hover:text-accent-foreground',
@@ -753,7 +807,12 @@ export function PromptManagementPage() {
           </ScrollArea>
         </Card>
 
-        <Card className="flex min-h-0 flex-col overflow-hidden">
+        <Card
+          className={cn(
+            'flex min-h-0 flex-col overflow-hidden',
+            isMobileViewport && !mobileEditing && 'hidden'
+          )}
+        >
           <CardHeader className="flex flex-col gap-2 space-y-0 p-3 pb-2 sm:gap-3 sm:p-6 sm:pb-3">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
               <div className="min-w-0">

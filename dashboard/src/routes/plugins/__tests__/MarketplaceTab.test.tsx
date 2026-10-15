@@ -76,6 +76,7 @@ function makeStats(id: string, overrides: Partial<PluginStatsData> = {}): Plugin
     downloads: 0,
     rating: 0,
     rating_count: 0,
+    comment_count: 0,
     ...overrides,
   }
 }
@@ -105,7 +106,6 @@ function makeTabProps(
     searchQuery: '',
     pluginTypeFilter: 'all',
     showCompatibleOnly: false,
-    hideInstalledPlugins: true,
     sortBy: 'default' as MarketplaceSortKey,
     gitStatus,
     maimaiVersion,
@@ -232,7 +232,7 @@ describe('MarketplaceTab 安装入口', () => {
 })
 
 describe('MarketplaceTab 过滤', () => {
-  it('跳过无 manifest、本地来源，以及隐藏已安装开关打开时的已安装插件', () => {
+  it('跳过无 manifest 和本地来源，保留已安装市场插件', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const visible = makePlugin('visible')
     const installed = makePlugin('installed', { installed: true })
@@ -249,14 +249,15 @@ describe('MarketplaceTab 过滤', () => {
 
     renderTab([visible, installed, local, noManifest])
 
-    expect(getDisplayedPluginNames()).toEqual(['插件-visible'])
+    expect(getDisplayedPluginNames()).toEqual(expect.arrayContaining(['插件-visible', '插件-installed']))
+    expect(getDisplayedPluginNames()).toHaveLength(2)
     expect(warnSpy).toHaveBeenCalledWith('[过滤] 跳过无 manifest 的插件:', 'ghost')
   })
 
-  it('关闭隐藏已安装后展示市场已安装插件，本地插件仍排除', () => {
+  it('默认展示市场已安装插件，本地插件仍排除', () => {
     const installedMarket = makePlugin('installed-market', { installed: true })
     const local = makePlugin('local-only', { source: 'local', installed: true })
-    renderTab([installedMarket, local], { hideInstalledPlugins: false })
+    renderTab([installedMarket, local])
 
     expect(getDisplayedPluginNames()).toEqual(['插件-installed-market'])
     expect(screen.queryByText('插件-local-only')).not.toBeInTheDocument()
@@ -324,6 +325,7 @@ describe('MarketplaceTab 排序与推荐', () => {
           likes: 500,
           rating: 5,
           rating_count: 200,
+          comment_count: 200,
         }),
       },
     })
@@ -346,7 +348,7 @@ describe('MarketplaceTab 排序与推荐', () => {
       pluginStats: {
         'high-dl': makeStats('high-dl', { downloads: 10000 }),
         'high-like': makeStats('high-like', { likes: 10000 }),
-        'high-rating': makeStats('high-rating', { rating: 5, rating_count: 100 }),
+        'high-rating': makeStats('high-rating', { rating: 5, rating_count: 100, comment_count: 100 }),
       },
     })
 
@@ -371,6 +373,96 @@ describe('MarketplaceTab 排序与推荐', () => {
 
     renderTab([lowOrder, highOrder], { pluginStats: {} })
     expect(getDisplayedPluginNames()).toEqual(['插件-high-order', '插件-low-order'])
+  })
+
+  it('默认排序：发布后又更新的插件在 14 天内获得更新加成，过期或上新期内不加', () => {
+    const recentlyUpdated = makePlugin('updated', { updated_at: daysAgo(1) })
+    const olderUpdate = makePlugin('older-update', { updated_at: daysAgo(10) })
+    const expiredUpdate = makePlugin('a-expired-update', { updated_at: daysAgo(14) })
+    const untouched = makePlugin('b-untouched')
+    renderTab([untouched, expiredUpdate, olderUpdate, recentlyUpdated], { pluginStats: {} })
+    expect(getDisplayedPluginNames()).toEqual([
+      '插件-updated',
+      '插件-older-update',
+      '插件-a-expired-update',
+      '插件-b-untouched',
+    ])
+  })
+
+  it('默认排序：更新加成以版本索引为准，只有一个版本或最新版是预发布时不算更新', () => {
+    const makeReleases = (id: string, versions: Array<[string, string, boolean?]>) => ({
+      id,
+      repositoryUrl: `https://github.com/example/${id}`,
+      mode: 'releases' as const,
+      recommended_version: versions[0][0],
+      versions: versions.map(([version, published_at, prerelease = false]) => ({
+        version,
+        tag: `v${version}`,
+        commit: 'a'.repeat(40),
+        prerelease,
+        yanked: false,
+        manifest: makePlugin(id).manifest,
+        published_at,
+        release_notes: '',
+        compatible: true,
+        reasons: [],
+      })),
+    })
+    const updated = makePlugin('updated', {
+      releases: makeReleases('updated', [['1.1.0', daysAgo(2)], ['1.0.0', daysAgo(150)]]),
+    })
+    const firstRelease = makePlugin('a-first-release', {
+      releases: makeReleases('a-first-release', [['1.0.0', daysAgo(150)]]),
+    })
+    const prereleaseOnly = makePlugin('b-prerelease', {
+      releases: makeReleases('b-prerelease', [
+        ['2.0.0', daysAgo(1), true], ['1.1.0', daysAgo(140)], ['1.0.0', daysAgo(150)],
+      ]),
+    })
+    renderTab([prereleaseOnly, firstRelease, updated], { pluginStats: {} })
+    expect(getDisplayedPluginNames()).toEqual([
+      '插件-updated',
+      '插件-a-first-release',
+      '插件-b-prerelease',
+    ])
+  })
+
+  it('默认排序：市场条目没有时间时，上架时间取版本索引里最早的版本', () => {
+    const makeReleases = (id: string, versions: Array<[string, string]>) => ({
+      id,
+      repositoryUrl: `https://github.com/example/${id}`,
+      mode: 'releases' as const,
+      recommended_version: versions[0][0],
+      versions: versions.map(([version, published_at]) => ({
+        version,
+        tag: `v${version}`,
+        commit: 'a'.repeat(40),
+        prerelease: false,
+        yanked: false,
+        manifest: makePlugin(id).manifest,
+        published_at,
+        release_notes: '',
+        compatible: true,
+        reasons: [],
+      })),
+    })
+    const justListed = makePlugin('z-just-listed', {
+      published_at: '',
+      updated_at: '',
+      releases: makeReleases('z-just-listed', [['1.0.0', hoursAgo(3)]]),
+    })
+    const oldWithNewVersion = makePlugin('old', {
+      published_at: '',
+      updated_at: '',
+      releases: makeReleases('old', [['2.0.0', hoursAgo(3)], ['1.0.0', daysAgo(300)]]),
+    })
+    const popular = makePlugin('popular', { published_at: '', updated_at: '', downloads: 99999 })
+    renderTab([popular, oldWithNewVersion, justListed], {
+      pluginStats: {
+        popular: makeStats('popular', { downloads: 99999, likes: 500, rating: 5, rating_count: 200, comment_count: 200 }),
+      },
+    })
+    expect(getDisplayedPluginNames()).toEqual(['插件-z-just-listed', '插件-popular', '插件-old'])
   })
 
   it('默认排序：超过 120 天不再获得时间新鲜度，零分时按名称兜底', () => {

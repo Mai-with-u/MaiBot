@@ -1,0 +1,55 @@
+name: Issue template guard
+
+# 关闭空白入口只会隐藏模板选择页的链接，CLI、API 和直接链接仍能创建无模板 issue。
+# 使用模板自动添加的标签检查提交方式；这些标签必须提前存在于仓库中。
+# issues 事件使用默认分支的 workflow，合并到 main 后才会生效。
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  guard:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+
+            // 按 GitHub 的作者关联豁免仓库所有者、所属组织成员和仓库协作者。
+            const privileged = ['OWNER', 'MEMBER', 'COLLABORATOR'];
+            if (privileged.includes(issue.author_association)) {
+              core.info(`author_association=${issue.author_association} — allowed`);
+              return;
+            }
+
+            const templateLabels = ['BUG', '新功能建议'];
+            if (issue.labels.some((label) => templateLabels.includes(label.name))) {
+              core.info('template label present — allowed');
+              return;
+            }
+
+            const { owner, repo } = context.repo;
+            const chooser = `https://github.com/${owner}/${repo}/issues/new/choose`;
+            const body = [
+              '感谢你的反馈。',
+              '',
+              '本仓库的 issue 需要通过 **Bug Report** 或 **Feature Request** 模板提交，以便我们准确、高效地处理。',
+              '直接创建的空白 / 自定义 issue 会被自动关闭，请通过模板重新提交。',
+              '',
+              `重新创建：${chooser}`,
+              '',
+              '本 issue 将自动关闭，感谢理解。',
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: issue.number, body,
+            });
+            await github.rest.issues.update({
+              owner, repo, issue_number: issue.number,
+              state: 'closed', state_reason: 'not_planned',
+            });
+            core.info(`closed #${issue.number} (author_association=${issue.author_association}, no template label)`);

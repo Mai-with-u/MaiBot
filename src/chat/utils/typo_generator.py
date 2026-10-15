@@ -2,20 +2,25 @@
 错别字生成器 - 基于拼音和字频的中文错别字生成工具
 """
 
+from collections import defaultdict
+from functools import cache
+from pathlib import Path
+from pypinyin import Style, pinyin
+from threading import Lock
+from typing import Dict, List
+
+import itertools
+import jieba
 import json
 import math
 import os
 import random
 import time
-import jieba
-
-from collections import defaultdict
-from pathlib import Path
-from pypinyin import Style, pinyin
 
 from src.common.logger import get_logger
 
 logger = get_logger("typo_gen")
+_data_lock = Lock()
 
 
 class ChineseTypoGenerator:
@@ -36,14 +41,17 @@ class ChineseTypoGenerator:
         self.word_replace_rate = word_replace_rate
         self.max_freq_diff = max_freq_diff
 
-        # 加载数据
+        # 基础数据在进程内共享；锁避免多个线程首次使用时重复初始化。
         # print("正在加载汉字数据库，请稍候...")
         # logger.info("正在加载汉字数据库，请稍候...")
 
-        self.pinyin_dict = self._create_pinyin_dict()
-        self.char_frequency = self._load_or_create_char_frequency()
+        with _data_lock:
+            self.pinyin_dict = self._create_pinyin_dict()
+            self.char_frequency = self._load_or_create_char_frequency()
 
-    def _load_or_create_char_frequency(self):
+    @staticmethod
+    @cache
+    def _load_or_create_char_frequency() -> Dict[str, float]:
         """
         加载或创建汉字频率字典
         """
@@ -64,7 +72,7 @@ class ChineseTypoGenerator:
                 word, freq = line.strip().split()[:2]
                 # 对词中的每个字进行频率累加
                 for char in word:
-                    if self._is_chinese_char(char):
+                    if ChineseTypoGenerator._is_chinese_char(char):
                         char_freq[char] += int(freq)
 
         # 归一化频率值
@@ -72,13 +80,15 @@ class ChineseTypoGenerator:
         normalized_freq = {char: freq / max_freq * 1000 for char, freq in char_freq.items()}
 
         # 保存到缓存文件
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
         with open(cache_file, "w", encoding="utf-8") as f:
             json.dump(normalized_freq, f, ensure_ascii=False, indent=2)
 
         return normalized_freq
 
     @staticmethod
-    def _create_pinyin_dict():
+    @cache
+    def _create_pinyin_dict() -> Dict[str, List[str]]:
         """
         创建拼音到汉字的映射字典
         """
@@ -94,7 +104,20 @@ class ChineseTypoGenerator:
             except Exception:
                 continue
 
-        return pinyin_dict
+        return dict(pinyin_dict)
+
+    @staticmethod
+    @cache
+    def _load_word_frequencies() -> Dict[str, float]:
+        """缓存内置词典，保持候选词与词频不受 jieba 用户词典调整影响。"""
+        dict_path = os.path.join(os.path.dirname(jieba.__file__), "dict.txt")
+        valid_words = {}
+        with open(dict_path, "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) >= 2:
+                    valid_words[parts[0]] = float(parts[1])  # 获取词频
+        return valid_words
 
     @staticmethod
     def _is_chinese_char(char):
@@ -177,10 +200,10 @@ class ChineseTypoGenerator:
         # 有一定概率使用错误声调
         if random.random() < self.tone_error_rate:
             wrong_tone_py = self._get_similar_tone_pinyin(py)
-            homophones.extend(self.pinyin_dict[wrong_tone_py])
+            homophones.extend(self.pinyin_dict.get(wrong_tone_py, []))
 
         # 添加正确声调的同音字
-        homophones.extend(self.pinyin_dict[py])
+        homophones.extend(self.pinyin_dict.get(py, []))
 
         if not homophones:
             return None
@@ -247,20 +270,11 @@ class ChineseTypoGenerator:
             candidates.append(chars)
 
         # 生成所有可能的组合
-        import itertools
-
         all_combinations = itertools.product(*candidates)
 
         # 获取jieba词典和词频信息
-        dict_path = os.path.join(os.path.dirname(jieba.__file__), "dict.txt")
-        valid_words = {}  # 改用字典存储词语及其频率
-        with open(dict_path, "r", encoding="utf-8") as f:
-            for line in f:
-                parts = line.strip().split()
-                if len(parts) >= 2:
-                    word_text = parts[0]
-                    word_freq = float(parts[1])  # 获取词频
-                    valid_words[word_text] = word_freq
+        with _data_lock:
+            valid_words = self._load_word_frequencies()  # 使用共享字典存储词语及其频率
 
         # 获取原词的词频作为参考
         original_word_freq = valid_words.get(word, 0)
@@ -270,16 +284,20 @@ class ChineseTypoGenerator:
         homophones = []
         for combo in all_combinations:
             new_word = "".join(combo)
-            if new_word != word and new_word in valid_words:
-                new_word_freq = valid_words[new_word]
-                # 只保留词频达到阈值的词
-                if new_word_freq >= min_word_freq:
-                    # 计算词的平均字频（考虑字频和词频）
-                    char_avg_freq = sum(self.char_frequency.get(c, 0) for c in new_word) / len(new_word)
-                    # 综合评分：结合词频和字频
-                    combined_score = new_word_freq * 0.7 + char_avg_freq * 0.3
-                    if combined_score >= self.min_freq:
-                        homophones.append((new_word, combined_score))
+            if new_word == word:
+                continue
+            new_word_freq = valid_words.get(new_word, 0)
+            # 排除无效词频，避免将非真实词条作为候选词
+            if new_word_freq <= 0:
+                continue
+            # 只保留词频达到阈值的词
+            if new_word_freq >= min_word_freq:
+                # 计算词的平均字频（考虑字频和词频）
+                char_avg_freq = sum(self.char_frequency.get(c, 0) for c in new_word) / len(new_word)
+                # 综合评分：结合词频和字频
+                combined_score = new_word_freq * 0.7 + char_avg_freq * 0.3
+                if combined_score >= self.min_freq:
+                    homophones.append((new_word, combined_score))
 
         # 按综合分数排序并限制返回数量
         sorted_homophones = sorted(homophones, key=lambda x: x[1], reverse=True)

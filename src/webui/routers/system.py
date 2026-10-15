@@ -21,6 +21,7 @@ import os
 import sqlite3
 import time
 
+from src.common.paths import get_instance_root
 from src.common.database.database import engine, get_db_session
 from src.common.database.database_model import Images, ImageType
 from src.common.logger import get_logger
@@ -43,7 +44,7 @@ router = APIRouter(prefix="/system", tags=["system"], dependencies=[Depends(requ
 logger = get_logger("webui_system")
 
 _start_time = time.time()
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_PROJECT_ROOT = get_instance_root()
 _DATA_DIR = _PROJECT_ROOT / "data"
 _IMAGE_DIR = _DATA_DIR / "images"
 _EMOJI_DIR = _DATA_DIR / "emoji"
@@ -1464,6 +1465,15 @@ async def _delayed_restart() -> None:
         os._exit(_RESTART_EXIT_CODE)
 
 
+def schedule_restart() -> None:
+    """创建后台重启任务；需要在运行中的事件循环内调用。"""
+    global _restart_task
+
+    # 创建后台任务执行重启；退出码 42 是外部 runner 约定的重启状态码。
+    if _restart_task is None or _restart_task.done():
+        _restart_task = asyncio.create_task(_delayed_restart())
+
+
 @router.post("/restart", response_model=RestartResponse)
 async def restart_maibot():
     """
@@ -1473,14 +1483,10 @@ async def restart_maibot():
     注意：此操作会使麦麦暂时离线。
     """
     try:
-        global _restart_task
-
         # 记录重启操作
         logger.info("WebUI 触发重启操作")
 
-        # 创建后台任务执行重启；退出码 42 是外部 runner 约定的重启状态码。
-        if _restart_task is None or _restart_task.done():
-            _restart_task = asyncio.create_task(_delayed_restart())
+        schedule_restart()
 
         # 立即返回成功响应
         return RestartResponse(success=True, message="麦麦正在重启中...")

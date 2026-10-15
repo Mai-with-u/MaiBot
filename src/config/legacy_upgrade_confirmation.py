@@ -5,6 +5,8 @@ import re
 import sqlite3
 import sys
 
+from src.common.paths import PACKAGE_ROOT
+
 LEGACY_UPGRADE_CONFIRM_ENV = "MAIBOT_LEGACY_0X_UPGRADE_CONFIRMED"
 LEGACY_0X_BOT_CONFIG_BOUNDARY = "8.9.4"
 LEGACY_0X_MODEL_CONFIG_BOUNDARY = "1.14.1"
@@ -23,7 +25,7 @@ def _parse_semver(version: str) -> tuple[int, int, int] | None:
 
 def _read_config_constant(project_root: Path, name: str) -> str | None:
     """从配置模块源码读取版本常量，避免提前触发配置加载和自动迁移。"""
-    config_source_path = project_root / "src" / "config" / "config.py"
+    config_source_path = PACKAGE_ROOT / "config" / "config.py"
     try:
         config_source = config_source_path.read_text(encoding="utf-8")
     except OSError:

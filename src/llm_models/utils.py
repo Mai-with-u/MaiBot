@@ -163,6 +163,12 @@ def compress_messages(items: list[ContextItem], img_target_size: int = 1 * 1024 
     return [rebuild_item_with_compressed_images(item) for item in items]
 
 
+# 供应商在响应中上报过 Prompt 缓存用量的模型，按 (api_provider, model_identifier) 记住。
+# 部分供应商（如 StepFun）只在命中时返回缓存字段，首次命中前该模型的用量不计入缓存统计；
+# 进程重启后集合清空，出现命中后自动恢复，无需任何配置。
+_CACHE_REPORTING_MODELS: set[tuple[str, str]] = set()
+
+
 class LLMUsageRecorder:
     """
     LLM使用情况记录器
@@ -193,15 +199,13 @@ class LLMUsageRecorder:
     ) -> float:
         """计算输入 token 费用，区分缓存命中与未命中部分。
 
-        是否启用缓存计价仅取决于当前价格档位的 cache_price_in 是否大于 0：
-        未填写（为 0）时缓存命中的输入与非缓存一致，全部按 price_in 计费。
+        缓存命中部分按当前档位的 cache_price_in 计费，该值为 0 即命中免费；
+        未命中部分按 price_in 计费。供应商未返回缓存用量时全部按 price_in 计费。
         """
 
         if prices is None:
             prices = model_info
         prompt_tokens = model_usage.prompt_tokens or 0
-        if prices.cache_price_in <= 0:
-            return (prompt_tokens / 1000000) * prices.price_in
 
         cache_hit_tokens = model_usage.prompt_cache_hit_tokens or 0
         cache_miss_tokens = model_usage.prompt_cache_miss_tokens or 0
@@ -231,6 +235,9 @@ class LLMUsageRecorder:
         input_cost = self._calculate_input_cost(model_info, model_usage, prices)
         output_cost = (model_usage.completion_tokens / 1000000) * prices.price_out
         total_cost = round(input_cost + output_cost, 6)
+        cache_model_key = (model_info.api_provider, model_info.model_identifier)
+        if model_usage.prompt_cache_reported:
+            _CACHE_REPORTING_MODELS.add(cache_model_key)
         try:
             with get_db_session() as session:
                 record = ModelUsage(
@@ -245,7 +252,12 @@ class LLMUsageRecorder:
                     prompt_tokens=model_usage.prompt_tokens or 0,
                     completion_tokens=model_usage.completion_tokens or 0,
                     total_tokens=model_usage.total_tokens or 0,
-                    prompt_cache_enabled=bool(prices.cache_price_in > 0),
+                    # 是否展示缓存统计由服务商行为自动探测，与价格配置无关：
+                    # 本次响应上报了缓存字段，或该模型此前上报过（零命中时部分供应商不返回字段，
+                    # 记住之后这些调用按全部未命中计入统计）。
+                    prompt_cache_enabled=(
+                        model_usage.prompt_cache_reported or cache_model_key in _CACHE_REPORTING_MODELS
+                    ),
                     prompt_cache_hit_tokens=model_usage.prompt_cache_hit_tokens or 0,
                     prompt_cache_miss_tokens=model_usage.prompt_cache_miss_tokens or 0,
                     cost=total_cost or 0.0,

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import asyncio
+
 import numpy as np
 import pytest
 
@@ -48,7 +50,7 @@ def _build_adapter(
         model_identifier="embedding-model-id",
         extra_params=dict(model_extra_params or {}),
     )
-    provider = SimpleNamespace(name="provider-1", client_type=client_type)
+    provider = SimpleNamespace(name="provider-1", client_type=client_type, base_url="https://example.test")
 
     monkeypatch.setattr(adapter, "_resolve_candidate_model_names", lambda: ["embedding-model"])
     monkeypatch.setattr(adapter, "_find_model_info", lambda model_name: model_info)
@@ -58,6 +60,7 @@ def _build_adapter(
         "get_client_class_instance",
         lambda api_provider, force_new=True: fake_client,
     )
+    adapter._last_configuration_key = adapter._dimension_cache_key()
     return adapter, fake_client
 
 
@@ -66,13 +69,18 @@ def test_auto_embedding_fingerprint_uses_resolved_candidate_model(monkeypatch):
     adapter._dimension = 8
     adapter._dimension_detected = True
     model_info_by_name = {
-        "embedding-model": SimpleNamespace(name="embedding-model", api_provider="provider-1"),
-        "fallback-model": SimpleNamespace(name="fallback-model", api_provider="provider-2"),
+        "embedding-model": SimpleNamespace(
+            name="embedding-model", api_provider="provider-1", model_identifier="model-id", extra_params={}
+        ),
+        "fallback-model": SimpleNamespace(
+            name="fallback-model", api_provider="provider-2", model_identifier="fallback-id", extra_params={}
+        ),
     }
 
     monkeypatch.setattr(adapter, "_resolve_candidate_model_names", lambda: ["embedding-model", "fallback-model"])
     monkeypatch.setattr(adapter, "_find_model_info", lambda model_name: model_info_by_name[model_name])
 
+    monkeypatch.setattr(adapter, "_find_provider", lambda name: SimpleNamespace(base_url="https://example.test"))
     cold_fingerprint = adapter.get_embedding_fingerprint(dimension=8)
     adapter._last_success_model_name = "embedding-model"
     adapter._last_success_provider_name = "provider-1"
@@ -275,3 +283,72 @@ async def test_encode_batch_keeps_batch_local_indexes_when_cache_hits_previous_b
     assert np.array_equal(embeddings[0], embeddings[2])
     assert embeddings[1][0] == float(ord("B"))
     assert embeddings[3][0] == float(ord("C"))
+
+
+@pytest.mark.asyncio
+async def test_failed_batch_finishes_inflight_calls_and_caches_successes(monkeypatch):
+    adapter = EmbeddingAPIAdapter(default_dimension=4, enable_cache=True)
+    monkeypatch.setattr(EmbeddingAPIAdapter, "_GLOBAL_TEXT_EMBEDDING_CACHE", {})
+    calls = []
+    async def encode(text, dimensions=None):
+        calls.append(text)
+        if text == "bad" and calls.count("bad") == 1:
+            return None
+        await asyncio.sleep(0)
+        return [1.0] * 4
+    monkeypatch.setattr(adapter, "_get_embedding_direct", encode)
+    with pytest.raises(RuntimeError):
+        await adapter._encode_batch_internal(["bad", "good"], batch_size=2, dimensions=4)
+    vectors = await adapter._encode_batch_internal(["bad", "good"], batch_size=2, dimensions=4)
+    assert vectors.shape == (2, 4)
+    assert calls.count("bad") == 2
+    assert calls.count("good") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("active", ["A", "B"])
+async def test_rebuild_identity_reuses_vector_fingerprint_and_ignores_unused_backups(monkeypatch, active):
+    adapter = EmbeddingAPIAdapter(default_dimension=8)
+    candidates = ["A", "B", "C"]
+    models = {
+        name: SimpleNamespace(name=name, api_provider=f"provider-{name}", model_identifier=name, extra_params={})
+        for name in candidates
+    }
+    providers = {
+        info.api_provider: SimpleNamespace(base_url="https://example.test", client_type="openai", api_key="old")
+        for info in models.values()
+    }
+    monkeypatch.setattr(adapter, "_resolve_candidate_model_names", lambda: list(candidates))
+    monkeypatch.setattr(adapter, "_find_model_info", lambda name: models[name])
+    monkeypatch.setattr(adapter, "_find_provider", lambda name: providers[name])
+    monkeypatch.setattr(api_adapter_module.client_registry, "get_client_class_instance", lambda provider: object())
+    async def request(client, model_info, text, extra_params):
+        if active == "B" and model_info.name == "A":
+            raise RuntimeError("primary unavailable")
+        return SimpleNamespace(embedding=[1.0] * 8)
+    monkeypatch.setattr(adapter, "_request_with_retry", request)
+    await adapter._get_embedding_direct("test")
+    baseline = adapter.get_embedding_configuration_key()
+    assert baseline == adapter.get_embedding_fingerprint()["hash"]
+
+    candidates[:] = ["A", "C", "B"]
+    assert adapter.get_embedding_configuration_key() == baseline
+    assert adapter.get_embedding_fingerprint()["hash"] == baseline
+    candidates[:] = ["A", "B", "C"]
+    providers[models[active].api_provider].api_key = "new"
+    assert adapter.get_embedding_configuration_key() == baseline
+
+    # 同 URL、同维度，仅更换当前模型的提供商名称，也按正常指纹规则判为变化。
+    providers["new-provider"] = providers[models[active].api_provider]
+    models[active].api_provider = "new-provider"
+    changed = adapter.get_embedding_configuration_key()
+    assert changed != baseline
+    await adapter._get_embedding_direct("test")
+    assert adapter.get_embedding_fingerprint()["hash"] == changed
+
+    # 首选模型换成 C，即使旧模型仍在备用列表中，也须立即检测而非等待旧请求完成。
+    candidates[:] = ["C", "A", "B"]
+    new_primary = adapter.get_embedding_configuration_key()
+    assert new_primary != changed
+    await adapter._get_embedding_direct("test")
+    assert adapter.get_embedding_fingerprint()["hash"] == new_primary

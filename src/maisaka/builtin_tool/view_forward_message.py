@@ -4,6 +4,7 @@ from typing import Optional
 
 from src.common.logger import get_logger
 from src.core.tooling import ToolExecutionContext, ToolExecutionResult, ToolInvocation, ToolSpec
+from src.maisaka.context.message_id_alias import to_display_message_id
 from src.maisaka.context.messages import (
     SessionBackedMessage,
     build_full_complex_message_content,
@@ -105,7 +106,7 @@ async def handle_tool(
     if target_context_message is None and target_source_message is None:
         return tool_ctx.build_failure_result(
             invocation.tool_name,
-            f"未找到目标转发消息，msg_id={target_message_id}",
+            f"未找到目标转发消息，msg_id={to_display_message_id(target_message_id)}",
         )
 
     target_sequence = (
@@ -114,7 +115,7 @@ async def handle_tool(
     if not contains_complex_message(target_sequence):
         return tool_ctx.build_failure_result(
             invocation.tool_name,
-            f"目标消息不是可展开查看的转发消息，msg_id={target_message_id}",
+            f"目标消息不是可展开查看的转发消息，msg_id={to_display_message_id(target_message_id)}",
         )
 
     logger.info(f"{tool_ctx.runtime.log_prefix} 触发转发消息浏览工具，目标消息编号={target_message_id}")
@@ -137,7 +138,7 @@ async def handle_tool(
     if not full_content:
         return tool_ctx.build_failure_result(
             invocation.tool_name,
-            f"转发消息内容为空，msg_id={target_message_id}",
+            f"转发消息内容为空，msg_id={to_display_message_id(target_message_id)}",
         )
 
     return tool_ctx.build_success_result(

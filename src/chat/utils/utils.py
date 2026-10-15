@@ -1,10 +1,7 @@
 from dataclasses import dataclass
-from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
-import ast
-import json
-import os
+import asyncio
 import random
 import re
 import time
@@ -18,6 +15,7 @@ from src.person_info.person_info import Person
 from src.services.bot_account_service import get_bot_accounts
 from src.services.embedding_service import EmbeddingServiceClient
 
+from .llm_sentence_splitter import split_text_with_llm
 from .typo_generator import ChineseTypoGenerator
 
 if TYPE_CHECKING:
@@ -63,7 +61,7 @@ def parse_platform_accounts(platforms: list[str]) -> dict[str, str]:
 
 
 def _get_configured_qq_account() -> str:
-    qq_account = str(getattr(global_config.bot, "qq_account", "")).strip()
+    qq_account = global_config.bot.qq_account.strip()
     if qq_account in {"", "0"}:
         return ""
     return qq_account
@@ -92,7 +90,7 @@ def get_configured_bot_accounts() -> dict[str, str]:
         primary_platform = str(global_config.bot.platform or "qq").strip().lower()
         bot_accounts[primary_platform] = qq_account
 
-    platforms_list = getattr(global_config.bot, "platforms", []) or []
+    platforms_list = global_config.bot.platforms
     platform_accounts = parse_platform_accounts(platforms_list)
 
     for platform_name, account in platform_accounts.items():
@@ -151,8 +149,8 @@ def is_mentioned_bot_in_message(message: SessionMessage) -> tuple[bool, bool, fl
 
     current_accounts = get_bot_accounts(platform)
 
-    nickname = str(global_config.bot.nickname or "")
-    alias_names = list(getattr(global_config.bot, "alias_names", []) or [])
+    nickname = global_config.bot.nickname
+    alias_names = global_config.bot.alias_names
     keywords = [nickname] + alias_names
 
     reply_probability = 0.0
@@ -428,12 +426,7 @@ def _split_into_sentence_segments(text: str) -> list[tuple[str, str]]:
 
         # 检查是否可以与下一段合并
         # 条件：不是最后一段，且随机数小于合并概率，且当前段有内容（避免合并空段）
-        if (
-            idx + 1 < len(segments)
-            and current_content
-            and current_sep != "\n"
-            and random.random() < merge_probability
-        ):
+        if idx + 1 < len(segments) and current_content and current_sep != "\n" and random.random() < merge_probability:
             next_content, next_sep = segments[idx + 1]
             # 合并: (内容1 + 分隔符1 + 内容2, 分隔符2)
             # 只有当下一段也有内容时才合并文本，否则只传递分隔符
@@ -523,33 +516,6 @@ def _merge_processed_segments_to_max_count(
     return merged_segments
 
 
-def random_remove_punctuation(text: str) -> str:
-    """随机处理标点符号，模拟人类打字习惯
-
-    Args:
-        text: 要处理的文本
-
-    Returns:
-        str: 处理后的文本
-    """
-    result = ""
-    text_len = len(text)
-
-    for i, char in enumerate(text):
-        if char == "。" and i == text_len - 1:  # 结尾的句号
-            if random.random() > 0.1:  # 90%概率删除结尾句号
-                continue
-        elif char == "，":
-            rand = random.random()
-            if rand < 0.05:  # 5%概率删除逗号
-                continue
-            elif rand < 0.25:  # 20%概率把逗号变成空格
-                result += " "
-                continue
-        result += char
-    return result
-
-
 def _get_random_default_reply() -> str:
     """获取随机默认回复"""
     default_replies = [
@@ -562,6 +528,41 @@ def _get_random_default_reply() -> str:
         "()",
     ]
     return random.choice(default_replies)
+
+
+def _apply_response_post_processing(
+    split_sentences: list[tuple[str, str]],
+    enable_chinese_typo: bool,
+) -> list[ProcessedResponseSegment]:
+    """对已完成断句的文本执行错别字注入和纠正段处理。"""
+    # 两种断句模式共用此入口：关闭功能时不构建生成器，启用时复用共享数据。
+    typo_generator = None
+    if global_config.chinese_typo.enable and enable_chinese_typo:
+        typo_generator = ChineseTypoGenerator(
+            error_rate=global_config.chinese_typo.error_rate,
+            min_freq=global_config.chinese_typo.min_freq,
+            tone_error_rate=global_config.chinese_typo.tone_error_rate,
+            word_replace_rate=global_config.chinese_typo.word_replace_rate,
+        )
+    segments: list[ProcessedResponseSegment] = []
+    for sentence, sentence_separator in split_sentences:
+        if typo_generator is not None:
+            typoed_text, typo_corrections = typo_generator.create_typo_sentence(sentence)
+            if typo_corrections:
+                if random.random() < 0.5:
+                    quote_previous = (
+                        global_config.chinese_typo.enable_correction_quote
+                        and random.random() < global_config.chinese_typo.correction_quote_probability
+                    )
+                    segments.append(ProcessedResponseSegment(typoed_text, separator=sentence_separator))
+                    segments.append(ProcessedResponseSegment(typo_corrections, quote_previous=quote_previous))
+                else:
+                    segments.append(ProcessedResponseSegment(sentence, separator=sentence_separator))
+            else:
+                segments.append(ProcessedResponseSegment(typoed_text, separator=sentence_separator))
+        else:
+            segments.append(ProcessedResponseSegment(sentence, separator=sentence_separator))
+    return segments
 
 
 def process_llm_response_segments(
@@ -601,44 +602,12 @@ def process_llm_response_segments(
         logger.warning(f"回复过长 ({len(cleaned_text)} 字符)，返回默认回复")
         return [ProcessedResponseSegment(_get_random_default_reply())]
 
-    typo_generator = ChineseTypoGenerator(
-        error_rate=global_config.chinese_typo.error_rate,
-        min_freq=global_config.chinese_typo.min_freq,
-        tone_error_rate=global_config.chinese_typo.tone_error_rate,
-        word_replace_rate=global_config.chinese_typo.word_replace_rate,
-    )
-
     if global_config.response_splitter.enable and enable_splitter:
         split_sentences = _split_into_sentence_segments(cleaned_text)
     else:
         split_sentences = [(cleaned_text, "")]
 
-    segments: list[ProcessedResponseSegment] = []
-    for sentence, sentence_separator in split_sentences:
-        if global_config.chinese_typo.enable and enable_chinese_typo:
-            typoed_text, typo_corrections = typo_generator.create_typo_sentence(sentence)
-            if typo_corrections:
-                # 50%概率新增正确字/词，50%概率用正确分句替换错别字分句
-                if random.random() < 0.5:
-                    quote_previous = (
-                        global_config.chinese_typo.enable_correction_quote
-                        and random.random() < global_config.chinese_typo.correction_quote_probability
-                    )
-                    segments.append(ProcessedResponseSegment(typoed_text, separator=sentence_separator))
-                    # 纠正消息是插入的合成段，不属于原始文本，不带分隔符
-                    segments.append(
-                        ProcessedResponseSegment(
-                            typo_corrections,
-                            quote_previous=quote_previous,
-                        )
-                    )
-                else:
-                    # 用正确的分句替换错别字分句
-                    segments.append(ProcessedResponseSegment(sentence, separator=sentence_separator))
-            else:
-                segments.append(ProcessedResponseSegment(typoed_text, separator=sentence_separator))
-        else:
-            segments.append(ProcessedResponseSegment(sentence, separator=sentence_separator))
+    segments = _apply_response_post_processing(split_sentences, enable_chinese_typo)
 
     if len(segments) > max_sentence_num:
         if global_config.response_splitter.enable_overflow_return_all:
@@ -669,6 +638,38 @@ def process_llm_response_segments(
     return segments
 
 
+async def process_llm_response_segments_async(
+    text: str,
+    enable_splitter: bool = True,
+    enable_chinese_typo: bool = True,
+) -> list[ProcessedResponseSegment]:
+    """异步处理回复文本，支持使用 LLM 按语义断句。"""
+    if global_config.response_splitter.mode != "llm":
+        return await asyncio.to_thread(process_llm_response_segments, text, enable_splitter, enable_chinese_typo)
+
+    if (
+        not global_config.response_post_process.enable_response_post_process
+        or not global_config.response_splitter.enable
+        or not enable_splitter
+    ):
+        return await asyncio.to_thread(process_llm_response_segments, text, enable_splitter, enable_chinese_typo)
+
+    try:
+        split_sentences = await split_text_with_llm(text)
+    except Exception:
+        logger.exception("LLM 断句失败，本次回复不断句")
+        split_sentences = [(text, "")]
+
+    # 数据首次加载和错别字计算交给线程执行，避免占住聊天事件循环。
+    segments = await asyncio.to_thread(_apply_response_post_processing, split_sentences, enable_chinese_typo)
+    max_sentence_num = global_config.response_splitter.max_sentence_num
+    if len(segments) > max_sentence_num:
+        if global_config.response_splitter.enable_overflow_return_all:
+            return [ProcessedResponseSegment(text)]
+        return [ProcessedResponseSegment(_get_random_default_reply())]
+    return _merge_processed_segments_to_max_count(segments, global_config.response_splitter.max_split_num)
+
+
 def process_llm_response(text: str, enable_splitter: bool = True, enable_chinese_typo: bool = True) -> list[str]:
     """处理回复文本，并返回兼容旧调用链的纯文本列表。"""
 
@@ -688,6 +689,7 @@ def calculate_typing_time(
     chinese_time: float = 0.3,
     english_time: float = 0.15,
     is_emoji: bool = False,
+    is_image: bool = False,
 ) -> float:
     """
     计算输入字符串所需的时间，中文和英文字符有不同的输入时间
@@ -695,11 +697,12 @@ def calculate_typing_time(
         chinese_time (float): 中文字符的输入时间，默认为0.2秒
         english_time (float): 英文字符的输入时间，默认为0.1秒
         is_emoji (bool): 是否为emoji，默认为False
+        is_image (bool): 是否为纯图片消息，默认为False
 
     特殊情况：
     - 如果只有一个中文字符，将使用3倍的中文输入时间
     - 在所有输入结束后，额外加上回车时间0.3秒
-    - 如果is_emoji为True，将使用固定1秒的输入时间
+    - 如果is_emoji或is_image为True，将使用固定1秒的输入时间，再应用打字速度配置
     """
     # chinese_time *= 1 / typing_speed_multiplier
     # english_time *= 1 / typing_speed_multiplier
@@ -707,14 +710,14 @@ def calculate_typing_time(
     chinese_chars = sum("\u4e00" <= char <= "\u9fff" for char in input_string)
 
     # 如果只有一个中文字符，使用3倍时间
-    if chinese_chars == 1 and len(input_string.strip()) == 1:
+    if not (is_emoji or is_image) and chinese_chars == 1 and len(input_string.strip()) == 1:
         return chinese_time * 3 + 0.3  # 加上回车时间
 
     # 正常计算所有字符的输入时间
     total_time = 0.0
     for char in input_string:
         total_time += chinese_time if "\u4e00" <= char <= "\u9fff" else english_time
-    if is_emoji:
+    if is_emoji or is_image:
         total_time = 1
 
     typing_speed = global_config.response_post_process.typing_speed
@@ -917,147 +920,3 @@ def get_chat_type_and_target_info(chat_id: str) -> Tuple[bool, Optional["ChatTar
         logger.error(f"获取聊天类型和目标信息时出错 for {chat_id}: {e}", exc_info=True)
 
     return is_group_chat, chat_target_info
-
-
-def record_replyer_action_temp(chat_id: str, reason: str, think_level: int) -> None:
-    """
-    临时记录replyer动作被选择的信息（仅群聊）
-
-    Args:
-        chat_id: 聊天ID
-        reason: 选择理由
-        think_level: 思考深度等级
-    """
-    try:
-        # 确保data/temp目录存在
-        temp_dir = "data/temp"
-        os.makedirs(temp_dir, exist_ok=True)
-
-        # 创建记录数据
-        record_data = {
-            "chat_id": chat_id,
-            "reason": reason,
-            "think_level": think_level,
-            "timestamp": datetime.now().isoformat(),
-        }
-
-        # 生成文件名（使用时间戳避免冲突）
-        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        filename = f"replyer_action_{timestamp_str}.json"
-        filepath = os.path.join(temp_dir, filename)
-
-        # 写入文件
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(record_data, f, ensure_ascii=False, indent=2)
-
-        logger.debug(f"已记录replyer动作选择: chat_id={chat_id}, think_level={think_level}")
-    except Exception as e:
-        logger.warning(f"记录replyer动作选择失败: {e}")
-
-
-def assign_message_ids(messages: List[SessionMessage]) -> List[Tuple[str, SessionMessage]]:
-    """
-    为消息列表中的每个消息分配唯一的简短随机ID
-
-    Args:
-        messages: 消息列表
-
-    Returns:
-        List[SessionMessage]: 分配了唯一ID的消息列表
-    """
-    result: List[Tuple[str, SessionMessage]] = []  # 复制原始消息列表
-    used_ids = set()
-    len_i = len(messages)
-    if len_i > 100:
-        a = 10
-        b = 99
-    else:
-        a = 1
-        b = 9
-
-    for i, message in enumerate(messages):
-        # 生成唯一的简短ID
-        while True:
-            # 使用索引+随机数生成简短ID
-            random_suffix = random.randint(a, b)
-            message_id = f"m{i + 1}{random_suffix}"
-
-            if message_id not in used_ids:
-                used_ids.add(message_id)
-                break
-        result.append((message_id, message))
-
-    return result
-
-
-#                 break
-#         result.append((message_id, message))
-
-#     return result
-
-
-def parse_keywords_string(keywords_input) -> list[str]:
-    # sourcery skip: use-contextlib-suppress
-    """
-    统一的关键词解析函数，支持多种格式的关键词字符串解析
-
-    支持的格式：
-    1. 字符串列表格式：'["utils.py", "修改", "代码", "动作"]'
-    2. 斜杠分隔格式：'utils.py/修改/代码/动作'
-    3. 逗号分隔格式：'utils.py,修改,代码,动作'
-    4. 空格分隔格式：'utils.py 修改 代码 动作'
-    5. 已经是列表的情况：["utils.py", "修改", "代码", "动作"]
-    6. JSON格式字符串：'{"keywords": ["utils.py", "修改", "代码", "动作"]}'
-
-    Args:
-        keywords_input: 关键词输入，可以是字符串或列表
-
-    Returns:
-        list[str]: 解析后的关键词列表，去除空白项
-    """
-    if not keywords_input:
-        return []
-
-    # 如果已经是列表，直接处理
-    if isinstance(keywords_input, list):
-        return [str(k).strip() for k in keywords_input if str(k).strip()]
-
-    # 转换为字符串处理
-    keywords_str = str(keywords_input).strip()
-    if not keywords_str:
-        return []
-
-    try:
-        # 尝试作为JSON对象解析（支持 {"keywords": [...]} 格式）
-        json_data = json.loads(keywords_str)
-        if isinstance(json_data, dict) and "keywords" in json_data:
-            keywords_list = json_data["keywords"]
-            if isinstance(keywords_list, list):
-                return [str(k).strip() for k in keywords_list if str(k).strip()]
-        elif isinstance(json_data, list):
-            # 直接是JSON数组格式
-            return [str(k).strip() for k in json_data if str(k).strip()]
-    except (json.JSONDecodeError, ValueError):
-        pass
-
-    try:
-        # 尝试使用 ast.literal_eval 解析（支持Python字面量格式）
-        parsed = ast.literal_eval(keywords_str)
-        if isinstance(parsed, list):
-            return [str(k).strip() for k in parsed if str(k).strip()]
-    except (ValueError, SyntaxError):
-        pass
-
-    # 尝试不同的分隔符
-    separators = ["/", ",", " ", "|", ";"]
-
-    for separator in separators:
-        if separator in keywords_str:
-            keywords_list = [k.strip() for k in keywords_str.split(separator) if k.strip()]
-            if len(keywords_list) > 1:  # 确保分割有效
-                return keywords_list
-
-    # 如果没有分隔符，返回单个关键词
-    return [keywords_str] if keywords_str else []
-
-

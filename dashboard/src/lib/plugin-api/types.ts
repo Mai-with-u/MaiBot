@@ -24,7 +24,7 @@ export interface MaimaiVersion {
  * 已安装插件信息
  */
 export interface InstalledPlugin {
-  release?: { version: string; commit: string; pinned: boolean } | null
+  release?: { version: string; commit: string } | null
   id: string
   manifest: {
     manifest_version: number
@@ -51,10 +51,10 @@ export interface InstalledPlugin {
   }
   path: string
   changelog?: string | null
-  enabled?: boolean
+  enabled?: boolean | null
   disabled?: boolean
   loaded?: boolean
-  load_status?: 'success' | 'failed' | 'inactive' | 'disabled' | 'offline' | 'unknown' | 'loading'
+  load_status?: 'success' | 'failed' | 'inactive' | 'disabled' | 'offline' | 'unknown' | 'loading' | 'stopping' | 'not_loaded' | 'stopped'
   load_error?: string
   circuit_status?: {
     state: 'open' | 'half_open'
@@ -62,14 +62,6 @@ export interface InstalledPlugin {
     cooldown_level: number
     half_open_inflight: boolean
   } | null
-}
-/**
- * 旧版本插件格式(直接包含 version 字段)
- */
-export interface LegacyInstalledPlugin {
-  id: string
-  version: string
-  path: string
 }
 
 export interface RuntimeCommand {
@@ -217,9 +209,10 @@ export interface PluginConfigSchema {
  * 插件配置页初始化数据
  */
 export interface PluginConfigBundle {
-  schema: PluginConfigSchema
+  schema: PluginConfigSchema | null
   config: Record<string, unknown>
   rawConfig: string
+  configError?: string
   message?: string
 }
 

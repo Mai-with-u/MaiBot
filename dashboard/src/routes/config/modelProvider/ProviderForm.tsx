@@ -552,7 +552,7 @@ export function ProviderForm({
                     <div className="flex items-center gap-1.5">
                       <Label htmlFor="max_retry">最大重试</Label>
                       <HelpTooltip
-                        content="API 请求失败时的最大重试次数。设置为 0 表示不重试。默认值：2"
+                        content="单个模型 API 请求的最大尝试次数（含首次请求），失败后按重试间隔重试。设置为 0 或 1 表示不重试。默认值：3"
                         side="top"
                         maxWidth="250px"
                       />
@@ -568,7 +568,7 @@ export function ProviderForm({
                           prev ? { ...prev, max_retry: val } : null
                         )
                       }}
-                      placeholder="默认: 2"
+                      placeholder="默认: 3"
                     />
                   </div>
 

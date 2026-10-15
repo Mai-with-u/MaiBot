@@ -15,7 +15,7 @@ from sqlalchemy import case, func
 from sqlmodel import col, delete, select
 
 from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
-from src.chat.replyer.expression_vector_index import normalize_text, resolve_project_path
+from src.chat.replyer.expression_vector_index import expression_vector_index, normalize_text, resolve_project_path
 from src.common.database.database import get_db_session
 from src.common.database.database_model import ChatSession, Expression, Messages, ModifiedBy
 from src.common.logger import get_logger
@@ -27,6 +27,7 @@ from src.learners.expression_review_store import (
     get_recent_ai_review_logs,
 )
 from src.services.bot_account_service import get_all_bot_account_pairs
+from src.services.expression_vector_service import expression_vector_service
 from src.webui.dependencies import require_auth
 
 logger = get_logger("webui.expression")
@@ -38,6 +39,22 @@ LEGACY_EXPRESSION_IMPORT_FILE = File(...)
 router = APIRouter(prefix="/expression", tags=["Expression"], dependencies=[Depends(require_auth)])
 LEGACY_IMPORT_UPLOAD_DIR = Path("data/webui_legacy_expression_imports")
 LOGGED_INVALID_EXPRESSION_SESSION_IDS: set[int] = set()
+
+
+@router.get("/runtime/vectors/spaces")
+async def list_expression_vector_spaces() -> Dict[str, Any]:
+    """查询表达模型库及补建状态，跨线程调用统一交给宿主接入层。"""
+    return await expression_vector_service.list_vector_spaces()
+
+
+@router.delete("/runtime/vectors/spaces/{space_id}")
+async def delete_expression_vector_space(space_id: str) -> Dict[str, Any]:
+    result = await expression_vector_service.delete_vector_space(space_id)
+    if not result["success"]:
+        error = result["error"]
+        status = 409 if error == "vector_space_in_use" else 404 if error == "vector_space_not_found" else 500
+        raise HTTPException(status_code=status, detail=error)
+    return result
 
 
 def get_configured_platform_accounts() -> set[tuple[str, str]]:
@@ -985,9 +1002,16 @@ def get_chat_list(
                 chat_session = session.exec(select(ChatSession).where(col(ChatSession.session_id) == session_id)).first()
                 chat_by_id[session_id] = build_chat_info(session_id, session, chat_session)
 
-        # 按名称排序
-        chat_list = list(chat_by_id.values())
-        chat_list.sort(key=lambda x: x.chat_name)
+            # 聚合每个聊天的最新消息时间，避免逐聊天查询消息历史。
+            latest_message_times = dict(session.exec(
+                select(Messages.session_id, func.max(Messages.timestamp))
+                .where(col(Messages.session_id).in_(chat_by_id))
+                .group_by(col(Messages.session_id))
+            ).all())
+
+        # 有消息的聊天按时间倒序；无消息的聊天排在最后，同一时间按名称稳定排序。
+        chat_list = sorted(chat_by_id.values(), key=lambda item: (item.chat_name, item.chat_id))
+        chat_list.sort(key=lambda item: latest_message_times.get(item.chat_id, datetime.min), reverse=True)
 
         return ChatListResponse(success=True, data=chat_list)
 
@@ -1097,6 +1121,15 @@ def read_expression_vector_index_payload() -> tuple[Path, Optional[dict[str, Any
     if not isinstance(payload, dict):
         raise ValueError(f"表达向量索引格式异常: {index_path}")
     return index_path, payload
+
+
+@router.get("/vector-build-progress")
+def get_expression_vector_build_progress() -> dict[str, Any]:
+    """读取表达向量补建进度；同步文件和数据库扫描交由 FastAPI 线程池执行。"""
+
+    return expression_vector_index.get_history_backfill_progress(
+        index_path=global_config.expression.expression_vector_index_path,
+    )
 
 
 def expression_cluster_member_to_response(raw_member: dict[str, Any]) -> ExpressionClusterMemberResponse:

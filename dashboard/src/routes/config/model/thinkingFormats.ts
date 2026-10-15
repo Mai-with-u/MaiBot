@@ -177,6 +177,9 @@ export function validateThinkingParams(
     if (params.thinking.type !== undefined && typeof params.thinking.type !== 'string') {
       return 'thinking.type 必须是字符串'
     }
+    if (config.canDisable !== true && params.thinking.type === 'disabled') {
+      return '当前模型不支持关闭思考'
+    }
   }
 
   const effortParam = getEffortParam(config)

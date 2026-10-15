@@ -40,7 +40,7 @@ describe('VersionCompatibilityDialog', () => {
     localStorage.removeItem('maibot-locale')
   })
 
-  it('WebUI 版本过低时要求等待 5 秒才能关闭', async () => {
+  it('WebUI 版本过低时要求等待 3 秒才能关闭', async () => {
     await renderDialog({
       status: 'webui_outdated',
       main_program_version: '1.2.3',
@@ -49,10 +49,10 @@ describe('VersionCompatibilityDialog', () => {
     })
 
     expect(screen.getByText('WebUI 版本过低')).toBeInTheDocument()
-    const confirmButton = screen.getByRole('button', { name: '5 秒后可确认' })
+    const confirmButton = screen.getByRole('button', { name: '3 秒后可确认' })
     expect(confirmButton).toBeDisabled()
 
-    act(() => vi.advanceTimersByTime(5000))
+    act(() => vi.advanceTimersByTime(3000))
 
     const enabledButton = screen.getByRole('button', { name: '关闭提示并继续' })
     expect(enabledButton).toBeEnabled()

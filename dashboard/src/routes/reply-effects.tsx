@@ -45,6 +45,7 @@ import {
 } from 'recharts'
 
 import { Badge } from '@/components/ui/badge'
+import { CHART_INITIAL_DIMENSION } from '@/components/ui/chart'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -393,7 +394,7 @@ function ScoreDistributionChart({
       )}
       <div className="mt-3 h-64">
         {series.length ? (
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" initialDimension={CHART_INITIAL_DIMENSION}>
             <ScatterChart margin={{ top: 8, right: 10, left: 20, bottom: 0 }}>
               <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" />
               <XAxis
@@ -1214,7 +1215,7 @@ export function ReplyEffectsPage() {
               <SectionPanel title="趋势" description="按天汇总两个连续评分维度" icon={BarChart3}>
                 <div className="h-80 p-4 sm:p-5">
                   {overview?.trend.length ? (
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" initialDimension={CHART_INITIAL_DIMENSION}>
                       <BarChart
                         data={overview.trend}
                         margin={{ top: 8, right: 8, left: -12, bottom: 0 }}

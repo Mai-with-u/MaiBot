@@ -2,6 +2,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
+import rehypeRaw from 'rehype-raw'
 import 'katex/dist/katex.min.css'
 import type { ComponentPropsWithoutRef } from 'react'
 
@@ -19,7 +20,7 @@ export function MarkdownRenderer({ content, className = '' }: MarkdownRendererPr
     <div className={`prose prose-sm dark:prose-invert max-w-none ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
+        rehypePlugins={[rehypeRaw, rehypeKatex]}
         components={{
           // 自定义代码样式：块级样式交给 pre，避免行内反引号被渲染成独立代码块。
           code({ className, children, node, ...props }: MarkdownComponentProps<'code'>) {

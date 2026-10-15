@@ -13,7 +13,7 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { type ReactNode, useRef, useState } from 'react'
 
 import { useQuery } from '@tanstack/react-query'
 
@@ -26,11 +26,16 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { ExpressionReviewer } from '@/components/expression-reviewer'
+import { MOBILE_GLASS_CLASS } from '@/components/layout/mobile-glass'
+import { MobileHeaderActions } from '@/components/layout/MobileHeaderActions'
+import { useHideMobileTabBar } from '@/components/layout/mobile-nav-context'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { useDataList } from '@/hooks/useDataList'
 import { useToast } from '@/hooks/use-toast'
 import { formatChatDisplayName } from '@/lib/chat-display'
+import { cn } from '@/lib/utils'
 
 import {
   batchDeleteExpressions,
@@ -98,7 +103,7 @@ const DEFAULT_STATS: StatsData = {
 /**
  * 表达方式管理主页面
  */
-export function ExpressionManagementPage() {
+export function ExpressionManagementPage({ browserHeader }: { browserHeader?: ReactNode }) {
   const { toast } = useToast()
   const importInputRef = useRef<HTMLInputElement>(null)
 
@@ -112,7 +117,11 @@ export function ExpressionManagementPage() {
   const [isBatchDeleteDialogOpen, setIsBatchDeleteDialogOpen] = useState(false)
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false)
   const [isMoreActionsOpen, setIsMoreActionsOpen] = useState(false)
-  const [activeView, setActiveView] = useState<'list' | 'logs' | 'quick' | 'clusters'>('list')
+  // 手机上默认进入卡片审核，与设计稿一致；桌面端默认列表
+  const isMobileViewport = useMediaQuery('(max-width: 1023.98px)')
+  const [activeView, setActiveView] = useState<'list' | 'logs' | 'quick' | 'clusters'>(() =>
+    window.matchMedia('(max-width: 1023.98px)').matches ? 'quick' : 'list'
+  )
 
   // 兄弟读：聊天流 / 共享组 / 统计 / 审核统计统一以 'expression' 前缀分层，
   // list.invalidate() 失效 ['expression'] 前缀时一并刷新（读失败局部呈现，不弹全局 toast）
@@ -211,6 +220,9 @@ export function ExpressionManagementPage() {
       onClearSelection: list.clearSelection,
       onCloseClearConfirm: () => setIsClearConfirmOpen(false),
     })
+
+  // 手机上卡片审核是全屏的滑卡界面，底部按钮占据标签栏的位置
+  useHideMobileTabBar(isMobileViewport && activeView === 'quick')
 
   // 顶部视图切换（表达 / 快速审核 / AI审核记录）
   const handleActiveViewChange = (view: 'list' | 'logs' | 'quick' | 'clusters') => {
@@ -385,13 +397,14 @@ export function ExpressionManagementPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden p-4 pb-6 sm:p-6">
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden p-2 pb-4 sm:p-6">
       {activeView !== 'list' && (
         <div className="mb-4 flex shrink-0 justify-end gap-2 sm:mb-3">
+          {/* 手机上由页头的「列表模式」返回，这里不再重复 */}
           <Button
             variant="outline"
             onClick={() => handleActiveViewChange('list')}
-            className="h-10 justify-center gap-2 sm:h-9"
+            className="h-10 justify-center gap-2 max-lg:hidden sm:h-9"
           >
             <ArrowLeft className="h-4 w-4" />
             返回表达
@@ -414,30 +427,19 @@ export function ExpressionManagementPage() {
           activeView === 'list' ? 'min-h-0 flex-1 overflow-y-auto lg:overflow-hidden' : 'hidden'
         }
       >
-        <div className="pr-3 pb-2 sm:pr-4 lg:h-full">
+        <div className="min-w-0 pb-2 sm:pr-4 lg:h-full">
           {/* 表达方式列表 */}
           <div
             className={`grid grid-cols-1 items-stretch gap-5 transition-[grid-template-columns] duration-200 sm:gap-4 lg:h-full lg:min-h-[30rem] ${
               browserPanelCollapsed
-                ? 'lg:grid-cols-[3.25rem_minmax(0,1fr)]'
+                ? browserHeader
+                  ? 'lg:grid-cols-[8rem_minmax(0,1fr)]'
+                  : 'lg:grid-cols-[3.25rem_minmax(0,1fr)]'
                 : 'lg:grid-cols-[13.5rem_minmax(0,1fr)]'
             }`}
           >
             <div className="flex min-h-0 flex-col gap-3">
-              <div
-                className={`${browserPanelCollapsed ? 'lg:hidden' : ''} grid h-11 w-full grid-cols-2 overflow-hidden border-2 bg-transparent`}
-              >
-                <div className="flex min-w-0 items-center justify-between gap-2 px-2.5 py-1">
-                  <div className="text-muted-foreground text-[11px]">总数量</div>
-                  <div className="text-sm leading-none font-semibold">{stats.total}</div>
-                </div>
-                <div className="flex min-w-0 items-center justify-between gap-2 border-l px-2.5 py-1">
-                  <div className="text-muted-foreground text-[11px]">近7天新增</div>
-                  <div className="text-sm leading-none font-semibold text-green-600">
-                    {stats.recent_7days}
-                  </div>
-                </div>
-              </div>
+              {browserHeader}
 
               <ChatScopeFilterPanel
                 modes={[
@@ -508,7 +510,7 @@ export function ExpressionManagementPage() {
               />
             </div>
 
-            <div className="flex min-h-0 flex-col space-y-4 sm:space-y-3">
+            <div className="flex min-h-0 min-w-0 flex-col space-y-3">
               {/* 批量操作工具栏 */}
               <div
                 className={`${list.selectedCount > 0 ? 'flex' : 'hidden'} mt-4 flex-col items-start justify-between gap-3 border-t pt-4 sm:mt-3 sm:flex-row sm:items-center sm:pt-3`}
@@ -555,6 +557,18 @@ export function ExpressionManagementPage() {
 
               <div className="border-2 bg-transparent">
                 <div className="flex flex-wrap items-center gap-2 px-3 py-1.5">
+                  <div className="grid h-8 shrink-0 grid-cols-2 overflow-hidden border-2 bg-transparent">
+                    <div className="flex min-w-0 items-center justify-between gap-2 px-2.5 py-1">
+                      <div className="text-muted-foreground text-[11px]">总数量</div>
+                      <div className="text-sm leading-none font-semibold">{stats.total}</div>
+                    </div>
+                    <div className="flex min-w-0 items-center justify-between gap-2 border-l px-2.5 py-1">
+                      <div className="text-muted-foreground text-[11px]">近7天新增</div>
+                      <div className="text-sm leading-none font-semibold text-green-600">
+                        {stats.recent_7days}
+                      </div>
+                    </div>
+                  </div>
                   {scopeStatus && (
                     <>
                       {renderStatusIndicator('开启学习', scopeStatus.enableLearning, false)}
@@ -582,7 +596,7 @@ export function ExpressionManagementPage() {
                         新增
                       </Button>
                       {currentChat && (
-                        <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:flex sm:w-auto sm:flex-wrap sm:items-center">
+                        <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
                           <Button
                             variant="outline"
                             size="sm"
@@ -601,7 +615,7 @@ export function ExpressionManagementPage() {
                               <Button
                                 variant="outline"
                                 size="icon"
-                                className="data-[state=open]:bg-accent h-7 w-full transition-colors duration-200 sm:w-7"
+                                className="data-[state=open]:bg-accent h-7 w-7 shrink-0 transition-colors duration-200"
                                 title="更多"
                                 aria-label={isMoreActionsOpen ? '关闭更多操作' : '更多操作'}
                               >
@@ -717,6 +731,18 @@ export function ExpressionManagementPage() {
           />
         </div>
       )}
+
+      {/* 手机页头右上角：在卡片审核与列表之间切换 */}
+      <MobileHeaderActions>
+        <button
+          type="button"
+          onClick={() => handleActiveViewChange(activeView === 'quick' ? 'list' : 'quick')}
+          data-mobile-header-text-button="true"
+          className={cn('h-11 rounded-full px-4 text-[15px]', MOBILE_GLASS_CLASS)}
+        >
+          {activeView === 'quick' ? '列表模式' : '卡片审核'}
+        </button>
+      </MobileHeaderActions>
 
       {activeView === 'clusters' && (
         <ExpressionClusterBrowser onOpenExpression={handleOpenExpressionById} />

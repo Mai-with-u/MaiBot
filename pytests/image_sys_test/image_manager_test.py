@@ -1,12 +1,18 @@
+from pathlib import Path
+from unittest.mock import AsyncMock
+
+import importlib
+import importlib.util
 import sys
 import types
-import importlib
+
 import pytest
-from pathlib import Path
-import importlib.util
 
 
 class DummyLogger:
+    def debug(self, *a, **k):
+        pass
+
     def info(self, *a, **k):
         pass
 
@@ -293,3 +299,57 @@ async def test_get_image_description_returns_cached_description_after_session_cl
     desc = await mgr.get_image_description(image_hash="cached-hash", wait_for_build=False)
 
     assert desc == "cached description"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("file_exists", [False, True])
+@pytest.mark.parametrize("wait_for_build", [False, True])
+async def test_cached_description_preserves_image_file(monkeypatch, tmp_path, file_exists, wait_for_build):
+    module = _load_image_manager_module(tmp_path)
+    path = tmp_path / "cached.png"
+    if file_exists:
+        path.write_bytes(b"abc")
+    record = types.SimpleNamespace(
+        id=1,
+        image_hash="dummy-hash",
+        image_type="image",
+        full_path=str(path),
+        description="缓存描述",
+        vlm_processed=True,
+        no_file_flag=not file_exists,
+        is_registered=False,
+        register_time=None,
+        query_count=0,
+    )
+    session = DummySession()
+    session.record = record
+    monkeypatch.setattr(module, "get_db_session", lambda: session)
+    monkeypatch.setattr(module, "resolve_stored_image_path", Path)
+    monkeypatch.setattr(module, "serialize_stored_image_path", str)
+    manager = module.ImageManager()
+    generate = AsyncMock(side_effect=AssertionError("缓存描述不应再次调用模型"))
+    monkeypatch.setattr(manager, "_generate_image_description", generate)
+
+    assert await manager.get_image_description(image_bytes=b"abc", wait_for_build=wait_for_build) == "缓存描述"
+    assert Path(record.full_path).read_bytes() == b"abc"
+    assert record.no_file_flag is False
+    assert record.description == "缓存描述"
+    generate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cached_description_does_not_hide_save_failure(monkeypatch, tmp_path):
+    module = _load_image_manager_module(tmp_path)
+    manager = module.ImageManager()
+    monkeypatch.setattr(
+        manager,
+        "_get_image_record",
+        lambda _: types.SimpleNamespace(
+            vlm_processed=True,
+            description="缓存描述",
+        ),
+    )
+    monkeypatch.setattr(manager, "ensure_image_saved", AsyncMock(side_effect=OSError("磁盘写入失败")))
+
+    with pytest.raises(OSError, match="磁盘写入失败"):
+        await manager.get_image_description(image_bytes=b"abc")

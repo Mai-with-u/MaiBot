@@ -8,6 +8,7 @@ from src.common.logger import get_logger
 from src.core.local_operator import LOCAL_PLATFORM_BOT_IDS
 from src.platform_io.drivers.base import PlatformIODriver
 
+from .adapter_policy import AdapterIdentity, AdapterPolicyResult, get_adapter_policy_manager
 from .dedupe import MessageDeduplicator
 from .outbound_tracker import OutboundTracker
 from .route_key_factory import RouteKeyFactory
@@ -29,7 +30,7 @@ class PlatformIOManager:
     与旧实现不同，这个管理器不再负责“多条链路谁该接管平台”的裁决，
     只维护发送表和接收表两张轻量路由表：
 
-    - 发送时：解析所有命中的发送绑定并全部投递。
+    - 发送时：解析所有命中的发送绑定，逐条检查适配器名单并投递允许的链路。
     - 接收时：只校验当前驱动是否已登记为可接收链路，然后全部放行给上层。
     - 去重时：仅对单条链路做技术性重放抑制，不做跨链路语义去重。
     """
@@ -534,7 +535,34 @@ class PlatformIOManager:
             return DeliveryBatch(internal_message_id=message.message_id, route_key=route_key)
 
         receipts: List[DeliveryReceipt] = []
+        group_info = message.message_info.group_info
+        chat_type = "group" if group_info is not None else "private"
+        # 出站 user_info 是机器人自身，私聊目标必须与传输层的接收者字段一致。
+        additional_config = message.message_info.additional_config or {}
+        target_id = (
+            group_info.group_id
+            if group_info is not None
+            else str(additional_config.get("platform_io_target_user_id") or "").strip()
+        )
         for driver in drivers:
+            policy_result = await self.evaluate_target_policy(driver, route_key, chat_type, target_id)
+            if not policy_result.allowed:
+                logger.info(
+                    f"适配器策略拒绝出站消息: driver={driver.driver_id} chat_type={chat_type} "
+                    f"target_id={target_id} source={policy_result.source} reason={policy_result.reason}"
+                )
+                receipts.append(
+                    DeliveryReceipt(
+                        internal_message_id=message.message_id,
+                        route_key=route_key,
+                        status=DeliveryStatus.DROPPED,
+                        driver_id=driver.driver_id,
+                        driver_kind=driver.descriptor.kind,
+                        error=f"adapter_policy: {policy_result.reason}",
+                        metadata={"adapter_policy": policy_result.to_dict()},
+                    )
+                )
+                continue
             try:
                 self._outbound_tracker.begin_tracking(
                     internal_message_id=message.message_id,
@@ -575,6 +603,36 @@ class PlatformIOManager:
             route_key=route_key,
             receipts=receipts,
         )
+
+    async def evaluate_target_policy(
+        self,
+        driver: PlatformIODriver,
+        route_key: RouteKey,
+        chat_type: str,
+        target_id: str,
+    ) -> AdapterPolicyResult:
+        """按实际投递驱动的完整身份检查目标；文件读取在线程池执行。"""
+        descriptor = driver.descriptor
+        identity = AdapterIdentity(
+            adapter_id=driver.driver_id,
+            plugin_id=descriptor.plugin_id or "",
+            gateway_name=str(descriptor.metadata.get("gateway_name", "")),
+            platform=route_key.platform,
+            account_id=route_key.account_id or descriptor.account_id,
+            scope=route_key.scope or descriptor.scope,
+        )
+        return await asyncio.to_thread(
+            get_adapter_policy_manager().evaluate, identity, chat_type=chat_type, target_id=target_id
+        )
+
+    async def is_target_allowed(self, route_key: RouteKey, *, chat_type: str, target_id: str) -> bool:
+        """会话有任一允许的发送链路时可调度，各条出站链路仍须独立检查。"""
+        drivers = self.resolve_drivers(route_key)
+        for driver in drivers:
+            result = await self.evaluate_target_policy(driver, route_key, chat_type, target_id)
+            if result.allowed:
+                return True
+        return False
 
     @staticmethod
     def _build_inbound_dedupe_key(envelope: InboundMessageEnvelope) -> Optional[str]:

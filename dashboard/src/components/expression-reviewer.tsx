@@ -828,6 +828,8 @@ export function ExpressionReviewer({
       className={cn(
         'flex min-h-0 flex-col overflow-hidden',
         embedded ? 'bg-card h-full rounded-lg border' : 'h-full',
+        // 手机上嵌入页面时直接铺在页面上，不再套一层卡片框
+        embedded && 'max-lg:rounded-none max-lg:border-0 max-lg:bg-transparent',
         className
       )}
     >
@@ -1489,6 +1491,7 @@ export function ExpressionReviewer({
                           role="option"
                           id={`quick-expr-${expr.id}`}
                           aria-selected={true}
+                          data-quick-review-card="current"
                           className={cn(
                             'bg-card flex h-full min-h-0 flex-col overflow-hidden rounded-xl border p-5 shadow-xl select-none sm:p-6',
                             'ring-border/50 shadow-2xl ring-1 active:cursor-grabbing',
@@ -1547,7 +1550,10 @@ export function ExpressionReviewer({
                               <div className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
                                 情景
                               </div>
-                              <div className="bg-muted/30 border-border/50 rounded-lg border p-3">
+                              <div
+                                data-quick-review-situation="true"
+                                className="bg-muted/30 border-border/50 rounded-lg border p-3"
+                              >
                                 <p className="line-clamp-3 text-base leading-relaxed font-medium break-words sm:text-lg">
                                   {expr.situation}
                                 </p>
@@ -1588,6 +1594,7 @@ export function ExpressionReviewer({
                           role="option"
                           id={`quick-expr-${expr.id}`}
                           aria-selected={false}
+                          data-quick-review-card="behind"
                           className={cn(
                             'bg-card flex h-full min-h-0 flex-col overflow-hidden rounded-xl border p-5 shadow-xl select-none sm:p-6'
                           )}
@@ -1607,7 +1614,10 @@ export function ExpressionReviewer({
                               <div className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
                                 情景
                               </div>
-                              <div className="bg-muted/30 border-border/50 rounded-lg border p-3">
+                              <div
+                                data-quick-review-situation="true"
+                                className="bg-muted/30 border-border/50 rounded-lg border p-3"
+                              >
                                 <p className="line-clamp-3 text-base leading-relaxed font-medium break-words sm:text-lg">
                                   {expr.situation}
                                 </p>
@@ -1647,7 +1657,10 @@ export function ExpressionReviewer({
                 </div>
 
                 {/* 操作按钮（移动端） */}
-                <div className="z-50 flex shrink-0 items-center gap-8 sm:hidden">
+                <div
+                  data-quick-review-actions="true"
+                  className="z-50 flex shrink-0 items-center gap-8 sm:hidden"
+                >
                   {(() => {
                     const currentExpr = quickExpressions[quickCurrentIndex]
                     const directions = getAllowedDirections(currentExpr)
@@ -1656,6 +1669,8 @@ export function ExpressionReviewer({
                         <Button
                           variant="outline"
                           size="lg"
+                          aria-label="拒绝"
+                          data-quick-review-action="reject"
                           className={cn(
                             'h-16 w-16 rounded-full border-2 shadow-lg transition-all active:scale-95',
                             !directions.left
@@ -1670,6 +1685,8 @@ export function ExpressionReviewer({
                         <Button
                           variant="outline"
                           size="lg"
+                          aria-label="通过"
+                          data-quick-review-action="approve"
                           className={cn(
                             'h-16 w-16 rounded-full border-2 shadow-lg transition-all active:scale-95',
                             !directions.right
@@ -1722,7 +1739,8 @@ export function ExpressionReviewer({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="flex h-[90vh] w-[95vw] max-w-5xl flex-col p-0 sm:h-[85vh] sm:w-full"
+        // 手机上铺满整屏，避开状态栏
+        className="flex h-[90vh] w-[95vw] max-w-5xl flex-col p-0 max-sm:h-[100dvh] max-sm:max-h-none max-sm:rounded-none max-sm:pt-[env(safe-area-inset-top)] max-sm:pb-[env(safe-area-inset-bottom)] sm:h-[85vh] sm:w-full"
         hideCloseButton
       >
         {reviewerContent}

@@ -38,6 +38,7 @@ Element.prototype.scrollTo = (() => {}) as unknown as Element['scrollTo']
 // 监控 hook 整体打桩：组件只消费其返回的状态与两个动作回调
 const monitorHookMocks = vi.hoisted(() => ({
   useMaisakaMonitor: vi.fn(),
+  listeners: new Set<() => void>(),
 }))
 
 // 路由跳转桩：捕获推理记录跳转参数
@@ -59,31 +60,57 @@ const virtualizerMocks = vi.hoisted(() => ({
   scrollToIndex: vi.fn(),
 }))
 
-vi.mock('./use-maisaka-monitor', () => ({
-  useMaisakaMonitor: monitorHookMocks.useMaisakaMonitor,
-}))
+vi.mock('./use-maisaka-monitor', async () => {
+  const { useSyncExternalStore } = await import('react')
+  const subscribe = (listener: () => void) => {
+    monitorHookMocks.listeners.add(listener)
+    return () => { monitorHookMocks.listeners.delete(listener) }
+  }
+  const readSnapshot = () => monitorHookMocks.useMaisakaMonitor()
+  function useMonitorSnapshot() {
+    return useSyncExternalStore(subscribe, readSnapshot)
+  }
+  return {
+    useMaisakaMonitorOverview: useMonitorSnapshot,
+    useMaisakaMonitorSession: useMonitorSnapshot,
+  }
+})
 
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => routerMocks.navigate,
 }))
 
 vi.mock('@tanstack/react-virtual', () => ({
-  useVirtualizer: ({ count, estimateSize }: { count: number; estimateSize: () => number }) => ({
-    getTotalSize: () => count * estimateSize(),
+  useVirtualizer: ({
+    count,
+    estimateSize,
+    getItemKey,
+  }: {
+    count: number
+    estimateSize: () => number
+    getItemKey?: (index: number) => string | number
+  }) => {
     // end 用于「查找上条」按行位置定位视口内首行，与真实虚拟列表语义保持一致
-    getVirtualItems: () =>
+    const buildItems = () =>
       Array.from({ length: count }, (_, index) => {
         const start = index * estimateSize()
         return {
           index,
-          key: index,
+          key: getItemKey ? getItemKey(index) : index,
           start,
           end: start + estimateSize(),
         }
-      }),
-    measureElement: virtualizerMocks.measureElement,
-    scrollToIndex: virtualizerMocks.scrollToIndex,
-  }),
+      })
+    return {
+      getTotalSize: () => count * estimateSize(),
+      getVirtualItems: buildItems,
+      get measurementsCache() {
+        return buildItems()
+      },
+      measureElement: virtualizerMocks.measureElement,
+      scrollToIndex: virtualizerMocks.scrollToIndex,
+    }
+  },
 }))
 
 vi.mock('@/hooks/use-toast', () => ({
@@ -123,14 +150,21 @@ function setupMonitorState(overrides: MonitorStateOverrides = {}) {
   const state: MonitorHookResult = {
     timeline,
     allTimeline: timeline,
+    latestMessages: new Map(),
+    selectedStageStatus: overrides.selectedSession ? overrides.stageStatuses?.get(overrides.selectedSession) : undefined,
     sessions: overrides.sessions ?? new Map(),
     stageStatuses: overrides.stageStatuses ?? new Map(),
     selectedSession: overrides.selectedSession ?? null,
     setSelectedSession: hookActions.setSelectedSession,
     connected: overrides.connected ?? true,
+    subagentTasks: [],
     clearTimeline: hookActions.clearTimeline,
+    historyLoading: false,
+    hasMoreHistory: false,
+    loadOlderHistory: vi.fn(),
   }
   monitorHookMocks.useMaisakaMonitor.mockReturnValue(state)
+  act(() => monitorHookMocks.listeners.forEach((listener) => listener()))
 }
 
 function nowSec() {
@@ -315,7 +349,7 @@ function findTimelineViewport(container: HTMLElement, markerText: string): HTMLD
 
 /** 定位“回到底部”按钮内的箭头图标（autoScroll 开启时带 text-primary 高亮） */
 function getBackToBottomIcon(): SVGElement {
-  const icon = screen.getByRole('button', { name: '回到底部' }).querySelector('svg')
+  const icon = screen.getByRole('button', { name: '底部' }).querySelector('svg')
   if (!icon) throw new Error('未找到回到底部按钮图标')
   return icon
 }
@@ -386,6 +420,45 @@ describe('MaisakaMonitor 空态与侧边栏', () => {
     expect(screen.getByText('等待 MaiSaka 会话…')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '折叠侧边栏' })).toBeInTheDocument()
     expect(window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY)).toBe('false')
+  })
+})
+
+describe('思考流程节点', () => {
+  it('按时间线显示流程节点、模型重试和最终失败', () => {
+    setupMonitorState({ timeline: [
+      makeEntry('flow.step', {
+        session_id: 's1', run_id: 'r1', cycle_id: 1, step: 'planner.requested',
+        title: '第 1/8 轮 · 请求模型', detail: '上下文已整理：历史 12 条，可用工具 4 个。', timestamp: nowSec(),
+      }),
+      makeEntry('llm.retry', {
+        session_id: 's1', task_name: 'planner', request_type: 'planner', model_name: '测试模型',
+        attempt: 2, max_attempts: 3, reason: '请求超时', retry_interval: 5, timestamp: nowSec(),
+      }),
+      makeEntry('llm.error', {
+        session_id: 's1', task_name: 'planner', request_type: 'planner', model_name: '测试模型',
+        message: '重试次数已用尽', timestamp: nowSec(),
+      }),
+    ] })
+    render(<MaisakaMonitor />)
+    expect(screen.getByText('第 1/8 轮 · 请求模型')).toBeInTheDocument()
+    expect(screen.getByTitle('上下文已整理：历史 12 条，可用工具 4 个。')).toBeInTheDocument()
+    expect(screen.getByText('模型请求重试 2/3')).toBeInTheDocument()
+    expect(screen.getByText(/请求超时.*5 秒后重试/s)).toBeInTheDocument()
+    expect(screen.getByText('模型请求失败')).toBeInTheDocument()
+    expect(screen.getByText(/重试次数已用尽/)).toBeInTheDocument()
+  })
+
+  it('轮次结束后显示真实结束原因，执行中不提前展示结果', () => {
+    const data = makeFinalized({ final_state: {
+      time_records: {}, agent_state: 'wait', end_reason: 'tool_pause:wait',
+      end_detail: 'Planner 调用 wait，本轮暂停并在等待结束后继续判断。',
+    } })
+    setupMonitorState({ timeline: [makeEntry('planner.progress', data)] })
+    render(<MaisakaMonitor />)
+    expect(screen.queryByText('轮次结果')).not.toBeInTheDocument()
+    setupMonitorState({ timeline: [makeEntry('planner.finalized', data)] })
+    expect(screen.getByText('轮次结果')).toBeInTheDocument()
+    expect(screen.getByText(data.final_state.end_detail!)).toBeInTheDocument()
   })
 })
 
@@ -595,7 +668,7 @@ describe('阶段状态栏与工具条', () => {
     await flushAutoScroll()
     virtualizerMocks.scrollToIndex.mockClear()
 
-    await user.click(screen.getByRole('button', { name: '回到底部' }))
+    await user.click(screen.getByRole('button', { name: '底部' }))
     expect(virtualizerMocks.scrollToIndex).toHaveBeenCalledWith(2, {
       align: 'end',
       behavior: 'smooth',
@@ -627,7 +700,7 @@ describe('阶段状态栏与工具条', () => {
     await waitFor(() => expect(getBackToBottomIcon()).not.toHaveClass('text-primary'))
 
     virtualizerMocks.scrollToIndex.mockClear()
-    await user.click(screen.getByRole('button', { name: '回到底部' }))
+    await user.click(screen.getByRole('button', { name: '底部' }))
     expect(virtualizerMocks.scrollToIndex).toHaveBeenCalledWith(1, {
       align: 'end',
       behavior: 'smooth',
@@ -663,6 +736,35 @@ describe('阶段状态栏与工具条', () => {
 
     expect(virtualizerMocks.scrollToIndex).not.toHaveBeenCalled()
     expect(getBackToBottomIcon()).not.toHaveClass('text-primary')
+  })
+
+  it('远离底部时时间线头部被裁剪，保持锚点条目位置不动', async () => {
+    const timeline = [
+      makeEntry('message.ingested', makeIngested({ content: '第一条' })),
+      makeEntry('message.ingested', makeIngested({ content: '第二条' })),
+      makeEntry('message.ingested', makeIngested({ content: '第三条' })),
+    ]
+    setupMonitorState({ timeline })
+    const { container, rerender } = render(<MaisakaMonitor />)
+
+    await flushAutoScroll()
+    const viewport = findTimelineViewport(container, '第一条')
+    Object.defineProperty(viewport, 'scrollHeight', { configurable: true, value: 1000 })
+    Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 200 })
+    Object.defineProperty(viewport, 'scrollTop', { configurable: true, writable: true, value: 150 })
+    fireEvent.scroll(viewport)
+    await waitFor(() => expect(getBackToBottomIcon()).not.toHaveClass('text-primary'))
+
+    // 第一条被裁剪后，原先位于 140 的第二条上移到 0，滚动位置应同步减去 140
+    setupMonitorState({
+      timeline: [
+        ...timeline.slice(1),
+        makeEntry('message.ingested', makeIngested({ content: '第四条' })),
+      ],
+    })
+    rerender(<MaisakaMonitor />)
+
+    expect(viewport.scrollTop).toBe(10)
   })
 
   it('位于底部时收到新消息继续自动滚动', async () => {
@@ -702,7 +804,7 @@ describe('阶段状态栏与工具条', () => {
 
     await flushAutoScroll()
     scrollToSpy.mockClear()
-    await user.click(screen.getByRole('button', { name: '回到底部' }))
+    await user.click(screen.getByRole('button', { name: '底部' }))
 
     expect(virtualizerMocks.scrollToIndex).not.toHaveBeenCalled()
     expect(scrollToSpy).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' })
@@ -725,7 +827,7 @@ describe('阶段状态栏与工具条', () => {
     Object.defineProperty(viewport, 'scrollTop', { configurable: true, value: 300 })
     virtualizerMocks.scrollToIndex.mockClear()
 
-    await user.click(screen.getByRole('button', { name: '查找上条' }))
+    await user.click(screen.getByRole('button', { name: '上条' }))
 
     expect(virtualizerMocks.scrollToIndex).toHaveBeenCalledWith(1, {
       align: 'center',
@@ -748,7 +850,7 @@ describe('阶段状态栏与工具条', () => {
     Object.defineProperty(viewport, 'scrollTop', { configurable: true, value: 300 })
     virtualizerMocks.scrollToIndex.mockClear()
 
-    await user.click(screen.getByRole('button', { name: '查找上条' }))
+    await user.click(screen.getByRole('button', { name: '上条' }))
 
     expect(virtualizerMocks.scrollToIndex).not.toHaveBeenCalled()
     expect(toastMocks.toast).toHaveBeenCalledWith(
@@ -778,7 +880,7 @@ describe('阶段状态栏与工具条', () => {
     fireEvent.scroll(viewport)
     await waitFor(() => expect(getBackToBottomIcon()).toHaveClass('text-primary'))
 
-    await user.click(screen.getByRole('button', { name: '查找上条' }))
+    await user.click(screen.getByRole('button', { name: '上条' }))
     expect(virtualizerMocks.scrollToIndex).toHaveBeenCalledWith(1, {
       align: 'center',
       behavior: 'smooth',
@@ -830,9 +932,9 @@ describe('时间线事件卡片', () => {
     expect(screen.getByText('回复 李四')).toBeInTheDocument()
     expect(screen.getByText('#m-9')).toBeInTheDocument()
     expect(screen.getByText('原始消息')).toBeInTheDocument()
-    // 发送方为空时回退显示“麦麦”，并带“已发送”徽章
+    // 发送方为空时回退显示“麦麦”，不再显示“已发送”徽章
     expect(screen.getByText('麦麦')).toBeInTheDocument()
-    expect(screen.getByText('已发送')).toBeInTheDocument()
+    expect(screen.queryByText('已发送')).not.toBeInTheDocument()
     expect(screen.getByText('收到！')).toBeInTheDocument()
     // 空回复预览显示回退文案，且不渲染消息 ID
     expect(screen.getByText('回复 未知用户')).toBeInTheDocument()
@@ -922,22 +1024,21 @@ describe('时间线事件卡片', () => {
     expect(screen.getByText('滑稽表情')).toBeInTheDocument()
     expect(screen.getByText('[图片]')).toBeInTheDocument()
 
-    // 点击表情包切换为原文件图片
-    const emojiButton = screen.getByText('滑稽表情').closest('button')
-    if (!emojiButton) throw new Error('未找到表情包媒体按钮')
-    await user.click(emojiButton)
+    // 通过右上角按钮切换为原文件图片。
+    await user.click(screen.getByRole('button', { name: '切换为原文件' }))
     const image = screen.getByAltText('表情包原文件')
     expect(image).toHaveAttribute('src', 'data:image/png;base64,abc')
 
-    // 再次点击切回识别文本
+    // 点击图片打开大图，关闭预览后通过按钮切回识别文本。
     await user.click(image)
+    expect(screen.getByAltText('表情包大图')).toHaveAttribute('src', 'data:image/png;base64,abc')
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByRole('button', { name: '切换为识别文本' }))
     expect(screen.queryByAltText('表情包原文件')).not.toBeInTheDocument()
     expect(screen.getByText('滑稽表情')).toBeInTheDocument()
 
-    // 没有 url/data_url 的媒体点击后保持文本态
-    const placeholderButton = screen.getByText('[图片]').closest('button')
-    if (!placeholderButton) throw new Error('未找到图片媒体按钮')
-    await user.click(placeholderButton)
+    // 没有 url/data_url 的媒体保持文本态，不提供切换按钮。
+    expect(screen.getAllByRole('button', { name: '切换为原文件' })).toHaveLength(1)
     expect(screen.queryByAltText('图片原文件')).not.toBeInTheDocument()
   })
 
@@ -970,7 +1071,7 @@ describe('时间线事件卡片', () => {
     })
     render(<MaisakaMonitor />)
 
-    await user.click(screen.getByText('图片描述'))
+    await user.click(screen.getByRole('button', { name: '切换为原文件' }))
 
     expect(screen.getByText('正在读取图片…')).toBeInTheDocument()
     await act(async () => {
@@ -1013,7 +1114,7 @@ describe('时间线事件卡片', () => {
     })
     render(<MaisakaMonitor />)
 
-    await user.click(screen.getByText('图片描述'))
+    await user.click(screen.getByRole('button', { name: '切换为原文件' }))
 
     expect(await screen.findByText('原文件读取失败')).toBeInTheDocument()
     expect(screen.queryByAltText('图片原文件')).not.toBeInTheDocument()
@@ -1123,11 +1224,11 @@ describe('时间线事件卡片', () => {
     expect(screen.getByText('10+5 tokens')).toBeInTheDocument()
 
     // 工具执行结果卡片
-    expect(screen.getByText('使用工具')).toBeInTheDocument()
+    expect(screen.getByText('send_message、web_search')).toBeInTheDocument()
     expect(screen.getByText('2 个')).toBeInTheDocument()
     expect(screen.getByText('send_message')).toBeInTheDocument()
     expect(screen.getByText('web_search')).toBeInTheDocument()
-    expect(screen.getByText('执行成功')).toBeInTheDocument()
+    expect(screen.queryByText('执行成功')).not.toBeInTheDocument()
     expect(screen.getByText('执行失败')).toBeInTheDocument()
     expect(screen.getByText('300ms')).toBeInTheDocument()
     // 参数内联块与完整 JSON 折叠入口
@@ -1139,6 +1240,62 @@ describe('时间线事件卡片', () => {
     expect(screen.getByText('未返回结果摘要。')).toBeInTheDocument()
     expect(screen.getByText('#1')).toBeInTheDocument()
     expect(screen.getByText('#2')).toBeInTheDocument()
+  })
+
+  it('planner.progress 在工具返回前显示执行中，已返回的工具显示结果', () => {
+    setupMonitorState({
+      timeline: [
+        makeEntry(
+          'planner.progress',
+          makeFinalized({
+            planner: makePlannerBlock({
+              content: '先查询再回复',
+              tool_calls: [
+                { id: 'tc-1', name: 'search_web', arguments: { query: '麦麦' } },
+                { id: 'tc-2', name: 'reply', arguments: {} },
+              ],
+            }),
+            tools: [makeToolResult({ tool_call_id: 'tc-1', tool_name: 'search_web', summary: '找到结果' })],
+            active_tool_call_id: 'tc-2',
+          })
+        ),
+      ],
+    })
+    render(<MaisakaMonitor />)
+
+    expect(screen.getByText('先查询再回复')).toBeInTheDocument()
+    expect(screen.getByText('找到结果')).toBeInTheDocument()
+    expect(screen.getAllByText('执行中').length).toBeGreaterThan(0)
+    expect(screen.queryByText('未返回结果摘要。')).not.toBeInTheDocument()
+  })
+
+  it('tool_search 将搜索词和激活工具列表单独展示', () => {
+    setupMonitorState({
+      timeline: [
+        makeEntry(
+          'planner.finalized',
+          makeFinalized({
+            tools: [
+              makeToolResult({
+                tool_name: 'tool_search',
+                tool_args: { query: 'search_vcpedia_song' },
+                summary:
+                  '- tool_search [推理中调用] [成功]: 已找到 2 个 deferred tools，它们会在后续轮次中加入可用工具列表：\n- search_vcpedia_song（本次新发现）\n- get_vcpedia_lyrics（此前已发现）',
+                matched_tool_names: ['search_vcpedia_song', 'get_vcpedia_lyrics'],
+                newly_discovered_tool_names: ['search_vcpedia_song'],
+              }),
+            ],
+          })
+        ),
+      ],
+    })
+    render(<MaisakaMonitor />)
+
+    expect(screen.getByText('搜索工具：')).toBeInTheDocument()
+    expect(screen.getAllByText('search_vcpedia_song')).toHaveLength(2)
+    expect(screen.getByText('激活工具：')).toBeInTheDocument()
+    expect(screen.getByText('get_vcpedia_lyrics')).toBeInTheDocument()
+    expect(screen.queryByText('执行结果')).not.toBeInTheDocument()
   })
 
   it('planner.finalized 单独展示 Provider 原生联网搜索摘要', () => {
@@ -1203,10 +1360,9 @@ describe('时间线事件卡片', () => {
     // 两张卡都提示回合结束（finish 工具名大小写不敏感）
     expect(screen.getAllByText('本轮思考暂时结束')).toHaveLength(2)
     expect(screen.getAllByText('等待新的消息。')).toHaveLength(2)
-    // 只有混合工具的卡片渲染“使用工具”，且计数只统计非 finish 工具
-    expect(screen.getByText('使用工具')).toBeInTheDocument()
-    expect(screen.getByText('1 个')).toBeInTheDocument()
+    // 混合工具卡片以非 finish 工具名为标题；单工具不重复显示数量。
     expect(screen.getByText('web_search')).toBeInTheDocument()
+    expect(screen.queryByText('1 个')).not.toBeInTheDocument()
     expect(screen.getByText('找到了结果')).toBeInTheDocument()
   })
 
@@ -1247,7 +1403,7 @@ describe('时间线事件卡片', () => {
     expect(screen.getByText('结果已记录')).toBeInTheDocument()
   })
 
-  it('planner.finalized 无执行结果时回退展示 tool_calls，空文本给出占位', () => {
+  it('planner.finalized 无执行结果时回退展示 tool_calls，空文本不显示占位', () => {
     setupMonitorState({
       timeline: [
         makeEntry(
@@ -1264,11 +1420,10 @@ describe('时间线事件卡片', () => {
     })
     render(<MaisakaMonitor />)
 
-    expect(screen.getByText('planner 本轮没有文本内容')).toBeInTheDocument()
-    expect(screen.getByText('使用工具')).toBeInTheDocument()
+    expect(screen.queryByText('planner 本轮没有文本内容')).not.toBeInTheDocument()
     expect(screen.getByText('search_web')).toBeInTheDocument()
-    // 回退条目默认视为执行成功且无耗时
-    expect(screen.getByText('执行成功')).toBeInTheDocument()
+    // 回退条目默认视为执行成功且无耗时，成功状态不额外显示
+    expect(screen.queryByText('执行成功')).not.toBeInTheDocument()
     expect(screen.getByText('正文调用')).toBeInTheDocument()
     expect(screen.getByText('未返回结果摘要。')).toBeInTheDocument()
   })
@@ -1653,4 +1808,3 @@ describe('MaisakaMonitor 额外空态与错误态', () => {
     expect(screen.queryByAltText('表情包原文件')).not.toBeInTheDocument()
   })
 })
-

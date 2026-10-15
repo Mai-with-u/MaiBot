@@ -20,6 +20,7 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { DynamicConfigForm } from '@/components/dynamic-form'
+import { useTheme } from '@/components/use-theme'
 import { useConfigForm } from '@/hooks/useConfigForm'
 import { useToast } from '@/hooks/use-toast'
 import { getBotConfig, getBotConfigSchema, updateBotConfigSection } from '@/lib/config-api'
@@ -35,7 +36,9 @@ import {
 import type { ConfigSchema } from '@/types/config-schema'
 import {
   AlertCircle,
+  ArrowLeft,
   CheckCircle2,
+  ChevronRight,
   Copy,
   Info,
   Loader2,
@@ -434,7 +437,7 @@ function MCPServersBlockEditor({
               </Badge>
             </div>
             <CardDescription>
-              这里会写入 mcp.servers。stdio 用命令启动本地服务，streamable_http 连接远程 MCP 端点。
+              连接本地或远程工具服务，保存后即可供麦麦调用。
             </CardDescription>
           </div>
           <Button type="button" size="sm" onClick={addServer}>
@@ -737,11 +740,140 @@ function MCPServersBlockEditor({
   )
 }
 
-export function MCPSettingsPage() {
-  return <MCPSettingsPageContent />
+export function MCPExtensionList({
+  searchQuery,
+  onEdit,
+}: {
+  searchQuery: string
+  onEdit: () => void
+}) {
+  const { themeConfig } = useTheme()
+  const config = useQuery({ queryKey: ['mcp-settings', 'config'], queryFn: getBotConfig })
+  const status = useQuery({
+    queryKey: ['mcp-status'],
+    queryFn: getMCPStatus,
+    refetchInterval: 5_000,
+  })
+  const payload = config.data as Record<string, unknown> | undefined
+  const fullConfig = (payload?.config ?? payload) as Record<string, unknown> | undefined
+  const mcp = fullConfig?.mcp as ConfigSectionData | undefined
+  const servers = normalizeMCPServers(mcp?.servers)
+  const query = searchQuery.trim().toLowerCase()
+  const visible = servers.filter((server) =>
+    `${server.name} MCP ${server.transport}`.toLowerCase().includes(query)
+  )
+
+  return (
+    <section aria-labelledby="mcp-extension-heading">
+      <div className="text-muted-foreground flex items-center justify-between gap-2 border-b px-2 pb-1.5 text-xs font-medium">
+        <div className="text-muted-foreground flex items-center gap-2 text-xs font-medium">
+          <span className="h-2 w-2 rounded-full bg-sky-500" aria-hidden="true" />
+          <h2 id="mcp-extension-heading">MCP 服务</h2>
+          <span>{servers.length}</span>
+        </div>
+        <Button variant="ghost" size="sm" onClick={onEdit}>
+          <Settings2 className="mr-1 h-4 w-4" />
+          管理服务
+        </Button>
+      </div>
+      {config.isPending ? (
+        <p className="text-muted-foreground px-2 py-4 text-sm">正在加载 MCP 服务…</p>
+      ) : config.isError ? (
+        <Alert variant="destructive">
+          <AlertDescription>
+            加载 MCP 配置失败：{config.error.message}
+            <Button variant="ghost" size="sm" onClick={() => void config.refetch()}>
+              重试
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : visible.length === 0 ? (
+        <p className="text-muted-foreground px-2 py-4 text-sm">
+          {query ? '没有匹配的 MCP 服务' : '尚未添加 MCP 服务，点击「管理服务」连接更多工具。'}
+        </p>
+      ) : (
+        <div className="divide-border/80 divide-y">
+          {visible.map((server, index) => {
+            const runtime = status.data?.servers.find((item) => item.name === server.name)
+            const enabled = Boolean(mcp?.enable) && server.enabled
+            const statusLabel = !enabled
+              ? '已禁用'
+              : status.isError
+                ? '状态获取失败'
+                : runtime?.connected
+                  ? '已连接'
+                  : runtime?.error
+                    ? '连接异常'
+                    : '未连接'
+            const dotClassName = !enabled
+              ? 'bg-muted-foreground/45'
+              : status.isError || runtime?.error
+                ? 'bg-red-500'
+                : runtime?.connected
+                  ? 'bg-emerald-500'
+                  : 'bg-slate-500'
+            return (
+              <div
+                key={`${server.name}-${index}`}
+                data-plugin-list-item="true"
+                role="button"
+                tabIndex={0}
+                onClick={onEdit}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    onEdit()
+                  }
+                }}
+                className={`hover:bg-muted/55 focus-visible:bg-muted/55 relative flex cursor-pointer flex-col justify-between gap-2 py-2.5 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-md focus-visible:-translate-y-0.5 focus-visible:shadow-md focus-visible:outline-none sm:min-h-0 sm:flex-row sm:items-center sm:gap-3 sm:px-2 sm:py-3 ${!enabled ? 'opacity-70' : ''}`}
+              >
+                <div className="flex min-w-0 items-start gap-3 sm:items-center">
+                  <span
+                    className={`mt-4 flex-shrink-0 sm:mt-0 ${themeConfig.dashboardStyle === 'future-retro' ? 'h-12 w-2' : 'h-2.5 w-2.5 rounded-full'} ${dotClassName}`}
+                    title={statusLabel}
+                    aria-label={statusLabel}
+                  />
+                  <div className="flex w-12 flex-shrink-0 flex-col items-center gap-1 sm:w-10">
+                    <div className="bg-muted flex h-12 w-12 items-center justify-center rounded-lg sm:h-10 sm:w-10">
+                      <Server className="text-muted-foreground h-5 w-5" />
+                    </div>
+                    <span className="text-muted-foreground text-[0.65rem] leading-none">MCP</span>
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-2 sm:space-y-1">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <h3 className="min-w-0 break-words text-sm font-medium leading-snug sm:truncate sm:text-base">
+                        {server.name}
+                      </h3>
+                      <Badge variant="outline" className="flex-shrink-0 text-xs">
+                        MCP
+                      </Badge>
+                      {enabled && (status.isError || runtime?.error) && (
+                        <Badge variant="outline" className="text-destructive flex-shrink-0 text-xs">
+                          {statusLabel}
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-muted-foreground line-clamp-2 text-sm leading-relaxed sm:truncate sm:leading-normal">
+                      {server.transport === 'stdio' ? '本地工具服务' : '远程工具服务'} ·{' '}
+                      {server.transport}
+                      {runtime?.connected ? ` · ${runtime.tool_count} 个工具` : ''}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center justify-end gap-2 border-t pt-2 sm:flex-shrink-0 sm:border-t-0 sm:pt-0">
+                  <span className="text-muted-foreground text-xs">{statusLabel}</span>
+                  <ChevronRight className="text-muted-foreground h-4 w-4" />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
 }
 
-function MCPSettingsPageContent() {
+export function MCPSettingsPage({ onBack }: { onBack?: () => void }) {
   const [advancedVisible, setAdvancedVisible] = useState(false)
   const { toast } = useToast()
   const queryClient = useQueryClient()
@@ -895,10 +1027,23 @@ function MCPSettingsPageContent() {
 
   return (
     <ScrollArea className="h-full">
-      <div className="space-y-4 sm:space-y-6 p-4 sm:p-6">
+      <div className="space-y-4 p-4 sm:space-y-6 sm:p-6">
+        {onBack && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              if (!hasUnsavedChanges || window.confirm('MCP 设置尚未保存，确定放弃修改并返回？'))
+                onBack()
+            }}
+          >
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            返回插件扩展
+          </Button>
+        )}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold">MCP 设置</h1>
+            <h1 className="text-xl font-bold sm:text-2xl md:text-3xl">MCP 设置</h1>
             <p className="text-muted-foreground mt-1 text-xs sm:text-sm">
               管理 MCP 客户端能力与服务器连接配置
             </p>
@@ -952,7 +1097,7 @@ function MCPSettingsPageContent() {
 
         {!loading && Boolean(loadError) && (
           <div className="flex h-64 flex-col items-center justify-center gap-2">
-            <p className="text-sm text-destructive">
+            <p className="text-destructive text-sm">
               {loadError instanceof Error ? loadError.message : '加载配置失败'}
             </p>
             <Button variant="outline" size="sm" onClick={() => form.reload()}>

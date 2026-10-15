@@ -75,7 +75,14 @@ class HeartFCMessageReceiver:
             # # if not processed_plain_text:
             # # print(message)
 
-            logger.info(f"[{mes_name}]{userinfo.user_nickname}:{message.processed_plain_text}")
+            # INFO 保留单行预览，长链接和多行消息的完整正文留在 DEBUG。
+            message_text = message.processed_plain_text or ""
+            preview = " ".join(message_text.split())
+            if len(preview) > 200:
+                preview = f"{preview[:200]}…（共{len(message_text)}字，已截断）"
+            logger.info(f"[{mes_name}] {userinfo.user_nickname}: {preview}")
+            if preview != message_text:
+                logger.debug(f"[{mes_name}] {userinfo.user_nickname} 完整消息: {message_text}")
 
             # 如果是群聊，获取群号和群昵称
             group_id = None

@@ -7,8 +7,10 @@ from fastapi import WebSocket
 from starlette.websockets import WebSocketState
 
 import asyncio
+import json
 
 from src.common.logger import get_logger
+from src.maisaka.monitor.planner_delta import PlannerDeltaEncoder
 
 logger = get_logger("webui.websocket")
 
@@ -23,6 +25,7 @@ class WebSocketConnection:
     chat_sessions: Dict[str, str] = field(default_factory=dict)
     send_queue: "asyncio.Queue[Optional[Dict[str, Any]]]" = field(default_factory=asyncio.Queue)
     sender_task: Optional["asyncio.Task[None]"] = None
+    planner_delta_encoder: PlannerDeltaEncoder = field(default_factory=PlannerDeltaEncoder)
 
 
 class UnifiedWebSocketManager:
@@ -73,11 +76,35 @@ class UnifiedWebSocketManager:
                 message = await connection.send_queue.get()
                 if message is None:
                     return
-                await connection.websocket.send_json(message)
+                if message.get("domain") == "maisaka_monitor" and message.get("event") == "planner.reset":
+                    connection.planner_delta_encoder = PlannerDeltaEncoder()
+                # 在连接所属循环按出站顺序编码，避免跨线程广播和历史回放打乱增量基准。
+                message = connection.planner_delta_encoder.encode(message)
+                try:
+                    text = json.dumps(message, ensure_ascii=False, separators=(",", ":"))
+                except (TypeError, ValueError) as exc:
+                    # 普通消息序列化失败只丢弃该条；增量消息还须避免破坏后续帧的基准。
+                    logger.error(
+                        f"统一 WebSocket 消息序列化失败，已丢弃: connection={connection.connection_id}, error={exc}"
+                    )
+                    if message.get("domain") == "maisaka_monitor" and message.get("event") in {
+                        "planner.progress", "planner.finalized", "planner.delta",
+                    }:
+                        # 增量依赖前一帧，不能跳过坏帧后继续推进基准；关闭连接让订阅从完整快照恢复。
+                        raise
+                    continue
+                await connection.websocket.send_text(text)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             logger.error(f"统一 WebSocket 发送失败: connection={connection.connection_id}, error={exc}")
+            # 发送协程退出后连接已无法下行，主动关闭让浏览器立即感知并重连，而不是等心跳超时
+            try:
+                await self._close_websocket(connection)
+            except Exception as close_exc:
+                logger.debug(
+                    f"发送失败后关闭统一 WebSocket 时出现异常: connection={connection.connection_id}, error={close_exc}"
+                )
 
     async def connect(self, connection_id: str, websocket: WebSocket) -> WebSocketConnection:
         """注册一个新的物理 WebSocket 连接。

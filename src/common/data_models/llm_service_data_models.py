@@ -254,6 +254,7 @@ class LLMGenerationOptions(BaseDataModel):
     response_format: RespFormat | None = None
     interrupt_flag: asyncio.Event | None = None
     raise_when_empty: bool = True
+    force_stream_mode: bool = False
 
 
 @dataclass(slots=True)

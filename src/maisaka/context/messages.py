@@ -5,11 +5,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from io import BytesIO
-from typing import Any, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence, Tuple
 
-from PIL import Image as PILImage
+from PIL import Image as PILImage, ImageOps
 
 import base64
+import hashlib
+import threading
 import uuid
 
 from src.chat.message_receive.message import SessionMessage
@@ -37,6 +39,7 @@ from src.llm_models.payload_content.context_item import (
     ProviderOpaqueItem,
     ReasoningItem,
     RoleType,
+    SUPPORTED_IMAGE_FORMATS,
     get_item_text,
     get_response_tool_calls,
 )
@@ -46,6 +49,12 @@ FORWARD_PREVIEW_LIMIT = 4
 FOCUS_COOLDOWN_WAKEUP_SOURCE = "focus_cooldown_wakeup"
 FOCUS_AT_WAKEUP_SOURCE = "focus_at_wakeup"
 FOCUS_WAKEUP_SOURCE_KINDS = frozenset({FOCUS_COOLDOWN_WAKEUP_SOURCE, FOCUS_AT_WAKEUP_SOURCE})
+# 不受支持格式图片的转码结果缓存条数；规划器每轮都会重建上下文，缓存可避免同一张图片被反复解码转码。
+TRANSCODED_IMAGE_CACHE_SIZE = 16
+# 以图片字节的 SHA-256 摘要为键缓存转码结果，缓存键不长期持有原始图片字节；字典按插入顺序充当 LRU。
+# 上下文也可能在 asyncio.to_thread 的工作线程中构建，读写需加锁。
+_transcoded_image_cache: Dict[str, Tuple[str, str]] = {}
+_transcoded_image_cache_lock = threading.Lock()
 
 
 def _guess_image_format(image_bytes: bytes) -> Optional[str]:
@@ -59,6 +68,60 @@ def _guess_image_format(image_bytes: bytes) -> Optional[str]:
         return None
 
 
+def _transcode_first_frame_for_context(image_bytes: bytes) -> Tuple[str, str]:
+    """将图片首帧转码为上下文图片片段可接受的格式，返回 `(image_format, image_base64)`。
+
+    首帧不含透明信息时编码为 JPEG（quality=95，与 `compress_messages` 一致）：MPO 本身就是 JPEG 容器，
+    照片若转码为 PNG 会耗时数秒阻塞事件循环且体积膨胀数倍；仅含透明信息的首帧编码为 PNG 以保留透明度。
+    结果由调用方按图片摘要缓存；无法解码的图片会直接抛出异常，不做静默跳过。
+    """
+    with PILImage.open(BytesIO(image_bytes)) as image:
+        # 多帧图片（如手机相机拍摄的 MPO）只取首帧主图。
+        image.seek(0)
+        # 转码结果不携带 EXIF 方向信息，先按 EXIF 方向摆正，避免照片转码后发生旋转。
+        first_frame = ImageOps.exif_transpose(image)
+        output_buffer = BytesIO()
+        if first_frame.has_transparency_data:
+            # 含透明信息（RGBA/LA，或带 transparency 的 P 等模式）时保留为 PNG，避免透明区域被填黑。
+            if first_frame.mode not in {"RGBA", "LA"}:
+                first_frame = first_frame.convert("RGBA")
+            first_frame.save(output_buffer, format="PNG")
+            transcoded_format = "png"
+        else:
+            # 照片等不透明图片编码为 JPEG：编码耗时和体积都远小于 PNG，不会长时间占住事件循环。
+            if first_frame.mode not in {"RGB", "L"}:
+                first_frame = first_frame.convert("RGB")
+            first_frame.save(output_buffer, format="JPEG", quality=95)
+            transcoded_format = "jpeg"
+    return transcoded_format, base64.b64encode(output_buffer.getvalue()).decode("utf-8")
+
+
+def _encode_image_for_context(image_bytes: bytes, image_format: str) -> Tuple[str, str]:
+    """将图片编码为上下文图片片段可接受的 `(image_format, image_base64)`。
+
+    受支持的格式直接透传原始字节，不做解码；MPO、BMP、TIFF 等其余格式取首帧转码为 JPEG（含透明信息时为 PNG），
+    转码结果按图片摘要放入容量为 `TRANSCODED_IMAGE_CACHE_SIZE` 的 LRU 缓存，同一张图片只解码一次。
+    """
+    if image_format in SUPPORTED_IMAGE_FORMATS:
+        return image_format, base64.b64encode(image_bytes).decode("utf-8")
+
+    image_digest = hashlib.sha256(image_bytes).hexdigest()
+    with _transcoded_image_cache_lock:
+        cached_result = _transcoded_image_cache.pop(image_digest, None)
+        if cached_result is not None:
+            # 重新插入到末尾，标记为最近使用。
+            _transcoded_image_cache[image_digest] = cached_result
+            return cached_result
+
+    transcoded_result = _transcode_first_frame_for_context(image_bytes)
+    with _transcoded_image_cache_lock:
+        _transcoded_image_cache[image_digest] = transcoded_result
+        while len(_transcoded_image_cache) > TRANSCODED_IMAGE_CACHE_SIZE:
+            # 字典按插入顺序迭代，第一个键即最久未使用的条目。
+            _transcoded_image_cache.pop(next(iter(_transcoded_image_cache)))
+    return transcoded_result
+
+
 def _append_emoji_component(
     builder: ContextItemBuilder,
     component: EmojiComponent,
@@ -69,7 +132,7 @@ def _append_emoji_component(
     image_format = _guess_image_format(component.binary_data) if enable_visual_message else None
     if enable_visual_message and image_format and component.binary_data:
         builder.add_text_content("[消息类型]表情包")
-        builder.add_image_content(image_format, base64.b64encode(component.binary_data).decode("utf-8"))
+        builder.add_image_content(*_encode_image_for_context(component.binary_data, image_format))
         return True
 
     normalized_content = component.content.strip()
@@ -90,7 +153,7 @@ def _append_image_component(
     """将图片组件追加到 LLM 消息构建器。"""
     image_format = _guess_image_format(component.binary_data) if enable_visual_message else None
     if enable_visual_message and image_format and component.binary_data:
-        builder.add_image_content(image_format, base64.b64encode(component.binary_data).decode("utf-8"))
+        builder.add_image_content(*_encode_image_for_context(component.binary_data, image_format))
         return True
 
     normalized_content = component.content.strip()
@@ -446,7 +509,6 @@ def _build_item_from_sequence(
 class ReferenceMessageType(str, Enum):
     """参考消息类型。"""
 
-    BEHAVIOR_PATTERN = "behavior_pattern"
     CONTEXT_RESTORE = "context_restore"
     CUSTOM = "custom"
     JARGON = "jargon"
@@ -605,6 +667,7 @@ class ReferenceMessage(LLMContextMessage):
     remaining_uses_value: Optional[int] = 1
     display_prefix: str = "[参考消息]"
     context_item_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    jargon_entries: tuple[tuple[str, str], ...] = ()
 
     @property
     def role(self) -> str:

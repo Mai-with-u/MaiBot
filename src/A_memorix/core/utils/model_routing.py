@@ -108,7 +108,6 @@ def build_single_model_task(model_name: str, template: Any) -> Any:
         model_list=[model_name],
         max_tokens=template.max_tokens,
         temperature=template.temperature,
-        slow_threshold=template.slow_threshold,
         selection_strategy=template.selection_strategy,
         hard_timeout=template.hard_timeout,
     )

@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 import asyncio
 import json
+import os
 import time
 
 from json_repair import repair_json
@@ -21,8 +22,10 @@ from src.person_info.person_info import Person, get_person_id, store_person_memo
 from src.services import memory_service as memory_service_module
 from src.services.memory_service import memory_service
 from src.A_memorix.core.image.component_paths import build_chat_external_ref, iter_message_image_components
+from src.A_memorix.host_service import a_memorix_host_service
 
 from .image_writeback_journal import ImageWritebackJournal
+from .person_fact_reverification import reclassify_historical_person_facts
 
 logger = get_logger("memory_flow_service")
 
@@ -37,6 +40,7 @@ class PersonFactWritebackService:
     def __init__(self) -> None:
         self._queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=256)
         self._worker_task: Optional[asyncio.Task] = None
+        self._reclassify_task: Optional[asyncio.Task] = None
         self._stopping = False
         self._extractor: Any | None = None
 
@@ -45,11 +49,20 @@ class PersonFactWritebackService:
             return
         self._stopping = False
         self._worker_task = asyncio.create_task(self._worker_loop(), name="A_Memorix.person_fact_writeback")
+        self._reclassify_task = asyncio.create_task(self._historical_reclassify_loop(), name="A_Memorix.person_fact_reclassify")
 
     async def shutdown(self) -> None:
         self._stopping = True
         worker = self._worker_task
         self._worker_task = None
+        reverify_task = self._reclassify_task
+        self._reclassify_task = None
+        if reverify_task is not None:
+            reverify_task.cancel()
+            try:
+                await reverify_task
+            except asyncio.CancelledError:
+                pass
         if worker is None:
             return
         worker.cancel()
@@ -59,6 +72,47 @@ class PersonFactWritebackService:
             pass
         except Exception as exc:
             logger.warning(f"关闭人物事实写回 worker 失败: {exc}")
+
+    async def _historical_reclassify_loop(self) -> None:
+        """后台分批恢复旧自动提取事实的分类，持久化游标以支持重启续跑。"""
+
+        state_path = a_memorix_host_service.get_runtime_data_dir() / "person_fact_classification_cursor.json"
+        await asyncio.sleep(5)
+        while not self._stopping:
+            try:
+                if not global_config.a_memorix.integration.person_fact_writeback_enabled:
+                    await asyncio.sleep(30)
+                    continue
+                if not (a_memorix_host_service.get_runtime_data_dir() / "metadata" / "metadata.db").exists():
+                    await asyncio.sleep(30)
+                    continue
+                state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                if not isinstance(state, dict):
+                    raise ValueError("历史人物事实分类进度文件格式错误")
+                cursor = str(state.get("cursor", "") or "")
+                result = await reclassify_historical_person_facts(cursor=cursor, limit=50)
+                next_cursor = str(result["next_cursor"]) if result["has_more"] else ""
+                state_path.parent.mkdir(parents=True, exist_ok=True)
+                temporary_path = state_path.with_suffix(".json.tmp")
+                progress = {
+                    "cursor": next_cursor,
+                    "processed_total": int(state.get("processed_total", 0)) + int(result["processed"]),
+                    "promoted_total": int(state.get("promoted_total", 0)) + int(result["promoted"]),
+                    "updated_at": time.time(),
+                }
+                temporary_path.write_text(json.dumps(progress, ensure_ascii=False), encoding="utf-8")
+                os.replace(temporary_path, state_path)
+                if int(result["promoted"]):
+                    logger.info(f"历史人物事实分类完成一批：晋升 {result['promoted']} 条")
+                if result["has_more"]:
+                    await asyncio.sleep(1)
+                else:
+                    await asyncio.sleep(24 * 3600)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error(f"历史人物事实分类失败: {exc}", exc_info=True)
+                await asyncio.sleep(60)
 
     async def enqueue(self, message: Any) -> None:
         if not bool(global_config.a_memorix.integration.person_fact_writeback_enabled):
@@ -120,7 +174,12 @@ class PersonFactWritebackService:
             for item in evidence.target_messages
             if str(getattr(item, "message_id", "") or "").strip()
         ]
-        for fact in facts:
+        for item in facts:
+            fact = str(item.get("fact", "") if isinstance(item, dict) else item).strip()
+            if not fact:
+                continue
+            # 语义判断由提取模型完成，来源 ID 由本次实际输入的消息确定。
+            # 记录完整的提取上下文，不把模型生成的消息 ID 写成真实证据。
             await store_person_memory_from_answer(
                 person_name,
                 fact,
@@ -128,6 +187,7 @@ class PersonFactWritebackService:
                 person_id=str(getattr(target_person, "person_id", "") or "").strip(),
                 evidence_source="user_supported",
                 evidence_message_ids=evidence_message_ids,
+                fact_claim={"authority": "direct_user", "stability": "stable", "profile_section": "stable_facts"},
             )
 
     def _resolve_target_person(self, message: Any) -> Optional[Person]:
@@ -281,7 +341,8 @@ class PersonFactWritebackService:
         for item in evidence.target_messages[:3]:
             line = PersonFactWritebackService._format_evidence_message_line(item, include_sender=False)
             if line:
-                target_lines.append(f"- {line}")
+                message_id = str(item.message_id or "").strip()
+                target_lines.append(f"- [消息ID: {message_id}] {line}" if message_id else f"- {line}")
 
         context_lines: List[str] = []
         target_ids = {
@@ -327,7 +388,7 @@ class PersonFactWritebackService:
         target_marker = " [目标用户发言]" if mark_target else ""
         return f"{prefix}{text}{target_marker}"
 
-    async def _extract_facts(self, person: Person, reply_text: str, user_evidence_text: str) -> List[str]:
+    async def _extract_facts(self, person: Person, reply_text: str, user_evidence_text: str) -> List[Any]:
         person_name = str(getattr(person, "person_name", "") or getattr(person, "nickname", "") or person.person_id)
         prompt = f"""你要从用户原始发言中提取“关于{person_name}的稳定事实”。
 
@@ -354,8 +415,8 @@ class PersonFactWritebackService:
 - 不确定、猜测、反问
 - 与目标人物无关的信息
 
-严格输出 JSON 数组，例如：
-["他喜欢深夜打游戏", "他养了一只猫"]
+严格输出 JSON 数组，每项包含 fact、evidence_message_id、evidence_quote。证据片段必须逐字摘自目标用户原始发言。请勿编造消息 ID。例：
+[{{"fact":"他喜欢打游戏","evidence_message_id":"消息ID","evidence_quote":"我喜欢打游戏"}}]
 如果没有可写入的事实，输出 []"""
         try:
             if self._extractor is None:
@@ -366,7 +427,31 @@ class PersonFactWritebackService:
         except Exception as exc:
             logger.debug(f"人物事实提取模型调用失败: {exc}")
             return []
-        return self._parse_fact_list(response_result.response)
+        return self._parse_fact_items(response_result.response)
+
+    @staticmethod
+    def _parse_fact_items(raw: str) -> List[Any]:
+        """解析提取结果，同时兼容字符串数组格式。"""
+
+        text = str(raw or "").strip()
+        if not text:
+            return []
+        try:
+            repaired = repair_json(text)
+            payload = json.loads(repaired) if isinstance(repaired, str) else repaired
+        except Exception:
+            return []
+        if not isinstance(payload, list):
+            return []
+        items: List[Any] = []
+        seen = set()
+        for raw_item in payload:
+            fact = str(raw_item.get("fact", "") if isinstance(raw_item, dict) else raw_item or "").strip()
+            if len(fact) < 4 or fact in seen:
+                continue
+            seen.add(fact)
+            items.append(raw_item if isinstance(raw_item, dict) else fact)
+        return items[:5]
 
     @staticmethod
     def _parse_fact_list(raw: str) -> List[str]:

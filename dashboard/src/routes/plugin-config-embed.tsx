@@ -4,7 +4,7 @@ import { PluginConfigPage } from './plugin-config'
 
 export function PluginConfigEmbedPage() {
   return (
-    <EmbedPageShell shellId="embed-plugin-config" title="插件管理 - MaiBot Dashboard">
+    <EmbedPageShell shellId="embed-plugin-config" title="插件扩展 - MaiBot Dashboard">
       <PluginConfigPage />
     </EmbedPageShell>
   )

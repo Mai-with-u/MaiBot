@@ -172,6 +172,8 @@ def build_profile_injection_text(
     *,
     recent_limit: int = 2,
     uncertain_fallback_limit: int = 1,
+    uncertain_candidates: Iterable[object] = (),
+    include_uncertain_fallback: bool = True,
 ) -> str:
     """从结构化画像段落构建紧凑注入文本。"""
 
@@ -191,7 +193,10 @@ def build_profile_injection_text(
         meaningful_found = True
         selected.extend([f"## {title}", *lines, ""])
 
-    if not meaningful_found:
+    selected_uncertain = dedupe_profile_bullets(uncertain_candidates, limit=2)
+    if not section_is_empty(selected_uncertain):
+        selected.extend(["## 不确定信息（未确认，不可当作确定事实）", *selected_uncertain, ""])
+    elif not meaningful_found and include_uncertain_fallback:
         uncertain = sections.get("不确定信息", [])[: max(0, int(uncertain_fallback_limit))]
         if not section_is_empty(uncertain):
             selected.extend(["## 不确定信息（未确认）", *uncertain, ""])

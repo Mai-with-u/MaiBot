@@ -106,3 +106,39 @@ def test_database_failure_keeps_temporary_identity(account_service, monkeypatch:
     assert not result.persisted
     assert result.enabled
     assert service.get_bot_accounts("qq") == {"temporary"}
+
+
+@pytest.mark.parametrize("disabled", [False, True])
+def test_deleted_account_can_be_discovered_again(account_service, disabled: bool) -> None:
+    service, engine = account_service
+    identity = AdapterAccountIdentity(platform="qq", account_id="bot-a")
+    result = service.record_adapter_account(identity, BOT_ACCOUNT_SOURCE_READY)
+    assert result.account is not None and result.account.id is not None
+    if disabled:
+        service.set_disabled("qq", "bot-a", True)
+
+    service.delete_by_id(result.account.id)
+
+    assert service.list_accounts() == []
+    assert service.get_bot_accounts("qq") == {"configured"}
+    with Session(engine) as session:
+        assert session.exec(select(BotPlatformAccount)).first() is None
+    repeated = service.record_adapter_account(identity, BOT_ACCOUNT_SOURCE_INBOUND)
+    assert repeated.persisted and repeated.enabled
+    assert service.get_bot_accounts("qq") == {"bot-a"}
+
+
+def test_deleting_account_preserves_other_identities(account_service) -> None:
+    service, _ = account_service
+    result = service.record_adapter_account(
+        AdapterAccountIdentity(platform="qq", account_id="bot-a"), BOT_ACCOUNT_SOURCE_READY
+    )
+    assert result.account is not None and result.account.id is not None
+    service.record_adapter_account(
+        AdapterAccountIdentity(platform="qq", account_id="bot-b"), BOT_ACCOUNT_SOURCE_READY
+    )
+    service.delete_by_id(result.account.id)
+    assert service.get_bot_accounts("qq") == {"bot-b"}
+    with pytest.raises(LookupError):
+        service.delete_by_id(result.account.id)
+    assert service.get_bot_accounts("qq") == {"bot-b"}

@@ -16,10 +16,10 @@ def get_reply_trigger_mode() -> str:
     return global_config.chat.reply_timing.reply_trigger_mode
 
 
-def is_reply_necessity_trigger_enabled() -> bool:
-    """判断是否启用回复必要性触发门。"""
+def is_dynamic_reply_trigger_enabled() -> bool:
+    """判断是否启用动态回复触发门。"""
 
-    return get_reply_trigger_mode() == "reply_necessity"
+    return get_reply_trigger_mode() == "dynamic"
 
 
 def is_idle_cycle_reason(cycle_end_reason: str) -> bool:

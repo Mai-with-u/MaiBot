@@ -6,7 +6,7 @@ import { MemoryMiniTabs } from '@/components/memory/MemoryMiniTabs'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -114,17 +114,22 @@ export function DeleteTab({ delete: memoryDelete }: DeleteTabProps) {
       {/* 来源删除与删除记录恢复左右并排，窄屏时自动堆叠 */}
       <div className="grid min-w-0 gap-4 xl:grid-cols-2 xl:items-start">
       <Card>
-        <CardContent className="space-y-4 pt-6">
-          <div className="space-y-3 rounded-xl border bg-muted/20 p-4">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Trash2 className="h-4 w-4" />
+            按来源抹除
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-2 min-w-0">
                 <Tabs value={sourceKindFilter} onValueChange={setSourceKindFilter} className="min-w-0">
                   <MemoryMiniTabs items={SOURCE_KIND_FILTER_OPTIONS} />
                 </Tabs>
-                <Badge variant="outline" className="bg-background/70">当前命中 {filteredSources.length} 个来源</Badge>
-                <Badge variant={selectedSources.length > 0 ? 'secondary' : 'outline'} className="bg-background/70">
-                  已选择 {selectedSources.length} 个来源
-                </Badge>
+                <span className="text-xs text-muted-foreground">
+                  {filteredSources.length} 个来源 · 已选 {selectedSources.length}
+                </span>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Button
@@ -137,7 +142,7 @@ export function DeleteTab({ delete: memoryDelete }: DeleteTabProps) {
                   onClick={() => void openSourceDeletePreview()}
                   disabled={selectedSources.length <= 0}
                 >
-                  <Trash2 className="mr-2 h-4 w-4" />
+                  <Trash2 className="h-4 w-4" />
                   预览删除
                 </Button>
               </div>
@@ -160,7 +165,7 @@ export function DeleteTab({ delete: memoryDelete }: DeleteTabProps) {
           </div>
 
           <TooltipProvider delayDuration={150}>
-            <ScrollArea className="h-[320px] rounded-lg border">
+            <ScrollArea data-memory-delete-screen="true" className="h-[360px] rounded-lg border bg-background">
               <Table>
                 <TableHeader className="sticky top-0 bg-background">
                   <TableRow>
@@ -194,9 +199,6 @@ export function DeleteTab({ delete: memoryDelete }: DeleteTabProps) {
                                     <Badge variant="secondary" className="shrink-0">{display.kindLabel}</Badge>
                                   ) : null}
                                 </div>
-                                {display.raw ? (
-                                  <code className="block text-[11px] break-all text-muted-foreground">{display.raw}</code>
-                                ) : null}
                               </div>
                             </TooltipTrigger>
                             <TooltipContent side="right" className="max-w-sm space-y-1">
@@ -226,9 +228,6 @@ export function DeleteTab({ delete: memoryDelete }: DeleteTabProps) {
               </Table>
             </ScrollArea>
           </TooltipProvider>
-          <p className="text-xs text-muted-foreground">
-            表格的段落数来自来源统计。删除会连带清理失去全部证据的关系，实际影响面在预览里确认。
-          </p>
         </CardContent>
       </Card>
 
@@ -236,16 +235,17 @@ export function DeleteTab({ delete: memoryDelete }: DeleteTabProps) {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <RotateCcw className="h-4 w-4" />
-            删除操作恢复
+            删除记录
           </CardTitle>
-          <CardDescription>按列表浏览最近的删除操作，点击记录弹出详情并执行恢复</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-3 rounded-xl border bg-muted/20 p-4 lg:grid-cols-[minmax(0,1fr)_180px_180px]">
+          <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-[minmax(0,1fr)_8rem_8rem]">
             <Input
               value={operationSearch}
               onChange={(event) => setOperationSearch(event.target.value)}
-              placeholder="搜索 operation / reason / requested_by / source"
+              placeholder="搜索记录、原因、发起人或来源"
+              aria-label="搜索删除记录"
+              className="sm:col-span-2 2xl:col-span-1"
             />
             <Select value={operationModeFilter} onValueChange={setOperationModeFilter}>
               <SelectTrigger>
@@ -277,8 +277,8 @@ export function DeleteTab({ delete: memoryDelete }: DeleteTabProps) {
             <span>第 {operationPage} / {deleteOperationPageCount} 页，每页显示 {DELETE_OPERATION_PAGE_SIZE} 条</span>
           </div>
 
-          <ScrollArea className="h-[320px] rounded-lg border">
-            <div className="space-y-3 p-3">
+          <ScrollArea data-memory-delete-screen="true" className="h-[360px] rounded-lg border bg-background">
+            <div className="divide-y">
               {pagedDeleteOperations.length > 0 ? pagedDeleteOperations.map((operation) => {
                 const summary = (operation.summary ?? {}) as Record<string, unknown>
                 const counts = ((summary.counts as Record<string, number> | undefined) ?? {})
@@ -287,12 +287,12 @@ export function DeleteTab({ delete: memoryDelete }: DeleteTabProps) {
                   <button
                     key={operation.operation_id}
                     type="button"
+                    data-memory-delete-operation="true"
+                    data-selected={isSelected}
                     onClick={() => openOperationDetail(operation.operation_id)}
                     className={cn(
-                      'w-full rounded-xl border p-4 text-left transition-colors',
-                      isSelected
-                        ? 'border-primary bg-primary/5 shadow-sm'
-                        : 'bg-muted/20 hover:border-primary/40 hover:bg-muted/40',
+                      'w-full p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+                      isSelected && 'bg-primary/5',
                     )}
                   >
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -310,9 +310,11 @@ export function DeleteTab({ delete: memoryDelete }: DeleteTabProps) {
                           <Badge variant="outline">
                             {formatDeleteOperationMode(String(operation.mode ?? ''))}
                           </Badge>
+                          <span className="text-xs text-muted-foreground">
+                            {formatDeleteOperationTime(operation.created_at)}
+                          </span>
                         </div>
-                        <div className="font-mono text-xs break-all">{operation.operation_id}</div>
-                        <div className="text-sm text-muted-foreground">
+                        <div className="text-sm break-words">
                           {operation.reason || '未填写原因'}
                         </div>
                       </div>
@@ -324,13 +326,10 @@ export function DeleteTab({ delete: memoryDelete }: DeleteTabProps) {
                         <span>来源 {Number(counts.sources ?? 0)}</span>
                       </div>
                     </div>
-                    <div className="mt-3 text-xs text-muted-foreground">
-                      {formatDeleteOperationTime(operation.created_at)}
-                    </div>
                   </button>
                 )
               }) : (
-                <div className="rounded-lg border border-dashed bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+                <div className="p-6 text-center text-sm text-muted-foreground">
                   当前筛选条件下没有删除操作
                 </div>
               )}
@@ -346,9 +345,6 @@ export function DeleteTab({ delete: memoryDelete }: DeleteTabProps) {
             >
               上一页
             </Button>
-            <div className="text-xs text-muted-foreground">
-              支持按删除记录、模式、状态、发起人和来源检索
-            </div>
             <Button
               variant="outline"
               size="sm"
@@ -539,9 +535,6 @@ export function DeleteTab({ delete: memoryDelete }: DeleteTabProps) {
                       >
                         上一页
                       </Button>
-                      <div className="text-xs text-muted-foreground">
-                        支持按对象类型、哈希、对象键和来源检索
-                      </div>
                       <Button
                         variant="outline"
                         size="sm"

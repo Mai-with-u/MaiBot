@@ -33,7 +33,6 @@ describe('installPlugin', () => {
         repository_url: 'https://github.com/user/demo.git',
         branch: 'main',
         version: 'latest',
-        pinned: false,
       },
       errorMessage: '安装插件失败',
     })
@@ -100,7 +99,6 @@ describe('updatePlugin', () => {
         repository_url: 'https://github.com/user/demo.git',
         branch: 'main',
         version: 'latest',
-        pinned: false,
       },
       errorMessage: '更新插件失败',
     })

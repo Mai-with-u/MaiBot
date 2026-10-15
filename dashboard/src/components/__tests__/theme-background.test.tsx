@@ -176,7 +176,6 @@ describe('ThemeProvider', () => {
     delete document.documentElement.dataset.retroTextureStyle
     document.documentElement.style.removeProperty('--retro-paper-warmth')
     document.documentElement.style.removeProperty('--retro-panel-depth')
-    document.documentElement.style.removeProperty('--retro-stroke-scale')
     document.documentElement.style.removeProperty('--retro-configured-paper-texture')
     document.documentElement.style.removeProperty('--retro-paper-texture-size')
     vi.clearAllMocks()

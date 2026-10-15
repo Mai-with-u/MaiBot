@@ -47,6 +47,7 @@ const richerData: DetailedStatisticsData = {
         tokens_per_hour: 0,
       },
       models: [],
+      task_groups: [],
       modules: [],
       request_types: [],
       chats: [],

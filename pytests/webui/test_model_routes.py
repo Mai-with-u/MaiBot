@@ -305,6 +305,57 @@ model_list = ["embed-model"]
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model_identifier", "image_task_config"),
+    [
+        ("Qwen/Qwen3-VL-Embedding-8B", ""),
+        ("custom-vector-model", '[model_task_config.image_embedding]\nmodel_list = ["my-vector"]'),
+    ],
+)
+async def test_test_model_capability_tests_visual_embedding_via_images(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    model_identifier: str,
+    image_task_config: str,
+) -> None:
+    """模型标识或图片嵌入任务应让模型测试发送图片，而非走对话或文本嵌入。"""
+    model_routes = load_model_routes(monkeypatch)
+    (tmp_path / "model_config.toml").write_text(
+        f'[[models]]\nname = "my-vector"\nmodel_identifier = "{model_identifier}"\n'
+        f'api_provider = "Fake"\n\n{image_task_config}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(model_routes, "CONFIG_DIR", str(tmp_path))
+    images: list[bytes] = []
+
+    class FakeOrchestrator:
+        def __init__(self, model_name: str):
+            assert model_name == "my-vector"
+
+        async def get_image_embedding(self, image_bytes: bytes, **kwargs: Any):
+            images.append(image_bytes)
+            return SimpleNamespace(embedding=[0.1, 0.2])
+
+        async def get_embedding(self, embedding_input: str, **kwargs: Any):
+            raise AssertionError("视觉嵌入模型不应调用文本嵌入接口")
+
+        async def generate_response_with_context_async(self, **kwargs: Any):
+            raise AssertionError("视觉嵌入模型不应调用对话接口")
+
+    monkeypatch.setattr(model_routes, "_SingleModelTestOrchestrator", FakeOrchestrator)
+
+    result = await model_routes.test_model_capability(model_routes.ModelTestRequest(model_name="my-vector"))
+
+    assert result.success is True
+    assert result.test_kind == "image_embedding"
+    assert result.embedding_dimension == 2
+    assert len(images) == 3
+    assert images[0].startswith(b"\x89PNG\r\n\x1a\n")
+    assert images[0] == images[1]
+    assert images[0] != images[2]
+
+
+@pytest.mark.asyncio
 async def test_test_model_capability_keeps_chat_test_for_non_embedding_model(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,

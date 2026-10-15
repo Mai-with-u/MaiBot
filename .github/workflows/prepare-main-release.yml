@@ -1,14 +1,6 @@
 name: Prepare Main Release
 
 on:
-  pull_request:
-    branches:
-      - main
-    types:
-      - opened
-      - ready_for_review
-      - synchronize
-      - reopened
   workflow_dispatch:
 
 concurrency:
@@ -21,11 +13,6 @@ permissions:
 jobs:
   prepare-dashboard-release:
     name: Prepare Dashboard Stable Release
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.ref == 'dev' &&
-      github.event.pull_request.draft == false)
     runs-on: ubuntu-24.04
     environment: webui
     steps:
@@ -146,7 +133,8 @@ jobs:
           uv run --no-project --with packaging --with tomlkit python .github/scripts/update_dashboard_stable_dependency.py
 
       - name: Update dependency lock
-        run: uv lock --upgrade-package maibot-dashboard
+        # 刷新发布前可能已缓存的 Dashboard 索引，其他依赖保持正常缓存。
+        run: uv lock --upgrade-package maibot-dashboard --refresh-package maibot-dashboard
 
       - name: Verify locked runtime dependencies
         env:

@@ -13,7 +13,7 @@ const PLUGIN_REPO_NAME = 'plugin-repo'
 const PLUGIN_REPO_BRANCH = 'main'
 const PLUGIN_DETAILS_FILE = 'plugin_details.json'
 const PLUGIN_LIST_CACHE_TTL = 5 * 60 * 1000
-const PLUGIN_LIST_STORAGE_KEY = 'maibot-plugin-market-list-cache-v2'
+const PLUGIN_LIST_STORAGE_KEY = 'maibot-plugin-market-list-cache-v3'
 const PLUGIN_TYPES = new Set<PluginType>([
   'adapter',
   'chat',
@@ -30,8 +30,17 @@ const PLUGIN_TYPES = new Set<PluginType>([
   'other',
 ])
 
-let pluginListCache: { timestamp: number; result: PluginInfo[] } | null = null
-let pluginListRequest: Promise<PluginInfo[]> | null = null
+const pluginListCaches = new Map<boolean, { timestamp: number; result: PluginInfo[] }>()
+const pluginListRequests = new Map<boolean, Promise<PluginInfo[]>>()
+let cacheGeneration = 0
+
+export function invalidatePluginMarketCache(): void {
+  cacheGeneration += 1
+  pluginListCaches.clear()
+  pluginListRequests.clear()
+  localStorage.removeItem(PLUGIN_LIST_STORAGE_KEY)
+  localStorage.removeItem(`${PLUGIN_LIST_STORAGE_KEY}-compatible`)
+}
 
 interface PluginListStorageCache {
   timestamp: number
@@ -171,13 +180,13 @@ function normalizeDateString(value: unknown): string {
   return ''
 }
 
-function readPluginListStorageCache(): PluginListStorageCache | null {
+function readPluginListStorageCache(compatibleOnly: boolean): PluginListStorageCache | null {
   if (typeof localStorage === 'undefined') {
     return null
   }
 
   try {
-    const rawCache = localStorage.getItem(PLUGIN_LIST_STORAGE_KEY)
+    const rawCache = localStorage.getItem(compatibleOnly ? `${PLUGIN_LIST_STORAGE_KEY}-compatible` : PLUGIN_LIST_STORAGE_KEY)
     if (!rawCache) {
       return null
     }
@@ -197,14 +206,14 @@ function readPluginListStorageCache(): PluginListStorageCache | null {
   }
 }
 
-function writePluginListStorageCache(data: PluginInfo[]): void {
+function writePluginListStorageCache(data: PluginInfo[], compatibleOnly: boolean): void {
   if (typeof localStorage === 'undefined') {
     return
   }
 
   try {
     localStorage.setItem(
-      PLUGIN_LIST_STORAGE_KEY,
+      compatibleOnly ? `${PLUGIN_LIST_STORAGE_KEY}-compatible` : PLUGIN_LIST_STORAGE_KEY,
       JSON.stringify({
         timestamp: Date.now(),
         data,
@@ -215,46 +224,62 @@ function writePluginListStorageCache(data: PluginInfo[]): void {
   }
 }
 
-export function getCachedPluginList(): PluginInfo[] | null {
+export function getCachedPluginList(compatibleOnly = false): PluginInfo[] | null {
+  const pluginListCache = pluginListCaches.get(compatibleOnly)
   if (pluginListCache) {
     return pluginListCache.result
   }
 
-  const storedCache = readPluginListStorageCache()
+  const storedCache = readPluginListStorageCache(compatibleOnly)
   if (!storedCache) {
     return null
   }
 
-  pluginListCache = { timestamp: storedCache.timestamp, result: storedCache.data }
+  pluginListCaches.set(compatibleOnly, { timestamp: storedCache.timestamp, result: storedCache.data })
   return storedCache.data
 }
 
 /**
  * 从远程获取插件列表(通过后端代理避免 CORS)
  */
-async function fetchPluginListUncached(): Promise<PluginInfo[]> {
-  const result = await backendApi.post<{ success: boolean; data: string; error?: string }>(
-    '/api/webui/plugins/fetch-raw',
-    {
-      body: {
-        owner: PLUGIN_REPO_OWNER,
-        repo: PLUGIN_REPO_NAME,
-        branch: PLUGIN_REPO_BRANCH,
-        file_path: PLUGIN_DETAILS_FILE,
-      },
-      errorMessage: '获取插件列表失败',
-    }
-  )
-
-  // 业务级失败：该 endpoint 的错误字段是 error 而非 message，不走 requireSuccess
-  if (!result.success || !result.data) {
-    throw new ApiError(result.error || '获取插件列表失败', { detail: result })
-  }
-
-  const data: PluginApiResponse[] = JSON.parse(result.data)
-  const catalog = await backendApi.get<{ plugins: PluginReleaseCatalog[] }>('/api/webui/plugins/releases', {
-    errorMessage: '获取插件发布版本失败',
+async function fetchPluginListUncached(compatibleOnly: boolean): Promise<PluginInfo[]> {
+  const market = await backendApi.get<{
+    source: 'github' | 'service'
+    details: PluginApiResponse[]
+    catalog: { plugins: PluginReleaseCatalog[] }
+    stats: Record<string, import('@/lib/plugin-stats').PluginStatsData>
+  }>('/api/webui/plugins/marketplace', {
+    query: { compatible_only: compatibleOnly }, errorMessage: '获取插件市场数据失败',
   })
+  let data: PluginApiResponse[]
+  let catalog: { plugins: PluginReleaseCatalog[] }
+  if (market.source === 'github') {
+    const result = await backendApi.post<{ success: boolean; data: string; error?: string }>(
+      '/api/webui/plugins/fetch-raw',
+      {
+        body: {
+          owner: PLUGIN_REPO_OWNER,
+          repo: PLUGIN_REPO_NAME,
+          branch: PLUGIN_REPO_BRANCH,
+          file_path: PLUGIN_DETAILS_FILE,
+        },
+        errorMessage: '获取插件列表失败',
+      }
+    )
+
+    // 业务级失败：该 endpoint 的错误字段是 error 而非 message，不走 requireSuccess
+    if (!result.success || !result.data) {
+      throw new ApiError(result.error || '获取插件列表失败', { detail: result })
+    }
+
+    data = JSON.parse(result.data)
+    catalog = await backendApi.get<{ plugins: PluginReleaseCatalog[] }>('/api/webui/plugins/releases', {
+      errorMessage: '获取插件发布版本失败',
+    })
+  } else {
+    data = market.details
+    catalog = market.catalog
+  }
   // 部分插件只在 Tag 中保留有效清单，即使分支详情同步失败也要保留发布版本入口。
   for (const entry of catalog.plugins) {
     if (data.some((item) => item.id === entry.id || item.manifest?.id === entry.manifest_id)) continue
@@ -291,6 +316,8 @@ async function fetchPluginListUncached(): Promise<PluginInfo[]> {
       const recommended = releases?.versions.find((release) => release.version === releases.recommended_version)
 
       return {
+        market_data_source: market.source,
+        marketplace_stats: market.source === 'service' ? market.stats[pluginId] : undefined,
         id: pluginId,
         marketplace_id: marketplaceId,
         marketplace_order: index,
@@ -298,9 +325,9 @@ async function fetchPluginListUncached(): Promise<PluginInfo[]> {
         manifest: normalizePluginManifest({ ...(recommended?.manifest || item.manifest), id: pluginId }),
         releases,
         assets: normalizePluginAssets(item.assets),
-        downloads: 0,
-        rating: 0,
-        review_count: 0,
+        downloads: market.source === 'service' ? market.stats[pluginId]?.downloads ?? 0 : 0,
+        rating: market.source === 'service' ? market.stats[pluginId]?.rating ?? 0 : 0,
+        review_count: market.source === 'service' ? market.stats[pluginId]?.comment_count ?? 0 : 0,
         installed: false,
         source: 'market' as const,
         changelog: normalizeOptionalString(item.changelog),
@@ -313,8 +340,10 @@ async function fetchPluginListUncached(): Promise<PluginInfo[]> {
 }
 
 export async function fetchPluginList(
-  options: { forceRefresh?: boolean } = {}
+  options: { forceRefresh?: boolean; compatibleOnly?: boolean } = {}
 ): Promise<PluginInfo[]> {
+  const compatibleOnly = options.compatibleOnly ?? false
+  const pluginListCache = pluginListCaches.get(compatibleOnly)
   if (
     !options.forceRefresh &&
     pluginListCache &&
@@ -324,27 +353,52 @@ export async function fetchPluginList(
   }
 
   if (!options.forceRefresh && !pluginListCache) {
-    const storedCache = readPluginListStorageCache()
+    const storedCache = readPluginListStorageCache(compatibleOnly)
     if (storedCache && Date.now() - storedCache.timestamp < PLUGIN_LIST_CACHE_TTL) {
-      pluginListCache = { timestamp: storedCache.timestamp, result: storedCache.data }
+      pluginListCaches.set(compatibleOnly, { timestamp: storedCache.timestamp, result: storedCache.data })
       return storedCache.data
     }
   }
 
+  let pluginListRequest = pluginListRequests.get(compatibleOnly)
   if (!pluginListRequest || options.forceRefresh) {
+    const generation = cacheGeneration
     // 仅在成功（fetchPluginListUncached 未抛错）时写入内存/本地缓存
-    pluginListRequest = fetchPluginListUncached()
+    const request: Promise<PluginInfo[]> = fetchPluginListUncached(compatibleOnly)
       .then((result) => {
-        pluginListCache = { timestamp: Date.now(), result }
-        writePluginListStorageCache(result)
+        if (generation === cacheGeneration && pluginListRequests.get(compatibleOnly) === request) {
+          pluginListCaches.set(compatibleOnly, { timestamp: Date.now(), result })
+          writePluginListStorageCache(result, compatibleOnly)
+        }
         return result
       })
       .finally(() => {
-        pluginListRequest = null
+        if (pluginListRequests.get(compatibleOnly) === request) pluginListRequests.delete(compatibleOnly)
       })
+    pluginListRequest = request
+    pluginListRequests.set(compatibleOnly, request)
   }
 
   return pluginListRequest
+}
+
+/** 插件中心仅在打开详情时拉取完整历史版本。 */
+export async function fetchPluginDetail(plugin: PluginInfo): Promise<PluginInfo> {
+  if (plugin.market_data_source !== 'service') return plugin
+  const detail = await backendApi.get<{
+    manifest: PluginApiResponse['manifest']
+    releases: PluginReleaseCatalog
+  }>(`/api/webui/plugins/marketplace/${encodeURIComponent(plugin.id)}`, {
+    errorMessage: '获取插件详情失败',
+  })
+  const recommended = detail.releases.versions.find(
+    (release) => release.version === detail.releases.recommended_version
+  )
+  return {
+    ...plugin,
+    manifest: normalizePluginManifest(recommended?.manifest ?? detail.manifest),
+    releases: detail.releases,
+  }
 }
 
 /**

@@ -6,6 +6,7 @@
  * 公开函数遵循 throw 契约：成功返回数据，失败抛 ApiError。
  */
 import { ApiError, backendApi, requireSuccess } from '@/lib/http'
+import type { VectorSpaceList } from '@/types/vector-space'
 import type {
   BatchReviewItem,
   BatchReviewResponse,
@@ -37,6 +38,34 @@ import type {
 } from '@/types/expression'
 
 const API_BASE = '/api/webui/expression'
+
+export async function getExpressionVectorSpaces(): Promise<VectorSpaceList> {
+  const data = await backendApi.get<VectorSpaceList>(`${API_BASE}/runtime/vectors/spaces`, {
+    errorMessage: '获取表达向量库失败',
+  })
+  return requireSuccess(data, '获取表达向量库失败')
+}
+
+export async function deleteExpressionVectorSpace(spaceId: string): Promise<{ success: boolean }> {
+  const data = await backendApi.delete<{ success: boolean }>(
+    `${API_BASE}/runtime/vectors/spaces/${encodeURIComponent(spaceId)}`,
+    { errorMessage: '删除表达向量库失败' }
+  )
+  return requireSuccess(data, '删除表达向量库失败')
+}
+
+export interface ExpressionVectorBuildProgress {
+  status: 'disabled' | 'unconfigured' | 'waiting_profile' | 'pending' | 'running' | 'completed'
+  completed: number
+  total: number
+  percent: number
+}
+
+export function getExpressionVectorBuildProgress(): Promise<ExpressionVectorBuildProgress> {
+  return backendApi.get<ExpressionVectorBuildProgress>(`${API_BASE}/vector-build-progress`, {
+    errorMessage: '获取表达库构建进度失败',
+  })
+}
 
 /**
  * 获取聊天列表

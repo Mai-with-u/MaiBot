@@ -337,6 +337,40 @@ class MemoryEmbeddingStateService(KernelServiceBase):
         except Exception as exc:
             logger.warning(f"登记 paragraph 向量回填任务失败: {exc}")
 
+    def _load_vector_stores_for_runtime(self, *, require_existing: bool = False) -> None:
+        """启动和指纹恢复共用加载规则，仅在双池未就绪时校验旧单池。"""
+        if self._dual_vector_pools_config_enabled() and self._reload_dual_vector_stores_from_disk():
+            return
+        if self._legacy_vector_view is not None:
+            return
+
+        assert self.vector_store is not None
+        if not self.vector_store.has_data():
+            if require_existing:
+                raise VectorStoreIntegrityError(
+                    "未找到可加载的向量世代：双池未就绪且旧单池元数据不存在",
+                    error_code="vector_generation_missing",
+                    dimension_status="unknown",
+                    fingerprint_status="unknown",
+                )
+            return
+
+        # 单池是已支持的历史存储格式；必须通过真实指纹和文件完整性校验才能复用。
+        expected_fingerprint = self._current_embedding_fingerprint_for_validation()
+        if expected_fingerprint is None:
+            raise VectorStoreIntegrityError(
+                "当前 Embedding 指纹尚未经过真实请求确认",
+                error_code="embedding_fingerprint_unavailable",
+                dimension_status="unknown",
+                fingerprint_status="unknown",
+            )
+        self.vector_store.load(
+            expected_embedding_fingerprint=expected_fingerprint,
+            v1_valid_hashes=self._v1_valid_hashes_for_pool("single"),
+            v1_evidence_root=self._v1_reconciliation_evidence_root(),
+        )
+        self.vector_store.warmup_index(force_train=True)
+
     async def _restore_vector_channel_after_embedding_recovery(self) -> bool:
         if str(self._vector_health.get("error_code", "") or "") != "embedding_fingerprint_unavailable":
             return False
@@ -347,30 +381,10 @@ class MemoryEmbeddingStateService(KernelServiceBase):
                     self._vectors_root(),
                     dimension=self._current_embedding_status_dimension(),
                 )
-                if self._dual_vector_pools_config_enabled():
-                    loaded = self._reload_dual_vector_stores_from_disk()
-                    if not loaded:
-                        raise RuntimeError("Embedding 恢复后未找到可加载的双池向量世代")
-                else:
-                    expected_fingerprint = self._current_embedding_fingerprint_for_validation()
-                    if expected_fingerprint is None:
-                        raise VectorStoreIntegrityError(
-                            "当前 Embedding 指纹尚未经过真实请求确认",
-                            error_code="embedding_fingerprint_unavailable",
-                            dimension_status="unknown",
-                            fingerprint_status="unknown",
-                        )
-                    if not self.vector_store.has_data():
-                        raise RuntimeError("Embedding 恢复后未找到可加载的单池向量世代")
-                    self.vector_store.load(
-                        expected_embedding_fingerprint=expected_fingerprint,
-                        v1_valid_hashes=self._v1_valid_hashes_for_pool("single"),
-                        v1_evidence_root=self._v1_reconciliation_evidence_root(),
-                    )
-                    self.vector_store.warmup_index(force_train=True)
+                self._load_vector_stores_for_runtime(require_existing=True)
+                if not self._dual_vector_pools_config_enabled():
                     self.paragraph_vector_store = self._make_vector_store(self._paragraph_vector_dir())
                     self.graph_vector_store = self._make_vector_store(self._graph_vector_dir())
-                    loaded = True
             except VectorStoreIntegrityError as exc:
                 if not self._recover_known_vector_failure(exc):
                     raise
@@ -439,6 +453,18 @@ class MemoryEmbeddingStateService(KernelServiceBase):
         report = await self._refresh_runtime_self_check(sample_text=sample_text)
         checked_at = float(report.get("checked_at") or time.time())
         ok = bool(report.get("ok", False))
+        if ok or report.get("code") == "embedding_dimension_mismatch":
+            space_result = await self._vector_space_service.synchronize()
+            if space_result.get("changed"):
+                return {
+                    "success": True,
+                    "recovered": True,
+                    "vector_restored": True,
+                    "vector_available": True,
+                    "vector_health": self._vector_health_snapshot(),
+                    "report": self._runtime_facade._runtime_self_check_report,
+                    "space": space_result,
+                }
         dimension_mismatch = self._apply_self_check_dimension_result(report)
         if dimension_mismatch:
             self._set_embedding_degraded(active=True, reason=dimension_mismatch, checked_at=checked_at)
@@ -451,7 +477,7 @@ class MemoryEmbeddingStateService(KernelServiceBase):
 
         if ok:
             self._set_embedding_degraded(active=False, checked_at=checked_at)
-            await self._restore_vector_channel_after_embedding_recovery()
+            vector_restored = await self._restore_vector_channel_after_embedding_recovery()
             backfill_result: Dict[str, Any] = {}
             if self._paragraph_vector_backfill_enabled():
                 backfill_result = await self._run_paragraph_backfill_once(
@@ -462,6 +488,12 @@ class MemoryEmbeddingStateService(KernelServiceBase):
             return {
                 "success": True,
                 "recovered": True,
+                # 保留 Embedding 恢复的既有语义，独立报告向量通道能否实际读写。
+                "vector_restored": vector_restored,
+                "vector_available": (
+                    self._runtime_capabilities["vector_read"] and self._runtime_capabilities["vector_write"]
+                ),
+                "vector_health": self._vector_health_snapshot(),
                 "report": report,
                 "backfill": backfill_result,
             }

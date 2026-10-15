@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import { updateModelConfigSection } from '@/lib/config-api'
 
 import type { ModelInfo, ModelTaskConfig } from '../types'
+import { serializeModel } from '../serializeModel'
 
 type EnqueueConfigWrite = (operation: () => Promise<void>) => Promise<void>
 
@@ -24,6 +25,8 @@ interface UseModelAutoSaveOptions {
   onSavingChange?: (saving: boolean) => void
   /** 未保存变更回调 */
   onUnsavedChange?: (hasUnsaved: boolean) => void
+  /** 自动保存失败时通知页面 */
+  onSaveError?: (domain: 'models' | 'taskConfig', error: unknown) => void
 }
 
 export interface ModelSaveBarrierCheckpoint {
@@ -78,6 +81,7 @@ export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAuto
     debounceMs = 2000,
     onSavingChange,
     onUnsavedChange,
+    onSaveError,
   } = options
 
   const modelsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -128,33 +132,9 @@ export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAuto
     }
   }, [])
 
-  // 清理模型中的 null 值（TOML 不支持 null）。
-  const cleanModelForSave = useCallback((model: ModelInfo): ModelInfo => {
-    const cleaned: ModelInfo = {
-      model_identifier: model.model_identifier,
-      name: model.name,
-      api_provider: model.api_provider,
-      price_in: model.price_in ?? 0,
-      price_out: model.price_out ?? 0,
-      cache_price_in: model.cache_price_in ?? 0,
-      price_periods: model.price_periods?.map((period) => ({ ...period })),
-      visual: model.visual ?? false,
-      force_stream_mode: model.force_stream_mode ?? false,
-      extra_params: model.extra_params ?? {},
-    }
-    // 只有在有值时才添加可选字段。
-    if (model.temperature != null) {
-      cleaned.temperature = model.temperature
-    }
-    if (model.max_tokens != null) {
-      cleaned.max_tokens = model.max_tokens
-    }
-    return cleaned
-  }, [])
-
   const snapshotModels = useCallback(
-    (nextModels: ModelInfo[]): string => JSON.stringify(nextModels.map(cleanModelForSave)),
-    [cleanModelForSave]
+    (nextModels: ModelInfo[]): string => JSON.stringify(nextModels.map(serializeModel)),
+    []
   )
 
   const snapshotTaskConfig = useCallback(
@@ -239,7 +219,7 @@ export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAuto
 
       return enqueueWrite(async () => {
         try {
-          const cleanedModels = newModels.map(cleanModelForSave)
+          const cleanedModels = newModels.map(serializeModel)
           await updateModelConfigSection('models', cleanedModels)
           if (
             generation === generationsRef.current.models &&
@@ -250,6 +230,7 @@ export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAuto
           }
         } catch (error) {
           console.error('自动保存模型列表失败:', error)
+          onSaveError?.('models', error)
           if (generation === generationsRef.current.models) {
             setDomainDirty('models', true)
           }
@@ -259,7 +240,7 @@ export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAuto
         }
       })
     },
-    [cleanModelForSave, enqueueWrite, setDomainDirty, updateSavingCount]
+    [enqueueWrite, onSaveError, setDomainDirty, updateSavingCount]
   )
 
   const queueTaskConfigSave = useCallback(
@@ -279,6 +260,7 @@ export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAuto
           }
         } catch (error) {
           console.error('自动保存任务配置失败:', error)
+          onSaveError?.('taskConfig', error)
           if (generation === generationsRef.current.taskConfig) {
             setDomainDirty('taskConfig', true)
           }
@@ -288,8 +270,16 @@ export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAuto
         }
       })
     },
-    [enqueueWrite, setDomainDirty, updateSavingCount]
+    [enqueueWrite, onSaveError, setDomainDirty, updateSavingCount]
   )
+
+  // 先登记卸载状态，后面的定时器清理才能区分重新编辑与离开页面。
+  useEffect(() => {
+    isMountedRef.current = true
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
 
   // 监听 models 变化。
   useEffect(() => {
@@ -317,6 +307,10 @@ export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAuto
       if (modelsTimerRef.current) {
         clearTimeout(modelsTimerRef.current)
         modelsTimerRef.current = null
+        // 离开页面时立即入队，不能丢弃防抖期间尚未保存的最新草稿。
+        if (!isMountedRef.current) {
+          void queueModelsSave(models, snapshot, generation)
+        }
       }
     }
   }, [models, debounceMs, queueModelsSave, setDomainDirty, snapshotModels])
@@ -347,17 +341,12 @@ export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAuto
       if (taskConfigTimerRef.current) {
         clearTimeout(taskConfigTimerRef.current)
         taskConfigTimerRef.current = null
+        if (!isMountedRef.current) {
+          void queueTaskConfigSave(taskConfig, snapshot, generation)
+        }
       }
     }
   }, [taskConfig, debounceMs, queueTaskConfigSave, setDomainDirty, snapshotTaskConfig])
-
-  useEffect(() => {
-    isMountedRef.current = true
-    return () => {
-      isMountedRef.current = false
-      cancelPendingTimers()
-    }
-  }, [cancelPendingTimers])
 
   return {
     cancelPendingTimers,

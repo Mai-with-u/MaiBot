@@ -49,6 +49,7 @@ class RelationWriteService:
         embedding_manager: Any,
         graph_vector_store: Any = None,
         use_typed_relation_ids: bool = False,
+        record_embedding_input: Optional[Callable[[str, str, str], None]] = None,
     ):
         self.metadata_store = metadata_store
         self.graph_store = graph_store
@@ -56,6 +57,7 @@ class RelationWriteService:
         self.graph_vector_store = graph_vector_store if graph_vector_store is not None else vector_store
         self.embedding_manager = embedding_manager
         self.use_typed_relation_ids = bool(use_typed_relation_ids)
+        self.record_embedding_input = record_embedding_input
 
     @staticmethod
     def build_relation_vector_text(subject: str, predicate: str, obj: str) -> str:
@@ -202,6 +204,10 @@ class RelationWriteService:
                         raise RuntimeError(
                             f"关系批量向量写入不完整: missing={len(missing_hashes)}"
                         )
+                    if self.record_embedding_input is not None:
+                        for record in records_to_add:
+                            self.record_embedding_input("relation", record.hash_value,
+                                self.build_relation_vector_text(record.subject, record.predicate, record.obj))
                     added_hashes.update(record.hash_value for record in records_to_add)
             except Exception as exc:
                 err = str(exc)[:max_error_len]
@@ -416,6 +422,8 @@ class RelationWriteService:
             )
             if vector_id not in target_store:
                 raise RuntimeError("关系向量写入后成员校验失败")
+            if self.record_embedding_input is not None:
+                self.record_embedding_input("relation", hash_value, vector_text)
             self.metadata_store.set_relation_vector_state(hash_value, "ready")
             logger.info(
                 "metric.relation_vector_write_success=1 "

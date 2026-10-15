@@ -14,6 +14,7 @@ import time
 import structlog
 import tomlkit
 
+from .paths import get_instance_root
 from .logger_color_and_mapping import MODULE_ALIASES, RESET_COLOR, CONVERTED_MODULE_COLORS as MODULE_COLORS
 
 
@@ -21,7 +22,7 @@ from .logger_color_and_mapping import MODULE_ALIASES, RESET_COLOR, CONVERTED_MOD
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(exist_ok=True)
 logger_file = Path(__file__).resolve()
-PROJECT_ROOT = logger_file.parent.parent.parent.resolve()
+PROJECT_ROOT = get_instance_root()
 # 全局handler实例，避免重复创建
 _file_handler = None
 _console_handler = None

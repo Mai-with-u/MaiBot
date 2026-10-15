@@ -193,6 +193,16 @@ async function openProfileDetail(name: string) {
 }
 
 describe('ProfileConsole 画像库加载', () => {
+  it('展示待确认事实总数', async () => {
+    vi.mocked(memoryApi.getMemoryProfileEvidence).mockResolvedValue({
+      ...makeEvidencePayload('p1'),
+      uncertain_fact_count: 257,
+    })
+    await renderManager()
+    await openProfileDetail('张三')
+    expect(await screen.findByText(/待确认事实 257 条/)).toBeInTheDocument()
+  })
+
   it('画像详情默认收起，点击候选项才弹出弹窗，关闭后回到列表', async () => {
     await renderManager()
 
@@ -209,14 +219,7 @@ describe('ProfileConsole 画像库加载', () => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog', { name: '画像详情' })).not.toBeInTheDocument()
     })
-    expect(screen.getByText('人物画像查询')).toBeInTheDocument()
-  })
-
-  it('画像列表内容较少时自然收缩，较多时按视口限制最大高度', async () => {
-    await renderManager()
-
-    expect(screen.getByLabelText('人物画像列表')).toHaveClass('max-h-[clamp(32.5rem,70vh,52rem)]')
-    expect(screen.getByLabelText('人物画像列表')).not.toHaveClass('h-[clamp(32.5rem,70vh,52rem)]')
+    expect(screen.queryByText('人物画像查询')).not.toBeInTheDocument()
   })
 
   it('挂载时加载画像库并自动选中第一个人物，同时拉取其证据', async () => {
@@ -277,34 +280,6 @@ describe('ProfileConsole 画像库加载', () => {
 })
 
 describe('ProfileConsole 查询流程', () => {
-  it('默认精确查询，同一个切换按钮点两次可在两种查询方式间往返', async () => {
-    await renderManager()
-
-    // 精确模式：按钮显示的是「将切换到的模式」
-    expect(screen.getByLabelText('平台')).toBeInTheDocument()
-    expect(screen.getByLabelText('用户账号')).toBeInTheDocument()
-    expect(screen.queryByLabelText('人物关键词')).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: '切换为模糊查询' }))
-
-    // 已切到模糊：按钮改标注「精确查询」，输入区换成关键词（输入区切换带退场动画，需等待卸载）
-    await waitFor(() => {
-      expect(screen.getByLabelText('人物关键词')).toBeInTheDocument()
-      expect(screen.queryByLabelText('平台')).not.toBeInTheDocument()
-      expect(screen.queryByLabelText('用户账号')).not.toBeInTheDocument()
-    })
-    expect(screen.queryByLabelText('强制刷新画像')).not.toBeInTheDocument()
-
-    // 再点同一个按钮滚回精确，平台/用户账号重新出现
-    fireEvent.click(screen.getByRole('button', { name: '切换为精确查询' }))
-    await waitFor(() => {
-      expect(screen.getByLabelText('平台')).toBeInTheDocument()
-      expect(screen.getByLabelText('用户账号')).toBeInTheDocument()
-    })
-    await waitFor(() => {
-      expect(screen.queryByLabelText('人物关键词')).not.toBeInTheDocument()
-    })
-  })
 
   it('没有任何查询条件时提交只弹提示，不发起请求', async () => {
     await renderManager()

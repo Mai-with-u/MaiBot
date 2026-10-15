@@ -48,7 +48,6 @@ describe('loadThemeConfig', () => {
           textureStyle: 'fine',
           textureIntensity: 55,
           panelDepth: 100,
-          strokeScale: 100,
         },
       },
     })
@@ -103,7 +102,6 @@ describe('loadThemeConfig', () => {
         textureStyle: 'none',
         textureIntensity: 0,
         panelDepth: 100,
-        strokeScale: 100,
       },
     })
   })

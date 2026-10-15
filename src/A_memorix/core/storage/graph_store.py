@@ -1465,7 +1465,7 @@ class GraphStore:
         except OSError as exc:
             logger.warning(f"清理旧图快照失败，当前快照已成功激活: {exc}")
 
-        logger.info(f"图存储已保存到: {data_dir}")
+        logger.debug(f"图存储已保存到: {data_dir}")
 
     def load(self, data_dir: Optional[Union[str, Path]] = None) -> None:
         """

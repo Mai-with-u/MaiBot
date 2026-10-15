@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, Play, RefreshCw, RotateCcw, Search } from 'lucide-react'
+import { ChevronDown, Play, RefreshCw, RotateCcw, Search, Trash2 } from 'lucide-react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -14,14 +24,17 @@ import { Textarea } from '@/components/ui/textarea'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { useToast } from '@/hooks/use-toast'
 import {
+  discardMemoryEpisodeMigrationBackfill,
   getMemoryEpisode,
   getMemoryEpisodes,
+  getMemoryEpisodeMigrationBackfill,
   getMemoryEpisodeStatus,
   processMemoryEpisodePending,
   rebuildMemoryEpisodes,
   type MemoryEpisodeActionPayload,
   type MemoryEpisodeDetailPayload,
   type MemoryEpisodeItemPayload,
+  type MemoryEpisodeMigrationBackfillPayload,
   type MemoryEpisodeParagraphPayload,
   type MemoryEpisodeStatusPayload,
 } from '@/lib/memory-api'
@@ -148,6 +161,8 @@ export function MemoryEpisodeManager({
   const [limit, setLimit] = useState('20')
   const [items, setItems] = useState<MemoryEpisodeItemPayload[]>([])
   const [status, setStatus] = useState<MemoryEpisodeStatusPayload | null>(null)
+  const [migrationBackfill, setMigrationBackfill] = useState<MemoryEpisodeMigrationBackfillPayload | null>(null)
+  const [discardDialogOpen, setDiscardDialogOpen] = useState(false)
   const [selectedId, setSelectedId] = useState('')
   const [detail, setDetail] = useState<MemoryEpisodeDetailPayload | null>(null)
   const [loading, setLoading] = useState(false)
@@ -168,9 +183,38 @@ export function MemoryEpisodeManager({
   const failedItems = Array.isArray(status?.failed) ? status.failed : []
 
   const loadStatus = useCallback(async () => {
-    const payload = await getMemoryEpisodeStatus(parsePositiveInt(limit) ?? 20)
-    setStatus(payload)
-  }, [limit])
+    const [statusResult, migrationResult] = await Promise.allSettled([
+      getMemoryEpisodeStatus(parsePositiveInt(limit) ?? 20),
+      getMemoryEpisodeMigrationBackfill(),
+    ])
+    if (statusResult.status === 'fulfilled' && statusResult.value.success) {
+      setStatus(statusResult.value)
+    } else {
+      setStatus(null)
+      toast({
+        title: '加载 Episode 状态失败',
+        description: statusResult.status === 'rejected'
+          ? statusResult.reason instanceof Error ? statusResult.reason.message : String(statusResult.reason)
+          : statusResult.value.error || 'Episode 状态接口返回失败',
+        variant: 'destructive',
+      })
+    }
+    const migrationPayload = migrationResult.status === 'fulfilled' ? migrationResult.value : null
+    if (migrationPayload?.success && migrationPayload.by_status && Array.isArray(migrationPayload.sample_sources)) {
+      setMigrationBackfill(migrationPayload)
+    } else {
+      setMigrationBackfill(null)
+      let description = migrationPayload?.error || 'Episode 迁移历史任务接口返回的数据不完整'
+      if (migrationResult.status === 'rejected') {
+        description = migrationResult.reason instanceof Error ? migrationResult.reason.message : String(migrationResult.reason)
+      }
+      toast({
+        title: '加载迁移任务失败',
+        description,
+        variant: 'destructive',
+      })
+    }
+  }, [limit, toast])
 
   const loadEpisodes = useCallback(async () => {
     setLoading(true)
@@ -360,6 +404,33 @@ export function MemoryEpisodeManager({
       setActionLoading(false)
     }
   }, [loadEpisodes, pendingLimit, pendingMaxRetry, toast])
+
+  const submitDiscardMigrationBackfill = useCallback(async () => {
+    const count = migrationBackfill?.candidates ?? 0
+    if (count === 0) {
+      return
+    }
+    setActionLoading(true)
+    try {
+      const result = await discardMemoryEpisodeMigrationBackfill()
+      if (!result.success) {
+        throw new Error(result.error || '丢弃 Episode 迁移历史任务失败')
+      }
+      toast({
+        title: '已丢弃历史 Episode 任务',
+        description: `已丢弃 ${result.discarded} 条迁移任务；${result.active_skipped} 条运行中的任务仍需等待完成后再次处理。`,
+      })
+      await loadEpisodes()
+    } catch (error) {
+      toast({
+        title: '丢弃历史 Episode 任务失败',
+        description: error instanceof Error ? error.message : String(error),
+        variant: 'destructive',
+      })
+    } finally {
+      setActionLoading(false)
+    }
+  }, [loadEpisodes, migrationBackfill?.candidates, toast])
 
   return (
     <div className="space-y-4">
@@ -646,6 +717,62 @@ export function MemoryEpisodeManager({
           </Card>
         </div>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Trash2 className="h-4 w-4" />
+            丢弃升级迁移的历史任务
+          </CardTitle>
+          <CardDescription>
+            仅清理升级迁移留下的 Episode 来源任务，保留已经生成的 Episode。之后有新记忆写入时，仍会正常自动生成。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="text-sm">
+            可丢弃 {migrationBackfill?.candidates ?? 0} 条迁移来源记录
+            {migrationBackfill?.active_skipped ? `，运行中暂不处理 ${migrationBackfill.active_skipped} 条` : ''}
+          </div>
+          {migrationBackfill ? (
+            <div className="text-xs text-muted-foreground">
+              待重建 {migrationBackfill.by_status.pending ?? 0}、已完成 {migrationBackfill.by_status.done ?? 0}、失败 {migrationBackfill.by_status.failed ?? 0}
+            </div>
+          ) : null}
+          {migrationBackfill?.sample_sources.length ? (
+            <div className="break-all text-xs text-muted-foreground">
+              来源示例：{migrationBackfill.sample_sources.slice(0, 3).join('、')}
+            </div>
+          ) : null}
+          <Button
+            variant="outline"
+            onClick={() => setDiscardDialogOpen(true)}
+            disabled={actionLoading || !migrationBackfill?.candidates}
+          >
+            <Trash2 className="mr-2 h-4 w-4" />
+            丢弃历史任务
+          </Button>
+        </CardContent>
+      </Card>
+
+      <AlertDialog open={discardDialogOpen} onOpenChange={setDiscardDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认丢弃历史 Episode 任务</AlertDialogTitle>
+            <AlertDialogDescription>
+              将丢弃 {migrationBackfill?.candidates ?? 0} 条升级迁移留下的来源任务。已有 Episode 和之后新写入的自动生成不受影响。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={actionLoading}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={actionLoading || !migrationBackfill?.candidates}
+              onClick={() => void submitDiscardMigrationBackfill()}
+            >
+              确认丢弃
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

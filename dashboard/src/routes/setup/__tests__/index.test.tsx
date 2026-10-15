@@ -638,3 +638,16 @@ describe('SetupPage 错误态与空态', () => {
   })
 })
 
+
+
+it('完成模型配置后进入带试聊引导的聊天页', async () => {
+  render(<SetupPage />)
+  await waitLoadingDone()
+  fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.next' }))
+  await screen.findByRole('button', { name: 'setupPage.actions.complete' })
+  fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.complete' }))
+  await waitFor(() => {
+    expect(mocks.navigate).toHaveBeenCalledWith({ to: '/chat', search: { setupTrial: true } })
+  })
+  expect(mocks.completeSetup).toHaveBeenCalledTimes(1)
+})

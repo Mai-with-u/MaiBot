@@ -5,6 +5,7 @@ import asyncio
 
 from src.common.logger import get_logger
 from src.config.model_configs import ModelInfo
+from src.llm_models.exceptions import RespNotOkException
 from src.llm_models.payload_content.context_protocol import ContextProtocolMode, validate_context_items
 
 from .base_client import (
@@ -17,6 +18,7 @@ from .base_client import (
     UsageRecord,
     UsageTuple,
 )
+from .embedding_rate_limit import get_embedding_rate_limit
 
 RawStreamT = TypeVar("RawStreamT")
 """流式原始响应类型变量。"""
@@ -42,15 +44,12 @@ logger = get_logger("llm_adapter_base")
 async def await_task_with_interrupt(
     task: asyncio.Task[TaskResultT],
     interrupt_flag: asyncio.Event | None,
-    *,
-    interval_seconds: float = 0.02,
 ) -> TaskResultT:
     """在支持外部中断的前提下等待异步任务完成。
 
     Args:
         task: 待等待的异步任务。
         interrupt_flag: 外部中断标记。
-        interval_seconds: 轮询检查间隔，单位秒。
 
     Returns:
         TaskResultT: 任务执行结果。
@@ -61,22 +60,45 @@ async def await_task_with_interrupt(
     from src.llm_models.exceptions import ReqAbortException
 
     started_at = asyncio.get_running_loop().time()
+    interrupt_task: asyncio.Task[bool] | None = None
+    interrupted = False
     try:
-        while not task.done():
-            if interrupt_flag and interrupt_flag.is_set():
+        if interrupt_flag is not None:
+            if not interrupt_flag.is_set():
+                interrupt_task = asyncio.create_task(interrupt_flag.wait())
+                await asyncio.wait({task, interrupt_task}, return_when=asyncio.FIRST_COMPLETED)
+            # 同时完成时优先中断，避免新消息已到达却仍使用旧请求的结果。
+            if interrupt_flag.is_set():
+                interrupted = True
                 elapsed = asyncio.get_running_loop().time() - started_at
                 logger.info(f"LLM 请求检测到中断信号，准备取消底层任务，elapsed={elapsed:.3f}s")
                 task.cancel()
+                # 流式处理器在清理缓冲区前携带片段抛出中断异常，逐层保留该异常。
+                try:
+                    await task
+                except ReqAbortException:
+                    raise
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    logger.debug("中断请求清理失败", exc_info=True)
                 raise ReqAbortException("请求被外部信号中断")
-            await asyncio.sleep(interval_seconds)
         return await task
     finally:
+        if interrupt_task is not None:
+            interrupt_task.cancel()
+            try:
+                await interrupt_task
+            except asyncio.CancelledError:
+                pass
         # 调用方协程被 CancelledError（如 asyncio.wait_for 命中 hard_timeout）打断时，
         # 必须把 child task 也取消，否则上游 httpx 请求会继续在后台运行，
         # 占用连接 / token 并使 hard_timeout 形同虚设。
         # cancel 后再 await 让子任务真正完成清理。
-        if not task.done():
-            task.cancel()
+        if interrupted or not task.done():
+            # 嵌套请求已经在清理时，不重复取消，避免打断响应流的关闭过程。
+            if not task.cancelling():
+                task.cancel()
             try:
                 await task
             except asyncio.CancelledError:
@@ -126,7 +148,34 @@ class AdapterClient(BaseClient, ABC, Generic[RawStreamT, RawResponseT]):
         Returns:
             APIResponse: 解析完成的统一嵌入响应。
         """
-        response, usage_record = await self._execute_embedding_request(request)
+        limiter = get_embedding_rate_limit(
+            self.api_provider.name, self.api_provider.base_url, request.model_info.model_identifier,
+        )
+        wait_seconds = 0.0
+        max_attempts = 1 if request.retry_handled_externally else 3
+        for attempt in range(max_attempts):
+            generation, waited = await limiter.wait()
+            wait_seconds += waited
+            if request.trace_context is not None:
+                request.trace_context.rate_limit_wait_seconds += waited
+            try:
+                response, usage_record = await self._execute_embedding_request(request)
+                break
+            except RespNotOkException as exc:
+                if exc.status_code == 429:
+                    limiter.reduce(generation)
+                if attempt + 1 == max_attempts or exc.status_code not in (408, 429, 500, 502, 503, 504):
+                    raise
+                # 直接调用才在客户端重试；经 Orchestrator 的请求由外层负责。
+                # 重试等待不计入模型请求耗时。
+                delay = float(2 ** attempt)
+                await asyncio.sleep(delay)
+                wait_seconds += delay
+                if request.trace_context is not None:
+                    request.trace_context.rate_limit_wait_seconds += delay
+        response.rate_limit_wait_seconds = (
+            request.trace_context.rate_limit_wait_seconds if request.trace_context is not None else wait_seconds
+        )
         return self._attach_usage_record(response, request.model_info, usage_record)
 
     async def get_image_embedding(self, request: ImageEmbeddingRequest) -> APIResponse:
@@ -198,6 +247,7 @@ class AdapterClient(BaseClient, ABC, Generic[RawStreamT, RawResponseT]):
             total_tokens=usage_record[2],
             prompt_cache_hit_tokens=usage_record[3] if len(usage_record) > 3 else 0,
             prompt_cache_miss_tokens=usage_record[4] if len(usage_record) > 4 else 0,
+            prompt_cache_reported=bool(usage_record[5]) if len(usage_record) > 5 else False,
         )
 
     def _attach_usage_record(

@@ -63,6 +63,28 @@ export const isDefaultAccentColor = (hsl: string): boolean => {
   )
 }
 
+/**
+ * 原版风格桌面端的图表配色：系列 1 仍是主色，其余四个换成一组固定的搭配色（绿、蓝、黄、洋红），
+ * 取代按色相等距旋转得到的高饱和色。数值经色觉障碍与对比度校验，浅色和夜间各用一档。
+ * 只在强调色为默认值时启用——自定义强调色可能与这组固定色撞色，此时沿用旋转色。
+ */
+const MODERN_CHART_COMPANIONS_LIGHT = [
+  '158.5 75.3% 34.9%',
+  '212.8 67.7% 50.2%',
+  '40.8 100% 46.5%',
+  '337.4 70.3% 69.6%',
+] as const
+
+const MODERN_CHART_COMPANIONS_DARK = [
+  '159.2 72.7% 35.9%',
+  '212.8 76.8% 56.1%',
+  '39.7 100% 39.4%',
+  '338.2 61.1% 57.6%',
+] as const
+
+export const getModernChartCompanions = (isDark: boolean): readonly string[] =>
+  isDark ? MODERN_CHART_COMPANIONS_DARK : MODERN_CHART_COMPANIONS_LIGHT
+
 export const hexToHSL = (hex: string): string => {
   let cleaned = hex.trim().replace('#', '')
   if (cleaned.length === 3) {

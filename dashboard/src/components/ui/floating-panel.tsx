@@ -23,6 +23,8 @@ interface FloatingPanelProps {
   initialHeight?: number
   initialTop?: number
   initialRight?: number
+  /** 手机（lg 以下）铺满整屏并改用大标题 */
+  mobileFullscreen?: boolean
 }
 
 const PANEL_MARGIN = 16
@@ -55,6 +57,7 @@ export function FloatingPanel({
   initialHeight = 620,
   initialTop = 112,
   initialRight = 32,
+  mobileFullscreen = false,
 }: FloatingPanelProps) {
   const [dragging, setDragging] = useState(false)
   const [position, setPosition] = useState<FloatingPanelPosition>(() =>
@@ -144,27 +147,47 @@ export function FloatingPanel({
       data-dashboard-floating-content="true"
       className={cn(
         'bg-background fixed z-50 overflow-hidden rounded-md border shadow-2xl',
-        className
+        className,
+        // 手机上铺满整屏，像原生应用的独立页面，而不是一块可拖动的小窗
+        mobileFullscreen &&
+          'max-lg:top-0! max-lg:left-0! max-lg:h-[100dvh]! max-lg:w-full! max-lg:rounded-none max-lg:border-0 max-lg:shadow-none'
       )}
       style={{ left: position.left, top: position.top }}
     >
       <div
+        data-floating-panel-header="true"
         className={cn(
           'bg-muted/70 flex touch-none items-center gap-2 border-b px-3 py-2 select-none',
-          dragging ? 'cursor-grabbing' : 'cursor-grab'
+          dragging ? 'cursor-grabbing' : 'cursor-grab',
+          // 手机上标题栏改为大标题，不再可拖动
+          mobileFullscreen &&
+            'max-lg:pointer-events-none max-lg:border-b-0 max-lg:bg-transparent max-lg:px-5 max-lg:pt-[calc(env(safe-area-inset-top)+16px)] max-lg:pb-2'
         )}
         onPointerCancel={endDrag}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={endDrag}
       >
-        <GripHorizontal className="text-muted-foreground h-4 w-4 shrink-0" />
+        <GripHorizontal
+          className={cn(
+            'text-muted-foreground h-4 w-4 shrink-0',
+            mobileFullscreen && 'max-lg:hidden'
+          )}
+        />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold">{title}</div>
+          <div
+            className={cn(
+              'truncate text-sm font-semibold',
+              mobileFullscreen &&
+                'max-lg:text-[34px] max-lg:leading-tight max-lg:font-bold max-lg:tracking-tight'
+            )}
+          >
+            {title}
+          </div>
           {subtitle && <div className="text-muted-foreground truncate text-xs">{subtitle}</div>}
         </div>
         <div
-          className="flex shrink-0 items-center gap-1"
+          className="pointer-events-auto flex shrink-0 items-center gap-1"
           onPointerDown={(event) => event.stopPropagation()}
         >
           {actions}

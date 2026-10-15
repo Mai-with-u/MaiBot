@@ -21,7 +21,6 @@ const mocks = vi.hoisted(() => ({
       wsMaxReconnectAttempts: 8,
       dataSyncInterval: 45,
       enableAvatarFetch: true,
-      enableFocusCompanion: false,
       alwaysShowUpdateNotice: false,
     }
     return values[key]
@@ -193,7 +192,6 @@ describe('OtherTab', () => {
     )
 
     fireEvent.click(screen.getByLabelText('settings.other.enableAvatarFetch'))
-    fireEvent.click(screen.getByLabelText('专注陪伴入口'))
     fireEvent.click(screen.getByLabelText('settings.other.alwaysShowUpdateNotice'))
     fireEvent.click(screen.getByRole('button', { name: 'slider-100' }))
     fireEvent.click(screen.getByRole('button', { name: 'slider-10' }))
@@ -201,7 +199,6 @@ describe('OtherTab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'slider-3' }))
 
     expect(mocks.setSetting).toHaveBeenCalledWith('enableAvatarFetch', false)
-    expect(mocks.setSetting).toHaveBeenCalledWith('enableFocusCompanion', true)
     expect(mocks.setSetting).toHaveBeenCalledWith('alwaysShowUpdateNotice', true)
     expect(mocks.setSetting).toHaveBeenCalledWith('logCacheSize', 1500)
     expect(mocks.setSetting).toHaveBeenCalledWith('dataSyncInterval', 60)

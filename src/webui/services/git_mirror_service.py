@@ -7,12 +7,14 @@ from typing import Any, Dict, List, Optional
 
 import asyncio
 import json
+import os
 import shutil
 import subprocess
 
 import httpx
 
 from src.common.logger import get_logger
+from src.webui.utils.http_client import get_shared_ssl_context
 from src.webui.utils.network_security import validate_public_url
 
 logger = get_logger("webui.git_mirror")
@@ -21,16 +23,52 @@ logger = get_logger("webui.git_mirror")
 _update_progress = None
 
 
+async def _run_git_process(cmd: List[str], cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
+    """在线程池等待 Git；取消或超时时终止进程树并等待退出。"""
+    launch = asyncio.create_task(asyncio.to_thread(
+        subprocess.Popen, cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        start_new_session=os.name != "nt",
+    ))
+    communicate = None
+    try:
+        process = await asyncio.shield(launch)
+        communicate = asyncio.create_task(asyncio.to_thread(process.communicate))
+        stdout, stderr = await asyncio.wait_for(asyncio.shield(communicate), timeout=300)
+        return subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
+    except (asyncio.CancelledError, asyncio.TimeoutError) as exc:
+        # 进程创建也可能与取消并发，先取得句柄，再终止所有 Git 子进程。
+        process = await launch
+        if process.poll() is None:
+            if os.name == "nt":
+                result = await asyncio.to_thread(
+                    subprocess.run, ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    capture_output=True,
+                )
+                if result.returncode and process.poll() is None:
+                    raise RuntimeError(f"终止 Git 进程失败: {result.stderr!r}") from exc
+            else:
+                import signal
+
+                os.killpg(process.pid, signal.SIGKILL)
+        if communicate is not None:
+            await communicate
+        else:
+            await asyncio.to_thread(process.communicate)
+        if isinstance(exc, asyncio.TimeoutError):
+            raise subprocess.TimeoutExpired(cmd, 300) from exc
+        raise
+
+
 def _validate_mirror_prefix(url: str, field_name: str) -> str:
     try:
-        return validate_public_url(url)
+        return validate_public_url(url, allow_fake_ip=True)
     except ValueError as e:
         raise ValueError(f"{field_name} 非法: {e}") from e
 
 
 def _validate_custom_outbound_url(url: str) -> str:
     try:
-        return validate_public_url(url)
+        return validate_public_url(url, allow_fake_ip=True)
     except ValueError as e:
         raise ValueError(f"目标 URL 非法: {e}") from e
 
@@ -187,7 +225,7 @@ class GitMirrorConfig:
 
         return True
 
-    def _save_config(self) -> None:
+    def _save_config(self, raise_on_error: bool = False) -> None:
         """保存配置到文件"""
         try:
             # 确保目录存在
@@ -209,6 +247,20 @@ class GitMirrorConfig:
             logger.debug(f"配置已保存到 {self.config_file}")
         except Exception as e:
             logger.error(f"保存配置文件失败: {e}")
+            if raise_on_error:
+                raise
+
+    def reset_default_mirrors(self) -> List[Dict[str, Any]]:
+        """恢复内置镜像源列表；保存失败时保留原来的内存配置。"""
+        previous_mirrors = self.mirrors
+        current_time = datetime.now().isoformat()
+        self.mirrors = [{**mirror, "created_at": current_time} for mirror in self.DEFAULT_MIRRORS]
+        try:
+            self._save_config(raise_on_error=True)
+        except Exception:
+            self.mirrors = previous_mirrors
+            raise
+        return self.get_all_mirrors()
 
     def get_all_mirrors(self) -> List[Dict[str, Any]]:
         """获取所有镜像源"""
@@ -450,6 +502,7 @@ class GitMirrorService:
             mirrors_to_try = self.config.get_enabled_mirrors()
 
         total_mirrors = len(mirrors_to_try)
+        validation_errors: List[str] = []
 
         # 依次尝试每个镜像源
         for index, mirror in enumerate(mirrors_to_try, 1):
@@ -484,6 +537,9 @@ class GitMirrorService:
                         logger.warning(f"推送进度失败: {e}")
                 return result
 
+            if result.get("status_code") == 400:
+                validation_errors.append(f"{mirror['id']}: {result['error']}")
+
             # 失败，记录日志并推送失败信息
             logger.warning(f"镜像源 {mirror['id']} 失败: {result.get('error')}")
 
@@ -500,7 +556,12 @@ class GitMirrorService:
                     logger.warning(f"推送进度失败: {e}")
 
         # 所有镜像源都失败
-        return {"success": False, "error": "所有镜像源均失败", "mirror_used": None, "attempts": len(mirrors_to_try)}
+        return {
+            "success": False,
+            "error": "所有镜像源均失败" + ("；" + "；".join(validation_errors) if validation_errors else ""),
+            "mirror_used": None,
+            "attempts": len(mirrors_to_try),
+        }
 
     async def _fetch_raw_from_mirror(
         self, owner: str, repo: str, branch: str, file_path: str, mirror: Dict[str, Any]
@@ -530,7 +591,11 @@ class GitMirrorService:
             attempts += 1
             try:
                 logger.debug(f"尝试 #{attempt + 1}: {url}")
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                # 复用共享 SSLContext：每次新建 AsyncClient 都会重新加载整套 CA 证书（实测约 5s/次），
+                # 镜像源逐个重试时该开销会成倍放大，且构造过程会阻塞 WebUI 事件循环。
+                async with httpx.AsyncClient(
+                    verify=get_shared_ssl_context(), timeout=self.timeout, follow_redirects=False
+                ) as client:
                     response = await client.get(url)
                     response.raise_for_status()
 
@@ -586,23 +651,13 @@ class GitMirrorService:
         else:
             commands.append(["git", "pull", "--ff-only"])
 
-        loop = asyncio.get_event_loop()
         executed: List[str] = []
 
         for cmd in commands:
             executed.append(" ".join(cmd))
 
-            def run_git_command(git_cmd=cmd):
-                return subprocess.run(
-                    git_cmd,
-                    cwd=repository_path,
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                )
-
             try:
-                process = await loop.run_in_executor(None, run_git_command)
+                process = await _run_git_process(cmd, cwd=repository_path)
             except subprocess.TimeoutExpired:
                 return {"success": False, "error": f"Git 命令超时: {' '.join(cmd)}", "commands": executed}
             except FileNotFoundError:
@@ -692,6 +747,7 @@ class GitMirrorService:
             mirrors_to_try = self.config.get_enabled_mirrors()
 
         total_mirrors = len(mirrors_to_try)
+        validation_errors: List[str] = []
 
         # 依次尝试每个镜像源
         for index, mirror in enumerate(mirrors_to_try, 1):
@@ -725,6 +781,8 @@ class GitMirrorService:
             )
             if result["success"]:
                 return result
+            if result.get("status_code") == 400:
+                validation_errors.append(f"{mirror['id']}: {result['error']}")
             logger.warning(f"镜像源 {mirror['id']} 克隆失败: {result.get('error')}")
 
             if _update_progress and index < total_mirrors:
@@ -745,7 +803,12 @@ class GitMirrorService:
                     logger.warning(f"推送进度失败: {e}")
 
         # 所有镜像源都失败
-        return {"success": False, "error": "所有镜像源克隆均失败", "mirror_used": None, "attempts": len(mirrors_to_try)}
+        return {
+            "success": False,
+            "error": "所有镜像源克隆均失败" + ("；" + "；".join(validation_errors) if validation_errors else ""),
+            "mirror_used": None,
+            "attempts": len(mirrors_to_try),
+        }
 
     async def _clone_from_mirror(
         self,
@@ -856,18 +919,8 @@ class GitMirrorService:
                     except Exception as e:
                         logger.warning(f"推送进度失败: {e}")
 
-                # 执行 git clone（在线程池中运行以避免阻塞）
-                loop = asyncio.get_event_loop()
-
-                def run_git_clone(clone_cmd=cmd):
-                    return subprocess.run(
-                        clone_cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=300,  # 5分钟超时
-                    )
-
-                process = await loop.run_in_executor(None, run_git_clone)
+                # 执行 git clone（在线程池中运行以避免阻塞），取消时终止进程树。
+                process = await _run_git_process(cmd)
 
                 if process.returncode == 0:
                     logger.info(f"成功克隆仓库: {url} -> {target_path}")
@@ -928,6 +981,12 @@ class GitMirrorService:
                             )
                         except Exception as e:
                             logger.warning(f"推送进度失败: {e}")
+
+            except asyncio.CancelledError:
+                # Git 已退出后才删除半成品，避免子进程继续写入临时目录。
+                if target_path.exists():
+                    await asyncio.to_thread(shutil.rmtree, target_path)
+                raise
 
             except subprocess.TimeoutExpired:
                 last_error = "克隆超时（超过 5 分钟）"

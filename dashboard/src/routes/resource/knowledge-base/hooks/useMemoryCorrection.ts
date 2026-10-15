@@ -35,6 +35,8 @@ export interface UseMemoryCorrectionResult {
   setRequestText: React.Dispatch<React.SetStateAction<string>>
   scope: MemoryCorrectionScope
   setScope: React.Dispatch<React.SetStateAction<MemoryCorrectionScope>>
+  personLookupMode: 'id' | 'keyword'
+  setPersonLookupMode: React.Dispatch<React.SetStateAction<'id' | 'keyword'>>
   personId: string
   setPersonId: React.Dispatch<React.SetStateAction<string>>
   personKeyword: string
@@ -180,6 +182,7 @@ export function useMemoryCorrection({
   const [scope, setScope] = useState<MemoryCorrectionScope>('person_profile')
   const [personId, setPersonId] = useState(initialPersonId)
   const [personKeyword, setPersonKeyword] = useState('')
+  const [personLookupMode, setPersonLookupMode] = useState<'id' | 'keyword'>(initialPersonId ? 'id' : 'keyword')
   const [chatId, setChatId] = useState(initialChatId)
   const [candidateLimit, setCandidateLimitValue] = useState(() =>
     formatCandidateLimit(configuredCandidateLimit)
@@ -394,7 +397,10 @@ export function useMemoryCorrection({
       })
       return
     }
-    if (scope === 'person_profile' && !personId.trim() && !personKeyword.trim()) {
+    // 切换时保留输入，但只使用当前可见的定位方式，避免隐藏的 ID 覆盖关键词。
+    const activePersonId = personLookupMode === 'id' ? personId.trim() : ''
+    const activePersonKeyword = personLookupMode === 'keyword' ? personKeyword.trim() : ''
+    if (scope === 'person_profile' && !activePersonId && !activePersonKeyword) {
       toast({
         title: '缺少人物定位信息',
         description: '人物画像修正需要填写人物 ID 或人物关键词',
@@ -408,8 +414,8 @@ export function useMemoryCorrection({
       const payload = await previewMemoryCorrection({
         request_text: trimmedRequest,
         scope,
-        person_id: personId.trim() || undefined,
-        person_keyword: personKeyword.trim() || undefined,
+        person_id: activePersonId || undefined,
+        person_keyword: activePersonKeyword || undefined,
         chat_id: chatId.trim() || undefined,
         limit: parseCandidateLimit(candidateLimit, configuredCandidateLimit),
         requested_by: 'knowledge_base',
@@ -453,6 +459,7 @@ export function useMemoryCorrection({
     correctionReason,
     personId,
     personKeyword,
+    personLookupMode,
     plansQuery,
     requestText,
     scope,
@@ -595,6 +602,8 @@ export function useMemoryCorrection({
     setPersonId,
     personKeyword,
     setPersonKeyword,
+    personLookupMode,
+    setPersonLookupMode,
     chatId,
     setChatId,
     candidateLimit,

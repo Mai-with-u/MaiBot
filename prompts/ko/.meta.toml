@@ -1,0 +1,4 @@
+[reply_attachments]
+display_name = "답변 첨부 안내"
+advanced = true
+description = "답변에 첨부된 이미지, 멘션, 이모티콘은 시스템이 전송하며 본문에 첨부 정보를 중복하지 않도록 안내합니다."

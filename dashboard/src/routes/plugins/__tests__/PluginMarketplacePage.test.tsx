@@ -13,13 +13,29 @@ import { PLUGIN_MARKET_VIEW_STATE_KEY } from '@/lib/plugin-market-navigation'
 
 // toast 与 navigate 使用 hoisted 稳定引用：toast 位于页面 useEffect 依赖数组中，
 // 引用不稳定会导致初始化 effect 反复执行
-const { toastMock, navigateMock } = vi.hoisted(() => ({
+const { toastMock, navigateMock, routerState } = vi.hoisted(() => ({
   toastMock: vi.fn(),
   navigateMock: vi.fn(),
+  routerState: {
+    search: {} as { pluginId?: string },
+    listeners: new Set<() => void>(),
+  },
 }))
 
 vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: toastMock }) }))
-vi.mock('@tanstack/react-router', () => ({ useNavigate: () => navigateMock }))
+// 详情插件 ID 存放在路由 search 中：navigate 写入 routerState 并通知订阅者，
+// useSearch 通过 useSyncExternalStore 订阅，模拟真实路由在地址变化后重渲染
+vi.mock('@tanstack/react-router', async () => {
+  const { useSyncExternalStore } = await import('react')
+  const subscribe = (listener: () => void) => {
+    routerState.listeners.add(listener)
+    return () => routerState.listeners.delete(listener)
+  }
+  return {
+    useNavigate: () => navigateMock,
+    useSearch: () => useSyncExternalStore(subscribe, () => routerState.search),
+  }
+})
 
 // 重启上下文与遮罩层：页面仅作为容器使用，桩掉避免引入 system-api 链路
 vi.mock('@/lib/restart-context', () => ({
@@ -46,6 +62,7 @@ vi.mock('@/lib/plugin-api', () => ({
 vi.mock('@/lib/plugin-stats', () => ({
   getCachedPluginStatsSummary: vi.fn(),
   getPluginStatsSummary: vi.fn(),
+  getPluginUserStates: vi.fn(),
   likePlugin: vi.fn(),
   recordPluginDownload: vi.fn(),
 }))
@@ -54,7 +71,6 @@ interface MarketplaceTabStubProps {
   plugins: PluginInfo[]
   searchQuery: string
   pluginTypeFilter: string
-  hideInstalledPlugins: boolean
   sortBy: string
   pluginStats: Record<string, { likes: number }>
   onInstall: (plugin: PluginInfo) => void
@@ -76,7 +92,6 @@ vi.mock('../MarketplaceTab', () => ({
       data-search={props.searchQuery}
       data-type-filter={props.pluginTypeFilter}
       data-sort-by={props.sortBy}
-      data-hide-installed={String(props.hideInstalledPlugins)}
     >
       {props.plugins.map((plugin) => {
         const stats = props.pluginStats[plugin.manifest?.id ?? plugin.id]
@@ -221,6 +236,12 @@ beforeEach(() => {
   progressHandler = null
   wsErrorHandler = null
 
+  routerState.search = {}
+  navigateMock.mockImplementation(({ search }: { search?: { pluginId?: string } }) => {
+    routerState.search = search ?? {}
+    routerState.listeners.forEach((listener) => listener())
+  })
+
   vi.mocked(pluginApi.getCachedPluginList).mockReturnValue(null)
   vi.mocked(pluginApi.checkGitStatus).mockResolvedValue({ installed: true, version: 'git version 2.44.0' })
   vi.mocked(pluginApi.getMaimaiVersion).mockResolvedValue({
@@ -239,9 +260,7 @@ beforeEach(() => {
     installedPlugins.some((item) => item.id === pluginId)
   )
   vi.mocked(pluginApi.getInstalledPluginVersion).mockImplementation((pluginId, installedPlugins) => {
-    const found = installedPlugins.find((item) => item.id === pluginId)
-    if (!found) return undefined
-    return 'manifest' in found ? found.manifest.version : found.version
+    return installedPlugins.find((item) => item.id === pluginId)?.manifest.version
   })
   vi.mocked(pluginApi.connectPluginProgressWebSocket).mockImplementation(async (onProgress, onError) => {
     progressHandler = onProgress
@@ -259,6 +278,7 @@ beforeEach(() => {
 
   vi.mocked(pluginStatsApi.getCachedPluginStatsSummary).mockReturnValue(null)
   vi.mocked(pluginStatsApi.getPluginStatsSummary).mockResolvedValue({})
+  vi.mocked(pluginStatsApi.getPluginUserStates).mockResolvedValue({})
   vi.mocked(pluginStatsApi.likePlugin).mockResolvedValue({
     success: true,
     likes: 1,
@@ -321,7 +341,7 @@ describe('PluginMarketplacePage 初始加载与数据合并', () => {
   it('存在缓存清单时先渲染缓存内容，拉取完成后替换为最新清单', async () => {
     vi.mocked(pluginApi.getCachedPluginList).mockReturnValue([makeMarketPlugin('cached-x')])
     vi.mocked(pluginStatsApi.getCachedPluginStatsSummary).mockReturnValue({
-      'cached-x': { plugin_id: 'cached-x', likes: 3, dislikes: 0, downloads: 9, rating: 5, rating_count: 2 },
+      'cached-x': { plugin_id: 'cached-x', likes: 3, dislikes: 0, downloads: 9, rating: 5, rating_count: 2, comment_count: 2 },
     })
 
     render(<PluginMarketplacePage />)
@@ -351,6 +371,46 @@ describe('PluginMarketplacePage 初始加载与数据合并', () => {
       variant: 'destructive',
     })
     expect(screen.queryByTestId('marketplace-tab')).not.toBeInTheDocument()
+  })
+
+  it('「仅显示当前版本」默认开启，关闭后放开兼容性过滤并写回 localStorage', async () => {
+    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([
+      makeMarketPlugin('plugin-ok'),
+      // releases 模式且无推荐版本：checkPluginCompatibility 判为不兼容，被兼容性过滤隐藏
+      makeMarketPlugin('plugin-old', {
+        releases: {
+          id: 'plugin-old',
+          repositoryUrl: 'https://example.com/plugin-old.git',
+          mode: 'releases',
+          versions: [],
+          recommended_version: null,
+        },
+      }),
+    ])
+
+    await renderPage()
+
+    // 默认开启：不兼容插件被计数排除，只统计可见插件
+    const compatSwitch = screen.getByRole('switch', { name: '仅显示当前版本' })
+    expect(compatSwitch).toHaveAttribute('aria-checked', 'true')
+    expect(localStorage.getItem('plugins-market-compatible-only')).toBe('true')
+    expect(getCountBadgeText()).toBe('全部插件 1')
+
+    // 关闭「仅显示当前版本」：兼容性过滤放开，计数包含不兼容插件并写回 localStorage
+    fireEvent.click(compatSwitch)
+    await waitFor(() => expect(getCountBadgeText()).toBe('全部插件 2'))
+    expect(localStorage.getItem('plugins-market-compatible-only')).toBe('false')
+  })
+
+  it('localStorage 为 false 时「仅显示当前版本」初始为关闭', async () => {
+    localStorage.setItem('plugins-market-compatible-only', 'false')
+
+    await renderPage()
+
+    expect(screen.getByRole('switch', { name: '仅显示当前版本' })).toHaveAttribute(
+      'aria-checked',
+      'false'
+    )
   })
 
   it('Git 未安装时显示警告卡片，并阻断安装与更新操作', async () => {
@@ -693,7 +753,6 @@ describe('PluginMarketplacePage 视图状态与交互', () => {
         searchQuery: '预置搜索',
         pluginTypeFilter: 'chat',
         marketplaceSortBy: 'downloads',
-        showInstalledPlugins: true,
       })
     )
     await renderPage()
@@ -702,8 +761,6 @@ describe('PluginMarketplacePage 视图状态与交互', () => {
     const tab = screen.getByTestId('marketplace-tab')
     expect(tab).toHaveAttribute('data-type-filter', 'chat')
     expect(tab).toHaveAttribute('data-sort-by', 'downloads')
-    // showInstalledPlugins=true 时不隐藏已安装插件
-    expect(tab).toHaveAttribute('data-hide-installed', 'false')
 
     // 非法的类型/排序值回退为默认值
     cleanup()
@@ -730,25 +787,12 @@ describe('PluginMarketplacePage 视图状态与交互', () => {
     expect(navigateMock).toHaveBeenCalledWith({ to: '/plugin-mirrors/embed' })
   })
 
-  it('显示已安装开关切换后计数包含已安装插件', async () => {
-    const user = userEvent.setup()
-    vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([makeInstalledPlugin('plugin-a', '1.2.0')])
-    await renderPage()
-
-    expect(getCountBadgeText()).toBe('全部插件 1')
-    expect(screen.getByTestId('marketplace-tab')).toHaveAttribute('data-hide-installed', 'true')
-
-    await user.click(screen.getByRole('switch'))
-
-    expect(getCountBadgeText()).toBe('全部插件 2')
-    expect(screen.getByTestId('marketplace-tab')).toHaveAttribute('data-hide-installed', 'false')
-  })
-
   it('点击详情打开插件详情对话框并可关闭', async () => {
     const user = userEvent.setup()
     await renderPage()
 
     await user.click(screen.getByText('detail-plugin-a'))
+    expect(navigateMock).toHaveBeenCalledWith({ to: '/plugins', search: { pluginId: 'plugin-a' }, replace: true })
     const detail = await screen.findByTestId('plugin-detail')
     expect(detail).toHaveAttribute('data-plugin-id', 'plugin-a')
 
@@ -1377,12 +1421,11 @@ describe('PluginMarketplacePage 合并、兼容性边界与进度清理', () => 
     expect(screen.getByTestId('plugin-plugin-a')).toHaveAttribute('data-needs-update', 'false')
   })
 
-  it('非法会话字段回退搜索词与显示已安装开关', async () => {
+  it('非法会话字段回退搜索词', async () => {
     window.sessionStorage.setItem(
       PLUGIN_MARKET_VIEW_STATE_KEY,
       JSON.stringify({
         searchQuery: 123,
-        showInstalledPlugins: 'yes',
         pluginTypeFilter: 'all',
         marketplaceSortBy: 'default',
       })
@@ -1391,7 +1434,6 @@ describe('PluginMarketplacePage 合并、兼容性边界与进度清理', () => 
     await renderPage()
 
     expect(screen.getByPlaceholderText('搜索插件...')).toHaveValue('')
-    expect(screen.getByTestId('marketplace-tab')).toHaveAttribute('data-hide-installed', 'true')
   })
 
   it('恢复并持久化滚动位置', async () => {
@@ -1597,6 +1639,7 @@ describe('PluginMarketplacePage 合并、兼容性边界与进度清理', () => 
         downloads: 3,
         rating: 5,
         rating_count: 1,
+        comment_count: 1,
       },
     })
 

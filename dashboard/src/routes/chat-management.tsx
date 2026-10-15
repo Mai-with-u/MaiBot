@@ -1,26 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import {
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
-  Plus,
-  RefreshCw,
-  Search,
-  Trash2,
-  UserRound,
-  UsersRound,
-  X,
-} from 'lucide-react'
+import { Plus, Trash2, X } from 'lucide-react'
 import type { CSSProperties } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 
-import { ChatStreamSettingsDialog } from '@/components/chat-stream-settings-dialog'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { DashboardTabBar, DashboardTabTrigger } from '@/components/ui/dashboard-tabs'
 import {
   Dialog,
   DialogBody,
@@ -32,38 +17,13 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import { Tabs } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
-import { useResolvedAvatarUrl } from '@/lib/avatar-url'
-import {
-  formatChatAccountLabel,
-  formatChatDisplayName,
-  getChatTypeText,
-} from '@/lib/chat-display'
+import { formatChatDisplayName, getChatTypeText } from '@/lib/chat-display'
 import { getChatStreams, type ChatStream, type ChatStreamType } from '@/lib/chat-management-api'
 import { getBotConfig, updateBotConfigSection } from '@/lib/config-api'
-import { cn } from '@/lib/utils'
 
-const PAGE_SIZE = 10
-type ChatTypeFilter = 'all' | ChatStreamType
-type ChatManagementView = 'groups' | 'streams'
 type MutualGroupKind = 'expression' | 'jargon' | 'memory'
 const MUTUAL_GROUP_CHAT_RESULT_LIMIT = 50
-
-function getRequestedSessionId(): string | null {
-  if (typeof window === 'undefined') {
-    return null
-  }
-  return new URLSearchParams(window.location.search).get('session_id')?.trim() || null
-}
 
 const MUTUAL_GROUP_KIND_LABEL: Record<MutualGroupKind, string> = {
   expression: '表达',
@@ -82,23 +42,6 @@ interface ChatStreamGroupConfig {
   targets?: TargetItem[]
   expression_groups?: TargetItem[]
   jargon_groups?: TargetItem[]
-}
-
-function formatTimestamp(timestamp: number | null): string {
-  if (!timestamp) {
-    return '-'
-  }
-
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(timestamp * 1000))
-}
-
-function getChatTypeLabel(chat: ChatStream): string {
-  return chat.chat_type === 'group' ? '群聊' : '私聊'
 }
 
 function getChatLogicalId(chat: ChatStream): string {
@@ -175,120 +118,13 @@ function chatToTarget(chat: ChatStream): TargetItem {
   }
 }
 
-function HoverScrollText({
-  className,
-  maxChars,
-  value,
+function MutualGroupsView({
+  chats,
+  onSectionSaved,
 }: {
-  className?: string
-  maxChars: number
-  value: string | null | undefined
+  chats: ChatStream[]
+  onSectionSaved?: (sectionName: string, value: Record<string, unknown>) => void
 }) {
-  const text = value || '-'
-  const containerRef = useRef<HTMLSpanElement>(null)
-  const textRef = useRef<HTMLSpanElement>(null)
-  const [shouldScroll, setShouldScroll] = useState(false)
-  const [scrollDurationMs, setScrollDurationMs] = useState(900)
-
-  useEffect(() => {
-    const containerElement = containerRef.current
-    const textElement = textRef.current
-    if (!containerElement || !textElement) return
-
-    const updateOverflowState = () => {
-      const overflowWidth = textElement.scrollWidth - containerElement.clientWidth
-      const nextShouldScroll = overflowWidth > 1
-      setShouldScroll((current) => (current === nextShouldScroll ? current : nextShouldScroll))
-      setScrollDurationMs(Math.max(900, Math.min(2800, overflowWidth * 36)))
-    }
-
-    updateOverflowState()
-
-    if (typeof ResizeObserver === 'undefined') {
-      window.addEventListener('resize', updateOverflowState)
-      return () => window.removeEventListener('resize', updateOverflowState)
-    }
-
-    const resizeObserver = new ResizeObserver(updateOverflowState)
-    resizeObserver.observe(containerElement)
-    resizeObserver.observe(textElement)
-    return () => resizeObserver.disconnect()
-  }, [maxChars, text])
-
-  return (
-    <span
-      ref={containerRef}
-      className={cn('group inline-block overflow-hidden align-bottom', className)}
-      style={{ width: `${maxChars}ch` }}
-      title={text}
-    >
-      <span
-        ref={textRef}
-        className={cn(
-          'block max-w-full overflow-hidden text-ellipsis whitespace-nowrap',
-          shouldScroll &&
-            'group-hover:w-max group-hover:max-w-none group-hover:animate-[chat-management-text-scroll_1s_linear_infinite_alternate] group-hover:overflow-visible'
-        )}
-        style={
-          {
-            '--scroll-container-width': `${maxChars}ch`,
-            animationDuration: `${scrollDurationMs}ms`,
-          } as CSSProperties
-        }
-      >
-        {text}
-      </span>
-    </span>
-  )
-}
-
-function matchesSearch(chat: ChatStream, query: string): boolean {
-  const normalizedQuery = query.trim().toLowerCase()
-  if (!normalizedQuery) {
-    return true
-  }
-
-  return [
-    chat.id,
-    chat.display_name,
-    chat.session_id,
-    chat.chat_type,
-    chat.target_id,
-    chat.platform,
-    chat.account_id,
-    chat.group_id,
-    chat.group_name,
-    chat.user_id,
-    chat.user_nickname,
-    chat.user_cardname,
-  ]
-    .filter(Boolean)
-    .some((value) => String(value).toLowerCase().includes(normalizedQuery))
-}
-
-function matchesTypeFilter(chat: ChatStream, filter: ChatTypeFilter): boolean {
-  return filter === 'all' || chat.chat_type === filter
-}
-
-function ChatStreamAvatar({ chat }: { chat: ChatStream }) {
-  const targetType = chat.chat_type === 'group' ? 'group' : 'user'
-  const targetId = chat.chat_type === 'group' ? chat.group_id : chat.user_id
-  const avatarUrl = useResolvedAvatarUrl(chat.platform, targetId, targetType)
-  const Icon = chat.chat_type === 'group' ? UsersRound : UserRound
-
-  return (
-    <Avatar className="border-border ring-background h-8 w-8 rounded-md border-2 ring-1">
-      {avatarUrl && (
-        <AvatarImage src={avatarUrl} alt={`${chat.display_name} 的头像`} className="object-cover" />
-      )}
-      <AvatarFallback className="text-muted-foreground rounded-md">
-        <Icon className="h-4 w-4" />
-      </AvatarFallback>
-    </Avatar>
-  )
-}
-
-function MutualGroupsView({ chats }: { chats: ChatStream[] }) {
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [kind, setKind] = useState<MutualGroupKind>(() => {
@@ -369,7 +205,8 @@ function MutualGroupsView({ chats }: { chats: ChatStream[] }) {
   const saveMutation = useMutation({
     mutationFn: (nextSectionData: Record<string, unknown>) =>
       updateBotConfigSection(sectionName, nextSectionData),
-    onSuccess: () => {
+    onSuccess: (_result, nextSectionData) => {
+      onSectionSaved?.(sectionName, nextSectionData)
       void queryClient.invalidateQueries({ queryKey: ['chat-management-mutual-groups-config'] })
       toast({
         title: '共享组已保存',
@@ -671,313 +508,27 @@ function MutualGroupsView({ chats }: { chats: ChatStream[] }) {
   )
 }
 
-export function ChatManagementPage() {
-  const requestedSessionId = useMemo(() => getRequestedSessionId(), [])
-  const requestedSessionOpenedRef = useRef(false)
-  const [activeView, setActiveView] = useState<ChatManagementView>(() => {
-    if (typeof window === 'undefined') {
-      return 'streams'
-    }
-    return new URLSearchParams(window.location.search).get('view') === 'groups'
-      ? 'groups'
-      : 'streams'
-  })
-  const [search, setSearch] = useState('')
-  const [typeFilter, setTypeFilter] = useState<ChatTypeFilter>('all')
-  const [page, setPage] = useState(1)
-  const [selectedChat, setSelectedChat] = useState<ChatStream | null>(null)
-  const {
-    data: chats = [],
-    error,
-    isFetching,
-    isLoading,
-    refetch,
-  } = useQuery({
+export function SharedGroupsSettings({
+  onSectionSaved,
+}: {
+  onSectionSaved?: (sectionName: string, value: Record<string, unknown>) => void
+} = {}) {
+  const { data: chats = [] } = useQuery({
     queryKey: ['chat-streams'],
     queryFn: () => getChatStreams(),
   })
 
-  const filteredChats = useMemo(
-    () =>
-      chats.filter((chat) => matchesTypeFilter(chat, typeFilter) && matchesSearch(chat, search)),
-    [chats, search, typeFilter]
-  )
-  const pageCount = Math.max(1, Math.ceil(filteredChats.length / PAGE_SIZE))
-  const currentPage = Math.min(page, pageCount)
-  const paginatedChats = useMemo(() => {
-    const start = (currentPage - 1) * PAGE_SIZE
-    return filteredChats.slice(start, start + PAGE_SIZE)
-  }, [currentPage, filteredChats])
-  const visibleStart = filteredChats.length === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1
-  const visibleEnd = Math.min(currentPage * PAGE_SIZE, filteredChats.length)
-  const groupCount = chats.filter((chat) => chat.chat_type === 'group').length
-  const privateCount = chats.length - groupCount
-
-  useEffect(() => {
-    if (!requestedSessionId || requestedSessionOpenedRef.current || chats.length === 0) {
-      return
-    }
-    const requestedChat = chats.find((chat) => chat.session_id === requestedSessionId)
-    if (requestedChat) {
-      const frameId = window.requestAnimationFrame(() => {
-        requestedSessionOpenedRef.current = true
-        setSelectedChat(requestedChat)
-      })
-      return () => window.cancelAnimationFrame(frameId)
-    }
-  }, [chats, requestedSessionId])
-
-  useEffect(() => {
-    const frameId = window.requestAnimationFrame(() => setPage(1))
-    return () => window.cancelAnimationFrame(frameId)
-  }, [search, typeFilter])
-
-  useEffect(() => {
-    if (page > pageCount) {
-      const frameId = window.requestAnimationFrame(() => setPage(pageCount))
-      return () => window.cancelAnimationFrame(frameId)
-    }
-  }, [page, pageCount])
-
-  const handleChatDeleted = (sessionId: string) => {
-    if (selectedChat?.session_id === sessionId) {
-      setSelectedChat(null)
-    }
-  }
-
   return (
-    <main className="flex h-full min-h-0 flex-col gap-4 overflow-hidden p-4 md:p-6">
-      <header className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="bg-background grid w-full grid-cols-3 border-2 text-sm sm:w-auto">
-          <div className="px-4 py-2">
-            <div className="text-muted-foreground">全部</div>
-            <div className="text-lg leading-tight font-semibold">{chats.length}</div>
-          </div>
-          <div className="border-l-2 px-4 py-2">
-            <div className="text-muted-foreground">群聊</div>
-            <div className="text-lg leading-tight font-semibold">{groupCount}</div>
-          </div>
-          <div className="border-l-2 px-4 py-2">
-            <div className="text-muted-foreground">私聊</div>
-            <div className="text-lg leading-tight font-semibold">{privateCount}</div>
-          </div>
-        </div>
-        <Tabs
-          value={activeView}
-          onValueChange={(value) => setActiveView(value as ChatManagementView)}
-        >
-          <DashboardTabBar className="bg-background h-10 w-full border-2 sm:w-fit">
-            <DashboardTabTrigger value="streams" className="h-8 px-4">
-              聊天流
-            </DashboardTabTrigger>
-            <DashboardTabTrigger value="groups" className="h-8 px-4">
-              共享组
-            </DashboardTabTrigger>
-          </DashboardTabBar>
-        </Tabs>
-      </header>
+    <div className="flex h-[min(70vh,48rem)] min-h-80 min-w-0 flex-col">
+      <MutualGroupsView chats={chats} onSectionSaved={onSectionSaved} />
+    </div>
+  )
+}
 
-      {activeView === 'groups' ? (
-        <MutualGroupsView chats={chats} />
-      ) : (
-        <>
-          <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="relative w-full sm:max-w-sm">
-              <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
-              <Input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="搜索名称、平台、用户、群号或会话 ID"
-                className="pl-9"
-              />
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <Tabs
-                value={typeFilter}
-                onValueChange={(value) => setTypeFilter(value as ChatTypeFilter)}
-              >
-                <DashboardTabBar className="bg-background h-10 w-full border-2 sm:w-fit">
-                  <DashboardTabTrigger value="all" className="h-8 px-4">
-                    全部
-                  </DashboardTabTrigger>
-                  <DashboardTabTrigger value="group" className="h-8 px-4">
-                    群聊
-                  </DashboardTabTrigger>
-                  <DashboardTabTrigger value="private" className="h-8 px-4">
-                    私聊
-                  </DashboardTabTrigger>
-                </DashboardTabBar>
-              </Tabs>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => void refetch()}
-                disabled={isFetching}
-                className="shrink-0"
-              >
-                <RefreshCw className={cn('mr-2 h-4 w-4', isFetching && 'animate-spin')} />
-                刷新
-              </Button>
-            </div>
-          </section>
-
-          <section className="bg-background flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border">
-            <div className="min-h-0 flex-1 overflow-auto">
-              <Table className="table-fixed">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[7rem] px-3">聊天流</TableHead>
-                    <TableHead className="w-[2rem] px-2">平台</TableHead>
-                    <TableHead className="w-[5rem] px-2">ID</TableHead>
-                    <TableHead className="w-[2.5rem] px-2">Type</TableHead>
-                    <TableHead className="w-[3rem] px-2 text-right">消息数</TableHead>
-                    <TableHead className="w-[3rem] px-2 text-right">表达数</TableHead>
-                    <TableHead className="w-[3rem] px-2 text-right">黑话数</TableHead>
-                    <TableHead className="w-[3rem] px-2">最后活跃</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {isLoading ? (
-                    <TableRow>
-                      <TableCell colSpan={8} className="text-muted-foreground h-28 text-center">
-                        正在加载聊天流...
-                      </TableCell>
-                    </TableRow>
-                  ) : error ? (
-                    <TableRow>
-                      <TableCell colSpan={8} className="text-destructive h-28 text-center">
-                        加载聊天流失败
-                      </TableCell>
-                    </TableRow>
-                  ) : filteredChats.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={8} className="text-muted-foreground h-28 text-center">
-                        暂无匹配的聊天流
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    paginatedChats.map((chat) => (
-                      <TableRow
-                        key={chat.session_id}
-                        role="button"
-                        tabIndex={0}
-                        aria-label={`查看 ${formatChatDisplayName(chat.display_name, chat.account_id)} 详情`}
-                        className="hover:bg-primary/10 focus-visible:bg-primary/10 focus-visible:outline-primary/60 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-[-2px]"
-                        onClick={() => setSelectedChat(chat)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault()
-                            setSelectedChat(chat)
-                          }
-                        }}
-                      >
-                        <TableCell className="px-3">
-                          <div className="flex min-w-0 items-center gap-3">
-                            <ChatStreamAvatar chat={chat} />
-                            <div className="min-w-0">
-                              <HoverScrollText
-                                className="font-medium"
-                                maxChars={12}
-                                value={chat.display_name}
-                              />
-                              {chat.account_id && (
-                                <div className="text-muted-foreground truncate font-mono text-xs">
-                                  {formatChatAccountLabel(chat.account_id)}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-muted-foreground px-2 font-mono text-xs">
-                          <HoverScrollText maxChars={4} value={chat.platform} />
-                        </TableCell>
-                        <TableCell className="text-muted-foreground px-2 font-mono text-xs">
-                          <HoverScrollText maxChars={12} value={getChatLogicalId(chat)} />
-                        </TableCell>
-                        <TableCell className="px-2">
-                          <Badge variant="outline">{getChatTypeLabel(chat)}</Badge>
-                        </TableCell>
-                        <TableCell className="px-2 text-right tabular-nums">
-                          {chat.message_count}
-                        </TableCell>
-                        <TableCell className="px-2 text-right tabular-nums">
-                          {chat.expression_count}
-                        </TableCell>
-                        <TableCell className="px-2 text-right tabular-nums">
-                          {chat.jargon_count}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground px-2">
-                          {formatTimestamp(chat.last_active_at)}
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-            <div className="text-muted-foreground flex shrink-0 flex-col gap-2 border-t px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                显示 {visibleStart}-{visibleEnd} / {filteredChats.length} 个聊天流
-              </div>
-              <div className="flex max-w-full min-w-0 items-center gap-1 overflow-x-auto sm:justify-end">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 shrink-0"
-                  disabled={currentPage <= 1}
-                  aria-label="第一页"
-                  onClick={() => setPage(1)}
-                >
-                  <ChevronsLeft className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 shrink-0"
-                  disabled={currentPage <= 1}
-                  aria-label="上一页"
-                  onClick={() => setPage((value) => Math.max(1, value - 1))}
-                >
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                </Button>
-                <span className="min-w-16 shrink-0 px-1 text-center tabular-nums">
-                  {currentPage} / {pageCount}
-                </span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 shrink-0"
-                  disabled={currentPage >= pageCount}
-                  aria-label="下一页"
-                  onClick={() => setPage((value) => Math.min(pageCount, value + 1))}
-                >
-                  <ChevronRight className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 shrink-0"
-                  disabled={currentPage >= pageCount}
-                  aria-label="最后一页"
-                  onClick={() => setPage(pageCount)}
-                >
-                  <ChevronsRight className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </div>
-          </section>
-        </>
-      )}
-
-      <ChatStreamSettingsDialog
-        chat={selectedChat}
-        onOpenChange={(open) => !open && setSelectedChat(null)}
-        onDeleted={handleChatDeleted}
-      />
+export function ChatManagementPage() {
+  return (
+    <main className="p-4 md:p-6">
+      <SharedGroupsSettings />
     </main>
   )
 }

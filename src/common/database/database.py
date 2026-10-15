@@ -1,5 +1,4 @@
 from contextlib import contextmanager
-from pathlib import Path
 from time import perf_counter
 from typing import ContextManager, Generator, TYPE_CHECKING
 
@@ -12,6 +11,7 @@ from sqlmodel import SQLModel, Session, create_engine
 
 import threading
 
+from src.common.paths import get_instance_root
 from src.common.database.migrations import create_database_migration_bootstrapper
 from src.common.logger import get_logger
 
@@ -24,7 +24,7 @@ logger = get_logger("database")
 
 
 # 定义数据库文件路径
-ROOT_PATH = Path(__file__).parent.parent.parent.parent.absolute().resolve()
+ROOT_PATH = get_instance_root()
 _DB_DIR = ROOT_PATH / "data"
 _DB_FILE = _DB_DIR / "MaiBot.db"
 

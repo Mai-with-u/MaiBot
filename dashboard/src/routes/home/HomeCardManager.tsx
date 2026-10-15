@@ -17,7 +17,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { ExternalLink, GripVertical, Maximize2, Pencil, Plus, RotateCcw, X } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useContext, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import ReactMarkdown from 'react-markdown'
@@ -37,6 +37,7 @@ import {
 } from '@/components/ui/dialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { PluginHomeCard, PluginHomeCardContent, PluginHomeCardWidth } from '@/lib/plugin-api'
+import { ThemeProviderContext } from '@/lib/theme-context'
 import { cn } from '@/lib/utils'
 
 const HOME_CARD_LAYOUT_STORAGE_KEY = 'maibot-home-card-layout-v1'
@@ -45,6 +46,8 @@ const HOME_CARD_LOW_ROW_HEIGHT = 192
 const HOME_CARD_HIGH_ROW_HEIGHT = 360
 const HOME_CARD_GRID_GAP = 16
 const HOME_CARD_SEPARATOR_ROW_HEIGHT = 34
+// 千禧风格的分隔条是「模块 + 屏幕 + 键帽」，比一行文字的分隔条高。
+const HOME_CARD_MILLENNIUM_SEPARATOR_ROW_HEIGHT = 70
 const LEGACY_BUILTIN_CARD_ORDERS = [
   [
     'builtin:version',
@@ -232,8 +235,12 @@ function isSeparatorRow(cards: HomeCardDefinition[]): boolean {
   return cards.length === 1 && cards[0].variant === 'separator'
 }
 
-function rowHeight(mode: HomeCardRowMode, cards: HomeCardDefinition[]): number {
-  if (isSeparatorRow(cards)) return HOME_CARD_SEPARATOR_ROW_HEIGHT
+function rowHeight(
+  mode: HomeCardRowMode,
+  cards: HomeCardDefinition[],
+  separatorRowHeight: number = HOME_CARD_SEPARATOR_ROW_HEIGHT
+): number {
+  if (isSeparatorRow(cards)) return separatorRowHeight
   return mode === 'high' ? HOME_CARD_HIGH_ROW_HEIGHT : HOME_CARD_LOW_ROW_HEIGHT
 }
 
@@ -696,6 +703,11 @@ function SortableHomeCard({
 
 export function HomeCardManager({ cards, pluginCards, controlsPortalId }: HomeCardManagerProps) {
   const { t } = useTranslation()
+  const { themeConfig } = useContext(ThemeProviderContext)
+  const separatorRowHeight =
+    themeConfig.dashboardStyle === 'millennium'
+      ? HOME_CARD_MILLENNIUM_SEPARATOR_ROW_HEIGHT
+      : HOME_CARD_SEPARATOR_ROW_HEIGHT
   const [layout, setLayout] = useState<HomeCardLayout>(loadHomeCardLayout)
   const [editing, setEditing] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -823,19 +835,21 @@ export function HomeCardManager({ cards, pluginCards, controlsPortalId }: HomeCa
             .slice(0, index)
             .reduce(
               (offset, previousMode, previousIndex) =>
-                offset + rowHeight(previousMode, cardRows[previousIndex]) + HOME_CARD_GRID_GAP,
+                offset +
+                rowHeight(previousMode, cardRows[previousIndex], separatorRowHeight) +
+                HOME_CARD_GRID_GAP,
               0
             )
           return { index, mode, top }
         })
         .filter((row) => !isSeparatorRow(cardRows[row.index])),
-    [cardRows, rowModes]
+    [cardRows, rowModes, separatorRowHeight]
   )
   const gridStyle =
     cardRows.length > 0
       ? ({
           '--home-card-grid-rows': rowModes
-            .map((mode, index) => `${rowHeight(mode, cardRows[index])}px`)
+            .map((mode, index) => `${rowHeight(mode, cardRows[index], separatorRowHeight)}px`)
             .join(' '),
         } as CSSProperties)
       : undefined

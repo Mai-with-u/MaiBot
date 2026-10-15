@@ -2,6 +2,7 @@ import { Download, Star, ThumbsDown, ThumbsUp } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -11,10 +12,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
 import {
   dislikePlugin,
+  getPluginReviewIdentity,
   getPluginStats,
   getPluginUserState,
   likePlugin,
@@ -28,6 +31,39 @@ interface PluginStatsProps {
   compact?: boolean
 }
 
+type RecentRating = NonNullable<PluginStatsData['recent_ratings']>[number]
+
+/** 单条最近评价：有评分显示星级，有评论内容时展示评论正文。 */
+function RecentRatingItem({ item }: { item: RecentRating }) {
+  return (
+    <div className="rounded-lg border bg-muted/50 p-3">
+      <div className={`flex items-center justify-between${item.comment ? ' mb-2' : ''}`}>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium">
+            {item.anonymous || !item.username ? '匿名用户' : item.username}
+          </span>
+          {item.rating != null && (
+            <div className="flex gap-1">
+              {[1, 2, 3, 4, 5].map((star) => (
+                <Star
+                  key={star}
+                  className={`h-3 w-3 ${
+                    star <= Number(item.rating) ? 'fill-yellow-400 text-yellow-400' : 'text-muted-foreground'
+                  }`}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+        <span className="text-xs text-muted-foreground">
+          {new Date(item.created_at).toLocaleDateString()}
+        </span>
+      </div>
+      {item.comment && <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">{item.comment}</p>}
+    </div>
+  )
+}
+
 export function PluginStats(props: PluginStatsProps) {
   return <PluginStatsContent key={props.pluginId} {...props} />
 }
@@ -39,6 +75,12 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
   const [savedUserRating, setSavedUserRating] = useState(0)
   const [userComment, setUserComment] = useState('')
   const [savedUserComment, setSavedUserComment] = useState('')
+  const [username, setUsername] = useState('')
+  const [savedUsername, setSavedUsername] = useState('')
+  const [anonymous, setAnonymous] = useState(false)
+  const [savedAnonymous, setSavedAnonymous] = useState(false)
+  const [identityReady, setIdentityReady] = useState(false)
+  const [identityError, setIdentityError] = useState('')
   const [liked, setLiked] = useState(false)
   const [disliked, setDisliked] = useState(false)
   const [actionLoading, setActionLoading] = useState<'like' | 'dislike' | 'rating' | null>(null)
@@ -65,6 +107,13 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
           setSavedUserRating(userState.rating ?? 0)
           setUserComment(userState.comment)
           setSavedUserComment(userState.comment)
+          setAnonymous(userState.anonymous === true)
+          setSavedAnonymous(userState.anonymous === true)
+          if (userState.username) {
+            setUsername(userState.username)
+            setSavedUsername(userState.username)
+            setIdentityReady(true)
+          }
         }
       })
       .catch((error: unknown) => {
@@ -80,6 +129,30 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
       cancelled = true
     }
   }, [pluginId])
+
+  useEffect(() => {
+    if (!isRatingDialogOpen || identityReady) return
+    let cancelled = false
+    setIdentityError('')
+    void getPluginReviewIdentity()
+      .then((identity) => {
+        if (cancelled) return
+        setUsername(identity.username)
+        setSavedUsername(identity.username)
+        setIdentityReady(true)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setIdentityError(error instanceof Error ? error.message : '获取默认评论用户名失败')
+        }
+      })
+    return () => { cancelled = true }
+  }, [isRatingDialogOpen, identityReady])
+
+  const identityChanged = anonymous !== savedAnonymous || (!anonymous && username !== savedUsername)
+  const canSubmitReview = userRating > 0 || userComment !== savedUserComment ||
+    (identityChanged && savedUserComment.trim().length > 0)
+  const canSubmitIdentity = anonymous || (identityReady && username.trim().length > 0)
 
   const updateVoteStats = (result: VoteStatsResponse) => {
     setLiked(result.liked === true)
@@ -137,9 +210,7 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
 
   const handleSubmitRating = async () => {
     const commentChanged = userComment !== savedUserComment
-    const canSubmit = userRating > 0 || commentChanged
-
-    if (!canSubmit) {
+    if (!canSubmitReview) {
       toast({
         title: '请填写评分或评论',
         description: '可以只评分，也可以只写评论',
@@ -147,14 +218,16 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
       })
       return
     }
+    if (!canSubmitIdentity) return
 
     const ratingToSubmit = userRating > 0 && (userRating !== savedUserRating || !commentChanged)
       ? userRating
       : undefined
-    const commentToSubmit = commentChanged ? userComment : undefined
+    // 修改署名时同时提交现有评论，支持只有评论而没有星级的评价。
+    const commentToSubmit = commentChanged || (identityChanged && savedUserComment) ? userComment : undefined
 
     setActionLoading('rating')
-    const result = await ratePlugin(pluginId, ratingToSubmit, commentToSubmit)
+    const result = await ratePlugin(pluginId, ratingToSubmit, commentToSubmit, undefined, { username, anonymous })
     setActionLoading(null)
 
     if (result.success) {
@@ -173,15 +246,23 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
       setSavedUserRating(nextUserRating)
       setUserComment(nextUserComment)
       setSavedUserComment(nextUserComment)
+      setUsername(username.trim())
+      setSavedUsername(username.trim())
+      setSavedAnonymous(anonymous)
       setStats((currentStats) => currentStats
         ? {
           ...currentStats,
           rating: Number(result.rating ?? currentStats.rating),
           rating_count: Number(result.rating_count ?? currentStats.rating_count),
+          comment_count: Number(result.comment_count ?? currentStats.comment_count),
         }
         : currentStats)
       setIsRatingDialogOpen(false)
       toast({ title: '评价已更新', description: '你的评分或评论已保存' })
+      const refreshedStats = await getPluginStats(pluginId)
+      if (refreshedStats) {
+        setStats((current) => current ? { ...current, recent_ratings: refreshedStats.recent_ratings } : refreshedStats)
+      }
       return
     }
 
@@ -229,6 +310,11 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
       </div>
     )
   }
+
+  // 评分与评论分流：有评论内容的进入「最近评论」（同时展示其星级），仅有评分的进入「最近评分」
+  const recentRatings = stats.recent_ratings ?? []
+  const recentComments = recentRatings.filter((item) => item.comment?.trim())
+  const recentRatingOnly = recentRatings.filter((item) => item.rating != null && !item.comment?.trim())
 
   return (
     <div className="space-y-4">
@@ -293,6 +379,28 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
             </DialogHeader>
 
             <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <label htmlFor="plugin-review-username" className="block text-sm font-medium">
+                  用户名
+                </label>
+                <Input
+                  id="plugin-review-username"
+                  value={anonymous ? '' : username}
+                  onChange={(event) => setUsername(event.target.value)}
+                  disabled={anonymous || !identityReady}
+                  placeholder={anonymous ? '匿名用户' : '默认使用 bot 昵称'}
+                  maxLength={100}
+                />
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="plugin-review-anonymous"
+                    checked={anonymous}
+                    onCheckedChange={(checked) => setAnonymous(checked === true)}
+                  />
+                  <label htmlFor="plugin-review-anonymous" className="text-sm">匿名评价（不发送用户名）</label>
+                </div>
+                {identityError && !anonymous && <p role="alert" className="text-sm text-destructive">{identityError}</p>}
+              </div>
               <div className="flex flex-col items-center gap-2">
                 <div className="flex gap-2">
                   {[1, 2, 3, 4, 5].map((star) => (
@@ -346,7 +454,7 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
               </Button>
               <Button
                 onClick={handleSubmitRating}
-                disabled={actionLoading !== null || (userRating === 0 && userComment === savedUserComment)}
+                disabled={actionLoading !== null || !canSubmitReview || !canSubmitIdentity}
               >
                 {actionLoading === 'rating' ? '提交中...' : '提交评价'}
               </Button>
@@ -355,37 +463,24 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
         </Dialog>
       </div>
 
-      {stats.recent_ratings && stats.recent_ratings.length > 0 && (
+      {/* 评分与评论是两种内容：有评论文字的归入「最近评论」并保留星级，仅有评分的归入「最近评分」 */}
+      {recentComments.length > 0 && (
         <div className="space-y-2">
-          <h4 className="text-sm font-semibold">最近评价</h4>
+          <h4 className="text-sm font-semibold">最近评论</h4>
           <div className="space-y-3">
-            {stats.recent_ratings.map((rating, index) => (
-              <div key={`${rating.user_id}-${rating.created_at}-${index}`} className="rounded-lg border bg-muted/50 p-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <div className="flex gap-1">
-                    {rating.rating == null ? (
-                      <span className="text-xs text-muted-foreground">仅评论</span>
-                    ) : (
-                      [1, 2, 3, 4, 5].map((star) => (
-                        <Star
-                          key={star}
-                          className={`h-3 w-3 ${
-                            star <= Number(rating.rating)
-                              ? 'fill-yellow-400 text-yellow-400'
-                              : 'text-muted-foreground'
-                          }`}
-                        />
-                      ))
-                    )}
-                  </div>
-                  <span className="text-xs text-muted-foreground">
-                    {new Date(rating.created_at).toLocaleDateString()}
-                  </span>
-                </div>
-                {rating.comment && (
-                  <p className="text-sm text-muted-foreground">{rating.comment}</p>
-                )}
-              </div>
+            {recentComments.map((item, index) => (
+              <RecentRatingItem key={`${item.user_id}-${item.created_at}-${index}`} item={item} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {recentRatingOnly.length > 0 && (
+        <div className="space-y-2">
+          <h4 className="text-sm font-semibold">最近评分</h4>
+          <div className="space-y-3">
+            {recentRatingOnly.map((item, index) => (
+              <RecentRatingItem key={`${item.user_id}-${item.created_at}-${index}`} item={item} />
             ))}
           </div>
         </div>

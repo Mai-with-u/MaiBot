@@ -62,7 +62,7 @@ MaiSaka 不仅仅是一个机器人，不仅仅是一个可以帮你完成任务
 
 <div align="center">
   <br>
-  <img src="../depends-data/webui-showcase.jpg" width="90%" alt="MaiBot WebUI 界面" style="box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+  <img src="../depends-data/webui-millennium-showcase.png" width="90%" alt="MaiBot WebUI 千禧主题浅色与夜间模式" style="box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
 </div>
 
 ---
@@ -73,7 +73,7 @@ MaiSaka 不仅仅是一个机器人，不仅仅是一个可以帮你完成任务
 
 - **发布**：[Release](https://github.com/Mai-with-u/MaiBot/releases/) 页面展示了最新发布的正式版。
 
-- **[部署教程](https://docs.mai-mai.org/manual/deployment/)**
+- **[部署教程](https://docs.mai-mai.org/manual/)**
 
 - **方便使用的麦麦启动器下载 (Windows/MAC)**：[Maibot-OK](https://github.com/Mai-with-u/MaiBotOneKey/releases/)
 
@@ -143,11 +143,17 @@ MaiSaka 不仅仅是一个机器人，不仅仅是一个可以帮你完成任务
 
 ## 📊 仓库状态
 
-![Alt](../depends-data/repository-metrics.svg "麦麦仓库状态")
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://status.maibot.top/card/repo.svg?theme=night">
+  <img src="https://status.maibot.top/card/repo.svg" alt="麦麦仓库状态" width="100%">
+</picture>
 
 ### Star History
 
-![Star 趋势](../depends-data/star-history.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://status.maibot.top/card/stars.svg?theme=night">
+  <img src="https://status.maibot.top/card/stars.svg" alt="Star 趋势" width="100%">
+</picture>
 
 ---
 

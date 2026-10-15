@@ -33,9 +33,13 @@ describe('menuSections 菜单结构', () => {
     }
   })
 
-  it('所有菜单项 label 均为 sidebar.menu 命名空间的 i18n key', () => {
+  it('菜单项使用侧栏文案，聊天入口复用工作区文案', () => {
     for (const item of allItems) {
-      expect(item.label).toMatch(/^sidebar\.menu\./)
+      if (item.path === '/chat') {
+        expect(item.label).toBe('workspace.chat')
+      } else {
+        expect(item.label).toMatch(/^sidebar\.menu\./)
+      }
     }
   })
 
@@ -120,13 +124,12 @@ describe('menuSections 菜单结构', () => {
     )
   })
 
-  it('行为学习与回复效果入口分别受特性开关控制', () => {
+  it('回复效果入口受特性开关控制', () => {
     const flaggedItems = allItems.filter((item) => item.featureFlag !== undefined)
 
-    expect(flaggedItems).toHaveLength(2)
+    expect(flaggedItems).toHaveLength(1)
     expect(flaggedItems).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ path: '/resource/behavior', featureFlag: 'behaviorLearning' }),
         expect.objectContaining({ path: '/reply-effects', featureFlag: 'replyEffects' }),
       ])
     )

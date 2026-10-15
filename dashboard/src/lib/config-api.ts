@@ -6,7 +6,7 @@
  * 公开函数遵循 throw 契约：成功返回数据，失败抛 ApiError。
  */
 
-import { ApiError, backendApi } from '@/lib/http'
+import { backendApi } from '@/lib/http'
 import type { ConfigSchema } from '@/types/config-schema'
 
 const API_BASE = '/api/webui/config'
@@ -45,9 +45,8 @@ function getCachedSchema(key: string, url: string): Promise<ConfigSchema> {
   const request = backendApi
     .get<ConfigSchema>(url, { cache: 'no-store', errorMessage: '获取配置架构失败' })
     .catch((error: unknown) => {
-      // HTTP 层失败（带 status 的 ApiError）保留被拒绝的 Promise 在缓存中，
-      // 避免对失败的配置接口反复发起请求；请求未到达服务器等瞬时异常则剔除缓存后重抛
-      if (!(error instanceof ApiError) || error.status === undefined) {
+      // 只复用进行中或成功的请求；失败后释放缓存，让后续读取可以重新请求。
+      if (schemaRequestCache.get(key) === request) {
         schemaRequestCache.delete(key)
       }
       throw error
@@ -67,8 +66,8 @@ function getCachedConfigData(key: string, url: string): Promise<Record<string, u
     .get<unknown>(url, { cache: 'no-store', errorMessage: '获取配置失败' })
     .then((data) => unwrapConfigResponse(data))
     .catch((error: unknown) => {
-      // HTTP 层失败保留被拒绝的 Promise 在缓存中，避免反复请求失败接口；瞬时异常则剔除缓存后重抛
-      if (!(error instanceof ApiError) || error.status === undefined) {
+      // 失败后释放缓存，但不能清除过期或失效后已经启动的新请求。
+      if (configDataCache.get(key)?.request === request) {
         configDataCache.delete(key)
       }
       throw error

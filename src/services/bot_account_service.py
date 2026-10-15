@@ -235,6 +235,29 @@ class BotAccountService:
                 self._enabled_accounts.setdefault(platform, set()).add(normalized_account)
         return account
 
+    def delete_by_id(self, record_id: int) -> None:
+        """删除已发现账号及缓存；后续适配器上报可重新发现该账号。"""
+
+        self._ensure_initialized()
+        with self._lock:
+            with get_db_session() as session:
+                account = session.get(BotPlatformAccount, record_id)
+                if account is None:
+                    raise LookupError(f"Bot 平台账号不存在: id={record_id}")
+                platform = normalize_platform(account.platform)
+                account_id = normalize_account_id(account.account_id)
+                session.delete(account)
+                session.flush()
+                remaining = session.exec(
+                    select(BotPlatformAccount.id).where(BotPlatformAccount.platform == platform)
+                ).first()
+            self._enabled_accounts.get(platform, set()).discard(account_id)
+            self._disabled_accounts.get(platform, set()).discard(account_id)
+            self._volatile_accounts.get(platform, set()).discard(account_id)
+            # 平台已无发现记录时，恢复原有的备用配置身份解析。
+            if remaining is None and not self._volatile_accounts.get(platform):
+                self._observed_platforms.discard(platform)
+
     def set_disabled_by_id(self, record_id: int, disabled: bool) -> BotPlatformAccount:
         """按数据库主键软禁用或恢复账号。"""
 

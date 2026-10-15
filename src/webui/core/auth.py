@@ -18,7 +18,7 @@ COOKIE_MAX_AGE = 7 * 24 * 60 * 60  # 7天
 
 def _is_secure_environment() -> bool:
     """
-    检测是否应该启用安全 Cookie（HTTPS）
+    根据 secure_cookie 配置决定是否启用安全 Cookie（HTTPS）。
 
     Returns:
         bool: 如果应该使用 secure cookie 则返回 True
@@ -28,13 +28,8 @@ def _is_secure_environment() -> bool:
         logger.info("配置中启用了 secure_cookie")
         return True
 
-    # 检查是否是生产环境
-    if global_config.webui.mode == "production":
-        logger.info("WebUI运行在生产模式，启用 secure cookie")
-        return True
-
-    # 默认：开发环境不启用（因为通常是 HTTP）
-    logger.debug("WebUI运行在开发模式，禁用 secure cookie")
+    # 运行模式不代表访问协议，关闭配置时允许通过 HTTP 使用登录 Cookie。
+    logger.debug("配置中未启用 secure_cookie")
     return False
 
 
@@ -78,7 +73,7 @@ def set_auth_cookie(response: Response, token: str, request: Optional[Request] =
         token: 要设置的 token
         request: FastAPI Request 对象（可选，用于检测协议）
     """
-    # 根据环境和实际请求协议决定安全设置
+    # 配置决定安全设置；实际请求协议只用于提示部署问题，不得降低配置要求。
     is_secure = _is_secure_environment()
 
     # 如果提供了 request，检测实际使用的协议
@@ -93,15 +88,12 @@ def set_auth_cookie(response: Response, token: str, request: Optional[Request] =
             is_https = request.url.scheme == "https"
             logger.debug(f"检测到 scheme: {request.url.scheme}, is_https={is_https}")
 
-        # 如果是 HTTP 连接，强制禁用 secure 标志
+        # HTTP 连接无法正常使用安全 Cookie，保留 Secure 标志并提示修正部署。
         if not is_https and is_secure:
-            logger.warning("=" * 80)
-            logger.warning("检测到 HTTP 连接但环境配置要求 HTTPS (secure cookie)")
-            logger.warning("已自动禁用 secure 标志以允许登录，但建议修改配置：")
-            logger.warning("1. 在配置文件中设置: webui.secure_cookie = false")
-            logger.warning("2. 如果使用反向代理，请确保正确配置 X-Forwarded-Proto 头")
-            logger.warning("=" * 80)
-            is_secure = False
+            logger.warning(
+                "检测到 HTTP 连接但配置要求安全 Cookie，已保留 Secure 标志；"
+                "请使用 HTTPS，并在反向代理中正确配置 X-Forwarded-Proto"
+            )
 
     # 设置 Cookie
     response.set_cookie(
@@ -110,7 +102,7 @@ def set_auth_cookie(response: Response, token: str, request: Optional[Request] =
         max_age=COOKIE_MAX_AGE,
         httponly=True,  # 防止 JS 读取，阻止 XSS 窃取
         samesite="lax",  # 使用 lax 以兼容更多场景（开发和生产）
-        secure=is_secure,  # 根据实际协议决定
+        secure=is_secure,  # 遵循安全配置
         path="/",  # 确保 Cookie 在所有路径下可用
     )
 

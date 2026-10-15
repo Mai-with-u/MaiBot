@@ -61,6 +61,7 @@ vi.mock('@/lib/chat-management-api', () => ({
 
 vi.mock('@/lib/bot-accounts-api', () => ({
   getDiscoveredBotAccounts: vi.fn(),
+  deleteDiscoveredBotAccount: vi.fn(),
   setDiscoveredBotAccountDisabled: vi.fn(),
 }))
 
@@ -253,20 +254,7 @@ describe('custom bot config hooks', () => {
         online: true,
       },
     ])
-    vi.mocked(botAccountsApi.setDiscoveredBotAccountDisabled).mockResolvedValue({
-      id: 1,
-      platform: 'qq',
-      account_id: 'bot-1',
-      disabled: true,
-      first_seen_at: '2026-08-08T08:00:00',
-      last_seen_at: '2026-08-08T09:00:00',
-      disabled_at: '2026-08-08T10:00:00',
-      last_source: 'ready',
-      last_adapter_id: 'adapter-1',
-      last_plugin_id: 'plugin-1',
-      last_gateway_name: 'gateway-1',
-      online: true,
-    })
+    vi.mocked(botAccountsApi.deleteDiscoveredBotAccount).mockResolvedValue(undefined)
     const onParentChange = vi.fn()
 
     render(
@@ -291,23 +279,19 @@ describe('custom bot config hooks', () => {
     expect(screen.queryByRole('button', { name: '添加平台' })).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: '备用平台账号' }))
-    expect(screen.getByDisplayValue('fallback-qq')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('fallback-wx')).toBeInTheDocument()
+    expect(screen.getByText('fallback-qq')).toBeInTheDocument()
+    expect(screen.getByText('fallback-wx')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '编辑主账号' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '添加平台' })).toBeInTheDocument()
 
     expect(screen.queryByText(/禁用只影响/)).not.toBeInTheDocument()
     expect(screen.queryByText(/这些配置不会写入/)).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: '排除身份' }))
-    await waitFor(() => expect(botAccountsApi.setDiscoveredBotAccountDisabled).toHaveBeenCalledWith(1, true))
-    expect(await screen.findByRole('button', { name: '已排除账号 1' })).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    )
-    expect(screen.queryByRole('button', { name: '恢复身份' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '删除账号' }))
+    await waitFor(() => expect(botAccountsApi.deleteDiscoveredBotAccount).toHaveBeenCalledWith(1))
+    await waitFor(() => expect(screen.queryByText('bot-1')).not.toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: '已排除账号 1' })).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: '已排除账号 1' }))
-    expect(screen.getByRole('button', { name: '恢复身份' })).toBeInTheDocument()
   })
 
   it('uses the shared scope selector while limiting memory groups to exact chats', async () => {

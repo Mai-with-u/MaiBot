@@ -86,6 +86,11 @@ def test_application_history_envelope_keeps_one_stable_item_identity() -> None:
 
 def test_day_boundary_is_deferred_until_after_tool_result() -> None:
     history: List[LLMContextMessage] = [
+        ReferenceMessage(
+            content="触发工具调用",
+            timestamp=datetime(2026, 7, 20, 23, 59, 58),
+            remaining_uses_value=None,
+        ),
         *_build_output_history(
             "调用表情工具",
             datetime(2026, 7, 20, 23, 59, 59),
@@ -108,19 +113,25 @@ def test_day_boundary_is_deferred_until_after_tool_result() -> None:
     messages = _build_history_messages(history)
 
     assert [type(message) for message in messages] == [
+        UserMessageItem,
         AssistantMessageItem,
         FunctionCallItem,
         FunctionCallOutputItem,
         UserMessageItem,
         UserMessageItem,
     ]
-    assert messages[2].call_id == "call_emoji"
-    assert get_item_text(messages[3]) == "时间：2026-07-21 00:00:01"
-    assert get_item_text(messages[4]) == "[参考消息]\n工具后的普通消息"
+    assert messages[3].call_id == "call_emoji"
+    assert get_item_text(messages[4]) == "时间：2026-07-21 00:00:01"
+    assert get_item_text(messages[5]) == "[参考消息]\n工具后的普通消息"
 
 
 def test_day_boundary_is_deferred_until_after_all_tool_results() -> None:
     history: List[LLMContextMessage] = [
+        ReferenceMessage(
+            content="触发并行工具调用",
+            timestamp=datetime(2026, 7, 20, 23, 59, 58),
+            remaining_uses_value=None,
+        ),
         *_build_output_history(
             "调用多个工具",
             datetime(2026, 7, 20, 23, 59, 59),
@@ -145,6 +156,7 @@ def test_day_boundary_is_deferred_until_after_all_tool_results() -> None:
     messages = _build_history_messages(history)
 
     assert [type(message) for message in messages] == [
+        UserMessageItem,
         AssistantMessageItem,
         FunctionCallItem,
         FunctionCallItem,
@@ -152,8 +164,8 @@ def test_day_boundary_is_deferred_until_after_all_tool_results() -> None:
         FunctionCallOutputItem,
         UserMessageItem,
     ]
-    assert [message.call_id for message in messages[3:5]] == ["call_first", "call_second"]
-    assert get_item_text(messages[5]) == "时间：2026-07-21 00:00:01"
+    assert [message.call_id for message in messages[4:6]] == ["call_first", "call_second"]
+    assert get_item_text(messages[6]) == "时间：2026-07-21 00:00:01"
 
 
 def test_day_boundary_stays_before_regular_context_message() -> None:

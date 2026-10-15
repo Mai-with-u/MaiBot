@@ -32,7 +32,7 @@ const ToastViewport = React.forwardRef<
 ToastViewport.displayName = ToastPrimitives.Viewport.displayName
 
 const toastVariants = cva(
-  "group pointer-events-auto relative flex w-full items-center justify-between space-x-2 overflow-hidden rounded-md border p-4 pr-6 shadow-lg transition-all",
+  "group pointer-events-auto relative flex w-full items-center justify-between gap-2 overflow-hidden rounded-md border py-2 pl-3 pr-14 shadow-lg transition-all",
   {
     variants: {
       variant: {
@@ -56,31 +56,59 @@ const Toast = React.forwardRef<
   React.ElementRef<typeof ToastPrimitives.Root>,
   React.ComponentPropsWithoutRef<typeof ToastPrimitives.Root> &
     VariantProps<typeof toastVariants>
->(({ children, className, duration, onPause, onResume, variant, ...props }, ref) => {
+>(({ children, className, duration = 4000, onPause, onResume, onOpenChange, open, defaultOpen = true, variant, ...props }, ref) => {
   const isMobile = useIsMobile()
-  // Radix 会在悬停、聚焦或窗口失焦时暂停关闭计时，进度动画需要同步暂停。
-  const [isPaused, setIsPaused] = React.useState(false)
+  // 接管 Radix 的自动关闭计时：悬停、聚焦或窗口失焦时减速，进度动画同步减速。
+  const [isSlow, setIsSlow] = React.useState(false)
+  const [internalOpen, setInternalOpen] = React.useState(defaultOpen)
+  const isOpen = open ?? internalOpen
+  const remainingRef = React.useRef(duration)
+  const onOpenChangeRef = React.useRef(onOpenChange)
+  onOpenChangeRef.current = onOpenChange
   const position = isMobile ? "mobile" : "desktop"
+
+  React.useEffect(() => {
+    remainingRef.current = duration
+  }, [duration, isOpen])
+
+  React.useEffect(() => {
+    if (!isOpen || !Number.isFinite(duration) || duration <= 0) return
+    const speed = isSlow ? 1 / 3 : 1
+    const startedAt = performance.now()
+    const timer = window.setTimeout(() => {
+      setInternalOpen(false)
+      onOpenChangeRef.current?.(false)
+    }, remainingRef.current / speed)
+    return () => {
+      window.clearTimeout(timer)
+      remainingRef.current = Math.max(0, remainingRef.current - (performance.now() - startedAt) * speed)
+    }
+  }, [duration, isOpen, isSlow])
   
   return (
     <ToastPrimitives.Root
       ref={ref}
       data-dashboard-toast="true"
       className={cn(toastVariants({ variant, position }), className)}
-      duration={duration}
+      duration={Infinity}
+      open={isOpen}
+      onOpenChange={(nextOpen) => {
+        setInternalOpen(nextOpen)
+        onOpenChange?.(nextOpen)
+      }}
       onPause={() => {
-        setIsPaused(true)
+        setIsSlow(true)
         onPause?.()
       }}
       onResume={() => {
-        setIsPaused(false)
+        setIsSlow(false)
         onResume?.()
       }}
       {...props}
     >
       {children}
       {typeof duration === "number" && Number.isFinite(duration) && duration > 0 && (
-        <ToastProgress duration={duration} paused={isPaused} />
+        <ToastProgress duration={duration} slow={isSlow} open={isOpen} />
       )}
     </ToastPrimitives.Root>
   )
@@ -111,7 +139,7 @@ const ToastClose = React.forwardRef<
     ref={ref}
     data-dashboard-toast-close="true"
     className={cn(
-      "absolute right-1 top-1 rounded-md p-1 text-foreground/50 opacity-0 transition-opacity hover:text-foreground focus:opacity-100 focus:outline-none focus:ring-1 group-hover:opacity-100 group-focus-within:opacity-100 group-[.destructive]:text-red-300 group-[.destructive]:hover:text-red-50 group-[.destructive]:focus:ring-red-400 group-[.destructive]:focus:ring-offset-red-600",
+      "absolute inset-y-0 right-0 flex w-11 cursor-pointer items-center justify-center border-l border-current/15 text-foreground/60 transition-colors hover:bg-foreground/10 hover:text-foreground focus-visible:bg-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-[.destructive]:text-red-300 group-[.destructive]:hover:bg-destructive/20 group-[.destructive]:hover:text-red-50 group-[.destructive]:focus-visible:ring-red-400",
       className
     )}
     aria-label="关闭提示"
@@ -151,22 +179,42 @@ ToastDescription.displayName = ToastPrimitives.Description.displayName
 
 interface ToastProgressProps extends React.HTMLAttributes<HTMLDivElement> {
   duration: number
-  paused?: boolean
+  slow: boolean
+  open: boolean
 }
 
-function ToastProgress({ className, duration, paused = false, style, ...props }: ToastProgressProps) {
+function ToastProgress({ className, duration, slow, open, style, ...props }: ToastProgressProps) {
+  const progressRef = React.useRef<HTMLDivElement>(null)
+  const animationRef = React.useRef<Animation | null>(null)
+
+  React.useEffect(() => {
+    if (!open) return
+    const animation = progressRef.current!.animate(
+      [{ transform: "scaleX(1)" }, { transform: "scaleX(0)" }],
+      { duration, easing: "linear", fill: "forwards" }
+    )
+    animationRef.current = animation
+    return () => {
+      animation.cancel()
+      animationRef.current = null
+    }
+  }, [duration, open])
+
+  React.useEffect(() => {
+    animationRef.current?.updatePlaybackRate(slow ? 1 / 3 : 1)
+  }, [slow, duration, open])
+
   return (
     <div
+      ref={progressRef}
       aria-hidden="true"
       data-dashboard-toast-progress="true"
       className={cn(
-        "toast-progress pointer-events-none absolute right-0 bottom-0 left-0 h-1 origin-left bg-primary/70 group-[.destructive]:bg-destructive/70",
+        "pointer-events-none absolute right-0 bottom-0 left-0 h-1 origin-left bg-primary/70 group-[.destructive]:bg-destructive/70",
         className
       )}
       style={{
         ...style,
-        animationDuration: `${duration}ms`,
-        animationPlayState: paused ? "paused" : "running",
       }}
       {...props}
     />

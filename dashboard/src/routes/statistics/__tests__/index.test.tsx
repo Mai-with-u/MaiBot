@@ -156,6 +156,7 @@ function makePeriod(overrides: Partial<DetailedStatisticsPeriod> = {}): Detailed
     end_time: '2026-07-01T12:00:00',
     summary: makeSummary(),
     models: [breakdown],
+    task_groups: [],
     modules: [{ ...breakdown, name: 'replyer' }],
     request_types: [{ ...breakdown, name: 'replyer.chat' }],
     chats: [{ name: '测试群聊', message_count: 10 }],
@@ -312,6 +313,7 @@ describe('StatisticsPage', () => {
         periods: [
           makePeriod({
             models: [],
+            task_groups: [],
             modules: [],
             request_types: [],
             chats: [],
@@ -398,6 +400,7 @@ describe('StatisticsPage', () => {
             key: 'weird_period',
             summary: makeSummary({ online_time: -8, cache_hit_rate: 0 }),
             models: [abnormalBreakdown],
+            task_groups: [],
             modules: [],
             request_types: [],
             chats: [],

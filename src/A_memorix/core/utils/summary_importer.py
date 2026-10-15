@@ -343,6 +343,10 @@ class SummaryImporter:
                     vectors=embeddings,
                     ids=[vector_id for _, _, vector_id in batch_entities],
                 )
+                recorder = self.plugin_config.get("record_embedding_input")
+                if recorder is not None:
+                    for entity_hash, name, _vector_id in batch_entities:
+                        recorder("entity", entity_hash, name)
             except Exception as exc:
                 if not self._allow_metadata_only_write():
                     raise
@@ -492,7 +496,6 @@ class SummaryImporter:
             model_list=list(template_cfg.model_list),
             max_tokens=template_cfg.max_tokens,
             temperature=template_cfg.temperature,
-            slow_threshold=template_cfg.slow_threshold,
             selection_strategy=template_cfg.selection_strategy,
             hard_timeout=template_cfg.hard_timeout,
         )

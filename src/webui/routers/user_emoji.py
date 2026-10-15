@@ -8,6 +8,7 @@ import uuid
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
+from src.common.paths import get_instance_root
 from src.webui.dependencies import require_auth
 from src.webui.routers.avatar import WEBUI_USER_ID_PATTERN, detect_supported_image_suffix
 
@@ -17,7 +18,7 @@ router = APIRouter(
     dependencies=[Depends(require_auth)],
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = get_instance_root()
 USER_EMOJI_ROOT = (PROJECT_ROOT / "data" / "webui_user_emojis").resolve()
 MAX_USER_EMOJI_BYTES = 2 * 1024 * 1024
 MAX_USER_EMOJI_COUNT = 100

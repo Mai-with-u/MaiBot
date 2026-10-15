@@ -151,7 +151,9 @@ export type ThemePreset = {
   isDark: boolean
 }
 
-export type DashboardStyle = 'modern' | 'future-retro'
+export type DashboardStyle = 'modern' | 'future-retro' | 'millennium'
+
+export const DASHBOARD_STYLES: readonly DashboardStyle[] = ['modern', 'future-retro', 'millennium']
 
 export type StyleTokenOverrides = Partial<Record<DashboardStyle, Partial<ThemeTokens>>>
 export type StyleCustomCSS = Partial<Record<DashboardStyle, string>>
@@ -164,21 +166,19 @@ export type FutureRetroStyleConfig = {
   textureStyle: FutureRetroTextureStyle
   textureIntensity: number
   panelDepth: number
-  strokeScale: number
 }
 
 export type DashboardStyleConfig = {
   futureRetro: FutureRetroStyleConfig
 }
 
-export const DEFAULT_DASHBOARD_STYLE: DashboardStyle = 'future-retro'
+export const DEFAULT_DASHBOARD_STYLE: DashboardStyle = 'millennium'
 
 export const DEFAULT_FUTURE_RETRO_STYLE_CONFIG: FutureRetroStyleConfig = {
   paperWarmth: 100,
   textureStyle: 'fine',
   textureIntensity: 55,
   panelDepth: 100,
-  strokeScale: 100,
 }
 
 export const DEFAULT_DASHBOARD_STYLE_CONFIG: DashboardStyleConfig = {
@@ -532,6 +532,127 @@ export const futureRetroDarkTokens: Partial<ThemeTokens> = {
   layout: {
     ...defaultDarkTokens.layout,
     ...futureRetroBaseLayout,
+  },
+}
+
+// ============================================================================
+// Millennium Tokens (千禧：米黄机壳、键帽与下沉屏幕)
+// ============================================================================
+
+const millenniumBaseTypography = {
+  'font-family-base':
+    'var(--mil-font-pixel), system-ui, sans-serif',
+  'font-family-code': '"JetBrains Mono", "Cascadia Mono", Consolas, monospace',
+  'font-weight-normal': 500,
+  'font-weight-medium': 700,
+  'font-weight-semibold': 700,
+  'font-weight-bold': 800,
+  'letter-spacing-tight': '0em',
+  'letter-spacing-normal': '0em',
+  'letter-spacing-wide': '0.04em',
+} satisfies Partial<TypographyTokens>
+
+const millenniumBaseVisual = {
+  'radius-sm': '0px',
+  'radius-md': '0px',
+  'radius-lg': '0px',
+  'radius-xl': '0px',
+  'shadow-sm': 'none',
+  'shadow-md': 'none',
+  'shadow-lg': 'none',
+  'shadow-xl': 'none',
+} satisfies Partial<VisualTokens>
+
+const millenniumBaseLayout = {
+  'sidebar-logo-height': '52px',
+  'sidebar-nav-item-gap': '0.625rem',
+  'sidebar-nav-item-height': '2.875rem',
+  'sidebar-nav-item-collapsed-width': '2.875rem',
+} satisfies Partial<LayoutTokens>
+
+export const millenniumLightTokens: Partial<ThemeTokens> = {
+  color: {
+    ...defaultLightTokens.color,
+    primary: '134.4 46.4% 70%',
+    'primary-foreground': '104 14.9% 19.8%',
+    'primary-gradient': 'none',
+    secondary: '43.3 42.9% 91.8%',
+    'secondary-foreground': '37.5 12.1% 25.9%',
+    muted: '42.2 32.5% 83.7%',
+    'muted-foreground': '43.6 12.6% 34.1%',
+    accent: '44.2 51.4% 92.7%',
+    'accent-foreground': '36.9 12.6% 20.2%',
+    destructive: '9 61% 47.3%',
+    'destructive-foreground': '0 0% 100%',
+    background: '42 30.6% 80.8%',
+    foreground: '37.5 12.1% 25.9%',
+    card: '43.2 38.5% 87.3%',
+    'card-foreground': '37.5 12.1% 25.9%',
+    popover: '43.3 42.9% 91.8%',
+    'popover-foreground': '37.5 12.1% 25.9%',
+    border: '41.8 18.2% 64.5%',
+    input: '43.1 12.6% 49.8%',
+    ring: '136.4 29.6% 51.6%',
+    'chart-1': '15.1 67.7% 53.9%',
+    'chart-2': '147.6 46.8% 46.5%',
+    'chart-3': '39.1 66.7% 55.3%',
+    'chart-4': '211.2 29.6% 50.4%',
+    'chart-5': '39.2 10.4% 49%',
+  },
+  typography: {
+    ...defaultLightTokens.typography,
+    ...millenniumBaseTypography,
+  },
+  visual: {
+    ...defaultLightTokens.visual,
+    ...millenniumBaseVisual,
+  },
+  layout: {
+    ...defaultLightTokens.layout,
+    ...millenniumBaseLayout,
+  },
+}
+
+export const millenniumDarkTokens: Partial<ThemeTokens> = {
+  color: {
+    ...defaultDarkTokens.color,
+    primary: '134.4 46.4% 70%',
+    'primary-foreground': '125.5 15.1% 14.3%',
+    'primary-gradient': 'none',
+    secondary: '35 8.5% 27.8%',
+    'secondary-foreground': '43.2 38.5% 87.3%',
+    muted: '30 8.2% 19.2%',
+    'muted-foreground': '42.2 15.4% 65.7%',
+    accent: '35 8.5% 27.8%',
+    'accent-foreground': '43.3 42.9% 91.8%',
+    destructive: '9.6 67.4% 54.3%',
+    'destructive-foreground': '0 0% 100%',
+    background: '34.3 8% 17.1%',
+    foreground: '43.2 38.5% 87.3%',
+    card: '33.3 8.4% 21%',
+    'card-foreground': '43.2 38.5% 87.3%',
+    popover: '32.7 8.8% 24.5%',
+    'popover-foreground': '43.2 38.5% 87.3%',
+    border: '30 9.1% 12.9%',
+    input: '36 9.4% 10.4%',
+    ring: '134.4 46.4% 70%',
+    'chart-1': '18.4 83.1% 65.3%',
+    'chart-2': '134.4 46.4% 70%',
+    'chart-3': '42.4 73.3% 66.3%',
+    'chart-4': '210 49.3% 70.6%',
+    'chart-5': '42.2 15.4% 65.7%',
+  },
+  typography: {
+    ...defaultDarkTokens.typography,
+    ...millenniumBaseTypography,
+  },
+  visual: {
+    ...defaultDarkTokens.visual,
+    ...millenniumBaseVisual,
+  },
+  layout: {
+    ...defaultDarkTokens.layout,
+    ...millenniumBaseLayout,
   },
 }
 

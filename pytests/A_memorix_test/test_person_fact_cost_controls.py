@@ -138,9 +138,9 @@ async def test_person_fact_ingest_skips_episode_and_debounces_profile_refresh(tm
     assert result["fact_claim_ids"] == ["claim-1"]
     assert metadata_store.fact_claims[0]["value_text"] == "测试用户喜欢猫。"
     assert metadata_store.fact_claims[0]["evidence_id"] == "paragraph-1"
-    assert metadata_store.fact_claims[0]["authority"] == "summary_derived"
-    assert metadata_store.fact_claims[0]["stability"] == "uncertain"
-    assert metadata_store.fact_claims[0]["profile_section"] == "uncertain_notes"
+    assert metadata_store.fact_claims[0]["authority"] == "manual"
+    assert metadata_store.fact_claims[0]["stability"] == "stable"
+    assert metadata_store.fact_claims[0]["profile_section"] == "stable_facts"
     assert metadata_store.episode_sources == ["person_fact:person-1"]
     assert metadata_store.profile_refreshes == [
         {

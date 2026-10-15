@@ -238,7 +238,9 @@ describe('useMaibotVersion', () => {
 
     expect(result.current.hitokoto).toEqual({ hitokoto: '测试一言', from: '来源' })
     expect(result.current.hitokotoLoading).toBe(false)
-    expect(fetch).toHaveBeenCalledWith('https://v1.hitokoto.cn/?c=a&c=b&c=c&c=d&c=h&c=i&c=k')
+    expect(fetch).toHaveBeenCalledWith('https://v1.hitokoto.cn/?c=a&c=b&c=c&c=d&c=h&c=i&c=k', {
+      signal: expect.any(AbortSignal),
+    })
     expect(localStorage.getItem(HITOKOTO_INDEX_STORAGE_KEY)).toBe('1')
   })
 

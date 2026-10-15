@@ -46,3 +46,11 @@ export async function setDiscoveredBotAccountDisabled(
   )
   return response.data
 }
+
+
+export async function deleteDiscoveredBotAccount(accountId: number): Promise<void> {
+  await backendApi.delete(`${API_BASE}/${accountId}`, {
+    parse: 'response',
+    errorMessage: '删除适配器账号失败',
+  })
+}

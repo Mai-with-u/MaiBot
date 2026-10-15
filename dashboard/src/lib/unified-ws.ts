@@ -80,12 +80,13 @@ class UnifiedWebSocketClient {
   private eventListeners: Set<EventListener> = new Set()
   private hasConnectedOnce = false
   private heartbeatIntervalId: number | null = null
-  private lastPongAt = 0
+  private lastInboundAt = 0
   private manualDisconnect = false
   private pendingRequests: Map<string, PendingRequest> = new Map()
   private reconnectAttempts = 0
   private reconnectListeners: Set<ReconnectListener> = new Set()
   private reconnectTimeout: number | null = null
+  private recoveryWatchEnabled = false
   private requestCounter = 0
   private status: ConnectionStatus = 'idle'
   private statusListeners: Set<StatusListener> = new Set()
@@ -149,7 +150,7 @@ class UnifiedWebSocketClient {
       }
 
       const now = Date.now()
-      if (this.lastPongAt > 0 && now - this.lastPongAt > this.heartbeatTimeoutMs) {
+      if (this.lastInboundAt > 0 && now - this.lastInboundAt > this.heartbeatTimeoutMs) {
         console.warn('统一 WebSocket 心跳超时，准备重连')
         void this.restart().catch((error) => {
           console.error('统一 WebSocket 心跳重连失败:', error)
@@ -168,6 +169,33 @@ class UnifiedWebSocketClient {
     }
   }
 
+  // 网络恢复或页面重新可见时立即重连，不必等退避计时器，也能救回已放弃重连的连接
+  private readonly handleRecoverySignal = (): void => {
+    if (document.visibilityState === 'hidden') {
+      return
+    }
+    if (this.manualDisconnect || this.status !== 'idle' || this.reconnectAttempts === 0) {
+      return
+    }
+
+    this.clearReconnectTimer()
+    this.reconnectAttempts = 0
+    void this.connect().catch((error) => {
+      console.error('统一 WebSocket 恢复连接失败:', error)
+    })
+  }
+
+  private setRecoveryWatch(enabled: boolean): void {
+    if (typeof window === 'undefined' || this.recoveryWatchEnabled === enabled) {
+      return
+    }
+
+    this.recoveryWatchEnabled = enabled
+    const method = enabled ? 'addEventListener' : 'removeEventListener'
+    window[method]('online', this.handleRecoverySignal)
+    document[method]('visibilitychange', this.handleRecoverySignal)
+  }
+
   private rejectPendingRequests(error: Error): void {
     this.pendingRequests.forEach((pendingRequest, requestId) => {
       clearTimeout(pendingRequest.timeoutId)
@@ -177,10 +205,11 @@ class UnifiedWebSocketClient {
   }
 
   private scheduleReconnect(): void {
-    if (this.manualDisconnect) {
+    if (this.manualDisconnect || this.reconnectTimeout !== null) {
       return
     }
 
+    this.setRecoveryWatch(true)
     if (this.reconnectAttempts >= this.getMaxReconnectAttempts()) {
       console.warn(`统一 WebSocket 达到最大重连次数 (${this.getMaxReconnectAttempts()})，停止重连`)
       return
@@ -188,8 +217,8 @@ class UnifiedWebSocketClient {
 
     this.reconnectAttempts += 1
     const delay = this.getReconnectDelay()
-    this.clearReconnectTimer()
     this.reconnectTimeout = window.setTimeout(() => {
+      this.reconnectTimeout = null
       void this.connect().catch((error) => {
         console.error('统一 WebSocket 重连失败:', error)
       })
@@ -197,12 +226,17 @@ class UnifiedWebSocketClient {
   }
 
   private async createWebSocketUrl(): Promise<string | null> {
-    const wsBaseUrl = await getWsBaseUrl()
-    const wsToken = await getWsToken()
-    if (!wsBaseUrl || !wsToken) {
+    try {
+      const wsBaseUrl = await getWsBaseUrl()
+      const wsToken = await getWsToken()
+      if (!wsBaseUrl || !wsToken) {
+        return null
+      }
+      return `${wsBaseUrl}/api/webui/ws?token=${encodeURIComponent(wsToken)}`
+    } catch (error) {
+      console.error('构建统一 WebSocket 地址失败:', error)
       return null
     }
-    return `${wsBaseUrl}/api/webui/ws?token=${encodeURIComponent(wsToken)}`
   }
 
   private async sendRequest(
@@ -261,6 +295,9 @@ class UnifiedWebSocketClient {
       return
     }
 
+    // 任何下行数据都说明连接存活；pong 可能排在大批量事件之后，不能只靠它判活
+    this.lastInboundAt = Date.now()
+
     let message: WsServerEnvelope
     try {
       message = JSON.parse(rawData) as WsServerEnvelope
@@ -270,7 +307,6 @@ class UnifiedWebSocketClient {
     }
 
     if (message.op === 'pong') {
-      this.lastPongAt = Date.now()
       return
     }
 
@@ -306,20 +342,26 @@ class UnifiedWebSocketClient {
     }
   }
 
+  /** 丢弃当前 socket 的全部运行态；之后该 socket 的回调都会被视为过期而忽略 */
+  private releaseSocket(reason: Error): void {
+    this.stopHeartbeat()
+    this.lastInboundAt = 0
+    this.ws = null
+    this.connectPromise = null
+    this.setStatus('idle')
+    this.rejectPendingRequests(reason)
+  }
+
   private handleClose(socket: WebSocket, event: CloseEvent): void {
     if (this.ws !== socket) {
       return
     }
 
-    this.stopHeartbeat()
-    this.lastPongAt = 0
-    this.ws = null
-    this.connectPromise = null
-    this.setStatus('idle')
-    this.rejectPendingRequests(new Error(`统一 WebSocket 已关闭 (${event.code})`))
+    this.releaseSocket(new Error(`统一 WebSocket 已关闭 (${event.code})`))
 
     if (event.code === 4001) {
       this.manualDisconnect = true
+      this.setRecoveryWatch(false)
       if (window.location.pathname !== '/auth') {
         window.location.href = '/auth'
       }
@@ -341,10 +383,12 @@ class UnifiedWebSocketClient {
     this.manualDisconnect = false
     this.setStatus('connecting')
 
-    this.connectPromise = (async () => {
+    const connectPromise = (async () => {
       const wsUrl = await this.createWebSocketUrl()
       if (!wsUrl) {
         this.setStatus('idle')
+        // 后端重启期间 token 接口也不可用；此时尚未创建 socket，不会有 close 事件驱动重连
+        this.scheduleReconnect()
         throw new Error('无法建立统一 WebSocket 连接')
       }
 
@@ -363,7 +407,9 @@ class UnifiedWebSocketClient {
           const shouldNotifyReconnect = this.hasConnectedOnce
           this.hasConnectedOnce = true
           this.reconnectAttempts = 0
-          this.lastPongAt = Date.now()
+          this.clearReconnectTimer()
+          this.setRecoveryWatch(false)
+          this.lastInboundAt = Date.now()
           this.startHeartbeat()
           this.setStatus('connected')
           resolve()
@@ -394,11 +440,13 @@ class UnifiedWebSocketClient {
         }
       })
     })()
+    this.connectPromise = connectPromise
 
     try {
-      await this.connectPromise
+      await connectPromise
     } finally {
-      if (this.status !== 'connected') {
+      // restart 可能已换上新的握手 Promise，只清理属于本次握手的引用
+      if (this.connectPromise === connectPromise && this.status !== 'connected') {
         this.connectPromise = null
       }
     }
@@ -407,23 +455,20 @@ class UnifiedWebSocketClient {
   disconnect(): void {
     this.manualDisconnect = true
     this.clearReconnectTimer()
-    this.stopHeartbeat()
-    this.lastPongAt = 0
-    this.rejectPendingRequests(new Error('统一 WebSocket 已手动断开'))
-    this.connectPromise = null
-    if (this.ws) {
-      this.ws.close()
-      this.ws = null
-    }
-    this.setStatus('idle')
+    this.setRecoveryWatch(false)
+    const socket = this.ws
+    this.releaseSocket(new Error('统一 WebSocket 已手动断开'))
+    socket?.close()
   }
 
   async restart(): Promise<void> {
     this.manualDisconnect = false
     this.clearReconnectTimer()
-    if (this.ws) {
-      this.ws.close()
-      return
+    const socket = this.ws
+    if (socket) {
+      // 半开连接上 close() 可能迟迟等不到 close 事件，先丢弃旧 socket 再立即重建
+      this.releaseSocket(new Error('统一 WebSocket 正在重启'))
+      socket.close()
     }
     await this.connect()
   }
@@ -433,17 +478,21 @@ class UnifiedWebSocketClient {
     domain: string
     method: string
     session?: string
+    timeoutMs?: number
   }): Promise<Record<string, unknown>> {
     await this.connect()
     const requestId = this.nextRequestId()
-    return await this.sendRequest({
-      op: 'call',
-      id: requestId,
-      domain: params.domain,
-      method: params.method,
-      session: params.session,
-      data: params.data ?? {},
-    })
+    return await this.sendRequest(
+      {
+        op: 'call',
+        id: requestId,
+        domain: params.domain,
+        method: params.method,
+        session: params.session,
+        data: params.data ?? {},
+      },
+      params.timeoutMs
+    )
   }
 
   async subscribe(

@@ -297,7 +297,10 @@ export function ReplayItemEditorColumn({
 }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex min-h-12 flex-shrink-0 items-center justify-between gap-3 border-b px-3 py-2 sm:min-h-14 sm:px-4 sm:py-3">
+      <div
+        data-reasoning-panel-header="true"
+        className="flex min-h-12 flex-shrink-0 items-center justify-between gap-3 border-b px-3 py-2 sm:min-h-14 sm:px-4 sm:py-3"
+      >
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
             <span className="truncate text-sm font-medium">编辑重放 Items</span>
@@ -595,13 +598,17 @@ export function ReasoningReplayPanel({
 
   return (
     <aside
+      data-reasoning-panel="true"
       className={cn(
         'bg-background min-h-0 flex-col overflow-hidden rounded-md border shadow-sm',
         open ? 'flex' : 'hidden'
       )}
       aria-hidden={!open}
     >
-      <div className="flex min-h-14 items-center justify-between gap-3 border-b px-3 py-2 sm:px-4">
+      <div
+        data-reasoning-panel-header="true"
+        className="flex min-h-14 items-center justify-between gap-3 border-b px-3 py-2 sm:px-4"
+      >
         <div className="min-w-0">
           <div className="text-sm font-semibold">重放推理请求</div>
           <div className="text-muted-foreground truncate text-xs">{selectedTitle}</div>

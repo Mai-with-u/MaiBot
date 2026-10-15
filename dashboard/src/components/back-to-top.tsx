@@ -164,7 +164,8 @@ export function BackToTop() {
   return (
     <div 
       className={cn(
-        "fixed right-6 bottom-24 z-50 transition-[transform,opacity] ease-in-out",
+        // 手机上底部是标签栏，回到顶部的悬浮按钮会与之重叠，因此只在桌面端显示
+        "fixed right-6 bottom-24 z-50 transition-[transform,opacity] ease-in-out max-lg:hidden",
         dragging ? "duration-75" : "duration-500",
         visible ? "opacity-100" : "pointer-events-none opacity-0"
       )}

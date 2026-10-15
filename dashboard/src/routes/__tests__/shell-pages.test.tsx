@@ -112,7 +112,7 @@ describe('嵌入页转发壳', () => {
     [
       <PluginConfigEmbedPage key="config" />,
       'embed-plugin-config',
-      '插件管理 - MaiBot Dashboard',
+      '插件扩展 - MaiBot Dashboard',
       '插件配置内容',
     ],
     [

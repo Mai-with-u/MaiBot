@@ -23,6 +23,7 @@ function createDeferred<T>() {
 function createModel(name: string): ModelInfo {
   return {
     model_identifier: name,
+    model_type: 'llm',
     name,
     api_provider: 'test',
     price_in: 0,

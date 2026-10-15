@@ -16,12 +16,23 @@ from .knowledge_types import (
 
 logger = get_logger("A_Memorix.MetadataSchema")
 
-SCHEMA_VERSION = 26
+SCHEMA_VERSION = 27
 RUNTIME_AUTO_MIGRATION_MIN_SCHEMA_VERSION = 9
 
 
 class MetadataSchemaMixin:
     """维护元数据数据库表结构、版本迁移与数据规范化。"""
+
+    @staticmethod
+    def _ensure_episode_empty_group_table(cursor: sqlite3.Cursor) -> None:
+        """保存成功但未产生情景的分组指纹，不生成虚假的情景记忆。"""
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS episode_empty_groups (
+                source TEXT NOT NULL,
+                input_fingerprint TEXT NOT NULL,
+                PRIMARY KEY (source, input_fingerprint)
+            )
+        """)
 
     @staticmethod
     def _ensure_summary_checkpoint_tables(cursor: sqlite3.Cursor) -> None:
@@ -1526,6 +1537,7 @@ class MetadataSchemaMixin:
         """)
 
         # Episode 情景记忆表
+        self._ensure_episode_empty_group_table(cursor)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS episodes (
                 episode_id TEXT PRIMARY KEY,
@@ -1849,6 +1861,7 @@ class MetadataSchemaMixin:
         """)
 
         # Episode MVP 表结构补齐
+        self._ensure_episode_empty_group_table(cursor)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS episodes (
                 episode_id TEXT PRIMARY KEY,

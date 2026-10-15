@@ -5,7 +5,33 @@ import { cn } from "@/lib/utils"
 
 type SliderProps = React.ComponentPropsWithoutRef<typeof SliderPrimitive.Root> & {
   "data-dashboard-slider"?: "config" | "default"
-  "data-dashboard-slider-value-format"?: "fixed-2" | "fixed-3"
+  "data-dashboard-slider-value-format"?: "fixed-1" | "fixed-2" | "fixed-3"
+}
+
+/**
+ * 渲染滑块上展示的数值：两位及以上小数时，末位降为 50% 字号以压缩滑块宽度
+ */
+function renderSliderValue(
+  value: number | undefined,
+  valueFormat: SliderProps['data-dashboard-slider-value-format'],
+): React.ReactNode {
+  if (typeof value !== 'number' || !valueFormat) {
+    return value
+  }
+  const decimals = valueFormat === 'fixed-3' ? 3 : valueFormat === 'fixed-2' ? 2 : 1
+  const text = value.toFixed(decimals)
+  // 一位小数本身已足够短，无需再用小号末位压缩
+  if (decimals === 1 || !text.includes('.')) {
+    return text
+  }
+  return (
+    <>
+      {text.slice(0, -1)}
+      <span className="text-[0.5em]" data-dashboard-slider-value-tail="true">
+        {text.slice(-1)}
+      </span>
+    </>
+  )
 }
 
 const Slider = React.forwardRef<
@@ -72,9 +98,7 @@ const Slider = React.forwardRef<
               data-dashboard-slider-value="true"
               className="pointer-events-none select-none"
             >
-              {typeof currentValues[index] === 'number' && dashboardValueFormat
-                ? currentValues[index].toFixed(dashboardValueFormat === 'fixed-3' ? 3 : 2)
-                : currentValues[index]}
+              {renderSliderValue(currentValues[index], dashboardValueFormat)}
             </span>
           )}
         </SliderPrimitive.Thumb>

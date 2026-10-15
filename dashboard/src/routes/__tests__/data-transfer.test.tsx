@@ -22,6 +22,8 @@ vi.mock('@/lib/data-transfer-api', () => ({
   createDataExportJob: vi.fn(),
   createDataImportJob: vi.fn(),
   downloadDataExport: vi.fn(),
+  getDataExportHistory: vi.fn().mockResolvedValue([]),
+  deleteDataExport: vi.fn(),
   getDataTransferJob: vi.fn(),
 }))
 
@@ -34,6 +36,10 @@ const getDataTransferJob = vi.mocked(dataTransferApi.getDataTransferJob)
 const downloadDataExport = vi.mocked(dataTransferApi.downloadDataExport)
 const cancelDataExportJob = vi.mocked(dataTransferApi.cancelDataExportJob)
 const createDataImportJob = vi.mocked(dataTransferApi.createDataImportJob)
+
+beforeEach(() => {
+  vi.mocked(dataTransferApi.getDataExportHistory).mockResolvedValue([])
+})
 
 /** 构造完整的数据迁移任务，便于按需覆盖字段 */
 function makeJob(overrides: Partial<DataTransferJob> = {}): DataTransferJob {

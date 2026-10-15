@@ -62,7 +62,7 @@ def test_schema25_upgrade_adds_empty_summary_checkpoints(tmp_path):
     store = MetadataStore(data_dir=tmp_path)
     store.connect()
     try:
-        assert store.get_schema_version() == 26
+        assert store.get_schema_version() == 27
         store.record_summary_checkpoint(external_id="empty", chat_id="real", trigger_message_count=30)
         assert store.get_summary_checkpoint_count("real") == 30
     finally:

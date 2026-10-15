@@ -147,6 +147,21 @@ afterEach(() => {
 })
 
 describe('usePluginConfigEditor 缺口', () => {
+  it('配置错误时打开原始 TOML，修正保存后清除错误并恢复定义', async () => {
+    vi.mocked(getPluginConfigBundle).mockResolvedValueOnce(makeBundle({
+      schema: null, config: {}, configError: 'invalid group target', rawConfig: 'target = "123"\n',
+    }))
+    const { result } = await renderEditor()
+    expect(result.current.editMode).toBe('source')
+    expect(result.current.schema).toBeNull()
+    expect(result.current.configError).toBe('invalid group target')
+    expect(result.current.sourceCode).toBe('target = "123"\n')
+    act(() => result.current.handleSourceCodeChange('name = "old"\n'))
+    await act(async () => { expect(await result.current.handleSave()).toBe(true) })
+    expect(result.current.configError).toBe('')
+    expect(result.current.schema).not.toBeNull()
+    expect(result.current.hasChanges).toBe(false)
+  })
   it('默认页签为 settings，可切换 pluginPageTab 与重置对话框', async () => {
     const { result } = await renderEditor()
     expect(result.current.pluginPageTab).toBe('settings')

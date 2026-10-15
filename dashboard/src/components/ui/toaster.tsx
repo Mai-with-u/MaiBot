@@ -9,8 +9,8 @@ import {
 } from "@/components/ui/toast"
 import { useIsMobile } from "@/hooks/use-media-query"
 
-const DEFAULT_TOAST_DURATION = 5000
-const DESTRUCTIVE_TOAST_DURATION = 10000
+const DEFAULT_TOAST_DURATION = 4000
+const DESTRUCTIVE_TOAST_DURATION = 7500
 
 export function Toaster() {
   const { toasts } = useToast()
@@ -28,7 +28,7 @@ export function Toaster() {
 
         return (
           <Toast key={id} duration={toastDuration} variant={variant} {...props}>
-            <div className="grid min-w-0 gap-1 select-text">
+            <div className="grid min-w-0 gap-0.5 select-text">
               {title && <ToastTitle>{title}</ToastTitle>}
               {description && (
                 <ToastDescription>{description}</ToastDescription>

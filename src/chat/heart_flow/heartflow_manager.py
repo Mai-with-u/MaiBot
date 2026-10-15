@@ -5,9 +5,12 @@ import asyncio
 import time
 import traceback
 
-from src.chat.message_receive.chat_manager import chat_manager
+from src.chat.message_receive.chat_manager import BotChatSession, chat_manager
 from src.common.logger import get_logger
+from src.core.local_operator import LOCAL_PLATFORM_BOT_IDS
 from src.maisaka.runtime import MaisakaHeartFlowChatting
+from src.platform_io.manager import get_platform_io_manager
+from src.platform_io.types import RouteKey
 
 logger = get_logger("heartflow")
 
@@ -39,6 +42,8 @@ class HeartflowManager:
                 chat_session = chat_manager.get_session_by_session_id(session_id)
                 if not chat_session:
                     raise ValueError(f"未找到 session_id={session_id} 对应的聊天流")
+                if not await self._is_session_allowed(chat_session):
+                    raise PermissionError(f"适配器名单禁止创建聊天运行实例: {session_id}")
 
                 new_chat = MaisakaHeartFlowChatting(session_id=session_id)
                 await new_chat.start()
@@ -99,6 +104,25 @@ class HeartflowManager:
 
         await self._evict_chat(session_id, reason="clear_context_command")
         return True
+
+    async def close_policy_blocked_chats(self) -> None:
+        """策略变更后停止并注销被禁用的运行实例，取消思考和所有唤醒任务。"""
+        for session_id, chat in list(self.heartflow_chat_list.items()):
+            if not await self._is_session_allowed(chat.chat_stream):
+                await self._evict_chat(session_id, reason="adapter_policy_block")
+
+    async def _is_session_allowed(self, session: BotChatSession) -> bool:
+        """在运行实例的创建和注销入口检查适配器名单。"""
+        # 本地控制台和 WebUI 聊天室不属于外部适配器名单。
+        if session.platform in LOCAL_PLATFORM_BOT_IDS or session.platform == "webui":
+            return True
+        manager = get_platform_io_manager()
+        await manager.ensure_send_pipeline_ready()
+        return await manager.is_target_allowed(
+            RouteKey(platform=session.platform, account_id=session.account_id, scope=session.scope),
+            chat_type="group" if session.is_group_session else "private",
+            target_id=(session.group_id if session.is_group_session else session.user_id) or "",
+        )
 
     def adjust_talk_frequency(self, session_id: str, frequency: float) -> None:
         """调整指定聊天流的说话频率。"""

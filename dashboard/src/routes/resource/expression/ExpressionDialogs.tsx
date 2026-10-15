@@ -646,7 +646,7 @@ export function ExpressionEditDialog({
                   </p>
                   <p>• 已人工精选：表示该表达方式已由人工确认可使用</p>
                   <p className="text-muted-foreground mt-2">
-                    根据配置中“使用精选表达”设置：
+                    根据配置中“仅使用精选表达”设置：
                     <br />
                     • 开启时：只有人工精选的项目会被使用
                     <br />• 关闭时：未精选的项目也会被使用

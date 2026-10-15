@@ -5,8 +5,11 @@ from typing import Awaitable, Callable, List, Literal
 from pydantic import BaseModel, Field
 
 
-AI_SEARCH_MAX_CANDIDATES = 600
-AI_SEARCH_MAX_RESULTS = 6
+AI_SEARCH_MAX_CANDIDATES = 2000
+
+
+class AISearchOutputError(ValueError):
+    """模型返回的内容无法解析为 AI 搜索结果结构。"""
 
 
 class AISearchCandidate(BaseModel):
@@ -30,19 +33,18 @@ class AISearchRequest(BaseModel):
 class AISearchModelResult(BaseModel):
     """模型选择的单个搜索候选。"""
 
-    id: str = Field(..., min_length=1, max_length=180)
-    score: float = Field(default=0.5, ge=0, le=1)
-    reason: str = Field(default="", max_length=160)
+    id: str = Field(..., min_length=1)
+    reason: str = ""
 
 
 class AISearchModelOutput(BaseModel):
-    """模型必须返回的结构化搜索结果。"""
+    """模型必须返回的结构化搜索结果，不限制任何字段的长度与数量。"""
 
-    answer: str = Field(default="", max_length=2000)
-    suggestions: List[str] = Field(default_factory=list, max_length=6)
-    source_ids: List[str] = Field(default_factory=list, max_length=6)
-    expanded_terms: List[str] = Field(default_factory=list, max_length=10)
-    results: List[AISearchModelResult] = Field(default_factory=list, max_length=AI_SEARCH_MAX_RESULTS)
+    answer: str = ""
+    suggestions: List[str] = Field(default_factory=list)
+    source_ids: List[str] = Field(default_factory=list)
+    expanded_terms: List[str] = Field(default_factory=list)
+    results: List[AISearchModelResult] = Field(default_factory=list)
 
 
 class AISearchSource(BaseModel):
@@ -55,7 +57,6 @@ class AISearchSource(BaseModel):
 class AISearchResponse(BaseModel):
     """经过候选 ID 与官方文档来源校验后的 AI 搜索响应。"""
 
-    success: bool = True
     cached: bool = False
     model_name: str = ""
     answer: str = ""
@@ -63,9 +64,11 @@ class AISearchResponse(BaseModel):
     sources: List[AISearchSource] = Field(default_factory=list)
     expanded_terms: List[str] = Field(default_factory=list)
     results: List[AISearchModelResult] = Field(default_factory=list)
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
     total_tokens: int = 0
+    # 回答正文未通过证据校验而被丢弃时的原因；此时仅保留导航结果
+    grounding_error: str = ""
+    # 回答是否依据了本地配置的当前值；配置随时可能被修改，这类回答不能缓存
+    used_local_config: bool = False
 
 
 class AISearchProgressEvent(BaseModel):

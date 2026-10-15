@@ -15,6 +15,7 @@ from src.common.data_models.message_component_data_model import (
     TextComponent,
     VoiceComponent,
 )
+from src.maisaka.context.message_id_alias import to_display_message_id
 
 SPEAKER_PREFIX_PATTERN = re.compile(
     r"^(?:(?P<timestamp>\d{2}:\d{2}:\d{2}))?(?:\[msg_id:(?P<message_id>[^\]]+)\])?\[(?P<speaker>[^\]]+)\](?P<content>.*)$",
@@ -31,7 +32,7 @@ def format_speaker_content(
     """将可见文本格式化为带说话人前缀的样式。"""
 
     time_prefix = timestamp.strftime("%H:%M:%S") if timestamp is not None else ""
-    message_id_prefix = f"[msg_id:{message_id}]" if message_id else ""
+    message_id_prefix = f"[msg_id:{to_display_message_id(message_id)}]" if message_id else ""
     return f"{time_prefix}{message_id_prefix}[{speaker_name}]{content}"
 
 
@@ -94,7 +95,7 @@ def build_visible_text_from_sequence(message_sequence: MessageSequence) -> str:
                 normalized_parts.append(match.group("timestamp"))
             message_id = match.group("message_id")
             if message_id:
-                normalized_parts.append(f"[msg_id:{message_id}]")
+                normalized_parts.append(f"[msg_id:{to_display_message_id(message_id)}]")
             normalized_parts.append(f"[{match.group('speaker')}]")
             normalized_parts.append(match.group("content"))
             append_visible_part("".join(normalized_parts))
@@ -119,7 +120,7 @@ def build_visible_text_from_sequence(message_sequence: MessageSequence) -> str:
         if isinstance(component, ReplyComponent):
             target_message_id = component.target_message_id.strip()
             if target_message_id:
-                parts.append(f"[引用消息]{target_message_id}")
+                parts.append(f"[引用消息]{to_display_message_id(target_message_id)}")
                 pending_reply_body_prefix = True
 
     return "".join(parts)

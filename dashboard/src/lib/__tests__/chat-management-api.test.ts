@@ -6,6 +6,7 @@ import {
   deleteChatStream,
   deleteChatStreamPrompt,
   deleteChatStreamTalkFrequency,
+  getAllChatStreams,
   getChatStreamDetail,
   getChatStreams,
   resolveChatTarget,
@@ -71,6 +72,24 @@ describe('getChatStreams', () => {
     getMock.mockResolvedValue({ success: true })
 
     await expect(getChatStreams()).resolves.toEqual([])
+  })
+})
+
+describe('getAllChatStreams', () => {
+  it('分批读取超过单页上限的全部聊天流', async () => {
+    const firstPage = Array.from({ length: 1000 }, (_, index) => ({ session_id: `s${index}` }))
+    const lastPage = [{ session_id: 's1000' }]
+    getMock
+      .mockResolvedValueOnce({ success: true, sessions: firstPage })
+      .mockResolvedValueOnce({ success: true, sessions: lastPage })
+
+    await expect(getAllChatStreams()).resolves.toEqual([...firstPage, ...lastPage])
+    expect(getMock).toHaveBeenNthCalledWith(1, '/api/chat/sessions', {
+      query: { limit: 1000, offset: 0 },
+    })
+    expect(getMock).toHaveBeenNthCalledWith(2, '/api/chat/sessions', {
+      query: { limit: 1000, offset: 1000 },
+    })
   })
 })
 

@@ -13,6 +13,8 @@ import pytest
 from src.A_memorix.core.runtime import sdk_memory_kernel as kernel_module
 from src.A_memorix.core.runtime.sdk_memory_kernel import SDKMemoryKernel
 from src.A_memorix.core.runtime.services.embedding_state_service import MemoryEmbeddingStateService
+from src.A_memorix.core.runtime.services.vector_rebuild_checkpoint import VectorRebuildCheckpoint
+from src.A_memorix.core.storage import MetadataStore, VectorStore
 
 
 class _FakeEmbeddingManager:
@@ -21,6 +23,9 @@ class _FakeEmbeddingManager:
         self.model_name = model_name
         self.encode_calls: list[Any] = []
         self.detect_calls = 0
+
+    def get_embedding_configuration_key(self) -> str:
+        return f"{self.model_name}:{self.default_dimension}"
 
     async def _detect_dimension(self) -> int:
         self.detect_calls += 1
@@ -123,6 +128,112 @@ def _dual_kernel_config(data_dir: Path, dimension: int) -> dict[str, Any]:
     config = _kernel_config(data_dir, dimension)
     config["retrieval"]["vector_pools"] = {"mode": "dual"}
     return config
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("pool_mode", "stored_state"),
+    [
+        ("single", "compatible"),
+        ("dual", "compatible"),
+        ("single", "fingerprint_mismatch"),
+        ("dual", "fingerprint_mismatch"),
+        ("single", "missing"),
+        ("dual", "missing"),
+        ("dual", "dual_fingerprint_mismatch"),
+    ],
+)
+async def test_pending_single_pool_recovers_after_real_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    pool_mode: str,
+    stored_state: str,
+) -> None:
+    """真实磁盘单池在请求确认指纹后恢复；不兼容或丢失时保留准确的阻塞状态。"""
+    data_dir = tmp_path / "memory"
+    embedding = _FallbackEmbeddingManager(
+        candidates=("fake-embedding",),
+        successful_model="fake-embedding",
+        initial_observed_model="fake-embedding",
+    )
+    metadata = MetadataStore(data_dir=data_dir / "metadata")
+    metadata.connect()
+    try:
+        paragraph_hash = metadata.add_paragraph(content="重启后仍应检索到的旧单池记忆", source="test")
+    finally:
+        metadata.close()
+    vector = await embedding.encode("重启后仍应检索到的旧单池记忆")
+    store = VectorStore(dimension=embedding.default_dimension, data_dir=data_dir / "vectors")
+    store.add(np.asarray([vector]), [paragraph_hash])
+    fingerprint = embedding.get_embedding_fingerprint()
+    if stored_state == "fingerprint_mismatch":
+        fingerprint["hash"] = "different-model-fingerprint"
+    store.save(embedding_fingerprint=fingerprint)
+    if stored_state == "dual_fingerprint_mismatch":
+        # 已发布双池明确不兼容时，即使旧单池完整且兼容，也不能绕过双池校验。
+        (data_dir / "vectors" / "dual_ready.json").write_text(
+            json.dumps(
+                {
+                    "status": "ready",
+                    "dimension": embedding.default_dimension,
+                    "paragraph_vectors": 1,
+                    "graph_vectors": 1,
+                    "embedding_fingerprint": {"hash": "different-dual-model"},
+                }
+            ),
+            encoding="utf-8",
+        )
+    embedding.observed_model = ""
+    embedding.encode_calls.clear()
+
+    config = _kernel_config(data_dir, embedding.default_dimension)
+    config["retrieval"]["vector_pools"]["mode"] = pool_mode
+    kernel = SDKMemoryKernel(plugin_root=tmp_path, config=config)
+    monkeypatch.setattr(kernel_module, "create_embedding_api_adapter", lambda **kwargs: embedding)
+
+    async def no_background_tasks() -> None:
+        # 手动驱动同一个恢复入口，避免后台探测与断言并发；不调用外部模型。
+        pass
+
+    monkeypatch.setattr(kernel, "_start_background_tasks", no_background_tasks)
+    try:
+        await kernel.initialize()
+        assert kernel._vector_health["error_code"] == "embedding_fingerprint_unavailable"
+        assert kernel.vector_store is None
+        assert embedding.encode_calls == []
+        if stored_state == "missing":
+            (data_dir / "vectors" / "vectors_metadata.json").unlink()
+        files_before = {
+            path.name: path.read_bytes() for path in (data_dir / "vectors").iterdir() if path.is_file()
+        }
+
+        result = await kernel.memory_runtime_admin(action="recover_embedding")
+
+        assert result["success"] is True
+        assert result["recovered"] is True
+        assert embedding.observed_model == "fake-embedding"
+        assert len(embedding.encode_calls) == 3
+        assert result["vector_restored"] is True
+        assert result["vector_available"] is True
+        assert result["vector_health"]["state"] == "healthy"
+        current_store = kernel._paragraph_store()
+        assert paragraph_hash in current_store
+        assert kernel._runtime_capabilities["vector_read"] is True
+        assert kernel._runtime_capabilities["vector_write"] is True
+        hashes, _ = current_store.search(vector, k=1)
+        assert hashes == [paragraph_hash]
+        assert kernel._active_vector_space_id
+        assert kernel._dual_vector_pools_enabled() == (pool_mode == "dual")
+        # 旧模型的已知身份仍保存在独立目录，重建不会覆写旧库内容。
+        if stored_state in {"fingerprint_mismatch", "dual_fingerprint_mismatch"}:
+            old_hash = "different-model-fingerprint" if stored_state == "fingerprint_mismatch" else "different-dual-model"
+            old_id = kernel._vector_space_service.space_id({"hash": old_hash})
+            old_root = data_dir / "vectors" / "spaces" / old_id
+            for name, content in files_before.items():
+                assert (old_root / name).read_bytes() == content
+        assert not (data_dir / "vector_quarantine").exists()
+    finally:
+        await kernel.shutdown()
 
 
 async def _fake_runtime_self_check(**kwargs: Any) -> dict[str, Any]:
@@ -925,6 +1036,10 @@ async def test_runtime_admin_rebuild_all_vectors_rejects_concurrent_request(
         config=_kernel_config(data_dir, fake_embedding_manager.default_dimension),
     )
 
+    async def no_background_tasks():
+        pass
+    monkeypatch.setattr(kernel, "_start_background_tasks", no_background_tasks)
+
     await kernel.initialize()
     assert kernel.metadata_store is not None
     kernel.metadata_store.add_paragraph("并发重建测试", source="test")
@@ -1155,7 +1270,7 @@ async def test_dual_rebuild_detects_new_embedding_dimension_without_recover(
         assert second_kernel.graph_vector_store.dimension == second_embedding_manager.default_dimension
         assert paragraph_hash in second_kernel.paragraph_vector_store
         assert f"entity:{entity_hash}" in second_kernel.graph_vector_store
-        manifest = json.loads((data_dir / "vectors" / "dual_ready.json").read_text(encoding="utf-8"))
+        manifest = json.loads((second_kernel._vectors_root() / "dual_ready.json").read_text(encoding="utf-8"))
         assert manifest["dimension"] == second_embedding_manager.default_dimension
     finally:
         await second_kernel.shutdown()
@@ -1856,6 +1971,64 @@ async def test_filter_current_effective_hits_all_expired(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("switch_space", [False, True])
+async def test_rebuild_publishes_batch_progress_for_manual_and_model_sync(monkeypatch, tmp_path, switch_space):
+    kernel = SDKMemoryKernel(
+        plugin_root=tmp_path / "plugin", config=_kernel_config(tmp_path / "data", 8),
+    )
+    kernel._target_vector_space_id = "new-space" if switch_space else ""
+    kernel.embedding_manager = _FakeEmbeddingManager()
+    kernel.vector_store = SimpleNamespace(add=lambda **kwargs: None)
+    service = kernel._vector_runtime_service
+    snapshots = []
+
+    async def encode(texts, **kwargs):
+        snapshots.append(dict(kernel._dual_vector_auto_migration_status["progress"]))
+        return np.ones((len(texts), 8), dtype=np.float32)
+
+    monkeypatch.setattr(kernel.embedding_manager, "encode_batch", encode)
+
+    async def rebuild(**kwargs):
+        assert kernel._dual_vector_auto_migration_status["running"] is True
+        kernel._update_dual_vector_auto_migration_stage("prepare_rebuild", total=3)
+        kernel._update_dual_vector_auto_migration_stage("paragraphs_start")
+        done, failed, *_ = await service._encode_and_add_rebuild_vectors(
+            items=[("a", "A"), ("b", "B"), ("c", "C")], batch_size=2,
+        )
+        return {"success": True, "done": done, "failed": failed}
+
+    monkeypatch.setattr(service, "_execute_vector_rebuild_locked", rebuild)
+    await service._rebuild_all_vectors_locked()
+    assert snapshots[0]["processed"] == 0
+    assert snapshots[1]["processed"] == 2
+    status = kernel._dual_vector_auto_migration_status
+    assert status["task"] == ("sync" if switch_space else "rebuild")
+    assert status["running"] is False
+    assert status["stage"] == "completed"
+    assert status["progress"]["percent"] == 100.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_rebuild_progress_finishes_on_error_or_cancellation(monkeypatch, tmp_path, cancelled):
+    kernel = SDKMemoryKernel(
+        plugin_root=tmp_path / "plugin", config=_kernel_config(tmp_path / "data", 8),
+    )
+    service = kernel._vector_runtime_service
+    error = asyncio.CancelledError() if cancelled else RuntimeError("encode failed")
+
+    async def rebuild(**kwargs):
+        raise error
+
+    monkeypatch.setattr(service, "_execute_vector_rebuild_locked", rebuild)
+    with pytest.raises(type(error)):
+        await service._rebuild_all_vectors_locked()
+    status = kernel._dual_vector_auto_migration_status
+    assert status["running"] is False
+    assert status["stage"] == ("cancelled" if cancelled else "failed")
+
+
+@pytest.mark.asyncio
 async def test_filter_current_effective_hits_keeps_valid_to_null_or_future(tmp_path: Path) -> None:
     """验证 valid_to=None 或未来时间正确保留。"""
     from src.A_memorix.core.runtime import sdk_memory_kernel
@@ -1926,3 +2099,191 @@ async def test_filter_current_effective_hits_uses_stored_metadata_after_fuzzy_ch
         {"hash": "r-stored", "type": "relation", "content": "", "metadata": {}},
     ]
     assert kernel._filter_current_effective_hits(hits) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["single", "dual"])
+@pytest.mark.parametrize("permanent", [False, True])
+async def test_rebuild_retries_failures_after_all_other_items(monkeypatch, tmp_path, mode, permanent):
+    embedding = _FakeEmbeddingManager()
+    monkeypatch.setattr(kernel_module, "create_embedding_api_adapter", lambda **kwargs: embedding)
+    monkeypatch.setattr(kernel_module, "run_embedding_runtime_self_check", _fake_runtime_self_check)
+    config = _kernel_config(tmp_path / "data", 8)
+    config["retrieval"]["vector_pools"]["mode"] = mode
+    kernel = SDKMemoryKernel(plugin_root=tmp_path, config=config)
+    async def no_background():
+        pass
+    monkeypatch.setattr(kernel, "_start_background_tasks", no_background)
+    await kernel.initialize()
+    first_id = kernel.metadata_store.add_paragraph("first", source="test")
+    second_id = kernel.metadata_store.add_paragraph("second", source="test")
+    calls = []
+    original = embedding.encode_batch
+    async def encode(texts, **kwargs):
+        calls.extend(texts)
+        if calls == ["first"] or (permanent and "first" in texts):
+            raise RuntimeError("temporary failure")
+        return await original(texts, **kwargs)
+    monkeypatch.setattr(embedding, "encode_batch", encode)
+    try:
+        result = await kernel.memory_runtime_admin(action="rebuild_all_vectors", batch_size=1, include_relations=False)
+        assert calls == ["first", "second", "first"]
+        assert result["success"] is (not permanent)
+        assert result["done"] == (1 if permanent else 2)
+        assert result["failed"] == (1 if permanent else 0)
+        assert bool(result["errors"]) is permanent
+        checkpoint = VectorRebuildCheckpoint(
+            kernel._vectors_root() / "rebuild_checkpoint.sqlite3",
+            embedding.get_embedding_fingerprint()["hash"], 8,
+        )
+        assert checkpoint.read("paragraph", [(first_id, "first"), (second_id, "second")]) == {}
+    finally:
+        await kernel.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["single", "dual"])
+async def test_rebuild_resumes_committed_batches_in_new_kernel(monkeypatch, tmp_path, mode):
+    embedding = _FakeEmbeddingManager()
+    monkeypatch.setattr(kernel_module, "create_embedding_api_adapter", lambda **kwargs: embedding)
+    monkeypatch.setattr(kernel_module, "run_embedding_runtime_self_check", _fake_runtime_self_check)
+    config = _kernel_config(tmp_path / "data", 8)
+    config["retrieval"]["vector_pools"]["mode"] = mode
+    async def no_background():
+        pass
+    kernel = SDKMemoryKernel(plugin_root=tmp_path, config=config)
+    monkeypatch.setattr(kernel, "_start_background_tasks", no_background)
+    await kernel.initialize()
+    for text in ("first", "second", "third"):
+        kernel.metadata_store.add_paragraph(text, source="test")
+    original = embedding.encode_batch
+    calls = []
+    async def encode(texts, **kwargs):
+        calls.extend(texts)
+        if "second" in texts:
+            raise asyncio.CancelledError()
+        return await original(texts, **kwargs)
+    monkeypatch.setattr(embedding, "encode_batch", encode)
+    with pytest.raises(asyncio.CancelledError):
+        await kernel.memory_runtime_admin(action="rebuild_all_vectors", batch_size=1, include_relations=False)
+    assert calls == ["first", "second"]
+    await kernel.shutdown()
+
+    # 新实例不继承内存缓存，必须从磁盘恢复成功批次。
+    fresh_embedding = _FakeEmbeddingManager()
+    monkeypatch.setattr(kernel_module, "create_embedding_api_adapter", lambda **kwargs: fresh_embedding)
+    restarted = SDKMemoryKernel(plugin_root=tmp_path, config=config)
+    monkeypatch.setattr(restarted, "_start_background_tasks", no_background)
+    await restarted.initialize()
+    fresh_embedding.encode_calls.clear()
+    try:
+        result = await restarted.memory_runtime_admin(action="rebuild_all_vectors", batch_size=1, include_relations=False)
+        assert result["success"] is True
+        assert result["done"] == 3
+        batch_calls = [texts for texts in fresh_embedding.encode_calls if isinstance(texts, list)]
+        assert batch_calls == [["second"], ["third"]]
+    finally:
+        await restarted.shutdown()
+
+
+def test_checkpoint_rejects_changed_text_and_model_and_preserves_other_models(tmp_path):
+    path = tmp_path / "checkpoint.sqlite3"
+    first = VectorRebuildCheckpoint(path, "model-one", 8)
+    first.write("paragraph", [("id", "text")], np.ones((1, 8), dtype=np.float32))
+    second = VectorRebuildCheckpoint(path, "model-two", 8)
+    assert first.read("paragraph", [("id", "changed")]) == {}
+    assert second.read("paragraph", [("id", "text")]) == {}
+    second.write("paragraph", [("id", "text")], np.zeros((1, 8), dtype=np.float32))
+    first.discard()
+    assert first.read("paragraph", [("id", "text")]) == {}
+    assert "id" in second.read("paragraph", [("id", "text")])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["single", "dual"])
+@pytest.mark.parametrize("new_dimension", [8, 12])
+@pytest.mark.parametrize("during_request", [False, True])
+@pytest.mark.parametrize("via_sync", [False, True])
+async def test_model_switch_discards_old_build_and_restarts(
+    monkeypatch, tmp_path, mode, new_dimension, during_request, via_sync,
+):
+    from src.config.config import config_manager
+
+    embedding = _FakeEmbeddingManager()
+    monkeypatch.setattr(kernel_module, "create_embedding_api_adapter", lambda **kwargs: embedding)
+    monkeypatch.setattr(kernel_module, "run_embedding_runtime_self_check", _fake_runtime_self_check)
+    config = _kernel_config(tmp_path / "data", 8)
+    config["retrieval"]["vector_pools"]["mode"] = mode
+    kernel = SDKMemoryKernel(plugin_root=tmp_path, config=config)
+    async def no_background():
+        pass
+    monkeypatch.setattr(kernel, "_start_background_tasks", no_background)
+    await kernel.initialize()
+    for text in ("first", "second"):
+        kernel.metadata_store.add_paragraph(text, source="test")
+    old_root = kernel._vectors_root()
+    old_model = embedding.model_name
+    original = embedding.encode_batch
+    calls = []
+    pending = asyncio.Event()
+    old_cancelled = False
+
+    def switch():
+        embedding.model_name = "new-model"
+        embedding.default_dimension = new_dimension
+
+    async def encode(texts, **kwargs):
+        nonlocal old_cancelled, old_root
+        if embedding.model_name == old_model and texts == ["first"]:
+            old_root = kernel._vectors_root()
+        calls.append((embedding.model_name, list(texts)))
+        if embedding.model_name == old_model and texts == ["second"]:
+            assert (old_root / "rebuild_checkpoint.sqlite3").exists()
+            if during_request:
+                pending.set()
+                try:
+                    await asyncio.Future()
+                except asyncio.CancelledError:
+                    old_cancelled = True
+                    raise
+            else:
+                switch()
+        return await original(texts, **kwargs)
+    monkeypatch.setattr(embedding, "encode_batch", encode)
+    task = asyncio.create_task(
+        kernel._vector_space_service.synchronize(force=True, batch_size=1, include_relations=False)
+        if via_sync else kernel.memory_runtime_admin(
+            action="rebuild_all_vectors", batch_size=1, include_relations=False,
+        )
+    )
+    try:
+        if during_request:
+            await asyncio.wait_for(pending.wait(), timeout=5)
+            switch()
+            registrations = [
+                entry for entry in config_manager._reload_callbacks
+                if entry.callback.__name__ == "on_reload"
+            ]
+            assert len(registrations) == 1
+            await asyncio.to_thread(
+                asyncio.run, config_manager._invoke_reload_callback(registrations[0].callback, ["model"]),
+            )
+        result = await asyncio.wait_for(task, timeout=15)
+        assert result["success"] is True
+        assert result["done"] == 2
+        assert old_cancelled is during_request
+        assert calls == [
+            (old_model, ["first"]), (old_model, ["second"]),
+            ("new-model", ["first"]), ("new-model", ["second"]),
+        ]
+        assert not (old_root / "rebuild_checkpoint.sqlite3").exists()
+        assert not list(old_root.glob("dual_build_*"))
+        assert not list(old_root.glob("single_build_*"))
+        store = kernel.paragraph_vector_store if mode == "dual" else kernel.vector_store
+        assert store.dimension == new_dimension
+        assert not any(entry.callback.__name__ == "on_reload" for entry in config_manager._reload_callbacks)
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await kernel.shutdown()

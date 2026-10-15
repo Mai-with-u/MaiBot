@@ -15,6 +15,7 @@ class MemoryRuntimeConfigService(KernelServiceBase):
         runtime_config["runtime"]["vector_pools_ready"] = self._dual_vector_pools_enabled()
         runtime_config.update(
             {
+                "record_embedding_input": self._vector_space_service.record_input,
                 "vector_store": self.vector_store,
                 "paragraph_vector_store": self.paragraph_vector_store or self.vector_store,
                 "graph_vector_store": self.graph_vector_store or self.vector_store,

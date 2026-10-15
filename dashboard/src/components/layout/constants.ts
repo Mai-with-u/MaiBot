@@ -2,12 +2,11 @@ import { createElement } from 'react'
 import {
   Activity,
   Box,
-  Brain,
   Database,
   FileText,
   HardDrive,
-  Hash,
   Home,
+  MessageCircle,
   MessageSquare,
   Puzzle,
   Settings,
@@ -21,19 +20,16 @@ import { createStreamlineIcon } from '@/components/ui/streamline-menu-icon'
 import type { MenuIcon, MenuSection } from './types'
 
 const HomeIcon = createStreamlineIcon('allergens-fish-remix', Home)
-const ChatManagementIcon = createStreamlineIcon('chat-two-bubbles-oval-remix', MessageSquare)
+const LocalChatIcon = createStreamlineIcon('desktop-chat-remix', MessageCircle)
 const BotConfigIcon = createStreamlineIcon('page-setting-remix', Settings)
 const ModelIcon = createStreamlineIcon('module-remix', Box)
 const PromptIcon = createStreamlineIcon('script-1-remix', FileText)
 const EmojiIcon = createStreamlineIcon('happy-face-remix', Smile)
-const ExpressionIcon = createStreamlineIcon('chat-bubble-square-write-remix', MessageSquare)
-const JargonIcon = createStreamlineIcon('sign-hashtag-solid', Hash)
-const BehaviorIcon = createStreamlineIcon('cyborg-solid', Brain)
+const LearningIcon = createStreamlineIcon('chat-bubble-square-write-remix', MessageSquare)
 const KnowledgeIcon = createStreamlineIcon('user-sticker-square-remix', Database)
 const PluginConfigIcon = createStreamlineIcon('application-add-remix', Puzzle)
 const AdapterManagementIcon = createStreamlineIcon('router-wifi-network-solid', Wifi)
 const PluginMarketIcon = createStreamlineIcon('store-2-solid', Store)
-const McpIcon = createStreamlineIcon('router-wifi-network-solid', Wifi)
 const DataTransferIcon: MenuIcon = (props) => createElement(HardDrive, props)
 const ReplyEffectsIcon: MenuIcon = (props) => createElement(Activity, props)
 
@@ -47,7 +43,7 @@ export const menuSections: MenuSection[] = [
         path: '/',
         searchDescription: 'search.items.homeDesc',
       },
-      { icon: ChatManagementIcon, label: 'sidebar.menu.chatManagement', path: '/chat-management' },
+      { icon: LocalChatIcon, label: 'workspace.chat', path: '/chat' },
     ],
   },
   {
@@ -83,23 +79,10 @@ export const menuSections: MenuSection[] = [
         searchDescription: 'search.items.emojiDesc',
       },
       {
-        icon: ExpressionIcon,
-        label: 'sidebar.menu.expressionManagement',
-        path: '/resource/expression',
-        searchDescription: 'search.items.expressionDesc',
-      },
-      {
-        icon: JargonIcon,
-        label: 'sidebar.menu.slangManagement',
-        path: '/resource/jargon',
-        searchDescription: 'search.items.jargonDesc',
-      },
-      {
-        icon: BehaviorIcon,
-        label: 'sidebar.menu.behaviorLearning',
-        path: '/resource/behavior',
-        searchDescription: 'search.items.behaviorLearningDesc',
-        featureFlag: 'behaviorLearning',
+        icon: LearningIcon,
+        label: 'sidebar.menu.learning',
+        path: '/resource/learning',
+        searchDescription: 'search.items.learningDesc',
       },
       {
         icon: KnowledgeIcon,
@@ -118,7 +101,6 @@ export const menuSections: MenuSection[] = [
         path: '/plugins',
         searchDescription: 'search.items.pluginsDesc',
       },
-      { icon: McpIcon, label: 'sidebar.menu.mcpSettings', path: '/mcp-settings' },
     ],
   },
   {

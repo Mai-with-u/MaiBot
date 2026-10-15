@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 
 import {
   AlertCircle,
+  ArrowLeftRight,
   Check,
   CheckCircle2,
   Clock3,
@@ -14,6 +15,7 @@ import {
   X,
   WandSparkles,
 } from 'lucide-react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
@@ -69,7 +71,7 @@ const STATUS_TEXT: Record<string, string> = {
 
 const SCOPE_TEXT: Record<string, string> = {
   person_profile: '人物画像',
-  memory: '记忆段落',
+  memory: '记忆内容（段落 / 关系）',
 }
 
 function formatCorrectionStatus(status?: MemoryCorrectionStatus): string {
@@ -387,6 +389,8 @@ export function CorrectionTab({ correction }: CorrectionTabProps) {
     setPersonId,
     personKeyword,
     setPersonKeyword,
+    personLookupMode,
+    setPersonLookupMode,
     chatId,
     setChatId,
     candidateLimit,
@@ -425,6 +429,7 @@ export function CorrectionTab({ correction }: CorrectionTabProps) {
   } = correction
   const [executeDialogOpen, setExecuteDialogOpen] = useState(false)
   const [rollbackDialogOpen, setRollbackDialogOpen] = useState(false)
+  const reduceMotion = useReducedMotion()
 
   const selectedChatTarget = useMemo(() => {
     const normalizedChatId = chatId.trim()
@@ -458,23 +463,24 @@ export function CorrectionTab({ correction }: CorrectionTabProps) {
               <WandSparkles className="h-4 w-4" />
               记忆修正
             </CardTitle>
-            <CardDescription>输入自然语言修正请求，生成预览后再确认写入</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-1 flex-col space-y-4">
             <div className="flex min-h-0 flex-1 flex-col gap-3">
-              <div className="flex min-h-[160px] flex-1 flex-col space-y-2">
+              <div className="space-y-2">
                 <Label htmlFor="memory-correction-request">修正内容</Label>
                 <Textarea
                   id="memory-correction-request"
-                  className="min-h-[120px] flex-1 resize-none"
-                  autoResize={false}
+                  className="resize-none"
+                  rows={2}
+                  minHeight={80}
+                  maxHeight={360}
                   value={requestText}
                   onChange={(event) => setRequestText(event.target.value)}
                   placeholder="例如：把张三的常住城市改为杭州，并保留修改原因"
                 />
               </div>
 
-              <div className="grid gap-3 lg:grid-cols-[170px_minmax(0,1fr)_minmax(0,1fr)]">
+              <div className="grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)]">
                 <div className="space-y-2">
                   <Label>修正范围</Label>
                   <Select value={scope} onValueChange={(value) => setScope(value as MemoryCorrectionScope)}>
@@ -483,27 +489,48 @@ export function CorrectionTab({ correction }: CorrectionTabProps) {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="person_profile">人物画像</SelectItem>
-                      <SelectItem value="memory">记忆段落</SelectItem>
+                      <SelectItem value="memory">记忆内容（段落 / 关系）</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="memory-correction-person-id">人物 ID</Label>
-                  <Input
-                    id="memory-correction-person-id"
-                    value={personId}
-                    onChange={(event) => setPersonId(event.target.value)}
-                    placeholder="person_id"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="memory-correction-person-keyword">人物关键词</Label>
-                  <Input
-                    id="memory-correction-person-keyword"
-                    value={personKeyword}
-                    onChange={(event) => setPersonKeyword(event.target.value)}
-                    placeholder="昵称 / 备注 / 名称"
-                  />
+                <div className="flex min-w-0 items-end gap-3">
+                  <div className="relative min-w-0 flex-1 overflow-hidden">
+                    <AnimatePresence initial={false} mode="popLayout">
+                      <motion.div
+                        key={personLookupMode}
+                        className="w-full space-y-2"
+                        initial={reduceMotion ? false : { y: '100%' }}
+                        animate={{ y: 0 }}
+                        exit={reduceMotion ? undefined : { y: '-100%' }}
+                        transition={{ duration: reduceMotion ? 0 : 0.24, ease: 'easeInOut' }}
+                      >
+                        <Label htmlFor={`memory-correction-person-${personLookupMode}`}>
+                          {personLookupMode === 'id' ? '人物 ID' : '人物关键词'}
+                        </Label>
+                        <Input
+                          id={`memory-correction-person-${personLookupMode}`}
+                          value={personLookupMode === 'id' ? personId : personKeyword}
+                          onChange={(event) =>
+                            personLookupMode === 'id'
+                              ? setPersonId(event.target.value)
+                              : setPersonKeyword(event.target.value)
+                          }
+                          placeholder={personLookupMode === 'id' ? 'person_id' : '昵称 / 备注 / 名称'}
+                        />
+                      </motion.div>
+                    </AnimatePresence>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="shrink-0"
+                    aria-label={personLookupMode === 'id' ? '切换为人物关键词' : '切换为人物 ID'}
+                    title={personLookupMode === 'id' ? '切换为人物关键词' : '切换为人物 ID'}
+                    onClick={() => setPersonLookupMode(personLookupMode === 'id' ? 'keyword' : 'id')}
+                  >
+                    <ArrowLeftRight className="h-4 w-4" />
+                  </Button>
                 </div>
               </div>
 
@@ -538,11 +565,7 @@ export function CorrectionTab({ correction }: CorrectionTabProps) {
                         <Badge variant="secondary">{getChatTargetValueLabel(selectedChatTarget)}</Badge>
                         <span className="font-mono break-all">{selectedChatTarget.chat_id}</span>
                       </div>
-                    ) : (
-                      <div className="text-xs text-muted-foreground">
-                        可直接填写，名称会在后端尝试转换为真实 session_id
-                      </div>
-                    )}
+                    ) : null}
                     <div className="overflow-hidden rounded-md border bg-background">
                       {chatTargetsLoading ? (
                         <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
@@ -823,7 +846,7 @@ export function CorrectionTab({ correction }: CorrectionTabProps) {
               <SelectContent>
                 <SelectItem value="all">全部范围</SelectItem>
                 <SelectItem value="person_profile">人物画像</SelectItem>
-                <SelectItem value="memory">记忆段落</SelectItem>
+                <SelectItem value="memory">记忆内容（段落 / 关系）</SelectItem>
               </SelectContent>
             </Select>
           </div>

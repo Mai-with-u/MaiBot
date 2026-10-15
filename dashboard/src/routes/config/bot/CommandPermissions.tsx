@@ -4,6 +4,7 @@ import { Command as CommandIcon, Search, ShieldCheck } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { MultiSelect } from '@/components/ui/multi-select'
+import { Switch } from '@/components/ui/switch'
 import { getChatStreams } from '@/lib/chat-management-api'
 import { getRuntimeCommands, type RuntimeCommand } from '@/lib/plugin-api'
 import { cn } from '@/lib/utils'
@@ -58,11 +59,31 @@ export function CommandPermissions({ pluginSection, onChange }: Props) {
   const permissionMap = (pluginSection?.command_permissions ?? {}) as Record<string, CommandRule>
   const selectedRule = permissionMap[selectedId] ?? { allow_users: [], allow_chats: [] }
   const operators = Array.isArray(pluginSection?.permission) ? (pluginSection.permission as string[]) : []
+  const silentPermissionDenied = pluginSection?.silent_permission_denied === true
+  const disabledCommandIds = new Set(
+    Array.isArray(pluginSection?.disabled_commands) ? (pluginSection.disabled_commands as string[]) : []
+  )
 
   const updateRule = (rule: CommandRule) => {
     onChange({
       ...(pluginSection ?? {}),
       command_permissions: { ...permissionMap, [selectedId]: rule },
+    })
+  }
+
+  const toggleCommandEnabled = (commandId: string, enabled: boolean) => {
+    const nextDisabled = new Set(disabledCommandIds)
+    if (enabled) {
+      nextDisabled.delete(commandId)
+    } else {
+      nextDisabled.add(commandId)
+    }
+    // 按命令列表顺序输出，保证配置内容与切换顺序无关
+    onChange({
+      ...(pluginSection ?? {}),
+      disabled_commands: commands
+        .filter((command) => nextDisabled.has(command.id))
+        .map((command) => command.id),
     })
   }
 
@@ -98,9 +119,12 @@ export function CommandPermissions({ pluginSection, onChange }: Props) {
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate font-medium">/{command.name}</span>
-                <Badge variant={command.permission === 'operator' ? 'default' : 'secondary'}>
-                  {command.permission === 'operator' ? '受保护' : '公开'}
-                </Badge>
+                <span className="flex flex-none items-center gap-1">
+                  {disabledCommandIds.has(command.id) && <Badge variant="outline">已停用</Badge>}
+                  <Badge variant={command.permission === 'operator' ? 'default' : 'secondary'}>
+                    {command.permission === 'operator' ? '受保护' : '公开'}
+                  </Badge>
+                </span>
               </div>
               <div className="text-muted-foreground mt-1 truncate text-xs">{command.plugin_name}</div>
             </button>
@@ -128,6 +152,20 @@ export function CommandPermissions({ pluginSection, onChange }: Props) {
               </code>
             </header>
 
+            <div className="bg-muted/40 flex items-center justify-between gap-3 rounded-lg border p-4">
+              <div className="min-w-0">
+                <div className="font-medium">启用此命令</div>
+                <p className="text-muted-foreground mt-1 text-sm">
+                  停用后，聊天中的命令文本不再触发此命令，按普通消息继续处理。
+                </p>
+              </div>
+              <Switch
+                checked={!disabledCommandIds.has(selectedCommand.id)}
+                onCheckedChange={(checked) => toggleCommandEnabled(selectedCommand.id, checked)}
+                aria-label={disabledCommandIds.has(selectedCommand.id) ? '启用命令' : '停用命令'}
+              />
+            </div>
+
             {selectedCommand.permission === 'public' ? (
               <div className="bg-muted/40 flex gap-3 rounded-lg border p-4">
                 <ShieldCheck className="text-muted-foreground mt-0.5 h-5 w-5 shrink-0" />
@@ -153,6 +191,22 @@ export function CommandPermissions({ pluginSection, onChange }: Props) {
                     placeholder="例如 qq:123456789，多个用户用逗号分隔"
                   />
                   <p className="text-muted-foreground text-xs">这些用户可以执行所有受保护命令。</p>
+                </div>
+
+                <div className="flex items-center justify-between gap-3 rounded-lg border p-4">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium">不显示无权限提示</div>
+                    <p className="text-muted-foreground mt-1 text-xs">
+                      开启后，用户执行受保护命令但无权限时不会收到提示消息，仅静默拦截并记录日志。
+                    </p>
+                  </div>
+                  <Switch
+                    checked={silentPermissionDenied}
+                    onCheckedChange={(checked) =>
+                      onChange({ ...(pluginSection ?? {}), silent_permission_denied: checked })
+                    }
+                    aria-label="不显示无权限提示"
+                  />
                 </div>
 
                 <div className="space-y-2">

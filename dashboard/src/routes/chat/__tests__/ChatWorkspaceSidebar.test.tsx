@@ -1,10 +1,8 @@
 import type { ReactNode } from 'react'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { useResolvedAvatarUrl } from '@/lib/avatar-url'
-import type { SessionAdapterStatus } from '@/lib/chat-management-api'
 import type { SessionInfo, StageStatusInfo } from '@/routes/monitor/use-maisaka-monitor'
 
 import { ChatWorkspaceSidebar } from '../ChatWorkspaceSidebar'
@@ -76,16 +74,10 @@ function renderSidebar(overrides: Partial<Parameters<typeof ChatWorkspaceSidebar
     observedSessions: new Map(),
     observedStageStatuses: new Map(),
     observedLatestMessages: new Map<string, ObservedMessagePreview>(),
-    observedAdapterStatuses: new Map<string, SessionAdapterStatus>(),
-    userId: 'user-a',
-    userName: '人类',
-    isUploadingUserAvatar: false,
     onSwitch: vi.fn(),
     onSelectObserved: vi.fn(),
     onOpenObservedSettings: vi.fn(),
     onClose: vi.fn(),
-    onUpdateUserAvatar: vi.fn(async () => {}),
-    onUpdateUserName: vi.fn(),
     ...overrides,
   }
   const view = render(<ChatWorkspaceSidebar {...props} />)
@@ -225,14 +217,13 @@ describe('ChatWorkspaceSidebar', () => {
     await user.click(screen.getByRole('button', { name: /^旧群聊/ }))
     expect(props.onSelectObserved).toHaveBeenCalledWith('old-session')
 
-    await user.click(
-      screen.getByRole('button', { name: 'chat.sidebar.openSettings:新的私聊' })
-    )
+    await user.click(screen.getByRole('button', { name: 'chat.sidebar.openSettings:新的私聊' }))
     expect(props.onOpenObservedSettings).toHaveBeenCalledWith('new-session')
     expect(props.onSelectObserved).toHaveBeenCalledTimes(1)
   })
 
-  it('搜索框按显示名过滤本地会话与观察聊天流，无结果时显示提示', async () => {    const user = userEvent.setup()
+  it('搜索框按显示名过滤本地会话与观察聊天流，无结果时显示提示', async () => {
+    const user = userEvent.setup()
     const sessions = new Map<string, SessionInfo>([
       [
         'session-a',
@@ -270,69 +261,5 @@ describe('ChatWorkspaceSidebar', () => {
     expect(screen.getByText('机器人-webui-default')).toBeInTheDocument()
     expect(screen.getByText('群聊A')).toBeInTheDocument()
     expect(screen.queryByText('chat.sidebar.noSearchResults')).not.toBeInTheDocument()
-  })
-
-  it('编辑昵称后按 Enter 提交去除首尾空白', async () => {
-    const user = userEvent.setup()
-    const { props } = renderSidebar()
-
-    // 身份框不再展示「我的身份」标题
-    expect(screen.queryByText('chat.sidebar.profileTitle')).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'chat.sidebar.editName' }))
-    const input = screen.getByPlaceholderText('chat.identity.namePlaceholder')
-    expect(input).toHaveValue('人类')
-
-    fireEvent.change(input, { target: { value: '  新名字  ' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
-    expect(props.onUpdateUserName).toHaveBeenCalledWith('新名字')
-    // 提交后退出编辑态
-    expect(screen.queryByPlaceholderText('chat.identity.namePlaceholder')).not.toBeInTheDocument()
-  })
-
-  it('空昵称提交时回退默认昵称（点击保存按钮）', async () => {
-    const user = userEvent.setup()
-    const { props } = renderSidebar()
-
-    await user.click(screen.getByRole('button', { name: 'chat.sidebar.editName' }))
-    const input = screen.getByPlaceholderText('chat.identity.namePlaceholder')
-    fireEvent.change(input, { target: { value: '   ' } })
-    await user.click(screen.getByRole('button', { name: 'chat.sidebar.saveName' }))
-    expect(props.onUpdateUserName).toHaveBeenCalledWith('chat.userNameFallback')
-  })
-
-  it('按 Escape 取消编辑且不提交昵称', async () => {
-    const user = userEvent.setup()
-    const { props } = renderSidebar()
-
-    await user.click(screen.getByRole('button', { name: 'chat.sidebar.editName' }))
-    const input = screen.getByPlaceholderText('chat.identity.namePlaceholder')
-    fireEvent.change(input, { target: { value: '改了一半' } })
-    fireEvent.keyDown(input, { key: 'Escape' })
-
-    expect(screen.queryByPlaceholderText('chat.identity.namePlaceholder')).not.toBeInTheDocument()
-    expect(props.onUpdateUserName).not.toHaveBeenCalled()
-    // 原昵称保持展示
-    expect(screen.getByText('人类')).toBeInTheDocument()
-  })
-
-  it('选择头像文件交给回调，上传中禁用入口', () => {
-    const { container, props, rerender } = renderSidebar({ userAvatarVersion: 2 })
-    // 有头像版本号时按 webui 平台解析用户头像
-    expect(useResolvedAvatarUrl).toHaveBeenCalledWith('webui', 'user-a', 'user', 2)
-
-    const file = new File(['avatar'], 'avatar.png', { type: 'image/png' })
-    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, {
-      target: { files: [file] },
-    })
-    expect(props.onUpdateUserAvatar).toHaveBeenCalledWith(file)
-
-    rerender(<ChatWorkspaceSidebar {...props} isUploadingUserAvatar />)
-    expect(screen.getByRole('button', { name: 'chat.sidebar.editAvatar' })).toBeDisabled()
-    expect(screen.getByText('chat.sidebar.savingAvatar')).toBeInTheDocument()
-  })
-
-  it('无头像版本号时不解析用户头像地址', () => {
-    renderSidebar()
-    expect(useResolvedAvatarUrl).toHaveBeenCalledWith(undefined, 'user-a', 'user', undefined)
   })
 })

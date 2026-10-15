@@ -10,10 +10,19 @@ import {
 } from '@/lib/plugin-api'
 import type { InstalledPlugin, MaimaiVersion } from '@/lib/plugin-api'
 import type { PluginInfo } from '@/types/plugin'
+import { unifiedWsClient } from '@/lib/unified-ws'
 
 import { usePluginList } from '../usePluginList'
 
 const { toastMock } = vi.hoisted(() => ({ toastMock: vi.fn() }))
+
+vi.mock('@/lib/unified-ws', () => ({
+  unifiedWsClient: {
+    addEventListener: vi.fn(() => vi.fn()),
+    subscribe: vi.fn(async () => ({})),
+    unsubscribe: vi.fn(async () => ({})),
+  },
+}))
 
 vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: toastMock }) }))
 
@@ -122,6 +131,59 @@ afterEach(() => {
 })
 
 describe('usePluginList 缺口', () => {
+  it('状态通知抢先返回也能打开深链接，关闭后不会再次打开', async () => {
+    window.history.replaceState(null, '', '/plugin-config?plugin=test.emoji')
+    const initial = createDeferred<InstalledPlugin[]>()
+    vi.mocked(getInstalledPlugins).mockReturnValueOnce(initial.promise)
+    const { result } = renderHook(() => usePluginList())
+    const listener = vi.mocked(unifiedWsClient.addEventListener).mock.calls.at(-1)![0]
+    const event = { domain: 'plugin_runtime', topic: 'main', event: 'changed', data: {} }
+    await act(async () => listener(event as Parameters<typeof listener>[0]))
+    expect(result.current.selectedPlugin?.id).toBe('test.emoji')
+    act(() => result.current.closePluginConfig())
+    await act(async () => {
+      listener(event as Parameters<typeof listener>[0])
+      initial.resolve([makePlugin('test.emoji', { load_status: 'loading' })])
+    })
+    expect(result.current.selectedPlugin).toBeNull()
+    expect(result.current.plugins[0].load_status).toBe('success')
+  })
+
+  it('运行状态事件会刷新页面，连续事件合并后保留最后状态', async () => {
+    const { result } = await renderPluginList()
+    const listener = vi.mocked(unifiedWsClient.addEventListener).mock.calls.at(-1)![0]
+    const slow = createDeferred<InstalledPlugin[]>()
+    vi.mocked(getInstalledPlugins)
+      .mockReturnValueOnce(slow.promise)
+      .mockResolvedValueOnce([makePlugin('test.emoji', { load_status: 'success' })])
+    const event = { domain: 'plugin_runtime', topic: 'main', event: 'changed', data: {} }
+    act(() => {
+      listener(event as Parameters<typeof listener>[0])
+      listener(event as Parameters<typeof listener>[0])
+      listener(event as Parameters<typeof listener>[0])
+    })
+    expect(getInstalledPlugins).toHaveBeenCalledTimes(2)
+    await act(async () => slow.resolve([makePlugin('test.emoji', { load_status: 'loading' })]))
+    await waitFor(() => expect(result.current.plugins[0].load_status).toBe('success'))
+    expect(getInstalledPlugins).toHaveBeenCalledTimes(3)
+  })
+
+  it('较早请求晚返回时不会覆盖最新状态', async () => {
+    const { result } = await renderPluginList()
+    const old = createDeferred<InstalledPlugin[]>()
+    vi.mocked(getInstalledPlugins)
+      .mockReturnValueOnce(old.promise)
+      .mockResolvedValueOnce([makePlugin('test.emoji', { load_status: 'success' })])
+    let earlier!: Promise<void>
+    act(() => { earlier = result.current.loadPlugins() })
+    await act(async () => result.current.loadPlugins())
+    await act(async () => {
+      old.resolve([makePlugin('test.emoji', { load_status: 'loading' })])
+      await earlier
+    })
+    expect(result.current.plugins[0].load_status).toBe('success')
+  })
+
   it('适配器管理路径不拉市场更新，仅看有更新也不会补拉', async () => {
     window.history.replaceState(null, '', '/adapter-management')
     vi.mocked(getInstalledPlugins).mockResolvedValue([
@@ -333,7 +395,7 @@ describe('usePluginList 缺口', () => {
       makePlugin('p.ok'),
       makePlugin('p.failed', { load_status: 'failed', load_error: 'boom' }),
       makePlugin('p.loading', { load_status: 'loading' }),
-      makePlugin('p.off', { enabled: false }),
+      makePlugin('p.off', { enabled: false, load_status: 'disabled' }),
     ])
     const { result } = await renderPluginList()
     expect(result.current.loadSuccessPercent).toBeCloseTo((1 / 3) * 100)

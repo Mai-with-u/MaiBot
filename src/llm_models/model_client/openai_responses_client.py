@@ -309,7 +309,7 @@ def _merge_text_config(extra_body: Dict[str, Any], response_format: RespFormat |
 
 
 def _extract_usage_record(usage: Any) -> UsageTuple | None:
-    """提取 Responses API 使用量。"""
+    """提取 Responses API 使用量，并判断是否上报了 Prompt 缓存用量。"""
 
     if usage is None:
         return None
@@ -317,13 +317,16 @@ def _extract_usage_record(usage: Any) -> UsageTuple | None:
     output_tokens = int(_get_value(usage, "output_tokens", 0) or 0)
     total_tokens = int(_get_value(usage, "total_tokens", input_tokens + output_tokens) or 0)
     input_details = _get_value(usage, "input_tokens_details")
-    cached_tokens = int(_get_value(input_details, "cached_tokens", 0) or 0)
+    # input_tokens_details.cached_tokens 缺失即未上报缓存用量，用 None 哨兵区分「缺失」与「为 0」
+    reported_cached_tokens = _get_value(input_details, "cached_tokens", None) if input_details is not None else None
+    cached_tokens = int(reported_cached_tokens or 0)
     return (
         input_tokens,
         output_tokens,
         total_tokens,
         cached_tokens,
         max(input_tokens - cached_tokens, 0),
+        reported_cached_tokens is not None,
     )
 
 
@@ -731,7 +734,7 @@ class OpenAIResponsesClient(OpenaiClient):
                     temperature=temperature if temperature is not None else omit,
                     store=store,
                     stream=bool(model_info.force_stream_mode),
-                    extra_headers=request_overrides.extra_headers or None,
+                    extra_headers=self._build_request_headers(request_overrides.extra_headers),
                     extra_query=request_overrides.extra_query or None,
                     extra_body=extra_body or None,
                 )
@@ -770,21 +773,25 @@ class OpenAIResponsesClient(OpenaiClient):
             }
             return response
         except (EmptyResponseException, RespParseException) as exc:
-            self._attach_failure_snapshot(exc, request, snapshot_provider_request)
+            await asyncio.to_thread(self._attach_failure_snapshot, exc, request, snapshot_provider_request)
             raise
         except APIConnectionError as exc:
             wrapped_error = NetworkConnectionError(str(exc))
-            self._attach_failure_snapshot(wrapped_error, request, snapshot_provider_request, original_error=exc)
+            await asyncio.to_thread(
+                self._attach_failure_snapshot, wrapped_error, request, snapshot_provider_request, original_error=exc
+            )
             raise wrapped_error from exc
         except APIStatusError as exc:
             wrapped_error = RespNotOkException(exc.status_code, _build_api_status_message(exc))
-            self._attach_failure_snapshot(wrapped_error, request, snapshot_provider_request, original_error=exc)
+            await asyncio.to_thread(
+                self._attach_failure_snapshot, wrapped_error, request, snapshot_provider_request, original_error=exc
+            )
             raise wrapped_error from exc
         except ReqAbortException:
             raise
         except Exception as exc:
             if not has_request_snapshot(exc):
-                self._attach_failure_snapshot(exc, request, snapshot_provider_request)
+                await asyncio.to_thread(self._attach_failure_snapshot, exc, request, snapshot_provider_request)
             raise
 
     def _attach_failure_snapshot(

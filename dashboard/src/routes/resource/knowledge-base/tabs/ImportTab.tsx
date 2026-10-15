@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -215,6 +215,7 @@ export interface ImportTabProps {
 }
 
 export function ImportTab({ queue, form }: ImportTabProps) {
+  const uploadInputRef = useRef<HTMLInputElement>(null)
   const {
     refreshImportQueue,
     runningImportTasks,
@@ -361,7 +362,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
       >
         <TabsList
           aria-label="长期记忆写入方式"
-          className="border-border/60 bg-muted/30 h-auto w-fit gap-1 rounded-xl border"
+          className="border-border/60 bg-muted/30 h-auto max-w-full flex-wrap justify-start gap-1 rounded-xl border lg:w-fit"
         >
           <TabsTrigger value="import">
             <Upload className="mr-2 h-4 w-4" />
@@ -734,14 +735,38 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                       </div>
                       <div className="space-y-1">
                         <Label>文件选择</Label>
-                        <Input
+                        <input
+                          ref={uploadInputRef}
                           type="file"
+                          className="hidden"
+                          aria-label="文件选择"
                           multiple
                           accept=".txt,.md,.json"
                           onChange={(event) =>
                             setUploadFiles(Array.from(event.target.files ?? []))
                           }
                         />
+                        <div className="flex items-start gap-3">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="shrink-0"
+                            onClick={() => uploadInputRef.current?.click()}
+                          >
+                            选择文件
+                          </Button>
+                          <div
+                            role="status"
+                            data-dashboard-input="true"
+                            className="border-input bg-background min-h-9 min-w-0 flex-1 rounded-md border px-3 py-2 text-sm break-words"
+                          >
+                            {uploadFiles.length > 0 ? (
+                              uploadFiles.map((file) => file.name).join('、')
+                            ) : (
+                              <span className="text-muted-foreground">未选择文件</span>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     </div>
                     <div className="text-xs text-muted-foreground">
@@ -898,7 +923,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                 </Button>
               </div>
             </CardHeader>
-            <CardContent className="space-y-6">
+            <CardContent data-memory-import-queue-screen="true" className="space-y-6">
               {importErrorText ? (
                 <Alert variant="destructive">
                   <AlertDescription>{importErrorText}</AlertDescription>
@@ -906,18 +931,21 @@ export function ImportTab({ queue, form }: ImportTabProps) {
               ) : null}
 
               {runningImportTasks.length > 0 ? (
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between gap-2">
+                <div data-memory-import-group="true" className="space-y-2.5">
+                  <div data-memory-import-group-header="true" className="flex items-center justify-between gap-2">
                     <div className="text-sm font-medium">运行中</div>
                     <Badge variant="outline">{runningImportTasks.length}</Badge>
                   </div>
                   <ScrollArea className="h-[208px]">
-                    <div className="space-y-2.5 p-2.5">
+                    <div data-memory-import-task-list="true" className="space-y-2.5 p-2.5">
                       {runningImportTasks.map((task) => {
                         const isSelected = task.task_id === selectedImportTaskId
                         return (
                           <button
                             key={task.task_id}
+                            data-memory-import-task="true"
+                            data-status={task.status}
+                            data-selected={isSelected}
                             type="button"
                             onClick={() => openTaskDetail(task.task_id)}
                             className={cn(
@@ -952,18 +980,21 @@ export function ImportTab({ queue, form }: ImportTabProps) {
               ) : null}
 
               {queuedImportTasks.length > 0 ? (
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between gap-2">
+                <div data-memory-import-group="true" className="space-y-2.5">
+                  <div data-memory-import-group-header="true" className="flex items-center justify-between gap-2">
                     <div className="text-sm font-medium">排队中</div>
                     <Badge variant="outline">{queuedImportTasks.length}</Badge>
                   </div>
                   <ScrollArea className="h-[188px]">
-                    <div className="space-y-2.5 p-2.5">
+                    <div data-memory-import-task-list="true" className="space-y-2.5 p-2.5">
                       {queuedImportTasks.map((task) => {
                         const isSelected = task.task_id === selectedImportTaskId
                         return (
                           <button
                             key={task.task_id}
+                            data-memory-import-task="true"
+                            data-status={task.status}
+                            data-selected={isSelected}
                             type="button"
                             onClick={() => openTaskDetail(task.task_id)}
                             className={cn(
@@ -997,18 +1028,21 @@ export function ImportTab({ queue, form }: ImportTabProps) {
               ) : null}
 
               {recentImportTasks.length > 0 ? (
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between gap-2">
+                <div data-memory-import-group="true" className="space-y-2.5">
+                  <div data-memory-import-group-header="true" className="flex items-center justify-between gap-2">
                     <div className="text-sm font-medium">最近完成</div>
                     <Badge variant="secondary">{recentImportTasks.length}</Badge>
                   </div>
                   <ScrollArea className="h-[260px]">
-                    <div className="space-y-2.5 p-2.5">
+                    <div data-memory-import-task-list="true" className="space-y-2.5 p-2.5">
                       {recentImportTasks.map((task) => {
                         const isSelected = task.task_id === selectedImportTaskId
                         return (
                           <button
                             key={task.task_id}
+                            data-memory-import-task="true"
+                            data-status={task.status}
+                            data-selected={isSelected}
                             type="button"
                             onClick={() => openTaskDetail(task.task_id)}
                             className={cn(
@@ -1070,9 +1104,6 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                 <Plus className="mr-2 h-4 w-4" />
                 新增事实
               </Button>
-              <p className="text-xs text-muted-foreground">
-                事实按「主体 - 谓词 - 客体」成条写入，录入后可在「记忆查询」页继续编辑、撤回或恢复。
-              </p>
             </CardContent>
           </Card>
         </div>

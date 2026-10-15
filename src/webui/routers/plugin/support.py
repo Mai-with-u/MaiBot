@@ -1,13 +1,14 @@
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, get_origin
+
+from fastapi import HTTPException
+
 import json
 import os
 import re
 import shutil
 import stat
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, cast, get_origin
-
-from fastapi import HTTPException
 
 from src.common.logger import get_logger
 from src.core.config_types import ConfigField
@@ -255,9 +256,14 @@ def load_manifest_json(manifest_path: Path) -> Optional[Dict[str, Any]]:
 
     try:
         with open(manifest_path, "r", encoding="utf-8") as file_obj:
-            return cast(dict[str, Any], json.load(file_obj))
-    except Exception:
+            manifest = json.load(file_obj)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        logger.warning(f"读取插件 manifest 失败: {manifest_path}", exc_info=True)
         return None
+    if not isinstance(manifest, dict):
+        logger.warning(f"插件 manifest 顶层必须是 JSON 对象: {manifest_path}")
+        return None
+    return manifest
 
 
 def read_plugin_changelog(plugin_path: Path) -> Optional[str]:

@@ -17,11 +17,13 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { useMediaQuery } from "@/hooks/use-media-query"
 import { cn } from "@/lib/utils"
 import { resolveFieldLabel } from "@/lib/config-label"
 import type { FieldSchema } from "@/types/config-schema"
 
 import { fieldTitleClassName } from "./fieldStyle"
+import { MobileTextSheetField } from "./MobileTextSheetField"
 
 const ARRAY_DRAFT_LINE_PATTERN = /\r\n|\n|\r/
 const TAG_DRAFT_SPLIT_PATTERN = /[\r\n,，;；]+/
@@ -242,6 +244,8 @@ export const DynamicField: React.FC<DynamicFieldProps> = ({
 }) => {
   const { i18n } = useTranslation()
   const fieldLabel = resolveFieldLabel(schema, i18n.language)
+  // 手机上长文本改为「列表行 + 底部弹层编辑」
+  const isMobileViewport = useMediaQuery("(max-width: 1023.98px)")
   const isNumericField = schema.type === 'integer' || schema.type === 'number'
 
   const parseNumericValue = (rawValue: unknown, fallbackValue: unknown = 0) => {
@@ -761,6 +765,26 @@ export const DynamicField: React.FC<DynamicFieldProps> = ({
       : schemaInputWidth ?? defaultInlineRightInputWidth
   const inlineRightInputStyle = supportsInlineRight ? { width: inlineRightInputWidth } : undefined
   const inlineRightInputClassName = supportsInlineRight ? '!w-[var(--field-input-width)]' : undefined
+
+  const isTextarea =
+    schema['x-widget'] === 'textarea' ||
+    (!schema['x-widget'] && schema.type === 'textarea')
+  if (isTextarea && isMobileViewport) {
+    return (
+      <div
+        data-dynamic-field={fieldPath ?? schema.name}
+        data-dynamic-field-widget="textarea"
+        className="min-w-0"
+      >
+        <MobileTextSheetField
+          label={fieldLabel}
+          description={fieldDescription}
+          value={typeof value === 'string' ? value : ((schema.default as string) ?? '')}
+          onChange={(nextValue) => onChange(nextValue)}
+        />
+      </div>
+    )
+  }
 
   // Switch/Boolean 字段自带完整布局，直接返回
   if (isBoolean) {

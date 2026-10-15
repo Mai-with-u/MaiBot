@@ -107,6 +107,8 @@ function makeCorrection(overrides: Partial<UseMemoryCorrectionResult> = {}): Use
     setRequestText: vi.fn(),
     scope: 'person_profile',
     setScope: vi.fn(),
+    personLookupMode: 'keyword',
+    setPersonLookupMode: vi.fn(),
     personId: '',
     setPersonId: vi.fn(),
     personKeyword: '',

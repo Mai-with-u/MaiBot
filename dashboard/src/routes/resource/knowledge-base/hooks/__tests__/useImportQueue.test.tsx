@@ -13,98 +13,11 @@ import type {
   MemoryImportFilePayload,
   MemoryImportTaskPayload,
 } from '@/lib/memory-api'
-import type { MemoryProgressEvent } from '@/lib/memory-progress-client'
 
 const toastMock = vi.hoisted(() => vi.fn())
 
-const wsState = vi.hoisted(() => {
-  const listeners = new Set<(connected: boolean) => void>()
-  let connected = false
-  return {
-    listeners,
-    get connected() {
-      return connected
-    },
-    onConnectionChange(listener: (connected: boolean) => void) {
-      listeners.add(listener)
-      listener(connected)
-      return () => {
-        listeners.delete(listener)
-      }
-    },
-    setConnected(next: boolean) {
-      connected = next
-      listeners.forEach((listener) => listener(next))
-    },
-    reset() {
-      listeners.clear()
-      connected = false
-    },
-  }
-})
-
-const progressState = vi.hoisted(() => {
-  const handlers: Array<(event: MemoryProgressEvent) => void> = []
-  let subscribeImpl:
-    | ((
-        handler: (event: MemoryProgressEvent) => void,
-        topics?: string[],
-      ) => Promise<() => Promise<void>>)
-    | null = null
-
-  return {
-    handlers,
-    lastTopics: [] as string[],
-    setSubscribe(
-      impl: (
-        handler: (event: MemoryProgressEvent) => void,
-        topics?: string[],
-      ) => Promise<() => Promise<void>>,
-    ) {
-      subscribeImpl = impl
-    },
-    reset() {
-      handlers.length = 0
-      subscribeImpl = null
-      progressState.lastTopics = []
-    },
-    subscribe(
-      handler: (event: MemoryProgressEvent) => void,
-      topics?: string[],
-    ): Promise<() => Promise<void>> {
-      progressState.lastTopics = topics ?? []
-      if (subscribeImpl) {
-        return subscribeImpl(handler, topics)
-      }
-      handlers.push(handler)
-      return Promise.resolve(async () => {
-        const index = handlers.indexOf(handler)
-        if (index >= 0) {
-          handlers.splice(index, 1)
-        }
-      })
-    },
-  }
-})
-
 vi.mock('@/hooks/use-toast', () => ({
   useToast: () => ({ toast: toastMock }),
-}))
-
-vi.mock('@/lib/unified-ws', () => ({
-  unifiedWsClient: {
-    onConnectionChange: (listener: (connected: boolean) => void) =>
-      wsState.onConnectionChange(listener),
-  },
-}))
-
-vi.mock('@/lib/memory-progress-client', () => ({
-  memoryProgressClient: {
-    subscribe: (
-      handler: (event: MemoryProgressEvent) => void,
-      topics?: string[],
-    ) => progressState.subscribe(handler, topics),
-  },
 }))
 
 vi.mock('@/lib/memory-api', () => ({
@@ -220,8 +133,6 @@ async function waitForSelectedTask(
 
 beforeEach(() => {
   toastMock.mockReset()
-  progressState.reset()
-  wsState.reset()
 
   vi.mocked(memoryApi.getMemoryImportSettings).mockResolvedValue({
     success: true,
@@ -297,14 +208,13 @@ describe('useImportQueue 任务列表', () => {
     expect(result.current.selectedImportChunks).toEqual([makeChunk()])
   })
 
-  it('非激活时不拉任务、不订阅进度', async () => {
+  it('非激活时不拉任务', async () => {
     renderQueue({ active: false })
     await act(async () => {
       await Promise.resolve()
     })
 
     expect(memoryApi.getMemoryImportTasks).not.toHaveBeenCalled()
-    expect(progressState.handlers).toHaveLength(0)
   })
 
   it('任务列表查询失败写入局部错误文案', async () => {
@@ -337,59 +247,8 @@ describe('useImportQueue 任务列表', () => {
   })
 })
 
-describe('useImportQueue WebSocket 进度与断线轮询', () => {
-  it('激活时订阅 import_progress；进度事件刷新列表与选中详情', async () => {
-    const { result } = renderQueue()
-    await waitForSelectedTask(result, 'task-1')
-    await waitFor(() => expect(progressState.handlers.length).toBeGreaterThan(0))
-    expect(progressState.lastTopics).toEqual(['import_progress'])
-
-    vi.mocked(memoryApi.getMemoryImportTasks).mockClear()
-    vi.mocked(memoryApi.getMemoryImportTask).mockClear()
-
-    await act(async () => {
-      progressState.handlers[0]({
-        topic: 'import_progress',
-        event: 'progress',
-        data: { task_id: 'task-1' },
-      })
-    })
-
-    await waitFor(() => expect(memoryApi.getMemoryImportTasks).toHaveBeenCalled())
-    await waitFor(() =>
-      expect(memoryApi.getMemoryImportTask).toHaveBeenCalledWith('task-1', false),
-    )
-  })
-
-  it('其它 topic 不刷新队列；进度刷新失败时静默只写错误', async () => {
-    const { result } = renderQueue()
-    await waitForSelectedTask(result, 'task-1')
-    await waitFor(() => expect(progressState.handlers.length).toBeGreaterThan(0))
-    vi.mocked(memoryApi.getMemoryImportTasks).mockClear()
-    toastMock.mockClear()
-
-    await act(async () => {
-      progressState.handlers[0]({
-        topic: 'delete_progress',
-        event: 'progress',
-        data: {},
-      })
-    })
-    expect(memoryApi.getMemoryImportTasks).not.toHaveBeenCalled()
-
-    vi.mocked(memoryApi.getMemoryImportTask).mockRejectedValue(new Error('详情失败'))
-    await act(async () => {
-      progressState.handlers[0]({
-        topic: 'import_progress',
-        event: 'progress',
-        data: {},
-      })
-    })
-    await waitFor(() => expect(result.current.importErrorText).toBe('详情失败'))
-    expect(toastMock).not.toHaveBeenCalled()
-  })
-
-  it('激活期间无论 WS 是否连接都保持 refetchInterval 轮询', async () => {
+describe('useImportQueue 轮询', () => {
+  it('激活期间保持 refetchInterval 轮询', async () => {
     vi.mocked(memoryApi.getMemoryImportSettings).mockResolvedValue({
       success: true,
       settings: { poll_interval_ms: 1500 },
@@ -397,16 +256,6 @@ describe('useImportQueue WebSocket 进度与断线轮询', () => {
     const { queryClient, result } = renderQueue()
     await waitForSelectedTask(result, 'task-1')
     await waitFor(() => expect(result.current.importPollInterval).toBe(1500))
-    await waitFor(() => expect(getTasksRefetchInterval(queryClient)).toBe(1500))
-
-    await act(async () => {
-      wsState.setConnected(true)
-    })
-    await waitFor(() => expect(getTasksRefetchInterval(queryClient)).toBe(1500))
-
-    await act(async () => {
-      wsState.setConnected(false)
-    })
     await waitFor(() => expect(getTasksRefetchInterval(queryClient)).toBe(1500))
   })
 
@@ -418,30 +267,6 @@ describe('useImportQueue WebSocket 进度与断线轮询', () => {
     const { queryClient, result } = renderQueue()
     await waitFor(() => expect(result.current.importPollInterval).toBe(200))
     await waitFor(() => expect(getTasksRefetchInterval(queryClient)).toBe(200))
-  })
-
-  it('面板从激活切到非激活会退订进度', async () => {
-    const { rerender } = renderQueue()
-    await waitFor(() => expect(progressState.handlers.length).toBeGreaterThan(0))
-    rerender({ active: false, buildRetryOverrides: undefined })
-    await waitFor(() => expect(progressState.handlers).toHaveLength(0))
-  })
-
-  it('订阅失败只打 warn，不阻断队列', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    progressState.setSubscribe(async () => {
-      throw new Error('ws down')
-    })
-
-    const { result } = renderQueue()
-    await waitForSelectedTask(result, 'task-1')
-    await waitFor(() =>
-      expect(warn).toHaveBeenCalledWith(
-        '订阅长期记忆 WebSocket 失败，已退化到轮询兜底',
-        expect.any(Error),
-      ),
-    )
-    warn.mockRestore()
   })
 })
 

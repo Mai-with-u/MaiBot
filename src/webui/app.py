@@ -5,15 +5,19 @@ from os import getenv
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
+import asyncio
+import gzip
 import mimetypes
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
+from src.common.paths import SOURCE_ROOT, get_instance_root
 from src.common.i18n import t
 from src.common.logger import get_logger
 from src.webui.dependencies import require_auth
+from src.webui.middleware.compression import TextGZipMiddleware, accepts_gzip
 from src.webui.version_compatibility import (
     get_webui_version_compatibility,
     read_installed_webui_version,
@@ -32,6 +36,11 @@ _MANUAL_INSTALL_COMMAND = f"pip install {_DASHBOARD_PACKAGE_NAME}"
 # 底层 SQLite 连接池只有 5 条常驻 + 10 条溢出连接，并发过高会让线程排队等连接，
 # 因此把同步端点的并发数限制在连接池容量以内。
 MAX_CONCURRENT_SYNC_ENDPOINTS = 8
+
+# 前端构建产物里可压缩的文本类文件；woff2、图片等本身已压缩，不再处理
+_GZIP_STATIC_SUFFIXES = frozenset({".css", ".html", ".js", ".json", ".map", ".mjs", ".svg", ".ttf", ".txt"})
+# 静态文件 gzip 结果缓存：路径 -> (修改时间, 文件大小, 压缩后内容)，文件变化后自动重新压缩
+_gzip_static_cache: Dict[Path, Tuple[int, int, bytes]] = {}
 
 
 def limit_sync_endpoint_concurrency() -> int:
@@ -62,8 +71,56 @@ def _resolve_safe_static_file_path(static_path: Path, full_path: str) -> Path | 
     return candidate_path
 
 
+def _load_gzipped_static_file(file_path: Path) -> bytes:
+    """读取静态文件的 gzip 内容，按修改时间和大小缓存。包含文件读写，需在线程中调用。"""
+
+    file_stat = file_path.stat()
+    cached = _gzip_static_cache.get(file_path)
+    if cached is not None and cached[0] == file_stat.st_mtime_ns and cached[1] == file_stat.st_size:
+        return cached[2]
+
+    compressed = gzip.compress(file_path.read_bytes(), compresslevel=9, mtime=0)
+    _gzip_static_cache[file_path] = (file_stat.st_mtime_ns, file_stat.st_size, compressed)
+    return compressed
+
+
+def _resolve_static_cache_control(static_path: Path, file_path: Path) -> str | None:
+    """按文件位置决定缓存策略。"""
+
+    relative_parts = file_path.resolve().relative_to(static_path.resolve()).parts
+    if relative_parts[0] == "assets":
+        # 构建产物文件名带内容哈希，内容变化时文件名必然变化，可以长期缓存
+        return "public, max-age=31536000, immutable"
+    if file_path.suffix == ".html":
+        # 入口页每次都要校验，保证更新 WebUI 后立即加载到新的资源文件名
+        return "no-cache"
+    return None
+
+
+async def _build_static_file_response(request: Request, static_path: Path, file_path: Path) -> Response:
+    """构造静态文件响应：文本类文件在客户端支持时返回 gzip 内容，并附带缓存策略。"""
+
+    media_type = mimetypes.guess_type(str(file_path))[0]
+    response: Response
+    if file_path.suffix in _GZIP_STATIC_SUFFIXES and accepts_gzip(request.headers.get("Accept-Encoding", "")):
+        compressed = await asyncio.to_thread(_load_gzipped_static_file, file_path)
+        # 猜不出类型时与 FileResponse 的默认值保持一致
+        response = Response(content=compressed, media_type=media_type or "text/plain")
+        response.headers["Content-Encoding"] = "gzip"
+        response.headers["Vary"] = "Accept-Encoding"
+    else:
+        response = FileResponse(file_path, media_type=media_type)
+
+    cache_control = _resolve_static_cache_control(static_path, file_path)
+    if cache_control is not None:
+        response.headers["Cache-Control"] = cache_control
+    if file_path.suffix == ".html":
+        response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    return response
+
+
 def _get_project_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return SOURCE_ROOT
 
 
 def _resolve_statistics_report_path() -> Path:
@@ -72,7 +129,7 @@ def _resolve_statistics_report_path() -> Path:
     if report_path.is_absolute():
         return report_path.resolve()
 
-    return (_get_project_root() / report_path).resolve()
+    return (get_instance_root() / report_path).resolve()
 
 
 def _is_local_dashboard_enabled() -> bool:
@@ -123,6 +180,7 @@ def create_app(
 
     _setup_anti_crawler(app)
     _setup_cors(app, port)
+    app.add_middleware(TextGZipMiddleware)
     _register_api_routes(app)
     _setup_robots_txt(app)
 
@@ -235,29 +293,21 @@ def _setup_static_files(app: FastAPI):
         return response
 
     @app.get("/{full_path:path}", include_in_schema=False)
-    async def serve_spa(full_path: str):
+    async def serve_spa(request: Request, full_path: str):
         if full_path == "api" or full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail=t("core.not_found"))
 
         if not full_path or full_path == "/":
-            response = FileResponse(static_path / "index.html", media_type="text/html")
-            response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
-            return response
+            return await _build_static_file_response(request, static_path, static_path / "index.html")
 
         file_path = _resolve_safe_static_file_path(static_path, full_path)
         if file_path is None:
             raise HTTPException(status_code=404, detail=t("core.not_found"))
 
         if file_path.exists() and file_path.is_file():
-            media_type = mimetypes.guess_type(str(file_path))[0]
-            response = FileResponse(file_path, media_type=media_type)
-            if str(file_path).endswith(".html"):
-                response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
-            return response
+            return await _build_static_file_response(request, static_path, file_path)
 
-        response = FileResponse(static_path / "index.html", media_type="text/html")
-        response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
-        return response
+        return await _build_static_file_response(request, static_path, static_path / "index.html")
 
     logger.debug(t("startup.webui_static_files_configured", static_path=static_path))
 

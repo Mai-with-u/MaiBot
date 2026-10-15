@@ -1,0 +1,520 @@
+/*
+ * 原版风格的手机端（lg 以下）：iOS Liquid Glass 克制版。
+ * 内容一律是纯色实底：中性浅灰页面 + 白色大圆角卡片，无描边、无投影；
+ * 玻璃只出现在悬浮层（标签栏、搜索、弹层）上，由组件自己的类名负责。
+ * 桌面端完全不受这里的规则影响。
+ */
+
+:root[data-dashboard-style='modern'] {
+  --m-page: #f5f5f7;
+  --m-card: #fff;
+  --m-fill: #efeff1;
+  --m-ink: #1d1d1f;
+  --m-muted: #6e6e73;
+  --m-hairline: rgb(0 0 0 / 0.1);
+  --m-ok: #34c759;
+}
+
+:root[data-dashboard-style='modern'].dark {
+  --m-page: #000;
+  --m-card: #1c1c1e;
+  --m-fill: #2c2c2e;
+  --m-ink: #f5f5f7;
+  --m-muted: #98989d;
+  --m-hairline: rgb(255 255 255 / 0.12);
+  --m-ok: #30d158;
+}
+
+/*
+ * 液态玻璃（iOS 26 Liquid Glass 的网页近似）。
+ * 放在 utilities 层里，与之前的 Tailwind 工具类处于同一层级，各风格的皮肤规则照旧可以覆盖它。
+ * - 底色很淡，主要靠背后内容的模糊与提饱和显出材质；
+ * - 一圈 0.5px 亮边，上沿和左沿更亮，像光从上方打在玻璃边缘；
+ * - 内侧柔光表现厚度，外投影只有一层很轻的漫射。
+ * - 按下时整体略微放大，接近原生按钮的弹性反馈。
+ */
+@layer utilities {
+  .m-glass,
+  .m-glass-mobile {
+    --m-glass-tint: rgb(255 255 255 / 0.62);
+    --m-glass-tint-edge: rgb(255 255 255 / 0.42);
+    --m-glass-rim: rgb(255 255 255 / 0.95);
+    --m-glass-rim-soft: rgb(255 255 255 / 0.45);
+    --m-glass-edge: rgb(0 0 0 / 0.07);
+    --m-glass-glow: rgb(255 255 255 / 0.35);
+    --m-glass-shadow: 0 8px 28px rgb(0 0 0 / 0.1), 0 1px 4px rgb(0 0 0 / 0.05);
+  }
+
+  .dark .m-glass,
+  .dark .m-glass-mobile {
+    --m-glass-tint: rgb(44 44 48 / 0.62);
+    --m-glass-tint-edge: rgb(44 44 48 / 0.44);
+    --m-glass-rim: rgb(255 255 255 / 0.32);
+    --m-glass-rim-soft: rgb(255 255 255 / 0.12);
+    --m-glass-edge: rgb(0 0 0 / 0.35);
+    --m-glass-glow: rgb(255 255 255 / 0.06);
+    --m-glass-shadow: 0 8px 28px rgb(0 0 0 / 0.45), 0 1px 4px rgb(0 0 0 / 0.3);
+  }
+
+  .m-glass {
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    backdrop-filter: blur(22px) saturate(180%);
+    background-color: transparent;
+    background-image: linear-gradient(
+      160deg,
+      var(--m-glass-tint) 0%,
+      var(--m-glass-tint-edge) 55%,
+      var(--m-glass-tint) 100%
+    );
+    box-shadow:
+      inset 0 0 0 0.5px var(--m-glass-edge),
+      inset 0 1px 0 var(--m-glass-rim),
+      inset 1px 0 0 var(--m-glass-rim-soft),
+      inset -1px 0 0 var(--m-glass-rim-soft),
+      inset 0 -1px 0 var(--m-glass-rim-soft),
+      inset 0 0 14px var(--m-glass-glow),
+      var(--m-glass-shadow);
+    transition: scale 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  :is(button, a).m-glass:active {
+    scale: 1.06;
+  }
+
+  @media (max-width: 1023.98px) {
+    .m-glass-mobile {
+      -webkit-backdrop-filter: blur(22px) saturate(180%);
+      backdrop-filter: blur(22px) saturate(180%);
+      background-color: transparent;
+      background-image: linear-gradient(
+        160deg,
+        var(--m-glass-tint) 0%,
+        var(--m-glass-tint-edge) 55%,
+        var(--m-glass-tint) 100%
+      );
+      box-shadow:
+        inset 0 0 0 0.5px var(--m-glass-edge),
+        inset 0 1px 0 var(--m-glass-rim),
+        inset 1px 0 0 var(--m-glass-rim-soft),
+        inset -1px 0 0 var(--m-glass-rim-soft),
+        inset 0 -1px 0 var(--m-glass-rim-soft),
+        inset 0 0 14px var(--m-glass-glow),
+        var(--m-glass-shadow);
+    }
+  }
+}
+
+@media (max-width: 1023.98px) {
+  /* ---------- 页面与卡片 ---------- */
+
+  :root[data-dashboard-style='modern'] [data-dashboard-main='true'].bg-background {
+    background-color: var(--m-page);
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-main='true'] [data-dashboard-card='true'] {
+    background-color: var(--m-card);
+    border-color: transparent;
+    border-radius: 24px;
+    box-shadow: none;
+  }
+
+  /* 首页卡片外壳的「厚度」投影在手机上去掉，卡片平铺在灰底上 */
+  :root[data-dashboard-style='modern'] [data-home-summary-cards='true'] [data-home-card-style],
+  :root[data-dashboard-style='modern']
+    [data-home-summary-cards='true']
+    [data-home-card-id='builtin:bot-status'][data-home-card-style]
+    [data-maibot-status-face],
+  :root[data-dashboard-style='modern'] [data-plugin-market-card='true'] {
+    border-radius: 24px;
+    box-shadow: none !important;
+  }
+
+  /* 聊天会话列表与对话页是白底，铺满到标签栏下方 */
+  :root[data-dashboard-style='modern']
+    [data-dashboard-main='true']:has(
+      [data-mobile-chat-list='true'],
+      [data-mobile-chat-room-bar='true']
+    ) {
+    background-color: hsl(var(--background));
+  }
+
+  /* 页面大标题：34px 粗体，紧凑字距 */
+  :root[data-dashboard-style='modern'] [data-mobile-large-title='true'] {
+    color: var(--m-ink);
+    font-size: 34px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+  }
+
+  /* ---------- 首页 ---------- */
+
+  :root[data-dashboard-style='modern'] [data-home-page='true'] {
+    padding: 12px 16px 16px;
+  }
+
+  :root[data-dashboard-style='modern'] [data-home-page='true'] > * + * {
+    margin-top: 16px;
+  }
+
+  /* 版本信息退成一行小字，不再用主题色大写 */
+  :root[data-dashboard-style='modern'] [data-home-command-strip='true'] {
+    color: var(--m-muted);
+    column-gap: 16px;
+    font-weight: 500;
+    letter-spacing: 0;
+    padding: 0 4px;
+    text-transform: none;
+  }
+
+  :root[data-dashboard-style='modern'] [data-home-command-strip='true'] span {
+    font-size: 13px;
+    letter-spacing: 0;
+    opacity: 1;
+  }
+
+  :root[data-dashboard-style='modern'] [data-home-page='true'] .text-primary {
+    color: var(--m-ink);
+  }
+
+  /* 麦麦状态：大字状态 + 绿点，去掉轨道动画与光晕 */
+  :root[data-dashboard-style='modern'] [data-maibot-activity-orbit='true'],
+  :root[data-dashboard-style='modern'] [data-maibot-status-glow='true'] {
+    display: none;
+  }
+
+  :root[data-dashboard-style='modern'] [data-maibot-status-card-content='true'] {
+    padding: 20px;
+  }
+
+  :root[data-dashboard-style='modern'] [data-maibot-runtime-label='true'] {
+    font-size: 34px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  :root[data-dashboard-style='modern'] [data-maibot-runtime-label='true'].text-primary::after {
+    background: var(--m-ok);
+    border-radius: 999px;
+    content: '';
+    display: inline-block;
+    height: 8px;
+    margin-left: 10px;
+    transform: translateY(-6px);
+    width: 8px;
+  }
+
+  :root[data-dashboard-style='modern'] [data-maibot-runtime-uptime='true'] {
+    color: var(--m-muted);
+    font-size: 15px;
+    font-weight: 400;
+  }
+
+  :root[data-dashboard-style='modern'] [data-maibot-feature-lights='true'] {
+    border-color: var(--m-hairline);
+    border-top-width: 0.5px;
+    margin-top: 14px;
+    padding-top: 14px;
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-feature-status='true'] {
+    color: var(--m-ink);
+    font-size: 14px;
+    font-weight: 400;
+  }
+
+  /* index.css 里状态灯用 !important 画成主题色方块，这里提高优先级改回绿色圆点 */
+  :root[data-dashboard-style='modern']
+    [data-dashboard-shell='true']
+    [data-dashboard-feature-status-light='true'] {
+    border-radius: 999px !important;
+    height: 8px;
+    width: 8px;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-shell='true']
+    [data-dashboard-feature-status='true'][data-enabled='true']
+    [data-dashboard-feature-status-light='true'] {
+    background: var(--m-ok) !important;
+  }
+
+  /* 快捷操作：四列圆形图标按钮，文字在下 */
+  :root[data-dashboard-style='modern'] [data-home-quick-actions-list='true'] {
+    display: grid;
+    gap: 16px 0;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    padding: 6px 0;
+  }
+
+  :root[data-dashboard-style='modern'] [data-home-quick-actions-list='true'] > * {
+    background: none;
+    border: 0;
+    box-shadow: none;
+    color: var(--m-ink);
+    flex-direction: column;
+    font-size: 12px;
+    font-weight: 400;
+    gap: 8px;
+    height: auto;
+    justify-content: flex-start;
+    max-width: none;
+    padding: 0;
+    position: relative;
+  }
+
+  :root[data-dashboard-style='modern'] [data-home-quick-actions-list='true'] > * > svg:first-child {
+    background: var(--m-fill);
+    border-radius: 999px;
+    box-sizing: content-box;
+    height: 22px;
+    padding: 15px;
+    stroke-width: 1.7;
+    width: 22px;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-home-quick-actions-list='true']
+    > *
+    > span:not([data-quick-action-badge]) {
+    flex: none;
+    max-width: 100%;
+    text-align: center;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-home-quick-actions-list='true']
+    [data-quick-action-badge='true'] {
+    background: #d9480f;
+    left: calc(50% + 12px);
+    margin: 0;
+    position: absolute;
+    top: 0;
+  }
+
+  /* 统计概览：分段控件切换时间范围，2×2 数字网格，黑色数字 */
+  :root[data-dashboard-style='modern'] [data-home-time-range='true'] {
+    background: var(--m-fill);
+    border-radius: 9px;
+    padding: 2px;
+  }
+
+  :root[data-dashboard-style='modern'] [data-home-time-range='true'] [aria-hidden='true'] {
+    display: none;
+  }
+
+  :root[data-dashboard-style='modern'] [data-home-time-range='true'] button {
+    border-radius: 7px;
+    color: var(--m-ink);
+    font-size: 13px;
+    height: 26px;
+    padding: 0 10px;
+  }
+
+  :root[data-dashboard-style='modern'] [data-home-time-range='true'] button[aria-pressed='true'] {
+    background: var(--m-card);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+    font-weight: 600;
+  }
+
+  :root[data-dashboard-style='modern'] [data-home-statistics-overview='true'] {
+    gap: 18px;
+    grid-template-rows: none;
+    padding-top: 36px;
+  }
+
+  :root[data-dashboard-style='modern'] [data-home-summary-primary-group='true'] {
+    padding-right: 0;
+    width: 100%;
+  }
+
+  :root[data-dashboard-style='modern'] [data-home-summary-primary-group='true'],
+  :root[data-dashboard-style='modern'] [data-home-summary-secondary='true'] {
+    border: 0;
+    column-gap: 12px;
+    padding-top: 0;
+  }
+
+  :root[data-dashboard-style='modern'] [data-home-summary-primary-group='true'] > *,
+  :root[data-dashboard-style='modern'] [data-home-summary-secondary='true'] > * {
+    border: 0;
+    padding: 0;
+  }
+
+  :root[data-dashboard-style='modern'] [data-home-summary-secondary='true'] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 18px;
+  }
+
+  :root[data-dashboard-style='modern'] [data-home-summary-primary='true'] > div:first-child {
+    color: var(--m-muted);
+    font-size: 13px;
+    font-weight: 400;
+  }
+
+  :root[data-dashboard-style='modern'] [data-home-summary-primary='true'] > div:last-child {
+    color: var(--m-ink);
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    overflow: visible;
+  }
+
+  :root[data-dashboard-style='modern'] [data-home-summary-metric='true'] > div:first-child {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+    justify-content: flex-start;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-home-summary-metric='true']
+    > div:first-child
+    > span:first-child {
+    color: var(--m-muted);
+    font-size: 13px;
+    font-weight: 400;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-home-summary-metric='true']
+    > div:first-child
+    > span:last-child {
+    color: var(--m-ink);
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  /* 一言：手机上不用整块色底，退成卡片之间的一行灰字（覆盖首页卡片的颜色预设） */
+  :root[data-dashboard-style='modern']
+    [data-dashboard-shell='true']
+    [data-home-card-style]
+    [data-home-hitokoto='true'] {
+    background: none !important;
+    border: 0;
+    color: var(--m-muted) !important;
+    font-weight: 400 !important;
+    padding: 0 4px;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-shell='true']
+    [data-home-card-style]
+    [data-home-hitokoto='true']
+    :is(p, button) {
+    color: var(--m-muted) !important;
+    font-size: 14px !important;
+  }
+
+  /* ---------- 配置表单（麦麦设置、模型等） ---------- */
+
+  /* 分组标题用正文黑，不再整片主题色 */
+  :root[data-dashboard-style='modern'] [data-dashboard-main='true'] [data-dashboard-card-header='true'] .text-primary {
+    color: var(--m-ink);
+  }
+
+  :root[data-dashboard-style='modern'] [data-config-field-path] [data-dashboard-card-title='true'] {
+    font-size: 17px;
+  }
+
+  /* 吸顶的分区导航与灰底页面融为一体 */
+  :root[data-dashboard-style='modern'] [data-config-section-navigation='true'] {
+    background-color: var(--m-page);
+  }
+
+  /* 字段之间用 0.5px 细线分隔，像 iOS 的分组列表 */
+  :root[data-dashboard-style='modern'] [data-config-field-path] [data-dynamic-field] + [data-dynamic-field],
+  :root[data-dashboard-style='modern'] [data-config-field-path] [data-config-row] + [data-config-row] {
+    border-top: 0.5px solid var(--m-hairline);
+    padding-top: 10px;
+  }
+
+  :root[data-dashboard-style='modern'] [data-mobile-pill-nav='true'] button[data-active='false'] {
+    background-color: var(--m-card);
+  }
+
+  /* 长文本编辑弹层：灰底上一张白卡片 */
+  :root[data-dashboard-style='modern'] [data-mobile-text-sheet='true'] {
+    background-color: var(--m-page);
+  }
+
+  /* 模型管理：选中的厂商用黑底，不再整块主题色 */
+  :root[data-dashboard-style='modern'] [data-model-config-page='true'] .bg-primary {
+    background-color: var(--m-ink);
+    color: var(--m-card);
+  }
+
+  /* ---------- 表达方式卡片审核 ---------- */
+
+  :root[data-dashboard-style='modern'] [data-quick-review-card] {
+    border: 0;
+    border-radius: 30px;
+    box-shadow: 0 20px 50px rgb(0 0 0 / 0.1);
+    padding: 28px;
+  }
+
+  :root[data-dashboard-style='modern'] [data-quick-review-card] [data-quick-review-situation='true'] {
+    background: none;
+    border: 0;
+    padding: 0;
+  }
+
+  :root[data-dashboard-style='modern'] [data-quick-review-card] [data-quick-review-situation='true'] p {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1.35;
+  }
+
+  :root[data-dashboard-style='modern'] [data-quick-review-actions='true'] {
+    gap: 24px;
+    padding-bottom: calc(env(safe-area-inset-bottom) + 12px);
+  }
+
+  :root[data-dashboard-style='modern'] [data-quick-review-action] {
+    border: 0;
+    height: 66px;
+    width: 66px;
+  }
+
+  :root[data-dashboard-style='modern'] [data-quick-review-action='reject'] {
+    -webkit-backdrop-filter: blur(28px) saturate(1.8);
+    backdrop-filter: blur(28px) saturate(1.8);
+    background: rgb(252 252 253 / 0.72);
+    box-shadow: inset 0 0 0 0.5px rgb(0 0 0 / 0.07), 0 10px 30px rgb(0 0 0 / 0.07);
+    color: #ff3b30;
+  }
+
+  :root[data-dashboard-style='modern'] [data-quick-review-action='approve'] {
+    background: var(--m-ink);
+    box-shadow: 0 10px 24px rgb(0 0 0 / 0.18);
+    color: var(--m-card);
+  }
+
+  /* 主按钮与选中项用黑色：麦麦橙只留给选中标签和状态点 */
+  :root[data-dashboard-style='modern'] [data-dashboard-main='true'] .bg-primary,
+  :root[data-dashboard-style='modern'] [data-dashboard-dialog-content='true'] .bg-primary {
+    background-color: var(--m-ink);
+    color: var(--m-card);
+  }
+}
+
+/* 观察页悬浮顶栏里的工具栏：玻璃胶囊自己是底，工具栏本身不再叠底色 */
+[data-mobile-floating-toolbar='true'] [data-maisaka-toolbar='true'] {
+  background: transparent;
+  margin: 0;
+  padding: 6px 10px;
+}
+
+:root[data-dashboard-style='millennium'] [data-mobile-floating-toolbar='true'] {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background-color: var(--mil-panel);
+  background-image: var(--mil-speck);
+  background-size: 5px 5px;
+  border-bottom: 2px solid var(--mil-line);
+  border-radius: 0;
+  box-shadow: 0 5px 0 var(--mil-drop);
+  margin: 0;
+}

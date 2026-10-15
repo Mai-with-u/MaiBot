@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING, cast
 
 from src.common.data_models.message_component_data_model import MessageSequence, ReplyComponent, TextComponent
-from src.llm_models.payload_content.context_item import ContextItem, FunctionCallItem
+from src.llm_models.payload_content.context_item import ContextItem, FunctionCallItem, RoleType
 from src.llm_models.payload_content.context_protocol import (
     analyze_context_item_relations,
     prune_context_items_for_history,
@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from src.chat.message_receive.message import SessionMessage
 
 TOOL_RESULT_MEDIA_SOURCE_KIND = "tool_result_media"
-OPTIMIZED_TOOL_HISTORY_SOURCE_KIND = "optimized_tool_history"
 
 
 def build_prefixed_message_sequence(
@@ -108,8 +107,6 @@ def drop_orphan_tool_results(
         return chat_history, 0
 
     available_tool_call_ids = _collect_available_tool_call_ids(chat_history)
-    folded_tool_call_ids = _collect_folded_tool_history_call_ids(chat_history)
-    available_media_owner_ids = available_tool_call_ids | folded_tool_call_ids
 
     orphan_results = [
         message
@@ -126,7 +123,7 @@ def drop_orphan_tool_results(
         if isinstance(message, ToolResultMessage) and message.tool_call_id not in available_tool_call_ids:
             removed_count += 1
             continue
-        if _is_orphan_tool_result_media_message(message, available_media_owner_ids):
+        if _is_orphan_tool_result_media_message(message, available_tool_call_ids):
             removed_count += 1
             continue
         filtered_history.append(message)
@@ -157,6 +154,29 @@ def normalize_tool_call_result_pairs(
         "moved_tool_results": moved_tool_result_count,
         "invalid_tool_turns": invalid_tool_turn_count,
     }
+
+
+def collect_tool_turn_anchor_indices(
+    chat_history: list[LLMContextMessage],
+    logical_turn_ids: set[str],
+) -> dict[str, int]:
+    """定位每个工具轮次之前最近的 user 上下文索引。"""
+
+    first_turn_index_by_id: dict[str, int] = {}
+    for index, message in enumerate(chat_history):
+        logical_turn_id = _get_logical_turn_id(message)
+        if logical_turn_id in logical_turn_ids and logical_turn_id not in first_turn_index_by_id:
+            first_turn_index_by_id[logical_turn_id] = index
+
+    anchor_index_by_turn_id: dict[str, int] = {}
+    for logical_turn_id, first_turn_index in first_turn_index_by_id.items():
+        anchor_index = next(
+            (index for index in range(first_turn_index - 1, -1, -1) if chat_history[index].role == RoleType.User.value),
+            None,
+        )
+        if anchor_index is not None:
+            anchor_index_by_turn_id[logical_turn_id] = anchor_index
+    return anchor_index_by_turn_id
 
 
 def drop_unanswered_tool_calls(
@@ -258,36 +278,6 @@ def _collect_available_tool_call_ids(chat_history: list[LLMContextMessage]) -> s
         for tool_call in message.tool_calls
         if tool_call.call_id
     }
-
-
-def _collect_folded_tool_history_call_ids(chat_history: list[LLMContextMessage]) -> set[str]:
-    """收集已折叠工具历史中仍可作为媒体归属锚点的工具调用 ID。"""
-
-    call_ids: set[str] = set()
-    for message in chat_history:
-        if not isinstance(message, SessionBackedMessage):
-            continue
-        if message.source_kind != OPTIMIZED_TOOL_HISTORY_SOURCE_KIND:
-            continue
-
-        call_ids.update(_parse_folded_tool_history_call_ids(message.processed_plain_text))
-    return call_ids
-
-
-def _parse_folded_tool_history_call_ids(content: str) -> set[str]:
-    """从折叠后的工具历史文本中提取 tool_call_id。"""
-
-    call_ids: set[str] = set()
-    for raw_line in content.splitlines():
-        normalized_line = raw_line.strip()
-        if not normalized_line.startswith("- tool_call_id:"):
-            continue
-
-        _, _, call_id = normalized_line.partition(":")
-        normalized_call_id = call_id.strip()
-        if normalized_call_id:
-            call_ids.add(normalized_call_id)
-    return call_ids
 
 
 def _is_orphan_tool_result_media_message(

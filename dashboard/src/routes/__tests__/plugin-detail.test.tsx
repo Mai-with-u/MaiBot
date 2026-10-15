@@ -36,6 +36,7 @@ vi.mock('@/lib/plugin-api', () => ({
   checkGitStatus: vi.fn(),
   checkPluginInstalled: vi.fn(),
   fetchPluginList: vi.fn(),
+  getCachedPluginList: vi.fn(),
   getInstalledPluginVersion: vi.fn(),
   getInstalledPlugins: vi.fn(),
   getMaimaiVersion: vi.fn(),
@@ -171,15 +172,14 @@ function makeReleasePlugin(): PluginInfo {
 }
 
 describe('插件发布版本选择', () => {
-  it('选择历史版本和锁定后，提交明确版本并按 commit 获取文档', async () => {
+  it('选择历史版本后，提交明确版本并按 commit 获取文档', async () => {
     vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([makeReleasePlugin()])
     renderPage()
     await waitDetailReady()
     fireEvent.change(screen.getByRole('combobox', { name: '选择发布版本' }), { target: { value: '1.0.0' } })
-    fireEvent.click(screen.getByRole('checkbox', { name: '安装后锁定此版本，阻止自动更新' }))
     fireEvent.click(screen.getByRole('button', { name: '安装' }))
     await waitFor(() => expect(pluginApi.installPlugin).toHaveBeenCalledWith(
-      'plug-1', 'https://github.com/owner/repo.git', 'main', { version: '1.0.0', pinned: true }
+      'plug-1', 'https://github.com/owner/repo.git', 'main', { version: '1.0.0' }
     ))
     expect(screen.getByText('1.0.0 发布说明')).toBeInTheDocument()
     expect(httpLib.backendApi.post).toHaveBeenCalledWith('/api/webui/plugins/fetch-raw', expect.objectContaining({
@@ -195,21 +195,9 @@ describe('插件发布版本选择', () => {
     renderPage()
     await waitDetailReady()
     expect(screen.getByRole('button', { name: '安装' })).toBeDisabled()
-    expect(screen.getByRole('option', { name: '2.0.0 · SDK 版本不兼容' })).toBeDisabled()
+    // 发布版本选项末尾附带更新日期，夹具未提供 published_at 时显示「时间未知」
+    expect(screen.getByRole('option', { name: '2.0.0 · SDK 版本不兼容 · 更新于 时间未知' })).toBeDisabled()
     expect(pluginApi.installPlugin).not.toHaveBeenCalled()
-  })
-
-  it('已锁定版本不显示自动更新入口', async () => {
-    const installed = makeInstalledPlugin()
-    installed.release = { version: '1.0.0', commit: 'b'.repeat(40), pinned: true }
-    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([makeReleasePlugin()])
-    vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([installed])
-    vi.mocked(pluginApi.checkPluginInstalled).mockReturnValue(true)
-    vi.mocked(pluginApi.getInstalledPluginVersion).mockReturnValue('1.0.0')
-    renderPage()
-    await waitDetailReady()
-    expect(screen.queryByRole('button', { name: '更新' })).not.toBeInTheDocument()
-    expect(screen.getByRole('checkbox', { name: '安装后锁定此版本，阻止自动更新' })).toBeChecked()
   })
 })
 

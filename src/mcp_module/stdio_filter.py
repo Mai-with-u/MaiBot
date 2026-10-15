@@ -68,6 +68,7 @@ async def tolerant_stdio_client(
 
     read_stream_writer, read_stream = anyio.create_memory_object_stream(0)
     write_stream, write_stream_reader = anyio.create_memory_object_stream(0)
+    closing = False
 
     try:
         command = _get_executable_command(server.command)
@@ -123,6 +124,11 @@ async def tolerant_stdio_client(
                             )
                             continue
                         await read_stream_writer.send(SessionMessage(message))
+                if not closing:
+                    raise EOFError("MCP stdio server closed stdout")
+        except (UnicodeError, anyio.BrokenResourceError, EOFError):
+            logger.exception("MCP stdio server '%s' stdout reading failed", server.command)
+            raise
         except anyio.ClosedResourceError:
             await anyio.lowlevel.checkpoint()
 
@@ -152,6 +158,7 @@ async def tolerant_stdio_client(
         try:
             yield read_stream, write_stream
         finally:
+            closing = True
             if process.stdin:
                 try:
                     await process.stdin.aclose()

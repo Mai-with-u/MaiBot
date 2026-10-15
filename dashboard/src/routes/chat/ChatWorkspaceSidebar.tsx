@@ -1,29 +1,15 @@
-import {
-  Ban,
-  Bot,
-  Camera,
-  Check,
-  Edit2,
-  Loader2,
-  Search,
-  Settings,
-  UserCircle2,
-  UserRound,
-  UsersRound,
-  X,
-} from 'lucide-react'
-import { useRef, useState } from 'react'
+import { Bot, Search, Settings, UserCircle2, UserRound, UsersRound, X } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useResolvedAvatarUrl } from '@/lib/avatar-url'
-import type { SessionAdapterStatus } from '@/lib/chat-management-api'
 import { cn } from '@/lib/utils'
 import type { SessionInfo, StageStatusInfo } from '@/routes/monitor/use-maisaka-monitor'
+import { StageStatusLabel } from '@/routes/monitor/StageStatusLabel'
 
 import type { ChatMessage, ChatTab, ObservedMessagePreview } from './types'
 import { getChatTabDisplayName } from './utils'
@@ -34,19 +20,13 @@ interface ChatWorkspaceSidebarProps {
   activeTabId: string
   activeObservedSessionId: string | null
   observedSessions: Map<string, SessionInfo>
+  observedSessionsError?: boolean
   observedStageStatuses: Map<string, StageStatusInfo>
   observedLatestMessages: Map<string, ObservedMessagePreview>
-  observedAdapterStatuses: Map<string, SessionAdapterStatus>
-  userId: string
-  userName: string
-  userAvatarVersion?: number
-  isUploadingUserAvatar: boolean
   onSwitch: (tabId: string) => void
   onSelectObserved: (sessionId: string) => void
   onOpenObservedSettings: (sessionId: string) => void
   onClose: (tabId: string, e?: React.MouseEvent | React.KeyboardEvent) => void
-  onUpdateUserAvatar: (file: File) => Promise<void>
-  onUpdateUserName: (name: string) => void
 }
 
 function getMessagePreview(message: ChatMessage | undefined, fallback: string) {
@@ -82,6 +62,8 @@ function ConversationItem({
 
   return (
     <div
+      data-chat-sidebar-item="true"
+      data-active={active ? 'true' : 'false'}
       className={cn(
         'group relative flex w-full min-w-0 items-center gap-1 rounded-xl pr-1 transition-colors',
         active
@@ -150,7 +132,6 @@ function ObservedConversationItem({
   session,
   status,
   latestMessage,
-  adapterStatus,
   active,
   onSelect,
   onOpenSettings,
@@ -158,7 +139,6 @@ function ObservedConversationItem({
   session: SessionInfo
   status?: StageStatusInfo
   latestMessage?: ObservedMessagePreview
-  adapterStatus?: SessionAdapterStatus
   active: boolean
   onSelect: (sessionId: string) => void
   onOpenSettings: (sessionId: string) => void
@@ -175,21 +155,15 @@ function ObservedConversationItem({
     session.isGroupChat && latestMessage?.speakerName
       ? `${latestMessage.speakerName}: ${messagePreview}`
       : messagePreview
-  // 适配器不允许的聊天流实际不活跃，提示区分是被单独阻止还是名单未放行
-  const adapterBlocked = adapterStatus?.allowed === false
-  const adapterBlockedHint =
-    adapterStatus?.reason === 'matched_deny_override'
-      ? t('chat.sidebar.adapterBlockedOverrideHint')
-      : t('chat.sidebar.adapterBlockedHint')
-
   return (
     <div
+      data-chat-sidebar-item="true"
+      data-active={active ? 'true' : 'false'}
       className={cn(
         'group relative flex w-full min-w-0 items-center gap-1 rounded-xl pr-1 transition-colors',
         active
           ? 'bg-primary/12 text-foreground shadow-inner'
-          : 'hover:bg-muted/70 text-foreground/90',
-        adapterBlocked && 'opacity-70'
+          : 'hover:bg-muted/70 text-foreground/90'
       )}
     >
       {active && (
@@ -227,24 +201,14 @@ function ObservedConversationItem({
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-1">
-            <span className="min-w-0 flex-1 truncate text-sm font-medium">{session.sessionName}</span>
-            {adapterBlocked && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span
-                    aria-label={adapterBlockedHint}
-                    className="text-muted-foreground shrink-0"
-                    role="img"
-                  >
-                    <Ban className="h-3 w-3" />
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent side="right">{adapterBlockedHint}</TooltipContent>
-              </Tooltip>
-            )}
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">
+              {session.sessionName}
+            </span>
           </div>
           {status?.stage && (
-            <p className="text-muted-foreground mt-0.5 truncate text-xs">{status.stage}</p>
+            <p className="text-muted-foreground mt-0.5 truncate text-xs">
+              <StageStatusLabel status={status} />
+            </p>
           )}
           <p className="text-muted-foreground mt-0.5 truncate text-xs">{previewText}</p>
         </div>
@@ -268,86 +232,22 @@ function ObservedConversationItem({
   )
 }
 
-function ObservedConversationGroup({
-  headingId,
-  title,
-  sessions,
-  observedStageStatuses,
-  observedLatestMessages,
-  observedAdapterStatuses,
-  activeObservedSessionId,
-  onSelectObserved,
-  onOpenObservedSettings,
-}: {
-  headingId: string
-  title: string
-  sessions: SessionInfo[]
-  observedStageStatuses: Map<string, StageStatusInfo>
-  observedLatestMessages: Map<string, ObservedMessagePreview>
-  observedAdapterStatuses: Map<string, SessionAdapterStatus>
-  activeObservedSessionId: string | null
-  onSelectObserved: (sessionId: string) => void
-  onOpenObservedSettings: (sessionId: string) => void
-}) {
-  if (sessions.length === 0) return null
-
-  return (
-    <div aria-labelledby={headingId} className="space-y-0.5" role="group">
-      <h3
-        id={headingId}
-        className="text-muted-foreground flex items-center gap-1 px-2.5 pt-1.5 pb-0.5 text-[10px] font-medium tracking-wide"
-      >
-        {title}
-        <span className="opacity-70">{sessions.length}</span>
-      </h3>
-      {sessions.map((session) => (
-        <ObservedConversationItem
-          key={session.sessionId}
-          session={session}
-          status={observedStageStatuses.get(session.sessionId)}
-          latestMessage={observedLatestMessages.get(session.sessionId)}
-          adapterStatus={observedAdapterStatuses.get(session.sessionId)}
-          active={activeObservedSessionId === session.sessionId}
-          onSelect={onSelectObserved}
-          onOpenSettings={onOpenObservedSettings}
-        />
-      ))}
-    </div>
-  )
-}
-
 export function ChatWorkspaceSidebar({
   className,
   tabs,
   activeTabId,
   activeObservedSessionId,
   observedSessions,
+  observedSessionsError = false,
   observedStageStatuses,
   observedLatestMessages,
-  observedAdapterStatuses,
-  userId,
-  userName,
-  userAvatarVersion,
-  isUploadingUserAvatar,
   onSwitch,
   onSelectObserved,
   onOpenObservedSettings,
   onClose,
-  onUpdateUserAvatar,
-  onUpdateUserName,
 }: ChatWorkspaceSidebarProps) {
   const { t } = useTranslation()
-  const [editing, setEditing] = useState(false)
-  const [draftName, setDraftName] = useState(userName)
   const [searchQuery, setSearchQuery] = useState('')
-  const avatarInputRef = useRef<HTMLInputElement>(null)
-  const nameInputAutofocusedRef = useRef(false)
-  const userAvatarUrl = useResolvedAvatarUrl(
-    userAvatarVersion ? 'webui' : undefined,
-    userId,
-    'user',
-    userAvatarVersion
-  )
   const sortedObservedSessions = Array.from(observedSessions.values()).sort(
     (a, b) => b.lastActivity - a.lastActivity
   )
@@ -356,7 +256,9 @@ export function ChatWorkspaceSidebar({
   const normalizedQuery = searchQuery.trim().toLowerCase()
   const filteredTabs = normalizedQuery
     ? tabs.filter((tab) =>
-        getChatTabDisplayName(tab, t('chat.botNameFallback')).toLowerCase().includes(normalizedQuery)
+        getChatTabDisplayName(tab, t('chat.botNameFallback'))
+          .toLowerCase()
+          .includes(normalizedQuery)
       )
     : tabs
   const filteredObservedSessions = normalizedQuery
@@ -364,37 +266,17 @@ export function ChatWorkspaceSidebar({
         session.sessionName.toLowerCase().includes(normalizedQuery)
       )
     : sortedObservedSessions
-  // 适配器不允许的聊天流不再处理消息，单独归到不活跃分组
-  const isAdapterBlocked = (sessionId: string) =>
-    observedAdapterStatuses.get(sessionId)?.allowed === false
-  const allowedObservedSessions = filteredObservedSessions.filter(
-    (session) => !isAdapterBlocked(session.sessionId)
-  )
-  const blockedObservedSessions = filteredObservedSessions.filter((session) =>
-    isAdapterBlocked(session.sessionId)
-  )
   const showLocalSection = !normalizedQuery || filteredTabs.length > 0
   const showObservedSection = !normalizedQuery || filteredObservedSessions.length > 0
   const showNoResults =
     normalizedQuery.length > 0 && filteredTabs.length === 0 && filteredObservedSessions.length === 0
 
-  const startEditing = () => {
-    setDraftName(userName)
-    nameInputAutofocusedRef.current = false
-    setEditing(true)
-  }
-
-  const commit = () => {
-    const next = draftName.trim() || t('chat.userNameFallback')
-    onUpdateUserName(next)
-    setEditing(false)
-  }
-
   return (
     <aside
+      data-chat-workspace-sidebar="true"
       className={cn(
         'bg-card/90 supports-backdrop-filter:bg-card/70 flex h-full shrink-0 flex-col border-r backdrop-blur',
-        'w-60 xl:w-64',
+        'w-52 xl:w-56',
         className
       )}
     >
@@ -416,22 +298,25 @@ export function ChatWorkspaceSidebar({
         </div>
       </div>
 
-      {/* 会话列表 */}
-      <ScrollArea
-        className="min-h-0 flex-1"
-        contentClassName="!block w-full min-w-0"
-        scrollbars="vertical"
-        viewportClassName="[&>div]:!block [&>div]:!min-w-0 [&>div]:w-full"
+      {/* 会话列表：「与麦麦聊天」固定在上方，其余聊天流在下方独立滚动 */}
+      <nav
+        aria-label={t('chat.sidebar.conversations')}
+        data-chat-sidebar-list="true"
+        className="flex min-h-0 flex-1 flex-col"
       >
-        <nav aria-label={t('chat.sidebar.conversations')} className="p-2">
-          {showLocalSection && (
-            <section aria-labelledby="chat-sidebar-local-heading" className="space-y-0.5">
-              <h2
-                id="chat-sidebar-local-heading"
-                className="text-muted-foreground px-2.5 pt-0.5 pb-1 text-[11px] font-medium tracking-wide"
-              >
-                {t('chat.sidebar.myChats')}
-              </h2>
+        {showLocalSection && (
+          <section
+            aria-labelledby="chat-sidebar-local-heading"
+            data-chat-sidebar-section="local"
+            className="mx-2 mt-2 shrink-0"
+          >
+            <h2
+              id="chat-sidebar-local-heading"
+              className="text-muted-foreground px-2.5 pt-0.5 pb-1 text-[11px] font-medium tracking-wide"
+            >
+              {t('chat.sidebar.myChats')}
+            </h2>
+            <div data-chat-sidebar-screen="true" className="space-y-0.5">
               {filteredTabs.map((tab) => (
                 <ConversationItem
                   key={tab.id}
@@ -441,168 +326,64 @@ export function ChatWorkspaceSidebar({
                   onClose={onClose}
                 />
               ))}
-            </section>
-          )}
+            </div>
+          </section>
+        )}
 
-          {showObservedSection && (
-            <section
-              aria-labelledby="chat-sidebar-observed-heading"
-              className={cn('space-y-0.5 pt-2', showLocalSection && 'border-border mt-2 border-t')}
-            >
-              <h2
-                id="chat-sidebar-observed-heading"
-                className="text-muted-foreground px-2.5 pt-0.5 pb-1 text-[11px] font-medium tracking-wide"
-              >
-                {t('chat.sidebar.observedChats')}
-              </h2>
-              {filteredObservedSessions.length === 0 ? (
-                <p className="text-muted-foreground px-2.5 py-2 text-xs">
-                  {t('chat.sidebar.waitingObservedChats')}
-                </p>
-              ) : (
-                <>
-                  <ObservedConversationGroup
-                    headingId="chat-sidebar-observed-allowed-heading"
-                    title={t('chat.sidebar.adapterAllowedGroup')}
-                    sessions={allowedObservedSessions}
-                    observedStageStatuses={observedStageStatuses}
-                    observedLatestMessages={observedLatestMessages}
-                    observedAdapterStatuses={observedAdapterStatuses}
-                    activeObservedSessionId={activeObservedSessionId}
-                    onSelectObserved={onSelectObserved}
-                    onOpenObservedSettings={onOpenObservedSettings}
-                  />
-                  <ObservedConversationGroup
-                    headingId="chat-sidebar-observed-blocked-heading"
-                    title={t('chat.sidebar.adapterBlockedGroup')}
-                    sessions={blockedObservedSessions}
-                    observedStageStatuses={observedStageStatuses}
-                    observedLatestMessages={observedLatestMessages}
-                    observedAdapterStatuses={observedAdapterStatuses}
-                    activeObservedSessionId={activeObservedSessionId}
-                    onSelectObserved={onSelectObserved}
-                    onOpenObservedSettings={onOpenObservedSettings}
-                  />
-                </>
-              )}
-            </section>
-          )}
-
-          {showNoResults && (
-            <p className="text-muted-foreground px-2.5 py-2 text-xs">
-              {t('chat.sidebar.noSearchResults')}
-            </p>
-          )}
-        </nav>
-      </ScrollArea>
-
-      {/* 底部：本地用户身份 */}
-      <div className="border-t p-2">
-        <div className="bg-background/70 hover:bg-background flex items-center gap-2 rounded-xl border p-1.5 transition-colors">
-          <div className="relative shrink-0">
-            <Avatar className="ring-border/60 h-8 w-8 ring-1">
-              {userAvatarUrl && (
-                <AvatarImage
-                  src={userAvatarUrl}
-                  alt={t('chat.sidebar.userAvatarAlt', { name: userName })}
-                  className="object-cover"
-                />
-              )}
-              <AvatarFallback className="bg-secondary text-secondary-foreground">
-                <UserCircle2 className="h-4 w-4" />
-              </AvatarFallback>
-            </Avatar>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-label={t('chat.sidebar.editAvatar')}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90 border-card absolute -right-1 -bottom-1 flex h-4 w-4 items-center justify-center rounded-full border-2 shadow-sm transition disabled:cursor-wait"
-                  disabled={isUploadingUserAvatar}
-                  onClick={() => avatarInputRef.current?.click()}
-                >
-                  {isUploadingUserAvatar ? (
-                    <Loader2 className="h-2 w-2 animate-spin" />
-                  ) : (
-                    <Camera className="h-2 w-2" />
-                  )}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="top">
-                {isUploadingUserAvatar
-                  ? t('chat.sidebar.savingAvatar')
-                  : t('chat.sidebar.editAvatar')}
-              </TooltipContent>
-            </Tooltip>
-            <input
-              ref={avatarInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif,image/bmp"
-              className="hidden"
-              onChange={(event) => {
-                const file = event.currentTarget.files?.[0]
-                event.currentTarget.value = ''
-                if (file) {
-                  void onUpdateUserAvatar(file)
-                }
-              }}
-            />
-          </div>
-          <div className="min-w-0 flex-1">
-            {editing ? (
-              <div className="flex items-center gap-1">
-                <Input
-                  ref={(element) => {
-                    if (element && !nameInputAutofocusedRef.current) {
-                      nameInputAutofocusedRef.current = true
-                      element.focus()
-                    }
-                  }}
-                  className="h-6 text-xs"
-                  placeholder={t('chat.identity.namePlaceholder')}
-                  value={draftName}
-                  onChange={(e) => setDraftName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                      e.preventDefault()
-                      commit()
-                    } else if (e.key === 'Escape') {
-                      setEditing(false)
-                    }
-                  }}
-                />
-                <Button
-                  aria-label={t('chat.sidebar.saveName')}
-                  className="h-6 w-6 shrink-0"
-                  size="icon"
-                  variant="ghost"
-                  onClick={commit}
-                >
-                  <Check className="h-3 w-3" />
-                </Button>
-              </div>
-            ) : (
-              <div className="flex min-w-0 items-center gap-1">
-                <p className="min-w-0 flex-1 truncate text-sm font-medium">{userName}</p>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      aria-label={t('chat.sidebar.editName')}
-                      className="h-5 w-5 shrink-0 opacity-60 hover:opacity-100"
-                      size="icon"
-                      variant="ghost"
-                      onClick={startEditing}
-                    >
-                      <Edit2 className="h-2.5 w-2.5" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top">{t('chat.sidebar.editName')}</TooltipContent>
-                </Tooltip>
-              </div>
+        {showObservedSection && (
+          <section
+            aria-labelledby="chat-sidebar-observed-heading"
+            data-chat-sidebar-section="observed"
+            className={cn(
+              'mx-2 flex min-h-0 flex-1 flex-col pt-2',
+              showLocalSection && 'border-border mt-2 border-t'
             )}
-          </div>
-        </div>
-      </div>
+          >
+            <h2
+              id="chat-sidebar-observed-heading"
+              className="text-muted-foreground px-2.5 pt-0.5 pb-1 text-[11px] font-medium tracking-wide"
+            >
+              {t('chat.sidebar.observedChats')}
+            </h2>
+            <ScrollArea
+              className="min-h-0 flex-1"
+              contentClassName="!block w-full min-w-0"
+              scrollbars="vertical"
+              viewportClassName="[&>div]:!block [&>div]:!min-w-0 [&>div]:w-full"
+            >
+              <div data-chat-sidebar-screen="true" className="space-y-0.5 pb-2">
+                {observedSessionsError ? (
+                  <p className="text-destructive px-2.5 py-2 text-xs">
+                    {t('chat.sidebar.loadObservedChatsFailed')}
+                  </p>
+                ) : filteredObservedSessions.length === 0 ? (
+                  <p className="text-muted-foreground px-2.5 py-2 text-xs">
+                    {t('chat.sidebar.waitingObservedChats')}
+                  </p>
+                ) : (
+                  filteredObservedSessions.map((session) => (
+                    <ObservedConversationItem
+                      key={session.sessionId}
+                      session={session}
+                      status={observedStageStatuses.get(session.sessionId)}
+                      latestMessage={observedLatestMessages.get(session.sessionId)}
+                      active={activeObservedSessionId === session.sessionId}
+                      onSelect={onSelectObserved}
+                      onOpenSettings={onOpenObservedSettings}
+                    />
+                  ))
+                )}
+              </div>
+            </ScrollArea>
+          </section>
+        )}
+
+        {showNoResults && (
+          <p className="text-muted-foreground px-4.5 py-2 text-xs">
+            {t('chat.sidebar.noSearchResults')}
+          </p>
+        )}
+      </nav>
     </aside>
   )
 }

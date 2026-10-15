@@ -1,0 +1,8 @@
+include EULA.md PRIVACY.md
+include changelogs/changelog.md
+recursive-include prompts *.prompt *.toml
+recursive-include locales *.json
+recursive-include src/plugins/built_in _manifest.json
+include src/A_memorix/config_schema.json src/A_memorix/LICENSE src/A_memorix/LICENSE-MAIBOT-GPL.md
+prune src/data
+global-exclude *.pyc *.pyo

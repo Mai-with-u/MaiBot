@@ -380,8 +380,8 @@ function SetupPageContent() {
         }),
       })
 
-      // 3. 配置文件会被 MaiBot 热加载；完成后直接回到首页。
-      navigate({ to: '/' })
+      // 3. 配置文件会被 MaiBot 热加载；完成后进入聊聊，先体验本地对话。
+      navigate({ to: '/chat', search: { setupTrial: true } })
     } catch (error) {
       toast({
         title: t('setupPage.toast.completeFailedTitle'),
@@ -496,12 +496,17 @@ function SetupPageContent() {
             </div>
 
             {/* 步骤指示器 */}
-            <div className="mb-4 flex justify-between md:mb-5">
+            <div data-setup-steps="true" className="mb-4 flex justify-between md:mb-5">
               {steps.map((step, index) => {
                 const Icon = step.icon
                 return (
                   <div
                     key={step.id}
+                    data-setup-step="true"
+                    data-setup-state={
+                      index === currentStep ? 'current' : index < currentStep ? 'complete' : 'pending'
+                    }
+                    aria-current={index === currentStep ? 'step' : undefined}
                     className={cn(
                       'flex flex-1 flex-col items-center gap-1',
                       index < steps.length - 1 && 'relative'
@@ -510,6 +515,7 @@ function SetupPageContent() {
                     {/* 连接线 */}
                     {index < steps.length - 1 && (
                       <div
+                        data-setup-connector="true"
                         className={cn(
                           'absolute top-2.5 left-1/2 h-0.5 w-full md:top-3.5',
                           index < currentStep ? 'bg-primary' : 'bg-border'
@@ -517,8 +523,9 @@ function SetupPageContent() {
                       />
                     )}
 
-                    {/* 步骤圆圈 */}
+                    {/* 步骤指示灯 */}
                     <div
+                      data-setup-indicator="true"
                       className={cn(
                         'relative z-10 flex h-5 w-5 items-center justify-center rounded-full border-2 transition-all md:h-7 md:w-7',
                         index === currentStep
@@ -541,6 +548,7 @@ function SetupPageContent() {
 
                     {/* 步骤标题 */}
                     <span
+                      data-setup-label="true"
                       className={cn(
                         'max-w-[60px] truncate text-center text-[10px] md:max-w-none md:text-xs md:whitespace-normal',
                         index === currentStep

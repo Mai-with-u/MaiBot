@@ -2,7 +2,7 @@
  * useMemoryProfileConsole —— 长期记忆「人物画像」领域 hook（页面逻辑下沉切片）。
  *
  * 收编人物画像相关的服务端状态与交互，供两个标签面板共享同一份状态：
- * - ProfileSearchPanel（记忆查询 → 人物画像子视图）：查询卡 + 详情卡；
+ * - ProfileSearchPanel（顶层人物画像页）：查询卡 + 详情卡；
  * - ProfileMaintenancePanel（记忆检修 → 画像维护子模式）：支撑证据 + 别名维护 + 画像覆写。
  *
  * 支撑证据的纠错与画像快照刷新都依赖「当前定位人物」与「证据数量」，因此这些状态必须由
@@ -136,7 +136,7 @@ export function useMemoryProfileConsole({
   const [queryPlatform, setQueryPlatform] = useState('')
   const [queryUserId, setQueryUserId] = useState('')
   const [evidenceLimit, setEvidenceLimit] = useState('12')
-  const [queryMode, setQueryMode] = useState<ProfileQueryMode>('exact')
+  const [queryMode, setQueryMode] = useState<ProfileQueryMode>('fuzzy')
   const [showRawProfilePayload, setShowRawProfilePayload] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
   const [overrideText, setOverrideText] = useState('')

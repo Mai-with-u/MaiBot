@@ -105,6 +105,96 @@ export async function getUpdateHistory(
   })
 }
 
+export type SelfUpdateBlocker =
+  | 'uv_missing'
+  | 'not_uv_tool'
+  | 'package_runner_missing'
+  | 'other_instances_running'
+  | 'package_busy'
+  | 'git_missing'
+  | 'not_git_repo'
+  | 'detached_head'
+  | 'unsupported_branch'
+  | 'dirty_worktree'
+  | 'diverged'
+  | 'no_dependency_tool'
+  | 'python_requirement_changed'
+
+export interface SelfUpdateCommit {
+  short_id: string
+  summary: string
+  committed_at: string
+}
+
+export interface SelfUpdateResult {
+  success: boolean
+  started_at: number
+  finished_at: number
+  branch: string
+  from_commit: string
+  to_commit: string
+  from_version: string
+  to_version: string
+  stage: string
+  error_code: string
+  error: string
+  rolled_back: boolean
+  rollback_error: string
+  dependencies_synced: boolean
+  source_name: string
+}
+
+export interface SelfUpdateStatus {
+  supported: boolean
+  deployment_type?: 'git' | 'package'
+  repository_url: string
+  current_version: string
+  current_commit: string | null
+  branch: string | null
+  checked_at: number | null
+  latest_version: string | null
+  latest_commit: string | null
+  behind: number
+  ahead: number
+  update_available: boolean
+  can_apply: boolean
+  blockers: SelfUpdateBlocker[]
+  dirty_files: string[]
+  dependencies_changed: boolean
+  dependency_tool: string | null
+  commits: SelfUpdateCommit[]
+  source_id: string | null
+  source_name: string | null
+  last_result: SelfUpdateResult | null
+}
+
+/** 读取自更新状态（不联网） */
+export async function getSelfUpdateStatus(): Promise<SelfUpdateStatus> {
+  return backendApi.get<SelfUpdateStatus>('/api/webui/system/self-update/status', {
+    errorMessage: '获取更新状态失败',
+  })
+}
+
+/** 联网检查官方仓库是否有新版本 */
+export async function checkSelfUpdate(): Promise<SelfUpdateStatus> {
+  return backendApi.post<SelfUpdateStatus>('/api/webui/system/self-update/check', {
+    errorMessage: '检查更新失败',
+  })
+}
+
+/** 更新到界面上确认过的提交并重启 */
+export async function applySelfUpdate(
+  expectedCommit: string
+): Promise<{ success: boolean; message: string }> {
+  return backendApi.post<{ success: boolean; message: string }>(
+    '/api/webui/system/self-update/apply',
+    {
+      body: { expected_commit: expectedCommit },
+      errorMessage: '发起更新失败',
+    }
+  )
+}
+
 export interface CacheDirectoryStats {
   key: string
   label: string

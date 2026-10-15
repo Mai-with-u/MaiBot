@@ -21,6 +21,7 @@ import type { ReleaseStatus } from '../types'
 
 const HITOKOTO_SETTINGS_STORAGE_KEY = 'maibot-home-hitokoto-settings-v1'
 const HITOKOTO_INDEX_STORAGE_KEY = 'maibot-home-hitokoto-index-v1'
+const HITOKOTO_REQUEST_TIMEOUT_MS = 8000
 
 export interface CustomHitokoto {
   id: string
@@ -93,6 +94,7 @@ export function useMaibotVersion() {
     useState<VersionCompatibilityResult | null>(null)
   const hitokotoIndexRef = useRef(loadHitokotoIndex())
   const hitokotoSettingsRef = useRef(hitokotoSettings)
+  const hitokotoRequestRef = useRef<AbortController | null>(null)
 
   // 使用 ref 跟踪组件是否已卸载，防止内存泄漏
   const isMountedRef = useRef(true)
@@ -100,6 +102,7 @@ export function useMaibotVersion() {
     isMountedRef.current = true
     return () => {
       isMountedRef.current = false
+      hitokotoRequestRef.current?.abort()
     }
   }, [])
 
@@ -168,16 +171,32 @@ export function useMaibotVersion() {
 
   const loadHitokoto = useCallback(
     async (settings: HitokotoSettings) => {
+      // 新加载（包括保存设置）取代旧加载，避免迟到的响应覆盖本地内容。
+      hitokotoRequestRef.current?.abort()
+      const controller = new AbortController()
+      hitokotoRequestRef.current = controller
+      let timeoutId: ReturnType<typeof setTimeout> | undefined
+      const isCurrentRequest = () =>
+        isMountedRef.current && hitokotoRequestRef.current === controller
       try {
-        setHitokotoLoading(true)
         const candidates = settings.customItems.map((item) => ({
           hitokoto: item.content,
           from: item.source,
         }))
+        const candidateCount = candidates.length + Number(settings.defaultEnabled)
+        const index = candidateCount > 0 ? hitokotoIndexRef.current % candidateCount : 0
 
-        if (settings.defaultEnabled) {
+        // 只有轮到在线来源才发请求，本地文本不等待网络。
+        if (settings.defaultEnabled && index === candidates.length) {
+          setHitokotoLoading(true)
+          timeoutId = setTimeout(
+            () => controller.abort(new Error('一言接口请求超时')),
+            HITOKOTO_REQUEST_TIMEOUT_MS
+          )
           try {
-            const response = await fetch('https://v1.hitokoto.cn/?c=a&c=b&c=c&c=d&c=h&c=i&c=k')
+            const response = await fetch('https://v1.hitokoto.cn/?c=a&c=b&c=c&c=d&c=h&c=i&c=k', {
+              signal: controller.signal,
+            })
             if (!response.ok) {
               throw new Error(`一言接口返回 HTTP ${response.status}`)
             }
@@ -187,6 +206,7 @@ export function useMaibotVersion() {
               from: String(data.from || data.from_who || t('home.unknownSource')),
             })
           } catch (error) {
+            if (!isCurrentRequest()) return
             console.error('获取默认一言失败:', error)
             if (candidates.length === 0) {
               candidates.push({
@@ -197,18 +217,18 @@ export function useMaibotVersion() {
           }
         }
 
-        if (isMountedRef.current) {
+        if (isCurrentRequest()) {
           if (candidates.length === 0) {
             setHitokoto(null)
           } else {
-            const index = hitokotoIndexRef.current % candidates.length
             hitokotoIndexRef.current += 1
             localStorage.setItem(HITOKOTO_INDEX_STORAGE_KEY, String(hitokotoIndexRef.current))
-            setHitokoto(candidates[index])
+            setHitokoto(candidates[index % candidates.length])
           }
         }
       } finally {
-        if (isMountedRef.current) {
+        if (timeoutId !== undefined) clearTimeout(timeoutId)
+        if (isCurrentRequest()) {
           setHitokotoLoading(false)
         }
       }
@@ -229,7 +249,10 @@ export function useMaibotVersion() {
       setHitokotoSettings(normalizedSettings)
       hitokotoIndexRef.current = 0
       localStorage.setItem(HITOKOTO_INDEX_STORAGE_KEY, '0')
-      await loadHitokoto(normalizedSettings)
+      // 设置已写入本地，保存操作无需等待在线内容返回。
+      void loadHitokoto(normalizedSettings).catch((error: unknown) => {
+        console.error('保存后刷新一言失败:', error)
+      })
     },
     [loadHitokoto]
   )

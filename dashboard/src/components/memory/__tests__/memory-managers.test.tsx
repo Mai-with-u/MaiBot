@@ -1,8 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
-import { MemoryConfigEditor } from '../MemoryConfigEditor'
 import { MemoryEpisodeManager } from '../MemoryEpisodeManager'
 import { MemoryTimelineManager } from '../MemoryTimelineManager'
 import * as memoryApi from '@/lib/memory-api'
@@ -16,7 +14,6 @@ import type {
   MemoryTimelineEventPayload,
   MemoryTimelinePayload,
 } from '@/lib/memory-api'
-import type { ConfigFieldSchema, PluginConfigSchema } from '@/lib/plugin-api'
 
 const toastMock = vi.hoisted(() => vi.fn())
 
@@ -25,7 +22,9 @@ vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: toastMock }) }))
 vi.mock('@/lib/memory-api', () => ({
   getMemoryEpisode: vi.fn(),
   getMemoryEpisodes: vi.fn(),
+  getMemoryEpisodeMigrationBackfill: vi.fn(),
   getMemoryEpisodeStatus: vi.fn(),
+  discardMemoryEpisodeMigrationBackfill: vi.fn(),
   getMemoryTimeline: vi.fn(),
   processMemoryEpisodePending: vi.fn(),
   rebuildMemoryEpisodes: vi.fn(),
@@ -40,42 +39,6 @@ function patchPointerCapture() {
   }
   if (!Element.prototype.releasePointerCapture) {
     Element.prototype.releasePointerCapture = () => {}
-  }
-}
-
-function makeField(
-  overrides: Partial<ConfigFieldSchema> & { name: string; ui_type: string },
-): ConfigFieldSchema {
-  return {
-    type: 'string',
-    default: '',
-    description: '',
-    required: false,
-    label: overrides.name,
-    hidden: false,
-    disabled: false,
-    order: 0,
-    ...overrides,
-  }
-}
-
-function makeSchema(
-  sections: PluginConfigSchema['sections'],
-  tabs: PluginConfigSchema['layout']['tabs'] | undefined = undefined,
-): PluginConfigSchema {
-  return {
-    plugin_id: 'a_memorix',
-    plugin_info: {
-      name: 'A_Memorix',
-      version: '2.0.0',
-      description: '',
-      author: 'A_Dawn',
-    },
-    layout: {
-      type: tabs && tabs.length > 0 ? 'tabs' : 'auto',
-      tabs: tabs ?? [],
-    },
-    sections,
   }
 }
 
@@ -244,6 +207,15 @@ beforeEach(() => {
   patchPointerCapture()
   vi.mocked(memoryApi.getMemoryEpisodes).mockResolvedValue({ success: true, items: [] })
   vi.mocked(memoryApi.getMemoryEpisodeStatus).mockResolvedValue(makeEpisodeStatus())
+  vi.mocked(memoryApi.getMemoryEpisodeMigrationBackfill).mockResolvedValue({
+    success: true,
+    dry_run: true,
+    candidates: 0,
+    discarded: 0,
+    active_skipped: 0,
+    by_status: {},
+    sample_sources: [],
+  })
   vi.mocked(memoryApi.getMemoryEpisode).mockResolvedValue(makeEpisodeDetail(makeEpisode()))
   vi.mocked(memoryApi.rebuildMemoryEpisodes).mockResolvedValue(makeAction())
   vi.mocked(memoryApi.processMemoryEpisodePending).mockResolvedValue(makeAction({ rebuilt: undefined, processed: 4 }))
@@ -253,264 +225,6 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
-})
-
-describe('MemoryConfigEditor 无页签回退与字段类型', () => {
-  it('没有 tabs 时按 section.order 平铺卡片，并跳过不存在的节', () => {
-    const schema = makeSchema({
-      later: {
-        name: 'later',
-        title: '靠后节',
-        collapsed: false,
-        order: 20,
-        fields: {
-          note: makeField({ name: 'note', ui_type: 'text', label: '备注文本', order: 1 }),
-        },
-      },
-      earlier: {
-        name: 'earlier',
-        title: '靠前节',
-        description: '靠前说明',
-        collapsed: false,
-        order: 1,
-        fields: {
-          title: makeField({ name: 'title', ui_type: 'text', label: '标题文本', order: 1 }),
-        },
-      },
-    })
-
-    const { container } = render(
-      <MemoryConfigEditor schema={schema} config={{ earlier: { title: 'A' }, later: { note: 'B' } }} onChange={vi.fn()} />,
-    )
-
-    expect(screen.queryByRole('tab')).not.toBeInTheDocument()
-    const titles = within(container).getAllByText(/靠前节|靠后节/)
-    expect(titles[0]).toHaveTextContent('靠前节')
-    expect(titles[1]).toHaveTextContent('靠后节')
-    expect(screen.getByText('靠前说明')).toBeInTheDocument()
-  })
-
-  it('tabs 指向缺失节时不渲染该节，其余节正常展示', () => {
-    const schema = makeSchema(
-      {
-        plugin: {
-          name: 'plugin',
-          title: '插件节',
-          collapsed: false,
-          order: 1,
-          fields: {
-            enabled: makeField({ name: 'enabled', ui_type: 'switch', label: '启用', type: 'boolean', default: true, order: 1 }),
-          },
-        },
-      },
-      [
-        { id: 'basic', title: '基础', sections: ['missing', 'plugin'], order: 1 },
-      ],
-    )
-
-    render(<MemoryConfigEditor schema={schema} config={{ plugin: { enabled: true } }} onChange={vi.fn()} />)
-    expect(screen.getByRole('tab', { name: '基础' })).toBeInTheDocument()
-    expect(screen.getByText('插件节')).toBeInTheDocument()
-    expect(screen.queryByText('missing')).not.toBeInTheDocument()
-  })
-
-  it('number/select/textarea/list/json 变更写回嵌套配置，非法 JSON 只保留草稿', async () => {
-    const user = userEvent.setup()
-    const onChange = vi.fn()
-    const schema = makeSchema({
-      'plugin.runtime': {
-        name: 'plugin.runtime',
-        title: '运行时',
-        collapsed: false,
-        order: 1,
-        fields: {
-          count: makeField({
-            name: 'count',
-            ui_type: 'number',
-            type: 'number',
-            label: '数量',
-            default: 3,
-            hint: '数字提示',
-            order: 1,
-          }),
-          mode: makeField({
-            name: 'mode',
-            ui_type: 'select',
-            label: '模式',
-            choices: ['alpha', 'beta'],
-            default: 'alpha',
-            hint: '选择提示',
-            order: 2,
-          }),
-          note: makeField({
-            name: 'note',
-            ui_type: 'textarea',
-            label: '备注',
-            default: 'hello',
-            hint: '多行提示',
-            order: 3,
-          }),
-          tags: makeField({
-            name: 'tags',
-            ui_type: 'list',
-            label: '标签',
-            item_type: 'string',
-            default: ['keep'],
-            hint: '列表提示',
-            order: 4,
-          }),
-          extra: makeField({
-            name: 'extra',
-            ui_type: 'json',
-            label: '附加 JSON',
-            default: {},
-            hint: 'JSON 提示',
-            order: 5,
-          }),
-        },
-      },
-    })
-
-    render(
-      <MemoryConfigEditor
-        schema={schema}
-        config={{
-          plugin: {
-            keep: true,
-            runtime: {
-              count: 3,
-              mode: 'alpha',
-              note: 'hello',
-              tags: ['keep'],
-              extra: { a: 1 },
-            },
-          },
-        }}
-        onChange={onChange}
-      />,
-    )
-
-    expect(screen.getByText('数字提示')).toBeInTheDocument()
-    expect(screen.getByText('选择提示')).toBeInTheDocument()
-    expect(screen.getByText('多行提示')).toBeInTheDocument()
-    expect(screen.getByText('列表提示')).toBeInTheDocument()
-    expect(screen.getByText('JSON 提示')).toBeInTheDocument()
-
-    fireEvent.change(screen.getByDisplayValue('3'), { target: { value: '8' } })
-    expect(onChange).toHaveBeenLastCalledWith({
-      plugin: {
-        keep: true,
-        runtime: {
-          count: 8,
-          mode: 'alpha',
-          note: 'hello',
-          tags: ['keep'],
-          extra: { a: 1 },
-        },
-      },
-    })
-
-    await user.click(screen.getByRole('combobox'))
-    await user.click(await screen.findByRole('option', { name: 'beta' }))
-    expect(onChange.mock.calls.at(-1)?.[0]).toMatchObject({
-      plugin: { runtime: { mode: 'beta' }, keep: true },
-    })
-
-    fireEvent.change(screen.getByDisplayValue('hello'), { target: { value: 'world' } })
-    expect(onChange.mock.calls.at(-1)?.[0]).toMatchObject({
-      plugin: { runtime: { note: 'world' } },
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: '添加项目' }))
-    expect(onChange.mock.calls.at(-1)?.[0]).toMatchObject({
-      plugin: { runtime: { tags: ['keep', ''] } },
-    })
-
-    const jsonBox = screen.getByDisplayValue(/"a": 1/)
-    fireEvent.change(jsonBox, { target: { value: '{' } })
-    const callsAfterInvalid = onChange.mock.calls.length
-    expect(jsonBox).toHaveValue('{')
-    fireEvent.change(jsonBox, { target: { value: '{"b":2}' } })
-    expect(onChange.mock.calls.length).toBe(callsAfterInvalid + 1)
-    expect(onChange.mock.calls.at(-1)?.[0]).toMatchObject({
-      plugin: { runtime: { extra: { b: 2 } } },
-    })
-  })
-
-  it('节路径终点不是对象时按空值渲染；list 无 default 时从空列表起步', () => {
-    const onChange = vi.fn()
-    const schema = makeSchema({
-      plugin: {
-        name: 'plugin',
-        title: '插件节',
-        collapsed: false,
-        order: 1,
-        fields: {
-          tags: makeField({
-            name: 'tags',
-            ui_type: 'list',
-            label: '标签',
-            item_type: 'string',
-            order: 1,
-          }),
-        },
-      },
-    })
-
-    render(
-      <MemoryConfigEditor
-        schema={schema}
-        config={{ plugin: ['not-an-object'] as unknown as Record<string, unknown> }}
-        onChange={onChange}
-      />,
-    )
-
-    expect(screen.getByText('暂无数据，点击下方按钮添加')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '添加项目' }))
-    expect(onChange).toHaveBeenCalledWith({
-      plugin: { tags: [''] },
-    })
-  })
-
-  it('节路径中间值是数组时按空对象写入', () => {
-    const onChange = vi.fn()
-    const schema = makeSchema({
-      'plugin.runtime': {
-        name: 'plugin.runtime',
-        title: '运行时',
-        collapsed: false,
-        order: 1,
-        fields: {
-          tags: makeField({
-            name: 'tags',
-            ui_type: 'list',
-            label: '标签',
-            item_type: 'string',
-            default: ['from-default'],
-            order: 1,
-          }),
-        },
-      },
-    })
-
-    render(
-      <MemoryConfigEditor
-        schema={schema}
-        config={{ plugin: [] as unknown as Record<string, unknown> }}
-        onChange={onChange}
-      />,
-    )
-
-    expect(screen.getByDisplayValue('from-default')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '添加项目' }))
-    expect(onChange).toHaveBeenCalledWith({
-      plugin: {
-        runtime: {
-          tags: ['from-default', ''],
-        },
-      },
-    })
-  })
 })
 
 describe('MemoryEpisodeManager 列表、筛选与空态', () => {

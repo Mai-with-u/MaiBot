@@ -4,12 +4,12 @@
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Dict, List
 
 import random
 import re
 
-from maibot_sdk import Action, Command, EventHandler, Field, HomeCard, MaiBotPlugin, PluginConfigBase, Tool
+from maibot_sdk import API, Action, Command, EventHandler, Field, HomeCard, MaiBotPlugin, PluginConfigBase, Tool
 from maibot_sdk.types import ActivationType, EventType, ToolParameterInfo, ToolParamType
 
 
@@ -68,11 +68,92 @@ class HelloWorldPlugin(MaiBotPlugin):
 
     config_model = HelloWorldPluginConfig
 
+    def __init__(self) -> None:
+        super().__init__()
+        # 页面演示只维护插件内存状态，不发送聊天消息，也不修改配置文件。
+        self._webui_greetings: List[Dict[str, Any]] = []
+        self._webui_greeting_count: int = 0
+        self._webui_last_greeting: str = "尚未生成问候，请在侧边栏的问候体验页试试。"
+
     async def on_load(self) -> None:
         """处理插件加载。"""
 
     async def on_unload(self) -> None:
         """处理插件卸载。"""
+
+    # ===== WebUI 页面 API =====
+
+    @API("webui_summary", description="读取自定义页面的问候摘要和最近记录", version="1")
+    async def webui_summary(self) -> Dict[str, Any]:
+        """为顶部概览和侧边体验页提供同一份只读数据快照。"""
+        return {
+            "greeting_count": self._webui_greeting_count,
+            "record_count": len(self._webui_greetings),
+            "current_time": datetime.now().strftime(self.config.time.format),
+            "default_greeting": self.config.greeting.message,
+            "last_greeting": self._webui_last_greeting,
+            "history": [dict(record) for record in reversed(self._webui_greetings)],
+            "chart": [
+                {"label": str(record["sequence"]), "characters": len(record["message"])}
+                for record in self._webui_greetings
+            ],
+        }
+
+    @API("webui_generate_greeting", description="生成问候预览，不向聊天流发送消息", version="1")
+    async def webui_generate_greeting(
+        self, name: str, style: str = "friendly", repeat: int = 1, include_time: bool = True
+    ) -> Dict[str, Any]:
+        """演示表单参数绑定和写操作完成后的查询刷新。"""
+        recipient = name.strip()
+        if not recipient or len(name) > 80:
+            raise ValueError("称呼不能为空，且不能超过 80 个字符")
+        if style not in {"friendly", "formal"}:
+            raise ValueError("不支持的问候风格")
+        if type(repeat) is not int or not 1 <= repeat <= 5:
+            raise ValueError("重复次数必须为 1 到 5 的整数")
+        if type(include_time) is not bool:
+            raise ValueError("显示时间必须为布尔值")
+
+        greeting = (
+            f"{recipient}，{self.config.greeting.message}"
+            if style == "friendly"
+            else f"您好，{recipient}。很高兴与您见面。"
+        )
+        created_at = datetime.now().strftime(self.config.time.format)
+        message = "\n".join([greeting] * repeat)
+        if include_time:
+            message = f"{message}\n时间：{created_at}"
+
+        self._webui_greeting_count += 1
+        self._webui_last_greeting = message
+        self._webui_greetings.append(
+            {"sequence": self._webui_greeting_count, "name": recipient, "message": message, "created_at": created_at}
+        )
+        # 限制演示历史的长度，顶部表格和图表展示实际生成的最近 20 条记录。
+        self._webui_greetings = self._webui_greetings[-20:]
+        return {"message": message, "greeting_count": self._webui_greeting_count}
+
+    @API("webui_reset_greetings", description="清空内存中的 WebUI 问候演示记录", version="1")
+    async def webui_reset_greetings(self) -> Dict[str, Any]:
+        """演示带宿主确认弹窗的危险操作，确认文案由 webui.json 声明。"""
+        self._webui_greetings.clear()
+        self._webui_greeting_count = 0
+        self._webui_last_greeting = "演示记录已清空，可以重新生成问候。"
+        return {"cleared": True}
+
+    @API("webui_remove_greeting", description="按选中记录的序号删除一条页面演示记录", version="1")
+    async def webui_remove_greeting(self, sequence: int) -> Dict[str, Any]:
+        """演示行数据参数绑定；只修改页面内存，不发送消息。"""
+        if type(sequence) is not int or sequence < 1:
+            raise ValueError("记录序号必须为正整数")
+        record = next((item for item in self._webui_greetings if item["sequence"] == sequence), None)
+        if record is None:
+            raise ValueError("记录不存在或已被删除，请刷新页面")
+        self._webui_greetings.remove(record)
+        self._webui_last_greeting = (
+            self._webui_greetings[-1]["message"] if self._webui_greetings else "演示记录已清空，可以重新生成问候。"
+        )
+        return {"removed": sequence}
 
     # ===== HomeCard 组件 =====
 
@@ -92,6 +173,7 @@ class HelloWorldPlugin(MaiBotPlugin):
                     "/time：按配置格式查询当前时间",
                     "/random_emojis：发送随机表情包",
                     "compare_numbers：供 LLM 调用的数字比较工具",
+                    "WebUI：顶部概览与侧边问候体验页，演示声明式页面组件",
                 ],
             },
             {
@@ -99,6 +181,7 @@ class HelloWorldPlugin(MaiBotPlugin):
                 "actions": [
                     {"label": "打开插件配置", "url": "/plugin-config?plugin=maibot-team.hello-world-plugin"},
                     {"label": "查看插件市场", "url": "/plugins"},
+                    {"label": "打开自定义概览", "url": "/extensions/maibot-team.hello-world-plugin/overview"},
                 ],
             },
         ],

@@ -1,1 +1,0 @@
-export { JargonManagementPage } from './index.tsx'

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import asyncio
 import copy
@@ -16,10 +16,12 @@ import uuid
 
 import numpy as np
 
+from src.common.paths import get_instance_root
 from src.common.logger import get_logger
+from src.config.config import config_manager
 
 logger = get_logger("expression_vector_index")
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = get_instance_root()
 
 VECTOR_CANDIDATE_HARD_LIMIT = 50
 VECTOR_INDEX_VERSION = 2
@@ -30,7 +32,7 @@ FULL_RECLUSTER_CHANGE_RATIO = 0.05
 CLUSTER_STATE_BOOTSTRAPPING = "BOOTSTRAPPING"
 CLUSTER_STATE_STABLE = "STABLE"
 EMBEDDING_PROFILE_CACHE_SECONDS = 600.0
-EMBEDDING_PROFILE_VERSION = 2
+EMBEDDING_PROFILE_VERSION = 3
 EMBEDDING_PROFILE_MIN_COSINE_SIMILARITY = 0.999
 EMBEDDING_PROFILE_DRIFT_CONFIRMATIONS = 3
 LEGACY_EMBEDDING_PROFILE_MARKER = "__legacy_unmarked__"
@@ -62,6 +64,7 @@ class ExpressionEmbeddingProfile:
     dimension: int
     revision: int
     probe_embeddings: Tuple[Tuple[float, ...], ...]
+    embedding_fingerprint: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -174,17 +177,21 @@ def _build_embedding_profile_marker(
     api_provider: str,
     dimension: int,
     revision: int,
+    embedding_fingerprint: Dict[str, Any] | None = None,
+    version: int = EMBEDDING_PROFILE_VERSION,
 ) -> str:
     """使用稳定后端身份和向量空间修订号生成 profile marker。"""
 
     payload = {
-        "version": EMBEDDING_PROFILE_VERSION,
+        "version": version,
         "model_name": model_name,
         "model_identifier": model_identifier,
         "api_provider": api_provider,
         "dimension": int(dimension),
         "revision": int(revision),
     }
+    if version >= 3:
+        payload["embedding_fingerprint"] = embedding_fingerprint or {}
     return sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
 
 
@@ -195,6 +202,7 @@ def _build_embedding_profile(
     api_provider: str,
     probe_embeddings: Sequence[Sequence[float]],
     revision: int,
+    embedding_fingerprint: Dict[str, Any] | None = None,
 ) -> ExpressionEmbeddingProfile:
     """根据稳定身份、探针基准和修订号构建 embedding profile。"""
 
@@ -214,6 +222,7 @@ def _build_embedding_profile(
         api_provider=api_provider,
         dimension=dimension,
         revision=revision,
+        embedding_fingerprint=embedding_fingerprint,
     )
     return ExpressionEmbeddingProfile(
         marker=marker,
@@ -223,10 +232,13 @@ def _build_embedding_profile(
         dimension=dimension,
         revision=revision,
         probe_embeddings=normalized_probes,
+        embedding_fingerprint=dict(embedding_fingerprint) if embedding_fingerprint is not None else {},
     )
 
 
-def build_embedding_profile_from_probe_results(results: Sequence[Any]) -> ExpressionEmbeddingProfile:
+def build_embedding_profile_from_probe_results(
+    results: Sequence[Any], *, embedding_fingerprint: Dict[str, Any] | None = None,
+) -> ExpressionEmbeddingProfile:
     """根据固定探针 embedding 结果生成当前 embedding profile。"""
 
     if len(results) != len(EMBEDDING_PROFILE_PROBE_TEXTS):
@@ -255,10 +267,11 @@ def build_embedding_profile_from_probe_results(results: Sequence[Any]) -> Expres
         api_provider=api_provider,
         probe_embeddings=[result.embedding for result in results],
         revision=1,
+        embedding_fingerprint=embedding_fingerprint,
     )
 
 
-def _embedding_profile_identity(profile: ExpressionEmbeddingProfile) -> Tuple[str, str, str, int]:
+def _embedding_profile_identity(profile: ExpressionEmbeddingProfile) -> Tuple[str, str, str, int, str]:
     """返回用于明确区分 embedding 后端的稳定身份。"""
 
     return (
@@ -266,6 +279,7 @@ def _embedding_profile_identity(profile: ExpressionEmbeddingProfile) -> Tuple[st
         profile.model_identifier,
         profile.api_provider,
         profile.dimension,
+        str(profile.embedding_fingerprint.get("hash", "")),
     )
 
 
@@ -327,6 +341,7 @@ def _serialize_embedding_profile(profile: ExpressionEmbeddingProfile) -> dict[st
         "revision": profile.revision,
         "probe_texts": list(EMBEDDING_PROFILE_PROBE_TEXTS),
         "probe_embeddings": [list(embedding) for embedding in profile.probe_embeddings],
+        "embedding_fingerprint": profile.embedding_fingerprint,
     }
 
 
@@ -334,7 +349,7 @@ def _deserialize_embedding_profile(raw_profile: dict[str, Any]) -> ExpressionEmb
     """从索引元数据恢复并校验持久化的 profile 基准。"""
 
     version = int(raw_profile.get("version") or 0)
-    if version != EMBEDDING_PROFILE_VERSION:
+    if version not in {2, EMBEDDING_PROFILE_VERSION}:
         raise ValueError(f"embedding profile 元数据版本不匹配: {version}")
     probe_texts = raw_profile.get("probe_texts")
     if probe_texts != EMBEDDING_PROFILE_PROBE_TEXTS:
@@ -349,6 +364,7 @@ def _deserialize_embedding_profile(raw_profile: dict[str, Any]) -> ExpressionEmb
         api_provider=normalize_text(raw_profile.get("api_provider")),
         probe_embeddings=raw_probe_embeddings,
         revision=int(raw_profile.get("revision") or 0),
+        embedding_fingerprint=raw_profile.get("embedding_fingerprint") if version >= 3 else None,
     )
     if not all((profile.model_name, profile.model_identifier, profile.api_provider)):
         raise ValueError("embedding profile 持久化后端身份为空")
@@ -358,9 +374,21 @@ def _deserialize_embedding_profile(raw_profile: dict[str, Any]) -> ExpressionEmb
             f"embedding profile 持久化维度不一致: stored={stored_dimension}, actual={profile.dimension}"
         )
     stored_marker = normalize_text(raw_profile.get("marker"))
-    if stored_marker != profile.marker:
+    expected_marker = _build_embedding_profile_marker(
+        model_name=profile.model_name, model_identifier=profile.model_identifier,
+        api_provider=profile.api_provider, dimension=profile.dimension, revision=profile.revision,
+        embedding_fingerprint=profile.embedding_fingerprint, version=version,
+    )
+    if stored_marker != expected_marker:
         raise ValueError(
-            f"embedding profile 持久化 marker 不一致: stored={stored_marker[:12]}, actual={profile.marker[:12]}"
+            f"embedding profile 持久化 marker 不一致: stored={stored_marker[:12]}, actual={expected_marker[:12]}"
+        )
+    if version == 2:
+        # 保留旧索引的分组标记；首次新标定会识别出缺失的模型身份并进行补建。
+        return ExpressionEmbeddingProfile(
+            marker=stored_marker, model_name=profile.model_name, model_identifier=profile.model_identifier,
+            api_provider=profile.api_provider, dimension=profile.dimension, revision=profile.revision,
+            probe_embeddings=profile.probe_embeddings,
         )
     return profile
 
@@ -423,7 +451,9 @@ def _remove_embedding_failures_file(index_path: Path) -> None:
         )
 
 
-def _atomic_write_text(path: Path, content: str) -> None:
+def _atomic_write_text(
+    path: Path, content: str, *, publish: Optional[Callable[[Path, Path], bool]] = None,
+) -> bool:
     """用同目录唯一临时文件完整落盘后原子替换文本文件。"""
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -433,7 +463,10 @@ def _atomic_write_text(path: Path, content: str) -> None:
             temporary_file.write(content)
             temporary_file.flush()
             os.fsync(temporary_file.fileno())
+        if publish is not None:
+            return publish(temporary_path, path)
         temporary_path.replace(path)
+        return True
     finally:
         temporary_path.unlink(missing_ok=True)
 
@@ -565,12 +598,218 @@ class ExpressionVectorIndex:
         self._snapshot: ExpressionVectorIndexSnapshot | None = None
         self._update_lock = asyncio.Lock()
         self._profile_lock = asyncio.Lock()
-        self._profile_cache: tuple[float, ExpressionEmbeddingProfile] | None = None
+        self._profile_cache: Tuple[
+            float, ExpressionEmbeddingProfile, Tuple[Tuple[str, str, str], ...]
+        ] | None = None
         self._profile_drift_candidate: ExpressionEmbeddingProfile | None = None
         self._profile_drift_confirmations = 0
         self._history_backfill_task: asyncio.Task[None] | None = None
         self._history_backfill_last_empty_at = 0.0
         self._history_backfill_last_failure_at = 0.0
+        self._history_backfill_wakeup = asyncio.Event()
+        self._history_backfill_index_path: str | None = None
+        self._profile_generation = 0
+        self._publication_lock = threading.Lock()
+        self._history_backfill_error = ""
+
+    def request_history_backfill(self, *, index_path: str, enabled: bool = True) -> None:
+        """配置变化后立即刷新标定，唤醒补建任务并跳过旧配置的扫描冷却。"""
+        with self._publication_lock:
+            self._profile_generation += 1
+        self._profile_cache = None
+        self._reset_profile_drift_candidate()
+        self._history_backfill_last_empty_at = 0.0
+        self._history_backfill_last_failure_at = 0.0
+        self._history_backfill_error = ""
+        self._history_backfill_index_path = index_path
+        self._history_backfill_wakeup.set()
+        if enabled:
+            self.ensure_history_backfill_task(index_path=index_path, force=True)
+
+    async def stop_history_backfill(self) -> None:
+        """等待后台补建任务退出。"""
+        task = self._history_backfill_task
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    def _publish_current_manifest(self, temporary_path: Path, path: Path, generation: int) -> bool:
+        """让配置版本递增与清单切换互斥；批量读写始终在锁外完成。"""
+        with self._publication_lock:
+            if generation != self._profile_generation:
+                return False
+            temporary_path.replace(path)
+            return True
+
+    @staticmethod
+    def _space_profiles(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """将旧单模型索引与当前分组索引转换为统一的模型库描述。"""
+        profiles = payload.get("embedding_profiles")
+        if profiles:
+            return profiles
+        return [{
+            "marker": payload.get("embedding_profile_marker") or LEGACY_EMBEDDING_PROFILE_MARKER,
+            "embedding_model": payload.get("embedding_model", ""),
+            "embedding_dimension": payload.get("embedding_dimension", 0),
+            "expression_count": len(payload.get("expressions", [])),
+            "cluster_count": len(payload.get("clusters", [])),
+            "vectors_key": "vectors", "cluster_centers_key": "cluster_centers",
+        }]
+
+    @staticmethod
+    def _stored_profile_fingerprint(stored: Dict[str, Any]) -> Dict[str, Any]:
+        """恢复旧版模型身份；不完整的清单应报告具体损坏字段。"""
+        fingerprint = stored.get("embedding_fingerprint")
+        if fingerprint:
+            return fingerprint
+        required_fields = ("model_name", "model_identifier", "api_provider", "dimension")
+        missing_fields = [name for name in required_fields if name not in stored]
+        if missing_fields:
+            raise ValueError(f"embedding profile 持久化身份字段缺失: {', '.join(missing_fields)}")
+        return {
+            "model": stored["model_name"], "model_identifier": stored["model_identifier"],
+            "provider": stored["api_provider"], "dimension": stored["dimension"],
+        }
+
+    @staticmethod
+    def _attach_space_metadata(
+        profiles: List[Dict[str, Any]], payload: Dict[str, Any], current: ExpressionEmbeddingProfile,
+    ) -> None:
+        """保留各模型分组的身份与使用时间，不增加额外的模型库副本。"""
+        previous = {item["marker"]: item for item in payload.get("embedding_profiles", [])}
+        stored = payload.get("embedding_profile", {})
+        for item in profiles:
+            old = previous.get(item["marker"], {})
+            if item["marker"] == current.marker:
+                item["embedding_fingerprint"] = current.embedding_fingerprint
+                item["last_used_at"] = time.time()
+            elif "embedding_fingerprint" in old:
+                item["embedding_fingerprint"] = old["embedding_fingerprint"]
+                item["last_used_at"] = old.get("last_used_at")
+            elif item["marker"] == stored.get("marker"):
+                item["embedding_fingerprint"] = ExpressionVectorIndex._stored_profile_fingerprint(stored)
+
+    def _list_vector_spaces(self, index_path: Path, enabled: bool) -> Dict[str, Any]:
+        """只读取原子发布的清单，使状态查询无需等待网络请求或重嵌入。"""
+        payload = _load_index_payload(index_path)
+        task = self._history_backfill_task
+        running = task is not None and not task.done()
+        cache = self._profile_cache
+        current = cache[1] if enabled and cache is not None else None
+        active_marker = ""
+        if enabled and payload is not None:
+            active_marker = normalize_text(payload.get("embedding_profile_marker")) or LEGACY_EMBEDDING_PROFILE_MARKER
+        target_marker = current.marker if current is not None else active_marker
+        items = []
+        for item in self._space_profiles(payload) if payload is not None else []:
+            marker = item["marker"]
+            state = "saved"
+            if marker == target_marker and running:
+                state = "syncing"
+            elif marker in {active_marker, target_marker}:
+                state = "active"
+            fingerprint = item.get("embedding_fingerprint") or {
+                "model": item.get("embedding_model", ""), "dimension": item.get("embedding_dimension", 0),
+            }
+            stored = payload.get("embedding_profile", {})
+            if marker == stored.get("marker"):
+                fingerprint = self._stored_profile_fingerprint(stored)
+            vector_count = int(item.get("expression_count", 0))
+            cluster_count = int(item.get("cluster_count", 0))
+            dimension = int(item.get("embedding_dimension", 0))
+            items.append({
+                "space_id": marker, "embedding_fingerprint": fingerprint,
+                "state": state, "can_delete": state == "saved", "vector_count": vector_count,
+                "counts": {"expression": vector_count},
+                "size_bytes": (vector_count + cluster_count) * dimension * np.dtype(np.float32).itemsize,
+                "last_used_at": item.get("last_used_at"),
+            })
+        if current is not None and not any(item["space_id"] == current.marker for item in items):
+            items.insert(0, {
+                "space_id": current.marker, "embedding_fingerprint": current.embedding_fingerprint,
+                "state": "syncing", "can_delete": False, "vector_count": 0,
+                "counts": {"expression": 0}, "size_bytes": 0, "last_used_at": None,
+            })
+        if running:
+            state = "syncing"
+        elif self._history_backfill_error:
+            state = "failed"
+        else:
+            state = "ready" if payload is not None else "empty"
+        return {
+            "success": True, "items": items, "state": state,
+            "last_error": self._history_backfill_error, "target_space_id": target_marker,
+        }
+
+    async def list_vector_spaces(self, *, index_path: str, enabled: bool = True) -> Dict[str, Any]:
+        return await asyncio.to_thread(self._list_vector_spaces, resolve_project_path(index_path), enabled)
+
+    def _delete_vector_space(self, index_path: Path, space_id: str, enabled: bool) -> Dict[str, Any]:
+        """删除一个未使用的模型分组，数据库中的表达原文保持完整。"""
+        payload = _load_mutable_index_payload(index_path)
+        if payload is None:
+            return {"success": False, "error": "vector_space_not_found"}
+        cache = self._profile_cache
+        current = cache[1] if enabled and cache is not None else None
+        active_marker = ""
+        if enabled:
+            active_marker = normalize_text(payload.get("embedding_profile_marker")) or LEGACY_EMBEDDING_PROFILE_MARKER
+        if space_id == active_marker or (current is not None and space_id == current.marker):
+            return {"success": False, "error": "vector_space_in_use"}
+        profiles = self._space_profiles(payload)
+        if not any(item["marker"] == space_id for item in profiles):
+            return {"success": False, "error": "vector_space_not_found"}
+        remaining = [item for item in profiles if item["marker"] != space_id]
+        vectors_path = _resolve_vectors_path(index_path, payload)
+        if not remaining:
+            if vectors_path.parent == index_path.parent and (
+                vectors_path.name == f"{index_path.stem}.npz"
+                or vectors_path.name.startswith(f"{index_path.stem}.vectors-")
+            ):
+                vectors_path.unlink(missing_ok=True)
+            index_path.unlink()
+        else:
+            # 保留其余模型分组的数组和索引位置，只移除目标分组。
+            with np.load(vectors_path) as arrays:
+                vectors = {item["marker"]: arrays[item["vectors_key"]] for item in remaining}
+                centers = {item["marker"]: arrays[item["cluster_centers_key"]] for item in remaining}
+            payload["expressions"] = [
+                item for item in payload.get("expressions", [])
+                if (item.get("embedding_profile_marker") or payload.get("embedding_profile_marker")
+                    or LEGACY_EMBEDDING_PROFILE_MARKER) != space_id
+            ]
+            payload["embedding_profiles"] = remaining
+            payload["sample_count"] = len(payload["expressions"])
+            payload["clusters"] = self._build_cluster_summaries(payload["expressions"])
+            payload["updated_at"] = datetime.now().isoformat(timespec="seconds")
+            if payload.get("embedding_profile_marker") == space_id:
+                # 非向量模式允许清除最后使用的分组；其余分组不继承已删除模型的标定。
+                payload.pop("embedding_profile", None)
+                payload.pop("cluster_maintenance", None)
+                payload["embedding_profile_marker"] = remaining[0]["marker"]
+                payload["embedding_model"] = remaining[0].get("embedding_model", "")
+                payload["embedding_dimension"] = remaining[0].get("embedding_dimension", 0)
+            self._write_index_files(
+                index_path=index_path, vectors_path=vectors_path, payload=payload,
+                profile_vectors=vectors, profile_cluster_centers=centers,
+            )
+        self._snapshot = None
+        self._history_backfill_last_empty_at = 0.0
+        return {"success": True, "deleted": space_id}
+
+    async def delete_vector_space(
+        self, *, index_path: str, space_id: str, enabled: bool = True,
+    ) -> Dict[str, Any]:
+        async with self._update_lock:
+            worker = asyncio.create_task(asyncio.to_thread(
+                self._delete_vector_space, resolve_project_path(index_path), space_id, enabled,
+            ))
+            try:
+                return await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                # 请求取消后，已开始的文件发布仍须完成，再释放索引写锁。
+                await worker
+                raise
 
     @staticmethod
     def _load_persisted_embedding_profile(index_path: Path) -> ExpressionEmbeddingProfile | None:
@@ -591,6 +830,18 @@ class ExpressionVectorIndex:
 
         self._profile_drift_candidate = None
         self._profile_drift_confirmations = 0
+
+    @staticmethod
+    def _configured_embedding_identity() -> Tuple[Tuple[str, str, str], ...]:
+        """读取当前 embedding 任务实际配置，用于在热重载后立刻淘汰旧 profile。"""
+
+        model_config = config_manager.get_model_config()
+        models_by_name = {model.name: model for model in model_config.models}
+        identity: List[Tuple[str, str, str]] = []
+        for model_name in model_config.model_task_config.embedding.model_list:
+            model = models_by_name[model_name]
+            identity.append((model.name, model.model_identifier, model.api_provider))
+        return tuple(identity)
 
     def _resolve_embedding_profile_candidate(
         self,
@@ -637,6 +888,7 @@ class ExpressionVectorIndex:
             api_provider=candidate_profile.api_provider,
             probe_embeddings=candidate_profile.probe_embeddings,
             revision=persisted_profile.revision + 1,
+            embedding_fingerprint=candidate_profile.embedding_fingerprint,
         )
         logger.warning(
             "embedding 向量空间漂移已连续确认，切换 profile: "
@@ -655,43 +907,60 @@ class ExpressionVectorIndex:
         """用固定探针解析当前 embedding 后端 profile，并做短时缓存。"""
 
         now = time.monotonic()
+        configured_identity = self._configured_embedding_identity()
         if self._profile_cache is not None:
-            cached_at, cached_profile = self._profile_cache
-            if now - cached_at <= EMBEDDING_PROFILE_CACHE_SECONDS:
+            cached_at, cached_profile, cached_identity = self._profile_cache
+            if cached_identity == configured_identity and now - cached_at <= EMBEDDING_PROFILE_CACHE_SECONDS:
                 return cached_profile
 
         async with self._profile_lock:
-            now = time.monotonic()
-            if self._profile_cache is not None:
-                cached_at, cached_profile = self._profile_cache
-                if now - cached_at <= EMBEDDING_PROFILE_CACHE_SECONDS:
-                    return cached_profile
+            while True:
+                now = time.monotonic()
+                configured_identity = self._configured_embedding_identity()
+                if self._profile_cache is not None:
+                    cached_at, cached_profile, cached_identity = self._profile_cache
+                    if cached_identity == configured_identity and now - cached_at <= EMBEDDING_PROFILE_CACHE_SECONDS:
+                        return cached_profile
 
-            from src.services.embedding_service import EmbeddingServiceClient
+                generation = self._profile_generation
+                from src.services.embedding_service import EmbeddingServiceClient, resolve_embedding_model_fingerprint
 
-            embedding_client = EmbeddingServiceClient(
-                task_name="embedding",
-                request_type="expression.selection.profile_probe",
-                session_id=session_id,
-            )
-            probe_results = await embedding_client.embed_texts(
-                list(EMBEDDING_PROFILE_PROBE_TEXTS),
-                max_concurrent=1,
-                session_id=session_id,
-            )
-            candidate_profile = build_embedding_profile_from_probe_results(probe_results)
-            persisted_profile = self._load_persisted_embedding_profile(resolve_project_path(index_path))
-            profile = self._resolve_embedding_profile_candidate(
-                persisted_profile=persisted_profile,
-                candidate_profile=candidate_profile,
-            )
-            self._profile_cache = (time.monotonic(), profile)
-            logger.info(
-                f"表达向量 embedding profile 已标定: marker={profile.marker[:12]} "
-                f"model={profile.model_name} identifier={profile.model_identifier} "
-                f"provider={profile.api_provider} dimension={profile.dimension} revision={profile.revision}"
-            )
-            return profile
+                embedding_client = EmbeddingServiceClient(
+                    task_name="embedding",
+                    request_type="expression.selection.profile_probe",
+                    session_id=session_id,
+                )
+                probe_results = await embedding_client.embed_texts(
+                    list(EMBEDDING_PROFILE_PROBE_TEXTS),
+                    max_concurrent=1,
+                    session_id=session_id,
+                )
+                if generation != self._profile_generation:
+                    continue
+                candidate_profile = build_embedding_profile_from_probe_results(probe_results)
+                fingerprint = resolve_embedding_model_fingerprint(
+                    model_name=candidate_profile.model_name, model_identifier=candidate_profile.model_identifier,
+                    api_provider=candidate_profile.api_provider, dimension=candidate_profile.dimension,
+                )
+                candidate_profile = build_embedding_profile_from_probe_results(
+                    probe_results, embedding_fingerprint=fingerprint,
+                )
+                persisted_profile = await asyncio.to_thread(
+                    self._load_persisted_embedding_profile, resolve_project_path(index_path)
+                )
+                if generation != self._profile_generation:
+                    continue
+                profile = self._resolve_embedding_profile_candidate(
+                    persisted_profile=persisted_profile,
+                    candidate_profile=candidate_profile,
+                )
+                self._profile_cache = (time.monotonic(), profile, configured_identity)
+                logger.info(
+                    f"表达向量 embedding profile 已标定: marker={profile.marker[:12]} "
+                    f"model={profile.model_name} identifier={profile.model_identifier} "
+                    f"provider={profile.api_provider} dimension={profile.dimension} revision={profile.revision}"
+                )
+                return profile
 
     @staticmethod
     def _validate_embedding_result_profile(
@@ -1137,6 +1406,78 @@ class ExpressionVectorIndex:
             deferred_count=deferred_count,
             isolated_count=isolated_count,
         )
+
+    def get_history_backfill_progress(self, *, index_path: str) -> Dict[str, Any]:
+        """按当前 embedding 配置统计表达库的可用向量，不触发探针或重建。"""
+
+        from src.config.config import global_config
+
+        if not global_config.expression.use_vector_expression:
+            return {"status": "disabled", "completed": 0, "total": 0, "percent": 0.0}
+
+        configured_identity = self._configured_embedding_identity()
+        if not configured_identity:
+            return {"status": "unconfigured", "completed": 0, "total": 0, "percent": 0.0}
+
+        payload = _load_index_payload(resolve_project_path(index_path)) or {}
+        raw_profile = payload.get("embedding_profile")
+        profile = raw_profile if isinstance(raw_profile, dict) else {}
+        profile_identity = (
+            normalize_text(profile.get("model_name")),
+            normalize_text(profile.get("model_identifier")),
+            normalize_text(profile.get("api_provider")),
+        )
+        profile_matches = profile_identity == configured_identity[0]
+        marker = normalize_text(profile.get("marker")) if profile_matches else ""
+        if (
+            self._profile_cache is not None
+            and self._profile_cache[2] == configured_identity
+            and time.monotonic() - self._profile_cache[0] <= EMBEDDING_PROFILE_CACHE_SECONDS
+        ):
+            # 探针已发现同名模型的向量空间漂移，而索引尚未写入新 profile 时旧向量不能算作完成。
+            if self._profile_cache[1].marker != marker:
+                profile_matches = False
+                marker = ""
+        dimension = int(profile.get("dimension") or 0) if profile_matches else 0
+        indexed_by_id = {
+            int(item.get("id") or 0): item
+            for item in payload.get("expressions") or []
+            if isinstance(item, dict) and int(item.get("id") or 0) > 0
+        }
+
+        total = 0
+        completed = 0
+        for row in _load_expression_rows_snapshot():
+            expression_id, situation, style = row[:3]
+            normalized_situation = normalize_text(situation)
+            normalized_style = normalize_text(style)
+            if expression_id is None or not normalized_situation or not normalized_style:
+                continue
+            total += 1
+            indexed = indexed_by_id.get(int(expression_id))
+            if (
+                marker
+                and indexed is not None
+                and normalize_text(indexed.get("embedding_profile_marker")) == marker
+                and int(indexed.get("embedding_dimension") or 0) == dimension
+                and normalize_text(indexed.get("fingerprint"))
+                == expression_fingerprint(int(expression_id), normalized_situation, normalized_style)
+            ):
+                completed += 1
+
+        running = self._history_backfill_task is not None and not self._history_backfill_task.done()
+        if not profile_matches:
+            status = "waiting_profile"
+        elif completed == total:
+            status = "completed"
+        else:
+            status = "running" if running else "pending"
+        return {
+            "status": status,
+            "completed": completed,
+            "total": total,
+            "percent": round(completed * 100 / total, 1) if total else 100.0,
+        }
 
     @staticmethod
     def _load_current_expression_fingerprints() -> Dict[int, str]:
@@ -1826,7 +2167,8 @@ class ExpressionVectorIndex:
         payload: dict[str, Any],
         profile_vectors: Dict[str, np.ndarray],
         profile_cluster_centers: Dict[str, np.ndarray],
-    ) -> Path:
+        publish: Optional[Callable[[Path, Path], bool]] = None,
+    ) -> Optional[Path]:
         """先提交版本化 NPZ，再原子切换 JSON 清单。"""
 
         index_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1861,8 +2203,11 @@ class ExpressionVectorIndex:
                 os.fsync(temporary_vectors_file.fileno())
             temporary_vectors_path.replace(next_vectors_path)
             payload["vectors_file"] = next_vectors_path.name
-            _atomic_write_text(index_path, json.dumps(payload, ensure_ascii=False, indent=2))
-            committed = True
+            committed = _atomic_write_text(
+                index_path, json.dumps(payload, ensure_ascii=False, indent=2), publish=publish,
+            )
+            if not committed:
+                return None
         finally:
             temporary_vectors_path.unlink(missing_ok=True)
             if not committed:
@@ -2081,6 +2426,7 @@ class ExpressionVectorIndex:
             index_path=str(resolved_index_path),
             session_id=embedding_session_id,
         )
+        profile_generation = self._profile_generation
         requested_count = len(normalized_items)
         normalized_items, next_vectors, embedding_failures = await self._embed_expression_items(
             items=normalized_items,
@@ -2089,6 +2435,9 @@ class ExpressionVectorIndex:
         )
 
         async with self._update_lock:
+            if profile_generation != self._profile_generation:
+                # 切换配置期间完成的旧模型请求交给新一轮补建重新处理。
+                return None
             current_fingerprints = await asyncio.to_thread(
                 self._load_current_expression_fingerprints
             )
@@ -2175,11 +2524,14 @@ class ExpressionVectorIndex:
             if not normalized_items and not force_recluster:
                 if index_state.existing_payload:
                     payload["updated_at"] = datetime.now().isoformat(timespec="seconds")
-                    await asyncio.to_thread(
+                    published = await asyncio.to_thread(
                         _atomic_write_text,
                         resolved_index_path,
                         json.dumps(payload, ensure_ascii=False, indent=2),
+                        publish=lambda temporary, path: self._publish_current_manifest(temporary, path, profile_generation),
                     )
+                    if not published:
+                        return None
                     await asyncio.to_thread(
                         _remove_embedding_failures_file,
                         resolved_index_path,
@@ -2191,11 +2543,14 @@ class ExpressionVectorIndex:
                         "updated_at": datetime.now().isoformat(timespec="seconds"),
                         "embedding_failures": payload["embedding_failures"],
                     }
-                    await asyncio.to_thread(
+                    published = await asyncio.to_thread(
                         _atomic_write_text,
                         _resolve_embedding_failures_path(resolved_index_path),
                         json.dumps(standalone_payload, ensure_ascii=False, indent=2),
+                        publish=lambda temporary, path: self._publish_current_manifest(temporary, path, profile_generation),
                     )
+                    if not published:
+                        return None
                 return ExpressionVectorIndexUpdateResult(
                     batch_count=0,
                     total_count=len(raw_expressions),
@@ -2232,11 +2587,14 @@ class ExpressionVectorIndex:
             if not normalized_items and not raw_expressions:
                 if index_state.existing_payload:
                     payload["updated_at"] = datetime.now().isoformat(timespec="seconds")
-                    await asyncio.to_thread(
+                    published = await asyncio.to_thread(
                         _atomic_write_text,
                         resolved_index_path,
                         json.dumps(payload, ensure_ascii=False, indent=2),
+                        publish=lambda temporary, path: self._publish_current_manifest(temporary, path, profile_generation),
                     )
+                    if not published:
+                        return None
                     await asyncio.to_thread(
                         _remove_embedding_failures_file,
                         resolved_index_path,
@@ -2248,11 +2606,14 @@ class ExpressionVectorIndex:
                         "updated_at": datetime.now().isoformat(timespec="seconds"),
                         "embedding_failures": payload["embedding_failures"],
                     }
-                    await asyncio.to_thread(
+                    published = await asyncio.to_thread(
                         _atomic_write_text,
                         _resolve_embedding_failures_path(resolved_index_path),
                         json.dumps(standalone_payload, ensure_ascii=False, indent=2),
+                        publish=lambda temporary, path: self._publish_current_manifest(temporary, path, profile_generation),
                     )
+                    if not published:
+                        return None
                 return ExpressionVectorIndexUpdateResult(
                     batch_count=0,
                     total_count=0,
@@ -2331,6 +2692,7 @@ class ExpressionVectorIndex:
                 )
 
             now_text = datetime.now().isoformat(timespec="seconds")
+            self._attach_space_metadata(profile_metadata, payload, current_profile)
             payload["version"] = VECTOR_INDEX_VERSION
             payload.setdefault("generated_at", now_text)
             payload["updated_at"] = now_text
@@ -2374,14 +2736,19 @@ class ExpressionVectorIndex:
                 cluster_maintenance["stabilized_at"] = previous_stabilized_at or now_text
             payload["cluster_maintenance"] = cluster_maintenance
 
-            await asyncio.to_thread(
+            if profile_generation != self._profile_generation:
+                return None
+            published_path = await asyncio.to_thread(
                 self._write_index_files,
                 index_path=resolved_index_path,
                 vectors_path=vectors_path,
                 payload=payload,
                 profile_vectors=profile_vectors,
                 profile_cluster_centers=profile_cluster_centers,
+                publish=lambda temporary, path: self._publish_current_manifest(temporary, path, profile_generation),
             )
+            if published_path is None:
+                return None
             await asyncio.to_thread(
                 _remove_embedding_failures_file,
                 resolved_index_path,
@@ -2399,7 +2766,7 @@ class ExpressionVectorIndex:
                 isolated_count=isolated_count,
                 failed_expression_ids=failed_expression_ids,
             )
-            logger.info(
+            logger.debug(
                 f"表达向量索引批量同步完成: path={resolved_index_path} "
                 f"requested={requested_count} succeeded={len(normalized_items)} "
                 f"failed={len(embedding_failures)} total_count={len(raw_expressions)} "
@@ -2423,6 +2790,7 @@ class ExpressionVectorIndex:
                 新的待回填项，则返回 False，由回填循环继续处理。
         """
 
+        profile_generation = self._profile_generation
         async with self._update_lock:
             selection = await asyncio.to_thread(
                 self._load_history_backfill_items,
@@ -2496,6 +2864,7 @@ class ExpressionVectorIndex:
             )
             now_text = datetime.now().isoformat(timespec="seconds")
             payload = index_state.payload
+            self._attach_space_metadata(profile_metadata, payload, profile)
             payload["version"] = VECTOR_INDEX_VERSION
             payload.setdefault("generated_at", now_text)
             payload["updated_at"] = now_text
@@ -2518,14 +2887,19 @@ class ExpressionVectorIndex:
                 "last_recluster_sample_count": len(raw_expressions),
                 "stabilized_at": now_text,
             }
-            await asyncio.to_thread(
+            if profile_generation != self._profile_generation:
+                return False
+            published_path = await asyncio.to_thread(
                 self._write_index_files,
                 index_path=index_path,
                 vectors_path=index_state.vectors_path,
                 payload=payload,
                 profile_vectors=profile_vectors,
                 profile_cluster_centers=profile_cluster_centers,
+                publish=lambda temporary, path: self._publish_current_manifest(temporary, path, profile_generation),
             )
+            if published_path is None:
+                return False
             await asyncio.to_thread(_remove_embedding_failures_file, index_path)
             self._snapshot = None
             logger.info(
@@ -2538,6 +2912,7 @@ class ExpressionVectorIndex:
         self,
         *,
         index_path: str,
+        force: bool = False,
     ) -> None:
         """确保历史表达向量补建后台任务正在运行。"""
 
@@ -2545,9 +2920,9 @@ class ExpressionVectorIndex:
             return
 
         now = time.monotonic()
-        if now - self._history_backfill_last_empty_at < HISTORY_BACKFILL_EMPTY_SCAN_INTERVAL_SECONDS:
+        if not force and now - self._history_backfill_last_empty_at < HISTORY_BACKFILL_EMPTY_SCAN_INTERVAL_SECONDS:
             return
-        if now - self._history_backfill_last_failure_at < HISTORY_BACKFILL_FAILURE_RETRY_INTERVAL_SECONDS:
+        if not force and now - self._history_backfill_last_failure_at < HISTORY_BACKFILL_FAILURE_RETRY_INTERVAL_SECONDS:
             return
 
         try:
@@ -2578,11 +2953,21 @@ class ExpressionVectorIndex:
             return
         try:
             task.result()
-        except Exception:
+        except Exception as exc:
             self._history_backfill_last_failure_at = time.monotonic()
+            self._history_backfill_error = str(exc)
             logger.exception("表达向量历史补建任务异常退出")
-            return
-        self._history_backfill_last_failure_at = 0.0
+        else:
+            self._history_backfill_last_failure_at = 0.0
+            self._history_backfill_error = ""
+        if self._history_backfill_wakeup.is_set() and self._history_backfill_index_path is not None:
+            from src.config.config import global_config
+
+            # 旧配置的在途请求失败时，仍立即处理已经收到的新配置通知。
+            if global_config.expression.use_vector_expression:
+                self._history_backfill_last_empty_at = 0.0
+                self._history_backfill_last_failure_at = 0.0
+                self.ensure_history_backfill_task(index_path=self._history_backfill_index_path, force=True)
 
     @staticmethod
     def _calculate_history_backfill_interval(
@@ -2610,20 +2995,25 @@ class ExpressionVectorIndex:
         resolved_index_path = resolve_project_path(index_path)
         effective_batch_size = HISTORY_BACKFILL_BATCH_SIZE
         while True:
+            self._history_backfill_wakeup.clear()
+            resolved_index_path = resolve_project_path(self._history_backfill_index_path or index_path)
             from src.config.config import global_config
 
-            if global_config.expression.expression_selection_mode != "vector_intent":
+            if not global_config.expression.use_vector_expression:
                 logger.info("表达向量历史补建已停止：当前表达选择模式不是向量模式")
                 return
 
             batch_started_at = time.monotonic()
             current_profile = await self.get_current_embedding_profile(index_path=str(resolved_index_path))
+            profile_generation = self._profile_generation
             selection = await asyncio.to_thread(
                 self._load_history_backfill_items,
                 index_path=resolved_index_path,
                 profile=current_profile,
                 batch_size=effective_batch_size,
             )
+            if profile_generation != self._profile_generation:
+                continue
             pending_items = selection.items
             if not pending_items:
                 finalized = await self._finalize_bootstrap_if_ready(
@@ -2631,6 +3021,8 @@ class ExpressionVectorIndex:
                     profile=current_profile,
                 )
                 if not finalized:
+                    continue
+                if self._history_backfill_wakeup.is_set():
                     continue
                 self._history_backfill_last_empty_at = time.monotonic()
                 logger.info(
@@ -2659,7 +3051,10 @@ class ExpressionVectorIndex:
                 f"耗时={elapsed_seconds:.2f}s 下批间隔={interval_seconds:.2f}s"
             )
             if interval_seconds > 0:
-                await asyncio.sleep(interval_seconds)
+                try:
+                    await asyncio.wait_for(self._history_backfill_wakeup.wait(), timeout=interval_seconds)
+                except asyncio.TimeoutError:
+                    pass
 
     async def select_candidates(
         self,

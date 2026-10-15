@@ -1,3 +1,5 @@
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useNavigate, useRouterState } from '@tanstack/react-router'
 import { motion } from 'motion/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -6,9 +8,14 @@ import {
   ChatStreamSettingsDialog,
   type ChatStreamSettingsTarget,
 } from '@/components/chat-stream-settings-dialog'
+import { MOBILE_GLASS_CLASS } from '@/components/layout/mobile-glass'
+import { useHideMobileTabBar } from '@/components/layout/mobile-nav-context'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { useToast } from '@/hooks/use-toast'
+import { Button } from '@/components/ui/button'
 import { uploadWebuiUserAvatar } from '@/lib/avatar-url'
 import { chatWsClient } from '@/lib/chat-ws-client'
+import { getAllChatStreams } from '@/lib/chat-management-api'
 import {
   maisakaMonitorClient,
   type LlmErrorEvent,
@@ -19,14 +26,21 @@ import {
   type StageStatusEvent,
 } from '@/lib/maisaka-monitor-client'
 import { loadUserEmojiPayload, type UserEmojiItem } from '@/lib/user-emoji-api'
+import { cn } from '@/lib/utils'
 import { MaisakaMonitor } from '@/routes/monitor/maisaka-monitor'
-import { useMaisakaMonitor } from '@/routes/monitor/use-maisaka-monitor'
+import { StageStatusLabel } from '@/routes/monitor/StageStatusLabel'
+import { useMaisakaMonitorOverview, type SessionInfo } from '@/routes/monitor/use-maisaka-monitor'
 
 import { ChatComposer } from './ChatComposer'
-import { ChatTabBar } from './ChatTabBar'
 import { ChatWorkspaceSidebar } from './ChatWorkspaceSidebar'
 import { MessageList } from './MessageList'
-import { useObservedAdapterStatuses } from './use-observed-adapter-status'
+import {
+  MobileChatList,
+  MobileChatRoomBar,
+  MobileChatRoomObservedAvatar,
+  MobileChatRoomTabAvatar,
+  MobileFloatingHeader,
+} from './MobileChat'
 import type {
   ChatImageAttachment,
   ChatIncomingImage,
@@ -40,6 +54,7 @@ import type {
   WsMessage,
 } from './types'
 import {
+  getChatTabDisplayName,
   getOrCreateUserId,
   getStoredUserAvatarVersion,
   getStoredUserName,
@@ -240,35 +255,73 @@ function buildRuntimeStatusFromStage(data: StageStatusEvent): ChatRuntimeStatus 
 }
 
 export function ChatPage() {
+  const navigate = useNavigate()
+  const setupTrial = useRouterState({
+    select: (state) => new URLSearchParams(state.location.searchStr).get('setupTrial') === 'true',
+  })
+  const [trialReplied, setTrialReplied] = useState(false)
+  const trialMessagePending = useRef(false)
+  const canOpenMessagePlatform = typeof window.maibotDesktopHost?.openMessagePlatform === 'function'
   const { t, i18n } = useTranslation()
+  const queryClient = useQueryClient()
   const {
     sessions: observedSessions,
     stageStatuses: observedStageStatuses,
-    allTimeline,
+    latestMessages,
     setSelectedSession: setSelectedObservedSession,
-  } = useMaisakaMonitor()
+  } = useMaisakaMonitorOverview()
 
-  // 每个观察聊天流的最新一条消息，用于侧边栏预览（时间线按时间升序，后写覆盖先写）
+  const { data: knownChatStreams = [], isError: knownChatStreamsError } = useQuery({
+    queryKey: ['chat-streams', 'all'],
+    queryFn: getAllChatStreams,
+    staleTime: 30_000,
+  })
+  // 监控中新出现的会话可能刚写入数据库，及时刷新已知聊天流列表。
+  const previousObservedSessionIds = useRef(new Set(observedSessions.keys()))
+  useEffect(() => {
+    const currentIds = new Set(observedSessions.keys())
+    const hasNewSession = Array.from(currentIds).some(
+      (sessionId) => !previousObservedSessionIds.current.has(sessionId)
+    )
+    previousObservedSessionIds.current = currentIds
+    if (hasNewSession) {
+      void queryClient.invalidateQueries({ queryKey: ['chat-streams', 'all'] })
+    }
+  }, [observedSessions, queryClient])
+
+  // 数据库中的真实聊天流为列表来源，实时监控事件只更新对应项的活动时间。
+  const knownSessions = useMemo(() => {
+    const sessions = new Map<string, SessionInfo>()
+    for (const chat of knownChatStreams) {
+      const live = observedSessions.get(chat.session_id)
+      sessions.set(chat.session_id, {
+        sessionId: chat.session_id,
+        sessionName: chat.display_name,
+        isGroupChat: chat.chat_type === 'group',
+        groupId: chat.group_id,
+        userId: chat.user_id,
+        platform: chat.platform,
+        lastActivity: Math.max(
+          chat.last_active_at ?? chat.created_at ?? 0,
+          live?.lastActivity ?? 0
+        ),
+        eventCount: live?.eventCount ?? 0,
+      })
+    }
+    return sessions
+  }, [knownChatStreams, observedSessions])
+
+  // 最新消息由监控仓库增量维护，状态/Planner 更新不再触发扫描全部历史。
   const observedLatestMessages = useMemo(() => {
-    const latestMessages = new Map<string, ObservedMessagePreview>()
-    for (const entry of allTimeline) {
-      if (entry.type !== 'message.ingested' && entry.type !== 'message.sent') {
-        continue
-      }
-      latestMessages.set(
-        entry.sessionId,
+    const previews = new Map<string, ObservedMessagePreview>()
+    for (const [sessionId, entry] of latestMessages) {
+      previews.set(
+        sessionId,
         buildObservedMessagePreview(entry.data as MessageIngestedEvent | MessageSentEvent)
       )
     }
-    return latestMessages
-  }, [allTimeline])
-
-  // 观察聊天流的适配器放行状态，用于侧边栏区分活跃与不活跃聊天
-  const observedSessionIds = useMemo(
-    () => Array.from(observedSessions.keys()),
-    [observedSessions]
-  )
-  const observedAdapterStatuses = useObservedAdapterStatuses(observedSessionIds)
+    return previews
+  }, [latestMessages])
 
   // 默认本地聊天标签页
   const defaultTab: ChatTab = {
@@ -312,6 +365,35 @@ export function ChatPage() {
   const [activeObservedSessionId, setActiveObservedSessionId] = useState(
     getRequestedObservedSessionId
   )
+
+  const activeObservedSession = activeObservedSessionId
+    ? knownSessions.get(activeObservedSessionId)
+    : undefined
+  const activeObservedStatus = activeObservedSessionId
+    ? observedStageStatuses.get(activeObservedSessionId)
+    : undefined
+
+  // 手机端（md 以下）先显示会话列表，点进会话后进入全屏对话页并隐藏底部标签栏
+  const isMobileChat = useMediaQuery('(max-width: 767.98px)')
+  // 手机端观察页的工具栏挂到悬浮顶栏里
+  const [observedToolbarSlot, setObservedToolbarSlot] = useState<HTMLDivElement | null>(null)
+  const [mobileRoomOpen, setMobileRoomOpen] = useState(
+    () => setupTrial || getRequestedObservedSessionId() !== null
+  )
+  useHideMobileTabBar(isMobileChat && mobileRoomOpen)
+
+  // 「麦麦实时」条等入口通过 ?observe= 直达某个聊天流；已在聊天页时也要跟着切换
+  const observeParam = useRouterState({
+    select: (state) => new URLSearchParams(state.location.searchStr).get('observe'),
+  })
+  const [handledObserveParam, setHandledObserveParam] = useState(observeParam)
+  if (observeParam !== handledObserveParam) {
+    setHandledObserveParam(observeParam)
+    if (observeParam) {
+      setActiveObservedSessionId(observeParam)
+      setMobileRoomOpen(true)
+    }
+  }
 
   // 当前活动标签页
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0]
@@ -466,6 +548,11 @@ export function ChatPage() {
         }
 
         case 'bot_message': {
+          // Only a live reply after this trial's own message completes the trial, not loaded history.
+          if (tabId === 'webui-default' && trialMessagePending.current && (data.content?.trim() || data.segments?.length)) {
+            trialMessagePending.current = false
+            setTrialReplied(true)
+          }
           updateTab(tabId, { isTyping: false, runtimeStatus: null })
           const processedSet = processedMessagesMapRef.current.get(tabId) || new Set()
           const contentHash = `bot-${data.content}-${Math.floor((data.timestamp || 0) * 1000)}`
@@ -856,6 +943,7 @@ export function ChatPage() {
     setSelectedImages([])
 
     try {
+      if (setupTrial && activeTabId === 'webui-default') trialMessagePending.current = true
       await chatWsClient.sendMessage(activeTabId, messageContent, displayName, {
         images: imagesToSend.map((image) => ({
           name: image.name,
@@ -864,6 +952,7 @@ export function ChatPage() {
         })),
       })
     } catch (error) {
+      if (activeTabId === 'webui-default') trialMessagePending.current = false
       console.error('发送聊天消息失败:', error)
       setTabs((prev) =>
         prev.map((tab) => {
@@ -881,7 +970,7 @@ export function ChatPage() {
         variant: 'destructive',
       })
     }
-  }, [activeTab, activeTabId, addMessageToTab, inputValue, selectedImages, t, toast, userName])
+  }, [activeTab, activeTabId, addMessageToTab, inputValue, selectedImages, setupTrial, t, toast, userName])
 
   const sendUserEmoji = useCallback(
     async (item: UserEmojiItem) => {
@@ -920,8 +1009,7 @@ export function ChatPage() {
     [activeTab, activeTabId, addMessageToTab, t, userName]
   )
 
-  // 处理键盘事件
-  // 处理昵称变更（来自侧边栏）
+  // 处理输入区的图片附件
   const handleAddImages = useCallback(
     async (files: FileList) => {
       const imageFiles = Array.from(files).filter((file) => file.type.startsWith('image/'))
@@ -973,6 +1061,7 @@ export function ChatPage() {
     setSelectedImages((prev) => prev.filter((image) => image.id !== id))
   }, [])
 
+  // 处理输入框左侧设置中的昵称变更
   const handleUpdateUserName = useCallback(
     (newName: string) => {
       const trimmed = newName.trim() || t('chat.userNameFallback')
@@ -1075,7 +1164,7 @@ export function ChatPage() {
 
   // 在页内直接打开观察聊天流的设置弹窗，不再跳转到聊天管理页
   const openObservedSettings = (sessionId: string) => {
-    const info = observedSessions.get(sessionId)
+    const info = knownSessions.get(sessionId)
     setSettingsChat({
       session_id: sessionId,
       display_name: info?.sessionName || sessionId,
@@ -1102,26 +1191,43 @@ export function ChatPage() {
           tabs={tabs}
           activeTabId={activeTabId}
           activeObservedSessionId={activeObservedSessionId}
-          observedSessions={observedSessions}
+          observedSessions={knownSessions}
+          observedSessionsError={knownChatStreamsError}
           observedStageStatuses={observedStageStatuses}
           observedLatestMessages={observedLatestMessages}
-          observedAdapterStatuses={observedAdapterStatuses}
-          userId={userId}
-          userName={userName}
-          userAvatarVersion={userAvatarVersion}
-          isUploadingUserAvatar={isUploadingUserAvatar}
           onSwitch={switchTab}
           onSelectObserved={selectObservedSession}
           onOpenObservedSettings={openObservedSettings}
           onClose={closeTab}
-          onUpdateUserAvatar={handleUpdateUserAvatar}
-          onUpdateUserName={handleUpdateUserName}
         />
       </motion.div>
 
+      {/* 移动端：会话列表（未进入对话时） */}
+      {!mobileRoomOpen && (
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col md:hidden">
+          <MobileChatList
+            tabs={tabs}
+            observedSessions={knownSessions}
+            observedSessionsError={knownChatStreamsError}
+            observedStageStatuses={observedStageStatuses}
+            observedLatestMessages={observedLatestMessages}
+            onOpenTab={(tabId) => {
+              switchTab(tabId)
+              setMobileRoomOpen(true)
+            }}
+            onOpenObserved={(sessionId) => {
+              selectObservedSession(sessionId)
+              setMobileRoomOpen(true)
+            }}
+            onOpenObservedSettings={openObservedSettings}
+            onClose={(tabId) => closeTab(tabId)}
+          />
+        </div>
+      )}
+
       {/* 主聊天区 */}
       <motion.div
-        className="flex min-w-0 flex-1 flex-col"
+        className={cn('flex min-w-0 flex-1 flex-col', !mobileRoomOpen && 'max-md:hidden')}
         variants={{
           initial: { opacity: 0, y: '100%' },
           animate: { opacity: 1, y: 0 },
@@ -1133,31 +1239,83 @@ export function ChatPage() {
         }}
         transition={{ type: 'spring', stiffness: 360, damping: 30, mass: 0.75 }}
       >
-        {/* 移动端会话切换条 */}
+        {setupTrial && (
+          <section className="bg-card mx-4 mt-4 flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-lg border p-4" aria-live="polite">
+            <div>
+              <p className="text-sm font-semibold">{t(trialReplied ? 'chat.setupTrial.repliedTitle' : 'chat.setupTrial.title')}</p>
+              <p className="text-muted-foreground mt-1 text-xs">{t(trialReplied ? 'chat.setupTrial.repliedDescription' : 'chat.setupTrial.description')}</p>
+            </div>
+            {trialReplied && (
+              <div className="flex gap-2">
+                <Button variant="ghost" size="sm" onClick={() => navigate({ to: '/chat', search: {}, replace: true })}>
+                  {t('chat.setupTrial.keepChatting')}
+                </Button>
+                {canOpenMessagePlatform && (
+                  <Button size="sm" onClick={() => {
+                    window.maibotDesktopHost!.openMessagePlatform()
+                    void navigate({ to: '/chat', search: {}, replace: true })
+                  }}>{t('chat.setupTrial.continue')}</Button>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+        {/* 移动端对话页顶栏：返回列表、会话名片与单个操作；观察页的顶栏悬浮在时间线上方 */}
         <div className="md:hidden">
-          <ChatTabBar
-            tabs={tabs}
-            activeTabId={activeTabId}
-            activeObservedSessionId={activeObservedSessionId}
-            observedSessions={observedSessions}
-            userId={userId}
-            userName={userName}
-            userAvatarVersion={userAvatarVersion}
-            isUploadingUserAvatar={isUploadingUserAvatar}
-            onSwitch={switchTab}
-            onSelectObserved={selectObservedSession}
-            onOpenObservedSettings={openObservedSettings}
-            onClose={closeTab}
-            onUpdateUserAvatar={handleUpdateUserAvatar}
-          />
+          {!activeObservedSessionId && activeTab && (
+            <MobileChatRoomBar
+              title={getChatTabDisplayName(activeTab, t('chat.botNameFallback'))}
+              subtitle={
+                activeTab.isConnected ? t('chat.sidebar.online') : t('chat.sidebar.offline')
+              }
+              online={activeTab.isConnected}
+              avatar={<MobileChatRoomTabAvatar tab={activeTab} />}
+              onBack={() => setMobileRoomOpen(false)}
+              userAvatar={{
+                userId,
+                userName,
+                userAvatarVersion,
+                isUploading: isUploadingUserAvatar,
+                onUpdate: handleUpdateUserAvatar,
+              }}
+            />
+          )}
         </div>
 
         {activeObservedSessionId ? (
-          <div className="min-h-0 min-w-0 flex-1" data-chat-observed-session>
+          <div className="relative min-h-0 min-w-0 flex-1" data-chat-observed-session>
             <MaisakaMonitor
               embedded
               reasoningReturnTo={`/chat?observe=${encodeURIComponent(activeObservedSessionId)}`}
+              floatingToolbarContainer={isMobileChat ? observedToolbarSlot : undefined}
             />
+            {isMobileChat && (
+              <MobileFloatingHeader>
+                <MobileChatRoomBar
+                  title={activeObservedSession?.sessionName ?? activeObservedSessionId}
+                  subtitle={
+                    activeObservedStatus ? (
+                      <StageStatusLabel status={activeObservedStatus} />
+                    ) : (
+                      t('chat.sidebar.observedBadge')
+                    )
+                  }
+                  online={activeObservedStatus !== undefined}
+                  avatar={
+                    activeObservedSession ? (
+                      <MobileChatRoomObservedAvatar session={activeObservedSession} />
+                    ) : null
+                  }
+                  onBack={() => setMobileRoomOpen(false)}
+                  onOpenSettings={() => openObservedSettings(activeObservedSessionId)}
+                />
+                <div
+                  ref={setObservedToolbarSlot}
+                  data-mobile-floating-toolbar="true"
+                  className={cn('mx-3 mb-2 overflow-hidden rounded-full', MOBILE_GLASS_CLASS)}
+                />
+              </MobileFloatingHeader>
+            )}
           </div>
         ) : (
           <>
@@ -1194,6 +1352,11 @@ export function ChatPage() {
               images={selectedImages}
               isConnected={!!activeTab?.isConnected}
               userId={userId}
+              userName={userName}
+              userAvatarVersion={userAvatarVersion}
+              isUploadingUserAvatar={isUploadingUserAvatar}
+              onUpdateUserAvatar={handleUpdateUserAvatar}
+              onUpdateUserName={handleUpdateUserName}
             />
           </>
         )}

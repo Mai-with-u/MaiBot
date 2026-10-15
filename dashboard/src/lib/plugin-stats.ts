@@ -21,10 +21,18 @@ export interface PluginStatsData {
   liked?: boolean
   disliked?: boolean
   downloads: number
+  /** 全市场飙升排名，1～30；未上榜为 null，旧统计接口可能不提供。 */
+  downloads_growth_rank_7d?: number | null
+  likes_growth_rank_7d?: number | null
+  downloads_growth_rank_30d?: number | null
+  likes_growth_rank_30d?: number | null
   rating: number
   rating_count: number
+  comment_count: number
   recent_ratings?: Array<{
     user_id: string
+    username?: string | null
+    anonymous?: boolean
     rating?: number | null
     comment?: string
     created_at: string
@@ -51,6 +59,7 @@ export interface RatingStatsResponse extends StatsResponse {
   comment?: string | null
   rating?: number
   rating_count?: number
+  comment_count?: number
 }
 
 export interface DownloadStatsResponse extends StatsResponse {
@@ -63,6 +72,25 @@ export interface PluginUserState {
   disliked: boolean
   rating: number | null
   comment: string
+  username?: string | null
+  anonymous?: boolean
+}
+
+export interface PluginReviewIdentity {
+  username: string
+  anonymous: boolean
+}
+
+/** 获取本地 bot 昵称；此请求不会发往插件统计服务。 */
+export async function getPluginReviewIdentity(): Promise<{ username: string }> {
+  return backendApi.get<{ username: string }>(`${STATS_API_BASE_URL}/identity`, {
+    errorMessage: '获取默认评论用户名失败',
+  })
+}
+
+export interface PluginVoteState {
+  liked: boolean
+  disliked: boolean
 }
 
 interface PluginStatsSummaryResponse {
@@ -84,6 +112,7 @@ function createEmptyStats(pluginId: string): PluginStatsData {
     downloads: 0,
     rating: 0,
     rating_count: 0,
+    comment_count: 0,
   }
 }
 
@@ -106,6 +135,7 @@ function normalizePluginStatsResponse(data: unknown, pluginId: string): PluginSt
     downloads: Number(stats.downloads ?? 0),
     rating: Number(stats.rating ?? 0),
     rating_count: Number(stats.rating_count ?? 0),
+    comment_count: Number(stats.comment_count ?? 0),
     recent_ratings: Array.isArray(stats.recent_ratings) ? stats.recent_ratings : undefined,
   }
 }
@@ -274,10 +304,41 @@ export async function getPluginUserState(
       disliked: data.disliked === true,
       rating: data.rating == null ? null : Number(data.rating),
       comment: typeof data.comment === 'string' ? data.comment : '',
+      ...(data.username !== undefined ? { username: data.username } : {}),
+      ...(data.anonymous !== undefined ? { anonymous: data.anonymous } : {}),
     }
   } catch (error) {
     console.error('Error fetching plugin user state:', error)
     return null
+  }
+}
+
+/**
+ * 批量获取当前用户对所有插件的点赞/点踩状态，键为插件 ID
+ */
+export async function getPluginUserStates(
+  userId: string = getUserId()
+): Promise<Record<string, PluginVoteState>> {
+  try {
+    const data = await backendApi.get<{
+      success?: boolean
+      states?: Record<string, Partial<PluginVoteState>>
+    }>(`${STATS_API_BASE_URL}/stats/user-states`, {
+      query: { user_id: userId },
+    })
+    if (!data.success || !data.states || typeof data.states !== 'object') {
+      return {}
+    }
+
+    return Object.fromEntries(
+      Object.entries(data.states).map(([pluginId, state]) => [
+        pluginId,
+        { liked: state.liked === true, disliked: state.disliked === true },
+      ])
+    )
+  } catch (error) {
+    console.error('Error fetching plugin user states:', error)
+    return {}
   }
 }
 
@@ -390,7 +451,8 @@ export async function ratePlugin(
   pluginId: string,
   rating?: number | null,
   comment?: string | null,
-  userId?: string
+  userId?: string,
+  identity?: PluginReviewIdentity
 ): Promise<RatingStatsResponse> {
   const hasRating = rating !== undefined && rating !== null
   const hasComment = comment !== undefined
@@ -410,6 +472,8 @@ export async function ratePlugin(
       user_id: string
       rating?: number
       comment?: string | null
+      username?: string
+      anonymous?: boolean
     } = { plugin_id: pluginId, user_id: finalUserId }
 
     if (hasRating) {
@@ -417,6 +481,16 @@ export async function ratePlugin(
     }
     if (hasComment) {
       payload.comment = comment
+    }
+    if (identity) {
+      payload.anonymous = identity.anonymous
+      if (!identity.anonymous) {
+        const username = identity.username.trim()
+        if (!username || username.length > 100) {
+          return { success: false, error: '用户名需要填写 1-100 个字符' }
+        }
+        payload.username = username
+      }
     }
 
     const data = await backendApi.post<Omit<RatingStatsResponse, 'success'>>(
@@ -433,6 +507,9 @@ export async function ratePlugin(
     }
     if (result.rating_count !== undefined) {
       updatedStats.rating_count = Number(result.rating_count)
+    }
+    if (result.comment_count !== undefined) {
+      updatedStats.comment_count = Number(result.comment_count)
     }
     updateCachedPluginStats(pluginId, updatedStats)
     return result

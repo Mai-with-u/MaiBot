@@ -6,7 +6,11 @@ RouteKey”约定下来，避免 legacy 和 plugin 两条链路各自发明一�
 
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
+from src.common.logger import get_logger
+
 from .types import RouteKey
+
+logger = get_logger("platform_io.route_key")
 
 if TYPE_CHECKING:
     from src.chat.message_receive.message import SessionMessage
@@ -15,14 +19,8 @@ if TYPE_CHECKING:
 class RouteKeyFactory:
     """统一构造 ``RouteKey`` 的工厂。
 
-    当前约定会优先从消息字典顶层、``message_info``、``additional_config`` 或传入 metadata 中提取
-    以下字段：
-
-    - account_id: ``platform_io_account_id`` / ``account_id`` / ``self_id`` / ``bot_account``
-    - scope: ``platform_io_scope`` / ``route_scope`` / ``adapter_scope`` / ``connection_id``
-
-    这样即使上游主链暂时还没有正式的 ``self_id`` 字段，中间层也能先统一
-    约定提取口径，等具体消息链接入时直接复用。
+    消息顶层 ``account_id`` 和可选 ``scope`` 是正式归属字段。
+    暂时兼容旧消息的别名及 additional_config/route_metadata，下个版本移除。
     """
 
     ACCOUNT_ID_KEYS = (
@@ -66,7 +64,9 @@ class RouteKeyFactory:
         )
 
     @classmethod
-    def from_message_dict(cls, message_dict: Dict[str, Any]) -> RouteKey:
+    def from_message_dict(
+        cls, message_dict: Dict[str, Any], legacy_metadata: Optional[Dict[str, Any]] = None
+    ) -> RouteKey:
         """从消息字典中提取 ``RouteKey``。
 
         Args:
@@ -89,13 +89,24 @@ class RouteKeyFactory:
             if isinstance(raw_additional_config, dict):
                 additional_config = raw_additional_config
 
+        if "account_id" in message_dict:
+            account_id = cls._formal_value(message_dict["account_id"], "account_id")
+            scope = cls._formal_value(message_dict.get("scope"), "scope")
+            return RouteKey(platform=platform, account_id=account_id, scope=scope)
+
+        # 暂时兼容旧消息归属字段；下个版本移除，适配器必须迁移到顶层 account_id/scope。
         explicit_account_id, explicit_scope = cls.extract_components(message_dict)
         message_info_account_id, message_info_scope = cls.extract_components(message_info)
         metadata_account_id, metadata_scope = cls.extract_components(additional_config)
+        route_account_id, route_scope = cls.extract_components(legacy_metadata)
+        logger.warning(
+            "消息使用旧版路由归属格式，该特性将在下个版本移除，请及时迁移到消息顶层 account_id/scope: "
+            f"platform={platform}, message_id={message_dict.get('message_id', '')}"
+        )
         return RouteKey(
             platform=platform,
-            account_id=explicit_account_id or message_info_account_id or metadata_account_id,
-            scope=explicit_scope or message_info_scope or metadata_scope,
+            account_id=explicit_account_id or message_info_account_id or metadata_account_id or route_account_id,
+            scope=explicit_scope or message_info_scope or metadata_scope or route_scope,
         )
 
     @classmethod
@@ -108,9 +119,22 @@ class RouteKeyFactory:
         Returns:
             RouteKey: 构造出的规范化路由键。
         """
-        additional_config = message.message_info.additional_config or {}
-        metadata = additional_config if isinstance(additional_config, dict) else {}
-        return cls.from_platform(message.platform, metadata=metadata)
+        if message.account_id is not None:
+            return RouteKey(platform=message.platform, account_id=message.account_id, scope=message.scope)
+        return cls.from_message_dict({
+            "platform": message.platform,
+            "message_id": message.message_id,
+            "message_info": {"additional_config": message.message_info.additional_config},
+        })
+
+    @staticmethod
+    def _formal_value(value: Any, name: str) -> Optional[str]:
+        """正式字段只接受字符串；空值不允许被旧字段静默覆盖。"""
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError(f"消息 {name} 必须是字符串或 None")
+        return value.strip() or None
 
     @classmethod
     def extract_components(cls, mapping: Optional[Dict[str, Any]]) -> Tuple[Optional[str], Optional[str]]:

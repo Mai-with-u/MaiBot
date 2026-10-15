@@ -237,7 +237,7 @@ def test_person_fact_backfill_preserves_content_without_semantic_guessing(tmp_pa
             store.add_paragraph(
                 content=text,
                 source="person_fact:person-1",
-                metadata={"person_id": "person-1", "evidence_source": "user_supported"},
+                metadata={"person_id": "person-1", "evidence_source": "summary_derived"},
                 knowledge_type="factual",
             )
             for text in ("用户不是素食主义者。", "用户的职业是测试工程师。", "用户居住在旧金山。")

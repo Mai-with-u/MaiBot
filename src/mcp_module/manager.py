@@ -5,7 +5,7 @@ MaiSaka - MCP 管理器
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Callable, List, Optional
 
 import asyncio
 
@@ -139,6 +139,7 @@ class MCPManager:
         """
 
         self._server_configs = {config.name: config for config in configs}
+        pending_connections: List[MCPConnection] = []
 
         async def connect_one(config: MCPServerRuntimeConfig) -> tuple[MCPServerRuntimeConfig, MCPConnection, bool]:
             """并行建立一个服务连接，但保持后续注册顺序稳定。"""
@@ -149,6 +150,7 @@ class MCPManager:
                 self._host_callbacks,
                 discover_extended_features=self._discover_extended_features,
             )
+            pending_connections.append(connection)
             connect_timeout_seconds = (
                 min(60.0, max(5.0, config.http_timeout_seconds + 5.0))
                 if config.transport != "stdio"
@@ -165,7 +167,13 @@ class MCPManager:
                 success = False
             return config, connection, success
 
-        connection_results = await asyncio.gather(*(connect_one(config) for config in configs))
+        try:
+            connection_results = await asyncio.gather(*(connect_one(config) for config in configs))
+        except BaseException:
+            # 建连批次被取消时，已成功的连接尚未注册，但其持有任务仍在运行。
+            # 必须连同仍在建连的连接一起关闭，再传播原始异常。
+            await asyncio.shield(asyncio.gather(*(connection.close() for connection in pending_connections)))
+            raise
         for config, connection, success in connection_results:
             if not success:
                 self._connection_errors[config.name] = connection.last_error or "连接失败"
@@ -183,6 +191,14 @@ class MCPManager:
                 f"资源 {registered_resource_count} / 模板 {registered_template_count})[/muted]"
             )
 
+    def add_status_change_callback(self, callback: Callable[[], None]) -> None:
+        """在连接持有任务结束后通知订阅者刷新状态；须在管理器建连完成后调用。"""
+
+        for connection in self._connections.values():
+            task = connection._lifecycle_task
+            if task is not None:
+                task.add_done_callback(lambda _task: callback())
+
     def get_status_snapshot(self) -> dict[str, Any]:
         """返回可跨线程读取的纯数据连接状态快照。"""
 
@@ -196,7 +212,11 @@ class MCPManager:
                     "connected": connection is not None and connection.session is not None,
                     "protocol_version": connection.protocol_version if connection is not None else "",
                     "tool_count": len(connection.tools) if connection is not None else 0,
-                    "error": self._connection_errors.get(server_name, ""),
+                    "error": (
+                        connection.last_error
+                        if connection is not None
+                        else self._connection_errors.get(server_name, "")
+                    ),
                 }
             )
         return {

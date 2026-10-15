@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { DraftNumberInput } from '@/components/ui/draft-number-input'
 import { Input } from '@/components/ui/input'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Slider } from '@/components/ui/slider'
@@ -45,6 +46,8 @@ import {
   Save,
   RotateCcw,
   Loader2,
+  MoreHorizontal,
+  FileArchive,
   Search,
   ArrowLeft,
   Info,
@@ -62,10 +65,14 @@ import {
   X,
 } from 'lucide-react'
 import { RestartProvider, useRestart } from '@/lib/restart-context'
+import { cn } from '@/lib/utils'
 import { RestartOverlay } from '@/components/restart-overlay'
+import { MOBILE_GLASS_CLASS } from '@/components/layout/mobile-glass'
+import { MobileHeaderActions } from '@/components/layout/MobileHeaderActions'
 import { getLocalPluginChangelog, getLocalPluginReadme, getPluginRuntimeComponents } from '@/lib/plugin-api'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { PluginStats } from '@/components/plugin-stats'
+import { PluginWebUIManagerPanel } from '@/components/plugin-webui-manager'
 import type {
   InstalledPlugin,
   ConfigFieldSchema,
@@ -75,12 +82,15 @@ import type {
   PluginRuntimeComponentType,
 } from '@/lib/plugin-api'
 import { PluginIcon } from './plugins/PluginIcon'
+import { ZipInstallDialog } from './plugins/ZipInstallDialog'
 import { getPluginType, getPluginTypeLabel } from './plugins/types'
 import { AdapterHostPolicyPanel } from './plugin-config/AdapterHostPolicyPanel'
+import { AdapterPolicyDefaultsCard } from './plugin-config/AdapterPolicyDefaultsCard'
 import { getNestedRecord, getPluginMarketplaceRoutePath, isAdapterManagementPath } from './plugin-config/utils'
 import { usePluginList } from './plugin-config/hooks/usePluginList'
 import { usePluginLifecycle } from './plugin-config/hooks/usePluginLifecycle'
 import { usePluginConfigEditor } from './plugin-config/hooks/usePluginConfigEditor'
+import { MCPExtensionList, MCPSettingsPage } from './mcp-settings'
 
 // 字段渲染组件
 interface FieldRendererProps {
@@ -400,7 +410,7 @@ function SectionRenderer({ sectionName, section, config, onChange }: SectionRend
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
       <Card>
         <CollapsibleTrigger asChild>
-          <CardHeader className="hover:bg-muted/50 cursor-pointer gap-0.5 px-4! py-2! transition-colors sm:px-4! sm:py-2!">
+          <CardHeader className="hover:bg-muted/50 cursor-pointer space-y-0 gap-0.5 px-4! py-1.5! transition-colors sm:px-4! sm:py-1.5!">
             <div className="flex items-center">
               <div className="flex min-w-0 items-center gap-2">
                 {isOpen ? (
@@ -494,37 +504,15 @@ function groupComponentsByDisplayGroup(components: PluginRuntimeComponent[]) {
   )
 }
 
-function PluginDetailsPanel({
-  plugin,
-  description,
-  detailItems,
-  homepageUrl,
-  repositoryUrl,
-  documentationUrl,
-  issuesUrl,
-  changelog,
-}: PluginDetailsPanelProps) {
+function PluginRuntimeComponentsPanel({ pluginId }: { pluginId: string }) {
   const [components, setComponents] = useState<PluginRuntimeComponent[]>([])
   const [componentsLoading, setComponentsLoading] = useState(true)
   const [componentsError, setComponentsError] = useState('')
-  const [readme, setReadme] = useState('')
-  const [readmeLoading, setReadmeLoading] = useState(true)
-  const [readmeError, setReadmeError] = useState('')
-  const [loadedPluginId, setLoadedPluginId] = useState(plugin.id)
-  if (loadedPluginId !== plugin.id) {
-    setLoadedPluginId(plugin.id)
-    setComponents([])
-    setComponentsLoading(true)
-    setComponentsError('')
-    setReadme('')
-    setReadmeLoading(true)
-    setReadmeError('')
-  }
 
   useEffect(() => {
     let cancelled = false
 
-    getPluginRuntimeComponents(plugin.id)
+    getPluginRuntimeComponents(pluginId)
       .then((data) => {
         if (!cancelled) {
           setComponents(data)
@@ -544,7 +532,142 @@ function PluginDetailsPanel({
     return () => {
       cancelled = true
     }
-  }, [plugin.id])
+  }, [pluginId])
+
+  const groupedComponents = groupComponentsByDisplayGroup(components)
+  const componentCount = components.length
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <CardTitle>注册组件</CardTitle>
+            <CardDescription>当前插件运行时已注册的 Tool、旧版 Action 和 Command。</CardDescription>
+          </div>
+          <Badge variant="secondary">{componentCount} 个组件</Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {componentsLoading ? (
+          <div className="text-muted-foreground flex items-center justify-center gap-2 py-8 text-sm">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            正在加载组件
+          </div>
+        ) : componentsError ? (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{componentsError}</AlertDescription>
+          </Alert>
+        ) : componentCount === 0 ? (
+          <div className="text-muted-foreground rounded-md border border-dashed px-4 py-8 text-center text-sm">
+            当前插件未注册运行时组件
+          </div>
+        ) : (
+          <div className="grid gap-4 lg:grid-cols-2">
+            {(Object.keys(COMPONENT_GROUP_LABELS) as ComponentDisplayGroup[]).map((componentGroup) => {
+              const Icon = COMPONENT_GROUP_ICONS[componentGroup]
+              const typedComponents = groupedComponents[componentGroup]
+              return (
+                <section key={componentGroup} className="min-w-0 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <h3 className="flex items-center gap-2 text-sm font-semibold">
+                        <Icon className="h-4 w-4 text-muted-foreground" />
+                        {COMPONENT_GROUP_LABELS[componentGroup]}
+                      </h3>
+                      <p className="text-muted-foreground mt-1 text-xs">
+                        {COMPONENT_GROUP_DESCRIPTIONS[componentGroup]}
+                      </p>
+                    </div>
+                    <Badge variant="outline">{typedComponents.length}</Badge>
+                  </div>
+                  {typedComponents.length === 0 ? (
+                    <div className="text-muted-foreground rounded-md border border-dashed px-3 py-4 text-center text-xs">
+                      暂无{COMPONENT_GROUP_LABELS[componentGroup]}组件
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {typedComponents.map((component) => {
+                        const schemaProperties = getSchemaPropertyNames(component.parameters_schema)
+                        return (
+                          <div key={`${component.component_type}-${component.name}`} className="rounded-md border p-3">
+                            <div className="mb-2 flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="break-words text-sm font-medium">{component.name}</div>
+                                {component.description && (
+                                  <p className="text-muted-foreground mt-1 line-clamp-3 text-xs">
+                                    {component.description}
+                                  </p>
+                                )}
+                              </div>
+                              <Badge variant={component.enabled ? 'default' : 'secondary'} className="shrink-0">
+                                {component.enabled ? '启用' : '禁用'}
+                              </Badge>
+                            </div>
+                            <Badge variant="outline" className="mb-2 text-[0.68rem]">
+                              {COMPONENT_TYPE_LABELS[component.component_type]}
+                            </Badge>
+
+                            {component.component_type === 'action' && (
+                              <div className="text-muted-foreground space-y-1 text-xs">
+                                {component.activation_type && <div>触发方式：{component.activation_type}</div>}
+                                {component.activation_keywords && component.activation_keywords.length > 0 && (
+                                  <div className="flex flex-wrap gap-1">
+                                    {component.activation_keywords.map((keyword) => (
+                                      <Badge key={keyword} variant="outline" className="text-[0.68rem]">
+                                        {keyword}
+                                      </Badge>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {component.component_type === 'tool' && schemaProperties.length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-1">
+                                {schemaProperties.map((propertyName) => (
+                                  <Badge key={propertyName} variant="outline" className="text-[0.68rem]">
+                                    {propertyName}
+                                  </Badge>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </section>
+              )
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function PluginDetailsPanel({
+  plugin,
+  description,
+  detailItems,
+  homepageUrl,
+  repositoryUrl,
+  documentationUrl,
+  issuesUrl,
+  changelog,
+}: PluginDetailsPanelProps) {
+  const [readme, setReadme] = useState('')
+  const [readmeLoading, setReadmeLoading] = useState(true)
+  const [readmeError, setReadmeError] = useState('')
+  const [loadedPluginId, setLoadedPluginId] = useState(plugin.id)
+  if (loadedPluginId !== plugin.id) {
+    setLoadedPluginId(plugin.id)
+    setReadme('')
+    setReadmeLoading(true)
+    setReadmeError('')
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -571,226 +694,119 @@ function PluginDetailsPanel({
     }
   }, [plugin.id])
 
-  const groupedComponents = groupComponentsByDisplayGroup(components)
-  const componentCount = components.length
   const statsPluginId = plugin.manifest.id || plugin.id
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)]">
-        <Card>
-          <CardHeader>
-            <CardTitle>插件详情</CardTitle>
-            <CardDescription>{description || '暂无描述'}</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-              {detailItems.map((item) => (
-                <div key={item.label} className="bg-muted/20 min-w-0 rounded-md border px-3 py-2">
-                  <div className="text-muted-foreground text-xs font-medium">{item.label}</div>
-                  <div className="mt-1 text-sm break-words">{item.value}</div>
+      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(360px,1fr)]">
+        <div className="min-w-0 space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>README</CardTitle>
+              <CardDescription>插件根目录中的说明文档。</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {readmeLoading ? (
+                <div className="text-muted-foreground flex items-center justify-center gap-2 py-8 text-sm">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  正在加载 README
                 </div>
-              ))}
-            </div>
-            {(homepageUrl || repositoryUrl || documentationUrl || issuesUrl) && (
-              <div className="flex flex-wrap gap-2">
-                {homepageUrl && (
-                  <Button variant="outline" size="sm" asChild>
-                    <a href={homepageUrl} target="_blank" rel="noreferrer">
-                      主页
-                    </a>
-                  </Button>
-                )}
-                {repositoryUrl && (
-                  <Button variant="outline" size="sm" asChild>
-                    <a href={repositoryUrl} target="_blank" rel="noreferrer">
-                      仓库
-                    </a>
-                  </Button>
-                )}
-                {documentationUrl && (
-                  <Button variant="outline" size="sm" asChild>
-                    <a href={documentationUrl} target="_blank" rel="noreferrer">
-                      文档
-                    </a>
-                  </Button>
-                )}
-                {issuesUrl && (
-                  <Button variant="outline" size="sm" asChild>
-                    <a href={issuesUrl} target="_blank" rel="noreferrer">
-                      问题反馈
-                    </a>
-                  </Button>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+              ) : readmeError ? (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{readmeError}</AlertDescription>
+                </Alert>
+              ) : readme ? (
+                <MarkdownRenderer content={readme} />
+              ) : (
+                <div className="text-muted-foreground rounded-md border border-dashed px-4 py-8 text-center text-sm">
+                  暂无 README
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>市场反馈</CardTitle>
-            <CardDescription>点赞、评分和评论会提交到插件市场统计服务。</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <PluginStats pluginId={statsPluginId} />
-          </CardContent>
-        </Card>
+        <div className="min-w-0 space-y-4">
+          <Card>
+            <CardHeader className="p-3 sm:p-3">
+              <CardTitle>插件详情</CardTitle>
+              <CardDescription>{description || '暂无描述'}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 p-3 pt-0 sm:p-3 sm:pt-0">
+              <dl className="grid gap-x-4 gap-y-2 sm:grid-cols-2 xl:grid-cols-1">
+                {detailItems.map((item) => (
+                  <div key={item.label} className={`flex min-w-0 gap-2 text-sm ${item.label === '安装路径' ? 'sm:col-span-2 xl:col-span-1' : ''}`}>
+                    <dt className="text-muted-foreground shrink-0">{item.label}</dt>
+                    <dd className="min-w-0 break-words [overflow-wrap:anywhere]">{item.value}</dd>
+                  </div>
+                ))}
+              </dl>
+              {(homepageUrl || repositoryUrl || documentationUrl || issuesUrl) && (
+                <div className="flex flex-wrap gap-2">
+                  {homepageUrl && (
+                    <Button variant="outline" size="sm" asChild>
+                      <a href={homepageUrl} target="_blank" rel="noreferrer">
+                        主页
+                      </a>
+                    </Button>
+                  )}
+                  {repositoryUrl && (
+                    <Button variant="outline" size="sm" asChild>
+                      <a href={repositoryUrl} target="_blank" rel="noreferrer">
+                        仓库
+                      </a>
+                    </Button>
+                  )}
+                  {documentationUrl && (
+                    <Button variant="outline" size="sm" asChild>
+                      <a href={documentationUrl} target="_blank" rel="noreferrer">
+                        文档
+                      </a>
+                    </Button>
+                  )}
+                  {issuesUrl && (
+                    <Button variant="outline" size="sm" asChild>
+                      <a href={issuesUrl} target="_blank" rel="noreferrer">
+                        问题反馈
+                      </a>
+                    </Button>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="p-3 sm:p-3">
+              <CardTitle>市场反馈</CardTitle>
+              <CardDescription>点赞、评分和评论会提交到插件市场统计服务。</CardDescription>
+            </CardHeader>
+            <CardContent className="p-3 pt-0 sm:p-3 sm:pt-0">
+              <PluginStats pluginId={statsPluginId} />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="p-3 sm:p-3">
+              <CardTitle>更新日志</CardTitle>
+              <CardDescription>插件作者提供的版本变更记录。</CardDescription>
+            </CardHeader>
+            <CardContent className="p-3 pt-0 sm:p-3 sm:pt-0">
+              {changelog ? (
+                <ScrollArea className="h-[min(48vh,540px)] pr-4">
+                  <MarkdownRenderer content={changelog} />
+                </ScrollArea>
+              ) : (
+                <div className="text-muted-foreground rounded-md border border-dashed px-4 py-8 text-center text-sm">
+                  暂无更新日志
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>README</CardTitle>
-          <CardDescription>插件根目录中的说明文档。</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {readmeLoading ? (
-            <div className="text-muted-foreground flex items-center justify-center gap-2 py-8 text-sm">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              正在加载 README
-            </div>
-          ) : readmeError ? (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>{readmeError}</AlertDescription>
-            </Alert>
-          ) : readme ? (
-            <ScrollArea className="h-[min(48vh,540px)] pr-4">
-              <MarkdownRenderer content={readme} />
-            </ScrollArea>
-          ) : (
-            <div className="text-muted-foreground rounded-md border border-dashed px-4 py-8 text-center text-sm">
-              暂无 README
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>更新日志</CardTitle>
-          <CardDescription>插件作者提供的版本变更记录。</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {changelog ? (
-            <ScrollArea className="h-[min(36vh,420px)] pr-4">
-              <MarkdownRenderer content={changelog} />
-            </ScrollArea>
-          ) : (
-            <div className="text-muted-foreground rounded-md border border-dashed px-4 py-8 text-center text-sm">
-              暂无更新日志
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <CardTitle>注册组件</CardTitle>
-              <CardDescription>当前插件运行时已注册的 Tool、旧版 Action 和 Command。</CardDescription>
-            </div>
-            <Badge variant="secondary">{componentCount} 个组件</Badge>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {componentsLoading ? (
-            <div className="text-muted-foreground flex items-center justify-center gap-2 py-8 text-sm">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              正在加载组件
-            </div>
-          ) : componentsError ? (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>{componentsError}</AlertDescription>
-            </Alert>
-          ) : componentCount === 0 ? (
-            <div className="text-muted-foreground rounded-md border border-dashed px-4 py-8 text-center text-sm">
-              当前插件未注册运行时组件
-            </div>
-          ) : (
-            <div className="grid gap-4 lg:grid-cols-2">
-              {(Object.keys(COMPONENT_GROUP_LABELS) as ComponentDisplayGroup[]).map((componentGroup) => {
-                const Icon = COMPONENT_GROUP_ICONS[componentGroup]
-                const typedComponents = groupedComponents[componentGroup]
-                return (
-                  <section key={componentGroup} className="min-w-0 space-y-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <h3 className="flex items-center gap-2 text-sm font-semibold">
-                          <Icon className="h-4 w-4 text-muted-foreground" />
-                          {COMPONENT_GROUP_LABELS[componentGroup]}
-                        </h3>
-                        <p className="text-muted-foreground mt-1 text-xs">
-                          {COMPONENT_GROUP_DESCRIPTIONS[componentGroup]}
-                        </p>
-                      </div>
-                      <Badge variant="outline">{typedComponents.length}</Badge>
-                    </div>
-                    {typedComponents.length === 0 ? (
-                      <div className="text-muted-foreground rounded-md border border-dashed px-3 py-4 text-center text-xs">
-                        暂无{COMPONENT_GROUP_LABELS[componentGroup]}组件
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        {typedComponents.map((component) => {
-                          const schemaProperties = getSchemaPropertyNames(component.parameters_schema)
-                          return (
-                            <div key={`${component.component_type}-${component.name}`} className="rounded-md border p-3">
-                              <div className="mb-2 flex items-start justify-between gap-2">
-                                <div className="min-w-0">
-                                  <div className="break-words text-sm font-medium">{component.name}</div>
-                                  {component.description && (
-                                    <p className="text-muted-foreground mt-1 line-clamp-3 text-xs">
-                                      {component.description}
-                                    </p>
-                                  )}
-                                </div>
-                                <Badge variant={component.enabled ? 'default' : 'secondary'} className="shrink-0">
-                                  {component.enabled ? '启用' : '禁用'}
-                                </Badge>
-                              </div>
-                              <Badge variant="outline" className="mb-2 text-[0.68rem]">
-                                {COMPONENT_TYPE_LABELS[component.component_type]}
-                              </Badge>
-
-                              {component.component_type === 'action' && (
-                                <div className="text-muted-foreground space-y-1 text-xs">
-                                  {component.activation_type && <div>触发方式：{component.activation_type}</div>}
-                                  {component.activation_keywords && component.activation_keywords.length > 0 && (
-                                    <div className="flex flex-wrap gap-1">
-                                      {component.activation_keywords.map((keyword) => (
-                                        <Badge key={keyword} variant="outline" className="text-[0.68rem]">
-                                          {keyword}
-                                        </Badge>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-
-                              {component.component_type === 'tool' && schemaProperties.length > 0 && (
-                                <div className="mt-2 flex flex-wrap gap-1">
-                                  {schemaProperties.map((propertyName) => (
-                                    <Badge key={propertyName} variant="outline" className="text-[0.68rem]">
-                                      {propertyName}
-                                    </Badge>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </section>
-                )
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
     </div>
   )
 }
@@ -1114,6 +1130,7 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
   const { i18n } = useTranslation()
   const language = i18n.resolvedLanguage || i18n.language || 'zh'
   const [documentPanelOpen, setDocumentPanelOpen] = useState(false)
+  const [hostPolicyToolbar, setHostPolicyToolbar] = useState<HTMLDivElement | null>(null)
 
   const {
     editMode,
@@ -1123,6 +1140,7 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
     activeConfigTab,
     handleConfigTabChange,
     schema,
+    configError,
     config,
     sourceCode,
     handleSourceCodeChange,
@@ -1152,7 +1170,7 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
     )
   }
 
-  if (!schema) {
+  if (!schema && !configError) {
     return (
       <div className="flex h-64 flex-col items-center justify-center space-y-4">
         <AlertCircle className="text-muted-foreground h-12 w-12" />
@@ -1166,21 +1184,21 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
   }
 
   // 按 order 排序 sections
-  const sortedSections = Object.entries(schema.sections).sort(
+  const sortedSections = Object.entries(schema?.sections ?? {}).sort(
     ([, a], [, b]) => (a.order ?? 0) - (b.order ?? 0)
   )
-  const schemaTabs = schema.layout.type === 'tabs' ? schema.layout.tabs : []
+  const schemaTabs = schema?.layout.type === 'tabs' ? schema.layout.tabs : []
   const selectedConfigTab = schemaTabs.some((tab) => tab.id === activeConfigTab)
     ? activeConfigTab
     : schemaTabs[0]?.id
 
   // 获取当前启用状态
-  const isEnabled = (config.plugin as Record<string, unknown>)?.enabled !== false
+  const isEnabled = !configError && (config.plugin as Record<string, unknown>)?.enabled !== false
   const pluginName = resolveLocalizedText(
-    schema.plugin_info.name,
+    schema?.plugin_info.name,
     language,
     plugin.manifest.name,
-    schema.plugin_info.i18n,
+    schema?.plugin_info.i18n,
     'name'
   )
   const manifestUrls = plugin.manifest.urls as
@@ -1195,7 +1213,7 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
   const pluginRepositoryUrl = plugin.manifest.repository_url || manifestUrls?.repository
   const pluginDetailItems = [
     { label: '插件 ID', value: plugin.manifest.id || plugin.id },
-    { label: '版本', value: schema.plugin_info.version || plugin.manifest.version },
+    { label: '版本', value: schema?.plugin_info.version || plugin.manifest.version },
     { label: '类型', value: getPluginTypeLabel(plugin) },
     { label: '作者', value: plugin.manifest.author?.name },
     { label: '许可证', value: plugin.manifest.license },
@@ -1211,41 +1229,45 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
     <div className="space-y-4 sm:space-y-6">
       {/* 头部 */}
       <div
-        className="sticky top-0 z-40 -mx-5 flex items-center justify-between gap-3 overflow-x-auto border-b px-5 py-2.5 shadow-sm backdrop-blur sm:-mx-7 sm:px-7 lg:-mx-8 lg:px-8"
+        className="sticky top-0 z-40 -mx-5 flex flex-col items-stretch justify-between gap-3 border-b px-5 py-2.5 shadow-sm backdrop-blur sm:-mx-7 sm:px-7 lg:-mx-8 lg:flex-row lg:items-center lg:px-8"
         style={{ backgroundColor: 'hsl(var(--background) / 0.96)' }}
       >
         <div className="flex min-w-0 items-center gap-2">
           <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={handleBack}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <div className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 lg:flex-nowrap">
             <h1 className="min-w-0 truncate text-lg font-semibold sm:text-xl" data-plugin-config-title>
               {pluginName}
             </h1>
             <Badge variant={isEnabled ? 'default' : 'secondary'} className="shrink-0">
-              {isEnabled ? '已启用' : '已禁用'}
+              {configError ? '配置错误，业务暂停' : isEnabled ? '已启用' : '已禁用'}
             </Badge>
             <span className="text-muted-foreground shrink-0 text-sm">
-              v{schema.plugin_info.version || plugin.manifest.version}
+              v{schema?.plugin_info.version || plugin.manifest.version}
             </span>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2 whitespace-nowrap sm:gap-3">
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8"
-            onClick={() => setDocumentPanelOpen(true)}
-          >
-            <BookOpen className="mr-2 h-4 w-4" />
-            打开文档
-          </Button>
-          {pluginPageTab !== 'host-policy' && (
+        <div className="grid min-w-0 auto-cols-fr grid-flow-col items-center gap-1 whitespace-nowrap max-lg:[&>*]:min-w-0 max-lg:[&>button]:!px-1 max-lg:[&>button]:!text-xs max-lg:[&>button>svg]:hidden lg:flex lg:shrink-0 lg:gap-3">
+          {pluginPageTab !== 'details' && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8"
+              onClick={() => setDocumentPanelOpen(true)}
+            >
+              <BookOpen className="mr-2 h-4 w-4" />
+              <span className="lg:hidden">文档</span>
+              <span className="hidden lg:inline">打开文档</span>
+            </Button>
+          )}
+          {pluginPageTab === 'settings' && (
             <Button
               variant="outline"
               size="sm"
               className="h-8"
               onClick={() => setEditMode(editMode === 'visual' ? 'source' : 'visual')}
+              disabled={!schema}
             >
               {editMode === 'visual' ? (
                 <>
@@ -1262,35 +1284,25 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
           )}
           <div
             data-dashboard-input="true"
-            className="border-input flex h-8 items-center gap-2 rounded-md border bg-transparent px-2 text-sm font-medium shadow-sm"
+            className="border-input flex h-8 items-center justify-center gap-1 rounded-md border bg-transparent px-1 text-sm font-medium shadow-sm lg:gap-2 lg:px-2"
           >
             <Switch
               checked={isEnabled}
+              disabled={!!configError}
               onCheckedChange={() => void handleToggle()}
               aria-label={isEnabled ? '禁用插件' : '启用插件'}
             />
             <span className="text-xs">启用</span>
           </div>
           {pluginPageTab !== 'host-policy' && (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8"
-                onClick={() => setResetDialogOpen(true)}
-              >
-                <RotateCcw className="mr-2 h-4 w-4" />
-                重置
-              </Button>
-              <Button size="sm" className="h-8" onClick={handleSave} disabled={!hasChanges || saving}>
-                {saving ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Save className="mr-2 h-4 w-4" />
-                )}
-                保存
-              </Button>
-            </>
+            <Button size="sm" className="h-8" onClick={handleSave} disabled={!hasChanges || saving}>
+              {saving ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="mr-2 h-4 w-4" />
+              )}
+              保存
+            </Button>
           )}
         </div>
       </div>
@@ -1311,12 +1323,25 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
         value={pluginPageTab}
         onValueChange={(value) => setPluginPageTab(value as 'settings' | 'host-policy' | 'details')}
       >
-        <TabsList>
-          <TabsTrigger value="settings">设置</TabsTrigger>
-          {showHostPolicy && <TabsTrigger value="host-policy">黑白名单规则</TabsTrigger>}
-          <TabsTrigger value="details">详情</TabsTrigger>
-        </TabsList>
+        <div className="flex flex-wrap items-center gap-3">
+          <TabsList>
+            <TabsTrigger value="settings">设置</TabsTrigger>
+            {showHostPolicy && <TabsTrigger value="host-policy">黑白名单规则</TabsTrigger>}
+            <TabsTrigger value="details">详情</TabsTrigger>
+          </TabsList>
+          {/* 黑白名单页的账号、分组操作与保存工具栏渲染到页签同一行，节省纵向空间 */}
+          {showHostPolicy && <div ref={setHostPolicyToolbar} className="min-w-0 flex-1" />}
+        </div>
         <TabsContent value="settings" className="mt-4">
+          {configError && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                <p>配置校验失败，工具和调度已暂停。请修正下方原始 TOML 并保存，校验通过后恢复运行。</p>
+                <pre className="mt-2 whitespace-pre-wrap break-words text-xs">{configError}</pre>
+              </AlertDescription>
+            </Alert>
+          )}
           {/* 源代码模式 */}
           {editMode === 'source' && (
             <div className="space-y-4">
@@ -1345,7 +1370,7 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
           )}
 
           {/* 可视化模式 */}
-          {editMode === 'visual' && (
+          {editMode === 'visual' && schema && (
             <>
               {/* 配置区域 */}
               {schema.layout.type === 'tabs' && schemaTabs.length > 0 ? (
@@ -1397,10 +1422,24 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
               )}
             </>
           )}
+          <div className="mt-6">
+            <PluginRuntimeComponentsPanel key={plugin.id} pluginId={plugin.id} />
+          </div>
+          <div className="mt-6 border-t pt-4">
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-destructive hover:text-destructive"
+              onClick={() => setResetDialogOpen(true)}
+            >
+              <RotateCcw className="mr-2 h-4 w-4" />
+              重置
+            </Button>
+          </div>
         </TabsContent>
         {showHostPolicy && (
           <TabsContent value="host-policy" className="mt-4">
-            <AdapterHostPolicyPanel pluginId={plugin.id} />
+            <AdapterHostPolicyPanel pluginId={plugin.id} toolbarContainer={hostPolicyToolbar} />
           </TabsContent>
         )}
         <TabsContent value="details" className="mt-4">
@@ -1493,6 +1532,8 @@ function PluginConfigPageContent() {
   const { themeConfig } = useTheme()
   const { triggerRestart, isRestarting } = useRestart()
   const adapterManagement = isAdapterManagementPath()
+  const [editingMCP, setEditingMCP] = useState(false)
+  const [zipInstallOpen, setZipInstallOpen] = useState(false)
 
   const {
     plugins,
@@ -1506,7 +1547,6 @@ function PluginConfigPageContent() {
     setSearchQuery,
     showUpdateOnly,
     setShowUpdateOnly,
-    visiblePlugins,
     visiblePluginGroups,
     actingPluginId,
     setActingPluginId,
@@ -1560,12 +1600,27 @@ function PluginConfigPageContent() {
   const isModernDashboardStyle = themeConfig.dashboardStyle === 'modern'
   const isFutureRetroDashboardStyle = themeConfig.dashboardStyle === 'future-retro'
   const [loadFailureDetailPlugin, setLoadFailureDetailPlugin] = useState<InstalledPlugin | null>(null)
+  const extensionGroups = [
+    ...visiblePluginGroups.filter((group) => group.key !== 'disabled'),
+    ...(!adapterManagement && !showUpdateOnly
+      ? [{ key: 'mcp', label: 'MCP 服务', dotClassName: '', plugins: [] }]
+      : []),
+    ...visiblePluginGroups.filter((group) => group.key === 'disabled'),
+  ]
 
-  // 如果选中了插件，显示配置编辑器
+  // 按扩展类型进入各自的配置编辑器。
+  if (editingMCP && !adapterManagement) {
+    return <MCPSettingsPage onBack={() => setEditingMCP(false)} />
+  }
+
   if (selectedPlugin) {
     return (
       <>
-        <ScrollArea className="h-full">
+        <ScrollArea
+          className="h-full max-lg:h-auto max-lg:overflow-visible max-lg:[&>[data-dashboard-scrollbar]]:hidden"
+          viewportClassName="max-lg:h-auto max-lg:!overflow-visible max-lg:overscroll-auto"
+          scrollbars="vertical"
+        >
           <div className="px-5 pt-0 pb-4 sm:px-7 sm:pb-6 lg:px-8">
             <PluginConfigEditor
               plugin={selectedPlugin}
@@ -1581,14 +1636,31 @@ function PluginConfigPageContent() {
 
   return (
     <>
-      <ScrollArea className="h-full">
+      {/* 手机页头右上角：去插件市场 */}
+      {!adapterManagement && (
+        <MobileHeaderActions>
+          <a
+            href={getPluginMarketplaceRoutePath()}
+            data-mobile-header-text-button="true"
+            className={cn('flex h-11 items-center rounded-full px-4 text-[15px]', MOBILE_GLASS_CLASS)}
+          >
+            插件市场
+          </a>
+        </MobileHeaderActions>
+      )}
+      {/* 手机端让列表自然撑高，由工作区统一滚动，避免内部视口拦截手势。 */}
+      <ScrollArea
+        className="h-full max-lg:h-auto max-lg:overflow-visible max-lg:[&>[data-dashboard-scrollbar]]:hidden"
+        viewportClassName="max-lg:h-auto max-lg:!overflow-visible max-lg:overscroll-auto"
+        scrollbars="vertical"
+      >
       <div className="space-y-4 p-4 sm:space-y-6 sm:p-6">
         {!adapterManagement && (
         <div className="flex flex-nowrap items-center gap-2 sm:gap-3">
           <div className="relative min-w-0 flex-1 basis-0 sm:basis-72">
             <Search className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
             <Input
-              placeholder="搜索插件..."
+              placeholder="搜索插件或 MCP 服务..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-9"
@@ -1618,17 +1690,23 @@ function PluginConfigPageContent() {
           >
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-9 shrink-0 px-2 sm:px-3"
-            onClick={() => triggerRestart()}
-            disabled={isRestarting}
-            title="重启麦麦"
-          >
-            <RotateCw className={`h-4 w-4 ${isRestarting ? 'animate-spin' : ''} sm:mr-2`} />
-            <span className="hidden sm:inline">重启麦麦</span>
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" className="shrink-0" aria-label="更多操作" title="更多操作">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => setZipInstallOpen(true)} disabled={isRestarting}>
+                <FileArchive className="mr-2 h-4 w-4" />从 ZIP 安装插件
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => triggerRestart()} disabled={isRestarting}>
+                <RotateCw className={`mr-2 h-4 w-4 ${isRestarting ? 'animate-spin' : ''}`} />重启麦麦
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <ZipInstallDialog open={zipInstallOpen} onOpenChange={setZipInstallOpen} onInstalled={loadPlugins} />
         </div>
         )}
 
@@ -1725,12 +1803,15 @@ function PluginConfigPageContent() {
           </div>
         )}
 
+        {/* 适配器全局默认策略（位于插件加载情况下方） */}
+        {adapterManagement && <AdapterPolicyDefaultsCard />}
+
         {/* 插件列表 */}
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="text-muted-foreground h-8 w-8 animate-spin" />
           </div>
-        ) : visiblePlugins.length === 0 ? (
+        ) : extensionGroups.length === 0 ? (
           <div className="flex flex-col items-center justify-center space-y-4 py-12">
             <Package className="text-muted-foreground/50 h-16 w-16" />
             <div className="space-y-2 text-center">
@@ -1752,7 +1833,9 @@ function PluginConfigPageContent() {
           </div>
         ) : (
           <div className="space-y-4">
-            {visiblePluginGroups.map((group) => (
+            {extensionGroups.map((group) => group.key === 'mcp' ? (
+              <MCPExtensionList key="mcp" searchQuery={searchQuery} onEdit={() => setEditingMCP(true)} />
+            ) : (
               <section key={group.key} aria-labelledby={`plugin-list-group-${group.key}`}>
                 <div className="text-muted-foreground flex items-center gap-2 border-b px-2 pb-1.5 text-xs font-medium">
                   <span className={`h-2 w-2 rounded-full ${group.dotClassName}`} aria-hidden="true" />
@@ -1762,7 +1845,7 @@ function PluginConfigPageContent() {
                 <div className="divide-border/80 divide-y">
                   {group.plugins.map((plugin) => {
               const pluginActing = actingPluginId === plugin.id
-              const pluginDisabled = isPluginDisabled(plugin)
+              const pluginDisabled = plugin.enabled === false
               const updateState = getPluginUpdateState(plugin)
               const pluginLoadFailed = isPluginLoadFailed(plugin)
               const pluginVersionIncompatible = isPluginVersionIncompatible(plugin)
@@ -1828,9 +1911,11 @@ function PluginConfigPageContent() {
                         <h3 className="min-w-0 text-sm leading-snug font-medium break-words sm:truncate sm:text-base">
                           {plugin.manifest.name}
                         </h3>
-                        <Badge variant="outline" className="flex-shrink-0 text-xs">
-                          {getPluginTypeLabel(plugin)}
-                        </Badge>
+                        {!adapterManagement && (
+                          <Badge variant="outline" className="flex-shrink-0 text-xs">
+                            {getPluginTypeLabel(plugin)}
+                          </Badge>
+                        )}
                         {statusMeta.showsBadge !== false && (
                           <Badge
                             variant="outline"
@@ -1919,8 +2004,9 @@ function PluginConfigPageContent() {
                       variant="outline"
                       size="sm"
                       data-plugin-update-button="true"
-                      className="relative h-9 w-9 p-0"
+                      className={`relative h-9 w-9 p-0 ${checkingUpdates ? 'text-primary disabled:opacity-100' : ''}`}
                       disabled={pluginActing || !updateState.canUpdate}
+                      aria-busy={checkingUpdates || pluginActing}
                       title={updateState.title}
                       aria-label={updateState.title || '更新/升级'}
                       onClick={(event) => openUpdatePluginDialog(plugin, event)}
@@ -1931,9 +2017,7 @@ function PluginConfigPageContent() {
                           aria-hidden="true"
                         />
                       )}
-                      {pluginActing ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : checkingUpdates ? (
+                      {pluginActing || checkingUpdates ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
                         <ArrowUp className="h-4 w-4" />
@@ -1965,6 +2049,8 @@ function PluginConfigPageContent() {
             ))}
           </div>
         )}
+
+        {!adapterManagement && <PluginWebUIManagerPanel />}
 
         <Dialog
           open={loadFailureDetailPlugin !== null}
@@ -2113,7 +2199,6 @@ function PluginConfigPageContent() {
               <Button
                 variant="outline"
                 onClick={closeUpdatePluginDialog}
-                disabled={updateProgress?.stage === 'loading'}
               >
                 {updateProgress?.stage === 'success' || updateProgress?.stage === 'error'
                   ? '关闭'

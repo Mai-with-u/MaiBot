@@ -1,4 +1,4 @@
-"""百炼/豆包原生图片嵌入协议自动适配的合约测试。
+"""百炼、豆包与硅基流动图片嵌入协议自动适配的合约测试。
 
 通过 httpx.MockTransport 走真实 AsyncOpenAI 请求链路，验证绝对 URL 拼接、
 鉴权头、请求体结构与响应解析；不发起真实网络请求。
@@ -22,12 +22,17 @@ from src.llm_models.model_client.image_embedding_protocols import (
     build_native_image_embedding_fingerprint,
     build_native_image_embedding_request,
     parse_native_image_embedding_response,
+    resolve_compatible_image_embedding_input,
     resolve_native_image_embedding_protocol,
 )
 from src.llm_models.model_client.openai_client import OpenaiClient
 
 DASHSCOPE_NATIVE_URL = (
     "https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding"
+)
+DASHSCOPE_WORKSPACE_NATIVE_URL = (
+    "https://llm-abc123.cn-beijing.maas.aliyuncs.com"
+    "/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding"
 )
 ARK_PLAN_NATIVE_URL = "https://ark.cn-beijing.volces.com/api/plan/v3/embeddings/multimodal"
 ARK_NORMAL_NATIVE_URL = "https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal"
@@ -69,6 +74,7 @@ def _make_openai_client(provider: APIProvider, handler: Callable[[httpx.Request]
         base_url=provider.base_url,
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
+    client._omit_sdk_authorization = False
     return client
 
 
@@ -78,6 +84,9 @@ def _make_openai_client(provider: APIProvider, handler: Callable[[httpx.Request]
         ("https://dashscope.aliyuncs.com/compatible-mode/v1", "dashscope"),
         ("https://dashscope.aliyuncs.com/compatible-mode/v1/", "dashscope"),
         ("https://dashscope.aliyuncs.com/api/v1", "dashscope"),
+        # 百炼业务空间专属域名 {WorkspaceId}.{region}.maas.aliyuncs.com
+        ("https://llm-abc123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1", "dashscope"),
+        ("https://llm-abc123.ap-southeast-1.maas.aliyuncs.com/api/v1/", "dashscope"),
         ("https://ark.cn-beijing.volces.com/api/v3", "ark"),
         ("https://ark.cn-beijing.volces.com/api/plan/v3/", "ark"),
         ("https://fake.example.com/v1", None),
@@ -85,11 +94,68 @@ def _make_openai_client(provider: APIProvider, handler: Callable[[httpx.Request]
         ("https://dashscope.aliyuncs.com/compatible-mode/v2", None),
         ("https://dashscope.aliyuncs.com/api/v2", None),
         ("https://evil.com/https://dashscope.aliyuncs.com/api/v1", None),
+        ("https://llm-abc123.cn-beijing.maas.aliyuncs.com/compatible-mode/v2", None),
+        # 专属域名必须恰好是 {WorkspaceId}.{region} 两级前缀，且以官方后缀结尾
+        ("https://cn-beijing.maas.aliyuncs.com/compatible-mode/v1", None),
+        ("https://a.llm-abc123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1", None),
+        ("https://llm-abc123.cn-beijing.maas.aliyuncs.com.evil.com/compatible-mode/v1", None),
         ("", None),
     ],
 )
 def test_resolve_native_image_embedding_protocol_matches_official_urls(base_url: str, expected: str | None) -> None:
     assert resolve_native_image_embedding_protocol(base_url) == expected
+
+
+@pytest.mark.parametrize(
+    ("base_url", "expected"),
+    [
+        ("https://api.siliconflow.cn/v1", {"image": "{data_uri}"}),
+        ("https://api.siliconflow.cn/v1/", {"image": "{data_uri}"}),
+        ("https://api.siliconflow.com/v1", {"image": "{data_uri}"}),
+        ("https://api.siliconflow.cn/v2", None),
+        ("https://fake.example.com/https://api.siliconflow.cn/v1", None),
+    ],
+)
+def test_resolve_compatible_image_embedding_input_matches_siliconflow_urls(
+    base_url: str, expected: dict[str, str] | None
+) -> None:
+    assert resolve_compatible_image_embedding_input(base_url) == expected
+
+
+@pytest.mark.asyncio
+async def test_siliconflow_url_sends_image_object_to_embeddings_endpoint() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["auth"] = request.headers.get("Authorization")
+        captured["body"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "model": "Qwen/Qwen3-VL-Embedding-8B",
+                "data": [{"object": "embedding", "embedding": [0.25, -0.5], "index": 0}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 0, "total_tokens": 5},
+            },
+        )
+
+    provider = _build_provider("https://api.siliconflow.cn/v1")
+    client = _make_openai_client(provider, handler)
+    try:
+        response = await client.get_image_embedding(_build_request("Qwen/Qwen3-VL-Embedding-8B", {"dimensions": 768}))
+    finally:
+        await client.client.close()
+
+    assert captured["url"] == "https://api.siliconflow.cn/v1/embeddings"
+    assert captured["auth"] == "Bearer test-key"
+    assert captured["body"]["model"] == "Qwen/Qwen3-VL-Embedding-8B"
+    assert captured["body"]["input"] == {"image": _expected_data_uri()}
+    assert captured["body"]["dimensions"] == 768
+    assert response.embedding == [0.25, -0.5]
+    assert response.usage is not None
+    assert response.usage.total_tokens == 5
+    assert response.request_protocol_hash
 
 
 @pytest.mark.asyncio
@@ -131,6 +197,28 @@ async def test_dashscope_compatible_mode_url_routes_to_native_protocol() -> None
     assert response.usage.total_tokens == 103
     assert response.usage.completion_tokens == 0
     assert response.request_protocol_hash
+
+
+@pytest.mark.asyncio
+async def test_dashscope_workspace_domain_routes_to_native_protocol() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["body"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(200, json={"output": {"embeddings": [{"index": 0, "embedding": [0.75]}]}})
+
+    # 业务空间专属域名与共享 DashScope 域名同属百炼，不应要求手动配置图片输入模板
+    provider = _build_provider("https://llm-abc123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1")
+    client = _make_openai_client(provider, handler)
+    try:
+        response = await client.get_image_embedding(_build_request("qwen3-vl-embedding"))
+    finally:
+        await client.client.close()
+
+    assert captured["url"] == DASHSCOPE_WORKSPACE_NATIVE_URL
+    assert captured["body"]["input"]["contents"][0]["image"] == _expected_data_uri()
+    assert response.embedding == [0.75]
 
 
 @pytest.mark.asyncio
@@ -234,6 +322,9 @@ def test_native_payload_rejects_reserved_key_conflicts(protocol: str, reserved_k
         # 百炼兼容层地址统一改写到 /api/v1 原生路径；原生地址派生结果一致
         ("https://dashscope.aliyuncs.com/compatible-mode/v1", DASHSCOPE_NATIVE_URL),
         ("https://dashscope.aliyuncs.com/api/v1", DASHSCOPE_NATIVE_URL),
+        # 业务空间专属域名保留自身 host，只改写到原生路径
+        ("https://llm-abc123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1", DASHSCOPE_WORKSPACE_NATIVE_URL),
+        ("https://llm-abc123.cn-beijing.maas.aliyuncs.com/api/v1", DASHSCOPE_WORKSPACE_NATIVE_URL),
     ],
 )
 def test_native_endpoint_url_derives_from_provider_base_url(base_url: str, expected_endpoint: str) -> None:
@@ -262,6 +353,7 @@ async def test_explicit_template_takes_precedence_on_official_url() -> None:
     client = object.__new__(OpenaiClient)
     client.api_provider = _build_provider("https://dashscope.aliyuncs.com/compatible-mode/v1")
     client.client = SimpleNamespace(embeddings=FakeEmbeddings())
+    client._omit_sdk_authorization = False
     request = _build_request("qwen3-vl-embedding", {"image_embedding_input": "{data_uri}"})
 
     response = await client.get_image_embedding(request)

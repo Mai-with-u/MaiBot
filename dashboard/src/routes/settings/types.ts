@@ -60,13 +60,5 @@ type LibraryItemProps = {
   license: string
 }
 
-type ThemeOptionProps = {
-  value: 'light' | 'dark' | 'system'
-  current: 'light' | 'dark' | 'system'
-  onChange: (theme: 'light' | 'dark' | 'system') => void
-  label: string
-  description: string
-}
-
 export { hslToHex }
-export type { LibraryItemProps, ThemeOptionProps }
+export type { LibraryItemProps }

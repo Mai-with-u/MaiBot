@@ -30,9 +30,9 @@ describe('searchWithAIStream', () => {
         controller.enqueue(
           encoder.encode(
             '"query":"表情包"}\n' +
-              '{"type":"result","response":{"success":true,"cached":false,"model_name":"test-model",' +
+              '{"type":"result","response":{"cached":false,"model_name":"test-model",' +
               '"answer":"完成","suggestions":[],"sources":[],"expanded_terms":[],"results":[],' +
-              '"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}\n'
+              '"total_tokens":2,"grounding_error":""}}\n'
           )
         )
         controller.close()

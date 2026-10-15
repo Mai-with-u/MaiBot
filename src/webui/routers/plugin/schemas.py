@@ -85,7 +85,6 @@ class InstallPluginRequest(BaseModel):
     branch: Optional[str] = Field("main", description="分支名称")
     mirror_id: Optional[str] = Field(None, description="指定镜像源 ID")
     version: Optional[str] = Field(None, description="发布版本；latest 表示最新兼容稳定版本")
-    pinned: bool = Field(False, description="锁定所选发布版本，阻止自动更新")
 
 
 class VersionResponse(BaseModel):
@@ -105,7 +104,6 @@ class UpdatePluginRequest(BaseModel):
     branch: Optional[str] = Field("main", description="分支名称")
     mirror_id: Optional[str] = Field(None, description="指定镜像源 ID")
     version: Optional[str] = Field(None, description="发布版本；latest 表示最新兼容稳定版本")
-    pinned: bool = Field(False, description="锁定所选发布版本，阻止自动更新")
 
 
 class UpdatePluginConfigRequest(BaseModel):

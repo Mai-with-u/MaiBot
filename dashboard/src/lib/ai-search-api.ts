@@ -16,12 +16,10 @@ export interface AISearchRequest {
 
 export interface AISearchResult {
   id: string
-  score: number
   reason: string
 }
 
 export interface AISearchResponse {
-  success: boolean
   cached: boolean
   model_name: string
   answer: string
@@ -29,9 +27,9 @@ export interface AISearchResponse {
   sources: Array<{ title: string; url: string }>
   expanded_terms: string[]
   results: AISearchResult[]
-  prompt_tokens: number
-  completion_tokens: number
   total_tokens: number
+  grounding_error: string
+  used_local_config: boolean
 }
 
 export type AISearchProgressStage =

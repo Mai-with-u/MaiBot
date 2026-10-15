@@ -46,6 +46,8 @@ class MessageDict(TypedDict, total=False):
     message_id: str
     timestamp: str
     platform: str
+    account_id: Optional[str]
+    scope: Optional[str]
     message_info: MessageInfoDict
     raw_message: List[Dict[str, Any]]
     is_mentioned: bool
@@ -427,6 +429,8 @@ class PluginMessageUtils:
             message_id=session_message.message_id,
             timestamp=str(session_message.timestamp.timestamp()),  # 转换为时间戳字符串
             platform=session_message.platform,
+            account_id=session_message.account_id,
+            scope=session_message.scope,
             message_info=PluginMessageUtils._message_info_to_dict(session_message.message_info),
             raw_message=PluginMessageUtils._message_sequence_to_dict(
                 session_message.raw_message,
@@ -476,8 +480,10 @@ class PluginMessageUtils:
         if group_info_dict := message_info_dict.get("group_info"):
             group_id = group_info_dict.get("group_id")
             group_name = group_info_dict.get("group_name")
-            if not isinstance(group_id, str) or not isinstance(group_name, str) or not group_id or not group_name:
-                raise ValueError("消息字典中 'group_info' 字段缺少有效的 'group_id' 或 'group_name'")
+            # 群名允许为空（适配器拿不到真实群名时的显式「未知」语义），
+            # 空值不会被写入会话，聊天流保留已记录的名称。
+            if not isinstance(group_id, str) or not isinstance(group_name, str) or not group_id:
+                raise ValueError("消息字典中 'group_info' 字段缺少有效的 'group_id'")
             group_info = GroupInfo(group_id=group_id, group_name=group_name)
         else:
             group_info = None
@@ -519,6 +525,11 @@ class PluginMessageUtils:
 
         # 构建消息信息
         session_message.message_info = PluginMessageUtils._build_message_info_from_dict(message_dict["message_info"])
+        from src.platform_io.route_key_factory import RouteKeyFactory
+
+        route_key = RouteKeyFactory.from_message_dict(message_dict)
+        session_message.account_id = route_key.account_id
+        session_message.scope = route_key.scope
 
         # 构建原始消息组件序列（复用 MessageSequence.from_dict 方法）
         raw_message_data = message_dict["raw_message"]

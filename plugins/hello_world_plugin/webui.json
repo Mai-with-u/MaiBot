@@ -1,0 +1,539 @@
+{
+  "schema_version": 1,
+  "workspace_title": "Hello World",
+  "pages": [
+    {
+      "id": "overview",
+      "title": "Hello World 概览",
+      "description": "演示顶部工作区、统计卡片、数据绑定、图表与表格。数据来自问候体验页的实际操作。",
+      "placement": "workspace",
+      "icon": "chart",
+      "queries": {
+        "summary": {
+          "api": "webui_summary",
+          "version": "1"
+        }
+      },
+      "actions": {
+        "reset": {
+          "api": "webui_reset_greetings",
+          "version": "1",
+          "confirmation": "确认清空 Hello World 的问候演示记录？此操作只影响插件内存中的演示数据。"
+        }
+      },
+      "content": [
+        {
+          "type": "grid",
+          "columns": 3,
+          "children": [
+            {
+              "type": "stat",
+              "label": "本次运行生成次数",
+              "value": {
+                "source": "summary",
+                "field": "greeting_count"
+              }
+            },
+            {
+              "type": "stat",
+              "label": "保留记录数",
+              "value": {
+                "source": "summary",
+                "field": "record_count"
+              }
+            },
+            {
+              "type": "stat",
+              "label": "查询时的当前时间",
+              "value": {
+                "source": "summary",
+                "field": "current_time"
+              }
+            }
+          ]
+        },
+        {
+          "type": "card",
+          "label": "最近一次问候",
+          "children": [
+            {
+              "type": "text",
+              "value": {
+                "source": "summary",
+                "field": "last_greeting"
+              }
+            },
+            {
+              "type": "text",
+              "value": "在麦麦侧边栏的“插件扩展 → Hello World 问候体验”中生成问候，再回到本页点击刷新。演示不会发送聊天消息，重载插件后记录会清空。"
+            }
+          ]
+        },
+        {
+          "type": "tabs",
+          "children": [
+            {
+              "type": "stack",
+              "label": "问候长度",
+              "children": [
+                {
+                  "type": "chart",
+                  "label": "最近 20 次问候的字符数",
+                  "chart_type": "bar",
+                  "x": "label",
+                  "y": "characters",
+                  "value": {
+                    "source": "summary",
+                    "field": "chart"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "stack",
+              "label": "最近记录",
+              "children": [
+                {
+                  "type": "table",
+                  "value": {
+                    "source": "summary",
+                    "field": "history"
+                  },
+                  "columns": [
+                    {
+                      "field": "sequence",
+                      "label": "序号"
+                    },
+                    {
+                      "field": "name",
+                      "label": "称呼"
+                    },
+                    {
+                      "field": "message",
+                      "label": "问候内容"
+                    },
+                    {
+                      "field": "created_at",
+                      "label": "生成时间"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "button",
+          "label": "清空演示记录",
+          "action": "reset",
+          "variant": "danger"
+        }
+      ]
+    },
+    {
+      "id": "greeting",
+      "title": "Hello World 问候体验",
+      "description": "演示侧边页面、表单参数绑定和操作后的自动刷新；只生成页面预览。",
+      "placement": "sidebar",
+      "icon": "puzzle",
+      "queries": {
+        "summary": {
+          "api": "webui_summary",
+          "version": "1"
+        }
+      },
+      "actions": {
+        "generate": {
+          "api": "webui_generate_greeting",
+          "version": "1",
+          "parameters": {
+            "name": {
+              "type": "string",
+              "required": true,
+              "max_length": 80
+            },
+            "style": {
+              "type": "string",
+              "required": true,
+              "choices": [
+                "friendly",
+                "formal"
+              ]
+            },
+            "repeat": {
+              "type": "integer",
+              "required": true,
+              "minimum": 1,
+              "maximum": 5
+            },
+            "include_time": {
+              "type": "boolean",
+              "required": true
+            }
+          }
+        }
+      },
+      "content": [
+        {
+          "type": "card",
+          "label": "生成问候",
+          "children": [
+            {
+              "type": "grid",
+              "columns": 2,
+              "children": [
+                {
+                  "type": "input",
+                  "name": "name",
+                  "label": "你的称呼",
+                  "value": "世界"
+                },
+                {
+                  "type": "select",
+                  "name": "style",
+                  "label": "问候风格",
+                  "value": "friendly",
+                  "options": [
+                    {
+                      "label": "亲切（使用插件问候配置）",
+                      "value": "friendly"
+                    },
+                    {
+                      "label": "正式",
+                      "value": "formal"
+                    }
+                  ]
+                },
+                {
+                  "type": "input",
+                  "name": "repeat",
+                  "label": "重复次数（1 到 5）",
+                  "value": 1
+                },
+                {
+                  "type": "switch",
+                  "name": "include_time",
+                  "label": "附上当前时间",
+                  "value": true
+                }
+              ]
+            },
+            {
+              "type": "button",
+              "label": "生成问候预览",
+              "action": "generate"
+            }
+          ]
+        },
+        {
+          "type": "card",
+          "label": "预览结果",
+          "children": [
+            {
+              "type": "text",
+              "value": {
+                "source": "summary",
+                "field": "last_greeting"
+              }
+            }
+          ]
+        },
+        {
+          "type": "card",
+          "label": "当前插件问候配置",
+          "children": [
+            {
+              "type": "text",
+              "value": {
+                "source": "summary",
+                "field": "default_greeting"
+              }
+            },
+            {
+              "type": "text",
+              "value": "本页演示数据只保存在插件内存中，不会修改 config.toml。要修改默认问候，请使用原有的插件配置页面。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "details",
+      "title": "Hello World 详情与循环示例",
+      "description": "生成问候后点击表格行查看详情；演示行上下文、字段参数、动态卡片和空数据条件显示。",
+      "placement": "sidebar",
+      "icon": "list",
+      "queries": {
+        "summary": {
+          "api": "webui_summary",
+          "version": "1"
+        }
+      },
+      "actions": {
+        "generate": {
+          "api": "webui_generate_greeting",
+          "version": "1",
+          "parameters": {
+            "name": {
+              "type": "string",
+              "required": true,
+              "max_length": 80
+            },
+            "style": {
+              "type": "string",
+              "required": true,
+              "choices": [
+                "friendly",
+                "formal"
+              ]
+            },
+            "repeat": {
+              "type": "integer",
+              "required": true,
+              "minimum": 1,
+              "maximum": 5
+            },
+            "include_time": {
+              "type": "boolean",
+              "required": true
+            }
+          }
+        },
+        "remove": {
+          "api": "webui_remove_greeting",
+          "parameters": {
+            "sequence": {
+              "type": "integer",
+              "required": true,
+              "minimum": 1
+            }
+          },
+          "arguments": {
+            "sequence": {
+              "scope": "selection",
+              "source": "greetingRow",
+              "field": "sequence"
+            }
+          },
+          "confirmation": "确认删除当前选中的问候预览？仅影响页面演示记录。"
+        }
+      },
+      "content": [
+        {
+          "type": "card",
+          "label": "生成问候",
+          "children": [
+            {
+              "type": "grid",
+              "columns": 2,
+              "children": [
+                {
+                  "type": "input",
+                  "name": "name",
+                  "label": "你的称呼",
+                  "value": "世界"
+                },
+                {
+                  "type": "select",
+                  "name": "style",
+                  "label": "问候风格",
+                  "value": "friendly",
+                  "options": [
+                    {
+                      "label": "亲切（使用插件问候配置）",
+                      "value": "friendly"
+                    },
+                    {
+                      "label": "正式",
+                      "value": "formal"
+                    }
+                  ]
+                },
+                {
+                  "type": "input",
+                  "name": "repeat",
+                  "label": "重复次数（1 到 5）",
+                  "value": 1
+                },
+                {
+                  "type": "switch",
+                  "name": "include_time",
+                  "label": "附上当前时间",
+                  "value": true
+                }
+              ]
+            },
+            {
+              "type": "button",
+              "label": "生成问候预览",
+              "action": "generate"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "value": "还没有记录。先生成一条问候，表格和动态卡片就会自动出现。",
+          "when": {
+            "reference": {
+              "source": "summary",
+              "field": "history"
+            },
+            "operator": "empty"
+          }
+        },
+        {
+          "type": "table",
+          "label": "点击任一行查看详情（也支持 Enter / 空格）",
+          "value": {
+            "source": "summary",
+            "field": "history"
+          },
+          "when": {
+            "reference": {
+              "source": "summary",
+              "field": "history"
+            },
+            "operator": "not_empty"
+          },
+          "selection": "greetingRow",
+          "detail": "greetingDetails",
+          "columns": [
+            {
+              "field": "sequence",
+              "label": "序号"
+            },
+            {
+              "field": "name",
+              "label": "称呼"
+            },
+            {
+              "field": "created_at",
+              "label": "时间"
+            }
+          ]
+        },
+        {
+          "type": "dialog",
+          "name": "greetingDetails",
+          "label": "问候详情",
+          "children": [
+            {
+              "type": "text",
+              "label": "记录序号",
+              "value": {
+                "scope": "selection",
+                "source": "greetingRow",
+                "field": "sequence"
+              }
+            },
+            {
+              "type": "text",
+              "label": "称呼",
+              "value": {
+                "scope": "selection",
+                "source": "greetingRow",
+                "field": "name"
+              }
+            },
+            {
+              "type": "text",
+              "label": "完整问候内容",
+              "value": {
+                "scope": "selection",
+                "source": "greetingRow",
+                "field": "message"
+              }
+            },
+            {
+              "type": "text",
+              "label": "生成时间",
+              "value": {
+                "scope": "selection",
+                "source": "greetingRow",
+                "field": "created_at"
+              }
+            },
+            {
+              "type": "button",
+              "label": "删除这条预览",
+              "action": "remove",
+              "variant": "danger"
+            }
+          ]
+        },
+        {
+          "type": "collapsible",
+          "label": "展开动态问候卡片",
+          "when": {
+            "reference": {
+              "source": "summary",
+              "field": "history"
+            },
+            "operator": "not_empty"
+          },
+          "children": [
+            {
+              "type": "grid",
+              "columns": 3,
+              "children": [
+                {
+                  "type": "repeat",
+                  "name": "greetingItem",
+                  "value": {
+                    "source": "summary",
+                    "field": "history"
+                  },
+                  "max_items": 20,
+                  "children": [
+                    {
+                      "type": "card",
+                      "label": "问候预览",
+                      "children": [
+                        {
+                          "type": "text",
+                          "label": "称呼",
+                          "value": {
+                            "scope": "item",
+                            "source": "greetingItem",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "value": {
+                            "scope": "item",
+                            "source": "greetingItem",
+                            "field": "message"
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "label": "生成时间",
+                          "value": {
+                            "scope": "item",
+                            "source": "greetingItem",
+                            "field": "created_at"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "collapsible",
+          "label": "这页是如何声明的？",
+          "children": [
+            {
+              "type": "text",
+              "value": "table.selection 保存被点击的行，table.detail 打开具名 dialog；scope=selection 读取行字段，actions.arguments 只投影已声明的标量参数；repeat 为数组元素提供 scope=item 上下文；when 控制空数据区块。全部内容由 webui.json 声明。"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

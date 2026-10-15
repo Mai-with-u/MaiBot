@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 import inspect
 
+from src.common.paths import get_instance_root, resource_path
 from src.common.i18n import get_locale
 from src.common.i18n.loaders import DEFAULT_LOCALE, normalize_locale
 from src.common.logger import get_logger
@@ -17,11 +18,10 @@ logger = get_logger("Prompt")
 _LEFT_BRACE = chr(0xFDE9)
 _RIGHT_BRACE = chr(0xFDEA)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-PROMPTS_DIR = PROJECT_ROOT / "prompts"
+PROJECT_ROOT = get_instance_root()
+PROMPTS_DIR = resource_path("prompts")
 DATA_DIR = PROJECT_ROOT / "data"
 CUSTOM_PROMPTS_DIR = DATA_DIR / "custom_prompts"
-PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
 CUSTOM_PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
 SUFFIX_PROMPT = ".prompt"
 

@@ -6,18 +6,34 @@
 
 from __future__ import annotations
 
-from typing import Any, Coroutine, List, Literal, TypeVar, overload
+from typing import Any, Coroutine, Dict, List, Literal, TypeVar, overload
 
 import asyncio
 
 from src.common.data_models.embedding_service_data_models import EmbeddingResult, ImageEmbeddingResult
+from src.common.embedding_identity import build_embedding_fingerprint
 from src.common.logger import get_logger
-from src.llm_models.utils_model import LLMOrchestrator
+from src.llm_models.utils_model import LLMOrchestrator, TempMethodsLLMUtils
 from src.services.service_task_resolver import resolve_task_name
 
 logger = get_logger("embedding_service")
 
 _CoroutineReturnT = TypeVar("_CoroutineReturnT")
+
+
+def resolve_embedding_model_fingerprint(
+    *, model_name: str, model_identifier: str, api_provider: str, dimension: int,
+) -> Dict[str, Any]:
+    """把实际命中的模型信息与宿主请求配置组合成向量空间身份。"""
+    model = TempMethodsLLMUtils.get_model_info_by_name(model_name)
+    provider = TempMethodsLLMUtils.get_provider_by_name(api_provider)
+    dimension_keys = [key for key in ("dimensions", "output_dimensionality") if key in model.extra_params]
+    return build_embedding_fingerprint(
+        model=model_name, provider=api_provider, model_identifier=model_identifier,
+        base_url=provider.base_url, dimension=dimension,
+        dimension_request_mode="always" if dimension_keys else "never",
+        extra_params=model.extra_params,
+    )
 
 
 class EmbeddingServiceClient:

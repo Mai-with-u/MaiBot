@@ -8,14 +8,6 @@ import { FieldHookRegistry } from '@/lib/field-hooks'
 import type { ConfigSchema, FieldSchema } from '@/types/config-schema'
 import type { FieldHookComponentProps } from '@/lib/field-hooks'
 
-vi.mock('@tanstack/react-router', () => ({
-  Link: (props: { children?: React.ReactNode; className?: string; to: string }) => (
-    <a className={props.className} href={props.to}>
-      {props.children}
-    </a>
-  ),
-}))
-
 function makeField(name: string, overrides: Partial<FieldSchema> = {}): FieldSchema {
   return {
     name,
@@ -509,44 +501,6 @@ describe('DynamicConfigForm', () => {
 
       view.rerender(<AdvancedSettingsButton active onClick={onClick} />)
       expect(screen.getByRole('button', { name: '高级设置' })).toHaveClass('bg-primary')
-    })
-  })
-
-  describe('personality section', () => {
-    it('renders the prompt generator entry card under the personality nested section', () => {
-      const schema: ConfigSchema = {
-        className: 'RootConfig',
-        classDoc: 'Root',
-        fields: [],
-        nested: {
-          personality: {
-            className: 'PersonalityConfig',
-            classDoc: '人格',
-            fields: [
-              makeField('personality', {
-                type: 'textarea',
-                label: '人格描述',
-                'x-widget': 'textarea',
-              }),
-            ],
-          },
-        },
-      }
-
-      render(
-        <DynamicConfigForm
-          schema={schema}
-          values={{ personality: { personality: '温柔' } }}
-          onChange={vi.fn()}
-        />,
-      )
-
-      expect(screen.getByText('人设生成器（测试版）')).toBeInTheDocument()
-      expect(screen.getByText('根据人格设定生成或调整麦麦的人设描述。')).toBeInTheDocument()
-      expect(screen.getByRole('link', { name: /人设生成器/ })).toHaveAttribute(
-        'href',
-        '/config/prompt-generator',
-      )
     })
   })
 

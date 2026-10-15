@@ -6,16 +6,17 @@ Episode 聚合与落库服务。
 2. 按真实时间区间连通分量分组
 3. 复用输入指纹未变的旧 Episode，其余调用 LLM 切分
 4. 返回完整物化计划，由 source revision CAS 原子发布
-5. LLM 失败时使用确定性 fallback
+5. LLM 失败时让错误进入来源任务重试，不生成替代情景
 """
 
 from __future__ import annotations
 
+from collections import Counter
+from typing import Any, Dict, List, Optional, Tuple
+
+import asyncio
 import json
 import re
-from collections import Counter
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
 
 from src.common.logger import get_logger
 from src.config.config import global_config
@@ -30,7 +31,7 @@ logger = get_logger("A_Memorix.EpisodeService")
 class EpisodeService:
     """Episode MVP 后台处理服务。"""
 
-    MATERIALIZATION_VERSION = "episode_source_revision_v1"
+    MATERIALIZATION_VERSION = "episode_source_revision_v2"
 
     def __init__(
         self,
@@ -229,9 +230,7 @@ class EpisodeService:
             for paragraph_hash in (episode.get("evidence_ids") or [])
             if str(paragraph_hash).strip()
         ]
-        if len(cached_hashes) != len(set(cached_hashes)):
-            return []
-        if set(cached_hashes) != set(group_hashes):
+        if not set(cached_hashes).issubset(set(group_hashes)):
             return []
         if any(
             not str(episode.get("title", "") or "").strip()
@@ -404,42 +403,6 @@ class EpisodeService:
 
         return [token for token, _ in token_counter.most_common(limit)]
 
-    def _build_fallback_episode(self, group: Dict[str, Any]) -> Dict[str, Any]:
-        paragraphs = group.get("paragraphs", []) or []
-        source = str(group.get("source", "") or "").strip()
-        hashes = [str(p.get("hash", "") or "").strip() for p in paragraphs if str(p.get("hash", "") or "").strip()]
-        snippets = []
-        for p in paragraphs[:3]:
-            text = str(p.get("content", "") or "").strip().replace("\n", " ")
-            if text:
-                snippets.append(text[:140])
-        summary = "；".join(snippets)[:500] if snippets else "自动回退生成的情景记忆。"
-
-        time_start, time_end, granularity, time_conf = self._compute_time_meta(paragraphs)
-        participants = self._collect_participants(paragraphs, limit=12)
-        keywords = self._derive_keywords(paragraphs, limit=10)
-
-        if time_start is not None:
-            day_text = datetime.fromtimestamp(time_start).strftime("%Y-%m-%d")
-            title = f"{source or 'unknown'} {day_text} 情景片段"
-        else:
-            title = f"{source or 'unknown'} 情景片段"
-
-        return {
-            "title": title[:80],
-            "summary": summary,
-            "paragraph_hashes": hashes,
-            "participants": participants,
-            "keywords": keywords,
-            "time_confidence": time_conf,
-            "llm_confidence": 0.0,
-            "event_time_start": time_start,
-            "event_time_end": time_end,
-            "time_granularity": granularity,
-            "segmentation_model": "fallback_rule",
-            "segmentation_version": EpisodeSegmentationService.SEGMENTATION_VERSION,
-        }
-
     @staticmethod
     def _normalize_episode_hashes(episode_hashes: List[str], group_hashes_ordered: List[str]) -> List[str]:
         in_group = set(group_hashes_ordered)
@@ -472,30 +435,18 @@ class EpisodeService:
         ]
         group_start, group_end, _, _ = self._compute_time_meta(paragraphs)
 
-        fallback_used = False
-        segmentation_model = "fallback_rule"
-        segmentation_version = EpisodeSegmentationService.SEGMENTATION_VERSION
-
-        try:
-            llm_result = await self.segmentation_service.segment(
-                source=source,
-                window_start=group_start,
-                window_end=group_end,
-                paragraphs=paragraphs,
-            )
-            episodes = list(llm_result.get("episodes") or [])
-            segmentation_model = str(llm_result.get("segmentation_model", "") or "").strip() or "auto"
-            segmentation_version = (
-                str(llm_result.get("segmentation_version", "") or "").strip()
-                or EpisodeSegmentationService.SEGMENTATION_VERSION
-            )
-            if not episodes:
-                raise ValueError("llm_empty_episodes")
-            EpisodeSegmentationService.validate_episode_coverage(episodes, group_hashes)
-        except Exception as e:
-            logger.warning(f"Episode segmentation fallback: source={source} size={len(group_hashes)} err={e}")
-            episodes = [self._build_fallback_episode(group)]
-            fallback_used = True
+        llm_result = await self.segmentation_service.segment(
+            source=source,
+            window_start=group_start,
+            window_end=group_end,
+            paragraphs=paragraphs,
+        )
+        episodes = list(llm_result["episodes"])
+        segmentation_model = str(llm_result.get("segmentation_model", "") or "").strip() or "auto"
+        segmentation_version = (
+            str(llm_result.get("segmentation_version", "") or "").strip()
+            or EpisodeSegmentationService.SEGMENTATION_VERSION
+        )
 
         stored_payloads: List[Dict[str, Any]] = []
         for episode in episodes:
@@ -526,6 +477,8 @@ class EpisodeService:
                     "source": source,
                     "hashes": ordered_hashes,
                     "version": segmentation_version,
+                    "title": title,
+                    "summary": summary,
                 },
                 ensure_ascii=False,
                 sort_keys=True,
@@ -550,11 +503,11 @@ class EpisodeService:
                 "paragraph_count": len(ordered_hashes),
                 "llm_confidence": self._clamp_score(
                     episode.get("llm_confidence"),
-                    default=0.0 if fallback_used else 0.6,
+                    default=0.6,
                 ),
                 "segmentation_model": (
                     str(episode.get("segmentation_model", "") or "").strip()
-                    or ("fallback_rule" if fallback_used else segmentation_model)
+                    or segmentation_model
                 ),
                 "segmentation_version": (
                     str(episode.get("segmentation_version", "") or "").strip() or segmentation_version
@@ -573,27 +526,8 @@ class EpisodeService:
             "payloads": stored_payloads,
             "done_hashes": [hash_value for hash_value in group_hashes if hash_value in stored_hashes],
             "episode_count": len(stored_payloads),
-            "fallback_count": 1 if fallback_used else 0,
+            "fallback_count": 0,
         }
-
-    @staticmethod
-    def _validate_source_payload_coverage(
-        paragraphs: List[Dict[str, Any]],
-        payloads: List[Dict[str, Any]],
-    ) -> None:
-        expected = [
-            str(paragraph.get("hash", "") or "").strip()
-            for paragraph in paragraphs
-            if str(paragraph.get("hash", "") or "").strip()
-        ]
-        assigned = [
-            str(paragraph_hash or "").strip()
-            for payload in payloads
-            for paragraph_hash in (payload.get("evidence_ids") or [])
-            if str(paragraph_hash or "").strip()
-        ]
-        if Counter(expected) != Counter(assigned):
-            raise ValueError("episode_source_coverage_invalid")
 
     async def plan_source_rebuild(
         self,
@@ -614,8 +548,8 @@ class EpisodeService:
             }
 
         memory_cfg = global_config.a_memorix.integration
-        paragraphs = self.metadata_store.get_live_paragraphs_by_source(
-            token,
+        paragraphs = await asyncio.to_thread(
+            self.metadata_store.get_live_paragraphs_by_source, token,
             exclude_stale=bool(getattr(memory_cfg, "feedback_correction_paragraph_hard_filter_enabled", True)),
         )
         generation = (
@@ -638,9 +572,13 @@ class EpisodeService:
                 "recomputed_group_count": 0,
             }
 
-        paragraphs = self._enrich_paragraph_participants(paragraphs)
+        paragraphs = await asyncio.to_thread(self._enrich_paragraph_participants, paragraphs)
         groups = self.group_paragraphs(paragraphs)
-        existing_episodes = self.metadata_store.get_episodes_by_source(token)
+        existing_episodes = await asyncio.to_thread(self.metadata_store.get_episodes_by_source, token)
+        cached_empty_groups = set(await asyncio.to_thread(
+            self.metadata_store.get_episode_empty_group_fingerprints, token,
+        ))
+        empty_group_fingerprints: List[str] = []
         cached_by_fingerprint: Dict[str, List[Dict[str, Any]]] = {}
         for episode in existing_episodes:
             input_fingerprint = str(episode.get("input_fingerprint", "") or "").strip()
@@ -656,6 +594,10 @@ class EpisodeService:
             group["_segmentation_generation"] = generation
             input_fingerprint = self._group_input_fingerprint(group)
             group["_input_fingerprint"] = input_fingerprint
+            if input_fingerprint in cached_empty_groups:
+                empty_group_fingerprints.append(input_fingerprint)
+                reused_group_count += 1
+                continue
             cached_payloads = self._reusable_group_payloads(
                 group,
                 input_fingerprint,
@@ -667,11 +609,13 @@ class EpisodeService:
                 reused_episode_count += len(cached_payloads)
                 continue
             result = await self._build_episode_payloads_for_group(group)
-            payloads.extend(list(result.get("payloads") or []))
+            group_payloads = list(result.get("payloads") or [])
+            payloads.extend(group_payloads)
+            if not group_payloads:
+                empty_group_fingerprints.append(input_fingerprint)
             fallback_count += int(result.get("fallback_count") or 0)
             recomputed_group_count += 1
 
-        self._validate_source_payload_coverage(paragraphs, payloads)
         return {
             "source": token,
             "payloads": payloads,
@@ -683,6 +627,7 @@ class EpisodeService:
             "reused_episode_count": reused_episode_count,
             "recomputed_group_count": recomputed_group_count,
             "generation_hash": generation_hash,
+            "empty_group_fingerprints": empty_group_fingerprints,
         }
 
     async def rebuild_source(self, source: str) -> Dict[str, Any]:
@@ -691,9 +636,10 @@ class EpisodeService:
         token = str(plan.get("source", "") or "").strip()
         if not token:
             return {key: value for key, value in plan.items() if key != "payloads"}
-        replace_result = self.metadata_store.replace_episodes_for_source(
-            token,
+        replace_result = await asyncio.to_thread(
+            self.metadata_store.replace_episodes_for_source, token,
             list(plan.get("payloads") or []),
+            empty_group_fingerprints=list(plan.get("empty_group_fingerprints") or []),
         )
         result = {key: value for key, value in plan.items() if key != "payloads"}
         result["episode_count"] = int(replace_result.get("episode_count") or 0)

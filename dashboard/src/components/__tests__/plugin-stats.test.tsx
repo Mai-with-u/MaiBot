@@ -5,6 +5,7 @@ import { PluginStats } from '../plugin-stats'
 
 import {
   dislikePlugin,
+  getPluginReviewIdentity,
   getPluginStats,
   getPluginUserState,
   likePlugin,
@@ -21,6 +22,7 @@ vi.mock('@/hooks/use-toast', () => ({
 }))
 
 vi.mock('@/lib/plugin-stats', () => ({
+  getPluginReviewIdentity: vi.fn(),
   getPluginStats: vi.fn(),
   getPluginUserState: vi.fn(),
   likePlugin: vi.fn(),
@@ -36,6 +38,7 @@ function makeStats(overrides: Partial<PluginStatsData> = {}): PluginStatsData {
     downloads: 1234,
     rating: 4.2,
     rating_count: 9,
+    comment_count: 9,
     ...overrides,
   }
 }
@@ -59,6 +62,7 @@ function getStarButtons(dialog: HTMLElement): HTMLElement[] {
 
 describe('PluginStats', () => {
   beforeEach(() => {
+    vi.mocked(getPluginReviewIdentity).mockResolvedValue({ username: '麦麦' })
     vi.mocked(getPluginStats).mockResolvedValue(makeStats())
     vi.mocked(getPluginUserState).mockResolvedValue(makeUserState())
   })
@@ -107,21 +111,46 @@ describe('PluginStats', () => {
     expect(screen.getByRole('button', { name: '修改评价' })).toBeInTheDocument()
   })
 
-  it('渲染最近评价列表，无评分的条目显示「仅评论」', async () => {
+  it('评分与评论分区展示：评论归入「最近评论」，纯评分归入「最近评分」', async () => {
     vi.mocked(getPluginStats).mockResolvedValue(
       makeStats({
         recent_ratings: [
-          { user_id: 'u1', rating: null, comment: '非常好用', created_at: '2026-01-02T00:00:00Z' },
+          { user_id: 'u1', username: '测试用户', rating: null, comment: '非常好用', created_at: '2026-01-02T00:00:00Z' },
           { user_id: 'u2', rating: 5, created_at: '2026-01-03T00:00:00Z' },
+          { user_id: 'u3', rating: 4, comment: '还不错', created_at: '2026-01-04T00:00:00Z' },
         ],
       })
     )
 
     render(<PluginStats pluginId="demo-plugin" />)
 
-    expect(await screen.findByText('最近评价')).toBeInTheDocument()
-    expect(screen.getByText('仅评论')).toBeInTheDocument()
+    // 两个分区同时存在，旧的合并标题「最近评价」不再出现
+    expect(await screen.findByText('最近评论')).toBeInTheDocument()
+    expect(screen.getByText('最近评分')).toBeInTheDocument()
+    expect(screen.queryByText('最近评价')).not.toBeInTheDocument()
+
+    // 评论分区展示评论正文和用户名。
     expect(screen.getByText('非常好用')).toBeInTheDocument()
+    expect(screen.getByText('还不错')).toBeInTheDocument()
+    expect(screen.getByText('测试用户')).toBeInTheDocument()
+  })
+
+  it('只有纯评分条目时仅渲染「最近评分」，不渲染「最近评论」', async () => {
+    vi.mocked(getPluginStats).mockResolvedValue(
+      makeStats({
+        recent_ratings: [
+          { user_id: 'u2', rating: 5, created_at: '2026-01-03T00:00:00Z' },
+          { user_id: 'u4', rating: 3, created_at: '2026-01-05T00:00:00Z' },
+        ],
+      })
+    )
+
+    render(<PluginStats pluginId="demo-plugin" />)
+
+    expect(await screen.findByText('最近评分')).toBeInTheDocument()
+    expect(screen.queryByText('最近评论')).not.toBeInTheDocument()
+    // 纯评分条目没有评论正文，也不应出现「仅评论」标注
+    expect(screen.queryByText('仅评论')).not.toBeInTheDocument()
   })
 
   it('点赞成功后更新计数并弹出成功提示', async () => {
@@ -198,6 +227,7 @@ describe('PluginStats', () => {
       user_rating: 4,
       rating: 4.5,
       rating_count: 10,
+      comment_count: 10,
     })
 
     render(<PluginStats pluginId="demo-plugin" />)
@@ -213,7 +243,7 @@ describe('PluginStats', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: '提交评价' }))
 
     await waitFor(() => {
-      expect(ratePlugin).toHaveBeenCalledWith('demo-plugin', 4, undefined)
+      expect(ratePlugin).toHaveBeenCalledWith('demo-plugin', 4, undefined, undefined, { username: '麦麦', anonymous: false })
     })
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
@@ -241,7 +271,7 @@ describe('PluginStats', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: '提交评价' }))
 
     await waitFor(() => {
-      expect(ratePlugin).toHaveBeenCalledWith('demo-plugin', undefined, '很好用')
+      expect(ratePlugin).toHaveBeenCalledWith('demo-plugin', undefined, '很好用', undefined, { username: '麦麦', anonymous: false })
     })
     // 评论保存后按钮文案变为「修改评价」
     await waitFor(() => {

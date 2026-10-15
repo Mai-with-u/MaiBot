@@ -133,38 +133,26 @@ describe('downloadDataExport', () => {
     expect(getMock).not.toHaveBeenCalled()
   })
 
-  it('以 blob 模式下载文件并通过临时链接触发保存', async () => {
-    const blob = new Blob(['zip-bytes'])
-    getMock.mockResolvedValue(blob)
-    const createObjectUrlSpy = vi
-      .spyOn(URL, 'createObjectURL')
-      .mockReturnValue('blob:maibot-test/export')
-    const revokeObjectUrlSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+  it('通过后端链接触发浏览器直接下载', async () => {
+    resolveApiPathMock.mockResolvedValue('https://backend.example/export.zip')
     // 捕获被点击的临时 <a> 元素，验证下载属性（mock.contexts 记录每次调用的 this）
     const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
 
     const job = makeJob()
     await downloadDataExport(job)
 
-    expect(getMock).toHaveBeenCalledWith(job.download_url, {
-      parse: 'blob',
-      cache: 'no-store',
-      errorMessage: '下载导出文件失败',
-    })
-    expect(createObjectUrlSpy).toHaveBeenCalledWith(blob)
+    expect(getMock).not.toHaveBeenCalled()
+    expect(resolveApiPathMock).toHaveBeenCalledWith(job.download_url)
     expect(clickSpy).toHaveBeenCalledTimes(1)
     const clickedLink = clickSpy.mock.contexts[0] as HTMLAnchorElement
-    expect(clickedLink.getAttribute('href')).toBe('blob:maibot-test/export')
+    expect(clickedLink.getAttribute('href')).toBe('https://backend.example/export.zip')
     expect(clickedLink.download).toBe('maibot-backup.zip')
-    // 下载完成后临时链接被移除、对象 URL 被回收
+    // 触发浏览器下载后移除临时链接。
     expect(document.body.contains(clickedLink)).toBe(false)
-    expect(revokeObjectUrlSpy).toHaveBeenCalledWith('blob:maibot-test/export')
   })
 
   it('任务未提供文件名时使用默认文件名 maibot-data.zip', async () => {
-    getMock.mockResolvedValue(new Blob(['zip-bytes']))
-    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:maibot-test/fallback')
-    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    resolveApiPathMock.mockImplementation(async (path: string) => path)
     const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
 
     await downloadDataExport(makeJob({ filename: null }))

@@ -1,5 +1,4 @@
 from datetime import datetime
-from pathlib import Path
 from typing import Dict, Optional, Set
 
 import asyncio
@@ -9,6 +8,7 @@ import hashlib
 from rich.traceback import install
 from sqlmodel import select
 
+from src.common.paths import get_instance_root
 from src.common.data_models.image_data_model import MaiImage
 from src.common.database.database import get_db_session
 from src.common.database.database_model import Images, ImageType
@@ -20,7 +20,7 @@ from src.services.llm_service import LLMServiceClient
 
 install(extra_lines=3)
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.absolute().resolve()
+PROJECT_ROOT = get_instance_root()
 DATA_DIR = PROJECT_ROOT / "data"
 IMAGE_DIR = DATA_DIR / "images"
 
@@ -107,13 +107,13 @@ class ImageManager:
         """
         获取图片描述的封装方法
 
-        如果图片已存在于数据库中，则直接返回描述
+        提供图片字节时先确保文件已保存，再复用数据库中的描述。
 
         如果不存在，则**保存图片**并**生成描述**后返回
 
         Args:
             image_hash (Optional[str]): 图片的哈希值，如果提供则优先使用该
-            image_bytes (Optional[bytes]): 图片的字节数据，如果提供则在数据库中找不到哈希值时使用该数据生成描述
+            image_bytes (Optional[bytes]): 图片的字节数据，用于保存或恢复文件，并在缺少描述时生成描述
             wait_for_build (bool): 未命中缓存时是否同步等待描述构建完成
         Returns:
             return (str): 图片描述，如果发生错误或无法生成描述则返回空字符串
@@ -128,6 +128,10 @@ class ImageManager:
         else:
             hash_str = hashlib.sha256(image_bytes).hexdigest()
 
+        # 描述可以比缓存文件保留更久，命中描述不能跳过文件恢复。
+        # 保存失败必须上抛，调用方才能保留原始字节，避免误认为图片已持久化。
+        saved_image = await self.ensure_image_saved(image_bytes) if image_bytes else None
+
         try:
             if record := self._get_image_record(hash_str):
                 if record.vlm_processed and record.description:
@@ -137,11 +141,6 @@ class ImageManager:
 
         if not image_bytes:
             logger.warning("图片哈希值未找到，且未提供图片字节数据，返回无描述")
-            return ""
-        try:
-            saved_image = await self.ensure_image_saved(image_bytes)
-        except Exception as e:
-            logger.error(f"保存图片文件时发生错误: {e}")
             return ""
         if not _is_vlm_task_configured():
             logger.info("未配置 VLM 模型，跳过图片识别")

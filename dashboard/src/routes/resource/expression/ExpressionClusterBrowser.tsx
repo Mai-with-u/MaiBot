@@ -13,6 +13,7 @@ import { getExpressionClusterMembers, getExpressionClusters } from '@/lib/expres
 import { cn } from '@/lib/utils'
 
 import type { ExpressionClusterMember, ExpressionClusterSummary } from '@/types/expression'
+import { ExpressionVectorSpaces } from './ExpressionVectorSpaces'
 
 interface ExpressionClusterBrowserProps {
   onOpenExpression: (expressionId: number) => void
@@ -155,7 +156,8 @@ export function ExpressionClusterBrowser({ onOpenExpression }: ExpressionCluster
               {clusterQuery.data?.embedding_model ?? '-'}
             </div>
           </div>
-          <div className="flex items-end justify-start lg:justify-end">
+          <div className="flex items-end justify-start gap-2 lg:justify-end">
+            <ExpressionVectorSpaces />
             <Button
               type="button"
               variant="outline"

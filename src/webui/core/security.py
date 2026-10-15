@@ -9,6 +9,7 @@ from typing import Dict, Optional, Tuple
 import json
 import secrets
 
+from src.common.paths import get_instance_root
 from src.common.logger import get_logger
 
 logger = get_logger("webui")
@@ -30,7 +31,7 @@ class TokenManager:
         """
         if config_path is None:
             # 获取项目根目录 (src/webui/core -> src/webui -> src -> 根目录)
-            project_root = Path(__file__).parent.parent.parent.parent
+            project_root = get_instance_root()
             config_path = project_root / "data" / "webui.json"
 
         self.config_path = config_path

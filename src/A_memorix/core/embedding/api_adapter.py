@@ -31,7 +31,7 @@ logger = get_logger("A_Memorix.EmbeddingAPIAdapter")
 class EmbeddingAPIAdapter:
     """适配宿主 embedding 请求接口。"""
 
-    _GLOBAL_DIMENSION_CACHE: Dict[str, int] = {}
+    _GLOBAL_DIMENSION_CACHE: Dict[str, Tuple[int, str, str]] = {}
     _GLOBAL_TEXT_EMBEDDING_CACHE: Dict[Tuple[str, int, str], np.ndarray] = {}
 
     def __init__(
@@ -63,7 +63,10 @@ class EmbeddingAPIAdapter:
         self._total_errors = 0
         self._total_time = 0.0
         self._last_success_model_name = ""
+        self._last_success_primary_model_name = ""
         self._last_success_provider_name = ""
+        self._last_success_dimension: Optional[int] = None
+        self._last_configuration_key = ""
 
         logger.info(
             "Embedding 初始化: "
@@ -115,12 +118,17 @@ class EmbeddingAPIAdapter:
         except Exception:
             return ""
 
-    def get_embedding_fingerprint(self, *, dimension: Optional[int] = None) -> Dict[str, Any]:
+    def get_embedding_fingerprint(
+        self, *, dimension: Optional[int] = None, model_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """返回当前适配器所用向量空间的精简指纹。"""
-        effective_dimension = max(1, int(dimension or self.get_embedding_dimension()))
-        model_token = str(self._last_success_model_name or "").strip()
-        provider_token = str(self._last_success_provider_name or "").strip()
-        source = "observed" if model_token else "configured"
+        effective_dimension = max(1, int(dimension or self._last_success_dimension or self.get_embedding_dimension()))
+        model_token = str(model_name if model_name is not None else self._last_success_model_name).strip()
+        provider_token = (
+            self._resolve_model_provider_name(model_token) if model_name is not None
+            else str(self._last_success_provider_name).strip()
+        )
+        source = "observed" if model_name is None and model_token else "configured"
         candidate_names = [
             str(item or "").strip() for item in self._resolve_candidate_model_names() if str(item or "").strip()
         ]
@@ -139,17 +147,25 @@ class EmbeddingAPIAdapter:
             "dimension": effective_dimension,
             "dimension_request_mode": self.dimension_request_mode,
         }
+        if model_token != "auto":
+            model_info = self._find_model_info(model_token)
+            provider = self._find_provider(model_info.api_provider)
+            compare_payload["model_identifier"] = model_info.model_identifier
+            compare_payload["base_url"] = provider.base_url.rstrip("/")
+            compare_payload["extra_params"] = self._strip_dimension_control_keys(model_info.extra_params)
         if model_token == "auto":
             compare_payload["candidate_models"] = candidate_names
 
         return {
-            "version": 1,
+            "version": 2,
             "hash": self._fingerprint_hash(compare_payload),
             "model": model_token,
             "provider": provider_token,
             "dimension": effective_dimension,
             "dimension_request_mode": self.dimension_request_mode,
             "source": source,
+            "model_identifier": compare_payload.get("model_identifier", ""),
+            "base_url": compare_payload.get("base_url", ""),
         }
 
     def get_requested_dimension(self) -> int:
@@ -278,6 +294,9 @@ class EmbeddingAPIAdapter:
         if not candidate_names:
             raise RuntimeError("embedding 任务未配置模型")
 
+        # 在发起请求前解析完整配置，配置错误不能吞掉已经成功的模型响应。
+        self._dimension_cache_key()
+
         last_exc: Optional[BaseException] = None
         for candidate_name in candidate_names:
             try:
@@ -310,7 +329,9 @@ class EmbeddingAPIAdapter:
                     source=f"embedding 模型 {candidate_name}",
                 )
                 self._last_success_model_name = str(candidate_name or "").strip()
+                self._last_success_primary_model_name = candidate_names[0]
                 self._last_success_provider_name = str(model_info.api_provider or "").strip()
+                self._last_success_dimension = int(vector.size)
                 return vector.tolist()
             except Exception as exc:
                 last_exc = exc
@@ -320,15 +341,34 @@ class EmbeddingAPIAdapter:
             logger.error(f"通过直接 Client 获取 Embedding 失败: {last_exc}")
         return None
 
+    def get_embedding_configuration_key(self) -> str:
+        """复用向量库指纹规则；首选模型变化立即生效，备用顺序不改变当前身份。"""
+        candidates = self._resolve_candidate_model_names()
+        primary = candidates[0] if candidates else "auto"
+        model = self._last_success_model_name
+        if model not in candidates or primary != self._last_success_primary_model_name:
+            model = primary
+        return self.get_embedding_fingerprint(model_name=model)["hash"]
+
     def _dimension_cache_key(self) -> str:
-        candidate_names = self._resolve_candidate_model_names()
-        return "|".join(
-            [
-                str(self.model_name or "auto"),
-                str(self.default_dimension),
-                str(self.dimension_request_mode),
-                ",".join(candidate_names),
-            ]
+        models = []
+        for name in self._resolve_candidate_model_names():
+            info = self._find_model_info(name)
+            provider = self._find_provider(info.api_provider)
+            models.append(
+                (
+                    name,
+                    info.model_identifier,
+                    provider.base_url.rstrip("/"),
+                    self._strip_dimension_control_keys(info.extra_params),
+                )
+            )
+        return self._fingerprint_hash(
+            {
+                "models": models,
+                "dimension": self.default_dimension,
+                "mode": self.dimension_request_mode,
+            }
         )
 
     def _embedding_cache_key(self, text: str, dimensions: Optional[int]) -> Tuple[str, int, str]:
@@ -336,13 +376,23 @@ class EmbeddingAPIAdapter:
         return (self._dimension_cache_key(), int(requested_dimension), str(text or ""))
 
     async def _detect_dimension(self) -> int:
+        configuration_key = self._dimension_cache_key()
+        if configuration_key != self._last_configuration_key:
+            self._dimension_detected = False
+            self._dimension = None
+            self._last_success_model_name = ""
+            self._last_success_provider_name = ""
+            self._last_success_dimension = None
+            self._last_configuration_key = configuration_key
         if self._dimension_detected and self._dimension is not None:
             return self._dimension
 
         cache_key = self._dimension_cache_key()
-        cached_dimension = self._GLOBAL_DIMENSION_CACHE.get(cache_key)
-        if cached_dimension is not None:
-            self._dimension = int(cached_dimension)
+        cached_detection = self._GLOBAL_DIMENSION_CACHE.get(cache_key)
+        if cached_detection is not None:
+            self._dimension, self._last_success_model_name, self._last_success_provider_name = cached_detection
+            self._last_success_dimension = self._dimension if self._last_success_model_name else None
+            self._last_success_primary_model_name = self._resolve_candidate_model_names()[0]
             self._dimension_detected = True
             logger.debug(f"嵌入维度命中进程缓存: {self._dimension}")
             return self._dimension
@@ -363,7 +413,12 @@ class EmbeddingAPIAdapter:
                         )
                     self._dimension = detected_dim
                     self._dimension_detected = True
-                    self._GLOBAL_DIMENSION_CACHE[cache_key] = int(detected_dim)
+                    # 模型身份和维度来自同一次探测，不能被后续普通编码拆开覆盖。
+                    self._GLOBAL_DIMENSION_CACHE[cache_key] = (
+                        int(detected_dim),
+                        self._last_success_model_name,
+                        self._last_success_provider_name,
+                    )
                     return detected_dim
             except Exception as exc:
                 logger.debug(f"带维度参数探测失败: {exc}，尝试不带维度参数探测")
@@ -374,7 +429,11 @@ class EmbeddingAPIAdapter:
                 detected_dim = len(test_embedding)
                 self._dimension = detected_dim
                 self._dimension_detected = True
-                self._GLOBAL_DIMENSION_CACHE[cache_key] = int(detected_dim)
+                self._GLOBAL_DIMENSION_CACHE[cache_key] = (
+                    int(detected_dim),
+                    self._last_success_model_name,
+                    self._last_success_provider_name,
+                )
                 logger.info(f"嵌入维度: {detected_dim} (自然输出)")
                 return detected_dim
             logger.warning(f"嵌入维度检测失败，使用 configured_dimension: {self.default_dimension}")
@@ -383,7 +442,7 @@ class EmbeddingAPIAdapter:
 
         self._dimension = self.default_dimension
         self._dimension_detected = True
-        self._GLOBAL_DIMENSION_CACHE[cache_key] = int(self.default_dimension)
+        self._GLOBAL_DIMENSION_CACHE[cache_key] = (int(self.default_dimension), "", "")
         return self.default_dimension
 
     async def encode(
@@ -491,15 +550,21 @@ class EmbeddingAPIAdapter:
                     return batch_index, vector
 
             tasks = [encode_with_semaphore(text, index, offset + index) for index, text in uncached_items]
-            results = await asyncio.gather(*tasks)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            errors = [result for result in results if isinstance(result, BaseException)]
             normalized_results: List[Tuple[int, np.ndarray]] = []
-            for batch_index, vector in results:
+            for result in results:
+                if isinstance(result, BaseException):
+                    continue
+                batch_index, vector = result
                 normalized_results.append((batch_index, vector))
                 if self.enable_cache:
                     text = batch[batch_index]
                     cache_key = self._embedding_cache_key(text, dimensions)
                     self._GLOBAL_TEXT_EMBEDDING_CACHE[cache_key] = vector.copy()
 
+            if errors:
+                raise errors[0]
             batch_results.extend(normalized_results)
             batch_results.sort(key=lambda item: item[0])
             all_embeddings.extend(emb for _, emb in batch_results)

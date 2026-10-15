@@ -6,8 +6,10 @@ import sys
 
 import tomlkit
 
+from src.common.paths import get_instance_root
 
-PROJECT_ROOT: Path = Path(__file__).parent.parent.parent.absolute().resolve()
+
+PROJECT_ROOT: Path = get_instance_root()
 CONFIG_DIR: Path = PROJECT_ROOT / "config"
 BOT_CONFIG_PATH: Path = (CONFIG_DIR / "bot_config.toml").resolve().absolute()
 

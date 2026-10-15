@@ -548,7 +548,7 @@ export function UpdateNoticeDialog() {
                   稍后处理
                 </Button>
                 <Button type="button" onClick={() => void openPluginManagement()}>
-                  前往插件管理
+                  前往插件扩展
                   <ArrowRight className="h-4 w-4" />
                 </Button>
               </>

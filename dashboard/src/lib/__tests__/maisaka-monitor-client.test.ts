@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { WsEventEnvelope } from '../unified-ws'
 
-// maisakaMonitorClient 是模块级单例（initialized/replayCursor/subscriptionActive 等内部状态），
+// maisakaMonitorClient 是模块级单例（initialized/subscriptionActive 等内部状态），
 // 因此每个用例都通过 vi.resetModules + 动态 import 获取全新实例，避免跨用例状态污染。
 type MonitorModule = typeof import('../maisaka-monitor-client')
 
@@ -10,7 +10,7 @@ const wsMocks = vi.hoisted(() => ({
   addEventListener: vi.fn(),
   subscribe: vi.fn(),
   unsubscribe: vi.fn(),
-  updateSubscriptionData: vi.fn(),
+  restart: vi.fn(),
 }))
 
 vi.mock('../unified-ws', () => ({
@@ -48,6 +48,7 @@ describe('maisakaMonitorClient', () => {
     })
     wsMocks.subscribe.mockResolvedValue({})
     wsMocks.unsubscribe.mockResolvedValue({})
+    wsMocks.restart.mockResolvedValue(undefined)
 
     const monitorModule: MonitorModule = await import('../maisaka-monitor-client')
     client = monitorModule.maisakaMonitorClient
@@ -57,15 +58,12 @@ describe('maisakaMonitorClient', () => {
     vi.useRealTimers()
   })
 
-  it('首次订阅时注册底层事件监听并携带初始补发参数订阅 maisaka_monitor 主题', async () => {
+  it('首次订阅时注册底层事件监听并以分页模式订阅 maisaka_monitor 主题', async () => {
     await client.subscribe(vi.fn())
 
     expect(wsMocks.addEventListener).toHaveBeenCalledTimes(1)
     expect(wsMocks.subscribe).toHaveBeenCalledTimes(1)
-    expect(wsMocks.subscribe).toHaveBeenCalledWith('maisaka_monitor', 'main', {
-      since_event_id: 0,
-      replay_limit: 1000,
-    })
+    expect(wsMocks.subscribe).toHaveBeenCalledWith('maisaka_monitor', 'main', { mode: 'paged' })
   })
 
   it('只转发 maisaka_monitor 域的事件，并把 event/data 映射为监控事件', async () => {
@@ -127,6 +125,40 @@ describe('maisakaMonitorClient', () => {
     )
   })
 
+  it('重置消息通知业务开始回放，Planner 增量还原成完整事件再分发', async () => {
+    const listener = vi.fn()
+    await client.subscribe(listener)
+    const envelope = { op: 'event' as const, domain: 'maisaka_monitor' }
+    capturedWsListener?.({ ...envelope, event: 'planner.reset', data: {} })
+    expect(listener).toHaveBeenCalledWith({ type: 'replay.started', data: {} })
+    const data = {
+      session_id: 's',
+      run_id: 'r',
+      cycle_id: 1,
+      event_id: 1,
+      tools: [],
+      planner: { content: '思考' },
+    }
+    capturedWsListener?.({ ...envelope, event: 'planner.progress', data })
+    capturedWsListener?.({
+      ...envelope,
+      event: 'planner.delta',
+      data: {
+        session_id: 's',
+        run_id: 'r',
+        cycle_id: 1,
+        base_event_id: 1,
+        event_type: 'planner.finalized',
+        changes: { event_id: 2 },
+        removed_fields: [],
+      },
+    })
+    expect(listener).toHaveBeenLastCalledWith({
+      type: 'planner.finalized',
+      data: { ...data, event_id: 2 },
+    })
+  })
+
   it('并发首次订阅共享同一个订阅 Promise，底层 subscribe 只调用一次', async () => {
     const pendingSubscribe = createDeferred<Record<string, unknown>>()
     wsMocks.subscribe.mockImplementation(() => pendingSubscribe.promise)
@@ -144,52 +176,38 @@ describe('maisakaMonitorClient', () => {
     expect(wsMocks.addEventListener).toHaveBeenCalledTimes(1)
   })
 
-  it('订阅已激活后新增订阅者会按当前游标触发补发订阅', async () => {
-    await client.subscribe(vi.fn())
-    expect(wsMocks.subscribe).toHaveBeenLastCalledWith('maisaka_monitor', 'main', {
-      since_event_id: 0,
-      replay_limit: 1000,
+  it('Planner 增量缺少基准时报告错误并重连恢复，避免持续丢帧', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const listener = vi.fn()
+    await client.subscribe(listener)
+    capturedWsListener?.({
+      op: 'event',
+      domain: 'maisaka_monitor',
+      event: 'planner.delta',
+      data: {
+        session_id: 's',
+        run_id: 'r',
+        cycle_id: 1,
+        base_event_id: 1,
+        event_type: 'planner.progress',
+        changes: { event_id: 2 },
+        removed_fields: [],
+      },
     })
+    expect(errorSpy).toHaveBeenCalledWith('MaiSaka 监控增量解码失败，重新连接:', expect.any(Error))
+    expect(wsMocks.restart).toHaveBeenCalledTimes(1)
+    expect(listener).not.toHaveBeenCalled()
+  })
 
-    client.updateReplayCursor(42)
+  it('重新订阅仍以分页模式同步概要，历史由分页接口按需拉取', async () => {
+    await client.subscribe(vi.fn())
+    expect(wsMocks.subscribe).toHaveBeenLastCalledWith('maisaka_monitor', 'main', { mode: 'paged' })
+
     await client.subscribe(vi.fn())
 
-    // 游标推进后 replay_limit 切换为增量补发上限 10000
+    // 重复订阅只重新同步概要与阶段快照，不再整段回放。
     expect(wsMocks.subscribe).toHaveBeenCalledTimes(2)
-    expect(wsMocks.subscribe).toHaveBeenLastCalledWith('maisaka_monitor', 'main', {
-      since_event_id: 42,
-      replay_limit: 10000,
-    })
-  })
-
-  it('updateReplayCursor 只在游标前进时生效并同步底层订阅数据', () => {
-    client.updateReplayCursor(7.9)
-    expect(wsMocks.updateSubscriptionData).toHaveBeenCalledTimes(1)
-    expect(wsMocks.updateSubscriptionData).toHaveBeenCalledWith('maisaka_monitor', 'main', {
-      since_event_id: 7,
-      replay_limit: 10000,
-    })
-
-    // 等于或小于当前游标、非有限数值均不应触发更新
-    client.updateReplayCursor(7)
-    client.updateReplayCursor(3)
-    client.updateReplayCursor(Number.NaN)
-    client.updateReplayCursor(Number.POSITIVE_INFINITY)
-    expect(wsMocks.updateSubscriptionData).toHaveBeenCalledTimes(1)
-  })
-
-  it('setInitialReplayCursor 忽略非法值且不回退游标，并影响首次订阅参数', async () => {
-    client.setInitialReplayCursor(-1)
-    client.setInitialReplayCursor(Number.NaN)
-    client.setInitialReplayCursor(8.7)
-    // 已推进到 8，较小的值不会回退游标
-    client.setInitialReplayCursor(3)
-
-    await client.subscribe(vi.fn())
-    expect(wsMocks.subscribe).toHaveBeenCalledWith('maisaka_monitor', 'main', {
-      since_event_id: 8,
-      replay_limit: 10000,
-    })
+    expect(wsMocks.subscribe).toHaveBeenLastCalledWith('maisaka_monitor', 'main', { mode: 'paged' })
   })
 
   it('最后一个监听器移除后延迟 200ms 才真正退订，随后订阅会重建', async () => {
@@ -207,10 +225,7 @@ describe('maisakaMonitorClient', () => {
     // 真正退订后再次订阅会重新建立订阅（初始游标参数）
     await client.subscribe(vi.fn())
     expect(wsMocks.subscribe).toHaveBeenCalledTimes(2)
-    expect(wsMocks.subscribe).toHaveBeenLastCalledWith('maisaka_monitor', 'main', {
-      since_event_id: 0,
-      replay_limit: 1000,
-    })
+    expect(wsMocks.subscribe).toHaveBeenLastCalledWith('maisaka_monitor', 'main', { mode: 'paged' })
   })
 
   it('延迟退订窗口内重新订阅会取消退订（StrictMode 快速卸载重挂载场景）', async () => {

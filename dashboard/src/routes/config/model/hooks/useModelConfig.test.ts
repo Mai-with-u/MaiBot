@@ -93,6 +93,7 @@ function model(name: string, apiProvider = 'main', extra: Partial<ModelInfo> = {
   return {
     name,
     model_identifier: `${name}-id`,
+    model_type: 'llm',
     api_provider: apiProvider,
     price_in: 1,
     price_out: 2,
@@ -612,7 +613,7 @@ describe('useModelConfig 任务配置与 embedding', () => {
       await result.current.embeddingWarning.confirm()
     })
     expect(result.current.taskConfig?.embedding.model_list).toEqual(['embed'])
-    expect(lastToast()).toEqual(expect.objectContaining({ title: '嵌入模型已更新' }))
+    expect(lastToast()).toEqual(expect.objectContaining({ title: '嵌入模型已选择' }))
 
     act(() => {
       result.current.updateTaskConfig('embedding', 'model_list', ['embed'])
@@ -717,6 +718,7 @@ describe('useModelConfig 模型编辑与校验', () => {
       result.current.setEditingModel({
         name: '   ',
         model_identifier: '',
+        model_type: 'llm',
         api_provider: '',
         price_in: 0,
         price_out: 0,
@@ -735,6 +737,7 @@ describe('useModelConfig 模型编辑与校验', () => {
       result.current.setEditingModel({
         name: 'CHAT',
         model_identifier: 'new-id',
+        model_type: 'llm',
         api_provider: 'main',
         price_in: 0,
         price_out: 0,
@@ -765,6 +768,7 @@ describe('useModelConfig 模型编辑与校验', () => {
       result.current.setEditingModel({
         name: 'vision',
         model_identifier: 'vision-id',
+        model_type: 'llm',
         api_provider: 'spare',
         price_in: null,
         price_out: null,
@@ -1210,7 +1214,7 @@ describe('useModelConfig 删除、批量与分页搜索', () => {
 })
 
 describe('useModelConfig 提供商编辑与级联删除', () => {
-  it('打开提供商对话框：新增给默认值，编辑回填当前项', async () => {
+  it('打开提供商对话框：新增只给基础字段，编辑回填当前项', async () => {
     const { result, unmount } = await renderLoadedHook()
 
     act(() => {
@@ -1222,11 +1226,10 @@ describe('useModelConfig 提供商编辑与级联删除', () => {
       expect.objectContaining({
         name: '',
         client_type: 'openai',
-        max_retry: 2,
-        timeout: 30,
-        retry_interval: 10,
       })
     )
+    // 超时等数值字段不再前端预填，缺省由后端 schema 默认值填充
+    expect(result.current.editingProvider?.timeout).toBeUndefined()
 
     act(() => {
       result.current.openProviderDialog(result.current.apiProviders[1], 1)
@@ -1320,7 +1323,7 @@ describe('useModelConfig 提供商编辑与级联删除', () => {
     unmount()
   })
 
-  it('重命名仍被模型引用的提供商时中止保存并打开级联确认', async () => {
+  it('重命名仍被模型引用的提供商时迁移模型引用并一起保存', async () => {
     const { result, unmount } = await renderLoadedHook()
 
     await act(async () => {
@@ -1333,15 +1336,12 @@ describe('useModelConfig 提供商编辑与级联删除', () => {
       )
     })
 
-    expect(updateModelConfigMock).not.toHaveBeenCalled()
-    expect(result.current.providerDialogOpen).toBe(false)
-    expect(result.current.editingProvider).toBeNull()
-    expect(result.current.deleteConfirmState.isOpen).toBe(true)
-    expect(result.current.deleteConfirmState.context).toBe('manual')
-    expect(result.current.deleteConfirmState.providersToDelete).toEqual(['main'])
-    expect(result.current.deleteConfirmState.affectedModels.map((item) => item.name)).toEqual([
-      'chat',
-    ])
+    expect(updateModelConfigMock).toHaveBeenCalledTimes(1)
+    expect(result.current.deleteConfirmState.isOpen).toBe(false)
+    expect(result.current.apiProviders[0].name).toBe('renamed-main')
+    expect(result.current.models.find((item) => item.name === 'chat')?.api_provider).toBe(
+      'renamed-main'
+    )
     unmount()
   })
 

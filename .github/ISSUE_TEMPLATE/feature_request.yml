@@ -1,6 +1,6 @@
 name: Feature Request
 description: 新功能请求
-labels: ["Feature"]
+labels: ["新功能建议"]
 body:
 - type: checkboxes
   attributes:

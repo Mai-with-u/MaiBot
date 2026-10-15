@@ -11,7 +11,7 @@
  *
  * 仓库地址解析（getPluginRepositoryUrl）依赖列表 hook 的市场信息，故由调用方注入。
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { uninstallPlugin, updatePlugin } from '@/lib/plugin-api'
 import type { InstalledPlugin, PluginLoadProgress } from '@/lib/plugin-api'
@@ -41,6 +41,18 @@ export function usePluginLifecycle(options: UsePluginLifecycleOptions) {
   const [updatingPlugin, setUpdatingPlugin] = useState<InstalledPlugin | null>(null)
   const [updateProgress, setUpdateProgress] = useState<PluginLoadProgress | null>(null)
 
+  const updateController = useRef<AbortController | null>(null)
+
+  // 页面刷新、关闭或路由卸载时断开请求，后端随连接断开取消更新。
+  useEffect(() => {
+    const abortUpdate = () => updateController.current?.abort()
+    window.addEventListener('pagehide', abortUpdate)
+    return () => {
+      window.removeEventListener('pagehide', abortUpdate)
+      abortUpdate()
+    }
+  }, [])
+
   // WS 实时进度订阅：仅在订阅时对应当前正在更新/卸载的插件才写入进度
   useEffect(() => {
     let unsubscribe: (() => Promise<void>) | null = null
@@ -61,6 +73,7 @@ export function usePluginLifecycle(options: UsePluginLifecycleOptions) {
         if (
           progress.operation === 'update' &&
           updatingPlugin &&
+          !updateController.current?.signal.aborted &&
           progress.plugin_id === updatingPlugin.id
         ) {
           setUpdateProgress(progress)
@@ -99,16 +112,14 @@ export function usePluginLifecycle(options: UsePluginLifecycleOptions) {
   )
 
   const closeUpdatePluginDialog = useCallback(() => {
-    if (updateProgress?.stage === 'loading') {
-      return
-    }
+    updateController.current?.abort()
     setUpdateDialogOpen(false)
     setUpdatingPlugin(null)
     setUpdateProgress(null)
-  }, [updateProgress])
+  }, [])
 
   const handleConfirmUpdatePlugin = useCallback(async () => {
-    if (!updatingPlugin || updateProgress?.stage === 'loading') return
+    if (!updatingPlugin || updateController.current || updateProgress?.stage === 'loading') return
 
     const repositoryUrl = getPluginRepositoryUrl(updatingPlugin)
     if (!repositoryUrl) {
@@ -125,6 +136,8 @@ export function usePluginLifecycle(options: UsePluginLifecycleOptions) {
       return
     }
 
+    const controller = new AbortController()
+    updateController.current = controller
     setActingPluginId(updatingPlugin.id)
     setUpdateProgress({
       operation: 'update',
@@ -136,7 +149,8 @@ export function usePluginLifecycle(options: UsePluginLifecycleOptions) {
       loaded_plugins: 0,
     })
     try {
-      await updatePlugin(updatingPlugin.id, repositoryUrl, 'main')
+      await updatePlugin(updatingPlugin.id, repositoryUrl, 'main', undefined, controller.signal)
+      if (controller.signal.aborted) return
       toast({
         title: '更新插件成功',
         description: `${updatingPlugin.manifest.name} 已完成更新/升级`,
@@ -152,6 +166,7 @@ export function usePluginLifecycle(options: UsePluginLifecycleOptions) {
       })
       await onChanged()
     } catch (error) {
+      if (controller.signal.aborted) return
       const errorMessage = error instanceof Error ? error.message : '未知错误'
       setUpdateProgress({
         operation: 'update',
@@ -169,6 +184,7 @@ export function usePluginLifecycle(options: UsePluginLifecycleOptions) {
         variant: 'destructive',
       })
     } finally {
+      if (updateController.current === controller) updateController.current = null
       setActingPluginId(null)
     }
   }, [getPluginRepositoryUrl, onChanged, setActingPluginId, toast, updateProgress, updatingPlugin])

@@ -78,6 +78,7 @@ function makeStats(id: string, overrides: Partial<PluginStatsData> = {}): Plugin
     downloads: 0,
     rating: 0,
     rating_count: 0,
+    comment_count: 0,
     ...overrides,
   }
 }
@@ -506,6 +507,7 @@ describe('PluginCard 展示回退', () => {
               rating: 4.8,
               likes: 7,
               rating_count: 10,
+              comment_count: 10,
             }),
           },
         })}

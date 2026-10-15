@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { findTemplateByBaseUrl, resolveModelFetcherTemplate } from '../providerTemplates'
+import { validateThinkingParams } from '../model/thinkingFormats'
+import { findTemplateByBaseUrl, resolveModelFetcherTemplate, resolveThinkingFormatForModel } from '../providerTemplates'
 
 describe('providerTemplates', () => {
   it('为未知自定义 OpenAI 兼容端点启用模型列表获取', () => {
@@ -49,5 +50,20 @@ describe('providerTemplates', () => {
 
   it('直接按 URL 查找模板时不把未知 URL 识别为内置模板', () => {
     expect(findTemplateByBaseUrl('https://example.com/v1')).toBeNull()
+  })
+
+  it('普通智谱 GLM-5.3 限制关闭与力度，但 Coding 套餐仍允许关闭', () => {
+    const apiTemplate = findTemplateByBaseUrl('https://open.bigmodel.cn/api/paas/v4')
+    const codingTemplate = findTemplateByBaseUrl('https://open.bigmodel.cn/api/coding/paas/v4')
+    const apiThinking = resolveThinkingFormatForModel(apiTemplate, 'glm-5.3-flash')!
+    const codingThinking = resolveThinkingFormatForModel(codingTemplate, 'glm-5.3-flash')!
+
+    expect(apiThinking.canDisable).toBe(false)
+    expect(apiThinking.efforts).toEqual(['low', 'high', 'max'])
+    expect(validateThinkingParams({ thinking: { type: 'disabled' } }, apiThinking)).toBe('当前模型不支持关闭思考')
+    expect(validateThinkingParams({ reasoning_effort: 'minimal' }, apiThinking)).toContain('reasoning_effort 只能是')
+    expect(codingThinking.canDisable).toBe(true)
+    expect(validateThinkingParams({ thinking: { type: 'disabled' } }, codingThinking)).toBeNull()
+    expect(resolveThinkingFormatForModel(apiTemplate, 'glm-4.7')?.canDisable).toBe(true)
   })
 })

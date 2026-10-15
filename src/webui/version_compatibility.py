@@ -9,6 +9,7 @@ import json
 import re
 import tomllib
 
+from src.common.paths import project_metadata_path
 from src.common.version import PROJECT_ROOT, read_project_version
 
 DASHBOARD_PACKAGE_NAME = "maibot-dashboard"
@@ -109,7 +110,7 @@ def read_required_webui_version(project_root: Path | None = None) -> str:
     """从 pyproject.toml 读取主程序要求的 WebUI 版本。"""
 
     root = project_root or PROJECT_ROOT
-    with (root / "pyproject.toml").open("rb") as pyproject_file:
+    with project_metadata_path(root).open("rb") as pyproject_file:
         pyproject_data = tomllib.load(pyproject_file)
 
     project_data = pyproject_data.get("project")

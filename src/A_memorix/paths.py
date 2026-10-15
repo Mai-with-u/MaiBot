@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from src.common.paths import get_instance_root
+
 A_MEMORIX_SYSTEM_ID = "a_memorix"
 
 
@@ -14,7 +16,7 @@ def src_root() -> Path:
 
 
 def repo_root() -> Path:
-    return src_root().parent
+    return get_instance_root()
 
 
 def config_path() -> Path:

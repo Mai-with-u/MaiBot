@@ -31,11 +31,6 @@ const ITEM_JSON_PANEL_STYLE: CSSProperties = {
 }
 
 const STAGE_LABELS: Record<string, string> = {
-  behavior_consolidator: '行为整合',
-  behavior_feedback: '行为反馈',
-  behavior_learner: '行为学习',
-  behavior_scenario_analyzer: '行为场景分析',
-  behavior_selector: '行为选择',
   emotion: '表情包发送',
   expression_learner: '表达学习',
   expression_selection: '表达选择',
@@ -238,6 +233,37 @@ export function getContextItemImages(item: ContextItemSnapshot): ContextItemImag
       },
     ]
   })
+}
+
+type ContextItemContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'images'; images: ContextItemImage[]; startIndex: number }
+
+function getContextItemContentBlocks(item: ContextItemSnapshot): ContextItemContentBlock[] {
+  if (!['SystemMessageItem', 'UserMessageItem', 'AssistantMessageItem'].includes(item.item_type)) {
+    const text = getContextItemReadableText(item)
+    return text ? [{ type: 'text', text }] : []
+  }
+
+  const blocks: ContextItemContentBlock[] = []
+  let imageIndex = 0
+  // 按请求 parts 的顺序展示，只合并连续同类片段，保留图片与前后发言的对应关系。
+  for (const part of item.parts ?? []) {
+    const partItem = { ...item, parts: [part] }
+    const images = getContextItemImages(partItem)
+    const previous = blocks.at(-1)
+    if (images.length > 0) {
+      if (previous?.type === 'images') previous.images.push(...images)
+      else blocks.push({ type: 'images', images, startIndex: imageIndex })
+      imageIndex += images.length
+      continue
+    }
+    const text = getContextItemReadableText(partItem)
+    if (!text) continue
+    if (previous?.type === 'text') previous.text += `\n${text}`
+    else blocks.push({ type: 'text', text })
+  }
+  return blocks
 }
 
 function ContextItemImagePreview({ image, index }: { image: ContextItemImage; index: number }) {
@@ -535,8 +561,36 @@ export function extractReasoningHeaderMeta(text?: string): ReasoningHeaderMeta {
     remainingLines.push(line)
   }
 
-  meta.remainingText = remainingLines.join('\n').trim()
+  meta.remainingText = mergeContextSummaryLines(remainingLines).join('\n').trim()
   return meta
+}
+
+/**
+ * 把「实际发送 N 条消息|消息 …|tool …|cache_window …」和「请求模型：…」两行合成一行：
+ * 模型放在最前，消息数改称上下文长度，cache_window 是内部调参信息，不展示。
+ */
+function mergeContextSummaryLines(lines: string[]): string[] {
+  const summaryIndex = lines.findIndex((line) => /^实际发送\s*\d+\s*条消息/.test(line.trim()))
+  if (summaryIndex < 0) return lines
+
+  const [sentPart, ...restParts] = lines[summaryIndex].trim().split('|')
+  const sentCount = sentPart.match(/\d+/)?.[0] ?? '0'
+  const summaryParts = [
+    `上下文长度：${sentCount} 条`,
+    ...restParts
+      .map((part) => part.trim())
+      .filter((part) => part && !part.startsWith('cache_window')),
+  ]
+
+  const modelIndex = lines.findIndex((line) => /^请求模型[：:]/.test(line.trim()))
+  if (modelIndex >= 0) {
+    summaryParts.unshift(lines[modelIndex].trim())
+  }
+
+  return lines.flatMap((line, index) => {
+    if (index === summaryIndex) return [summaryParts.join(' | ')]
+    return index === modelIndex ? [] : [line]
+  })
 }
 
 export function getReasoningRecordTitle(
@@ -672,9 +726,11 @@ export function renderMessageTagMeta(
 export function NaturalLanguageText({
   text,
   avatarMap = {},
+  trailingMessageHasImages = false,
 }: {
   text: string
   avatarMap?: ReasoningPromptMessageAvatarMap
+  trailingMessageHasImages?: boolean
 }) {
   const blocks = parseNaturalTextBlocks(text)
   const baseClassName = 'text-foreground text-sm leading-6 whitespace-pre-wrap'
@@ -698,9 +754,15 @@ export function NaturalLanguageText({
         }
 
         return (
-          <div key={`message-${index}`} className="border-primary/60 border-l-2 pl-2">
+          <div
+            key={`message-${index}`}
+            data-reasoning-message-block="true"
+            className="border-primary/60 border-l-2 pl-2"
+          >
             {renderMessageTagMeta(block.attrs, avatarMap)}
-            <pre className={baseClassName}>{block.body || '空消息'}</pre>
+            {(block.body || !trailingMessageHasImages || index !== blocks.length - 1) && (
+              <pre className={baseClassName}>{block.body || '空消息'}</pre>
+            )}
           </div>
         )
       })}
@@ -743,9 +805,6 @@ export function ToolCallsCollapsible({ toolCalls }: { toolCalls: unknown[] }) {
                   >
                     {toolCall.sourceLabel}
                   </Badge>
-                )}
-                {toolCall.id && (
-                  <span className="text-muted-foreground font-mono text-[11px]">{toolCall.id}</span>
                 )}
               </div>
               <pre className="bg-muted/20 mt-2 rounded-md border p-2 font-mono text-xs leading-5 whitespace-pre-wrap">
@@ -794,11 +853,8 @@ export function ContextItemCard({
   )
   const readableText = getContextItemReadableText(item)
   const images = getContextItemImages(item)
+  const contentBlocks = getContextItemContentBlocks(item)
   const toolCalls = getContextItemToolCalls(item)
-  const callId =
-    item.item_type === 'FunctionCallItem' && isRecord(item.tool_call)
-      ? String(item.tool_call.call_id || '')
-      : String(item.call_id || '')
 
   return (
     <article
@@ -808,44 +864,42 @@ export function ContextItemCard({
       )}
     >
       <div className="min-w-0 space-y-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+        {/* 桌面端右上角浮着「完整 Item JSON」，标题行给它让出宽度，窄屏时标签换行而不是叠上去 */}
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5 lg:min-h-8 lg:pr-52">
           <Badge variant="outline">#{index + 1}</Badge>
           <Badge variant="outline" className={cn('font-mono', roleStyle.badgeClassName)}>
             {roleStyle.label}
           </Badge>
           <span className="text-muted-foreground font-mono text-[11px]">{item.item_type}</span>
-          {item.meta.logical_turn_id && (
-            <Badge
-              variant="outline"
-              className="max-w-48 truncate font-mono text-[10px]"
-              title={item.meta.logical_turn_id}
-            >
-              turn {item.meta.logical_turn_id}
-            </Badge>
-          )}
           {item.phase && <Badge variant="outline">phase: {item.phase}</Badge>}
           {item.representation && <Badge variant="outline">{item.representation}</Badge>}
           {item.status && <Badge variant="outline">{item.status}</Badge>}
         </div>
 
-        {callId && (
-          <div className="text-muted-foreground font-mono text-[11px]">call_id: {callId}</div>
-        )}
-        {readableText && <NaturalLanguageText text={readableText} avatarMap={avatarMap} />}
-        {images.length > 0 && (
-          <div className="grid gap-2 sm:grid-cols-2">
-            {images.map((image, imageIndex) => (
-              <ContextItemImagePreview
-                key={`${image.path}-${imageIndex}`}
-                image={image}
-                index={imageIndex}
-              />
-            ))}
-          </div>
+        {contentBlocks.map((block, blockIndex) =>
+          block.type === 'text' ? (
+            <NaturalLanguageText
+              key={blockIndex}
+              text={block.text}
+              avatarMap={avatarMap}
+              // 紧随其后的图片属于文本末尾的消息，不能仅因正文为空就显示“空消息”。
+              trailingMessageHasImages={contentBlocks[blockIndex + 1]?.type === 'images'}
+            />
+          ) : (
+            <div key={blockIndex} className="grid gap-2 sm:grid-cols-2">
+              {block.images.map((image, imageIndex) => (
+                <ContextItemImagePreview
+                  key={`${image.path}-${imageIndex}`}
+                  image={image}
+                  index={block.startIndex + imageIndex}
+                />
+              ))}
+            </div>
+          )
         )}
         {toolCalls.length > 0 && <ToolCallsCollapsible toolCalls={toolCalls} />}
         {item.item_type === 'ProviderActivityItem' && item.details && item.details.length > 0 && (
-          <pre className="bg-muted/20 max-h-64 overflow-auto rounded-md border p-2.5 font-mono text-xs leading-5 whitespace-pre-wrap">
+          <pre className="bg-muted/20 max-h-64 overflow-auto rounded-md border p-2.5 font-mono text-xs leading-5 whitespace-pre-wrap max-lg:max-h-none max-lg:overflow-visible max-lg:break-words">
             {item.details.join('\n')}
           </pre>
         )}
@@ -860,6 +914,7 @@ export function ContextItemCard({
         open={itemJsonOpen}
         onOpenChange={setItemJsonOpen}
         style={ITEM_JSON_PANEL_STYLE}
+        data-reasoning-item-json="true"
         className={cn(
           'min-w-0 rounded-md border',
           'lg:absolute lg:top-3 lg:right-3',
@@ -878,7 +933,7 @@ export function ContextItemCard({
           </button>
         </CollapsibleTrigger>
         <CollapsibleContent className="min-w-0 border-t">
-          <pre className="max-h-96 overflow-auto p-2.5 font-mono text-xs leading-5 whitespace-pre-wrap lg:max-h-[32rem]">
+          <pre className="max-h-96 overflow-auto p-2.5 font-mono text-xs leading-5 whitespace-pre-wrap max-lg:max-h-none max-lg:overflow-visible max-lg:break-words lg:max-h-[32rem]">
             {JSON.stringify(item, null, 2)}
           </pre>
         </CollapsibleContent>
@@ -899,7 +954,7 @@ export function ContextItemTimeline({
   botSelfNames: Set<string>
 }) {
   return (
-    <section className="space-y-2 rounded-md border p-2.5 sm:p-3">
+    <section className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-semibold">{title}</span>
         <Badge variant="secondary">{items.length} Items</Badge>

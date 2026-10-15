@@ -27,7 +27,6 @@ describe('useMenuSections', () => {
     const { result } = renderHook(() => useMenuSections())
     const paths = flattenPaths(result.current)
 
-    expect(paths).not.toContain('/resource/behavior')
     expect(paths).not.toContain('/reply-effects')
     // 其它常规入口不受特性开关影响
     expect(paths).toContain('/')
@@ -37,25 +36,6 @@ describe('useMenuSections', () => {
     expect(result.current).toHaveLength(5)
   })
 
-  it('实验开关开启时显示行为学习入口', async () => {
-    mockGetBotConfigCached.mockResolvedValue({
-      experimental: { enable_behavior_learning: true },
-    })
-
-    const { result } = renderHook(() => useMenuSections())
-
-    await waitFor(() => {
-      expect(flattenPaths(result.current)).toContain('/resource/behavior')
-    })
-    // 分组标题保持完整
-    expect(result.current.map((section) => section.title)).toEqual([
-      'sidebar.groups.overview',
-      'sidebar.groups.botConfig',
-      'sidebar.groups.botResources',
-      'sidebar.groups.extensionsMonitor',
-      'sidebar.groups.advancedTools',
-    ])
-  })
 
   it('回复评分调试开关开启时显示回复效果入口', async () => {
     mockGetBotConfigCached.mockResolvedValue({
@@ -82,62 +62,10 @@ describe('useMenuSections', () => {
     expect(flattenPaths(result.current)).not.toContain('/reply-effects')
   })
 
-  it('实验开关关闭时隐藏行为学习入口', async () => {
-    mockGetBotConfigCached.mockResolvedValue({
-      experimental: { enable_behavior_learning: false },
-    })
-
-    const { result } = renderHook(() => useMenuSections())
-    const initial = result.current
-
-    // 配置加载后 featureFlags 状态更新，useMemo 会产出新的数组引用
-    await waitFor(() => {
-      expect(result.current).not.toBe(initial)
-    })
-
-    const paths = flattenPaths(result.current)
-    expect(paths).not.toContain('/resource/behavior')
-    // 资源分组中其余入口保持可见
-    expect(paths).toContain('/resource/expression')
-    expect(paths).toContain('/resource/knowledge-base')
-  })
-
-  it('配置缺少 experimental 字段时默认显示行为学习入口', async () => {
-    mockGetBotConfigCached.mockResolvedValue({})
-
-    const { result } = renderHook(() => useMenuSections())
-
-    await waitFor(() => {
-      expect(flattenPaths(result.current)).toContain('/resource/behavior')
-    })
-    expect(flattenPaths(result.current)).not.toContain('/reply-effects')
-  })
-
-  it('experimental 存在但缺少开关键时默认显示行为学习入口', async () => {
-    mockGetBotConfigCached.mockResolvedValue({ experimental: {} })
-
-    const { result } = renderHook(() => useMenuSections())
-
-    await waitFor(() => {
-      expect(flattenPaths(result.current)).toContain('/resource/behavior')
-    })
-  })
-
-  it('配置拉取失败时回退为显示行为学习入口', async () => {
-    mockGetBotConfigCached.mockRejectedValue(new Error('网络错误'))
-
-    const { result } = renderHook(() => useMenuSections())
-
-    await waitFor(() => {
-      expect(flattenPaths(result.current)).toContain('/resource/behavior')
-    })
-    expect(flattenPaths(result.current)).not.toContain('/reply-effects')
-  })
-
   it('收到配置更新事件后重新拉取并刷新菜单', async () => {
     mockGetBotConfigCached
-      .mockResolvedValueOnce({ experimental: { enable_behavior_learning: false } })
-      .mockResolvedValueOnce({ experimental: { enable_behavior_learning: true } })
+      .mockResolvedValueOnce({ debug: { enable_reply_effect_tracking: false } })
+      .mockResolvedValueOnce({ debug: { enable_reply_effect_tracking: true } })
 
     const { result } = renderHook(() => useMenuSections())
     const initial = result.current
@@ -146,7 +74,7 @@ describe('useMenuSections', () => {
     await waitFor(() => {
       expect(result.current).not.toBe(initial)
     })
-    expect(flattenPaths(result.current)).not.toContain('/resource/behavior')
+    expect(flattenPaths(result.current)).not.toContain('/reply-effects')
 
     // 派发配置更新事件，触发第二次拉取（开关开启）
     act(() => {
@@ -154,7 +82,7 @@ describe('useMenuSections', () => {
     })
 
     await waitFor(() => {
-      expect(flattenPaths(result.current)).toContain('/resource/behavior')
+      expect(flattenPaths(result.current)).toContain('/reply-effects')
     })
     expect(mockGetBotConfigCached).toHaveBeenCalledTimes(2)
   })

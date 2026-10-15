@@ -108,7 +108,11 @@ vi.mock('@/components/ui/tooltip', () => ({
   TooltipProvider: ({ children }: { children: ReactNode }) => children,
 }))
 vi.mock('@/components/use-theme', () => ({
-  useTheme: () => ({ setTheme: vi.fn(), theme: layoutMocks.theme }),
+  useTheme: () => ({ setTheme: vi.fn(), theme: layoutMocks.theme, themeConfig: { dashboardStyle: 'default' } }),
+}))
+vi.mock('@/lib/plugin-webui', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/plugin-webui')>(),
+  usePluginWebUI: () => ({ extensions: [], loading: false, error: null, preferences: { hidden: [], order: [] } }),
 }))
 vi.mock('@/hooks/use-auth', () => ({
   useAuthGuard: () => ({ checking: layoutMocks.checking }),
@@ -125,8 +129,6 @@ vi.mock('@/lib/runtime', () => ({
 vi.mock('./Header', () => ({
   Header: ({
     actualTheme,
-    mobileMenuOpen,
-    onMobileMenuToggle,
     onSearchOpenChange,
     onSidebarToggle,
     onTopbarToggle,
@@ -137,8 +139,6 @@ vi.mock('./Header', () => ({
     workspaceMode,
   }: {
     actualTheme: 'light' | 'dark'
-    mobileMenuOpen: boolean
-    onMobileMenuToggle: () => void
     onSearchOpenChange: (open: boolean) => void
     onSidebarToggle: () => void
     onTopbarToggle: () => void
@@ -151,7 +151,6 @@ vi.mock('./Header', () => ({
     <div
       data-testid="header"
       data-actual-theme={actualTheme}
-      data-mobile-menu-open={String(mobileMenuOpen)}
       data-search-open={String(searchOpen)}
       data-sidebar-open={String(sidebarOpen)}
       data-topbar-collapsed={String(topbarCollapsed)}
@@ -159,9 +158,6 @@ vi.mock('./Header', () => ({
     >
       <button type="button" onClick={onSidebarToggle}>
         切换侧栏模式
-      </button>
-      <button type="button" onClick={onMobileMenuToggle}>
-        切换移动菜单
       </button>
       <button type="button" onClick={() => onSearchOpenChange(!searchOpen)}>
         切换搜索
@@ -181,15 +177,34 @@ vi.mock('./Header', () => ({
     </div>
   ),
 }))
+vi.mock('./MobileRouteHeader', () => ({
+  MobileRouteHeader: () => null,
+}))
+
+vi.mock('./MobileTabBar', () => ({
+  MobileTabBar: ({ onSearch }: { onSearch: () => void }) => (
+    <nav data-testid="mobile-tabbar">
+      <button type="button" onClick={onSearch}>
+        底部搜索
+      </button>
+    </nav>
+  ),
+}))
 vi.mock('./Sidebar', () => ({
   Sidebar: ({
+    menuSections,
     onSidebarFix,
     sidebarOpen,
   }: {
+    menuSections: Array<{ title: string }>
     onSidebarFix: () => void
     sidebarOpen: boolean
   }) => (
-    <div data-testid="sidebar" data-sidebar-open={String(sidebarOpen)}>
+    <div
+      data-testid="sidebar"
+      data-sidebar-open={String(sidebarOpen)}
+      data-section-titles={menuSections.map((section) => section.title).join(',')}
+    >
       <button type="button" onClick={onSidebarFix}>
         切换为固定模式
       </button>
@@ -210,10 +225,6 @@ function getWorkspaceContent(container: HTMLElement) {
 
 function getMain() {
   return document.querySelector('[data-dashboard-main="true"]')
-}
-
-function getMobileOverlay() {
-  return document.querySelector('.bg-black\\/50')
 }
 
 function flushMicrotasks() {
@@ -258,14 +269,14 @@ describe('Layout 工作区切换', () => {
     // 冲刷 UpdateNoticeDialog 的 lazy import，避免首个用例在 act 外完成挂起
     await flushMicrotasks()
 
-    fireEvent.click(screen.getByRole('button', { name: '切换到麦麦聊天' }))
+    fireEvent.click(screen.getByRole('button', { name: '切换到日志' }))
     act(() => {
       vi.advanceTimersByTime(280 + 180)
     })
-    expect(routerMocks.navigate).toHaveBeenCalledWith({ to: '/chat' })
+    expect(routerMocks.navigate).toHaveBeenCalledWith({ to: '/logs' })
 
     // 模拟 pathname 已切换，但 Outlet 仍短暂保留旧首页的并发提交窗口。
-    routerMocks.pathname = '/chat'
+    routerMocks.pathname = '/logs'
     routerMocks.status = 'pending'
     view.rerender(
       <Layout>
@@ -281,7 +292,7 @@ describe('Layout 工作区切换', () => {
     routerMocks.status = 'idle'
     view.rerender(
       <Layout>
-        <div>聊天内容</div>
+        <div>日志内容</div>
       </Layout>
     )
     act(() => {
@@ -290,7 +301,7 @@ describe('Layout 工作区切换', () => {
 
     expect(workspaceContent).not.toHaveClass('invisible')
     expect(screen.queryByText('首页内容')).not.toBeInTheDocument()
-    expect(screen.getByText('聊天内容')).toBeInTheDocument()
+    expect(screen.getByText('日志内容')).toBeInTheDocument()
   })
 
   it('侧栏宽度使用 CSS 过渡且不启用会拉伸内容的 FLIP 尺寸缩放', () => {
@@ -349,7 +360,7 @@ describe('Layout 工作区切换', () => {
   })
 
   it('非设置工作区切走时跳过侧栏退场，导航失败后恢复可交互', async () => {
-    routerMocks.pathname = '/chat'
+    routerMocks.pathname = '/logs'
     routerMocks.navigate.mockImplementation(() => Promise.reject(new Error('导航失败')))
     const { container } = render(
       <Layout>
@@ -357,7 +368,7 @@ describe('Layout 工作区切换', () => {
       </Layout>
     )
 
-    fireEvent.click(screen.getByRole('button', { name: '切换到日志' }))
+    fireEvent.click(screen.getByRole('button', { name: '切换到设置' }))
     act(() => {
       vi.advanceTimersByTime(279)
     })
@@ -366,11 +377,11 @@ describe('Layout 工作区切换', () => {
     act(() => {
       vi.advanceTimersByTime(1)
     })
-    expect(routerMocks.navigate).toHaveBeenCalledWith({ to: '/logs' })
+    expect(routerMocks.navigate).toHaveBeenCalledWith({ to: '/' })
     await flushMicrotasks()
 
     expect(getWorkspaceContent(container)).not.toHaveClass('invisible')
-    expect(getHeader()).toHaveAttribute('data-workspace-mode', 'chat')
+    expect(getHeader()).toHaveAttribute('data-workspace-mode', 'logs')
   })
 
   it('切回设置工作区时等路由空闲后再侧栏入场', () => {
@@ -543,21 +554,19 @@ describe('Layout 壳层、快捷键与公告入口', () => {
     expect(getHeader()).toHaveAttribute('data-search-open', 'true')
   })
 
-  it('移动端遮罩只在设置工作区打开，点击后关闭菜单', () => {
+  // 日志工作区在移动端同样保留麦麦导航，遮罩随菜单一起打开
+  it.each(['/', '/logs'])('移动端在 %s 渲染底部标签栏，标签栏的搜索按钮打开全局搜索', (pathname) => {
+    routerMocks.pathname = pathname
     render(
       <Layout>
         <div>首页内容</div>
       </Layout>
     )
 
-    expect(getMobileOverlay()).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '切换移动菜单' }))
-    expect(getHeader()).toHaveAttribute('data-mobile-menu-open', 'true')
-    expect(getMobileOverlay()).toBeInTheDocument()
-
-    fireEvent.click(getMobileOverlay() as Element)
-    expect(getHeader()).toHaveAttribute('data-mobile-menu-open', 'false')
-    expect(getMobileOverlay()).not.toBeInTheDocument()
+    expect(screen.getByTestId('mobile-tabbar')).toBeInTheDocument()
+    expect(getHeader()).toHaveAttribute('data-search-open', 'false')
+    fireEvent.click(screen.getByRole('button', { name: '底部搜索' }))
+    expect(getHeader()).toHaveAttribute('data-search-open', 'true')
   })
 
   it('沉浸模式收起壳层，再次进入时保留首次快照并在退出后恢复', () => {
@@ -567,7 +576,6 @@ describe('Layout 壳层、快捷键与公告入口', () => {
       </Layout>
     )
 
-    fireEvent.click(screen.getByRole('button', { name: '切换移动菜单' }))
     act(() => {
       window.dispatchEvent(
         new CustomEvent('maibot-layout-immersive-change', { detail: { immersive: true } })
@@ -575,8 +583,6 @@ describe('Layout 壳层、快捷键与公告入口', () => {
     })
     expect(getHeader()).toHaveAttribute('data-sidebar-open', 'false')
     expect(getHeader()).toHaveAttribute('data-topbar-collapsed', 'true')
-    expect(getHeader()).toHaveAttribute('data-mobile-menu-open', 'false')
-    expect(getMobileOverlay()).not.toBeInTheDocument()
     expect(localStorage.getItem('maibot-layout-sidebar-open')).toBe('false')
     expect(localStorage.getItem('maibot-layout-topbar-collapsed')).toBe('true')
 
@@ -613,7 +619,7 @@ describe('Layout 壳层、快捷键与公告入口', () => {
   })
 
   it.each([
-    ['/chat', 'chat', false],
+    ['/chat', 'settings', false],
     ['/logs', 'logs', false],
     ['/statistics', 'logs', false],
     ['/reasoning-process/detail', 'logs', false],
@@ -621,6 +627,12 @@ describe('Layout 壳层、快捷键与公告入口', () => {
     ['/config/bot', 'settings', true],
   ] as const)('路径 %s 映射工作区 %s，返回顶部=%s', (pathname, workspace, showBackToTop) => {
     routerMocks.pathname = pathname
+    layoutMocks.menuSections = [
+      {
+        title: 'sidebar.groups.botConfig',
+        items: [{ path: '/config/bot', label: 'sidebar.menu.botMainConfig' }],
+      },
+    ]
     render(
       <Layout>
         <div>页面内容</div>
@@ -632,7 +644,12 @@ describe('Layout 壳层、快捷键与公告入口', () => {
     if (workspace === 'settings') {
       expect(screen.getAllByTestId('sidebar').length).toBeGreaterThan(0)
     } else {
+      // 日志工作区不挂侧栏；手机上的导航由底部标签栏负责
+      expect(
+        document.querySelector('[data-dashboard-sidebar-layout="true"]')
+      ).not.toBeInTheDocument()
       expect(screen.queryByTestId('sidebar')).not.toBeInTheDocument()
+      expect(screen.getByTestId('mobile-tabbar')).toBeInTheDocument()
     }
   })
 
@@ -654,7 +671,7 @@ describe('Layout 壳层、快捷键与公告入口', () => {
     expect(getMain()).toHaveClass('bg-transparent')
   })
 
-  it('聊天工作区主区透明且不滚动，system 主题跟随 matchMedia', () => {
+  it('聊天页面保留设置工作区布局，system 主题跟随 matchMedia', () => {
     routerMocks.pathname = '/chat'
     layoutMocks.theme = 'system'
     vi.spyOn(window, 'matchMedia').mockImplementation(
@@ -676,7 +693,7 @@ describe('Layout 壳层、快捷键与公告入口', () => {
         <div>聊天内容</div>
       </Layout>
     )
-    expect(getMain()).toHaveClass('bg-transparent', 'overflow-hidden')
+    expect(getMain()).toHaveClass('bg-background', 'overflow-y-auto')
     expect(getHeader()).toHaveAttribute('data-actual-theme', 'dark')
   })
 

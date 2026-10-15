@@ -553,7 +553,8 @@ describe('LogViewerPage 页签与提示', () => {
     expect(reasoningStub).toHaveAttribute('data-embedded', 'true')
     expect(reasoningStub).toHaveAttribute('data-toolbar-visible', 'true')
     expect(reasoningStub).toHaveAttribute('data-toolbar-container', 'log-terminal-toolbar')
-    expect(reasoningStub).toHaveAttribute('data-topbar-actions', 'reasoning-topbar-actions')
+    // 顶栏操作位随页签挂进顶栏；这里没有顶栏容器，所以不会把操作位交给推理页
+    expect(reasoningStub).not.toHaveAttribute('data-topbar-actions')
     expect(screen.queryByText('暂无日志数据')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('tab', { name: '终端' }))
@@ -605,6 +606,13 @@ describe('LogViewerPage 页签与提示', () => {
       expect(within(topbarRoot).getByRole('tab', { name: '详细统计' })).toBeInTheDocument()
       // 用于紧凑模式测量的隐藏节点也随 Portal 渲染
       expect(topbarRoot.querySelector('[data-log-viewer-switcher-measure="true"]')).not.toBeNull()
+
+      // 页签挂进顶栏之后，才把顶栏操作位交给推理页
+      await userEvent.click(within(topbarRoot).getByRole('tab', { name: '推理过程' }))
+      expect(screen.getByTestId('reasoning-process-stub')).toHaveAttribute(
+        'data-topbar-actions',
+        'reasoning-topbar-actions'
+      )
     } finally {
       topbarRoot.remove()
     }

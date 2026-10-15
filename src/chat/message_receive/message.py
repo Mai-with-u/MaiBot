@@ -1,9 +1,10 @@
-import asyncio
 from asyncio import Task
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from rich.traceback import install
 from sqlmodel import select
+
+import asyncio
 
 from src.common.logger import get_logger
 from src.common.database.database import get_db_session
@@ -303,14 +304,11 @@ class SessionMessage(MaiMessage):
             return normalized_content
         from src.chat.image_system.image_manager import image_manager
 
-        # 获取描述
-        try:
-            desc = await image_manager.get_image_description(
-                image_bytes=component.binary_data,
-                wait_for_build=enable_heavy_media_analysis,
-            )
-        except Exception:
-            desc = None  # 失败置空
+        # 先保存图片再获取描述；保存失败时上抛并保留原始字节，供调用方处理失败。
+        desc = await image_manager.get_image_description(
+            image_bytes=component.binary_data,
+            wait_for_build=enable_heavy_media_analysis,
+        )
 
         # desc 为空时保持 content 为空，表示图片仍处于待识别状态；
         # 展示占位由 Maisaka 渲染层处理，避免把占位符当作已识别内容。
@@ -373,6 +371,7 @@ class SessionMessage(MaiMessage):
             if bot_nickname:
                 component.target_user_nickname = bot_nickname
                 component.target_user_cardname = bot_nickname
+                component.uses_configured_bot_nickname = True
                 return f"@{bot_nickname}"
 
         from src.common.utils.utils_person import PersonUtils

@@ -31,6 +31,7 @@ from src.llm_models.payload_content.context_item import (
     UserMessageItem,
     get_item_text,
 )
+from src.maisaka.context.message_id_alias import to_display_message_id
 from src.maisaka.context.messages import (
     ComplexSessionMessage,
     LLMContextMessage,
@@ -473,7 +474,7 @@ def _save_mid_term_memory_prompt_preview(
 ) -> None:
     """保存聊天回想生成 Prompt 到 Maisaka Prompt 预览目录。"""
 
-    if not bool(getattr(global_config.debug, "show_maisaka_thinking", False)):
+    if not global_config.debug.show_maisaka_thinking:
         return
     if not request_prompt_messages:
         return
@@ -566,7 +567,7 @@ def _build_summary_planner_prefix(
     message_id: str,
 ) -> str:
     return (
-        f'<message msg_id="{escape(message_id, quote=True)}" '
+        f'<message msg_id="{escape(to_display_message_id(message_id), quote=True)}" '
         f'time="{escape(timestamp.strftime("%H:%M:%S"), quote=True)}">\n'
     )
 
@@ -608,8 +609,6 @@ def _resolve_participant_name(message: LLMContextMessage) -> str:
 
     if message.role == "assistant":
         return "麦麦"
-    if isinstance(message, ComplexSessionMessage) and message.source_kind == "optimized_tool_history":
-        return "历史工具调用"
     return str(message.source or "").strip()
 
 

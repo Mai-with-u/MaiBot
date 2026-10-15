@@ -18,6 +18,7 @@ from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from src.common.paths import get_instance_root, project_metadata_path
 from src.common.logger import get_logger
 from src.plugin_runtime import detect_host_application_version
 from src.plugin_runtime.local_sdk import read_local_sdk_version
@@ -1247,7 +1248,7 @@ class ManifestValidator:
         Returns:
             Path: 项目根目录路径。
         """
-        return Path(__file__).resolve().parents[3]
+        return get_instance_root()
 
     @classmethod
     @lru_cache(maxsize=None)
@@ -1314,7 +1315,7 @@ class ManifestValidator:
         Returns:
             Dict[str, Requirement]: 以规范化包名为键的 Requirement 映射。
         """
-        pyproject_path = project_root / "pyproject.toml"
+        pyproject_path = project_metadata_path(project_root)
         try:
             with pyproject_path.open("rb") as pyproject_file:
                 pyproject_data = tomllib.load(pyproject_file)

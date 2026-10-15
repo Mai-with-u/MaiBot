@@ -93,7 +93,7 @@ describe('TaskConfigCard 缺口', () => {
     expect(onChange).toHaveBeenCalledWith('temperature', 2)
   })
 
-  it('高级模式、单选、导览标记与超时默认值/非法值', () => {
+  it('高级模式、单选、导览标记与硬超时缺省值/非法值', () => {
     const onChange = vi.fn()
     const { container } = render(
       <TaskConfigCard
@@ -110,14 +110,33 @@ describe('TaskConfigCard 缺口', () => {
     )
 
     expect(container.firstChild).toHaveClass('bg-amber-50/30')
-    expect(screen.getByTestId('multi-select')).toHaveAttribute('data-single-select', 'true')
+    // 单选模型任务改用下拉单选，不再渲染多选标签列表
+    expect(screen.queryByTestId('multi-select')).toBeNull()
+    expect(screen.getAllByTestId('select-root')[0]).toHaveAttribute('data-value', 'alpha')
     expect(document.querySelector('[data-tour="embedding-models"]')).not.toBeNull()
 
-    expect(screen.getByDisplayValue('15')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('240')).toBeInTheDocument()
+    // 硬超时缺省时不预填，输入框为空、由 placeholder 提示后端默认值 240 秒
+    const timeoutInput = screen.getByPlaceholderText('240') as HTMLInputElement
+    expect(timeoutInput.value).toBe('')
 
-    fireEvent.change(screen.getByDisplayValue('15'), { target: { value: 'abc' } })
-    fireEvent.change(screen.getByDisplayValue('240'), { target: { value: '' } })
+    fireEvent.change(timeoutInput, { target: { value: 'abc' } })
+    fireEvent.change(timeoutInput, { target: { value: '' } })
     expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('硬超时已配置时输入框回显配置值', () => {
+    render(
+      <TaskConfigCard
+        title="嵌入任务"
+        description="回显"
+        taskConfig={{ ...baseTask, hard_timeout: 15 }}
+        modelNames={['alpha']}
+        onChange={vi.fn()}
+        advanced
+        showAdvancedSettings
+      />
+    )
+
+    expect(screen.getByDisplayValue('15')).toBeInTheDocument()
   })
 })

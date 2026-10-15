@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from typing import Any, Dict, List, Optional, Sequence
+
 import json
 import time
-from typing import Any, Dict, List, Sequence
 
 from src.common.logger import get_logger
 from src.common.prompt_i18n import load_prompt
@@ -49,6 +50,7 @@ class MemoryCorrectionAdminService(KernelServiceBase):
                 ),
                 requested_by=str(kwargs.get("requested_by", "") or "webui").strip(),
                 reason=str(kwargs.get("reason", "") or "").strip(),
+                **({"targets": kwargs["targets"]} if kwargs.get("targets") is not None else {}),
             )
         if act == "execute":
             return await self._execute_fuzzy_modify_action(
@@ -93,6 +95,7 @@ class MemoryCorrectionAdminService(KernelServiceBase):
         limit: int = 20,
         requested_by: str = "webui",
         reason: str = "",
+        targets: Optional[Sequence[Dict[str, str]]] = None,
     ) -> Dict[str, Any]:
         assert self.metadata_store is not None
         if not fuzzy_modify_cfg_enabled():
@@ -104,23 +107,31 @@ class MemoryCorrectionAdminService(KernelServiceBase):
         scope_token = self._normalize_fuzzy_modify_scope(scope)
         pid = str(person_id or "").strip()
         keyword = str(person_keyword or "").strip()
+        if targets is not None and (scope_token != "memory" or pid or keyword or chat_id):
+            return {"success": False, "error": "按所选记忆修正时请使用 memory 范围，不要同时指定人物或聊天流"}
         if scope_token == "person_profile":
             if not pid and keyword and self.person_profile_service is not None:
                 pid = self.person_profile_service.resolve_person_id(keyword)
             if not pid:
                 return {"success": False, "error": "人物画像修改需要提供 person_id 或 person_keyword"}
-        elif not chat_id and not fuzzy_modify_cfg_allow_global_scope():
+        elif targets is None and not chat_id and not fuzzy_modify_cfg_allow_global_scope():
             return {"success": False, "error": "非人物画像修正需要提供 chat_id，或开启全局记忆修正范围"}
 
         candidate_limit = min(max(1, int(limit or 20)), fuzzy_modify_cfg_candidate_limit())
-        candidates = await self._collect_fuzzy_modify_candidates(
-            request_text=text,
-            scope=scope_token,
-            person_id=pid,
-            person_keyword=keyword,
-            chat_id=str(chat_id or "").strip(),
-            limit=candidate_limit,
-        )
+        if targets is not None:
+            try:
+                candidates = self._collect_selected_fuzzy_modify_candidates(targets)
+            except ValueError as exc:
+                return {"success": False, "error": str(exc)}
+        else:
+            candidates = await self._collect_fuzzy_modify_candidates(
+                request_text=text,
+                scope=scope_token,
+                person_id=pid,
+                person_keyword=keyword,
+                chat_id=str(chat_id or "").strip(),
+                limit=candidate_limit,
+            )
         if not candidates:
             return {"success": False, "error": "未找到可修改的候选记忆", "candidates": []}
 
@@ -481,6 +492,48 @@ class MemoryCorrectionAdminService(KernelServiceBase):
             reason=reason if reason else None,
         )
         return {"success": rollback_success, "plan": updated, "rollback": rollback_result}
+
+    def _collect_selected_fuzzy_modify_candidates(self, targets: Sequence[Dict[str, str]]) -> List[Dict[str, Any]]:
+        """精确读取用户勾选的权威记录；任一目标失效时拒绝整批预览，不扩大搜索范围。"""
+        assert self.metadata_store is not None
+        max_targets = min(fuzzy_modify_cfg_candidate_limit(), fuzzy_modify_cfg_max_targets())
+        if not isinstance(targets, (list, tuple)) or not targets:
+            raise ValueError("请至少选择一条记忆")
+        if len(targets) > max_targets:
+            raise ValueError(f"一次最多修正 {max_targets} 条记忆，请减少选择数量")
+        candidates: List[Dict[str, Any]] = []
+        seen = set()
+        for target in targets:
+            if not isinstance(target, dict):
+                raise ValueError("所选记忆格式无效")
+            target_type = target.get("type")
+            hash_value = target.get("id")
+            if (
+                target_type not in {"paragraph", "relation"}
+                or not isinstance(hash_value, str)
+                or not hash_value.strip()
+            ):
+                raise ValueError("批量修正仅支持指定 ID 的段落和关系")
+            hash_value = hash_value.strip()
+            key = (target_type, hash_value)
+            if key in seen:
+                raise ValueError("所选记忆包含重复记录")
+            seen.add(key)
+            row = (
+                self.metadata_store.get_paragraph(hash_value)
+                if target_type == "paragraph"
+                else self.metadata_store.get_relation(hash_value, include_inactive=False)
+            )
+            if row is None:
+                raise ValueError(f"所选记忆已不存在：{target_type}:{hash_value}")
+            item = {**row, "type": target_type, "hash": hash_value}
+            if target_type == "relation":
+                item["content"] = f"{row['subject']} {row['predicate']} {row['object']}"
+            candidate = self._normalize_fuzzy_modify_candidate(item)
+            if not self._is_fuzzy_modify_candidate_mutable(candidate, item):
+                raise ValueError(f"所选记忆已删除、停用或受保护，不能修正：{target_type}:{hash_value}")
+            candidates.append(candidate)
+        return candidates
 
     async def _collect_fuzzy_modify_candidates(
         self,

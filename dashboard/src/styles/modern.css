@@ -1,0 +1,314 @@
+/*
+ * 原版风格的桌面端（lg 及以上）补充样式。
+ * 手机端（lg 以下）由 styles/mobile.css 负责；这里的规则全部包在 min-width: 1024px 里，两边互不影响。
+ * 配色、卡片、控件沿用原版风格本身的令牌，这里只管三件事：
+ * 1. 侧栏：当前页用贴边的 2px 主色线加主色字，不铺底色；
+ * 2. 顶栏：跟随悬停滑动的选中块收成一条贴底的线；
+ * 3. 磨砂玻璃：只放在有细节、有色彩、有图片的内容前面——吸顶顶栏、浮层、图表提示框，
+ *    以及设置了自定义背景时的卡片与侧栏。模糊强度跟随「视觉效果」里的模糊开关（--visual-blur-md）。
+ */
+
+@media (min-width: 1024px) {
+  :root[data-dashboard-style='modern'] {
+    --mdn-glass-alpha: 0.74;
+    --mdn-glass-surface-alpha: 0.5;
+    --mdn-glass-chart-alpha: 0.6;
+    --mdn-glass-edge: var(--foreground) / 0.1;
+    --mdn-glass-shadow: 0 8px 24px rgb(16 24 40 / 0.12);
+    --mdn-glass-filter: blur(calc(var(--visual-blur-md) * 1.5)) saturate(160%);
+    --mdn-scrim: 0 0% 0% / 0.32;
+  }
+
+  :root.dark[data-dashboard-style='modern'] {
+    --mdn-glass-alpha: 0.72;
+    --mdn-glass-surface-alpha: 0.46;
+    --mdn-glass-chart-alpha: 0.5;
+    --mdn-glass-edge: var(--foreground) / 0.14;
+    --mdn-glass-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
+    --mdn-scrim: 0 0% 0% / 0.5;
+  }
+
+  /* ---------- 图表配色 ----------
+     系列 1 仍是主色，系列 2–5 换成管线给出的搭配色；令牌写在根节点的行内样式上，所以在外壳这一层覆盖。
+     管线变量缺失时（例如热更新后主题还没重新应用）退回这里写的默认搭配色，避免变量失效后图形变黑。 */
+
+  :root[data-dashboard-style='modern'] [data-dashboard-shell='true'] {
+    --color-chart-2: var(--modern-chart-2, 158.5 75.3% 34.9%);
+    --color-chart-3: var(--modern-chart-3, 212.8 67.7% 50.2%);
+    --color-chart-4: var(--modern-chart-4, 40.8 100% 46.5%);
+    --color-chart-5: var(--modern-chart-5, 337.4 70.3% 69.6%);
+  }
+
+  :root.dark[data-dashboard-style='modern'] [data-dashboard-shell='true'] {
+    --color-chart-2: var(--modern-chart-2, 159.2 72.7% 35.9%);
+    --color-chart-3: var(--modern-chart-3, 212.8 76.8% 56.1%);
+    --color-chart-4: var(--modern-chart-4, 39.7 100% 39.4%);
+    --color-chart-5: var(--modern-chart-5, 338.2 61.1% 57.6%);
+  }
+
+  /* ---------- 侧栏 ---------- */
+
+  /* 侧栏里的悬停底色用中性灰，不用强调色 */
+  :root[data-dashboard-style='modern'] [data-dashboard-sidebar='true'] {
+    --accent: var(--color-muted);
+    --accent-foreground: var(--color-foreground);
+  }
+
+  /* Logo 行与顶栏同高：色块在前、字标在后，左缘与导航图标对齐 */
+  :root[data-dashboard-style='modern'] [data-dashboard-logo-area='true'] {
+    height: 2.625rem;
+    padding-right: 0.5rem;
+    padding-left: var(--layout-sidebar-nav-icon-left);
+    border-bottom-color: transparent;
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-logo-area='true'] > div:first-child {
+    justify-content: flex-start;
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-logo-area='true'] > div:first-child > div {
+    width: auto;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-logo-title='true'] {
+    width: auto;
+    background: none;
+    color: hsl(var(--foreground));
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    -webkit-text-fill-color: currentColor;
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-logo-spectrum='true'] {
+    width: 1.375rem;
+    height: 1.375rem;
+    flex: none;
+    order: -1;
+    align-items: stretch;
+    --tw-translate-y: 0;
+    translate: none;
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-logo-spectrum='true'] > span {
+    height: 100%;
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-logo-spectrum-block='true'] {
+    top: 0.625rem;
+    left: var(--layout-sidebar-nav-icon-left);
+  }
+
+  /* 侧栏模式开关（固定 / 悬浮）都放在 Logo 行右侧，垂直居中 */
+  :root[data-dashboard-style='modern']
+    [data-dashboard-sidebar='true']
+    :is([data-dashboard-sidebar-fix-switch='true'], [data-dashboard-sidebar-mode-switch='true']) {
+    top: 50%;
+    right: 0.5rem;
+    bottom: auto;
+    transform: translateY(-50%);
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-sidebar-section-title='true'] {
+    color: hsl(var(--muted-foreground));
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-nav-label='true'] {
+    font-size: 0.875rem;
+  }
+
+  /* 当前页：贴着侧栏左缘的 2px 主色线加主色字，不铺底色 */
+  :root[data-dashboard-style='modern'] [data-dashboard-nav-item='true'][data-active='true'] {
+    background-color: transparent;
+    color: hsl(var(--primary));
+    font-weight: 600;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-nav-item='true'][data-active='true']
+    [data-dashboard-nav-label='true'] {
+    font-weight: 600;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-nav-item='true'][data-active='true']::before {
+    position: absolute;
+    top: 0.375rem;
+    bottom: 0.375rem;
+    left: calc(-1 * var(--layout-sidebar-nav-padding-collapsed));
+    width: 2px;
+    background-color: hsl(var(--primary));
+    content: '';
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-nav-item='true'][data-active='true']:hover {
+    background-color: hsl(var(--accent));
+  }
+
+  /* ---------- 顶栏：吸顶玻璃，内容滚到下面时透出来 ---------- */
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-header='true']:not([data-dashboard-header-collapsed='true']) {
+    -webkit-backdrop-filter: var(--mdn-glass-filter);
+    backdrop-filter: var(--mdn-glass-filter);
+    background-color: hsl(var(--background) / 0.72);
+  }
+
+  /* 顶栏按钮悬停只靠滑动的那条线提示，不再叠一层强调色底 */
+  :root[data-dashboard-style='modern'] [data-dashboard-header='true'] {
+    --accent: var(--color-muted);
+    --accent-foreground: var(--color-foreground);
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-header='true']
+    [data-dashboard-header-action='true']:hover {
+    background-color: transparent;
+    color: hsl(var(--foreground));
+  }
+
+  /* 工作区标签显示文字时不再带图标；顶栏变窄、文字收起后图标照常显示 */
+  :root[data-dashboard-style='modern']
+    [data-dashboard-workspace-tabs='true']
+    [data-dashboard-tabs-trigger='true']:has(span.sm\:inline)
+    > svg {
+    display: none;
+  }
+
+  /* 顶栏里跟随悬停滑动的选中块，收成一条贴底的 2px 线 */
+  :root[data-dashboard-style='modern'] [data-dashboard-topbar-pill='true'] {
+    top: auto;
+    right: 0.5rem;
+    bottom: -0.5rem;
+    left: 0.5rem;
+    height: 2px;
+    border-radius: 0;
+    --tw-shadow: 0 0 #0000;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-header-action='true']
+    [data-dashboard-topbar-pill='true'] {
+    right: 0.375rem;
+    bottom: -0.375rem;
+    left: 0.375rem;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-workspace-tabs='true']
+    [data-dashboard-tabs-trigger='true'][data-workspace-highlighted='true'],
+  :root[data-dashboard-style='modern']
+    [data-dashboard-header-action='true'][data-header-action-highlighted='true'] {
+    color: hsl(var(--foreground));
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-workspace-tabs='true']
+    [data-dashboard-tabs-trigger='true']
+    span {
+    font-size: 0.9375rem;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  /* 顶栏收起后只剩一条细边：展开用的拉片收成一枚小圆角短条，悬停时变主色 */
+  :root[data-dashboard-style='modern']
+    [data-dashboard-header='true'][data-dashboard-header-collapsed='true']
+    [data-dashboard-topbar-toggle='true'] {
+    width: 2.5rem;
+    height: 0.25rem;
+    border-radius: 9999px !important;
+    background-color: hsl(var(--muted-foreground) / 0.5);
+    transition: background-color 150ms;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-header='true'][data-dashboard-header-collapsed='true']
+    [data-dashboard-topbar-toggle='true']:hover {
+    background-color: hsl(var(--primary));
+    box-shadow: none !important;
+  }
+
+  /* ---------- 浮层：磨砂玻璃 ----------
+     菜单、气泡、下拉会盖在图表、列表这类有细节的内容上，所以用玻璃。 */
+
+  :root[data-dashboard-style='modern']
+    :is([data-dashboard-floating-content='true'], [data-dashboard-select-content='true']) {
+    border-color: hsl(var(--mdn-glass-edge));
+    -webkit-backdrop-filter: var(--mdn-glass-filter);
+    backdrop-filter: var(--mdn-glass-filter);
+    background-color: hsl(var(--popover) / var(--mdn-glass-alpha));
+    box-shadow: var(--mdn-glass-shadow);
+    color: hsl(var(--popover-foreground));
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-select-item='true'] {
+    background-color: transparent;
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-select-item='true']:is(:hover, :focus) {
+    background-color: hsl(var(--foreground) / 0.08);
+  }
+
+  /* 图表提示框压在彩色的柱子和折线前面，是玻璃最该出现的地方：底色更淡，让颜色透出来 */
+  :root[data-dashboard-style='modern']
+    :is([data-dashboard-chart-tooltip='true'], .recharts-default-tooltip) {
+    border-color: hsl(var(--mdn-glass-edge)) !important;
+    -webkit-backdrop-filter: var(--mdn-glass-filter);
+    backdrop-filter: var(--mdn-glass-filter);
+    background-color: hsl(var(--popover) / var(--mdn-glass-chart-alpha)) !important;
+    box-shadow: var(--mdn-glass-shadow);
+  }
+
+  /* 提示框里的名称和数值之间留出间距，不再贴在一起 */
+  :root[data-dashboard-style='modern'] [data-dashboard-chart-tooltip='true'] .font-mono {
+    margin-left: 0.75rem;
+  }
+
+  /* 弹窗：遮罩调淡，让页面内容透过玻璃面板隐约可见 */
+  :root[data-dashboard-style='modern'] [data-dashboard-dialog-overlay='true'] {
+    background-color: hsl(var(--mdn-scrim));
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-dialog-content='true'] {
+    border-color: hsl(var(--mdn-glass-edge));
+    -webkit-backdrop-filter: var(--mdn-glass-filter);
+    backdrop-filter: var(--mdn-glass-filter);
+    background-color: hsl(var(--background) / 0.82);
+    box-shadow: var(--mdn-glass-shadow);
+  }
+
+  /* ---------- 自定义背景：各个表面换成玻璃 ----------
+     只有设置了页面背景图或视频时才生效；纯色底后面没有内容可透，保持原样。 */
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-shell='true']:is(
+      [data-dashboard-page-background='image'],
+      [data-dashboard-page-background='video']
+    )
+    :is([data-dashboard-sidebar='true'], [data-dashboard-card='true']) {
+    border-color: hsl(var(--mdn-glass-edge));
+    -webkit-backdrop-filter: var(--mdn-glass-filter);
+    backdrop-filter: var(--mdn-glass-filter);
+    background-color: hsl(var(--card) / var(--mdn-glass-surface-alpha));
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-shell='true']:is(
+      [data-dashboard-page-background='image'],
+      [data-dashboard-page-background='video']
+    )
+    [data-dashboard-header='true']:not([data-dashboard-header-collapsed='true']) {
+    border-color: hsl(var(--mdn-glass-edge));
+    background-color: hsl(var(--background) / var(--mdn-glass-surface-alpha));
+  }
+}

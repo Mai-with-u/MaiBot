@@ -1,6 +1,7 @@
 import {
   Check,
   Image as ImageIcon,
+  Info,
   Link2Off,
   Loader2,
   Pencil,
@@ -10,11 +11,19 @@ import {
 } from 'lucide-react'
 import type { CSSProperties } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Dialog, DialogBody, DialogContent } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   Select,
   SelectContent,
@@ -24,6 +33,7 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { TabsContent } from '@/components/ui/tabs'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useToast } from '@/hooks/use-toast'
 import {
   deleteMemoryImageLink,
@@ -57,7 +67,13 @@ function formatTime(value?: number | null): string {
   return new Date(value * 1000).toLocaleString('zh-CN')
 }
 
-function Stats({ stats }: { stats?: MemoryImageStatsPayload }) {
+function Stats({
+  stats,
+  onOpenMaintenance,
+}: {
+  stats?: MemoryImageStatsPayload
+  onOpenMaintenance: () => void
+}) {
   const primaryItems = [
     ['已记住的图片', stats?.asset_count ?? 0],
     ['图片说明', stats?.observation_count ?? 0],
@@ -71,30 +87,52 @@ function Stats({ stats }: { stats?: MemoryImageStatsPayload }) {
     ['待绑定描述', stats?.pending_unbound_description_count ?? 0],
   ]
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
-        {primaryItems.map(([label, value]) => (
-          <span key={label} className="flex items-baseline gap-1.5">
-            <span className="text-muted-foreground">{label}</span>
-            <span className="text-foreground font-semibold tabular-nums">{value}</span>
-          </span>
-        ))}
-      </div>
-      <details className="text-muted-foreground text-xs">
-        <summary className="cursor-pointer">后台处理情况</summary>
-        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
-          {maintenanceItems.map(([label, value]) => (
-            <span key={label}>
-              {label} <span className="text-foreground font-medium tabular-nums">{value}</span>
-            </span>
-          ))}
-        </div>
-      </details>
+    <div className="flex min-h-8 min-w-0 flex-1 flex-wrap items-center gap-x-5 gap-y-1 text-sm">
+      {primaryItems.map(([label, value]) => (
+        <span key={label} className="flex items-baseline gap-1.5">
+          <span className="text-muted-foreground">{label}</span>
+          <span className="text-foreground font-semibold tabular-nums">{value}</span>
+        </span>
+      ))}
+      <TooltipProvider delayDuration={150}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="text-muted-foreground h-7 w-7 shrink-0"
+              aria-label="后台处理情况"
+              aria-haspopup="dialog"
+              onClick={onOpenMaintenance}
+            >
+              <Info className="h-4 w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent className="w-56 space-y-2 p-3">
+            <div className="font-semibold">后台处理情况</div>
+            <div className="space-y-1.5">
+              {maintenanceItems.map(([label, value]) => (
+                <div key={label} className="flex items-center justify-between gap-4">
+                  <span>{label}</span>
+                  <span className="font-medium tabular-nums">{value}</span>
+                </div>
+              ))}
+            </div>
+            <div className="text-muted-foreground pt-2 text-xs">点击打开高级维护</div>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
     </div>
   )
 }
 
-export function ImagesTab() {
+interface ImagesTabProps {
+  /** 页面提供的顶部操作区；独立使用时在面板顶部显示操作按钮。 */
+  toolbarTarget?: HTMLElement | null
+}
+
+export function ImagesTab({ toolbarTarget }: ImagesTabProps) {
   const { toast } = useToast()
   const [status, setStatus] = useState<MemoryImageStatusPayload | null>(null)
   const [items, setItems] = useState<MemoryImageAssetPayload[]>([])
@@ -111,7 +149,6 @@ export function ImagesTab() {
   const [savingSemantic, setSavingSemantic] = useState(false)
   const [error, setError] = useState('')
   const [maintenanceOpen, setMaintenanceOpen] = useState(false)
-  const maintenanceRef = useRef<HTMLDetailsElement>(null)
   const detailRequestIdRef = useRef(0)
 
   const loadPage = useCallback(async () => {
@@ -244,42 +281,34 @@ export function ImagesTab() {
     if (selectedId) await selectAsset(selectedId)
   }
 
-  return (
-    <TabsContent value="images" className="space-y-4">
-      <Card>
-        <CardHeader className="border-b pb-3 sm:flex-row sm:justify-end">
-          <Button variant="outline" size="sm" onClick={() => void loadPage()} disabled={loading}>
-            <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
-            刷新
-          </Button>
-        </CardHeader>
-        <CardContent className="pt-4 sm:pt-5">
-          <Stats stats={status?.stats} />
-          {(status?.status === 'error' || status?.status === 'unavailable') && (
-            <Alert variant="destructive" className="mt-3">
-              <AlertDescription>
-                相似图片查找暂不可用。你仍可浏览已保存的图片、查看来源和修正说明。请检查图片模型配置与连接。
-                <details className="mt-2">
-                  <summary className="cursor-pointer">查看技术原因</summary>
-                  {status.message ?? status.error}
-                </details>
-              </AlertDescription>
-            </Alert>
-          )}
-        </CardContent>
-      </Card>
+  const refreshButton = (
+    <Button
+      variant="outline"
+      size="sm"
+      className="shrink-0"
+      onClick={() => void loadPage()}
+      disabled={loading}
+    >
+      <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+      刷新
+    </Button>
+  )
 
+  return (
+    <TabsContent value="images" className="mt-0 flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+      {toolbarTarget ? createPortal(refreshButton, toolbarTarget) : refreshButton}
       {error && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="shrink-0">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
 
-      <Card className="flex h-[440px] min-w-0 flex-col overflow-hidden md:h-[760px]">
-        <CardHeader className="gap-2 border-b pb-3 sm:flex-row sm:items-center sm:justify-between">
-          <CardTitle className="text-sm">已记住的图片</CardTitle>
+      <Card className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <CardHeader className="shrink-0 space-y-0 gap-2 border-b pb-3 sm:flex-row sm:items-center sm:justify-between">
+          <CardTitle className="sr-only">已记住的图片</CardTitle>
+          <Stats stats={status?.stats} onOpenMaintenance={() => setMaintenanceOpen(true)} />
           <Select value={chatId || 'all'} onValueChange={handleChatFilterChange}>
-            <SelectTrigger aria-label="按聊天筛选" className="w-52">
+            <SelectTrigger aria-label="按聊天筛选" className="w-full sm:w-52 sm:shrink-0">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -293,7 +322,18 @@ export function ImagesTab() {
           </Select>
         </CardHeader>
         <CardContent className="flex min-h-0 flex-1 flex-col pt-4">
-          <div className="min-h-0 flex-1 overflow-auto pr-1">
+          {(status?.status === 'error' || status?.status === 'unavailable') && (
+            <Alert variant="destructive" className="mb-3 shrink-0">
+              <AlertDescription>
+                相似图片查找暂不可用。你仍可浏览已保存的图片、查看来源和修正说明。请检查图片模型配置与连接。
+                <details className="mt-2">
+                  <summary className="cursor-pointer">查看技术原因</summary>
+                  {status.message ?? status.error}
+                </details>
+              </AlertDescription>
+            </Alert>
+          )}
+          <div key={`${chatId}:${offset}`} className="@container h-[60dvh] min-h-0 flex-none overflow-auto overscroll-contain pr-1 lg:h-auto lg:flex-1">
             {loading ? (
               <div className="text-muted-foreground flex h-full items-center justify-center text-sm">
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -315,7 +355,6 @@ export function ImagesTab() {
                     variant="outline"
                     onClick={() => {
                       setMaintenanceOpen(true)
-                      maintenanceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
                     }}
                   >
                     查看历史图片回填
@@ -323,14 +362,15 @@ export function ImagesTab() {
                 </div>
               )
             ) : (
-              <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-3">
+              // 列数取每页 24 张的约数，按浏览区宽度切换，避免完整页的最后一行缺格。
+              <div className="grid grid-cols-1 gap-3 @[20rem]:grid-cols-2 @[30rem]:grid-cols-3 @[40rem]:grid-cols-4 @[60rem]:grid-cols-6 @[80rem]:grid-cols-8 @[120rem]:grid-cols-12">
                 {items.map((item, index) => (
                   <button
                     key={item.asset_id}
                     type="button"
                     onClick={() => void selectAsset(item.asset_id)}
                     className={cn(
-                      'border-border/70 bg-background hover:border-primary/50 overflow-hidden rounded-lg border text-left transition hover:shadow-sm',
+                      'border-border/70 bg-background hover:border-primary/50 min-w-0 overflow-hidden rounded-lg border text-left transition hover:shadow-sm',
                       selectedId === item.asset_id && 'border-primary ring-primary/20 ring-2'
                     )}
                   >
@@ -340,18 +380,18 @@ export function ImagesTab() {
                       className="bg-muted h-36 w-full object-contain"
                       loading="lazy"
                     />
-                    <div className="text-muted-foreground flex justify-between p-2 text-xs">
-                      <span>
+                    <div className="text-muted-foreground flex items-center justify-between gap-2 p-2 text-xs">
+                      <span className="min-w-0 truncate" title={`${item.width} × ${item.height}`}>
                         {item.width} × {item.height}
                       </span>
-                      <span>{formatBytes(item.byte_size)}</span>
+                      <span className="shrink-0 whitespace-nowrap">{formatBytes(item.byte_size)}</span>
                     </div>
                   </button>
                 ))}
               </div>
             )}
           </div>
-          <div className="mt-4 flex items-center justify-between">
+          <div className="mt-2 flex shrink-0 items-center justify-between">
             <Button
               variant="outline"
               size="sm"
@@ -616,19 +656,17 @@ export function ImagesTab() {
         </DialogContent>
       </Dialog>
 
-      <details
-        ref={maintenanceRef}
-        open={maintenanceOpen}
-        onToggle={(event) => setMaintenanceOpen(event.currentTarget.open)}
-        className="rounded-lg border p-4"
-      >
-        <summary className="cursor-pointer text-sm font-medium">
-          高级维护 · 历史图片回填与故障处理
-        </summary>
-        <div className="mt-4">
-          <ImageMaintenancePanel status={status} onRefresh={loadPage} />
-        </div>
-      </details>
+      <Dialog open={maintenanceOpen} onOpenChange={setMaintenanceOpen}>
+        <DialogContent className="max-h-[85vh] [--dialog-width:64rem]">
+          <DialogHeader>
+            <DialogTitle>图片记忆高级维护</DialogTitle>
+            <DialogDescription className="sr-only">历史图片回填、失败任务与索引诊断。</DialogDescription>
+          </DialogHeader>
+          <DialogBody>
+            <ImageMaintenancePanel status={status} onRefresh={loadPage} />
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
     </TabsContent>
   )
 }

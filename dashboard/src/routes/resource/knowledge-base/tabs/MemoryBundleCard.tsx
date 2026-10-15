@@ -1,10 +1,10 @@
-import { Download, Loader2, PackageOpen, RefreshCw, Trash2, Upload } from 'lucide-react'
+import { Download, Loader2, RefreshCw, Trash2, Upload } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -300,17 +300,7 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
 
   return (
     <Card className="border-border/70 rounded-2xl shadow-sm">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <PackageOpen className="h-4 w-4" />
-          可分享记忆包
-        </CardTitle>
-        <CardDescription>
-          可选择图片及关联知识导出，也可连同人物画像、Episode、事实账本和生命周期状态完整迁移。安装过程不调用
-          LLM 抽取。
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-5">
+      <CardContent className="space-y-5 pt-4 sm:pt-5">
         {notice ? (
           <Alert variant={notice.kind === 'error' ? 'destructive' : 'default'}>
             <AlertDescription>{notice.text}</AlertDescription>
@@ -319,12 +309,7 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
 
         <div className="grid gap-5 xl:grid-cols-2">
           <div className="border-border/60 space-y-4 rounded-xl border p-4">
-            <div>
-              <div className="font-medium">导出记忆包</div>
-              <div className="text-muted-foreground mt-1 text-xs">
-                范围与内容级别互相独立，可导出全部、聊天流、来源、旧导入任务或已安装知识包。
-              </div>
-            </div>
+            <div className="font-medium">导出记忆包</div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>内容级别</Label>
@@ -547,26 +532,27 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
                 携带所选图片直接关联的知识；关闭时仅保留图片及认知
               </Label>
             )}
-            <Button variant="outline" onClick={() => void handleExport(true)} disabled={exporting}>
-              预览导出内容
-            </Button>
-            <Button onClick={() => void handleExport()} disabled={exporting}>
-              {exporting ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Download className="mr-2 h-4 w-4" />
-              )}
-              导出并下载
-            </Button>
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+              <Button
+                variant="outline"
+                onClick={() => void handleExport(true)}
+                disabled={exporting}
+              >
+                预览导出内容
+              </Button>
+              <Button onClick={() => void handleExport()} disabled={exporting}>
+                {exporting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4" />
+                )}
+                导出并下载
+              </Button>
+            </div>
           </div>
 
           <div className="border-border/60 space-y-4 rounded-xl border p-4">
-            <div>
-              <div className="font-medium">安装记忆包</div>
-              <div className="text-muted-foreground mt-1 text-xs">
-                合并模式可安全去重；恢复模式只接受完整包，并要求目标记忆库为空。
-              </div>
-            </div>
+            <div className="font-medium">安装记忆包</div>
             <div className="space-y-2">
               <Label>记忆包文件</Label>
               <Input
@@ -579,13 +565,6 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
                 }}
               />
             </div>
-            <Button
-              variant="outline"
-              disabled={!bundleFile || inspecting || installing}
-              onClick={() => void inspectFile()}
-            >
-              {inspecting ? '检查中…' : '检查图片资源与向量兼容性'}
-            </Button>
             {preview && (
               <div className="space-y-1 rounded border p-3 text-sm">
                 <p>
@@ -656,26 +635,35 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
                 </Select>
               </div>
             ) : null}
-            <Button onClick={() => void handleInstall()} disabled={installing}>
-              {installing ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Upload className="mr-2 h-4 w-4" />
-              )}
-              安装知识包
-            </Button>
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+              <Button
+                variant="outline"
+                disabled={!bundleFile || inspecting || installing}
+                onClick={() => void inspectFile()}
+              >
+                {inspecting ? '检查中…' : '检查图片资源与向量兼容性'}
+              </Button>
+              <Button onClick={() => void handleInstall()} disabled={installing}>
+                {installing ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Upload className="h-4 w-4" />
+                )}
+                安装知识包
+              </Button>
+            </div>
 
             <div className="border-border/60 border-t pt-4">
-              <div className="mb-3 flex items-center justify-between">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <div className="text-sm font-medium">已安装</div>
                 <Button
-                  variant="ghost"
+                  variant="outline"
                   size="sm"
                   onClick={() => void refreshInstallations()}
                   disabled={loadingInstallations}
                 >
                   <RefreshCw
-                    className={`mr-1 h-3.5 w-3.5 ${loadingInstallations ? 'animate-spin' : ''}`}
+                    className={`h-3.5 w-3.5 ${loadingInstallations ? 'animate-spin' : ''}`}
                   />
                   刷新安装记录
                 </Button>

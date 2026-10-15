@@ -53,6 +53,11 @@ class UsageRecord:
     prompt_cache_miss_tokens: int = 0
     """输入中缓存未命中的 token 数"""
 
+    prompt_cache_reported: bool = False
+    """供应商本次响应是否上报了 Prompt 缓存用量字段。
+    部分供应商（如 StepFun）只在命中时返回缓存字段，未命中时为 False；
+    统计页据此自动探测模型是否支持 Prompt 缓存，不依赖任何价格配置。"""
+
 
 @dataclass(frozen=True, slots=True)
 class GenerationTrace:
@@ -110,6 +115,9 @@ class APIResponse:
     embedding: List[float] | None = None
     """嵌入向量"""
 
+    rate_limit_wait_seconds: float = 0.0
+    """本次逻辑请求累计的嵌入限速等待时间，不计入模型耗时。"""
+
     usage: UsageRecord | None = None
     """使用情况 (prompt_tokens, completion_tokens, total_tokens)"""
 
@@ -126,7 +134,7 @@ class APIResponse:
     """本次成功请求的最终 wire 载荷，仅用于缓存诊断和可观测性。"""
 
     request_protocol_hash: str | None = None
-    """图片嵌入客户端计算的原生协议指纹；仅原生图片嵌入协议分支填充，
+    """图片嵌入客户端计算的协议指纹；自动适配图片嵌入协议时填充，
     编排器据此透传给上层，其余场景保持 None 并沿用默认指纹算法。"""
 
     @property
@@ -210,7 +218,8 @@ class APIResponse:
 
 
 UsageTuple = Tuple[int, ...]
-"""统一的使用量元组，顺序为 `(prompt_tokens, completion_tokens, total_tokens, prompt_cache_hit_tokens, prompt_cache_miss_tokens)`。"""
+"""统一的使用量元组，顺序为 `(prompt_tokens, completion_tokens, total_tokens, prompt_cache_hit_tokens, prompt_cache_miss_tokens, prompt_cache_reported)`。
+ Gemini 等不区分缓存的客户端可缩短元组，末位是否存在由消费方按长度判断。"""
 
 StreamResponseHandler = Callable[
     [Any, asyncio.Event | None],
@@ -235,6 +244,7 @@ class RequestTraceContext:
     model_attempt: int = 0
     snapshot_path: str = ""
     current_attempt_started_at: float = 0.0
+    rate_limit_wait_seconds: float = 0.0
     generation_attempts: List[GenerationAttempt] = field(default_factory=list)
 
     def replace_attempt_status(self, attempt_number: int, status: str) -> None:
@@ -300,6 +310,7 @@ class EmbeddingRequest:
     embedding_input: str
     extra_params: Dict[str, Any] = field(default_factory=dict)
     trace_context: RequestTraceContext | None = None
+    retry_handled_externally: bool = False
 
 
 @dataclass(slots=True)

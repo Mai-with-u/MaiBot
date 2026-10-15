@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, cast
 
 import asyncio
 import httpx
+import logging
 
 from src.cli.console import console
 from src.core.tooling import ToolExecutionResult
@@ -87,6 +88,9 @@ except ImportError:
     McpError = Exception  # type: ignore[assignment,misc]
 
 
+logger = logging.getLogger(__name__)
+
+
 class MCPConnection:
     """管理单个 MCP 服务器的连接生命周期。"""
 
@@ -124,6 +128,9 @@ class MCPConnection:
         self._http_client: Optional[httpx.AsyncClient] = None
         self._session_id_getter: Optional[Callable[[], str | None]] = None
         self._exit_stack = AsyncExitStack()
+        self._lifecycle_task: Optional[asyncio.Task[None]] = None
+        self._ready: Optional[asyncio.Future[bool]] = None
+        self._close_requested = asyncio.Event()
 
     @property
     def session_id(self) -> str:
@@ -149,27 +156,52 @@ class MCPConnection:
             console.print("[warning]⚠️ 未安装 mcp SDK，请运行: pip install mcp[/warning]")
             return False
 
-        if self.session is not None:
-            return True
+        if self._lifecycle_task is None or self._lifecycle_task.done():
+            self.last_error = ""
+            self._ready = asyncio.get_running_loop().create_future()
+            self._close_requested = asyncio.Event()
+            self._lifecycle_task = asyncio.create_task(self._run_connection(self._ready))
 
-        self.last_error = ""
+        assert self._ready is not None
         try:
-            await self._exit_stack.__aenter__()
-            read_stream, write_stream = await self._connect_transport()
-            session = await self._create_client_session(read_stream, write_stream)
-            self.session = session
-            initialize_result = await session.initialize()
-            self.server_capabilities = getattr(initialize_result, "capabilities", None)
-            self.protocol_version = str(getattr(initialize_result, "protocolVersion", "") or "")
+            return await asyncio.shield(self._ready) and self.session is not None
+        except asyncio.CancelledError:
+            await self.close()
+            raise
 
-            await self._load_server_features()
-            return True
+    async def _run_connection(self, ready: asyncio.Future[bool]) -> None:
+        """由同一持续运行的任务进入、持有和退出 SDK 的异步作用域。"""
+        try:
+            async with self._exit_stack:
+                read_stream, write_stream = await self._connect_transport()
+                session = await self._create_client_session(read_stream, write_stream)
+                self.session = session
+                initialize_result = await session.initialize()
+                self.server_capabilities = initialize_result.capabilities
+                self.protocol_version = initialize_result.protocolVersion
 
+                await self._load_server_features()
+                ready.set_result(True)
+                try:
+                    await self._close_requested.wait()
+                finally:
+                    self.session = None
         except Exception as exc:
             self.last_error = str(exc).strip() or exc.__class__.__name__
-            console.print(f"[warning]⚠️ MCP 服务器 '{self.config.name}' 连接失败: {exc}[/warning]")
-            await self.close()
-            return False
+            logger.exception("MCP 服务器 '%s' 连接失败或异常断开", self.config.name)
+        finally:
+            self.session = None
+            self.server_capabilities = None
+            self.tools = []
+            self.prompts = []
+            self.resources = []
+            self.resource_templates = []
+            self.protocol_version = ""
+            self._http_client = None
+            self._session_id_getter = None
+            self._exit_stack = AsyncExitStack()
+            if not ready.done():
+                ready.set_result(False)
 
     async def _connect_transport(self) -> tuple[Any, Any]:
         """根据配置建立底层传输连接。
@@ -677,18 +709,18 @@ class MCPConnection:
     async def close(self) -> None:
         """关闭连接并释放资源。"""
 
-        try:
-            await self._exit_stack.aclose()
-        except Exception as exc:
-            console.print(f"[warning]⚠️ MCP 服务器 '{self.config.name}' 关闭连接失败: {exc}[/warning]")
-
+        task = self._lifecycle_task
+        if task is None:
+            return
+        ready = self._ready
+        close_already_requested = self._close_requested.is_set()
+        self._close_requested.set()
         self.session = None
-        self.server_capabilities = None
-        self.tools = []
-        self.prompts = []
-        self.resources = []
-        self.resource_templates = []
-        self.protocol_version = ""
-        self._http_client = None
-        self._session_id_getter = None
-        self._exit_stack = AsyncExitStack()
+        # 建连尚未完成时终止等待；已连接时让持有任务正常退出并清理资源。
+        # 重复关闭不能再次取消正在退出 anyio 作用域的任务。
+        if not close_already_requested and ready is not None and not ready.done():
+            task.cancel()
+        # 调用者超时或取消时，持有任务仍须完成同任务资源清理。
+        await asyncio.shield(asyncio.gather(task, return_exceptions=True))
+        if ready is not None and not ready.done():
+            ready.set_result(False)

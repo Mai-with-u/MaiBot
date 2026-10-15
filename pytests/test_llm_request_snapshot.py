@@ -1,6 +1,7 @@
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import base64
 import json
@@ -27,7 +28,7 @@ from src.llm_models.request_snapshot import (
     update_failed_request_attempt,
 )
 from src.maisaka.display import preview_path_utils, prompt_cli_renderer
-from src.webui.routers.reasoning_process import _extract_llm_error_display_title
+from src.webui.routers.reasoning_process import _extract_llm_error_display_title, _load_prompt_json
 import src.llm_models.request_snapshot as request_snapshot
 
 
@@ -39,6 +40,75 @@ def _build_provider() -> APIProvider:
         client_type="openai",
         default_headers={"Authorization": "secret"},
     )
+
+
+def test_normal_history_reads_are_quiet_and_do_not_take_storage_lock(monkeypatch, tmp_path):
+    from src.maisaka.display.prompt_preview_logger import PromptPreviewLogger
+
+    diagnostic_logger = Mock()
+    monkeypatch.setattr(request_snapshot, "logger", diagnostic_logger)
+    lock = Mock(side_effect=AssertionError("ordinary history read took storage lock"))
+    monkeypatch.setattr(PromptPreviewLogger, "_timed_storage_lock", lock)
+    path = tmp_path / "history.json"
+    path.write_text('{"metadata": {"model_name": "test"}}', encoding="utf-8")
+    for _ in range(100):
+        assert _load_prompt_json(path)["metadata"]["model_name"] == "test"
+    lock.assert_not_called()
+    assert diagnostic_logger.mock_calls == []
+
+
+def test_image_index_restart_loads_only_references_and_handles_shared_deletions(monkeypatch, tmp_path):
+    from src.maisaka.display.prompt_preview_logger import PromptPreviewLogger
+
+    _patch_snapshot_paths(monkeypatch, tmp_path)
+    images = tmp_path / "images"
+    images.mkdir()
+    monkeypatch.setattr(PromptPreviewLogger, "_IMAGE_DIR", images)
+    root = PromptPreviewLogger._BASE_DIR
+    image_name = "a" * 64 + ".png"
+    image = images / image_name
+    image.write_bytes(b"image")
+    first = root / "first.json"
+    second = root / "second.events.jsonl"
+    empty = root / "empty.json"
+    PromptPreviewLogger.write_record_file(first, "prompt_imgs/" + image_name, {})
+    PromptPreviewLogger.append_record_event(second, json.dumps({"image": "prompt_imgs/" + image_name}), {})
+    PromptPreviewLogger.write_record_file(empty, "{}", {})
+    assert empty in PromptPreviewLogger._record_signatures
+
+    PromptPreviewLogger._image_index_ready = False
+    monkeypatch.setattr(PromptPreviewLogger, "_refresh_image_index", Mock(side_effect=AssertionError("full scan")))
+    PromptPreviewLogger._ensure_image_index()
+    assert set(PromptPreviewLogger._record_signatures) == {first, second}
+    assert PromptPreviewLogger._previews_by_image[image_name] == {first, second}
+    first.unlink()
+    assert PromptPreviewLogger.cleanup_orphan_images() == 0
+    assert image.exists()
+    second.unlink()
+    assert PromptPreviewLogger.cleanup_orphan_images() == 1
+    assert not image.exists()
+    PromptPreviewLogger._image_index_ready = False
+    PromptPreviewLogger._ensure_image_index()
+    assert not PromptPreviewLogger._record_signatures
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_history_read_reports_only_slow_or_failed_operations(monkeypatch, tmp_path, failed):
+    import src.common.operation_timing as operation_timing
+
+    diagnostic_logger = Mock()
+    monkeypatch.setattr(request_snapshot, "logger", diagnostic_logger)
+    monkeypatch.setattr(operation_timing.time, "perf_counter", Mock(side_effect=[0, 0.01 if failed else 0.8]))
+    path = tmp_path / "history.json"
+    path.write_text("broken" if failed else "{}", encoding="utf-8")
+    if failed:
+        with pytest.raises(json.JSONDecodeError):
+            request_snapshot.read_request_snapshot(path)
+    else:
+        assert request_snapshot.read_request_snapshot(path) == {}
+    diagnostic_logger.warning.assert_called_once()
+    diagnostic_logger.debug.assert_not_called()
+    assert ("outcome=failed" if failed else "耗时=0.800s") in diagnostic_logger.warning.call_args.args[0]
 
 
 def _build_model() -> ModelInfo:
@@ -53,6 +123,13 @@ def _patch_snapshot_paths(monkeypatch, tmp_path: Path) -> None:
     snapshot_root = tmp_path / "logs" / "maisaka_prompt" / "llm_error"
     prompt_image_root = tmp_path / "data" / "prompt_imgs"
     prompt_audio_root = tmp_path / "data" / "prompt_audio"
+    from src.maisaka.display.prompt_preview_logger import PromptPreviewLogger
+
+    monkeypatch.setattr(PromptPreviewLogger, "_BASE_DIR", snapshot_root.parent)
+    monkeypatch.setattr(PromptPreviewLogger, "_image_index_ready", False)
+    for attribute in ("_images_by_preview", "_previews_by_image", "_record_signatures"):
+        monkeypatch.setattr(PromptPreviewLogger, attribute, {})
+    monkeypatch.setattr(PromptPreviewLogger, "_index_pending", set())
     monkeypatch.setattr(request_snapshot, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(request_snapshot, "LLM_REQUEST_LOG_DIR", snapshot_root)
     monkeypatch.setattr(request_snapshot, "LLM_REQUEST_AUDIO_DIR", prompt_audio_root)
@@ -99,6 +176,8 @@ def test_failed_request_snapshot_aggregates_attempts_and_externalizes_image(monk
         provider_request={"request_kwargs": {"messages": ["重复请求体"], "authorization": "secret"}},
         trace_context=trace_context,
     )
+    original_bytes = first_path.read_bytes()
+    original_mtime = first_path.stat().st_mtime_ns
     trace_context.attempt = 2
     trace_context.model_attempt = 2
     second_path = save_failed_request_snapshot(
@@ -114,12 +193,12 @@ def test_failed_request_snapshot_aggregates_attempts_and_externalizes_image(monk
 
     assert first_path == second_path
     assert first_path is not None
-    payload = json.loads(first_path.read_text(encoding="utf-8"))
+    payload = request_snapshot.read_request_snapshot(first_path)
     assert payload["schema_version"] == 6
     assert "messages" not in payload
     assert "output" not in payload
     assert payload["request"]["task_name"] == "planner"
-    assert payload["metadata"]["status"] == "retrying"
+    assert payload["metadata"]["status"] == "failed"
     assert len(payload["generation_attempts"]) == 2
     assert image_base64 not in first_path.read_text(encoding="utf-8")
     image_part = payload["request_items"][0]["parts"][1]
@@ -141,7 +220,8 @@ def test_failed_request_snapshot_aggregates_attempts_and_externalizes_image(monk
     retry_error = RuntimeError("第二次失败")
     attach_request_snapshot(retry_error, second_path)
     update_failed_request_attempt(retry_error, status="retrying", retry_interval=3)
-    payload = json.loads(first_path.read_text(encoding="utf-8"))
+    previous_events = first_path.with_suffix(".events.jsonl").read_bytes()
+    payload = request_snapshot.read_request_snapshot(first_path)
     assert payload["generation_attempts"][-1]["retry_interval"] == 3
 
     trace_context.attempt = 3
@@ -157,9 +237,14 @@ def test_failed_request_snapshot_aggregates_attempts_and_externalizes_image(monk
         )
     )
     mark_request_succeeded(request, APIResponse())
-    payload = json.loads(first_path.read_text(encoding="utf-8"))
+    payload = request_snapshot.read_request_snapshot(first_path)
     assert payload["metadata"]["status"] == "succeeded_after_retry"
     assert payload["generation_attempts"][-1]["status"] == "succeeded"
+    assert first_path.read_bytes() == original_bytes
+    assert first_path.stat().st_mtime_ns == original_mtime
+    assert len(first_path.with_suffix(".events.jsonl").read_text(encoding="utf-8").splitlines()) == 3
+    assert first_path.with_suffix(".events.jsonl").read_bytes().startswith(previous_events)
+    assert _load_prompt_json(first_path)["metadata"]["status"] == "succeeded_after_retry"
 
 
 def test_failed_request_without_session_is_saved_under_system(monkeypatch, tmp_path: Path) -> None:
@@ -185,6 +270,37 @@ def test_failed_request_without_session_is_saved_under_system(monkeypatch, tmp_p
 
     assert snapshot_path is not None
     assert snapshot_path.parent.name == "system"
+    original_bytes = snapshot_path.read_bytes()
+    error = RuntimeError("最终失败")
+    attach_request_snapshot(error, snapshot_path)
+    request_snapshot.mark_request_final_failure(error)
+    assert snapshot_path.read_bytes() == original_bytes
+    assert request_snapshot.read_request_snapshot(snapshot_path)["metadata"]["status"] == "final_failed"
+
+
+def test_retention_removes_snapshot_events_and_index(monkeypatch, tmp_path):
+    _patch_snapshot_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(request_snapshot, "_get_llm_request_snapshot_limit", lambda: 1)
+    from src.maisaka.display.prompt_preview_logger import PromptPreviewLogger
+
+    paths = []
+    for number in range(2):
+        trace = RequestTraceContext(request_id=f"retention-{number}", attempt=1)
+        path = save_failed_request_snapshot(
+            api_provider=_build_provider(), client_type="openai", error=RuntimeError("failed"),
+            internal_request={"request_kind": "response", "context_items": []},
+            model_info=_build_model(), operation="test", provider_request={}, trace_context=trace,
+        )
+        assert path is not None
+        error = RuntimeError("final failure")
+        attach_request_snapshot(error, path)
+        request_snapshot.mark_request_final_failure(error)
+        paths.append(path)
+    assert not paths[0].exists()
+    assert not paths[0].with_suffix(".events.jsonl").exists()
+    assert paths[0] not in PromptPreviewLogger._record_signatures
+    assert paths[0].with_suffix(".events.jsonl") not in PromptPreviewLogger._record_signatures
+    assert paths[1].exists()
 
 
 def test_llm_error_display_title_uses_final_status_and_latest_error() -> None:
@@ -254,6 +370,7 @@ async def test_openai_image_embedding_uses_explicit_data_uri_protocol() -> None:
     client = object.__new__(OpenaiClient)
     client.api_provider = _build_provider()
     client.client = SimpleNamespace(embeddings=FakeEmbeddings())
+    client._omit_sdk_authorization = False
     request = ImageEmbeddingRequest(
         model_info=_build_model(),
         image_bytes=b"image-bytes",

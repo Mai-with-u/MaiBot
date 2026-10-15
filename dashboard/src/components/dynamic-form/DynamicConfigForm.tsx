@@ -1,5 +1,4 @@
-import { Link } from '@tanstack/react-router'
-import { ChevronDown, ChevronUp, Sparkles } from 'lucide-react'
+import { ChevronDown, ChevronUp } from 'lucide-react'
 import * as React from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -27,6 +26,12 @@ export interface DynamicConfigFormProps {
   level?: number
   advancedVisible?: boolean
   sectionColumns?: 1 | 2
+  /** 按完整配置路径，为顶层配置节添加前置内容。 */
+  sectionLeadingContent?: Record<string, React.ReactNode>
+  /** 按完整配置路径，为顶层配置节添加末尾内容。 */
+  sectionTrailingContent?: Record<string, React.ReactNode>
+  /** 按完整配置路径，在字段后插入内容。 */
+  fieldTrailingContent?: Record<string, React.ReactNode>
 }
 
 function buildFieldPath(basePath: string, fieldName: string) {
@@ -82,28 +87,10 @@ export function AdvancedSettingsButton({
   )
 }
 
-function PromptGeneratorEntryCard() {
-  return (
-    <Link
-      to="/config/prompt-generator"
-      className="group flex items-start gap-3 rounded-lg border bg-muted/20 p-3 text-left transition-colors hover:bg-muted/40"
-    >
-      <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border bg-background text-primary">
-        <Sparkles className="h-4 w-4" aria-hidden="true" />
-      </span>
-      <span className="min-w-0 space-y-1">
-        <span className="block text-sm font-semibold text-foreground group-hover:text-primary">
-          人设生成器（测试版）
-        </span>
-        <span className="block text-xs leading-5 text-muted-foreground">
-          根据人格设定生成或调整麦麦的人设描述。
-        </span>
-      </span>
-    </Link>
-  )
-}
-
 function DynamicConfigSection({
+  leadingContent,
+  trailingContent,
+  fieldTrailingContent,
   advancedVisible,
   basePath,
   children,
@@ -126,6 +113,9 @@ function DynamicConfigSection({
   level: number
   nestedSchema: ConfigSchema
   onChange: (field: string, value: unknown) => void
+  leadingContent?: React.ReactNode
+  trailingContent?: React.ReactNode
+  fieldTrailingContent?: Record<string, React.ReactNode>
   sectionKey: string
   sectionTitle: string
   values: Record<string, unknown>
@@ -168,6 +158,7 @@ function DynamicConfigSection({
         <CardContent id={contentId} className="pt-3">
           {children ?? (
             <div className="space-y-3">
+              {leadingContent}
               <DynamicConfigForm
                 schema={nestedSchema}
                 values={values}
@@ -177,8 +168,9 @@ function DynamicConfigSection({
                 level={level}
                 advancedVisible={advancedVisible}
                 sectionColumns={1}
+                fieldTrailingContent={fieldTrailingContent}
               />
-              {sectionKey === 'personality' && <PromptGeneratorEntryCard />}
+              {trailingContent}
             </div>
           )}
         </CardContent>
@@ -284,6 +276,9 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
   level = 0,
   advancedVisible,
   sectionColumns = 1,
+  sectionLeadingContent,
+  sectionTrailingContent,
+  fieldTrailingContent,
 }) => {
   const resolvedAdvancedVisible = advancedVisible ?? false
 
@@ -463,6 +458,7 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
     <>
       {rows.map((row) => {
         const rowKey = row[0]['x-row']
+        const isBotIdentityRow = rowKey === 'bot-identity'
         const isVisualImageCompressionRow = rowKey === 'visual-image-compression'
 
         return row.length > 1 ? (
@@ -471,7 +467,9 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
               data-config-row={rowKey}
               className={cn(
                 "grid min-w-0 items-stretch gap-3 py-0.5",
-                isVisualImageCompressionRow
+                isBotIdentityRow
+                  ? "grid-cols-[minmax(0,1fr)_auto]"
+                  : isVisualImageCompressionRow
                   ? "grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1.1fr)] items-center"
                   : "md:grid-cols-2 xl:grid-cols-3",
               )}
@@ -481,7 +479,9 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
                   key={field.name}
                   className={cn(
                     "flex min-w-0 items-stretch",
-                    isVisualImageCompressionRow
+                    isBotIdentityRow
+                      ? ""
+                      : isVisualImageCompressionRow
                       ? fieldIndex > 0 && "md:border-l md:border-border/50 md:pl-3"
                       : horizontalSeparatorClassName,
                   )}
@@ -503,6 +503,15 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
         <React.Fragment key={row.map((field) => field.name).join('|')}>
           {index > 0 && <Separator className="my-1.5 bg-border/50" />}
           {renderRows([row])}
+          {row.map((field) => {
+            const fieldPath = buildFieldPath(basePath, field.name)
+            const trailingContent = fieldTrailingContent?.[fieldPath]
+            return trailingContent ? (
+              <div key={fieldPath} className="mt-3">
+                {trailingContent}
+              </div>
+            ) : null
+          })}
         </React.Fragment>
       ))}
     </>
@@ -650,6 +659,9 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
                 level={level + 1}
                 sectionKey={key}
                 sectionTitle={sectionTitle}
+                leadingContent={sectionLeadingContent?.[nestedFieldPath]}
+                trailingContent={sectionTrailingContent?.[nestedFieldPath]}
+                fieldTrailingContent={fieldTrailingContent}
               />
             )
           }

@@ -44,4 +44,5 @@ jobs:
       - name: 校验新增的国际化问题
         env:
           BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+          UV_DEFAULT_INDEX: https://pypi.org/simple
         run: uv run --isolated --no-project --with "tomlkit>=0.13.3" python .github/scripts/check_i18n_regressions.py --baseline-ref "$BASE_REF"

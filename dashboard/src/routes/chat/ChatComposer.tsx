@@ -8,6 +8,7 @@ import type { UserEmojiItem } from '@/lib/user-emoji-api'
 import { cn } from '@/lib/utils'
 
 import type { ChatImageAttachment } from './types'
+import { ChatUserIdentity } from './ChatUserIdentity'
 import { UserEmojiManager } from './UserEmojiManager'
 
 interface ChatComposerProps {
@@ -21,6 +22,11 @@ interface ChatComposerProps {
   images: ChatImageAttachment[]
   isConnected: boolean
   userId: string
+  userName: string
+  userAvatarVersion?: number
+  isUploadingUserAvatar: boolean
+  onUpdateUserAvatar: (file: File) => Promise<void>
+  onUpdateUserName: (name: string) => void
 }
 
 /**
@@ -37,6 +43,11 @@ export function ChatComposer({
   images,
   isConnected,
   userId,
+  userName,
+  userAvatarVersion,
+  isUploadingUserAvatar,
+  onUpdateUserAvatar,
+  onUpdateUserName,
 }: ChatComposerProps) {
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -78,64 +89,74 @@ export function ChatComposer({
             ))}
           </div>
         )}
-        <div
-          className={cn(
-            'group bg-background/80 focus-within:border-primary/60 focus-within:ring-primary/20 relative flex items-end gap-2 rounded-2xl border px-3 py-2 shadow-sm transition focus-within:ring-2',
-            !isConnected && 'opacity-70'
-          )}
-        >
-          <input
-            ref={fileInputRef}
-            className="hidden"
-            type="file"
-            accept="image/*"
-            multiple
-            disabled={!isConnected}
-            onChange={(e) => {
-              if (e.target.files) {
-                onAddImages(e.target.files)
-              }
-              e.currentTarget.value = ''
-            }}
-          />
-          <Button
-            aria-label={t('chat.actions.addImage')}
-            className="h-9 w-9 shrink-0 rounded-full"
-            disabled={!isConnected}
-            size="icon"
-            title={t('chat.actions.addImage')}
-            type="button"
-            variant="ghost"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <ImagePlus className="h-4 w-4" />
-          </Button>
-          <UserEmojiManager disabled={!isConnected} userId={userId} onSendEmoji={onSendEmoji} />
-          <Textarea
-            aria-label={t('chat.input.placeholder')}
-            autoResize
-            className="max-h-40 min-h-9 flex-1 resize-none border-0 bg-transparent px-1 py-1.5 text-sm shadow-none focus-visible:ring-0"
-            disabled={!isConnected}
-            maxHeight={160}
-            minHeight={36}
-            placeholder={isConnected ? t('chat.input.placeholder') : t('chat.input.waiting')}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-          />
-          <Button
-            aria-label={t('chat.actions.send')}
+        <div className="flex flex-col items-end gap-2 md:flex-row md:items-end">
+          <div
             className={cn(
-              'h-9 w-9 shrink-0 rounded-full transition',
-              canSend ? 'shadow-md' : 'opacity-60'
+              'group bg-background/80 focus-within:border-primary/60 focus-within:ring-primary/20 relative flex w-full min-w-0 flex-1 items-end gap-2 rounded-2xl border px-3 py-2 shadow-sm transition focus-within:ring-2',
+              !isConnected && 'opacity-70'
             )}
-            disabled={!canSend}
-            size="icon"
-            title={t('chat.actions.send')}
-            onClick={onSend}
           >
-            <Send className="h-4 w-4" />
-          </Button>
+            <input
+              ref={fileInputRef}
+              className="hidden"
+              type="file"
+              accept="image/*"
+              multiple
+              disabled={!isConnected}
+              onChange={(e) => {
+                if (e.target.files) {
+                  onAddImages(e.target.files)
+                }
+                e.currentTarget.value = ''
+              }}
+            />
+            <Button
+              aria-label={t('chat.actions.addImage')}
+              className="h-9 w-9 shrink-0 rounded-full"
+              disabled={!isConnected}
+              size="icon"
+              title={t('chat.actions.addImage')}
+              type="button"
+              variant="ghost"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <ImagePlus className="h-4 w-4" />
+            </Button>
+            <UserEmojiManager disabled={!isConnected} userId={userId} onSendEmoji={onSendEmoji} />
+            <Textarea
+              aria-label={t('chat.input.placeholder')}
+              autoResize
+              className="max-h-40 min-h-9 min-w-0 flex-1 resize-none border-0 bg-transparent px-1 py-1.5 text-sm shadow-none focus-visible:ring-0"
+              disabled={!isConnected}
+              maxHeight={160}
+              minHeight={36}
+              placeholder={isConnected ? t('chat.input.placeholder') : t('chat.input.waiting')}
+              value={value}
+              onChange={(e) => onChange(e.target.value)}
+              onKeyDown={handleKeyDown}
+            />
+            <Button
+              aria-label={t('chat.actions.send')}
+              className={cn(
+                'h-9 w-9 shrink-0 rounded-full transition',
+                canSend ? 'shadow-md' : 'opacity-60'
+              )}
+              disabled={!canSend}
+              size="icon"
+              title={t('chat.actions.send')}
+              onClick={onSend}
+            >
+              <Send className="h-4 w-4" />
+            </Button>
+          </div>
+          <ChatUserIdentity
+            userId={userId}
+            userName={userName}
+            userAvatarVersion={userAvatarVersion}
+            isUploadingUserAvatar={isUploadingUserAvatar}
+            onUpdateUserAvatar={onUpdateUserAvatar}
+            onUpdateUserName={onUpdateUserName}
+          />
         </div>
         <p className="text-muted-foreground mt-1.5 hidden px-2 text-[11px] sm:block">
           {t('chat.composer.hint')}

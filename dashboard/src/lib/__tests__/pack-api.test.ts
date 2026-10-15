@@ -506,7 +506,7 @@ describe('applyPack', () => {
   it('任务配置 append 模式：与现有 model_list 合并去重，无现有配置的任务直接写入', async () => {
     const localConfig = makeLocalConfig({
       model_task_config: {
-        planner: { model_list: ['模型A', '本地模型'], slow_threshold: 30 },
+        planner: { model_list: ['模型A', '本地模型'] },
       },
     })
     backendGetMock.mockResolvedValue(localConfig)
@@ -531,7 +531,6 @@ describe('applyPack', () => {
     // planner 合并去重：保留本地模型与原有字段，追加 Pack 中的新模型
     expect(savedConfig.model_task_config.planner).toEqual({
       model_list: ['模型A', '本地模型', '模型B'],
-      slow_threshold: 30,
     })
     // vlm 本地不存在，直接写入 Pack 配置
     expect(savedConfig.model_task_config.vlm).toEqual({ model_list: ['模型A'] })

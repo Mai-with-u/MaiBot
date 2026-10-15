@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # Update the base image and uv image with pinned digests in the Dockerfile.
+  - package-ecosystem: docker
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: monthly
+    groups:
+      docker-base-images:
+        patterns:
+          - "*"

@@ -1,4 +1,4 @@
-from typing import Dict, Final, List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 import re
 
@@ -9,12 +9,6 @@ RULE_TYPE_OPTION_DESCRIPTIONS = {
     "private": "私聊聊天流，item_id 填用户 ID",
 }
 
-VISUAL_MODE_OPTION_DESCRIPTIONS = {
-    "auto": "根据模型信息自动选择文本或多模态模式",
-    "text": "纯文本模式，不向模型发送视觉输入",
-    "multimodal": "多模态模式，会向模型发送视觉输入",
-}
-
 OVERSIZED_IMAGE_HANDLE_METHOD_DESCRIPTIONS = {
     "compress": "压缩图片并继续处理",
     "discard": "丢弃超过最大大小的图片组件",
@@ -22,38 +16,13 @@ OVERSIZED_IMAGE_HANDLE_METHOD_DESCRIPTIONS = {
 
 REPLY_TRIGGER_MODE_OPTION_DESCRIPTIONS = {
     "frequency": "按照新消息数量决定思考",
-    "reply_necessity": "综合新消息数量、内容、过往发言决定思考",
+    "dynamic": "估计每批消息的回复可能性并动态调整门槛，让回复次数贴近回复频率",
 }
 
 REPLY_TRIGGER_MODE_OPTION_LABELS = {
     "frequency": "频率触发",
-    "reply_necessity": "必要性触发",
+    "dynamic": "动态触发",
 }
-
-EMOTION_TRAIT_OPTION_LABELS = {
-    "rational_calm": "理性冷静",
-    "neutral": "中性",
-    "sentimental": "多愁善感",
-}
-
-EMOTION_TRAIT_OPTION_DESCRIPTIONS = {
-    "rational_calm": "情绪表达更克制，优先保持客观、清晰和稳定。",
-    "neutral": "不追加额外情绪特点描述，完全使用原人格设定。",
-    "sentimental": "情绪表达更细腻敏感，更容易被聊天氛围触动。",
-}
-
-PERSONALITY_EMOTION_SUFFIXES: Final[dict[str, str]] = {
-    "rational_calm": "你整体理性冷静，回应时更偏向客观、克制和清晰判断，少用强烈情绪表达。",
-    "neutral": "",
-    "sentimental": "你更敏感细腻，容易被聊天氛围触动，会自然表现出一点惆怅、共情或情绪波动，但不要过度煽情。",
-}
-
-
-def build_personality_emotion_suffix(emotion_trait: str) -> str:
-    """根据实验性情绪特点档位生成追加到人格后的提示词。"""
-
-    return PERSONALITY_EMOTION_SUFFIXES[emotion_trait]
-
 
 ATTENTION_DRIFT_LEVEL_OPTION_LABELS = {
     "subtle": "轻微漂移",
@@ -345,42 +314,8 @@ class VisualConfig(ConfigBase):
     __ui_label__ = "视觉"
     __ui_order__ = 60
 
-    planner_mode: Literal["text", "multimodal", "auto"] = Field(
-        default="auto",
-        json_schema_extra={
-            "x-widget": "select",
-            "x-layout": "inline-right",
-            "x-input-width": "12rem",
-            "x-option-descriptions": VISUAL_MODE_OPTION_DESCRIPTIONS,
-            "x-row": "visual-modes",
-            "label": {
-                "zh_CN": "规划阶段视觉模式",
-                "en_US": "Planner vision mode",
-                "ja_JP": "プランナー視覚モード",
-            },
-        },
-    )
-    """控制规划阶段是否把图片内容直接发送给 planner 模型。auto 会根据模型是否支持视觉自动选择；text 始终只使用文字和图片识别结果；multimodal 会强制使用多模态输入。"""
-
-    replyer_mode: Literal["text", "multimodal", "auto"] = Field(
-        default="auto",
-        json_schema_extra={
-            "x-widget": "select",
-            "x-layout": "inline-right",
-            "x-input-width": "12rem",
-            "x-option-descriptions": VISUAL_MODE_OPTION_DESCRIPTIONS,
-            "x-row": "visual-modes",
-            "label": {
-                "zh_CN": "回复生成视觉模式",
-                "en_US": "Replyer vision mode",
-                "ja_JP": "返信生成視覚モード",
-            },
-        },
-    )
-    """控制回复生成阶段是否把图片内容直接发送给 replyer 模型。auto 会根据模型是否支持视觉自动选择；text 始终只使用文字和图片识别结果；multimodal 会强制使用多模态输入。"""
-
     max_image_num: int = Field(
-        default=128,
+        default=64,
         ge=0,
         json_schema_extra={
             "advanced": True,
@@ -395,7 +330,7 @@ class VisualConfig(ConfigBase):
     """一次多模态请求最多带多少张图，太大可能更慢更贵。"""
 
     wait_image_recognize_max_time: float = Field(
-        default=10,
+        default=32,
         ge=0,
         json_schema_extra={
             "x-widget": "input",
@@ -426,7 +361,7 @@ class VisualConfig(ConfigBase):
     """收到太大的图片时，是否自动压缩或丢弃。"""
 
     max_image_size_mb: float = Field(
-        default=30.0,
+        default=16.0,
         ge=0,
         json_schema_extra={
             "x-widget": "input",
@@ -596,7 +531,7 @@ class ChatReplyTimingConfig(ConfigBase):
     )
     """开启后，被 @ 时会尽量回复。"""
 
-    reply_trigger_mode: Literal["frequency", "reply_necessity"] = Field(
+    reply_trigger_mode: Literal["frequency", "dynamic"] = Field(
         default="frequency",
         json_schema_extra={
             "label": {
@@ -817,6 +752,19 @@ class ChatConfig(ConfigBase):
     __ui_use_subtabs__ = True
     __ui_root_sub_label__ = "基础设置"
 
+    enable_reply_at: bool = Field(
+        default=True,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "允许回复时 @ 用户",
+                "en_US": "Allow mentions in replies",
+                "ja_JP": "返信でユーザーへのメンションを許可",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """允许麦麦在回复开头 @ 一个或多个用户，由模型根据聊天内容决定是否使用。"""
+
     max_context_size: int = Field(
         default=40,
         json_schema_extra={
@@ -848,20 +796,6 @@ class ChatConfig(ConfigBase):
         },
     )
     """私聊回复时参考的最近消息数量。"""
-
-    enable_context_optimization: bool = Field(
-        default=True,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "优化上下文",
-                "en_US": "Optimize context",
-                "ja_JP": "コンテキスト最適化",
-            },
-            "x-widget": "switch",
-            "x-row": "chat-context-controls",
-        },
-    )
-    """压缩部分上下文，减少模型消耗；一般建议开启。"""
 
     mid_term_memory: bool = Field(
         default=True,
@@ -982,31 +916,18 @@ class ExperimentalConfig(ConfigBase):
     __ui_advanced__ = True
     __ui_order__ = 140
 
-    enable_behavior_learning: bool = Field(
+    planner_message_steering: bool = Field(
         default=False,
         json_schema_extra={
             "label": {
-                "zh_CN": "启用行为学习",
-                "en_US": "Enable behavior learning",
-                "ja_JP": "行動学習を有効化",
+                "zh_CN": "快速反应模式",
+                "en_US": "Quick reaction mode",
+                "ja_JP": "即応モード",
             },
             "x-widget": "switch",
         },
     )
-    """让麦麦从聊天中学习什么时候该怎么回应的经验。"""
-
-    enable_rich_reply: bool = Field(
-        default=False,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "丰富回复能力",
-                "en_US": "Rich reply ability",
-                "ja_JP": "豊かな返信能力",
-            },
-            "x-widget": "switch",
-        },
-    )
-    """开启后，reply 动作可通过 attach_pic、attach_emoji、attach_at 参数附加图片、表情包或 at。"""
+    """强制 Planner 使用流式请求；思考或输出期间收到新消息立即中断并重新请求，wait 等待也可被新消息提前结束。不等待静默窗口，也不限制连续打断次数。"""
 
     replyer_retro_prompt: bool = Field(
         default=False,
@@ -1021,59 +942,88 @@ class ExperimentalConfig(ConfigBase):
     )
     """按旧版（0.12.x）的方式组织 replyer 提示词：全部回复指令集中在一份完整模板里，用块占位符填充，群聊/私聊/简短回复各用一套模板，并整段作为一条 user 消息发送。"""
 
-    emotion_trait: Literal["rational_calm", "neutral", "sentimental"] = Field(
-        default="neutral",
+    planner_optimized_prompt: bool = Field(
+        default=False,
         json_schema_extra={
             "label": {
-                "zh_CN": "情绪特点",
-                "en_US": "Emotion trait",
-                "ja_JP": "感情特徴",
+                "zh_CN": "优化 Planner 提示词",
+                "en_US": "Optimized planner prompt",
+                "ja_JP": "Planner プロンプトの最適化",
             },
-            "x-widget": "select",
-            "x-layout": "inline-right",
-            "x-input-width": "12rem",
-            "x-option-labels": EMOTION_TRAIT_OPTION_LABELS,
-            "x-option-descriptions": EMOTION_TRAIT_OPTION_DESCRIPTIONS,
+            "x-widget": "switch",
         },
     )
-    """实验性人格情绪特点；理性冷静和多愁善感会追加人格后缀，中性不追加内容。"""
+    """Planner 改用优化版提示词：以“你的名字是……”的第二人称描述麦麦自己，去掉“替麦麦做决策”的旁观者设定并精简任务说明。Focus 模式仍使用原提示词。"""
+
+    planner_unsent_reply_retry: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "回复丢失提醒重试",
+                "en_US": "Unsent reply retry",
+                "ja_JP": "未送信返信のリトライ",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """Planner 在分析里写了要回复、却没有调用任何工具就结束时，提醒一次并让它重新决策；每个回合最多重试一次。"""
+
+    tool_result_condense: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "超长工具结果整理",
+                "en_US": "Condense long tool results",
+                "ja_JP": "長いツール結果の要約",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """工具返回的结果超过阈值字数时，先交给子代理按 Planner 当前意图整理成结论再写入上下文，减少后续每轮的上下文占用；会多一次模型请求。"""
+
+    tool_result_condense_threshold: int = Field(
+        default=3000,
+        ge=500,
+        json_schema_extra={
+            "advanced": True,
+            "x-widget": "input",
+            "label": {
+                "zh_CN": "工具结果整理阈值",
+                "en_US": "Tool result condense threshold",
+                "ja_JP": "ツール結果要約のしきい値",
+            },
+        },
+    )
+    """工具结果达到多少字时才触发整理，仅在开启“超长工具结果整理”时生效；调低会更频繁地整理，调高则更多原文留在上下文里。"""
+
+    planner_subagent: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "子代理任务派发",
+                "en_US": "Delegate tasks to sub-agents",
+                "ja_JP": "サブエージェントへのタスク委任",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """给 Planner 提供 subagent 工具：把自包含的查询或整理任务交给子代理，子代理在独立上下文里多轮调用被授权的工具，只把结论交还给 Planner。"""
+
+    advanced_sub_agent: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "高级子代理",
+                "en_US": "Advanced sub-agents",
+                "ja_JP": "高度なサブエージェント",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """子代理改为在后台运行：派发后立刻返回任务 id，麦麦可以继续聊天，子代理结束时结论作为一条新消息送回并唤醒 Planner；同时提供查看和终止后台任务的工具。需要先开启“子代理任务派发”。"""
 
     attention_drift: AttentionDriftConfig = Field(default_factory=AttentionDriftConfig)
     """注意力漂移实验模式；让麦麦在群聊/私聊中表现出更活跃的联想和轻微话题漂移。"""
-
-    behavior_learning_list: list["LearningItem"] = Field(
-        default_factory=lambda: [
-            LearningItem(
-                platform="",
-                item_id="",
-                type="group",
-                use=True,
-                learn=True,
-            )
-        ],
-        json_schema_extra={
-            "label": {
-                "zh_CN": "行为学习配置",
-                "en_US": "Behavior learning settings",
-                "ja_JP": "行動学習設定",
-            },
-            "x-widget": "custom",
-        },
-    )
-    """配置哪些聊天会学习和使用行为经验；默认规则不够时再单独添加。"""
-
-    behavior_groups: list["ChatStreamGroup"] = Field(
-        default_factory=list,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "行为共享组",
-                "en_US": "Behavior sharing groups",
-                "ja_JP": "行動共有グループ",
-            },
-            "x-widget": "custom",
-        },
-    )
-    """_wrap_让多个群聊或私聊共享学到的行为经验。"""
 
     focus_mode: bool = Field(
         default=False,
@@ -3244,20 +3194,6 @@ class AMemorixPersonProfileConfig(ConfigBase):
     )
     """人物画像证据分类最大输出 token 数"""
 
-    evidence_classification_temperature: float = Field(
-        default=0.1,
-        ge=0.0,
-        le=2.0,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "证据分类温度",
-                "en_US": "Evidence classification temperature",
-                "ja_JP": "証拠分類の温度",
-            },
-        },
-    )
-    """人物画像证据分类模型温度"""
-
 
 class AMemorixMemoryEvolutionConfig(ConfigBase):
     """A_Memorix 记忆演化配置"""
@@ -4066,12 +4002,12 @@ class ExpressionConfig(ConfigBase):
     __ui_sub_label__ = "表达"
 
     expression_checked_only: bool = Field(
-        default=True,
+        default=False,
         json_schema_extra={
             "label": {
-                "zh_CN": "使用精选表达",
-                "en_US": "Use curated expressions",
-                "ja_JP": "厳選した表現を使用",
+                "zh_CN": "仅使用精选表达",
+                "en_US": "Use only curated expressions",
+                "ja_JP": "厳選した表現のみを使用",
             },
             "x-widget": "switch",
             "x-row": "expression-learning-switches",
@@ -4093,28 +4029,20 @@ class ExpressionConfig(ConfigBase):
     )
     """写入表达方式前先让 AI 检查，减少学到奇怪内容。"""
 
-    expression_selection_mode: Literal["legacy", "vector_intent"] = Field(
-        default="legacy",
+    use_vector_expression: bool = Field(
+        default=True,
         json_schema_extra={
             "label": {
-                "zh_CN": "表达使用方式",
-                "en_US": "Expression usage mode",
-                "ja_JP": "表現の使用方法",
+                "zh_CN": "使用向量表达",
+                "en_US": "Use vector expressions",
+                "ja_JP": "ベクトル表現を使用",
             },
-            "x-widget": "select",
+            "x-widget": "switch",
+            "x-row": "expression-learning-switches",
             "advanced": False,
-            "options": ["legacy", "vector_intent"],
-            "x-option-labels": {
-                "legacy": "随手",
-                "vector_intent": "超级精细",
-            },
-            "x-option-descriptions": {
-                "legacy": "使用 LLM 进行选择，效果一般",
-                "vector_intent": "使用特殊构建的回复方式加上嵌入模型进行选择，效果非常好（需要配置嵌入模型）",
-            },
         },
     )
-    """表达方式的使用策略：legacy 随手抽取候选，vector_intent 使用表达意图与嵌入召回。"""
+    """开启后使用表达意图与嵌入召回，需要配置嵌入模型；关闭时使用随手候选。"""
 
     expression_vector_index_path: str = Field(
         default="data/expression_selection/expression_vector_index.json",
@@ -4319,6 +4247,19 @@ class EmojiConfig(ConfigBase):
     __ui_advanced__ = True
     __ui_order__ = 80
 
+    use_new_send_logic: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "采用新表情包发送逻辑",
+                "en_US": "Use new emoji sending logic",
+                "ja_JP": "新しい絵文字送信方式を使用",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """开启后由思考模型直接查看并挑选表情包，在文字回复后发送，需要思考模型支持视觉；关闭时沿用独立选择并发送表情包的旧方式。"""
+
     emoji_send_num: int = Field(
         default=25,
         ge=1,
@@ -4521,7 +4462,6 @@ class KeywordReactionConfig(ConfigBase):
 class ResponsePostProcessConfig(ConfigBase):
     """回复后处理配置类"""
 
-    __ui_parent__ = "chat"
     __ui_label__ = "后处理"
     __ui_advanced__ = True
     __ui_order__ = 100
@@ -4678,6 +4618,20 @@ class ResponseSplitterConfig(ConfigBase):
     """回复分割器配置类"""
 
     __ui_parent__ = "response_post_process"
+
+    mode: Literal["rule", "llm"] = Field(
+        default="rule",
+        json_schema_extra={
+            "label": {
+                "zh_CN": "断句模式",
+                "en_US": "Splitting mode",
+                "ja_JP": "分割モード",
+            },
+            "x-widget": "select",
+            "options": ["rule", "llm"],
+        },
+    )
+    """规则断句或使用 LLM 按语义断句。"""
 
     enable: bool = Field(
         default=True,
@@ -4925,7 +4879,7 @@ class LogConfig(ConfigBase):
     """每个聊天最多保留多少条回复效果记录。"""
 
     event_loop_watchdog_enabled: bool = Field(
-        default=True,
+        default=False,
         json_schema_extra={
             "label": {
                 "zh_CN": "事件循环卡顿看门狗",
@@ -5017,7 +4971,7 @@ class DebugConfig(ConfigBase):
     __ui_label__ = "其他"
 
     enable_console_input: bool = Field(
-        default=False,
+        default=True,
         json_schema_extra={
             "label": {
                 "zh_CN": "启用终端输入",
@@ -5041,19 +4995,6 @@ class DebugConfig(ConfigBase):
         },
     )
     """在日志或界面中显示麦麦的思考过程。"""
-
-    enable_clear_context_command: bool = Field(
-        default=False,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "启用 /clear 指令",
-                "en_US": "Enable /clear command",
-                "ja_JP": "/clear コマンドを有効化",
-            },
-            "x-widget": "switch",
-        },
-    )
-    """允许使用 /clear 清空当前聊天流的 Maisaka 短期历史上下文。"""
 
     enable_reply_effect_tracking: bool = Field(
         default=False,
@@ -5360,9 +5301,9 @@ class WebUIConfig(ConfigBase):
     """WebUI 运行模式；普通使用保持 production。"""
 
     webui_style: int = Field(
-        default=1,
+        default=2,
         ge=0,
-        le=1,
+        le=2,
         json_schema_extra={
             "label": {
                 "zh_CN": "界面风格",
@@ -5374,7 +5315,7 @@ class WebUIConfig(ConfigBase):
             "x-input-width": "8rem",
         },
     )
-    """界面风格编号；0 为旧风格，1 为未来复古风格。"""
+    """界面风格编号；0 为旧风格，1 为未来复古风格，2 为千禧风格。"""
 
     anti_crawler_mode: Literal["false", "strict", "loose", "basic"] = Field(
         default="basic",
@@ -5929,11 +5870,30 @@ class PluginConfig(ConfigBase):
     )
     """允许用聊天命令管理插件的用户，格式如 qq:123456789。"""
 
+    silent_permission_denied: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "不显示无权限提示",
+                "en_US": "Hide permission denied notice",
+                "ja_JP": "権限なし通知を非表示",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """开启后，用户执行无权限命令时不再发送提示消息，仅静默拦截并记录日志。"""
+
     command_permissions: Dict[str, CommandPermissionConfig] = Field(
         default_factory=dict,
         json_schema_extra={"hidden": True},
     )
     """受保护命令按用户和真实聊天流配置的额外放行规则。"""
+
+    disabled_commands: List[str] = Field(
+        default_factory=list,
+        json_schema_extra={"hidden": True},
+    )
+    """在命令管理中停用的命令 ID 列表（格式为 plugin_id.command_name，内置命令为 core.clear）。"""
 
 
 class PluginRuntimeRenderConfig(ConfigBase):

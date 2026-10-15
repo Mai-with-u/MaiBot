@@ -4,6 +4,7 @@
 
 import { DEFAULT_ACCENT_COLOR_HSL, normalizeAccentColor } from './palette'
 import {
+  DASHBOARD_STYLES,
   DEFAULT_DASHBOARD_STYLE,
   DEFAULT_DASHBOARD_STYLE_CONFIG,
   DEFAULT_FUTURE_RETRO_STYLE_CONFIG,
@@ -64,8 +65,8 @@ function hasRequiredImportThemeFields(
 }
 
 function normalizeDashboardStyle(value: unknown): DashboardStyle {
-  if (value === 'modern' || value === 'future-retro') {
-    return value
+  if (DASHBOARD_STYLES.includes(value as DashboardStyle)) {
+    return value as DashboardStyle
   }
 
   return DEFAULT_DASHBOARD_STYLE
@@ -77,7 +78,7 @@ function normalizeStyleTokenOverrides(value: unknown): StyleTokenOverrides {
   }
 
   const nextOverrides: StyleTokenOverrides = {}
-  for (const style of ['modern', 'future-retro'] as const) {
+  for (const style of DASHBOARD_STYLES) {
     if (isRecord(value[style])) {
       nextOverrides[style] = value[style] as StyleTokenOverrides[typeof style]
     }
@@ -105,7 +106,7 @@ function normalizeStyleBackgroundConfig(value: unknown): StyleBackgroundConfigMa
   }
 
   const nextBackgroundConfig: StyleBackgroundConfigMap = {}
-  for (const style of ['modern', 'future-retro'] as const) {
+  for (const style of DASHBOARD_STYLES) {
     if (isRecord(value[style])) {
       nextBackgroundConfig[style] = value[style] as BackgroundConfigMap
     }
@@ -145,10 +146,6 @@ function normalizeStyleConfig(value: unknown): DashboardStyleConfig {
       panelDepth: clampPercent(
         futureRetro.panelDepth,
         DEFAULT_FUTURE_RETRO_STYLE_CONFIG.panelDepth
-      ),
-      strokeScale: clampPercent(
-        futureRetro.strokeScale,
-        DEFAULT_FUTURE_RETRO_STYLE_CONFIG.strokeScale
       ),
     },
   }

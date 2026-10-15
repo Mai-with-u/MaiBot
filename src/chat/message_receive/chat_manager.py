@@ -180,11 +180,8 @@ class ChatManager:
             raise ValueError("消息缺少平台信息")
         user_id = message.message_info.user_info.user_id
         group_id = message.message_info.group_info.group_id if message.message_info.group_info else None
-        account_id = None
-        scope = None
-        additional_config = message.message_info.additional_config
-        if isinstance(additional_config, dict):
-            account_id, scope = RouteKeyFactory.extract_components(additional_config)
+        route_key = RouteKeyFactory.from_session_message(message)
+        account_id, scope = route_key.account_id, route_key.scope
         session_id = SessionUtils.calculate_session_id(
             platform,
             user_id=user_id,
@@ -210,6 +207,7 @@ class ChatManager:
         group_info = message.message_info.group_info
         user_info = message.message_info.user_info
         if group_info is not None:
+            # 群名为空表示适配器未知（显式语义），不覆盖聊天流已记录的名称
             group_name = self._normalize_identity_text(group_info.group_name)
             if group_name and session.group_name != group_name:
                 session.group_name = group_name
@@ -263,7 +261,7 @@ class ChatManager:
         try:
             for session in self.sessions.values():
                 self._save_session(session)
-            logger.info(f"共 {len(self.sessions)} 个会话已经保存到数据库中")
+            logger.debug(f"共 {len(self.sessions)} 个会话已经保存到数据库中")
         except Exception as e:
             logger.error(f"保存会话记录到数据库时发生错误: {e}")
             raise e

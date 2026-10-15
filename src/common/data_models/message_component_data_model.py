@@ -65,20 +65,25 @@ class ImageComponent(BaseMessageComponentModel, ByteComponent):
     def format_name(self) -> str:
         return "image"
 
-    async def load_image_binary(self):
+    async def load_image_binary(self) -> None:
         if self.binary_data:
             return
         from src.common.database.database import get_db_session
         from src.common.database.database_model import Images, ImageType
 
-        try:
+        def load_stored_image() -> bytes:
+            """数据库查询与文件读取一起在线程中完成，避免占用聊天事件循环。"""
+
             with get_db_session() as db:
                 statement = select(Images).filter_by(image_hash=self.binary_hash, image_type=ImageType.IMAGE).limit(1)
                 if image_record := db.exec(statement).first():
                     image_path = resolve_stored_image_path(image_record.full_path)
                 else:
                     raise ValueError(f"无法通过 image_hash 加载图片二进制数据: {self.binary_hash}")
-            self.binary_data = await asyncio.to_thread(image_path.read_bytes)
+            return image_path.read_bytes()
+
+        try:
+            self.binary_data = await asyncio.to_thread(load_stored_image)
         except Exception as e:
             raise ValueError(f"通过 image_hash 加载图片二进制数据时发生错误: {e}") from e
 
@@ -241,6 +246,8 @@ class AtComponent(BaseMessageComponentModel):
         target_user_id: str,
         target_user_nickname: Optional[str] = None,
         target_user_cardname: Optional[str] = None,
+        *,
+        uses_configured_bot_nickname: bool = False,
     ) -> None:
         self.target_user_id = target_user_id
         """目标用户ID"""
@@ -248,6 +255,8 @@ class AtComponent(BaseMessageComponentModel):
         """目标用户昵称"""
         self.target_user_cardname: Optional[str] = target_user_cardname
         """目标用户备注名"""
+        self.uses_configured_bot_nickname: bool = uses_configured_bot_nickname
+        """显示昵称是否由 bot 配置补充，而非实际的平台昵称。"""
         assert isinstance(target_user_id, str), "AtComponent 的 target_user_id 必须是字符串类型"
 
     async def to_seg(self) -> Seg:
@@ -467,6 +476,7 @@ class MessageSequence:
                     "target_user_id": item.target_user_id,
                     "target_user_nickname": item.target_user_nickname,
                     "target_user_cardname": item.target_user_cardname,
+                    "uses_configured_bot_nickname": item.uses_configured_bot_nickname,
                 },
             }
         elif isinstance(item, ReplyComponent):
@@ -521,6 +531,7 @@ class MessageSequence:
                 target_user_id=item["data"]["target_user_id"],
                 target_user_nickname=item["data"].get("target_user_nickname"),
                 target_user_cardname=item["data"].get("target_user_cardname"),
+                uses_configured_bot_nickname=item["data"].get("uses_configured_bot_nickname", False),
             )
         elif item_type == "reply":
             return ReplyComponent(target_message_id=item["data"])

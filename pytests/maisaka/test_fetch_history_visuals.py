@@ -24,6 +24,7 @@ from src.llm_models.payload_content.context_item import (
     get_item_text,
 )
 from src.maisaka.context.message_adapter import build_visible_text_from_sequence
+from src.maisaka.context.message_id_alias import to_display_message_id
 from src.maisaka.context.messages import LLMContextMessage, SessionBackedMessage
 from src.maisaka.focus.runtime_mixin import MaisakaFocusRuntimeMixin
 from src.maisaka.reasoning_engine import MaisakaReasoningEngine
@@ -178,7 +179,7 @@ async def test_fetch_history_keeps_text_metadata_and_order_without_visual_payloa
     assert "[表情包]" in newer_text
     assert 'msg_id="older"' in older_text
     assert 'chat_id="test-session"' in older_text
-    assert 'quote="quoted-message"' in older_text
+    assert f'quote="{to_display_message_id("quoted-message")}"' in older_text
     assert 'time="14:01:00"' in older_text
     assert 'user="测试昵称"' in older_text
     assert 'group_card="测试群名片"' in older_text
@@ -247,7 +248,9 @@ async def test_default_history_path_respects_disabled_visual_planner(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("use_runtime_history", [False, True])
 async def test_description_refresh_preserves_text_only_policy_and_context_identity(
+    use_runtime_history: bool,
     monkeypatch: pytest.MonkeyPatch,
     visual_loads: Tuple[List[str], List[str]],
 ) -> None:
@@ -261,6 +264,8 @@ async def test_description_refresh_preserves_text_only_policy_and_context_identi
     runtime = _FetchHistoryRuntime([message])
     _, _, recalled = await runtime.build_focus_fetch_history_result(num=1)
     runtime._chat_history.extend(recalled)
+    # 回复器可传入独立的历史列表，刷新应修改调用方传入的列表。
+    history = runtime._chat_history if use_runtime_history else list(recalled)
     original_item = _text_only_item(recalled[0])
     assert "[图片，识别中.....]" in get_item_text(original_item)
 
@@ -269,7 +274,7 @@ async def test_description_refresh_preserves_text_only_policy_and_context_identi
     monkeypatch.setattr("src.maisaka.visual.chat_history_refresher._lookup_cached_image_description", image_description)
     monkeypatch.setattr("src.maisaka.visual.chat_history_refresher._lookup_cached_emoji_description", emoji_description)
 
-    refreshed_count = await runtime._reasoning_engine._refresh_chat_history_visual_placeholders_once()
+    refreshed_count = await runtime._reasoning_engine._refresh_chat_history_visual_placeholders_once(history)
 
     assert refreshed_count == 1
     assert visual_loads == ([], [])
@@ -279,7 +284,7 @@ async def test_description_refresh_preserves_text_only_policy_and_context_identi
         enable_heavy_media_analysis=False,
         enable_voice_transcription=False,
     )
-    refreshed = runtime._chat_history[0]
+    refreshed = history[0]
     assert isinstance(refreshed, SessionBackedMessage)
     assert refreshed.allow_visual is False
     assert refreshed.message_id == message.message_id

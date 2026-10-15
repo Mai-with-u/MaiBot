@@ -1,4 +1,5 @@
 import type { PluginConfigSchema } from '@/lib/plugin-api'
+import type { VectorSpace, VectorSpaceList } from '@/types/vector-space'
 
 import { backendApi } from '@/lib/http'
 import type { HttpMethod } from '@/lib/http'
@@ -309,6 +310,10 @@ export interface MemoryVectorStoreSnapshot {
 }
 
 export interface MemoryVectorMigrationProgress extends Record<string, unknown> {
+  retrying?: boolean
+  paragraph_failed?: number
+  entity_failed?: number
+  relation_failed?: number
   total?: number
   processed?: number
   percent?: number
@@ -317,6 +322,7 @@ export interface MemoryVectorMigrationProgress extends Record<string, unknown> {
 }
 
 export interface MemoryVectorAutoMigrationStatus {
+  task?: 'sync' | 'rebuild'
   running?: boolean
   attempted?: boolean
   success?: boolean
@@ -894,6 +900,7 @@ export interface MemoryDeleteOperationDetailPayload {
 
 export interface MemoryCorrectionRequestPayload {
   request_text: string
+  targets?: { type: 'paragraph' | 'relation'; id: string }[]
   scope?: string
   person_id?: string
   person_keyword?: string
@@ -1389,6 +1396,17 @@ export interface MemoryEpisodeStatusPayload extends Record<string, unknown> {
   error?: string
 }
 
+export interface MemoryEpisodeMigrationBackfillPayload {
+  success: boolean
+  error?: string
+  dry_run: boolean
+  candidates: number
+  discarded: number
+  active_skipped: number
+  by_status: Record<string, number>
+  sample_sources: string[]
+}
+
 export interface MemoryEpisodeActionPayload extends Record<string, unknown> {
   success: boolean
   error?: string
@@ -1429,6 +1447,7 @@ export interface MemoryProfileQueryPayload extends Record<string, unknown> {
   profile?: MemoryProfileItemPayload | Record<string, unknown>
   person_id?: string
   profile_text?: string
+  uncertain_fact_count?: number
   evidence?: Array<Record<string, unknown>>
   error?: string
 }
@@ -1451,6 +1470,7 @@ export interface MemoryProfileEvidenceItemPayload extends Record<string, unknown
 export interface MemoryProfileEvidencePayload extends Record<string, unknown> {
   success: boolean
   person_id?: string
+  uncertain_fact_count?: number
   person_name?: string
   profile_text?: string
   auto_profile_text?: string
@@ -1899,6 +1919,16 @@ export async function getMemoryEpisodeStatus(
   return requestJson<MemoryEpisodeStatusPayload>(`/episodes/status?limit=${limit}`)
 }
 
+export async function getMemoryEpisodeMigrationBackfill(): Promise<MemoryEpisodeMigrationBackfillPayload> {
+  return requestJson<MemoryEpisodeMigrationBackfillPayload>('/episodes/migration-backfill')
+}
+
+export async function discardMemoryEpisodeMigrationBackfill(): Promise<MemoryEpisodeMigrationBackfillPayload> {
+  return requestJson<MemoryEpisodeMigrationBackfillPayload>('/episodes/migration-backfill/discard', {
+    method: 'POST',
+  })
+}
+
 export async function processMemoryEpisodePending(payload: {
   limit?: number
   max_retry?: number
@@ -2089,6 +2119,16 @@ export async function protectMemory(
 
 export async function getMemoryRuntimeConfig(): Promise<MemoryRuntimeConfigPayload> {
   return requestJson<MemoryRuntimeConfigPayload>('/runtime/config')
+}
+
+export type MemoryVectorSpace = VectorSpace
+
+export async function getMemoryVectorSpaces(): Promise<VectorSpaceList> {
+  return requestJson('/runtime/vectors/spaces')
+}
+
+export async function deleteMemoryVectorSpace(spaceId: string): Promise<{ success: boolean }> {
+  return requestJson(`/runtime/vectors/spaces/${encodeURIComponent(spaceId)}`, { method: 'DELETE' })
 }
 
 export async function refreshMemoryRuntimeSelfCheck(): Promise<MemoryRuntimeSelfCheckPayload> {

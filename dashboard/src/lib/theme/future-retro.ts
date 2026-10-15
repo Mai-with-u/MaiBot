@@ -34,14 +34,13 @@ export function buildFutureRetroTexture(
   }
 
   const coarse = style === 'coarse'
-  const size = coarse ? 260 : 180
-  const frequency = coarse ? '0.32' : '1.05'
-  const octaves = coarse ? 3 : 4
-  // 细颗粒在高分屏缩放后容易被纸张亮度层稀释，因此需要略高的基础对比度。
-  const noiseOpacity = (strength * (coarse ? 0.28 : 0.3)).toFixed(3)
-  const fleckOpacity = (strength * (coarse ? 0.2 : 0.16)).toFixed(3)
+  const size = coarse ? 260 : 220
+  const frequency = coarse ? '0.32' : '0.6'
+  const octaves = 3
+  const noiseOpacity = (strength * (coarse ? 0.28 : 0.29)).toFixed(3)
+  const fleckOpacity = (strength * (coarse ? 0.2 : 0.18)).toFixed(3)
 
   return svgDataUrl(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="${frequency}" numOctaves="${octaves}" seed="11"/></filter><rect width="100%" height="100%" filter="url(#n)" opacity="${noiseOpacity}"/><g fill="${accent}" opacity="${fleckOpacity}"><circle cx="12" cy="21" r="${coarse ? 1.5 : 0.7}"/><circle cx="67" cy="43" r="${coarse ? 1.1 : 0.55}"/><circle cx="139" cy="16" r="${coarse ? 1.35 : 0.65}"/></g></svg>`
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="${frequency}" numOctaves="${octaves}" seed="11"/></filter><rect width="100%" height="100%" filter="url(#n)" opacity="${noiseOpacity}"/><g fill="${accent}" opacity="${fleckOpacity}"><circle cx="12" cy="21" r="${coarse ? 1.5 : 1.1}"/><circle cx="67" cy="43" r="${coarse ? 1.1 : 0.8}"/><circle cx="139" cy="16" r="${coarse ? 1.35 : 1}"/></g></svg>`
   )
 }

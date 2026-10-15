@@ -1,7 +1,7 @@
 """Host 侧组件注册表。
 
 对齐旧系统 component_registry.py 的核心能力：
-- 按类型注册组件（action / command / tool / event_handler / hook_handler / message_gateway）
+- 按类型注册组件（action / command / tool / event_handler / hook_handler / message_gateway / reply_extension）
 - 命名空间 (plugin_id.component_name)
 - 命令正则匹配
 - 组件启用/禁用
@@ -18,6 +18,7 @@ import re
 from src.common.logger import get_logger
 from .component_timeout import normalize_component_timeout_ms
 from .hook_spec_registry import HookSpecRegistry
+from .reply_extension_schema import validate_parameter_schema
 
 logger = get_logger("plugin_runtime.host.component_registry")
 
@@ -56,6 +57,7 @@ class ComponentTypes(str, Enum):
     HOOK_HANDLER = "HOOK_HANDLER"
     MESSAGE_GATEWAY = "MESSAGE_GATEWAY"
     HOME_CARD = "HOME_CARD"
+    REPLY_EXTENSION = "REPLY_EXTENSION"
 
 
 ComponentChatScope = Literal["all", "group", "private"]
@@ -72,6 +74,19 @@ def _normalize_chat_scope(raw_value: Any) -> ComponentChatScope:
     return "all"
 
 
+def _normalize_platforms(raw_platforms: Any, component_name: str) -> Set[str]:
+    """注册时校验 Tool 和回复扩展的平台声明，不依赖调用方使用哪个 SDK。"""
+    if raw_platforms is None:
+        raw_platforms = []
+    elif isinstance(raw_platforms, str):
+        raw_platforms = [raw_platforms]
+    if not isinstance(raw_platforms, list) or any(
+        not isinstance(platform, str) or not platform.strip() for platform in raw_platforms
+    ):
+        raise ValueError(f"{component_name} platforms 必须是非空平台名称字符串或字符串列表；省略、None 或 [] 表示不限平台")
+    return {platform.strip().lower() for platform in raw_platforms}
+
+
 class StatusDict(TypedDict):
     total: int
     action: int
@@ -80,6 +95,7 @@ class StatusDict(TypedDict):
     event_handler: int
     hook_handler: int
     message_gateway: int
+    reply_extension: int
     plugins: int
 
 
@@ -124,6 +140,24 @@ class ComponentEntry:
             if str(session_id).strip()
         }
 
+class ReplyExtensionEntry(ComponentEntry):
+    """随 reply 注册的命名空间参数和回复处理器，platforms 与 Tool 作用域规则一致。"""
+
+    def __init__(
+        self, name: str, component_type: str, plugin_id: str, metadata: Dict[str, Any],
+        chat_scope: str = "all", allowed_session: Optional[List[str]] = None,
+    ) -> None:
+        super().__init__(name, component_type, plugin_id, metadata, chat_scope, allowed_session)
+        self.platforms: Set[str] = _normalize_platforms(metadata.get("platforms"), "ReplyExtension")
+        if not name.strip() or chat_scope.strip().lower() not in {"all", "group", "private"}:
+            raise ValueError("回复扩展名称不能为空，chat_scope 必须是 all/group/private")
+        self.parameters_schema: Dict[str, Any] = validate_parameter_schema(metadata.get("parameters_schema"))
+        self.description: str = metadata.get("description", "")
+        self.priority: int = metadata.get("priority", 0)
+        if not isinstance(self.description, str) or type(self.priority) is not int:
+            raise ValueError("回复扩展 description 必须是字符串，priority 必须是整数")
+
+
 class ActionEntry(ComponentEntry):
     """Action 组件条目"""
 
@@ -162,7 +196,12 @@ class CommandEntry(ComponentEntry):
 
 
 class ToolEntry(ComponentEntry):
-    """Tool 组件条目"""
+    """Tool 组件条目。
+
+    SDK 声明示例：@Tool("name", platforms="telegram") 或
+    @Tool("name", platforms=["telegram", "qq"])；省略、None、[] 表示不限平台。
+    平台限制与 chat_scope、allowed_session 共同生效，不是模型调用参数。
+    """
 
     def __init__(
         self,
@@ -173,6 +212,7 @@ class ToolEntry(ComponentEntry):
         chat_scope: str = "all",
         allowed_session: Optional[List[str]] = None,
     ) -> None:
+        self.platforms: Set[str] = _normalize_platforms(metadata.get("platforms"), "Tool")
         self.description: str = str(
             metadata.get("description", "") or metadata.get("brief_description", "") or f"工具 {name}"
         ).strip()
@@ -669,6 +709,11 @@ class ComponentRegistry:
 
         try:
             normalized_type = self._normalize_component_type(component_type)
+            existing = self._components.get(f"{plugin_id}.{name}")
+            if existing is not None and existing.plugin_id != plugin_id and (
+                normalized_type == ComponentTypes.REPLY_EXTENSION or isinstance(existing, ReplyExtensionEntry)
+            ):
+                raise ValueError(f"回复扩展命名空间与另一插件冲突：{existing.full_name}")
             normalized_metadata = dict(metadata)
             if normalized_type == ComponentTypes.ACTION:
                 normalized_metadata = self._convert_action_metadata_to_tool_metadata(name, normalized_metadata)
@@ -697,6 +742,10 @@ class ComponentRegistry:
                     normalized_metadata,
                     chat_scope,
                     allowed_session,
+                )
+            elif normalized_type == ComponentTypes.REPLY_EXTENSION:
+                component = ReplyExtensionEntry(
+                    name, normalized_type.value, plugin_id, normalized_metadata, chat_scope, allowed_session,
                 )
             elif normalized_type == ComponentTypes.EVENT_HANDLER:
                 component = EventHandlerEntry(
@@ -863,6 +912,14 @@ class ComponentRegistry:
                 )
             )
 
+        names: Dict[str, ComponentEntry] = {}
+        for component in prepared_components:
+            previous = names.get(component.full_name)
+            if previous is not None and (
+                isinstance(component, ReplyExtensionEntry) or isinstance(previous, ReplyExtensionEntry)
+            ):
+                raise ComponentRegistrationError(f"回复扩展组件名称重复：{component.full_name}")
+            names[component.full_name] = component
         self.remove_components_by_plugin(plugin_id)
         for component in prepared_components:
             self._add_component_entry(component)
@@ -892,6 +949,10 @@ class ComponentRegistry:
         group_id: Optional[str] = None,
         platform: Optional[str] = None,
     ):
+        # 无上下文的查询用于组件清单；有平台上下文时过滤 Tool 和回复扩展的适用平台。
+        if isinstance(component, (ToolEntry, ReplyExtensionEntry)) and component.platforms and platform is not None:
+            if platform.strip().lower() not in component.platforms:
+                return False
         if session_id and session_id in component.disabled_session:
             return False
         if is_group_chat is not None:
@@ -1275,5 +1336,6 @@ class ComponentRegistry:
             event_handler=len(self._by_type[ComponentTypes.EVENT_HANDLER]),
             hook_handler=len(self._by_type[ComponentTypes.HOOK_HANDLER]),
             message_gateway=len(self._by_type[ComponentTypes.MESSAGE_GATEWAY]),
+            reply_extension=len(self._by_type[ComponentTypes.REPLY_EXTENSION]),
             plugins=len(self._by_plugin),
         )

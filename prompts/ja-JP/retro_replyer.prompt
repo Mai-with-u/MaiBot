@@ -7,7 +7,7 @@
 
 {reply_target_block}。
 {planner_reasoning}
-{group_chat_attention_block}{identity}あなたはグループでチャットしています。上の履歴を読み、今の話題を踏まえて、普段どおり簡潔に返信してください。
+あなたはグループでチャットしています。上の履歴を読み、今の話題を踏まえて、普段どおり簡潔に返信してください。
 一度にひとつの話題へ返信すると、くどくなったり内容が乱れたりしません。
 {keywords_reaction_prompt}
 チャットの内容をよく把握してください。

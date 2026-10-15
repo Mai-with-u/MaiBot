@@ -18,6 +18,7 @@ function makeModel(name: string, overrides: Partial<ModelInfo> = {}): ModelInfo 
   return {
     name,
     model_identifier: `${name}-id`,
+    model_type: 'llm',
     api_provider: 'provider-a',
     price_in: 1,
     price_out: 2,

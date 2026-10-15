@@ -12,6 +12,7 @@ import { useState } from 'react'
 interface Props {
   children: ReactNode
   fallback?: ReactNode
+  onError?: (error: Error) => void
 }
 
 interface State {
@@ -271,6 +272,7 @@ export class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('ErrorBoundary caught an error:', error, errorInfo)
     this.setState({ errorInfo })
+    this.props.onError?.(error)
   }
 
   handleReset = () => {
@@ -300,10 +302,13 @@ export class ErrorBoundary extends Component<Props, State> {
 }
 
 // 路由级别的错误边界组件（用于 TanStack Router）
-export function RouteErrorBoundary({ error }: { error: Error }) {
+// 路由 errorComponent 传入的 error 为 unknown（路由加载/渲染时抛出的不一定是 Error 实例），
+// 这里统一归一为 Error 再交给展示组件。
+export function RouteErrorBoundary({ error }: { error: unknown }) {
+  const normalizedError = error instanceof Error ? error : new Error(String(error))
   return (
     <ErrorFallback
-      error={error}
+      error={normalizedError}
       errorInfo={null}
     />
   )

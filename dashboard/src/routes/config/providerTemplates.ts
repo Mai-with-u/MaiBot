@@ -19,6 +19,8 @@ export interface ProviderTemplate {
   id: string
   name: string
   base_url: string
+  // 额外匹配的 base_url 正则（可选，用于含账号/地域变量的官方地址；对规范化后的 URL 整体匹配）
+  baseUrlPattern?: RegExp
   client_type: 'openai' | 'openai_responses' | 'gemini'
   allowed_client_types?: Array<'openai' | 'openai_responses' | 'gemini'>
   display_name: string
@@ -55,8 +57,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
       effortParam: 'reasoning_effort',
       efforts: ['max', 'xhigh', 'high', 'medium', 'low', 'minimal', 'none'],
       defaultEffort: 'max',
-      // GLM-5.3 / GLM-5.3-Flash 仅支持开启思考，力度档位只接受 low/high/max
-      disableNote: 'GLM-5.3 系列仅支持开启思考，力度档位只接受 low/high/max',
     },
   },
   {
@@ -73,7 +73,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
       effortParam: 'reasoning_effort',
       efforts: ['max', 'xhigh', 'high', 'medium', 'low', 'minimal', 'none'],
       defaultEffort: 'max',
-      disableNote: 'GLM-5.3 系列仅支持开启思考，力度档位只接受 low/high/max',
     },
   },
   {
@@ -125,6 +124,8 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     id: 'alibaba',
     name: 'Alibaba',
     base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    // 业务空间专属域名 https://{WorkspaceId}.{region}.maas.aliyuncs.com/compatible-mode/v1
+    baseUrlPattern: /^https?:\/\/[a-z0-9-]+\.[a-z0-9-]+\.maas\.aliyuncs\.com\/compatible-mode\/v1$/,
     client_type: 'openai',
     display_name: '阿里云百炼 (Alibaba Qwen)',
     modelFetcher: { endpoint: '/models', parser: 'openai' },
@@ -307,9 +308,33 @@ export function findTemplateByBaseUrl(baseUrl: string): ProviderTemplate | null 
 
   return (
     PROVIDER_TEMPLATES.find(
-      (template) => template.id !== 'custom' && normalizeUrl(template.base_url) === normalizedUrl
+      (template) =>
+        template.id !== 'custom' &&
+        (normalizeUrl(template.base_url) === normalizedUrl ||
+          (template.baseUrlPattern?.test(normalizedUrl) ?? false))
     ) || null
   )
+}
+
+export function resolveThinkingFormatForModel(
+  template: ProviderTemplate | null,
+  modelIdentifier: string
+): ThinkingFormatConfig | null {
+  const thinking = template?.thinking
+  if (!thinking) return null
+
+  // 普通智谱 API 的 GLM-5.3 系列拒绝关闭思考；Coding 套餐使用独立模板，不受此限制。
+  if (template?.id === 'zhipu' && /^glm-5\.3(?:$|-)/i.test(modelIdentifier.trim())) {
+    return {
+      ...thinking,
+      canDisable: false,
+      efforts: ['low', 'high', 'max'],
+      defaultEffort: 'max',
+      disableNote: '此模型不支持关闭思考',
+    }
+  }
+
+  return thinking
 }
 
 /**

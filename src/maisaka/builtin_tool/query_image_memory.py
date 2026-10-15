@@ -19,10 +19,11 @@ def get_tool_spec(*, enabled: bool = True) -> ToolSpec:
         parameters_schema={
             "type": "object",
             "properties": {
-                "message_id": {"type": "string", "description": "包含目标图片的消息 ID；留空时使用最近图片。"},
-                "component_path": {"type": "string", "description": "消息内图片组件路径；留空时使用第一张图片。"},
+                "message_id": {"type": "string", "description": "包含目标图片的消息 ID。"},
+                "component_path": {"type": "string", "description": "消息内图片组件路径。"},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 8},
             },
+            "required": ["message_id", "component_path"],
         },
         provider_name="maisaka_builtin",
         provider_type="builtin",
@@ -40,20 +41,26 @@ async def handle_tool(
     session_id = str(runtime.session_id or "").strip()
     requested_message_id = str(invocation.arguments.get("message_id") or "").strip()
     requested_path = str(invocation.arguments.get("component_path") or "").strip()
+    if not requested_message_id:
+        return tool_ctx.build_failure_result(
+            invocation.tool_name,
+            "查询图片记忆工具需要提供有效的 `message_id` 参数。",
+        )
+    if not requested_path:
+        return tool_ctx.build_failure_result(
+            invocation.tool_name,
+            "查询图片记忆工具需要提供有效的 `component_path` 参数。",
+        )
     try:
         limit = max(1, min(20, int(invocation.arguments.get("limit") or 8)))
     except (TypeError, ValueError):
         limit = 8
 
-    messages = (
-        find_messages(session_id=session_id, message_id=requested_message_id, limit=1)
-        if requested_message_id
-        else find_messages(session_id=session_id, limit=30, limit_mode="latest")
-    )
+    messages = find_messages(session_id=session_id, message_id=requested_message_id, limit=1)
     selected = None
     for message in reversed(messages):
         for component_path, component in iter_message_image_components(message.raw_message.components):
-            if requested_path and component_path != requested_path:
+            if component_path != requested_path:
                 continue
             selected = (message, component_path, component)
             break

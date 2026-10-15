@@ -22,6 +22,12 @@ type ChartContextProps = {
 
 const ChartContext = React.createContext<ChartContextProps | null>(null)
 
+/**
+ * ResponsiveContainer 首帧尚未量到容器尺寸，默认按 -1 渲染并打印尺寸告警；
+ * 给一个最小的初始尺寸，量到实际尺寸后会立即重绘。
+ */
+export const CHART_INITIAL_DIMENSION = { width: 1, height: 1 }
+
 function useChart() {
   const context = React.useContext(ChartContext)
 
@@ -56,7 +62,7 @@ const ChartContainer = React.forwardRef<
         {...props}
       >
         <ChartStyle id={chartId} config={config} />
-        <RechartsPrimitive.ResponsiveContainer>
+        <RechartsPrimitive.ResponsiveContainer initialDimension={CHART_INITIAL_DIMENSION}>
           {children}
         </RechartsPrimitive.ResponsiveContainer>
       </div>
@@ -194,6 +200,7 @@ const ChartTooltipContent = React.forwardRef<
     return (
       <div
         ref={ref}
+        data-dashboard-chart-tooltip="true"
         className={cn(
           "grid min-w-[8rem] items-start gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl",
           className

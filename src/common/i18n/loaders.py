@@ -6,6 +6,7 @@ from string import Formatter
 import json
 import locale
 
+from src.common.paths import resource_path
 from .exceptions import (
     DuplicateTranslationKeyError,
     InvalidLocaleError,
@@ -20,13 +21,13 @@ TranslationValue = str | dict[str, str]
 
 
 def get_project_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return resource_path()
 
 
 def get_locales_root(locales_root: Path | None = None) -> Path:
     if locales_root is not None:
         return locales_root.resolve()
-    return (get_project_root() / "locales").resolve()
+    return resource_path("locales").resolve()
 
 
 def normalize_locale(locale: str) -> str:

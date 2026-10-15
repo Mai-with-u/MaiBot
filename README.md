@@ -3,68 +3,82 @@
 <div align="center">
 
   <!-- Language Switcher -->
-  <a href="#-双语--bilingual">双语 / Bilingual</a> | <a href="docs/README_CN.md">中文</a> | <a href="docs/README_EN.md">English</a>
+  <p>
+    <a href="#-双语--bilingual"><picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/key-lang-bilingual-night.svg"><img src="depends-data/readme/key-lang-bilingual-day.svg" alt="双语 / Bilingual"></picture></a>
+    <a href="docs/README_CN.md"><picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/key-lang-zh-night.svg"><img src="depends-data/readme/key-lang-zh-day.svg" alt="中文"></picture></a>
+    <a href="docs/README_EN.md"><picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/key-lang-en-night.svg"><img src="depends-data/readme/key-lang-en-day.svg" alt="English"></picture></a>
+  </p>
 
-  <br>
+  <!-- Hero -->
+  <picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/hero-night.svg"><img src="depends-data/readme/hero-day.svg" alt="麦麦 MaiBot：致力于了解你，用真人的方式聊天的数字生命" width="100%"></picture>
 
-  <h1>麦麦 MaiBot</h1>
+  <!-- Live telemetry -->
+  <p>
+    <a href="https://status.maibot.top"><picture><source media="(prefers-color-scheme: dark)" srcset="https://status.maibot.top/card/stat-online.svg?theme=night"><img src="https://status.maibot.top/card/stat-online.svg" alt="在线实例" width="24%"></picture></a>
+    <a href="https://status.maibot.top"><picture><source media="(prefers-color-scheme: dark)" srcset="https://status.maibot.top/card/stat-installs.svg?theme=night"><img src="https://status.maibot.top/card/stat-installs.svg" alt="累计装机" width="24%"></picture></a>
+    <a href="https://status.maibot.top"><picture><source media="(prefers-color-scheme: dark)" srcset="https://status.maibot.top/card/stat-dau.svg?theme=night"><img src="https://status.maibot.top/card/stat-dau.svg" alt="日活跃" width="24%"></picture></a>
+    <a href="https://status.maibot.top"><picture><source media="(prefers-color-scheme: dark)" srcset="https://status.maibot.top/card/stat-plugins.svg?theme=night"><img src="https://status.maibot.top/card/stat-plugins.svg" alt="上架插件" width="24%"></picture></a>
+  </p>
 
   <!-- Badges Row -->
   <p>
-    <img src="https://img.shields.io/badge/Python-3.12+-blue" alt="Python Version">
-    <img src="https://img.shields.io/github/license/Mai-with-u/MaiBot?label=License" alt="License">
-    <img src="https://img.shields.io/github/contributors/Mai-with-u/MaiBot.svg?style=flat&label=Contributors" alt="Contributors">
-    <img src="https://img.shields.io/github/forks/Mai-with-u/MaiBot.svg?style=flat&label=Forks" alt="Forks">
-    <img src="https://img.shields.io/github/stars/Mai-with-u/MaiBot?style=flat&label=Stars" alt="Stars">
-    <br>
+    <img src="https://img.shields.io/badge/Python-3.12+-8fd6a0?style=flat-square&labelColor=5a544a" alt="Python Version">
+    <img src="https://img.shields.io/github/license/Mai-with-u/MaiBot?label=License&color=8fd6a0&style=flat-square&labelColor=5a544a" alt="License">
+    <img src="https://img.shields.io/github/contributors/Mai-with-u/MaiBot.svg?label=Contributors&color=8fd6a0&style=flat-square&labelColor=5a544a" alt="Contributors">
+    <img src="https://img.shields.io/github/forks/Mai-with-u/MaiBot.svg?label=Forks&color=f08a5d&style=flat-square&labelColor=5a544a" alt="Forks">
+    <img src="https://img.shields.io/github/stars/Mai-with-u/MaiBot?label=Stars&color=ffd84a&style=flat-square&labelColor=5a544a" alt="Stars">
+  </p>
+
+  <!-- Quick links -->
+  <p>
+    <a href="https://github.com/Mai-with-u/MaiBotOneKey/releases/"><picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/key-get-night.svg"><img src="depends-data/readme/key-get-day.svg" alt="下载启动器"></picture></a>
+    <a href="https://docs.mai-mai.org/manual/"><picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/key-setup-night.svg"><img src="depends-data/readme/key-setup-day.svg" alt="部署教程"></picture></a>
+    <a href="https://docs.mai-mai.org"><picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/key-docs-night.svg"><img src="depends-data/readme/key-docs-day.svg" alt="文档"></picture></a>
+    <a href="https://github.com/Mai-with-u/MaiBot/releases/"><picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/key-release-night.svg"><img src="depends-data/readme/key-release-day.svg" alt="发布页"></picture></a>
+  </p>
+
+  <p>
     <a href="https://trendshift.io/repositories/20445" target="_blank"><img src="https://trendshift.io/api/badge/repositories/20445" alt="Mai-with-u%2FMaiBot | Trendshift" width="250" height="55"></a>
   </p>
 </div>
 
-<br>
-
-<!-- Mascot on the Right (Float) -->
-<img src="depends-data/maimai-v2.png" align="right" width="40%" alt="MaiBot Character" style="margin-left: 20px; margin-bottom: 20px;">
-
 <a id="english"></a>
 
-## INTRO
+<picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/sec-intro-night.svg"><img src="depends-data/readme/sec-intro-day.svg" alt="简介 · INTRO" width="100%"></picture>
 
 麦麦 MaiSaka 是一个基于大语言模型的可交互智能体。  
 
 MaiSaka 不仅仅是一个机器人，不仅仅是一个可以帮你完成任务的“有帮助的助手”，她还是一个致力于了解你，并以真实人类的风格进行交互的数字生命。她不追求完美，不追求高效，但追求亲切和真实。  
 <sub><sup>MaiSaka is an interactive agent based on large language models. MaiSaka is more than just a bot, and more than a "helpful assistant" that completes tasks. She is a digital life form that tries to understand you and interact in a genuinely human style. She does not pursue perfection or efficiency above all else. She pursues warmth and authenticity.</sup></sub>
 
-- 💭 **没有人喜欢 GPT 的语言风格**：麦麦使用了更加自然、贴合人类对话习惯的交互方式，不是长篇大论或者 markdown 格式的分点，而是或长或短的闲谈。  
+- **没有人喜欢 GPT 的语言风格**：麦麦使用了更加自然、贴合人类对话习惯的交互方式，不是长篇大论或者 markdown 格式的分点，而是或长或短的闲谈。  
   <sub><sup><strong>No one likes GPT-sounding dialogue</strong>: MaiSaka uses a more natural conversational style. Instead of long-winded markdown-heavy replies, she chats in a way that feels casual, varied, and human.</sup></sub>
-- 🎭 **不再是傻乎乎的一问一答**：懂得在合适的时间说话，把握聊天中的气氛，在合适的时候开口，在合适的时候闭嘴。  
+- **不再是傻乎乎的一问一答**：懂得在合适的时间说话，把握聊天中的气氛，在合适的时候开口，在合适的时候闭嘴。  
   <sub><sup><strong>No longer stuck in rigid Q&A</strong>: She knows when to speak, how to read the room, when to join a conversation, and when to stay quiet.</sup></sub>
-- 🧠 **麦麦·成为人类**：在多人对话中，麦麦会模仿其他人的说话风格，还会自主理解新词或者小圈子里的黑话，不断进化。  
+- **麦麦·成为人类**：在多人对话中，麦麦会模仿其他人的说话风格，还会自主理解新词或者小圈子里的黑话，不断进化。  
   <sub><sup><strong>MaiSaka becoming human</strong>: In group conversations, MaiSaka imitates how people around her speak, learns new slang and in-group language, and keeps evolving.</sup></sub>
-- ❤️ **永远都在更加了解你**：基于心理学中人格理论，麦麦会不断积累对于你的了解，不论是你的信息、喜恶或是行为风格，她都记在心里。  
+- **永远都在更加了解你**：基于心理学中人格理论，麦麦会不断积累对于你的了解，不论是你的信息、喜恶或是行为风格，她都记在心里。  
   <sub><sup><strong>Always learning more about you</strong>: Inspired by personality theory in psychology, MaiSaka gradually builds an understanding of your preferences, traits, habits, and behavior style.</sup></sub>
-- 🔌 **插件系统**：提供强大的 API 和事件系统，拥有无限扩展可能。  
+- **插件系统**：提供强大的 API 和事件系统，拥有无限扩展可能。  
   <sub><sup><strong>Plugin system</strong>: Provides powerful APIs and an event system with virtually unlimited room for extension.</sup></sub>
 
 <div align="center">
   <br>
-  <img src="depends-data/webui-showcase.jpg" width="90%" alt="MaiBot WebUI 界面" style="box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+  <img src="depends-data/webui-millennium-showcase.png" width="90%" alt="MaiBot WebUI 千禧主题浅色与夜间模式" style="box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
 </div>
-
----
 
 <a id="-更新和安装--updates-and-installation"></a>
 
-## 安装 · INSTALL
+<picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/sec-install-night.svg"><img src="depends-data/readme/sec-install-day.svg" alt="安装 · INSTALL" width="100%"></picture>
 
-**最新版本: v1.3.0**
+**最新版本: v1.3.5**
 
-<sub><sup><strong>Latest Version: v1.3.0</strong></sup></sub>
+<sub><sup><strong>Latest Version: v1.3.5</strong></sup></sub>
 
 - **发布**：[Release](https://github.com/Mai-with-u/MaiBot/releases/) 页面展示了最新发布的正式版。
   <sub><sup><strong>Download</strong>: Visit the <a href="https://github.com/Mai-with-u/MaiBot/releases/">Release</a> page to get the latest version.</sup></sub>
 
-- **[部署教程](https://docs.mai-mai.org/manual/deployment/)**  
+- **[部署教程](https://docs.mai-mai.org/manual/)**  
 <sub><sup>Deployment Guide</sup></sub>
 
 - **方便使用的麦麦启动器下载 (Windows/MAC)**：[Maibot-OK](https://github.com/Mai-with-u/MaiBotOneKey/releases/)  
@@ -76,12 +90,10 @@ MaiSaka 不仅仅是一个机器人，不仅仅是一个可以帮你完成任务
 | `main` | **稳定版 · STABLE** |
 | `dev` | 开发版，包含开发中的新功能 · DEV|
 
----
+<picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/sec-doc-night.svg"><img src="depends-data/readme/sec-doc-day.svg" alt="文档 · DOC" width="100%"></picture>
 
-## 📚 文档 · DOC
-
-- **[📚 麦麦文档](https://docs.mai-mai.org)**：最全面的文档中心，了解麦麦的一切。  
-  <sub><sup><strong><a href="https://docs.mai-mai.org">📚 Documentation</a></strong>: The most comprehensive documentation hub for everything about MaiSaka.</sup></sub>
+- **[麦麦文档](https://docs.mai-mai.org)**：最全面的文档中心，了解麦麦的一切。  
+  <sub><sup><strong><a href="https://docs.mai-mai.org">Documentation</a></strong>: The most comprehensive documentation hub for everything about MaiSaka.</sup></sub>
 
 
 - **[演示视频]**
@@ -96,9 +108,7 @@ MaiSaka 不仅仅是一个机器人，不仅仅是一个可以帮你完成任务
   </a>
 </div>
 
----
-
-## 💬 讨论与社区 · Discussion/Community
+<picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/sec-community-night.svg"><img src="depends-data/readme/sec-community-day.svg" alt="讨论与社区 · Community" width="100%"></picture>
 
 | 群组 / Group | 说明 / Description |
 | :--- | :--- |
@@ -108,11 +118,8 @@ MaiSaka 不仅仅是一个机器人，不仅仅是一个可以帮你完成任务
  | [麦麦闲聊群](https://qm.qq.com/q/JxvHZnxyec)<br><sub><sup>Mai Casual Chat Group</sup></sub> | 以闲聊为主<br><sub><sup>Casual chat only, no support</sup></sub> |
 | 插件开发群:1036092828<br><sub><sup>Plugin Dev Group</sup></sub> | 插件、进阶开发与测试<br><sub><sup>Advanced development and testing</sup></sub> |
 
----
 
-
-## 🧩 衍生项目 · Related Projects
-<sub><sup></sup></sub>
+<picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/sec-related-night.svg"><img src="depends-data/readme/sec-related-day.svg" alt="衍生项目 · Related Projects" width="100%"></picture>
 
 - **[Amaidesu](https://github.com/MaiM-with-u/Amaidesu)**：让麦麦在 B 站开播。  
   <sub><sup>Let MaiSaka stream on Bilibili.</sup></sub>
@@ -121,9 +128,7 @@ MaiSaka 不仅仅是一个机器人，不仅仅是一个可以帮你完成任务
 - **[MaiCraft](https://github.com/MaiM-with-u/Maicraft)**：让麦麦陪你玩 Minecraft（暂时停止维护中）。  
   <sub><sup>Let MaiSaka accompany you in Minecraft (currently paused).</sup></sub>
 
----
-
-## 💡 设计理念 · IDEA
+<picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/sec-idea-night.svg"><img src="depends-data/readme/sec-idea-day.svg" alt="设计理念 · IDEA" width="100%"></picture>
 
 > **千石可乐说：**  
 > <sub><sup><strong>SengokuCola:</strong></sup></sub>
@@ -134,27 +139,26 @@ MaiSaka 不仅仅是一个机器人，不仅仅是一个可以帮你完成任务
 > - 如果人类真的需要一个 AI 来陪伴自己，并不是所有人都需要一个完美的，能解决所有问题的“helpful assistant”，而是一个会犯错的，拥有自己感知和想法的“生命形式”。  
 >   <sub><sup>If people truly want AI companionship, not everyone needs a perfect "helpful assistant" that solves every problem. Some people may want a life form that can make mistakes and has its own perceptions and thoughts.</sup></sub>
 
----
-
-## 🌟 贡献和致谢 · Contributors
+<picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/sec-contributors-night.svg"><img src="depends-data/readme/sec-contributors-day.svg" alt="贡献和致谢 · Contributors" width="100%"></picture>
 
 欢迎参与贡献！请先阅读 [贡献指南](docs/CONTRIBUTE.md)。
 <sub><sup>Contributions are welcome. Please read the <a href="docs/CONTRIBUTE.md">Contribution Guide</a> first.</sup></sub>
 
-### 🌟 贡献者
+### 贡献者
 <sub><sup>Contributors</sup></sub>
 
 <a href="https://github.com/MaiM-with-u/MaiBot/graphs/contributors">
   <img alt="contributors" src="https://contrib.rocks/image?repo=MaiM-with-u/MaiBot" />
 </a>
 
-### 🤝 开源项目友链
+### 开源项目友链
 <sub><sup>Open Source Friends</sup></sub>
 
-- **[AstrBot](https://github.com/AstrBotDevs/AstrBot)**: 优秀的LLM Agent项目  
+- **[AstrBot](https://github.com/AstrBotDevs/AstrBot)**: 优秀的LLM Agent项目。
   <sub><sup>An excellent LLM Agent project.</sup></sub>
+- **[Pallas-Bot](https://github.com/PallasBot/Pallas-Bot)**: 以防你不知道牛牛又开始更新了。
 
-### ❤️ 特别致谢
+### 特别致谢
 <sub><sup>Special Thanks</sup></sub>
 
 - **[萨卡班甲鱼](https://en.wikipedia.org/wiki/Sacabambaspis)**：千石可乐很喜欢的生物。  
@@ -164,21 +168,21 @@ MaiSaka 不仅仅是一个机器人，不仅仅是一个可以帮你完成任务
 - **[NapCat](https://github.com/NapNeko/NapCatQQ)**：现代化的基于 NTQQ 的 Bot 协议实现。  
   <sub><sup>A modern NTQQ-based bot protocol implementation.</sup></sub>
 
----
+<picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/sec-status-night.svg"><img src="depends-data/readme/sec-status-day.svg" alt="仓库状态 · Repository Status" width="100%"></picture>
 
-## 📊 仓库状态
-<sub><sup>Repository Status</sup></sub>
-
-![Alt](depends-data/repository-metrics.svg "麦麦仓库状态")
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://status.maibot.top/card/repo.svg?theme=night">
+  <img src="https://status.maibot.top/card/repo.svg" alt="麦麦仓库状态" width="100%">
+</picture>
 
 ### Star History
 
-![Star 趋势](depends-data/star-history.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://status.maibot.top/card/stars.svg?theme=night">
+  <img src="https://status.maibot.top/card/stars.svg" alt="Star 趋势" width="100%">
+</picture>
 
----
-
-## 📌 注意事项 & License
-<sub><sup>Notice & License</sup></sub>
+<picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/sec-notice-night.svg"><img src="depends-data/readme/sec-notice-day.svg" alt="注意事项 &amp; License" width="100%"></picture>
 
 > [!IMPORTANT]
 > 使用前请阅读 [用户协议 (EULA)](EULA.md) 和 [隐私协议](PRIVACY.md)。AI 生成内容请仔细甄别。  

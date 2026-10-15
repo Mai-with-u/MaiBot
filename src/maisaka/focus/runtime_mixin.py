@@ -326,6 +326,8 @@ class MaisakaFocusRuntimeMixin:
             platform=self.chat_stream.platform,
         )
         wakeup_message.session_id = self.session_id
+        wakeup_message.account_id = self.chat_stream.account_id
+        wakeup_message.scope = self.chat_stream.scope
         wakeup_message.message_info = MessageInfo(
             user_info=self._build_runtime_user_info(),
             group_info=self._build_group_info(),
@@ -709,6 +711,8 @@ class MaisakaFocusRuntimeMixin:
             platform=target_session.platform,
         )
         switch_trigger_message.session_id = target_session.session_id
+        switch_trigger_message.account_id = target_session.account_id
+        switch_trigger_message.scope = target_session.scope
         switch_trigger_message.message_info = MessageInfo(
             user_info=target_runtime._build_runtime_user_info(),
             group_info=target_runtime._build_group_info(),

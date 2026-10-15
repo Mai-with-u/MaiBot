@@ -10,12 +10,9 @@ import type {
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-
-import { InstalledTab } from '../InstalledTab'
 import { InstallDialog } from '../InstallDialog'
 import { MarketplaceTab } from '../MarketplaceTab'
 import { PluginCard } from '../PluginCard'
-import { UpdatesTab } from '../UpdatesTab'
 
 vi.mock('../PluginIcon', () => ({
   PluginIcon: ({ pluginId }: { pluginId: string }) => (
@@ -143,6 +140,7 @@ function makeStats(id: string, overrides: Partial<PluginStatsData> = {}): Plugin
     downloads: 99,
     rating: 4.8,
     rating_count: 10,
+    comment_count: 10,
     ...overrides,
   }
 }
@@ -232,7 +230,7 @@ describe('PluginCard', () => {
     const plugin = makePlugin('zero', { downloads: 0, rating: 0 })
     const props = cardProps(plugin)
     props.pluginStats = {
-      zero: makeStats('zero', { downloads: 0, rating: 0, rating_count: 0, likes: 0 }),
+      zero: makeStats('zero', { downloads: 0, rating: 0, rating_count: 0, comment_count: 0, likes: 0 }),
     }
     render(<PluginCard {...props} />)
 
@@ -388,27 +386,7 @@ describe('插件标签页过滤', () => {
     }
   }
 
-  it('InstalledTab 只展示已安装并满足搜索、类型和兼容性条件的插件', () => {
-    const installed = makePlugin('installed', { installed: true })
-    const bad = makePlugin('bad', { installed: true })
-    const uninstalled = makePlugin('uninstalled')
-    const props = tabProps([installed, bad, uninstalled])
-    render(<InstalledTab {...props} showCompatibleOnly searchQuery="installed" />)
-
-    expect(screen.getByText('插件-installed')).toBeInTheDocument()
-    expect(screen.queryByText('插件-bad')).not.toBeInTheDocument()
-    expect(screen.queryByText('插件-uninstalled')).not.toBeInTheDocument()
-  })
-
-  it('UpdatesTab 只展示已安装且版本需要更新的插件', () => {
-    const update = makePlugin('update', { installed: true })
-    const current = makePlugin('current', { installed: true })
-    render(<UpdatesTab {...tabProps([update, current])} />)
-    expect(screen.getByText('插件-update')).toBeInTheDocument()
-    expect(screen.queryByText('插件-current')).not.toBeInTheDocument()
-  })
-
-  it('MarketplaceTab 排除本地插件和已安装插件，并按下载量排序', () => {
+  it('MarketplaceTab 排除本地插件并保留已安装插件，按下载量排序', () => {
     const low = makePlugin('low', { downloads: 1 })
     const high = makePlugin('high', { downloads: 100 })
     const local = makePlugin('local', { source: 'local' })
@@ -419,12 +397,12 @@ describe('插件标签页过滤', () => {
       high: makeStats('high', { downloads: 100 }),
     }
     render(
-      <MarketplaceTab {...props} hideInstalledPlugins sortBy="downloads" pluginProgressById={{}} />
+      <MarketplaceTab {...props} sortBy="downloads" pluginProgressById={{}} />
     )
 
     const names = screen.getAllByText(/^插件-(high|low)$/).map((element) => element.textContent)
     expect(names).toEqual(['插件-high', '插件-low'])
     expect(screen.queryByText('插件-local')).not.toBeInTheDocument()
-    expect(screen.queryByText('插件-installed')).not.toBeInTheDocument()
+    expect(screen.getByText('插件-installed')).toBeInTheDocument()
   })
 })

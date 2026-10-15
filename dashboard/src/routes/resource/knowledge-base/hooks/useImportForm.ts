@@ -169,7 +169,7 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
   const [importCommonNarrativeOverlap, setImportCommonNarrativeOverlap] = useState('400')
   const [importCommonFactualTargetSize, setImportCommonFactualTargetSize] = useState('1200')
   const [importCommonLlmEnabled, setImportCommonLlmEnabled] = useState(true)
-  const [importContentCategory, setImportContentCategory] = useState<ImportContentCategory>('')
+  const [importContentCategory, setImportContentCategory] = useState<ImportContentCategory>('narrative')
   const [importCommonDedupePolicy, setImportCommonDedupePolicy] = useState('content_hash')
   const [importCommonChatId, setImportCommonChatId] = useState('')
   const [importCommonChatReferenceTime, setImportCommonChatReferenceTime] = useState('')

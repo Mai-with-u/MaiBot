@@ -231,64 +231,60 @@ export function ApiProviderSetupForm({ config, onChange }: ApiProviderSetupFormP
     <div className="space-y-6">
       <div className="space-y-3">
         <Label>{t('setupPage.forms.apiProvider.providerName.label')}</Label>
-        <div className="relative h-11 overflow-hidden">
-          <div
-            className={`absolute inset-0 flex gap-2 transition-transform duration-500 ease-out ${
-              customMode ? '-translate-y-full' : 'translate-y-0'
-            }`}
-          >
-            <Input className="h-11 min-w-0 flex-1" readOnly value={config.provider_name} />
-            <select
-              aria-label="选择预置提供商"
-              className="h-11 w-52 rounded-md border border-input bg-background px-3 text-sm"
-              onChange={(event) => selectPreset(event.target.value)}
-              value={selectedPreset}
-            >
-              {providerPresets.map((preset) => (
-                <option key={preset.id} value={preset.id}>
-                  {preset.display_name}
-                </option>
-              ))}
-            </select>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-11"
-              onClick={switchToCustom}
-            >
-              自定义
-            </Button>
-          </div>
-          <div
-            className={`absolute inset-0 flex gap-2 transition-transform duration-500 ease-out ${
-              customMode ? 'translate-y-0' : 'translate-y-full'
-            }`}
-          >
-            <Input
-              id="provider_name"
-              className="h-11 min-w-0 flex-1"
-              placeholder={t('setupPage.forms.apiProvider.providerName.placeholder')}
-              value={config.provider_name}
-              onChange={(e) => onChange({ ...config, provider_name: e.target.value })}
-            />
-            <Input
-              aria-label={t('setupPage.forms.apiProvider.baseUrl.label')}
-              className="h-11 min-w-0 flex-1 font-mono"
-              placeholder="https://api.example.com/v1"
-              value={config.base_url}
-              onChange={(e) => onChange({ ...config, base_url: e.target.value })}
-            />
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-11"
-              onClick={switchToPreset}
-            >
-              预置
-            </Button>
-          </div>
+        {/* 只挂载当前模式，避免滑出容器的表单边框露出，也不裁切主题轮廓。 */}
+        <div className="flex gap-2">
+          {!customMode ? (
+            <>
+              <Input className="h-11 min-w-0 flex-1" readOnly value={config.provider_name} />
+              <select
+                aria-label="选择预置提供商"
+                className="border-input bg-background h-11 w-52 rounded-md border px-3 text-sm"
+                onChange={(event) => selectPreset(event.target.value)}
+                value={selectedPreset}
+              >
+                {providerPresets.map((preset) => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.display_name}
+                  </option>
+                ))}
+              </select>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-11"
+                onClick={switchToCustom}
+              >
+                自定义
+              </Button>
+            </>
+          ) : (
+            <>
+              <Input
+                id="provider_name"
+                className="h-11 min-w-0 flex-1"
+                placeholder={t('setupPage.forms.apiProvider.providerName.placeholder')}
+                value={config.provider_name}
+                onChange={(e) => onChange({ ...config, provider_name: e.target.value })}
+              />
+              <Input
+                aria-label={t('setupPage.forms.apiProvider.baseUrl.label')}
+                className="h-11 min-w-0 flex-1 font-mono"
+                placeholder="https://api.example.com/v1"
+                value={config.base_url}
+                onChange={(e) => onChange({ ...config, base_url: e.target.value })}
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-11"
+                onClick={switchToPreset}
+              >
+                预置
+              </Button>
+            </>
+          )}
         </div>
       </div>
 

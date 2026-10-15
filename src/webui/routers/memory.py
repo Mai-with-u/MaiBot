@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -295,8 +295,14 @@ class DeletePurgeRequest(BaseModel):
     limit: int = Field(1000, ge=1, le=5000)
 
 
+class MemoryCorrectionTarget(BaseModel):
+    type: Literal["paragraph", "relation"]
+    id: str = Field(..., min_length=1)
+
+
 class MemoryCorrectionPreviewRequest(BaseModel):
     request_text: str = Field(..., min_length=1)
+    targets: Optional[List[MemoryCorrectionTarget]] = Field(default=None, min_length=1)
     scope: str = "person_profile"
     person_id: str = ""
     person_keyword: str = ""
@@ -2489,6 +2495,33 @@ def _timeline_delete_events(
     return [event for event in events if _types_match(event, accepted_types)]
 
 
+def _timeline_profile_content_changes(current_text: str, previous_text: str) -> Dict[str, List[str]]:
+    """按画像小节比较正文，忽略空白、占位项和固定维护说明。"""
+    def content_lines(text: str) -> List[str]:
+        section = ""
+        lines: List[str] = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if line.startswith("#"):
+                section = line.lstrip("#").strip()
+                continue
+            if not line or line in {"暂无", "- 暂无"} or line.startswith("人物ID:") or section == "维护备注":
+                continue
+            content = line.removeprefix("- ")
+            value = f"{section}：{content}" if section else content
+            if value not in lines:
+                lines.append(value)
+        return lines
+
+    current = content_lines(current_text)
+    previous = content_lines(previous_text)
+    current_set, previous_set = set(current), set(previous)
+    return {
+        "added": [line for line in current if line not in previous_set],
+        "removed": [line for line in previous if line not in current_set],
+    }
+
+
 def _timeline_profile_events(
     *,
     chat: MemoryTimelineChat,
@@ -2528,43 +2561,100 @@ def _timeline_profile_events(
         ),
         (*chat_params, *time_params, *((query_limit,) if query_limit is not None else ())),
     )
-    person_ids = [str(row.get("person_id") or "").strip() for row in rows]
-    person_ids = [person_id for person_id in person_ids if person_id]
-    paragraphs_by_person: dict[str, list[dict[str, Any]]] = {person_id: [] for person_id in person_ids}
-    # evidence_ids 一定落在候选拔段落里（SQL 已按候选哈希过滤），这里直接复用，
-    # 再用 _paragraph_matches_chat 做精确归属校验（source 之外还要核对 metadata.chat_id）
+    person_names = _resolve_source_person_names([str(row["person_id"]) for row in rows])
+    # 先用覆盖索引筛出有限数量的快照，再读取正文和前一版本，避免扫描全部大行。
+    snapshot_details: Dict[Tuple[str, int], Dict[str, Any]] = {}
+    if rows:
+        wanted_values = ",".join("(?, ?)" for _ in rows)
+        detail_rows = _query_memory_rows(
+            f"""
+            WITH wanted(person_id, profile_version) AS (VALUES {wanted_values})
+            SELECT current.person_id, current.profile_version, current.profile_text,
+                   previous.profile_version AS previous_version,
+                   previous.profile_text AS previous_text,
+                   previous.evidence_ids_json AS previous_evidence_ids_json
+            FROM wanted
+            JOIN person_profile_snapshots current
+              ON current.person_id = wanted.person_id AND current.profile_version = wanted.profile_version
+            LEFT JOIN person_profile_snapshots previous ON previous.snapshot_id = (
+                SELECT snapshot_id FROM person_profile_snapshots
+                WHERE person_id = current.person_id AND profile_version < current.profile_version
+                ORDER BY profile_version DESC LIMIT 1
+            )
+            """,
+            tuple(value for row in rows for value in (row["person_id"], row["profile_version"])),
+        )
+        snapshot_details = {(row["person_id"], row["profile_version"]): row for row in detail_rows}
+    # 复用候选段落，并按单个快照去重计数；精确归属校验还要核对 metadata.chat_id，
+    # 不能把同一人物所有历史版本的证据累加到每一条事件上。
     paragraphs_by_evidence = {
         str(item.get("hash") or "").strip(): dict(item) for item in candidate_paragraphs
     }
-    for row in rows:
-        person_id = str(row.get("person_id") or "").strip()
-        for evidence_id in _decode_json_payload(row.get("evidence_ids_json"), []):
-            paragraph = paragraphs_by_evidence.get(str(evidence_id or "").strip())
-            if paragraph is not None:
-                paragraphs_by_person.setdefault(person_id, []).append(paragraph)
-
     events: list[MemoryTimelineEvent] = []
     for row in rows:
         person_id = str(row.get("person_id") or "").strip()
-        paragraph_rows = paragraphs_by_person.get(person_id, [])
-        if not any(_paragraph_matches_chat(paragraph, chat.chat_id)[0] for paragraph in paragraph_rows):
+        evidence_ids = set(_decode_json_payload(row.get("evidence_ids_json"), []))
+        paragraph_rows = [
+            paragraphs_by_evidence[evidence_id]
+            for evidence_id in evidence_ids
+            if evidence_id in paragraphs_by_evidence
+            and _paragraph_matches_chat(paragraphs_by_evidence[evidence_id], chat.chat_id)[0]
+        ]
+        if not paragraph_rows:
             continue
         updated_at = _safe_float(row.get("updated_at"))
         if updated_at is None or not _event_in_range(updated_at, time_start, time_end):
             continue
+        snapshot = snapshot_details[(row["person_id"], row["profile_version"])]
+        previous_version = snapshot["previous_version"]
+        changes = _timeline_profile_content_changes(snapshot["profile_text"], snapshot["previous_text"] or "")
+        previous_evidence_ids = set(_decode_json_payload(snapshot["previous_evidence_ids_json"], []))
+        evidence_added = len(evidence_ids - previous_evidence_ids)
+        evidence_removed = len(previous_evidence_ids - evidence_ids)
+        if previous_version is None and row["profile_version"] != 1:
+            title = "画像快照"
+            summary = "缺少前一版本，无法还原具体变更；详情可查看该版本正文。"
+            changes = {"added": [], "removed": []}
+        elif previous_version is None:
+            title = "画像生成"
+            summary = "；".join(changes["added"][:2]) or "首次生成画像，暂无可展示的正文内容。"
+        elif changes["added"] or changes["removed"]:
+            title = "画像内容更新"
+            summary = "；".join(
+                [f"新增：{line}" for line in changes["added"][:2]]
+                + [f"移除：{line}" for line in changes["removed"][:2]]
+            )
+        elif evidence_added or evidence_removed:
+            title = "画像证据更新"
+            summary = f"正文未变化；证据新增 {evidence_added} 条、移除 {evidence_removed} 条。"
+        else:
+            title = "画像快照刷新"
+            summary = "与前一版本相比，正文和段落证据未变化。"
+        person_name = person_names.get(person_id)
+        if person_name:
+            title = f"{person_name} · {title}"
         events.append(
             _timeline_event(
                 event_type="profile_updated",
                 category="profile",
                 occurred_at=updated_at,
                 chat=chat,
-                title="相关画像变更",
-                summary="人物画像证据包含该聊天流的长期记忆段落",
-                object_count=max(1, len(paragraph_rows)),
+                title=title,
+                summary=summary,
+                object_count=len(paragraph_rows),
                 key_id=person_id,
                 source=str(row.get("source_note") or ""),
                 attribution="profile.evidence_paragraph",
-                metadata={"person_id": person_id, "profile_version": row.get("profile_version")},
+                metadata={
+                    "person_id": person_id,
+                    "profile_version": row["profile_version"],
+                    "previous_version": previous_version,
+                    "profile_changes": changes,
+                    "profile_text": snapshot["profile_text"],
+                    "evidence_added": evidence_added,
+                    "evidence_removed": evidence_removed,
+                    "time_note": "记录时间为该版本最后刷新时间，可能包含缓存续期；正文差异按画像版本比较。",
+                },
                 jump_target={"tab": "profiles", "params": {"person_id": person_id}},
             )
         )
@@ -2623,11 +2713,13 @@ def _timeline_maintenance_events(
         _append_limit(
             f"""
         SELECT r.hash, r.subject, r.predicate, r.object, r.source_paragraph, r.last_reinforced,
+               r.created_at, r.last_access_reinforced_at, r.reinforcement_count,
                r.inactive_since, r.protected_until, r.metadata, p.source, p.metadata AS paragraph_metadata
         FROM relations r
         JOIN paragraphs p ON p.hash = r.source_paragraph
         WHERE p.source IN ({source_placeholders}) OR p.metadata LIKE ?
-        ORDER BY COALESCE(r.last_reinforced, r.inactive_since, r.protected_until, r.created_at, 0) DESC
+        ORDER BY MAX(COALESCE(r.last_reinforced, 0), COALESCE(r.last_access_reinforced_at, 0),
+                     COALESCE(r.inactive_since, 0), COALESCE(r.protected_until, 0), r.created_at) DESC
         """,
             query_limit,
         ),
@@ -2637,6 +2729,41 @@ def _timeline_maintenance_events(
             *((query_limit,) if query_limit is not None else ()),
         ),
     )
+    # 显式强化使用已有 V5 操作审计；没有审计的旧记录不推断为人工操作。
+    manual_reinforcements: Dict[str, Dict[str, Any]] = {}
+    if rows:
+        operation_rows = _query_memory_rows(
+            _append_limit(
+                """
+                SELECT operation_id, reason, updated_by, resolved_hashes_json, result_json
+                FROM memory_v5_operations
+                WHERE action IN ('reinforce', 'remember_forever')
+                ORDER BY created_at DESC
+                """,
+                query_limit,
+            ),
+            (query_limit,) if query_limit is not None else (),
+        )
+        for operation in operation_rows:
+            result = _decode_json_payload(operation.get("result_json"), {})
+            if not isinstance(result, dict) or not result.get("success"):
+                continue
+            statuses = result.get("statuses")
+            if not isinstance(statuses, dict):
+                continue
+            for relation_hash in _decode_json_payload(operation.get("resolved_hashes_json"), []):
+                status = statuses.get(relation_hash)
+                if relation_hash in manual_reinforcements or not isinstance(status, dict):
+                    continue
+                reinforced_at = _safe_float(status.get("last_reinforced"))
+                if reinforced_at is not None:
+                    manual_reinforcements[relation_hash] = {
+                        "occurred_at": reinforced_at,
+                        "operation_id": operation.get("operation_id"),
+                        "updated_by": operation.get("updated_by"),
+                        "reason": operation.get("reason") or "通过强化接口执行的显式强化",
+                    }
+
     events: list[MemoryTimelineEvent] = []
     for row in rows:
         paragraph_row = {"metadata": row.get("paragraph_metadata"), "source": row.get("source")}
@@ -2654,6 +2781,32 @@ def _timeline_maintenance_events(
             occurred_at = _safe_float(row.get(timestamp_key))
             if occurred_at is None or not _event_in_range(occurred_at, time_start, time_end):
                 continue
+            event_metadata: Dict[str, Any] = {
+                "relation_hash": relation_hash, "source_paragraph": row.get("source_paragraph")
+            }
+            if event_type == "relation_reinforced":
+                manual = manual_reinforcements.get(relation_hash)
+                if manual is not None and manual["occurred_at"] == occurred_at:
+                    title = "手动强化"
+                    event_metadata.update(manual)
+                    event_metadata["reinforcement_kind"] = "manual"
+                elif int(row.get("reinforcement_count") or 0) == 1:
+                    # 新增事件使用真实创建时间；不能把后续的检查时间当成创建时间。
+                    created_at = _safe_float(row.get("created_at"))
+                    if created_at is None or not _event_in_range(created_at, time_start, time_end):
+                        continue
+                    occurred_at = created_at
+                    title = "新增关系"
+                    paragraph_metadata = _decode_metadata_payload(row.get("paragraph_metadata"))
+                    reason = "新证据段落入库，首次建立关系关联"
+                    if paragraph_metadata.get("trigger") == "message_threshold":
+                        reason = "聊天消息数量达到阈值，自动聊天总结入库并建立关系关联"
+                    event_metadata.update({"reinforcement_kind": "added", "reason": reason})
+                else:
+                    event_metadata.update({
+                        "reinforcement_kind": "unknown",
+                        "reason": "这条历史记录未保存触发途径，无法区分新增证据与显式强化",
+                    })
             events.append(
                 _timeline_event(
                     event_type=event_type,
@@ -2665,8 +2818,30 @@ def _timeline_maintenance_events(
                     key_id=relation_hash,
                     source=source,
                     attribution=attribution,
-                    metadata={"relation_hash": relation_hash, "source_paragraph": row.get("source_paragraph")},
+                    metadata=event_metadata,
                     jump_target={"tab": "maintenance", "params": {"target": relation_hash or relation_text}},
+                )
+            )
+        accessed_at = _safe_float(row.get("last_access_reinforced_at"))
+        if accessed_at is not None and _event_in_range(accessed_at, time_start, time_end):
+            events.append(
+                _timeline_event(
+                    event_type="relation_accessed",
+                    category="maintenance",
+                    occurred_at=accessed_at,
+                    chat=chat,
+                    title="使用强化",
+                    summary=relation_text,
+                    key_id=relation_hash,
+                    source=source,
+                    attribution=attribution,
+                    metadata={
+                        "relation_hash": relation_hash,
+                        "source_paragraph": row.get("source_paragraph"),
+                        "reinforcement_kind": "access",
+                        "reason": "记忆检索最终采用了这条关系，满足访问加强冷却条件后提升保留强度",
+                    },
+                    jump_target={"tab": "maintenance", "params": {"target": relation_hash}},
                 )
             )
     return [event for event in events if _types_match(event, accepted_types)]
@@ -3179,6 +3354,10 @@ async def _episode_status(limit: int) -> dict:
     return await memory_service.episode_admin(action="status", limit=limit)
 
 
+async def _episode_migration_backfill(dry_run: bool) -> dict:
+    return await memory_service.episode_admin(action="discard_migration_backfill", dry_run=dry_run)
+
+
 async def _episode_process_pending(payload: EpisodeProcessPendingRequest) -> dict:
     return await memory_service.episode_admin(
         action="process_sources",
@@ -3549,7 +3728,10 @@ async def _maintenance_restore(payload: MaintainRequest) -> dict:
 
 
 async def _maintenance_reinforce(payload: MaintainRequest) -> dict:
-    return (await memory_service.reinforce_memory(target=payload.target)).to_dict()
+    # 使用同一强化实现并保留操作审计，时间线才能区分显式强化与新证据入库。
+    return await memory_service.v5_admin(
+        action="reinforce", target=payload.target, updated_by="webui", reason="WebUI 手动强化"
+    )
 
 
 async def _maintenance_freeze(payload: MaintainRequest) -> dict:
@@ -3649,6 +3831,7 @@ async def _memory_correction_preview(payload: MemoryCorrectionPreviewRequest) ->
     return await memory_service.memory_correction_admin(
         action="preview",
         request_text=payload.request_text,
+        **({"targets": [target.model_dump() for target in payload.targets]} if payload.targets is not None else {}),
         scope=payload.scope,
         person_id=payload.person_id,
         person_keyword=payload.person_keyword,
@@ -4106,6 +4289,16 @@ async def get_memory_episode_status(limit: int = Query(20, ge=1, le=200)):
     return await _episode_status(limit)
 
 
+@router.get("/episodes/migration-backfill")
+async def get_memory_episode_migration_backfill():
+    return await _episode_migration_backfill(dry_run=True)
+
+
+@router.post("/episodes/migration-backfill/discard")
+async def discard_memory_episode_migration_backfill():
+    return await _episode_migration_backfill(dry_run=False)
+
+
 @router.get("/episodes/{episode_id}")
 async def get_memory_episode(episode_id: str):
     return await _episode_get(episode_id)
@@ -4279,6 +4472,21 @@ async def set_memory_runtime_auto_save(payload: AutoSaveRequest):
 @router.post("/runtime/vectors/rebuild")
 async def rebuild_memory_runtime_vectors(payload: VectorRebuildRequest):
     return await _runtime_rebuild_vectors(payload)
+
+
+@router.get("/runtime/vectors/spaces")
+async def list_memory_vector_spaces():
+    return await memory_service.runtime_admin(action="list_vector_spaces")
+
+
+@router.delete("/runtime/vectors/spaces/{space_id}")
+async def delete_memory_vector_space(space_id: str):
+    result = await memory_service.runtime_admin(action="delete_vector_space", space_id=space_id)
+    if not result.get("success"):
+        error = result.get("error", "删除向量库失败")
+        status = 409 if error == "vector_space_in_use" else 404 if error == "vector_space_not_found" else 500
+        raise HTTPException(status_code=status, detail=error)
+    return result
 
 
 @router.get("/maintenance/recycle-bin")
@@ -5022,6 +5230,16 @@ async def compat_list_episodes(
 @compat_router.get("/episodes/status")
 async def compat_episode_status(limit: int = Query(20, ge=1, le=200)):
     return await _episode_status(limit)
+
+
+@compat_router.get("/episodes/migration_backfill")
+async def compat_episode_migration_backfill():
+    return await _episode_migration_backfill(dry_run=True)
+
+
+@compat_router.post("/episodes/migration_backfill/discard")
+async def compat_discard_episode_migration_backfill():
+    return await _episode_migration_backfill(dry_run=False)
 
 
 @compat_router.get("/episodes/{episode_id}")

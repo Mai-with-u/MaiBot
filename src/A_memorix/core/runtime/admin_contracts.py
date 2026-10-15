@@ -118,7 +118,7 @@ _GRAPH_ACTIONS = {
     "update_edge_weight",
 }
 _SOURCE_ACTIONS = {"list", "delete", "batch_delete"}
-_EPISODE_ACTIONS = {"query", "list", "get", "status", "rebuild", "process_sources"}
+_EPISODE_ACTIONS = {"query", "list", "get", "status", "rebuild", "process_sources", "discard_migration_backfill"}
 _PROFILE_ACTIONS = {
     "query",
     "evidence",

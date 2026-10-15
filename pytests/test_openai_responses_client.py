@@ -211,7 +211,7 @@ def test_parse_response_preserves_output_items_and_usage() -> None:
     assert isinstance(response.output_items[3], ProviderOpaqueItem)
     assert response.output_items[3].replay is not None
     assert response.output_items[3].replay.materialize()["extension"] == {"kept": True}
-    assert usage == (120, 30, 150, 80, 40)
+    assert usage == (120, 30, 150, 80, 40, True)
 
 
 def test_parse_response_extracts_multiple_plaintext_reasoning_parts() -> None:
@@ -488,6 +488,8 @@ async def test_client_merges_structured_output_and_native_tools() -> None:
     assert response.content == '{"ok":true}'
     assert response.usage is not None
     assert response.usage.total_tokens == 15
+    # 未返回 input_tokens_details.cached_tokens 时视为未上报缓存用量
+    assert response.usage.prompt_cache_reported is False
     assert response.wire_protocol == "responses"
     assert response.request_wire_payload["input"] == captured_kwargs["input"]
     assert captured_kwargs["store"] is False

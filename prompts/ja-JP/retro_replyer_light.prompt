@@ -7,7 +7,7 @@
 
 {reply_target_block}。
 {planner_reasoning}
-{group_chat_attention_block}{identity}あなたはグループでチャットしています。上の履歴を読み、普段どおりの口語的で
+あなたはグループでチャットしています。上の履歴を読み、普段どおりの口語的で
 できるだけ短い返信をしてください。{keywords_reaction_prompt}
 チャットの内容をよく把握し、整いすぎた返信はしないでください。
 {reply_style}

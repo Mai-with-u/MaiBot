@@ -22,8 +22,10 @@ import {
   togglePlugin,
 } from '@/lib/plugin-api'
 import type { InstalledPlugin, MaimaiVersion } from '@/lib/plugin-api'
+import { refreshPluginWebUI } from '@/lib/plugin-webui'
 import type { PluginInfo } from '@/types/plugin'
 import { useToast } from '@/hooks/use-toast'
+import { unifiedWsClient } from '@/lib/unified-ws'
 import { getPluginType } from '../../plugins/types'
 import { getPluginConfigRoutePath, isAdapterManagementPath } from '../utils'
 
@@ -45,7 +47,7 @@ export interface PluginUpdateState {
 }
 
 export interface PluginListGroup {
-  key: 'success' | 'loading' | 'offline' | 'failed' | 'disabled'
+  key: 'success' | 'loading' | 'offline' | 'failed' | 'disabled' | 'inactive' | 'stopped' | 'not_loaded'
   label: string
   dotClassName: string
   plugins: InstalledPlugin[]
@@ -126,10 +128,14 @@ export function usePluginList() {
   const [actingPluginId, setActingPluginId] = useState<string | null>(null)
   const [marketPluginsById, setMarketPluginsById] = useState<Record<string, PluginInfo>>({})
   const [maimaiVersion, setMaimaiVersion] = useState<MaimaiVersion | null>(null)
-  const [checkingUpdates, setCheckingUpdates] = useState(false)
+  const [checkingUpdates, setCheckingUpdates] = useState(!adapterOnly && !initialTarget.pluginId)
   const updateCheckStartedRef = useRef(false)
+  const initialTargetHandledRef = useRef(false)
+  const installedRequestRef = useRef(0)
+  const runtimeSubscriptionRef = useRef(0)
 
   const openPluginConfig = (plugin: InstalledPlugin, tabId?: string | null) => {
+    initialTargetHandledRef.current = true
     setSelectedPlugin(plugin)
     setSelectedPluginTab(tabId ?? undefined)
     const params = new URLSearchParams({ plugin: plugin.id })
@@ -140,6 +146,7 @@ export function usePluginList() {
   }
 
   const closePluginConfig = () => {
+    initialTargetHandledRef.current = true
     setSelectedPlugin(null)
     setSelectedPluginTab(undefined)
     window.history.replaceState(null, '', getPluginConfigRoutePath())
@@ -180,30 +187,38 @@ export function usePluginList() {
   }
 
   // 加载插件列表（含深链接自动选中）
-  const loadPlugins = async () => {
-    setLoading(true)
+  const refreshPlugins = async (background = false) => {
+    const requestId = ++installedRequestRef.current
+    if (!background) setLoading(true)
     try {
-      const allInstalled = await getInstalledPlugins()
+      // 启停和状态通知同步刷新列表及导航，跳过缓存以获取最新运行状态。
+      const [allInstalled] = await Promise.all([
+        getInstalledPlugins({ forceRefresh: true }),
+        refreshPluginWebUI(true),
+      ])
+      if (requestId !== installedRequestRef.current) return
       const installed = adapterOnly
         ? allInstalled.filter((plugin) => getPluginType(plugin) === 'adapter')
         : allInstalled
       setPlugins(installed)
-      if (!selectedPlugin && initialTarget.pluginId) {
+      if (!initialTargetHandledRef.current && initialTarget.pluginId) {
         const targetPlugin = installed.find((plugin) => plugin.id === initialTarget.pluginId)
         if (targetPlugin) {
           openPluginConfig(targetPlugin, initialTarget.tabId)
         }
       }
     } catch (error) {
+      if (requestId !== installedRequestRef.current) return
       toast({
         title: '加载插件列表失败',
         description: error instanceof Error ? error.message : '未知错误',
         variant: 'destructive',
       })
     } finally {
-      setLoading(false)
+      if (requestId === installedRequestRef.current) setLoading(false)
     }
   }
+  const loadPlugins = () => refreshPlugins()
 
   useEffect(() => {
     loadPlugins()
@@ -212,6 +227,45 @@ export function usePluginList() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    const subscriptionId = ++runtimeSubscriptionRef.current
+    let cancelled = false
+    let refreshing = false
+    let pending = false
+
+    // 合并连续注册通知；若请求期间又有变化，完成后再取一次，避免旧响应覆盖新状态。
+    const refreshFromRuntime = async () => {
+      pending = true
+      if (refreshing) return
+      refreshing = true
+      while (pending && !cancelled) {
+        pending = false
+        await refreshPlugins(true)
+      }
+      refreshing = false
+    }
+    const removeListener = unifiedWsClient.addEventListener((message) => {
+      if (message.domain === 'plugin_runtime' && message.topic === 'main') {
+        void refreshFromRuntime()
+      }
+    })
+    void unifiedWsClient.subscribe('plugin_runtime', 'main').then(() => {
+      if (cancelled && runtimeSubscriptionRef.current === subscriptionId) {
+        void unifiedWsClient.unsubscribe('plugin_runtime', 'main')
+      }
+    }).catch((error) => console.error('订阅插件运行状态失败:', error))
+    return () => {
+      cancelled = true
+      installedRequestRef.current += 1
+      removeListener()
+      void unifiedWsClient.unsubscribe('plugin_runtime', 'main').catch((error) => {
+        console.error('退订插件运行状态失败:', error)
+      })
+    }
+    // refreshPlugins 使用本次页面的筛选设置；重连由统一客户端重新订阅并获取快照。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adapterOnly])
 
   const handleShowUpdateOnlyChange = (enabled: boolean) => {
     setShowUpdateOnly(enabled)
@@ -237,11 +291,11 @@ export function usePluginList() {
 
   // 统计数据 / 状态派生
   const isPluginDisabled = (plugin: InstalledPlugin) =>
-    plugin.disabled === true || plugin.enabled === false
+    plugin.load_status === 'disabled' || (!plugin.load_status && (plugin.disabled === true || plugin.enabled === false))
   const isPluginLoadSuccess = (plugin: InstalledPlugin) =>
-    !isPluginDisabled(plugin) && (plugin.load_status === 'success' || plugin.loaded === true)
+    plugin.load_status === 'success'
   const isPluginLoading = (plugin: InstalledPlugin) =>
-    !isPluginDisabled(plugin) && plugin.load_status === 'loading'
+    plugin.load_status === 'loading' || plugin.load_status === 'stopping'
   const isPluginOffline = (plugin: InstalledPlugin) =>
     !isPluginDisabled(plugin) && plugin.load_status === 'offline'
   const isPluginCircuitOpen = (plugin: InstalledPlugin) =>
@@ -251,7 +305,7 @@ export function usePluginList() {
   const isPluginCircuitActive = (plugin: InstalledPlugin) =>
     isPluginCircuitOpen(plugin) || isPluginCircuitHalfOpen(plugin)
   const isPluginLoadFailed = (plugin: InstalledPlugin) =>
-    !isPluginDisabled(plugin) && !isPluginLoading(plugin) && !isPluginOffline(plugin) && !isPluginLoadSuccess(plugin)
+    plugin.load_status === 'failed'
   const isPluginVersionIncompatible = (plugin: InstalledPlugin) => {
     if (!isPluginLoadFailed(plugin)) {
       return false
@@ -300,49 +354,11 @@ export function usePluginList() {
     .filter(Boolean)
     .join('，')
 
-  const getPluginStatusBarClassName = (plugin: InstalledPlugin) => {
-    if (isPluginDisabled(plugin)) {
-      return 'bg-muted-foreground/45'
-    }
-    if (isPluginCircuitOpen(plugin)) {
-      return 'bg-orange-500'
-    }
-    if (isPluginCircuitHalfOpen(plugin)) {
-      return 'bg-yellow-500'
-    }
-    if (isPluginLoading(plugin)) {
-      return 'bg-sky-500'
-    }
-    if (isPluginOffline(plugin)) {
-      return 'bg-slate-500'
-    }
-    if (isPluginLoadFailed(plugin)) {
-      return 'bg-red-500'
-    }
-    return 'bg-emerald-500'
-  }
-  const getPluginStatusLabel = (plugin: InstalledPlugin) => {
-    if (isPluginDisabled(plugin)) {
-      return '已禁用'
-    }
-    if (isPluginCircuitOpen(plugin)) {
-      const remainingSec = Math.ceil(plugin.circuit_status?.remaining_sec ?? 0)
-      return remainingSec > 0 ? `熔断中 ${remainingSec}s` : '熔断中'
-    }
-    if (isPluginCircuitHalfOpen(plugin)) {
-      return '半开测试'
-    }
-    if (isPluginLoading(plugin)) {
-      return '加载中'
-    }
-    if (isPluginOffline(plugin)) {
-      return '已离线'
-    }
-    if (isPluginLoadFailed(plugin)) {
-      return '启动失败'
-    }
-    return '已启用'
-  }
+  const getPluginStatusBarClassName = (plugin: InstalledPlugin) =>
+    getPluginStatusMeta(plugin).dotClassName
+  const getPluginStatusLabel = (plugin: InstalledPlugin) =>
+    isPluginLoadSuccess(plugin) ? '已启用' : isPluginLoadFailed(plugin) && !isPluginCircuitActive(plugin)
+      ? '启动失败' : getPluginStatusMeta(plugin).label
   const getPluginStatusMeta = (plugin: InstalledPlugin): PluginStatusMeta => {
     if (isPluginDisabled(plugin)) {
       return { dotClassName: 'bg-muted-foreground/45', label: '已禁用', showsBadge: false }
@@ -367,7 +383,7 @@ export function usePluginList() {
     if (isPluginLoading(plugin)) {
       return {
         dotClassName: 'bg-sky-500',
-        label: '加载中',
+        label: plugin.load_status === 'stopping' ? '正在停止' : '加载中',
         badgeClassName: 'border-sky-600 text-sky-600',
         icon: 'loading' as const,
       }
@@ -382,6 +398,13 @@ export function usePluginList() {
     }
     if (isPluginLoadSuccess(plugin)) {
       return { dotClassName: 'bg-emerald-500', label: '加载成功', showsBadge: false }
+    }
+    if (!isPluginLoadFailed(plugin)) {
+      return {
+        dotClassName: 'bg-slate-500',
+        label: plugin.load_status === 'inactive' ? '未激活' : plugin.load_status === 'stopped' ? '运行时未启动' : '尚未加载',
+        badgeClassName: 'border-slate-500 text-slate-600',
+      }
     }
     return {
       dotClassName: 'bg-red-500',
@@ -455,6 +478,9 @@ export function usePluginList() {
     { key: 'offline', label: '已离线', dotClassName: 'bg-slate-500' },
     { key: 'failed', label: '加载失败', dotClassName: 'bg-red-500' },
     { key: 'disabled', label: '已禁用', dotClassName: 'bg-muted-foreground/45' },
+    { key: 'inactive', label: '未激活', dotClassName: 'bg-amber-500' },
+    { key: 'stopped', label: '运行时未启动', dotClassName: 'bg-slate-500' },
+    { key: 'not_loaded', label: '尚未加载', dotClassName: 'bg-slate-500' },
   ]
   const getPluginListGroupKey = (plugin: InstalledPlugin): PluginListGroup['key'] => {
     if (isPluginLoadSuccess(plugin)) {
@@ -469,7 +495,10 @@ export function usePluginList() {
     if (isPluginLoadFailed(plugin)) {
       return 'failed'
     }
-    return 'disabled'
+    if (isPluginDisabled(plugin)) return 'disabled'
+    if (plugin.load_status === 'inactive') return 'inactive'
+    if (plugin.load_status === 'stopped') return 'stopped'
+    return 'not_loaded'
   }
   const visiblePluginGroups = pluginListGroupDefinitions
     .map((group) => ({
@@ -487,7 +516,7 @@ export function usePluginList() {
     try {
       const toggleResult = await togglePlugin(plugin.id)
       toast({
-        title: toggleResult.enabled ? '插件已启动' : '插件已关闭',
+        title: toggleResult.runtime_status === 'stopped' ? '启停配置已保存' : toggleResult.enabled ? '插件已启动' : '插件已关闭',
         description: toggleResult.message || `${plugin.manifest.name} 状态已更新`,
       })
       await loadPlugins()

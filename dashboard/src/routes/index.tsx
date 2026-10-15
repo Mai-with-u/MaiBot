@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react'
 import { Link } from '@tanstack/react-router'
-import { AlertCircle, ArrowRight, ExternalLink, Pencil, RefreshCw } from 'lucide-react'
+import { AlertCircle, ArrowRight, ExternalLink, Pencil, RefreshCw, Settings } from 'lucide-react'
 import { motion, useReducedMotion } from 'motion/react'
 import { lazy, Suspense, useCallback, useContext, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -10,6 +10,7 @@ import { RestartOverlay } from '@/components/restart-overlay'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { CHART_INITIAL_DIMENSION } from '@/components/ui/chart'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
@@ -25,6 +26,7 @@ import { Progress } from '@/components/ui/progress'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
+import { MobilePageHeader } from '@/components/layout/MobilePageHeader'
 import { RestartProvider, useRestart } from '@/lib/restart-context'
 import { ThemeProviderContext } from '@/lib/theme-context'
 import { openUpdateNotice } from '@/lib/update-notice-events'
@@ -38,6 +40,7 @@ import { useLocalCacheMetrics } from './home/hooks/useLocalCacheMetrics'
 import { useMaibotVersion } from './home/hooks/useMaibotVersion'
 import { HitokotoEditorDialog } from './home/HitokotoEditorDialog'
 import { HomeCardManager, type HomeCardDefinition } from './home/HomeCardManager'
+import { NewsCard } from './home/NewsCard'
 import { usePluginHomeCards } from './home/hooks/usePluginHomeCards'
 import { useQuickShortcuts } from './home/hooks/useQuickShortcuts'
 import { useReviewStats } from './home/hooks/useReviewStats'
@@ -141,8 +144,9 @@ function BotStatusFlipCard({
     0
   )
   const formatOnlineTime = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600)
-    const minutes = Math.round((seconds % 3600) / 60)
+    const totalMinutes = Math.round(seconds / 60)
+    const hours = Math.floor(totalMinutes / 60)
+    const minutes = totalMinutes % 60
     return t('home.time.hoursMinutes', { hours, minutes })
   }
   const faceClassName =
@@ -161,7 +165,7 @@ function BotStatusFlipCard({
     >
       <motion.div
         data-maibot-status-rotor="true"
-        className="relative z-10 h-full min-h-[136px] w-full [transform-style:preserve-3d] [will-change:transform]"
+        className="relative z-10 h-full min-h-[136px] w-full [will-change:transform] [transform-style:preserve-3d]"
         animate={{ rotateY: prefersReducedMotion ? 0 : isFlipped ? 180 : 0 }}
         transition={{ duration: prefersReducedMotion ? 0 : 0.46, ease: [0.22, 1, 0.36, 1] }}
       >
@@ -258,7 +262,7 @@ function BotStatusFlipCard({
                 aria-label={t('home.botStatus.recentOnlineChart')}
                 className="mt-1 min-h-0 flex-1"
               >
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height="100%" initialDimension={CHART_INITIAL_DIMENSION}>
                   <BarChart
                     data={recentOnlineData}
                     margin={{ top: 5, right: 0, bottom: 0, left: 0 }}
@@ -339,7 +343,7 @@ function compareVersions(left: string, right: string): number {
 }
 
 function IndexPageContent() {
-  const { t } = useTranslation()
+  const { i18n, t } = useTranslation()
   const { themeConfig } = useContext(ThemeProviderContext)
   const { triggerRestart, isRestarting } = useRestart()
 
@@ -545,7 +549,10 @@ function IndexPageContent() {
       source: 'builtin',
       render: () => (
         <Card className="h-full">
-          <CardContent data-home-titleless-content="true" className="relative pt-4 sm:pt-5">
+          <CardContent
+            data-home-titleless-content="true"
+            className="relative flex flex-col justify-center py-3 sm:py-3"
+          >
             {selectedQuickShortcuts.length === 0 ? (
               <div className="text-muted-foreground flex flex-col gap-3 rounded-lg border border-dashed p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
                 <span>{t('home.quickActions.empty')}</span>
@@ -580,6 +587,9 @@ function IndexPageContent() {
                   )
 
                   if (shortcut.href) {
+                    const internalUrl = shortcut.external
+                      ? null
+                      : new URL(shortcut.href, window.location.origin)
                     return (
                       <Button
                         key={shortcut.id}
@@ -588,14 +598,25 @@ function IndexPageContent() {
                         asChild
                         className="max-w-[14rem] justify-start gap-2 overflow-hidden sm:max-w-[18rem]"
                       >
-                        <a
-                          href={shortcut.href}
-                          target={shortcut.external ? '_blank' : undefined}
-                          rel={shortcut.external ? 'noopener noreferrer' : undefined}
-                          title={shortcut.label}
-                        >
-                          {content}
-                        </a>
+                        {internalUrl ? (
+                          <Link
+                            to={internalUrl.pathname}
+                            search={Object.fromEntries(internalUrl.searchParams)}
+                            hash={internalUrl.hash.slice(1)}
+                            title={shortcut.label}
+                          >
+                            {content}
+                          </Link>
+                        ) : (
+                          <a
+                            href={shortcut.href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={shortcut.label}
+                          >
+                            {content}
+                          </a>
+                        )}
                       </Button>
                     )
                   }
@@ -624,12 +645,23 @@ function IndexPageContent() {
       id: 'builtin:stats-overview',
       title: t('home.stats.overviewTitle'),
       description: t('home.stats.overviewDesc'),
-      width: 'wide',
+      width: 'large',
       allowedWidths: ['large', 'wide', 'full'],
       preferredHeight: 'low',
       category: 'statistics',
       source: 'builtin',
       render: () => <StatisticsOverviewCard />,
+    },
+    {
+      id: 'builtin:news',
+      title: t('home.news.title'),
+      description: t('home.news.description'),
+      width: 'small',
+      allowedWidths: ['small', 'medium', 'large'],
+      preferredHeight: 'low',
+      category: 'status',
+      source: 'builtin',
+      render: () => <NewsCard />,
     },
     {
       id: 'builtin:prompt-cache',
@@ -915,8 +947,13 @@ function IndexPageContent() {
   )
   const versionsMismatch =
     versionCompatibility?.status !== undefined && versionCompatibility.status !== 'compatible'
+  // 移动端由 Layout 的 main 滚动，内层按内容撑高并允许滚动传递，避免拦截触摸滑动。
   return (
-    <ScrollArea className="h-full">
+    <ScrollArea
+      className="h-full max-lg:h-auto"
+      viewportClassName="max-lg:h-auto max-lg:overscroll-auto"
+      scrollbars="vertical"
+    >
       <div data-home-page="true" className="space-y-2 p-4 sm:space-y-4 sm:p-6">
         {dashboardError && (
           <Card className="border-destructive/50 bg-destructive/5">
@@ -937,6 +974,24 @@ function IndexPageContent() {
             </CardContent>
           </Card>
         )}
+        <MobilePageHeader
+          eyebrow={new Intl.DateTimeFormat(i18n.resolvedLanguage ?? i18n.language, {
+            month: 'long',
+            day: 'numeric',
+            weekday: 'long',
+          }).format(new Date())}
+          title={t('home.mobile.title')}
+          trailing={
+            <Link
+              to="/settings"
+              data-home-avatar-entry="true"
+              aria-label={t('home.mobile.openSettings')}
+              className="bg-muted text-foreground flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
+            >
+              <Settings className="h-[22px] w-[22px]" strokeWidth={1.7} aria-hidden="true" />
+            </Link>
+          }
+        />
         <div
           data-home-command-strip="true"
           className={cn(

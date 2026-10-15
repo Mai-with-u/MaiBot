@@ -10,7 +10,11 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getExpressionClusterMembers, getExpressionClusters } from '@/lib/expression-api'
+import {
+  getExpressionClusterMembers,
+  getExpressionClusters,
+  getExpressionVectorSpaces,
+} from '@/lib/expression-api'
 
 import { ExpressionClusterBrowser } from '../ExpressionClusterBrowser'
 
@@ -23,6 +27,8 @@ import type {
 vi.mock('@/lib/expression-api', () => ({
   getExpressionClusterMembers: vi.fn(),
   getExpressionClusters: vi.fn(),
+  getExpressionVectorSpaces: vi.fn(),
+  deleteExpressionVectorSpace: vi.fn(),
 }))
 
 afterEach(() => {
@@ -85,6 +91,7 @@ function renderBrowser(onOpenExpression = vi.fn()) {
 }
 
 beforeEach(() => {
+  vi.mocked(getExpressionVectorSpaces).mockResolvedValue({ success: true, items: [], state: 'empty' })
   vi.mocked(getExpressionClusters).mockResolvedValue(
     makeClustersResponse([makeCluster(1, [memberA, memberB]), makeCluster(2, [memberC])])
   )

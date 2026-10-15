@@ -173,7 +173,7 @@ def build_search_runtime(
     if str(vector_pools_cfg_raw.get("mode", "dual") or "dual").strip().lower() == "dual" and not vector_pools_ready:
         vector_pools_cfg_raw = dict(vector_pools_cfg_raw)
         vector_pools_cfg_raw["mode"] = "single"
-        log.warning(f"{prefix_text}[{owner}] 双池向量尚未 ready，当前按单池检索运行")
+        log.warning(f"{prefix_text}[{owner}] 双池向量尚未就绪，向量检索是否可用取决于单池加载状态")
 
     try:
         sparse_cfg = SparseBM25Config(**sparse_cfg_raw)

@@ -41,6 +41,7 @@ export function usePluginConfigEditor(options: UsePluginConfigEditorOptions) {
   const [editMode, setEditMode] = useState<'visual' | 'source'>('visual')
   const [pluginPageTab, setPluginPageTab] = useState<'settings' | 'host-policy' | 'details'>('settings')
   const [schema, setSchema] = useState<PluginConfigSchema | null>(null)
+  const [configError, setConfigError] = useState('')
   const [activeConfigTab, setActiveConfigTab] = useState<string | undefined>(initialTab)
   // 可编辑草稿 + 加载基线
   const [config, setConfig] = useState<Record<string, unknown>>({})
@@ -73,9 +74,12 @@ export function usePluginConfigEditor(options: UsePluginConfigEditorOptions) {
         schema: schemaData,
         config: configData,
         rawConfig,
+        configError: validationError,
       } = await getPluginConfigBundle(plugin.id)
 
       setSchema(schemaData)
+      setConfigError(validationError ?? '')
+      if (validationError) setEditMode('source')
       setConfig(configData)
       setOriginalConfig(JSON.parse(JSON.stringify(configData)))
       setSourceCode(rawConfig)
@@ -113,6 +117,7 @@ export function usePluginConfigEditor(options: UsePluginConfigEditorOptions) {
   const handleSave = useCallback(async (): Promise<boolean> => {
     setSaving(true)
     try {
+      let note = '更改将在插件重新加载后生效'
       if (editMode === 'source') {
         // 源代码模式：先验证 TOML 格式
         try {
@@ -129,9 +134,11 @@ export function usePluginConfigEditor(options: UsePluginConfigEditorOptions) {
         }
 
         // 格式正确，保存原始配置
-        await updatePluginConfigRaw(plugin.id, sourceCode)
+        const result = await updatePluginConfigRaw(plugin.id, sourceCode)
+        note = result.note ?? result.message
         setOriginalSourceCode(sourceCode)
         setHasTomlError(false)
+        await loadConfig()
       } else {
         // 可视化模式
         await updatePluginConfig(plugin.id, config)
@@ -140,7 +147,7 @@ export function usePluginConfigEditor(options: UsePluginConfigEditorOptions) {
 
       toast({
         title: '配置已保存',
-        description: '更改将在插件重新加载后生效',
+        description: note,
       })
       return true
     } catch (error) {
@@ -153,7 +160,7 @@ export function usePluginConfigEditor(options: UsePluginConfigEditorOptions) {
     } finally {
       setSaving(false)
     }
-  }, [config, editMode, plugin.id, sourceCode, toast])
+  }, [config, editMode, loadConfig, plugin.id, sourceCode, toast])
 
   const handleBack = useCallback(() => {
     if (!hasChanges) {
@@ -253,6 +260,7 @@ export function usePluginConfigEditor(options: UsePluginConfigEditorOptions) {
     handleConfigTabChange,
     // schema / 草稿
     schema,
+    configError,
     config,
     sourceCode,
     handleSourceCodeChange,

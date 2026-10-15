@@ -15,6 +15,7 @@ export interface ModelPricePeriod {
  * 模型信息
  */
 export interface ModelInfo {
+  model_type: 'llm' | 'embedding' | 'image_embedding' // 旧配置由升级钩子标注
   model_identifier: string
   name: string
   api_provider: string
@@ -52,7 +53,6 @@ export interface TaskConfig {
   model_list: string[]
   temperature?: number
   max_tokens?: number
-  slow_threshold?: number
   hard_timeout?: number
   selection_strategy?: string
 }

@@ -1,18 +1,23 @@
 from functools import lru_cache
+from importlib.metadata import version as installed_version
 from pathlib import Path
 from typing import Any
 
 import tomllib
 
+from .paths import PACKAGED_INSTALL, RESOURCE_ROOT, get_instance_root
 
-PROJECT_ROOT: Path = Path(__file__).resolve().parents[2]
+
+PROJECT_ROOT: Path = RESOURCE_ROOT
 
 
 @lru_cache(maxsize=None)
 def read_project_version(project_root: Path | None = None) -> str:
     """读取 pyproject.toml 中声明的主程序版本号。"""
 
-    root = project_root or PROJECT_ROOT
+    if PACKAGED_INSTALL:
+        return installed_version("MaiBot")
+    root = RESOURCE_ROOT if project_root is None or project_root == get_instance_root() else project_root
     pyproject_path = root / "pyproject.toml"
     with pyproject_path.open("rb") as pyproject_file:
         pyproject_data: dict[str, Any] = tomllib.load(pyproject_file)

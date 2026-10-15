@@ -84,6 +84,7 @@ function makeModel(name: string, overrides: Partial<ModelInfo> = {}): ModelInfo 
   return {
     name,
     model_identifier: `${name}-id`,
+    model_type: 'llm',
     api_provider: 'provider-a',
     price_in: 1,
     price_out: 2,
@@ -300,24 +301,18 @@ describe('TaskConfigCard', () => {
     expect(onChange).toHaveBeenCalledWith('selection_strategy', 'random')
   })
 
-  it('高级超时配置拒绝无效值并接受大于等于一的整数', () => {
+  it('任务硬超时拒绝无效值并接受大于等于一的整数', () => {
     const onChange = vi.fn()
     render(
       <TaskConfigCard
         title="高级任务"
         description="高级参数"
-        taskConfig={{ ...baseTask, slow_threshold: 15, hard_timeout: 240 }}
+        taskConfig={{ ...baseTask, hard_timeout: 240 }}
         modelNames={[]}
         onChange={onChange}
         showAdvancedSettings
       />
     )
-    const threshold = screen.getByDisplayValue('15')
-    fireEvent.change(threshold, { target: { value: '0' } })
-    expect(onChange).not.toHaveBeenCalledWith('slow_threshold', 0)
-    fireEvent.change(threshold, { target: { value: '20' } })
-    expect(onChange).toHaveBeenCalledWith('slow_threshold', 20)
-
     const hardTimeout = screen.getByDisplayValue('240')
     fireEvent.change(hardTimeout, { target: { value: '0' } })
     expect(onChange).not.toHaveBeenCalledWith('hard_timeout', 0)

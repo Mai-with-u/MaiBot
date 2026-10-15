@@ -1,7 +1,9 @@
 from pathlib import Path
 
+from src.common.paths import get_instance_root
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+PROJECT_ROOT = get_instance_root()
 
 
 class StoredImagePathError(ValueError):

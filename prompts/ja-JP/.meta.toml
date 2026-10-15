@@ -1,13 +1,3 @@
-[behavior_scene_analyze]
-display_name = "行動シーン分析"
-advanced = true
-description = "直近のチャット文脈を再利用可能な行動シーン断片に分割し、領域タグ、行動ニーズ、相互作用の特徴を抽出するテンプレート。"
-
-[consolidate_behavior]
-display_name = "行動表現の統合"
-advanced = true
-description = "行動表現ライブラリ内の意味的に重複する項目を見つけ、保持対象と統合対象のプランを出力するテンプレート。"
-
 [maisaka_chat]
 display_name = "Planner"
 advanced = false
@@ -23,10 +13,15 @@ display_name = "Replyer"
 advanced = false
 description = "Maisaka の返信生成テンプレート。人格、表現スタイル、グループチャット上の注意点、返信対象の文脈から最終返信を生成する。"
 
+[reply_attachments]
+display_name = "返信の添付案内"
+advanced = true
+description = "返信に添付する画像、メンション、絵文字はシステムが送信することを示し、本文での添付情報の重複を防ぎます。"
+
 [retro_replyer]
 display_name = "レトロ返信"
 advanced = true
-description = "レトロモード（experimental.replyer_retro_prompt）のグループチャット返信テンプレート。返信指示をひとつのテンプレートにまとめ、そのまま 1 通のメッセージとして送信する。"
+description = "レトロモード（experimental.replyer_retro_prompt）のグループチャット返信テンプレート。ペルソナとチャットの注意事項を先頭の system メッセージにまとめ、残りのテンプレートを user メッセージとして送信する。"
 
 [retro_replyer_light]
 display_name = "レトロ返信（短め）"
@@ -67,11 +62,6 @@ description = "テキスト文脈に応じて絵文字やスタンプを選択�
 display_name = "絵文字選択"
 advanced = true
 description = "文脈と現在の語調に合わせて、絵文字やスタンプのグリッドから最適なものを選ぶためのテンプレート。"
-
-[evaluate_behavior_feedback]
-display_name = "行動フィードバック評価"
-advanced = true
-description = "選択された行動が実際に採用されたか、採用後にどのような会話結果が生じたかを評価するテンプレート。"
 
 [expression_evaluation]
 display_name = "表現評価"
@@ -123,15 +113,15 @@ display_name = "隠語学習"
 advanced = true
 description = "実際のチャットからグループ固有の隠語候補を抽出し、意味と共起分布を更新するためのテンプレート。"
 
-[learn_behavior]
-display_name = "行動表現学習"
-advanced = true
-description = "実際のチャットから再利用可能なシーン・行動・結果のパターンを抽出し、観察学習と自己フィードバックを扱うテンプレート。"
-
 [maisaka_chat_focus]
 display_name = "Focus Planner"
 advanced = true
 description = "Focus モード用の Maisaka 計画テンプレート。現在注目しているチャットとチャット横断概要をもとに次の行動を選択する。"
+
+[maisaka_chat_optimized]
+display_name = "Planner（最適化版）"
+advanced = true
+description = "実験機能 experimental.planner_optimized_prompt を有効にしたときに使う Maisaka メイン計画テンプレート。ボット自身を二人称で記述し、タスク説明を簡潔にしている。Focus モードでは引き続き Focus Planner を使う。"
 
 [maisaka_timing_gate]
 display_name = "Timing Gate"
@@ -157,3 +147,18 @@ description = "ReAct 形式の記憶検索フローで使用する高度な記�
 display_name = "WebUI AI 検索"
 advanced = true
 description = "自然言語の意図に基づき、WebUI が提供する実在のページと設定候補から関連結果を選択します。"
+
+[webui_ai_search_final]
+display_name = "WebUI AI 検索の最終化指示"
+advanced = true
+description = "AI 検索でツールラウンドを使い切った場合や形式どおりに回答しなかった場合に、調査を終了して最終 JSON を返すよう求めます。"
+
+[webui_ai_search_correction]
+display_name = "WebUI AI 検索の修正指示"
+advanced = true
+description = "AI 検索の回答が根拠検証に失敗した場合に、根拠のない内容を削除して最終 JSON を書き直すよう求めます。"
+
+[webui_ai_search_evidence]
+display_name = "WebUI AI 検索の根拠メッセージ"
+advanced = true
+description = "AI 検索の読み取り専用ツールの結果を、ツールなしのリクエストで使える根拠メッセージに変換します。"

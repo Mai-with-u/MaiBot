@@ -60,6 +60,7 @@ function modelConfig() {
       {
         name: 'model',
         model_identifier: 'model',
+        model_type: 'llm',
         api_provider: 'main',
         price_in: 0,
         price_out: 0,

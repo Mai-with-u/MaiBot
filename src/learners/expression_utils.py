@@ -5,7 +5,6 @@ from json_repair import repair_json
 import json
 import re
 
-from src.common.data_models.llm_service_data_models import LLMGenerationOptions
 from src.common.logger import get_logger
 from src.prompt.prompt_manager import prompt_manager
 from src.services.llm_service import LLMServiceClient
@@ -162,11 +161,10 @@ async def check_expression_suitability(
 
     prompt = await prompt_manager.render_prompt(prompt_template)
 
-    logger.info(f"正在优化表达方式: situation={situation}, style={style}")
+    logger.debug(f"优化表达 场景={situation!r} 表达={style!r}")
 
     generation_result = await judge_llm.generate_response(
         prompt=prompt,
-        options=LLMGenerationOptions(temperature=0.6),
         session_id=session_id,
     )
     response = generation_result.response

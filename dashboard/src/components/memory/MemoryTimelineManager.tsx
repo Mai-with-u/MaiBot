@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowRight,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Minus,
+  Plus,
   RefreshCw,
 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
+import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -32,6 +33,8 @@ import {
 } from '@/lib/memory-api'
 import { cn } from '@/lib/utils'
 
+import { MemoryTimelineEventDialog } from './MemoryTimelineEventDialog'
+
 type TimelineQuickRange = '24h' | '7d' | '30d'
 type TimelineTypeFilter = 'all' | MemoryTimelineEventCategory
 
@@ -43,45 +46,20 @@ interface MemoryTimelineManagerProps {
   onJump: (target: MemoryTimelineJumpTargetPayload) => void
 }
 
-// 单次拉取量；页面按 5/10/20 条分页展示，200 已足够回溯，避免撑满后端扫描上限
+// 单次拉取量；页面按 30/100 条分页展示，200 已足够回溯，避免撑满后端扫描上限
 const TIMELINE_FETCH_LIMIT = 200
-const DEFAULT_TIMELINE_PAGE_SIZE = 5
-const TIMELINE_PAGE_SIZE_OPTIONS = [5, 10, 20]
+const DEFAULT_TIMELINE_PAGE_SIZE = 30
+const TIMELINE_PAGE_SIZE_OPTIONS = [30, 100]
 
 const TYPE_FILTERS: Array<{ value: TimelineTypeFilter; label: string }> = [
   { value: 'all', label: '全部' },
   { value: 'paragraph', label: '段落' },
-  { value: 'episode', label: 'Episode' },
+  { value: 'episode', label: '记忆片' },
   { value: 'profile', label: '人物画像' },
   { value: 'feedback', label: '反馈纠错' },
   { value: 'delete', label: '删除恢复' },
   { value: 'maintenance', label: '维护操作' },
 ]
-
-function toDatetimeLocal(timestamp?: number | null): string {
-  if (!timestamp) {
-    return ''
-  }
-  const value = new Date(timestamp * 1000)
-  if (Number.isNaN(value.getTime())) {
-    return ''
-  }
-  const offset = value.getTimezoneOffset()
-  const local = new Date(value.getTime() - offset * 60_000)
-  return local.toISOString().slice(0, 16)
-}
-
-function fromDatetimeLocal(value: string): number | undefined {
-  const trimmed = value.trim()
-  if (!trimmed) {
-    return undefined
-  }
-  const timestamp = new Date(trimmed).getTime()
-  if (!Number.isFinite(timestamp)) {
-    return undefined
-  }
-  return Math.floor(timestamp / 1000)
-}
 
 function formatMemoryTime(timestamp?: number | null): string {
   if (!timestamp) {
@@ -134,9 +112,9 @@ function getEventTypeLabel(type: string): string {
     paragraph_updated: '段落更新',
     paragraph_deleted: '段落删除',
     paragraph_restored: '段落恢复',
-    episode_created: 'Episode 新增',
-    episode_updated: 'Episode 更新',
-    episode_rebuilt: 'Episode 重建',
+    episode_created: '记忆片新增',
+    episode_updated: '记忆片更新',
+    episode_rebuilt: '记忆片重建',
     profile_updated: '画像更新',
     profile_override_set: '画像覆写',
     profile_override_deleted: '画像覆写删除',
@@ -145,6 +123,7 @@ function getEventTypeLabel(type: string): string {
     delete_executed: '删除执行',
     delete_restored: '删除恢复',
     relation_reinforced: '关系强化',
+    relation_accessed: '使用强化',
     relation_frozen: '关系冻结',
     relation_protected: '关系保护',
     relation_restored: '关系恢复',
@@ -158,6 +137,16 @@ function getVisiblePageNumbers(currentPage: number, totalPages: number): number[
   }
   const start = Math.min(Math.max(currentPage - 2, 1), totalPages - 4)
   return Array.from({ length: 5 }, (_, index) => start + index)
+}
+
+function getTimelineCategoryLabel(event: MemoryTimelineEventPayload): string {
+  if (event.category !== 'maintenance') return getCategoryLabel(event.category)
+  const kind = event.metadata?.reinforcement_kind
+  if (kind === 'added') return '新增'
+  if (kind === 'access') return '使用'
+  if (kind === 'manual') return '手动'
+  if (kind === 'unknown') return '未记录'
+  return getEventTypeLabel(event.event_type)
 }
 
 export function MemoryTimelineManager({
@@ -176,6 +165,7 @@ export function MemoryTimelineManager({
   const [loading, setLoading] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(DEFAULT_TIMELINE_PAGE_SIZE)
+  const [selectedEvent, setSelectedEvent] = useState<MemoryTimelineEventPayload | null>(null)
   const initialAppliedRef = useRef(false)
   const latestRequestRef = useRef(0)
 
@@ -274,11 +264,11 @@ export function MemoryTimelineManager({
   }, [totalPages])
 
   return (
-    <div className="space-y-4">
-      <Card className="w-full">
-        <CardContent className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-[minmax(0,1.5fr)_minmax(12rem,0.5fr)]">
-            <div className="space-y-2">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <Card data-memory-timeline-panel="true" className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <CardContent data-memory-timeline-filters="true" className="@container shrink-0 border-b lg:max-h-[45%] lg:overflow-y-auto">
+          <div className="flex flex-wrap items-end gap-2 @[70rem]:flex-nowrap">
+            <div className="w-full min-w-0 space-y-1 sm:w-56 @[70rem]:w-auto @[70rem]:flex-1">
               <Label>聊天流</Label>
               <Select value={chatId} onValueChange={setChatId}>
                 <SelectTrigger>
@@ -294,10 +284,10 @@ export function MemoryTimelineManager({
               </Select>
             </div>
 
-            <div className="space-y-2">
-              <Label>事件类型</Label>
+            <div className="w-28 shrink-0 space-y-1">
+              <Label htmlFor="timeline-type-filter">事件类型</Label>
               <Select value={typeFilter} onValueChange={(value) => setTypeFilter(value as TimelineTypeFilter)}>
-                <SelectTrigger>
+                <SelectTrigger id="timeline-type-filter">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -309,101 +299,109 @@ export function MemoryTimelineManager({
                 </SelectContent>
               </Select>
             </div>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
-            <div className="space-y-2">
-              <Label htmlFor="timeline-time-start">开始时间</Label>
-              <Input
-                id="timeline-time-start"
-                type="datetime-local"
-                value={toDatetimeLocal(timeStart)}
-                onChange={(event) => setTimeStart(fromDatetimeLocal(event.target.value))}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="timeline-time-end">结束时间</Label>
-              <Input
-                id="timeline-time-end"
-                type="datetime-local"
-                value={toDatetimeLocal(timeEnd)}
-                onChange={(event) => setTimeEnd(fromDatetimeLocal(event.target.value))}
-              />
-            </div>
-            <Button onClick={() => void loadTimeline()} disabled={loading || !chatId}>
-              <RefreshCw className={cn('mr-2 h-4 w-4', loading && 'animate-spin')} />
-              刷新时间线
-            </Button>
-          </div>
-
-          <div className="grid gap-2 sm:grid-cols-3">
-            {[
-              { value: '24h' as const, label: '最近 24 小时' },
-              { value: '7d' as const, label: '最近 7 天' },
-              { value: '30d' as const, label: '最近 30 天' },
-            ].map((item) => (
-              <Button key={item.value} type="button" variant="outline" onClick={() => applyQuickRange(item.value)}>
-                {item.label}
+            <div
+              role="group"
+              aria-label="时间范围"
+              className="flex w-full flex-wrap items-end gap-2 @[70rem]:w-auto @[70rem]:shrink-0 @[70rem]:flex-nowrap"
+            >
+              <div className="w-full min-w-0 space-y-1 sm:w-52 sm:shrink-0">
+                <Label htmlFor="timeline-time-start">开始时间</Label>
+                <DateTimePicker
+                  id="timeline-time-start"
+                  label="开始时间"
+                  value={timeStart}
+                  onChange={setTimeStart}
+                />
+              </div>
+              <div className="w-full min-w-0 space-y-1 sm:w-52 sm:shrink-0">
+                <Label htmlFor="timeline-time-end">结束时间</Label>
+                <DateTimePicker
+                  id="timeline-time-end"
+                  label="结束时间"
+                  value={timeEnd}
+                  onChange={setTimeEnd}
+                />
+              </div>
+              {[
+                { value: '24h' as const, label: '最近 24 小时' },
+                { value: '7d' as const, label: '最近 7 天' },
+                { value: '30d' as const, label: '最近 30 天' },
+              ].map((item) => (
+                <Button
+                  key={item.value}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 px-3"
+                  onClick={() => applyQuickRange(item.value)}
+                >
+                  {item.label}
+                </Button>
+              ))}
+              <Button
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                aria-label="刷新时间线"
+                title="刷新时间线"
+                onClick={() => void loadTimeline()}
+                disabled={loading || !chatId}
+              >
+                <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
               </Button>
-            ))}
+            </div>
           </div>
         </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent className="space-y-4">
+        <CardContent data-memory-timeline-browser="true" className="flex h-[65dvh] min-h-0 flex-none flex-col gap-2 overflow-hidden lg:h-auto lg:flex-1">
           {events.length > 0 ? (
             <>
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <div className="flex flex-col gap-1 text-sm text-muted-foreground sm:flex-row sm:items-center sm:gap-4">
-                  <span>
-                    第 {safeCurrentPage} / {totalPages} 页，每页 {pageSize} 条
-                  </span>
-                  <span>
-                    当前显示 {pageStartIndex + 1}-{pageEndIndex} / {events.length} 条
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="timeline-page-size" className="whitespace-nowrap text-sm text-muted-foreground">
-                    每页显示
-                  </Label>
-                  <Select value={String(pageSize)} onValueChange={handlePageSizeChange}>
-                    <SelectTrigger id="timeline-page-size" className="h-9 w-[112px]" aria-label="每页显示条数">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {TIMELINE_PAGE_SIZE_OPTIONS.map((size) => (
-                        <SelectItem key={size} value={String(size)}>
-                          {size} 条
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="space-y-3">
+              <div key={safeCurrentPage} data-memory-timeline-list="true" className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain">
                 {pageEvents.map((event) => (
-                  <TimelineEventCard key={event.event_id} event={event} onJump={onJump} />
+                  <TimelineEventCard key={event.event_id} event={event} onSelect={setSelectedEvent} />
                 ))}
               </div>
 
-              <TimelinePagination
-                currentPage={safeCurrentPage}
-                pageNumbers={pageNumbers}
-                totalPages={totalPages}
-                onPageChange={setCurrentPage}
-              />
+              <div data-memory-timeline-pagination="true" className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                <div className="text-xs text-muted-foreground">
+                  <span>第 {safeCurrentPage} / {totalPages} 页 · {pageStartIndex + 1}-{pageEndIndex} / {events.length} 条</span>
+                </div>
+                <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                  <TimelinePagination
+                    currentPage={safeCurrentPage}
+                    pageNumbers={pageNumbers}
+                    totalPages={totalPages}
+                    onPageChange={setCurrentPage}
+                  />
+                    <Select value={String(pageSize)} onValueChange={handlePageSizeChange}>
+                      <SelectTrigger id="timeline-page-size" className="h-7 w-[80px] px-2 text-xs" aria-label="每页显示条数">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {TIMELINE_PAGE_SIZE_OPTIONS.map((size) => (
+                          <SelectItem key={size} value={String(size)}>
+                            {size} 条
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                </div>
+              </div>
             </>
           ) : (
-            <div className="space-y-3">
-              <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <div data-memory-timeline-list="true" className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
                 当前范围内没有可审计事件。
               </div>
             </div>
           )}
         </CardContent>
       </Card>
+      <MemoryTimelineEventDialog
+        event={selectedEvent}
+        categoryLabel={selectedEvent ? getTimelineCategoryLabel(selectedEvent) : ''}
+        timeLabel={selectedEvent ? formatMemoryTime(selectedEvent.occurred_at) : ''}
+        onClose={() => setSelectedEvent(null)}
+        onJump={onJump}
+      />
     </div>
   )
 }
@@ -420,9 +418,7 @@ function TimelinePagination({
   onPageChange: (page: number) => void
 }) {
   return (
-    <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
-      <div className="text-sm text-muted-foreground">共 {totalPages} 页</div>
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="ml-auto flex flex-wrap items-center gap-1">
         <Button
           type="button"
           variant="outline"
@@ -475,46 +471,59 @@ function TimelinePagination({
         >
           <ChevronsRight className="h-4 w-4" />
         </Button>
-      </div>
     </div>
   )
 }
 
 function TimelineEventCard({
   event,
-  onJump,
+  onSelect,
 }: {
   event: MemoryTimelineEventPayload
-  onJump: (target: MemoryTimelineJumpTargetPayload) => void
+  onSelect: (event: MemoryTimelineEventPayload) => void
 }) {
+  const showOperationIcon = event.category === 'paragraph' || event.category === 'episode' || event.category === 'profile'
+  const title = event.category === 'episode'
+    ? event.title.replace(/^(?:Episode|记忆片)\s*(?:新增|更新|重建)\s*[:：]\s*/, '')
+    : event.category === 'paragraph'
+      ? event.title.replace(/^段落(?:新增|更新|被标记删除|删除|恢复)(?:\s*[:：]\s*|$)/, '')
+    : event.title
+  const removed = event.event_type === 'profile_override_deleted' || event.event_type === 'paragraph_deleted'
+  const updated = event.event_type === 'paragraph_updated'
+  const EventIcon = removed ? Minus : updated ? RefreshCw : Plus
+
   return (
-    <div className="rounded-lg border bg-card p-4">
+    <button
+      type="button"
+      data-memory-timeline-event="true"
+      className="hover:bg-muted/40 focus-visible:ring-ring w-full cursor-pointer rounded-lg border bg-card px-3 py-2 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none"
+      onClick={() => onSelect(event)}
+    >
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0 space-y-2">
+        <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="secondary">{getCategoryLabel(event.category)}</Badge>
-            <Badge variant="outline">{getEventTypeLabel(event.event_type)}</Badge>
+            {showOperationIcon && (
+              <EventIcon
+                className={cn(
+                  'h-4 w-4 shrink-0',
+                  removed ? 'text-red-600 dark:text-red-400' : updated ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400'
+                )}
+                aria-label={getEventTypeLabel(event.event_type)}
+              />
+            )}
+            <Badge variant={event.category === 'maintenance' ? 'outline' : 'secondary'}>
+              {getTimelineCategoryLabel(event)}
+            </Badge>
+            {title && (
+              <span className="min-w-0 font-medium break-words">
+                {title}
+              </span>
+            )}
             <span className="text-xs text-muted-foreground">{formatMemoryTime(event.occurred_at)}</span>
-            <span className="text-xs text-muted-foreground">{event.chat_name}</span>
           </div>
-          <div>
-            <div className="font-medium">{event.title}</div>
-            <div className="mt-1 text-sm text-muted-foreground">{event.summary || '-'}</div>
-          </div>
-          <div className="grid gap-1 text-xs text-muted-foreground md:grid-cols-3">
-            <span>影响对象：{event.object_count}</span>
-            <span className="break-all">关键 ID：{event.key_id || '-'}</span>
-            <span className="break-all">来源：{event.source || '-'}</span>
-          </div>
-          {event.attribution ? (
-            <div className="text-xs text-muted-foreground">归因：{event.attribution}</div>
-          ) : null}
+          <div className="text-sm text-muted-foreground">{event.summary || '-'}</div>
         </div>
-        <Button type="button" variant="outline" className="shrink-0" onClick={() => onJump(event.jump_target)}>
-          <ArrowRight className="mr-2 h-4 w-4" />
-          跳转
-        </Button>
       </div>
-    </div>
+    </button>
   )
 }

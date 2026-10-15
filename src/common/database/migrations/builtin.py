@@ -45,6 +45,9 @@ from .v36_to_v37 import migrate_v36_to_v37
 from .v37_to_v38 import migrate_v37_to_v38
 from .v38_to_v39 import migrate_v38_to_v39
 from .v39_to_v40 import migrate_v39_to_v40
+from .v40_to_v41 import migrate_v40_to_v41
+from .v41_to_v42 import BEHAVIOR_TABLES, migrate_v41_to_v42
+from .v42_to_v43 import migrate_v42_to_v43
 from .version_store import SQLiteUserVersionStore
 
 EMPTY_SCHEMA_VERSION = 0
@@ -88,7 +91,10 @@ V37_SCHEMA_VERSION = 37
 V38_SCHEMA_VERSION = 38
 V39_SCHEMA_VERSION = 39
 V40_SCHEMA_VERSION = 40
-LATEST_SCHEMA_VERSION = 40
+V41_SCHEMA_VERSION = 41
+V42_SCHEMA_VERSION = 42
+V43_SCHEMA_VERSION = 43
+LATEST_SCHEMA_VERSION = 43
 
 _LEGACY_V1_EXCLUSIVE_TABLES = (
     "chat_streams",
@@ -630,12 +636,16 @@ def _detect_v26_base_schema(snapshot: DatabaseSchemaSnapshot, *, use_latest_high
     return True
 
 
-def _detect_v37_base_schema(snapshot: DatabaseSchemaSnapshot) -> bool:
+def _detect_v37_base_schema(snapshot: DatabaseSchemaSnapshot, *, behavior_removed: bool = False) -> bool:
     """判断数据库是否具备 v37 的主体结构。"""
 
     if not snapshot.has_table("maisaka_reply_effects"):
         return False
-    if not _detect_v26_base_schema(snapshot, use_latest_high_frequency_terms=True):
+    if behavior_removed:
+        has_base_schema = _detect_v18_common_schema(snapshot, use_latest_high_frequency_terms=True)
+    else:
+        has_base_schema = _detect_v26_base_schema(snapshot, use_latest_high_frequency_terms=True)
+    if not has_base_schema:
         return False
     if snapshot.has_column("behavior_scene_clusters", "score"):
         return False
@@ -676,13 +686,19 @@ class LatestSchemaVersionDetector(BaseSchemaVersionDetector):
     def detect_version(self, snapshot: DatabaseSchemaSnapshot) -> Optional[int]:
         """检测数据库是否已经是当前最新结构。"""
 
-        if not _detect_v37_base_schema(snapshot):
+        behavior_removed = not any(snapshot.has_table(table_name) for table_name in BEHAVIOR_TABLES)
+        if not _detect_v37_base_schema(snapshot, behavior_removed=behavior_removed):
             return None
         if not snapshot.has_column("maisaka_reply_effects", "request_fingerprint"):
             return None
         if not snapshot.has_column("maisaka_reply_effects", "record_blob"):
             return None
-        return LATEST_SCHEMA_VERSION
+        if not snapshot.has_table("bot_platform_accounts"):
+            return V39_SCHEMA_VERSION
+        if not all(snapshot.has_column("mai_messages", name) for name in ("account_id", "scope")):
+            return V40_SCHEMA_VERSION
+        # v43 只压缩文件，结构与 v42 相同；未标记版本的库仍需执行瘦身迁移。
+        return V42_SCHEMA_VERSION if behavior_removed else V41_SCHEMA_VERSION
 
 
 class V38SchemaVersionDetector(BaseSchemaVersionDetector):
@@ -1923,6 +1939,28 @@ def build_default_migration_registry() -> MigrationRegistry:
                 name="v39_to_v40",
                 description="新增适配器上报的 Bot 平台账号表。",
                 handler=migrate_v39_to_v40,
+            ),
+            MigrationStep(
+                version_from=V40_SCHEMA_VERSION,
+                version_to=V41_SCHEMA_VERSION,
+                name="v40_to_v41",
+                description="为消息增加正式 account_id/scope 归属字段。",
+                handler=migrate_v40_to_v41,
+            ),
+            MigrationStep(
+                version_from=V41_SCHEMA_VERSION,
+                version_to=V42_SCHEMA_VERSION,
+                name="v41_to_v42",
+                description="彻底移除行为学习数据表。",
+                handler=migrate_v41_to_v42,
+            ),
+            MigrationStep(
+                version_from=V42_SCHEMA_VERSION,
+                version_to=V43_SCHEMA_VERSION,
+                name="v42_to_v43",
+                description="压缩移除行为学习表后的数据库，回收磁盘空间。",
+                handler=migrate_v42_to_v43,
+                transactional=False,
             ),
         ]
     )

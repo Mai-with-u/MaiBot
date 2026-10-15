@@ -97,6 +97,7 @@ describe('DetailedStatistics 类型契约', () => {
       end_time: '2026-01-02T00:00:00',
       summary,
       models: [breakdown],
+      task_groups: [],
       modules: [],
       request_types: [],
       chats: [chat],

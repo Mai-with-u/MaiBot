@@ -4,6 +4,9 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider } from '@tanstack/react-router'
 
 import './index.css'
+import './styles/millennium.css'
+import './styles/modern.css'
+import './styles/mobile.css'
 import './i18n'
 import { ElectronShell } from './components/electron/electron-shell'
 import { AnnouncerProvider } from './components/ui/announcer'
@@ -13,11 +16,14 @@ import { ThemeProvider } from './components/theme-provider'
 import { TourProvider } from './components/tour/tour-provider'
 import { LazyTourRenderer } from './components/tour/lazy-tour-renderer'
 import { ErrorBoundary } from './components/error-boundary'
+import { installMillenniumIconStyle } from './components/ui/millennium-icon-set'
 import { Toaster } from './components/ui/toaster'
 import { VersionCompatibilityDialog } from './components/version-compatibility-dialog'
 import { isElectron } from './lib/runtime'
 import { queryClient } from './lib/query'
 import { router } from './router'
+
+installMillenniumIconStyle()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

@@ -7,7 +7,6 @@ on:
       - "src/services/memory_service.py"
       - "src/webui/routers/memory.py"
       - "pytests/A_memorix_test/**"
-      - "pytests/webui/test_memory_routes_integration.py"
       - "pyproject.toml"
       - "requirements.txt"
       - "uv.lock"
@@ -28,4 +27,4 @@ jobs:
       - name: 安装项目依赖
         run: uv sync --frozen --group dev
       - name: 运行 A_Memorix 测试
-        run: uv run pytest -q pytests/A_memorix_test pytests/webui/test_memory_routes_integration.py
+        run: uv run pytest -q pytests/A_memorix_test

@@ -426,7 +426,8 @@ def _extract_usage_record(response: GenerateContentResponse) -> Optional[UsageTu
         getattr(usage_metadata, "thoughts_token_count", 0) or 0
     )
     total_tokens = getattr(usage_metadata, "total_token_count", 0) or 0
-    return prompt_tokens, completion_tokens, total_tokens
+    # Gemini 不参与 Prompt 缓存用量探测，末位恒为未上报
+    return prompt_tokens, completion_tokens, total_tokens, False
 
 
 def _extract_finish_reason(response: GenerateContentResponse | None) -> str | None:
@@ -1078,7 +1079,8 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
             raise
         except (ClientError, ServerError) as exc:
             status_code = int(getattr(exc, "code", 500) or 500)
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=self.api_provider,
                 client_type="gemini",
                 error=exc,
@@ -1093,7 +1095,8 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
             raise wrapped_error from exc
         except (UnknownFunctionCallArgumentError, UnsupportedFunctionError, FunctionInvocationError) as exc:
             wrapped_error = RespParseException(None, f"Gemini 工具调用参数错误: {exc}")
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=self.api_provider,
                 client_type="gemini",
                 error=wrapped_error,
@@ -1106,7 +1109,8 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
             attach_request_snapshot(wrapped_error, snapshot_path)
             raise wrapped_error from exc
         except EmptyResponseException as exc:
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=self.api_provider,
                 client_type="gemini",
                 error=exc,
@@ -1121,7 +1125,8 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
         except Exception as exc:
             if has_request_snapshot(exc):
                 raise
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=self.api_provider,
                 client_type="gemini",
                 error=exc,
@@ -1184,7 +1189,8 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
             )
         except (ClientError, ServerError) as exc:
             status_code = int(getattr(exc, "code", 500) or 500)
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=self.api_provider,
                 client_type="gemini",
                 error=exc,
@@ -1200,7 +1206,8 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
         except Exception as exc:
             if has_request_snapshot(exc):
                 raise
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=self.api_provider,
                 client_type="gemini",
                 error=exc,
@@ -1223,7 +1230,8 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
         response = APIResponse(raw_data=raw_response)
         if not raw_response.embeddings:
             exc = RespParseException(raw_response, "Gemini 嵌入响应解析失败，缺少 embeddings 字段。")
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=self.api_provider,
                 client_type="gemini",
                 error=exc,
@@ -1322,7 +1330,8 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
             )
         except (ClientError, ServerError) as exc:
             status_code = int(getattr(exc, "code", 500) or 500)
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=self.api_provider,
                 client_type="gemini",
                 error=exc,
@@ -1338,7 +1347,8 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
         except Exception as exc:
             if has_request_snapshot(exc):
                 raise
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=self.api_provider,
                 client_type="gemini",
                 error=exc,

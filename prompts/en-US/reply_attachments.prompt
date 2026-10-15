@@ -1,0 +1,3 @@
+{attachments}
+The system will send these attachments. Generate only the accompanying natural reply text.
+Do not repeat @ mentions, attachment numbers, media indices, image or emoji URLs, or copy emoji descriptions into the reply.

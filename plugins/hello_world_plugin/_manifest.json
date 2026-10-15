@@ -16,14 +16,22 @@
   },
   "changelog": "CHANGELOG.md",
   "host_application": {
-    "min_version": "1.0.0",
-    "max_version": "1.2.99"
+    "min_version": "1.3.0",
+    "max_version": "1.3.99"
   },
   "sdk": {
     "min_version": "2.0.0",
     "max_version": "2.99.99"
   },
   "dependencies": [],
+  "display": {
+    "icon": {
+      "type": "local",
+      "value": "assets/icon.svg",
+      "fallback": "puzzle",
+      "background": "#1C272C"
+    }
+  },
   "capabilities": [
     "send.text",
     "send.forward",

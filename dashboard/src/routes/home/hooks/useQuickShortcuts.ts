@@ -11,11 +11,14 @@
  *   handleRestart / isRestarting / uncheckedCount / onOpenReviewer，hook 负责编排其余全部逻辑。
  * - 插件快捷入口的纯函数 helper（id 编解码、schema 解析等）随 hook 一并下沉。
  */
-import { ClipboardCheck, FileText, HardDrive, Puzzle, RotateCcw, Settings } from 'lucide-react'
+import { BookOpen, ClipboardCheck, FileText, HardDrive, MessageSquare, Puzzle, RotateCcw, Settings } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 
+import { getBotConfigSchema } from '@/lib/config-api'
+import { buildTabGroupsFromSchema } from '@/lib/config-tab-groups'
 import {
   getInstalledPlugins,
   getPluginConfigSchema,
@@ -26,7 +29,14 @@ import {
 import type { QuickShortcutDefinition } from '../types'
 
 const QUICK_SHORTCUT_STORAGE_KEY = 'maibot-home-quick-shortcuts'
-const DEFAULT_QUICK_SHORTCUT_IDS = ['action:restart', 'action:expression-review', 'route:logs']
+const DEFAULT_QUICK_SHORTCUT_IDS = [
+  'route:logs',
+  'route:settings-appearance',
+  'route:model-list',
+  'route:chat',
+  'route:logs:replyer',
+  'route:logs:reasoning',
+]
 const SIDEBAR_REDUNDANT_SHORTCUT_IDS = new Set([
   'route:plugin-market',
   'route:plugin-config',
@@ -213,6 +223,25 @@ export function useQuickShortcuts({
   const [quickShortcutSearch, setQuickShortcutSearch] = useState('')
   const [pluginShortcuts, setPluginShortcuts] = useState<QuickShortcutDefinition[]>([])
   const [isPluginShortcutsLoading, setIsPluginShortcutsLoading] = useState(false)
+  const configSchemaQuery = useQuery({
+    queryKey: ['bot-config', 'schema'],
+    queryFn: getBotConfigSchema,
+    staleTime: Infinity,
+  })
+  const configShortcuts = useMemo<QuickShortcutDefinition[]>(
+    () =>
+      configSchemaQuery.data
+        ? buildTabGroupsFromSchema(configSchemaQuery.data).map((tab) => ({
+            id: `route:bot-config:${tab.id}`,
+            category: 'config' as const,
+            label: tab.label,
+            description: t('home.quickActions.descriptions.configSection', { section: tab.label }),
+            icon: Settings,
+            href: `/config/bot?${new URLSearchParams({ tab: tab.id }).toString()}`,
+          }))
+        : [],
+    [configSchemaQuery.data, t]
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -317,6 +346,32 @@ export function useQuickShortcuts({
         href: '/logs',
       },
       {
+        id: 'route:chat',
+        category: 'system',
+        label: t('home.quickActions.chat'),
+        description: t('home.quickActions.descriptions.chat'),
+        icon: MessageSquare,
+        href: '/chat',
+      },
+      {
+        id: 'external:docs',
+        category: 'external',
+        label: t('home.quickActions.docs'),
+        description: t('home.quickActions.descriptions.docs'),
+        icon: BookOpen,
+        href: 'https://docs.mai-mai.org',
+        external: true,
+      },
+      ...(['replyer', 'planner', 'reasoning'] as const).map((stage) => ({
+        id: `route:logs:${stage}`,
+        category: 'monitor' as const,
+        label: t(`home.quickActions.${stage}Logs`),
+        description: t(`home.quickActions.descriptions.${stage}Logs`),
+        icon: FileText,
+        href: stage === 'reasoning' ? '/reasoning-process' : `/reasoning-process?stage=${stage}`,
+      })),
+      ...configShortcuts,
+      {
         id: 'route:settings-appearance',
         category: 'system',
         label: t('home.quickActions.appearanceSettings'),
@@ -350,7 +405,7 @@ export function useQuickShortcuts({
       },
       ...pluginShortcuts,
     ],
-    [handleRestart, isRestarting, onOpenReviewer, pluginShortcuts, t, uncheckedCount]
+    [configShortcuts, handleRestart, isRestarting, onOpenReviewer, pluginShortcuts, t, uncheckedCount]
   )
 
   const quickShortcutMap = useMemo(

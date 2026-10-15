@@ -44,7 +44,6 @@ export interface PackTaskConfig {
   model_list: string[]
   temperature?: number
   max_tokens?: number
-  slow_threshold?: number
 }
 
 /**

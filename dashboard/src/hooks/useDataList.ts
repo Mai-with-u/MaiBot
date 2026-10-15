@@ -36,7 +36,7 @@ export interface UseDataListConfig<TItem, TFilters, TId> {
   /** 列表请求；页面在此把各自 API 形状适配为 { items, total } */
   queryFn: (params: DataListQueryParams<TFilters>) => Promise<{ items: TItem[]; total: number }>
   /** 透传给底层 useQuery 的部分选项（如条件列表的 enabled、覆盖 staleTime） */
-  queryOptions?: { enabled?: boolean; staleTime?: number }
+  queryOptions?: { enabled?: boolean; staleTime?: number; refetchInterval?: number | false }
   /** 参数变化时是否保留选中项，默认 false 表示清空选中。 */
   preserveSelectionOnParamsChange?: boolean
 }

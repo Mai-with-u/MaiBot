@@ -7,6 +7,7 @@ import re
 import tempfile
 
 from src.common.logger import get_logger
+from .paths import get_instance_root, resource_path
 from src.common.version import PROJECT_ROOT, read_project_version
 
 
@@ -15,9 +16,9 @@ logger = get_logger("update_notice")
 NoticeChannel = Literal["terminal", "webui"]
 StateValue = str | int
 
-_DATA_DIR = PROJECT_ROOT / "data"
+_DATA_DIR = get_instance_root() / "data"
 _STATE_PATH = _DATA_DIR / "update_notice_state.json"
-_CHANGELOG_PATH = PROJECT_ROOT / "changelogs" / "changelog.md"
+_CHANGELOG_PATH = resource_path("changelogs", "changelog.md")
 _VERSION_HEADING_RE = re.compile(r"^# \[(?P<version>[^\]]+)\](?P<suffix>[^\n]*)$", re.MULTILINE)
 _SECTION_HEADING_RE = re.compile(r"^#{2,6}\s+(?P<title>.+?)\s*$", re.MULTILINE)
 _TERMINAL_NOTICE_REPEAT_COUNT = 3

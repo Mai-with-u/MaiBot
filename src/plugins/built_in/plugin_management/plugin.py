@@ -145,6 +145,7 @@ class PluginManagementPlugin(MaiBotPlugin):
         permission_list = permission_result if isinstance(permission_result, list) else []
         command_permission_result = await self.ctx.config.get("plugin.command_permissions")
         command_permissions = command_permission_result if isinstance(command_permission_result, dict) else {}
+        silent_denied_result = await self.ctx.config.get("plugin.silent_permission_denied")
         is_local_operator = kwargs.get("is_local_operator") is True
         if not has_command_permission(
             f"{_PLUGIN_MANAGEMENT_ID}.management",
@@ -155,7 +156,8 @@ class PluginManagementPlugin(MaiBotPlugin):
             command_permissions,
             local_operator=is_local_operator,
         ):
-            await self.ctx.send.text("你没有权限使用插件管理命令", stream_id)
+            if not silent_denied_result:
+                await self.ctx.send.text("你没有权限使用插件管理命令", stream_id)
             return False, "没有权限", True
 
         if not stream_id:

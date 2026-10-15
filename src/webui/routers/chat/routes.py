@@ -15,10 +15,6 @@ from src.chat.heart_flow.heartflow_manager import heartflow_manager
 from src.chat.message_receive.chat_manager import chat_manager as core_chat_manager
 from src.common.database.database import get_db_session
 from src.common.database.database_model import (
-    BehaviorAction,
-    BehaviorExperiencePath,
-    BehaviorOutcome,
-    BehaviorSceneCluster,
     ChatSession,
     Expression,
     HighFrequencyTerm,
@@ -30,13 +26,19 @@ from src.common.database.database_model import (
 )
 from src.common.logger import get_logger
 from src.common.utils.utils_config import (
-    BehaviorConfigUtils,
     ChatConfigUtils,
     ExpressionConfigUtils,
     JargonConfigUtils,
 )
 from src.config.config import BOT_CONFIG_PATH, config_manager, global_config
-from src.platform_io import AdapterIdentity, DriverKind, RouteKey, get_adapter_policy_manager, get_platform_io_manager
+from src.platform_io import (
+    AdapterIdentity,
+    AdapterPolicyManager,
+    DriverKind,
+    RouteKey,
+    get_adapter_policy_manager,
+    get_platform_io_manager,
+)
 from src.webui.dependencies import require_auth
 from src.webui.utils.toml_utils import save_toml_with_format
 
@@ -95,11 +97,22 @@ class AdapterHostPolicySectionRequest(BaseModel):
     deny_ids: List[str] = Field(default_factory=list)
 
 
+class AdapterHostPolicyGroupRequest(BaseModel):
+    """配置域内保存的一组群聊与私聊策略。"""
+
+    id: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=100)
+    group: AdapterHostPolicySectionRequest = Field(default_factory=AdapterHostPolicySectionRequest)
+    private: AdapterHostPolicySectionRequest = Field(default_factory=AdapterHostPolicySectionRequest)
+
+
 class AdapterHostPolicyUpdateRequest(BaseModel):
     """按适配器插件编辑主程序放行规则的请求。"""
 
     group: AdapterHostPolicySectionRequest = Field(default_factory=AdapterHostPolicySectionRequest)
     private: AdapterHostPolicySectionRequest = Field(default_factory=AdapterHostPolicySectionRequest)
+    policy_groups: Optional[List[AdapterHostPolicyGroupRequest]] = None
+    active_group: Optional[str] = None
 
 
 class ChatTargetResolveItem(BaseModel):
@@ -446,7 +459,7 @@ def _is_same_learning_target(rule: Dict[str, Any], chat_session: ChatSession) ->
 
 def _format_frequency(value: float) -> str:
     normalized_value = max(0.0, float(value))
-    return f"{normalized_value:.3f}（{normalized_value * 100:.1f}%）"
+    return f"{normalized_value:.2f}（{normalized_value * 100:.1f}%）"
 
 
 def _talk_rule_to_dict(rule: Any, session_id: str, is_group_chat: bool, now_min: int) -> Optional[Dict[str, Any]]:
@@ -712,7 +725,7 @@ async def _save_chat_talk_frequency_rule(
     reply_timing_config["talk_value_rules"] = rules
     save_toml_with_format(config_data, str(config_path))
 
-    if not await config_manager.reload_config(changed_scopes=["bot"]):
+    if not await config_manager.reload_config(changed_scopes=["bot"], changed_sections=["chat.reply_timing"]):
         raise HTTPException(status_code=500, detail="配置已写入，但热重载失败")
 
 
@@ -755,7 +768,7 @@ async def _delete_chat_talk_frequency_rule(chat_session: ChatSession, rule_time:
     reply_timing_config["talk_value_rules"] = next_rules
     save_toml_with_format(config_data, str(config_path))
 
-    if not await config_manager.reload_config(changed_scopes=["bot"]):
+    if not await config_manager.reload_config(changed_scopes=["bot"], changed_sections=["chat.reply_timing"]):
         raise HTTPException(status_code=500, detail="配置已写入，但热重载失败")
 
 
@@ -774,7 +787,6 @@ async def _save_chat_learning_rule(chat_session: ChatSession, kind: str, request
     learning_config_map = {
         "expression": ("expression", "learning_list"),
         "jargon": ("jargon", "learning_list"),
-        "behavior": ("experimental", "behavior_learning_list"),
     }
     config_target = learning_config_map.get(kind)
     if config_target is None:
@@ -817,11 +829,9 @@ async def _save_chat_learning_rule(chat_session: ChatSession, kind: str, request
         rules[replace_index] = next_rule
 
     config_section[field_name] = rules
-    if kind == "behavior" and request.learn:
-        config_section["enable_behavior_learning"] = True
     save_toml_with_format(config_data, str(config_path))
 
-    if not await config_manager.reload_config(changed_scopes=["bot"]):
+    if not await config_manager.reload_config(changed_scopes=["bot"], changed_sections=[section_name]):
         raise HTTPException(status_code=500, detail="配置已写入，但热重载失败")
 
 
@@ -878,7 +888,7 @@ async def _save_chat_prompt_rule(
     reply_style_config["chat_prompts"] = prompts
     save_toml_with_format(config_data, str(config_path))
 
-    if not await config_manager.reload_config(changed_scopes=["bot"]):
+    if not await config_manager.reload_config(changed_scopes=["bot"], changed_sections=["chat.reply_style"]):
         raise HTTPException(status_code=500, detail="配置已写入，但热重载失败")
 
 
@@ -914,7 +924,7 @@ async def _delete_chat_prompt_rule(chat_session: ChatSession, prompt_index: int)
     reply_style_config["chat_prompts"] = prompts
     save_toml_with_format(config_data, str(config_path))
 
-    if not await config_manager.reload_config(changed_scopes=["bot"]):
+    if not await config_manager.reload_config(changed_scopes=["bot"], changed_sections=["chat.reply_style"]):
         raise HTTPException(status_code=500, detail="配置已写入，但热重载失败")
 
 
@@ -926,7 +936,6 @@ def _chat_session_detail_to_response(chat_session: ChatSession) -> Dict[str, Any
     core_chat_manager.get_existing_session_by_session_id(session_id)
 
     expression_use, expression_learn = ExpressionConfigUtils.get_expression_config_for_chat(session_id)
-    behavior_use, behavior_learn = BehaviorConfigUtils.get_behavior_config_for_chat(session_id)
     jargon_use, jargon_learn = JargonConfigUtils.get_jargon_config_for_chat(session_id)
     return {
         "session_id": session_id,
@@ -941,11 +950,6 @@ def _chat_session_detail_to_response(chat_session: ChatSession) -> Dict[str, Any
             "learn": expression_learn,
             "matched_rule": _target_config_to_dict(ExpressionConfigUtils._find_expression_config_item(session_id)),
         },
-        "behavior": {
-            "use": behavior_use,
-            "learn": behavior_learn,
-            "matched_rule": _target_config_to_dict(BehaviorConfigUtils._find_behavior_config_item(session_id)),
-        },
         "jargon": {
             "use": jargon_use,
             "learn": jargon_learn,
@@ -958,7 +962,7 @@ def _chat_session_detail_to_response(chat_session: ChatSession) -> Dict[str, Any
 
 
 def _get_adapter_policy_details(chat_session: ChatSession) -> List[Dict[str, Any]]:
-    """返回当前聊天流在各适配器插件中的路由与放行状态。"""
+    """返回当前聊天流在同平台适配器插件中的路由与放行状态。"""
 
     platform = str(chat_session.platform or "").strip()
     target_id = _get_chat_target_id(chat_session)
@@ -978,7 +982,7 @@ def _get_adapter_policy_details(chat_session: ChatSession) -> List[Dict[str, Any
     platform_io_manager = get_platform_io_manager()
     policy_manager = get_adapter_policy_manager()
     adapter_details: List[Dict[str, Any]] = []
-    for driver in platform_io_manager.driver_registry.list(kind=DriverKind.PLUGIN):
+    for driver in platform_io_manager.driver_registry.list(kind=DriverKind.PLUGIN, platform=chat_route_key.platform):
         descriptor = driver.descriptor
         metadata = descriptor.metadata if isinstance(descriptor.metadata, dict) else {}
         if str(metadata.get("plugin_type") or "").strip().lower() != "adapter":
@@ -1074,16 +1078,20 @@ def _get_running_adapter_identity(adapter_id: str) -> AdapterIdentity:
     return _get_driver_adapter_identity(driver)
 
 
-async def _save_adapter_policy_rule(chat_session: ChatSession, request: AdapterPolicyUpdateRequest) -> None:
+def _save_adapter_policy_rule(chat_session: ChatSession, request: AdapterPolicyUpdateRequest) -> None:
     """写入当前聊天流在指定适配器上的显式放行策略。"""
 
     target_id = _get_chat_target_id(chat_session)
     if not target_id:
         raise HTTPException(status_code=400, detail="聊天流缺少目标 ID，无法保存适配器策略")
 
+    identity = _get_running_adapter_identity(request.adapter_id)
+    if identity.platform != chat_session.platform.strip().lower():
+        raise HTTPException(status_code=400, detail="适配器与聊天流的平台不匹配，无法保存策略")
+
     try:
         get_adapter_policy_manager().set_chat_override(
-            _get_running_adapter_identity(request.adapter_id),
+            identity,
             chat_type=_get_chat_type(chat_session),
             target_id=target_id,
             action=request.action,
@@ -1096,10 +1104,6 @@ SESSION_DELETE_TABLES = [
     ("messages", "消息", Messages, "session_id"),
     ("expressions", "表达", Expression, "session_id"),
     ("tool_records", "工具调用记录", ToolRecord, "session_id"),
-    ("behavior_experience_paths", "行为经验路径", BehaviorExperiencePath, "session_id"),
-    ("behavior_scene_clusters", "行为场景簇", BehaviorSceneCluster, "session_id"),
-    ("behavior_actions", "行为动作", BehaviorAction, "session_id"),
-    ("behavior_outcomes", "行为结果", BehaviorOutcome, "session_id"),
     ("statistics_message_hourly", "消息统计", StatisticsMessageHourly, "chat_id"),
     ("high_frequency_terms", "高频词", HighFrequencyTerm, "chat_id"),
     ("chat_sessions", "聊天流记录", ChatSession, "session_id"),
@@ -1297,6 +1301,7 @@ def get_persons_by_platform(
 @router.get("/sessions")
 def get_chat_sessions(
     limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
 ) -> Dict[str, object]:
     """获取已存在的聊天流列表。"""
 
@@ -1307,7 +1312,9 @@ def get_chat_sessions(
                 case((col(ChatSession.last_active_timestamp).is_(None), 1), else_=0),
                 col(ChatSession.last_active_timestamp).desc(),
                 col(ChatSession.created_timestamp).desc(),
+                col(ChatSession.id).desc(),
             )
+            .offset(offset)
             .limit(limit)
         )
         chat_sessions = session.exec(statement).all()
@@ -1337,7 +1344,7 @@ def get_chat_sessions(
 
 @router.post("/sessions/adapter-status")
 def get_chat_sessions_adapter_status(request: SessionAdapterStatusRequest) -> Dict[str, object]:
-    """批量获取聊天流的适配器放行状态，供聊天页按放行状态分组。"""
+    """批量获取聊天流的适配器放行状态。"""
 
     normalized_session_ids = [
         session_id
@@ -1508,7 +1515,7 @@ async def upsert_chat_session_prompt(
 
 
 @router.put("/sessions/{session_id}/adapters/policy")
-async def update_chat_session_adapter_policy(
+def update_chat_session_adapter_policy(
     session_id: str,
     request: AdapterPolicyUpdateRequest,
 ) -> Dict[str, object]:
@@ -1526,7 +1533,7 @@ async def update_chat_session_adapter_policy(
     if chat_session is None:
         raise HTTPException(status_code=404, detail=f"聊天流不存在: {normalized_session_id}")
 
-    await _save_adapter_policy_rule(chat_session, request)
+    _save_adapter_policy_rule(chat_session, request)
     return {"success": True, "detail": _chat_session_detail_to_response(chat_session)}
 
 
@@ -1550,6 +1557,50 @@ def update_adapter_policy_defaults(request: AdapterPolicyDefaultsUpdateRequest) 
     return {"success": True, "defaults": manager.get_default_actions()}
 
 
+def _get_plugin_adapter_identity(plugin_id: str) -> Optional[AdapterIdentity]:
+    """按 plugin_id 查找运行中的适配器驱动并返回完整身份。
+
+    面板读写必须使用与运行时求值一致的完整身份（adapter_id、platform、
+    account_id 等），否则会读到/写出与实际生效规则脱靶的条目。
+    """
+
+    for driver in get_platform_io_manager().driver_registry.list():
+        descriptor = driver.descriptor
+        if (descriptor.plugin_id or "") != plugin_id:
+            continue
+        metadata = descriptor.metadata if isinstance(descriptor.metadata, dict) else {}
+        if str(metadata.get("plugin_type") or "").strip().lower() != "adapter":
+            continue
+        return _get_driver_adapter_identity(driver)
+    return None
+
+
+def _build_adapter_account_status(
+    manager: AdapterPolicyManager,
+    plugin_id: str,
+    identity: AdapterIdentity,
+    active_identity: Optional[AdapterIdentity],
+) -> Dict[str, object]:
+    """返回当前激活身份与规则归属信息，供面板区分专属规则、默认继承与历史账号条目。"""
+
+    return {
+        "active_identity": (
+            {
+                "adapter_id": active_identity.adapter_id,
+                "plugin_id": active_identity.plugin_id,
+                "gateway_name": active_identity.gateway_name,
+                "platform": active_identity.platform,
+                "account_id": active_identity.account_id,
+                "scope": active_identity.scope,
+            }
+            if active_identity is not None
+            else None
+        ),
+        "has_entry": manager.has_adapter_policy_entry(identity),
+        "account_entries": manager.list_plugin_entries(plugin_id),
+    }
+
+
 @router.get("/adapters/plugins/{plugin_id}/policy")
 def get_adapter_plugin_policy(plugin_id: str) -> Dict[str, object]:
     """返回指定适配器插件在主程序侧的群聊与私聊规则。"""
@@ -1558,9 +1609,12 @@ def get_adapter_plugin_policy(plugin_id: str) -> Dict[str, object]:
     if not normalized_plugin_id:
         raise HTTPException(status_code=400, detail="缺少适配器插件 ID")
 
+    # 优先用运行中驱动的完整身份；未运行时退回 plugin_id 单键做只读展示
+    running_identity = _get_plugin_adapter_identity(normalized_plugin_id)
+    identity = running_identity or AdapterIdentity(plugin_id=normalized_plugin_id)
     manager = get_adapter_policy_manager()
     try:
-        policy = manager.get_adapter_policy(AdapterIdentity(plugin_id=normalized_plugin_id))
+        policy = manager.get_adapter_policy(identity)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
@@ -1568,6 +1622,8 @@ def get_adapter_plugin_policy(plugin_id: str) -> Dict[str, object]:
         "plugin_id": normalized_plugin_id,
         "global_defaults": manager.get_default_actions(),
         "policy": policy,
+        # 当前激活身份换账号登录后实时变化
+        **_build_adapter_account_status(manager, normalized_plugin_id, identity, running_identity),
     }
 
 
@@ -1576,17 +1632,30 @@ def update_adapter_plugin_policy(
     plugin_id: str,
     request: AdapterHostPolicyUpdateRequest,
 ) -> Dict[str, object]:
-    """更新指定适配器插件在主程序侧的群聊与私聊规则。"""
+    """更新指定适配器插件在主程序侧的群聊与私聊规则。
+
+    纯同步文件读写，写成 `def` 由 FastAPI 交给线程池执行，避免自动保存
+    的写入占用 WebUI 事件循环。
+    """
 
     normalized_plugin_id = str(plugin_id or "").strip()
     if not normalized_plugin_id:
         raise HTTPException(status_code=400, detail="缺少适配器插件 ID")
 
+    # 写入必须能确定规则归属；适配器未运行时拒绝而不是猜一个身份静默写出死规则
+    identity = _get_plugin_adapter_identity(normalized_plugin_id)
+    if identity is None:
+        raise HTTPException(status_code=404, detail="适配器当前未运行，无法确定规则归属，请先启动适配器")
+
     manager = get_adapter_policy_manager()
     try:
         manager.set_adapter_policy(
-            AdapterIdentity(plugin_id=normalized_plugin_id),
+            identity,
             request.model_dump(),
+            policy_groups=(
+                [group.model_dump() for group in request.policy_groups] if request.policy_groups is not None else None
+            ),
+            active_group=request.active_group,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1594,7 +1663,8 @@ def update_adapter_plugin_policy(
         "success": True,
         "plugin_id": normalized_plugin_id,
         "global_defaults": manager.get_default_actions(),
-        "policy": manager.get_adapter_policy(AdapterIdentity(plugin_id=normalized_plugin_id)),
+        "policy": manager.get_adapter_policy(identity),
+        **_build_adapter_account_status(manager, normalized_plugin_id, identity, identity),
     }
 
 

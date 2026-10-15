@@ -4,8 +4,12 @@ import { createPortal } from 'react-dom'
 import {
   AlertTriangle,
   ArrowLeft,
+  ArrowUpLeft,
+  ArrowUpRight,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Code2,
   Copy,
@@ -41,12 +45,16 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Switch } from '@/components/ui/switch'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
+import { MOBILE_GLASS_CLASS } from '@/components/layout/mobile-glass'
+import { MobileHeaderActions } from '@/components/layout/MobileHeaderActions'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import { resolveApiPath } from '@/lib/api-base'
 import { useAvatarFetchEnabled } from '@/lib/avatar-url'
 import {
+  findReasoningToolCallRecords,
+  findReasoningToolCallSource,
   getReasoningPromptFile,
   getReasoningPromptHtmlUrl,
   listReasoningPromptFiles,
@@ -55,6 +63,7 @@ import {
   type ReasoningPromptFile,
   type ReasoningPromptSessionInfo,
   type ReasoningPromptStageInfo,
+  type ReasoningToolCallRecord,
 } from '@/lib/reasoning-process-api'
 import { cn } from '@/lib/utils'
 import {
@@ -521,6 +530,8 @@ export function ReasoningProcessPage({
   const [replayPanelOpen, setReplayPanelOpen] = useState(false)
   const [replayItems, setReplayItems] = useState<EditableReplayItem[]>([])
   const [eraseNicknameOnExport, setEraseNicknameOnExport] = useState(true)
+  const [toolCallRecords, setToolCallRecords] = useState<ReasoningToolCallRecord[]>([])
+  const [toolCallSource, setToolCallSource] = useState<ReasoningToolCallRecord | null>(null)
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const stageCards = useMemo(() => {
@@ -533,6 +544,15 @@ export function ReasoningProcessPage({
   }, [sessionInfos])
   const structuredPrompt = useMemo(() => parseStructuredPrompt(jsonContent), [jsonContent])
   const avatarFetchEnabled = useAvatarFetchEnabled()
+  const outputToolCallIds = useMemo(
+    () =>
+      (structuredPrompt?.output_items ?? []).flatMap((item) =>
+        item.item_type === 'FunctionCallItem' && isRecord(item.tool_call) && item.tool_call.call_id
+          ? [String(item.tool_call.call_id)]
+          : []
+      ),
+    [structuredPrompt]
+  )
   const hasToolbarContent = browsingStage || Boolean(returnTo)
 
   useEffect(() => {
@@ -547,6 +567,41 @@ export function ReasoningProcessPage({
   useEffect(() => {
     setToolbarRoot(toolbarContainerId ? document.getElementById(toolbarContainerId) : null)
   }, [toolbarContainerId])
+
+  // 输出里的工具调用（如 reply）如果留有自己的推理记录，查出它们的位置，供输出卡片上的跳转键使用
+  const selectedSessionId = selected?.session_id
+  const selectedStage = selected?.stage
+  const selectedStem = selected?.stem
+  useEffect(() => {
+    let ignore = false
+    setToolCallRecords([])
+    if (!selectedSessionId || !selectedStage || !selectedStem || outputToolCallIds.length === 0) {
+      return
+    }
+
+    findReasoningToolCallRecords({
+      session: selectedSessionId,
+      sourceStage: selectedStage,
+      sourceStem: selectedStem,
+      callIds: outputToolCallIds,
+    })
+      .then((data) => {
+        if (ignore) return
+        setToolCallRecords(data.records)
+      })
+      .catch((err) => {
+        if (ignore) return
+        toast({
+          title: '查找工具推理记录失败',
+          description: err instanceof Error ? err.message : '请稍后再试',
+          variant: 'destructive',
+        })
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [outputToolCallIds, selectedSessionId, selectedStage, selectedStem, toast])
 
   useEffect(() => {
     const frameId = requestAnimationFrame(() => {
@@ -800,6 +855,19 @@ export function ReasoningProcessPage({
     })
   }
 
+  function openReasoningRecord(target: ReasoningToolCallRecord) {
+    setStage(target.stage)
+    setSession(target.session)
+    setActionFilter('')
+    setSearch('')
+    setItems([])
+    setTotal(0)
+    setSelected(null)
+    setPage(1)
+    setTargetStem(target.stem)
+    setBrowsingStage(true)
+  }
+
   async function handleConfirmClearStage() {
     if (!pendingClearStage) return
     const stageName = pendingClearStage.name
@@ -931,10 +999,42 @@ export function ReasoningProcessPage({
     () => extractReasoningHeaderMeta(structuredPrompt?.request?.selection_reason),
     [structuredPrompt]
   )
+
+  // 工具自己的推理记录（如回复器）带有调用 ID：反查发起这次调用的记录，供标题栏的「前往」键使用
+  const selectedCallId = headerMeta.callId
+  useEffect(() => {
+    let ignore = false
+    setToolCallSource(null)
+    if (!selectedSessionId || !selectedStage || !selectedStem || !selectedCallId) {
+      return
+    }
+
+    findReasoningToolCallSource({
+      session: selectedSessionId,
+      stage: selectedStage,
+      stem: selectedStem,
+      callId: selectedCallId,
+    })
+      .then((data) => {
+        if (!ignore) setToolCallSource(data.record)
+      })
+      .catch((err) => {
+        if (ignore) return
+        toast({
+          title: '查找发起调用的推理记录失败',
+          description: err instanceof Error ? err.message : '请稍后再试',
+          variant: 'destructive',
+        })
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [selectedCallId, selectedSessionId, selectedStage, selectedStem, toast])
   const selectedTokenText = selected
     ? formatTokenUsage(selected.prompt_tokens, selected.completion_tokens, selected.total_tokens)
     : ''
-  const renderRefreshButton = (variant: 'default' | 'topbar' | 'toolbar' = 'default') => (
+  const renderRefreshButton = (variant: 'default' | 'toolbar' = 'default') => (
     <Button
       variant="outline"
       size="sm"
@@ -944,7 +1044,6 @@ export function ReasoningProcessPage({
       disabled={loading}
       className={cn(
         'shrink-0 p-0',
-        variant === 'topbar' && 'h-9 w-9',
         variant === 'toolbar' && 'h-8 w-8',
         variant === 'default' && 'h-9 w-9 sm:h-10 sm:w-10'
       )}
@@ -952,12 +1051,12 @@ export function ReasoningProcessPage({
       <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
     </Button>
   )
-  const renderReturnButton = () =>
+  const renderReturnButton = (compact = false) =>
     returnTo ? (
       <Button
         variant="outline"
         size="sm"
-        className="h-9 shrink-0 gap-1.5 sm:h-10"
+        className={cn('shrink-0 gap-1.5', compact ? 'h-9' : 'h-9 sm:h-10')}
         onClick={() => navigate({ to: returnTo })}
         title="返回麦麦观察"
       >
@@ -1036,7 +1135,7 @@ export function ReasoningProcessPage({
 
     return (
       <>
-        <div className={cn('relative', inToolbar ? 'w-full sm:w-[140px]' : undefined)}>
+        <div className={cn('relative', inToolbar ? 'w-full sm:w-[140px]' : 'w-24 shrink-0')}>
           <Input
             value={actionFilter}
             onChange={(event) => resetToFirstPage(() => setActionFilter(event.target.value))}
@@ -1048,7 +1147,9 @@ export function ReasoningProcessPage({
         <div
           className={cn(
             'relative',
-            inToolbar ? 'min-w-0 flex-[1_1_220px] sm:max-w-[520px] sm:min-w-[260px]' : undefined
+            inToolbar
+              ? 'min-w-0 flex-[1_1_220px] sm:max-w-[520px] sm:min-w-[260px]'
+              : 'min-w-0 flex-1'
           )}
         >
           <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
@@ -1056,7 +1157,7 @@ export function ReasoningProcessPage({
             value={search}
             onChange={(event) => resetToFirstPage(() => setSearch(event.target.value))}
             className={cn(controlClassName, 'pl-9')}
-            placeholder="搜索会话、文件名、模型或记录摘要"
+            placeholder={inToolbar ? '搜索会话、文件名、模型或记录摘要' : '搜索会话、模型或摘要'}
           />
         </div>
       </>
@@ -1069,22 +1170,38 @@ export function ReasoningProcessPage({
     </>
   )
   const toolbarContent = (
-    <div className="flex w-full min-w-0 flex-wrap items-center justify-start gap-1.5 sm:justify-end">
+    <div
+      data-reasoning-toolbar-mobile-only={embedded ? 'true' : undefined}
+      className={cn(
+        'flex w-full min-w-0 flex-wrap items-center justify-start gap-1.5 sm:justify-end',
+        embedded && 'sm:hidden'
+      )}
+    >
       {renderReturnButton()}
       {!embedded && browsingStage && renderBrowsingControls(true)}
       {!embedded && renderRefreshButton('default')}
     </div>
   )
+  // 嵌入模式下「返回观察」键放在顶栏；顶栏操作区在移动端不显示，这时才退回到独立工具栏。
+  // 没有这颗键就不渲染，让日志页把空工具栏整行收起
   const toolbarPortal =
-    embedded && toolbarVisible && toolbarRoot ? createPortal(toolbarContent, toolbarRoot) : null
+    embedded && toolbarVisible && toolbarRoot && returnTo
+      ? createPortal(toolbarContent, toolbarRoot)
+      : null
   const topbarActionsPortal =
-    embedded && toolbarVisible && !browsingStage && topbarActionsRoot
-      ? createPortal(renderRefreshButton('topbar'), topbarActionsRoot)
+    embedded && toolbarVisible && topbarActionsRoot && returnTo
+      ? createPortal(
+          <div className="flex items-center gap-2">
+            {renderReturnButton(true)}
+          </div>,
+          topbarActionsRoot
+        )
       : null
   const showBrowsingControlsInline = browsingStage && (!embedded || !toolbarVisible || !toolbarRoot)
   const renderStageCard = (item: ReasoningPromptStageInfo) => (
     <div
       key={item.name}
+      data-reasoning-stage-card="true"
       className={cn(
         'group bg-background relative flex min-h-20 flex-col rounded-md border text-left shadow-sm',
         'transition-[border-color,background-color,box-shadow,transform] duration-150 ease-out',
@@ -1193,13 +1310,33 @@ export function ReasoningProcessPage({
 
   return (
     <div
+      data-reasoning-process="true"
       className={cn(
         'flex h-full min-h-0 flex-col gap-2 overflow-hidden sm:gap-3',
-        embedded ? 'p-0' : 'p-2 lg:p-4'
+        embedded ? 'p-0' : 'p-1'
       )}
     >
+      {/* 手机页头右上角：导出当前推理过程（嵌在日志页时只在推理页签可见时挂上） */}
+      {(!embedded || toolbarVisible) && (
+        <MobileHeaderActions>
+          <button
+            type="button"
+            aria-label="导出推理过程"
+            onClick={handleDownloadReasoningJson}
+            data-mobile-header-icon-button="true"
+            className={cn('flex h-11 w-11 items-center justify-center rounded-full', MOBILE_GLASS_CLASS)}
+          >
+            <Download className="h-5 w-5" strokeWidth={1.7} />
+          </button>
+        </MobileHeaderActions>
+      )}
       {toolbarPortal}
       {topbarActionsPortal}
+      {embedded && !browsingStage && (
+        <div className="flex shrink-0 justify-end px-2 pt-2 sm:px-3">
+          {renderRefreshButton('toolbar')}
+        </div>
+      )}
 
       <AlertDialog
         open={Boolean(pendingClearStage)}
@@ -1280,31 +1417,38 @@ export function ReasoningProcessPage({
       ) : (
         <div
           className={cn(
-            'grid min-h-0 flex-1 grid-cols-1 gap-2 transition-[gap,grid-template-columns] duration-300 ease-out lg:gap-3',
+            // 移动端列表与详情纵向堆叠，整体可上下滚动；桌面端各栏各自滚动
+            'grid min-h-0 flex-1 grid-cols-1 gap-2 overflow-x-hidden overflow-y-auto transition-[gap,grid-template-columns] duration-300 ease-out lg:overflow-visible',
             replayPanelOpen
-              ? 'lg:grid-cols-[280px_minmax(0,1fr)_420px] xl:grid-cols-[300px_minmax(0,1fr)_460px]'
-              : 'lg:grid-cols-[280px_minmax(0,1fr)]'
+              ? 'lg:grid-cols-[320px_minmax(0,1fr)_420px] xl:grid-cols-[360px_minmax(0,1fr)_460px]'
+              : 'lg:grid-cols-[340px_minmax(0,1fr)] xl:grid-cols-[380px_minmax(0,1fr)]'
           )}
         >
-          <div className="bg-background flex h-[32vh] min-h-[180px] flex-col overflow-hidden rounded-md border transition-[height,min-height,opacity,transform,border-width] duration-300 ease-out lg:h-auto lg:min-h-0 lg:transition-[opacity,transform,border-width]">
-            <div className="text-muted-foreground flex h-8 flex-shrink-0 items-center justify-between border-b px-2.5 text-xs">
-              <span>{total} 条记录</span>
-              <span>
-                第 {page} / {totalPages} 页
-              </span>
-            </div>
+          <div
+            data-reasoning-panel="true"
+            className="bg-background flex min-h-0 flex-col overflow-hidden rounded-md border transition-[opacity,transform,border-width] duration-300 ease-out max-lg:self-start"
+          >
             {embedded && browsingStage && (
-              <div className="flex flex-shrink-0 flex-col gap-2 border-b p-2">
+              <div
+                data-reasoning-panel-toolbar="true"
+                className="flex flex-shrink-0 flex-col gap-2 border-b p-2"
+              >
                 <div className="flex items-center gap-2">
                   {renderTypeButton(true)}
                   <div className="min-w-0 flex-1">{renderSessionSelect('sidebarRow')}</div>
                   {renderRefreshButton('toolbar')}
                 </div>
-                {renderBrowsingFilters('sidebar')}
+                <div className="flex items-center gap-2">{renderBrowsingFilters('sidebar')}</div>
               </div>
             )}
-            <ScrollArea className="min-h-0 flex-1">
-              <div className="space-y-1 p-1.5 sm:p-2">
+            <ScrollArea
+              data-reasoning-screen="true"
+              data-reasoning-list="true"
+              className="min-h-0 flex-1 max-lg:flex-none max-lg:overflow-visible max-lg:[&>[data-dashboard-scrollbar]]:hidden"
+              viewportClassName="max-lg:h-auto max-lg:!overflow-visible max-lg:overscroll-auto"
+              scrollbars="vertical"
+            >
+              <div data-reasoning-list-items="true" className="space-y-1 p-1.5 sm:p-2">
                 {items.map((item) => {
                   const active =
                     selected?.stage === item.stage &&
@@ -1315,11 +1459,19 @@ export function ReasoningProcessPage({
                   const rawPreviewText =
                     item.display_title ||
                     (item.stage === 'replyer' ? item.output_preview : item.action_preview)
-                  const previewText = rawPreviewText ? formatPromptPreviewText(rawPreviewText) : ''
+                  // 规划器没有调用任何工具时，这一轮就是不回复；用次要颜色标出，不和有动作的记录抢视线
+                  const noReply = !rawPreviewText && item.stage === 'planner'
+                  const previewText = rawPreviewText
+                    ? formatPromptPreviewText(rawPreviewText)
+                    : noReply
+                      ? '不回复'
+                      : ''
                   return (
                     <button
                       key={`${item.stage}/${item.session_id}/${item.stem}`}
                       type="button"
+                      data-reasoning-list-item="true"
+                      data-active={active}
                       onClick={() => setSelected(item)}
                       className={cn(
                         'flex w-full flex-col gap-1.5 rounded-md border px-2.5 py-2 text-left text-sm transition-colors sm:gap-2 sm:px-3',
@@ -1330,18 +1482,16 @@ export function ReasoningProcessPage({
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 flex-1">
-                          {(item.has_behavior_choice_insert || previewText) && (
+                          {previewText && (
                             <div className="flex min-w-0 items-start gap-1.5">
-                              {item.has_behavior_choice_insert && (
-                                <span
-                                  className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-violet-500"
-                                  title="包含行为表现参考"
-                                  aria-label="包含行为表现参考"
-                                />
-                              )}
                               {previewText && (
                                 <div
-                                  className="text-foreground line-clamp-2 min-w-0 text-sm font-medium"
+                                  className={cn(
+                                    'line-clamp-2 min-w-0 text-sm',
+                                    noReply
+                                      ? 'text-muted-foreground font-normal'
+                                      : 'text-foreground font-medium'
+                                  )}
                                   title={previewText}
                                 >
                                   {previewText}
@@ -1394,27 +1544,49 @@ export function ReasoningProcessPage({
                 )}
               </div>
             </ScrollArea>
-            <div className="flex h-11 flex-shrink-0 items-center justify-between border-t px-3 lg:h-12">
+            <div
+              data-reasoning-panel-footer="true"
+              className="flex h-10 flex-shrink-0 items-center justify-between border-t px-2"
+            >
               <Button
                 variant="outline"
                 size="sm"
+                className="h-8 w-8 p-0"
+                aria-label="上一页"
+                title="上一页"
                 disabled={page <= 1 || loading}
                 onClick={() => setPage((current) => Math.max(1, current - 1))}
               >
-                上一页
+                <ChevronLeft className="h-4 w-4" />
               </Button>
+              {/* 记录数和页码并进翻页栏，列表上方不再单独占一行 */}
+              <div
+                data-reasoning-panel-count="true"
+                className="text-muted-foreground flex min-w-0 flex-1 items-center justify-center gap-3 px-2 text-xs"
+              >
+                <span className="truncate">{total} 条记录</span>
+                <span className="shrink-0">
+                  第 {page} / {totalPages} 页
+                </span>
+              </div>
               <Button
                 variant="outline"
                 size="sm"
+                className="h-8 w-8 p-0"
+                aria-label="下一页"
+                title="下一页"
                 disabled={page >= totalPages || loading}
                 onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
               >
-                下一页
+                <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
           </div>
 
-          <div className="bg-background flex min-h-0 flex-col overflow-hidden rounded-md border">
+          <div
+            data-reasoning-panel="true"
+            className="bg-background flex min-h-0 flex-col overflow-hidden rounded-md border max-lg:self-start"
+          >
             {replayPanelOpen ? (
               <ReplayItemEditorColumn
                 selectedTitle={selectedTitle}
@@ -1431,13 +1603,21 @@ export function ReasoningProcessPage({
                 className="flex min-h-0 flex-1 flex-col"
               >
                 <div className="relative min-h-0 flex-1 overflow-hidden">
-                  <ScrollArea className="h-full transition-transform duration-300 ease-out">
-                    <div className="min-h-full">
-                      <div className="flex min-h-12 flex-col gap-2 border-b px-3 py-2 sm:min-h-14 sm:px-4 sm:py-3 xl:flex-row xl:items-center xl:justify-between">
+                  <ScrollArea
+                    data-reasoning-screen="true"
+                    className="h-full transition-transform duration-300 ease-out max-lg:h-auto max-lg:flex-none max-lg:overflow-visible max-lg:[&>[data-dashboard-scrollbar]]:hidden"
+                    scrollbars="vertical"
+                    viewportClassName="overscroll-auto max-lg:h-auto max-lg:!overflow-visible lg:overscroll-contain"
+                  >
+                    <div className="min-h-full min-w-0">
+                      <div
+                        data-reasoning-panel-header="true"
+                        className="flex min-h-10 flex-col gap-1.5 border-b px-3 py-1.5 sm:px-4 sm:py-2 xl:flex-row xl:items-center xl:justify-between"
+                      >
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-sm font-medium">{selectedTitle}</div>
                           {(headerMeta.sessionId || headerMeta.callId || selectedTokenText) && (
-                            <div className="text-muted-foreground mt-1 flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-[11px] leading-4">
+                            <div className="text-muted-foreground mt-0.5 flex min-w-0 flex-wrap gap-x-3 gap-y-0 text-[11px] leading-4">
                               {headerMeta.sessionId && (
                                 <span className="min-w-0 truncate">
                                   会话ID: {headerMeta.sessionId}
@@ -1459,26 +1639,58 @@ export function ReasoningProcessPage({
                         </div>
                         {selected && (
                           <div className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-2 text-xs">
-                            <TabsList className="h-8 rounded-md">
-                              {previewTabMode === 'structured' && (
-                                <TabsTrigger value="structured" className="h-6 gap-1 px-2 text-xs">
-                                  <FileJson className="h-3.5 w-3.5" />
-                                  结构化
-                                </TabsTrigger>
-                              )}
-                              {previewTabMode === 'text' && (
-                                <TabsTrigger value="text" className="h-6 gap-1 px-2 text-xs">
-                                  <FileText className="h-3.5 w-3.5" />
-                                  文本
-                                </TabsTrigger>
-                              )}
-                              {selected.html_path && (
-                                <TabsTrigger value="html" className="h-6 gap-1 px-2 text-xs">
-                                  <Code2 className="h-3.5 w-3.5" />
-                                  HTML
-                                </TabsTrigger>
-                              )}
-                            </TabsList>
+                            {/* 只有结构化一种视图时不显示切换键；旧记录带文本或 HTML 时才需要切换 */}
+                            {(previewTabMode !== 'structured' || selected.html_path) && (
+                              <TabsList className="h-8 rounded-md">
+                                {previewTabMode === 'structured' && (
+                                  <TabsTrigger
+                                    value="structured"
+                                    className="h-6 gap-1 px-2 text-xs"
+                                  >
+                                    <FileJson className="h-3.5 w-3.5" />
+                                    结构化
+                                  </TabsTrigger>
+                                )}
+                                {previewTabMode === 'text' && (
+                                  <TabsTrigger value="text" className="h-6 gap-1 px-2 text-xs">
+                                    <FileText className="h-3.5 w-3.5" />
+                                    文本
+                                  </TabsTrigger>
+                                )}
+                                {selected.html_path && (
+                                  <TabsTrigger value="html" className="h-6 gap-1 px-2 text-xs">
+                                    <Code2 className="h-3.5 w-3.5" />
+                                    HTML
+                                  </TabsTrigger>
+                                )}
+                              </TabsList>
+                            )}
+                            {/* 两个方向的跳转键都放在标题栏：去发起调用的记录，或去工具自己的推理记录 */}
+                            {toolCallRecords.map((record) => (
+                              <Button
+                                key={record.call_id}
+                                variant="outline"
+                                size="sm"
+                                className="h-8 gap-1.5"
+                                onClick={() => openReasoningRecord(record)}
+                                title={`跳转到这次工具调用自己的推理记录（${record.call_id}）`}
+                              >
+                                <ArrowUpRight className="h-3.5 w-3.5" />
+                                前往{formatStageName(record.stage)}
+                              </Button>
+                            ))}
+                            {toolCallSource && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-8 gap-1.5"
+                                onClick={() => openReasoningRecord(toolCallSource)}
+                                title="跳转到发起这次工具调用的推理记录"
+                              >
+                                <ArrowUpLeft className="h-3.5 w-3.5" />
+                                前往{formatStageName(toolCallSource.stage)}
+                              </Button>
+                            )}
                             <Button
                               variant="outline"
                               size="sm"
@@ -1563,12 +1775,6 @@ export function ReasoningProcessPage({
                                 txt
                               </span>
                             )}
-                            {selected.json_path && (
-                              <span className="inline-flex items-center gap-1">
-                                <FileJson className="h-3.5 w-3.5" />
-                                json
-                              </span>
-                            )}
                             {selected.html_path && (
                               <span className="inline-flex items-center gap-1">
                                 <FileCode2 className="h-3.5 w-3.5" />
@@ -1589,6 +1795,16 @@ export function ReasoningProcessPage({
                             {selected?.stage === 'llm_error' && (
                               <LlmErrorDetails prompt={structuredPrompt} />
                             )}
+
+                            {/* 最终输出放在最上面，用一道粗分割线和下面的请求过程隔开 */}
+                            <div data-reasoning-output="true" className="border-b-2 pb-3">
+                              <ContextItemTimeline
+                                title={structuredPrompt.presentation?.output_title || '输出 Items'}
+                                items={structuredPrompt.output_items}
+                                avatarMap={messageAvatarMap}
+                                botSelfNames={botSelfNames}
+                              />
+                            </div>
 
                             {headerMeta.remainingText && (
                               <div className="rounded-md border p-2.5 sm:p-3">
@@ -1660,13 +1876,6 @@ export function ReasoningProcessPage({
                             <GenerationAttemptTimeline
                               attempts={structuredPrompt.generation_attempts}
                               referenceRequestItems={structuredPrompt.request_items}
-                            />
-
-                            <ContextItemTimeline
-                              title={structuredPrompt.presentation?.output_title || '输出 Items'}
-                              items={structuredPrompt.output_items}
-                              avatarMap={messageAvatarMap}
-                              botSelfNames={botSelfNames}
                             />
 
                             {structuredPrompt.tool_definitions &&

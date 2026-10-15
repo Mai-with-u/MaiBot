@@ -27,6 +27,7 @@ from src.llm_models.request_snapshot import (
     deserialize_model_info_snapshot,
     deserialize_persisted_context_items_snapshot,
     deserialize_response_format_snapshot,
+    read_request_snapshot,
     deserialize_structured_context_items_snapshot,
     deserialize_tool_options_snapshot,
     read_structured_audio_base64,
@@ -35,7 +36,7 @@ from src.llm_models.request_snapshot import (
 
 def _load_snapshot(snapshot_path: Path) -> dict[str, Any]:
     """加载请求快照。"""
-    return json.loads(snapshot_path.read_text(encoding="utf-8"))
+    return read_request_snapshot(snapshot_path)
 
 
 def _resolve_api_provider(provider_name: str):

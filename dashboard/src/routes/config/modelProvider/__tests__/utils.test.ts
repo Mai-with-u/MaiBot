@@ -16,13 +16,13 @@ const makeProvider = (overrides: Partial<APIProvider> = {}): APIProvider => ({
 })
 
 describe('cleanProviderData', () => {
-  it('数值字段为 null 时填充默认值 2/30/10', () => {
+  it('数值字段为 null 时不下发，交由后端填充默认值', () => {
     const cleaned = cleanProviderData(
       makeProvider({ max_retry: null, timeout: null, retry_interval: null })
     )
-    expect(cleaned.max_retry).toBe(2)
-    expect(cleaned.timeout).toBe(30)
-    expect(cleaned.retry_interval).toBe(10)
+    expect(cleaned.max_retry).toBeUndefined()
+    expect(cleaned.timeout).toBeUndefined()
+    expect(cleaned.retry_interval).toBeUndefined()
   })
 
   it('已有数值不被覆盖，包括 0 这样的合法边界值', () => {

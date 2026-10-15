@@ -1,7 +1,6 @@
 from typing import Any, Dict, Optional
 
 from src.chat.message_receive.chat_manager import BotChatSession, chat_manager as _chat_manager
-from src.config.config import global_config
 from src.common.logger import get_logger
 
 from .maisaka_generator import MaisakaReplyGenerator
@@ -14,11 +13,6 @@ class ReplyerManager:
 
     def __init__(self) -> None:
         self._repliers: Dict[str, Any] = {}
-
-    @staticmethod
-    def _get_maisaka_generator_type() -> str:
-        """返回当前配置下 Maisaka replyer 的消息模式。"""
-        return global_config.visual.replyer_mode
 
     def get_replyer(
         self,
@@ -33,8 +27,7 @@ class ReplyerManager:
             logger.warning("[ReplyerManager] 缺少 stream_id，无法获取 replyer")
             return None
 
-        generator_type = self._get_maisaka_generator_type() if replyer_type == "maisaka" else ""
-        cache_key = f"{replyer_type}:{generator_type}:{stream_id}"
+        cache_key = f"{replyer_type}:{stream_id}"
         if cache_key in self._repliers:
             return self._repliers[cache_key]
 

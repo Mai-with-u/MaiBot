@@ -306,6 +306,60 @@ async def test_person_fact_writeback_uses_resolved_person_id(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_person_fact_writeback_marks_verified_user_statement_stable(monkeypatch):
+    from src.services import person_fact_verifier
+
+    stored_payloads: list[dict[str, object]] = []
+    user_message = SimpleNamespace(
+        message_id="user-1",
+        platform="qq",
+        user_id="10001",
+        processed_plain_text="我喜欢猫。",
+        message_info=SimpleNamespace(user_info=SimpleNamespace(user_id="10001")),
+    )
+
+    class FakePerson:
+        person_id = "person-target"
+        person_name = "测试用户"
+        nickname = "测试用户"
+        is_known = True
+
+    service = memory_flow_module.PersonFactWritebackService.__new__(memory_flow_module.PersonFactWritebackService)
+    service._resolve_target_person = lambda message: FakePerson()
+
+    async def fake_extract_facts(person, reply_text, user_evidence_text):
+        assert "消息ID: user-1" in user_evidence_text
+        return [{"fact": "测试用户喜欢猫。", "evidence_message_id": "user-1", "evidence_quote": "我喜欢猫。"}]
+
+    async def fake_store(person_name, memory_content, chat_id, **kwargs):
+        stored_payloads.append(kwargs)
+
+    service._extract_facts = fake_extract_facts
+    monkeypatch.setattr(memory_flow_module, "store_person_memory_from_answer", fake_store)
+    monkeypatch.setattr(memory_flow_module, "find_messages", lambda **kwargs: [user_message])
+    monkeypatch.setattr(memory_flow_module, "is_bot_self", lambda platform, user_id: False)
+    monkeypatch.setattr(memory_flow_module, "get_person_id", lambda platform, user_id: "person-target")
+    monkeypatch.setattr(person_fact_verifier, "find_messages", lambda **kwargs: [user_message])
+    monkeypatch.setattr(person_fact_verifier, "get_person_id", lambda platform, user_id: "person-target")
+
+    message = SimpleNamespace(
+        processed_plain_text="我记住了。",
+        session_id="session-1",
+        reply_to="",
+        timestamp=20.0,
+        session=SimpleNamespace(platform="qq", user_id="bot-1", group_id="", session_id="session-1"),
+    )
+    await service._handle_message(message)
+
+    assert stored_payloads[0]["fact_claim"] == {
+        "authority": "direct_user",
+        "stability": "stable",
+        "profile_section": "stable_facts",
+    }
+    assert stored_payloads[0]["evidence_message_ids"] == ["user-1"]
+
+
+@pytest.mark.asyncio
 async def test_chat_summary_writeback_service_triggers_when_threshold_reached(monkeypatch):
     events: list[tuple[str, object]] = []
 

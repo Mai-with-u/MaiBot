@@ -130,6 +130,7 @@ describe('useImportForm', () => {
       act(() => {
         result.current.setUnifiedImportMode('text')
         result.current.setPasteContent('要导入的内容')
+        result.current.setImportContentCategory('')
       })
       expect(result.current.importContentCategoryMissing).toBe(true)
 
@@ -174,10 +175,10 @@ describe('useImportForm', () => {
       }
     })
 
-    it('未选择类别时保留 auto 载荷供旧任务重试', () => {
+    it('默认以叙事资料类别构建重试载荷', () => {
       const { result } = renderForm()
       expect(result.current.buildCommonImportPayload()).toMatchObject({
-        strategy_override: 'auto',
+        strategy_override: 'narrative',
         chat_log: false,
       })
     })
@@ -253,7 +254,10 @@ describe('useImportForm 模式切换校验', () => {
     } as never)
     const { result, onCreated } = renderForm()
 
-    act(() => result.current.setUnifiedImportMode('text'))
+    act(() => {
+      result.current.setUnifiedImportMode('text')
+      result.current.setImportContentCategory('')
+    })
     expect(result.current.importContentCategoryMissing).toBe(true)
     await act(async () => {
       await result.current.submitImportByMode()
@@ -679,7 +683,7 @@ describe('useImportForm 空 counts 与默认值', () => {
     })
     expect(result.current.buildCommonImportPayload()).toEqual({
       llm_enabled: true,
-      strategy_override: 'auto',
+      strategy_override: 'narrative',
       chat_log: false,
       scope_type: 'global',
       dedupe_policy: 'content_hash',

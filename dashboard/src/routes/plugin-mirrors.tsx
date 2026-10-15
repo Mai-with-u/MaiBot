@@ -1,7 +1,8 @@
-﻿import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { backendApi } from '@/lib/http'
+import { invalidatePluginMarketCache } from '@/lib/plugin-api'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -25,7 +26,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { ArrowLeft, Plus, Pencil, Trash2, Loader2, AlertTriangle, ChevronUp, ChevronDown } from 'lucide-react'
+import { ArrowLeft, Plus, Pencil, Trash2, Loader2, AlertTriangle, ChevronUp, ChevronDown, RotateCcw } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 
 interface MirrorConfig {
@@ -39,8 +40,6 @@ interface MirrorConfig {
   updated_at?: string
 }
 
-const PLUGIN_MARKET_COMPATIBLE_ONLY_KEY = 'plugins-market-compatible-only'
-
 interface PluginMirrorsPageProps {
   embedded?: boolean
 }
@@ -53,9 +52,27 @@ export function PluginMirrorsPage({ embedded = false }: PluginMirrorsPageProps) 
   const [editingMirror, setEditingMirror] = useState<MirrorConfig | null>(null)
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
-  const [showCompatibleOnly, setShowCompatibleOnly] = useState(
-    () => localStorage.getItem(PLUGIN_MARKET_COMPATIBLE_ONLY_KEY) !== 'false'
-  )
+
+  const sourceQuery = useQuery({
+    queryKey: ['plugin-market-source'],
+    queryFn: () => backendApi.get<{ use_github: boolean }>('/api/webui/plugins/marketplace/source', {
+      errorMessage: '获取插件市场数据源失败',
+    }),
+  })
+  const sourceMutation = useMutation({
+    mutationFn: (use_github: boolean) => backendApi.put<{ use_github: boolean }>(
+      '/api/webui/plugins/marketplace/source', {
+        body: { use_github }, errorMessage: '更新插件市场数据源失败',
+      }
+    ),
+    meta: { errorTitle: '切换数据源失败' },
+    onSuccess: (data) => {
+      queryClient.setQueryData(['plugin-market-source'], data)
+      invalidatePluginMarketCache()
+      void queryClient.invalidateQueries({ queryKey: ['plugin-detail'] })
+      toast({ title: '数据源已切换', description: '返回插件市场后将加载新的数据。' })
+    },
+  })
 
   // 琛ㄥ崟鐘舵€?
   const [formData, setFormData] = useState({
@@ -82,9 +99,17 @@ export function PluginMirrorsPage({ embedded = false }: PluginMirrorsPageProps) 
   const invalidateMirrors = () =>
     queryClient.invalidateQueries({ queryKey: ['plugin-mirrors'] })
 
-  useEffect(() => {
-    localStorage.setItem(PLUGIN_MARKET_COMPATIBLE_ONLY_KEY, String(showCompatibleOnly))
-  }, [showCompatibleOnly])
+  const resetMirrorsMutation = useMutation({
+    mutationFn: () => backendApi.post<{ mirrors: MirrorConfig[] }>(
+      '/api/webui/plugins/mirrors/reset', { errorMessage: '恢复默认镜像源失败' }
+    ),
+    meta: { errorTitle: '重置失败' },
+    onSuccess: (data) => {
+      queryClient.setQueryData(['plugin-mirrors'], data)
+      invalidatePluginMarketCache()
+      toast({ title: '已恢复默认镜像源', description: '镜像地址、启用状态和优先级已恢复默认，自定义镜像源已移除。' })
+    },
+  })
 
   // 添加镜像源（失败由全局 mutation 错误 toast 呈现）
   const addMutation = useMutation({
@@ -246,32 +271,50 @@ export function PluginMirrorsPage({ embedded = false }: PluginMirrorsPageProps) 
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold">插件商店设置</h1>
               <p className="text-sm text-muted-foreground mt-1">
-                管理插件市场筛选偏好和插件安装镜像源
+                管理插件市场数据来源和安装镜像源
               </p>
             </div>
           </div>
-          <Button onClick={() => setIsAddDialogOpen(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            添加镜像源
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              disabled={loading || resetMirrorsMutation.isPending}
+              onClick={() => resetMirrorsMutation.mutate()}
+            >
+              {resetMirrorsMutation.isPending
+                ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                : <RotateCcw className="h-4 w-4 mr-2" />}
+              恢复默认
+            </Button>
+            <Button onClick={() => setIsAddDialogOpen(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              添加镜像源
+            </Button>
+          </div>
         </div>
 
-        <Card className="p-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <Card className="p-6">
+          <div className="flex items-center justify-between gap-4">
             <div className="space-y-1">
-              <Label htmlFor="plugin-market-compatible-only" className="text-sm font-medium">
-                仅显示当前版本
-              </Label>
+              <Label htmlFor="plugin-market-use-github">使用 GitHub 和镜像源获取数据</Label>
               <p className="text-sm text-muted-foreground">
-                在插件市场默认隐藏不兼容当前麦麦版本的插件
+                关闭时使用插件中心获取列表和版本信息；开启时使用下方配置的 GitHub 和镜像源。
+                插件安装包始终通过镜像源下载。
               </p>
             </div>
             <Switch
-              id="plugin-market-compatible-only"
-              checked={showCompatibleOnly}
-              onCheckedChange={setShowCompatibleOnly}
+              id="plugin-market-use-github"
+              checked={sourceQuery.data?.use_github ?? false}
+              disabled={!sourceQuery.data || sourceMutation.isPending}
+              onCheckedChange={(checked) => sourceMutation.mutate(checked)}
             />
           </div>
+          {sourceQuery.isError && (
+            <div className="mt-3 flex items-center gap-3 text-sm text-destructive">
+              <span>{sourceQuery.error.message}</span>
+              <Button variant="outline" size="sm" onClick={() => sourceQuery.refetch()}>重试</Button>
+            </div>
+          )}
         </Card>
 
         {/* 加载状态 */}

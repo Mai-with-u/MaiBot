@@ -715,6 +715,7 @@ def fetch_model_usage_since(
                     col(ModelUsage.prompt_cache_miss_tokens),
                     col(ModelUsage.cost),
                     col(ModelUsage.time_cost),
+                    col(ModelUsage.task_name),
                 )
                 .where(
                     col(ModelUsage.timestamp) >= query_start_time,
@@ -743,6 +744,7 @@ def fetch_model_usage_since(
                 "prompt_cache_miss_tokens": record[11],
                 "cost": record[12],
                 "time_cost": record[13],
+                "task_name": record[14],
             }
 
         last_id = int(records[-1][0])
@@ -760,12 +762,14 @@ def fetch_model_duration_aggregates_since(query_start_time: datetime) -> list[di
                 func.count().label("request_count"),
                 func.sum(col(ModelUsage.time_cost)).label("time_cost_sum"),
                 func.sum(col(ModelUsage.time_cost) * col(ModelUsage.time_cost)).label("time_cost_sq_sum"),
+                col(ModelUsage.task_name),
             )
             .where(
                 col(ModelUsage.timestamp) >= query_start_time,
                 col(ModelUsage.time_cost) > 0,
             )
             .group_by(
+                col(ModelUsage.task_name),
                 col(ModelUsage.request_type),
                 col(ModelUsage.model_api_provider_name),
                 col(ModelUsage.model_assign_name),
@@ -783,6 +787,7 @@ def fetch_model_duration_aggregates_since(query_start_time: datetime) -> list[di
             "count": int(record[4] or 0),
             "sum": float(record[5] or 0.0),
             "sum_sq": float(record[6] or 0.0),
+            "task_name": record[7],
         }
         for record in records
     ]

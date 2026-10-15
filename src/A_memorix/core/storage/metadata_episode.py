@@ -13,6 +13,58 @@ from .tokenizer_runtime import HAS_JIEBA, JIEBA_MODULE
 class MetadataEpisodeMixin:
     """维护 Episode、重建队列与段落回填任务。"""
 
+    _MIGRATION_REBUILD_REASONS = ("schema_19_pending_migration", "schema_19_source_discovery")
+
+    def discard_migration_episode_rebuilds(self, *, dry_run: bool = True) -> Dict[str, Any]:
+        """仅丢弃升级迁移留下的来源任务，保留已有 Episode 和后续增量任务。"""
+        now_ts = datetime.now().timestamp()
+        reasons = self._MIGRATION_REBUILD_REASONS
+        eligible_sql = (
+            "reason IN (?, ?) AND "
+            "(lease_token IS NULL OR lease_token = '' OR COALESCE(lease_until, 0) <= ?)"
+        )
+        params = (*reasons, now_ts)
+        with self.transaction(immediate=not dry_run) as database:
+            rows = database.execute(
+                f"SELECT status, COUNT(*) AS count FROM episode_rebuild_sources "
+                f"WHERE {eligible_sql} GROUP BY status",
+                params,
+            ).fetchall()
+            by_status = {str(row["status"]): int(row["count"]) for row in rows}
+            candidates = sum(by_status.values())
+            sample = [
+                str(row["source"])
+                for row in database.execute(
+                    f"SELECT source FROM episode_rebuild_sources WHERE {eligible_sql} "
+                    "ORDER BY requested_at ASC, source ASC LIMIT 10",
+                    params,
+                ).fetchall()
+            ]
+            active = int(
+                database.execute(
+                    "SELECT COUNT(*) FROM episode_rebuild_sources "
+                    "WHERE reason IN (?, ?) AND lease_token IS NOT NULL "
+                    "AND lease_token != '' AND COALESCE(lease_until, 0) > ?",
+                    params,
+                ).fetchone()[0]
+            )
+            discarded = 0
+            if not dry_run and candidates:
+                discarded = int(
+                    database.execute(
+                        f"DELETE FROM episode_rebuild_sources WHERE {eligible_sql}",
+                        params,
+                    ).rowcount
+                )
+        return {
+            "dry_run": dry_run,
+            "candidates": candidates,
+            "discarded": discarded,
+            "active_skipped": active,
+            "by_status": by_status,
+            "sample_sources": sample,
+        }
+
     @staticmethod
     def _normalize_episode_source(source: Any) -> str:
         return str(source or "").strip()
@@ -361,6 +413,7 @@ class MetadataEpisodeMixin:
         claimed_revision: int,
         generation_hash: str,
         episodes_payloads: List[Dict[str, Any]],
+        empty_group_fingerprints: Optional[List[str]] = None,
         now: Optional[float] = None,
     ) -> Dict[str, Any]:
         """仅在来源版本未变化时替换完整快照并完成任务。"""
@@ -413,7 +466,9 @@ class MetadataEpisodeMixin:
                     "episode_count": 0,
                 }
 
-            replace_result = self.replace_episodes_for_source(token, episodes_payloads)
+            replace_result = self.replace_episodes_for_source(
+                token, episodes_payloads, empty_group_fingerprints=empty_group_fingerprints,
+            )
             cursor.execute(
                 """
                 UPDATE episode_rebuild_sources
@@ -715,10 +770,20 @@ class MetadataEpisodeMixin:
             for source, token in normalized.items()
         }
 
+    def get_episode_empty_group_fingerprints(self, source: str) -> List[str]:
+        """读取已成功处理且结果为空的分组。"""
+        cursor = self._conn.execute(
+            "SELECT input_fingerprint FROM episode_empty_groups WHERE source = ?",
+            (self._normalize_episode_source(source),),
+        )
+        return [str(row["input_fingerprint"]) for row in cursor.fetchall()]
+
     def replace_episodes_for_source(
         self,
         source: str,
         episodes_payloads: List[Dict[str, Any]],
+        *,
+        empty_group_fingerprints: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """按 source 全量替换 episode 结果。"""
         token = self._normalize_episode_source(source)
@@ -730,6 +795,12 @@ class MetadataEpisodeMixin:
 
         with self.transaction(immediate=True) as connection:
             cursor = connection.cursor()
+            # 空结果与情景快照在同一事务中发布；失效租约不能提前写入缓存。
+            cursor.execute("DELETE FROM episode_empty_groups WHERE source = ?", (token,))
+            cursor.executemany(
+                "INSERT INTO episode_empty_groups (source, input_fingerprint) VALUES (?, ?)",
+                [(token, fingerprint) for fingerprint in dict.fromkeys(empty_group_fingerprints or [])],
+            )
             cursor.execute(
                 """
                 SELECT episode_id, created_at

@@ -8,26 +8,32 @@ from src.config.config import Config, ConfigManager, ModelConfig, load_config_fr
 from src.config.official_configs import ExpressionConfig
 
 
-def test_expression_selection_schema_exposes_only_supported_modes() -> None:
-    """配置界面不应继续展示已移除的 vector 模式。"""
+def test_expression_schema_exposes_vector_switch_and_defaults() -> None:
+    """配置界面使用向量开关，精选默认关闭，优化学习默认开启。"""
 
-    field_schema = ExpressionConfig.model_json_schema()["properties"]["expression_selection_mode"]
+    properties = ExpressionConfig.model_json_schema()["properties"]
+    field_schema = properties["use_vector_expression"]
 
-    assert field_schema["enum"] == ["legacy", "vector_intent"]
-    assert field_schema["options"] == ["legacy", "vector_intent"]
+    assert "expression_selection_mode" not in properties
+    assert field_schema["type"] == "boolean"
+    assert field_schema["default"] is True
+    assert properties["expression_checked_only"]["default"] is False
+    assert properties["expression_self_reflect"]["default"] is True
 
 
 def test_load_repairs_removed_vector_mode_after_legacy_migration_completed(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    """一次性迁移已完成时，旧 vector 值也必须在校验前修复并落盘。"""
+    """升级时移除旧模式、重置精选限制并落盘，同时保留备份。"""
 
     config_path = tmp_path / "bot_config.toml"
     config_module.generate_new_config_file(Config, config_path, "8.14.39")
     with config_path.open("r", encoding="utf-8") as config_file:
         config_document = tomlkit.load(config_file)
     config_document["expression"]["expression_selection_mode"] = "vector"
+    config_document["expression"]["expression_checked_only"] = True
+    del config_document["expression"]["use_vector_expression"]
     config_document["a_memorix"]["web"]["import"]["max_files_per_task"] = 321
     with config_path.open("w", encoding="utf-8") as config_file:
         tomlkit.dump(config_document, config_file)
@@ -44,16 +50,19 @@ def test_load_repairs_removed_vector_mode_after_legacy_migration_completed(
 
     monkeypatch.setattr(config_module, "output_config_changes", capture_config_changes)
 
-    loaded_config, updated = load_config_from_file(Config, config_path, "8.14.40")
+    loaded_config, updated = load_config_from_file(Config, config_path, "8.14.58")
 
     assert updated is True
-    assert loaded_config.expression.expression_selection_mode == "vector_intent"
+    assert loaded_config.expression.use_vector_expression is True
+    assert loaded_config.expression.expression_checked_only is False
     assert loaded_config.a_memorix.web.import_config.max_files_per_task == 321
     assert reported_changes == [([], [])]
     with config_path.open("r", encoding="utf-8") as config_file:
         repaired_document = tomlkit.load(config_file)
-    assert repaired_document["inner"]["version"] == "8.14.40"
-    assert repaired_document["expression"]["expression_selection_mode"] == "vector_intent"
+    assert repaired_document["inner"]["version"] == "8.14.58"
+    assert "expression_selection_mode" not in repaired_document["expression"]
+    assert repaired_document["expression"]["use_vector_expression"] is True
+    assert repaired_document["expression"]["expression_checked_only"] is False
     assert repaired_document["a_memorix"]["web"]["import"]["max_files_per_task"] == 321
     assert "import_config" not in repaired_document["a_memorix"]["web"]
     backup_paths = list((tmp_path / "old").glob("bot_config_*.toml"))

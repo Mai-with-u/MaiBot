@@ -86,7 +86,7 @@ class DetailedStatisticsSummary(BaseModel):
 
 
 class DetailedStatisticsBreakdown(BaseModel):
-    """模型、模块或请求类型维度的详细统计行。"""
+    """模型、任务组、模块或请求类型维度的详细统计行。"""
 
     name: str
     request_count: int = 0
@@ -138,6 +138,7 @@ class DetailedStatisticsPeriod(BaseModel):
     summary: DetailedStatisticsSummary
     models: List[DetailedStatisticsBreakdown]
     modules: List[DetailedStatisticsBreakdown]
+    task_groups: List[DetailedStatisticsBreakdown]
     request_types: List[DetailedStatisticsBreakdown]
     chats: List[DetailedChatStatistics]
     distributions: DetailedStatisticsDistributions

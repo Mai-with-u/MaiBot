@@ -59,6 +59,45 @@ def _patch_statistics_database(monkeypatch, tmp_path, records: list[SQLModel]) -
     monkeypatch.setattr(statistics_service, "get_db_session", get_test_db_session)
 
 
+def test_task_groups_use_recorded_task_names_and_preserve_duration_statistics(monkeypatch, tmp_path) -> None:
+    start_time = datetime(2026, 7, 1)
+    # 同一模型和请求类型可被不同任务组使用，不能从模型名称或请求前缀推断任务组。
+    records = [
+        _model_usage(start_time, request_type="maisaka.action", task_name="planner", time_cost=1.0),
+        _model_usage(start_time, request_type="maisaka.action", task_name="planner", time_cost=3.0),
+        _model_usage(start_time, request_type="maisaka.action", task_name="replyer", time_cost=5.0),
+        _model_usage(start_time, request_type="maisaka.action", task_name="utils", time_cost=7.0),
+        _model_usage(start_time, request_type="maisaka.action", task_name=None, time_cost=9.0),
+    ]
+    _patch_statistics_database(monkeypatch, tmp_path, records)
+    monkeypatch.setattr(statistic, "fetch_model_usage_since", statistics_service.fetch_model_usage_since)
+    monkeypatch.setattr(
+        statistic, "fetch_model_duration_aggregates_since", statistics_service.fetch_model_duration_aggregates_since
+    )
+
+    task = statistic.StatisticOutputTask()
+    task.all_time_start_time = start_time
+    period = task._collect_model_request_for_period([("all_time", start_time)])["all_time"]
+    period[statistic.TOTAL_REPLY_CNT] = 2
+    rows = {row.name: row for row in task._build_breakdown_rows(period, "task")}
+
+    assert set(rows) == {"planner", "replyer", "utils", "未记录"}
+    assert rows["planner"].request_count == 2
+    assert rows["planner"].input_tokens == 20
+    assert rows["planner"].output_tokens == 10
+    assert rows["planner"].total_tokens == 30
+    assert rows["planner"].total_cost == 0.02
+    assert rows["planner"].avg_time_cost == 2.0
+    assert rows["planner"].std_time_cost == 1.0
+    assert rows["planner"].avg_calls_per_reply == 1.0
+    assert sum(row.request_count for row in rows.values()) == period[statistic.TOTAL_REQ_CNT]
+
+    task._refresh_all_time_duration_stats(period)
+    refreshed = {row.name: row for row in task._build_breakdown_rows(period, "task")}
+    assert refreshed == rows
+    assert task._build_breakdown_rows(period, "module")[0].request_count == 5
+
+
 def test_hourly_online_seconds_splits_and_merges_intervals(monkeypatch, tmp_path) -> None:
     start_time = datetime(2026, 7, 1)
     records = [

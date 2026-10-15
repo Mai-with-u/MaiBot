@@ -25,8 +25,8 @@ MAX_JARGON_REFERENCE_MATCHES = 10
 _HIGH_FREQUENCY_TERM_TTL_SECONDS = 60.0
 _PLANNER_MESSAGE_PREFIX_RE = re.compile(r"^<message\b[^>]*>\s*", re.IGNORECASE)
 _JARGON_REFERENCE_ITEM_RE = re.compile(r"^\s*(?:\d+\.\s*)?(?P<content>.+?)：")
-_JARGON_REFERENCE_HEADER = "以下黑话来自当前上下文中其他用户消息的机械匹配，仅作理解聊天语境的参考："
-_JARGON_REFERENCE_DISPLAY_PREFIX = "[黑话参考]"
+_JARGON_REFERENCE_HEADER = "以下释义来自当前上下文中部分词汇的猜测含义，仅作理解聊天语境的参考，不一定为真，需要根据情景理解："
+_JARGON_REFERENCE_DISPLAY_PREFIX = "<jargon>"
 
 
 @dataclass(slots=True)
@@ -91,16 +91,16 @@ def build_jargon_reference_message(
         return None
 
     reference_lines = [_JARGON_REFERENCE_HEADER]
-    for index, match in enumerate(matched_jargons, start=1):
-        high_frequency_hint = "，同时命中高频词" if match.high_frequency_term else ""
-        reference_lines.append(f"{index}. {match.content}：{match.meaning}{high_frequency_hint}")
+    for match in matched_jargons:
+        reference_lines.append(f"{match.content}：{match.meaning}")
 
     return ReferenceMessage(
         content="\n".join(reference_lines),
         timestamp=datetime.now(),
         reference_type=ReferenceMessageType.JARGON,
         remaining_uses_value=None,
-        display_prefix="[黑话参考]",
+        display_prefix=_JARGON_REFERENCE_DISPLAY_PREFIX,
+        jargon_entries=tuple((match.content, match.meaning) for match in matched_jargons),
     )
 
 

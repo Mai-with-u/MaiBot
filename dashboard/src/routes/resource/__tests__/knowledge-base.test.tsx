@@ -33,15 +33,6 @@ vi.mock('@/hooks/use-toast', () => ({
   useToast: () => ({ toast: toastMock }),
 }))
 
-vi.mock('@/components', () => ({
-  CodeEditor: ({ value }: { value: string }) => <pre data-testid="code-editor">{value}</pre>,
-  MarkdownRenderer: ({ content }: { content: string }) => <div>{content}</div>,
-}))
-
-vi.mock('@/components/memory/MemoryConfigEditor', () => ({
-  MemoryConfigEditor: () => <div data-testid="memory-config-editor">memory-config-editor</div>,
-}))
-
 vi.mock('@/components/memory/MemoryDeleteDialog', () => ({
   MemoryDeleteDialog: ({
     open,
@@ -252,8 +243,6 @@ async function openInspectionMode(
   await user.click(screen.getByRole('tab', { name: '记忆检修' }))
   await user.click(await screen.findByRole('tab', { name: mode }))
 }
-
-const QUICK_START_KEY = 'memory-quick-start-dismissed'
 
 function runtimeConfig(
   overrides: Partial<memoryApi.MemoryRuntimeConfigPayload> = {},
@@ -1427,7 +1416,6 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
-    await openMemoryStatusDialog(user)
     await user.click(screen.getByRole('button', { name: '重建向量' }))
     await waitFor(() =>
       expect(memoryApi.rebuildMemoryRuntimeVectors).toHaveBeenCalledWith({ dry_run: true }),
@@ -1454,9 +1442,9 @@ describe('KnowledgeBasePage import workflow', () => {
     await waitForConsoleReady()
     await openImportTab()
     const createButton = screen.getByRole('button', { name: '创建导入任务' })
-    expect(createButton).toBeDisabled()
+    expect(createButton).toBeEnabled()
     expect(screen.queryByText('公共参数')).not.toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent('请选择资料类别')
+    expect(screen.queryByText('请选择资料类别')).not.toBeInTheDocument()
     await user.click(screen.getByRole('combobox', { name: '资料类别' }))
     await user.click(screen.getByRole('option', { name: '叙事资料' }))
     expect(createButton).toBeEnabled()
@@ -1580,7 +1568,7 @@ describe('KnowledgeBasePage import workflow', () => {
     expect(retryPayload).toMatchObject({
       overrides: {
         llm_enabled: true,
-        strategy_override: 'auto',
+        strategy_override: 'narrative',
       },
     })
   }, 20_000)
@@ -2183,10 +2171,6 @@ describe('KnowledgeBasePage import workflow', () => {
   }, 20_000)
 
   describe('页面壳', () => {
-    afterEach(() => {
-      window.localStorage.removeItem(QUICK_START_KEY)
-    })
-
     it('reads deep links for records feedback import and legacy tuning', async () => {
       window.history.replaceState(null, '', '/resource/knowledge-base?tab=records')
       const recordsView = renderPage()
@@ -2443,20 +2427,10 @@ describe('KnowledgeBasePage import workflow', () => {
       encodedView.unmount()
     }, 20_000)
 
-    it('dismisses quick start and jumps to import tuning and graph', async () => {
+    it('opens graph from the more actions menu', async () => {
       const user = userEvent.setup()
       renderPage()
       await waitForConsoleReady()
-      expect(screen.getByText('快速开始：先从这两件事入手')).toBeInTheDocument()
-
-      await user.click(screen.getByRole('button', { name: /导入或导出资料/ }))
-      expect(screen.getByRole('tab', { name: '导入导出' })).toHaveAttribute('data-state', 'active')
-      expect(window.location.search).toContain('tab=import')
-
-      await user.click(screen.getByRole('button', { name: /检索调优/ }))
-      expect(screen.getByRole('tab', { name: '记忆检修' })).toHaveAttribute('data-state', 'active')
-      expect(screen.getByRole('tab', { name: '检索调优' })).toHaveAttribute('data-state', 'active')
-      expect(window.location.search).toContain('mode=tuning')
 
       // 图谱入口在右上角省略号，与查看记忆状态并列；标签栏里不再有图谱
       expect(screen.queryByRole('tab', { name: '图谱' })).not.toBeInTheDocument()
@@ -2464,18 +2438,7 @@ describe('KnowledgeBasePage import workflow', () => {
       await user.click(screen.getByRole('button', { name: '更多操作' }))
       await user.click(await screen.findByRole('menuitem', { name: '打开图谱' }))
       expect(window.location.search).toContain('tab=graph')
-
-      await user.click(screen.getByRole('button', { name: '关闭快速开始' }))
-      expect(screen.queryByText('快速开始：先从这两件事入手')).not.toBeInTheDocument()
-      expect(window.localStorage.getItem(QUICK_START_KEY)).toBe('true')
     }, 20_000)
-
-    it('hides quick start after it was dismissed', async () => {
-      window.localStorage.setItem(QUICK_START_KEY, 'true')
-      renderPage()
-      await waitForConsoleReady()
-      expect(screen.queryByText('快速开始：先从这两件事入手')).not.toBeInTheDocument()
-    })
 
     it('refreshes runtime data and runs self-check from the status dialog', async () => {
       const user = userEvent.setup()
@@ -2498,7 +2461,6 @@ describe('KnowledgeBasePage import workflow', () => {
       const user = userEvent.setup()
       renderPage()
       await waitForConsoleReady()
-      await openMemoryStatusDialog(user)
       await user.click(screen.getByRole('button', { name: '重建向量' }))
       expect(await screen.findByText('重建全部向量')).toBeInTheDocument()
       await user.click(screen.getByRole('button', { name: '取消' }))

@@ -1,171 +1,73 @@
-import type { ReactNode } from 'react'
-
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AboutTab } from '../AboutTab'
 import { SettingsPage } from '../index'
 
-const scrollAreaState = vi.hoisted(() => ({ attachViewportRef: true }))
-
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+const { navigateMock, routerState } = vi.hoisted(() => ({
+  navigateMock: vi.fn(),
+  // 设置页同时读取 searchStr 与 hash（hash 作为 tab 的后备来源）
+  routerState: { searchStr: '', hash: '' },
 }))
-
-vi.mock('@/components/ui/scroll-area', () => ({
-  ScrollArea: ({
-    children,
-    viewportRef,
+vi.mock('@tanstack/react-router', () => ({
+  useNavigate: () => navigateMock,
+  useRouterState: ({
+    select,
   }: {
-    children: ReactNode
-    viewportRef?: { current: HTMLDivElement | null }
-  }) => (
-    <div
-      data-testid="settings-scroll-viewport"
-      ref={(node) => {
-        if (scrollAreaState.attachViewportRef && viewportRef) {
-          viewportRef.current = node
-        }
-      }}
-    >
-      {children}
-    </div>
-  ),
+    select: (state: { location: { searchStr: string; hash: string } }) => string
+  }) => select({ location: routerState }),
 }))
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
+vi.mock('../AppearanceTab', () => ({ AppearanceTab: () => <div>外观页内容</div> }))
+vi.mock('../SecurityTab', () => ({ SecurityTab: () => <div>安全页内容</div> }))
+vi.mock('../OtherTab', () => ({ OtherTab: () => <div>其他页内容</div> }))
+vi.mock('../MobileAccountCard', () => ({ MobileAccountCard: () => null }))
+vi.mock('../SelfUpdateCard', () => ({ SelfUpdateCard: () => null }))
 
-vi.mock('@/components/ui/tabs', async () => {
-  const { createContext, useContext } = await import('react')
-
-  type TabsContextValue = {
-    value: string
-    onValueChange: (value: string) => void
-  }
-
-  const TabsContext = createContext<TabsContextValue | null>(null)
-
-  return {
-    Tabs: ({
-      children,
-      value,
-      onValueChange,
-    }: {
-      children: ReactNode
-      value: string
-      onValueChange: (value: string) => void
-    }) => (
-      <TabsContext.Provider value={{ value, onValueChange }}>
-        <div data-testid="settings-tabs" data-value={value}>
-          {children}
-          <button
-            type="button"
-            data-testid="settings-invalid-tab"
-            onClick={() => onValueChange('not-a-tab')}
-          />
-        </div>
-      </TabsContext.Provider>
-    ),
-    TabsList: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-    TabsTrigger: ({ children, value }: { children: ReactNode; value: string }) => {
-      const context = useContext(TabsContext)
-      return (
-        <button type="button" onClick={() => context?.onValueChange(value)}>
-          {children}
-        </button>
-      )
-    },
-    TabsContent: ({ children, value }: { children: ReactNode; value: string }) => {
-      const context = useContext(TabsContext)
-      return context?.value === value ? <section>{children}</section> : null
-    },
-  }
+beforeEach(() => {
+  routerState.searchStr = ''
+  routerState.hash = ''
 })
+afterEach(cleanup)
 
-vi.mock('../AppearanceTab', () => ({
-  AppearanceTab: () => <div>外观页内容</div>,
-}))
-
-vi.mock('../SecurityTab', () => ({
-  SecurityTab: () => <div>安全页内容</div>,
-}))
-
-vi.mock('../OtherTab', () => ({
-  OtherTab: () => <div>其他页内容</div>,
-}))
-
-describe('设置页入口与关于页', () => {
-  const scrollTo = vi.fn()
-
-  beforeEach(() => {
-    scrollAreaState.attachViewportRef = true
-    window.history.replaceState(null, '', '/settings')
-    Object.defineProperty(HTMLDivElement.prototype, 'scrollTo', {
-      configurable: true,
-      value: scrollTo,
-    })
-    vi.stubGlobal(
-      'requestAnimationFrame',
-      vi.fn((callback: FrameRequestCallback) => {
-        callback(0)
-        return 1
-      })
-    )
-    vi.stubGlobal('cancelAnimationFrame', vi.fn())
-  })
-
-  afterEach(() => {
-    cleanup()
-    scrollTo.mockReset()
-    vi.restoreAllMocks()
-    vi.unstubAllGlobals()
-  })
-
-  it('优先读取查询参数，并在切换标签时同步 URL 和滚动位置', async () => {
-    window.history.replaceState(null, '', '/settings?tab=security')
-    const replaceState = vi.spyOn(window.history, 'replaceState')
-    const user = userEvent.setup()
-
-    render(<SettingsPage />)
-
-    expect(screen.getByTestId('settings-tabs')).toHaveAttribute('data-value', 'security')
+describe('独立 WebUI 设置页与关于页', () => {
+  it('读取路由查询参数，切换时保留其他参数并移除旧版 mode 参数', async () => {
+    routerState.searchStr = '?mode=webui&tab=security&extra=keep'
+    const view = render(<SettingsPage />)
     expect(screen.getByText('安全页内容')).toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: 'settings.tabs.about' }))
-
-    expect(screen.getByTestId('settings-tabs')).toHaveAttribute('data-value', 'about')
-    expect(replaceState).toHaveBeenLastCalledWith(null, '', '/settings?tab=about')
-    expect(scrollTo).toHaveBeenCalledWith({ top: 0 })
+    await userEvent.setup().click(screen.getByRole('tab', { name: 'settings.tabs.other' }))
+    expect(navigateMock).toHaveBeenCalledWith({
+      href: '/settings?tab=other&extra=keep',
+      replace: true,
+    })
+    routerState.searchStr = '?tab=other&extra=keep'
+    view.rerender(<SettingsPage />)
+    expect(screen.getByText('其他页内容')).toBeInTheDocument()
   })
 
-  it('无效标签回退到外观页，并在滚动阈值两侧折叠和展开标题', () => {
-    window.history.replaceState(null, '', '/settings?tab=unknown')
-    render(<SettingsPage />)
-
-    expect(screen.getByTestId('settings-tabs')).toHaveAttribute('data-value', 'appearance')
+  it('缺省或未知标签显示外观页，滚动由主内容区管理', () => {
+    const view = render(<SettingsPage />)
     expect(screen.getByText('外观页内容')).toBeInTheDocument()
+    routerState.searchStr = '?tab=unknown'
+    view.rerender(<SettingsPage />)
+    expect(screen.getByText('外观页内容')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'settings.title' })).not.toBeInTheDocument()
+  })
 
-    const viewport = screen.getByTestId('settings-scroll-viewport')
-    const titleContainer = screen.getByRole('heading', { name: 'settings.title' }).parentElement
-      ?.parentElement
-    Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 500 })
-
-    viewport.scrollTop = 65
-    fireEvent.scroll(viewport)
-    expect(titleContainer).toHaveClass('max-h-0', 'opacity-0')
-
-    viewport.scrollTop = 4
-    fireEvent.scroll(viewport)
-    expect(titleContainer).toHaveClass('max-h-24', 'opacity-100')
+  it('切回外观页删除 tab 与旧版 mode 参数，回到独立设置页', async () => {
+    routerState.searchStr = '?tab=about&mode=webui'
+    render(<SettingsPage />)
+    await userEvent.setup().click(screen.getByRole('tab', { name: 'settings.tabs.appearance' }))
+    expect(navigateMock).toHaveBeenCalledWith({ href: '/settings', replace: true })
   })
 
   it('关于页展示版本、技术栈、许可证和安全的外部链接属性', () => {
     render(<AboutTab />)
-
     expect(screen.getByText(/MaiBot Dashboard/)).toBeInTheDocument()
     expect(screen.getByText('React 19.2.0')).toBeInTheDocument()
     expect(screen.getByText('GPLv3')).toBeInTheDocument()
     expect(screen.getByText('TypeScript')).toBeInTheDocument()
-
     expect(screen.getByRole('link', { name: /settings.about.visitGitHub/ })).toHaveAttribute(
       'href',
       'https://github.com/Mai-with-u/MaiBot-Dashboard'
@@ -174,85 +76,5 @@ describe('设置页入口与关于页', () => {
       'rel',
       'noopener noreferrer'
     )
-  })
-
-  it('hash 标签在无查询参数时生效，切回外观页时去掉 tab 参数', async () => {
-    window.history.replaceState(null, '', '/settings#other')
-    const replaceState = vi.spyOn(window.history, 'replaceState')
-    const user = userEvent.setup()
-
-    render(<SettingsPage />)
-
-    expect(screen.getByTestId('settings-tabs')).toHaveAttribute('data-value', 'other')
-    expect(screen.getByText('其他页内容')).toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: 'settings.tabs.appearance' }))
-
-    expect(screen.getByTestId('settings-tabs')).toHaveAttribute('data-value', 'appearance')
-    expect(screen.getByText('外观页内容')).toBeInTheDocument()
-    expect(replaceState).toHaveBeenLastCalledWith(null, '', '/settings')
-    expect(scrollTo).toHaveBeenCalledWith({ top: 0 })
-  })
-
-  it('未知标签值回退到外观页', async () => {
-    window.history.replaceState(null, '', '/settings?tab=about')
-    const replaceState = vi.spyOn(window.history, 'replaceState')
-    const user = userEvent.setup()
-
-    render(<SettingsPage />)
-    expect(screen.getByTestId('settings-tabs')).toHaveAttribute('data-value', 'about')
-
-    await user.click(screen.getByTestId('settings-invalid-tab'))
-
-    expect(screen.getByTestId('settings-tabs')).toHaveAttribute('data-value', 'appearance')
-    expect(replaceState).toHaveBeenLastCalledWith(null, '', '/settings')
-  })
-
-  it('滚动视口未挂载时不折叠标题', () => {
-    scrollAreaState.attachViewportRef = false
-    render(<SettingsPage />)
-
-    const viewport = screen.getByTestId('settings-scroll-viewport')
-    const titleContainer = screen.getByRole('heading', { name: 'settings.title' }).parentElement
-      ?.parentElement
-
-    viewport.scrollTop = 80
-    fireEvent.scroll(viewport)
-    expect(titleContainer).toHaveClass('max-h-24', 'opacity-100')
-  })
-
-  it('标题折叠或展开导致视口高度变化时校正滚动位置', () => {
-    const pending: FrameRequestCallback[] = []
-    vi.stubGlobal(
-      'requestAnimationFrame',
-      vi.fn((callback: FrameRequestCallback) => {
-        pending.push(callback)
-        return pending.length
-      })
-    )
-    vi.stubGlobal('cancelAnimationFrame', vi.fn())
-
-    render(<SettingsPage />)
-    const viewport = screen.getByTestId('settings-scroll-viewport')
-    let clientHeight = 400
-    Object.defineProperty(viewport, 'clientHeight', {
-      configurable: true,
-      get: () => clientHeight,
-    })
-
-    viewport.scrollTop = 80
-    fireEvent.scroll(viewport)
-    expect(pending).toHaveLength(1)
-    clientHeight = 520
-    pending[0](0)
-    expect(viewport.scrollTop).toBe(200)
-
-    viewport.scrollTop = 3
-    clientHeight = 520
-    fireEvent.scroll(viewport)
-    expect(pending).toHaveLength(2)
-    clientHeight = 300
-    pending[1](0)
-    expect(viewport.scrollTop).toBe(0)
   })
 })

@@ -10,18 +10,13 @@ import time
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import ValidationError
 
 from src.common.logger import get_logger
 from src.webui.dependencies import require_auth
-from src.webui.services.ai_search_agent import (
-    build_response_sources,
-    resolve_prompt_locale,
-    run_ai_search_agent,
-)
-from src.webui.services.ai_search_grounding import AISearchGroundingError
+from src.webui.services.ai_search_agent import resolve_prompt_locale, run_ai_search_agent
 from src.webui.services.ai_search_models import (
     AISearchCandidate,
+    AISearchOutputError,
     AISearchProgressCallback,
     AISearchProgressEvent,
     AISearchRequest,
@@ -32,21 +27,10 @@ logger = get_logger("webui.ai_search")
 
 router = APIRouter(prefix="/search", tags=["Search"], dependencies=[Depends(require_auth)])
 
-AI_SEARCH_TIMEOUT_SECONDS = 45.0
 AI_SEARCH_CACHE_TTL_SECONDS = 300.0
 AI_SEARCH_CACHE_MAX_ENTRIES = 128
 
 _AI_SEARCH_CACHE: "OrderedDict[str, Tuple[float, AISearchResponse]]" = OrderedDict()
-
-
-async def _emit_progress(
-    callback: AISearchProgressCallback | None,
-    event: AISearchProgressEvent,
-) -> None:
-    """按需发送单条搜索过程事件。"""
-
-    if callback is not None:
-        await callback(event)
 
 
 def _build_cache_key(request: AISearchRequest) -> str:
@@ -151,9 +135,9 @@ def _log_ai_search_record(
 
 async def _execute_ai_search_request(
     request: AISearchRequest,
-    progress_callback: AISearchProgressCallback | None = None,
+    progress_callback: AISearchProgressCallback,
 ) -> AISearchResponse:
-    """执行一次可选进度回调的 AI 搜索。"""
+    """执行一次带进度回调的 AI 搜索。"""
 
     _validate_candidate_ids(request.candidates)
     search_id = uuid4().hex[:12]
@@ -162,119 +146,49 @@ async def _execute_ai_search_request(
 
     async def record_progress(event: AISearchProgressEvent) -> None:
         progress.append(_compact_progress_for_log(event))
-        await _emit_progress(progress_callback, event)
+        await progress_callback(event)
+
+    def log_record(status: str, response: AISearchResponse | None = None, error: str = "") -> None:
+        _log_ai_search_record(
+            request=request,
+            search_id=search_id,
+            started_at=started_at,
+            status=status,
+            progress=progress,
+            response=response,
+            error=error,
+        )
 
     cache_key = _build_cache_key(request)
     cached_response = _get_cached_response(cache_key)
     if cached_response is not None:
         await record_progress(AISearchProgressEvent(stage="cache_hit"))
-        _log_ai_search_record(
-            request=request,
-            search_id=search_id,
-            started_at=started_at,
-            status="cached",
-            progress=progress,
-            response=cached_response,
-        )
+        log_record("cached", cached_response)
         return cached_response
 
     try:
-        generation_result, model_output = await asyncio.wait_for(
-            run_ai_search_agent(request, record_progress),
-            timeout=AI_SEARCH_TIMEOUT_SECONDS,
-        )
-    except asyncio.TimeoutError as exc:
-        _log_ai_search_record(
-            request=request,
-            search_id=search_id,
-            started_at=started_at,
-            status="timeout",
-            progress=progress,
-            error=str(exc),
-        )
-        logger.warning("WebUI AI 搜索超时", search_id=search_id)
-        raise HTTPException(status_code=504, detail="AI 搜索超时，请稍后重试") from exc
+        response = await run_ai_search_agent(request, record_progress)
     except asyncio.CancelledError:
-        _log_ai_search_record(
-            request=request,
-            search_id=search_id,
-            started_at=started_at,
-            status="cancelled",
-            progress=progress,
-        )
+        log_record("cancelled")
         raise
-    except AISearchGroundingError as exc:
-        _log_ai_search_record(
-            request=request,
-            search_id=search_id,
-            started_at=started_at,
-            status="grounding_failed",
-            progress=progress,
-            error=str(exc),
-        )
-        logger.error("WebUI AI 搜索证据校验失败", search_id=search_id, error=str(exc))
-        raise HTTPException(status_code=502, detail=f"AI 回答证据校验失败: {str(exc)}") from exc
-    except (ValueError, ValidationError) as exc:
-        _log_ai_search_record(
-            request=request,
-            search_id=search_id,
-            started_at=started_at,
-            status="parse_failed",
-            progress=progress,
-            error=str(exc),
-        )
+    except AISearchOutputError as exc:
+        log_record("parse_failed", error=str(exc))
         logger.error("WebUI AI 搜索响应解析失败", search_id=search_id, error=str(exc))
         raise HTTPException(status_code=502, detail=f"AI 搜索结果解析失败: {str(exc)}") from exc
-    except HTTPException as exc:
-        _log_ai_search_record(
-            request=request,
-            search_id=search_id,
-            started_at=started_at,
-            status="http_failed",
-            progress=progress,
-            error=str(exc.detail),
-        )
-        raise
     except Exception as exc:
-        _log_ai_search_record(
-            request=request,
-            search_id=search_id,
-            started_at=started_at,
-            status="failed",
-            progress=progress,
-            error=str(exc),
-        )
+        log_record("failed", error=str(exc))
         logger.error("WebUI AI 搜索调用失败", search_id=search_id, error=str(exc), exc_info=True)
         raise HTTPException(status_code=502, detail=f"AI 搜索调用失败: {str(exc)}") from exc
 
-    response = AISearchResponse(
-        model_name=generation_result.model_name,
-        answer=model_output.answer,
-        suggestions=model_output.suggestions,
-        sources=build_response_sources(model_output.source_ids),
-        expanded_terms=model_output.expanded_terms,
-        results=model_output.results,
-        prompt_tokens=generation_result.prompt_tokens,
-        completion_tokens=generation_result.completion_tokens,
-        total_tokens=generation_result.total_tokens,
-    )
-    _cache_response(cache_key, response)
-    _log_ai_search_record(
-        request=request,
-        search_id=search_id,
-        started_at=started_at,
-        status="completed",
-        progress=progress,
-        response=response,
-    )
+    if response.grounding_error:
+        # 回答正文被证据校验丢弃的结果不写缓存，让用户可以立即重试
+        log_record("grounding_failed", response, response.grounding_error)
+        return response
+
+    if not response.used_local_config:
+        _cache_response(cache_key, response)
+    log_record("completed", response)
     return response
-
-
-@router.post("/ai", response_model=AISearchResponse)
-async def search_with_ai(request: AISearchRequest) -> AISearchResponse:
-    """使用 utils 模型在 WebUI 提供的真实候选索引中选择结果。"""
-
-    return await _execute_ai_search_request(request)
 
 
 async def _stream_ai_search_events(request: AISearchRequest) -> AsyncIterator[str]:

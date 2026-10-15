@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -95,6 +95,13 @@ afterEach(() => {
 })
 
 vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: toastMock }) }))
+// 扩展列表新增 MCP 栏目，列表测试提供独立的空配置，避免发出真实后端请求。
+vi.mock('@/lib/config-api', () => ({
+  getBotConfig: async () => ({ mcp: { enabled: true, servers: [] } }),
+}))
+vi.mock('@/lib/mcp-api', () => ({
+  getMCPStatus: async () => ({ servers: [] }),
+}))
 vi.mock('@/lib/restart-context', () => ({
   RestartProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
   useRestart: () => restartState,
@@ -112,6 +119,14 @@ vi.mock('@tanstack/react-router', () => ({
 // 避免真实 WebSocket 连接（插件进度订阅）
 vi.mock('@/lib/plugin-progress-client', () => ({
   pluginProgressClient: { subscribe: progressClient.subscribe },
+}))
+// 插件列表订阅统一 WebSocket 的运行状态推送，同样桩掉避免真实连接
+vi.mock('@/lib/unified-ws', () => ({
+  unifiedWsClient: {
+    addEventListener: vi.fn(() => vi.fn()),
+    subscribe: vi.fn(async () => ({})),
+    unsubscribe: vi.fn(async () => ({})),
+  },
 }))
 vi.mock('@/components/CodeEditor', () => ({
   CodeEditor: ({ value, onChange }: { value: string; onChange?: (v: string) => void }) => (
@@ -148,8 +163,12 @@ vi.mock('@/components/plugin-stats', () => ({
   PluginStats: ({ pluginId }: { pluginId: string }) => <div data-testid="plugin-stats">{pluginId}</div>,
 }))
 vi.mock('@/lib/chat-management-api', () => ({
+  CHAT_ADAPTER_STATUS_QUERY_KEY: 'chat-adapter-status',
+  getAllChatStreams: async () => [],
   getAdapterHostPolicy: vi.fn(),
+  getAdapterPolicyDefaults: vi.fn(),
   updateAdapterHostPolicy: vi.fn(),
+  updateAdapterPolicyDefaults: vi.fn(),
 }))
 
 vi.mock('@/lib/plugin-api', () => ({
@@ -211,6 +230,16 @@ function makeHostPolicyResponse(pluginId: string) {
   return {
     success: true,
     plugin_id: pluginId,
+    active_identity: {
+      adapter_id: `gateway:${pluginId}:gw`,
+      plugin_id: pluginId,
+      gateway_name: 'gw',
+      platform: 'qq',
+      account_id: '123456',
+      scope: null,
+    },
+    has_entry: true,
+    account_entries: [],
     global_defaults: { group: 'allow' as const, private: 'block' as const },
     policy: {
       group: { default_action: 'inherit' as const, allow_ids: [] as string[], deny_ids: [] as string[] },
@@ -279,10 +308,28 @@ beforeEach(() => {
   vi.mocked(pluginApi.getLocalPluginReadme).mockResolvedValue('')
   vi.mocked(pluginApi.getLocalPluginChangelog).mockResolvedValue('')
   vi.mocked(chatApi.getAdapterHostPolicy).mockResolvedValue(makeHostPolicyResponse('adapter.qq') as never)
-  vi.mocked(chatApi.updateAdapterHostPolicy).mockResolvedValue(makeHostPolicyResponse('adapter.qq') as never)
+  vi.mocked(chatApi.updateAdapterHostPolicy).mockImplementation(async (pluginId, policy) => ({
+    ...makeHostPolicyResponse(pluginId),
+    policy,
+  }) as never)
+  vi.mocked(chatApi.getAdapterPolicyDefaults).mockResolvedValue({ group: 'allow', private: 'block' })
+  vi.mocked(chatApi.updateAdapterPolicyDefaults).mockImplementation(async (defaults) => defaults)
 })
 
 describe('PluginConfigPage 特征化', () => {
+  it('配置校验失败展示原始 TOML 和具体错误并禁用启用开关', async () => {
+    window.history.replaceState(null, '', '/plugin-config?plugin=test.emoji')
+    vi.mocked(pluginApi.getPluginConfigBundle).mockResolvedValue({
+      schema: null, config: {}, rawConfig: '# 原始配置\ntarget = "123"\n',
+      configError: 'proactive.group_ids: 群聊目标必须填写 平台:ID:group',
+    })
+    renderPage()
+    const editor = await screen.findByTestId('code-editor')
+    expect(editor).toHaveValue('# 原始配置\ntarget = "123"\n')
+    expect(screen.getByText('proactive.group_ids: 群聊目标必须填写 平台:ID:group')).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: '启用插件' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '可视化' })).toBeDisabled()
+  })
   it('显示已装插件且不暴露 A_Memorix', async () => {
     renderPage()
     expect(await screen.findByText('Emoji Plugin')).toBeInTheDocument()
@@ -300,7 +347,7 @@ describe('PluginConfigPage 特征化', () => {
     }
     vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([adapterPlugin] as never)
 
-    render(<PluginConfigPage />)
+    renderPage()
 
     expect(await screen.findByText('Adapter Plugin')).toBeInTheDocument()
     expect(screen.queryByPlaceholderText('搜索插件...')).not.toBeInTheDocument()
@@ -325,7 +372,7 @@ describe('PluginConfigPage 特征化', () => {
   })
 
   it('插件卡片不显示重复的配置按钮，更新按钮保留原色并标记统一边框', async () => {
-    const { container } = render(<PluginConfigPage />)
+    const { container } = renderPage()
 
     await screen.findByText('Emoji Plugin')
     expect(screen.queryByRole('button', { name: '配置' })).not.toBeInTheDocument()
@@ -344,7 +391,7 @@ describe('PluginConfigPage 特征化', () => {
   it('无插件时显示空态提示', async () => {
     vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([] as never)
     renderPage()
-    await waitFor(() => expect(screen.getByText('暂无已安装的插件')).toBeInTheDocument())
+    expect(await screen.findByRole('heading', { name: 'MCP 服务' })).toBeInTheDocument()
   })
 
   it('按照加载成功、加载中、加载失败的顺序分层展示插件', async () => {
@@ -352,6 +399,8 @@ describe('PluginConfigPage 特征化', () => {
     failedPlugin.load_status = 'failed'
     const disabledPlugin = makePlugin('test.disabled', 'Disabled Plugin')
     disabledPlugin.enabled = false
+    // 后端对已禁用且未运行的插件下发 load_status=disabled，前端以 load_status 为准分组
+    disabledPlugin.load_status = 'disabled'
     const loadingPlugin = makePlugin('test.loading', 'Loading Plugin')
     loadingPlugin.load_status = 'loading'
     const successPlugin = makePlugin('test.success', 'Success Plugin')
@@ -603,9 +652,9 @@ describe('PluginConfigPage 空列表', () => {
     const user = userEvent.setup()
     renderPage()
     await screen.findByText('Emoji Plugin')
-    await user.type(screen.getByPlaceholderText('搜索插件...'), 'zzz-not-found')
-    expect(await screen.findByText('没有找到匹配的插件')).toBeInTheDocument()
-    expect(screen.getByText('尝试其他搜索关键词')).toBeInTheDocument()
+    await user.type(screen.getByPlaceholderText('搜索插件或 MCP 服务...'), 'zzz-not-found')
+    expect(screen.queryByText('Emoji Plugin')).not.toBeInTheDocument()
+    expect(await screen.findByText('没有匹配的 MCP 服务')).toBeInTheDocument()
   })
 
   it('仅看有更新且没有新版本时显示空态', async () => {
@@ -642,6 +691,59 @@ describe('PluginConfigPage 主程序放行规则', () => {
       makeAdapter(),
       makePlugin('test.emoji', 'Emoji Plugin'),
     ] as never)
+  })
+
+  it('适配器设置页分别修改群聊与私聊全局默认策略', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    const defaults = await screen.findByRole('region', { name: '适配器全局默认策略' })
+    expect(screen.getByText('QQ Adapter')).toBeInTheDocument()
+    expect(within(defaults).getByText('群聊')).toBeInTheDocument()
+    expect(within(defaults).getByText('私聊')).toBeInTheDocument()
+    const groupRow = within(defaults).getByText('群聊').parentElement as HTMLElement
+    const privateRow = within(defaults).getByText('私聊').parentElement as HTMLElement
+    await user.click(within(groupRow).getByRole('button', { name: '不接收' }))
+    await waitFor(() =>
+      expect(chatApi.updateAdapterPolicyDefaults).toHaveBeenCalledWith(
+        { group: 'block', private: 'block' },
+        expect.anything()
+      )
+    )
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith({ title: '适配器默认策略已保存' })
+    )
+
+    await user.click(within(privateRow).getByRole('button', { name: '接收消息' }))
+    await waitFor(() =>
+      expect(chatApi.updateAdapterPolicyDefaults).toHaveBeenLastCalledWith(
+        { group: 'block', private: 'allow' },
+        expect.anything()
+      )
+    )
+  })
+
+  it('全局默认策略读取失败时显示错误', async () => {
+    vi.mocked(chatApi.getAdapterPolicyDefaults).mockRejectedValueOnce(new Error('读取失败'))
+    renderPage()
+    const defaults = await screen.findByRole('region', { name: '适配器全局默认策略' })
+    expect(await within(defaults).findByText('默认策略加载失败')).toBeInTheDocument()
+  })
+
+  it('全局默认策略保存失败时提示具体错误', async () => {
+    vi.mocked(chatApi.updateAdapterPolicyDefaults).mockRejectedValue(new Error('写入失败'))
+    const user = userEvent.setup()
+    renderPage()
+    const defaults = await screen.findByRole('region', { name: '适配器全局默认策略' })
+    const groupRow = within(defaults).getByText('群聊').parentElement as HTMLElement
+    await user.click(within(groupRow).getByRole('button', { name: '不接收' }))
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith({
+        title: '适配器默认策略保存失败',
+        description: '写入失败',
+        variant: 'destructive',
+      })
+    )
   })
 
   it('适配器管理页只列出适配器并展示主程序放行规则页签', async () => {
@@ -707,26 +809,31 @@ describe('PluginConfigPage 主程序放行规则', () => {
     await user.click(await screen.findByRole('button', { name: /QQ Adapter/ }))
     await user.click(await screen.findByRole('tab', { name: '黑白名单规则' }))
 
-    expect(await screen.findByText('这是 MaiBot 主程序侧规则，与适配器自身名单相互独立。')).toBeInTheDocument()
-    expect(screen.getByText('全局默认：阅读')).toBeInTheDocument()
-    expect(screen.getByText('全局默认：不阅读')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /保存主程序规则/ })).toBeDisabled()
-    expect(screen.queryByRole('button', { name: /^保存$/ })).not.toBeInTheDocument()
+    expect(await screen.findByText('群聊规则')).toBeInTheDocument()
+    expect(screen.queryByText('这是 MaiBot 主程序侧规则，与适配器自身名单相互独立。')).not.toBeInTheDocument()
+    expect(screen.queryByText(/适配器自身的白名单仍在/)).not.toBeInTheDocument()
+    expect(screen.getByTestId('mode-hint:group')).toHaveTextContent('黑名单模式')
+    expect(screen.getByTestId('mode-hint:private')).toHaveTextContent('白名单模式')
+    expect(screen.queryByRole('button', { name: /保存主程序规则/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /源代码/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /重置/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled()
 
-    await user.click(screen.getAllByRole('combobox')[0])
-    await user.click(await screen.findByText('阅读'))
+    // 页签行工具栏新增了「当前生效分组」下拉框，默认规则下拉框需限定在群聊规则卡片内查找
+    const groupRulesCard = screen.getByText('群聊规则').closest('[data-dashboard-card="true"]') as HTMLElement
+    await user.click(within(groupRulesCard).getByRole('combobox'))
+    await user.click(await screen.findByText('接收所有消息'))
     await user.click(screen.getAllByRole('button', { name: '添加列表项' })[0])
-    await user.click(screen.getByRole('button', { name: /保存主程序规则/ }))
 
-    await waitFor(() =>
-      expect(chatApi.updateAdapterHostPolicy).toHaveBeenCalledWith('adapter.qq', {
-        group: { default_action: 'allow', allow_ids: ['new-item'], deny_ids: [] },
-        private: { default_action: 'inherit', allow_ids: [], deny_ids: [] },
-      })
+    await waitFor(
+      () =>
+        expect(chatApi.updateAdapterHostPolicy).toHaveBeenCalledWith('adapter.qq', {
+          group: { default_action: 'allow', allow_ids: ['new-item'], deny_ids: [] },
+          private: { default_action: 'inherit', allow_ids: [], deny_ids: [] },
+        }),
+      { timeout: 6000 }
     )
-    expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '主程序放行规则已保存' }))
+    expect(await screen.findByTestId('host-policy-save-status')).toHaveTextContent('已保存')
   })
 
   it('保存主程序放行规则失败时弹出错误 toast', async () => {
@@ -736,18 +843,21 @@ describe('PluginConfigPage 主程序放行规则', () => {
     await user.click(await screen.findByRole('button', { name: /QQ Adapter/ }))
     await user.click(await screen.findByRole('tab', { name: '黑白名单规则' }))
     await user.click(await screen.findByText('群聊规则'))
-    await user.click(screen.getAllByRole('combobox')[0])
-    await user.click(await screen.findByText('不阅读'))
-    await user.click(screen.getByRole('button', { name: /保存主程序规则/ }))
+    const groupRulesCard = screen.getByText('群聊规则').closest('[data-dashboard-card="true"]') as HTMLElement
+    await user.click(within(groupRulesCard).getByRole('combobox'))
+    await user.click(await screen.findByText('默认不接收消息'))
 
-    await waitFor(() =>
-      expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: '主程序放行规则保存失败',
-          description: '写入失败',
-        })
-      )
+    await waitFor(
+      () =>
+        expect(toastMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: '主程序放行规则保存失败',
+            description: '写入失败',
+          })
+        ),
+      { timeout: 6000 }
     )
+    expect(screen.getByTestId('host-policy-save-status')).toHaveTextContent('保存失败')
   })
 
   it('编辑器返回时保持适配器管理路径', async () => {
@@ -2032,6 +2142,7 @@ describe('PluginConfigPage 列表操作与状态', () => {
     themeState.dashboardStyle = 'future-retro'
     const disabled = makePlugin('p.off', 'Off Plugin')
     disabled.enabled = false
+    disabled.load_status = 'disabled'
     const failed = makePlugin('p.bad', 'Bad Plugin')
     failed.load_status = 'failed'
     failed.load_error = 'boom'
@@ -2054,7 +2165,8 @@ describe('PluginConfigPage 列表操作与状态', () => {
     await screen.findByText('Emoji Plugin')
     await user.click(screen.getByRole('button', { name: '刷新' }))
     await waitFor(() => expect(vi.mocked(pluginApi.getInstalledPlugins).mock.calls.length).toBeGreaterThan(1))
-    await user.click(screen.getByRole('button', { name: /重启麦麦/ }))
+    await user.click(screen.getByRole('button', { name: '更多操作' }))
+    await user.click(screen.getByRole('menuitem', { name: /重启麦麦/ }))
     expect(restartState.triggerRestart).toHaveBeenCalled()
   })
 
@@ -2062,7 +2174,8 @@ describe('PluginConfigPage 列表操作与状态', () => {
     restartState.isRestarting = true
     renderPage()
     await screen.findByText('Emoji Plugin')
-    expect(screen.getByRole('button', { name: /重启麦麦/ })).toBeDisabled()
+    await userEvent.setup().click(screen.getByRole('button', { name: '更多操作' }))
+    expect(screen.getByRole('menuitem', { name: /重启麦麦/ })).toHaveAttribute('aria-disabled', 'true')
   })
 
   it('重复插件 ID 只保留第一项', async () => {
@@ -2520,7 +2633,7 @@ describe('PluginConfigPage 覆盖补全', () => {
     themeState.dashboardStyle = 'future-retro'
     vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([] as never)
     renderPage()
-    expect(await screen.findByText('暂无已安装的插件')).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'MCP 服务' })).toBeInTheDocument()
     expect(screen.getByText('已安装 0 个插件，已启用 0 个，已禁用 0 个，加载中 0 个，启动失败 0 个')).toBeInTheDocument()
   })
 })

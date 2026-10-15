@@ -16,6 +16,8 @@ from rich.console import Group, RenderableType
 from rich.panel import Panel
 from rich.text import Text
 
+from src.common.logger import get_logger
+from src.common.operation_timing import log_operation, timed_operation
 from src.llm_models.model_client.base_client import GenerationAttempt
 from src.llm_models.payload_content.context_item import (
     AssistantMessageItem,
@@ -41,6 +43,8 @@ from .display_utils import (
 )
 from .preview_path_utils import build_display_path, build_file_uri, REPO_ROOT
 from .prompt_preview_logger import PromptPreviewLogger
+
+logger = get_logger("maisaka_prompt_preview")
 
 DATA_IMAGE_DIR = REPO_ROOT / "data" / "images"
 DATA_EMOJI_DIR = REPO_ROOT / "data" / "emoji"
@@ -148,6 +152,7 @@ class PromptPreviewAccess:
     record_uri: str
     preview_web_uri: str
     reasoning_web_uri: str | None
+    payload: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -281,7 +286,6 @@ class PromptCLIVisualizer:
     @staticmethod
     def _build_image_cache_path(image_format: str, image_bytes: bytes) -> Path:
         image_format = PromptCLIVisualizer._normalize_image_format(image_format) or "bin"
-        DATA_PROMPT_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
         digest = hashlib.sha256(image_bytes).hexdigest()
         return DATA_PROMPT_IMAGE_DIR / f"{digest}.{image_format}"
 
@@ -297,7 +301,7 @@ class PromptCLIVisualizer:
 
     @staticmethod
     def _build_image_file_link(image_format: str, image_base64: str) -> tuple[str, Path] | None:
-        """优先返回已有 data 图片路径；不存在时落盘到 prompt 图片缓存。"""
+        """优先返回已有 data 图片路径；不存在时登记后台落盘的 prompt 图片。"""
         normalized_format = PromptCLIVisualizer._normalize_image_format(image_format) or "bin"
         try:
             image_bytes = b64decode(image_base64)
@@ -309,11 +313,7 @@ class PromptCLIVisualizer:
             return build_file_uri(official_path), official_path
 
         path = PromptCLIVisualizer._build_image_cache_path(normalized_format, image_bytes)
-        if not path.exists():
-            try:
-                path.write_bytes(image_bytes)
-            except Exception:
-                return None
+        PromptPreviewLogger.add_image_asset(path, image_bytes)
         return build_file_uri(path), path
 
     @staticmethod
@@ -794,6 +794,7 @@ class PromptCLIVisualizer:
         return sanitized_item
 
     @classmethod
+    @timed_operation(logger, "preview.build_structured_preview_payload")
     def _build_structured_preview_payload(
         cls,
         request_items: list[Any],
@@ -905,12 +906,14 @@ class PromptCLIVisualizer:
         category: str,
         payload: dict[str, Any],
     ) -> PromptPreviewAccess:
-        structured_preview_text = json.dumps(
-            payload,
-            ensure_ascii=False,
-            indent=2,
-            default=str,
-        )
+        with log_operation(logger, "preview.serialize", category=category, chat_id=chat_id) as stats:
+            structured_preview_text = json.dumps(
+                payload,
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+            stats["chars"] = len(structured_preview_text)
         record_path = PromptPreviewLogger.save_preview_file(
             chat_id,
             category,
@@ -921,6 +924,7 @@ class PromptCLIVisualizer:
             record_link_text="点击打开 JSON 记录",
         )
         return PromptPreviewAccess(
+            payload=payload,
             body=body,
             record_path=record_path,
             record_uri=build_file_uri(record_path),
@@ -929,6 +933,7 @@ class PromptCLIVisualizer:
         )
 
     @classmethod
+    @timed_operation(logger, "preview.build_prompt_preview_access")
     def build_prompt_preview_access(
         cls,
         request_items: list[Any],
@@ -942,25 +947,27 @@ class PromptCLIVisualizer:
         output_items: Sequence[Any] = (),
         metadata: Mapping[str, Any] | None = None,
         generation_attempts: Sequence[GenerationAttemptInput] = (),
+        keep_base64: bool | None = None,
     ) -> PromptPreviewAccess:
         """保存 Prompt 预览文件，并返回 CLI 展示入口与浏览器可打开的 URI。"""
 
-        keep_json_base64 = cls._should_keep_prompt_preview_json_base64()
-        return cls._save_structured_preview_access(
-            chat_id=chat_id,
-            category=category,
-            payload=cls._build_structured_preview_payload(
-                request_items,
-                request_kind=request_kind,
-                selection_reason=selection_reason,
-                tool_definitions=tool_definitions,
-                output_title=output_title,
-                output_items=output_items,
-                metadata=metadata,
-                generation_attempts=generation_attempts,
-                keep_base64=keep_json_base64,
-            ),
-        )
+        with PromptPreviewLogger.collect_image_assets():
+            keep_json_base64 = cls._should_keep_prompt_preview_json_base64() if keep_base64 is None else keep_base64
+            return cls._save_structured_preview_access(
+                chat_id=chat_id,
+                category=category,
+                payload=cls._build_structured_preview_payload(
+                    request_items,
+                    request_kind=request_kind,
+                    selection_reason=selection_reason,
+                    tool_definitions=tool_definitions,
+                    output_title=output_title,
+                    output_items=output_items,
+                    metadata=metadata,
+                    generation_attempts=generation_attempts,
+                    keep_base64=keep_json_base64,
+                ),
+            )
 
     @classmethod
     def build_prompt_access_panel(
@@ -1063,6 +1070,7 @@ class PromptCLIVisualizer:
         ).body
 
     @classmethod
+    @timed_operation(logger, "preview.build_text_preview_access")
     def build_text_preview_access(
         cls,
         content: str,
@@ -1078,24 +1086,25 @@ class PromptCLIVisualizer:
     ) -> PromptPreviewAccess:
         """保存文本型 Prompt 预览文件，并返回对应访问入口。"""
 
-        keep_json_base64 = cls._should_keep_prompt_preview_json_base64()
-        return cls._save_structured_preview_access(
-            chat_id=chat_id,
-            category=category,
-            payload=cls._build_structured_preview_payload(
-                [
-                    UserMessageItem(
-                        meta=ContextItemMeta.create(),
-                        parts=(ContextTextPart(content),),
-                    )
-                ],
-                request_kind=request_kind,
-                selection_reason=subtitle,
-                tool_definitions=None,
-                output_title=output_title,
-                output_items=output_items,
-                metadata=metadata,
-                generation_attempts=generation_attempts,
-                keep_base64=keep_json_base64,
-            ),
-        )
+        with PromptPreviewLogger.collect_image_assets():
+            keep_json_base64 = cls._should_keep_prompt_preview_json_base64()
+            return cls._save_structured_preview_access(
+                chat_id=chat_id,
+                category=category,
+                payload=cls._build_structured_preview_payload(
+                    [
+                        UserMessageItem(
+                            meta=ContextItemMeta.create(),
+                            parts=(ContextTextPart(content),),
+                        )
+                    ],
+                    request_kind=request_kind,
+                    selection_reason=subtitle,
+                    tool_definitions=None,
+                    output_title=output_title,
+                    output_items=output_items,
+                    metadata=metadata,
+                    generation_attempts=generation_attempts,
+                    keep_base64=keep_json_base64,
+                ),
+            )

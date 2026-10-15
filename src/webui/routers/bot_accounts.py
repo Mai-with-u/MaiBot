@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from src.platform_io import DriverKind, get_platform_io_manager
@@ -92,3 +92,12 @@ def disable_bot_platform_account(account_id: int) -> BotPlatformAccountMutationR
 @router.post("/{account_id}/restore", response_model=BotPlatformAccountMutationResponse)
 def restore_bot_platform_account(account_id: int) -> BotPlatformAccountMutationResponse:
     return _mutate_account(account_id, disabled=False)
+
+
+@router.delete("/{account_id}", status_code=204)
+def delete_bot_platform_account(account_id: int) -> Response:
+    try:
+        bot_account_service.delete_by_id(account_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Response(status_code=204)

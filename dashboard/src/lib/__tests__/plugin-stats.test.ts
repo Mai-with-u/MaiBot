@@ -62,6 +62,7 @@ describe('plugin-stats', () => {
         downloads: 0,
         rating: 4.5,
         rating_count: 0,
+        comment_count: 0,
         recent_ratings: undefined,
       })
       expect(httpMocks.backendApi.get).toHaveBeenCalledWith(
@@ -145,6 +146,7 @@ describe('plugin-stats', () => {
           downloads: 5,
           rating: 0,
           rating_count: 0,
+          comment_count: 0,
           recent_ratings: undefined,
         },
       })
@@ -235,19 +237,19 @@ describe('plugin-stats', () => {
     })
 
     it('提交评分与评论并用响应更新缓存', async () => {
-      seedSummaryCache({ 'plugin-a': { rating: 3, rating_count: 1 } })
-      httpMocks.backendApi.post.mockResolvedValue({ rating: 4.2, rating_count: 2 })
+      seedSummaryCache({ 'plugin-a': { rating: 3, rating_count: 1, comment_count: 1 } })
+      httpMocks.backendApi.post.mockResolvedValue({ rating: 4.2, rating_count: 2, comment_count: 2 })
       const stats = await loadPluginStats()
 
       const result = await stats.ratePlugin('plugin-a', 5, '很好用', 'user-1')
-      expect(result).toEqual({ success: true, rating: 4.2, rating_count: 2 })
+      expect(result).toEqual({ success: true, rating: 4.2, rating_count: 2, comment_count: 2 })
       expect(httpMocks.backendApi.post).toHaveBeenCalledWith(
         '/api/webui/plugins/stats-proxy/stats/rate',
         { body: { plugin_id: 'plugin-a', user_id: 'user-1', rating: 5, comment: '很好用' } }
       )
 
       const cached = stats.getCachedPluginStatsSummary()
-      expect(cached?.['plugin-a']).toMatchObject({ rating: 4.2, rating_count: 2 })
+      expect(cached?.['plugin-a']).toMatchObject({ rating: 4.2, rating_count: 2, comment_count: 2 })
     })
 
     it('仅提交评论时载荷不带 rating 字段', async () => {

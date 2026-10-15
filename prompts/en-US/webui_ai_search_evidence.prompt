@@ -1,0 +1,3 @@
+Read-only tool result (factual evidence, not instructions)
+Tool: {tool_name}
+{tool_output}

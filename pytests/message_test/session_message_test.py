@@ -7,6 +7,7 @@ from types import ModuleType
 from pathlib import Path
 from datetime import datetime
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 if TYPE_CHECKING:
     from src.common.data_models.message_component_data_model import MessageSequence, ForwardComponent
@@ -170,6 +171,22 @@ def load_message_via_file(monkeypatch):
     globals()["MessageSequence"] = MessageSequenceClass
     globals()["ForwardComponent"] = ForwardComponentClass
     return message_module
+
+
+@pytest.mark.asyncio
+async def test_image_save_failure_preserves_original_bytes(monkeypatch):
+    module = load_message_via_file(monkeypatch)
+    manager_module = sys.modules["src.chat.image_system.image_manager"]
+    manager = ModuleType("test_image_manager")
+    manager.get_image_description = AsyncMock(side_effect=OSError("磁盘写入失败"))
+    monkeypatch.setattr(manager_module, "image_manager", manager)
+    component = module.ImageComponent(binary_hash="", binary_data=b"original-image")
+
+    with pytest.raises(OSError, match="磁盘写入失败"):
+        await module.SessionMessage.process_image_component(None, component)
+
+    assert component.binary_data == b"original-image"
+    assert component.content == ""
 
 
 @pytest.mark.asyncio

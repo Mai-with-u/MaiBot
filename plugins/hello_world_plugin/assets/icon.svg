@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 40 40" fill="none">
+  <title>Hello World 示例插件</title>
+  <desc>深石墨底上的浅色线条终端提示符，光标下划线为橙色。</desc>
+  <rect width="40" height="40" rx="8" fill="#1C272C"/>
+  <g stroke="#E4ECEE" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10 13l7 7-7 7"/>
+    <path d="M21 27h9" stroke="#F08A24"/>
+  </g>
+</svg>

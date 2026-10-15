@@ -8,7 +8,7 @@ import {
   Network,
   Timer,
 } from 'lucide-react'
-import { useEffect } from 'react'
+import { useContext, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Bar,
@@ -26,8 +26,6 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   ChartContainer,
-  ChartLegend,
-  ChartLegendContent,
   ChartTooltip,
   ChartTooltipContent,
   type ChartConfig,
@@ -36,6 +34,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { ZoomableChart } from '@/components/ui/zoomable-chart'
+import { ThemeProviderContext } from '@/lib/theme-context'
 import { cn } from '@/lib/utils'
 
 import { useDashboardData } from './hooks/useDashboardData'
@@ -419,10 +418,40 @@ export function PromptCacheCard() {
   )
 }
 
+// 首页图例使用普通布局，避免 Recharts 在拖拽期间反复清零、上报图例尺寸，
+// 使图表布局和图例测量互相触发更新。
+function StatisticsChartLegend({ config }: { config: ChartConfig }) {
+  return (
+    <div
+      data-home-chart-guide="true"
+      className="flex h-7 shrink-0 items-center gap-4 px-2 text-[11px]"
+    >
+      {Object.entries(config).map(([key, item]) => (
+        <div key={key} className="flex items-center gap-1.5">
+          <div
+            className="h-2 w-2 shrink-0 rounded-[2px]"
+            style={{ backgroundColor: item.color }}
+          />
+          {item.label}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function ChartCard({ kind }: { kind: 'requests' | 'cost' | 'tokens' }) {
   const { t, i18n } = useTranslation()
   const state = useStatisticsCardData()
   const locale = i18n.resolvedLanguage || i18n.language
+  // 千禧风格把绘图区画成一块深色示波屏：坐标和图例留在屏幕外的机壳上，
+  // 网格是实线，折线走阶梯，不画坐标轴线。
+  const isMillennium = useContext(ThemeProviderContext).themeConfig.dashboardStyle === 'millennium'
+  const gridProps = isMillennium
+    ? { stroke: 'var(--mil-scope-grid)', strokeWidth: 2, fill: 'var(--mil-scope)' }
+    : { strokeDasharray: '3 3', stroke: 'hsl(var(--color-muted-foreground) / 0.2)' }
+  const axisLineProps = isMillennium ? { axisLine: false, tickLine: false } : {}
+  const chartConfig =
+    kind === 'requests' ? requestChartConfig : kind === 'cost' ? costChartConfig : tokenChartConfig
   const metadata = {
     requests: {
       title: t('home.charts.requestTrend'),
@@ -442,130 +471,110 @@ function ChartCard({ kind }: { kind: 'requests' | 'cost' | 'tokens' }) {
     <StatisticsCardFrame {...metadata} state={state}>
       {(data) => {
         const chartData = selectChartTimeSeries(data, state.timeRange)
-        const chartGuide = (
-          <ChartLegend
-            verticalAlign="top"
-            height={28}
-            content={
-              <ChartLegendContent
-                data-home-chart-guide="true"
-                verticalAlign="top"
-                className="justify-start px-2 pb-2 text-[11px]"
-              />
-            }
-          />
-        )
         return (
-          <ZoomableChart aria-label={metadata.title} className="h-full min-h-[240px]">
-            <ChartContainer
-              config={
-                kind === 'requests'
-                  ? requestChartConfig
-                  : kind === 'cost'
-                    ? costChartConfig
-                    : tokenChartConfig
-              }
-              className="aspect-auto h-full min-h-[240px] w-full"
-            >
-              {kind === 'requests' ? (
-                <LineChart data={chartData}>
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="hsl(var(--color-muted-foreground) / 0.2)"
-                  />
-                  <XAxis
-                    dataKey="timestamp"
-                    tickFormatter={(value) => formatChartTimeAxis(value, locale, state.timeRange)}
-                    angle={-45}
-                    textAnchor="end"
-                    height={60}
-                    stroke="hsl(var(--color-muted-foreground))"
-                    tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
-                  />
-                  <YAxis
-                    stroke="hsl(var(--color-muted-foreground))"
-                    tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
-                  />
-                  <ChartTooltip
-                    content={
-                      <ChartTooltipContent
-                        labelFormatter={(value) => formatDateTime(value as string, locale)}
-                      />
-                    }
-                  />
-                  {chartGuide}
-                  <Line
-                    type="monotone"
-                    dataKey="requests"
-                    stroke="var(--color-requests)"
-                    strokeWidth={2}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                </LineChart>
-              ) : kind === 'cost' ? (
-                <BarChart data={chartData}>
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="hsl(var(--color-muted-foreground) / 0.2)"
-                  />
-                  <XAxis
-                    dataKey="timestamp"
-                    tickFormatter={(value) => formatChartTimeAxis(value, locale, state.timeRange)}
-                    angle={-45}
-                    textAnchor="end"
-                    height={60}
-                    stroke="hsl(var(--color-muted-foreground))"
-                    tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
-                  />
-                  <YAxis
-                    stroke="hsl(var(--color-muted-foreground))"
-                    tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
-                  />
-                  <ChartTooltip
-                    content={
-                      <ChartTooltipContent
-                        labelFormatter={(value) => formatDateTime(value as string, locale)}
-                      />
-                    }
-                  />
-                  {chartGuide}
-                  <Bar dataKey="cost" fill="var(--color-cost)" />
-                </BarChart>
-              ) : (
-                <BarChart data={chartData}>
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="hsl(var(--color-muted-foreground) / 0.2)"
-                  />
-                  <XAxis
-                    dataKey="timestamp"
-                    tickFormatter={(value) => formatChartTimeAxis(value, locale, state.timeRange)}
-                    angle={-45}
-                    textAnchor="end"
-                    height={60}
-                    stroke="hsl(var(--color-muted-foreground))"
-                    tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
-                  />
-                  <YAxis
-                    tickFormatter={(value) => formatTokenAxis(Number(value), locale)}
-                    stroke="hsl(var(--color-muted-foreground))"
-                    tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
-                  />
-                  <ChartTooltip
-                    content={
-                      <ChartTooltipContent
-                        labelFormatter={(value) => formatDateTime(value as string, locale)}
-                      />
-                    }
-                  />
-                  {chartGuide}
-                  <Bar dataKey="input_tokens" stackId="tokens" fill="var(--color-input_tokens)" />
-                  <Bar dataKey="output_tokens" stackId="tokens" fill="var(--color-output_tokens)" />
-                </BarChart>
-              )}
-            </ChartContainer>
-          </ZoomableChart>
+          <div className="flex h-full min-h-[240px] flex-col">
+            {!isMillennium && <StatisticsChartLegend config={chartConfig} />}
+            <ZoomableChart aria-label={metadata.title} className="min-h-0 flex-1">
+              <ChartContainer
+                config={chartConfig}
+                className="aspect-auto h-full w-full"
+                data-chart-plot-screen={isMillennium ? 'true' : undefined}
+              >
+                {kind === 'requests' ? (
+                  <LineChart data={chartData}>
+                    <CartesianGrid {...gridProps} />
+                    <XAxis
+                      dataKey="timestamp"
+                      tickFormatter={(value) => formatChartTimeAxis(value, locale, state.timeRange)}
+                      angle={-45}
+                      textAnchor="end"
+                      height={60}
+                      stroke="hsl(var(--color-muted-foreground))"
+                      tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
+                      {...axisLineProps}
+                    />
+                    <YAxis
+                      stroke="hsl(var(--color-muted-foreground))"
+                      tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
+                      {...axisLineProps}
+                    />
+                    <ChartTooltip
+                      content={
+                        <ChartTooltipContent
+                          labelFormatter={(value) => formatDateTime(value as string, locale)}
+                        />
+                      }
+                    />
+                    <Line
+                      type={isMillennium ? 'stepAfter' : 'monotone'}
+                      dataKey="requests"
+                      stroke="var(--color-requests)"
+                      strokeWidth={isMillennium ? 3 : 2}
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                  </LineChart>
+                ) : kind === 'cost' ? (
+                  <BarChart data={chartData}>
+                    <CartesianGrid {...gridProps} />
+                    <XAxis
+                      dataKey="timestamp"
+                      tickFormatter={(value) => formatChartTimeAxis(value, locale, state.timeRange)}
+                      angle={-45}
+                      textAnchor="end"
+                      height={60}
+                      stroke="hsl(var(--color-muted-foreground))"
+                      tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
+                      {...axisLineProps}
+                    />
+                    <YAxis
+                      stroke="hsl(var(--color-muted-foreground))"
+                      tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
+                      {...axisLineProps}
+                    />
+                    <ChartTooltip
+                      content={
+                        <ChartTooltipContent
+                          labelFormatter={(value) => formatDateTime(value as string, locale)}
+                        />
+                      }
+                    />
+                    <Bar dataKey="cost" fill="var(--color-cost)" />
+                  </BarChart>
+                ) : (
+                  <BarChart data={chartData}>
+                    <CartesianGrid {...gridProps} />
+                    <XAxis
+                      dataKey="timestamp"
+                      tickFormatter={(value) => formatChartTimeAxis(value, locale, state.timeRange)}
+                      angle={-45}
+                      textAnchor="end"
+                      height={60}
+                      stroke="hsl(var(--color-muted-foreground))"
+                      tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
+                      {...axisLineProps}
+                    />
+                    <YAxis
+                      tickFormatter={(value) => formatTokenAxis(Number(value), locale)}
+                      stroke="hsl(var(--color-muted-foreground))"
+                      tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
+                      {...axisLineProps}
+                    />
+                    <ChartTooltip
+                      content={
+                        <ChartTooltipContent
+                          labelFormatter={(value) => formatDateTime(value as string, locale)}
+                        />
+                      }
+                    />
+                    <Bar dataKey="input_tokens" stackId="tokens" fill="var(--color-input_tokens)" />
+                    <Bar dataKey="output_tokens" stackId="tokens" fill="var(--color-output_tokens)" />
+                  </BarChart>
+                )}
+              </ChartContainer>
+            </ZoomableChart>
+            {isMillennium && <StatisticsChartLegend config={chartConfig} />}
+          </div>
         )
       }}
     </StatisticsCardFrame>
@@ -691,46 +700,45 @@ export function DailyStatisticsCard() {
       {(data) => {
         const chartData = selectChartTimeSeries(data, state.timeRange)
         return (
-          <ZoomableChart aria-label={t('home.charts.dailyStats')} className="h-full min-h-[240px]">
-            <ChartContainer
-              config={dailyChartConfig}
-              className="aspect-auto h-full min-h-[240px] w-full"
-            >
-              <BarChart data={chartData}>
-                <CartesianGrid
-                  strokeDasharray="3 3"
-                  stroke="hsl(var(--color-muted-foreground) / 0.2)"
-                />
-                <XAxis
-                  dataKey="timestamp"
-                  tickFormatter={(value) => formatChartTimeAxis(value, locale, state.timeRange)}
-                  stroke="hsl(var(--color-muted-foreground))"
-                  tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
-                />
-                <YAxis
-                  yAxisId="left"
-                  stroke="hsl(var(--color-muted-foreground))"
-                  tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
-                />
-                <YAxis
-                  yAxisId="right"
-                  orientation="right"
-                  stroke="hsl(var(--color-muted-foreground))"
-                  tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
-                />
-                <ChartTooltip
-                  content={
-                    <ChartTooltipContent
-                      labelFormatter={(value) => formatDateTime(value as string, locale)}
-                    />
-                  }
-                />
-                <ChartLegend content={<ChartLegendContent />} />
-                <Bar yAxisId="left" dataKey="requests" fill="var(--color-requests)" />
-                <Bar yAxisId="right" dataKey="cost" fill="var(--color-cost)" />
-              </BarChart>
-            </ChartContainer>
-          </ZoomableChart>
+          <div className="flex h-full min-h-[240px] flex-col">
+            <ZoomableChart aria-label={t('home.charts.dailyStats')} className="min-h-0 flex-1">
+              <ChartContainer config={dailyChartConfig} className="aspect-auto h-full w-full">
+                <BarChart data={chartData}>
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="hsl(var(--color-muted-foreground) / 0.2)"
+                  />
+                  <XAxis
+                    dataKey="timestamp"
+                    tickFormatter={(value) => formatChartTimeAxis(value, locale, state.timeRange)}
+                    stroke="hsl(var(--color-muted-foreground))"
+                    tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
+                  />
+                  <YAxis
+                    yAxisId="left"
+                    stroke="hsl(var(--color-muted-foreground))"
+                    tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
+                  />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    stroke="hsl(var(--color-muted-foreground))"
+                    tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
+                  />
+                  <ChartTooltip
+                    content={
+                      <ChartTooltipContent
+                        labelFormatter={(value) => formatDateTime(value as string, locale)}
+                      />
+                    }
+                  />
+                  <Bar yAxisId="left" dataKey="requests" fill="var(--color-requests)" />
+                  <Bar yAxisId="right" dataKey="cost" fill="var(--color-cost)" />
+                </BarChart>
+              </ChartContainer>
+            </ZoomableChart>
+            <StatisticsChartLegend config={dailyChartConfig} />
+          </div>
         )
       }}
     </StatisticsCardFrame>

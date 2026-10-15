@@ -4,12 +4,11 @@ Episode 语义切分服务（LLM 主路径）。
 职责：
 1. 组装语义切分提示词
 2. 调用 LLM 生成结构化 episode JSON
-3. 严格校验输出结构，返回标准化结果
+3. 将模型返回的段落序号映射为内部 hash，返回标准化结果
 """
 
 from __future__ import annotations
 
-from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple
 import json
 
@@ -31,36 +30,10 @@ logger = get_logger("A_Memorix.EpisodeSegmentationService")
 class EpisodeSegmentationService:
     """基于 LLM 的 episode 语义切分服务。"""
 
-    SEGMENTATION_VERSION = "episode_mvp_v1"
+    SEGMENTATION_VERSION = "episode_indices_v2"
 
     def __init__(self, plugin_config: Optional[dict] = None):
         self.plugin_config = plugin_config or {}
-
-    @staticmethod
-    def validate_episode_coverage(
-        episodes: List[Dict[str, Any]],
-        input_hashes: List[str],
-    ) -> None:
-        """确保模型输出对输入段落形成无遗漏、无重复的完整分区。"""
-        expected = [str(hash_value or "").strip() for hash_value in input_hashes if str(hash_value or "").strip()]
-        if len(expected) != len(set(expected)):
-            raise ValueError("episode_input_hashes_not_unique")
-
-        assigned = [
-            str(hash_value or "").strip()
-            for episode in episodes
-            for hash_value in (episode.get("paragraph_hashes") or [])
-            if str(hash_value or "").strip()
-        ]
-        assigned_counts = Counter(assigned)
-        if assigned_counts != Counter(expected):
-            missing = sorted(set(expected) - set(assigned))
-            duplicated = sorted(hash_value for hash_value, count in assigned_counts.items() if count > 1)
-            unexpected = sorted(set(assigned) - set(expected))
-            raise ValueError(
-                "episode_coverage_invalid: "
-                f"missing={missing}, duplicated={duplicated}, unexpected={unexpected}"
-            )
 
     def _cfg(self, key: str, default: Any = None) -> Any:
         current: Any = self.plugin_config
@@ -127,7 +100,7 @@ class EpisodeSegmentationService:
             return {
                 "segmentation_version": self.SEGMENTATION_VERSION,
                 "selector": selector,
-                "mode": "fallback_rule",
+                "mode": "unavailable",
             }
         return {
             "segmentation_version": self.SEGMENTATION_VERSION,
@@ -198,7 +171,6 @@ class EpisodeSegmentationService:
     ) -> str:
         rows: List[str] = []
         for idx, item in enumerate(paragraphs, 1):
-            p_hash = str(item.get("hash", "") or "").strip()
             content = str(item.get("content", "") or "").strip().replace("\r\n", "\n")
             content = content[:800]
             event_start = item.get("event_time_start")
@@ -206,7 +178,7 @@ class EpisodeSegmentationService:
             event_time = item.get("event_time")
             rows.append(
                 (
-                    f"[{idx}] hash={p_hash}\n"
+                    f"[{idx}]\n"
                     f"event_time={event_time}\n"
                     f"event_time_start={event_start}\n"
                     f"event_time_end={event_end}\n"
@@ -217,16 +189,16 @@ class EpisodeSegmentationService:
         source_text = str(source or "").strip() or "unknown"
         return (
             "You are an episode segmentation engine.\n"
-            "Group the given paragraphs into one or more coherent episodes.\n"
+            "Group meaningful events into coherent episodes. Skip paragraphs that do not describe an event.\n"
             "Return JSON ONLY. No markdown, no explanation.\n"
             "\n"
-            "Hard JSON schema:\n"
+            "JSON schema:\n"
             "{\n"
             '  "episodes": [\n'
             "    {\n"
             '      "title": "string",\n'
             '      "summary": "string",\n'
-            '      "paragraph_hashes": ["hash1", "hash2"],\n'
+            '      "paragraph_indices": [1, 2],\n'
             '      "participants": ["person1", "person2"],\n'
             '      "keywords": ["kw1", "kw2"],\n'
             '      "time_confidence": 0.0,\n'
@@ -236,7 +208,9 @@ class EpisodeSegmentationService:
             "}\n"
             "\n"
             "Rules:\n"
-            "1) paragraph_hashes must come from input only.\n"
+            "1) paragraph_indices are the 1-based numbers shown in the input.\n"
+            "   You may omit irrelevant paragraphs and reuse a paragraph across related episodes.\n"
+            '   Return {"episodes": []} if there are no meaningful events.\n'
             "2) title and summary must be non-empty.\n"
             "3) keep participants/keywords concise and deduplicated.\n"
             "4) if uncertain, still provide best effort confidence values.\n"
@@ -257,32 +231,26 @@ class EpisodeSegmentationService:
         if not isinstance(raw_episodes, list):
             raise ValueError("episodes_missing_or_not_list")
 
-        valid_hashes = set(input_hashes)
         normalized: List[Dict[str, Any]] = []
         for item in raw_episodes:
             if not isinstance(item, dict):
-                continue
+                raise ValueError("episode_not_object")
 
             title = str(item.get("title", "") or "").strip()
             summary = str(item.get("summary", "") or "").strip()
             if not title or not summary:
-                continue
+                raise ValueError("episode_title_or_summary_missing")
 
-            raw_hashes = item.get("paragraph_hashes")
-            if not isinstance(raw_hashes, list):
-                continue
-
+            indices = item.get("paragraph_indices")
+            if not isinstance(indices, list) or not indices:
+                raise ValueError("episode_paragraph_indices_missing")
             dedup_hashes: List[str] = []
-            seen_hashes = set()
-            for h in raw_hashes:
-                token = str(h or "").strip()
-                if not token or token in seen_hashes or token not in valid_hashes:
-                    continue
-                seen_hashes.add(token)
-                dedup_hashes.append(token)
-
-            if not dedup_hashes:
-                continue
+            for index in indices:
+                if type(index) is not int or not 1 <= index <= len(input_hashes):
+                    raise ValueError(f"episode_paragraph_index_invalid: {index}")
+                paragraph_hash = input_hashes[index - 1]
+                if paragraph_hash not in dedup_hashes:
+                    dedup_hashes.append(paragraph_hash)
 
             participants = []
             for p in item.get("participants", []) or []:
@@ -308,9 +276,6 @@ class EpisodeSegmentationService:
                 }
             )
 
-        if not normalized:
-            raise ValueError("episodes_all_invalid")
-        self.validate_episode_coverage(normalized, input_hashes)
         return normalized
 
     async def segment(

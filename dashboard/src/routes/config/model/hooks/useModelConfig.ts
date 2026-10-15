@@ -38,6 +38,7 @@ import { useToast } from '@/hooks/use-toast'
 import type { ConfigSchema } from '@/types/config-schema'
 
 import type { ModelInfo, ModelPricePeriod, ModelTaskConfig, ProviderConfig, TaskConfig } from '../types'
+import { serializeModel } from '../serializeModel'
 import type { APIProvider, DeleteConfirmState } from '../../modelProvider/types'
 import { cleanProviderData } from '../../modelProvider/utils'
 import { useModelAutoSave } from './useModelAutoSave'
@@ -235,6 +236,7 @@ export function useModelConfig() {
 
   // ---- provider 自动保存定时器 / 快照 ----
   const providerAutoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isMountedRef = useRef(true)
   const providersSnapshotRef = useRef<string | null>(null)
   const latestProvidersSnapshotRef = useRef('')
   const providerGenerationRef = useRef(0)
@@ -249,6 +251,17 @@ export function useModelConfig() {
     return operationPromise
   }, [])
 
+  const handleAutoSaveError = useCallback(
+    (domain: 'models' | 'taskConfig', error: unknown) => {
+      toast({
+        title: domain === 'taskConfig' ? '功能分配保存失败' : '模型列表保存失败',
+        description: error instanceof Error ? error.message : String(error),
+        variant: 'destructive',
+      })
+    },
+    [toast]
+  )
+
   // 自动保存 models / taskConfig（沿用既有 hook）
   const {
     cancelPendingTimers: cancelModelAutoSaveTimers,
@@ -262,6 +275,7 @@ export function useModelConfig() {
     enqueueWrite: enqueueConfigWrite,
     onSavingChange: setModelAutoSaving,
     onUnsavedChange: setModelHasUnsavedChanges,
+    onSaveError: handleAutoSaveError,
   })
 
   const cancelProviderAutoSaveTimer = useCallback(() => {
@@ -401,6 +415,11 @@ export function useModelConfig() {
       }
       const config = unwrapModelConfig(result.value)
       const modelList = (config.models as ModelInfo[]) || []
+      for (const model of modelList) {
+        if (!['llm', 'embedding', 'image_embedding'].includes(model.model_type)) {
+          throw new Error(`模型 ${model.name} 缺少或包含无效的 model_type，请检查配置升级是否完成`)
+        }
+      }
       setModels(modelList)
       setModelNames(modelList.map((m) => m.name))
 
@@ -464,32 +483,6 @@ export function useModelConfig() {
     [providerConfigs]
   )
 
-  // 清理模型中的 null 值（TOML 不支持 null）
-  // cache 为遗留兼容字段，不再保存：是否启用缓存计价由 cache_price_in 是否填写决定
-  const cleanModelForSave = useCallback((model: ModelInfo): ModelInfo => {
-    const cleaned: ModelInfo = {
-      model_identifier: model.model_identifier,
-      name: model.name,
-      api_provider: model.api_provider,
-      price_in: model.price_in ?? 0,
-      price_out: model.price_out ?? 0,
-      cache_price_in: model.cache_price_in ?? 0,
-      price_periods: model.price_periods?.map((period) => ({ ...period })),
-      send_temperature: model.send_temperature ?? true,
-      visual: model.visual ?? false,
-      force_stream_mode: model.force_stream_mode ?? false,
-      extra_params: model.extra_params ?? {},
-    }
-    // 只有在有值时才添加可选字段
-    if (model.temperature != null) {
-      cleaned.temperature = model.temperature
-    }
-    if (model.max_tokens != null) {
-      cleaned.max_tokens = model.max_tokens
-    }
-    return cleaned
-  }, [])
-
   // ---- 提供商状态同步 / 级联删除 ----
   const syncProviderState = useCallback((nextProviders: APIProvider[]) => {
     const cleanedProviders = nextProviders.map(cleanProviderData)
@@ -502,9 +495,9 @@ export function useModelConfig() {
         api_key: provider.api_key,
         client_type: provider.client_type,
         default_headers: provider.default_headers,
-        max_retry: provider.max_retry ?? 2,
-        timeout: provider.timeout ?? 30,
-        retry_interval: provider.retry_interval ?? 10,
+        max_retry: provider.max_retry,
+        timeout: provider.timeout,
+        retry_interval: provider.retry_interval,
       }))
     )
   }, [])
@@ -590,7 +583,7 @@ export function useModelConfig() {
       const savePromise = enqueueConfigWrite(async () => {
         const config = unwrapModelConfig(await getModelConfig())
         config.api_providers = nextApiProviders.map(cleanProviderData)
-        config.models = nextModels.map(cleanModelForSave)
+        config.models = nextModels.map(serializeModel)
         config.model_task_config = nextTaskConfig
         await updateModelConfig(config)
       })
@@ -605,7 +598,6 @@ export function useModelConfig() {
       }
     },
     [
-      cleanModelForSave,
       commitProviderSaveBarrier,
       commitSaveBarrier,
       enqueueConfigWrite,
@@ -725,6 +717,14 @@ export function useModelConfig() {
     ]
   )
 
+  // 在定时器清理前标记卸载，让切换页面时的待保存改动立即入队。
+  useEffect(() => {
+    isMountedRef.current = true
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
+
   // 监听 apiProviders 变化，防抖自动保存
   useEffect(() => {
     if (initialLoadRef.current) return
@@ -749,6 +749,9 @@ export function useModelConfig() {
       if (providerAutoSaveTimerRef.current) {
         clearTimeout(providerAutoSaveTimerRef.current)
         providerAutoSaveTimerRef.current = null
+        if (!isMountedRef.current) {
+          void autoSaveProviders(apiProviders, snapshot, generation)
+        }
       }
     }
   }, [apiProviders, autoSaveProviders, initialLoadRef])
@@ -911,7 +914,8 @@ export function useModelConfig() {
       model: ModelInfo | null,
       index: number | null,
       onOpened?: () => void,
-      preferredProvider?: string
+      preferredProvider?: string,
+      modelType: ModelInfo['model_type'] = 'llm'
     ) => {
       // 清除表单验证错误
       setFormErrors({})
@@ -924,6 +928,7 @@ export function useModelConfig() {
           price_periods: model.price_periods?.map((period) => ({ ...period })),
         } : {
           model_identifier: '',
+          model_type: modelType,
           name: '',
           api_provider: defaultProvider,
           price_in: 0,
@@ -952,9 +957,6 @@ export function useModelConfig() {
         base_url: '',
         api_key: '',
         client_type: 'openai',
-        max_retry: 2,
-        timeout: 30,
-        retry_interval: 10,
       }
     )
     setEditingProviderIndex(index)
@@ -971,23 +973,50 @@ export function useModelConfig() {
         nextProviders.push(providerToSave)
       }
 
-      const { shouldProceed } = await checkDeleteProviderImpact(nextProviders, 'manual')
-      if (!shouldProceed) {
-        setProviderDialogOpen(false)
-        setEditingProvider(null)
-        setEditingProviderIndex(null)
-        return
-      }
+      const oldProviderName = index !== null ? apiProviders[index].name : null
+      const providerRenamed = oldProviderName !== null && oldProviderName !== providerToSave.name
+      const hasLinkedModels =
+        providerRenamed && models.some((model) => model.api_provider === oldProviderName)
 
       try {
         setSaving(true)
-        await saveProviders(nextProviders)
+        if (hasLinkedModels) {
+          // 改名只迁移供应商引用；与供应商一起写入，避免触发级联删除或留下无效引用。
+          const nextModels = models.map((model) =>
+            model.api_provider === oldProviderName
+              ? { ...model, api_provider: providerToSave.name }
+              : model
+          )
+          const persistResult = await persistModelConfigDraft(nextModels, taskConfig, nextProviders)
+          if (persistResult.applyProviders) {
+            syncProviderState(nextProviders)
+          }
+          if (persistResult.applyModels) {
+            setModels(nextModels)
+            setModelNames(nextModels.map((model) => model.name))
+          }
+          if (persistResult.applyTaskConfig) {
+            setTaskConfig(taskConfig)
+          }
+          if (persistResult.applyModels && persistResult.applyTaskConfig) {
+            checkTaskConfigIssues(taskConfig, nextModels)
+          }
+        } else {
+          await saveProviders(nextProviders)
+        }
+        if (providerRenamed) {
+          setModelProviderFilter((current) =>
+            current === oldProviderName ? providerToSave.name : current
+          )
+        }
         setProviderDialogOpen(false)
         setEditingProvider(null)
         setEditingProviderIndex(null)
         toast({
           title: index !== null ? '提供商已更新' : '提供商已添加',
-          description: '模型配置已保存',
+          description: hasLinkedModels
+            ? '供应商名称及关联模型已同步保存，任务分配已保留'
+            : '模型配置已保存',
         })
       } catch (error) {
         toast({
@@ -999,7 +1028,16 @@ export function useModelConfig() {
         setSaving(false)
       }
     },
-    [apiProviders, checkDeleteProviderImpact, saveProviders, toast]
+    [
+      apiProviders,
+      checkTaskConfigIssues,
+      models,
+      persistModelConfigDraft,
+      saveProviders,
+      syncProviderState,
+      taskConfig,
+      toast,
+    ]
   )
 
   // 保存模型编辑
@@ -1040,29 +1078,7 @@ export function useModelConfig() {
     // 清除错误状态
     setFormErrors({})
 
-    // 填充空值的默认值，并移除 null 值的可选字段（TOML 不支持 null）
-    // cache 为遗留兼容字段，不再保存：是否启用缓存计价由 cache_price_in 是否填写决定
-    const modelToSave: ModelInfo = {
-      model_identifier: editingModel.model_identifier,
-      name: editingModel.name,
-      api_provider: editingModel.api_provider,
-      price_in: editingModel.price_in ?? 0,
-      price_out: editingModel.price_out ?? 0,
-      cache_price_in: editingModel.cache_price_in ?? 0,
-      price_periods: editingModel.price_periods?.map((period) => ({ ...period })),
-      send_temperature: editingModel.send_temperature ?? true,
-      visual: editingModel.visual ?? false,
-      force_stream_mode: editingModel.force_stream_mode ?? false,
-      extra_params: editingModel.extra_params ?? {},
-    }
-
-    // 只有在有值时才添加可选字段
-    if (editingModel.temperature != null) {
-      modelToSave.temperature = editingModel.temperature
-    }
-    if (editingModel.max_tokens != null) {
-      modelToSave.max_tokens = editingModel.max_tokens
-    }
+    const modelToSave = serializeModel(editingModel)
 
     let newModels: ModelInfo[]
     let oldModelName: string | null = null

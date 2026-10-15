@@ -22,6 +22,7 @@ from src.webui.routers.chat.service import (
 from src.webui.routers.plugin.progress import get_current_progress
 from src.webui.routers.websocket.auth import verify_ws_token
 from src.webui.routers.websocket.manager import websocket_manager
+from .plugin_runtime import stop_plugin_runtime_subscription, subscribe_plugin_runtime
 
 logger = get_logger("webui.unified_ws")
 router = APIRouter()
@@ -110,12 +111,14 @@ async def _handle_logs_subscribe(connection_id: str, request_id: Optional[str], 
         ok=True,
         data={"domain": "logs", "topic": "main"},
     )
+    # 读日志文件是同步磁盘 IO，放到线程里，避免卡住 WebUI 事件循环
+    entries = await asyncio.to_thread(load_recent_logs, limit=replay_limit)
     await websocket_manager.send_event(
         connection_id,
         domain="logs",
         event="snapshot",
         topic="main",
-        data={"entries": load_recent_logs(limit=replay_limit)},
+        data={"entries": entries},
     )
 
 
@@ -158,6 +161,8 @@ async def _handle_maisaka_monitor_subscribe(
         f"MaiSaka 监控订阅请求: connection_id={connection_id} "
         f"manager_id={id(websocket_manager)}"
     )
+    # 分页模式只下发各聊天流概要，时间线由前端按聊天流逐页拉取；旧版前端仍走整段回放。
+    paged = str(data.get("mode") or "").strip() == "paged"
     since_event_id = _coerce_non_negative_int(data.get("since_event_id"))
     replay_limit = _coerce_non_negative_int(data.get("replay_limit"), default=1000)
     replay_limit = max(1, min(replay_limit, 10000))
@@ -169,25 +174,40 @@ async def _handle_maisaka_monitor_subscribe(
         data={
             "domain": "maisaka_monitor",
             "topic": "main",
+            "mode": "paged" if paged else "replay",
             "since_event_id": since_event_id,
             "replay_limit": replay_limit,
         },
     )
-    from src.maisaka.monitor.event_store import replay_monitor_events
+    from src.maisaka.monitor.event_store import load_session_summaries, replay_monitor_events
 
-    replay_events = await asyncio.to_thread(
-        replay_monitor_events,
-        since_event_id=since_event_id,
-        limit=replay_limit,
+    # 重置标记与快照共用出站队列，前后端在相同位置清空基准，重订阅也不会错位。
+    await websocket_manager.send_event(
+        connection_id, domain="maisaka_monitor", event="planner.reset", topic="main", data={}
     )
-    for replay_event in replay_events:
+    if paged:
+        session_summaries = await asyncio.to_thread(load_session_summaries)
         await websocket_manager.send_event(
             connection_id,
             domain="maisaka_monitor",
-            event=str(replay_event["event"]),
+            event="sessions.snapshot",
             topic="main",
-            data=cast(Dict[str, Any], replay_event["data"]),
+            data={"sessions": session_summaries, "timestamp": time.time()},
         )
+    else:
+        replay_events = await asyncio.to_thread(
+            replay_monitor_events,
+            since_event_id=since_event_id,
+            limit=replay_limit,
+        )
+        for replay_event in replay_events:
+            await websocket_manager.send_event(
+                connection_id,
+                domain="maisaka_monitor",
+                event=str(replay_event["event"]),
+                topic="main",
+                data=cast(Dict[str, Any], replay_event["data"]),
+            )
 
     from src.maisaka.display.stage_status_board import get_stage_status_snapshot
 
@@ -197,6 +217,87 @@ async def _handle_maisaka_monitor_subscribe(
         event="stage.snapshot",
         topic="main",
         data={"entries": get_stage_status_snapshot(), "timestamp": time.time()},
+    )
+
+
+async def _handle_maisaka_monitor_call(connection_id: str, message: Dict[str, Any]) -> None:
+    """处理 MaiSaka 监控域调用请求。
+
+    Args:
+        connection_id: 连接 ID。
+        message: 客户端消息。
+    """
+    request_id = cast(Optional[str], message.get("id"))
+    method = str(message.get("method") or "").strip()
+    if method != "history.load":
+        await websocket_manager.send_response(
+            connection_id,
+            request_id=request_id,
+            ok=False,
+            error=_build_error("unsupported_method", f"不支持的监控方法: {method}"),
+        )
+        return
+
+    data = _get_request_data(message)
+    session_id = str(data.get("session_id") or "").strip()
+    if not session_id:
+        await websocket_manager.send_response(
+            connection_id,
+            request_id=request_id,
+            ok=False,
+            error=_build_error("missing_session", "历史加载请求缺少 session_id"),
+        )
+        return
+
+    from src.maisaka.monitor.event_store import (
+        DEFAULT_HISTORY_PAGE_SIZE,
+        load_session_event_page,
+        load_session_subagent_events,
+    )
+
+    before_event_id = _coerce_non_negative_int(data.get("before_event_id"))
+    limit = _coerce_non_negative_int(data.get("limit"), default=DEFAULT_HISTORY_PAGE_SIZE)
+    page = await asyncio.to_thread(
+        load_session_event_page,
+        session_id=session_id,
+        before_event_id=before_event_id,
+        limit=limit,
+    )
+    if before_event_id == 0 and page.has_more:
+        # 首页之前可能还有未结束的子代理任务，随首页补齐子代理面板所需的事件。
+        subagent_events = await asyncio.to_thread(
+            load_session_subagent_events,
+            session_id=session_id,
+            before_event_id=page.oldest_event_id,
+        )
+        if subagent_events:
+            await websocket_manager.send_event(
+                connection_id,
+                domain="maisaka_monitor",
+                event="subagent.history",
+                topic="main",
+                data={"session_id": session_id, "events": subagent_events},
+            )
+
+    # 历史事件与实时事件共用出站队列和增量编码，应答排在最后，前端收到应答时本页已全部到达。
+    for history_event in page.events:
+        await websocket_manager.send_event(
+            connection_id,
+            domain="maisaka_monitor",
+            event=str(history_event["event"]),
+            topic="main",
+            data=cast(Dict[str, Any], history_event["data"]),
+        )
+    await websocket_manager.send_response(
+        connection_id,
+        request_id=request_id,
+        ok=True,
+        data={
+            "session_id": session_id,
+            "count": len(page.events),
+            "oldest_event_id": page.oldest_event_id,
+            "has_more": page.has_more,
+        },
     )
 
 
@@ -239,6 +340,10 @@ async def _handle_subscribe(connection_id: str, message: Dict[str, Any]) -> None
         await _handle_plugin_progress_subscribe(connection_id, request_id)
         return
 
+    if domain == "plugin_runtime" and topic == "main":
+        await subscribe_plugin_runtime(connection_id, request_id)
+        return
+
     if domain == "maisaka_monitor" and topic == "main":
         await _handle_maisaka_monitor_subscribe(connection_id, request_id, data)
         return
@@ -272,6 +377,8 @@ async def _handle_unsubscribe(connection_id: str, message: Dict[str, Any]) -> No
         return
 
     websocket_manager.unsubscribe(connection_id, domain=domain, topic=topic)
+    if domain == "plugin_runtime" and topic == "main":
+        stop_plugin_runtime_subscription(connection_id)
     await websocket_manager.send_response(
         connection_id,
         request_id=request_id,
@@ -557,6 +664,10 @@ async def _handle_call(connection_id: str, message: Dict[str, Any]) -> None:
         await _handle_chat_call(connection_id, message)
         return
 
+    if domain == "maisaka_monitor":
+        await _handle_maisaka_monitor_call(connection_id, message)
+        return
+
     await websocket_manager.send_response(
         connection_id,
         request_id=request_id,
@@ -642,6 +753,7 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
     except Exception as exc:
         logger.error(f"统一 WebSocket 处理失败: connection={connection_id}, error={exc}", exc_info=True)
     finally:
+        stop_plugin_runtime_subscription(connection_id)
         chat_manager.disconnect_connection(connection_id)
         await websocket_manager.disconnect(connection_id)
         logger.info(

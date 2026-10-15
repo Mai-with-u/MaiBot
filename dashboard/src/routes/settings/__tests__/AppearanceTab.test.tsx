@@ -1178,13 +1178,6 @@ describe('AppearanceTab 未来复古 token 与滑块', () => {
         futureRetro: { ...DEFAULT_FUTURE_RETRO_STYLE_CONFIG, panelDepth: 99 },
       },
     })
-
-    fireEvent.keyDown(getLabeledSlider('settings.appearance.retroStrokeScale'), { key: 'ArrowLeft' })
-    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
-      styleConfig: {
-        futureRetro: { ...DEFAULT_FUTURE_RETRO_STYLE_CONFIG, strokeScale: 99 },
-      },
-    })
   })
 
   it('纹理为 none 时禁用强度滑块；重置同时清排版覆盖并恢复默认风格', async () => {

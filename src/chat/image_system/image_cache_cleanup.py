@@ -9,6 +9,7 @@ from sqlmodel import col, select
 
 import asyncio
 
+from src.common.paths import get_instance_root
 from src.common.database.database import get_db_session
 from src.common.database.database_model import Images, ImageType
 from src.common.logger import get_logger
@@ -16,7 +17,7 @@ from src.common.utils.image_path import StoredImagePathError, resolve_stored_ima
 
 logger = get_logger("image_cache_cleanup")
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.absolute().resolve()
+PROJECT_ROOT = get_instance_root()
 IMAGE_DIR = PROJECT_ROOT / "data" / "images"
 _CACHE_IMAGE_EXTENSIONS = {
     ".avif",

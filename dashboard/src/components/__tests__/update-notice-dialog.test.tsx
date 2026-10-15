@@ -308,7 +308,7 @@ describe('UpdateNoticeDialog', () => {
     render(<UpdateNoticeDialog />)
 
     fireEvent.click(await screen.findByRole('button', { name: /知道了/ }))
-    fireEvent.click(await screen.findByRole('button', { name: /前往插件管理/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /前往插件扩展/ }))
 
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ to: '/plugin-config' }))
     expect(ackUpdateNotice).toHaveBeenCalledTimes(1)

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable
 
+import asyncio
+
 from ...utils.runtime_payloads import optional_float, tokens
 from .base import KernelServiceBase
 
@@ -59,6 +61,13 @@ class MemoryEpisodeAdminService(KernelServiceBase):
                 failed_limit=max(1, int(kwargs.get("limit", 20) or 20))
             )
             return {"success": True, **summary}
+
+        if act == "discard_migration_backfill":
+            result = await asyncio.to_thread(
+                self.metadata_store.discard_migration_episode_rebuilds,
+                dry_run=bool(kwargs.get("dry_run", True)),
+            )
+            return {"success": True, **result}
 
         if act == "rebuild":
             sources = tokens(kwargs.get("sources"))

@@ -147,7 +147,10 @@ describe('unifiedWsClient', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    // 断开本用例的客户端实例，移除其挂在 window/document 上的恢复监听，避免串扰后续用例
+    const client = await loadClient()
+    client.disconnect()
     vi.unstubAllGlobals()
     vi.useRealTimers()
   })
@@ -438,7 +441,7 @@ describe('unifiedWsClient', () => {
     expect(locationState.href).toBe('http://localhost/auth')
   })
 
-  it('没有现存 socket 时 restart 会主动建连；已有 socket 则关闭并等待重连', async () => {
+  it('没有现存 socket 时 restart 会主动建连；已有 socket 则关闭并立即重建', async () => {
     const client = await loadClient()
     const restartPromise = client.restart()
     await flushMicrotasks()
@@ -447,11 +450,32 @@ describe('unifiedWsClient', () => {
     await restartPromise
     expect(client.getStatus()).toBe('connected')
 
-    await client.restart()
+    const secondRestart = client.restart()
     expect(FakeWebSocket.instances[0]?.readyState).toBe(FakeWebSocket.CLOSED)
-    await vi.advanceTimersByTimeAsync(1000)
     await flushMicrotasks()
     expect(FakeWebSocket.instances).toHaveLength(2)
+    FakeWebSocket.instances[1]?.serverOpen()
+    await secondRestart
+    expect(client.getStatus()).toBe('connected')
+  })
+
+  it('半开连接的 close 事件迟迟不来时，restart 不等待旧 socket 直接重建', async () => {
+    const { client, socket } = await connectAndOpen()
+    // 模拟半开连接：close() 发出后收不到 close 事件
+    socket.close = () => {
+      socket.readyState = FakeWebSocket.CLOSING
+    }
+
+    const restartPromise = client.restart()
+    await flushMicrotasks()
+    expect(FakeWebSocket.instances).toHaveLength(2)
+    FakeWebSocket.instances[1]?.serverOpen()
+    await restartPromise
+    expect(client.getStatus()).toBe('connected')
+
+    // 旧 socket 迟到的 close 事件不影响新连接
+    socket.serverClose(1006)
+    expect(client.getStatus()).toBe('connected')
   })
 
   it('已连接时 unsubscribe 发送退订请求；未 OPEN 的 sendRequest 会抛错', async () => {
@@ -483,13 +507,16 @@ describe('unifiedWsClient', () => {
 
     const restartPromise = client.restart()
     await expect(connectPromise).rejects.toThrow('统一 WebSocket 已关闭')
+    await flushMicrotasks()
+    FakeWebSocket.instances[1]?.serverOpen()
     await restartPromise
 
     stale?.serverOpen()
     stale?.serverMessage({ op: 'event', domain: 'logs', event: 'entry', data: {} })
     stale?.serverError()
     stale?.serverClose(1006)
-    expect(client.getStatus()).toBe('idle')
+    expect(client.getStatus()).toBe('connected')
+    expect(FakeWebSocket.instances).toHaveLength(2)
   })
 
   it('onStatusChange / onReconnect / onConnectionChange 退订后不再收到后续通知', async () => {
@@ -631,10 +658,16 @@ describe('unifiedWsClient', () => {
     expect(healthyStatus).toHaveBeenCalled()
     expect(healthyConn).toHaveBeenCalled()
     expect(healthyReconnect).toHaveBeenCalledTimes(1)
-    expect(console.error).toHaveBeenCalledWith('统一 WebSocket 事件监听器执行失败:', expect.any(Error))
+    expect(console.error).toHaveBeenCalledWith(
+      '统一 WebSocket 事件监听器执行失败:',
+      expect.any(Error)
+    )
     expect(console.error).toHaveBeenCalledWith('WebSocket 状态监听器执行失败:', expect.any(Error))
     expect(console.error).toHaveBeenCalledWith('WebSocket 连接监听器执行失败:', expect.any(Error))
-    expect(console.error).toHaveBeenCalledWith('统一 WebSocket 重连监听器执行失败:', expect.any(Error))
+    expect(console.error).toHaveBeenCalledWith(
+      '统一 WebSocket 重连监听器执行失败:',
+      expect.any(Error)
+    )
   })
 
   it('恢复订阅失败只记日志仍通知重连；心跳在 socket 非 OPEN 时不发 ping', async () => {
@@ -683,7 +716,7 @@ describe('unifiedWsClient', () => {
     expect(received).not.toHaveBeenCalled()
   })
 
-  it('subscribe 省略 data 时发送空对象；重连 connect 失败只记日志', async () => {
+  it('subscribe 省略 data 时发送空对象；重连 connect 失败会记日志', async () => {
     const { client, socket } = await connectAndOpen()
     const subscribePromise = client.subscribe('logs', 'main')
     await flushMicrotasks()
@@ -701,5 +734,113 @@ describe('unifiedWsClient', () => {
     await vi.advanceTimersByTimeAsync(1000)
     await flushMicrotasks()
     expect(console.error).toHaveBeenCalledWith('统一 WebSocket 重连失败:', expect.any(Error))
+  })
+
+  it('重连时 token 接口不可用（后端重启中）会继续按退避重试，直到恢复', async () => {
+    apiState.settings = { wsMaxReconnectAttempts: 5, wsReconnectInterval: 1000 }
+    const { client, socket } = await connectAndOpen()
+
+    apiState.tokenError = new Error('后端重启中')
+    socket.serverClose(1006)
+
+    // 第 1 次重连（1000ms）：token 获取失败，未创建 socket
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushMicrotasks()
+    expect(FakeWebSocket.instances).toHaveLength(1)
+
+    // 后端恢复后，第 2 次重连（2000ms 退避）成功建连
+    apiState.tokenError = null
+    await vi.advanceTimersByTimeAsync(2000)
+    await flushMicrotasks()
+    expect(FakeWebSocket.instances).toHaveLength(2)
+    FakeWebSocket.instances[1]?.serverOpen()
+    await flushMicrotasks()
+    expect(client.getStatus()).toBe('connected')
+  })
+
+  it('首次 connect 因 token 失败时也会自动安排重连', async () => {
+    apiState.tokenError = new Error('后端尚未就绪')
+    const client = await loadClient()
+    await expect(client.connect()).rejects.toThrow('无法建立统一 WebSocket 连接')
+
+    apiState.tokenError = null
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushMicrotasks()
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    FakeWebSocket.instances[0]?.serverOpen()
+    await flushMicrotasks()
+    expect(client.getStatus()).toBe('connected')
+  })
+
+  it('同一次断线的多个 close 回调只安排一次重连', async () => {
+    apiState.settings = { wsMaxReconnectAttempts: 5, wsReconnectInterval: 1000 }
+    const { socket } = await connectAndOpen()
+    socket.serverError()
+    socket.serverClose(1006)
+    socket.serverClose(1006)
+
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushMicrotasks()
+    expect(FakeWebSocket.instances).toHaveLength(2)
+  })
+
+  it('重连次数耗尽后，网络恢复 online 事件会重置次数并立即重连', async () => {
+    apiState.settings = { wsMaxReconnectAttempts: 1, wsReconnectInterval: 1000 }
+    const { client, socket } = await connectAndOpen()
+
+    socket.serverClose(1006)
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushMicrotasks()
+    FakeWebSocket.instances[1]?.serverClose(1006)
+    await vi.advanceTimersByTimeAsync(600000)
+    await flushMicrotasks()
+    expect(FakeWebSocket.instances).toHaveLength(2)
+
+    window.dispatchEvent(new Event('online'))
+    await flushMicrotasks()
+    expect(FakeWebSocket.instances).toHaveLength(3)
+    FakeWebSocket.instances[2]?.serverOpen()
+    await flushMicrotasks()
+    expect(client.getStatus()).toBe('connected')
+  })
+
+  it('页面重新可见时跳过退避等待立即重连；隐藏或已连接时不触发', async () => {
+    apiState.settings = { wsMaxReconnectAttempts: 5, wsReconnectInterval: 10000 }
+    const visibility = { value: 'hidden' as DocumentVisibilityState }
+    vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility.value)
+    const { socket } = await connectAndOpen()
+
+    // 连接正常时可见性变化不做任何事
+    visibility.value = 'visible'
+    document.dispatchEvent(new Event('visibilitychange'))
+    await flushMicrotasks()
+    expect(FakeWebSocket.instances).toHaveLength(1)
+
+    socket.serverClose(1006)
+    visibility.value = 'hidden'
+    document.dispatchEvent(new Event('visibilitychange'))
+    await flushMicrotasks()
+    expect(FakeWebSocket.instances).toHaveLength(1)
+
+    visibility.value = 'visible'
+    document.dispatchEvent(new Event('visibilitychange'))
+    await flushMicrotasks()
+    expect(FakeWebSocket.instances).toHaveLength(2)
+
+    // 原退避计时器已取消，不会再额外建连
+    FakeWebSocket.instances[1]?.serverOpen()
+    await vi.advanceTimersByTimeAsync(60000)
+    expect(FakeWebSocket.instances).toHaveLength(2)
+  })
+
+  it('手动断开后 online 事件不会触发重连', async () => {
+    const { client, socket } = await connectAndOpen()
+    socket.serverClose(1006)
+    client.disconnect()
+
+    window.dispatchEvent(new Event('online'))
+    await vi.advanceTimersByTimeAsync(600000)
+    await flushMicrotasks()
+    expect(FakeWebSocket.instances).toHaveLength(1)
   })
 })

@@ -13,6 +13,11 @@ import {
   saveThemePartial,
 } from '@/lib/theme/storage'
 import { applyThemePipeline, removeCustomCSS } from '@/lib/theme/pipeline'
+import {
+  applyMillenniumFonts,
+  loadMillenniumCjkFont,
+  loadMillenniumFont,
+} from '@/lib/theme/millennium-font'
 
 type Theme = 'dark' | 'light' | 'system'
 
@@ -22,12 +27,23 @@ type ThemeProviderProps = {
   storageKey?: string
 }
 
-function dashboardStyleToConfigValue(style: DashboardStyle): 0 | 1 {
-  return style === 'future-retro' ? 1 : 0
+type WebUIStyleConfigValue = 0 | 1 | 2
+
+// bot_config 的 webui.webui_style 用整数保存界面风格：0 原版、1 未来复古、2 千禧。
+const DASHBOARD_STYLE_CONFIG_VALUES: Record<DashboardStyle, WebUIStyleConfigValue> = {
+  modern: 0,
+  'future-retro': 1,
+  millennium: 2,
+}
+
+function dashboardStyleToConfigValue(style: DashboardStyle): WebUIStyleConfigValue {
+  return DASHBOARD_STYLE_CONFIG_VALUES[style]
 }
 
 function configValueToDashboardStyle(value: unknown): DashboardStyle {
-  return Number(value) === 1 ? 'future-retro' : 'modern'
+  const configValue = Number(value)
+  if (configValue === 2) return 'millennium'
+  return configValue === 1 ? 'future-retro' : 'modern'
 }
 
 function shouldSyncRemoteWebUIStyle(): boolean {
@@ -44,7 +60,7 @@ export function ThemeProvider({
   })
   const [themeConfig, setThemeConfig] = useState<UserThemeConfig>(() => loadThemeConfig())
   const [systemThemeTick, setSystemThemeTick] = useState(0)
-  const pendingWebUIStyleRef = useRef<0 | 1 | null>(null)
+  const pendingWebUIStyleRef = useRef<WebUIStyleConfigValue | null>(null)
 
   const resolvedTheme = useMemo<'dark' | 'light'>(() => {
     void systemThemeTick
@@ -76,10 +92,10 @@ export function ThemeProvider({
     }
 
     root.dataset.dashboardStyle = dashboardStyle
+    applyMillenniumFonts(loadMillenniumFont(), loadMillenniumCjkFont())
     root.dataset.retroTextureStyle = futureRetroConfig.textureStyle
     root.style.setProperty('--retro-paper-warmth', `${futureRetroConfig.paperWarmth}%`)
     root.style.setProperty('--retro-panel-depth', String(futureRetroConfig.panelDepth / 100))
-    root.style.setProperty('--retro-stroke-scale', String(futureRetroConfig.strokeScale / 100))
     root.style.setProperty(
       '--retro-configured-paper-texture',
       buildFutureRetroTexture(
@@ -89,7 +105,7 @@ export function ThemeProvider({
       )
     )
     const textureSize = {
-      fine: '180px 180px',
+      fine: '220px 220px',
       coarse: '260px 260px',
       'dot-grid': '24px 24px',
       ruled: '40px 28px',

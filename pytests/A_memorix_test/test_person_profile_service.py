@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import List
 import json
 
 import pytest
@@ -133,6 +134,7 @@ class FakeRetriever:
     def __init__(self) -> None:
         self.score = 0.95
         self.content = "机器人建议测试用户以后叫星灯。"
+        self.metadata = {"source_type": "chat_summary", "person_id": "person-1"}
 
     async def retrieve(self, query: str, top_k: int):
         del query, top_k
@@ -142,7 +144,7 @@ class FakeRetriever:
                 result_type="paragraph",
                 score=self.score,
                 content=self.content,
-                metadata={"source_type": "chat_summary", "person_id": "person-1"},
+                metadata=self.metadata,
             )
         ]
 
@@ -292,6 +294,78 @@ async def test_profile_refresh_short_circuits_when_only_retrieval_score_changes(
 
 
 @pytest.mark.asyncio
+async def test_profile_refresh_skips_llm_when_nested_retrieval_scores_change(monkeypatch: pytest.MonkeyPatch) -> None:
+    metadata_store = FakeMetadataStore()
+    retriever = FakeRetriever()
+    retriever.metadata.update(
+        {
+            "score_breakdown": {"graph_reliability": 0.19199791869543034, "graph_grounding_quality": 0.2953814133775851},
+            "bm25_score": 0.7,
+            "ppr_signal": 0.5,
+            "ppr_focus_entity_count": 1,
+            "ppr_boost": 0.03,
+        }
+    )
+    service = PersonProfileService(metadata_store=metadata_store, retriever=retriever)
+    service.get_person_aliases = lambda person_id: (["测试用户"], "测试用户", [])
+    service._resolve_profile_classification_model = lambda: SimpleNamespace(
+        task_name="memory",
+        selected_model_name=None,
+        task_config=SimpleNamespace(model_list=["test-model"]),
+    )
+    prompts: List[str] = []
+
+    async def fake_generate(model, request_type, prompt, **kwargs):
+        assert request_type == PROFILE_CLASSIFICATION_REQUEST_TYPE
+        prompts.append(prompt)
+        return SimpleNamespace(
+            success=True,
+            completion=SimpleNamespace(response=json.dumps({"recent_interactions": [retriever.content]})),
+        )
+
+    monkeypatch.setattr(profile_service_module, "generate_with_resolved_model", fake_generate)
+    first = await service.query_person_profile(person_id="person-1", top_k=6, force_refresh=True)
+    retriever.score = 0.51
+    retriever.metadata.update(
+        {
+            "score_breakdown": {"graph_reliability": 0.19201712884036976, "graph_grounding_quality": 0.2954109674467227},
+            "bm25_score": 0.9,
+            "ppr_signal": 0.8,
+            "ppr_focus_entity_count": 2,
+            "ppr_boost": 0.048,
+        }
+    )
+    second = await service.query_person_profile(person_id="person-1", top_k=6, force_refresh=True)
+
+    assert second["evidence_unchanged"] is True
+    assert second["profile_version"] == first["profile_version"] == 1
+    assert metadata_store.refresh_count == 1
+    assert len(metadata_store.snapshots) == len(prompts) == 1
+    assert "score_breakdown" not in prompts[0]
+    assert retriever.metadata["ppr_boost"] == 0.048
+
+
+@pytest.mark.parametrize("field", ["source_type", "custom_evidence_note"])
+def test_profile_fingerprint_tracks_non_scoring_evidence_metadata(field: str) -> None:
+    service = PersonProfileService(metadata_store=FakeMetadataStore(), retriever=FakeRetriever())
+    service._resolve_profile_classification_model = lambda: None
+    evidence = {"hash": "p-1", "type": "paragraph", "content": "测试证据", "metadata": {"source_type": "chat_summary"}}
+    inputs = {
+        "person_id": "person-1",
+        "primary_name": "测试用户",
+        "aliases": ["测试用户"],
+        "relation_edges": [],
+        "vector_evidence": [evidence],
+        "memory_traits": [],
+        "fact_claims": [],
+    }
+    first = service._profile_evidence_fingerprint(**inputs)
+    evidence["metadata"][field] = "person_fact"
+
+    assert service._profile_evidence_fingerprint(**inputs) != first
+
+
+@pytest.mark.asyncio
 async def test_profile_refresh_creates_version_when_same_evidence_id_content_changes() -> None:
     metadata_store = FakeMetadataStore()
     retriever = FakeRetriever()
@@ -362,8 +436,7 @@ async def test_profile_classification_uses_llm_buckets_and_guards_uncertain_stab
 
     assert buckets["identity_settings"] == ["测试用户是画师。"]
     assert buckets["relationship_settings"] == ["测试用户把麦麦当搭档。"]
-    assert "测试用户可能长期熬夜。" not in buckets["stable_facts"]
-    assert "测试用户可能长期熬夜。" in buckets["uncertain_notes"]
+    assert "测试用户可能长期熬夜。" in buckets["stable_facts"]
     assert "测试用户似乎偏好蓝色。" in buckets["uncertain_notes"]
 
 
@@ -418,7 +491,7 @@ async def test_model_derived_person_fact_is_confined_to_uncertain_projection() -
 
 
 @pytest.mark.asyncio
-async def test_model_classification_cannot_promote_free_text_to_stable_profile() -> None:
+async def test_model_classification_can_write_stable_profile() -> None:
     metadata_store = FakeMetadataStore()
     metadata_store.fact_claims = []
     service = PersonProfileService(metadata_store=metadata_store, retriever=FakeRetriever())
@@ -440,5 +513,5 @@ async def test_model_classification_cannot_promote_free_text_to_stable_profile()
     payload = await service.query_person_profile(person_id="person-1", top_k=12, force_refresh=True)
     sections = parse_profile_sections(payload["profile_text"])
 
-    assert "旧金山" not in "\n".join(sections["稳定了解"])
-    assert "旧金山" in "\n".join(sections["不确定信息"])
+    assert "旧金山" in "\n".join(sections["稳定了解"])
+    assert "旧金山" not in "\n".join(sections["不确定信息"])

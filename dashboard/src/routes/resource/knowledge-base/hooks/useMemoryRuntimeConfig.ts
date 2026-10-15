@@ -18,10 +18,13 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useToast } from '@/hooks/use-toast'
 import { usePendingOperation, type UsePendingOperationResult } from '@/hooks/usePendingOperation'
 import {
+  deleteMemoryVectorSpace,
   getMemoryRuntimeConfig,
+  getMemoryVectorSpaces,
   rebuildMemoryRuntimeVectors,
   refreshMemoryRuntimeSelfCheck,
   type MemoryRuntimeConfigPayload,
+  type MemoryVectorSpace,
 } from '@/lib/memory-api'
 
 /** 向量重建待定操作的载荷：dry-run 预览已暂存，confirm 时执行真重建（无额外参数） */
@@ -30,6 +33,11 @@ interface VectorRebuildOperation {
 }
 
 export interface UseMemoryRuntimeConfigResult {
+  vectorSpaces: MemoryVectorSpace[]
+  vectorSpacesLoading: boolean
+  vectorSpacesError: string
+  deletingSpaceId: string | null
+  deleteVectorSpace: (spaceId: string) => Promise<void>
   runtimeConfig: MemoryRuntimeConfigPayload | null
   /** 运行时配置首次加载中（用于页面整体 loading 门控） */
   runtimeLoading: boolean
@@ -49,9 +57,36 @@ export interface UseMemoryRuntimeConfigResult {
   confirmVectorRebuild: () => Promise<void>
 }
 
-export function useMemoryRuntimeConfig(): UseMemoryRuntimeConfigResult {
+export function useMemoryRuntimeConfig(statusDialogOpen = false): UseMemoryRuntimeConfigResult {
   const { toast } = useToast()
   const queryClient = useQueryClient()
+  const spacesQuery = useQuery({
+    queryKey: ['memory-runtime', 'vector-spaces'],
+    queryFn: async () => {
+      const payload = await getMemoryVectorSpaces()
+      if (!payload.success) throw new Error('读取已保存向量库失败')
+      return payload.items
+    },
+    enabled: statusDialogOpen,
+    refetchInterval: statusDialogOpen ? 5000 : false,
+  })
+  const [deletingSpaceId, setDeletingSpaceId] = useState<string | null>(null)
+  const deleteVectorSpace = useCallback(async (spaceId: string) => {
+    setDeletingSpaceId(spaceId)
+    try {
+      await deleteMemoryVectorSpace(spaceId)
+      await spacesQuery.refetch()
+      toast({ title: '已删除向量库' })
+    } catch (error) {
+      toast({
+        title: '删除向量库失败',
+        description: error instanceof Error ? error.message : '未知错误',
+        variant: 'destructive',
+      })
+    } finally {
+      setDeletingSpaceId(null)
+    }
+  }, [spacesQuery, toast])
 
   // 运行时配置：服务于概览区/图谱，默认即拉取（沿用原页面初始化时加载、非懒加载的时机）
   const runtimeQuery = useQuery({
@@ -168,6 +203,11 @@ export function useMemoryRuntimeConfig(): UseMemoryRuntimeConfigResult {
 
   return useMemo(
     () => ({
+      vectorSpaces: spacesQuery.data ?? [],
+      vectorSpacesLoading: spacesQuery.isLoading,
+      vectorSpacesError: spacesQuery.error instanceof Error ? spacesQuery.error.message : '',
+      deletingSpaceId,
+      deleteVectorSpace,
       runtimeConfig,
       runtimeLoading: runtimeQuery.isLoading,
       runtimeErrorText,
@@ -182,6 +222,11 @@ export function useMemoryRuntimeConfig(): UseMemoryRuntimeConfigResult {
       confirmVectorRebuild,
     }),
     [
+      spacesQuery.data,
+      spacesQuery.isLoading,
+      spacesQuery.error,
+      deletingSpaceId,
+      deleteVectorSpace,
       runtimeConfig,
       runtimeQuery.isLoading,
       runtimeErrorText,

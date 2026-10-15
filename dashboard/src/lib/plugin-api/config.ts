@@ -18,14 +18,15 @@ const RUNTIME_API_BASE = '/api/webui/plugins/runtime'
 export async function getPluginConfigBundle(pluginId: string): Promise<PluginConfigBundle> {
   const data = await backendApi.get<{
     success: boolean
-    schema?: PluginConfigSchema
+    schema?: PluginConfigSchema | null
     config?: Record<string, unknown>
     raw_config?: string
+    config_error?: string
     message?: string
   }>(`${API_BASE}/${pluginId}/bundle`, { errorMessage: '获取插件配置初始化数据失败' })
   const checked = requireSuccess(data, '获取插件配置初始化数据失败')
   if (
-    !checked.schema ||
+    (!checked.schema && !(checked.schema === null && checked.config_error)) ||
     checked.config === undefined ||
     checked.config === null ||
     typeof checked.raw_config !== 'string'
@@ -37,6 +38,7 @@ export async function getPluginConfigBundle(pluginId: string): Promise<PluginCon
     config: checked.config,
     rawConfig: checked.raw_config,
     message: checked.message,
+    ...(checked.config_error ? { configError: checked.config_error } : {}),
   }
 }
 
@@ -109,8 +111,8 @@ export async function updatePluginConfig(
 export async function updatePluginConfigRaw(
   pluginId: string,
   configToml: string
-): Promise<{ success: boolean; message: string; note?: string }> {
-  return backendApi.put<{ success: boolean; message: string; note?: string }>(
+): Promise<{ success: boolean; message: string; note?: string; runtime_status?: string }> {
+  return backendApi.put<{ success: boolean; message: string; note?: string; runtime_status?: string }>(
     `${API_BASE}/${pluginId}/raw`,
     {
       body: { config: configToml },
@@ -138,8 +140,8 @@ export async function resetPluginConfig(
  */
 export async function togglePlugin(
   pluginId: string
-): Promise<{ success: boolean; enabled: boolean; message: string; note?: string }> {
-  return backendApi.post<{ success: boolean; enabled: boolean; message: string; note?: string }>(
+): Promise<{ success: boolean; enabled: boolean; message: string; note?: string; runtime_status?: string }> {
+  return backendApi.post<{ success: boolean; enabled: boolean; message: string; note?: string; runtime_status?: string }>(
     `${API_BASE}/${pluginId}/toggle`,
     { errorMessage: '切换插件状态失败' }
   )

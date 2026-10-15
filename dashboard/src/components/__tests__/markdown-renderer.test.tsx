@@ -5,6 +5,20 @@ import { describe, expect, it } from 'vitest'
 import { MarkdownRenderer } from '../markdown-renderer'
 
 describe('MarkdownRenderer', () => {
+  it('renders raw HTML blocks from README content', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownRenderer
+        content={'<p align="center"><img src="https://example.com/icon.png" alt="图标" /></p>\n\n<h1 align="center">插件标题</h1>'}
+      />
+    )
+
+    expect(html).toContain('src="https://example.com/icon.png"')
+    expect(html).toContain('alt="图标"')
+    expect(html).toContain('align="center"')
+    expect(html).toContain('>插件标题</h1>')
+    expect(html).not.toContain('&lt;p align=')
+  })
+
   it('keeps inline code inside ordered-list text', () => {
     const content = '2. `config.toml` 中旧的 `tags = [...]` 会自动迁移到 `tag_templates`'
 

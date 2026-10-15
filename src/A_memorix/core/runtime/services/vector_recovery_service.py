@@ -145,6 +145,9 @@ class MemoryVectorRecoveryService(KernelServiceBase):
         elif error_code in self._EMBEDDING_COMPATIBILITY_CODES:
             state = "incompatible"
             recovery_stage = "rebuild_required"
+        elif error_code == "vector_generation_missing":
+            state = "unavailable"
+            recovery_stage = "rebuild_required"
         else:
             state = "unavailable"
             recovery_stage = "not_started"

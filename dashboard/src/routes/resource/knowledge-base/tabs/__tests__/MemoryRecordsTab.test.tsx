@@ -7,12 +7,14 @@ import { Tabs } from '@/components/ui/tabs'
 import i18n from '@/i18n'
 import {
   getMemoryRecordContext,
+  previewMemoryCorrection,
   restoreMemoryFact,
   retractMemoryFact,
   searchMemoryRecords,
   updateMemoryFact,
   type MemoryRecordContextPayload,
   type MemoryRecordPayload,
+  type MemoryCorrectionPlanPayload,
 } from '@/lib/memory-api'
 
 import { MemoryRecordsTab } from '../MemoryRecordsTab'
@@ -22,6 +24,7 @@ vi.mock('@/lib/memory-api', async (importOriginal) => {
   return {
     ...actual,
     getMemoryRecordContext: vi.fn(),
+    previewMemoryCorrection: vi.fn(),
     restoreMemoryFact: vi.fn(),
     retractMemoryFact: vi.fn(),
     searchMemoryRecords: vi.fn(),
@@ -31,6 +34,7 @@ vi.mock('@/lib/memory-api', async (importOriginal) => {
 
 const searchMock = vi.mocked(searchMemoryRecords)
 const contextMock = vi.mocked(getMemoryRecordContext)
+const previewMock = vi.mocked(previewMemoryCorrection)
 const updateFactMock = vi.mocked(updateMemoryFact)
 const retractFactMock = vi.mocked(retractMemoryFact)
 const restoreFactMock = vi.mocked(restoreMemoryFact)
@@ -82,14 +86,14 @@ const context: MemoryRecordContextPayload = {
   available_actions: ['graph', 'correct', 'delete'],
 }
 
-function renderTab(onAction = vi.fn()) {
+function renderTab(onAction = vi.fn(), onCorrectionPlan = vi.fn()) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   render(
     <QueryClientProvider client={queryClient}>
       <Tabs value="records">
-        <MemoryRecordsTab onAction={onAction} />
+        <MemoryRecordsTab onAction={onAction} onCorrectionPlan={onCorrectionPlan} />
       </Tabs>
     </QueryClientProvider>
   )
@@ -100,6 +104,7 @@ beforeEach(async () => {
   await i18n.changeLanguage('zh')
   searchMock.mockReset()
   contextMock.mockReset()
+  previewMock.mockReset()
   updateFactMock.mockReset()
   retractFactMock.mockReset()
   restoreFactMock.mockReset()
@@ -120,6 +125,74 @@ beforeEach(async () => {
 })
 
 describe('MemoryRecordsTab', () => {
+  it('多选独立于详情切换，支持全选、取消和重新搜索后清空', async () => {
+    const user = userEvent.setup()
+    const second = { ...paragraph, id: 'paragraph-02', title: '小明喜欢红茶' }
+    searchMock.mockResolvedValue({ success: true, query: '', types: ['paragraph'], include_inactive: false,
+      limit: 80, count: 2, counts: { paragraph: 2 }, items: [paragraph, second] })
+    renderTab()
+    await user.click(await screen.findByRole('checkbox', { name: '选择段落：小明喜欢咖啡' }))
+    expect(screen.getByText('已选 1 条')).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: '全选当前结果' })).toHaveAttribute('data-state', 'indeterminate')
+    await user.click(screen.getByRole('button', { name: /小明喜欢红茶/ }))
+    expect(screen.getByText('已选 1 条')).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await user.click(screen.getByRole('checkbox', { name: '全选当前结果' }))
+    expect(screen.getByText('已选 2 条')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '清空选择' }))
+    expect(screen.getByText('已选 0 条')).toBeInTheDocument()
+    await user.click(screen.getByRole('checkbox', { name: '全选当前结果' }))
+    await user.type(screen.getByLabelText('搜索记忆'), '咖啡')
+    await user.click(screen.getByRole('button', { name: '查询' }))
+    expect(screen.getByText('已选 0 条')).toBeInTheDocument()
+  })
+
+  it('批量预览发送精确目标，失败时保留选择，成功后打开待确认计划', async () => {
+    const user = userEvent.setup()
+    const onCorrectionPlan = vi.fn()
+    const second = { ...paragraph, id: 'relation-01', type: 'relation' as const, title: '小明 喜欢 咖啡' }
+    searchMock.mockResolvedValue({ success: true, query: '', types: ['paragraph', 'relation'], include_inactive: false,
+      limit: 80, count: 2, counts: { paragraph: 1, relation: 1 }, items: [paragraph, second] })
+    const plan: MemoryCorrectionPlanPayload = {
+      plan_id: 'batch-plan', request_text: '改为喜欢绿茶', scope: 'memory', target_person_id: '', target_chat_id: '',
+      status: 'awaiting_confirmation', confidence: 0.9, created_at: 1, updated_at: 1, requested_by: 'knowledge_base', reason: '',
+      plan: { scope: 'memory', request_text: '改为喜欢绿茶', person_id: '', chat_id: '', confidence: 0.9, risk_level: 'medium', reason: '', operations: [] },
+      preview: { request_text: '改为喜欢绿茶', scope: 'memory', person_id: '', person_keyword: '', chat_id: '', candidates: [], operations: [], requires_confirmation: true, confirm_threshold: 0.8, reason: '' },
+      execution: {},
+    }
+    previewMock.mockResolvedValueOnce({ success: false, error: '所选关系受保护' })
+      .mockResolvedValueOnce({ success: true, plan_id: plan.plan_id, plan })
+    renderTab(vi.fn(), onCorrectionPlan)
+    await screen.findByRole('checkbox', { name: '选择段落：小明喜欢咖啡' })
+    await user.click(screen.getByRole('checkbox', { name: '全选当前结果' }))
+    await user.click(screen.getByRole('button', { name: '修正所选' }))
+    expect(screen.getByRole('button', { name: '生成预览' })).toBeDisabled()
+    await user.type(screen.getByLabelText('修正内容'), '改为喜欢绿茶')
+    await user.click(screen.getByRole('button', { name: '生成预览' }))
+    expect(await screen.findByText('所选关系受保护')).toBeInTheDocument()
+    expect(onCorrectionPlan).not.toHaveBeenCalled()
+    expect(previewMock).toHaveBeenCalledWith(expect.objectContaining({
+      request_text: '改为喜欢绿茶', scope: 'memory', targets: [
+        { type: 'paragraph', id: paragraph.id }, { type: 'relation', id: second.id },
+      ],
+    }))
+    await user.click(screen.getByRole('button', { name: '生成预览' }))
+    await waitFor(() => expect(onCorrectionPlan).toHaveBeenCalledWith('batch-plan', '改为喜欢绿茶'))
+    expect(screen.getByText('已选 0 条')).toBeInTheDocument()
+  })
+
+  it('事实和实体可以勾选，但明确提示使用各自编辑入口', async () => {
+    const user = userEvent.setup()
+    const fact = { ...paragraph, type: 'fact' as const }
+    searchMock.mockResolvedValue({ success: true, query: '', types: ['fact'], include_inactive: false,
+      limit: 80, count: 1, counts: { fact: 1 }, items: [fact] })
+    renderTab()
+    await user.click(await screen.findByRole('checkbox', { name: '选择事实：小明喜欢咖啡' }))
+    expect(screen.getByRole('button', { name: '修正所选' })).toBeDisabled()
+    expect(screen.getByText(/事实请逐条编辑/)).toBeInTheDocument()
+  })
+
   it('展示权威记录及数据库派生的关联内容', async () => {
     const user = userEvent.setup()
     renderTab()

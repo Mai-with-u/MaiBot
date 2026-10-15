@@ -88,15 +88,15 @@ describe('config-api', () => {
       )
     })
 
-    it('HTTP 层失败（带 status）时保留被拒绝的缓存，不重复请求', async () => {
-      httpMocks.backendApi.get.mockRejectedValue(
-        new httpMocks.ApiError('获取配置架构失败', { status: 500 })
-      )
+    it('HTTP 层瞬时失败后释放缓存，后端恢复时可以重新读取', async () => {
+      httpMocks.backendApi.get
+        .mockRejectedValueOnce(new httpMocks.ApiError('获取配置架构失败', { status: 503 }))
+        .mockResolvedValueOnce({ sections: [] })
       const api = await loadConfigApi()
 
       await expect(api.getModelConfigSchema()).rejects.toThrow('获取配置架构失败')
-      await expect(api.getModelConfigSchema()).rejects.toThrow('获取配置架构失败')
-      expect(httpMocks.backendApi.get).toHaveBeenCalledTimes(1)
+      await expect(api.getModelConfigSchema()).resolves.toEqual({ sections: [] })
+      expect(httpMocks.backendApi.get).toHaveBeenCalledTimes(2)
     })
 
     it('网络层瞬时失败（无 status）后剔除缓存并允许重试', async () => {
@@ -112,6 +112,39 @@ describe('config-api', () => {
   })
 
   describe('配置数据缓存与失效', () => {
+    it('配置数据的 HTTP 失败也会释放缓存，允许立即重试', async () => {
+      httpMocks.backendApi.get
+        .mockRejectedValueOnce(new httpMocks.ApiError('服务暂不可用', { status: 503 }))
+        .mockResolvedValueOnce({ config: { bot: { nickname: '麦麦' } } })
+      const api = await loadConfigApi()
+
+      await expect(api.getBotConfigCached()).rejects.toThrow('服务暂不可用')
+      await expect(api.getBotConfigCached()).resolves.toEqual({ bot: { nickname: '麦麦' } })
+      expect(httpMocks.backendApi.get).toHaveBeenCalledTimes(2)
+    })
+
+    it('旧请求迟到的失败不会清除更新配置后创建的新缓存', async () => {
+      let rejectFirstRequest!: (reason: Error) => void
+      const firstRequest = new Promise<unknown>((_resolve, reject) => {
+        rejectFirstRequest = reject
+      })
+      httpMocks.backendApi.get
+        .mockReturnValueOnce(firstRequest)
+        .mockResolvedValueOnce({ config: { bot: { nickname: '新名字' } } })
+      httpMocks.backendApi.post.mockResolvedValue({ success: true })
+      const api = await loadConfigApi()
+      const oldRequest = api.getBotConfigCached()
+      const rejected = expect(oldRequest).rejects.toThrow('旧请求失败')
+
+      await api.updateBotConfig({ bot: { nickname: '新名字' } })
+      await api.getBotConfigCached()
+      rejectFirstRequest(new httpMocks.ApiError('旧请求失败', { status: 503 }))
+      await rejected
+
+      await expect(api.getBotConfigCached()).resolves.toEqual({ bot: { nickname: '新名字' } })
+      expect(httpMocks.backendApi.get).toHaveBeenCalledTimes(2)
+    })
+
     it('getBotConfigCached 复用缓存，updateBotConfig 后失效并派发更新事件', async () => {
       httpMocks.backendApi.get.mockResolvedValue({ config: { bot: {} } })
       httpMocks.backendApi.post.mockResolvedValue({ success: true })

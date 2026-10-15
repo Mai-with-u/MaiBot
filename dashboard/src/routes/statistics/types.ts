@@ -60,6 +60,7 @@ export interface DetailedStatisticsPeriod {
   summary: DetailedStatisticsSummary
   models: DetailedStatisticsBreakdown[]
   modules: DetailedStatisticsBreakdown[]
+  task_groups: DetailedStatisticsBreakdown[]
   request_types: DetailedStatisticsBreakdown[]
   chats: DetailedChatStatistics[]
   distributions: DetailedStatisticsDistributions

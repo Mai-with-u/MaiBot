@@ -47,7 +47,6 @@ export const TASK_CONFIGS = [
     key: 'vlm' as const,
     title: '图像识别模型 (vlm)',
     description: '视觉语言模型',
-    hideTemperature: true,
   },
   {
     key: 'voice' as const,
@@ -63,6 +62,17 @@ export const TASK_CONFIGS = [
     description: '用于向量化',
     hideTemperature: true,
     hideMaxTokens: true,
+    hideSelectionStrategy: true,
+    singleModel: true,
+  },
+  {
+    key: 'image_embedding' as const,
+    title: '图片嵌入模型 (image_embedding)',
+    description: '用于图片向量化，必须实现图片输入到向量的协议',
+    hideTemperature: true,
+    hideMaxTokens: true,
+    hideSelectionStrategy: true,
+    singleModel: true,
   },
 ] as const
 
@@ -70,6 +80,7 @@ export const TASK_CONFIGS = [
  * 默认模型信息
  */
 export const DEFAULT_MODEL_INFO = {
+  model_type: 'llm',
   model_identifier: '',
   name: '',
   api_provider: '',

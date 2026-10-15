@@ -10,7 +10,7 @@ from sqlmodel import select
 from src.chat.replyer.expression_vector_index import ExpressionVectorIndexUpsertItem, expression_vector_index
 from src.chat.utils.utils import is_bot_self
 from src.common.data_models.expression_data_model import MaiExpression
-from src.common.data_models.llm_service_data_models import LLMGenerationOptions, LLMResponseResult
+from src.common.data_models.llm_service_data_models import LLMResponseResult
 from src.common.database.database import get_db_session
 from src.common.database.database_model import Expression, ModifiedBy
 from src.common.logger import get_logger
@@ -34,7 +34,6 @@ if TYPE_CHECKING:
 logger = get_logger("expressor")
 
 express_learn_model = LLMServiceClient(task_name="learner", request_type="expression.learner")
-summary_model = LLMServiceClient(task_name="utils", request_type="expression.summary")
 
 
 @dataclass(frozen=True)
@@ -276,6 +275,8 @@ class ExpressionLearner:
     async def learn_from_context_messages(
         self,
         context_messages: Sequence["LLMContextMessage"],
+        *,
+        learned_contents: Optional[List[str]] = None,
     ) -> bool:
         """从 Maisaka 被裁切的上下文消息中学习表达方式。
 
@@ -295,6 +296,7 @@ class ExpressionLearner:
 
         return await self._learn_from_session_messages(
             source_messages,
+            learned_contents=learned_contents,
         )
 
     @staticmethod
@@ -337,6 +339,8 @@ class ExpressionLearner:
     async def _learn_from_session_messages(
         self,
         pending_messages: List["SessionMessage"],
+        *,
+        learned_contents: Optional[List[str]] = None,
     ) -> bool:
         """对一批真实会话消息执行表达学习。"""
 
@@ -371,6 +375,7 @@ class ExpressionLearner:
             return await self._run_learning_batch(
                 pending_messages,
                 learning_session_id=learning_session_id,
+                learned_contents=learned_contents,
             )
         finally:
             await expression_learning_batch_gate.release(learning_session_id)
@@ -380,6 +385,7 @@ class ExpressionLearner:
         pending_messages: List["SessionMessage"],
         *,
         learning_session_id: str,
+        learned_contents: Optional[List[str]] = None,
     ) -> bool:
         """执行已经获得并发闸门的表达学习批次。"""
 
@@ -393,7 +399,6 @@ class ExpressionLearner:
             learning_messages = await self._build_multi_learning_messages(pending_messages, prompt)
             generation_result = await express_learn_model.generate_response_with_context(
                 lambda _client: learning_messages,
-                options=LLMGenerationOptions(temperature=0.3),
                 session_id=learning_session_id,
             )
             self._log_learning_context_preview(
@@ -406,6 +411,8 @@ class ExpressionLearner:
             response = generation_result.response
         except Exception as e:
             logger.error(f"学习表达方式失败: {e}")
+            if learned_contents is not None:
+                raise
             return False
 
         expressions: List[Tuple[str, str, str]]
@@ -447,7 +454,7 @@ class ExpressionLearner:
         expression_log_title = (
             "待优化的表达方式" if global_config.expression.expression_self_reflect else "学习到的表达"
         )
-        logger.info(f"[{session_display_name}] {expression_log_title}：\n{learnt_expressions_str}")
+        logger.debug(f"[{session_display_name}] {expression_log_title}：\n{learnt_expressions_str}")
 
         written_expressions: List[MaiExpression] = []
         for situation, style in learnt_expressions:
@@ -485,9 +492,15 @@ class ExpressionLearner:
             )
             if expression is not None:
                 written_expressions.append(expression)
+                if learned_contents is not None:
+                    learned_contents.append(f"{situation} → {style}")
 
         if written_expressions:
             await self._sync_expression_vector_index_batch(written_expressions)
+        logger.info(
+            f"[{session_display_name}] 表达学习完成 "
+            f"候选={len(learnt_expressions)} 写入={len(written_expressions)}"
+        )
         return bool(written_expressions)
 
     def _resolve_learning_session_id(self, messages: List["SessionMessage"]) -> Optional[str]:
@@ -580,10 +593,10 @@ class ExpressionLearner:
         source_type: str,
         generation_result: LLMResponseResult,
     ) -> None:
-        """保存表达学习上下文预览，并在日志中输出查看入口。"""
+        """保存表达学习上下文预览，供 WebUI 查看。"""
 
         try:
-            preview_access = PromptCLIVisualizer.build_prompt_preview_access(
+            PromptCLIVisualizer.build_prompt_preview_access(
                 messages,
                 category="expression_learner",
                 chat_id=session_id,
@@ -601,12 +614,6 @@ class ExpressionLearner:
         except Exception as exc:
             logger.warning(f"{self.session_id} 表达学习上下文预览保存失败: {exc}")
             return
-
-        logger.info(
-            f"{self.session_id} 表达学习上下文预览已生成: "
-            f"WebUI={preview_access.preview_web_uri} "
-            f"JSON={preview_access.record_path}"
-        )
 
     # ====== 过滤方法 ======
     def _filter_expressions(
@@ -657,10 +664,10 @@ class ExpressionLearner:
             # 过滤掉 style 与机器人名称/昵称重复的表达
             normalized_style = normalize_expression_style_for_learning(style)
             if not normalized_style:
-                logger.info(f"跳过清洗后为空的表达方式：situation={situation}, style={style}, source_id={source_id}")
+                logger.debug(f"跳过清洗后为空的表达方式：situation={situation}, style={style}, source_id={source_id}")
                 continue
             if "SELF" in situation or "SELF" in normalized_style or "SELF" in context:
-                logger.info(f"跳过包含 SELF 的表达方式：situation={situation}, style={style}, source_id={source_id}")
+                logger.debug(f"跳过包含 SELF 的表达方式：situation={situation}, style={style}, source_id={source_id}")
                 continue
             if normalized_style and normalized_style.casefold() in banned_casefold:
                 logger.debug(
@@ -669,11 +676,11 @@ class ExpressionLearner:
                 continue
             # 过滤掉包含 "[表情" 的内容
             if "[表情包" in situation or "[表情包" in normalized_style or "[表情包" in context:
-                logger.info(f"跳过包含表情标记的表达方式：situation={situation}, style={style}, source_id={source_id}")
+                logger.debug(f"跳过包含表情标记的表达方式：situation={situation}, style={style}, source_id={source_id}")
                 continue
             # 过滤掉包含 "[图片" 的内容
             if "[图片" in situation or "[图片" in normalized_style or "[图片" in context:
-                logger.info(f"跳过包含图片标记的表达方式：situation={situation}, style={style}, source_id={source_id}")
+                logger.debug(f"跳过包含图片标记的表达方式：situation={situation}, style={style}, source_id={source_id}")
                 continue
 
             filtered_expressions.append((situation, normalized_style))
@@ -699,15 +706,12 @@ class ExpressionLearner:
             checked: 是否已经完成人工审核。
             modified_by: 最后修改者标记。
         """
-        expr, similarity = self._find_similar_expression(situation, style, session_id=session_id) or (None, 0)
+        expr, _ = self._find_similar_expression(situation, style, session_id=session_id) or (None, 0)
         if expr:
-            # 只有完全一致的表达才会合并，因此不再触发相似表达的 LLM 情景概括。
-            use_llm_summary = similarity < 1.0
+            # 只有完全一致的表达才会合并，保留原有使用情景。
             expression = await self._update_existing_expression(
                 expr,
                 situation,
-                use_llm_summary=use_llm_summary,
-                session_id=session_id,
                 checked=checked,
                 modified_by=modified_by,
             )
@@ -725,7 +729,7 @@ class ExpressionLearner:
 
     @staticmethod
     def _should_sync_expression_vector_index() -> bool:
-        return global_config.expression.expression_selection_mode == "vector_intent"
+        return global_config.expression.use_vector_expression
 
     async def _sync_expression_vector_index_batch(self, expressions: Sequence[MaiExpression]) -> None:
         """表达学习批次写库成功后，同步维护表达向量索引并重聚类。"""
@@ -806,8 +810,6 @@ class ExpressionLearner:
         expr: "MaiExpression",
         situation: str,
         *,
-        session_id: str,
-        use_llm_summary: bool = True,
         checked: bool = False,
         modified_by: Optional[ModifiedBy] = None,
     ) -> Optional[MaiExpression]:
@@ -816,12 +818,6 @@ class ExpressionLearner:
         expr.checked = checked
         expr.modified_by = modified_by
         expr.last_active_time = datetime.now()
-
-        if use_llm_summary:
-            # 相似匹配时，使用 LLM 重新组合 situation
-            new_situation = await self._compose_situation_text(expr.content, session_id=session_id)
-            if new_situation:
-                expr.situation = new_situation
 
         try:
             with get_db_session() as session:
@@ -881,35 +877,10 @@ class ExpressionLearner:
         )
 
         status = "通过" if suitable else "不通过"
-        logger.info(
-            f"表达方式检查 - {status} | "
-            f"Situation: {situation} | "
-            f"Style: {style} || "
-            f"Reason: {reason[:100] if reason else '无'}..."
+        logger.debug(
+            f"表达检查{status} 场景={situation!r} 表达={style!r} 原因={reason or '无'}"
         )
         return suitable
-
-    # ====== 概括方法 ======
-    async def _compose_situation_text(self, content_list: List[str], *, session_id: str) -> Optional[str]:
-        texts = [c.strip() for c in content_list if c.strip()]
-        if not texts:
-            return None
-        description = "\n".join(f"- {s}" for s in texts[-10:])  # 只取最近10条进行概括
-        prompt = (
-            "请阅读以下多个聊天情境描述，并将它们概括成一句简短的话，长度不超过20个字，保留共同特点：\n"
-            f"{description}\n"
-            "只输出概括内容。"
-        )
-        try:
-            summary_result = await summary_model.generate_response(
-                prompt, options=LLMGenerationOptions(temperature=0.2), session_id=session_id
-            )
-            summary = summary_result.response
-            if summary := summary.strip():
-                return summary
-        except Exception as e:
-            logger.error(f"使用 LLM 生成表达方式概括失败: {e}")
-        return None
 
     def _find_similar_expression(
         self,

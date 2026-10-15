@@ -3,11 +3,11 @@
 from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
-import os
 import traceback
 
 from maim_message import MessageBase
 
+from src.common.paths import get_instance_root
 from src.chat.heart_flow.heartflow_message_processor import HeartFCMessageReceiver
 from src.chat.heart_flow.heartflow_manager import heartflow_manager
 from src.common.logger import get_logger
@@ -35,10 +35,26 @@ from .message import SessionMessage
 # 定义日志配置
 
 # 获取项目根目录（假设本文件在src/chat/message_receive/下，根目录为上上上级目录）
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
+PROJECT_ROOT = str(get_instance_root())
 
 # 配置主程序日志格式
 logger = get_logger("chat")
+
+# 内置 /clear 命令在命令管理中的 ID
+CLEAR_COMMAND_ID = "core.clear"
+
+
+def is_command_disabled(command_id: str) -> bool:
+    """判断命令是否在命令管理页被停用。
+
+    Args:
+        command_id: 命令完整 ID，格式为 ``plugin_id.command_name``，内置命令为 ``core.clear``。
+
+    Returns:
+        bool: 命令是否已被停用。
+    """
+
+    return command_id in global_config.plugin.disabled_commands
 
 
 def register_chat_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
@@ -272,6 +288,10 @@ class ChatBot:
                     logger.info("用户禁用的命令，跳过处理")
                     return False, None, True
 
+                if is_command_disabled(f"{plugin_name}.{command_name}"):
+                    logger.info(f"命令 {plugin_name}.{command_name} 已在命令管理中停用，按普通消息处理")
+                    return False, None, True
+
                 if command_info.permission == "operator" and not has_command_permission(
                     f"{plugin_name}.{command_name}",
                     message.platform,
@@ -284,11 +304,12 @@ class ChatBot:
                         message.message_info.additional_config,
                     ),
                 ):
-                    from src.services.send_service import text_to_stream
-
                     self._mark_command_message(message, intercept_message_level=1)
                     await self._store_intercepted_command_message(message)
-                    await text_to_stream("你没有权限使用此命令。", message.session_id, storage_message=False)
+                    if not global_config.plugin.silent_permission_denied:
+                        from src.services.send_service import text_to_stream
+
+                        await text_to_stream("你没有权限使用此命令。", message.session_id, storage_message=False)
                     return True, "没有权限", False
 
                 message.is_command = True
@@ -381,13 +402,15 @@ class ChatBot:
         if message_is_local_operator:
             if command_text == CLEAR_CONTEXT_COMMAND or command_text.startswith(f"{CLEAR_CONTEXT_COMMAND} "):
                 return True
-        elif global_config.debug.enable_clear_context_command and is_clear_context_command(command_text):
+        elif is_clear_context_command(command_text) and not is_command_disabled(CLEAR_COMMAND_ID):
             return True
 
         command_result = component_query_service.find_command_by_text(command_text)
         if command_result is None:
             return False
         _, _, command_info = command_result
+        if is_command_disabled(f"{command_info.plugin_name}.{command_info.name}"):
+            return False
         return not (
             message.session_id
             and command_info.name in global_announcement_manager.get_disabled_chat_commands(message.session_id)
@@ -400,7 +423,8 @@ class ChatBot:
             message.platform,
             message.message_info.additional_config,
         )
-        if not global_config.debug.enable_clear_context_command and not message_is_local_operator:
+        # 本地调试终端始终可用 /clear；普通用户侧由命令管理的启用开关决定。
+        if not message_is_local_operator and is_command_disabled(CLEAR_COMMAND_ID):
             return False
 
         command_text = (message.processed_plain_text or "").strip()
@@ -419,11 +443,12 @@ class ChatBot:
             global_config.plugin.command_permissions,
             local_operator=message_is_local_operator,
         ):
-            from src.services.send_service import text_to_stream
-
             self._mark_command_message(message, intercept_message_level=1)
             await self._store_intercepted_command_message(message)
-            await text_to_stream("你没有权限使用此命令。", message.session_id, storage_message=False)
+            if not global_config.plugin.silent_permission_denied:
+                from src.services.send_service import text_to_stream
+
+                await text_to_stream("你没有权限使用此命令。", message.session_id, storage_message=False)
             return True
 
         from src.services.send_service import text_to_stream
@@ -481,7 +506,7 @@ class ChatBot:
         had_runtime = await heartflow_manager.clear_chat_history_context(message.session_id)
 
         sent = await text_to_stream(
-            "已清空当前聊天的 Maisaka 历史上下文。",
+            "我暂时失忆了",
             message.session_id,
             storage_message=False,
         )
@@ -515,11 +540,12 @@ class ChatBot:
             self._mark_command_message(message, intercept_message_level=1)
             await self._store_intercepted_command_message(message)
 
-            await text_to_stream(
-                "你没有权限使用适配器管理命令。",
-                message.session_id,
-                storage_message=False,
-            )
+            if not global_config.plugin.silent_permission_denied:
+                await text_to_stream(
+                    "你没有权限使用适配器管理命令。",
+                    message.session_id,
+                    storage_message=False,
+                )
             logger.warning(
                 f"已拒绝未授权的适配器管理指令: "
                 f"platform={message.platform} user_id={message.message_info.user_info.user_id} command={command}"
@@ -724,11 +750,8 @@ class ChatBot:
         try:
             group_info = message.message_info.group_info
             user_info = message.message_info.user_info
-            account_id = None
-            scope = None
-            additional_config = message.message_info.additional_config
-            if isinstance(additional_config, dict):
-                account_id, scope = RouteKeyFactory.extract_components(additional_config)
+            route_key = RouteKeyFactory.from_session_message(message)
+            account_id, scope = route_key.account_id, route_key.scope
 
             session_id = SessionUtils.calculate_session_id(
                 message.platform,
@@ -768,9 +791,8 @@ class ChatBot:
 
             group_info = message.message_info.group_info
             user_info = message.message_info.user_info
-            additional_config = message.message_info.additional_config
-            if isinstance(additional_config, dict):
-                account_id, scope = RouteKeyFactory.extract_components(additional_config)
+            route_key = RouteKeyFactory.from_session_message(message)
+            account_id, scope = route_key.account_id, route_key.scope
 
             # 通知消息（戳一戳、撤回、禁言等）由适配器标记 is_notify=True，
             await self.handle_notice_message(message)
@@ -794,6 +816,9 @@ class ChatBot:
             group_info = message.message_info.group_info
             user_info = message.message_info.user_info
 
+            # Hook 处理后重新读取正式归属，确保消息注册和聊天流创建使用同一条路由。
+            route_key = RouteKeyFactory.from_session_message(message)
+            account_id, scope = route_key.account_id, route_key.scope
             # 平台层的 @ 检测由底层 is_mentioned_bot_in_message 统一处理；此处不做用户名硬编码匹配
 
             # 已注册命令优先进入命令链；普通消息仍需先通过聊天过滤。

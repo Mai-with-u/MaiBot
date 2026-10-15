@@ -17,6 +17,10 @@ vi.mock('@/lib/api-base', () => ({
   resolveApiPath: vi.fn(),
 }))
 
+const runtimeMocks = vi.hoisted(() => ({ isElectron: vi.fn(() => false) }))
+
+vi.mock('@/lib/runtime', () => runtimeMocks)
+
 vi.mock('@/lib/http', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/http')>()
   return {
@@ -42,6 +46,7 @@ beforeEach(() => {
   localStorage.clear()
   // 每个用例前重挂实现：解析结果加上 resolved: 前缀，便于断言路径确实经过了解析
   resolveApiPathMock.mockImplementation(async (path: string) => `resolved:${path}`)
+  runtimeMocks.isElectron.mockReturnValue(false)
 })
 
 describe('buildWebuiAvatarPath', () => {
@@ -146,7 +151,15 @@ describe('useAvatarFetchEnabled', () => {
 })
 
 describe('useResolvedAvatarUrl', () => {
-  it('参数有效且开关开启时，解析出经 resolveApiPath 处理的头像地址', async () => {
+  it('浏览器中首帧即返回同源头像路径，不经异步解析', () => {
+    const { result } = renderHook(() => useResolvedAvatarUrl('QQ', '12345'))
+
+    expect(result.current).toBe('/api/webui/avatar?platform=qq&user_id=12345')
+    expect(resolveApiPathMock).not.toHaveBeenCalled()
+  })
+
+  it('Electron 中解析出经 resolveApiPath 处理的头像地址', async () => {
+    runtimeMocks.isElectron.mockReturnValue(true)
     const { result } = renderHook(() => useResolvedAvatarUrl('QQ', '12345'))
 
     await waitFor(() => {

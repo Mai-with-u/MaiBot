@@ -4,7 +4,7 @@
 提供从各个 AI 厂商 API 获取可用模型列表的代理接口
 """
 
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import io
 import math
@@ -30,6 +30,7 @@ from src.llm_models.payload_content.tool_option import ToolCall
 from src.llm_models.request_snapshot import format_request_snapshot_log_info
 from src.llm_models.utils_model import LLMOrchestrator, LLMResponseResult
 from src.webui.dependencies import require_auth
+from src.webui.utils.http_client import get_shared_ssl_context
 from src.webui.utils.network_security import validate_public_url
 
 logger = get_logger("webui")
@@ -117,8 +118,7 @@ class _SingleModelTestOrchestrator(LLMOrchestrator):
         self._model_test_task_config = TaskConfig(
             model_list=[model_name],
             max_tokens=512,
-            temperature=0.0,
-            slow_threshold=30.0,
+            temperature=0.7,
             selection_strategy="sequential",
             hard_timeout=90.0,
         )
@@ -162,11 +162,14 @@ async def test_model_capability(request: ModelTestRequest):
     if model_config is None:
         raise HTTPException(status_code=404, detail=f"未找到模型: {model_name}")
 
-    # 嵌入模型不支持 chat/completions 接口，需改用嵌入接口测试：
-    # 除命中 embedding 任务配置外，模型名称带 embed/embedding 时也按嵌入模型处理，
-    # 避免图片嵌入等未挂到 embedding 任务的向量模型误走聊天测试
-    if model_name in _get_task_model_names("embedding") or _looks_like_embedding_model(model_name):
-        return await _test_embedding_model(model_name)
+    # 按升级后持久化的显式类型选择测试接口，缺失或非法类型直接报错。
+    model_type = model_config["model_type"]
+    if model_type == "image_embedding":
+        return await _test_image_embedding_model(model_name)
+    if model_type == "embedding":
+        return await _test_text_embedding_model(model_name)
+    if model_type != "llm":
+        raise ValueError(f"模型 {model_name} 的 model_type 无效: {model_type}")
 
     visual_enabled = bool(model_config.get("visual", False))
     start_time = time.time()
@@ -174,7 +177,6 @@ async def test_model_capability(request: ModelTestRequest):
         orchestrator = _SingleModelTestOrchestrator(model_name=model_name)
         result = await orchestrator.generate_response_with_context_async(
             context_factory=_build_model_test_context_factory(visual_enabled),
-            temperature=0.0,
             max_tokens=512,
             model_name=model_name,
             tools=_build_model_test_tools(),
@@ -321,7 +323,8 @@ async def _fetch_models_from_provider(
             headers["Authorization"] = f"Bearer {client_config.api_key}"
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        # 复用共享 SSLContext，避免每次获取模型列表都重新加载整套 CA 证书（实测约 5s/次）
+        async with httpx.AsyncClient(verify=get_shared_ssl_context(), timeout=30.0) as client:
             response = await client.get(url, headers=headers, params=params)
             response.raise_for_status()
             data = response.json()
@@ -405,47 +408,6 @@ def _get_model_config(model_name: str) -> Optional[Dict]:
         return None
 
 
-def _looks_like_embedding_model(model_name: str) -> bool:
-    """按模型名称判断是否为嵌入模型（名称带 embed/embedding 即命中）。"""
-    return "embed" in model_name.lower()
-
-
-def _get_task_model_names(task_key: str) -> Set[str]:
-    """从 model_config.toml 获取指定任务配置的模型名称集合。
-
-    Args:
-        task_key: 任务配置键名，如 `embedding`、`image_embedding`。
-
-    Returns:
-        任务 model_list 中的模型名称集合，读取失败时返回空集合。
-    """
-    config_path = os.path.join(CONFIG_DIR, "model_config.toml")
-    if not os.path.exists(config_path):
-        return set()
-
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            config_data = tomlkit.load(f)
-
-        task_config = config_data.get("model_task_config", {}).get(task_key, {})
-        return {str(name) for name in task_config.get("model_list", [])}
-    except Exception as e:
-        logger.error(f"读取任务 '{task_key}' 配置失败: {e}")
-        return set()
-
-
-async def _test_embedding_model(model_name: str) -> ModelTestResponse:
-    """对嵌入模型执行向量嵌入测试。
-
-    嵌入模型不支持 chat/completions 接口，直接发对话测试会被服务商拒绝，
-    因此改为调用嵌入接口验证可用性。图片嵌入模型（在 image_embedding 任务
-    中，或名称带 vision）改发测试图片，验证图片嵌入链路。
-    """
-    if model_name in _get_task_model_names("image_embedding") or "vision" in model_name.lower():
-        return await _test_image_embedding_model(model_name)
-    return await _test_text_embedding_model(model_name)
-
-
 _EMBEDDING_TEST_TEXTS = ("今天天气真好", "今日天气十分晴朗", "猫在键盘上散步")
 """嵌入测试样例文本：前两句语义相近，用于对比相近/无关文本的相似度差异。"""
 
@@ -453,7 +415,7 @@ _EMBEDDING_TEST_TEXTS = ("今天天气真好", "今日天气十分晴朗", "猫�
 def _build_solid_png(color: Tuple[int, int, int]) -> bytes:
     """生成指定颜色的纯色 PNG 测试图片。"""
     buffer = io.BytesIO()
-    Image.new("RGB", (32, 32), color).save(buffer, format="PNG")
+    Image.new("RGB", (64, 64), color).save(buffer, format="PNG")
     return buffer.getvalue()
 
 
@@ -832,7 +794,10 @@ async def _test_provider_connection(
     # 第一步：测试网络连通性
     try:
         start_time = time.time()
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+        # 复用共享 SSLContext，避免连接测试新建客户端时重新加载整套 CA 证书（实测约 5s/次）
+        async with httpx.AsyncClient(
+            verify=get_shared_ssl_context(), timeout=10.0, follow_redirects=False
+        ) as client:
             # 尝试 GET 请求 base_url（不需要 API Key）
             response = await client.get(base_url)
             latency = (time.time() - start_time) * 1000
@@ -858,7 +823,10 @@ async def _test_provider_connection(
     if api_key:
         try:
             start_time = time.time()
-            async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
+            # 复用共享 SSLContext，避免校验 API Key 新建客户端时重新加载整套 CA 证书（实测约 5s/次）
+            async with httpx.AsyncClient(
+                verify=get_shared_ssl_context(), timeout=15.0, follow_redirects=False
+            ) as client:
                 headers = {"Content-Type": "application/json"}
                 params = {}
 

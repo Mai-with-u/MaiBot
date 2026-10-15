@@ -9,15 +9,18 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import asyncio
 import shutil
 import subprocess
 import sys
+import tempfile
+import tomllib
 
 from packaging.utils import canonicalize_name
 
+from src.common.paths import get_instance_root, project_metadata_path
 from src.common.logger import get_logger
 from src.plugin_runtime.compat_policy import is_force_plugin_compatibility_enabled
 from src.plugin_runtime.runner.manifest_validator import ManifestValidator, PluginManifest
@@ -43,6 +46,14 @@ class CombinedPackageRequirement:
     plugin_ids: Tuple[str, ...]
     requirement_text: str
     version_spec: str
+
+
+@dataclass(frozen=True)
+class PackageIndexSettings:
+    """主程序 ``pyproject.toml`` 中与依赖安装相关的 uv 配置。"""
+
+    index_urls: Tuple[str, ...]
+    constraints: Tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -76,7 +87,7 @@ class PluginDependencyPipeline:
             project_root: 项目根目录；留空时自动推断。
         """
 
-        self._project_root: Path = project_root or Path(__file__).resolve().parents[2]
+        self._project_root: Path = project_root or get_instance_root()
         self._manifest_validator: ManifestValidator = ManifestValidator(
             project_root=self._project_root,
             validate_python_package_dependencies=False,
@@ -100,8 +111,8 @@ class PluginDependencyPipeline:
             DependencyPipelineResult: 最终的阻止加载结果与环境变更状态。
         """
 
-        plan = self.build_plan(
-            plugin_dirs,
+        plan = await asyncio.to_thread(
+            self.build_plan, plugin_dirs,
             initial_blocked_plugin_reasons=initial_blocked_plugin_reasons,
         )
         if not plan.install_requirements:
@@ -385,41 +396,113 @@ class PluginDependencyPipeline:
             return True, ""
 
         logger.info(f"开始自动安装插件 Python 依赖: {', '.join(requirement_texts)}")
-        command = self._build_install_command(requirement_texts)
-
         try:
-            completed_process = await asyncio.to_thread(
-                subprocess.run,
-                command,
-                capture_output=True,
-                check=False,
-                cwd=self._project_root,
-                text=True,
-            )
+            index_settings = self._load_package_index_settings()
         except Exception as exc:
-            return False, str(exc)
+            return False, f"读取主程序 pyproject.toml 中的 uv 配置失败: {exc}"
 
-        if completed_process.returncode == 0:
-            logger.info("插件 Python 依赖自动安装完成")
-            return True, ""
+        # 与主程序一致：按索引优先级逐个源单独安装，前一个源找不到或连不上就换下一个源，任意一个成功即可。
+        # 不能让 uv 同时查询多个索引，否则任一索引网络异常（如国内访问 pypi.org 超时）都会让整次安装失败。
+        index_urls: Sequence[Optional[str]] = index_settings.index_urls or (None,)
+        install_errors: List[str] = []
+        with tempfile.TemporaryDirectory(prefix="maibot-plugin-deps-") as temp_dir:
+            constraint_path = self._write_constraint_file(Path(temp_dir), index_settings.constraints)
+            for attempt_index, index_url in enumerate(index_urls):
+                source_name = index_url or "默认源"
+                command = self._build_install_command(requirement_texts, index_url, constraint_path)
 
-        output = self._summarize_install_error(completed_process.stdout, completed_process.stderr)
-        return False, output or f"命令执行失败，退出码 {completed_process.returncode}"
+                try:
+                    completed_process = await asyncio.to_thread(
+                        subprocess.run,
+                        command,
+                        capture_output=True,
+                        check=False,
+                        cwd=self._project_root,
+                        text=True,
+                    )
+                except Exception as exc:
+                    return False, str(exc)
+
+                if completed_process.returncode == 0:
+                    logger.info(f"插件 Python 依赖自动安装完成（源: {source_name}）")
+                    return True, ""
+
+                output = self._summarize_install_error(completed_process.stdout, completed_process.stderr)
+                output = output or f"命令执行失败，退出码 {completed_process.returncode}"
+                install_errors.append(f"[{source_name}] {output}")
+                if attempt_index + 1 < len(index_urls):
+                    logger.warning(f"从 {source_name} 安装插件 Python 依赖失败，改用下一个源重试: {output}")
+
+        return False, "；".join(install_errors)
+
+    def _load_package_index_settings(self) -> PackageIndexSettings:
+        """读取主程序 ``pyproject.toml`` 中 ``[tool.uv]`` 的索引顺序与约束依赖。
+
+        索引顺序与 uv 保持一致：非默认索引按声明顺序在前，``default = true`` 的索引排在最后。
+
+        Returns:
+            PackageIndexSettings: 按优先级排列的索引地址与约束依赖。
+        """
+
+        with project_metadata_path(self._project_root).open("rb") as pyproject_file:
+            uv_config: Dict[str, Any] = tomllib.load(pyproject_file).get("tool", {}).get("uv", {})
+
+        raw_indexes: List[Dict[str, Any]] = uv_config.get("index", [])
+        index_urls = [str(index["url"]) for index in raw_indexes if not index.get("default", False)]
+        index_urls.extend(str(index["url"]) for index in raw_indexes if index.get("default", False))
+        return PackageIndexSettings(
+            index_urls=tuple(index_urls),
+            constraints=tuple(str(constraint) for constraint in uv_config.get("constraint-dependencies", [])),
+        )
 
     @staticmethod
-    def _build_install_command(requirement_texts: Sequence[str]) -> List[str]:
+    def _write_constraint_file(directory: Path, constraints: Sequence[str]) -> Optional[Path]:
+        """把主程序的约束依赖写入临时约束文件。
+
+        Args:
+            directory: 临时文件所在目录。
+            constraints: 约束依赖文本序列。
+
+        Returns:
+            Optional[Path]: 约束文件路径；没有约束依赖时返回 ``None``。
+        """
+
+        if not constraints:
+            return None
+        constraint_path = directory / "constraints.txt"
+        constraint_path.write_text("\n".join(constraints) + "\n", encoding="utf-8")
+        return constraint_path
+
+    @staticmethod
+    def _build_install_command(
+        requirement_texts: Sequence[str],
+        index_url: Optional[str],
+        constraint_path: Optional[Path],
+    ) -> List[str]:
         """构造依赖安装命令。
 
         Args:
             requirement_texts: 待安装的依赖文本序列。
+            index_url: 本次安装只使用的索引地址；为 ``None`` 时沿用安装工具自身的索引配置。
+            constraint_path: 主程序约束依赖文件路径；为 ``None`` 时不附加约束。
 
         Returns:
             List[str]: 适用于 ``subprocess.run`` 的命令参数列表。
         """
 
         if shutil.which("uv"):
-            return ["uv", "pip", "install", "--python", sys.executable, *requirement_texts]
-        return [sys.executable, "-m", "pip", "install", *requirement_texts]
+            command = ["uv", "pip", "install", "--python", sys.executable]
+            if index_url:
+                # uv 会把 pyproject.toml 中的索引与命令行索引合并，需要 --no-config 才能只查这一个源；
+                # 被跳过的 constraint-dependencies 由约束文件显式传入。
+                command.extend(["--no-config", "--index-url", index_url])
+        else:
+            command = [sys.executable, "-m", "pip", "install"]
+            if index_url:
+                command.extend(["--index-url", index_url])
+        if constraint_path is not None:
+            command.extend(["--constraint", str(constraint_path)])
+        return [*command, *requirement_texts]
 
     @staticmethod
     def _summarize_install_error(stdout: str, stderr: str) -> str:

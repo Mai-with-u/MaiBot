@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import List
 
+import asyncio
 import time
 
 from src.common.logger import get_logger
@@ -130,6 +131,9 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
         else:
             self._set_runtime_capability("embedding", True)
 
+        self._active_vector_space_id = await asyncio.to_thread(self._vector_space_service._read_active_space)
+        self._vector_space_inputs = await asyncio.to_thread(self._vector_space_service._read_inputs)
+
         try:
             stored_dimension = self._stored_vector_dimension()
         except Exception as exc:
@@ -244,37 +248,10 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
             self._cleanup_stale_dual_vector_build_dirs()
             self._resume_vector_recovery_if_needed()
 
-            dual_loaded = False
-            if self._dual_vector_pools_config_enabled():
-                dual_loaded = self._reload_dual_vector_stores_from_disk()
-            if dual_loaded and self._legacy_vector_view is None:
-                self._set_vector_health(
-                    state="healthy",
-                    error_code="",
-                    reason="",
-                    trusted_coverage=1.0,
-                    recovery_stage="idle",
-                    operation_id="",
-                    copy_progress={},
-                )
-            elif self._legacy_vector_view is None and self.vector_store.has_data():
-                expected_fingerprint = self._current_embedding_fingerprint_for_validation()
-                if expected_fingerprint is None:
-                    raise VectorStoreIntegrityError(
-                        "当前 Embedding 指纹尚未经过真实请求确认",
-                        error_code="embedding_fingerprint_unavailable",
-                        dimension_status="unknown",
-                        fingerprint_status="unknown",
-                    )
-                self.vector_store.load(
-                    expected_embedding_fingerprint=expected_fingerprint,
-                    v1_valid_hashes=self._v1_valid_hashes_for_pool("single"),
-                    v1_evidence_root=self._v1_reconciliation_evidence_root(),
-                )
-                self.vector_store.warmup_index(force_train=True)
+            self._embedding_state_service._load_vector_stores_for_runtime()
             self._set_runtime_capability("vector_read", True)
             self._set_runtime_capability("vector_write", True)
-            if not dual_loaded and self._legacy_vector_view is None:
+            if self._legacy_vector_view is None:
                 self._set_vector_health(
                     state="healthy",
                     error_code="",
@@ -324,9 +301,15 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
             if configured_pool_mode == effective_pool_mode
             else f"{effective_pool_mode}(configured={configured_pool_mode})"
         )
-        logger.info(
-            f"[sdk] 向量存储初始化完成: dim={self.embedding_dimension}, mode=SQ8, vector_pools={pool_mode_label}"
-        )
+        if self._runtime_capabilities["vector_read"]:
+            logger.info(
+                f"[sdk] 向量存储初始化完成: dim={self.embedding_dimension}, mode=SQ8, vector_pools={pool_mode_label}"
+            )
+        else:
+            logger.info(
+                "[sdk] 记忆运行时初始化完成，向量通道尚不可用: "
+                f"state={self._vector_health['state']}, code={self._vector_health['error_code']}"
+            )
 
         self._mark_startup_self_check_deferred()
 

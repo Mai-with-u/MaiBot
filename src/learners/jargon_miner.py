@@ -10,7 +10,7 @@ import json
 import re
 
 from src.common.data_models.jargon_data_model import MaiJargon
-from src.common.data_models.llm_service_data_models import LLMGenerationOptions, LLMResponseResult
+from src.common.data_models.llm_service_data_models import LLMResponseResult
 from src.common.database.database import get_db_session
 from src.common.database.database_model import Jargon, JargonCreatedBy, Messages
 from src.common.logger import get_logger
@@ -451,9 +451,7 @@ class JargonMiner:
         prompt1_template.add_context("previous_meaning_instruction", previous_meaning_instruction)
         prompt1 = await prompt_manager.render_prompt(prompt1_template)
 
-        generation_result_1 = await llm_inference.generate_response(
-            prompt1, options=LLMGenerationOptions(temperature=0.3), session_id=self.session_id
-        )
+        generation_result_1 = await llm_inference.generate_response(prompt1, session_id=self.session_id)
         llm_response_1 = generation_result_1.response
         self._log_inference_prompt_preview(
             jargon_content=content,
@@ -489,9 +487,7 @@ class JargonMiner:
         prompt2_template.add_context("content", content)
         prompt2 = await prompt_manager.render_prompt(prompt2_template)
 
-        generation_result_2 = await llm_inference.generate_response(
-            prompt2, options=LLMGenerationOptions(temperature=0.3), session_id=self.session_id
-        )
+        generation_result_2 = await llm_inference.generate_response(prompt2, session_id=self.session_id)
         llm_response_2 = generation_result_2.response
         self._log_inference_prompt_preview(
             jargon_content=content,
@@ -515,9 +511,7 @@ class JargonMiner:
         prompt3_template.add_context("inference2", json.dumps(inference2, ensure_ascii=False))
         prompt3 = await prompt_manager.render_prompt(prompt3_template)
 
-        generation_result_3 = await llm_inference.generate_response(
-            prompt3, options=LLMGenerationOptions(temperature=0.3), session_id=self.session_id
-        )
+        generation_result_3 = await llm_inference.generate_response(prompt3, session_id=self.session_id)
         llm_response_3 = generation_result_3.response
         self._log_inference_prompt_preview(
             jargon_content=content,

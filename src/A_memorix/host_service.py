@@ -891,7 +891,8 @@ class AMemorixHostService:
     def register_config_reload_callback(self) -> None:
         if self._reload_callback_registered:
             return
-        _get_config_manager().register_reload_callback(self.on_config_reload)
+        # 运行时仅在启动时固化 a_memorix 配置节，其余配置节变更无需重启
+        _get_config_manager().register_reload_callback(self.on_config_reload, sections=("a_memorix",))
         self._reload_callback_registered = True
 
     async def on_config_reload(self, changed_scopes: Sequence[str] | None = None) -> None:

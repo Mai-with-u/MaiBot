@@ -16,7 +16,7 @@ import {
   type VersionCompatibilityResult,
 } from '@/lib/version-compatibility-api'
 
-const CONFIRM_DELAY_SECONDS = 5
+const CONFIRM_DELAY_SECONDS = 3
 
 function VersionValue({ value }: { value: string }) {
   return (

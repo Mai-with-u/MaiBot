@@ -85,6 +85,7 @@ async def handle_tool(
         "\n".join(content_lines),
         structured_content=structured_content,
         metadata={
+            "monitor_detail": {**structured_content, "content": "\n".join(content_lines)},
             "matched_tool_names": matched_tool_names,
             "newly_discovered_tool_names": newly_discovered_tool_names,
         },

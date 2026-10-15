@@ -23,6 +23,7 @@ from src.common.data_models.message_component_data_model import MessageSequence,
 from src.common.logger import redirect_console_logs
 from src.config.config import global_config
 from src.core.local_operator import (
+    BOT_CONSOLE_BOT_ID,
     BOT_CONSOLE_PLATFORM,
     BOT_CONSOLE_USER_ID,
     LOCAL_OPERATOR_CONFIG_KEY,
@@ -150,6 +151,7 @@ class BotConsole:
             timestamp=datetime.now(),
             platform=BOT_CONSOLE_PLATFORM,
         )
+        message.account_id = BOT_CONSOLE_BOT_ID
         message.message_info = MessageInfo(
             user_info=UserInfo(
                 user_id=BOT_CONSOLE_USER_ID,

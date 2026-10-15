@@ -20,7 +20,6 @@ export type ReasoningPromptFile = {
   action_preview: string | null
   display_title: string | null
   related_json_paths: string[]
-  has_behavior_choice_insert: boolean
   model_name: string | null
   duration_ms: number | null
   prompt_tokens: number | null
@@ -177,7 +176,8 @@ export type ReasoningReplayRequest = {
 
 // 后端 /replay 的 attempt 是 serialize_generation_attempt 的精简结构（仅元数据与 error），
 // 不保证携带 attempt 级的 request_items/tool_definitions/output_items 等渲染字段。
-export type ReasoningReplayWireAttempt = Partial<GenerationAttemptSnapshot> & Record<string, unknown>
+export type ReasoningReplayWireAttempt = Partial<GenerationAttemptSnapshot> &
+  Record<string, unknown>
 
 // normalizeReplayResult 规范化后的重放结果：attempt 字段已补齐默认值，可安全渲染。
 export type NormalizedReplayResult = Omit<ReasoningReplayResponse, 'generation_attempts'> & {
@@ -269,5 +269,58 @@ export async function replayReasoningPrompt(
   return backendApi.post<ReasoningReplayResponse>(`${API_BASE}/replay`, {
     body: request,
     errorMessage: '重放推理请求失败',
+  })
+}
+
+export interface ReasoningToolCallRecord {
+  call_id: string
+  stage: string
+  session: string
+  stem: string
+}
+
+export interface ReasoningToolCallRecordsResponse {
+  records: ReasoningToolCallRecord[]
+}
+
+/** 查找一次请求输出的工具调用里，哪些工具（如 reply）留有自己的推理过程记录。 */
+export async function findReasoningToolCallRecords(params: {
+  session: string
+  sourceStage: string
+  sourceStem: string
+  callIds: string[]
+}): Promise<ReasoningToolCallRecordsResponse> {
+  return backendApi.get<ReasoningToolCallRecordsResponse>(`${API_BASE}/tool-call-records`, {
+    query: {
+      session: params.session,
+      source_stage: params.sourceStage,
+      source_stem: params.sourceStem,
+      call_id: params.callIds,
+    },
+    cache: 'no-store',
+    errorMessage: '查找工具推理记录失败',
+  })
+}
+
+export interface ReasoningToolCallSourceResponse {
+  record: ReasoningToolCallRecord | null
+}
+
+/** 从工具自己的推理记录（如回复器）反查发起这次调用的推理记录（通常是规划器）。 */
+export async function findReasoningToolCallSource(params: {
+  session: string
+  stage: string
+  stem: string
+  callId: string
+}): Promise<ReasoningToolCallSourceResponse> {
+  return backendApi.get<ReasoningToolCallSourceResponse>(`${API_BASE}/tool-call-source`, {
+    query: {
+      session: params.session,
+      stage: params.stage,
+      stem: params.stem,
+      call_id: params.callId,
+    },
+    cache: 'no-store',
+    errorMessage: '查找发起调用的推理记录失败',
   })
 }

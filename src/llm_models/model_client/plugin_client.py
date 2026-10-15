@@ -208,6 +208,9 @@ class PluginLLMClient(BaseClient):
             total_tokens=int(raw_usage.get("total_tokens") or 0),
             prompt_cache_hit_tokens=int(raw_usage.get("prompt_cache_hit_tokens") or 0),
             prompt_cache_miss_tokens=int(raw_usage.get("prompt_cache_miss_tokens") or 0),
+            prompt_cache_reported=(
+                "prompt_cache_hit_tokens" in raw_usage or "prompt_cache_miss_tokens" in raw_usage
+            ),
         )
 
     @staticmethod

@@ -13,6 +13,8 @@ from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
 from src.common.database.database import get_db_session
 from src.common.database.database_model import ChatSession, Jargon, JargonCreatedBy, Messages
 from src.common.logger import get_logger
+from src.common.utils.utils_config import JargonConfigUtils
+from src.config.config import global_config
 from src.webui.dependencies import require_auth
 
 logger = get_logger("webui.jargon")
@@ -263,6 +265,21 @@ class ChatListResponse(BaseModel):
 
     success: bool = True
     data: List[ChatInfoResponse]
+
+
+class JargonGroupInfo(BaseModel):
+    """黑话共享组及已解析的真实聊天流。"""
+
+    index: int
+    name: str
+    session_ids: List[str]
+    members: List[ChatInfoResponse]
+    is_global: bool = False
+
+
+class JargonGroupListResponse(BaseModel):
+    success: bool = True
+    data: List[JargonGroupInfo]
 
 
 class JargonTargetInfo(BaseModel):
@@ -758,6 +775,7 @@ def get_jargon_list(
     page_size: int = Query(20, ge=1, le=100, description="每页数量"),
     search: Optional[str] = Query(None, description="搜索关键词"),
     session_id: Optional[str] = Query(None, description="按聊天流ID筛选"),
+    session_ids: Optional[List[str]] = Query(None, description="按共享组内任一聊天流ID筛选"),
     jargon_status: Optional[Literal["confirmed_jargon", "confirmed_not_jargon", "manual_jargon", "pending"]] = Query(
         None,
         description="按黑话判定状态筛选",
@@ -773,6 +791,7 @@ def get_jargon_list(
         page_size: 每页数量，范围为 1-100。
         search: 搜索关键词。
         session_id: 聊天流 ID 筛选条件。
+        session_ids: 共享组聊天流 ID 列表，匹配其中任一聊天流。
         jargon_status: 黑话判定状态筛选条件。
         is_jargon: 是否为黑话的筛选条件。
         is_complete: 是否推断完成的筛选条件。
@@ -801,6 +820,13 @@ def get_jargon_list(
             is_complete=is_complete,
             is_global=is_global,
         )
+
+        if session_ids is not None:
+            scope_filter = build_session_id_dict_filter(session_ids)
+            if scope_filter is None:
+                return JargonListResponse(total=0, page=page, page_size=page_size, data=[])
+            statement = statement.where(scope_filter)
+            count_statement = count_statement.where(scope_filter)
 
         with get_db_session() as session:
             total = count_jargon_query(session, count_statement)
@@ -881,13 +907,45 @@ def get_chat_list(include_empty: bool = Query(False, description="是否包含�
                     is_group=False,
                 )
 
-        result = list(chat_by_session_id.values())
-        result.sort(key=lambda item: (item.chat_name, item.session_id))
+            # 聚合最新消息时间，包含旧黑话保留但已不在会话表中的聊天。
+            latest_message_times = dict(session.exec(
+                select(Messages.session_id, func.max(Messages.timestamp))
+                .where(col(Messages.session_id).in_(chat_by_session_id))
+                .group_by(col(Messages.session_id))
+            ).all())
+
+        result = sorted(chat_by_session_id.values(), key=lambda item: (item.chat_name, item.session_id))
+        result.sort(key=lambda item: latest_message_times.get(item.session_id, datetime.min), reverse=True)
         return ChatListResponse(success=True, data=result)
 
     except Exception as e:
         logger.error(f"获取聊天列表失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取聊天列表失败: {str(e)}") from e
+
+
+@router.get("/groups", response_model=JargonGroupListResponse)
+def get_jargon_groups() -> JargonGroupListResponse:
+    """按黑话共享配置解析组成员，不生成新的会话 ID。"""
+    chats = {chat.session_id: chat for chat in get_chat_list(include_empty=True).data}
+    groups: List[JargonGroupInfo] = []
+    for index, group in enumerate(global_config.jargon.jargon_groups):
+        session_ids: Set[str] = set()
+        is_global = False
+        for target in group.targets:
+            session_ids.update(JargonConfigUtils.get_target_session_ids_with_wildcards(target))
+            if target.platform.strip() == "*" and target.item_id.strip() == "*":
+                is_global = True
+        resolved_ids = sorted(session_ids)
+        groups.append(
+            JargonGroupInfo(
+                index=index,
+                name=f"共享组 {index + 1}",
+                session_ids=resolved_ids,
+                members=[chats[session_id] for session_id in resolved_ids if session_id in chats],
+                is_global=is_global,
+            )
+        )
+    return JargonGroupListResponse(data=groups)
 
 
 @router.get("/stats/summary", response_model=JargonStatsResponse)

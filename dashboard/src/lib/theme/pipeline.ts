@@ -1,6 +1,11 @@
 import type { ThemeTokens, UserThemeConfig } from './tokens'
 
-import { generatePalette, getReadableForeground, isDefaultAccentColor } from './palette'
+import {
+  generatePalette,
+  getModernChartCompanions,
+  getReadableForeground,
+  isDefaultAccentColor,
+} from './palette'
 import { getPresetById } from './presets'
 import { sanitizeCSS } from './sanitizer'
 import {
@@ -9,6 +14,8 @@ import {
   defaultLightTokens,
   futureRetroDarkTokens,
   futureRetroLightTokens,
+  millenniumDarkTokens,
+  millenniumLightTokens,
   tokenToCSSVarName,
 } from './tokens'
 
@@ -75,14 +82,17 @@ const buildTokens = (config: UserThemeConfig, isDark: boolean): ThemeTokens => {
     }
   }
 
-  if ((config.dashboardStyle ?? DEFAULT_DASHBOARD_STYLE) === 'future-retro') {
+  const dashboardStyle = config.dashboardStyle ?? DEFAULT_DASHBOARD_STYLE
+
+  if (dashboardStyle === 'future-retro') {
     mergedTokens = mergeTokens(
       mergedTokens,
       isDark ? futureRetroDarkTokens : futureRetroLightTokens
     )
+  } else if (dashboardStyle === 'millennium') {
+    mergedTokens = mergeTokens(mergedTokens, isDark ? millenniumDarkTokens : millenniumLightTokens)
   }
 
-  const dashboardStyle = config.dashboardStyle ?? DEFAULT_DASHBOARD_STYLE
   const styleTokenOverrides = config.styleTokenOverrides?.[dashboardStyle]
 
   if (styleTokenOverrides) {
@@ -196,11 +206,24 @@ export function applyThemePipeline(config: UserThemeConfig, isDark: boolean): vo
   const root = document.documentElement
   const tokens = buildTokens(config, isDark)
   const dashboardStyle = config.dashboardStyle ?? DEFAULT_DASHBOARD_STYLE
-  const customCSS =
-    dashboardStyle === 'future-retro' ? undefined : config.styleCustomCSS?.[dashboardStyle]
+  // 仅原版风格开放自定义 CSS；未来复古与千禧的外观由各自的样式表完整接管。
+  const customCSS = dashboardStyle === 'modern' ? config.styleCustomCSS?.[dashboardStyle] : undefined
   const backgroundConfig = config.styleBackgroundConfig?.[dashboardStyle]
 
   injectTokensAsCSS(tokens, root)
+
+  // 原版风格的桌面端样式表（styles/modern.css）用这组变量替换图表的系列 2–5；手机端和其它风格不读取它们。
+  const modernChartKeys = ['chart-2', 'chart-3', 'chart-4', 'chart-5'] as const
+  if (dashboardStyle === 'modern') {
+    const companions = isDefaultAccentColor(config.accentColor)
+      ? getModernChartCompanions(isDark)
+      : modernChartKeys.map((key) => tokens.color[key])
+    modernChartKeys.forEach((key, index) => {
+      root.style.setProperty(`--modern-${key}`, companions[index])
+    })
+  } else {
+    modernChartKeys.forEach((key) => root.style.removeProperty(`--modern-${key}`))
+  }
   if (customCSS) {
     const sanitized = sanitizeCSS(customCSS)
     if (sanitized.css.trim().length > 0) {

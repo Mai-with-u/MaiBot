@@ -3,19 +3,18 @@
  *
  * 收编导入任务队列相关的服务端状态与交互：
  * - 任务列表（tasks）与导入设置（settings）走 useQuery，仅在导入面板激活时拉取（enabled: active）；
- * - 轮询 + WebSocket 融合：轮询负责最终一致性，WS 推送负责即时刷新
+ * - 轮询刷新任务进度
  *   （refetchInterval = active ? importPollInterval : false）；
  * - 选中任务详情与分块分页仍以本地 state + 命令式加载维持（依赖用户选择，不适合纯查询缓存）；
  * - 队列读失败用 importErrorText 局部呈现，取消/重试写失败仍走全局 toast。
  *
  * 与 useImportForm 共享 settings 查询（同 queryKey 由 React Query 去重），表单侧负责默认值 seed 与别名联动。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { useQuery } from '@tanstack/react-query'
 
 import { useToast } from '@/hooks/use-toast'
-import { memoryProgressClient, type MemoryProgressEvent } from '@/lib/memory-progress-client'
 import {
   cancelMemoryImportTask,
   getMemoryImportSettings,
@@ -34,7 +33,7 @@ import {
 import { IMPORT_CHUNK_PAGE_SIZE, QUEUED_IMPORT_STATUS, RUNNING_IMPORT_STATUS } from '../constants'
 
 export interface UseImportQueueOptions {
-  /** 导入面板是否激活；非激活时不拉取、不轮询、不订阅 */
+  /** 导入面板是否激活；非激活时不拉取、不轮询 */
   active: boolean
   /** 重试时构建 overrides 的回调，由表单 hook 提供当前公共参数（拆分前 retry 直接读表单参数） */
   buildRetryOverrides?: () => Record<string, unknown>
@@ -67,7 +66,7 @@ export interface UseImportQueueResult {
   selectedImportChunks: MemoryImportChunkPayload[]
   /** 供 useImportForm 在创建任务成功后调用：刷新队列并选中新任务 */
   afterCreated: (taskId: string) => Promise<void>
-  /** 失效导入任务查询（WS 推送或外部变更后触发重新拉取） */
+  /** 外部变更后重新拉取导入任务查询 */
   invalidate: () => void
 }
 
@@ -89,7 +88,7 @@ export function useImportQueue({
     [importSettings.poll_interval_ms]
   )
 
-  // 导入任务列表：轮询保证最终一致性，避免 WS 已连接但进度事件缺失时页面停在旧状态。
+  // 导入任务列表：在面板激活期间轮询刷新任务进度。
   const tasksQuery = useQuery({
     queryKey: ['memory-import', 'tasks'],
     queryFn: () => getMemoryImportTasks(20),
@@ -391,47 +390,6 @@ export function useImportQueue({
     }
     void loadImportTaskDetail(selectedImportTaskId, true)
   }, [active, importTasks, loadImportTaskDetail, selectImportTask, selectedImportTaskId])
-
-  // 统一 WebSocket 推送：作为轮询的实时增强；后端未广播时由轮询兜底
-  const selectedImportTaskIdRef = useRef<string>('')
-  useEffect(() => {
-    selectedImportTaskIdRef.current = selectedImportTaskId
-  }, [selectedImportTaskId])
-
-  useEffect(() => {
-    if (!active) {
-      return
-    }
-    let cancelled = false
-    let unsubscribe: (() => Promise<void>) | undefined
-    const handleEvent = (event: MemoryProgressEvent) => {
-      if (event.topic === 'import_progress') {
-        invalidate()
-        if (selectedImportTaskIdRef.current) {
-          void loadImportTaskDetail(selectedImportTaskIdRef.current, true)
-        }
-      }
-    }
-    void memoryProgressClient
-      .subscribe(handleEvent, ['import_progress'])
-      .then((cleanup) => {
-        if (cancelled) {
-          void cleanup()
-          return
-        }
-        unsubscribe = cleanup
-      })
-      .catch((error) => {
-        // 订阅失败不影响轮询兜底
-        console.warn('订阅长期记忆 WebSocket 失败，已退化到轮询兜底', error)
-      })
-    return () => {
-      cancelled = true
-      if (unsubscribe) {
-        void unsubscribe()
-      }
-    }
-  }, [active, invalidate, loadImportTaskDetail])
 
   // 派生：任务分组、选中任务的衍生信息、分块分页
   const runningImportTasks = useMemo(

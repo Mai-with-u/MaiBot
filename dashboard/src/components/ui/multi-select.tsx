@@ -80,7 +80,8 @@ function SortableBadge({
   } = useSortable({ id: value, disabled })
 
   const style = {
-    transform: CSS.Transform.toString(transform),
+    // 标签宽度随名称变化，排序时只平移，避免按目标标签尺寸缩放文字。
+    transform: CSS.Translate.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
   }

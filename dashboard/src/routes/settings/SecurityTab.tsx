@@ -5,6 +5,7 @@ import {
   Copy,
   Eye,
   EyeOff,
+  LogOut,
   RefreshCw,
   XCircle,
 } from 'lucide-react'
@@ -13,6 +14,7 @@ import { useTranslation } from 'react-i18next'
 
 import { useNavigate } from '@tanstack/react-router'
 import { cn } from '@/lib/utils'
+import { logout } from '@/lib/auth'
 import { useToast } from '@/hooks/use-toast'
 import { validateToken } from '@/lib/token-validator'
 import { Button } from '@/components/ui/button'
@@ -41,13 +43,10 @@ import {
 export function SecurityTab() {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const [currentToken, setCurrentToken] = useState('')
   const [newToken, setNewToken] = useState('')
-  const [showCurrentToken, setShowCurrentToken] = useState(false)
   const [showNewToken, setShowNewToken] = useState(false)
   const [isUpdating, setIsUpdating] = useState(false)
   const [isRegenerating, setIsRegenerating] = useState(false)
-  const [copied, setCopied] = useState(false)
   const [showTokenDialog, setShowTokenDialog] = useState(false)
   const [generatedToken, setGeneratedToken] = useState('')
   const [tokenCopied, setTokenCopied] = useState(false)
@@ -55,33 +54,6 @@ export function SecurityTab() {
 
   // 实时验证新 Token
   const tokenValidation = useMemo(() => validateToken(newToken), [newToken])
-
-  // 复制 token 到剪贴板
-  const copyToClipboard = async (text: string) => {
-    if (!currentToken) {
-      toast({
-        title: t('settings.security.cannotCopy'),
-        description: t('settings.security.cannotCopyDesc'),
-        variant: 'destructive',
-      })
-      return
-    }
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      toast({
-        title: t('settings.security.copySuccess'),
-        description: t('settings.security.copySuccessDesc'),
-      })
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      toast({
-        title: t('settings.security.copyFailed'),
-        description: t('settings.security.copyFailedDesc'),
-        variant: 'destructive',
-      })
-    }
-  }
 
   // 更新 token
   const handleUpdateToken = async () => {
@@ -127,9 +99,6 @@ export function SecurityTab() {
         // 清空输入框
         setNewToken('')
         
-        // 更新当前显示的 Token
-        setCurrentToken(newToken.trim())
-        
         toast({
           title: t('settings.security.updateSuccess'),
           description: t('settings.security.updateSuccessDesc'),
@@ -174,9 +143,6 @@ export function SecurityTab() {
       const data = await response.json()
 
       if (response.ok && data.success) {
-        // 更新当前显示的 Token
-        setCurrentToken(data.token)
-        
         // 显示弹窗展示新 Token
         setGeneratedToken(data.token)
         setShowTokenDialog(true)
@@ -247,6 +213,13 @@ export function SecurityTab() {
 
   return (
     <div className="space-y-4 sm:space-y-6">
+      {/* 登出按钮 */}
+      <div className="flex justify-end">
+        <Button variant="destructive" onClick={() => void logout()} className="gap-2">
+          <LogOut className="h-4 w-4" />
+          {t('header.logoutLabel')}
+        </Button>
+      </div>
       {/* Token 生成成功弹窗 */}
       <Dialog open={showTokenDialog} onOpenChange={handleDialogOpenChange}>
         <DialogContent className="sm:max-w-md">
@@ -313,97 +286,39 @@ export function SecurityTab() {
         </DialogContent>
       </Dialog>
 
-      {/* 当前 Token */}
+      {/* Token 管理：随机生成与自定义更新共用一个区域 */}
       <div className="rounded-lg border bg-card p-4 sm:p-6">
-        <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">{t('settings.security.currentToken')}</h3>
-        <div className="space-y-3 sm:space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="current-token" className="text-sm">{t('settings.security.yourToken')}</Label>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <div className="relative flex-1">
-                <Input
-                  id="current-token"
-                  type={showCurrentToken ? 'text' : 'password'}
-                  value={currentToken || '••••••••••••••••••••••••••••••••'}
-                  readOnly
-                  className="pr-10 font-mono text-sm"
-                  placeholder={t('settings.security.tokenStorePlaceholder')}
-                />
-                <button
-                  onClick={() => {
-                    if (currentToken) {
-                      setShowCurrentToken(!showCurrentToken)
-                    } else {
-                      toast({
-                        title: t('settings.security.cannotView'),
-                        description: t('settings.security.cannotViewDesc'),
-                      })
-                    }
-                  }}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 hover:bg-accent rounded"
-                  title={showCurrentToken ? t('settings.security.hide') : t('settings.security.show')}
-                >
-                  {showCurrentToken ? (
-                    <EyeOff className="h-4 w-4 text-muted-foreground" />
-                  ) : (
-                    <Eye className="h-4 w-4 text-muted-foreground" />
-                  )}
-                </button>
-              </div>
-              <div className="flex gap-2 w-full sm:w-auto">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={() => copyToClipboard(currentToken)}
-                  title={t('settings.security.copyTip')}
-                  className="flex-shrink-0"
-                  disabled={!currentToken}
-                >
-                  {copied ? (
-                    <Check className="h-4 w-4 text-green-500" />
-                  ) : (
-                    <Copy className="h-4 w-4" />
-                  )}
-                </Button>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button
-                      variant="outline"
-                      disabled={isRegenerating}
-                      className="gap-2 flex-1 sm:flex-none"
-                    >
-                      <RefreshCw className={cn('h-4 w-4', isRegenerating && 'animate-spin')} />
-                      <span className="hidden sm:inline">{t('settings.security.regenerate')}</span>
-                      <span className="sm:hidden">{t('settings.security.regenerateShort')}</span>
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>{t('settings.security.confirmRegenerate')}</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        {t('settings.security.confirmRegenerateFullDesc')}
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>{t('settings.security.cancel')}</AlertDialogCancel>
-                      <AlertDialogAction onClick={executeRegenerateToken}>
-                        {t('settings.security.confirmGenerate')}
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              </div>
-            </div>
-            <p className="text-[10px] sm:text-xs text-muted-foreground">
-              {t('settings.security.safekeepTip')}
-            </p>
-          </div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-3 sm:mb-4">
+          <h3 className="text-base sm:text-lg font-semibold">{t('settings.security.tokenManagement')}</h3>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                variant="outline"
+                disabled={isRegenerating || isUpdating}
+                className="gap-2 w-full sm:w-auto"
+              >
+                <RefreshCw className={cn('h-4 w-4', isRegenerating && 'animate-spin')} />
+                <span className="hidden sm:inline">{t('settings.security.regenerate')}</span>
+                <span className="sm:hidden">{t('settings.security.regenerateShort')}</span>
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{t('settings.security.confirmRegenerate')}</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {t('settings.security.confirmRegenerateFullDesc')}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>{t('settings.security.cancel')}</AlertDialogCancel>
+                <AlertDialogAction onClick={executeRegenerateToken}>
+                  {t('settings.security.confirmGenerate')}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
-      </div>
-
-      {/* 更新 Token */}
-      <div className="rounded-lg border bg-card p-4 sm:p-6">
-        <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">{t('settings.security.customToken')}</h3>
+        {/* 更新 Token */}
         <div className="space-y-3 sm:space-y-4">
           <div className="space-y-2">
             <Label htmlFor="new-token" className="text-sm">{t('settings.security.newTokenLabel')}</Label>
@@ -462,7 +377,7 @@ export function SecurityTab() {
           </div>
           <Button 
             onClick={handleUpdateToken} 
-            disabled={isUpdating || !tokenValidation.isValid || !newToken} 
+            disabled={isUpdating || isRegenerating || !tokenValidation.isValid || !newToken}
             className="w-full sm:w-auto"
           >
             {isUpdating ? t('settings.security.updating') : t('settings.security.updateBtn')}

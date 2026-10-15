@@ -1,5 +1,5 @@
 /**
- * 聊天流设置弹窗：聊天管理页与麦麦聊天页共用。
+ * 麦麦聊天页的聊天流设置弹窗。
  *
  * 弹窗内展示 Session 基本信息、适配器规则、发言频率规则、聊天 Prompt 与学习配置，
  * 并提供删除聊天流的严肃确认入口。
@@ -45,12 +45,10 @@ import {
   deleteChatStreamTalkFrequency,
   getAdapterPolicyDefaults,
   getChatStreamDetail,
-  updateAdapterPolicyDefaults,
   updateChatStreamAdapterPolicy,
   updateChatStreamLearning,
   updateChatStreamTalkFrequency,
   upsertChatStreamPrompt,
-  type AdapterPolicyDefaults,
   type ChatAdapterStatus,
   type ChatConfigRule,
   type ChatLearningStatus,
@@ -61,7 +59,7 @@ import {
 } from '@/lib/chat-management-api'
 import { cn } from '@/lib/utils'
 
-type LearningKind = 'expression' | 'jargon' | 'behavior'
+type LearningKind = 'expression' | 'jargon'
 
 function formatRuleTarget(rule: ChatConfigRule | null): string {
   if (!rule) {
@@ -271,7 +269,7 @@ function formatFrequencySummary(label: string): string {
   if (!Number.isFinite(numericValue)) {
     return label
   }
-  return numericValue.toFixed(3)
+  return numericValue.toFixed(2)
 }
 
 function FrequencySummaryItem({
@@ -296,24 +294,17 @@ function FrequencySummaryItem({
 function TalkFrequencyRuleStackItem({ rule }: { rule: ChatTalkFrequencyRule }) {
   const targetLabel = `${rule.platform || '*'}:${rule.item_id || '*'}:${rule.type || '-'}`
   const timeLabel = rule.time || '默认'
-  const timePriority = rule.time_priority ?? 0
 
   return (
     <div
       className={cn(
         'rounded-md border px-3 py-2 text-sm',
-        rule.is_effective
-          ? 'border-primary bg-primary/10 text-foreground'
-          : 'bg-muted text-muted-foreground'
+        rule.is_effective ? 'text-foreground' : 'bg-muted text-muted-foreground'
       )}
     >
       <div className="flex flex-wrap items-center gap-2">
-        {rule.is_effective && <Badge variant="default">生效中</Badge>}
         {!rule.is_effective && !rule.time_active && <Badge variant="outline">时间未命中</Badge>}
         <span className="font-mono text-xs">{targetLabel}</span>
-        <span className="text-xs">
-          优先级 {rule.target_priority}.{timePriority}
-        </span>
       </div>
       <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
         <span>时间：{timeLabel}</span>
@@ -406,7 +397,7 @@ function TalkFrequencyRuleEditor({
           type="number"
           min={0}
           max={1}
-          step={0.001}
+          step={0.01}
           value={value}
           onChange={(event) => setValue(clampTalkFrequencyValue(Number(event.target.value)))}
         />
@@ -634,12 +625,12 @@ function TalkFrequencyTimelineRule({
           value={[value]}
           min={0}
           max={1}
-          step={0.001}
+          step={0.01}
           onValueChange={(values) => setValue(clampTalkFrequencyValue(values[0] ?? 0))}
           data-dashboard-slider="config"
-          data-dashboard-slider-value-format="fixed-3"
+          data-dashboard-slider-value-format="fixed-2"
         />
-        <span className="w-12 text-right font-mono text-xs tabular-nums">{value.toFixed(3)}</span>
+        <span className="w-12 text-right font-mono text-xs tabular-nums">{value.toFixed(2)}</span>
       </div>
       <div className="flex justify-end gap-2">
         <Button
@@ -1028,11 +1019,6 @@ function ConfigStatusRows({ detail }: { detail: ChatStreamDetail }) {
   const configRows = [
     { kind: 'expression' as const, title: '表达', status: detail.expression },
     { kind: 'jargon' as const, title: '黑话', status: detail.jargon },
-    {
-      kind: 'behavior' as const,
-      title: '行为',
-      status: detail.behavior,
-    },
   ]
 
   return (
@@ -1075,7 +1061,8 @@ function getAdapterDisplayName(adapter: ChatAdapterStatus): string {
 
 function getAdapterPolicyLabel(adapter: ChatAdapterStatus): string {
   if (adapter.policy.reason === 'matched_allow_override') {
-    return '已允许当前聊天'
+    // 单独放行的状态由高亮的「允许」按钮与下方说明文案表达，不再额外使用标签
+    return ''
   }
   if (adapter.policy.reason === 'matched_deny_override') {
     return '已阻止当前聊天'
@@ -1090,10 +1077,6 @@ function getAdapterPolicyLabel(adapter: ChatAdapterStatus): string {
 }
 
 function getAdapterPolicyDescription(adapter: ChatAdapterStatus): string {
-  if (adapter.policy.reason === 'matched_allow_override') {
-    // 徽章已标明“已允许当前聊天”，这里不再重复展示说明文案
-    return ''
-  }
   if (adapter.policy.reason === 'matched_deny_override') {
     return '这条聊天已被单独加入阻止规则。'
   }
@@ -1112,15 +1095,6 @@ function getAdapterPolicyDescription(adapter: ChatAdapterStatus): string {
     : '当前聊天被这个适配器的规则阻止。'
 }
 
-function getAdapterRouteDescription(adapter: ChatAdapterStatus): string {
-  const routeState = adapter.routed ? '已接入当前聊天' : '未接入当前聊天'
-  const directions = [
-    adapter.receive_bound ? '收消息' : '',
-    adapter.send_bound ? '发消息' : '',
-  ].filter(Boolean)
-  return `${routeState}${directions.length > 0 ? `，负责${directions.join('、')}` : ''}`
-}
-
 function hasAdapterAllowOverride(adapter: ChatAdapterStatus): boolean {
   return adapter.policy.reason === 'matched_allow_override'
 }
@@ -1136,22 +1110,6 @@ function ChatAdapterSection({ detail }: { detail: ChatStreamDetail }) {
   const defaultsQuery = useQuery({
     queryKey: ['adapter-policy-defaults'],
     queryFn: getAdapterPolicyDefaults,
-  })
-  const defaultsMutation = useMutation({
-    mutationFn: updateAdapterPolicyDefaults,
-    onSuccess: (defaults) => {
-      queryClient.setQueryData(['adapter-policy-defaults'], defaults)
-      void queryClient.invalidateQueries({ queryKey: ['chat-stream-detail'] })
-      void queryClient.invalidateQueries({ queryKey: [CHAT_ADAPTER_STATUS_QUERY_KEY] })
-      toast({ title: '适配器默认策略已保存' })
-    },
-    onError: (error) => {
-      toast({
-        title: '适配器默认策略保存失败',
-        description: error instanceof Error ? error.message : '请稍后重试',
-        variant: 'destructive',
-      })
-    },
   })
   const policyMutation = useMutation({
     mutationFn: (payload: { adapter_id: string; action: 'allow' | 'block' | 'inherit' }) =>
@@ -1171,56 +1129,22 @@ function ChatAdapterSection({ detail }: { detail: ChatStreamDetail }) {
     },
   })
   const savingAdapterId = policyMutation.variables?.adapter_id
+  const defaultPolicySummary = defaultsQuery.isError
+    ? '获取失败'
+    : defaultsQuery.data
+      ? `群聊 ${defaultsQuery.data.group === 'allow' ? '放行' : '拒绝'} · 私聊 ${defaultsQuery.data.private === 'allow' ? '放行' : '拒绝'}`
+      : '加载中'
 
   const saveAdapterPolicy = (adapter: ChatAdapterStatus, action: 'allow' | 'block' | 'inherit') => {
     policyMutation.mutate({ adapter_id: adapter.adapter_id, action })
   }
-  const saveDefaultPolicy = (chatType: keyof AdapterPolicyDefaults, action: 'allow' | 'block') => {
-    const current = defaultsQuery.data ?? { group: 'allow', private: 'allow' }
-    defaultsMutation.mutate({ ...current, [chatType]: action })
-  }
-
   return (
     <section className="space-y-3 rounded-md border p-3">
       <div className="flex items-center justify-between gap-3">
         <div className="font-medium">适配器规则</div>
         <Badge variant="outline">{adapters.length} 个</Badge>
       </div>
-      <div className="bg-muted/20 grid gap-2 rounded-md border p-3 sm:grid-cols-2">
-        {(['group', 'private'] as const).map((chatType) => {
-          const action = defaultsQuery.data?.[chatType] ?? 'allow'
-          return (
-            <div key={chatType} className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-medium">
-                  {chatType === 'group' ? '群聊默认策略' : '私聊默认策略'}
-                </div>
-                <div className="text-muted-foreground text-xs">未设置单独规则时生效</div>
-              </div>
-              <div className="flex gap-1">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={action === 'allow' ? 'secondary' : 'outline'}
-                  disabled={defaultsQuery.isLoading || defaultsMutation.isPending}
-                  onClick={() => saveDefaultPolicy(chatType, 'allow')}
-                >
-                  放行
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={action === 'block' ? 'destructive' : 'outline'}
-                  disabled={defaultsQuery.isLoading || defaultsMutation.isPending}
-                  onClick={() => saveDefaultPolicy(chatType, 'block')}
-                >
-                  拒绝
-                </Button>
-              </div>
-            </div>
-          )
-        })}
-      </div>
+      <p className="text-muted-foreground text-xs">全局默认：{defaultPolicySummary}</p>
       {adapters.length === 0 ? (
         <div className="text-muted-foreground rounded-md border border-dashed px-3 py-2 text-sm">
           当前没有运行中的适配器插件路由。
@@ -1229,39 +1153,44 @@ function ChatAdapterSection({ detail }: { detail: ChatStreamDetail }) {
         <div className="space-y-2">
           {adapters.map((adapter) => {
             const policyDescription = getAdapterPolicyDescription(adapter)
+            const policyLabel = getAdapterPolicyLabel(adapter)
             return (
               <div
                 key={adapter.adapter_id}
-                className="bg-muted/20 grid gap-3 rounded-md border p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
+                className="bg-muted/20 grid gap-2 rounded-md border p-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
               >
-                <div className="min-w-0 space-y-1">
+                <div className="min-w-0 space-y-0.5">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium">{getAdapterDisplayName(adapter)}</span>
-                    <Badge
-                      variant={
-                        !adapter.policy.configured
-                          ? 'outline'
-                          : adapter.policy.allowed
-                            ? 'default'
-                            : 'destructive'
-                      }
-                    >
-                      {getAdapterPolicyLabel(adapter)}
-                    </Badge>
+                    {policyLabel && (
+                      <Badge
+                        variant={
+                          !adapter.policy.configured
+                            ? 'outline'
+                            : adapter.policy.allowed
+                              ? 'default'
+                              : 'destructive'
+                        }
+                      >
+                        {policyLabel}
+                      </Badge>
+                    )}
                   </div>
                   {policyDescription && (
                     <div className="text-muted-foreground text-sm">{policyDescription}</div>
                   )}
-                  <div className="text-muted-foreground text-xs">
-                    {getAdapterRouteDescription(adapter)}
-                    {adapter.account_id ? `；账号 ${adapter.account_id}` : ''}
-                  </div>
+                  {adapter.account_id && (
+                    <div className="text-muted-foreground text-xs">账号 {adapter.account_id}</div>
+                  )}
                 </div>
-                <div className="flex flex-wrap gap-2 md:justify-end">
+                <div className="flex flex-wrap gap-1.5 md:justify-end">
                   <Button
                     type="button"
                     size="sm"
-                    variant={hasAdapterAllowOverride(adapter) ? 'secondary' : 'outline'}
+                    variant={hasAdapterAllowOverride(adapter) ? 'default' : 'outline'}
+                    className={
+                      hasAdapterAllowOverride(adapter) ? 'bg-green-600 hover:bg-green-700' : undefined
+                    }
                     disabled={policyMutation.isPending}
                     onClick={() => saveAdapterPolicy(adapter, 'allow')}
                   >
@@ -1473,7 +1402,7 @@ function DeleteChatStreamDialog({
               <div className="text-destructive font-medium">将被清理的数据包括：</div>
               <ul className="text-muted-foreground mt-2 list-disc space-y-1 pl-5">
                 <li>聊天流记录和该 session_id 下的所有消息。</li>
-                <li>表达学习、黑话关联、工具调用记录、行为学习记录。</li>
+                <li>表达学习、黑话关联、工具调用记录。</li>
                 <li>消息统计、高频词等以该聊天流为归属的数据。</li>
               </ul>
             </div>

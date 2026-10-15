@@ -7,7 +7,7 @@
 
 {reply_target_block}。
 {planner_reasoning}
-{group_chat_attention_block}{identity}你正在群里聊天,现在请你读读之前的聊天记录，然后给出日常且口语化的回复，
+你正在群里聊天,现在请你读读之前的聊天记录，然后给出日常且口语化的回复，
 尽量简短一些。{keywords_reaction_prompt}
 请注意把握聊天内容，不要回复的太有条理。
 {reply_style}

@@ -6,7 +6,6 @@ import {
   Outlet,
   redirect,
 } from '@tanstack/react-router'
-import { TanStackRouterDevtools } from '@tanstack/router-devtools'
 import { NotFoundPage } from './routes/404'
 import { Layout } from './components/layout'
 import { RoutePendingFallback } from './components/route-pending-fallback'
@@ -15,12 +14,7 @@ import { RouteErrorBoundary } from './components/error-boundary'
 
 // Root 路由
 const rootRoute = createRootRoute({
-  component: () => (
-    <>
-      <Outlet />
-      {import.meta.env.DEV && <TanStackRouterDevtools />}
-    </>
-  ),
+  component: Outlet,
   beforeLoad: ({ location }) => {
     // 只在目标路由确实是首页时异步鉴权。使用 window.location 会读到导航前的旧路径，
     // 并让离开首页的工作区切换无故进入 pending 状态。
@@ -62,6 +56,20 @@ const protectedRoute = createRoute({
   errorComponent: ({ error }) => <RouteErrorBoundary error={error} />,
 })
 
+const pluginWebUIRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/extensions/$pluginId/$pageId',
+  component: lazyRouteComponent(() => import('./routes/plugin-webui'), 'PluginWebUIPage'),
+})
+
+const pluginWebUIManagerRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/extensions',
+  beforeLoad: () => {
+    throw redirect({ to: '/plugin-config', hash: 'webui-extensions', replace: true })
+  },
+})
+
 // 首页路由
 const indexRoute = createRoute({
   getParentRoute: () => protectedRoute,
@@ -82,17 +90,19 @@ const replyEffectsRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/reply-effects'), 'ReplyEffectsPage'),
 })
 
-// 沉浸专注陪伴路由
-const focusCompanionRoute = createRoute({
-  getParentRoute: () => protectedRoute,
-  path: '/focus',
-  component: lazyRouteComponent(() => import('./routes/focus'), 'FocusCompanionPage'),
-})
-
 // 配置路由 - 麦麦主程序配置
 const botConfigRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/config/bot',
+  beforeLoad: ({ location }) => {
+    const params = new URLSearchParams(location.searchStr)
+    if (params.get('mode') !== 'webui') return
+    params.delete('mode')
+    const search = params.size ? `?${params.toString()}` : ''
+    // 兼容此前内嵌 WebUI 设置的链接，保留页签参数和 hash。
+    const hash = location.hash ? `#${location.hash.replace(/^#/, '')}` : ''
+    throw redirect({ href: `/settings${search}${hash}`, replace: true })
+  },
   component: lazyRouteComponent(() => import('./routes/config/bot'), 'BotConfigPage'),
 })
 
@@ -110,13 +120,6 @@ const promptManagementRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/config/prompts'), 'PromptManagementPage'),
 })
 
-// 配置路由 - 人设生成器（测试功能）
-const promptGeneratorRoute = createRoute({
-  getParentRoute: () => protectedRoute,
-  path: '/config/prompt-generator',
-  component: lazyRouteComponent(() => import('./routes/prompt-generator'), 'PromptGeneratorPage'),
-})
-
 // 资源管理路由 - 表情包管理
 const emojiManagementRoute = createRoute({
   getParentRoute: () => protectedRoute,
@@ -127,14 +130,23 @@ const emojiManagementRoute = createRoute({
   ),
 })
 
-// 资源管理路由 - 表达方式管理
+// 资源管理路由 - 学习（表达方式与黑话）
+const learningRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/resource/learning',
+  validateSearch: (search: Record<string, unknown>): { tab: 'expression' | 'jargon' } => ({
+    tab: search.tab === 'jargon' ? 'jargon' : 'expression',
+  }),
+  component: lazyRouteComponent(() => import('./routes/resource/learning'), 'LearningPage'),
+})
+
+// 旧表达方式地址进入学习页的表达页签。
 const expressionManagementRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/resource/expression',
-  component: lazyRouteComponent(
-    () => import('./routes/resource/expression/index.tsx'),
-    'ExpressionManagementPage'
-  ),
+  beforeLoad: () => {
+    throw redirect({ to: '/resource/learning', search: { tab: 'expression' }, replace: true })
+  },
 })
 
 // 资源管理路由 - 人物信息管理
@@ -144,25 +156,16 @@ const personManagementRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/person'), 'PersonManagementPage'),
 })
 
-// 资源管理路由 - 黑话管理
+// 旧黑话地址进入学习页的黑话页签。
 const jargonManagementRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/resource/jargon',
-  component: lazyRouteComponent(
-    () => import('./routes/resource/jargon/index.tsx'),
-    'JargonManagementPage'
-  ),
+  beforeLoad: () => {
+    throw redirect({ to: '/resource/learning', search: { tab: 'jargon' }, replace: true })
+  },
 })
 
 // 资源管理路由 - 知识库图谱可视化
-const behaviorLearningRoute = createRoute({
-  getParentRoute: () => protectedRoute,
-  path: '/resource/behavior',
-  component: lazyRouteComponent(
-    () => import('./routes/resource/behavior/index.tsx'),
-    'BehaviorLearningPage'
-  ),
-})
 
 const knowledgeGraphRoute = createRoute({
   getParentRoute: () => protectedRoute,
@@ -203,10 +206,21 @@ const plannerMonitorRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/monitor/index.tsx'), 'PlannerMonitorPage'),
 })
 
+// 移动端管理页路由：底部标签栏「管理」，汇总侧栏的全部入口
+const manageRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/manage',
+  component: lazyRouteComponent(() => import('./routes/manage'), 'ManagePage'),
+})
+
 // 本地聊天室路由
 const chatRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/chat',
+  validateSearch: (search: Record<string, unknown>): { setupTrial?: boolean; observe?: string } => ({
+    setupTrial: search.setupTrial === true || search.setupTrial === 'true' ? true : undefined,
+    observe: typeof search.observe === 'string' && search.observe ? search.observe : undefined,
+  }),
   component: lazyRouteComponent(() => import('./routes/chat/index'), 'ChatPage'),
 })
 
@@ -224,17 +238,13 @@ const chatEmbedRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/chat/embed'), 'ChatEmbedPage'),
 })
 
-// 外部程序嵌入用专注陪伴路由，不挂载 dashboard 顶栏和侧边栏
-const focusCompanionEmbedRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/focus/embed',
-  component: lazyRouteComponent(() => import('./routes/focus'), 'FocusCompanionPage'),
-})
-
 // 外部程序嵌入用插件市场路由，不挂载 dashboard 顶栏和侧边栏
 const pluginsEmbedRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/plugins/embed',
+  validateSearch: (search: Record<string, unknown>): { pluginId?: string } => ({
+    pluginId: typeof search.pluginId === 'string' ? search.pluginId.trim() || undefined : undefined,
+  }),
   component: lazyRouteComponent(
     () => import('./routes/plugins/embed'),
     'PluginMarketplaceEmbedPage'
@@ -245,6 +255,9 @@ const pluginsEmbedRoute = createRoute({
 const pluginsRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/plugins',
+  validateSearch: (search: Record<string, unknown>): { pluginId?: string } => ({
+    pluginId: typeof search.pluginId === 'string' ? search.pluginId.trim() || undefined : undefined,
+  }),
   component: lazyRouteComponent(
     () => import('./routes/plugins/PluginMarketplacePage'),
     'PluginMarketplacePage'
@@ -299,11 +312,13 @@ const pluginMirrorsRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/plugin-mirrors'), 'PluginMirrorsPage'),
 })
 
-// 设置页路由
+// 旧 MCP 地址统一进入插件扩展。
 const mcpSettingsRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/mcp-settings',
-  component: lazyRouteComponent(() => import('./routes/mcp-settings'), 'MCPSettingsPage'),
+  beforeLoad: () => {
+    throw redirect({ to: '/plugin-config' })
+  },
 })
 
 // 数据迁移与备份路由
@@ -365,23 +380,22 @@ const routeTree = rootRoute.addChildren([
   authRoute,
   setupRoute,
   chatEmbedRoute,
-  focusCompanionEmbedRoute,
   pluginsEmbedRoute,
   pluginConfigEmbedRoute,
   pluginMirrorsEmbedRoute,
   protectedRoute.addChildren([
+    pluginWebUIRoute,
+    pluginWebUIManagerRoute,
     indexRoute,
     statisticsRoute,
     replyEffectsRoute,
-    focusCompanionRoute,
     botConfigRoute,
     modelConfigRoute,
     promptManagementRoute,
-    promptGeneratorRoute,
     emojiManagementRoute,
+    learningRoute,
     expressionManagementRoute,
     jargonManagementRoute,
-    behaviorLearningRoute,
     personManagementRoute,
     knowledgeGraphRoute,
     knowledgeBaseRoute,
@@ -397,6 +411,7 @@ const routeTree = rootRoute.addChildren([
     plannerMonitorRoute,
     chatManagementRoute,
     chatRoute,
+    manageRoute,
     settingsRoute,
     packMarketRoute,
     packDetailRoute,

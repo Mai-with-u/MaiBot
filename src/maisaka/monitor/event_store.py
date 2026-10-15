@@ -1,10 +1,11 @@
 """麦麦观察事件账本。"""
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from sqlalchemy import text
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 import json
 import threading
@@ -13,6 +14,7 @@ import time
 from src.common.database.database import get_db_session
 from src.common.database.database_model import ImageType, Images, MaisakaMonitorEventRecord
 from src.common.logger import get_logger
+from src.maisaka.monitor.planner_delta import PLANNER_EVENTS
 
 logger = get_logger("maisaka_monitor_event_store")
 
@@ -21,8 +23,31 @@ MAX_MONITOR_EVENT_RECORDS = 10000
 MAX_MONITOR_EVENT_AGE_HOURS = 72
 DEFAULT_REPLAY_LIMIT = 1000
 MAX_REPLAY_LIMIT = MAX_MONITOR_EVENT_RECORDS
+DEFAULT_HISTORY_PAGE_SIZE = 100
+MAX_HISTORY_PAGE_SIZE = 500
+MAX_SUBAGENT_HISTORY_EVENTS = 500
+SESSION_MESSAGE_EVENT_TYPES = ("message.ingested", "message.sent")
+# 子代理面板由这些事件累积而成；session.start 用于把上一个进程遗留的任务标记为已终止。
+SUBAGENT_HISTORY_EVENT_TYPES = (
+    "session.start",
+    "subagent.started",
+    "subagent.round",
+    "subagent.tool_result",
+    "subagent.finished",
+)
 CLEANUP_CHECK_INTERVAL_RECORDS = 200
 CLEANUP_CHECK_INTERVAL_SECONDS = 60
+
+
+
+@dataclass
+class MonitorEventPage:
+    """单个聊天流的一页历史事件，``events`` 按 ``event_id`` 升序排列。"""
+
+    events: list[dict[str, Any]]
+    oldest_event_id: int
+    has_more: bool
+
 
 _cleanup_lock = threading.Lock()
 _records_since_cleanup = 0
@@ -83,7 +108,113 @@ def replay_monitor_events(*, since_event_id: int = 0, limit: int = DEFAULT_REPLA
             )
             records = list(reversed(session.exec(statement).all()))
 
+    events = [_record_to_replay_event(record) for record in records]
+    valid_events = [event for event in events if _is_replayable_event(event)]
+    skipped_count = len(events) - len(valid_events)
+    if skipped_count > 0:
+        logger.warning(f"回放时跳过 {skipped_count} 条缺少 run_id 的旧版 Planner 事件")
+    return valid_events
+
+
+def load_session_event_page(
+    *,
+    session_id: str,
+    before_event_id: int = 0,
+    limit: int = DEFAULT_HISTORY_PAGE_SIZE,
+) -> MonitorEventPage:
+    """读取某个聊天流早于 ``before_event_id`` 的最近一页事件；为 0 时读取最新一页。"""
+
+    normalized_limit = max(1, min(limit, MAX_HISTORY_PAGE_SIZE))
+    with get_db_session(auto_commit=False) as session:
+        statement = select(MaisakaMonitorEventRecord).where(MaisakaMonitorEventRecord.session_id == session_id)
+        if before_event_id > 0:
+            statement = statement.where(MaisakaMonitorEventRecord.event_id < before_event_id)
+        # 多取一条用于判断是否还有更早的记录。
+        statement = statement.order_by(MaisakaMonitorEventRecord.event_id.desc()).limit(normalized_limit + 1)
+        records = list(session.exec(statement).all())
+
+    has_more = len(records) > normalized_limit
+    page_records = list(reversed(records[:normalized_limit]))
+    events = [_record_to_replay_event(record) for record in page_records]
+    return MonitorEventPage(
+        events=[event for event in events if _is_replayable_event(event)],
+        oldest_event_id=int(page_records[0].event_id or 0) if page_records else 0,
+        has_more=has_more,
+    )
+
+
+def load_session_subagent_events(
+    *,
+    session_id: str,
+    before_event_id: int,
+    limit: int = MAX_SUBAGENT_HISTORY_EVENTS,
+) -> list[dict[str, Any]]:
+    """读取某个聊天流早于 ``before_event_id`` 的子代理事件，按 ``event_id`` 升序返回。
+
+    分页只加载最新一页时间线，仍在运行的子代理可能开始于更早的页；
+    这些事件数量很少，随首页一并补发，保证子代理面板完整。
+    """
+
+    with get_db_session(auto_commit=False) as session:
+        statement = (
+            select(MaisakaMonitorEventRecord)
+            .where(MaisakaMonitorEventRecord.session_id == session_id)
+            .where(col(MaisakaMonitorEventRecord.event_type).in_(SUBAGENT_HISTORY_EVENT_TYPES))
+            .where(MaisakaMonitorEventRecord.event_id < before_event_id)
+            .order_by(MaisakaMonitorEventRecord.event_id.desc())
+            .limit(max(1, limit))
+        )
+        records = list(reversed(session.exec(statement).all()))
     return [_record_to_replay_event(record) for record in records]
+
+
+def load_session_summaries() -> list[dict[str, Any]]:
+    """汇总账本中每个聊天流的概要：事件数、最近活动、最近一次启动事件与最新一条消息。"""
+
+    message_types = ", ".join(f"'{event_type}'" for event_type in SESSION_MESSAGE_EVENT_TYPES)
+    with get_db_session(auto_commit=False) as session:
+        rows = session.execute(
+            text(
+                f"""
+                SELECT
+                    session_id,
+                    COUNT(*) AS event_count,
+                    MAX(event_id) AS last_event_id,
+                    MAX(timestamp) AS last_activity,
+                    MAX(CASE WHEN event_type = 'session.start' THEN event_id END) AS start_event_id,
+                    MAX(CASE WHEN event_type IN ({message_types}) THEN event_id END) AS message_event_id
+                FROM maisaka_monitor_events
+                WHERE session_id != ''
+                GROUP BY session_id
+                """
+            )
+        ).all()
+        detail_event_ids = [
+            event_id for row in rows for event_id in (row.start_event_id, row.message_event_id) if event_id is not None
+        ]
+        detail_events: dict[int, dict[str, Any]] = {}
+        if detail_event_ids:
+            statement = select(MaisakaMonitorEventRecord).where(
+                col(MaisakaMonitorEventRecord.event_id).in_(detail_event_ids)
+            )
+            for record in session.exec(statement).all():
+                if record.event_id is not None:
+                    detail_events[record.event_id] = _record_to_replay_event(record)
+
+    summaries: list[dict[str, Any]] = []
+    for row in rows:
+        start_event = detail_events.get(row.start_event_id)
+        summaries.append(
+            {
+                "session_id": row.session_id,
+                "event_count": int(row.event_count),
+                "last_event_id": int(row.last_event_id),
+                "last_activity": float(row.last_activity),
+                "session_start": start_event["data"] if start_event is not None else None,
+                "latest_message": detail_events.get(row.message_event_id),
+            }
+        )
+    return summaries
 
 
 def cleanup_monitor_events(session: Optional[Session] = None) -> int:
@@ -114,7 +245,7 @@ def cleanup_monitor_events(session: Optional[Session] = None) -> int:
     )
     removed_count = int(age_result.rowcount or 0) + int(count_result.rowcount or 0)
     if removed_count > 0:
-        logger.info(f"麦麦观察事件账本清理完成，删除记录数={removed_count}")
+        logger.debug(f"麦麦观察事件账本清理完成，删除记录数={removed_count}")
     return removed_count
 
 
@@ -125,6 +256,14 @@ def sanitize_monitor_payload(payload: dict[str, Any], *, session: Optional[Sessi
     if not isinstance(cleaned, dict):
         raise TypeError("麦麦观察事件 payload 必须是字典")
     return cleaned
+
+
+def _is_replayable_event(event: dict[str, Any]) -> bool:
+    """旧版本写入的 Planner 事件没有 run_id，无法做增量编码，回放时丢弃。"""
+
+    if event["event"] not in PLANNER_EVENTS:
+        return True
+    return bool(event["data"].get("run_id"))
 
 
 def _record_to_replay_event(record: MaisakaMonitorEventRecord) -> dict[str, Any]:

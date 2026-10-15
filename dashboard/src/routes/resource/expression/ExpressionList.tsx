@@ -139,7 +139,7 @@ export function ExpressionList({
   }
 
   return (
-    <div className={cn('flex min-h-0 flex-col border-2 bg-transparent', className)}>
+    <div className={cn('flex min-h-0 min-w-0 flex-col bg-transparent md:border-2', className)}>
       {/* 桌面端表格视图 */}
       <div
         data-expression-table-viewport="true"
@@ -281,7 +281,7 @@ export function ExpressionList({
       </div>
 
       {/* 移动端卡片视图 */}
-      <div className="space-y-4 p-4 md:hidden">
+      <div className="min-w-0 space-y-2 md:hidden">
         {loading ? (
           <div className="text-muted-foreground py-8 text-center">
             <ThinkingIllustration size="sm" className="mx-auto" />
@@ -292,16 +292,16 @@ export function ExpressionList({
           expressions.map((expression) => (
             <div
               key={expression.id}
-              className="space-y-4 overflow-hidden rounded-lg border bg-transparent p-4"
+              className="min-w-0 space-y-2 overflow-hidden rounded-lg border bg-transparent p-3"
             >
               {/* 复选框和情境 */}
-              <div className="flex items-start gap-3">
+              <div className="flex items-start gap-2">
                 <Checkbox
                   checked={selectedIds.has(expression.id)}
                   onCheckedChange={() => onToggleSelect(expression.id)}
                   className="mt-1"
                 />
-                <div className="min-w-0 flex-1 space-y-3 overflow-hidden">
+                <div className="min-w-0 flex-1 space-y-2 overflow-hidden">
                   <div>
                     <div className="text-muted-foreground mb-1 text-xs">情境</div>
                     <h3
@@ -337,15 +337,15 @@ export function ExpressionList({
                 </div>
               )}
 
-              <div className="text-sm">
-                <div className="text-muted-foreground mb-1 text-xs">精选</div>
-                <div className="flex flex-wrap items-center gap-2">
+              {isUserApproved(expression) && (
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   {getReviewBadge(expression)}
+                  <span>已精选</span>
                 </div>
-              </div>
+              )}
 
               {/* 操作按钮 */}
-              <div className="grid grid-cols-4 gap-2 overflow-hidden border-t pt-3">
+              <div className="grid grid-cols-3 gap-2 border-t pt-2">
                 <Button
                   variant={isUserApproved(expression) ? 'outline' : 'default'}
                   size="icon"

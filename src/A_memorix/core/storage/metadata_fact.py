@@ -15,7 +15,6 @@ _STABILITIES = {"stable", "temporal", "uncertain"}
 _AUTHORITIES = {"manual", "direct_user", "imported", "summary_derived"}
 _STATUSES = {"active", "conflicted", "superseded", "retracted"}
 _EVIDENCE_STANCES = {"support", "refute"}
-_TRUSTED_FACT_ORIGINS = {"manual_confirmed", "server_verified", "trusted_import"}
 _PROFILE_SECTIONS = {
     "identity_settings",
     "relationship_settings",
@@ -896,7 +895,6 @@ class MetadataFactMixin:
             FROM fact_claims
             WHERE scope_type = 'person' AND scope_id = ? AND status = 'active'
               AND stability = 'stable'
-              AND authority IN ('manual', 'direct_user', 'imported')
               AND (valid_from IS NULL OR valid_from <= ?)
               AND (valid_to IS NULL OR valid_to > ?)
             ORDER BY
@@ -944,7 +942,6 @@ class MetadataFactMixin:
               AND (
                     (
                         stability = 'stable'
-                        AND authority IN ('manual', 'direct_user', 'imported')
                     )
                     OR (
                         stability = 'uncertain'
@@ -975,6 +972,45 @@ class MetadataFactMixin:
             (token, point, point, max(1, int(limit))),
         )
         return [self._fact_claim_row(row) or {} for row in cursor.fetchall()]
+
+    def count_uncertain_person_fact_claims(self, person_id: str) -> int:
+        """统计人物有效的未确认事实，避免为计数加载全部记录。"""
+
+        token = _required_token("person_id", person_id)
+        point = datetime.now().timestamp()
+        rows = self.query(
+            """
+            SELECT COUNT(*) AS total FROM fact_claims
+            WHERE scope_type = 'person' AND scope_id = ? AND status = 'active'
+              AND stability = 'uncertain' AND authority = 'summary_derived'
+              AND profile_section = 'uncertain_notes'
+              AND (valid_from IS NULL OR valid_from <= ?)
+              AND (valid_to IS NULL OR valid_to > ?)
+            """,
+            (token, point, point),
+        )
+        return int(rows[0]["total"])
+
+    def list_uncertain_person_fact_claims(self, person_id: str, *, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """读取人物有效的未确认事实，可限制用于画像候选的记录数。"""
+
+        token = _required_token("person_id", person_id)
+        point = datetime.now().timestamp()
+        sql = """
+            SELECT * FROM fact_claims
+            WHERE scope_type = 'person' AND scope_id = ? AND status = 'active'
+              AND stability = 'uncertain' AND authority = 'summary_derived'
+              AND profile_section = 'uncertain_notes'
+              AND (valid_from IS NULL OR valid_from <= ?)
+              AND (valid_to IS NULL OR valid_to > ?)
+            ORDER BY last_confirmed_at DESC, claim_id ASC
+            """
+        params: List[Any] = [token, point, point]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(max(1, int(limit)))
+        rows = self.query(sql, tuple(params))
+        return [self._fact_claim_row(row) or {} for row in rows]
 
     def backfill_person_fact_claims(self, *, limit: Optional[int] = None) -> Dict[str, int]:
         """把现有原子人物事实段落确定性迁移到事实账本。
@@ -1019,35 +1055,22 @@ class MetadataFactMixin:
             raw_claim = metadata.get("fact_claim")
             claim_spec = dict(raw_claim) if isinstance(raw_claim, dict) else {}
             trust = _normalized_token(claim_spec.get("trust"))
-            trusted = trust in _TRUSTED_FACT_ORIGINS
             observed_at = row.get("event_time") or row.get("created_at")
+            # 无分类的旧摘要不能在迁移时获得模型未给出的稳定结论。
+            user_supported = evidence_source == "user_supported"
             result = self.upsert_fact_claim(
                 scope_type="person",
                 scope_id=person_id,
-                fact_key=(
-                    str(claim_spec.get("fact_key", "") or f"statement:{paragraph_hash}")
-                    if trusted
-                    else f"statement:{paragraph_hash}"
-                ),
+                fact_key=str(claim_spec.get("fact_key") or f"statement:{paragraph_hash}"),
                 value_text=content,
-                polarity=str(claim_spec.get("polarity", "positive") or "positive") if trusted else "positive",
-                cardinality=str(claim_spec.get("cardinality", "set") or "set") if trusted else "set",
-                stability=str(claim_spec.get("stability", "stable") or "stable") if trusted else "uncertain",
-                profile_section=(
-                    str(claim_spec.get("profile_section", "stable_facts") or "stable_facts")
-                    if trusted
-                    else "uncertain_notes"
-                ),
-                authority=(
-                    str(claim_spec.get("authority", "") or "direct_user")
-                    if trusted
-                    else "summary_derived"
-                ),
-                confidence=(
-                    float(claim_spec.get("confidence", 1.0) or 1.0)
-                    if trusted
-                    else min(0.5, float(claim_spec.get("confidence", 0.5) or 0.5))
-                ),
+                polarity=str(claim_spec.get("polarity", "positive")),
+                cardinality=str(claim_spec.get("cardinality", "set")),
+                stability=str(claim_spec.get("stability", "stable" if user_supported else "uncertain")),
+                profile_section=str(claim_spec.get("profile_section", "stable_facts" if user_supported else "uncertain_notes")),
+                authority=str(claim_spec.get("authority") or (
+                    "direct_user" if evidence_source == "user_supported" else "summary_derived"
+                )),
+                confidence=float(claim_spec.get("confidence", 1.0 if user_supported else 0.5)),
                 evidence_type="paragraph",
                 evidence_id=paragraph_hash,
                 evidence_metadata={

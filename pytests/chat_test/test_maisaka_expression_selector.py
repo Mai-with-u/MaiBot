@@ -1,7 +1,11 @@
+from datetime import datetime
+
 from src.chat.replyer.maisaka_expression_selector import (
     MAX_SELECTED_EXPRESSIONS,
     MaisakaExpressionSelector,
 )
+from src.llm_models.payload_content.context_item import ContextItemMeta, ContextTextPart, UserMessageItem
+from src.maisaka.context.emoji_candidates import EmojiCandidateMessage
 
 
 def test_expression_selector_prompt_and_parser_share_five_item_limit() -> None:
@@ -42,3 +46,20 @@ def test_expression_query_includes_available_intent() -> None:
     assert "表达场景：轻松调侃" in query_text
     assert "期望语气：活泼" in query_text
     assert "回复信息参考：\n回应对方刚才的玩笑" in query_text
+
+
+def test_serialize_context_message_accepts_emoji_candidate_snapshot() -> None:
+    """表情候选快照没有 source_kind 字段，序列化上下文时不能因此中断回复。"""
+
+    timestamp = datetime.now()
+    message = EmojiCandidateMessage(
+        item=UserMessageItem(meta=ContextItemMeta.create(timestamp=timestamp), parts=(ContextTextPart("表情包选择图"),)),
+        emoji_hashes={1: "hash"},
+        visible_text="表情包选择图",
+        timestamp=timestamp,
+    )
+
+    serialized = MaisakaExpressionSelector._serialize_context_message(message)
+
+    assert serialized["source_kind"] == "emoji_candidates"
+    assert serialized["text"] == "表情包选择图"

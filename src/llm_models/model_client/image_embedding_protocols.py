@@ -1,14 +1,16 @@
-"""百炼与豆包官方图片嵌入协议的自动适配。
+"""百炼、豆包与硅基流动官方图片嵌入协议的自动适配。
 
-两个厂商的多模态图片嵌入接口不是 OpenAI 兼容协议：端点路径、请求体结构
+百炼和豆包的多模态图片嵌入接口不是 OpenAI 兼容协议：端点路径、请求体结构
 和向量返回位置都与 `/embeddings` 不同。当 `client_type = "openai"` 的
 Provider 地址指向官方域名时，图片嵌入请求由本模块自动切换到对应原生协议；
-其他地址仍走 OpenAI 兼容模板逻辑（`image_embedding_input` /
+硅基流动沿用 `/embeddings`，但图片输入需要 `{"image": ...}`，官方地址会
+自动填入该模板。其他地址仍走 OpenAI 兼容模板逻辑（`image_embedding_input` /
 `image_embedding_body`），互不影响。
 
 协议来源：
 - 百炼: https://help.aliyun.com/zh/model-studio/multimodal-embedding-api-reference
 - 豆包: https://docs.volcengine.com/docs/ark/vectorization?lang=zh
+- 硅基流动: https://docs.siliconflow.cn/docs/api/embeddings-post
 """
 
 from dataclasses import dataclass, field
@@ -19,6 +21,7 @@ import base64
 import hashlib
 import json
 import math
+import re
 
 from src.llm_models.openai_compat import normalize_openai_base_url
 
@@ -35,6 +38,12 @@ _DASHSCOPE_NATIVE_PATH = "/api/v1/services/embeddings/multimodal-embedding/multi
 
 _ARK_NATIVE_SUFFIX = "/embeddings/multimodal"
 """豆包原生多模态向量接口后缀；套餐(/api/plan/v3)与普通(/api/v3)网关都在各自基路径下提供该端点。"""
+
+_DASHSCOPE_HOSTNAME = "dashscope.aliyuncs.com"
+"""百炼共享 DashScope 域名。"""
+
+_DASHSCOPE_WORKSPACE_HOSTNAME_PATTERN = re.compile(r"[a-z0-9-]+\.[a-z0-9-]+\.maas\.aliyuncs\.com")
+"""百炼业务空间专属域名 `{WorkspaceId}.{region}.maas.aliyuncs.com`，对小写 hostname 整体匹配。"""
 
 _DASHSCOPE_BASE_PATHS = {"/compatible-mode/v1", "/api/v1"}
 """百炼 Provider 地址允许的基路径（规范化后精确匹配）。"""
@@ -80,13 +89,14 @@ class NativeImageEmbeddingResult:
     """校验后的嵌入向量。"""
 
     usage: UsageTuple | None
-    """统一使用量五元组；响应未提供 usage 时为 None。"""
+    """统一使用量元组；响应未提供 usage 时为 None。嵌入调用不含缓存字段，末位恒为未上报。"""
 
 
 def resolve_native_image_embedding_protocol(base_url: str) -> str | None:
     """识别官方百炼/豆包地址并返回对应原生协议；其他地址返回 None。
 
-    匹配基于规范化后的 hostname 与路径精确比对，不做子串或子域名猜测；
+    匹配基于规范化后的 hostname 与路径精确比对，不做子串或任意子域名猜测；
+    百炼业务空间专属域名按 `{WorkspaceId}.{region}.maas.aliyuncs.com` 固定格式整体匹配。
     未识别的地址一律返回 None，由调用方继续走原有 OpenAI 兼容逻辑。
     """
     parsed = urlsplit(normalize_openai_base_url(str(base_url or "")))
@@ -94,11 +104,41 @@ def resolve_native_image_embedding_protocol(base_url: str) -> str | None:
         return None
     hostname = parsed.hostname.lower()
     path = parsed.path.rstrip("/")
-    if hostname == "dashscope.aliyuncs.com" and path in _DASHSCOPE_BASE_PATHS:
+    if _is_dashscope_hostname(hostname) and path in _DASHSCOPE_BASE_PATHS:
         return DASHSCOPE_PROTOCOL
     if hostname == "ark.cn-beijing.volces.com" and path in _ARK_BASE_PATHS:
         return ARK_PROTOCOL
     return None
+
+
+def _is_dashscope_hostname(hostname: str) -> bool:
+    """判断小写 hostname 是否为百炼官方推理域名（共享 DashScope 域名或业务空间专属域名）。"""
+    return hostname == _DASHSCOPE_HOSTNAME or _DASHSCOPE_WORKSPACE_HOSTNAME_PATTERN.fullmatch(hostname) is not None
+
+
+def resolve_compatible_image_embedding_input(base_url: str) -> Dict[str, str] | None:
+    """识别硅基流动官方地址，并返回其 `/embeddings` 图片输入模板。"""
+    parsed = urlsplit(normalize_openai_base_url(str(base_url or "")))
+    if parsed.scheme not in ("https", "http") or parsed.path.rstrip("/") != "/v1":
+        return None
+    if parsed.hostname not in {"api.siliconflow.cn", "api.siliconflow.com"}:
+        return None
+    return {"image": "{data_uri}"}
+
+
+def build_compatible_image_embedding_fingerprint(
+    input_template: Mapping[str, str], extra_params: Mapping[str, Any]
+) -> str:
+    """按编排器现有模板指纹格式记录自动适配后的实际图片输入。"""
+    fingerprint_payload = {
+        "input": input_template,
+        "body": None,
+        "task": extra_params.get("task"),
+        "dimensions": extra_params.get("dimensions"),
+    }
+    return hashlib.sha256(
+        json.dumps(fingerprint_payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def build_native_image_embedding_request(
@@ -291,14 +331,16 @@ def _extract_dashscope_usage(usage: Any) -> UsageTuple | None:
     if not isinstance(usage, Mapping):
         return None
     total_tokens = _as_non_negative_int(usage.get("total_tokens"))
-    return (total_tokens, 0, total_tokens, 0, 0)
+    # 嵌入调用不参与 Prompt 缓存用量探测，末位恒为未上报
+    return (total_tokens, 0, total_tokens, 0, 0, False)
 
 
 def _extract_ark_usage(usage: Any) -> UsageTuple | None:
     if not isinstance(usage, Mapping):
         return None
     total_tokens = _as_non_negative_int(usage.get("total_tokens"))
-    return (total_tokens, 0, total_tokens, 0, 0)
+    # 嵌入调用不参与 Prompt 缓存用量探测，末位恒为未上报
+    return (total_tokens, 0, total_tokens, 0, 0, False)
 
 
 def _as_non_negative_int(value: Any) -> int:

@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from watchfiles import Change
 
@@ -134,3 +135,138 @@ async def test_stop_file_watcher_cleans_state():
     assert fake_watcher.stop_called is True
     assert manager._file_watcher is None
     assert manager._file_watcher_subscription_id is None
+
+
+def test_section_matches_by_dotted_prefix():
+    assert ConfigManager._section_matches("chat", "chat.reply_timing")
+    assert ConfigManager._section_matches("chat.reply_timing", "chat")
+    assert ConfigManager._section_matches("a_memorix", "a_memorix")
+    assert not ConfigManager._section_matches("webui", "chat")
+    assert not ConfigManager._section_matches("cha", "chat")
+
+
+def _make_reload_test_manager(monkeypatch: pytest.MonkeyPatch, new_global_config) -> ConfigManager:
+    """构造不落盘的 ConfigManager，热重载直接换内存配置对象。"""
+
+    from src.config.config import Config
+
+    manager = ConfigManager()
+    manager.global_config = Config()
+    monkeypatch.setattr(manager, "_update_config_file_fingerprints", lambda scopes: None)
+
+    def fake_load(config_class, path, new_ver, override_repr=False):
+        return (new_global_config, False) if config_class is Config else (SimpleNamespace(), False)
+
+    monkeypatch.setattr("src.config.config.load_config_from_file", fake_load)
+    return manager
+
+
+@pytest.mark.asyncio
+async def test_reload_config_notifies_section_callback_only_on_match(monkeypatch: pytest.MonkeyPatch):
+    from src.config.config import Config
+
+    new_config = Config()
+    new_config.webui.anti_crawler_mode = "strict"
+    manager = _make_reload_test_manager(monkeypatch, new_config)
+
+    notified_all: list[int] = []
+    notified_webui: list[int] = []
+    notified_a_memorix: list[int] = []
+
+    async def cb_all():
+        notified_all.append(1)
+
+    async def cb_webui():
+        notified_webui.append(1)
+
+    async def cb_a_memorix():
+        notified_a_memorix.append(1)
+
+    manager.register_reload_callback(cb_all)
+    manager.register_reload_callback(cb_webui, sections=("webui",))
+    manager.register_reload_callback(cb_a_memorix, sections=("a_memorix",))
+
+    assert await manager.reload_config(changed_scopes=["bot"]) is True
+
+    # 自动 diff 识别出 webui 节变化：不限节的回调与 webui 回调被通知，a_memorix 回调跳过
+    assert notified_all == [1]
+    assert notified_webui == [1]
+    assert notified_a_memorix == []
+
+
+@pytest.mark.asyncio
+async def test_reload_config_respects_explicit_changed_sections(monkeypatch: pytest.MonkeyPatch):
+    from src.config.config import Config
+
+    manager = _make_reload_test_manager(monkeypatch, Config())
+
+    notified_all: list[int] = []
+    notified_a_memorix: list[int] = []
+
+    async def cb_all():
+        notified_all.append(1)
+
+    async def cb_a_memorix():
+        notified_a_memorix.append(1)
+
+    manager.register_reload_callback(cb_all)
+    manager.register_reload_callback(cb_a_memorix, sections=("a_memorix",))
+
+    assert await manager.reload_config(changed_scopes=["bot"], changed_sections=["chat.reply_timing"]) is True
+    assert notified_all == [1]
+    assert notified_a_memorix == []
+
+    assert await manager.reload_config(changed_scopes=["bot"], changed_sections=["a_memorix"]) is True
+    assert notified_a_memorix == [1]
+
+
+@pytest.mark.asyncio
+async def test_reload_config_auto_diff_without_change_skips_section_callbacks(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from src.config.config import Config
+
+    manager = _make_reload_test_manager(monkeypatch, Config())
+
+    notified_all: list[int] = []
+    notified_webui: list[int] = []
+
+    async def cb_all():
+        notified_all.append(1)
+
+    async def cb_webui():
+        notified_webui.append(1)
+
+    manager.register_reload_callback(cb_all)
+    manager.register_reload_callback(cb_webui, sections=("webui",))
+
+    assert await manager.reload_config(changed_scopes=["bot"]) is True
+
+    # 新旧配置无差异：节限定回调不通知，不限节回调保持原有行为
+    assert notified_all == [1]
+    assert notified_webui == []
+
+
+@pytest.mark.asyncio
+async def test_reload_config_model_scope_skips_bot_section_callbacks(monkeypatch: pytest.MonkeyPatch):
+    from src.config.config import Config
+
+    manager = _make_reload_test_manager(monkeypatch, Config())
+    manager.model_config = SimpleNamespace()  # type: ignore[assignment]
+
+    notified_all: list[int] = []
+    notified_webui: list[int] = []
+
+    async def cb_all():
+        notified_all.append(1)
+
+    async def cb_webui():
+        notified_webui.append(1)
+
+    manager.register_reload_callback(cb_all)
+    manager.register_reload_callback(cb_webui, sections=("webui",))
+
+    assert await manager.reload_config(changed_scopes=["model"]) is True
+
+    assert notified_all == [1]
+    assert notified_webui == []

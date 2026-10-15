@@ -37,8 +37,8 @@ def _model(**overrides: Any) -> ModelInfo:
     return ModelInfo(**(values | overrides))
 
 
-def _usage(hit: int = 250_000, miss: int = 750_000) -> UsageRecord:
-    return UsageRecord("test-model", "test-provider", 1_000_000, 500_000, 1_500_000, hit, miss)
+def _usage(hit: int = 250_000, miss: int = 750_000, *, reported: bool = False) -> UsageRecord:
+    return UsageRecord("test-model", "test-provider", 1_000_000, 500_000, 1_500_000, hit, miss, reported)
 
 
 @pytest.fixture
@@ -57,6 +57,15 @@ def recorded_usage(monkeypatch: pytest.MonkeyPatch) -> List[ModelUsage]:
     monkeypatch.setattr(utils, "get_db_session", session)
     monkeypatch.setattr(utils, "datetime", RecordedDatetime)
     return records
+
+
+@pytest.fixture(autouse=True)
+def clear_cache_reporting_memory() -> Iterator[None]:
+    """清空供应商缓存上报记忆，避免跨用例污染粘性判定。"""
+
+    utils._CACHE_REPORTING_MODELS.clear()
+    yield
+    utils._CACHE_REPORTING_MODELS.clear()
 
 
 @pytest.mark.parametrize(
@@ -79,7 +88,7 @@ def test_prices_follow_request_start_not_recording_time(recorded_usage, started_
 
 @pytest.mark.parametrize(
     ("cache", "hit", "miss", "expected"),
-    # cache 布尔不再参与计价：缓存单价大于 0 时按缓存价计，且 prompt_cache_enabled 为 True
+    # cache 为遗留兼容字段，不参与计价也不参与统计：计价仅取决于时段缓存单价是否大于 0
     [(False, 250_000, 750_000, 2.775), (True, 250_000, 0, 2.775), (True, 0, 0, 3.0)],
 )
 def test_period_prices_preserve_cache_accounting(recorded_usage, cache, hit, miss, expected) -> None:
@@ -88,12 +97,12 @@ def test_period_prices_preserve_cache_accounting(recorded_usage, cache, hit, mis
     )
 
     assert recorded_usage[0].cost == pytest.approx(expected)
-    # 时段缓存单价 0.1 > 0，无论 cache 布尔如何，缓存计价均视为启用
-    assert recorded_usage[0].prompt_cache_enabled is True
+    # 供应商从未上报缓存字段，统计不展示，与 cache 布尔和缓存单价无关
+    assert recorded_usage[0].prompt_cache_enabled is False
 
 
-def test_cache_price_left_blank_matches_uncached_price(recorded_usage) -> None:
-    """缓存单价未填写（为 0）时，缓存命中的输入与非缓存一致，全部按 price_in 计费。"""
+def test_zero_cache_price_means_free_cache_hits(recorded_usage) -> None:
+    """缓存单价为 0 表示缓存命中免费，未命中部分仍按 price_in 计费。"""
     LLMUsageRecorder().record_usage_to_database(
         _model(cache=True, price_periods=[_period(cache_price_in=0.0)]),
         _usage(250_000, 750_000),
@@ -102,9 +111,46 @@ def test_cache_price_left_blank_matches_uncached_price(recorded_usage) -> None:
         request_started_at=datetime(2026, 9, 18, 1),
     )
 
-    # 输入 1M * 1.0 + 输出 0.5M * 4.0
-    assert recorded_usage[0].cost == pytest.approx(3.0)
+    # 命中 0.25M * 0 + 未命中 0.75M * 1.0 + 输出 0.5M * 4.0
+    assert recorded_usage[0].cost == pytest.approx(2.75)
+    # 计价与统计展示互不影响：未上报缓存字段就不展示
     assert recorded_usage[0].prompt_cache_enabled is False
+
+
+def test_prompt_cache_stats_follow_provider_reporting(recorded_usage) -> None:
+    """缓存统计展示由供应商是否上报缓存字段决定，与价格配置无关；首次上报后粘性生效。"""
+
+    # 上报了缓存字段的模型即展示统计，缓存价 0 时命中免费、未命中按 price_in 计费
+    LLMUsageRecorder().record_usage_to_database(
+        _model(cache=True, cache_price_in=0.0, price_periods=[]),
+        _usage(250_000, 750_000, reported=True),
+        "system",
+        "test",
+        request_started_at=datetime(2026, 9, 18, 1),
+    )
+    # 命中 0.25M * 0（免费）+ 未命中 0.75M * 2.0 + 输出 0.5M * 8.0
+    assert recorded_usage[0].cost == pytest.approx(5.5)
+    assert recorded_usage[0].prompt_cache_enabled is True
+
+    # 同一模型后续调用未命中（部分供应商零命中时不返回缓存字段），仍按已记住的支持缓存展示
+    LLMUsageRecorder().record_usage_to_database(
+        _model(cache=True, cache_price_in=0.0, price_periods=[]),
+        _usage(0, 0),
+        "system",
+        "test",
+        request_started_at=datetime(2026, 9, 18, 1),
+    )
+    assert recorded_usage[1].prompt_cache_enabled is True
+
+    # 从未上报的模型即使配了缓存价也不展示统计
+    LLMUsageRecorder().record_usage_to_database(
+        _model(name="other-model", model_identifier="other-model-id"),
+        _usage(),
+        "system",
+        "test",
+        request_started_at=datetime(2026, 9, 18, 1),
+    )
+    assert recorded_usage[2].prompt_cache_enabled is False
 
 
 def test_legacy_model_uses_default_prices(recorded_usage) -> None:
