@@ -60,12 +60,14 @@ class AsyncTaskManager:
         call_back: 任务完成后移除任务
         """
         task_name = task.get_name()
-        if task_name in self.tasks:
+        # 同名任务替换时，旧任务的 done callback 可能晚于新任务注册执行。
+        # 只有任务对象仍是当前索引中的对象时，才允许删除该名称。
+        if self.tasks.get(task_name) is task:
             # 任务完成后移除任务
             del self.tasks[task_name]
             logger.debug(f"已移除任务 '{task_name}'")
         else:
-            logger.warning(f"尝试移除不存在的任务 '{task_name}'")
+            logger.debug(f"跳过已被替换的任务回调 '{task_name}'")
 
     @staticmethod
     def _default_finish_call_back(task: Task):
