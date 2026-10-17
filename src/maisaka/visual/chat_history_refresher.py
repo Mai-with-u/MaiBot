@@ -1,6 +1,6 @@
 """Maisaka 聊天历史视觉占位刷新器。"""
 
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable, List, Optional
 
 from sqlmodel import select
 
@@ -9,7 +9,7 @@ import asyncio
 from src.chat.message_receive.message import SessionMessage
 from src.common.data_models.message_component_data_model import EmojiComponent, ForwardNodeComponent, ImageComponent
 from src.common.database.database import get_db_session
-from src.common.database.database_model import Images, ImageType
+from src.common.database.database_model import ImageType, Images
 from src.common.logger import get_logger
 from src.config.config import config_manager
 
@@ -18,7 +18,7 @@ from src.maisaka.context.messages import LLMContextMessage, SessionBackedMessage
 
 logger = get_logger("maisaka_chat_history_visual_refresher")
 
-BuildHistoryMessage = Callable[[SessionMessage, str], Awaitable[Optional[LLMContextMessage]]]
+BuildHistoryMessage = Callable[[SessionMessage, str, bool], Awaitable[Optional[LLMContextMessage]]]
 BuildVisibleText = Callable[[SessionMessage, str], str]
 
 _PLANNER_PENDING_IMAGE_HASHES: set[str] = set()
@@ -27,7 +27,7 @@ _MONITOR_PENDING_IMAGE_REFRESHERS: dict[str, list[Callable[[str], None]]] = {}
 
 async def refresh_chat_history_visual_placeholders(
     *,
-    chat_history: list[LLMContextMessage],
+    chat_history: List[LLMContextMessage],
     build_history_message: BuildHistoryMessage,
     build_visible_text: BuildVisibleText,
 ) -> int:
@@ -53,17 +53,17 @@ async def refresh_chat_history_visual_placeholders(
         visual_components_updated = await asyncio.to_thread(
             _refresh_pending_visual_components, original_message.raw_message.components
         )
-        if visual_components_updated:
-            await original_message.process(
-                enable_heavy_media_analysis=False,
-                enable_voice_transcription=False,
-            )
-
+        # 直接从更新后的组件构建文字，避免整条 process 重处理尚未识别的媒体并清空其二进制。
         refreshed_visible_text = build_visible_text(original_message, history_message.source_kind)
         if not visual_components_updated and refreshed_visible_text == history_message.visible_text:
             continue
 
-        rebuilt_history_message = await build_history_message(original_message, history_message.source_kind)
+        # 刷新识图文字时继承消息自身的视觉策略，避免仅文字召回重新触发二进制加载。
+        rebuilt_history_message = await build_history_message(
+            original_message,
+            history_message.source_kind,
+            history_message.allow_visual,
+        )
         if rebuilt_history_message is None:
             continue
         if isinstance(rebuilt_history_message, SessionBackedMessage):

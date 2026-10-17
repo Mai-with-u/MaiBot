@@ -6,12 +6,13 @@ from datetime import datetime
 from enum import Enum
 from io import BytesIO
 from typing import Any, Dict, Optional, Sequence, Tuple
+
+from PIL import Image as PILImage, ImageOps
+
 import base64
 import hashlib
 import threading
 import uuid
-
-from PIL import Image as PILImage, ImageOps
 
 from src.chat.message_receive.message import SessionMessage
 from src.common.data_models.message_component_data_model import (
@@ -128,7 +129,7 @@ def _append_emoji_component(
     enable_visual_message: bool,
 ) -> bool:
     """将表情组件追加到 LLM 消息构建器。"""
-    image_format = _guess_image_format(component.binary_data)
+    image_format = _guess_image_format(component.binary_data) if enable_visual_message else None
     if enable_visual_message and image_format and component.binary_data:
         builder.add_text_content("[消息类型]表情包")
         builder.add_image_content(*_encode_image_for_context(component.binary_data, image_format))
@@ -150,7 +151,7 @@ def _append_image_component(
     enable_visual_message: bool,
 ) -> bool:
     """将图片组件追加到 LLM 消息构建器。"""
-    image_format = _guess_image_format(component.binary_data)
+    image_format = _guess_image_format(component.binary_data) if enable_visual_message else None
     if enable_visual_message and image_format and component.binary_data:
         builder.add_image_content(*_encode_image_for_context(component.binary_data, image_format))
         return True
@@ -327,9 +328,7 @@ def _render_components_for_browser(
     for component in components:
         if isinstance(component, ForwardNodeComponent):
             nested_path = [*parent_path, nested_component_index]
-            rendered_parts.append(
-                f"[嵌套转发消息，path={nested_path}，可再次调用 view_forward_message 展开]"
-            )
+            rendered_parts.append(f"[嵌套转发消息，path={nested_path}，可再次调用 view_forward_message 展开]")
             nested_component_index += 1
             continue
 
@@ -563,6 +562,8 @@ class SessionBackedMessage(LLMContextMessage):
     original_message: Optional[SessionMessage] = None
     source_kind: str = "user"
     context_item_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    # 召回消息的仅文字策略需在后续渲染和识图文字刷新时持续生效。
+    allow_visual: bool = field(default=True, kw_only=True)
 
     @property
     def role(self) -> str:
@@ -581,7 +582,7 @@ class SessionBackedMessage(LLMContextMessage):
             RoleType.User,
             self.raw_message,
             self.processed_plain_text,
-            enable_visual_message=enable_visual_message,
+            enable_visual_message=enable_visual_message and self.allow_visual,
             meta=ContextItemMeta.create(item_id=self.context_item_id, timestamp=self.timestamp),
         )
 
@@ -593,6 +594,7 @@ class SessionBackedMessage(LLMContextMessage):
         raw_message: MessageSequence,
         visible_text: str,
         source_kind: str = "user",
+        allow_visual: bool = True,
     ) -> "SessionBackedMessage":
         """从真实 SessionMessage 构造上下文消息。"""
         return cls(
@@ -602,6 +604,7 @@ class SessionBackedMessage(LLMContextMessage):
             message_id=session_message.message_id,
             original_message=session_message,
             source_kind=source_kind,
+            allow_visual=allow_visual,
         )
 
 
@@ -634,6 +637,7 @@ class ComplexSessionMessage(SessionBackedMessage):
         planner_prefix: str,
         visible_text: str,
         source_kind: str = "user",
+        allow_visual: bool = True,
     ) -> Optional["ComplexSessionMessage"]:
         """从真实 SessionMessage 构造复杂消息上下文消息。"""
 
@@ -648,6 +652,7 @@ class ComplexSessionMessage(SessionBackedMessage):
             message_id=session_message.message_id,
             original_message=session_message,
             source_kind=source_kind,
+            allow_visual=allow_visual,
             prompt_text=f"{planner_prefix}{prompt_text}",
         )
 
