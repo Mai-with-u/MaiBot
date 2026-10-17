@@ -5,7 +5,7 @@
 """
 
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 import base64
 import json
@@ -15,17 +15,22 @@ import pytest
 from openai import AsyncOpenAI
 
 from src.config.model_configs import APIProvider, ModelInfo
-from src.llm_models.exceptions import NetworkConnectionError, RespNotOkException
-from src.llm_models.model_client.base_client import ImageEmbeddingRequest
+from src.llm_models.exceptions import NetworkConnectionError, RespNotOkException, RespParseException
+from src.llm_models.model_client.base_client import EmbeddingRequest, ImageEmbeddingRequest
 from src.llm_models.model_client.image_embedding_protocols import (
+    ARK_MULTIMODAL_TEXT_PROTOCOL,
+    TEXT_EMBEDDING_PROTOCOL_EXTRA_PARAM,
     build_native_image_embedding_diagnostic_payload,
     build_native_image_embedding_fingerprint,
     build_native_image_embedding_request,
+    build_native_text_embedding_request,
     parse_native_image_embedding_response,
+    parse_native_text_embedding_response,
     resolve_compatible_image_embedding_input,
     resolve_native_image_embedding_protocol,
 )
 from src.llm_models.model_client.openai_client import OpenaiClient
+from src.llm_models.model_client import openai_client as openai_client_module
 
 DASHSCOPE_NATIVE_URL = (
     "https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding"
@@ -48,16 +53,36 @@ def _build_provider(base_url: str) -> APIProvider:
     )
 
 
-def _build_model(model_identifier: str) -> ModelInfo:
-    return ModelInfo(name="test-model", model_identifier=model_identifier, api_provider="test-provider")
+def _build_model(
+    model_identifier: str,
+    model_type: Literal["embedding", "image_embedding"] = "embedding",
+) -> ModelInfo:
+    return ModelInfo(
+        name="test-model",
+        model_identifier=model_identifier,
+        api_provider="test-provider",
+        model_type=model_type,
+    )
 
 
 def _build_request(model_identifier: str, extra_params: dict[str, Any] | None = None) -> ImageEmbeddingRequest:
     return ImageEmbeddingRequest(
-        model_info=_build_model(model_identifier),
+        model_info=_build_model(model_identifier, model_type="image_embedding"),
         image_bytes=b"image-bytes",
         mime_type="image/png",
         preprocess_version="identity_v1",
+        extra_params=extra_params or {},
+    )
+
+
+def _build_text_request(
+    model_identifier: str,
+    embedding_input: str,
+    extra_params: dict[str, Any] | None = None,
+) -> EmbeddingRequest:
+    return EmbeddingRequest(
+        model_info=_build_model(model_identifier),
+        embedding_input=embedding_input,
         extra_params=extra_params or {},
     )
 
@@ -246,7 +271,11 @@ async def test_ark_plan_v3_url_routes_to_native_protocol_with_dimensions() -> No
     try:
         request = _build_request(
             "doubao-embedding-vision-251215",
-            {"dimensions": 1024, "instructions": "Instruction:Compress the image into one word."},
+            {
+                "dimensions": 1024,
+                "instructions": "Instruction:Compress the image into one word.",
+                TEXT_EMBEDDING_PROTOCOL_EXTRA_PARAM: ARK_MULTIMODAL_TEXT_PROTOCOL,
+            },
         )
         response = await client.get_image_embedding(request)
     finally:
@@ -259,6 +288,7 @@ async def test_ark_plan_v3_url_routes_to_native_protocol_with_dimensions() -> No
     assert captured["body"]["input"][0]["type"] == "image_url"
     assert captured["body"]["input"][0]["image_url"]["url"] == _expected_data_uri()
     assert captured["body"]["encoding_format"] == "float"
+    assert TEXT_EMBEDDING_PROTOCOL_EXTRA_PARAM not in captured["body"]
     assert captured["body"]["dimensions"] == 1024
     assert "instructions" in captured["body"]
 
@@ -354,14 +384,198 @@ async def test_explicit_template_takes_precedence_on_official_url() -> None:
     client.api_provider = _build_provider("https://dashscope.aliyuncs.com/compatible-mode/v1")
     client.client = SimpleNamespace(embeddings=FakeEmbeddings())
     client._omit_sdk_authorization = False
-    request = _build_request("qwen3-vl-embedding", {"image_embedding_input": "{data_uri}"})
+    request = _build_request(
+        "qwen3-vl-embedding",
+        {
+            "image_embedding_input": "{data_uri}",
+            TEXT_EMBEDDING_PROTOCOL_EXTRA_PARAM: ARK_MULTIMODAL_TEXT_PROTOCOL,
+        },
+    )
 
     response = await client.get_image_embedding(request)
 
     assert captured["input"] == _expected_data_uri()
+    assert TEXT_EMBEDDING_PROTOCOL_EXTRA_PARAM not in captured
     assert response.embedding == [0.5]
     # 旧模板路径不产生新指纹，保持既有索引指纹算法不变
     assert response.request_protocol_hash is None
+
+
+@pytest.mark.asyncio
+async def test_ark_text_marker_routes_to_native_multimodal_endpoint() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["auth"] = request.headers.get("Authorization")
+        captured["header"] = request.headers.get("X-Test-Header")
+        captured["body"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={
+                "data": {"embedding": [0.1, 0.2], "object": "embedding"},
+                "usage": {"prompt_tokens": 4, "total_tokens": 4},
+            },
+        )
+
+    provider = _build_provider("https://ark.cn-beijing.volces.com/api/plan/v3")
+    client = _make_openai_client(provider, handler)
+    request = _build_text_request(
+        "doubao-embedding-vision-251215",
+        "memory text",
+        {
+            TEXT_EMBEDDING_PROTOCOL_EXTRA_PARAM: ARK_MULTIMODAL_TEXT_PROTOCOL,
+            "dimensions": 1024,
+            "instructions": "compress",
+            "headers": {"X-Test-Header": "header-value"},
+            "query": {"tag": "text"},
+        },
+    )
+    try:
+        response = await client.get_embedding(request)
+    finally:
+        await client.client.close()
+
+    assert captured["url"] == "https://ark.cn-beijing.volces.com/api/plan/v3/embeddings/multimodal?tag=text"
+    assert captured["auth"] == "Bearer test-key"
+    assert captured["header"] == "header-value"
+    assert captured["body"] == {
+        "model": "doubao-embedding-vision-251215",
+        "input": [{"type": "text", "text": "memory text"}],
+        "encoding_format": "float",
+        "dimensions": 1024,
+        "instructions": "compress",
+    }
+    assert response.embedding == [0.1, 0.2]
+    assert response.usage is not None
+    assert response.usage.total_tokens == 4
+
+
+@pytest.mark.asyncio
+async def test_unmarked_ark_text_embedding_keeps_openai_compatible_route() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["body"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(200, json={"data": [{"embedding": [0.5], "index": 0}], "usage": None})
+
+    provider = _build_provider("https://ark.cn-beijing.volces.com/api/v3")
+    client = _make_openai_client(provider, handler)
+    try:
+        response = await client.get_embedding(_build_text_request("model", "legacy input"))
+    finally:
+        await client.client.close()
+
+    assert captured["url"] == "https://ark.cn-beijing.volces.com/api/v3/embeddings"
+    assert captured["body"] == {
+        "encoding_format": "base64",
+        "input": "legacy input",
+        "model": "model",
+    }
+    assert response.embedding == [0.5]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("base_url", "protocol", "message"),
+    [
+        ("https://example.com/v1", ARK_MULTIMODAL_TEXT_PROTOCOL, "仅适用于"),
+        ("https://ark.cn-beijing.volces.com/api/v3", "unknown", "不支持的文本嵌入协议"),
+    ],
+)
+async def test_ark_text_protocol_rejects_mismatched_provider_or_selector(
+    base_url: str,
+    protocol: str,
+    message: str,
+) -> None:
+    provider = _build_provider(base_url)
+    client = _make_openai_client(provider, lambda _: pytest.fail("request should not be sent"))
+    request = _build_text_request(
+        "model",
+        "text",
+        {TEXT_EMBEDDING_PROTOCOL_EXTRA_PARAM: protocol},
+    )
+    try:
+        with pytest.raises(ValueError, match=message):
+            await client.get_embedding(request)
+    finally:
+        await client.client.close()
+
+
+@pytest.mark.asyncio
+async def test_ark_text_http_error_is_propagated(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"code": "InvalidParameter", "message": "unsupported endpoint"})
+
+    monkeypatch.setattr(openai_client_module, "save_failed_request_snapshot", lambda *args, **kwargs: None)
+    provider = _build_provider("https://ark.cn-beijing.volces.com/api/v3")
+    client = _make_openai_client(provider, handler)
+    request = _build_text_request(
+        "model",
+        "text",
+        {TEXT_EMBEDDING_PROTOCOL_EXTRA_PARAM: ARK_MULTIMODAL_TEXT_PROTOCOL},
+    )
+    try:
+        with pytest.raises(RespNotOkException) as exc_info:
+            await client.get_embedding(request)
+    finally:
+        await client.client.close()
+
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_ark_text_connection_error_is_propagated(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection failed")
+
+    monkeypatch.setattr(openai_client_module, "save_failed_request_snapshot", lambda *args, **kwargs: None)
+    provider = _build_provider("https://ark.cn-beijing.volces.com/api/v3")
+    client = _make_openai_client(provider, handler)
+    request = _build_text_request(
+        "model",
+        "text",
+        {TEXT_EMBEDDING_PROTOCOL_EXTRA_PARAM: ARK_MULTIMODAL_TEXT_PROTOCOL},
+    )
+    try:
+        with pytest.raises(NetworkConnectionError):
+            await client.get_embedding(request)
+    finally:
+        await client.client.close()
+
+
+@pytest.mark.asyncio
+async def test_ark_text_malformed_vector_is_propagated(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": {"embedding": []}})
+
+    monkeypatch.setattr(openai_client_module, "save_failed_request_snapshot", lambda *args, **kwargs: None)
+    provider = _build_provider("https://ark.cn-beijing.volces.com/api/v3")
+    client = _make_openai_client(provider, handler)
+    request = _build_text_request(
+        "model",
+        "text",
+        {TEXT_EMBEDDING_PROTOCOL_EXTRA_PARAM: ARK_MULTIMODAL_TEXT_PROTOCOL},
+    )
+    try:
+        with pytest.raises(RespParseException):
+            await client.get_embedding(request)
+    finally:
+        await client.client.close()
+
+
+def test_native_text_request_rejects_reserved_fields_and_malformed_response() -> None:
+    with pytest.raises(ValueError, match="保留字段"):
+        build_native_text_embedding_request(
+            base_url="https://ark.cn-beijing.volces.com/api/v3",
+            model_identifier="model",
+            embedding_input="text",
+            extra_params={"body": {"input": "override"}},
+        )
+
+    with pytest.raises(ValueError):
+        parse_native_text_embedding_response({"data": {"embedding": []}})
 
 
 @pytest.mark.asyncio
