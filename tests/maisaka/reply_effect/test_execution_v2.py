@@ -425,3 +425,50 @@ async def test_reply_effect_judge_uses_isolated_utils_json_request() -> None:
     assert captured["model_task_name"] == "utils"
     assert captured["include_parent_context"] is False
     assert captured["response_format"].format_type == RespFormatType.JSON_OBJ
+
+
+@pytest.mark.asyncio
+async def test_tracked_records_cleaned_up_after_evaluation() -> None:
+    """评审完成后，_tracked_records 应移除已评审的记录，防止无界累积（#2191）。"""
+    record = build_record()
+    storage = FakeStorage()
+
+    async def runner(_prompt: str) -> str:
+        return build_judge_payload(record)
+
+    tracker = build_tracker(storage=storage, judge_runner=runner)
+    tracker._started = True
+    tracker._pending_records[record.effect_id] = record
+    tracker._tracked_records[record.effect_id] = record
+
+    assert record.effect_id in tracker._tracked_records
+    await tracker.finalize(record.effect_id, "session_followups_limit")
+    await tracker.wait_for_idle()
+
+    # 评审完成后，已持久化的记录应从 _tracked_records 中移除
+    assert record.effect_id not in tracker._tracked_records
+
+
+@pytest.mark.asyncio
+async def test_tracked_records_cleanup_with_multiple_records() -> None:
+    """多条记录并行评审后，_tracked_records 应全部清理（#2191）。"""
+    records = [build_record(f"effect-{index}") for index in range(5)]
+    storage = FakeStorage()
+
+    async def runner(_prompt: str) -> str:
+        return build_judge_payload(records[0])
+
+    tracker = build_tracker(storage=storage, judge_runner=runner)
+    tracker._started = True
+    for record in records:
+        tracker._pending_records[record.effect_id] = record
+        tracker._tracked_records[record.effect_id] = record
+
+    assert len(tracker._tracked_records) == 5
+    for record in records:
+        await tracker.finalize(record.effect_id, "session_followups_limit")
+    await tracker.wait_for_idle()
+
+    # 所有评审完成的记录都应从 _tracked_records 中移除
+    assert len(tracker._tracked_records) == 0
+    assert all(record.status == ReplyEffectStatus.FINALIZED for record in records)

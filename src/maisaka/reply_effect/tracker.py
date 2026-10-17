@@ -406,6 +406,12 @@ class ReplyEffectTracker:
             record.followup_summary = self._build_followup_summary(record)
             self._storage.save_record(record)
 
+        # 评审完成后清理已持久化的记录，防止 _tracked_records 无界累积。
+        # 每条记录带有完整的 context_snapshot（长度受 max_context_size 约束），
+        # 若不在此处清理，实例在数千条消息后该字典会持续占用数百 MB 内存。
+        async with self._state_lock:
+            self._tracked_records.pop(record.effect_id, None)
+
     async def _apply_associations(self, evaluated: Dict[str, list[ReplyAssociation]]) -> None:
         """把一次批量评审的关联边同步到所有仍保留的候选记录。"""
 
