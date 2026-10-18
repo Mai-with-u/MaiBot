@@ -13,9 +13,11 @@ import struct
 from abc import ABC, abstractmethod
 from typing import Awaitable, Callable
 
+from src.config.startup_bindings import get_startup_max_frame_size_mib
+
 # 分帧常量
 FRAME_HEADER_SIZE = 4  # 4 字节长度前缀
-MAX_FRAME_SIZE = 16 * 1024 * 1024  # 16 MB 最大帧大小
+MAX_FRAME_SIZE = get_startup_max_frame_size_mib() * 1024 * 1024  # 默认 16 MiB，可由 plugin_runtime.max_frame_size_mib 配置
 
 
 class ConnectionClosed(Exception):
