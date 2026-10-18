@@ -51,9 +51,6 @@ from src.maisaka.builtin_tool import (
     get_builtin_tool_visibility,
     is_builtin_tool_in_action_stage,
 )
-from .chat_loop_service import ChatResponse
-from .planner_reply_guard import has_unsent_reply_intent
-from .tool_result_condenser import condense_tool_result, should_condense_tool_result
 from src.maisaka.visual.chat_history_refresher import (
     has_pending_image_recognition,
     log_pending_image_recognition_before_text_planner,
@@ -96,6 +93,10 @@ from src.maisaka.monitor.events import (
 from src.maisaka.memory.person_profile import build_person_profile_injection_messages
 from src.maisaka.context.planner_messages import build_planner_user_prefix_from_session_message
 from src.maisaka.visual.mode_utils import resolve_enable_visual_planner
+
+from .chat_loop_service import ChatResponse
+from .planner_reply_guard import has_unsent_reply_intent
+from .tool_result_condenser import condense_tool_result, should_condense_tool_result
 
 if TYPE_CHECKING:
     from .runtime import MaisakaHeartFlowChatting
@@ -1184,8 +1185,9 @@ class MaisakaReasoningEngine:
         message: SessionMessage,
         *,
         source_kind: str = "user",
+        allow_visual: bool = True,
     ) -> Optional[LLMContextMessage]:
-        """根据真实消息构造对应的上下文消息。"""
+        """根据真实消息构造上下文，allow_visual 控制是否加载和发送图片或表情。"""
 
         source_sequence = message.raw_message
         visible_text = self._build_legacy_visible_text(message, source_sequence, source_kind=source_kind)
@@ -1201,9 +1203,14 @@ class MaisakaReasoningEngine:
                 planner_prefix=planner_prefix,
                 visible_text=visible_text,
                 source_kind=source_kind,
+                allow_visual=allow_visual,
             )
 
-        user_sequence = await self._build_message_sequence(message, planner_prefix=planner_prefix)
+        user_sequence = await self._build_message_sequence(
+            message,
+            planner_prefix=planner_prefix,
+            allow_visual=allow_visual,
+        )
         if not user_sequence.components:
             return None
 
@@ -1212,6 +1219,7 @@ class MaisakaReasoningEngine:
             raw_message=user_sequence,
             visible_text=visible_text,
             source_kind=source_kind,
+            allow_visual=allow_visual,
         )
 
     async def _build_message_sequence(
@@ -1219,9 +1227,10 @@ class MaisakaReasoningEngine:
         message: SessionMessage,
         *,
         planner_prefix: str,
+        allow_visual: bool = True,
     ) -> MessageSequence:
         message_sequence = build_prefixed_message_sequence(message.raw_message, planner_prefix)
-        if resolve_enable_visual_planner():
+        if allow_visual and resolve_enable_visual_planner():
             await self._hydrate_visual_components(message_sequence.components)
         return message_sequence
 
@@ -1285,9 +1294,10 @@ class MaisakaReasoningEngine:
     async def _refresh_chat_history_visual_placeholders_once(self, chat_history: List[LLMContextMessage]) -> int:
         return await refresh_chat_history_visual_placeholders(
             chat_history=chat_history,
-            build_history_message=lambda message, source_kind: self._build_history_message(
+            build_history_message=lambda message, source_kind, allow_visual: self._build_history_message(
                 message,
                 source_kind=source_kind,
+                allow_visual=allow_visual,
             ),
             build_visible_text=lambda message, source_kind: self._build_legacy_visible_text(
                 message,
