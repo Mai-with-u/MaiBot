@@ -15,8 +15,12 @@ from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
 
-_QUERY_DATE_RE = re.compile(r"^\d{4}/\d{2}/\d{2}$")
-_QUERY_MINUTE_RE = re.compile(r"^\d{4}/\d{2}/\d{2} \d{2}:\d{2}$")
+_QUERY_DATE_RE = re.compile(r"^\d{4}[/-]\d{2}[/-]\d{2}$")
+_QUERY_MINUTE_RE = re.compile(r"^\d{4}[/-]\d{2}[/-]\d{2} \d{2}:\d{2}$")
+# 修复(2026-10-19)：模型会传带秒的时间（如 2026/10/19 17:25:00），
+# 原先只认到分钟，导致 query_memory 每次都报「时间格式错误」，
+# 模型看到错误就用同样格式重试，陷入死循环永远不调用 reply。
+_QUERY_SECOND_RE = re.compile(r"^\d{4}[/-]\d{2}[/-]\d{2} \d{2}:\d{2}:\d{2}$")
 _NUMERIC_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
 
 _INGEST_FORMATS = [
@@ -40,16 +44,23 @@ def parse_query_datetime_to_timestamp(value: str, is_end: bool = False) -> float
         raise ValueError("时间不能为空")
 
     if _QUERY_DATE_RE.fullmatch(text):
-        dt = datetime.strptime(text, "%Y/%m/%d")
+        dt = datetime.strptime(text.replace("-", "/"), "%Y/%m/%d")
         if is_end:
             dt = dt.replace(hour=23, minute=59, second=0, microsecond=0)
         return dt.timestamp()
 
     if _QUERY_MINUTE_RE.fullmatch(text):
-        dt = datetime.strptime(text, "%Y/%m/%d %H:%M")
+        dt = datetime.strptime(text.replace("-", "/"), "%Y/%m/%d %H:%M")
         return dt.timestamp()
 
-    raise ValueError(f"时间格式错误: {text}。仅支持 YYYY/MM/DD 或 YYYY/MM/DD HH:mm")
+    # 带秒也接受（模型常用这种格式）
+    if _QUERY_SECOND_RE.fullmatch(text):
+        dt = datetime.strptime(text.replace("-", "/"), "%Y/%m/%d %H:%M:%S")
+        return dt.timestamp()
+
+    raise ValueError(
+        f"时间格式错误: {text}。支持 YYYY/MM/DD、YYYY/MM/DD HH:mm、YYYY/MM/DD HH:mm:ss"
+    )
 
 
 def parse_query_time_range(
