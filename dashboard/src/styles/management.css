@@ -341,3 +341,30 @@
     gap: 0.75rem;
   }
 }
+
+/* 插件记录保留全部字段，超出可用宽度时在表格内部滚动。 */
+:root [data-plugin-webui-table='true'] {
+  min-width: 0;
+  max-width: 100%;
+}
+:root [data-plugin-webui-table='true'] > [data-dashboard-table-wrapper='true'] {
+  max-width: 100%;
+  overflow-x: auto;
+}
+:root [data-plugin-webui-table='true'] [data-dashboard-table='true'] {
+  width: max-content;
+  min-width: 100%;
+  table-layout: auto;
+}
+:root [data-plugin-webui-table='true'] [data-dashboard-table-head='true'] {
+  min-width: 9rem;
+  white-space: nowrap;
+}
+:root [data-plugin-webui-table='true'] [data-dashboard-table-cell='true'] {
+  min-width: 9rem;
+  max-width: 22rem;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
