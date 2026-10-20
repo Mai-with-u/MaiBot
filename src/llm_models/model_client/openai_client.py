@@ -1584,6 +1584,12 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                 request.extra_params,
                 reserved_body_keys=CHAT_COMPLETIONS_RESERVED_EXTRA_BODY_KEYS,
             )
+            # 仅在本次请求确实携带工具时才下发 tool_choice。
+            # 模型级 extra_params 会被该模型的所有请求复用，而无工具的场景
+            # （回复器 / 图像理解等）收到孤立的 tool_choice 会让模型输出退化成
+            # 裸的 XML 工具调用片段。这里做一次兜底剥离。
+            if not tools_payload:
+                request_overrides.extra_body.pop("tool_choice", None)
 
             temperature_argument = (
                 omit if "temperature" in request_overrides.extra_body else _coerce_openai_argument(request.temperature)
