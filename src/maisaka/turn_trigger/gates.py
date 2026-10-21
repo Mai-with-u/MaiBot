@@ -24,6 +24,9 @@ TurnGateDecision = Literal["trigger", "wait", "delay"]
 RECENT_PRESENCE_WINDOW_SECONDS = 300.0
 """统计近期消息量与麦麦发言占比的时间窗口。"""
 
+PRIVATE_IDLE_COMPENSATION_INTERVAL_CAP_SECONDS = 30.0
+"""私聊空窗折算的间隔上限，避免稀疏历史让当前消息长时间挂起。"""
+
 
 @dataclass(frozen=True)
 class TurnGateResult:
@@ -234,16 +237,25 @@ class FrequencyThresholdTurnGate:
         if average_message_interval is None or average_message_interval <= 0:
             return False, None, "平均消息间隔不可用，无法进行空窗补偿"
 
+        compensation_interval = average_message_interval
+        if not runtime.chat_stream.is_group_session:
+            # 私聊的低频率仍能合并连续消息，但不应按稀疏历史等待数十分钟。
+            compensation_interval = min(
+                average_message_interval,
+                PRIVATE_IDLE_COMPENSATION_INTERVAL_CAP_SECONDS,
+            )
+
         last_external_received_at = runtime._last_external_message_received_at or runtime._last_message_received_at
         idle_seconds = max(0.0, time.time() - last_external_received_at)
         # 即便空窗无限长，也不能让纯沉默跨过阈值。
         idle_equivalent_count = min(
-            idle_seconds / average_message_interval,
+            idle_seconds / compensation_interval,
             float(max(0, trigger_threshold - 1)),
         )
         equivalent_message_count = pending_count + idle_equivalent_count
         detail = (
             f"平均间隔={average_message_interval:.2f}s "
+            f"补偿间隔={compensation_interval:.2f}s "
             f"空窗={idle_seconds:.2f}s "
             f"空窗折算={idle_equivalent_count:.2f} "
             f"等效消息数={equivalent_message_count:.2f}/{trigger_threshold}"
@@ -251,5 +263,5 @@ class FrequencyThresholdTurnGate:
         if equivalent_message_count >= trigger_threshold:
             return True, None, detail
 
-        delay_seconds = max(0.0, (trigger_threshold - pending_count) * average_message_interval - idle_seconds)
+        delay_seconds = max(0.0, (trigger_threshold - pending_count) * compensation_interval - idle_seconds)
         return False, delay_seconds, f"{detail} 延迟={delay_seconds:.2f}s"
