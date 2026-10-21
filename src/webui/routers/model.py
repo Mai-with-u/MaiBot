@@ -739,7 +739,7 @@ async def get_provider_models(
         raise HTTPException(status_code=404, detail=f"未找到提供商: {provider_name}")
 
     base_url = provider_config.get("base_url")
-    api_key = provider_config.get("api_key")
+    api_key = provider_config.get("api_key") or ""
     client_type = provider_config.get("client_type", "openai")
 
     if not base_url:

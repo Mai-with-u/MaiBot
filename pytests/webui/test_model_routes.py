@@ -578,3 +578,66 @@ async def test_get_provider_models_still_requires_api_key_for_other_auth_types(
         )
 
     assert exc_info.value.status_code == 400
+
+
+
+@pytest.mark.asyncio
+async def test_get_provider_models_none_auth_with_api_key_field_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """auth_type=none 且配置完全省略 api_key 字段时，应归一为空字符串后再传给抓取函数。"""
+    model_routes = load_model_routes(monkeypatch)
+    provider_config = {
+        "name": "ollama",
+        "base_url": "http://localhost:11434/v1",
+        "client_type": "openai",
+        "auth_type": "none",
+    }
+    assert "api_key" not in provider_config
+    monkeypatch.setattr(model_routes, "_get_provider_config", lambda name: provider_config)
+    captured: dict[str, Any] = {}
+
+    async def fake_fetch(**kwargs: Any):
+        captured.update(kwargs)
+        return [{"id": "llama3.1", "name": "llama3.1"}]
+
+    monkeypatch.setattr(model_routes, "_fetch_models_from_provider", fake_fetch)
+
+    result = await model_routes.get_provider_models(
+        provider_name="ollama", parser="openai", endpoint="/models"
+    )
+
+    assert result["success"] is True
+    assert result["count"] == 1
+    assert captured["auth_type"] == "none"
+    assert isinstance(captured["api_key"], str)
+    assert captured["api_key"] == ""
+
+
+@pytest.mark.asyncio
+async def test_get_provider_models_omitted_api_key_field_still_400_for_default_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """缺省鉴权（bearer）且配置完全省略 api_key 字段时仍应返回 400，且不得发出请求。"""
+    from fastapi import HTTPException
+
+    model_routes = load_model_routes(monkeypatch)
+    provider_config = {
+        "name": "some-provider",
+        "base_url": "https://example.com/v1",
+        "client_type": "openai",
+    }
+    assert "api_key" not in provider_config
+    monkeypatch.setattr(model_routes, "_get_provider_config", lambda name: provider_config)
+
+    async def fake_fetch(**kwargs: Any):
+        raise AssertionError("缺少 api_key 时不应构造模型列表请求")
+
+    monkeypatch.setattr(model_routes, "_fetch_models_from_provider", fake_fetch)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await model_routes.get_provider_models(
+            provider_name="some-provider", parser="openai", endpoint="/models"
+        )
+
+    assert exc_info.value.status_code == 400
