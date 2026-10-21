@@ -1590,7 +1590,7 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
             preserve_reasoning = (
                 model_info.model_identifier == "MiniMax-M3.1-Flash"
                 and urlparse(self.api_provider.base_url).hostname
-                in {"api.minimax.cn", "api.minimax.io", "api.minimax.chat"}
+                in {"api.minimax.cn", "api.minimax.io", "api.minimax.chat", "api.minimaxi.com"}
             )
             messages_payload: List[ChatCompletionMessageParam] = _convert_messages(
                 request_messages, preserve_reasoning=preserve_reasoning

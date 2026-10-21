@@ -177,7 +177,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     id: 'minimax',
     name: 'MiniMax',
     base_url: 'https://api.minimax.cn/v1',
-    baseUrlPattern: /^https:\/\/api\.minimax\.(?:cn|io|chat)\/v1$/,
+    baseUrlPattern: /^https:\/\/api\.(?:minimax\.(?:cn|io|chat)|minimaxi\.com)\/v1$/,
     client_type: 'openai',
     display_name: 'MiniMax (海螺 AI)',
     modelFetcher: { endpoint: '/models', parser: 'openai' },
