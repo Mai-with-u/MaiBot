@@ -276,6 +276,14 @@ def _resolve_segment_reply_context(
     if index == 0:
         return effective_set_quote, target_message
     if quote_previous and previous_sent_message is not None:
+        # 修复(2026-09-18)：不要引用自己刚发的表情包/图片。
+        # 原来只要 quote_previous 为真就引用「上一条已发送的消息」，
+        # 而那条消息是机器人自己发的 —— 若上一段恰好是表情包，就会出现
+        # "回复时引用自己表情包"的观感。文字消息之间的纠正引用保持原样。
+        if bool(getattr(previous_sent_message, "is_emoji", False)) or bool(
+            getattr(previous_sent_message, "is_picture", False)
+        ):
+            return False, target_message
         return True, previous_sent_message
     return False, target_message
 
@@ -395,17 +403,66 @@ async def handle_tool(
         reply_tool_args.pop("expression_intent", None)
 
     if not target_message_id:
-        return tool_ctx.build_failure_result(
-            invocation.tool_name,
-            "reply 工具需要提供有效的 `msg_id` 参数。",
-        )
+        # 修复(2026-09-15)：模型偶尔会漏传 msg_id（实测群聊里连续 8 次空参调用
+        # {'msg_id': 缺失}，导致 reply 全部失败、机器人在群里完全不回复）。
+        # 这里加兜底：回溯最近一条「在历史里能找到原始消息」的非自身消息作为目标，
+        # 而不是直接判失败。正常情况下模型会传 msg_id，此分支不会被触发。
+        try:
+            for _h in reversed(list(getattr(tool_ctx.runtime, "_chat_history", []) or [])):
+                _mid = str(getattr(_h, "message_id", "") or "").strip()
+                if not _mid:
+                    continue
+                if getattr(_h, "original_message", None) is None:
+                    continue
+                if bool(getattr(_h, "is_self_message", False)):
+                    continue
+                target_message_id = _mid
+                break
+        except Exception:
+            target_message_id = ""
+        if target_message_id:
+            logger.warning(
+                f"{getattr(tool_ctx.runtime, 'log_prefix', '')} "
+                f"reply 未收到 msg_id，已回退使用最近消息 {target_message_id}"
+            )
+        else:
+            return tool_ctx.build_failure_result(
+                invocation.tool_name,
+                "reply 工具需要提供有效的 `msg_id` 参数。",
+            )
 
     target_message = tool_ctx.runtime.find_source_message_by_id(target_message_id)
     if target_message is None:
-        return tool_ctx.build_failure_result(
-            invocation.tool_name,
-            f"未找到要回复的目标消息，msg_id={to_display_message_id(target_message_id)}",
-        )
+        # 2026-10-20：模型有时会传一个历史里并不存在的 msg_id（实测 24h 12/107 次），
+        # 原逻辑直接失败、整轮不回复。这里回退到最近一条能解析的他人消息。
+        _fallback_id = ""
+        try:
+            for _h in reversed(list(getattr(tool_ctx.runtime, "_chat_history", []) or [])):
+                _mid = str(getattr(_h, "message_id", "") or "").strip()
+                if not _mid or _mid == target_message_id:
+                    continue
+                if getattr(_h, "original_message", None) is None:
+                    continue
+                if bool(getattr(_h, "is_self_message", False)):
+                    continue
+                if tool_ctx.runtime.find_source_message_by_id(_mid) is None:
+                    continue
+                _fallback_id = _mid
+                break
+        except Exception:
+            _fallback_id = ""
+        if _fallback_id:
+            logger.warning(
+                f"{getattr(tool_ctx.runtime, 'log_prefix', '')} "
+                f"reply 的 msg_id={target_message_id} 解析不到，已回退到最近消息 {_fallback_id}"
+            )
+            target_message_id = _fallback_id
+            target_message = tool_ctx.runtime.find_source_message_by_id(_fallback_id)
+        if target_message is None:
+            return tool_ctx.build_failure_result(
+                invocation.tool_name,
+                f"未找到要回复的目标消息，msg_id={to_display_message_id(target_message_id)}",
+            )
 
     extension_execution = ReplyExtensionExecution(
         context=ToolAvailabilityContext(
@@ -712,4 +769,5 @@ async def handle_tool(
             "target_user_name": target_user_name,
         },
         metadata=reply_metadata,
+        stop_after_execution=True,
     )
