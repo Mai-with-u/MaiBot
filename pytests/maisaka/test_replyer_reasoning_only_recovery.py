@@ -4,7 +4,7 @@ openai_responses 通过 ReasoningItem 回放续写一次；chat_completions 等
 非 Responses 协议无法回放 ReasoningItem，改为带约束重生成一次。
 """
 from types import SimpleNamespace
-from typing import List
+from typing import List, Optional
 
 import pytest
 
@@ -61,13 +61,18 @@ class _FakeRuntime:
 class _FakeLLMClient:
     script: List[LLMResponseResult] = []
     captured: List[str] = []
-    client_type: str = "openai"
+    client_type: Optional[str] = "openai"
 
     def __init__(self, task_name: str = "replyer", request_type: str = "maisaka.replyer", session_id: str = "") -> None:
         self.task_name = task_name
         self.request_type = request_type
         self.session_id = session_id
-        self.api_provider = SimpleNamespace(client_type=_FakeLLMClient.client_type)
+        # client_type=None 表示 provider 根本没有 client_type 属性（不是空字符串）。
+        self.api_provider = (
+            SimpleNamespace()
+            if _FakeLLMClient.client_type is None
+            else SimpleNamespace(client_type=_FakeLLMClient.client_type)
+        )
 
     async def generate_response_with_context(self, context_factory=None, options=None) -> LLMResponseResult:
         items = await context_factory(self) if context_factory is not None else []
@@ -87,7 +92,7 @@ def _build_generator() -> BaseMaisakaReplyGenerator:
     return generator
 
 
-async def _run(client_type: str, script: List[LLMResponseResult], after_response_queue: List[dict] = ()):
+async def _run(client_type: Optional[str], script: List[LLMResponseResult], after_response_queue: List[dict] = ()):
     _FakeLLMClient.client_type = client_type
     _FakeLLMClient.script = list(script)
     _FakeLLMClient.captured = []
@@ -230,3 +235,21 @@ async def test_recovery_warning_log_excludes_reasoning_content(monkeypatch) -> N
     assert recovery_warnings, "恢复 warning 未触发，测试前置失效"
     assert all(REASONING_TEXT not in w for w in recovery_warnings)
     assert all("reasoning=" not in w for w in recovery_warnings)
+
+
+@pytest.mark.asyncio
+async def test_missing_client_type_reasoning_only_recovers_via_regeneration() -> None:
+    # provider 缺少 client_type 属性时，生产代码经 getattr 归一化为空字符串，
+    # 按非 Responses 处理：带约束重生成一次，而不是走 Responses 回放续写。
+    success, result, captured = await _run(
+        None,
+        [_make_result(reasoning=REASONING_TEXT), _make_result(content=VISIBLE_TEXT)],
+    )
+
+    assert success is True
+    assert result.completion.response_text.strip() == VISIBLE_TEXT
+    assert len(captured) == 2
+    assert "只输出了思考内容" in captured[1]
+    # 第二次请求不含原推理文本，证明走的是重生成而非 ReasoningItem 回放续写。
+    assert REASONING_TEXT not in captured[1]
+    assert result.metrics.extra["replyer_reasoning_continuation_count"] == 1
