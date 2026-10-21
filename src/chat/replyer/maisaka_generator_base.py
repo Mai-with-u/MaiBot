@@ -1360,10 +1360,12 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                     "你上一次只输出了思考内容，正文为空。请直接输出要发送的回复正文，"
                     "不要只输出思考过程，也不要输出思考的复述。"
                 )
+                # 安全说明（隐私）：推理原文可能含用户私密信息，常规日志只记恢复事件与
+                # 非内容类诊断信息（session/client_type），无论 save_maisaka_reasoning
+                # 开关如何，一律不记录推理内容。
                 logger.warning(
                     "Maisaka 回复器仅收到推理内容且当前协议不支持续写，将重生成一次: "
-                    f"session={preview_chat_id} client_type={active_client_type or 'unknown'} "
-                    f"reasoning={self._normalize_content(generation_result.reasoning, limit=200)!r}"
+                    f"session={preview_chat_id} client_type={active_client_type or 'unknown'}"
                 )
             if retry_requested and retry_count < REPLYER_MAX_HOOK_RETRIES:
                 reason_parts = []

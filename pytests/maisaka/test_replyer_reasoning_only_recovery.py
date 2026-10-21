@@ -203,3 +203,30 @@ async def test_empty_response_without_reasoning_does_not_trigger_recovery() -> N
     assert result.error_message == "回复器返回了空内容"
     assert len(captured) == 1
     assert result.metrics.extra["replyer_reasoning_continuation_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_recovery_warning_log_excludes_reasoning_content(monkeypatch) -> None:
+    # 隐私回归（CodeRabbit Major）：恢复 warning 不得记录推理原文——
+    # 推理文本可能含用户私密信息，且 save_maisaka_reasoning=False 也关不掉这条日志。
+    import src.chat.replyer.maisaka_generator_base as base_mod
+
+    captured_warnings = []
+    real_warning = base_mod.logger.warning
+
+    def _capture(msg, *args, **kwargs):
+        text = msg % args if args else msg
+        captured_warnings.append(text)
+        return real_warning(msg, *args, **kwargs)
+
+    monkeypatch.setattr(base_mod.logger, "warning", _capture)
+    success, result, _ = await _run(
+        "openai",
+        [_make_result(reasoning=REASONING_TEXT), _make_result(content=VISIBLE_TEXT)],
+    )
+
+    assert success is True
+    recovery_warnings = [w for w in captured_warnings if "将重生成一次" in w]
+    assert recovery_warnings, "恢复 warning 未触发，测试前置失效"
+    assert all(REASONING_TEXT not in w for w in recovery_warnings)
+    assert all("reasoning=" not in w for w in recovery_warnings)
