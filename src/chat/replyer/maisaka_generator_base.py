@@ -1342,6 +1342,29 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             matched_regex_pattern = str(after_response_kwargs.get("matched_regex_pattern") or "").strip()
             matched_regex_description = str(after_response_kwargs.get("matched_regex_description") or "").strip()
             retry_reason = str(after_response_kwargs.get("retry_reason") or "").strip()
+            # chat_completions（client_type="openai"）等非 Responses 协议下 ReasoningItem 无法回放进请求：
+            # openai_client._convert_assistant_item_group 只收集 AssistantMessageItem
+            # 与 FunctionCallItem，纯推理分组会返回 None 而被丢弃。因此上面的
+            # Responses 式续写对这类 provider 不可用，模型若只输出思考就会得到空正文、
+            # 整条消息静默不回复。这里退化为一次普通重生成，并附加明确约束。
+            if (
+                not retry_requested
+                and reasoning_continuation_count == 0
+                and retry_count < REPLYER_MAX_HOOK_RETRIES
+                and active_client_type != "openai_responses"
+                and self._is_reasoning_only_response(generation_result)
+            ):
+                reasoning_continuation_count = 1
+                retry_requested = True
+                retry_reason = (
+                    "你上一次只输出了思考内容，正文为空。请直接输出要发送的回复正文，"
+                    "不要只输出思考过程，也不要输出思考的复述。"
+                )
+                logger.warning(
+                    "Maisaka 回复器仅收到推理内容且当前协议不支持续写，将重生成一次: "
+                    f"session={preview_chat_id} client_type={active_client_type or 'unknown'} "
+                    f"reasoning={self._normalize_content(generation_result.reasoning, limit=200)!r}"
+                )
             if retry_requested and retry_count < REPLYER_MAX_HOOK_RETRIES:
                 reason_parts = []
                 if matched_regex:
