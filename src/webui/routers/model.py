@@ -744,7 +744,7 @@ async def get_provider_models(
 
     if not base_url:
         raise HTTPException(status_code=400, detail="提供商配置缺少 base_url")
-    if not api_key:
+    if not api_key and provider_config.get("auth_type", "bearer") != "none":
         raise HTTPException(status_code=400, detail="提供商配置缺少 api_key")
 
     resolved_endpoint = provider_config.get("model_list_endpoint", endpoint) if endpoint == "/models" else endpoint

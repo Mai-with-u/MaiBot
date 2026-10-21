@@ -19,7 +19,7 @@ import { AnimationContext } from '@/lib/animation-context'
 import { fetchModelClientTypes, type ModelClientType } from '@/lib/config-api'
 
 import { PROVIDER_TEMPLATES } from '../providerTemplates'
-import type { APIProvider, FormErrors } from './types'
+import { DEFAULT_AUTH_TYPE, type APIProvider, type FormErrors } from './types'
 import { AUTH_TYPE_OPTIONS, isNoAuthProvider, resolveAuthType, validateProvider } from './utils'
 
 const PROVIDER_TEMPLATE_OPTIONS = PROVIDER_TEMPLATES.filter((template) => template.id !== 'custom')
@@ -188,6 +188,7 @@ export function ProviderForm({
       base_url: template.base_url,
       client_type: template.client_type,
       ...template.providerDefaults,
+      auth_type: template.auth_type ?? DEFAULT_AUTH_TYPE,
       api_key: template.defaultApiKey ?? (
         PROVIDER_TEMPLATES.some((item) => item.defaultApiKey === prev?.api_key)
           ? ''

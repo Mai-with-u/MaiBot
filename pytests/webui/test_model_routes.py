@@ -514,3 +514,67 @@ def test_model_test_image_base64_is_valid_png(monkeypatch: pytest.MonkeyPatch) -
     assert chunk_types[0] == b"IHDR"
     assert b"IDAT" in chunk_types
     assert chunk_types[-1] == b"IEND"
+
+
+@pytest.mark.asyncio
+async def test_get_provider_models_allows_none_auth_without_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """auth_type=none 的提供商未填 api_key 时，模型列表接口应继续构造并发送请求，不得返回 400。"""
+    model_routes = load_model_routes(monkeypatch)
+    provider_config = {
+        "name": "ollama",
+        "base_url": "http://localhost:11434/v1",
+        "api_key": "",
+        "client_type": "openai",
+        "auth_type": "none",
+    }
+    monkeypatch.setattr(model_routes, "_get_provider_config", lambda name: provider_config)
+    captured: dict[str, Any] = {}
+
+    async def fake_fetch(**kwargs: Any):
+        captured.update(kwargs)
+        return [{"id": "llama3.1", "name": "llama3.1"}]
+
+    monkeypatch.setattr(model_routes, "_fetch_models_from_provider", fake_fetch)
+
+    result = await model_routes.get_provider_models(
+        provider_name="ollama", parser="openai", endpoint="/models"
+    )
+
+    assert result["success"] is True
+    assert result["count"] == 1
+    assert captured["auth_type"] == "none"
+    assert captured["api_key"] == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("auth_type", ["bearer", "header", "query", None])
+async def test_get_provider_models_still_requires_api_key_for_other_auth_types(
+    monkeypatch: pytest.MonkeyPatch, auth_type: Any
+) -> None:
+    """非 none 鉴权（缺省按 bearer）未填 api_key 时仍应返回 400，且不得发出请求。"""
+    from fastapi import HTTPException
+
+    model_routes = load_model_routes(monkeypatch)
+    provider_config = {
+        "name": "some-provider",
+        "base_url": "https://example.com/v1",
+        "api_key": "",
+        "client_type": "openai",
+    }
+    if auth_type is not None:
+        provider_config["auth_type"] = auth_type
+    monkeypatch.setattr(model_routes, "_get_provider_config", lambda name: provider_config)
+
+    async def fake_fetch(**kwargs: Any):
+        raise AssertionError("缺少 api_key 时不应构造模型列表请求")
+
+    monkeypatch.setattr(model_routes, "_fetch_models_from_provider", fake_fetch)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await model_routes.get_provider_models(
+            provider_name="some-provider", parser="openai", endpoint="/models"
+        )
+
+    assert exc_info.value.status_code == 400

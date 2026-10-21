@@ -643,3 +643,30 @@ describe('ProviderForm 鉴权方式', () => {
     expect(screen.getByRole('option', { name: '无鉴权' })).toBeInTheDocument()
   })
 })
+
+
+describe('ProviderForm 模板切换时的鉴权方式', () => {
+  it('先选「无鉴权」再切回供应商模板时，auth_type 回退为模板默认值（bearer），API Key 恢复必填', async () => {
+    const user = userEvent.setup()
+    const { onSave } = renderForm()
+
+    // 进入自定义模式，把鉴权方式改成「无鉴权」
+    await user.click(screen.getByRole('button', { name: '使用自定义提供商' }))
+    const authSelect = screen.getByRole('combobox', { name: '鉴权方式' })
+    await user.click(authSelect)
+    await user.click(await screen.findByRole('option', { name: '无鉴权' }))
+    expect(authSelect).toHaveTextContent('无鉴权')
+    expect(screen.queryByLabelText('API Key *')).not.toBeInTheDocument()
+
+    // 切回供应商模板（DeepSeek，未声明 auth_type）：不应保留之前的「无鉴权」
+    await user.click(screen.getByRole('button', { name: '使用供应商模板' }))
+    await waitFor(() => expect(getTemplateTrigger()).toHaveTextContent('DeepSeek'))
+    expect(authSelect).toHaveTextContent('Bearer Token')
+    expect(screen.getByLabelText('API Key *')).toBeInTheDocument()
+
+    // 模板未提供默认 Key 且未填写时，保存应被必填校验拦截
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    expect(await screen.findByText('请输入 API Key')).toBeInTheDocument()
+    expect(onSave).not.toHaveBeenCalled()
+  })
+})
