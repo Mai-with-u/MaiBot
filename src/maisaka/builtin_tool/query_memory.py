@@ -43,7 +43,8 @@ def get_tool_spec(*, enabled: bool = True) -> ToolSpec:
                     "description": (
                         "检索路由：search按语义检索事实、偏好等记忆；time按时间范围检索；"
                         "episode检索经历；aggregate综合检索；hybrid同时使用语义与时间范围。"
-                        "time和hybrid至少提供time_start或time_end；没有时间条件时使用search。"
+                        "time至少提供time_start或time_end；hybrid可不提供时间（此时按开放时间窗口做语义检索）；"
+                        "没有时间条件时也可使用search。"
                     ),
                     "enum": sorted(_ALLOWED_QUERY_MODES),
                     "default": "search",
