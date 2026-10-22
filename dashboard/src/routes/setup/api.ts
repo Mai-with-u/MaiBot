@@ -1,7 +1,16 @@
 // 设置向导API调用函数
 
 import { authApi, backendApi } from '@/lib/http'
-import { PROVIDER_TEMPLATES } from '@/routes/config/providerTemplates'
+import {
+  findTemplateByBaseUrl,
+  PROVIDER_TEMPLATES,
+  resolveModelFetcherTemplate,
+  resolveThinkingFormatForModel,
+} from '@/routes/config/providerTemplates'
+import type { ProviderTemplate } from '@/routes/config/providerTemplates'
+import { setThinkingEnabled } from '@/routes/config/model/thinkingFormats'
+import { getDeepSeekReasoningEffort, setDeepSeekReasoningEffort, setDeepSeekThinkingEnabled } from '@/routes/config/model/deepSeekExtraParams'
+import type { ModelListItem } from '@/lib/config-api'
 import type { ModelPricePeriod } from '@/routes/config/model/types'
 
 import type {
@@ -83,19 +92,26 @@ function readThinkingEnabled(model?: ModelInfo, fallbackIdentifier = ''): boolea
 
 function buildThinkingExtraParams(
   existingParams: Record<string, unknown> | undefined,
-  thinkingEnabled: boolean
+  thinkingEnabled: boolean,
+  modelIdentifier: string,
+  template: ProviderTemplate | null,
+  clientType: string,
+  effort: 'low' | 'high' | 'max' = 'high'
 ): Record<string, unknown> {
   const extraParams = { ...(existingParams || {}) }
+  delete extraParams.thinking
   delete extraParams.enable_thinking
-  extraParams.thinking = { type: thinkingEnabled ? 'enabled' : 'disabled' }
-
-  if (thinkingEnabled) {
-    extraParams.reasoning_effort = 'high'
-  } else {
-    delete extraParams.reasoning_effort
+  delete extraParams.reasoning_effort
+  if (template?.id === 'deepseek' && (clientType === 'openai' || clientType === 'openai_responses')) {
+    const params = setDeepSeekThinkingEnabled(extraParams, clientType, thinkingEnabled)
+    return thinkingEnabled ? setDeepSeekReasoningEffort(params, clientType, effort) : params
   }
-
-  return extraParams
+  const format = resolveThinkingFormatForModel(template, modelIdentifier)
+  if (!format) return extraParams
+  // 不可关闭思考的模型遵循模板的启用值，不使用向导中隐藏的开关状态。
+  const canDisable = format.kind === 'enable_thinking' ||
+    (format.kind === 'thinking_type' && format.canDisable === true)
+  return setThinkingEnabled(extraParams, format, canDisable ? thinkingEnabled : true)
 }
 
 // ===== 读取配置 =====
@@ -133,6 +149,7 @@ export async function loadPersonalityConfig(): Promise<PersonalityConfig> {
 
   return {
     personality: personalityConfig.personality || '',
+    behavior_style: personalityConfig.behavior_style ?? '',
     reply_style: personalityConfig.reply_style || '',
     multiple_reply_style: personalityConfig.multiple_reply_style || [],
     multiple_probability: personalityConfig.multiple_probability ?? 0.2,
@@ -155,6 +172,23 @@ export async function loadApiProviderSetupConfig(): Promise<ApiProviderSetupConf
   }
 }
 
+// 使用尚未保存的提供商配置获取模型，避免输入 Key 时写入配置文件。
+export async function fetchSetupModels(config: ApiProviderSetupConfig): Promise<ModelListItem[]> {
+  const template = resolveModelFetcherTemplate(config.base_url)
+  const response = await backendApi.get<{ models: ModelListItem[] }>('/api/webui/models/list-by-url', {
+    query: {
+      base_url: config.base_url.trim(),
+      api_key: config.api_key.trim(),
+      client_type: template?.client_type ?? 'openai',
+      parser: template?.modelFetcher?.parser ?? 'openai',
+      endpoint: template?.modelFetcher?.endpoint ?? '/models',
+    },
+    errorMessage: '获取模型列表失败',
+  })
+  if (response.models.length === 0) throw new Error('提供商返回的模型列表为空')
+  return response.models
+}
+
 // 读取基础模型配置
 export async function loadModelSetupConfig(): Promise<ModelSetupConfig> {
   const modelConfig = await loadModelConfig()
@@ -169,10 +203,12 @@ export async function loadModelSetupConfig(): Promise<ModelSetupConfig> {
     planner_model_name: plannerName,
     planner_model_identifier: plannerModel?.model_identifier || plannerName,
     planner_visual: Boolean(plannerModel?.visual),
+    planner_reasoning_effort: getDeepSeekReasoningEffort(plannerModel?.extra_params ?? {}, 'openai'),
     planner_thinking: readThinkingEnabled(plannerModel, plannerName),
     replyer_model_name: replyerName,
     replyer_model_identifier: replyerModel?.model_identifier || replyerName,
     replyer_visual: Boolean(replyerModel?.visual),
+    replyer_reasoning_effort: getDeepSeekReasoningEffort(replyerModel?.extra_params ?? {}, 'openai'),
     replyer_thinking: readThinkingEnabled(replyerModel, replyerName),
   }
 }
@@ -201,7 +237,10 @@ function createBasicModel(
   providerName: string,
   visual: boolean,
   thinking: boolean,
-  existing?: ModelInfo
+  template: ProviderTemplate | null,
+  clientType: string,
+  existing?: ModelInfo,
+  effort: 'low' | 'high' | 'max' = 'high'
 ): ModelInfo {
   return {
     price_in: 0,
@@ -209,7 +248,7 @@ function createBasicModel(
     price_out: 0,
     force_stream_mode: false,
     ...existing,
-    extra_params: buildThinkingExtraParams(existing?.extra_params, thinking),
+    extra_params: buildThinkingExtraParams(existing?.extra_params, thinking, modelIdentifier, template, clientType, effort),
     visual,
     model_identifier: modelIdentifier,
     model_type: 'llm',
@@ -237,7 +276,7 @@ export async function saveApiProviderSetupConfig(config: ApiProviderSetupConfig)
     name: providerName,
     base_url: config.base_url.trim(),
     api_key: config.api_key.trim(),
-    client_type: 'openai',
+    client_type: findTemplateByBaseUrl(config.base_url)?.client_type ?? 'openai',
     max_retry: 3,
     timeout: 120,
     retry_interval: 5,
@@ -267,8 +306,13 @@ export async function saveApiProviderSetupConfig(config: ApiProviderSetupConfig)
 export async function saveModelSetupConfig(config: ModelSetupConfig, providerName: string) {
   const modelConfig = await loadModelConfig()
   const trimmedProviderName = providerName.trim()
+  const provider = modelConfig.api_providers?.find((item) => item.name === trimmedProviderName)
+  const template = findTemplateByBaseUrl(provider?.base_url ?? '')
+  const clientType = provider?.client_type ?? 'openai'
   const plannerModelIdentifier = config.planner_model_identifier.trim()
-  const plannerModelName = plannerModelIdentifier
+  // 同一模型用于两个角色时分别保存，避免思考开关和强度互相覆盖。
+  const plannerModelName = plannerModelIdentifier === config.replyer_model_identifier.trim()
+    ? `${plannerModelIdentifier}-planner` : plannerModelIdentifier
   const replyerModelIdentifier = config.replyer_model_identifier.trim()
   const replyerModelName = replyerModelIdentifier
 
@@ -284,7 +328,10 @@ export async function saveModelSetupConfig(config: ModelSetupConfig, providerNam
       trimmedProviderName,
       config.planner_visual,
       config.planner_thinking,
-      existingPlannerModel
+      template,
+      clientType,
+      existingPlannerModel,
+      config.planner_reasoning_effort
     )
   )
   models = upsertModel(
@@ -295,7 +342,10 @@ export async function saveModelSetupConfig(config: ModelSetupConfig, providerNam
       trimmedProviderName,
       config.replyer_visual,
       config.replyer_thinking,
-      existingReplyerModel
+      template,
+      clientType,
+      existingReplyerModel,
+      config.replyer_reasoning_effort
     )
   )
 

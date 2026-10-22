@@ -1,3 +1,5 @@
+import { DataPanel, PageFrame } from '@/components/ui/surface'
+import { SegmentedMeter } from '@/components/ui/segmented-meter'
 import { type CSSProperties, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
@@ -69,7 +71,7 @@ import { cn } from '@/lib/utils'
 import { RestartOverlay } from '@/components/restart-overlay'
 import { MOBILE_GLASS_CLASS } from '@/components/layout/mobile-glass'
 import { MobileHeaderActions } from '@/components/layout/MobileHeaderActions'
-import { getLocalPluginChangelog, getLocalPluginReadme, getPluginRuntimeComponents } from '@/lib/plugin-api'
+import { fetchPluginList, fetchPluginDocument, getPluginRuntimeComponents } from '@/lib/plugin-api'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { PluginStats } from '@/components/plugin-stats'
 import { PluginWebUIManagerPanel } from '@/components/plugin-webui-manager'
@@ -85,7 +87,9 @@ import { PluginIcon } from './plugins/PluginIcon'
 import { ZipInstallDialog } from './plugins/ZipInstallDialog'
 import { getPluginType, getPluginTypeLabel } from './plugins/types'
 import { AdapterHostPolicyPanel } from './plugin-config/AdapterHostPolicyPanel'
+import { AdapterManagementView } from './plugin-config/AdapterManagementView'
 import { AdapterPolicyDefaultsCard } from './plugin-config/AdapterPolicyDefaultsCard'
+import { getPluginLoadFailureInfo } from './plugin-config/load-failure'
 import { getNestedRecord, getPluginMarketplaceRoutePath, isAdapterManagementPath } from './plugin-config/utils'
 import { usePluginList } from './plugin-config/hooks/usePluginList'
 import { usePluginLifecycle } from './plugin-config/hooks/usePluginLifecycle'
@@ -672,7 +676,7 @@ function PluginDetailsPanel({
   useEffect(() => {
     let cancelled = false
 
-    getLocalPluginReadme(plugin.id)
+    fetchPluginDocument(plugin.id, 'readme', { preferLocal: true })
       .then((content) => {
         if (!cancelled) {
           setReadme(content)
@@ -695,6 +699,30 @@ function PluginDetailsPanel({
   }, [plugin.id])
 
   const statsPluginId = plugin.manifest.id || plugin.id
+  const [marketMatch, setMarketMatch] = useState<{ pluginId: string; exists: boolean } | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    // 使用完整市场列表，避免将暂不兼容的已上架插件误判成本地插件。
+    fetchPluginList()
+      .then((plugins) => {
+        if (!cancelled) {
+          setMarketMatch({
+            pluginId: statsPluginId,
+            exists: plugins.some((item) => item.id === statsPluginId || item.manifest.id === statsPluginId),
+          })
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setMarketMatch(null)
+          console.warn('检查插件市场收录状态失败:', error)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [statsPluginId])
 
   return (
     <div className="space-y-4">
@@ -777,15 +805,17 @@ function PluginDetailsPanel({
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="p-3 sm:p-3">
-              <CardTitle>市场反馈</CardTitle>
-              <CardDescription>点赞、评分和评论会提交到插件市场统计服务。</CardDescription>
-            </CardHeader>
-            <CardContent className="p-3 pt-0 sm:p-3 sm:pt-0">
-              <PluginStats pluginId={statsPluginId} />
-            </CardContent>
-          </Card>
+          {marketMatch?.pluginId === statsPluginId && marketMatch.exists && (
+            <Card>
+              <CardHeader className="p-3 sm:p-3">
+                <CardTitle>市场反馈</CardTitle>
+                <CardDescription>点赞、评分和评论会提交到插件市场统计服务。</CardDescription>
+              </CardHeader>
+              <CardContent className="p-3 pt-0 sm:p-3 sm:pt-0">
+                <PluginStats pluginId={statsPluginId} />
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader className="p-3 sm:p-3">
@@ -865,7 +895,7 @@ function PluginDocumentFloatingPanel({ plugin, onClose }: PluginDocumentFloating
       setError('')
       try {
         if (mode === 'readme') {
-          const content = await getLocalPluginReadme(plugin.id)
+          const content = await fetchPluginDocument(plugin.id, 'readme', { preferLocal: true })
           if (!cancelled) {
             setReadme(content)
           }
@@ -874,7 +904,7 @@ function PluginDocumentFloatingPanel({ plugin, onClose }: PluginDocumentFloating
 
         const localChangelog = plugin.changelog?.trim()
           ? plugin.changelog
-          : await getLocalPluginChangelog(plugin.id)
+          : await fetchPluginDocument(plugin.id, 'changelog', { preferLocal: true })
         if (!cancelled) {
           setChangelog(localChangelog ?? '')
         }
@@ -1564,13 +1594,10 @@ function PluginConfigPageContent() {
     disabledCount,
     loadingCount,
     circuitOpenCount,
+    circuitActiveCount,
     loadFailedCount,
     enabledCount,
     loadSuccessCount,
-    loadSuccessPercent,
-    loadFailedPercent,
-    loadingPercent,
-    circuitPercent,
     showsCircuitSummary,
     modernLoadSummaryLabel,
     futureRetroPluginSummaryLabel,
@@ -1710,6 +1737,24 @@ function PluginConfigPageContent() {
         </div>
         )}
 
+        {adapterManagement ? (
+          <AdapterManagementView
+            groups={visiblePluginGroups}
+            defaults={<AdapterPolicyDefaultsCard />}
+            loading={loading}
+            actingPluginId={actingPluginId}
+            checkingUpdates={checkingUpdates}
+            getStatusMeta={getPluginStatusMeta}
+            getUpdateState={getPluginUpdateState}
+            isVersionIncompatible={isPluginVersionIncompatible}
+            onConfigure={openPluginConfig}
+            onToggle={(plugin) => void performTogglePlugin(plugin)}
+            onUpdate={openUpdatePluginDialog}
+            onDelete={openDeletePluginDialog}
+            onFailureDetails={setLoadFailureDetailPlugin}
+          />
+        ) : (
+        <>
         {/* 统计信息 */}
         {isModernDashboardStyle ? (
           <Card>
@@ -1740,38 +1785,24 @@ function PluginConfigPageContent() {
               >
                 <span className="sr-only">{modernLoadSummaryLabel}</span>
                 <strong className="w-8 text-right text-emerald-600">{loadSuccessCount}</strong>
-                <div
-                  className="bg-muted flex h-3 min-w-28 flex-1 overflow-hidden"
-                  aria-hidden="true"
-                >
-                  <div className="bg-emerald-500" style={{ width: `${loadSuccessPercent}%` }} />
-                  <div className="bg-sky-500" style={{ width: `${loadingPercent}%` }} />
-                  <div className="bg-orange-500" style={{ width: `${circuitPercent}%` }} />
-                  <div className="bg-red-500" style={{ width: `${loadFailedPercent}%` }} />
-                </div>
+                <SegmentedMeter label="插件加载状态" className="min-w-28 flex-1" segments={[
+                  {label: '加载成功', value: loadSuccessCount, className: 'bg-emerald-500'},
+                  {label: '加载中', value: loadingCount, className: 'bg-sky-500'},
+                  {label: '熔断中', value: circuitActiveCount, className: 'bg-orange-500'},
+                  {label: '加载失败', value: loadFailedCount, className: 'bg-red-500'},
+                ]} />
                 <strong className="w-8 text-red-600">{loadFailedCount}</strong>
               </div>
             </CardContent>
           </Card>
         ) : (
           <div className="space-y-3">
-            <div className="space-y-2" aria-label={futureRetroPluginSummaryLabel}>
+            <PageFrame className="space-y-2 p-3" aria-label={futureRetroPluginSummaryLabel}>
               <span className="sr-only">{futureRetroPluginSummaryLabel}</span>
-              <div className="bg-muted flex h-3 w-full overflow-hidden" aria-hidden="true">
-                {plugins.length > 0 ? (
-                  plugins.map((plugin, index) => (
-                    <div
-                      key={`${plugin.id}-${index}`}
-                      className={`min-w-0 flex-1 ${getPluginStatusBarClassName(plugin)} ${
-                        index < plugins.length - 1 ? 'border-background border-r' : ''
-                      }`}
-                      title={`${plugin.manifest.name}：${getPluginStatusLabel(plugin)}`}
-                    />
-                  ))
-                ) : (
-                  <div className="bg-muted-foreground/20 h-full flex-1" />
-                )}
-              </div>
+              <SegmentedMeter label="插件状态" separated segments={plugins.map((plugin) => ({
+                label: `${plugin.manifest.name}：${getPluginStatusLabel(plugin)}`,
+                value: 1, className: getPluginStatusBarClassName(plugin),
+              }))} />
               <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
                 <span className="flex items-center gap-1.5">
                   插件 <strong className="text-foreground">{installedCount}</strong>个
@@ -1799,12 +1830,9 @@ function PluginConfigPageContent() {
                   启动失败 <strong className="text-red-600">{loadFailedCount}</strong> 个
                 </span>
               </div>
-            </div>
+            </PageFrame>
           </div>
         )}
-
-        {/* 适配器全局默认策略（位于插件加载情况下方） */}
-        {adapterManagement && <AdapterPolicyDefaultsCard />}
 
         {/* 插件列表 */}
         {loading ? (
@@ -1836,20 +1864,25 @@ function PluginConfigPageContent() {
             {extensionGroups.map((group) => group.key === 'mcp' ? (
               <MCPExtensionList key="mcp" searchQuery={searchQuery} onEdit={() => setEditingMCP(true)} />
             ) : (
-              <section key={group.key} aria-labelledby={`plugin-list-group-${group.key}`}>
+              <PageFrame key={group.key} asChild className="p-3">
+              <section aria-labelledby={`plugin-list-group-${group.key}`}>
                 <div className="text-muted-foreground flex items-center gap-2 border-b px-2 pb-1.5 text-xs font-medium">
                   <span className={`h-2 w-2 rounded-full ${group.dotClassName}`} aria-hidden="true" />
                   <h2 id={`plugin-list-group-${group.key}`}>{group.label}</h2>
                   <span aria-label={`${group.plugins.length} 个插件`}>{group.plugins.length}</span>
                 </div>
-                <div className="divide-border/80 divide-y">
+                <DataPanel padding="none" className="divide-border/80 mt-1 divide-y">
                   {group.plugins.map((plugin) => {
               const pluginActing = actingPluginId === plugin.id
               const pluginDisabled = plugin.enabled === false
               const updateState = getPluginUpdateState(plugin)
               const pluginLoadFailed = isPluginLoadFailed(plugin)
               const pluginVersionIncompatible = isPluginVersionIncompatible(plugin)
-              const pluginNeedsUpdate = pluginVersionIncompatible && updateState.hasUpdate
+              const {
+                needsUpdate: pluginNeedsUpdate,
+                title: loadFailureTitle,
+                description: loadFailureDescription,
+              } = getPluginLoadFailureInfo(plugin, updateState, pluginVersionIncompatible, checkingUpdates)
               const baseStatusMeta = getPluginStatusMeta(plugin)
               const statusMeta = pluginVersionIncompatible
                 ? {
@@ -1857,19 +1890,6 @@ function PluginConfigPageContent() {
                     label: pluginNeedsUpdate ? '需要更新' : '版本不兼容',
                   }
                 : baseStatusMeta
-              const loadFailureReason = plugin.load_error?.trim() || '运行时未返回具体失败原因'
-              const loadFailureTitle = pluginNeedsUpdate
-                ? '当前插件版本需要更新'
-                : pluginVersionIncompatible
-                  ? '当前插件版本已不兼容'
-                  : '插件加载失败'
-              const loadFailureDescription = pluginVersionIncompatible
-                ? checkingUpdates
-                  ? `已安装 v${plugin.manifest.version} 与当前麦麦版本不兼容，正在检查插件市场更新…`
-                  : pluginNeedsUpdate
-                    ? `已安装 v${plugin.manifest.version}，插件市场已有 v${updateState.latestVersion}，请更新后重试。`
-                    : `已安装 v${plugin.manifest.version} 与当前麦麦版本不兼容，请前往插件市场查看兼容版本。`
-                : `失败原因：${loadFailureReason}`
               return (
                 <div
                   key={plugin.id}
@@ -1987,12 +2007,12 @@ function PluginConfigPageContent() {
                   </div>
                   <div className="flex items-center justify-end gap-2 border-t pt-2 sm:flex-shrink-0 sm:border-t-0 sm:pt-0">
                     <div
-                      className="flex h-9 w-9 items-center justify-center"
+                      className="flex h-9 min-w-11 items-center justify-center"
                       title={pluginDisabled ? '启动插件' : '关闭插件'}
                     >
                       {pluginActing && <Loader2 className="h-4 w-4 animate-spin" />}
                       <Switch
-                        data-plugin-list-switch="true"
+                        size="lg"
                         checked={!pluginDisabled}
                         disabled={pluginActing}
                         aria-label={pluginDisabled ? '启动插件' : '关闭插件'}
@@ -2002,9 +2022,9 @@ function PluginConfigPageContent() {
                     </div>
                     <Button
                       variant="outline"
-                      size="sm"
+                      size="icon"
                       data-plugin-update-button="true"
-                      className={`relative h-9 w-9 p-0 ${checkingUpdates ? 'text-primary disabled:opacity-100' : ''}`}
+                      className={`relative ${checkingUpdates ? 'text-primary disabled:opacity-100' : ''}`}
                       disabled={pluginActing || !updateState.canUpdate}
                       aria-busy={checkingUpdates || pluginActing}
                       title={updateState.title}
@@ -2024,11 +2044,10 @@ function PluginConfigPageContent() {
                       )}
                     </Button>
                     <Button
-                      variant="outline"
-                      size="sm"
-                      data-plugin-delete-button="true"
-                      className="text-primary h-9 w-9 border-current bg-transparent p-0 shadow-none hover:bg-transparent hover:text-primary/80"
+                      variant="destructive"
+                      size="icon"
                       disabled={pluginActing}
+                      aria-busy={pluginActing}
                       title="删除"
                       aria-label="删除"
                       onClick={(event) => openDeletePluginDialog(plugin, event)}
@@ -2039,18 +2058,20 @@ function PluginConfigPageContent() {
                         <Trash2 className="h-4 w-4" />
                       )}
                     </Button>
-                    <ChevronRight className="text-muted-foreground h-4 w-4" />
                   </div>
                 </div>
               )
                   })}
-                </div>
+                </DataPanel>
               </section>
+              </PageFrame>
             ))}
           </div>
         )}
 
-        {!adapterManagement && <PluginWebUIManagerPanel />}
+        <PluginWebUIManagerPanel />
+        </>
+        )}
 
         <Dialog
           open={loadFailureDetailPlugin !== null}

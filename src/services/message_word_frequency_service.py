@@ -387,7 +387,7 @@ def _extract_user_texts_by_chat_id_from_context(context_messages: Sequence[objec
         # 通知也以 user 来源进入规划器，但事件描述不是用户发言；
         # 学习必须读取原始组件，不能把规划器包装、工具展开内容当作正文。
         original_message = context_message.original_message
-        if original_message is None or original_message.is_notify:
+        if original_message.is_notify:
             continue
         if is_bot_self(original_message.platform, original_message.message_info.user_info.user_id):
             continue
@@ -413,8 +413,6 @@ def _extract_user_texts_by_chat_id_from_context(context_messages: Sequence[objec
 
 
 def _extract_chat_id_from_context_message(context_message: SessionBackedMessage) -> str:
-    if context_message.original_message is None:
-        return ""
     return str(context_message.original_message.session_id).strip()
 
 

@@ -127,6 +127,7 @@ async def send_emoji_for_maisaka(
     requested_emotion: str = "",
     reasoning: str = "",
     context_texts: Sequence[str] | None = None,
+    reply_message: Optional["SessionMessage"] = None,
 ) -> MaisakaEmojiSendResult:
     """为 Maisaka 选择并发送一个表情。"""
 
@@ -240,7 +241,7 @@ async def send_emoji_for_maisaka(
                 stream_id=stream_id,
                 storage_message=True,
                 set_reply=False,
-                reply_message=None,
+                reply_message=reply_message,
                 sync_to_maisaka_history=True,
                 maisaka_source_kind="guided_reply",
             )

@@ -5,7 +5,8 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { UserEmojiItem } from '@/lib/user-emoji-api'
-import { cn } from '@/lib/utils'
+import { MessageComposerFrame } from '@/components/ui/conversation'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 import type { ChatImageAttachment } from './types'
 import { ChatUserIdentity } from './ChatUserIdentity'
@@ -30,7 +31,7 @@ interface ChatComposerProps {
 }
 
 /**
- * 聊天输入区：自适应高度的输入框 + 浮动发送按钮，带快捷键提示。
+ * 聊天输入区：自适应高度的输入框 + 独立工具栏，带快捷键提示。
  */
 export function ChatComposer({
   value,
@@ -62,106 +63,103 @@ export function ChatComposer({
   const canSend = !disabled && (value.trim().length > 0 || images.length > 0)
 
   return (
-    <div className="bg-card/85 supports-backdrop-filter:bg-card/65 shrink-0 border-t backdrop-blur">
-      <div className="mx-auto max-w-4xl px-3 py-3 sm:px-6 sm:py-4">
-        {images.length > 0 && (
-          <div className="mb-2 flex gap-2 overflow-x-auto px-1 pb-1">
+    <MessageComposerFrame
+      attachments={
+        images.length > 0 && (
+          <div className="flex gap-2 overflow-x-auto p-3">
             {images.map((image) => (
-              <div
-                key={image.id}
-                className="bg-muted relative h-16 w-16 shrink-0 overflow-hidden rounded-md border"
-              >
+              <div key={image.id} className="relative h-16 w-16 shrink-0">
                 <img
                   src={image.data_url}
                   alt={image.name || t('chat.media.image')}
                   className="h-full w-full object-cover"
                 />
-                <button
+                <Button
                   type="button"
-                  className="bg-background/90 text-foreground hover:bg-background absolute top-0.5 right-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full border shadow-sm"
-                  title={t('chat.actions.removeImage')}
+                  size="icon-xs"
+                  variant="outline"
+                  className="absolute top-0 right-0"
                   aria-label={t('chat.actions.removeImage')}
                   onClick={() => onRemoveImage(image.id)}
                 >
-                  <X className="h-3 w-3" />
-                </button>
+                  <X />
+                </Button>
               </div>
             ))}
           </div>
-        )}
-        <div className="flex flex-col items-end gap-2 md:flex-row md:items-end">
-          <div
-            className={cn(
-              'group bg-background/80 focus-within:border-primary/60 focus-within:ring-primary/20 relative flex w-full min-w-0 flex-1 items-end gap-2 rounded-2xl border px-3 py-2 shadow-sm transition focus-within:ring-2',
-              !isConnected && 'opacity-70'
-            )}
-          >
-            <input
-              ref={fileInputRef}
-              className="hidden"
-              type="file"
-              accept="image/*"
-              multiple
-              disabled={!isConnected}
-              onChange={(e) => {
-                if (e.target.files) {
-                  onAddImages(e.target.files)
-                }
-                e.currentTarget.value = ''
-              }}
-            />
-            <Button
-              aria-label={t('chat.actions.addImage')}
-              className="h-9 w-9 shrink-0 rounded-full"
-              disabled={!isConnected}
-              size="icon"
-              title={t('chat.actions.addImage')}
-              type="button"
-              variant="ghost"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <ImagePlus className="h-4 w-4" />
-            </Button>
-            <UserEmojiManager disabled={!isConnected} userId={userId} onSendEmoji={onSendEmoji} />
-            <Textarea
-              aria-label={t('chat.input.placeholder')}
-              autoResize
-              className="max-h-40 min-h-9 min-w-0 flex-1 resize-none border-0 bg-transparent px-1 py-1.5 text-sm shadow-none focus-visible:ring-0"
-              disabled={!isConnected}
-              maxHeight={160}
-              minHeight={36}
-              placeholder={isConnected ? t('chat.input.placeholder') : t('chat.input.waiting')}
-              value={value}
-              onChange={(e) => onChange(e.target.value)}
-              onKeyDown={handleKeyDown}
-            />
-            <Button
-              aria-label={t('chat.actions.send')}
-              className={cn(
-                'h-9 w-9 shrink-0 rounded-full transition',
-                canSend ? 'shadow-md' : 'opacity-60'
-              )}
-              disabled={!canSend}
-              size="icon"
-              title={t('chat.actions.send')}
-              onClick={onSend}
-            >
-              <Send className="h-4 w-4" />
-            </Button>
-          </div>
-          <ChatUserIdentity
-            userId={userId}
-            userName={userName}
-            userAvatarVersion={userAvatarVersion}
-            isUploadingUserAvatar={isUploadingUserAvatar}
-            onUpdateUserAvatar={onUpdateUserAvatar}
-            onUpdateUserName={onUpdateUserName}
+        )
+      }
+      tools={
+        <>
+          <input
+            ref={fileInputRef}
+            className="hidden"
+            type="file"
+            accept="image/*"
+            multiple
+            disabled={!isConnected}
+            onChange={(e) => {
+              if (e.target.files) onAddImages(e.target.files)
+              e.currentTarget.value = ''
+            }}
           />
-        </div>
-        <p className="text-muted-foreground mt-1.5 hidden px-2 text-[11px] sm:block">
-          {t('chat.composer.hint')}
-        </p>
-      </div>
-    </div>
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            disabled={!isConnected}
+            aria-label={t('chat.actions.addImage')}
+            title={t('chat.actions.addImage')}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <ImagePlus />
+          </Button>
+          <UserEmojiManager disabled={!isConnected} userId={userId} onSendEmoji={onSendEmoji} />
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="outline" size="sm">
+                以「{userName}」发送
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-auto">
+              <ChatUserIdentity
+                userId={userId}
+                userName={userName}
+                userAvatarVersion={userAvatarVersion}
+                isUploadingUserAvatar={isUploadingUserAvatar}
+                onUpdateUserAvatar={onUpdateUserAvatar}
+                onUpdateUserName={onUpdateUserName}
+              />
+            </PopoverContent>
+          </Popover>
+        </>
+      }
+      hint={t('chat.composer.hint')}
+      submit={
+        <Button
+          type="button"
+          size="sm"
+          disabled={!canSend}
+          onClick={onSend}
+          aria-label={t('chat.actions.send')}
+        >
+          <Send />
+          {t('chat.actions.send')}
+        </Button>
+      }
+    >
+      <Textarea
+        aria-label={t('chat.input.placeholder')}
+        autoResize
+        variant="composer"
+        disabled={!isConnected}
+        maxHeight={160}
+        minHeight={56}
+        placeholder={isConnected ? t('chat.input.placeholder') : t('chat.input.waiting')}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={handleKeyDown}
+      />
+    </MessageComposerFrame>
   )
 }

@@ -128,7 +128,7 @@ export function usePluginList() {
   const [actingPluginId, setActingPluginId] = useState<string | null>(null)
   const [marketPluginsById, setMarketPluginsById] = useState<Record<string, PluginInfo>>({})
   const [maimaiVersion, setMaimaiVersion] = useState<MaimaiVersion | null>(null)
-  const [checkingUpdates, setCheckingUpdates] = useState(!adapterOnly && !initialTarget.pluginId)
+  const [checkingUpdates, setCheckingUpdates] = useState(!initialTarget.pluginId)
   const updateCheckStartedRef = useRef(false)
   const initialTargetHandledRef = useRef(false)
   const installedRequestRef = useRef(0)
@@ -154,7 +154,7 @@ export function usePluginList() {
   }
 
   const checkPluginUpdates = async () => {
-    if (adapterOnly || updateCheckStartedRef.current) {
+    if (updateCheckStartedRef.current) {
       return
     }
     updateCheckStartedRef.current = true
@@ -327,11 +327,6 @@ export function usePluginList() {
   const circuitActiveCount = plugins.filter(isPluginCircuitActive).length
   const loadFailedCount = plugins.filter(isPluginLoadFailed).length
   const enabledCount = installedCount - disabledCount
-  const loadTotalCount = loadSuccessCount + loadFailedCount + loadingCount + circuitActiveCount
-  const loadSuccessPercent = loadTotalCount > 0 ? (loadSuccessCount / loadTotalCount) * 100 : 0
-  const loadFailedPercent = loadTotalCount > 0 ? (loadFailedCount / loadTotalCount) * 100 : 0
-  const loadingPercent = loadTotalCount > 0 ? (loadingCount / loadTotalCount) * 100 : 0
-  const circuitPercent = loadTotalCount > 0 ? (circuitActiveCount / loadTotalCount) * 100 : 0
   const showsCircuitSummary = circuitOpenCount > 0
   const modernLoadSummaryLabel = [
     `加载成功 ${loadSuccessCount} 个`,
@@ -567,13 +562,10 @@ export function usePluginList() {
     disabledCount,
     loadingCount,
     circuitOpenCount,
+    circuitActiveCount,
     loadFailedCount,
     enabledCount,
     loadSuccessCount,
-    loadSuccessPercent,
-    loadFailedPercent,
-    loadingPercent,
-    circuitPercent,
     showsCircuitSummary,
     modernLoadSummaryLabel,
     futureRetroPluginSummaryLabel,

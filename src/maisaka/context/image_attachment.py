@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from src.common.data_models.message_component_data_model import ImageComponent
 
 from .message_id_alias import build_alias_map, to_display_message_id
-from .messages import SessionBackedMessage
+from .messages import ContentContextMessage
 
 if TYPE_CHECKING:
     from src.maisaka.runtime import MaisakaHeartFlowChatting
@@ -24,24 +24,23 @@ async def resolve_context_image(
     # SDK 调用同样接受模型可见的短编号；工具媒体索引仍使用原始值。
     alias_map = build_alias_map(
         message.message_id for message in reversed(runtime._chat_history)
-        if isinstance(message, SessionBackedMessage)
+        if isinstance(message, ContentContextMessage)
     )
     source_id = alias_map.get(source_id, source_id)
 
-    # 工具返回媒体保存在历史中，普通聊天图片也可以从当前源消息读取。
+    # 真实 IM、插件插入和工具返回的图文统一通过内容类型读取。
     context_message = next(
         (
             message for message in reversed(runtime._chat_history)
-            if isinstance(message, SessionBackedMessage) and message.message_id == source_id
+            if isinstance(message, ContentContextMessage) and message.message_id == source_id
         ),
         None,
     )
-    source_message = context_message or runtime.find_source_message_by_id(source_id)
-    if source_message is None:
+    if context_message is None:
         raise ValueError(f"没有找到消息：msg_id={to_display_message_id(source_id)}")
 
     # 保留原始图片序号；不能过滤加载失败的图片，否则会发送另一张图。
-    images = [component for component in source_message.raw_message.components if isinstance(component, ImageComponent)]
+    images = [component for component in context_message.raw_message.components if isinstance(component, ImageComponent)]
     if image_index >= len(images):
         raise ValueError(f"图片序号超出范围：index={image_index}，该消息共有 {len(images)} 张图片。")
     image = images[image_index]

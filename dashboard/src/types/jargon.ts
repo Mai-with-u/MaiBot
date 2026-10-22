@@ -34,6 +34,7 @@ export interface JargonChatInfo {
   platform: string | null
   account_id?: string | null
   is_group: boolean
+  jargon_count?: number
 }
 
 /**

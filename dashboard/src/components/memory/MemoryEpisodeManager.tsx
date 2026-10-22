@@ -13,6 +13,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -666,7 +667,7 @@ export function MemoryEpisodeManager({
                   </div>
                 </div>
                 <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={rebuildAll} onChange={(event) => setRebuildAll(event.target.checked)} />
+                  <Checkbox checked={rebuildAll} onCheckedChange={(checked) => setRebuildAll(checked === true)} />
                   重新生成全部可用来源
                 </label>
                 <Button onClick={() => void submitRebuild()} disabled={actionLoading}>

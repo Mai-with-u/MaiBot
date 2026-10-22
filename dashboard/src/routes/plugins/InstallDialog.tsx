@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AlertCircle, CheckCircle2, Download, Loader2 } from 'lucide-react'
 
+import { PluginSettingsDialog } from './PluginSettingsDialog'
 import type { PluginInfo, PluginLoadProgress } from './types'
 import { getPluginProgressDetail } from './types'
 
@@ -19,6 +20,7 @@ interface InstallDialogProps {
 }
 
 export function InstallDialog({ open, plugin, loadProgress, onOpenChange, onInstall }: InstallDialogProps) {
+  const [sourceSettingsOpen, setSourceSettingsOpen] = useState(false)
   const [selectedBranch, setSelectedBranch] = useState('main')
   const [customBranch, setCustomBranch] = useState('')
   const [branchInputMode, setBranchInputMode] = useState<'preset' | 'custom'>('preset')
@@ -53,7 +55,10 @@ export function InstallDialog({ open, plugin, loadProgress, onOpenChange, onInst
     if (open) {
       return
     }
-    const timer = window.setTimeout(() => setLastInstallProgress(null), 0)
+    const timer = window.setTimeout(() => {
+      setLastInstallProgress(null)
+      setSourceSettingsOpen(false)
+    }, 0)
     return () => window.clearTimeout(timer)
   }, [open])
 
@@ -286,17 +291,28 @@ export function InstallDialog({ open, plugin, loadProgress, onOpenChange, onInst
           >
             {installFinished ? '关闭' : '取消'}
           </Button>
-          {!installFinished && (
+          {displayedProgress?.stage === 'error' && (
+            <Button variant="outline" onClick={() => setSourceSettingsOpen(true)}>
+              打开下载源设置
+            </Button>
+          )}
+          {displayedProgress?.stage !== 'success' && (
             <Button onClick={handleInstall} disabled={isInstalling || (isReleaseInstall && !canInstallRelease)}>
               {isInstalling ? (
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
               ) : (
                 <Download className="h-4 w-4 mr-2" />
               )}
-              {isInstalling ? '安装中' : '安装'}
+              {isInstalling ? '安装中' : displayedProgress?.stage === 'error' ? '重试' : '安装'}
             </Button>
           )}
         </DialogFooter>
+        {sourceSettingsOpen && (
+          <PluginSettingsDialog
+            onClose={() => setSourceSettingsOpen(false)}
+            onSaved={() => setSourceSettingsOpen(false)}
+          />
+        )}
       </DialogContent>
     </Dialog>
   )

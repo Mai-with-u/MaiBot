@@ -27,7 +27,12 @@ import {
   type ReasoningReplayResponse,
 } from '@/lib/reasoning-process-api'
 import { cn } from '@/lib/utils'
-import { ContextItemTimeline } from './context-items'
+import {
+  ContextItemImagePreview,
+  ContextItemTimeline,
+  getContextItemImages,
+  type ContextItemImage,
+} from './context-items'
 import { GenerationAttemptTimeline } from './generation-attempts'
 import {
   isRecord,
@@ -150,6 +155,37 @@ type ReplayTextPart = {
   text: string
 }
 
+type ReplayBodyPart =
+  | { type: 'text'; index: number; text: string; textIndex: number }
+  | { type: 'image'; index: number; image: ContextItemImage; imageIndex: number }
+
+function getReplayBodyParts(jsonText: string): ReplayBodyPart[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(jsonText) as unknown
+  } catch {
+    return []
+  }
+  const item = normalizeContextItemSnapshot(parsed, 0, 'replay')
+  if (!item || !Array.isArray(item.parts)) return []
+
+  let textIndex = 0
+  let imageIndex = 0
+  // 保留原始 parts 顺序和索引，文字编辑仍写回对应片段，图片沿用详情页的预览方式。
+  return item.parts.flatMap<ReplayBodyPart>((part, index) => {
+    if (!isRecord(part)) return []
+    if (part.type === 'text' && typeof part.text === 'string') {
+      return [{ type: 'text', index, text: part.text, textIndex: textIndex++ }]
+    }
+    return getContextItemImages({ ...item, parts: [part] }).map<ReplayBodyPart>((image) => ({
+      type: 'image',
+      index,
+      image,
+      imageIndex: imageIndex++,
+    }))
+  })
+}
+
 export function getReplayTextParts(jsonText: string): ReplayTextPart[] {
   try {
     const parsed = JSON.parse(jsonText) as unknown
@@ -183,8 +219,9 @@ function ReplayItemBodyEditor({
   updateItem: (id: string, patch: Partial<EditableReplayItem>) => void
 }) {
   const [showJson, setShowJson] = useState(false)
+  const bodyParts = getReplayBodyParts(item.jsonText)
   const textParts = getReplayTextParts(item.jsonText)
-  const hasReadableText = textParts.length > 0
+  const hasReadableContent = bodyParts.length > 0
 
   const updateJsonText = (jsonText: string) => {
     const itemTypeMatch = jsonText.match(/"item_type"\s*:\s*"([^"]+)"/)
@@ -196,26 +233,34 @@ function ReplayItemBodyEditor({
 
   return (
     <div className="space-y-3">
-      {hasReadableText && !showJson ? (
+      {hasReadableContent && !showJson ? (
         <div className="space-y-3">
-          {textParts.map((part, textIndex) => (
-            <div key={part.index} className="space-y-1.5">
-              <Label className="text-muted-foreground text-xs">
-                {textParts.length > 1 ? `正文 ${textIndex + 1}` : '正文'}
-              </Label>
-              <Textarea
-                value={part.text}
-                onChange={(event) => {
-                  updateJsonText(
-                    updateReplayTextPart(item.jsonText, part.index, event.target.value)
-                  )
-                }}
-                minHeight={180}
-                maxHeight={560}
-                className="text-sm leading-6"
+          {bodyParts.map((part) =>
+            part.type === 'image' ? (
+              <ContextItemImagePreview
+                key={part.index}
+                image={part.image}
+                index={part.imageIndex}
               />
-            </div>
-          ))}
+            ) : (
+              <div key={part.index} className="space-y-1.5">
+                <Label className="text-muted-foreground text-xs">
+                  {textParts.length > 1 ? `正文 ${part.textIndex + 1}` : '正文'}
+                </Label>
+                <Textarea
+                  value={part.text}
+                  onChange={(event) => {
+                    updateJsonText(
+                      updateReplayTextPart(item.jsonText, part.index, event.target.value)
+                    )
+                  }}
+                  minHeight={80}
+                  maxHeight={560}
+                  className="text-sm leading-6"
+                />
+              </div>
+            )
+          )}
         </div>
       ) : (
         <CodeEditor
@@ -230,7 +275,7 @@ function ReplayItemBodyEditor({
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        {hasReadableText && (
+        {hasReadableContent && (
           <Button
             type="button"
             variant="outline"

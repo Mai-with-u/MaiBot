@@ -61,38 +61,6 @@ export async function getInstalledPlugins(
 }
 
 /**
- * 获取本地已安装插件 README。
- */
-export async function getLocalPluginReadme(pluginId: string): Promise<string> {
-  const data = await backendApi.get<{ success: boolean; data?: string; error?: string }>(
-    `/api/webui/plugins/local-readme/${encodeURIComponent(pluginId)}`,
-    { errorMessage: '获取 README 失败' }
-  )
-
-  if (!data.success) {
-    return ''
-  }
-
-  return data.data || ''
-}
-
-/**
- * 获取本地已安装插件更新日志。
- */
-export async function getLocalPluginChangelog(pluginId: string): Promise<string> {
-  const data = await backendApi.get<{ success: boolean; data?: string; error?: string }>(
-    `/api/webui/plugins/local-changelog/${encodeURIComponent(pluginId)}`,
-    { errorMessage: '获取更新日志失败' }
-  )
-
-  if (!data.success) {
-    return ''
-  }
-
-  return data.data || ''
-}
-
-/**
  * 检查插件是否已安装
  */
 export function checkPluginInstalled(

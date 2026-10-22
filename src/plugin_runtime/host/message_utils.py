@@ -45,6 +45,7 @@ class MessageInfoDict(TypedDict, total=False):
 class MessageDict(TypedDict, total=False):
     message_id: str
     timestamp: str
+    received_at: str
     platform: str
     account_id: Optional[str]
     scope: Optional[str]
@@ -446,6 +447,8 @@ class PluginMessageUtils:
         )
 
         # 添加可选字段
+        if session_message.received_at is not None:
+            message_dict["received_at"] = session_message.received_at.isoformat(timespec="microseconds")
         if session_message.reply_to is not None:
             message_dict["reply_to"] = session_message.reply_to
         if session_message.processed_plain_text is not None:
@@ -521,6 +524,7 @@ class PluginMessageUtils:
             timestamp = datetime.now()  # 如果解析失败，使用当前时间
 
         # 创建 SessionMessage 实例
+        # received_at 由主程序入站入口记录，不接受外部载荷或 Hook 重新指定。
         session_message = SessionMessage(message_id=message_id, timestamp=timestamp, platform=platform)
 
         # 构建消息信息

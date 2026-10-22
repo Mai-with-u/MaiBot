@@ -7,12 +7,14 @@ permissions:
   contents: write
 
 concurrency:
-  group: update-dashboard-dependency-dev
+  group: dashboard-dependency-dev
   cancel-in-progress: false
 
 jobs:
   update-dev-dependency:
     runs-on: ubuntu-24.04
+    env:
+      UV_INDEX: https://pypi.org/simple
     steps:
       - name: Checkout dev
         uses: actions/checkout@v4
@@ -23,12 +25,12 @@ jobs:
       - name: Setup uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Check PyPI latest dashboard dev package
+      - name: Check latest dashboard dev package and wait for PyPI index
         run: |
           uv run --no-project --with packaging --with tomlkit python .github/scripts/update_dashboard_dependency.py
 
       - name: Update dependency lock
-        run: uv lock --upgrade-package maibot-dashboard
+        run: uv lock --upgrade-package maibot-dashboard --verbose
 
       - name: Commit dependency update
         run: |

@@ -94,7 +94,7 @@ export function AdapterAccountsPanel() {
       }}
     >
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="sm" className="shrink-0 gap-2">
+        <Button variant="outline" size="sm" className="shrink-0 gap-2">
           <span>平台账号</span>
           <ChevronDown className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} />
         </Button>

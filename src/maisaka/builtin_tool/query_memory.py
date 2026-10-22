@@ -26,7 +26,7 @@ def get_tool_spec(*, enabled: bool = True) -> ToolSpec:
 
     return ToolSpec(
         name="query_memory",
-        description="检索长期记忆。",
+        description="检索长期记忆。涉及回忆、过往经历时可以检索。",
         parameters_schema={
             "type": "object",
             "properties": {

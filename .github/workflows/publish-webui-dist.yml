@@ -107,6 +107,13 @@ jobs:
     needs: build-and-publish
     if: github.ref_name == 'dev'
     runs-on: ubuntu-24.04
+    # 构建发布仍可并行，仅串行执行向 dev 写入依赖的阶段。
+    concurrency:
+      group: dashboard-dependency-dev
+      cancel-in-progress: false
+    env:
+      # 优先从官方 PyPI 解析刚发布的包，避免镜像同步延迟。
+      UV_INDEX: https://pypi.org/simple
     permissions:
       contents: write
     steps:
@@ -119,12 +126,12 @@ jobs:
       - name: Setup uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Update dashboard dev dependency
+      - name: Wait for PyPI index and update dashboard dev dependency
         env:
           DASHBOARD_DEV_VERSION: ${{ needs.build-and-publish.outputs.webui_version }}
         run: |
           uv run --no-project --with packaging --with tomlkit python .github/scripts/update_dashboard_dependency.py
-          uv lock --upgrade-package maibot-dashboard
+          uv lock --upgrade-package maibot-dashboard --verbose
 
       - name: Commit dependency update
         env:

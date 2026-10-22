@@ -111,12 +111,6 @@
     background-color: var(--m-page);
   }
 
-  :root[data-dashboard-style='modern'] [data-dashboard-main='true'] [data-dashboard-card='true'] {
-    background-color: var(--m-card);
-    border-color: transparent;
-    border-radius: 24px;
-    box-shadow: none;
-  }
 
   /* 首页卡片外壳的「厚度」投影在手机上去掉，卡片平铺在灰底上 */
   :root[data-dashboard-style='modern'] [data-home-summary-cards='true'] [data-home-card-style],
@@ -292,31 +286,7 @@
     top: 0;
   }
 
-  /* 统计概览：分段控件切换时间范围，2×2 数字网格，黑色数字 */
-  :root[data-dashboard-style='modern'] [data-home-time-range='true'] {
-    background: var(--m-fill);
-    border-radius: 9px;
-    padding: 2px;
-  }
-
-  :root[data-dashboard-style='modern'] [data-home-time-range='true'] [aria-hidden='true'] {
-    display: none;
-  }
-
-  :root[data-dashboard-style='modern'] [data-home-time-range='true'] button {
-    border-radius: 7px;
-    color: var(--m-ink);
-    font-size: 13px;
-    height: 26px;
-    padding: 0 10px;
-  }
-
-  :root[data-dashboard-style='modern'] [data-home-time-range='true'] button[aria-pressed='true'] {
-    background: var(--m-card);
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
-    font-weight: 600;
-  }
-
+  /* 统计概览布局；时间选择由公共分段控件负责。 */
   :root[data-dashboard-style='modern'] [data-home-statistics-overview='true'] {
     gap: 18px;
     grid-template-rows: none;

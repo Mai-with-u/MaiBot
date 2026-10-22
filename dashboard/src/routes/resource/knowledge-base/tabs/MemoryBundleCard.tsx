@@ -358,13 +358,12 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
                 <div className="grid grid-cols-3 gap-2">
                   {imageOptions.map((image) => (
                     <label key={image.asset_id} className="rounded border p-2">
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         aria-label={`选择图片 ${image.content_hash.slice(0, 12)}`}
                         checked={selectorValue.split(',').includes(image.content_hash)}
-                        onChange={(event) => {
+                        onCheckedChange={(checked) => {
                           const selected = new Set(selectorValue.split(',').filter(Boolean))
-                          if (event.target.checked) selected.add(image.content_hash)
+                          if (checked === true) selected.add(image.content_hash)
                           else selected.delete(image.content_hash)
                           setSelectorValue([...selected].join(','))
                         }}

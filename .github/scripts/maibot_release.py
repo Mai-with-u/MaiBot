@@ -136,13 +136,14 @@ def compare_pypi(local: Dict[str, str], remote: Dict[str, str], complete: bool =
 
 def check_pypi(directory: Path, complete: bool) -> None:
     manifest = verify(directory)
-    for attempt in range(6 if complete else 1):
+    # 上传后 PyPI 查询可能延迟可见；立即查询一次，再每 10 秒查询，最多等待 3 分钟。
+    for attempt in range(19 if complete else 1):
         remote = pypi_files("maibot", manifest["version"])
         compare_pypi(manifest["files"], remote)
         if not complete or remote == manifest["files"]:
             return
-        if attempt < 5:
-            time.sleep(5)
+        if attempt < 18:
+            time.sleep(10)
     compare_pypi(manifest["files"], remote, complete=True)
 
 

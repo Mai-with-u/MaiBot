@@ -5,7 +5,6 @@ import {
   MoreHorizontal,
   Network,
   Plus,
-  Search,
   Star,
   StarOff,
   Trash2,
@@ -20,6 +19,14 @@ import { useQuery } from '@tanstack/react-query'
 import { ChatScopeFilterPanel } from '@/components/chat-scope-filter-panel'
 import { Button } from '@/components/ui/button'
 import {
+  DataBrowserHeader,
+  DataBrowserLayout,
+  DataToolbar,
+  MetricStrip,
+  StatusIndicator,
+} from '@/components/ui/data-browser'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -31,10 +38,9 @@ import { MobileHeaderActions } from '@/components/layout/MobileHeaderActions'
 import { useHideMobileTabBar } from '@/components/layout/mobile-nav-context'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
 import { useDataList } from '@/hooks/useDataList'
 import { useToast } from '@/hooks/use-toast'
-import { formatChatDisplayName } from '@/lib/chat-display'
+import { formatChatAccountLabel, formatChatDisplayName } from '@/lib/chat-display'
 import { cn } from '@/lib/utils'
 
 import {
@@ -199,8 +205,16 @@ export function ExpressionManagementPage({ browserHeader }: { browserHeader?: Re
     list.setFilter('selectedChatId', chatList[0].chat_id)
   }
 
-  // 列表写成功后失效 ['expression'] 前缀：刷新列表 + 统计 + 审核统计
-  const refreshAll = list.invalidate
+  // 删除末页最后一项后同步实际查询页，避免分页数字与空列表指向不同的页。
+  if (!list.isPending && !list.isFetching && !list.isError && list.page > list.totalPages) {
+    list.goToPage(list.totalPages)
+  }
+
+  // 写成功后清空选中再刷新，筛选后已消失的记录不能残留在批量操作里。
+  const refreshAll = () => {
+    list.clearSelection()
+    list.invalidate()
+  }
 
   // 审核（单条 / 批量）：写成功后 invalidate 重新拉取（服务端为准）
   const { toggleReviewStatus, batchReviewStatus } = useExpressionReview({ onChanged: refreshAll })
@@ -295,14 +309,6 @@ export function ExpressionManagementPage({ browserHeader }: { browserHeader?: Re
     }
   }
 
-  // 页面跳转
-  const handleJumpToPage = (jumpToPage: string) => {
-    const targetPage = parseInt(jumpToPage)
-    if (targetPage >= 1 && targetPage <= list.totalPages) {
-      list.goToPage(targetPage)
-    }
-  }
-
   // 浏览维度切换：按聊天 / 按共享组 / 全部（变更后 setFilter 自动重置页码并清空选中）
   const handleBrowseModeChange = (mode: BrowseMode) => {
     list.setFilter('browseMode', mode)
@@ -377,27 +383,14 @@ export function ExpressionManagementPage({ browserHeader }: { browserHeader?: Re
   }
 
   const scopeStatus = getScopeStatus()
-  const renderStatusIndicator = (label: string, status: IndicatorStatus, separated = true) => {
-    const statusLabel = label.replace(/^开启/, '')
-    const statusText =
-      status === 'mixed'
-        ? `部分${statusLabel}`
-        : status === 'on'
-          ? `开启${statusLabel}`
-          : `关闭${statusLabel}`
-    const dotClass =
-      status === 'mixed' ? 'bg-amber-500' : status === 'on' ? 'bg-green-500' : 'bg-muted-foreground'
-
-    return (
-      <div className={`flex items-center gap-1.5 px-2 py-1 text-xs ${separated ? 'border-l' : ''}`}>
-        <span className={`h-2 w-2 rounded-full ${dotClass}`} />
-        <span className="leading-none font-medium">{statusText}</span>
-      </div>
-    )
-  }
+  const renderStatusIndicator = (label: string, status: IndicatorStatus) => (
+    <StatusIndicator status={status} title={scopeStatus?.label}>
+      {status === 'on' ? `${label}中` : status === 'mixed' ? `部分${label}` : `${label}关闭`}
+    </StatusIndicator>
+  )
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden p-2 pb-4 sm:p-6">
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden p-3 pb-4 sm:p-4">
       {activeView !== 'list' && (
         <div className="mb-4 flex shrink-0 justify-end gap-2 sm:mb-3">
           {/* 手机上由页头的「列表模式」返回，这里不再重复 */}
@@ -424,294 +417,298 @@ export function ExpressionManagementPage({ browserHeader }: { browserHeader?: Re
 
       <div
         className={
-          activeView === 'list' ? 'min-h-0 flex-1 overflow-y-auto lg:overflow-hidden' : 'hidden'
+          activeView === 'list'
+            ? 'flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto lg:overflow-hidden'
+            : 'hidden'
         }
       >
-        <div className="min-w-0 pb-2 sm:pr-4 lg:h-full">
-          {/* 表达方式列表 */}
-          <div
-            className={`grid grid-cols-1 items-stretch gap-5 transition-[grid-template-columns] duration-200 sm:gap-4 lg:h-full lg:min-h-[30rem] ${
-              browserPanelCollapsed
-                ? browserHeader
-                  ? 'lg:grid-cols-[8rem_minmax(0,1fr)]'
-                  : 'lg:grid-cols-[3.25rem_minmax(0,1fr)]'
-                : 'lg:grid-cols-[13.5rem_minmax(0,1fr)]'
-            }`}
-          >
-            <div className="flex min-h-0 flex-col gap-3">
-              {browserHeader}
-
-              <ChatScopeFilterPanel
-                modes={[
-                  { label: '聊天', value: 'chat' },
-                  { label: '组', value: 'group' },
-                  { label: '全部', value: 'all' },
+        <DataBrowserHeader
+          title="学习"
+          navigation={browserHeader}
+          summary={
+            <>
+              <MetricStrip
+                items={[
+                  { label: '总数量', value: stats.total.toLocaleString() },
+                  {
+                    label: '近7天新增',
+                    value: `+${stats.recent_7days.toLocaleString()}`,
+                    positive: true,
+                  },
                 ]}
-                activeMode={browseMode}
-                onModeChange={handleBrowseModeChange}
-                items={
-                  browseMode === 'chat'
-                    ? chatList.map((chat) => ({
-                        id: chat.chat_id,
-                        label: formatChatDisplayName(chat.chat_name, chat.account_id),
-                        title: `${formatChatDisplayName(chat.chat_name, chat.account_id)} (${chat.chat_id})`,
-                      }))
-                    : browseMode === 'group'
-                      ? groups.map((group) => {
-                          const memberNames = group.members
-                            .map((member) =>
-                              formatChatDisplayName(member.chat_name, member.account_id)
+              />
+              {scopeStatus && (
+                <>
+                  {renderStatusIndicator('学习', scopeStatus.enableLearning)}
+                  {renderStatusIndicator('使用', scopeStatus.useExpression)}
+                </>
+              )}
+            </>
+          }
+        />
+        <DataBrowserLayout
+          sidebar={
+            <ChatScopeFilterPanel
+              density="compact"
+              title="聊天范围"
+              titleMeta={
+                browseMode === 'chat'
+                  ? `${chatList.length} 个`
+                  : browseMode === 'group'
+                    ? `${groups.length} 组`
+                    : undefined
+              }
+              modes={[
+                { label: '聊天', value: 'chat' },
+                { label: '组', value: 'group' },
+                { label: '全部', value: 'all' },
+              ]}
+              activeMode={browseMode}
+              onModeChange={handleBrowseModeChange}
+              items={
+                browseMode === 'chat'
+                  ? chatList.map((chat) => ({
+                      id: chat.chat_id,
+                      label: chat.chat_name,
+                      description: formatChatAccountLabel(chat.account_id),
+                      descriptionTitle: formatChatAccountLabel(chat.account_id),
+                      meta: chat.expression_count?.toLocaleString(),
+                      title: formatChatDisplayName(chat.chat_name, chat.account_id),
+                    }))
+                  : browseMode === 'group'
+                    ? groups.map((group) => {
+                        const memberNames = group.members
+                          .map((member) =>
+                            formatChatDisplayName(member.chat_name, member.account_id)
+                          )
+                          .join('、')
+                        return {
+                          id: group.index,
+                          label: `${group.name}${group.is_global ? '（全局）' : ''}`,
+                          description: memberNames || '暂无已解析聊天',
+                          descriptionTitle: memberNames,
+                          title: memberNames,
+                        }
+                      })
+                    : []
+              }
+              selectedItemId={browseMode === 'chat' ? selectedChatId : selectedGroupIndex}
+              onItemSelect={(id) => {
+                if (browseMode === 'chat') handleChatChange(String(id))
+                else if (browseMode === 'group') handleGroupChange(Number(id))
+              }}
+              emptyContent={
+                <div className="text-muted-foreground px-2 py-6 text-center text-sm">
+                  {browseMode === 'group' ? '暂无共享组' : '当前显示全部表达方式'}
+                </div>
+              }
+              collapsed={browserPanelCollapsed}
+              onCollapsedChange={setBrowserPanelCollapsed}
+              collapseLabel="折叠浏览列表"
+              expandLabel="展开浏览列表"
+              footer={
+                <div
+                  className="flex w-full items-center justify-between gap-3"
+                  title="显示旧格式的表达方式（这些项目会在运行中被转换为新格式）"
+                >
+                  <Label htmlFor="show-legacy-expressions" className="cursor-pointer text-xs">
+                    显示旧格式
+                  </Label>
+                  <Checkbox
+                    id="show-legacy-expressions"
+                    size="sm"
+                    checked={showLegacyExpressions}
+                    onCheckedChange={(checked) => handleLegacyExpressionsChange(checked === true)}
+                  />
+                </div>
+              }
+              listClassName="max-h-64 lg:max-h-none"
+            />
+          }
+        >
+          <ExpressionList
+            className="min-h-0"
+            toolbar={
+              <DataToolbar
+                search={list.searchInput}
+                onSearchChange={list.setSearchInput}
+                placeholder="搜索情境、风格或上下文..."
+                actions={
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      aria-pressed={reviewFilter === 'user_checked'}
+                      onClick={() =>
+                        list.setFilter(
+                          'reviewFilter',
+                          reviewFilter === 'user_checked' ? 'all' : 'user_checked'
+                        )
+                      }
+                    >
+                      <Star className="h-4 w-4" />
+                      仅精选
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="icon-sm"
+                      onClick={exportSelectedExpressionsToFile}
+                      disabled={!currentChat || list.selectedCount === 0}
+                      title="导出所选"
+                      aria-label="导出所选"
+                    >
+                      <Download className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => setIsCreateDialogOpen(true)}
+                      disabled={!scopeStatus}
+                    >
+                      <Plus className="h-4 w-4" />
+                      新增
+                    </Button>
+                    <DropdownMenu open={isMoreActionsOpen} onOpenChange={setIsMoreActionsOpen}>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="icon-sm"
+                          className="data-[state=open]:bg-accent shrink-0"
+                          title="更多"
+                          aria-label={isMoreActionsOpen ? '关闭更多操作' : '更多操作'}
+                        >
+                          <span className="relative h-3.5 w-3.5" aria-hidden="true">
+                            <MoreHorizontal
+                              className={`absolute inset-0 h-3.5 w-3.5 transition-all duration-200 ease-out ${
+                                isMoreActionsOpen
+                                  ? 'scale-0 rotate-90 opacity-0'
+                                  : 'scale-100 rotate-0 opacity-100'
+                              }`}
+                            />
+                            <X
+                              className={`absolute inset-0 h-3.5 w-3.5 transition-all duration-200 ease-out ${
+                                isMoreActionsOpen
+                                  ? 'scale-100 rotate-0 opacity-100'
+                                  : 'scale-0 -rotate-90 opacity-0'
+                              }`}
+                            />
+                          </span>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="expression-actions-menu-content">
+                        <DropdownMenuItem
+                          onSelect={() =>
+                            list.setFilter(
+                              'reviewFilter',
+                              reviewFilter === 'unchecked' ? 'all' : 'unchecked'
                             )
-                            .join('、')
-                          return {
-                            id: group.index,
-                            label: `${group.name}${group.is_global ? '（全局）' : ''}`,
-                            description: memberNames || '暂无已解析聊天',
-                            descriptionTitle: memberNames,
-                            title: memberNames,
                           }
-                        })
-                      : []
-                }
-                selectedItemId={browseMode === 'chat' ? selectedChatId : selectedGroupIndex}
-                onItemSelect={(id) => {
-                  if (browseMode === 'chat') {
-                    handleChatChange(String(id))
-                  } else if (browseMode === 'group') {
-                    handleGroupChange(Number(id))
-                  }
-                }}
-                emptyContent={
-                  <div className="text-muted-foreground px-2 py-6 text-center text-sm">
-                    {browseMode === 'group' ? '暂无共享组' : '当前显示全部表达方式'}
-                  </div>
-                }
-                collapsed={browserPanelCollapsed}
-                onCollapsedChange={setBrowserPanelCollapsed}
-                collapseLabel="折叠浏览列表"
-                expandLabel="展开浏览列表"
-                footer={
-                  <div
-                    className="flex w-full items-center justify-between gap-3"
-                    title="显示旧格式的表达方式（这些项目会在运行中被转换为新格式）"
-                  >
-                    <Label htmlFor="show-legacy-expressions" className="cursor-pointer text-sm">
-                      显示旧格式
-                    </Label>
-                    <Switch
-                      id="show-legacy-expressions"
-                      checked={showLegacyExpressions}
-                      onCheckedChange={handleLegacyExpressionsChange}
-                    />
-                  </div>
-                }
-                className="lg:flex-1"
-                listClassName="max-h-72 w-full space-y-2 p-3 sm:max-h-56 sm:space-y-1 sm:p-2 lg:max-h-none"
-              />
-            </div>
-
-            <div className="flex min-h-0 min-w-0 flex-col space-y-3">
-              {/* 批量操作工具栏 */}
-              <div
-                className={`${list.selectedCount > 0 ? 'flex' : 'hidden'} mt-4 flex-col items-start justify-between gap-3 border-t pt-4 sm:mt-3 sm:flex-row sm:items-center sm:pt-3`}
-              >
-                <div className="text-muted-foreground flex items-center gap-2 text-sm">
-                  {list.selectedCount > 0 && <span>已选择 {list.selectedCount} 个表达方式</span>}
-                </div>
-                <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
-                  {list.selectedCount > 0 && (
-                    <>
-                      <Button variant="outline" size="sm" onClick={() => list.clearSelection()}>
-                        取消选择
-                      </Button>
-                      <Button
-                        variant="default"
-                        size="sm"
-                        className="gap-1"
-                        onClick={() => batchReviewStatus(Array.from(list.selectedIds), true)}
-                      >
-                        <Star className="h-4 w-4" />
-                        批量精选
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="gap-1"
-                        onClick={() => batchReviewStatus(Array.from(list.selectedIds), false)}
-                      >
-                        <StarOff className="h-4 w-4" />
-                        取消精选
-                      </Button>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => setIsBatchDeleteDialogOpen(true)}
-                      >
-                        <Trash2 className="mr-1 h-4 w-4" />
-                        批量删除
-                      </Button>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              <div className="border-2 bg-transparent">
-                <div className="flex flex-wrap items-center gap-2 px-3 py-1.5">
-                  <div className="grid h-8 shrink-0 grid-cols-2 overflow-hidden border-2 bg-transparent">
-                    <div className="flex min-w-0 items-center justify-between gap-2 px-2.5 py-1">
-                      <div className="text-muted-foreground text-[11px]">总数量</div>
-                      <div className="text-sm leading-none font-semibold">{stats.total}</div>
-                    </div>
-                    <div className="flex min-w-0 items-center justify-between gap-2 border-l px-2.5 py-1">
-                      <div className="text-muted-foreground text-[11px]">近7天新增</div>
-                      <div className="text-sm leading-none font-semibold text-green-600">
-                        {stats.recent_7days}
-                      </div>
-                    </div>
-                  </div>
-                  {scopeStatus && (
-                    <>
-                      {renderStatusIndicator('开启学习', scopeStatus.enableLearning, false)}
-                      {renderStatusIndicator('开启使用', scopeStatus.useExpression)}
-                    </>
-                  )}
-                  <div className="relative w-full min-w-0 sm:min-w-48 sm:flex-1">
-                    <Search className="text-muted-foreground absolute top-2 left-2.5 h-4 w-4" />
+                        >
+                          <StarOff className="mr-2 h-4 w-4" />
+                          {reviewFilter === 'unchecked' ? '显示全部' : '仅显示未精选'}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => handleActiveViewChange('quick')}>
+                          <Zap className="mr-2 h-4 w-4" />
+                          精选
+                          {uncheckedCount > 0 && (
+                            <span className="ml-auto rounded-full bg-orange-500 px-1.5 py-0.5 text-xs leading-none text-white">
+                              {uncheckedCount > 99 ? '99+' : uncheckedCount}
+                            </span>
+                          )}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => handleActiveViewChange('clusters')}>
+                          <Network className="mr-2 h-4 w-4" />
+                          聚类
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => setIsLegacyImportOpen(true)}>
+                          <Upload className="mr-2 h-4 w-4" />
+                          从旧版本导入
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!currentChat}
+                          onSelect={() => importInputRef.current?.click()}
+                        >
+                          <Upload className="mr-2 h-4 w-4" />
+                          导入
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive"
+                          disabled={!currentChat}
+                          onSelect={() => setIsClearConfirmOpen(true)}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          清除
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                     <input
-                      id="search"
-                      aria-label="搜索"
-                      placeholder="搜索情境、风格或上下文..."
-                      value={list.searchInput}
-                      onChange={(e) => list.setSearchInput(e.target.value)}
-                      className="border-input focus-visible:ring-ring text-foreground placeholder:text-muted-foreground h-8 w-full border-2 bg-transparent py-1 pr-3 pl-9 text-sm focus-visible:ring-1 focus-visible:outline-none"
+                      ref={importInputRef}
+                      type="file"
+                      accept="application/json,.json"
+                      className="hidden"
+                      onChange={handleImportFileChange}
                     />
-                  </div>
-                  {scopeStatus && (
-                    <>
-                      <Button
-                        onClick={() => setIsCreateDialogOpen(true)}
-                        className="h-7 justify-center gap-1 px-2 text-xs"
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                        新增
-                      </Button>
-                      {currentChat && (
-                        <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7 justify-center gap-1 px-2 text-xs"
-                            onClick={exportSelectedExpressionsToFile}
-                            disabled={list.selectedCount === 0}
-                          >
-                            <Download className="h-3.5 w-3.5" />
-                            导出所选
-                          </Button>
-                          <DropdownMenu
-                            open={isMoreActionsOpen}
-                            onOpenChange={setIsMoreActionsOpen}
-                          >
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                variant="outline"
-                                size="icon"
-                                className="data-[state=open]:bg-accent h-7 w-7 shrink-0 transition-colors duration-200"
-                                title="更多"
-                                aria-label={isMoreActionsOpen ? '关闭更多操作' : '更多操作'}
-                              >
-                                <span className="relative h-3.5 w-3.5" aria-hidden="true">
-                                  <MoreHorizontal
-                                    className={`absolute inset-0 h-3.5 w-3.5 transition-all duration-200 ease-out ${
-                                      isMoreActionsOpen
-                                        ? 'scale-0 rotate-90 opacity-0'
-                                        : 'scale-100 rotate-0 opacity-100'
-                                    }`}
-                                  />
-                                  <X
-                                    className={`absolute inset-0 h-3.5 w-3.5 transition-all duration-200 ease-out ${
-                                      isMoreActionsOpen
-                                        ? 'scale-100 rotate-0 opacity-100'
-                                        : 'scale-0 -rotate-90 opacity-0'
-                                    }`}
-                                  />
-                                </span>
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent
-                              align="end"
-                              className="expression-actions-menu-content"
-                            >
-                              <DropdownMenuItem onSelect={() => handleActiveViewChange('quick')}>
-                                <Zap className="mr-2 h-4 w-4" />
-                                精选
-                                {uncheckedCount > 0 && (
-                                  <span className="ml-auto rounded-full bg-orange-500 px-1.5 py-0.5 text-xs leading-none text-white">
-                                    {uncheckedCount > 99 ? '99+' : uncheckedCount}
-                                  </span>
-                                )}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onSelect={() => handleActiveViewChange('clusters')}>
-                                <Network className="mr-2 h-4 w-4" />
-                                聚类
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onSelect={() => setIsLegacyImportOpen(true)}>
-                                <Upload className="mr-2 h-4 w-4" />
-                                从旧版本导入
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onSelect={() => importInputRef.current?.click()}>
-                                <Upload className="mr-2 h-4 w-4" />
-                                导入
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                className="text-destructive focus:text-destructive"
-                                onSelect={() => setIsClearConfirmOpen(true)}
-                              >
-                                <Trash2 className="mr-2 h-4 w-4" />
-                                清除
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                          <input
-                            ref={importInputRef}
-                            type="file"
-                            accept="application/json,.json"
-                            className="hidden"
-                            onChange={handleImportFileChange}
-                          />
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-
-              <ExpressionList
-                className="lg:min-h-0 lg:flex-1"
-                expressions={list.items}
-                loading={list.isPending}
-                total={list.total}
-                page={list.page}
-                pageSize={list.pageSize}
-                selectedIds={list.selectedIds}
-                chatNameMap={chatNameMap}
-                hideChatColumn={
-                  (browseMode === 'chat' && selectedChatId !== '') ||
-                  (browseMode === 'group' && selectedGroupIndex !== null)
+                  </>
                 }
-                reviewFilter={reviewFilter}
-                onReviewFilterChange={(filter) => list.setFilter('reviewFilter', filter)}
-                onEdit={handleEdit}
-                onDelete={(expression) => setDeleteConfirmExpression(expression)}
-                onToggleReviewStatus={toggleReviewStatus}
-                onToggleSelect={list.toggle}
-                onToggleSelectAll={list.toggleAll}
-                onPageChange={list.goToPage}
-                onJumpToPage={handleJumpToPage}
-                onPageSizeChange={list.setPageSize}
-              />
-            </div>
-          </div>
-        </div>
+              >
+                {/* 多选后的操作留在窗口工具栏里，不挤出第二个外框。 */}
+                {list.selectedCount > 0 && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3">
+                    <span className="text-muted-foreground mr-auto text-xs">
+                      已选择 {list.selectedCount} 个表达方式
+                    </span>
+                    <Button variant="outline" size="xs" onClick={list.clearSelection}>
+                      取消选择
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      onClick={() => batchReviewStatus(Array.from(list.selectedIds), true)}
+                    >
+                      <Star className="h-3 w-3" />
+                      批量精选
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      onClick={() => batchReviewStatus(Array.from(list.selectedIds), false)}
+                    >
+                      <StarOff className="h-3 w-3" />
+                      取消精选
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      size="xs"
+                      onClick={() => setIsBatchDeleteDialogOpen(true)}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      批量删除
+                    </Button>
+                  </div>
+                )}
+              </DataToolbar>
+            }
+            expressions={list.items}
+            loading={list.isPending}
+            total={list.total}
+            page={list.page}
+            pageSize={list.pageSize}
+            selectedIds={list.selectedIds}
+            chatNameMap={chatNameMap}
+            hideChatColumn={
+              (browseMode === 'chat' && selectedChatId !== '') ||
+              (browseMode === 'group' && selectedGroupIndex !== null)
+            }
+            reviewFilter={reviewFilter}
+            onReviewFilterChange={(filter) => list.setFilter('reviewFilter', filter)}
+            onEdit={handleEdit}
+            onDelete={(expression) => setDeleteConfirmExpression(expression)}
+            onToggleReviewStatus={toggleReviewStatus}
+            onToggleSelect={list.toggle}
+            onToggleSelectAll={list.toggleAll}
+            onPageChange={list.goToPage}
+            onPageSizeChange={list.setPageSize}
+          />
+        </DataBrowserLayout>
       </div>
 
       {activeView === 'logs' && (

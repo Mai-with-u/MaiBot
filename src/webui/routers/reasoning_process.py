@@ -26,11 +26,13 @@ from src.common.operation_timing import timed_operation
 from src.config.config import config_manager
 from src.llm_models.payload_content.context_item import CONTEXT_ITEM_SCHEMA_VERSION, ContextItem
 from src.llm_models.payload_content.context_protocol import ContextProtocolMode, validate_context_items
-from src.llm_models.request_snapshot import (
+from src.llm_models.payload_content.context_snapshot import (
     deserialize_context_item_snapshot,
+    serialize_context_item_snapshot,
+)
+from src.llm_models.request_snapshot import (
     read_request_snapshot,
     serialize_generation_attempt,
-    serialize_context_item_snapshot,
 )
 from src.maisaka.display.prompt_preview_logger import PromptPreviewLogger
 from src.services.llm_service import generate as generate_llm_response

@@ -1,23 +1,16 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import {
-  Check,
-  ChevronDown,
-  Download,
-  MoreHorizontal,
-  Plus,
-  Search,
-  Trash2,
-  Upload,
-  X,
-} from 'lucide-react'
+import { Check, ChevronDown, Download, MoreHorizontal, Plus, Trash2, Upload, X } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
 
 import { ChatScopeFilterPanel } from '@/components/chat-scope-filter-panel'
-import { MobileAddMenu } from '@/components/layout/MobileAddMenu'
-import { MOBILE_GLASS_CLASS } from '@/components/layout/mobile-glass'
-import { MobileHeaderActions } from '@/components/layout/MobileHeaderActions'
-import { AccentPanel } from '@/components/ui/accent-panel'
 import { Button } from '@/components/ui/button'
+import {
+  DataBrowserHeader,
+  DataBrowserLayout,
+  DataToolbar,
+  MetricStrip,
+} from '@/components/ui/data-browser'
+import { PageFrame } from '@/components/ui/surface'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,7 +21,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useDataList } from '@/hooks/useDataList'
 import { useToast } from '@/hooks/use-toast'
-import { formatChatDisplayName } from '@/lib/chat-display'
+import { formatChatAccountLabel, formatChatDisplayName } from '@/lib/chat-display'
 import { cn } from '@/lib/utils'
 
 import {
@@ -145,6 +138,11 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
   const filterChatId = list.filters.chatId
   const { browseMode, groupIndex } = list.filters
   const selectedIds = list.selectedIds
+
+  // 删除末页最后一项后同步实际查询页，避免分页显示与返回的数据错位。
+  if (!list.isPending && !list.isFetching && !list.isError && list.page > list.totalPages) {
+    list.goToPage(list.totalPages)
+  }
 
   // 统计数据：失败时保持占位数值，不打断页面
   const statsQuery = useQuery({
@@ -320,20 +318,6 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
     batchSetJargonMutation.mutate({ ids: Array.from(selectedIds), isJargon })
   }
 
-  // 页面跳转
-  const handleJumpToPage = (jumpToPage: string) => {
-    const targetPage = parseInt(jumpToPage)
-    if (targetPage >= 1 && targetPage <= list.totalPages) {
-      list.goToPage(targetPage)
-    } else {
-      toast({
-        title: '无效的页码',
-        description: `请输入1-${list.totalPages}之间的页码`,
-        variant: 'destructive',
-      })
-    }
-  }
-
   const handleChatChange = (chatId: string) => {
     list.updateFilters((filters) => ({
       ...filters,
@@ -406,368 +390,226 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
   const activeSummary =
     summaryOptions.find((option) => option.value === summaryFilter) ?? summaryOptions[0]
 
-  return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden p-4 pb-6 sm:p-6">
-      {/* 手机页头右上角：导出与添加 */}
-      <MobileHeaderActions>
-        <button
-          type="button"
-          aria-label="导出黑话"
-          onClick={openExportDialog}
-          data-mobile-header-icon-button="true"
-          className={cn(
-            'flex h-11 w-11 items-center justify-center rounded-full',
-            MOBILE_GLASS_CLASS
-          )}
-        >
-          <Upload className="h-5 w-5" strokeWidth={1.7} />
-        </button>
-        <MobileAddMenu
-          label="添加黑话"
-          items={[
-            { label: '新增黑话', onSelect: () => setIsCreateDialogOpen(true) },
-            { label: '导入黑话', onSelect: () => setIsImportDialogOpen(true) },
-          ]}
-        />
-      </MobileHeaderActions>
-      <div className="min-h-0 flex-1 overflow-y-auto lg:overflow-hidden">
-        <div className="pr-3 pb-2 sm:pr-4 lg:h-full">
-          <div
-            className={`grid grid-cols-1 items-stretch gap-5 transition-[grid-template-columns] duration-200 sm:gap-4 lg:h-full lg:min-h-[30rem] ${
-              scopePanelCollapsed
-                ? browserHeader
-                  ? 'lg:grid-cols-[8rem_minmax(0,1fr)]'
-                  : 'lg:grid-cols-[3.25rem_minmax(0,1fr)]'
-                : 'lg:grid-cols-[13.5rem_minmax(0,1fr)]'
-            }`}
+  const toolbar = (
+    <DataToolbar
+      search={list.searchInput}
+      onSearchChange={list.setSearchInput}
+      placeholder="搜索黑话内容..."
+      actions={
+        <>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label={`黑话分类：${activeSummary.label} ${activeSummary.count}`}
+              >
+                <span>{activeSummary.label}</span>
+                <span className={cn('tabular-nums', activeSummary.className)}>
+                  {activeSummary.count.toLocaleString()}
+                </span>
+                <ChevronDown className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-52">
+              <DropdownMenuRadioGroup value={summaryFilter} onValueChange={handleSummaryChange}>
+                {summaryOptions.map((option) => (
+                  <DropdownMenuRadioItem
+                    key={option.value}
+                    value={option.value}
+                    aria-label={`${option.label} ${option.count}`}
+                  >
+                    <span>{option.label}</span>
+                    <span className={cn('ml-auto pl-4 tabular-nums', option.className)}>
+                      {option.count.toLocaleString()}
+                    </span>
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button
+            variant="outline"
+            size="icon-sm"
+            onClick={openExportDialog}
+            aria-label="导出黑话"
+            title="导出黑话"
           >
-            <div className="hidden min-h-0 flex-col gap-3 lg:flex">
-              {browserHeader}
-              <ChatScopeFilterPanel
-                modes={[
-                  { label: '聊天', value: 'chat' },
-                  { label: '组', value: 'group' },
-                  { label: '全部', value: 'all' },
-                ]}
-                activeMode={browseMode}
-                onModeChange={handleBrowseModeChange}
-                items={
-                  browseMode === 'chat'
-                    ? chatList.map((chat) => ({
-                        id: chat.session_id,
-                        label: formatChatDisplayName(chat.chat_name, chat.account_id),
-                        title: formatChatDisplayName(chat.chat_name, chat.account_id),
-                      }))
-                    : browseMode === 'group'
-                      ? groups.map((group) => ({
+            <Download className="h-4 w-4" />
+          </Button>
+          <Button size="sm" onClick={() => setIsCreateDialogOpen(true)} aria-label="新增黑话">
+            <Plus className="h-4 w-4" />
+            新增
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon-sm" aria-label="更多操作" title="更多操作">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => setIsImportDialogOpen(true)}>
+                <Upload className="mr-2 h-4 w-4" />
+                导入黑话
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </>
+      }
+    >
+      {/* 跨页选择保留，批量操作与搜索共用窗口内部的工具栏。 */}
+      {selectedIds.size > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3">
+          <span className="text-muted-foreground mr-auto text-xs">
+            已选择 {selectedIds.size} 个
+          </span>
+          <Button variant="outline" size="xs" onClick={() => handleBatchSetJargon(true)}>
+            <Check className="h-3 w-3" />
+            标记为黑话
+          </Button>
+          <Button variant="outline" size="xs" onClick={() => handleBatchSetJargon(false)}>
+            <X className="h-3 w-3" />
+            标记为无黑话
+          </Button>
+          <Button variant="outline" size="xs" onClick={list.clearSelection}>
+            取消选择
+          </Button>
+          <Button variant="destructive" size="xs" onClick={() => setIsBatchDeleteDialogOpen(true)}>
+            <Trash2 className="h-3 w-3" />
+            批量删除
+          </Button>
+        </div>
+      )}
+    </DataToolbar>
+  )
+
+  return (
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden p-3 pb-4 sm:p-4">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto lg:overflow-hidden">
+        <DataBrowserHeader
+          title="学习"
+          navigation={browserHeader}
+          summary={
+            <MetricStrip
+              items={[
+                { label: '总数量', value: stats.total.toLocaleString() },
+                {
+                  label: '已确认黑话',
+                  value: stats.confirmed_jargon.toLocaleString(),
+                  positive: true,
+                },
+                { label: '推断完成', value: stats.complete_count.toLocaleString() },
+              ]}
+            />
+          }
+        />
+        <DataBrowserLayout
+          sidebar={
+            <ChatScopeFilterPanel
+              density="compact"
+              title="聊天范围"
+              titleMeta={
+                browseMode === 'chat'
+                  ? `${chatList.length} 个`
+                  : browseMode === 'group'
+                    ? `${groups.length} 组`
+                    : undefined
+              }
+              modes={[
+                { label: '聊天', value: 'chat' },
+                { label: '组', value: 'group' },
+                { label: '全部', value: 'all' },
+              ]}
+              activeMode={browseMode}
+              onModeChange={handleBrowseModeChange}
+              items={
+                browseMode === 'chat'
+                  ? chatList.map((chat) => ({
+                      id: chat.session_id,
+                      label: chat.chat_name,
+                      meta: chat.jargon_count?.toLocaleString(),
+                      description: formatChatAccountLabel(chat.account_id),
+                      descriptionTitle: formatChatAccountLabel(chat.account_id),
+                      title: formatChatDisplayName(chat.chat_name, chat.account_id),
+                    }))
+                  : browseMode === 'group'
+                    ? groups.map((group) => {
+                        const memberNames = group.members
+                          .map((chat) => formatChatDisplayName(chat.chat_name, chat.account_id))
+                          .join('、')
+                        return {
                           id: group.index,
                           label: `${group.name}${group.is_global ? '（全局）' : ''}`,
-                          description:
-                            group.members
-                              .map((chat) => formatChatDisplayName(chat.chat_name, chat.account_id))
-                              .join('、') || '暂无已解析聊天',
-                          title: group.members
-                            .map((chat) => formatChatDisplayName(chat.chat_name, chat.account_id))
-                            .join('、'),
-                        }))
-                      : []
-                }
-                selectedItemId={browseMode === 'chat' ? filterChatId : groupIndex}
-                onItemSelect={(id) => {
-                  if (browseMode === 'group') {
-                    list.setFilter('groupIndex', Number(id))
-                  } else {
-                    handleChatChange(String(id))
-                  }
-                }}
-                emptyContent={
-                  <div className="text-muted-foreground px-2 py-6 text-center text-sm">
-                    {browseMode === 'all'
-                      ? '当前显示全部黑话'
-                      : browseMode === 'group'
-                        ? groupsQuery.isError
-                          ? '共享组加载失败'
-                          : groupsQuery.isPending
-                            ? '正在加载共享组...'
-                            : '暂无共享组'
-                        : '暂无聊天'}
-                  </div>
-                }
-                collapsed={scopePanelCollapsed}
-                onCollapsedChange={setScopePanelCollapsed}
-                collapseLabel="折叠范围列表"
-                expandLabel="展开范围列表"
-                className="flex-1"
-                listClassName="w-full space-y-2 p-3 sm:space-y-1 sm:p-2"
-              />
-            </div>
-            <div className="flex min-h-0 flex-col gap-3">
-              <div className="lg:hidden">{browserHeader}</div>
-              {/* 搜索和筛选 */}
-              <div className="shrink-0 border-2 bg-transparent">
-                <div className="px-3 py-1.5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="hidden shrink-0 lg:block">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="outline"
-                            className="h-8 justify-between gap-3 bg-transparent px-2.5 text-xs"
-                            aria-label={`黑话分类：${activeSummary.label} ${activeSummary.count}`}
-                          >
-                            <span>{activeSummary.label}</span>
-                            <span className="ml-auto flex items-center gap-2">
-                              <span className={`font-semibold ${activeSummary.className}`}>
-                                {activeSummary.count}
-                              </span>
-                              <ChevronDown className="h-3.5 w-3.5" />
-                            </span>
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="min-w-52">
-                          <DropdownMenuRadioGroup
-                            value={summaryFilter}
-                            onValueChange={handleSummaryChange}
-                          >
-                            {summaryOptions.map((option) => (
-                              <DropdownMenuRadioItem
-                                key={option.value}
-                                value={option.value}
-                                aria-label={`${option.label} ${option.count}`}
-                              >
-                                <span>{option.label}</span>
-                                <span className={`ml-auto pl-4 font-semibold ${option.className}`}>
-                                  {option.count}
-                                </span>
-                              </DropdownMenuRadioItem>
-                            ))}
-                          </DropdownMenuRadioGroup>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-
-                    <div className="w-full min-w-0 sm:min-w-48 sm:flex-1">
-                      <div className="relative">
-                        <Search className="text-muted-foreground absolute top-2 left-2.5 h-4 w-4" />
-                        <input
-                          id="search"
-                          aria-label="搜索黑话"
-                          placeholder="搜索黑话内容..."
-                          value={list.searchInput}
-                          onChange={(e) => list.setSearchInput(e.target.value)}
-                          className="border-input focus-visible:ring-ring text-foreground placeholder:text-muted-foreground h-8 w-full border-2 bg-transparent py-1 pr-3 pl-9 text-sm focus-visible:ring-1 focus-visible:outline-none"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 max-lg:hidden">
-                      <Button
-                        onClick={() => setIsCreateDialogOpen(true)}
-                        className="h-7 gap-1 px-2 text-xs"
-                        aria-label="新增黑话"
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                        新增
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={openExportDialog}
-                        className="h-7 gap-1 px-2 text-xs"
-                        aria-label="导出黑话"
-                      >
-                        <Upload className="h-3.5 w-3.5" />
-                        导出
-                      </Button>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            className="h-7 w-7"
-                            aria-label="更多操作"
-                            title="更多操作"
-                          >
-                            <MoreHorizontal className="h-3.5 w-3.5" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onSelect={() => setIsImportDialogOpen(true)}>
-                            <Download className="mr-2 h-4 w-4" />
-                            导入黑话
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </div>
-
-                  {/* 批量操作工具栏 */}
-                  {selectedIds.size > 0 && (
-                    <div className="mt-2 flex flex-wrap items-center gap-2 border-t pt-2">
-                      <span className="text-muted-foreground text-sm">
-                        已选择 {selectedIds.size} 个
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleBatchSetJargon(true)}
-                      >
-                        <Check className="mr-1 h-4 w-4" />
-                        标记为黑话
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleBatchSetJargon(false)}
-                      >
-                        <X className="mr-1 h-4 w-4" />
-                        标记为无黑话
-                      </Button>
-                      <Button variant="outline" size="sm" onClick={() => list.clearSelection()}>
-                        取消选择
-                      </Button>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => setIsBatchDeleteDialogOpen(true)}
-                      >
-                        <Trash2 className="mr-1 h-4 w-4" />
-                        批量删除
-                      </Button>
-                    </div>
-                  )}
+                          description: memberNames || '暂无已解析聊天',
+                          descriptionTitle: memberNames,
+                          title: memberNames,
+                        }
+                      })
+                    : []
+              }
+              selectedItemId={browseMode === 'chat' ? filterChatId : groupIndex}
+              onItemSelect={(id) => {
+                if (browseMode === 'group') list.setFilter('groupIndex', Number(id))
+                else if (browseMode === 'chat') handleChatChange(String(id))
+              }}
+              emptyContent={
+                <div className="text-muted-foreground px-2 py-6 text-center text-sm">
+                  {browseMode === 'all'
+                    ? '当前显示全部黑话'
+                    : browseMode === 'group'
+                      ? groupsQuery.isError
+                        ? '共享组加载失败'
+                        : groupsQuery.isPending
+                          ? '正在加载共享组...'
+                          : '暂无共享组'
+                      : chatListQuery.isError
+                        ? '聊天列表加载失败'
+                        : chatListQuery.isPending
+                          ? '正在加载聊天...'
+                          : '暂无聊天'}
                 </div>
+              }
+              collapsed={scopePanelCollapsed}
+              onCollapsedChange={setScopePanelCollapsed}
+              collapseLabel="折叠范围列表"
+              expandLabel="展开范围列表"
+              listClassName="max-h-64 lg:max-h-none"
+            />
+          }
+        >
+          {list.isError ? (
+            <PageFrame className="flex min-h-0 flex-col">
+              {toolbar}
+              <div className="flex min-h-48 flex-1 flex-col items-center justify-center gap-2 p-8">
+                <p className="text-destructive text-sm">{list.error?.message}</p>
+                <Button variant="outline" size="sm" onClick={() => list.refetch()}>
+                  重试
+                </Button>
               </div>
-
-              {/* 手机：分类改为可点按的统计卡，聊天范围改为横滑胶囊 */}
-              <div
-                data-mobile-jargon-summary="true"
-                className="bg-card grid grid-cols-4 rounded-3xl py-3 lg:hidden"
-              >
-                {summaryOptions.slice(0, 4).map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    aria-pressed={summaryFilter === option.value}
-                    onClick={() => handleSummaryChange(option.value)}
-                    className={cn(
-                      'flex min-w-0 flex-col items-center gap-0.5 px-1',
-                      summaryFilter !== option.value && 'opacity-60'
-                    )}
-                  >
-                    <b className="text-xl font-semibold tabular-nums">{option.count}</b>
-                    <span className="text-muted-foreground truncate text-xs">{option.label}</span>
-                  </button>
-                ))}
-              </div>
-              <div className="flex gap-2 lg:hidden" role="group" aria-label="浏览范围">
-                {(
-                  [
-                    { value: 'chat', label: '聊天' },
-                    { value: 'group', label: '组' },
-                    { value: 'all', label: '全部' },
-                  ] as const
-                ).map((mode) => (
-                  <Button
-                    key={mode.value}
-                    variant={browseMode === mode.value ? 'default' : 'outline'}
-                    size="sm"
-                    aria-pressed={browseMode === mode.value}
-                    onClick={() => handleBrowseModeChange(mode.value)}
-                  >
-                    {mode.label}
-                  </Button>
-                ))}
-              </div>
-              {browseMode === 'group' && (
-                <div className="flex gap-2 overflow-x-auto lg:hidden">
-                  {groups.map((group) => (
-                    <Button
-                      key={group.index}
-                      variant={groupIndex === group.index ? 'default' : 'outline'}
-                      size="sm"
-                      onClick={() => list.setFilter('groupIndex', group.index)}
-                    >
-                      {group.name}
-                    </Button>
-                  ))}
-                  {groupsQuery.isError ? (
-                    <span>共享组加载失败</span>
-                  ) : (
-                    !groupsQuery.isPending && groups.length === 0 && <span>暂无共享组</span>
-                  )}
-                </div>
-              )}
-              <nav
-                aria-label="聊天范围"
-                data-mobile-pill-nav="true"
-                className={cn(
-                  '-mx-4 flex gap-2 overflow-x-auto px-4 [scrollbar-width:none] lg:hidden',
-                  browseMode !== 'chat' && 'hidden'
-                )}
-              >
-                {[
-                  { id: 'all', label: '全部聊天' },
-                  ...chatList.map((chat) => ({
-                    id: chat.session_id,
-                    label: formatChatDisplayName(chat.chat_name, chat.account_id),
-                  })),
-                ].map((item) => {
-                  const active = filterChatId === item.id
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      aria-pressed={active}
-                      data-active={active ? 'true' : 'false'}
-                      onClick={() => handleChatChange(String(item.id))}
-                      className={cn(
-                        'h-9 shrink-0 rounded-full px-4 text-[15px]',
-                        active ? 'bg-foreground text-background font-semibold' : 'bg-card'
-                      )}
-                    >
-                      {item.label}
-                    </button>
-                  )
-                })}
-              </nav>
-
-              {/* 黑话列表 */}
-              <div className="min-h-0 lg:flex-1">
-                {list.isError ? (
-                  <AccentPanel className="bg-card h-full min-h-[12rem] border">
-                    <div className="flex h-full min-h-[12rem] flex-col items-center justify-center gap-2 py-8">
-                      <p className="text-destructive text-sm">{list.error?.message}</p>
-                      <Button variant="outline" size="sm" onClick={() => list.refetch()}>
-                        重试
-                      </Button>
-                    </div>
-                  </AccentPanel>
-                ) : (
-                  <JargonList
-                    jargons={jargons}
-                    loading={loading}
-                    total={total}
-                    page={page}
-                    pageSize={pageSize}
-                    selectedIds={selectedIds}
-                    hideChatColumn={
-                      summaryFilter === 'global_count' ||
-                      (browseMode === 'chat' && filterChatId !== 'all')
-                    }
-                    className="lg:h-full"
-                    onEdit={handleEdit}
-                    onDelete={(jargon) => setDeleteConfirmJargon(jargon)}
-                    onToggleSelect={list.toggle}
-                    onToggleSelectAll={list.toggleAll}
-                    onPageChange={list.goToPage}
-                    onJumpToPage={handleJumpToPage}
-                    onPageSizeChange={list.setPageSize}
-                  />
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
+            </PageFrame>
+          ) : (
+            <JargonList
+              className="min-h-0"
+              toolbar={toolbar}
+              jargons={jargons}
+              loading={loading}
+              total={total}
+              page={page}
+              pageSize={pageSize}
+              selectedIds={selectedIds}
+              hideChatColumn={
+                summaryFilter === 'global_count' ||
+                (browseMode === 'chat' && filterChatId !== 'all')
+              }
+              onEdit={handleEdit}
+              onDelete={(jargon) => setDeleteConfirmJargon(jargon)}
+              onToggleSelect={list.toggle}
+              onToggleSelectAll={list.toggleAll}
+              onPageChange={list.goToPage}
+              onPageSizeChange={list.setPageSize}
+            />
+          )}
+        </DataBrowserLayout>
       </div>
 
       {/* 详情对话框 */}

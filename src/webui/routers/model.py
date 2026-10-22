@@ -4,8 +4,9 @@
 提供从各个 AI 厂商 API 获取可用模型列表的代理接口
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
+import asyncio
 import io
 import math
 import os
@@ -23,15 +24,16 @@ from src.config.config import CONFIG_DIR
 from src.config.model_configs import APIProvider, TaskConfig
 from src.llm_models.exceptions import RespNotOkException
 from src.llm_models.model_client import ensure_client_type_loaded
-from src.llm_models.model_client.base_client import client_registry
+from src.llm_models.model_client.base_client import BaseClient, client_registry
 from src.llm_models.openai_compat import build_openai_compatible_client_config, normalize_openai_base_url
-from src.llm_models.payload_content.context_item import ContextItem, ContextItemBuilder
+from src.llm_models.payload_content.context_item import ContextItem, ContextItemBuilder, RoleType
 from src.llm_models.payload_content.tool_option import ToolCall
 from src.llm_models.request_snapshot import format_request_snapshot_log_info
 from src.llm_models.utils_model import LLMOrchestrator, LLMResponseResult
 from src.webui.dependencies import require_auth
-from src.webui.utils.http_client import get_shared_ssl_context
-from src.webui.utils.network_security import validate_public_url
+from src.common.http_client import get_shared_ssl_context_async
+from src.common.network_security import validate_public_url
+from src.common.prompt_i18n import load_prompt
 
 logger = get_logger("webui")
 
@@ -104,7 +106,7 @@ class ModelTestResponse(BaseModel):
     completion_tokens: int = 0
     total_tokens: int = 0
     test_kind: str = "chat"
-    """测试类型：`chat` / `text_embedding` / `image_embedding`。"""
+    """测试类型：`chat` / `replyer` / `text_embedding` / `image_embedding`。"""
     embedding_dimension: int | None = None
     """嵌入向量维度；仅嵌入测试返回。"""
     embedding_pairs: List[ModelTestEmbeddingPair] = Field(default_factory=list)
@@ -114,7 +116,7 @@ class ModelTestResponse(BaseModel):
 class _SingleModelTestOrchestrator(LLMOrchestrator):
     """复用 LLM 调度器，但将 WebUI 测试请求限制到单个模型。"""
 
-    def __init__(self, model_name: str) -> None:
+    def __init__(self, model_name: str, *, replyer_test: bool = False) -> None:
         self._model_test_task_config = TaskConfig(
             model_list=[model_name],
             max_tokens=512,
@@ -122,7 +124,10 @@ class _SingleModelTestOrchestrator(LLMOrchestrator):
             selection_strategy="sequential",
             hard_timeout=90.0,
         )
-        super().__init__(task_name="webui_model_test", request_type="webui_model_test")
+        super().__init__(
+            task_name="replyer" if replyer_test else "webui_model_test",
+            request_type="webui_model_test",
+        )
 
     def _get_task_config_or_raise(self) -> TaskConfig:
         return self._model_test_task_config
@@ -158,7 +163,7 @@ def get_registered_client_types():
 async def test_model_capability(request: ModelTestRequest):
     """测试单个模型的文本、tool call 与可选视觉能力。"""
     model_name = request.model_name.strip()
-    model_config = _get_model_config(model_name)
+    model_config = await asyncio.to_thread(_get_model_config, model_name)
     if model_config is None:
         raise HTTPException(status_code=404, detail=f"未找到模型: {model_name}")
 
@@ -171,15 +176,25 @@ async def test_model_capability(request: ModelTestRequest):
     if model_type != "llm":
         raise ValueError(f"模型 {model_name} 的 model_type 无效: {model_type}")
 
-    visual_enabled = bool(model_config.get("visual", False))
+    replyer_test = _is_replyer_test_model(model_config)
+    visual_enabled = not replyer_test and bool(model_config.get("visual", False))
     start_time = time.time()
     try:
-        orchestrator = _SingleModelTestOrchestrator(model_name=model_name)
+        orchestrator = (
+            _SingleModelTestOrchestrator(model_name=model_name, replyer_test=True)
+            if replyer_test
+            else _SingleModelTestOrchestrator(model_name=model_name)
+        )
+        context_factory = (
+            await asyncio.to_thread(_build_replyer_test_context_factory)
+            if replyer_test
+            else _build_model_test_context_factory(visual_enabled)
+        )
         result = await orchestrator.generate_response_with_context_async(
-            context_factory=_build_model_test_context_factory(visual_enabled),
+            context_factory=context_factory,
             max_tokens=512,
             model_name=model_name,
-            tools=_build_model_test_tools(),
+            tools=None if replyer_test else _build_model_test_tools(),
         )
         latency_ms = round((time.time() - start_time) * 1000, 2)
         return _build_model_test_response(
@@ -187,6 +202,7 @@ async def test_model_capability(request: ModelTestRequest):
             visual_tested=visual_enabled,
             latency_ms=latency_ms,
             result=result,
+            test_kind="replyer" if replyer_test else "chat",
         )
     except HTTPException:
         raise
@@ -198,6 +214,7 @@ async def test_model_capability(request: ModelTestRequest):
             visual_tested=visual_enabled,
             latency_ms=latency_ms,
             error=_format_model_test_error(e),
+            test_kind="replyer" if replyer_test else "chat",
         )
 
 
@@ -324,7 +341,7 @@ async def _fetch_models_from_provider(
 
     try:
         # 复用共享 SSLContext，避免每次获取模型列表都重新加载整套 CA 证书（实测约 5s/次）
-        async with httpx.AsyncClient(verify=get_shared_ssl_context(), timeout=30.0) as client:
+        async with httpx.AsyncClient(verify=await get_shared_ssl_context_async(), timeout=30.0) as client:
             response = await client.get(url, headers=headers, params=params)
             response.raise_for_status()
             data = response.json()
@@ -560,6 +577,39 @@ def _format_model_test_error(error: Exception) -> str:
     return "\n".join(lines)
 
 
+def _is_replyer_test_model(model_config: Dict[str, Any]) -> bool:
+    """按模型标识识别专用回复模型，允许修改显示名称或提供商名称。"""
+    identifier = model_config["model_identifier"].lower().replace("-", "_")
+    return identifier in {"v2p1_raw", "v2p1_contract"} or "mai_replier" in identifier
+
+
+def _build_replyer_test_context_factory() -> Callable[[BaseClient], List[ContextItem]]:
+    """用真实复古回复模板模拟一轮群聊，不测试工具调用或视觉能力。"""
+    prompt = load_prompt(
+        "retro_replyer",
+        extra_info_block="",
+        expression_habits_block="",
+        bot_name="麦麦",
+        time_block="现在是周末下午。",
+        dialogue_prompt="小明：终于忙完了，准备出去散散步\n小红：今天阳光不错，正好出去透透气",
+        reply_target_block="你准备参与这段聊天",
+        planner_reasoning="跟着大家聊聊周末散步，轻松自然地回应一句。",
+        keywords_reaction_prompt="",
+        reply_style="用日常口语简短回复。",
+    )
+    items = [
+        ContextItemBuilder().set_role(RoleType.System).add_text_content(
+            "你叫麦麦，是一个说话自然、随和的群友。"
+        ).build(),
+        ContextItemBuilder().set_role(RoleType.User).add_text_content(prompt).build(),
+    ]
+
+    def context_factory(client: BaseClient) -> List[ContextItem]:
+        return items
+
+    return context_factory
+
+
 def _build_model_test_prompt(visual_enabled: bool) -> str:
     """构造单模型测试提示词。"""
     image_instruction = (
@@ -644,16 +694,21 @@ def _build_model_test_response(
     latency_ms: float | None,
     result: LLMResponseResult | None = None,
     error: str | None = None,
+    test_kind: str = "chat",
 ) -> ModelTestResponse:
     """根据 LLM 调用结果构造模型测试响应。"""
     tool_calls = _serialize_model_test_tool_calls(result.tool_calls if result is not None else None)
     tool_call_ok = any(tool_call.name == MODEL_TEST_TOOL_NAME for tool_call in tool_calls)
-    success = result is not None and tool_call_ok and not error
-    if result is not None and not tool_call_ok and not error:
+    replyer_ok = result is not None and bool(result.response.strip())
+    success = result is not None and (replyer_ok if test_kind == "replyer" else tool_call_ok) and not error
+    if test_kind == "replyer" and result is not None and not replyer_ok and not error:
+        error = "模拟 replyer 任务未返回回复正文"
+    elif test_kind != "replyer" and result is not None and not tool_call_ok and not error:
         error = f"模型未按要求调用测试工具 {MODEL_TEST_TOOL_NAME}"
 
     return ModelTestResponse(
         success=success,
+        test_kind=test_kind,
         model_name=result.model_name if result is not None and result.model_name else model_name,
         visual_tested=visual_tested,
         tool_call_ok=tool_call_ok,
@@ -796,7 +851,7 @@ async def _test_provider_connection(
         start_time = time.time()
         # 复用共享 SSLContext，避免连接测试新建客户端时重新加载整套 CA 证书（实测约 5s/次）
         async with httpx.AsyncClient(
-            verify=get_shared_ssl_context(), timeout=10.0, follow_redirects=False
+            verify=await get_shared_ssl_context_async(), timeout=10.0, follow_redirects=False
         ) as client:
             # 尝试 GET 请求 base_url（不需要 API Key）
             response = await client.get(base_url)
@@ -825,7 +880,7 @@ async def _test_provider_connection(
             start_time = time.time()
             # 复用共享 SSLContext，避免校验 API Key 新建客户端时重新加载整套 CA 证书（实测约 5s/次）
             async with httpx.AsyncClient(
-                verify=get_shared_ssl_context(), timeout=15.0, follow_redirects=False
+                verify=await get_shared_ssl_context_async(), timeout=15.0, follow_redirects=False
             ) as client:
                 headers = {"Content-Type": "application/json"}
                 params = {}
@@ -879,13 +934,15 @@ async def test_provider_connection_by_name(
     """
     通过提供商名称测试连接（从配置文件读取信息）
     """
-    # 读取配置文件
-    model_config_path = os.path.join(CONFIG_DIR, "model_config.toml")
-    if not os.path.exists(model_config_path):
-        raise HTTPException(status_code=404, detail="配置文件不存在")
+    # 配置文件读取交给线程，避免阻塞 WebUI 事件循环。
+    def read_config() -> Dict[str, Any]:
+        model_config_path = os.path.join(CONFIG_DIR, "model_config.toml")
+        if not os.path.exists(model_config_path):
+            raise HTTPException(status_code=404, detail="配置文件不存在")
+        with open(model_config_path, "r", encoding="utf-8") as f:
+            return dict(tomlkit.load(f))
 
-    with open(model_config_path, "r", encoding="utf-8") as f:
-        config = tomlkit.load(f)
+    config = await asyncio.to_thread(read_config)
 
     # 查找提供商
     providers = config.get("api_providers", [])
@@ -900,6 +957,26 @@ async def test_provider_connection_by_name(
 
     if not base_url:
         raise HTTPException(status_code=400, detail="提供商配置缺少 base_url")
+
+    if _normalize_url(base_url).lower() == "https://openzako.ai/v1":
+        # 专用回复服务通过实际生成验证连接，不依赖 /models 或工具调用能力。
+        candidates = [
+            model for model in config.get("models", [])
+            if model.get("api_provider") == provider_name
+            and model.get("model_type") == "llm"
+            and _is_replyer_test_model(model)
+        ]
+        if not candidates:
+            raise HTTPException(status_code=400, detail="请先为麦麦特调回复添加一个回复模型")
+        model = next((item for item in candidates if item["model_identifier"] == "mai_replier"), candidates[0])
+        result = await test_model_capability(ModelTestRequest(model_name=model["name"]))
+        return {
+            "network_ok": result.success,
+            "api_key_valid": result.success,
+            "latency_ms": result.latency_ms,
+            "error": result.error,
+            "http_status": None,
+        }
 
     # 调用测试接口
     return await _test_provider_connection(

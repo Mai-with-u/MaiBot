@@ -11,6 +11,8 @@ const badgeVariants = cva(
         default: 'border-transparent bg-primary text-primary-foreground shadow hover:bg-primary/80',
         secondary:
           'border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80',
+        success:
+          'border-green-200 bg-green-100 text-green-800 dark:border-green-800 dark:bg-green-950 dark:text-green-200',
         destructive:
           'border-transparent bg-destructive text-destructive-foreground shadow hover:bg-destructive/80',
         outline: 'text-foreground',
@@ -29,6 +31,7 @@ function Badge({ className, variant, ...props }: BadgeProps) {
   return (
     <div
       data-dashboard-badge="true"
+      data-badge-variant={variant ?? 'default'}
       className={cn(badgeVariants({ variant }), className)}
       {...props}
     />

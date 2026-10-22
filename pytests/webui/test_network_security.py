@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from src.webui.utils import network_security
+from src.common import network_security
 
 
 def _install_webui_url_check_config(monkeypatch: pytest.MonkeyPatch, enabled: bool) -> None:
@@ -84,3 +84,38 @@ def test_validate_public_url_still_blocks_link_local_for_configured_provider(
             "http://metadata.internal/latest",
             allow_configured_private_network=True,
         )
+
+
+@pytest.mark.parametrize("allow_fake_ip", [False, True])
+def test_non_public_error_preserves_dns_results(monkeypatch: pytest.MonkeyPatch, allow_fake_ip: bool) -> None:
+    addresses = {"169.254.1.44", "114.117.137.126"}
+    monkeypatch.setattr(
+        network_security, "_resolve_ip_addresses",
+        lambda hostname, port: {ipaddress.ip_address(address) for address in addresses},
+    )
+
+    with pytest.raises(network_security.NonPublicAddressError) as error:
+        network_security.validate_public_url(
+            "https://cnb.cool/Mai-with-u/plugin.git", require_public_network=True, allow_fake_ip=allow_fake_ip,
+        )
+
+    assert error.value.hostname == "cnb.cool"
+    assert error.value.address == "169.254.1.44"
+    assert error.value.resolved_addresses == addresses
+
+
+def test_download_source_error_explains_dns_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.webui.services import git_mirror_service
+
+    def reject_url(url: str, **kwargs: object) -> str:
+        raise network_security.NonPublicAddressError("cnb.cool", "169.254.1.44", {"169.254.1.44"})
+
+    monkeypatch.setattr(git_mirror_service, "validate_public_url", reject_url)
+
+    with pytest.raises(ValueError) as error:
+        git_mirror_service._validate_custom_outbound_url("https://cnb.cool/Mai-with-u/plugin.git", "CNB 镜像")
+
+    message = str(error.value)
+    for detail in ("CNB 镜像", "cnb.cool", "169.254.1.44", "已阻止下载", "DNS", "下载源设置"):
+        assert detail in message
+    assert isinstance(error.value.__cause__, network_security.NonPublicAddressError)

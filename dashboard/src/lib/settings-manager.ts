@@ -17,6 +17,7 @@ export const STORAGE_KEYS = {
 
   // 调试设置
   ALWAYS_SHOW_UPDATE_NOTICE: 'maibot-always-show-update-notice',
+  ALWAYS_SHOW_UPDATE_BUTTON: 'maibot-always-show-update-button',
 
   // 性能与存储设置
   LOG_CACHE_SIZE: 'maibot-log-cache-size',
@@ -60,6 +61,7 @@ export const DEFAULT_SETTINGS = {
 
   // 调试
   alwaysShowUpdateNotice: false,
+  alwaysShowUpdateButton: false,
 
   // 性能与存储
   logCacheSize: 1000,
@@ -134,6 +136,7 @@ export function getAllSettings(): Settings {
     enableAnimations: getSetting('enableAnimations'),
     enableAvatarFetch: getSetting('enableAvatarFetch'),
     alwaysShowUpdateNotice: getSetting('alwaysShowUpdateNotice'),
+    alwaysShowUpdateButton: getSetting('alwaysShowUpdateButton'),
     logCacheSize: getSetting('logCacheSize'),
     logAutoScroll: getSetting('logAutoScroll'),
     logLevelFilter: getSetting('logLevelFilter'),
@@ -344,6 +347,7 @@ function getStorageKey(settingKey: keyof Settings): string {
     enableAnimations: STORAGE_KEYS.ENABLE_ANIMATIONS,
     enableAvatarFetch: STORAGE_KEYS.ENABLE_AVATAR_FETCH,
     alwaysShowUpdateNotice: STORAGE_KEYS.ALWAYS_SHOW_UPDATE_NOTICE,
+    alwaysShowUpdateButton: STORAGE_KEYS.ALWAYS_SHOW_UPDATE_BUTTON,
     logCacheSize: STORAGE_KEYS.LOG_CACHE_SIZE,
     logAutoScroll: STORAGE_KEYS.LOG_AUTO_SCROLL,
     logLevelFilter: STORAGE_KEYS.LOG_LEVEL_FILTER,

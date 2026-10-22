@@ -86,7 +86,6 @@
       "mcpSettings": "MCP 설정",
       "dataTransfer": "데이터 관리",
       "statistics": "상세 통계 데이터",
-      "replyEffects": "답변 효과",
       "logViewer": "로그 뷰어",
       "reasoningProcess": "추론 과정",
       "maisakaMonitor": "MaiSaka 채팅 모니터",
@@ -162,6 +161,14 @@
       "messages": "메시지 수"
     },
     "distributions": {
+      "metric": "통계 지표",
+      "costs": "비용",
+      "tokens": "Token",
+      "ownerTokens": "호출 출처별 Token 분포",
+      "modelTokens": "모델별 Token 분포",
+      "moduleTokens": "모듈별 Token 분포",
+      "requestTypeTokens": "요청 유형별 Token 분포",
+      "chatTokens": "채팅별 Token 분포",
       "ownerCosts": "호출 소스 비용 분포",
       "modelCosts": "모델 비용 분포",
       "moduleCosts": "모듈 비용 분포",
@@ -365,6 +372,7 @@
     "title": "WebUI 설정",
     "description": "앱 환경 설정 관리",
     "tabs": {
+      "general": "일반",
       "appearance": "외관",
       "security": "보안",
       "other": "기타",
@@ -599,11 +607,18 @@
       "resetAllSettingsBtn": "모든 설정을 기본값으로 재설정",
       "confirmResetAll": "모든 설정 재설정 확인",
       "confirmResetAllDesc": "테마, 색상, 애니메이션 등 모든 인터페이스 설정을 기본값으로 복원합니다. 로그인 상태에는 영향이 없습니다. 계속하시겠습니까?",
-      "configWizardDesc": "초기 설정 마법사를 다시 실행하여 시스템 기본 설정을 재구성할 수 있습니다.",
+      "configWizardDesc": "초기 설정을 다시 진행합니다. 로그인 비밀번호도 초기화하여 비밀번호 설정부터 시작할 수 있습니다.",
       "rerunSetup": "초기 설정 다시 실행",
+      "resetSetupPassword": "로그인 비밀번호도 초기화",
+      "resetSetupPasswordDesc": "기존 비밀번호는 즉시 무효화되며 다른 브라우저에서는 다시 로그인해야 합니다. 현재 브라우저는 로그인 상태로 비밀번호 설정 화면에 진입합니다. 새 비밀번호를 저장하기 전에는 임시 인증 정보를 사용하며 재시작 시 변경됩니다.",
+      "setupPasswordResetSuccess": "비밀번호가 초기화되었습니다. 비밀번호 설정으로 이동합니다.",
+      "setupResetSuccess": "초기 설정이 초기화되었습니다. 설정 마법사로 이동합니다.",
+      "setupResetFailed": "설정을 초기화할 수 없습니다. 다시 시도하세요.",
       "confirmRerunSetup": "재구성 확인",
       "confirmRerunSetupDesc": "초기 설정 마법사로 돌아갑니다. 시스템 기본 설정을 재구성할 수 있습니다. 계속하시겠습니까?",
       "devToolsDesc": "아래 기능은 개발 및 디버깅 전용입니다. 페이지 충돌이나 비정상 동작을 유발할 수 있습니다.",
+      "alwaysShowUpdateButton": "업데이트 버튼 항상 표시",
+      "alwaysShowUpdateButtonDesc": "업데이트 감지 여부와 관계없이 오른쪽 상단에 메인 프로그램 업데이트 버튼을 항상 표시합니다. 즉시 적용됩니다.",
       "alwaysShowUpdateNotice": "업데이트 로그 항상 표시",
       "alwaysShowUpdateNoticeDesc": "활성화하면 WebUI에 들어갈 때마다 업데이트 내용과 플러그인 호환성 알림이 차례로 표시됩니다. 새로고침 후 적용됩니다.",
       "triggerError": "테스트 오류 발생",
@@ -775,7 +790,8 @@
       },
       "customToken": {
         "title": "로그인 Token 설정",
-        "description": "이번 실행에서 생성된 랜덤 Token을 고정 사용자 지정 Token으로 바꿉니다"
+        "description": "설정하지 않으면 시작할 때마다 임의의 비밀번호가 생성됩니다.",
+        "label": "로그인 비밀번호"
       },
       "botBasic": {
         "title": "Bot 기본 설정",
@@ -837,7 +853,7 @@
       "next": "다음",
       "skip": "마법사 건너뛰기",
       "complete": "설정 완료",
-      "saveToken": "Token 저장",
+      "saveToken": "저장 후 계속",
       "saving": "저장 중...",
       "completing": "완료 중..."
     },
@@ -850,6 +866,7 @@
     "defaults": {
       "personality": {
         "personality": "여자 대학생이며 현재 2학년이고, Tieba 같은 커뮤니티를 자주 봅니다.",
+        "behaviorStyle": "일상 대화에 자연스럽게 참여합니다. 억지로 화제를 만들지 않고 맥락을 이해한 뒤 답변하거나 조용히 있을지 결정합니다.",
         "replyStyle": "답변은 담백하고 짧게 하며 중국어로 말하세요. 자신의 학과 배경을 일부러 강조하지 마세요. Tieba, Zhihu, Weibo의 답변 스타일을 참고할 수 있습니다.",
         "multipleReplyStyles": {
           "plain": "말투는 담백하지만 약간 냉소적이고, 매우 짧고 구어체입니다. Tieba 와 Weibo 답변 스타일을 참고할 수 있습니다.",
@@ -867,11 +884,19 @@
         "noticeTitle": "현재 실행 시 생성된 랜덤 Token을 사용 중입니다",
         "noticeDescription": "랜덤 Token은 다음 실행 때 변경됩니다. 고정 사용자 지정 Token을 설정하고 앞으로 WebUI 로그인에 사용하세요.",
         "label": "사용자 지정 Token *",
-        "placeholder": "안전하게 보관할 수 있는 Token을 입력하세요",
+        "placeholder": "새 비밀번호 입력",
         "description": "저장하면 현재 로그인이 만료되며 새 Token으로 다시 로그인해야 합니다.",
         "requirements": "Token 요구 사항",
-        "show": "Token 표시",
-        "hide": "Token 숨기기"
+        "show": "표시",
+        "hide": "숨기기",
+        "met": "충족",
+        "unmet": "미충족",
+        "rules": {
+          "minLength": "10자 이상",
+          "hasUppercase": "대문자",
+          "hasLowercase": "소문자",
+          "hasSpecialChar": "특수 문자"
+        }
       },
       "botBasic": {
         "platform": {
@@ -897,7 +922,7 @@
           "description": "이 플랫폼에서 봇을 식별하는 계정 ID입니다"
         },
         "nickname": {
-          "label": "닉네임 *",
+          "label": "닉네임",
           "placeholder": "봇의 닉네임을 입력하세요",
           "description": "봇의 대표 호칭입니다"
         },
@@ -910,15 +935,26 @@
         }
       },
       "personality": {
+        "expand": "{{field}} 확대 편집",
+        "presets": {
+          "default": "기본 (마이마이)",
+          "label": "페르소나 프리셋",
+          "description": "선택하면 아래 성격, 행동 스타일, 답변 스타일이 변경됩니다. 적용 후에도 자유롭게 수정할 수 있습니다."
+        },
         "personality": {
-          "label": "성격 특성 *",
+          "label": "성격 특성",
           "placeholder": "봇의 성격과 설정을 설명해 주세요 (권장 120자 이내)",
-          "description": "예: 대학 2학년 여자 대학생으로 Tieba 를 자주 본다"
+          "description": "bot의 핵심 성격을 설명하며, bot이 자신을 인식하는 방식에 영향을 줍니다"
+        },
+        "behaviorStyle": {
+          "label": "행동 스타일",
+          "placeholder": "대화에 참여하거나 상황을 관찰하거나 조용히 있을 때를 설명하세요",
+          "description": "bot의 행동을 설명하며, 행동 방식을 결정합니다"
         },
         "replyStyle": {
-          "label": "말투 *",
+          "label": "말투",
           "placeholder": "봇이 말하는 방식과 표현 습관을 설명해 주세요",
-          "description": "예: 답변은 담백하고 짧게, 중국어로 말하며 Tieba, Zhihu, Weibo 스타일을 참고한다"
+          "description": "bot의 말하는 방식과 말투에 직접 영향을 줍니다"
         },
         "multipleReplyStyle": {
           "label": "대체 답변 스타일",
@@ -1128,9 +1164,8 @@
       "model": "모델 설정",
       "modelDesc": "모델 매개변수 구성",
       "emoji": "이모티콘 관리",
-      "emojiDesc": "속 이모티콘 관리",
       "expression": "표현 관리",
-      "learningDesc": "학습한 표현과 슬랭 관리",
+      "learningDesc": "학습한 표현, 슬랭 및 이모티콘 관리",
       "expressionDesc": "속 표현 관리",
       "person": "인물 정보",
       "personDesc": "인물 정보 관리",

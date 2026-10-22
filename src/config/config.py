@@ -13,6 +13,8 @@ from src.common.paths import get_instance_root
 from src.common.i18n import t
 from src.common.logger import get_logger
 from src.common.version import read_project_version
+from src.agent.config import AgentConfig
+from src.web_search.config import WebConfig, resolve_web_search_config
 
 from .config_base import AttributeData, ConfigBase, Field
 from .config_upgrade_hooks import apply_config_upgrade_hooks
@@ -29,6 +31,7 @@ from .model_configs import APIProvider, ModelInfo, ModelTaskConfig
 from .official_configs import (
     AMemorixConfig,
     BotConfig,
+    CapabilitiesConfig,
     ChatConfig,
     ChineseTypoConfig,
     DatabaseConfig,
@@ -69,8 +72,8 @@ MODEL_CONFIG_PATH: Path = (CONFIG_DIR / "model_config.toml").resolve().absolute(
 LEGACY_ENV_PATH: Path = (PROJECT_ROOT / ".env").resolve().absolute()
 A_MEMORIX_LEGACY_CONFIG_PATH: Path = (CONFIG_DIR / "a_memorix.toml").resolve().absolute()
 MMC_VERSION: str = read_project_version(PROJECT_ROOT)
-CONFIG_VERSION: str = "8.15.4"
-MODEL_CONFIG_VERSION: str = "1.17.17"
+CONFIG_VERSION: str = "8.15.37"
+MODEL_CONFIG_VERSION: str = "1.17.22"
 
 logger = get_logger("config")
 
@@ -95,6 +98,9 @@ class _ReloadCallbackRegistration:
 class Config(ConfigBase):
     """总配置类"""
 
+    agent: AgentConfig = Field(default_factory=AgentConfig)
+    """统一独立 Agent 配置"""
+
     bot: BotConfig = Field(default_factory=BotConfig)
     """机器人配置类"""
 
@@ -103,6 +109,9 @@ class Config(ConfigBase):
 
     chat: ChatConfig = Field(default_factory=ChatConfig)
     """聊天配置类"""
+
+    capabilities: CapabilitiesConfig = Field(default_factory=CapabilitiesConfig)
+    """能力配置类"""
 
     experimental: ExperimentalConfig = Field(default_factory=ExperimentalConfig)
     """实验性功能配置类"""
@@ -171,6 +180,9 @@ class Config(ConfigBase):
 class ModelConfig(ConfigBase):
     """模型配置类"""
 
+    web: WebConfig = Field(default_factory=WebConfig)
+    """统一联网服务配置，与模型列表独立；默认关闭。"""
+
     models: list[ModelInfo] = Field(default_factory=list)
     """模型配置列表"""
 
@@ -181,6 +193,7 @@ class ModelConfig(ConfigBase):
     """API提供商列表"""
 
     def model_post_init(self, context: Any = None):
+        resolve_web_search_config(self.web, self.model_task_config.web_search)
         if not self.models:
             raise ValueError(t("config.models_empty"))
         if not self.api_providers:
@@ -251,6 +264,21 @@ def _migrate_legacy_a_memorix_config(config_data: dict[str, Any]) -> tuple[dict[
 
 def _normalize_loaded_bot_config_dict(config_data: dict[str, Any]) -> dict[str, Any]:
     normalized = copy.deepcopy(config_data)
+    # 将已稳定的能力配置移入独立栏目，保留用户原有开关与阈值。
+    experimental_config = normalized.get("experimental")
+    if isinstance(experimental_config, dict):
+        if "replyer_retro_prompt" in experimental_config:
+            normalized.setdefault("debug", {}).setdefault(
+                "replyer_retro_prompt", experimental_config.pop("replyer_retro_prompt")
+            )
+        for field_name in (
+            "tool_result_condense",
+            "tool_result_condense_threshold",
+            "planner_subagent",
+            "advanced_sub_agent",
+        ):
+            if field_name in experimental_config:
+                normalized.setdefault("capabilities", {}).setdefault(field_name, experimental_config.pop(field_name))
     a_memorix_config = normalized.get("a_memorix")
     if isinstance(a_memorix_config, dict):
         normalized["a_memorix"] = _normalize_a_memorix_legacy_config(a_memorix_config)
@@ -277,6 +305,26 @@ class ConfigManager:
         self._last_hot_reload_monotonic: float = 0.0
         self._config_file_fingerprints: dict[str, str] = {}
         self.reload_revision: int = 0
+        self.retro_prompt_forced: bool = False
+
+    def _sync_retro_reply_prompt(self, config: Config, models: ModelConfig) -> None:
+        """指定模型存在时强制开启，最后一个指定模型移走时清除自动开关。"""
+        retro_models = {"v2p1-contract", "v2p1-raw"}
+        forced = any(
+            model_name in retro_models or "mai-replier" in model_name
+            for model in models.models
+            for value in (model.name, model.model_identifier)
+            for model_name in (value.strip().lower().replace("_", "-"),)
+        )
+        if forced or self.retro_prompt_forced:
+            # 仅更新该字段，保留磁盘上其他配置、注释以及尚未热重载的修改。
+            doc = tomlkit.loads(self.bot_config_path.read_text(encoding="utf-8"))
+            debug = doc.setdefault("debug", tomlkit.table())
+            if debug.get("replyer_retro_prompt") != forced:
+                debug["replyer_retro_prompt"] = forced
+                self.bot_config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
+            config.debug.replyer_retro_prompt = forced
+        self.retro_prompt_forced = forced
 
     def initialize(self):
         logger.info(t("config.current_version", version=MMC_VERSION))
@@ -288,6 +336,7 @@ class ConfigManager:
             MODEL_CONFIG_VERSION,
             True,
         )
+        self._sync_retro_reply_prompt(self.global_config, self.model_config)
         if global_updated or model_updated:
             logger.info("配置已自动升级，将继续使用更新后的配置启动")
         self._update_config_file_fingerprints(("bot", "model"))
@@ -609,6 +658,7 @@ class ConfigManager:
                         MODEL_CONFIG_VERSION,
                         True,
                     )
+                await asyncio.to_thread(self._sync_retro_reply_prompt, global_config_new, model_config_new)
             except Exception as exc:
                 logger.error(t("config.reload_failed", error=exc))
                 return False
@@ -657,7 +707,7 @@ class ConfigManager:
             paths=[self.bot_config_path, self.model_config_path, policy_path],
         )
         await self._file_watcher.start()
-        logger.info(t("config.file_watcher_started"))
+        logger.debug(t("config.file_watcher_started"))
 
     async def stop_file_watcher(self) -> None:
         if self._file_watcher is None:

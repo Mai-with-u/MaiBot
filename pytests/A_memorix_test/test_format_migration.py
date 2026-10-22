@@ -447,7 +447,9 @@ def test_startup_format_migration_is_idempotent_after_pickle_backup(tmp_path: Pa
     assert not list((data_dir / "vectors").glob("vectors_metadata.pkl.bak.*"))
 
 
-def test_startup_format_migration_skips_sqlite_scan_after_applied(tmp_path: Path) -> None:
+def test_startup_format_migration_skips_sqlite_scan_after_applied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     data_dir = tmp_path / "a_memorix_data"
     db_path = data_dir / "metadata" / "metadata.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -463,10 +465,32 @@ def test_startup_format_migration_skips_sqlite_scan_after_applied(tmp_path: Path
         conn.close()
 
     first = run_startup_format_migration(data_dir)
+
+    def unexpected_scan(conn: sqlite3.Connection) -> bool:
+        pytest.fail("已完成迁移的数据库不应再次扫描业务表")
+
+    monkeypatch.setattr(
+        "src.A_memorix.core.storage.format_migration._sqlite_legacy_metadata_exists", unexpected_scan,
+    )
     second = run_startup_format_migration(data_dir)
 
     assert first["sqlite"]["updated"] == 1
     assert second["sqlite"]["reason"] == "already_applied"
+
+
+def test_startup_format_migration_checks_restored_legacy_database(tmp_path: Path) -> None:
+    data_dir = tmp_path / "a_memorix_data"
+    db_path = _build_legacy_migration_data(data_dir)
+    backup_path = tmp_path / "legacy.db"
+    backup_path.write_bytes(db_path.read_bytes())
+    assert run_startup_format_migration(data_dir)["sqlite"]["updated"] == 1
+
+    # 整库恢复会恢复当时的迁移记录；旧备份仍须被检查和转换。
+    db_path.write_bytes(backup_path.read_bytes())
+    summary = run_startup_format_migration(data_dir)
+    assert summary["sqlite"]["updated"] == 1
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT typeof(metadata) FROM paragraphs").fetchone()[0] == "text"
 
 
 def test_startup_format_migration_without_legacy_input_does_not_write_database(tmp_path: Path) -> None:

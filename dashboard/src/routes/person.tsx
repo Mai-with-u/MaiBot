@@ -1,11 +1,9 @@
+import { Card } from '@/components/ui/card'
+import { DataPagination } from '@/components/ui/data-pagination'
 import { useState, useMemo } from 'react'
 
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
   Edit,
   Eye,
   Hash,
@@ -85,7 +83,6 @@ export function PersonManagementPage() {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [deleteConfirmPerson, setDeleteConfirmPerson] = useState<PersonInfo | null>(null)
   const [batchDeleteDialogOpen, setBatchDeleteDialogOpen] = useState(false)
-  const [jumpToPage, setJumpToPage] = useState('')
   const { toast } = useToast()
 
   // 人物列表：分页/搜索/筛选/多选统一由 useDataList 承载，翻页/改参自动重置页码并清空选中
@@ -186,21 +183,6 @@ export function PersonManagementPage() {
     },
   })
 
-  // 页面跳转
-  const handleJumpToPage = () => {
-    const targetPage = parseInt(jumpToPage)
-    if (targetPage >= 1 && targetPage <= list.totalPages) {
-      list.goToPage(targetPage)
-      setJumpToPage('')
-    } else {
-      toast({
-        title: '无效的页码',
-        description: `请输入1-${list.totalPages}之间的页码`,
-        variant: 'destructive',
-      })
-    }
-  }
-
   // 格式化时间
   const formatTime = (timestamp: number | null) => {
     if (!timestamp) return '-'
@@ -229,22 +211,22 @@ export function PersonManagementPage() {
 
       {/* 统计卡片 */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="rounded-lg border bg-card p-4">
+        <Card className="p-4">
           <div className="text-sm text-muted-foreground">总人数</div>
           <div className="text-2xl font-bold mt-1">{stats.total}</div>
-        </div>
-        <div className="rounded-lg border bg-card p-4">
+        </Card>
+        <Card className="p-4">
           <div className="text-sm text-muted-foreground">已认识</div>
           <div className="text-2xl font-bold mt-1 text-green-600">{stats.known}</div>
-        </div>
-        <div className="rounded-lg border bg-card p-4">
+        </Card>
+        <Card className="p-4">
           <div className="text-sm text-muted-foreground">未认识</div>
           <div className="text-2xl font-bold mt-1 text-muted-foreground">{stats.unknown}</div>
-        </div>
+        </Card>
       </div>
 
       {/* 搜索和过滤 */}
-      <div className="rounded-lg border bg-card p-4">
+      <Card className="p-4">
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
           <div className="sm:col-span-2">
             <Label htmlFor="search">搜索</Label>
@@ -308,21 +290,6 @@ export function PersonManagementPage() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            <Label htmlFor="page-size" className="text-sm whitespace-nowrap">每页显示</Label>
-            <Select
-              value={pageSize.toString()}
-              onValueChange={(value) => list.setPageSize(parseInt(value))}
-            >
-              <SelectTrigger id="page-size" className="w-20">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="10">10</SelectItem>
-                <SelectItem value="20">20</SelectItem>
-                <SelectItem value="50">50</SelectItem>
-                <SelectItem value="100">100</SelectItem>
-              </SelectContent>
-            </Select>
             {list.selectedCount > 0 && (
               <>
                 <Button
@@ -344,10 +311,10 @@ export function PersonManagementPage() {
             )}
           </div>
         </div>
-      </div>
+      </Card>
 
       {/* 人物列表 */}
-      <div className="rounded-lg border bg-card">
+      <Card className="">
         {/* 桌面端表格视图 */}
         <div className="hidden md:block">
           <Table aria-label="人物信息列表">
@@ -443,7 +410,7 @@ export function PersonManagementPage() {
                         <Button
                           size="sm"
                           onClick={() => setDeleteConfirmPerson(person)}
-                          className="bg-red-600 hover:bg-red-700 text-white"
+                          variant="destructive"
                         >
                           <Trash2 className="h-4 w-4 mr-1" />
                           删除
@@ -476,7 +443,7 @@ export function PersonManagementPage() {
             </div>
           ) : (
             persons.map((person) => (
-              <div key={person.id} className="rounded-lg border bg-card p-4 space-y-3 overflow-hidden">
+              <Card key={person.id} className="p-4 space-y-3 overflow-hidden">
                 {/* 复选框和状态 */}
                 <div className="flex items-start gap-3">
                   <Checkbox
@@ -550,88 +517,16 @@ export function PersonManagementPage() {
                     删除
                   </Button>
                 </div>
-              </div>
+              </Card>
             ))
           )}
         </div>
 
-        {/* 分页 - 增强版 */}
-        {total > 0 && (
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 px-4 py-3 border-t">
-            <div className="text-sm text-muted-foreground">
-              共 {total} 条记录，第 {page} / {list.totalPages} 页
-            </div>
-            <div className="flex items-center gap-2">
-              {/* 首页 */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => list.goToPage(1)}
-                disabled={page === 1}
-                className="hidden sm:flex"
-              >
-                <ChevronsLeft className="h-4 w-4" />
-              </Button>
-
-              {/* 上一页 */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => list.goToPage(page - 1)}
-                disabled={page === 1}
-              >
-                <ChevronLeft className="h-4 w-4 sm:mr-1" />
-                <span className="hidden sm:inline">上一页</span>
-              </Button>
-
-              {/* 页码跳转 */}
-              <div className="flex items-center gap-2">
-                <Input
-                  type="number"
-                  value={jumpToPage}
-                  onChange={(e) => setJumpToPage(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleJumpToPage()}
-                  placeholder={page.toString()}
-                  className="w-16 h-8 text-center"
-                  min={1}
-                  max={list.totalPages}
-                />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleJumpToPage}
-                  disabled={!jumpToPage}
-                  className="h-8"
-                >
-                  跳转
-                </Button>
-              </div>
-
-              {/* 下一页 */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => list.goToPage(page + 1)}
-                disabled={page >= list.totalPages}
-              >
-                <span className="hidden sm:inline">下一页</span>
-                <ChevronRight className="h-4 w-4 sm:ml-1" />
-              </Button>
-
-              {/* 末页 */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => list.goToPage(list.totalPages)}
-                disabled={page >= list.totalPages}
-                className="hidden sm:flex"
-              >
-                <ChevronsRight className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        )}
-      </div>
+        {/* 分页统一负责页码与每页数量，查询仍由列表 hook 管理。 */}
+        <DataPagination total={total} page={page} pageSize={pageSize}
+          onPageChange={list.goToPage} onPageSizeChange={list.setPageSize}
+          disabled={list.isFetching} />
+      </Card>
 
         </div>
       </ScrollArea>

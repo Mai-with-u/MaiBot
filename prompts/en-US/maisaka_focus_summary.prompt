@@ -1,0 +1,4 @@
+Compress the older context of a shared-chat Planner. Merge the previous summary and new material into a compact summary that supports continued reasoning.
+Retain each fact's session_id and chat provenance. Distinguish people, message IDs, important facts, completed actions, unfinished tasks and commitments in each chat. Preserve tool arguments, results, links, identifiers and versions verbatim when they may be needed later.
+Use only the supplied evidence. Do not invent facts, assign one chat's information to another, or claim unfinished actions succeeded. Preserve disagreements and uncertainty; remove repetition and irrelevant detail.
+Output only the summary, preferably within 2000 characters, without tool calls.

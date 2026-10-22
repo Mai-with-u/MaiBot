@@ -1,6 +1,6 @@
 """后台子代理任务的登记与生命周期管理。
 
-开启 ``experimental.advanced_sub_agent`` 后，subagent 工具不再等子代理跑完才返回：
+开启 ``capabilities.advanced_sub_agent`` 后，subagent 工具不再等子代理跑完才返回：
 每次调用登记一个任务并在后台运行，Planner 拿到任务 id 后可以继续处理聊天；
 任务结束时由运行时把结论作为一条新的 user 消息追加到上下文末尾并唤醒 Planner。
 """

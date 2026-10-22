@@ -42,6 +42,88 @@ def load_model_routes(monkeypatch: pytest.MonkeyPatch):
     return importlib.import_module("src.webui.routers.model")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identifier", ["v2p1-raw", "mai_replier_v6", "mai_replier_v7", "mai_replier", "mai_replier_today"])
+@pytest.mark.parametrize("response, expected_success", [("我也想出去走走了", True), ("  ", False)])
+async def test_replyer_model_uses_chat_reply_instead_of_tools(
+    monkeypatch: pytest.MonkeyPatch, identifier: str, response: str, expected_success: bool
+) -> None:
+    """专用回复模型应使用真实回复模板，正文为空才判失败，不要求工具调用。"""
+    model_routes = load_model_routes(monkeypatch)
+    monkeypatch.setattr(model_routes, "_get_model_config", lambda name: {
+        "model_type": "llm", "model_identifier": identifier, "visual": True,
+    })
+    captured = {}
+
+    class FakeOrchestrator:
+        def __init__(self, model_name: str, *, replyer_test: bool = False) -> None:
+            captured["replyer_test"] = replyer_test
+
+        async def generate_response_with_context_async(self, **kwargs: Any):
+            captured.update(kwargs)
+            return model_routes.LLMResponseResult.from_portable_output(response=response, model_name="V麦回复")
+
+    monkeypatch.setattr(model_routes, "_SingleModelTestOrchestrator", FakeOrchestrator)
+    result = await model_routes.test_model_capability(model_routes.ModelTestRequest(model_name="V麦回复"))
+
+    assert result.success is expected_success
+    assert result.test_kind == "replyer"
+    assert result.visual_tested is False
+    assert result.tool_call_ok is False
+    assert captured["replyer_test"] is True
+    assert captured["tools"] is None
+    messages = captured["context_factory"](None)
+    from src.llm_models.payload_content.context_item import get_item_text
+
+    assert len(messages) == 2
+    assert "麦麦" in get_item_text(messages[0])
+    assert "散步" in get_item_text(messages[1])
+    assert "{" not in get_item_text(messages[1])
+    if not expected_success:
+        assert result.error == "模拟 replyer 任务未返回回复正文"
+
+
+@pytest.mark.asyncio
+async def test_replyer_provider_connection_runs_reply_task(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """提供商连接按钮也通过实际回复验证，优先使用 mai_replier，不走通用网络探测。"""
+    model_routes = load_model_routes(monkeypatch)
+    (tmp_path / "model_config.toml").write_text(
+        '''
+[[api_providers]]
+name = "renamed-provider"
+base_url = "https://openzako.ai/v1/"
+[[models]]
+name = "mai_replier_today"
+api_provider = "renamed-provider"
+model_identifier = "mai_replier_today"
+model_type = "llm"
+[[models]]
+name = "mai_replier"
+api_provider = "renamed-provider"
+model_identifier = "mai_replier"
+model_type = "llm"
+''', encoding="utf-8",
+    )
+    monkeypatch.setattr(model_routes, "CONFIG_DIR", str(tmp_path))
+
+    async def fake_model_test(request):
+        assert request.model_name == "mai_replier"
+        return model_routes.ModelTestResponse(
+            success=True, model_name=request.model_name, visual_tested=False,
+            tool_call_ok=False, test_kind="replyer", latency_ms=12.0,
+        )
+
+    async def unexpected_generic_test(**kwargs):
+        pytest.fail("麦麦特调回复不应执行通用连接测试")
+
+    monkeypatch.setattr(model_routes, "test_model_capability", fake_model_test)
+    monkeypatch.setattr(model_routes, "_test_provider_connection", unexpected_generic_test)
+    result = await model_routes.test_provider_connection_by_name(provider_name="renamed-provider")
+    assert result["network_ok"] is True
+    assert result["api_key_valid"] is True
+    assert result["latency_ms"] == 12.0
+
+
 class FakeResponse:
     """简化版 HTTP 响应对象。"""
 

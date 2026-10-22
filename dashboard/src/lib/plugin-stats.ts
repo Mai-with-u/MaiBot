@@ -1,18 +1,11 @@
-﻿/**
- * 閹绘帊娆㈢紒鐔活吀 API 鐎广垺鍩涚粩?
- * 閻劋绨稉?Cloudflare Workers 缂佺喕顓搁張宥呭娴溿倓绨?
+/**
+ * 插件市场统计与用户互动客户端。
+ * 统计读取与评分、点赞、下载记录统一调用公共市场接口。
  */
-
-// 闁板秶鐤嗙紒鐔活吀閺堝秴濮?API 閸︽澘娼冮敍鍫熷閺堝鏁ら幋宄板彙娴滎偆娈戞禍鎴狀伂缂佺喕顓搁張宥呭閿?
 import { ApiError, backendApi } from '@/lib/http'
+import { invalidatePluginMarketCache } from '@/lib/plugin-api/marketplace'
 
-const STATS_API_BASE_URL = '/api/webui/plugins/stats-proxy'
-const PLUGIN_STATS_SUMMARY_CACHE_TTL = 5 * 60 * 1000
-const PLUGIN_STATS_SUMMARY_STORAGE_KEY = 'maibot-plugin-stats-summary-cache'
-
-let pluginStatsSummaryCache: { timestamp: number; data: Record<string, PluginStatsData> } | null =
-  null
-let pluginStatsSummaryRequest: Promise<Record<string, PluginStatsData>> | null = null
+const MARKET_API_BASE_URL = '/api/webui/plugins/marketplace'
 
 export interface PluginStatsData {
   plugin_id: string
@@ -83,7 +76,7 @@ export interface PluginReviewIdentity {
 
 /** 获取本地 bot 昵称；此请求不会发往插件统计服务。 */
 export async function getPluginReviewIdentity(): Promise<{ username: string }> {
-  return backendApi.get<{ username: string }>(`${STATS_API_BASE_URL}/identity`, {
+  return backendApi.get<{ username: string }>(`${MARKET_API_BASE_URL}/review-identity`, {
     errorMessage: '获取默认评论用户名失败',
   })
 }
@@ -91,53 +84,6 @@ export async function getPluginReviewIdentity(): Promise<{ username: string }> {
 export interface PluginVoteState {
   liked: boolean
   disliked: boolean
-}
-
-interface PluginStatsSummaryResponse {
-  success?: boolean
-  stats?: Record<string, Partial<PluginStatsData>>
-  error?: string
-}
-
-interface PluginStatsSummaryStorageCache {
-  timestamp: number
-  data: Record<string, PluginStatsData>
-}
-
-function createEmptyStats(pluginId: string): PluginStatsData {
-  return {
-    plugin_id: pluginId,
-    likes: 0,
-    dislikes: 0,
-    downloads: 0,
-    rating: 0,
-    rating_count: 0,
-    comment_count: 0,
-  }
-}
-
-function normalizePluginStatsResponse(data: unknown, pluginId: string): PluginStatsData | null {
-  if (!data || typeof data !== 'object') {
-    return null
-  }
-
-  const response = data as Partial<PluginStatsData> & {
-    stats?: Partial<PluginStatsData>
-  }
-  const stats = response.stats ?? response
-
-  return {
-    ...createEmptyStats(pluginId),
-    ...stats,
-    plugin_id: String(stats.plugin_id ?? pluginId),
-    likes: Number(stats.likes ?? 0),
-    dislikes: Number(stats.dislikes ?? 0),
-    downloads: Number(stats.downloads ?? 0),
-    rating: Number(stats.rating ?? 0),
-    rating_count: Number(stats.rating_count ?? 0),
-    comment_count: Number(stats.comment_count ?? 0),
-    recent_ratings: Array.isArray(stats.recent_ratings) ? stats.recent_ratings : undefined,
-  }
 }
 
 function getReadableError(data: unknown, fallback: string): string {
@@ -159,129 +105,12 @@ function getDetailError(error: ApiError): string | undefined {
   return typeof detailError === 'string' ? detailError : undefined
 }
 
-function readPluginStatsSummaryStorageCache(): PluginStatsSummaryStorageCache | null {
-  if (typeof localStorage === 'undefined') {
-    return null
-  }
-
-  try {
-    const rawCache = localStorage.getItem(PLUGIN_STATS_SUMMARY_STORAGE_KEY)
-    if (!rawCache) {
-      return null
-    }
-
-    const cache = JSON.parse(rawCache) as Partial<PluginStatsSummaryStorageCache>
-    if (!cache.timestamp || !cache.data || typeof cache.data !== 'object') {
-      return null
-    }
-
-    return {
-      timestamp: Number(cache.timestamp),
-      data: Object.fromEntries(
-        Object.entries(cache.data).map(([pluginId, stats]) => [
-          pluginId,
-          normalizePluginStatsResponse(stats, pluginId) ?? createEmptyStats(pluginId),
-        ])
-      ),
-    }
-  } catch (error) {
-    console.warn('读取插件统计缓存失败:', error)
-    return null
-  }
-}
-
-function writePluginStatsSummaryStorageCache(data: Record<string, PluginStatsData>): void {
-  if (typeof localStorage === 'undefined') {
-    return
-  }
-
-  try {
-    localStorage.setItem(
-      PLUGIN_STATS_SUMMARY_STORAGE_KEY,
-      JSON.stringify({
-        timestamp: Date.now(),
-        data,
-      })
-    )
-  } catch (error) {
-    console.warn('写入插件统计缓存失败:', error)
-  }
-}
-
-function updateCachedPluginStats(pluginId: string, partialStats: Partial<PluginStatsData>): void {
-  const currentCache = pluginStatsSummaryCache ?? readPluginStatsSummaryStorageCache()
-  if (!currentCache) {
-    return
-  }
-
-  const currentStats = currentCache.data[pluginId] ?? createEmptyStats(pluginId)
-  const nextData = {
-    ...currentCache.data,
-    [pluginId]:
-      normalizePluginStatsResponse(
-        {
-          ...currentStats,
-          ...partialStats,
-          plugin_id: pluginId,
-        },
-        pluginId
-      ) ?? currentStats,
-  }
-
-  pluginStatsSummaryCache = { timestamp: Date.now(), data: nextData }
-  writePluginStatsSummaryStorageCache(nextData)
-}
-
-export function getCachedPluginStatsSummary(): Record<string, PluginStatsData> | null {
-  if (pluginStatsSummaryCache) {
-    return pluginStatsSummaryCache.data
-  }
-
-  const storedCache = readPluginStatsSummaryStorageCache()
-  if (!storedCache) {
-    return null
-  }
-
-  pluginStatsSummaryCache = storedCache
-  return storedCache.data
-}
-
-/**
- * 閼惧嘲褰囬幓鎺嶆缂佺喕顓搁弫鐗堝祦
- */
+/** 获取当前市场统计与评论；错误交由调用方显示或记录。 */
 export async function getPluginStats(pluginId: string): Promise<PluginStatsData | null> {
-  try {
-    const data = await backendApi.get<unknown>(
-      `${STATS_API_BASE_URL}/stats/${encodeURIComponent(pluginId)}`
-    )
-    return normalizePluginStatsResponse(data, pluginId)
-  } catch (error) {
-    console.error('Error fetching plugin stats:', error)
-    return null
-  }
-}
-
-/**
- * 閼惧嘲褰囬幓鎺嶆鐢倸婧€閻ㄥ嫯浜ら柌蹇曠埠鐠佲剝鎲崇憰渚婄礄娑撳秴瀵橀崥顐ョ槑鐠佺尨绱氶妴? */
-async function fetchPluginStatsSummaryUncached(): Promise<Record<string, PluginStatsData>> {
-  try {
-    const data = await backendApi.get<PluginStatsSummaryResponse>(
-      `${STATS_API_BASE_URL}/stats/summary`
-    )
-    if (!data.success || !data.stats || typeof data.stats !== 'object') {
-      return {}
-    }
-
-    return Object.fromEntries(
-      Object.entries(data.stats).map(([pluginId, stats]) => [
-        pluginId,
-        normalizePluginStatsResponse({ stats }, pluginId) ?? createEmptyStats(pluginId),
-      ])
-    )
-  } catch (error) {
-    console.error('Error fetching plugin stats summary:', error)
-    return {}
-  }
+  const result = await backendApi.get<{ stats: PluginStatsData | null }>(
+    `${MARKET_API_BASE_URL}/${encodeURIComponent(pluginId)}/stats`
+  )
+  return result.stats
 }
 
 export async function getPluginUserState(
@@ -290,9 +119,9 @@ export async function getPluginUserState(
 ): Promise<PluginUserState | null> {
   try {
     const data = await backendApi.get<Partial<PluginUserState> & { success?: boolean }>(
-      `${STATS_API_BASE_URL}/stats/user-state`,
+      `${MARKET_API_BASE_URL}/${encodeURIComponent(pluginId)}/user-state`,
       {
-        query: { plugin_id: pluginId, user_id: userId },
+        query: { user_id: userId },
       }
     )
     if (data.success === false) {
@@ -323,7 +152,7 @@ export async function getPluginUserStates(
     const data = await backendApi.get<{
       success?: boolean
       states?: Record<string, Partial<PluginVoteState>>
-    }>(`${STATS_API_BASE_URL}/stats/user-states`, {
+    }>(`${MARKET_API_BASE_URL}/user-states`, {
       query: { user_id: userId },
     })
     if (!data.success || !data.states || typeof data.states !== 'object') {
@@ -342,59 +171,19 @@ export async function getPluginUserStates(
   }
 }
 
-export async function getPluginStatsSummary(
-  options: { forceRefresh?: boolean } = {}
-): Promise<Record<string, PluginStatsData>> {
-  if (
-    !options.forceRefresh &&
-    pluginStatsSummaryCache &&
-    Date.now() - pluginStatsSummaryCache.timestamp < PLUGIN_STATS_SUMMARY_CACHE_TTL
-  ) {
-    return pluginStatsSummaryCache.data
-  }
-
-  if (!options.forceRefresh && !pluginStatsSummaryCache) {
-    const storedCache = readPluginStatsSummaryStorageCache()
-    if (storedCache && Date.now() - storedCache.timestamp < PLUGIN_STATS_SUMMARY_CACHE_TTL) {
-      pluginStatsSummaryCache = storedCache
-      return storedCache.data
-    }
-  }
-
-  if (!pluginStatsSummaryRequest || options.forceRefresh) {
-    pluginStatsSummaryRequest = fetchPluginStatsSummaryUncached()
-      .then((data) => {
-        pluginStatsSummaryCache = { timestamp: Date.now(), data }
-        writePluginStatsSummaryStorageCache(data)
-        return data
-      })
-      .finally(() => {
-        pluginStatsSummaryRequest = null
-      })
-  }
-
-  return pluginStatsSummaryRequest
-}
-
-/**
- * 閻愮绂愰幓鎺嶆
- */
 export async function likePlugin(pluginId: string, userId?: string): Promise<VoteStatsResponse> {
   try {
     const finalUserId = userId || getUserId()
 
     const data = await backendApi.post<Omit<VoteStatsResponse, 'success'>>(
-      `${STATS_API_BASE_URL}/stats/like`,
+      `${MARKET_API_BASE_URL}/like`,
       {
         body: { plugin_id: pluginId, user_id: finalUserId },
       }
     )
 
     const result: VoteStatsResponse = { success: true, ...data }
-    updateCachedPluginStats(pluginId, {
-      likes: Number(result.likes ?? 0),
-      dislikes: Number(result.dislikes ?? 0),
-    })
+    invalidatePluginMarketCache()
     return result
   } catch (error) {
     if (error instanceof ApiError) {
@@ -418,17 +207,14 @@ export async function dislikePlugin(pluginId: string, userId?: string): Promise<
     const finalUserId = userId || getUserId()
 
     const data = await backendApi.post<Omit<VoteStatsResponse, 'success'>>(
-      `${STATS_API_BASE_URL}/stats/dislike`,
+      `${MARKET_API_BASE_URL}/dislike`,
       {
         body: { plugin_id: pluginId, user_id: finalUserId },
       }
     )
 
     const result: VoteStatsResponse = { success: true, ...data }
-    updateCachedPluginStats(pluginId, {
-      likes: Number(result.likes ?? 0),
-      dislikes: Number(result.dislikes ?? 0),
-    })
+    invalidatePluginMarketCache()
     return result
   } catch (error) {
     if (error instanceof ApiError) {
@@ -494,24 +280,14 @@ export async function ratePlugin(
     }
 
     const data = await backendApi.post<Omit<RatingStatsResponse, 'success'>>(
-      `${STATS_API_BASE_URL}/stats/rate`,
+      `${MARKET_API_BASE_URL}/rate`,
       {
         body: payload,
       }
     )
 
     const result: RatingStatsResponse = { success: true, ...data }
-    const updatedStats: Partial<PluginStatsData> = {}
-    if (result.rating !== undefined) {
-      updatedStats.rating = Number(result.rating)
-    }
-    if (result.rating_count !== undefined) {
-      updatedStats.rating_count = Number(result.rating_count)
-    }
-    if (result.comment_count !== undefined) {
-      updatedStats.comment_count = Number(result.comment_count)
-    }
-    updateCachedPluginStats(pluginId, updatedStats)
+    invalidatePluginMarketCache()
     return result
   } catch (error) {
     if (error instanceof ApiError) {
@@ -535,7 +311,7 @@ export async function recordPluginDownload(pluginId: string): Promise<DownloadSt
     const userId = getUserId()
     const fingerprint = generateUserFingerprint()
     const data = await backendApi.post<Omit<DownloadStatsResponse, 'success'>>(
-      `${STATS_API_BASE_URL}/stats/download`,
+      `${MARKET_API_BASE_URL}/download`,
       {
         body: { plugin_id: pluginId, user_id: userId, fingerprint },
       }
@@ -543,7 +319,7 @@ export async function recordPluginDownload(pluginId: string): Promise<DownloadSt
 
     const result: DownloadStatsResponse = { success: true, ...data }
     if (typeof result.downloads === 'number') {
-      updateCachedPluginStats(pluginId, { downloads: result.downloads })
+      invalidatePluginMarketCache()
     }
     return result
   } catch (error) {

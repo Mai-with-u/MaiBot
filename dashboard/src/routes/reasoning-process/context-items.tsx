@@ -39,7 +39,6 @@ const STAGE_LABELS: Record<string, string> = {
   jargon_learning_update: '黑话含义推断',
   llm_error: 'LLM 请求异常',
   planner: '规划器',
-  reply_effect_judge: '回复效果评估',
   replyer: '回复器',
   timing_gate: '时机判断',
 }
@@ -266,7 +265,7 @@ function getContextItemContentBlocks(item: ContextItemSnapshot): ContextItemCont
   return blocks
 }
 
-function ContextItemImagePreview({ image, index }: { image: ContextItemImage; index: number }) {
+export function ContextItemImagePreview({ image, index }: { image: ContextItemImage; index: number }) {
   const [src, setSrc] = useState('')
 
   useEffect(() => {
@@ -795,17 +794,6 @@ export function ToolCallsCollapsible({ toolCalls }: { toolCalls: unknown[] }) {
                 <Badge variant="secondary" className="font-mono">
                   {toolCall.name}
                 </Badge>
-                {toolCall.sourceLabel && (
-                  <Badge
-                    variant="outline"
-                    className={cn(
-                      'px-1.5 py-0 text-[11px]',
-                      getToolCallSourceClassName(toolCall.source)
-                    )}
-                  >
-                    {toolCall.sourceLabel}
-                  </Badge>
-                )}
               </div>
               <pre className="bg-muted/20 mt-2 rounded-md border p-2 font-mono text-xs leading-5 whitespace-pre-wrap">
                 {stringifyStructuredValue(toolCall.arguments)}

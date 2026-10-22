@@ -29,6 +29,31 @@ export const TASK_CONFIGS = [
     description: '负责决定麦麦该什么时候回复',
   },
   {
+    key: 'memory' as const,
+    title: '长期记忆 (memory)',
+    description: '用于长期记忆总结、抽取和写回',
+  },
+  {
+    key: 'mid_memory' as const,
+    title: '聊天回想 (mid_memory)',
+    description: '用于回想聊天内容',
+  },
+  {
+    key: 'learner' as const,
+    title: '表达学习 (learner)',
+    description: '用于表达方式和黑话学习',
+  },
+  {
+    key: 'fast_model' as const,
+    title: '快速模型 (fast_model)',
+    description: '用于表达方式选择、回复断句等快速任务',
+  },
+  {
+    key: 'emoji' as const,
+    title: '表情包选择 (emoji)',
+    description: '用于表情包发送',
+  },
+  {
     key: 'utils' as const,
     title: '组件模型 (utils)',
     description: '用于表情包、取名、关系、情绪变化等组件',
@@ -73,6 +98,11 @@ export const TASK_CONFIGS = [
     hideMaxTokens: true,
     hideSelectionStrategy: true,
     singleModel: true,
+  },
+  {
+    key: 'web_search' as const,
+    title: '联网搜索 (web_search)',
+    description: '使用已分配的联网服务搜索和读取网页',
   },
 ] as const
 

@@ -5,6 +5,7 @@
 """
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -195,6 +196,7 @@ class InboundMessageEnvelope:
         session_message: 可选的、已经完成规范化的 ``SessionMessage`` 对象。
         payload: 可选的原始字典载荷，供延迟转换或调试使用。
         metadata: 额外入站元数据，例如连接信息或追踪上下文。
+        received_at: 主程序接收入站消息的本机时间，不使用适配器提供的时间。
     """
 
     route_key: RouteKey
@@ -205,6 +207,7 @@ class InboundMessageEnvelope:
     session_message: Optional["SessionMessage"] = None
     payload: Optional[Dict[str, Any]] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    received_at: Optional[datetime] = None
 
 
 @dataclass(slots=True)

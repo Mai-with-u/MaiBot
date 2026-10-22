@@ -41,8 +41,10 @@ import type { ModelInfo, ModelPricePeriod, ModelTaskConfig, ProviderConfig, Task
 import { serializeModel } from '../serializeModel'
 import type { APIProvider, DeleteConfirmState } from '../../modelProvider/types'
 import { cleanProviderData } from '../../modelProvider/utils'
+import { PROVIDER_TEMPLATES } from '../../providerTemplates'
 import { useModelAutoSave } from './useModelAutoSave'
 import { useEmbeddingWarning, type PendingEmbeddingUpdate } from './useEmbeddingWarning'
+import { readWebSearchConfig, type WebSearchConfig } from '../../webSearch/types'
 
 const ADVANCED_MODEL_TASK_NAMES = new Set(['memory', 'learner', 'emoji', 'voice'])
 
@@ -148,6 +150,7 @@ export function useModelConfig() {
   const [apiProviders, setApiProviders] = useState<APIProvider[]>([])
   const [modelNames, setModelNames] = useState<string[]>([])
   const [taskConfig, setTaskConfig] = useState<ModelTaskConfig | null>(null)
+  const [webConfig, setWebConfig] = useState<WebSearchConfig>(() => readWebSearchConfig(undefined))
 
   // ---- 加载 / 保存状态 ----
   const [loading, setLoading] = useState(true)
@@ -329,7 +332,8 @@ export function useModelConfig() {
       const emptyTaskList: string[] = []
 
       for (const [key, task] of Object.entries(taskConf)) {
-        if (!task) continue
+        // 联网任务引用 web.services，不属于 LLM/嵌入模型的引用检查范围。
+        if (!task || key === 'web_search') continue
 
         // 检查是否有模型
         if (!task.model_list || task.model_list.length === 0) {
@@ -414,6 +418,7 @@ export function useModelConfig() {
         return
       }
       const config = unwrapModelConfig(result.value)
+      setWebConfig(readWebSearchConfig(config.web))
       const modelList = (config.models as ModelInfo[]) || []
       for (const model of modelList) {
         if (!['llm', 'embedding', 'image_embedding'].includes(model.model_type)) {
@@ -528,6 +533,10 @@ export function useModelConfig() {
 
       const nextTaskConfig: ModelTaskConfig = {}
       for (const [taskName, task] of Object.entries(sourceTaskConfig)) {
+        if (taskName === 'web_search') {
+          nextTaskConfig[taskName] = task
+          continue
+        }
         nextTaskConfig[taskName] = {
           ...task,
           model_list: (task?.model_list || []).filter(
@@ -765,6 +774,10 @@ export function useModelConfig() {
 
     // 遍历所有任务，过滤掉无效的模型引用
     for (const [key, task] of Object.entries(taskConfig)) {
+      if (key === 'web_search') {
+        newTaskConfig[key] = task
+        continue
+      }
       if (task && task.model_list) {
         newTaskConfig[key] = {
           ...task,
@@ -964,7 +977,7 @@ export function useModelConfig() {
   }, [])
 
   const handleSaveProviderEdit = useCallback(
-    async (provider: APIProvider, index: number | null) => {
+    async (provider: APIProvider, index: number | null, templateId?: string) => {
       const providerToSave = cleanProviderData(provider)
       const nextProviders = [...apiProviders]
       if (index !== null) {
@@ -980,13 +993,30 @@ export function useModelConfig() {
 
       try {
         setSaving(true)
-        if (hasLinkedModels) {
-          // 改名只迁移供应商引用；与供应商一起写入，避免触发级联删除或留下无效引用。
+        const template = PROVIDER_TEMPLATES.find((item) => item.id === templateId)
+        const presetModels = template?.base_url === providerToSave.base_url ? template.models : undefined
+        if (hasLinkedModels || presetModels?.length) {
+          // 改名迁移供应商引用；预设模型与供应商一起写入，避免留下无效引用。
           const nextModels = models.map((model) =>
-            model.api_provider === oldProviderName
+            providerRenamed && model.api_provider === oldProviderName
               ? { ...model, api_provider: providerToSave.name }
               : model
           )
+          // 重复保存只补齐缺失项，保留已有模型参数；全局重名时加供应商后缀。
+          const usedNames = new Set(nextModels.map((model) => model.name.toLowerCase()))
+          for (const preset of presetModels ?? []) {
+            if (nextModels.some((model) =>
+              model.api_provider === providerToSave.name && model.model_identifier === preset.model_identifier
+            )) continue
+            let name = preset.name
+            let suffix = 2
+            while (usedNames.has(name.toLowerCase())) {
+              name = `${preset.name} (${providerToSave.name}${suffix === 2 ? '' : ` ${suffix}`})`
+              suffix += 1
+            }
+            usedNames.add(name.toLowerCase())
+            nextModels.push({ ...preset, name, api_provider: providerToSave.name })
+          }
           const persistResult = await persistModelConfigDraft(nextModels, taskConfig, nextProviders)
           if (persistResult.applyProviders) {
             syncProviderState(nextProviders)
@@ -1014,7 +1044,9 @@ export function useModelConfig() {
         setEditingProviderIndex(null)
         toast({
           title: index !== null ? '提供商已更新' : '提供商已添加',
-          description: hasLinkedModels
+          description: presetModels?.length
+            ? '提供商及全部预设模型已保存，请在回复模型中选择使用'
+            : hasLinkedModels
             ? '供应商名称及关联模型已同步保存，任务分配已保留'
             : '模型配置已保存',
         })
@@ -1102,7 +1134,7 @@ export function useModelConfig() {
 
       newTaskConfig = {}
       for (const [key, task] of Object.entries(taskConfig)) {
-        newTaskConfig[key] = { ...task, model_list: updateModelList(task?.model_list || []) }
+        newTaskConfig[key] = key === 'web_search' ? task : { ...task, model_list: updateModelList(task?.model_list || []) }
       }
     }
 
@@ -1323,13 +1355,13 @@ export function useModelConfig() {
         if (testResult.success) {
           toast({
             title: '模型测试通过',
-            description: `${modelName} 已完成文本${testResult.visual_tested ? '、视觉' : ''}与工具调用测试 (${testResult.latency_ms != null ? `${(testResult.latency_ms / 1000).toFixed(2)}s` : '-'})`,
+            description: `${modelName} ${testResult.test_kind === 'replyer' ? '已完成模拟 replyer 回复测试' : `已完成文本${testResult.visual_tested ? '、视觉' : ''}与工具调用测试`} (${testResult.latency_ms != null ? `${(testResult.latency_ms / 1000).toFixed(2)}s` : '-'})`,
             duration: 8000,
             action: buildModelTestDetailAction(testResult),
           })
         } else {
           toast({
-            title: testResult.tool_call_ok ? '模型响应异常' : '工具调用未通过',
+            title: testResult.test_kind === 'replyer' ? '回复测试未通过' : testResult.tool_call_ok ? '模型响应异常' : '工具调用未通过',
             description: `${modelName} 未通过模型能力测试，请点击“详情”查看完整错误信息`,
             variant: 'destructive',
             duration: 10000,
@@ -1482,13 +1514,23 @@ export function useModelConfig() {
   const isModelUsed = useCallback(
     (modelName: string): boolean => {
       if (!taskConfig) return false
-      return Object.values(taskConfig).some((task) => task?.model_list?.includes(modelName))
+      return Object.entries(taskConfig).some(([name, task]) => name !== 'web_search' && task?.model_list?.includes(modelName))
     },
     [taskConfig]
   )
 
+  const saveWebConfig = useCallback(async (next: WebSearchConfig) => {
+    // 与模型自动保存共用写入队列，避免整份配置保存覆盖联网服务的修改。
+    await enqueueConfigWrite(async () => {
+      await updateModelConfigSection('web', next)
+      setWebConfig(next)
+    })
+  }, [enqueueConfigWrite])
+
   return {
     // 草稿态
+    webConfig,
+    saveWebConfig,
     models,
     providers,
     apiProviders,

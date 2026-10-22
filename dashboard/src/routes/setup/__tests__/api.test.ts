@@ -142,6 +142,7 @@ describe('loadPersonalityConfig', () => {
       config: {
         personality: {
           personality: '活泼开朗',
+          behavior_style: '自然参与聊天',
           reply_style: '简短口语',
           multiple_reply_style: ['风格A'],
           multiple_probability: 0,
@@ -151,6 +152,7 @@ describe('loadPersonalityConfig', () => {
 
     await expect(loadPersonalityConfig()).resolves.toEqual({
       personality: '活泼开朗',
+      behavior_style: '自然参与聊天',
       reply_style: '简短口语',
       multiple_reply_style: ['风格A'],
       multiple_probability: 0,
@@ -165,6 +167,7 @@ describe('loadPersonalityConfig', () => {
 
     await expect(loadPersonalityConfig()).resolves.toEqual({
       personality: '',
+      behavior_style: '',
       reply_style: '',
       multiple_reply_style: [],
       multiple_probability: 0.2,
@@ -324,6 +327,7 @@ describe('saveBotBasicConfig / savePersonalityConfig', () => {
     postMock.mockResolvedValue({ success: true })
     const config = {
       personality: '活泼开朗',
+      behavior_style: '自然参与聊天',
       reply_style: '简短口语',
       multiple_reply_style: [],
       multiple_probability: 0.2,

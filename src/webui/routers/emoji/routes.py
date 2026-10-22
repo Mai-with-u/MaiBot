@@ -1,6 +1,6 @@
 """表情包管理 API 路由"""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -19,6 +19,7 @@ import re
 from src.common.database.database import get_db_session
 from src.common.database.database_model import Images, ImageType
 from src.common.utils.image_path import StoredImagePathError, resolve_stored_image_path, serialize_stored_image_path
+from src.config.config import global_config
 from src.webui.core import get_token_manager
 from src.webui.core import verify_auth_token_from_cookie_or_header as verify_auth_token
 
@@ -470,7 +471,7 @@ def get_emoji_stats(maibot_session: Optional[str] = Cookie(None)) -> Dict[str, A
         maibot_session: WebUI 登录会话 Cookie。
 
     Returns:
-        Dict[str, Any]: 表情包总数、格式分布和高频使用统计。
+        Dict[str, Any]: 表情包总数、近七天收录数量、收集开关、格式分布和高频使用统计。
     """
     try:
         verify_auth_token(maibot_session)
@@ -516,6 +517,14 @@ def get_emoji_stats(maibot_session: Optional[str] = Cookie(None)) -> Dict[str, A
             )
 
             total = session.exec(total_statement).one()
+            recent_count = session.exec(
+                select(func.count())
+                .select_from(Images)
+                .where(
+                    col(Images.image_type) == ImageType.EMOJI,
+                    col(Images.record_time) >= datetime.now() - timedelta(days=7),
+                )
+            ).one()
             registered = session.exec(registered_statement).one()
             banned = session.exec(banned_statement).one()
             known = session.exec(known_statement).one()
@@ -548,6 +557,8 @@ def get_emoji_stats(maibot_session: Optional[str] = Cookie(None)) -> Dict[str, A
             "success": True,
             "data": {
                 "total": total,
+                "recent_count": recent_count,
+                "collecting_enabled": global_config.emoji.steal_emoji,
                 "registered": registered,
                 "banned": banned,
                 "unregistered": total - registered,

@@ -656,8 +656,8 @@ async def process_llm_response_segments_async(
 
     try:
         split_sentences = await split_text_with_llm(text)
-    except Exception:
-        logger.exception("LLM 断句失败，本次回复不断句")
+    except Exception as exc:
+        logger.warning(f"LLM 断句失败，本次回复不断句：{exc}")
         split_sentences = [(text, "")]
 
     # 数据首次加载和错别字计算交给线程执行，避免占住聊天事件循环。

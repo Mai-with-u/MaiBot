@@ -2,6 +2,9 @@ import type { ReactNode } from 'react'
 import { ChevronRight } from 'lucide-react'
 
 import { StreamlineIcon } from '@/components/ui/streamline-icon'
+import { Button } from '@/components/ui/button'
+import { SelectionListItem } from '@/components/ui/selection-list-item'
+import { DataPanel, PageFrame } from '@/components/ui/surface'
 import { cn } from '@/lib/utils'
 
 export interface ChatScopeMode<T extends string> {
@@ -15,6 +18,8 @@ export interface ChatScopeItem {
   title?: string
   description?: ReactNode
   descriptionTitle?: string
+  disabled?: boolean
+  meta?: ReactNode
 }
 
 interface ChatScopeFilterPanelProps<TMode extends string> {
@@ -25,6 +30,8 @@ interface ChatScopeFilterPanelProps<TMode extends string> {
   selectedItemId?: string | number | null
   onItemSelect?: (id: string | number) => void
   title?: string
+  titleMeta?: ReactNode
+  density?: 'default' | 'compact'
   emptyContent?: ReactNode
   footer?: ReactNode
   modeColumns?: number
@@ -44,6 +51,8 @@ export function ChatScopeFilterPanel<TMode extends string>({
   selectedItemId,
   onItemSelect,
   title,
+  titleMeta,
+  density = 'default',
   emptyContent,
   footer,
   modeColumns,
@@ -58,120 +67,132 @@ export function ChatScopeFilterPanel<TMode extends string>({
   const hasModes = modeItems.length > 0
 
   return (
-    <aside
-      data-chat-scope-panel="true"
-      data-collapsed={collapsed ? 'true' : 'false'}
-      className={cn(
-        'bg-card flex min-h-0 flex-col border-2 lg:h-full lg:self-stretch lg:overflow-hidden',
-        className
-      )}
-    >
-      <div data-chat-scope-panel-header="true" className="border-b-2 px-3 py-2">
+    <PageFrame asChild>
+      <aside
+        data-chat-scope-panel="true"
+        data-collapsed={collapsed ? 'true' : 'false'}
+        className={cn(
+          'flex min-h-0 flex-col lg:h-full lg:self-stretch lg:overflow-hidden',
+          className
+        )}
+      >
         <div
-          className={cn(
-            'grid w-full items-center gap-2',
-            onCollapsedChange ? 'grid-cols-[2rem_minmax(0,1fr)]' : 'grid-cols-1'
-          )}
+          data-chat-scope-panel-header="true"
+          className={cn('space-y-2 border-b-2 py-2', collapsed ? 'px-2' : 'px-3')}
         >
-          {onCollapsedChange && (
-            <button
-              type="button"
-              onClick={() => onCollapsedChange(!collapsed)}
-              className="text-muted-foreground hover:bg-muted hover:text-foreground flex h-8 w-7 items-center justify-center border-2 transition-colors"
-              aria-label={collapsed ? expandLabel : collapseLabel}
-              aria-expanded={!collapsed}
-              title={collapsed ? expandLabel : collapseLabel}
-            >
-              <StreamlineIcon
-                name="line-arrow-right-1-remix"
-                fallback={ChevronRight}
-                className={cn('h-4 w-4', !collapsed && 'rotate-180')}
-              />
-            </button>
-          )}
-          {!collapsed && (
-            <div className="min-w-0 space-y-2">
-              {title && <h2 className="text-sm font-medium">{title}</h2>}
-              {hasModes && (
-                <div
-                  data-chat-scope-panel-modes="true"
-                  className="bg-muted grid gap-0.5 border-2 p-1"
-                  style={{
-                    gridTemplateColumns: `repeat(${modeColumns ?? modeItems.length}, minmax(0, 1fr))`,
-                  }}
+          {(title || titleMeta || onCollapsedChange) && (
+            <div className="flex min-w-0 items-center gap-2">
+              {!collapsed && (
+                <>
+                  <h2 className="min-w-0 flex-1 truncate text-xs font-medium">{title}</h2>
+                  {titleMeta && (
+                    <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
+                      {titleMeta}
+                    </span>
+                  )}
+                </>
+              )}
+              {onCollapsedChange && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={() => onCollapsedChange(!collapsed)}
+                  aria-label={collapsed ? expandLabel : collapseLabel}
+                  aria-expanded={!collapsed}
+                  title={collapsed ? expandLabel : collapseLabel}
                 >
-                  {modeItems.map((mode) => (
-                    <button
-                      key={mode.value}
-                      type="button"
-                      onClick={() => onModeChange?.(mode.value)}
-                      data-chat-scope-panel-mode="true"
-                      data-active={activeMode === mode.value ? 'true' : 'false'}
-                      className={cn(
-                        'min-w-0 px-1.5 py-1 text-xs transition-colors',
-                        activeMode === mode.value
-                          ? 'bg-background text-foreground'
-                          : 'text-muted-foreground hover:text-foreground'
-                      )}
-                    >
-                      <span className="block truncate">{mode.label}</span>
-                    </button>
-                  ))}
-                </div>
+                  <StreamlineIcon
+                    name="line-arrow-right-1-remix"
+                    fallback={ChevronRight}
+                    className={cn('h-3 w-3', !collapsed && 'rotate-180')}
+                  />
+                </Button>
               )}
             </div>
           )}
-        </div>
-      </div>
-
-      {!collapsed && (
-        <>
-          <div
-            data-chat-scope-panel-list="true"
-            className={cn('min-h-0 flex-1 space-y-1 overflow-y-auto p-2', listClassName)}
-          >
-            {items.length > 0
-              ? items.map((item) => {
-                  const active = selectedItemId === item.id
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => onItemSelect?.(item.id)}
-                      data-chat-scope-panel-item="true"
-                      data-active={active ? 'true' : 'false'}
-                      className={cn(
-                        'w-full px-2 py-2 text-left text-sm transition-colors',
-                        active
-                          ? 'bg-primary text-primary-foreground'
-                          : 'text-foreground hover:bg-muted'
-                      )}
-                      title={item.title}
-                    >
-                      <span className="block truncate">{item.label}</span>
-                      {item.description && (
-                        <span
-                          className={cn(
-                            'block truncate text-xs',
-                            active ? 'text-primary-foreground/75' : 'text-muted-foreground'
-                          )}
-                          title={item.descriptionTitle}
-                        >
-                          {item.description}
-                        </span>
-                      )}
-                    </button>
-                  )
-                })
-              : emptyContent}
-          </div>
-          {footer && (
-            <div data-chat-scope-panel-footer="true" className="border-t-2 px-3 py-2">
-              {footer}
+          {!collapsed && hasModes && (
+            <div
+              data-chat-scope-panel-modes="true"
+              className="grid gap-1"
+              style={{
+                gridTemplateColumns: `repeat(${modeColumns ?? modeItems.length}, minmax(0, 1fr))`,
+              }}
+            >
+              {modeItems.map((mode) => (
+                <Button
+                  key={mode.value}
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  onClick={() => onModeChange?.(mode.value)}
+                  data-chat-scope-panel-mode="true"
+                  data-active={activeMode === mode.value ? 'true' : 'false'}
+                  aria-pressed={activeMode === mode.value}
+                  className="min-w-0 px-1.5"
+                >
+                  <span className="block truncate">{mode.label}</span>
+                </Button>
+              ))}
             </div>
           )}
-        </>
-      )}
-    </aside>
+        </div>
+
+        {!collapsed && (
+          <>
+            <DataPanel
+              padding="list"
+              inset
+              data-chat-scope-panel-list="true"
+              className={cn('min-h-0 flex-1 space-y-1 overflow-y-auto', listClassName)}
+            >
+              {items.length > 0
+                ? items.map((item) => {
+                    const active = selectedItemId === item.id
+                    return (
+                      <SelectionListItem
+                        key={item.id}
+                        type="button"
+                        onClick={() => onItemSelect?.(item.id)}
+                        data-chat-scope-panel-item="true"
+                        data-active={active ? 'true' : 'false'}
+                        selected={active}
+                        density={density}
+                        disabled={item.disabled}
+                        title={item.title}
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="min-w-0 flex-1 truncate font-medium">{item.label}</span>
+                          {item.meta != null && (
+                            <span className="shrink-0 text-xs tabular-nums opacity-75">
+                              {item.meta}
+                            </span>
+                          )}
+                        </span>
+                        {item.description && (
+                          <span
+                            className={cn(
+                              'block truncate text-xs',
+                              active ? 'text-current opacity-75' : 'text-muted-foreground'
+                            )}
+                            title={item.descriptionTitle}
+                          >
+                            {item.description}
+                          </span>
+                        )}
+                      </SelectionListItem>
+                    )
+                  })
+                : emptyContent}
+            </DataPanel>
+            {footer && (
+              <div data-chat-scope-panel-footer="true" className="border-t-2 px-3 py-2">
+                {footer}
+              </div>
+            )}
+          </>
+        )}
+      </aside>
+    </PageFrame>
   )
 }

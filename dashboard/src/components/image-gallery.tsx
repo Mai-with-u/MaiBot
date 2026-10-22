@@ -1,10 +1,12 @@
-import { ChevronLeft, ChevronRight, ImageOff, Loader2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Download, ImageOff, Loader2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
 import { ZoomableImage } from '@/components/zoomable-image'
+import { useToast } from '@/hooks/use-toast'
 import { backendApi } from '@/lib/http'
 import { cn } from '@/lib/utils'
 
@@ -75,9 +77,49 @@ export function ImageGalleryProvider({
   children: ReactNode
 }) {
   const { t } = useTranslation()
+  const { toast } = useToast()
+  const [isSaving, setIsSaving] = useState(false)
   const [active, setActive] = useState<GalleryImage | null>(null)
   const contextValue = useMemo<ImageGalleryContextValue>(() => ({ open: setActive }), [])
   const source = useGalleryImageSource(active)
+
+  const saveImage = async () => {
+    if (source.status !== 'ready' || isSaving) return
+    setIsSaving(true)
+    try {
+      // 使用预览已解析的地址，兼容需登录读取的图片、data URL 和普通图片。
+      const response = await fetch(source.src)
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const blob = await response.blob()
+      const extensions: Record<string, string> = {
+        'image/jpeg': 'jpg',
+        'image/png': 'png',
+        'image/gif': 'gif',
+        'image/webp': 'webp',
+        'image/avif': 'avif',
+        'image/svg+xml': 'svg',
+        'image/bmp': 'bmp',
+      }
+      const extension = extensions[blob.type.split(';')[0]]
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `maimai-image-${Date.now()}${extension ? `.${extension}` : ''}`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      // 给浏览器时间启动下载后再释放文件地址。
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch {
+      toast({
+        title: t('chat.media.saveFailed', { defaultValue: '保存图片失败' }),
+        description: t('chat.media.saveFailedDescription', { defaultValue: '无法下载这张图片，请稍后重试。' }),
+        variant: 'destructive',
+      })
+    } finally {
+      setIsSaving(false)
+    }
+  }
 
   const index = active ? images.findIndex((image) => image.src === active.src) : -1
   const previous = index > 0 ? images[index - 1] : null
@@ -114,6 +156,17 @@ export function ImageGalleryProvider({
             })}
           </DialogDescription>
           <div className="relative flex h-[calc(100vh-4rem)] w-full items-center justify-center max-sm:h-[70dvh]">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="absolute top-2 left-2 z-10 gap-2"
+              disabled={source.status !== 'ready' || isSaving}
+              onClick={saveImage}
+            >
+              {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              {t('chat.media.saveImage', { defaultValue: '保存图片' })}
+            </Button>
             {source.status === 'ready' && active ? (
               <ZoomableImage
                 // 换图后回到未缩放状态

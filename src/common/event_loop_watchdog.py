@@ -66,7 +66,7 @@ def start_watchdog(loop_name: str) -> Optional["asyncio.Task[None]"]:
         warn_threshold_seconds=log_config.event_loop_watchdog_warn_seconds,
     )
     task = asyncio.create_task(watchdog.run(), name=f"event_loop_watchdog:{loop_name}")
-    logger.info(
+    logger.debug(
         f"事件循环看门狗已启动: loop={loop_name} 告警阈值={watchdog.warn_threshold_seconds:.2f}s"
     )
     return task

@@ -17,6 +17,7 @@ class EmojiCandidateMessage(LLMContextMessage):
     emoji_hashes: Dict[int, str]
     visible_text: str
     timestamp: datetime
+    session_id: str = ""
 
     @property
     def role(self) -> str:

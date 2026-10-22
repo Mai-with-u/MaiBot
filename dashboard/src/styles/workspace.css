@@ -1,0 +1,80 @@
+/* 数据浏览页只组合公共外壳，主题材质仍由 surfaces.css 提供。 */
+[data-browser-header='true'] {
+  display: flex;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+}
+[data-browser-summary='true'] {
+  display: flex;
+  /* 同排摘要按最高内容等高；换行后各行独立排列，不限制组件单独使用。 */
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+[data-metric-strip='true'] {
+  display: flex;
+  /* 凹槽的外沿属于统计框占位，保证视觉边缘也能和相邻组件对齐。 */
+  padding: var(--surface-data-outset);
+}
+[data-metric-strip='true'] > [data-dashboard-data-panel='true'] {
+  display: flex;
+  align-items: center;
+  flex: 1;
+}
+[data-metric-strip='true'] [data-dashboard-separator='true'] {
+  align-self: stretch;
+  height: auto;
+}
+[data-status-indicator='true'] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+[data-status-indicator='true'][data-status-variant='panel'] {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--control-height-sm);
+  padding: 6px 12px;
+  font-size: 12px;
+  white-space: nowrap;
+  background: var(--surface-frame-bg);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--surface-radius);
+}
+[data-browser-layout='true'] {
+  display: grid;
+  grid-template-columns: 14rem minmax(0, 1fr);
+  gap: 20px;
+}
+[data-browser-layout='true']:has(> [data-collapsed='true']) {
+  grid-template-columns: 3.25rem minmax(0, 1fr);
+}
+[data-browser-toolbar='true'] {
+  flex-shrink: 0;
+  padding: 12px;
+  border-bottom: 1px solid var(--surface-line);
+}
+:root[data-dashboard-style='millennium'] [data-browser-header='true'] h1 {
+  font-family: var(--mil-font-pixel);
+}
+:root[data-dashboard-style='millennium'] [data-metric-strip='true'] .tabular-nums {
+  font-family: var(--mil-font-pixel);
+}
+:root[data-dashboard-style='millennium'] [data-status-indicator='true'][data-status-variant='panel'] {
+  border-width: 2px;
+  box-shadow: var(--mil-bevel);
+}
+:root[data-dashboard-style='millennium'] [data-browser-toolbar='true'] {
+  border-bottom: 2px solid var(--mil-lo);
+  box-shadow: 0 2px 0 var(--mil-hi);
+}
+@media (max-width: 1023px) {
+  [data-browser-layout='true'],
+  [data-browser-layout='true']:has(> [data-collapsed='true']) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

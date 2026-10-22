@@ -1,0 +1,104 @@
+/* 公共控件尺寸：页面选择档位，主题决定实际尺寸，不再靠 h-9 等工具类猜控件类型。 */
+:root {
+  --choice-size: 1rem;
+  --choice-icon-size: 0.75rem;
+  --control-height-xs: 1.75rem;
+  --control-height-sm: 2rem;
+  --control-height: 2.25rem;
+  --control-height-lg: 2.5rem;
+  --tab-height: 1.75rem;
+  --tab-height-sm: 1.75rem;
+}
+
+:root[data-dashboard-style='millennium'] {
+  --choice-size: 1.25rem;
+  --control-height-xs: 1.875rem;
+  --control-height-sm: 2.25rem;
+  --control-height: 2.875rem;
+  --control-height-lg: 3.25rem;
+  --tab-height: var(--control-height);
+  --tab-height-sm: var(--control-height-sm);
+}
+
+/* 表格等紧凑区域使用同一档位，不再为某个页面重新画复选框。 */
+:is([data-dashboard-checkbox='true'], [data-dashboard-radio-item='true'])[data-control-size='sm'] {
+  --choice-size: 1rem;
+  --choice-icon-size: 0.625rem;
+}
+
+[data-dashboard-checkbox-indicator='true'] svg {
+  width: var(--choice-icon-size);
+  height: var(--choice-icon-size);
+}
+
+[data-dashboard-checkbox='true'][data-state='checked'] [data-checkbox-mark='indeterminate'],
+[data-dashboard-checkbox='true'][data-state='indeterminate'] [data-checkbox-mark='checked'] {
+  display: none;
+}
+
+[data-dashboard-radio-mark='true'] {
+  width: calc(var(--choice-icon-size) - 2px);
+  height: calc(var(--choice-icon-size) - 2px);
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* 滑块大小与行程从轨道尺寸推导，切换大小时仍能到达两端。 */
+[data-dashboard-switch='true'] {
+  --switch-height: 1.25rem;
+  --switch-width: 2.25rem;
+  --switch-thumb: calc(var(--switch-height) - 4px);
+  --switch-travel: calc(var(--switch-width) - var(--switch-height));
+}
+
+[data-dashboard-switch='true'][data-control-size='lg'] {
+  --switch-height: 1.5rem;
+  --switch-width: 2.75rem;
+}
+
+[data-dashboard-slider][data-disabled] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* 持续选中的按钮统一去掉浮起阴影；千禧的键帽按下状态由主题绘制。 */
+:root:not([data-dashboard-style='millennium']) .dashboard-button[aria-pressed='true'] {
+  /* 只移除浮起阴影，保留 Tailwind 用 box-shadow 绘制的键盘焦点圈。 */
+  --tw-shadow: 0 0 #0000;
+}
+
+/* 主题的通用纸面压平规则不能盖掉按钮状态；ghost/link 也不继承实体键的描边。 */
+:root[data-dashboard-style='future-retro'] .dashboard-button[aria-pressed='true'] {
+  background-color: var(--retro-rust);
+  color: hsl(var(--primary-foreground));
+}
+:root[data-dashboard-style='future-retro']
+  :is(.dashboard-button--ghost, .dashboard-button--link) {
+  border: 0;
+}
+
+/* 仅扩大公共小控件的触控区域，不占用标签页和菜单项的伪元素。 */
+@media (pointer: coarse) {
+  :is([data-dashboard-checkbox='true'], [data-dashboard-switch='true'], [data-dashboard-slider-thumb='true']) { position: relative; }
+  :is([data-dashboard-checkbox='true'], [data-dashboard-switch='true'], [data-dashboard-slider-thumb='true'], [data-time-range-handle='true'])::before {
+    content: '';
+    position: absolute;
+    inset: 50% auto auto 50%;
+    transform: translate(-50%, -50%);
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+  }
+}
+[data-dashboard-segmented-meter='true'][data-separated='true'] > span + span { border-left: 1px solid var(--surface-data-bg); }
+:root[data-dashboard-style='millennium'] [data-dashboard-segmented-meter='true'] {
+  background: var(--mil-meter-track);
+  border: 2px solid var(--mil-line);
+  box-shadow: var(--mil-sunk);
+}
+
+/* 时间轴使用公共数据屏的描线和圆角，拖动手柄保留独立交互形状。 */
+[data-dashboard-time-range='true'] {
+  background-color: var(--surface-data-bg);
+  border: var(--surface-data-stroke) solid var(--surface-line);
+  border-radius: var(--surface-radius);
+}

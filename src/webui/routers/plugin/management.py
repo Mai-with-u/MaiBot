@@ -3,7 +3,7 @@ from datetime import datetime
 from functools import wraps
 from pathlib import Path
 from threading import Lock
-from typing import Any, Awaitable, Callable, Dict, Iterator, List, Optional, ParamSpec, TypeVar
+from typing import Any, Awaitable, Callable, Dict, Iterator, List, Optional, ParamSpec, Tuple, TypeVar
 
 import asyncio
 import json
@@ -14,22 +14,22 @@ import tomlkit
 
 from src.common.runtime_loop import run_on_main_loop
 from src.common.logger import get_logger
+from src.plugin_market import service as market_service
+from src.plugin_market.documents import read_local_document
+from src.plugin_market.errors import MarketError
+from src.plugin_market.releases import PluginRelease, PluginReleaseEntry
 from src.webui.services.git_mirror_service import get_git_mirror_service
 
 from .progress import update_progress
 from .release_install import install_release, read_release_receipt
-from .releases import resolve_release
 from .schemas import InstallPluginRequest, UninstallPluginRequest, UpdatePluginRequest
 from .support import (
-    find_plugin_path_by_id,
     get_plugin_candidate_paths,
     get_plugin_config_path,
     is_plugin_install_residue,
     iter_plugin_directories,
     load_manifest_json,
     parse_repository_url,
-    read_plugin_changelog,
-    read_plugin_readme,
     remove_tree,
     require_plugin_token,
     resolve_installed_plugin_path,
@@ -101,6 +101,16 @@ def _reserve_plugin_operation(plugin_id: str, operation: str) -> Iterator[None]:
             for key in operation_keys:
                 if _ACTIVE_PLUGIN_OPERATIONS.get(key) == operation:
                     _ACTIVE_PLUGIN_OPERATIONS.pop(key, None)
+
+
+async def resolve_release(plugin_id: str, version: str) -> Tuple[PluginReleaseEntry, Optional[PluginRelease]]:
+    """安装路由只映射公共服务的错误，不另行获取或筛选版本。"""
+    try:
+        return await market_service.resolve_release(plugin_id, version)
+    except MarketError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(status_code=502, detail=f"获取插件发布版本失败：{exc}") from exc
 
 
 def _exclusive_plugin_operation(
@@ -684,10 +694,16 @@ async def _perform_update_plugin(request: UpdatePluginRequest, maibot_session: O
             stage="loading", progress=30, message="正在通过 Git 拉取新版本...", operation="update", plugin_id=plugin_id
         )
         service = get_git_mirror_service()
+        source_url = request.repository_url
+        if not source_url:
+            urls = manifest.get("urls")
+            source_url = urls.get("repository") if isinstance(urls, dict) else None
+            source_url = source_url or manifest.get("repository_url")
         result = await service.pull_repository(
             repository_path=plugin_path,
             branch=request.branch,
-            remote_url=request.repository_url,
+            remote_url=source_url,
+            mirror_id=request.mirror_id,
         )
 
         if not result.get("success"):
@@ -826,7 +842,7 @@ def _collect_installed_plugins(snapshot: Dict[str, Any]) -> Dict[str, Any]:
                     "disabled" if enabled is False and load_status not in {"success", "loading", "stopping"}
                     else load_status
                 )
-                changelog = read_plugin_changelog(plugin_path)
+                changelog = read_local_document(plugin_path, manifest, "changelog")
                 installed_plugins.append(
                     {
                         "id": plugin_id,
@@ -866,43 +882,3 @@ def _collect_installed_plugins(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"获取已安装插件列表失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"服务器错误: {str(e)}") from e
-
-
-@router.get("/local-readme/{plugin_id}")
-def get_local_plugin_readme(plugin_id: str, maibot_session: Optional[str] = Cookie(None)) -> Dict[str, Any]:
-    require_plugin_token(maibot_session)
-    logger.info(f"获取本地插件 README: {plugin_id}")
-
-    try:
-        plugin_path = find_plugin_path_by_id(plugin_id)
-        if plugin_path is None:
-            return {"success": False, "error": "插件未安装"}
-
-        readme = read_plugin_readme(plugin_path)
-        if readme:
-            return {"success": True, "data": readme}
-
-        return {"success": False, "error": "本地未找到 README 文件"}
-    except Exception as e:
-        logger.error(f"获取本地 README 失败: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
-
-
-@router.get("/local-changelog/{plugin_id}")
-def get_local_plugin_changelog(plugin_id: str, maibot_session: Optional[str] = Cookie(None)) -> Dict[str, Any]:
-    require_plugin_token(maibot_session)
-    logger.info(f"获取本地插件更新日志: {plugin_id}")
-
-    try:
-        plugin_path = find_plugin_path_by_id(plugin_id)
-        if plugin_path is None:
-            return {"success": False, "error": "插件未安装"}
-
-        changelog = read_plugin_changelog(plugin_path)
-        if changelog:
-            return {"success": True, "data": changelog}
-
-        return {"success": False, "error": "本地未找到 CHANGELOG.md 文件"}
-    except Exception as e:
-        logger.error(f"获取本地插件更新日志失败: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}

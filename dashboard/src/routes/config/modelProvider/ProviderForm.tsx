@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Check, ChevronDown, ChevronsUpDown, Copy, Eye, EyeOff } from 'lucide-react'
+import { useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { Check, ChevronDown, ChevronsUpDown, Copy, Eye, EyeOff, Info } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -12,7 +13,9 @@ import { KeyValueEditor } from '@/components/ui/key-value-editor'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useToast } from '@/hooks/use-toast'
+import { AnimationContext } from '@/lib/animation-context'
 import { fetchModelClientTypes, type ModelClientType } from '@/lib/config-api'
 
 import { PROVIDER_TEMPLATES } from '../providerTemplates'
@@ -36,7 +39,7 @@ interface ProviderFormProps {
   editingProvider: APIProvider | null
   editingIndex: number | null
   providers: APIProvider[]
-  onSave: (provider: APIProvider, index: number | null) => Promise<void> | void
+  onSave: (provider: APIProvider, index: number | null, templateId?: string) => Promise<void> | void
   tourState: { isRunning: boolean }
 }
 
@@ -59,6 +62,9 @@ export function ProviderForm({
   const [clientTypes, setClientTypes] = useState<ModelClientType[]>([])
   const [saving, setSaving] = useState(false)
   const { toast } = useToast()
+  const animationSettings = useContext(AnimationContext)
+  const reducedMotion = useReducedMotion()
+  const transitionDuration = reducedMotion || animationSettings?.enableAnimations === false ? 0 : 0.2
 
   useEffect(() => {
     if (!open) return
@@ -109,6 +115,9 @@ export function ProviderForm({
           )
       )
       setSelectedTemplate(matchedTemplate?.id || 'custom')
+      if (matchedTemplate?.defaultApiKey) {
+        setLocalProvider({ ...editingProvider, api_key: matchedTemplate.defaultApiKey })
+      }
       if (matchedTemplate && matchedTemplate.id !== 'custom') {
         setLastTemplateId(matchedTemplate.id)
       }
@@ -129,6 +138,7 @@ export function ProviderForm({
   }, [open, editingProvider, editingIndex])
 
   const isUsingTemplate = useMemo(() => selectedTemplate !== 'custom', [selectedTemplate])
+  const isMaiReplier = selectedTemplate === 'mai_replier'
   const selectedTemplateConfig = useMemo(
     () => PROVIDER_TEMPLATES.find((template) => template.id === selectedTemplate),
     [selectedTemplate]
@@ -170,11 +180,18 @@ export function ProviderForm({
     setSelectedTemplate(template.id)
     setLastTemplateId(template.id)
     setTemplateComboboxOpen(false)
+    setFormErrors({})
     setLocalProvider(prev => ({
       ...prev!,
       name: template.name,
       base_url: template.base_url,
       client_type: template.client_type,
+      ...template.providerDefaults,
+      api_key: template.defaultApiKey ?? (
+        PROVIDER_TEMPLATES.some((item) => item.defaultApiKey === prev?.api_key)
+          ? ''
+          : prev?.api_key ?? ''
+      ),
     }))
   }, [])
 
@@ -221,7 +238,11 @@ export function ProviderForm({
     setFormErrors({})
     setSaving(true)
     try {
-      await onSave(localProvider, editingIndex)
+      if (selectedTemplateConfig?.models) {
+        await onSave(localProvider, editingIndex, selectedTemplate)
+      } else {
+        await onSave(localProvider, editingIndex)
+      }
     } finally {
       setSaving(false)
     }
@@ -250,7 +271,12 @@ export function ProviderForm({
           <DialogBody>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2" data-tour="provider-template-select">
-              <Label htmlFor="template">提供商模板</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="template">提供商模板</Label>
+                {selectedTemplateConfig?.description && (
+                  <TemplateInfo description={selectedTemplateConfig.description} />
+                )}
+              </div>
               <div className="flex items-center gap-2">
                 <Popover
                   open={isUsingTemplate && templateComboboxOpen}
@@ -291,6 +317,7 @@ export function ProviderForm({
                                   }`}
                                 />
                                 {template.display_name}
+                                {template.description && <TemplateInfo description={template.description} />}
                               </CommandItem>
                             ))}
                           </CommandGroup>
@@ -309,11 +336,13 @@ export function ProviderForm({
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                选择预设模板可自动填充 URL 和客户端类型,支持搜索
+                {selectedTemplateConfig?.models
+                  ? `已自动配置连接信息，保存后添加全部 ${selectedTemplateConfig.models.length} 个预设模型，仅用于回复模型。`
+                  : '选择预设模板可自动填充 URL 和客户端类型,支持搜索'}
               </p>
             </div>
 
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="grid gap-4">
               <div className="grid gap-2" data-tour="provider-name-input">
                 <div className="flex items-center gap-1.5">
                   <Label htmlFor="name" className={formErrors.name ? 'text-destructive' : ''}>名称 *</Label>
@@ -352,158 +381,173 @@ export function ProviderForm({
                   <p id="name-error" role="alert" className="text-xs text-destructive">{formErrors.name}</p>
                 )}
               </div>
+            </div>
 
-              <div className="grid gap-2">
-                <div className="flex items-center gap-1.5">
-                  <Label htmlFor="client_type">客户端类型</Label>
-                  <HelpTooltip
-                    content={
-                      <div className="space-y-2">
-                        <p className="font-medium">API 客户端类型</p>
-                        <p>指定与提供商通信时使用的 API 协议格式。</p>
-                        <ul className="list-disc list-inside space-y-1 text-xs">
-                          <li><strong>OpenAI：</strong>兼容 OpenAI API 格式的提供商</li>
-                          <li><strong>OpenAI Responses：</strong>OpenAI Responses API 原生格式</li>
-                          <li><strong>Gemini：</strong>Google Gemini 专用格式</li>
-                          <li>已加载的插件可以在这里提供新的客户端类型</li>
-                        </ul>
+            <AnimatePresence initial={false}>
+              {!isMaiReplier && (
+                <motion.div
+                  key="provider-connection-fields"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: transitionDuration }}
+                  className="overflow-hidden"
+                >
+                  <div className="grid gap-4">
+                    <div className="grid gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <Label htmlFor="client_type">客户端类型</Label>
+                        <HelpTooltip
+                          content={
+                            <div className="space-y-2">
+                              <p className="font-medium">API 客户端类型</p>
+                              <p>指定与提供商通信时使用的 API 协议格式。</p>
+                              <ul className="list-disc list-inside space-y-1 text-xs">
+                                <li><strong>OpenAI：</strong>兼容 OpenAI API 格式的提供商</li>
+                                <li><strong>OpenAI Responses：</strong>OpenAI Responses API 原生格式</li>
+                                <li><strong>Gemini：</strong>Google Gemini 专用格式</li>
+                                <li>已加载的插件可以在这里提供新的客户端类型</li>
+                              </ul>
+                            </div>
+                          }
+                          side="right"
+                          maxWidth="350px"
+                        />
                       </div>
-                    }
-                    side="right"
-                    maxWidth="350px"
-                  />
-                </div>
-                <Select
-                  value={localProvider?.client_type || 'openai'}
-                  onValueChange={(value) =>
-                    setLocalProvider((prev) =>
-                      prev ? { ...prev, client_type: value } : null
-                    )
-                  }
-                  disabled={isClientTypeLocked}
-                >
-                  <SelectTrigger id="client_type" className={isClientTypeLocked ? 'bg-muted cursor-not-allowed' : ''}>
-                    <SelectValue placeholder="选择客户端类型" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {visibleClientTypeOptions.map((item) => (
-                      <SelectItem key={item.client_type} value={item.client_type}>
-                        {item.client_type}
-                        {item.owner_plugin_id ? ` (${item.owner_plugin_id})` : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div className="grid gap-2" data-tour="provider-url-input">
-              <div className="flex items-center gap-1.5">
-                <Label htmlFor="base_url" className={formErrors.base_url ? 'text-destructive' : ''}>基础 URL *</Label>
-                <HelpTooltip
-                  content={
-                    <div className="space-y-2">
-                      <p className="font-medium">API 基础地址</p>
-                      <p>提供商的 API 端点基础 URL，通常以 /v1 结尾。</p>
-                      <ul className="list-disc list-inside space-y-1 text-xs">
-                        <li><strong>OpenAI 格式：</strong>https://api.openai.com/v1</li>
-                        <li><strong>DeepSeek：</strong>https://api.deepseek.com</li>
-                        <li><strong>硅基流动：</strong>https://api.siliconflow.cn/v1</li>
-                        <li>选择模板会自动填充正确的 URL</li>
-                      </ul>
+                      <Select
+                        value={localProvider?.client_type || 'openai'}
+                        onValueChange={(value) =>
+                          setLocalProvider((prev) =>
+                            prev ? { ...prev, client_type: value } : null
+                          )
+                        }
+                        disabled={isClientTypeLocked}
+                      >
+                        <SelectTrigger id="client_type" className={isClientTypeLocked ? 'bg-muted cursor-not-allowed' : ''}>
+                          <SelectValue placeholder="选择客户端类型" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {visibleClientTypeOptions.map((item) => (
+                            <SelectItem key={item.client_type} value={item.client_type}>
+                              {item.client_type}
+                              {item.owner_plugin_id ? ` (${item.owner_plugin_id})` : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
-                  }
-                  side="right"
-                  maxWidth="400px"
-                />
-              </div>
-              <Input
-                id="base_url"
-                value={localProvider?.base_url || ''}
-                onChange={(e) => {
-                  setLocalProvider((prev) =>
-                    prev ? { ...prev, base_url: e.target.value } : null
-                  )
-                  if (formErrors.base_url) {
-                    setFormErrors((prev) => ({ ...prev, base_url: undefined }))
-                  }
-                }}
-                placeholder="https://api.example.com/v1"
-                disabled={isUsingTemplate}
-                aria-invalid={formErrors.base_url ? true : undefined}
-                aria-describedby={formErrors.base_url ? 'base-url-error' : undefined}
-                className={`${isUsingTemplate ? 'bg-muted cursor-not-allowed' : ''} ${formErrors.base_url ? 'border-destructive focus-visible:ring-destructive' : ''}`}
-              />
-              {formErrors.base_url && (
-                <p id="base-url-error" role="alert" className="text-xs text-destructive">{formErrors.base_url}</p>
-              )}
-            </div>
-
-            <div className="grid gap-2" data-tour="provider-apikey-input">
-              <div className="flex items-center gap-1.5">
-                <Label htmlFor="api_key" className={formErrors.api_key ? 'text-destructive' : ''}>API Key *</Label>
-                <HelpTooltip
-                  content={
-                    <div className="space-y-2">
-                      <p className="font-medium">API 密钥</p>
-                      <p>从提供商平台获取的身份验证密钥。</p>
-                      <ul className="list-disc list-inside space-y-1 text-xs">
-                        <li>通常以 <code>sk-</code> 开头</li>
-                        <li>请妥善保管，不要泄露给他人</li>
-                        <li>可以点击眼睛图标切换显示/隐藏</li>
-                        <li>点击复制图标可快速复制密钥</li>
-                      </ul>
+                    <div className="grid gap-2" data-tour="provider-url-input">
+                      <div className="flex items-center gap-1.5">
+                        <Label htmlFor="base_url" className={formErrors.base_url ? 'text-destructive' : ''}>基础 URL *</Label>
+                        <HelpTooltip
+                          content={
+                            <div className="space-y-2">
+                              <p className="font-medium">API 基础地址</p>
+                              <p>提供商的 API 端点基础 URL，通常以 /v1 结尾。</p>
+                              <ul className="list-disc list-inside space-y-1 text-xs">
+                                <li><strong>OpenAI 格式：</strong>https://api.openai.com/v1</li>
+                                <li><strong>DeepSeek：</strong>https://api.deepseek.com</li>
+                                <li><strong>硅基流动：</strong>https://api.siliconflow.cn/v1</li>
+                                <li>选择模板会自动填充正确的 URL</li>
+                              </ul>
+                            </div>
+                          }
+                          side="right"
+                          maxWidth="400px"
+                        />
+                      </div>
+                      <Input
+                        id="base_url"
+                        value={localProvider?.base_url || ''}
+                        onChange={(e) => {
+                          setLocalProvider((prev) =>
+                            prev ? { ...prev, base_url: e.target.value } : null
+                          )
+                          if (formErrors.base_url) {
+                            setFormErrors((prev) => ({ ...prev, base_url: undefined }))
+                          }
+                        }}
+                        placeholder="https://api.example.com/v1"
+                        disabled={isUsingTemplate}
+                        aria-invalid={formErrors.base_url ? true : undefined}
+                        aria-describedby={formErrors.base_url ? 'base-url-error' : undefined}
+                        className={`${isUsingTemplate ? 'bg-muted cursor-not-allowed' : ''} ${formErrors.base_url ? 'border-destructive focus-visible:ring-destructive' : ''}`}
+                      />
+                      {formErrors.base_url && (
+                        <p id="base-url-error" role="alert" className="text-xs text-destructive">{formErrors.base_url}</p>
+                      )}
                     </div>
-                  }
-                  side="right"
-                  maxWidth="350px"
-                />
-              </div>
-              <div className="flex gap-2">
-                <Input
-                  id="api_key"
-                  type={showApiKey ? 'text' : 'password'}
-                  value={localProvider?.api_key || ''}
-                  onChange={(e) => {
-                    setLocalProvider((prev) =>
-                      prev ? { ...prev, api_key: e.target.value } : null
-                    )
-                    if (formErrors.api_key) {
-                      setFormErrors((prev) => ({ ...prev, api_key: undefined }))
-                    }
-                  }}
-                  placeholder="sk-..."
-                  aria-invalid={formErrors.api_key ? true : undefined}
-                  aria-describedby={formErrors.api_key ? 'api-key-error' : undefined}
-                  className={`flex-1 ${formErrors.api_key ? 'border-destructive focus-visible:ring-destructive' : ''}`}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  onClick={() => setShowApiKey(!showApiKey)}
-                  title={showApiKey ? '隐藏密钥' : '显示密钥'}
-                >
-                  {showApiKey ? (
-                    <EyeOff className="h-4 w-4" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
-                  )}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  onClick={copyApiKey}
-                  title="复制密钥"
-                >
-                  <Copy className="h-4 w-4" />
-                </Button>
-              </div>
-              {formErrors.api_key && (
-                <p id="api-key-error" role="alert" className="text-xs text-destructive">{formErrors.api_key}</p>
+
+                    <div className="grid gap-2" data-tour="provider-apikey-input">
+                      <div className="flex items-center gap-1.5">
+                        <Label htmlFor="api_key" className={formErrors.api_key ? 'text-destructive' : ''}>API Key *</Label>
+                        <HelpTooltip
+                          content={
+                            <div className="space-y-2">
+                              <p className="font-medium">API 密钥</p>
+                              <p>从提供商平台获取的身份验证密钥。</p>
+                              <ul className="list-disc list-inside space-y-1 text-xs">
+                                <li>通常以 <code>sk-</code> 开头</li>
+                                <li>请妥善保管，不要泄露给他人</li>
+                                <li>可以点击眼睛图标切换显示/隐藏</li>
+                                <li>点击复制图标可快速复制密钥</li>
+                              </ul>
+                            </div>
+                          }
+                          side="right"
+                          maxWidth="350px"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <Input
+                          id="api_key"
+                          type={showApiKey ? 'text' : 'password'}
+                          value={localProvider?.api_key || ''}
+                          onChange={(e) => {
+                            setLocalProvider((prev) =>
+                              prev ? { ...prev, api_key: e.target.value } : null
+                            )
+                            if (formErrors.api_key) {
+                              setFormErrors((prev) => ({ ...prev, api_key: undefined }))
+                            }
+                          }}
+                          placeholder="sk-..."
+                          aria-invalid={formErrors.api_key ? true : undefined}
+                          aria-describedby={formErrors.api_key ? 'api-key-error' : undefined}
+                          className={`flex-1 ${formErrors.api_key ? 'border-destructive focus-visible:ring-destructive' : ''}`}
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => setShowApiKey(!showApiKey)}
+                          title={showApiKey ? '隐藏密钥' : '显示密钥'}
+                        >
+                          {showApiKey ? (
+                            <EyeOff className="h-4 w-4" />
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={copyApiKey}
+                          title="复制密钥"
+                        >
+                          <Copy className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      {formErrors.api_key && (
+                        <p id="api-key-error" role="alert" className="text-xs text-destructive">{formErrors.api_key}</p>
+                      )}
+                    </div>
+
+                  </div>
+                </motion.div>
               )}
-            </div>
+            </AnimatePresence>
 
             <Collapsible
               open={advancedOpen}
@@ -643,5 +687,20 @@ export function ProviderForm({
         </form>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function TemplateInfo({ description }: { description: string }) {
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span tabIndex={0} className="ml-1 inline-flex cursor-help text-muted-foreground" aria-label={description}>
+            <Info className="h-4 w-4" />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="z-[70] max-w-xs whitespace-pre-line">{description}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }

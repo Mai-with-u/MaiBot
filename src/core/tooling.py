@@ -7,9 +7,11 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from hashlib import sha256
+from typing import Any, Dict, List, Literal, Optional, Protocol, Tuple, runtime_checkable
 import json
-from typing import Any, Dict, Literal, Optional, Protocol, runtime_checkable
+import re
 
 from src.common.logger import get_logger
 from src.llm_models.payload_content.tool_option import ToolDefinitionInput
@@ -291,28 +293,42 @@ class ToolRegistry:
         self,
         context: Optional[ToolAvailabilityContext] = None,
     ) -> list[ToolSpec]:
-        """按 Provider 顺序列出全部去重后的工具。
+        """按 Provider 顺序列出工具，重名项添加来源前缀并保留原始入口。
 
         Returns:
-            list[ToolSpec]: 去重后的工具列表。
+            list[ToolSpec]: 名称唯一的工具列表。
         """
 
-        collected_specs: list[ToolSpec] = []
-        seen_names: set[str] = set()
+        return [spec for _, spec in (await self._list_routes(context)).values()]
 
+    async def _list_routes(
+        self,
+        context: Optional[ToolAvailabilityContext] = None,
+    ) -> Dict[str, Tuple[ToolProvider, ToolSpec]]:
+        """声明与执行共用名称分配规则，不修改 Provider 持有的原始声明。"""
+        entries: List[Tuple[ToolProvider, ToolSpec]] = []
         for provider in self._providers:
-            provider_specs = await provider.list_tools(context)
-            for spec in provider_specs:
-                if not spec.enabled:
-                    continue
-                if spec.name in seen_names:
-                    logger.warning(
-                        f"检测到重复工具名 {spec.name}，保留先注册的工具，跳过 provider={provider.provider_name}"
-                    )
-                    continue
-                seen_names.add(spec.name)
-                collected_specs.append(spec)
-        return collected_specs
+            entries.extend((provider, spec) for spec in await provider.list_tools(context) if spec.enabled)
+        reserved_names = {spec.name for _, spec in entries}
+        routes: Dict[str, Tuple[ToolProvider, ToolSpec]] = {}
+        for provider, original in entries:
+            name = original.name
+            spec = deepcopy(original)
+            spec.metadata["registry_original_name"] = name
+            if name in routes:
+                source = str(
+                    spec.metadata.get("server_name") or spec.metadata.get("plugin_id") or provider.provider_name
+                )
+                prefix = f"{provider.provider_type}_{source}" if source != provider.provider_type else source
+                candidate = re.sub(r"[^a-zA-Z0-9_-]", "_", f"{prefix}_{name}")
+                if len(candidate) > 64 or candidate in routes or candidate in reserved_names:
+                    digest = sha256(f"{provider.provider_name}:{source}:{name}".encode()).hexdigest()[:12]
+                    candidate = f"{candidate[:51]}_{digest}"
+                if candidate in routes or candidate in reserved_names:
+                    raise ValueError(f"工具来源重复，无法分配唯一名称：{provider.provider_name}/{source}/{name}")
+                spec.name = candidate
+            routes[spec.name] = (provider, spec)
+        return routes
 
     async def get_tool_spec(
         self,
@@ -387,25 +403,35 @@ class ToolRegistry:
                 platform=context.platform,
             )
 
-        for provider in self._providers:
-            provider_specs = await provider.list_tools(availability_context)
-            if any(spec.name == invocation.tool_name and spec.enabled for spec in provider_specs):
-                try:
-                    return await provider.invoke(invocation, context)
-                except Exception as exc:
-                    logger.exception(
-                        f"工具调用异常: tool={invocation.tool_name} provider={getattr(provider, 'provider_name', '')}",
-                    )
-                    error_message = str(exc).strip()
-                    if error_message:
-                        error_message = f"工具 {invocation.tool_name} 调用失败：{exc.__class__.__name__}: {error_message}"
-                    else:
-                        error_message = f"工具 {invocation.tool_name} 调用失败：{exc.__class__.__name__}"
-                    return ToolExecutionResult(
-                        tool_name=invocation.tool_name,
-                        success=False,
-                        error_message=error_message,
-                    )
+        route = (await self._list_routes(availability_context)).get(invocation.tool_name)
+        if route is not None:
+            provider, spec = route
+            metadata = dict(invocation.metadata)
+            if provider.provider_type == "mcp":
+                # 服务器选择来自注册表，不接受调用方伪造的路由元数据。
+                metadata["mcp_server_name"] = spec.metadata["server_name"]
+            native_invocation = replace(
+                invocation,
+                tool_name=spec.metadata["registry_original_name"],
+                metadata=metadata,
+            )
+            try:
+                result = await provider.invoke(native_invocation, context)
+                return replace(result, tool_name=invocation.tool_name)
+            except Exception as exc:
+                logger.exception(
+                    f"工具调用异常: tool={invocation.tool_name} provider={provider.provider_name}",
+                )
+                error_message = str(exc).strip()
+                if error_message:
+                    error_message = f"工具 {invocation.tool_name} 调用失败：{exc.__class__.__name__}: {error_message}"
+                else:
+                    error_message = f"工具 {invocation.tool_name} 调用失败：{exc.__class__.__name__}"
+                return ToolExecutionResult(
+                    tool_name=invocation.tool_name,
+                    success=False,
+                    error_message=error_message,
+                )
 
         return ToolExecutionResult(
             tool_name=invocation.tool_name,

@@ -1,3 +1,4 @@
+import { DataPagination } from '@/components/ui/data-pagination'
 /**
  * Pack 市场页面
  * 
@@ -32,14 +33,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationLink,
-  PaginationNext,
-  PaginationPrevious,
-} from '@/components/ui/pagination'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useDataList } from '@/hooks/useDataList'
 import { toast } from '@/hooks/use-toast'
@@ -266,42 +259,9 @@ export default function PackMarketPage() {
             </div>
           )}
           
-          {/* 分页 */}
-          {list.totalPages > 1 && (
-            <Pagination>
-              <PaginationContent>
-                <PaginationItem>
-                  <PaginationPrevious
-                    onClick={() => list.goToPage(list.page - 1)}
-                    className={list.page === 1 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
-                  />
-                </PaginationItem>
-                {Array.from({ length: list.totalPages }, (_, i) => i + 1)
-                  .filter(p => p === 1 || p === list.totalPages || Math.abs(p - list.page) <= 1)
-                  .map((p, i, arr) => {
-                    const showEllipsis = i > 0 && p - arr[i - 1] > 1
-                    return (
-                      <PaginationItem key={p}>
-                        {showEllipsis && <span className="px-2">...</span>}
-                        <PaginationLink
-                          onClick={() => list.goToPage(p)}
-                          isActive={p === list.page}
-                          className="cursor-pointer"
-                        >
-                          {p}
-                        </PaginationLink>
-                      </PaginationItem>
-                    )
-                  })}
-                <PaginationItem>
-                  <PaginationNext
-                    onClick={() => list.goToPage(list.page + 1)}
-                    className={list.page === list.totalPages ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
-                  />
-                </PaginationItem>
-              </PaginationContent>
-            </Pagination>
-          )}
+          {/* 与数据浏览页共用分页边界和交互。 */}
+          {list.totalPages > 1 && <DataPagination total={list.total} page={list.page}
+            pageSize={list.pageSize} onPageChange={list.goToPage} disabled={list.isFetching} />}
         </div>
       </ScrollArea>
     </div>

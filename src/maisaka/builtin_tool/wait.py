@@ -13,7 +13,7 @@ def get_tool_spec() -> ToolSpec:
 
     return ToolSpec(
         name="wait",
-        description="暂停当前对话并等待一段时间；快速反应模式下，新消息可提前结束等待。",
+        description="等待一段时间；期间不查看聊天，用于一段时间后再次查看聊天内容。不适用于正在进行的聊天。",
         parameters_schema={
             "type": "object",
             "properties": {
@@ -63,7 +63,7 @@ async def handle_tool(
 
     wait_detail = (
         f"当前对话循环进入等待状态，最多等待 {wait_seconds} 秒；新消息可提前结束等待并继续思考。"
-        if global_config.experimental.planner_message_steering
+        if global_config.chat.reply_timing.planner_message_steering
         else f"当前对话循环进入等待状态，将固定等待 {wait_seconds} 秒；期间收到的新消息不会提前打断本次等待。"
     )
     return tool_ctx.build_success_result(

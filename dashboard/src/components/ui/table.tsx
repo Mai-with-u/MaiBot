@@ -4,9 +4,9 @@ import { cn } from "@/lib/utils"
 
 const Table = React.forwardRef<
   HTMLTableElement,
-  React.HTMLAttributes<HTMLTableElement>
->(({ className, ...props }, ref) => (
-  <div data-dashboard-table-wrapper="true" className="relative w-full overflow-auto">
+  React.HTMLAttributes<HTMLTableElement> & { density?: "default" | "compact" }
+>(({ className, density = "default", ...props }, ref) => (
+  <div data-dashboard-table-wrapper="true" data-table-density={density} className="relative w-full overflow-auto">
     <table
       ref={ref}
       data-dashboard-table="true"

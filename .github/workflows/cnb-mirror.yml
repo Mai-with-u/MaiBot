@@ -1,0 +1,55 @@
+name: Sync MaiBot to CNB
+
+on:
+  push:
+    branches: ['**']
+    tags: ['**']
+  create:
+  delete:
+  # GITHUB_TOKEN pushes do not trigger another push workflow.
+  workflow_run:
+    workflows: ['Publish MaiBot', 'Prepare Main Release', 'Publish WebUI Dist', 'Update Dashboard Dependency', 'Ruff']
+    types: [completed]
+  schedule:
+    - cron: '30 7,18 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cnb-maibot-mirror
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'Mai-with-u/MaiBot' && vars.CNB_GROUP != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Always execute the trusted script, even for tag/deletion/other-branch events.
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify synchronization script
+        run: node --test .github/scripts/sync_cnb_mirror.test.cjs
+      - name: Check Git LFS
+        run: git lfs version
+      - name: Sync MaiBot to CNB
+        env:
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+          CNB_GROUP: ${{ vars.CNB_GROUP }}
+          CNB_MAIBOT_REPO: ${{ vars.CNB_MAIBOT_REPO }}
+        run: node .github/scripts/sync_cnb_mirror.cjs
+      - name: Upload synchronization status
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maibot-cnb-mirror-status
+          path: cnb-sync-output/maibot.json
+          if-no-files-found: ignore
+          retention-days: 14

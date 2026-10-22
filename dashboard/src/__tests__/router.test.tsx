@@ -43,11 +43,9 @@ vi.mock('@/routes/logs', () => ({
   ReasoningLogViewerPage: StubPage,
   StatisticsLogViewerPage: StubPage,
 }))
-vi.mock('@/routes/reply-effects', () => ({ ReplyEffectsPage: StubPage }))
 vi.mock('@/routes/config/bot', () => ({ BotConfigPage: StubPage }))
 vi.mock('@/routes/config/model', () => ({ ModelConfigPage: StubPage }))
 vi.mock('@/routes/config/prompts', () => ({ PromptManagementPage: StubPage }))
-vi.mock('@/routes/resource/emoji/index.tsx', () => ({ EmojiManagementPage: StubPage }))
 vi.mock('@/routes/resource/learning', () => ({ LearningPage: StubPage }))
 vi.mock('@/routes/resource/expression/index.tsx', () => ({ ExpressionManagementPage: StubPage }))
 vi.mock('@/routes/person', () => ({ PersonManagementPage: StubPage }))
@@ -83,7 +81,6 @@ const expectedPaths = [
   '/plugin-mirrors/embed',
   '/',
   '/statistics',
-  '/reply-effects',
   '/config/bot',
   '/config/model',
   '/config/prompts',
@@ -195,6 +192,7 @@ describe('router 路由表', () => {
           '/mcp-settings',
           '/settings',
           '/extensions',
+          '/resource/emoji',
           '/resource/expression',
           '/resource/jargon',
         ].includes(path)
@@ -357,6 +355,7 @@ describe('router 路由表', () => {
           '/mcp-settings',
           '/settings',
           '/extensions',
+          '/resource/emoji',
           '/resource/expression',
           '/resource/jargon',
         ].includes(path)

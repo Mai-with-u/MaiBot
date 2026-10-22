@@ -3,13 +3,14 @@ from typing import Any
 
 import pytest
 
-from src.config.config import global_config
+from src.config.config import global_config, model_config
 from src.core.tooling import ToolInvocation
 from src.llm_models.payload_content.tool_option import ToolCall
 from src.maisaka.builtin_tool import get_all_builtin_tool_specs, read_tool_result
 from src.maisaka.builtin_tool.context import BuiltinToolRuntimeContext
 from src.maisaka.tool_result_condenser import condense_tool_result, should_condense_tool_result
 from src.maisaka.tool_result_store import MAX_STORED_RESULTS_PER_SESSION, ToolResultStore, tool_result_store
+from src.web_search.config import WebSearchTaskConfig
 
 
 def _tool_ctx(session_id: str) -> BuiltinToolRuntimeContext:
@@ -49,9 +50,10 @@ async def test_condensed_result_tells_planner_how_to_fetch_the_original() -> Non
     history_content = await condense_tool_result(runtime, tool_call, original, "想推荐插件")
 
     result_id = history_content.split("原始结果已保存为 ")[1].split("。")[0]
-    assert history_content.startswith("[以下是子代理对 maibot_plugin_list 原始结果")
-    assert "共 200 个插件，代表：插件A。" in history_content
-    assert f'read_tool_result(result_id="{result_id}")' in history_content.splitlines()[-1]
+    assert history_content.splitlines() == [
+        f'<压缩后信息；原始结果已保存为 {result_id}。需要上面没有的细节时，调用 read_tool_result(result_id="{result_id}") 分段读取原文，或加 keyword 参数直接查找。>',
+        "共 200 个插件，代表：插件A。",
+    ]
     assert tool_result_store.get("chat-condense", result_id).content == original
 
 
@@ -96,8 +98,21 @@ async def test_read_tool_result_reports_expired_ids() -> None:
 
 
 def test_read_tool_result_is_exposed_with_the_condense_switch(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(global_config.experimental, "tool_result_condense", False)
+    monkeypatch.setattr(model_config.model_task_config, "web_search", WebSearchTaskConfig())
+    monkeypatch.setattr(global_config.capabilities, "tool_result_condense", False)
     assert "read_tool_result" not in {tool_spec.name for tool_spec in get_all_builtin_tool_specs()}
 
-    monkeypatch.setattr(global_config.experimental, "tool_result_condense", True)
+    monkeypatch.setattr(global_config.capabilities, "tool_result_condense", True)
     assert "read_tool_result" in {tool_spec.name for tool_spec in get_all_builtin_tool_specs()}
+
+
+def test_web_results_can_be_read_without_condense(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(global_config.capabilities, "tool_result_condense", False)
+    monkeypatch.setattr(model_config.model_task_config, "web_search", WebSearchTaskConfig(model_list=["step"]))
+    assert "read_tool_result" in {tool_spec.name for tool_spec in get_all_builtin_tool_specs()}
+
+
+def test_web_preview_skips_condense_but_raw_mcp_result_does_not(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(global_config.capabilities, "tool_result_condense_threshold", 3000)
+    assert not should_condense_tool_result("web_search", "x" * 5000, success=True, already_previewed=True)
+    assert should_condense_tool_result("web_search", "x" * 5000, success=True)

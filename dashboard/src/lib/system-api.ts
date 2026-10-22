@@ -7,6 +7,7 @@
  * （例如重启期间后端短暂不可达导致的预期失败）。
  */
 import { backendApi } from '@/lib/http'
+import { getApiBaseUrl } from '@/lib/api-base'
 
 /**
  * 重启麦麦主程序
@@ -168,28 +169,119 @@ export interface SelfUpdateStatus {
   last_result: SelfUpdateResult | null
 }
 
+/** 开发预览：保留在 URL 中，刷新和切换页面后仍可继续调整更新 UI。 */
+function getMockSelfUpdateStatus(): SelfUpdateStatus | null {
+  if (!import.meta.env.DEV) return null
+  const scenario = new URLSearchParams(window.location.search).get('mockUpdate')
+  if (scenario !== 'available' && scenario !== 'blocked' && scenario !== 'latest') return null
+
+  const available = scenario !== 'latest'
+  const blocked = scenario === 'blocked'
+  return {
+    supported: true,
+    deployment_type: 'git',
+    repository_url: 'https://github.com/Mai-with-u/MaiBot.git',
+    current_version: '1.3.13',
+    current_commit: '1111111111111111111111111111111111111111',
+    branch: 'dev',
+    checked_at: Date.now() / 1000,
+    latest_version: available ? '1.3.14' : '1.3.13',
+    latest_commit: available
+      ? '2222222222222222222222222222222222222222'
+      : '1111111111111111111111111111111111111111',
+    behind: available ? 3 : 0,
+    ahead: 0,
+    update_available: available,
+    can_apply: available && !blocked,
+    blockers: blocked ? ['dirty_worktree'] : [],
+    dirty_files: blocked ? ['src/mock-preview.py'] : [],
+    dependencies_changed: available,
+    dependency_tool: 'uv',
+    commits: available ? [
+      { short_id: '22222222', summary: 'feat: 模拟新功能，用于更新界面预览', committed_at: new Date().toISOString() },
+      { short_id: '33333333', summary: 'fix: 模拟问题修复', committed_at: new Date().toISOString() },
+      { short_id: '44444444', summary: 'chore: 模拟依赖更新', committed_at: new Date().toISOString() },
+    ] : [],
+    source_id: 'github',
+    source_name: '本地模拟更新源',
+    last_result: null,
+  }
+}
+
 /** 读取自更新状态（不联网） */
 export async function getSelfUpdateStatus(): Promise<SelfUpdateStatus> {
+  const mock = getMockSelfUpdateStatus()
+  if (mock) return mock
   return backendApi.get<SelfUpdateStatus>('/api/webui/system/self-update/status', {
     errorMessage: '获取更新状态失败',
+    signal: AbortSignal.timeout(8000),
   })
 }
 
-/** 联网检查官方仓库是否有新版本 */
-export async function checkSelfUpdate(): Promise<SelfUpdateStatus> {
-  return backendApi.post<SelfUpdateStatus>('/api/webui/system/self-update/check', {
+export interface SelfUpdateSourceSelection {
+  source_id: 'cnb' | 'github' | 'custom' | 'pypi' | 'tuna' | 'aliyun'
+  custom_prefix?: string
+}
+
+export const SELF_UPDATE_STATUS_EVENT = 'maibot-self-update-status'
+const SELF_UPDATE_CUSTOM_PREFIX_KEY = 'maibot-self-update-custom-prefix'
+const startupUpdateChecks = new Map<string, Promise<SelfUpdateStatus>>()
+
+export function getSelfUpdateCustomPrefix(): string {
+  return localStorage.getItem(SELF_UPDATE_CUSTOM_PREFIX_KEY) ?? ''
+}
+
+/** 使用本次选中的来源检查本体更新，所有入口共享后端判断和状态通知。 */
+export async function checkSelfUpdate(source: SelfUpdateSourceSelection, force = true): Promise<SelfUpdateStatus> {
+  const mock = getMockSelfUpdateStatus()
+  if (mock) {
+    window.dispatchEvent(new CustomEvent<SelfUpdateStatus>(SELF_UPDATE_STATUS_EVENT, { detail: mock }))
+    return mock
+  }
+  const status = await backendApi.post<SelfUpdateStatus>('/api/webui/system/self-update/check', {
+    body: { ...source, force },
     errorMessage: '检查更新失败',
+    signal: AbortSignal.timeout(65000),
   })
+  if (source.source_id === 'custom' && source.custom_prefix?.trim()) {
+    localStorage.setItem(SELF_UPDATE_CUSTOM_PREFIX_KEY, source.custom_prefix.trim())
+  }
+  startupUpdateChecks.set(await getApiBaseUrl(), Promise.resolve(status))
+  window.dispatchEvent(new CustomEvent<SelfUpdateStatus>(SELF_UPDATE_STATUS_EVENT, { detail: status }))
+  return status
+}
+
+/** 每个后端在本次 WebUI 启动时共享一次后台检查，不阻塞页面加载。 */
+export async function checkSelfUpdateOnStartup(): Promise<SelfUpdateStatus> {
+  const baseUrl = await getApiBaseUrl()
+  const existing = startupUpdateChecks.get(baseUrl)
+  if (existing) return existing
+
+  const request = (async () => {
+    const local = await getSelfUpdateStatus()
+    if (!local.supported) return local
+    // 包安装沿用现有 PyPI 检查，Git 镜像仅适用于源码部署。
+    if (local.deployment_type === 'package') return checkSelfUpdate({ source_id: 'pypi' }, false)
+
+    // 后端并发读取 GitHub / CNB 元数据，采用先成功的结果；下载源在执行更新时选择。
+    return checkSelfUpdate({ source_id: 'github' }, false)
+  })()
+  startupUpdateChecks.set(baseUrl, request)
+  return request
 }
 
 /** 更新到界面上确认过的提交并重启 */
 export async function applySelfUpdate(
-  expectedCommit: string
+  expectedCommit: string,
+  source: SelfUpdateSourceSelection
 ): Promise<{ success: boolean; message: string }> {
+  if (getMockSelfUpdateStatus()) {
+    throw new Error('当前使用本地模拟更新源，仅供 UI 预览，不会执行更新或重启。')
+  }
   return backendApi.post<{ success: boolean; message: string }>(
     '/api/webui/system/self-update/apply',
     {
-      body: { expected_commit: expectedCommit },
+      body: { expected_commit: expectedCommit, ...source },
       errorMessage: '发起更新失败',
     }
   )

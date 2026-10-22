@@ -45,6 +45,11 @@ export interface DetailedDistributionItem {
 }
 
 export interface DetailedStatisticsDistributions {
+  owner_tokens: DetailedDistributionItem[]
+  model_tokens: DetailedDistributionItem[]
+  module_tokens: DetailedDistributionItem[]
+  request_type_tokens: DetailedDistributionItem[]
+  chat_tokens: DetailedDistributionItem[]
   owner_costs: DetailedDistributionItem[]
   model_costs: DetailedDistributionItem[]
   module_costs: DetailedDistributionItem[]

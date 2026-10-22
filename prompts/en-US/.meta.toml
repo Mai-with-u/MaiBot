@@ -1,3 +1,8 @@
+[a_memorix_chat_summary]
+display_name = "Long-term Memory Chat Summary"
+advanced = false
+description = "Extracts incremental information and important knowledge from the current chat window for long-term memory."
+
 [maisaka_chat]
 display_name = "Planner"
 advanced = false
@@ -116,17 +121,17 @@ description = "Extracts group-specific jargon candidates from real chat and lets
 [maisaka_chat_focus]
 display_name = "Focus Planner"
 advanced = true
-description = "Maisaka planner template for Focus mode, choosing the next action from the active chat and cross-chat overview."
+description = "Shared Focus planner for all chats in a group, selecting each tool's target through session_id."
+
+[maisaka_focus_summary]
+display_name = "Focus context compression"
+advanced = true
+description = "Compress older shared context while preserving chat provenance, facts, completed actions and unfinished tasks."
 
 [maisaka_chat_optimized]
 display_name = "Planner (Optimized)"
 advanced = true
 description = "Main Maisaka planning template used when the experimental feature experimental.planner_optimized_prompt is enabled. It addresses the bot in the second person and trims the task description; Focus mode keeps using the Focus planner."
-
-[maisaka_timing_gate]
-display_name = "Timing Gate"
-advanced = false
-description = "Maisaka timing control template that decides whether to wait, stop, or continue into thinking and replying before each main-loop turn."
 
 [memory_fuzzy_modify_plan]
 display_name = "Memory Fuzzy Modification Plan"

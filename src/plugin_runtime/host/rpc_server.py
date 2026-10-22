@@ -286,7 +286,7 @@ class RPCServer:
                 self._logger.debug("Runner staged 握手成功")
                 self._connection = conn
         except Exception as e:
-            self._logger.error(f"握手失败: {e}")
+            self._logger.error(f"握手失败: {type(e).__name__}: {e}", exc_info=True)
             await conn.close()
             return
 
@@ -339,19 +339,11 @@ class RPCServer:
             await conn.send_frame(self._codec.encode_envelope(resp))
             return False
 
-        # 校验 SDK 版本
+        # SDK 范围仅作提示，不阻止已经通过身份校验的 Runner 连接。
         if not self._check_sdk_version(hello.sdk_version):
-            self._logger.error(f"SDK 版本不兼容: {hello.sdk_version}")
-            self._last_handshake_rejection_reason = (
-                f"SDK 版本 {hello.sdk_version} 不在支持范围 [{MIN_SDK_VERSION}, {MAX_SDK_VERSION}]"
+            self._logger.warning(
+                f"SDK 版本 {hello.sdk_version} 不在支持范围 [{MIN_SDK_VERSION}, {MAX_SDK_VERSION}]，已放行"
             )
-            resp_payload = HelloResponsePayload(
-                accepted=False,
-                reason=self._last_handshake_rejection_reason,
-            )
-            resp = envelope.make_response(payload=resp_payload.model_dump())
-            await conn.send_frame(self._codec.encode_envelope(resp))
-            return False
 
         # 发送响应
         self.clear_handshake_state()

@@ -3,11 +3,12 @@
 负责在 Host 侧统一完成以下工作：
 1. 扫描插件 Manifest；
 2. 检测插件与主程序、插件与插件之间的 Python 依赖冲突；
-3. 为可加载插件自动安装缺失的 Python 依赖；
+3. 自动补装缺失的 Python 依赖，沿用已有包并让插件尝试加载；
 4. 产出最终的拒绝加载列表，供运行时使用。
 """
 
 from dataclasses import dataclass
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -130,7 +131,6 @@ class PluginDependencyPipeline:
                 install_requirements=plan.install_requirements,
             )
 
-        blocked_plugin_reasons = dict(plan.blocked_plugin_reasons)
         affected_plugin_ids = sorted(
             {
                 plugin_id
@@ -138,15 +138,13 @@ class PluginDependencyPipeline:
                 for plugin_id in requirement.plugin_ids
             }
         )
-        for plugin_id in affected_plugin_ids:
-            self._append_block_reason(
-                blocked_plugin_reasons,
-                plugin_id,
-                f"自动安装 Python 依赖失败: {error_message}",
-            )
+        # 安装失败记录错误，插件仍尝试加载，实际导入或执行异常由运行时报告。
+        logger.error(
+            f"自动安装 Python 依赖失败，插件仍将尝试加载 ({', '.join(affected_plugin_ids)}): {error_message}"
+        )
 
         return DependencyPipelineResult(
-            blocked_plugin_reasons=blocked_plugin_reasons,
+            blocked_plugin_reasons=dict(plan.blocked_plugin_reasons),
             environment_changed=False,
             install_requirements=plan.install_requirements,
         )
@@ -195,12 +193,12 @@ class PluginDependencyPipeline:
         """
 
         manifests: Dict[str, PluginManifest] = {}
-        for _plugin_path, manifest in self._manifest_validator.iter_plugin_manifests(plugin_dirs):
+        for _plugin_path, manifest in self._manifest_validator.iter_plugin_manifests(plugin_dirs, enabled_only=True):
             manifests[manifest.id] = manifest
         return manifests
 
     def _detect_host_conflicts(self, manifests: Dict[str, PluginManifest]) -> Dict[str, str]:
-        """检测插件与主程序依赖之间的冲突。
+        """检测待补装依赖与主程序约束之间的冲突。
 
         Args:
             manifests: 当前已解析到的插件 Manifest 映射。
@@ -221,6 +219,10 @@ class PluginDependencyPipeline:
                         manifest.id,
                         f"Python 包依赖声明无效: {dependency.name}{dependency.version_spec}",
                     )
+                    continue
+
+                # 已有依赖直接沿用，不因插件声明的版本范围提前阻止加载。
+                if self._manifest_validator.get_installed_package_version(dependency.name) is not None:
                     continue
 
                 normalized_package_name = canonicalize_name(dependency.name)
@@ -251,7 +253,7 @@ class PluginDependencyPipeline:
         manifests: Dict[str, PluginManifest],
         blocked_plugin_reasons: Dict[str, str],
     ) -> Dict[str, str]:
-        """检测插件之间的 Python 依赖冲突。
+        """检测待补装 Python 包在插件之间的约束冲突。
 
         Args:
             manifests: 当前已解析到的插件 Manifest 映射。
@@ -266,6 +268,8 @@ class PluginDependencyPipeline:
 
         for _package_name, usages in dependency_usages.items():
             display_package_name = usages[0].package_name
+            if self._manifest_validator.get_installed_package_version(display_package_name) is not None:
+                continue
             for index, left_usage in enumerate(usages):
                 for right_usage in usages[index + 1 :]:
                     left_specifier = self._manifest_validator.build_specifier_set(left_usage.version_spec)
@@ -333,7 +337,7 @@ class PluginDependencyPipeline:
             blocked_plugin_reasons: 已经被阻止加载的插件及原因。
 
         Returns:
-            Tuple[CombinedPackageRequirement, ...]: 需要安装或调整版本的依赖列表。
+            Tuple[CombinedPackageRequirement, ...]: 需要补装的缺失依赖列表。
         """
 
         combined_requirements: List[CombinedPackageRequirement] = []
@@ -344,10 +348,7 @@ class PluginDependencyPipeline:
             package_name = usages[0].package_name
             requirement_text = f"{package_name}{merged_specifier_text}"
             installed_version = self._manifest_validator.get_installed_package_version(package_name)
-            if installed_version is not None and self._manifest_validator.version_matches_specifier(
-                installed_version,
-                merged_specifier_text,
-            ):
+            if installed_version is not None:
                 continue
 
             combined_requirements.append(
@@ -397,16 +398,23 @@ class PluginDependencyPipeline:
 
         logger.info(f"开始自动安装插件 Python 依赖: {', '.join(requirement_texts)}")
         try:
-            index_settings = self._load_package_index_settings()
+            index_settings = await asyncio.to_thread(self._load_package_index_settings)
+            installed_constraints = await asyncio.to_thread(self._load_installed_package_constraints)
         except Exception as exc:
-            return False, f"读取主程序 pyproject.toml 中的 uv 配置失败: {exc}"
+            return False, f"读取依赖安装配置或当前环境版本失败，已取消自动安装: {exc}"
 
         # 与主程序一致：按索引优先级逐个源单独安装，前一个源找不到或连不上就换下一个源，任意一个成功即可。
         # 不能让 uv 同时查询多个索引，否则任一索引网络异常（如国内访问 pypi.org 超时）都会让整次安装失败。
         index_urls: Sequence[Optional[str]] = index_settings.index_urls or (None,)
         install_errors: List[str] = []
         with tempfile.TemporaryDirectory(prefix="maibot-plugin-deps-") as temp_dir:
-            constraint_path = self._write_constraint_file(Path(temp_dir), index_settings.constraints)
+            # 新包的间接依赖也可能要求升级或降级 Pillow 等宿主依赖。
+            # 固定全部已安装版本，让此类冲突在解析阶段失败，禁止进入卸载阶段。
+            constraint_path = await asyncio.to_thread(
+                self._write_constraint_file,
+                Path(temp_dir),
+                (*index_settings.constraints, *installed_constraints),
+            )
             for attempt_index, index_url in enumerate(index_urls):
                 source_name = index_url or "默认源"
                 command = self._build_install_command(requirement_texts, index_url, constraint_path)
@@ -418,6 +426,8 @@ class PluginDependencyPipeline:
                         capture_output=True,
                         check=False,
                         cwd=self._project_root,
+                        encoding="utf-8",
+                        errors="replace",
                         text=True,
                     )
                 except Exception as exc:
@@ -434,6 +444,18 @@ class PluginDependencyPipeline:
                     logger.warning(f"从 {source_name} 安装插件 Python 依赖失败，改用下一个源重试: {output}")
 
         return False, "；".join(install_errors)
+
+    @staticmethod
+    def _load_installed_package_constraints() -> Tuple[str, ...]:
+        """快照当前解释器的已安装版本，同时约束直接依赖与间接依赖。"""
+
+        constraints = set()
+        for distribution in importlib_metadata.distributions():
+            package_name = distribution.metadata["Name"]
+            if not package_name:
+                raise ValueError(f"已安装包缺少 Name 元数据: {distribution}")
+            constraints.add(f"{canonicalize_name(package_name)}=={distribution.version}")
+        return tuple(sorted(constraints))
 
     def _load_package_index_settings(self) -> PackageIndexSettings:
         """读取主程序 ``pyproject.toml`` 中 ``[tool.uv]`` 的索引顺序与约束依赖。

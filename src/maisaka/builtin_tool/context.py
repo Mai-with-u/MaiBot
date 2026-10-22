@@ -6,15 +6,18 @@ from base64 import b64decode
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, TYPE_CHECKING
+from uuid import uuid4
 
 import asyncio
 
+from src.chat.message_receive.message import SessionMessage
 from src.chat.utils.utils import (
     ProcessedResponseSegment,
     process_llm_response,
     process_llm_response_segments,
     process_llm_response_segments_async,
 )
+from src.common.data_models.mai_message_data_model import MessageInfo, UserInfo
 from src.common.data_models.message_component_data_model import (
     AtComponent,
     EmojiComponent,
@@ -25,16 +28,10 @@ from src.common.data_models.message_component_data_model import (
 from src.common.logger import get_logger
 from src.config.config import global_config
 from src.core.tooling import ToolExecutionResult
-from src.maisaka.context.message_adapter import format_speaker_content
+from src.core.local_operator import MAISAKA_CLI_BOT_ID
 from src.maisaka.context.emoji_candidates import EmojiCandidateMessage
 from src.maisaka.context.image_attachment import resolve_context_image
 from src.maisaka.context.message_id_alias import to_display_message_id
-from src.maisaka.context.messages import SessionBackedMessage
-from src.maisaka.context.planner_messages import (
-    build_planner_prefix,
-    build_session_backed_text_message,
-    extract_quote_ids_from_message_sequence,
-)
 from src.plugin_runtime.integration import get_plugin_runtime_manager
 
 if TYPE_CHECKING:
@@ -394,10 +391,14 @@ class BuiltinToolRuntimeContext:
             if segment.text.strip()
         ]
         attachment_args = dict(attachments or {})
+        raw_emoji = attachment_args.get("attach_emoji")
+        # 0 表示不附加表情包，与省略参数一致；其他无效类型仍交给严格校验。
+        if type(raw_emoji) is int and raw_emoji == 0:
+            raw_emoji = None
 
         if attachment_args.get("attach_at") and not global_config.chat.enable_reply_at:
             raise ValueError("回复时 @ 用户已关闭，不能使用 attach_at。")
-        if attachment_args.get("attach_emoji") is not None and not global_config.emoji.use_new_send_logic:
+        if raw_emoji is not None and not global_config.emoji.use_new_send_logic:
             raise ValueError("新表情包发送逻辑未开启，请使用 send_emoji 工具。")
 
         at_components = [
@@ -408,7 +409,6 @@ class BuiltinToolRuntimeContext:
             await self._resolve_image_attachment(raw_attachment)
             for raw_attachment in self._normalize_attachment_list(attachment_args.get("attach_pic"), "attach_pic")
         ]
-        raw_emoji = attachment_args.get("attach_emoji")
         emoji_components = [await self._resolve_emoji_attachment(raw_emoji)] if raw_emoji is not None else []
 
         if not at_components and not image_components and not emoji_components:
@@ -433,98 +433,30 @@ class BuiltinToolRuntimeContext:
 
         return get_plugin_runtime_manager()
 
-    def _should_include_planner_chat_id(self) -> bool:
-        """当前上下文写入规划器历史时是否需要保留聊天流 ID。"""
-
-        return self.runtime._is_focus_mode_active_for_current_chat()
+    def _append_cli_message(self, sequence: MessageSequence, visible_text: str) -> None:
+        """记录已经在 CLI 展示的真实发言，与平台发送复用同一历史写入链路。"""
+        message = SessionMessage(
+            message_id=f"cli_sent_{uuid4().hex}", timestamp=datetime.now(),
+            platform=self.runtime.chat_stream.platform,
+        )
+        message.session_id = self.runtime.session_id
+        message.account_id = self.runtime.chat_stream.account_id
+        message.scope = self.runtime.chat_stream.scope
+        message.message_info = MessageInfo(
+            user_info=UserInfo(user_id=MAISAKA_CLI_BOT_ID, user_nickname=global_config.bot.nickname),
+            additional_config={},
+        )
+        message.raw_message = sequence
+        message.processed_plain_text = visible_text
+        self.runtime.append_sent_message_to_chat_history(message, source_kind="guided_reply")
 
     def append_guided_reply_to_chat_history(self, reply_text: str) -> None:
-        """将引导回复写回 Maisaka 历史。"""
+        """将 CLI 已展示的文字回复写回 Maisaka 历史。"""
+        self._append_cli_message(MessageSequence([TextComponent(reply_text)]), reply_text)
 
-        bot_name = global_config.bot.nickname.strip() or "MaiSaka"
-        reply_timestamp = datetime.now()
-        include_chat_id = self._should_include_planner_chat_id()
-        history_message = build_session_backed_text_message(
-            speaker_name=bot_name,
-            text=reply_text,
-            timestamp=reply_timestamp,
-            source_kind="guided_reply",
-            chat_id=self.runtime.session_id,
-            include_chat_id=include_chat_id,
-            is_self_message=True,
-        )
-        self.runtime._chat_history.append(history_message)
-
-    def append_sent_message_to_chat_history(self, message: Any, *, source_kind: str = "guided_reply") -> bool:
-        """将已发送消息写回 Maisaka 历史。"""
-
-        runtime_append = getattr(self.runtime, "append_sent_message_to_chat_history", None)
-        if callable(runtime_append):
-            return bool(runtime_append(message, source_kind=source_kind))
-
-        from src.maisaka.context.messages import SessionBackedMessage
-        from src.maisaka.context.history import build_prefixed_message_sequence, build_session_message_visible_text
-        user_info = message.message_info.user_info
-        speaker_name = user_info.user_cardname or user_info.user_nickname or user_info.user_id
-        include_chat_id = self._should_include_planner_chat_id()
-        planner_prefix = build_planner_prefix(
-            timestamp=message.timestamp,
-            user_name=speaker_name,
-            group_card=user_info.user_cardname or "",
-            message_id=message.message_id,
-            chat_id=message.session_id,
-            quote_ids=extract_quote_ids_from_message_sequence(message.raw_message),
-            include_message_id=not message.is_notify and bool(message.message_id),
-            include_chat_id=include_chat_id,
-            is_self_message=source_kind == "guided_reply",
-        )
-        history_message = SessionBackedMessage.from_session_message(
-            message,
-            raw_message=build_prefixed_message_sequence(message.raw_message, planner_prefix),
-            visible_text=build_session_message_visible_text(
-                message,
-                include_reply_components=source_kind != "guided_reply",
-            ),
-            source_kind=source_kind,
-        )
-        self.runtime._chat_history.append(history_message)
-        return True
-
-    def append_sent_emoji_to_chat_history(
-        self,
-        *,
-        emoji_base64: str,
-        success_message: str,
-    ) -> None:
-        """将 bot 主动发送的表情包同步到 Maisaka 历史。"""
-
-        bot_name = global_config.bot.nickname.strip() or "MaiSaka"
-        reply_timestamp = datetime.now()
-        include_chat_id = self._should_include_planner_chat_id()
-        planner_prefix = build_planner_prefix(
-            timestamp=reply_timestamp,
-            user_name=bot_name,
-            chat_id=self.runtime.session_id,
-            include_chat_id=include_chat_id,
-            is_self_message=True,
-        )
-        history_message = SessionBackedMessage(
-            raw_message=MessageSequence(
-                [
-                    TextComponent(planner_prefix),
-                    EmojiComponent(
-                        binary_hash="",
-                        content=success_message,
-                        binary_data=b64decode(emoji_base64),
-                    ),
-                ]
-            ),
-            visible_text=format_speaker_content(
-                bot_name,
-                "[表情包]",
-                reply_timestamp,
-            ),
-            timestamp=reply_timestamp,
-            source_kind="guided_reply",
-        )
-        self.runtime._chat_history.append(history_message)
+    def append_sent_emoji_to_chat_history(self, *, emoji_base64: str, success_message: str) -> None:
+        """将 CLI 已展示的表情包写回 Maisaka 历史。"""
+        sequence = MessageSequence([EmojiComponent(
+            binary_hash="", content=success_message, binary_data=b64decode(emoji_base64),
+        )])
+        self._append_cli_message(sequence, "[表情包]")

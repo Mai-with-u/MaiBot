@@ -258,6 +258,7 @@ class ChatInfoResponse(BaseModel):
     platform: Optional[str] = None
     account_id: Optional[str] = None
     is_group: bool = False
+    jargon_count: int = 0
 
 
 class ChatListResponse(BaseModel):
@@ -861,11 +862,15 @@ def get_chat_list(include_empty: bool = Query(False, description="是否包含�
     try:
         with get_db_session() as session:
             seen_session_ids: Set[str] = set()
-            jargon_statement = select(Jargon.session_id_dict)
-            if not include_empty:
-                jargon_statement = jargon_statement.where(col(Jargon.is_global).is_(False))
-            for session_id_dict in session.exec(jargon_statement).all():
-                seen_session_ids.update(parse_session_id_dict(session_id_dict).keys())
+            jargon_counts: Dict[str, int] = {}
+            # 每个归属聊天计一次词条，和按聊天筛选列表一致；遇见次数不作为词条数。
+            # 全局词条不单独创建侧栏聊天，但计入已有聊天能浏览到的记录。
+            for session_id_dict, is_global in session.exec(select(Jargon.session_id_dict, Jargon.is_global)).all():
+                session_ids = parse_session_id_dict(session_id_dict).keys()
+                for session_id in session_ids:
+                    jargon_counts[session_id] = jargon_counts.get(session_id, 0) + 1
+                if include_empty or not is_global:
+                    seen_session_ids.update(session_ids)
 
             chat_by_session_id: Dict[str, ChatInfoResponse] = {}
 
@@ -893,6 +898,7 @@ def get_chat_list(include_empty: bool = Query(False, description="是否包含�
                     platform=chat_session.platform,
                     account_id=chat_session.account_id,
                     is_group=bool(chat_session.group_id),
+                    jargon_count=jargon_counts.get(chat_session.session_id, 0),
                 )
 
             # 兼容旧数据：黑话记录里可能还保留着已经不在 chat_sessions 表中的聊天流。
@@ -905,6 +911,7 @@ def get_chat_list(include_empty: bool = Query(False, description="是否包含�
                     platform=None,
                     account_id=None,
                     is_group=False,
+                    jargon_count=jargon_counts[stored_session_id],
                 )
 
             # 聚合最新消息时间，包含旧黑话保留但已不在会话表中的聊天。

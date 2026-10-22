@@ -427,10 +427,12 @@ describe('usePluginList', () => {
     })
   })
 
-  it('checkPluginUpdates 会同时按市场 id 与 manifest.id 建索引，0.0.0 版本视为空', async () => {
+  it.each(['/plugin-config', '/adapter-management'])('%s 共用市场更新检查并按 manifest.id 匹配', async (path) => {
+    window.history.replaceState(null, '', path)
     const plugin = makePlugin('local.weather', {
       manifest: {
         id: 'market.weather',
+        plugin_type: 'adapter',
         name: 'Weather',
         version: '1.0.0',
       },

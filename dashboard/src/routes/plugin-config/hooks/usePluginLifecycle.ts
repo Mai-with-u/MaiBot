@@ -102,8 +102,8 @@ export function usePluginLifecycle(options: UsePluginLifecycleOptions) {
 
   // ---- 更新/升级 ----
   const openUpdatePluginDialog = useCallback(
-    (plugin: InstalledPlugin, event: React.MouseEvent<HTMLButtonElement>) => {
-      stopPluginActionEvent(event)
+    (plugin: InstalledPlugin, event?: React.MouseEvent<HTMLButtonElement>) => {
+      if (event) stopPluginActionEvent(event)
       setUpdatingPlugin(plugin)
       setUpdateProgress(null)
       setUpdateDialogOpen(true)
@@ -191,8 +191,8 @@ export function usePluginLifecycle(options: UsePluginLifecycleOptions) {
 
   // ---- 卸载 ----
   const openDeletePluginDialog = useCallback(
-    (plugin: InstalledPlugin, event: React.MouseEvent<HTMLButtonElement>) => {
-      stopPluginActionEvent(event)
+    (plugin: InstalledPlugin, event?: React.MouseEvent<HTMLButtonElement>) => {
+      if (event) stopPluginActionEvent(event)
       setDeletingPlugin(plugin)
       setDeleteProgress(null)
       setDeleteDialogOpen(true)

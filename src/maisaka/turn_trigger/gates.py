@@ -31,7 +31,7 @@ class TurnGateResult:
 
     decision: TurnGateDecision
     detail: str
-    delay_seconds: Optional[float] = None
+    delay_seconds: float = 0.0
 
     @property
     def should_trigger(self) -> bool:
@@ -129,7 +129,8 @@ class DynamicReplyTurnGate:
         # 近期活跃度属于整个聊天流；虚拟轮次评分与放行评分必须使用同一批待处理消息统计。
         current_time = datetime.fromtimestamp(now)
         recent_pending_count = sum(
-            (current_time - message.timestamp).total_seconds() <= RECENT_PRESENCE_WINDOW_SECONDS
+            message.received_at is not None
+            and (current_time - message.received_at).total_seconds() <= RECENT_PRESENCE_WINDOW_SECONDS
             for message in pending_messages
         )
         recent_message_count = recent_history_count + recent_pending_count
@@ -154,14 +155,16 @@ class DynamicReplyTurnGate:
         for message in reversed(self._runtime._chat_history):
             if not message.count_in_context:
                 continue
-            elapsed_seconds = (current_time - message.timestamp).total_seconds()
             is_self_message = message.source == "guided_reply"
+            # 外部消息按接收时刻统计活跃度；自身发言仍按本机发送时间计算。
+            activity_time = message.timestamp if is_self_message else message.received_at
+            if activity_time is None:
+                continue
+            elapsed_seconds = (current_time - activity_time).total_seconds()
             if is_self_message and seconds_since_bot is None:
                 seconds_since_bot = max(0.0, elapsed_seconds)
             if elapsed_seconds > RECENT_PRESENCE_WINDOW_SECONDS:
-                # 窗口外只需要继续找到麦麦最近一次发言
-                if seconds_since_bot is not None:
-                    break
+                # 媒体处理可能乱序完成，历史列表不保证按接收时刻排序。
                 continue
             recent_total_count += 1
             if is_self_message:
@@ -170,83 +173,3 @@ class DynamicReplyTurnGate:
             seconds_since_bot = DEFAULT_SECONDS_SINCE_BOT_MESSAGE
         return recent_self_count, recent_total_count, seconds_since_bot
 
-
-class FrequencyThresholdTurnGate:
-    """按回复频率折算消息阈值，并用空窗补偿辅助触发。"""
-
-    def __init__(self, runtime: "MaisakaHeartFlowChatting") -> None:
-        self._runtime = runtime
-
-    def evaluate(
-        self,
-        *,
-        pending_count: int,
-        trigger_threshold: int,
-    ) -> TurnGateResult:
-        """返回频率阈值门控的触发判定。"""
-
-        if pending_count >= trigger_threshold:
-            return TurnGateResult(
-                decision="trigger",
-                detail=f"pending={pending_count} 达到阈值={trigger_threshold} 判定=进入Planner",
-            )
-
-        idle_compensation_triggered, delay_seconds, idle_detail = self._calculate_idle_compensation(
-            pending_count=pending_count,
-            trigger_threshold=trigger_threshold,
-        )
-        if idle_compensation_triggered:
-            return TurnGateResult(
-                decision="trigger",
-                detail=f"{idle_detail} 判定=空窗补偿进入Planner",
-            )
-
-        if delay_seconds is not None:
-            return TurnGateResult(
-                decision="delay",
-                detail=f"{idle_detail} 判定=延迟检查",
-                delay_seconds=delay_seconds,
-            )
-
-        return TurnGateResult(decision="wait", detail=f"{idle_detail} 判定=等待更多消息")
-
-    def _calculate_idle_compensation(
-        self,
-        *,
-        pending_count: int,
-        trigger_threshold: int,
-    ) -> tuple[bool, Optional[float], str]:
-        """在新消息不足阈值时，按空窗时间折算补齐触发条件，并返回下次检查延迟。
-
-        空窗折算量被限制在 ``trigger_threshold - 1`` 以内，确保至少要有一条真实新消息
-        才可能触发，杜绝纯靠沉默累积反复唤醒回复。
-        """
-
-        # 与下方折算封顶互为双保险：纯沉默（pending_count == 0）一律不触发。
-        if pending_count < 1:
-            return False, None, "pending=0，不允许纯沉默触发"
-
-        runtime = self._runtime
-        average_message_interval = runtime._get_recent_average_external_message_interval()
-        if average_message_interval is None or average_message_interval <= 0:
-            return False, None, "平均消息间隔不可用，无法进行空窗补偿"
-
-        last_external_received_at = runtime._last_external_message_received_at or runtime._last_message_received_at
-        idle_seconds = max(0.0, time.time() - last_external_received_at)
-        # 即便空窗无限长，也不能让纯沉默跨过阈值。
-        idle_equivalent_count = min(
-            idle_seconds / average_message_interval,
-            float(max(0, trigger_threshold - 1)),
-        )
-        equivalent_message_count = pending_count + idle_equivalent_count
-        detail = (
-            f"平均间隔={average_message_interval:.2f}s "
-            f"空窗={idle_seconds:.2f}s "
-            f"空窗折算={idle_equivalent_count:.2f} "
-            f"等效消息数={equivalent_message_count:.2f}/{trigger_threshold}"
-        )
-        if equivalent_message_count >= trigger_threshold:
-            return True, None, detail
-
-        delay_seconds = max(0.0, (trigger_threshold - pending_count) * average_message_interval - idle_seconds)
-        return False, delay_seconds, f"{detail} 延迟={delay_seconds:.2f}s"

@@ -266,44 +266,6 @@ def load_manifest_json(manifest_path: Path) -> Optional[Dict[str, Any]]:
     return manifest
 
 
-def read_plugin_changelog(plugin_path: Path) -> Optional[str]:
-    """读取插件根目录中的更新日志；缺失或不可读时返回 None，不影响插件加载。"""
-    for changelog_name in PLUGIN_CHANGELOG_FILENAMES:
-        changelog_path = resolve_plugin_file_path(plugin_path, changelog_name)
-        if not changelog_path.exists():
-            continue
-        if not changelog_path.is_file():
-            continue
-
-        try:
-            with open(changelog_path, "r", encoding="utf-8") as file_obj:
-                return file_obj.read(MAX_PLUGIN_CHANGELOG_CHARS + 1)[:MAX_PLUGIN_CHANGELOG_CHARS]
-        except Exception as exc:
-            logger.warning(f"读取插件更新日志失败: {changelog_path} ({exc})")
-            return None
-
-    return None
-
-
-def read_plugin_readme(plugin_path: Path) -> Optional[str]:
-    """读取插件根目录中的 README；缺失或不可读时返回 None，不影响插件加载。"""
-    for readme_name in PLUGIN_README_FILENAMES:
-        readme_path = resolve_plugin_file_path(plugin_path, readme_name)
-        if not readme_path.exists():
-            continue
-        if not readme_path.is_file():
-            continue
-
-        try:
-            with open(readme_path, "r", encoding="utf-8") as file_obj:
-                return file_obj.read(MAX_PLUGIN_README_CHARS + 1)[:MAX_PLUGIN_README_CHARS]
-        except Exception as exc:
-            logger.warning(f"读取插件 README 失败: {readme_path} ({exc})")
-            return None
-
-    return None
-
-
 def iter_plugin_directories() -> List[Path]:
     plugins_dir = get_plugins_dir()
     plugin_directories: List[Path] = []

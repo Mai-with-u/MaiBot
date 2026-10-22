@@ -460,7 +460,7 @@ function MCPServersBlockEditor({
             const currentStatus = runtimeStatus?.servers.find((item) => item.name === server.name)
 
             return (
-              <Card key={key} className="border-border/70 bg-muted/20 shadow-none">
+              <Card key={key} variant="flat" className="bg-muted/20">
                 <CardHeader className="space-y-3 px-4 py-3">
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div className="flex min-w-0 flex-1 items-center gap-3">

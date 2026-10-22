@@ -26,7 +26,7 @@ from src.maisaka.subagent_tasks import SUBAGENT_MAX_RUNNING_TASKS, SubAgentTask,
 
 @pytest.fixture(autouse=True)
 def _synchronous_subagent_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(global_config.experimental, "advanced_sub_agent", False)
+    monkeypatch.setattr(global_config.capabilities, "advanced_sub_agent", False)
 
 
 @pytest.fixture(autouse=True)
@@ -202,14 +202,14 @@ def test_subagent_tools_follow_their_switches(monkeypatch: pytest.MonkeyPatch) -
     def exposed_names() -> set[str]:
         return {tool_spec.name for tool_spec in get_all_builtin_tool_specs()}
 
-    monkeypatch.setattr(global_config.experimental, "planner_subagent", False)
-    monkeypatch.setattr(global_config.experimental, "advanced_sub_agent", True)
+    monkeypatch.setattr(global_config.capabilities, "planner_subagent", False)
+    monkeypatch.setattr(global_config.capabilities, "advanced_sub_agent", True)
     assert not exposed_names() & {"subagent", "subagent_status", "subagent_stop"}
 
-    monkeypatch.setattr(global_config.experimental, "planner_subagent", True)
+    monkeypatch.setattr(global_config.capabilities, "planner_subagent", True)
     assert {"subagent", "subagent_status", "subagent_stop"} <= exposed_names()
 
-    monkeypatch.setattr(global_config.experimental, "advanced_sub_agent", False)
+    monkeypatch.setattr(global_config.capabilities, "advanced_sub_agent", False)
     assert "subagent" in exposed_names()
     assert not exposed_names() & {"subagent_status", "subagent_stop"}
 
@@ -219,7 +219,7 @@ def _build_background_tool_ctx(
 ) -> tuple[BuiltinToolRuntimeContext, list[SubAgentTask]]:
     """构造开启高级子代理时的工具上下文，并收集被送回的任务。"""
 
-    monkeypatch.setattr(global_config.experimental, "advanced_sub_agent", True)
+    monkeypatch.setattr(global_config.capabilities, "advanced_sub_agent", True)
     tool_ctx, _, _ = _build_tool_ctx(responses)
     delivered_tasks: list[SubAgentTask] = []
     tool_ctx.runtime.deliver_subagent_result = delivered_tasks.append

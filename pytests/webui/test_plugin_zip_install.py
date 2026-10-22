@@ -144,3 +144,14 @@ def test_reject_missing_entrypoint_manifest_or_multiple_plugins(client, files):
             output.writestr(name, content)
     assert api.post("/install-zip", files={"file": ("plugin.zip", buffer.getvalue())}).status_code == 400
     assert list(root.iterdir()) == []
+
+
+@pytest.mark.parametrize("sdk", [
+    {"min_version": "9.0.0", "max_version": "9.99.99"},
+    {"min_version": "1.0.0", "max_version": "1.99.99"},
+])
+def test_offline_install_allows_sdk_range_mismatch(client, sdk):
+    api, root = client
+    response = api.post("/install-zip", files={"file": ("plugin.zip", archive(manifest_changes={"sdk": sdk}))})
+    assert response.status_code == 200, response.text
+    assert json.loads((root / "example_demo" / "_manifest.json").read_text(encoding="utf-8"))["sdk"] == sdk

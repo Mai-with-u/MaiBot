@@ -130,8 +130,8 @@ def _collect_message_stats(period_start: datetime, period_end: datetime) -> dict
                 """
                 SELECT platform, user_id, group_id, reply_frequency
                 FROM mai_messages
-                WHERE timestamp >= :period_start
-                  AND timestamp < :period_end
+                WHERE COALESCE(received_at, timestamp) >= :period_start
+                  AND COALESCE(received_at, timestamp) < :period_end
                 """
             ),
             params={

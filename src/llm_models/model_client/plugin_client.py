@@ -23,8 +23,10 @@ from src.llm_models.payload_content.context_item import (
     build_portable_output_items,
 )
 from src.llm_models.payload_content.context_protocol import ContextProtocolMode, validate_context_items
-from src.llm_models.request_snapshot import (
+from src.llm_models.payload_content.context_snapshot import (
     deserialize_context_item_snapshot,
+)
+from src.llm_models.request_snapshot import (
     deserialize_tool_calls_snapshot,
     serialize_audio_request_snapshot,
     serialize_embedding_request_snapshot,

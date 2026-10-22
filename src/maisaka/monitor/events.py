@@ -225,6 +225,8 @@ def _serialize_tool_results(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     serialized_tools: List[Dict[str, Any]] = []
     for tool in tools:
         serialized_tool = {
+            **({"session_id": str(tool["session_id"]), "session_name": str(tool.get("session_name", ""))}
+               if tool.get("session_id") else {}),
             "tool_call_id": str(tool.get("tool_call_id", "")),
             "tool_name": str(tool.get("tool_name", "")),
             "tool_args": _normalize_payload_value(tool.get("tool_args", {})),
@@ -532,13 +534,14 @@ async def emit_message_ingested(
     message_id: str,
     timestamp: float,
     *,
+    received_at: Optional[float] = None,
     platform: str = "",
     user_id: str = "",
     group_id: str = "",
     reply_to: Optional[Dict[str, Any]] = None,
     media: Optional[list[Dict[str, Any]]] = None,
 ) -> None:
-    """广播新消息注入事件。"""
+    """广播新消息注入事件，分别保留平台消息时间与主程序实际接收时间。"""
 
     await _broadcast("message.ingested", {
         "session_id": session_id,
@@ -551,6 +554,7 @@ async def emit_message_ingested(
         "reply_to": _normalize_payload_value(reply_to) if reply_to else None,
         "media": _normalize_payload_value(media) if media else [],
         "timestamp": timestamp,
+        "received_at": received_at,
     })
 
 
@@ -593,6 +597,7 @@ async def emit_message_updated(
     timestamp: float,
     source_kind: str = "",
     *,
+    received_at: Optional[float] = None,
     platform: str = "",
     user_id: str = "",
     group_id: str = "",
@@ -613,6 +618,7 @@ async def emit_message_updated(
         "reply_to": _normalize_payload_value(reply_to) if reply_to else None,
         "media": _normalize_payload_value(media) if media else [],
         "timestamp": timestamp,
+        "received_at": received_at,
     })
 
 
@@ -646,10 +652,14 @@ async def emit_planner_snapshot(
     end_reason: str = "",
     end_detail: str = "",
     active_tool_call_id: str = "",
+    focus_scope_id: str = "",
+    focus_session_ids: Optional[List[str]] = None,
 ) -> None:
     """广播 Planner 过程或结束时的快照。"""
 
     await _broadcast(event_type, {
+        **({"focus_scope_id": focus_scope_id, "focus_session_ids": list(focus_session_ids or [])}
+           if focus_scope_id else {}),
         "session_id": session_id,
         "cycle_id": cycle_id,
         "run_id": run_id,

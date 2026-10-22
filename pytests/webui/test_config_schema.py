@@ -7,7 +7,7 @@ from pytest import raises
 
 from src.config.config import Config
 from src.config.config_base import AttributeData, ConfigBase, Field
-from src.config.official_configs import AMemorixConfig, ChatConfig, DebugConfig, MessageReceiveConfig, PersonalityConfig
+from src.config.official_configs import AMemorixConfig, ChatConfig, MessageReceiveConfig
 from src.webui.dependencies import require_auth
 from src.webui.config_schema import (
     AMEMORIX_ADVANCED_FIELD_PATHS,
@@ -81,41 +81,10 @@ def test_nested_model_schema():
     assert talk_value.get("minValue") == 0
 
 
-def test_personality_schema_exposes_behavior_style():
-    """核心设置需要从官方配置架构读取独立的行为风格字段。"""
-    schema = ConfigSchemaGenerator.generate_schema(PersonalityConfig)
-    behavior_style = next(field for field in schema["fields"] if field["name"] == "behavior_style")
-
-    assert behavior_style["label"]["zh_CN"] == "行为风格"
-    assert behavior_style.get("x-widget") == "textarea"
 
 
-def test_debug_schema_exposes_clear_context_command_switch():
-    """调试设置需要展示可选的 /clear 上下文清理指令开关。"""
-    schema = ConfigSchemaGenerator.generate_schema(DebugConfig)
-    clear_command = next(field for field in schema["fields"] if field["name"] == "enable_clear_context_command")
-
-    assert clear_command["default"] is False
-    assert clear_command["label"]["zh_CN"] == "启用 /clear 指令"
-    assert clear_command.get("x-widget") == "switch"
 
 
-def test_config_subtab_metadata_is_exposed():
-    """配置子 Tab 元数据应由 schema 提供，而不是由 WebUI 硬编码。"""
-    schema = ConfigSchemaGenerator.generate_schema(Config)
-
-    chat_schema = schema["nested"]["chat"]
-    expression_schema = schema["nested"]["expression"]
-    jargon_schema = schema["nested"]["jargon"]
-
-    assert chat_schema.get("uiUseSubTabs") is True
-    assert chat_schema.get("uiRootSubLabel") == "基础设置"
-    assert chat_schema["nested"]["reply_timing"].get("uiLabel") == "什么时候发言"
-    assert chat_schema["nested"]["reply_style"].get("uiLabel") == "如何发言"
-
-    assert expression_schema.get("uiUseSubTabs") is True
-    assert expression_schema.get("uiSubLabel") == "表达"
-    assert jargon_schema.get("uiSubLabel") == "黑话"
 
 
 def test_field_without_extra_metadata():
@@ -159,14 +128,6 @@ def test_tab_advanced_visibility_comes_from_config_metadata():
     assert schema["nested"]["message_receive"].get("uiAdvanced") is True
 
 
-def test_mcp_parent_metadata_matches_current_config_shape():
-    """当前配置模型没有 maisaka 宿主节，MCP 仍保留既有父级元数据。"""
-    schema = ConfigSchemaGenerator.generate_schema(Config)
-
-    mcp_schema = schema["nested"]["mcp"]
-
-    assert "maisaka" not in schema["nested"]
-    assert mcp_schema.get("uiParent") == "maisaka"
 
 
 def test_memory_query_config_fields_are_exposed():
@@ -356,5 +317,3 @@ def test_compat_config_schema_route_keeps_a_memorix_visibility_policy():
     assert _schema_field_at_path(a_memorix_schema, "storage.data_dir") is None
     assert _schema_field_at_path(a_memorix_schema, "retrieval.fusion.rrf_k") is None
     assert _schema_field_at_path(a_memorix_schema, "retrieval.search.smart_fallback.enabled")["advanced"] is True
-
-

@@ -6,13 +6,12 @@ import {
   CheckCircle2,
   Globe,
   ShieldCheck,
-  SkipForward,
 } from 'lucide-react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { SetupWizardLayout } from './SetupWizardLayout'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,9 +30,11 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
+import { findTemplateByBaseUrl } from '@/routes/config/providerTemplates'
 import { APP_NAME } from '@/lib/version'
 import { useToast } from '@/hooks/use-toast'
 import { validateToken } from '@/lib/token-validator'
+import type { ModelListItem } from '@/lib/config-api'
 import type {
   ApiProviderSetupConfig,
   SetupStep,
@@ -47,6 +48,7 @@ import {
   CustomTokenForm,
   ModelSetupForm,
   PersonalityForm,
+  PersonalityPresetSelect,
 } from './StepForms'
 import {
   loadBotBasicConfig,
@@ -59,6 +61,7 @@ import {
   saveApiProviderSetupConfig,
   saveModelSetupConfig,
   completeSetup,
+  fetchSetupModels,
   updateAccessToken,
 } from './api'
 
@@ -77,11 +80,13 @@ export function SetupPage() {
 // 内部实现组件
 function SetupPageContent() {
   const navigate = useNavigate()
+  const reduceMotion = useReducedMotion()
   const { t, i18n: i18nInstance } = useTranslation()
   const { toast } = useToast()
   const currentLang = i18nInstance.resolvedLanguage || i18nInstance.language || 'zh'
   const createDefaultPersonalityConfig = (): PersonalityConfig => ({
     personality: t('setupPage.defaults.personality.personality'),
+    behavior_style: t('setupPage.defaults.personality.behaviorStyle'),
     reply_style: t('setupPage.defaults.personality.replyStyle'),
     multiple_reply_style: [
       t('setupPage.defaults.personality.multipleReplyStyles.plain'),
@@ -158,6 +163,83 @@ function SetupPageContent() {
     : setupSteps
 
   const currentStepId = steps[currentStep]?.id
+  const [availableModels, setAvailableModels] = useState<ModelListItem[]>([])
+  const [modelFetchStatus, setModelFetchStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
+  const [modelFetchError, setModelFetchError] = useState('')
+
+  // DeepSeek 的角色默认值在选择提供商后立即生效，不依赖 Key 或模型列表请求。
+  useEffect(() => {
+    if (findTemplateByBaseUrl(apiProviderSetup.base_url)?.id !== 'deepseek') return
+    setModelSetup((previous) => ({
+      ...previous,
+      planner_model_identifier: 'deepseek-flash',
+      planner_model_name: 'deepseek-flash',
+      planner_thinking: false,
+      planner_reasoning_effort: 'high',
+      replyer_model_identifier: 'deepseek-flash',
+      replyer_model_name: 'deepseek-flash',
+      replyer_thinking: true,
+      replyer_reasoning_effort: 'high',
+    }))
+  }, [apiProviderSetup.base_url])
+
+  useEffect(() => {
+    if (currentStepId !== 'model-setup') return
+    setAvailableModels([])
+    setModelFetchError('')
+    if (!apiProviderSetup.base_url.trim() || !apiProviderSetup.api_key.trim()) {
+      setModelFetchStatus('idle')
+      return
+    }
+
+    setModelFetchStatus('loading')
+    let cancelled = false
+    let timer: ReturnType<typeof window.setTimeout>
+    const fetchModels = async () => {
+      try {
+        const models = await fetchSetupModels({
+          provider_name: '',
+          base_url: apiProviderSetup.base_url,
+          api_key: apiProviderSetup.api_key,
+        })
+        if (cancelled) return
+        setAvailableModels(models)
+        if (findTemplateByBaseUrl(apiProviderSetup.base_url)?.id === 'deepseek') {
+          if (!models.some((model) => model.id === 'deepseek-flash')) {
+            throw new Error('提供商返回的模型列表中没有 deepseek-flash，请检查模型列表或手动选择可用模型')
+          }
+        } else {
+          setModelSetup((previous) => {
+            const planner = models.some((model) => model.id === previous.planner_model_identifier)
+              ? previous.planner_model_identifier : ''
+            const replyer = models.some((model) => model.id === previous.replyer_model_identifier)
+              ? previous.replyer_model_identifier : ''
+            return {
+              ...previous,
+              planner_model_identifier: planner,
+              planner_model_name: planner,
+              replyer_model_identifier: replyer,
+              replyer_model_name: replyer,
+            }
+          })
+        }
+        setModelFetchError('')
+        setModelFetchStatus('success')
+      } catch (error) {
+        if (cancelled) return
+        setModelFetchError(error instanceof Error ? error.message : '获取模型列表失败')
+        setModelFetchStatus('error')
+        // 失败后等待 1 秒再重试，避免请求重叠；重试期间保留错误状态以允许手动填写。
+        timer = window.setTimeout(fetchModels, 1000)
+      }
+    }
+    // 等待用户停止输入；切换地址或 Key 后忽略旧请求，避免串用提供商的列表。
+    timer = window.setTimeout(fetchModels, 600)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [currentStepId, apiProviderSetup.base_url, apiProviderSetup.api_key])
 
   // 加载现有配置
   useEffect(() => {
@@ -292,6 +374,12 @@ function SetupPageContent() {
   }
 
   function validateModelSetup(config: ModelSetupConfig): string | null {
+    if (modelFetchStatus === 'loading') return '正在获取模型列表，请稍候'
+    if (modelFetchStatus === 'idle') return '请先填写 API Key 获取模型列表'
+    if (modelFetchStatus === 'success' && (
+      !availableModels.some((model) => model.id === config.planner_model_identifier) ||
+      !availableModels.some((model) => model.id === config.replyer_model_identifier)
+    )) return '请选择用于规划和回复的模型'
     if (!config.planner_model_identifier.trim()) {
       return t('setupPage.validation.enterPlannerModelIdentifier')
     }
@@ -415,18 +503,47 @@ function SetupPageContent() {
         return (
           <div className="space-y-8">
             <BotBasicForm config={botBasic} onChange={setBotBasic} />
-            <div className="border-t pt-6">
-              <PersonalityForm config={personality} onChange={setPersonality} />
-            </div>
+            <PersonalityForm config={personality} onChange={setPersonality} />
           </div>
         )
       case 'model-setup':
         return (
-          <div className="space-y-8">
-            <ApiProviderSetupForm config={apiProviderSetup} onChange={setApiProviderSetup} />
-            <div className="border-t pt-6">
-              <ModelSetupForm config={modelSetup} onChange={setModelSetup} />
-            </div>
+          <div className="space-y-5">
+            <ApiProviderSetupForm config={apiProviderSetup} onChange={(next) => {
+              if (next.base_url !== apiProviderSetup.base_url) {
+                setModelSetup((previous) => ({
+                  ...previous,
+                  planner_model_identifier: '',
+                  planner_model_name: '',
+                  replyer_model_identifier: '',
+                  replyer_model_name: '',
+                }))
+              }
+              setApiProviderSetup(next)
+            }} />
+            <AnimatePresence initial={false}>
+              {apiProviderSetup.api_key.trim() && (
+                <motion.div
+                  key="model-setup-fields"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: reduceMotion ? 0 : 0.2, ease: 'easeInOut' }}
+                  className="overflow-hidden"
+                >
+                  <div className="border-border border-t-2 pt-4">
+                    <ModelSetupForm
+                      config={modelSetup}
+                      onChange={setModelSetup}
+                      models={availableModels}
+                      fetchStatus={modelFetchStatus}
+                      fetchError={modelFetchError}
+                      providerBaseUrl={apiProviderSetup.base_url}
+                    />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         )
       default:
@@ -435,7 +552,7 @@ function SetupPageContent() {
   }
 
   return (
-    <div className="from-primary/5 via-background to-secondary/5 relative flex h-full min-h-screen flex-col items-center justify-center overflow-y-auto overflow-x-hidden bg-gradient-to-br p-3 md:p-4">
+    <div className="relative h-full min-h-screen overflow-x-hidden overflow-y-auto px-4">
       {/* 语言切换 */}
       <div className="absolute top-3 right-3 z-20">
         <DropdownMenu>
@@ -466,15 +583,9 @@ function SetupPageContent() {
         </DropdownMenu>
       </div>
 
-      {/* 背景装饰 */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="bg-primary/5 absolute top-1/4 left-1/4 h-64 w-64 rounded-full blur-3xl md:h-96 md:w-96" />
-        <div className="bg-secondary/5 absolute right-1/4 bottom-1/4 h-64 w-64 rounded-full blur-3xl md:h-96 md:w-96" />
-      </div>
-
       {/* 加载状态 */}
       {isLoading ? (
-        <div className="relative z-10 text-center">
+        <div className="relative z-10 flex min-h-screen flex-col items-center justify-center text-center">
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center">
             <div className="border-primary h-12 w-12 animate-spin rounded-full border-4 border-t-transparent" />
           </div>
@@ -482,153 +593,46 @@ function SetupPageContent() {
           <p className="text-muted-foreground mt-2 text-sm">{t('setupPage.loading.description')}</p>
         </div>
       ) : (
-        <>
-          {/* 主要内容 */}
-          <div className="relative z-10 w-full max-w-4xl">
-            {/* 头部 */}
-            <div className="mb-4 text-center md:mb-5">
-              <h1 className="mb-1 text-2xl font-bold md:text-3xl">{t('setupPage.header.title')}</h1>
-              {t('setupPage.header.description', { appName: APP_NAME }) ? (
-                <p className="text-muted-foreground text-sm md:text-base">
-                  {t('setupPage.header.description', { appName: APP_NAME })}
-                </p>
-              ) : null}
-            </div>
-
-            {/* 步骤指示器 */}
-            <div data-setup-steps="true" className="mb-4 flex justify-between md:mb-5">
-              {steps.map((step, index) => {
-                const Icon = step.icon
-                return (
-                  <div
-                    key={step.id}
-                    data-setup-step="true"
-                    data-setup-state={
-                      index === currentStep ? 'current' : index < currentStep ? 'complete' : 'pending'
-                    }
-                    aria-current={index === currentStep ? 'step' : undefined}
-                    className={cn(
-                      'flex flex-1 flex-col items-center gap-1',
-                      index < steps.length - 1 && 'relative'
-                    )}
+        <SetupWizardLayout
+          steps={steps}
+          currentStep={currentStep}
+          headerActions={currentStepId === 'bot-profile' ? (
+            <PersonalityPresetSelect config={personality} onChange={setPersonality} />
+          ) : undefined}
+          actions={
+            <>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    className="px-1"
+                    disabled={isSaving || isCompleting || currentStepId === 'custom-token'}
                   >
-                    {/* 连接线 */}
-                    {index < steps.length - 1 && (
-                      <div
-                        data-setup-connector="true"
-                        className={cn(
-                          'absolute top-2.5 left-1/2 h-0.5 w-full md:top-3.5',
-                          index < currentStep ? 'bg-primary' : 'bg-border'
-                        )}
-                      />
-                    )}
+                    {t('setupPage.actions.skip')}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>{t('setupPage.skipDialog.title')}</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {t('setupPage.skipDialog.description')}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+                    <AlertDialogAction onClick={handleSkip}>
+                      {t('setupPage.skipDialog.confirm')}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
 
-                    {/* 步骤指示灯 */}
-                    <div
-                      data-setup-indicator="true"
-                      className={cn(
-                        'relative z-10 flex h-5 w-5 items-center justify-center rounded-full border-2 transition-all md:h-7 md:w-7',
-                        index === currentStep
-                          ? 'border-primary bg-primary text-primary-foreground'
-                          : index < currentStep
-                            ? 'border-primary bg-primary text-primary-foreground'
-                            : 'border-border bg-background text-muted-foreground'
-                      )}
-                    >
-                      {index < currentStep ? (
-                        <CheckCircle2
-                          className="h-2.5 w-2.5 md:h-3.5 md:w-3.5"
-                          strokeWidth={2.5}
-                          fill="none"
-                        />
-                      ) : (
-                        <Icon className="h-2.5 w-2.5 md:h-3.5 md:w-3.5" />
-                      )}
-                    </div>
-
-                    {/* 步骤标题 */}
-                    <span
-                      data-setup-label="true"
-                      className={cn(
-                        'max-w-[60px] truncate text-center text-[10px] md:max-w-none md:text-xs md:whitespace-normal',
-                        index === currentStep
-                          ? 'text-foreground font-medium'
-                          : 'text-muted-foreground'
-                      )}
-                      title={step.title}
-                    >
-                      {step.title}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-
-            {/* 步骤内容卡片 */}
-            <Card className="mb-4 shadow-lg md:mb-5">
-              <CardContent className="p-4 md:p-8">
-                  <div className="min-h-0">
-                  <div className="mb-4 md:mb-6">
-                    <h2 className="mb-2 text-xl font-semibold md:text-2xl">
-                      {steps[currentStep].title}
-                    </h2>
-                    {steps[currentStep].description ? (
-                      <p className="text-muted-foreground text-sm md:text-base">
-                        {steps[currentStep].description}
-                      </p>
-                    ) : null}
-                  </div>
-
-                  {/* 表单内容 */}
-                  <ScrollArea
-                    className="h-[clamp(220px,42vh,500px)] min-h-0"
-                    viewportClassName="overscroll-auto"
-                  >
-                    <div className="pr-2">{renderStepForm()}</div>
-                  </ScrollArea>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* 操作按钮 */}
-            <div className="flex flex-col items-center justify-between gap-2 sm:flex-row sm:gap-0">
-              <Button
-                variant="outline"
-                onClick={handlePrevious}
-                disabled={currentStep === 0 || isSaving}
-                className="order-2 w-full sm:order-1 sm:w-auto"
-              >
-                {t('setupPage.actions.previous')}
-              </Button>
-
-              <div className="order-1 flex w-full gap-2 sm:order-2 sm:w-auto">
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      className="flex-1 gap-2 sm:flex-none"
-                      disabled={isSaving || isCompleting || currentStepId === 'custom-token'}
-                    >
-                      <SkipForward className="h-4 w-4" strokeWidth={2} fill="none" />
-                      {t('setupPage.actions.skip')}
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>{t('setupPage.skipDialog.title')}</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        {t('setupPage.skipDialog.description')}
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-                      <AlertDialogAction onClick={handleSkip}>
-                        {t('setupPage.skipDialog.confirm')}
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-
+              <div className="ml-auto flex items-center gap-3">
+                {currentStep > 0 && (
+                  <Button variant="outline" onClick={handlePrevious} disabled={isSaving}>
+                    {t('setupPage.actions.previous')}
+                  </Button>
+                )}
                 {currentStep === steps.length - 1 && currentStepId !== 'custom-token' ? (
                   <Button
                     onClick={handleComplete}
@@ -650,7 +654,16 @@ function SetupPageContent() {
                     )}
                   </Button>
                 ) : (
-                  <Button onClick={handleNext} disabled={isSaving} className="flex-1 sm:flex-none">
+                  <Button
+                    onClick={handleNext}
+                    variant={currentStepId === 'custom-token' && !validateToken(customToken).isValid ? 'outline' : 'default'}
+                    size="lg"
+                    disabled={
+                      isSaving ||
+                      (currentStepId === 'custom-token' && !validateToken(customToken).isValid)
+                    }
+                    className="min-w-44"
+                  >
                     {isSaving ? (
                       <>
                         <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
@@ -667,10 +680,12 @@ function SetupPageContent() {
                   </Button>
                 )}
               </div>
-            </div>
-          </div>
-
-        </>
+            </>
+          }
+        >
+          {/* 表单内容 */}
+          {renderStepForm()}
+        </SetupWizardLayout>
       )}
     </div>
   )

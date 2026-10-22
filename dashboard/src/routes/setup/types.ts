@@ -19,6 +19,7 @@ export interface BotBasicConfig {
 // 步骤2：人格配置
 export interface PersonalityConfig {
   personality: string
+  behavior_style: string
   reply_style: string
   multiple_reply_style: string[]
   multiple_probability: number
@@ -36,9 +37,11 @@ export interface ModelSetupConfig {
   planner_model_name: string
   planner_model_identifier: string
   planner_visual: boolean
+  planner_reasoning_effort?: 'low' | 'high' | 'max'
   planner_thinking: boolean
   replyer_model_name: string
   replyer_model_identifier: string
   replyer_visual: boolean
+  replyer_reasoning_effort?: 'low' | 'high' | 'max'
   replyer_thinking: boolean
 }

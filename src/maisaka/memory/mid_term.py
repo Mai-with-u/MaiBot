@@ -10,6 +10,7 @@ from typing import Any, Sequence
 from json_repair import repair_json
 from pydantic import BaseModel
 
+import asyncio
 import json
 import re
 
@@ -24,6 +25,7 @@ from src.llm_models.payload_content.context_item import (
     ContextImagePart,
     ContextItem,
     ContextItemBuilder,
+    ContextItemMeta,
     ContextTextPart,
     FunctionCallOutputItem,
     RoleType,
@@ -33,18 +35,19 @@ from src.llm_models.payload_content.context_item import (
 )
 from src.maisaka.context.message_id_alias import to_display_message_id
 from src.maisaka.context.messages import (
-    ComplexSessionMessage,
+    InternalContextMessage,
     LLMContextMessage,
     ReferenceMessage,
     ReferenceMessageType,
+    SessionBackedMessage,
     build_context_items_from_history_entry,
 )
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
 from src.maisaka.visual.message_limiter import limit_latest_images_in_messages
+from src.maisaka.visual.deferred_images import defer_context_image_encoding
 
 MID_TERM_MEMORY_COMPONENT_TYPE = "mid_term_memory"
 MID_TERM_MEMORY_SOURCE_KIND = "mid_term_memory"
-MID_TERM_MEMORY_COMPLEX_TYPE = "mid_term_memory"
 MID_TERM_MEMORY_USER_NAME = "聊天回想"
 MID_TERM_MEMORY_REFERENCE_MARKER = "【聊天回想-内部参考】"
 MAX_SUMMARY_INPUT_CHARS = 16000
@@ -64,10 +67,26 @@ class MidTermMemorySummaryModel(BaseModel):
 
 
 @dataclass(slots=True)
+class MemorySummaryMessage(InternalContextMessage):
+    """内部聊天摘要，保留结构化载荷和发给模型的预览，不伪装成 IM 消息。"""
+
+    prompt_text: str = ""
+    source_kind: str = MID_TERM_MEMORY_SOURCE_KIND
+
+    def to_context_item(
+        self, enable_visual_message: bool = True, *, limit_emoji_size: bool = False
+    ) -> ContextItem:
+        del enable_visual_message, limit_emoji_size
+        return ContextItemBuilder().set_role(RoleType.User).set_meta(
+            ContextItemMeta.create(item_id=self.context_item_id, timestamp=self.timestamp)
+        ).add_text_content(self.prompt_text).build()
+
+
+@dataclass(slots=True)
 class MidTermMemoryBuildResult:
     """聊天回想消息构建结果。"""
 
-    message: ComplexSessionMessage
+    message: MemorySummaryMessage
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
@@ -78,7 +97,7 @@ class MidTermMemoryBuildResult:
 class MidTermMemoryRecallCandidate:
     """一条聊天回想匹配段的召回候选。"""
 
-    message: ComplexSessionMessage
+    message: MemorySummaryMessage
     payload: dict[str, Any]
     segment_text: str
     score: float
@@ -87,11 +106,7 @@ class MidTermMemoryRecallCandidate:
 def is_mid_term_memory_message(message: LLMContextMessage) -> bool:
     """判断上下文消息是否为聊天回想消息。"""
 
-    return (
-        isinstance(message, ComplexSessionMessage)
-        and message.source_kind == MID_TERM_MEMORY_SOURCE_KIND
-        and message.complex_message_type == MID_TERM_MEMORY_COMPLEX_TYPE
-    )
+    return isinstance(message, MemorySummaryMessage)
 
 
 def is_mid_term_memory_reference_message(message: LLMContextMessage) -> bool:
@@ -161,7 +176,8 @@ async def build_mid_term_memory_message(
         return request_prompt_messages
 
     result = await llm_client.generate_response_with_context(context_factory)
-    _save_mid_term_memory_prompt_preview(
+    await asyncio.to_thread(
+        _save_mid_term_memory_prompt_preview,
         request_prompt_messages,
         result=result,
         session_id=session_id,
@@ -178,7 +194,7 @@ async def build_mid_term_memory_message(
         summary_payload.recall_cues,
         session_id=session_id,
     )
-    message = build_mid_term_memory_complex_message(
+    message = build_mid_term_memory_summary_message(
         summary_payload,
         time_range=time_range,
         participants=participants,
@@ -214,14 +230,14 @@ def _select_summary_source_messages(messages: Sequence[LLMContextMessage]) -> li
     ]
 
 
-def build_mid_term_memory_complex_message(
+def build_mid_term_memory_summary_message(
     summary_payload: MidTermMemorySummaryModel,
     *,
     time_range: str,
     participants: Sequence[str],
     source_messages: Sequence[LLMContextMessage],
     recall_cue_embeddings: Sequence[dict[str, Any]] | None = None,
-) -> ComplexSessionMessage:
+) -> MemorySummaryMessage:
     """基于摘要内容构造聊天回想上下文消息。"""
 
     timestamp = _resolve_summary_timestamp(source_messages)
@@ -254,20 +270,19 @@ def build_mid_term_memory_complex_message(
             f"summary: {summary_payload.summary.strip()}",
         ]
     )
-    return ComplexSessionMessage(
+    return MemorySummaryMessage(
         raw_message=MessageSequence([DictComponent(payload)]),
         visible_text=visible_text,
         timestamp=timestamp,
         message_id=message_id,
         source_kind=MID_TERM_MEMORY_SOURCE_KIND,
         prompt_text=f"{planner_prefix}{preview_text}",
-        complex_message_type=MID_TERM_MEMORY_COMPLEX_TYPE,
     )
 
 
 def insert_mid_term_memory_message(
     history: Sequence[LLMContextMessage],
-    summary_message: ComplexSessionMessage,
+    summary_message: MemorySummaryMessage,
     *,
     max_summary_count: int,
 ) -> list[LLMContextMessage]:
@@ -420,6 +435,7 @@ def _build_summary_instruction_prompt(
     )
 
 
+@defer_context_image_encoding(lambda items: items)
 def _build_summary_prompt_messages(
     source_messages: Sequence[LLMContextMessage],
     *,
@@ -474,7 +490,7 @@ def _save_mid_term_memory_prompt_preview(
 ) -> None:
     """保存聊天回想生成 Prompt 到 Maisaka Prompt 预览目录。"""
 
-    if not global_config.debug.show_maisaka_thinking:
+    if not global_config.debug.save_maisaka_reasoning:
         return
     if not request_prompt_messages:
         return
@@ -595,17 +611,9 @@ def _collect_participants(messages: Sequence[LLMContextMessage]) -> list[str]:
 
 
 def _resolve_participant_name(message: LLMContextMessage) -> str:
-    original_message = getattr(message, "original_message", None)
-    message_info = getattr(original_message, "message_info", None)
-    user_info = getattr(message_info, "user_info", None)
-    if user_info is not None:
-        user_name = (
-            getattr(user_info, "user_cardname", None)
-            or getattr(user_info, "user_nickname", None)
-            or getattr(user_info, "user_id", None)
-        )
-        if str(user_name or "").strip():
-            return str(user_name).strip()
+    if isinstance(message, SessionBackedMessage):
+        user_info = message.original_message.message_info.user_info
+        return user_info.user_cardname or user_info.user_nickname or user_info.user_id
 
     if message.role == "assistant":
         return "麦麦"
@@ -774,7 +782,7 @@ def _collect_mid_term_memory_recall_candidates(
 ) -> list[MidTermMemoryRecallCandidate]:
     candidates: list[MidTermMemoryRecallCandidate] = []
     for message in history:
-        if not isinstance(message, ComplexSessionMessage) or not is_mid_term_memory_message(message):
+        if not isinstance(message, MemorySummaryMessage):
             continue
 
         payload = _get_mid_term_memory_payload(message)

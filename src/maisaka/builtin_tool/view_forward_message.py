@@ -6,9 +6,7 @@ from src.common.logger import get_logger
 from src.core.tooling import ToolExecutionContext, ToolExecutionResult, ToolInvocation, ToolSpec
 from src.maisaka.context.message_id_alias import to_display_message_id
 from src.maisaka.context.messages import (
-    SessionBackedMessage,
-    build_full_complex_message_content,
-    build_full_complex_message_content_from_sequence,
+    ContentContextMessage,
     contains_complex_message,
 )
 
@@ -46,7 +44,7 @@ def get_tool_spec() -> ToolSpec:
     )
 
 
-def _find_context_message_by_id(tool_ctx: BuiltinToolRuntimeContext, message_id: str) -> SessionBackedMessage | None:
+def _find_context_message_by_id(tool_ctx: BuiltinToolRuntimeContext, message_id: str) -> ContentContextMessage | None:
     """从 Maisaka 历史里按 message_id 查找上下文消息。"""
 
     normalized_message_id = str(message_id or "").strip()
@@ -54,23 +52,9 @@ def _find_context_message_by_id(tool_ctx: BuiltinToolRuntimeContext, message_id:
         return None
 
     for history_message in reversed(tool_ctx.runtime._chat_history):
-        if str(getattr(history_message, "message_id", "") or "").strip() != normalized_message_id:
-            continue
-        if isinstance(history_message, SessionBackedMessage):
+        if isinstance(history_message, ContentContextMessage) and history_message.message_id == normalized_message_id:
             return history_message
     return None
-
-
-async def _build_full_content_for_context_message(
-    message: SessionBackedMessage,
-    path: list[int],
-) -> str:
-    """优先使用原始消息按路径展开，合成转发消息则直接展开上下文组件。"""
-
-    original_message = getattr(message, "original_message", None)
-    if original_message is not None:
-        return await build_full_complex_message_content(original_message, path)
-    return build_full_complex_message_content_from_sequence(message.raw_message, path)
 
 
 async def handle_tool(
@@ -100,18 +84,13 @@ async def handle_tool(
     path: list[int] = raw_path
 
     target_context_message = _find_context_message_by_id(tool_ctx, target_message_id)
-    target_source_message = None
     if target_context_message is None:
-        target_source_message = tool_ctx.runtime.find_source_message_by_id(target_message_id)
-    if target_context_message is None and target_source_message is None:
         return tool_ctx.build_failure_result(
             invocation.tool_name,
             f"未找到目标转发消息，msg_id={to_display_message_id(target_message_id)}",
         )
 
-    target_sequence = (
-        target_context_message.raw_message if target_context_message is not None else target_source_message.raw_message
-    )
+    target_sequence = target_context_message.media_sequence
     if not contains_complex_message(target_sequence):
         return tool_ctx.build_failure_result(
             invocation.tool_name,
@@ -120,10 +99,7 @@ async def handle_tool(
 
     logger.info(f"{tool_ctx.runtime.log_prefix} 触发转发消息浏览工具，目标消息编号={target_message_id}")
     try:
-        if target_context_message is not None:
-            full_content = await _build_full_content_for_context_message(target_context_message, path)
-        else:
-            full_content = await build_full_complex_message_content(target_source_message, path)
+        full_content = await target_context_message.expand_forward_content(path)
     except ValueError as exc:
         return tool_ctx.build_failure_result(invocation.tool_name, str(exc))
     except Exception as exc:

@@ -11,6 +11,15 @@ ALIYUN = "https://mirrors.aliyun.com/pypi/simple"
 PYPI = "https://pypi.org/simple"
 
 
+@pytest.fixture(autouse=True)
+def installed_constraints(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        PluginDependencyPipeline,
+        "_load_installed_package_constraints",
+        staticmethod(lambda: ("pillow==13.0.0",)),
+    )
+
+
 def _write_pyproject(project_root: Path) -> None:
     # 默认索引故意写在前面，验证顺序按 uv 规则而不是按声明位置。
     (project_root / "pyproject.toml").write_text(
@@ -74,6 +83,17 @@ def test_uv_command_only_queries_one_index_and_keeps_constraints(
     assert command[-1] == "silk-python>=0.2.8"
 
 
+def test_pip_command_keeps_runtime_constraints(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    constraint_path = tmp_path / "constraints.txt"
+
+    command = PluginDependencyPipeline._build_install_command(["silk-python>=0.2.8"], ALIYUN, constraint_path)
+
+    assert command[1:4] == ["-m", "pip", "install"]
+    assert _index_of(command) == ALIYUN
+    assert command[command.index("--constraint") + 1] == str(constraint_path)
+
+
 @pytest.mark.asyncio
 async def test_install_falls_back_to_pypi_when_aliyun_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_pyproject(tmp_path)
@@ -95,7 +115,7 @@ async def test_install_falls_back_to_pypi_when_aliyun_fails(tmp_path: Path, monk
     assert succeeded is True
     assert error_message == ""
     assert attempted_indexes == [ALIYUN, PYPI]
-    assert constraint_texts == ["idna>=3.15\nurllib3>=2.7.0\n"] * 2
+    assert constraint_texts == ["idna>=3.15\nurllib3>=2.7.0\npillow==13.0.0\n"] * 2
 
 
 @pytest.mark.asyncio

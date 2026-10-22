@@ -1,14 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { ArrowUpDown, Plus, Search, SlidersHorizontal, Trash2, X } from 'lucide-react'
+import { ArrowUpDown, Plus, Search, SlidersHorizontal, Trash2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Select,
   SelectContent,
@@ -37,10 +35,7 @@ import {
 
 import { MOBILE_GLASS_CLASS } from '@/components/layout/mobile-glass'
 import { MobileHeaderActions } from '@/components/layout/MobileHeaderActions'
-import {
-  useHideMobileTabBar,
-  useMobileTitleOverride,
-} from '@/components/layout/mobile-nav-context'
+import { useHideMobileTabBar, useMobileTitleOverride } from '@/components/layout/mobile-nav-context'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { useDataList } from '@/hooks/useDataList'
 import { useToast } from '@/hooks/use-toast'
@@ -53,46 +48,51 @@ import {
   registerEmoji,
 } from '@/lib/emoji-api'
 import { cn } from '@/lib/utils'
-import type { Emoji, EmojiStats, EmojiStatus } from '@/types/emoji'
+import type { Emoji, EmojiStats } from '@/types/emoji'
 
 import { EmojiCacheMaintenancePanel } from './EmojiCacheMaintenancePanel'
 import { EmojiDetailDialog, EmojiEditDialog, EmojiUploadDialog } from './EmojiDialogs'
-import { EmojiList } from './EmojiList'
+import { EmojiBrowser, type EmojiFilters } from './EmojiBrowser'
 import { MobileEmojiGrid } from './MobileEmojiGrid'
 
 // 页面可见时每 10 秒同步后台收录和使用状态，离开页面后停止轮询。
 const EMOJI_REFRESH_INTERVAL = 10_000
 
-// 表情包筛选项：状态 / 格式 / 排序字段 / 排序方向
-interface EmojiFilters {
-  status: EmojiStatus | 'all'
-  format: string
-  sortBy: string
-  sortOrder: 'desc' | 'asc'
+// 与表情包列表接口的每页上限一致；补齐整行时不能把 100 向上凑成 102 或 104。
+const EMOJI_MAX_PAGE_SIZE = 100
+
+function alignEmojiPageSize(preferredSize: number, columns: number): number {
+  const rows = Math.min(
+    Math.ceil(preferredSize / columns),
+    Math.floor(EMOJI_MAX_PAGE_SIZE / columns)
+  )
+  return rows * columns
 }
 
-export function EmojiManagementPage() {
+export function EmojiManagementPage({ browserHeader }: { browserHeader?: ReactNode }) {
   const [selectedEmoji, setSelectedEmoji] = useState<Emoji | null>(null)
   const [detailDialogOpen, setDetailDialogOpen] = useState(false)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [batchDeleteDialogOpen, setBatchDeleteDialogOpen] = useState(false)
-  const [jumpToPage, setJumpToPage] = useState('')
+  const [cacheOpen, setCacheOpen] = useState(false)
   const [cardSize, setCardSize] = useState<'small' | 'medium' | 'large'>('medium')
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
   // 手机端：长按进入多选，筛选收进底部弹层
   const isMobile = useMediaQuery('(max-width: 1023.98px)')
   const isWideGrid = useMediaQuery('(min-width: 1280px)')
-  const gridColumns = isMobile ? 3 : {
-    small: isWideGrid ? 10 : 8,
-    medium: isWideGrid ? 8 : 6,
-    large: isWideGrid ? 5 : 4,
-  }[cardSize]
-  const [preferredPageSize, setPreferredPageSize] = useState(20)
-  const alignedPageSize = Math.ceil(preferredPageSize / gridColumns) * gridColumns
-  const pageSizeOptions = [20, 40, 60, 100].map((value) => ({
+  const gridColumns = isMobile
+    ? 3
+    : {
+        small: isWideGrid ? 8 : 6,
+        medium: isWideGrid ? 6 : 4,
+        large: isWideGrid ? 4 : 3,
+      }[cardSize]
+  const [preferredPageSize, setPreferredPageSize] = useState(24)
+  const alignedPageSize = alignEmojiPageSize(preferredPageSize, gridColumns)
+  const pageSizeOptions = [24, 48, 72, 96].map((value) => ({
     value,
-    count: Math.ceil(value / gridColumns) * gridColumns,
+    count: alignEmojiPageSize(value, gridColumns),
   }))
   const [mobileSelecting, setMobileSelecting] = useState(false)
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false)
@@ -107,7 +107,12 @@ export function EmojiManagementPage() {
     initialPageSize: alignedPageSize,
     preserveSelectionOnParamsChange: true,
     getId: (emoji) => emoji.id,
-    initialFilters: { status: 'adopted', format: 'all', sortBy: 'register_time', sortOrder: 'desc' },
+    initialFilters: {
+      status: 'adopted',
+      format: 'all',
+      sortBy: 'register_time',
+      sortOrder: 'desc',
+    },
     searchDebounceMs: 300,
     queryOptions: { refetchInterval: EMOJI_REFRESH_INTERVAL },
     queryFn: async ({ page, pageSize, search, filters }) => {
@@ -133,16 +138,24 @@ export function EmojiManagementPage() {
   useEffect(() => {
     if (pageSize !== alignedPageSize) setPageSize(alignedPageSize)
   }, [alignedPageSize, pageSize, setPageSize])
-  // 命中提示用的已去空搜索词（与防抖后驱动查询的值一致）
-  const searchKeyword = list.searchInput.trim()
+  // 删除末页最后一项后，真实查询也回到有效页，不能只修正分页文案。
+  useEffect(() => {
+    if (!list.isPending && !list.isFetching && !list.isError && list.page > list.totalPages) {
+      list.goToPage(list.totalPages)
+    }
+  }, [list.isPending, list.isFetching, list.isError, list.page, list.totalPages, list.goToPage])
 
-  // 统计数据：失败时保持 null，状态切换 Tabs 自动隐藏，不打断页面
+  // 统计失败时显示未知数，筛选和列表仍可使用。
   const statsQuery = useQuery({
     queryKey: ['emoji', 'stats'],
     queryFn: getEmojiStats,
     refetchInterval: EMOJI_REFRESH_INTERVAL,
   })
   const stats: EmojiStats | null = statsQuery.data?.data ?? null
+  const refreshData = () => {
+    list.invalidate()
+    void statsQuery.refetch()
+  }
 
   // 多选时页头标题换成已选数量，底部换成批量操作栏
   useMobileTitleOverride(selecting ? `已选择 ${list.selectedCount} 项` : null)
@@ -154,7 +167,7 @@ export function EmojiManagementPage() {
   }
 
   // 查看详情
-  const handleViewDetail = async (emoji: Emoji) => {
+  const handleViewDetail = (emoji: Emoji) => {
     setSelectedEmoji(emoji)
     setDetailDialogOpen(true)
   }
@@ -185,7 +198,7 @@ export function EmojiManagementPage() {
       if (list.isSelected(emoji.id)) {
         list.toggle(emoji.id)
       }
-      list.invalidate()
+      refreshData()
     },
   })
 
@@ -204,7 +217,7 @@ export function EmojiManagementPage() {
         title: '成功',
         description: '表情包已注册',
       })
-      list.invalidate()
+      refreshData()
     },
   })
 
@@ -222,7 +235,7 @@ export function EmojiManagementPage() {
         title: '成功',
         description: '表情包已封禁',
       })
-      list.invalidate()
+      refreshData()
     },
   })
 
@@ -243,7 +256,7 @@ export function EmojiManagementPage() {
       list.clearSelection()
       setMobileSelecting(false)
       setBatchDeleteDialogOpen(false)
-      list.invalidate()
+      refreshData()
     },
   })
 
@@ -260,7 +273,7 @@ export function EmojiManagementPage() {
         description: `已${action === 'register' ? '注册' : '封禁'} ${ids.length} 个表情包`,
       })
       exitMobileSelecting()
-      list.invalidate()
+      refreshData()
     },
   })
 
@@ -269,23 +282,8 @@ export function EmojiManagementPage() {
     batchDeleteMutation.mutate(Array.from(list.selectedIds))
   }
 
-  // 页面跳转
-  const handleJumpToPage = () => {
-    const targetPage = parseInt(jumpToPage)
-    if (targetPage >= 1 && targetPage <= list.totalPages) {
-      list.goToPage(targetPage)
-      setJumpToPage('')
-    } else {
-      toast({
-        title: '无效的页码',
-        description: `请输入1-${list.totalPages}之间的页码`,
-        variant: 'destructive',
-      })
-    }
-  }
-
   // 获取格式选项
-  const formatOptions = stats?.formats ? Object.keys(stats.formats) : []
+  const formatOptions = stats ? Object.keys(stats.formats) : []
   const statusOptions = stats
     ? [
         { value: 'known' as const, label: '认识', count: stats.known },
@@ -296,368 +294,217 @@ export function EmojiManagementPage() {
     : []
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] flex-col p-4 max-lg:h-auto max-lg:px-0 max-lg:pt-1 sm:p-6">
-      {/* 手机端由工作区 main 滚动，内部视口展开，避免截住触摸滚动。 */}
-      <ScrollArea
-        className="min-w-0 flex-1 max-lg:flex-none max-lg:overflow-visible max-lg:[&>[data-dashboard-scrollbar]]:hidden"
-        viewportClassName="max-lg:h-auto max-lg:!overflow-visible max-lg:overscroll-auto"
-        scrollbars="vertical"
-      >
-        {/* 手机上滚动区满宽、内容自己留边距，满宽网格就不会撑出横向滚动 */}
-        <div className="space-y-4 pr-4 max-lg:px-4 sm:space-y-6">
-          {/* 手机：搜索 + 状态胶囊；排序、格式等收进筛选弹层 */}
-          {isMobile && (
-            <div data-mobile-emoji-toolbar="true" className="space-y-3">
-              <div className="relative">
-                <Search className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
-                <Input
-                  value={list.searchInput}
-                  onChange={(event) => list.setSearchInput(event.target.value)}
-                  placeholder="搜索 tag、描述或哈希..."
-                  aria-label="搜索表情包"
-                  className="h-10 rounded-xl pl-9"
-                />
-              </div>
-              {stats && (
-                <nav
-                  aria-label="表情包状态"
-                  data-mobile-pill-nav="true"
-                  className="-mx-4 flex gap-2 overflow-x-auto overflow-y-hidden px-4 py-1 [scrollbar-width:none]"
-                  style={{ touchAction: 'pan-x pan-y' }}
-                >
-                  {statusOptions.map((option) => {
-                    const active = list.filters.status === option.value
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        aria-pressed={active}
-                        data-active={active ? 'true' : 'false'}
-                        onClick={() => list.setFilter('status', option.value)}
-                        className={cn(
-                          'h-9 shrink-0 rounded-full px-4 text-[15px]',
-                          active ? 'bg-foreground text-background font-semibold' : 'bg-card'
-                        )}
-                      >
-                        {option.label} {option.count}
-                      </button>
-                    )
-                  })}
-                </nav>
-              )}
-            </div>
-          )}
-
-          {/* 筛选和排序 */}
-          <Card className="max-lg:hidden">
-            <CardHeader className="space-y-3">
-              <div className="grid grid-cols-2 items-end gap-4 [&>div]:min-w-0 lg:grid-cols-3 xl:grid-cols-[minmax(0,2fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1.2fr)_auto_5rem_auto]">
-                <div className="space-y-2">
-                  <Label htmlFor="emoji-search">搜索 tag</Label>
-                  <div className="relative">
-                    <Search className="text-muted-foreground absolute top-2.5 left-2.5 h-4 w-4" />
-                    <Input
-                      id="emoji-search"
-                      value={list.searchInput}
-                      onChange={(event) => list.setSearchInput(event.target.value)}
-                      placeholder="搜索 tag、描述或哈希..."
-                      className="pr-9 pl-8"
-                    />
-                    {list.searchInput && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="absolute top-1 right-1 h-7 w-7"
-                        onClick={() => list.setSearchInput('')}
-                        aria-label="清空搜索"
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>排序方式</Label>
-                  <div className="flex gap-2">
-                    <Select value={list.filters.sortBy} onValueChange={(value) => list.setFilter('sortBy', value)}>
-                    <SelectTrigger aria-label="排序字段" className="min-w-0 flex-1">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="usage_count">使用次数</SelectItem>
-                        <SelectItem value="register_time">注册时间</SelectItem>
-                        <SelectItem value="record_time">记录时间</SelectItem>
-                        <SelectItem value="last_used_time">最后使用</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="shrink-0"
-                      aria-label={list.filters.sortOrder === 'desc' ? '切换为正序' : '切换为倒序'}
-                      title={list.filters.sortOrder === 'desc' ? '当前倒序，点击切换为正序' : '当前正序，点击切换为倒序'}
-                      onClick={() =>
-                        list.setFilter('sortOrder', list.filters.sortOrder === 'desc' ? 'asc' : 'desc')
-                      }
-                    >
-                      <ArrowUpDown className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>格式</Label>
-                  <Select
-                    value={list.filters.format}
-                    onValueChange={(value) => list.setFilter('format', value)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">全部</SelectItem>
-                      {formatOptions.map((format) => (
-                        <SelectItem key={format} value={format}>
-                          {format.toUpperCase()} ({stats?.formats[format]})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {stats && (
-                  <div className="space-y-2">
-                    <Label>表情包状态</Label>
-                    <Select
-                      value={list.filters.status === 'all' ? 'adopted' : list.filters.status}
-                      onValueChange={(value) => list.setFilter('status', value as EmojiStatus)}
-                    >
-                      <SelectTrigger aria-label="表情包状态">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {statusOptions.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label} ({option.count})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-                <div className="space-y-2">
-                  <Label>卡片大小</Label>
-                  <div className="flex h-9 items-center gap-1 border-2 px-1.5">
-                    {[
-                      { value: 'small' as const, label: '小', sizeClassName: 'h-3 w-3' },
-                      { value: 'medium' as const, label: '中', sizeClassName: 'h-4 w-4' },
-                      { value: 'large' as const, label: '大', sizeClassName: 'h-5 w-5' },
-                    ].map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => setCardSize(option.value)}
-                        className={`flex h-7 w-7 items-center justify-center transition-colors ${
-                          cardSize === option.value
-                            ? 'bg-primary text-primary-foreground'
-                            : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                        }`}
-                        aria-label={`${option.label}卡片`}
-                        title={`${option.label}卡片`}
-                      >
-                        <span className={`${option.sizeClassName} bg-current`} />
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="emoji-page-size">
-                    每页显示
-                  </Label>
-                  <Select
-                    value={preferredPageSize.toString()}
-                    onValueChange={(value) => setPreferredPageSize(parseInt(value))}
-                  >
-                    <SelectTrigger id="emoji-page-size" className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {pageSizeOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value.toString()}>{option.count}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button onClick={() => setUploadDialogOpen(true)} className="col-span-2 gap-2 lg:col-span-3 xl:col-span-1">
-                  <Plus className="h-4 w-4" />
-                  新增
-                </Button>
-              </div>
-            </CardHeader>
-          </Card>
-
-          {/* 选择操作栏独立于筛选卡片，滚动到列表后仍保持吸顶。 */}
-          {list.selectedCount > 0 && !isMobile && (
-            <Card className="sticky top-0 z-20">
-              <div className="flex flex-wrap items-center gap-3 p-4 sm:p-5">
-                <span className="text-muted-foreground text-sm">
+    <div className="flex h-full min-h-0 min-w-0 flex-col p-3 pb-4 max-lg:h-auto sm:p-4">
+      {!isMobile && (
+        <EmojiBrowser
+          browserHeader={browserHeader}
+          stats={stats}
+          filters={list.filters}
+          onFilterChange={list.setFilter}
+          search={list.searchInput}
+          onSearchChange={list.setSearchInput}
+          cardSize={cardSize}
+          onCardSizeChange={setCardSize}
+          columns={gridColumns}
+          emojiList={emojiList}
+          loading={loading}
+          total={total}
+          page={page}
+          pageSize={pageSize}
+          pageSizeOptions={pageSizeOptions.map((option) => option.count)}
+          onPageSizeChange={(size) => {
+            const option = pageSizeOptions.find((item) => item.count === size)
+            if (option) setPreferredPageSize(option.value)
+          }}
+          onPageChange={list.goToPage}
+          selectedIds={list.selectedIds}
+          onToggleSelect={list.toggle}
+          onEdit={handleEdit}
+          onViewDetail={handleViewDetail}
+          onRegister={handleRegister}
+          onBan={handleBan}
+          onDelete={handleDelete}
+          onUpload={() => setUploadDialogOpen(true)}
+          onOpenCache={() => setCacheOpen(true)}
+          error={list.isError ? list.error?.message : undefined}
+          onRetry={() => list.refetch()}
+          batchActions={
+            list.selectedCount > 0 && (
+              <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3">
+                <span className="text-muted-foreground mr-auto text-xs">
                   已选择 {list.selectedCount} 个表情包
                 </span>
-                <Button variant="outline" size="sm" onClick={() => list.clearSelection()}>
+                <Button variant="outline" size="xs" onClick={list.toggleAll}>
+                  全选本页
+                </Button>
+                <Button variant="outline" size="xs" onClick={list.clearSelection}>
                   取消选择
                 </Button>
                 <Button
                   variant="destructive"
-                  size="sm"
+                  size="xs"
                   onClick={() => setBatchDeleteDialogOpen(true)}
                 >
-                  <Trash2 className="mr-1 h-4 w-4" />
+                  <Trash2 />
                   批量删除
                 </Button>
               </div>
-            </Card>
-          )}
+            )
+          }
+        />
+      )}
+      <div className="space-y-4 lg:hidden">
+        {isMobile && (
+          <div data-mobile-emoji-toolbar="true" className="space-y-3">
+            <div className="relative">
+              <Search className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
+              <Input
+                value={list.searchInput}
+                onChange={(event) => list.setSearchInput(event.target.value)}
+                placeholder="搜索 tag、描述或哈希..."
+                aria-label="搜索表情包"
+                className="h-10 rounded-xl pl-9"
+              />
+            </div>
+            {stats && (
+              <nav
+                aria-label="表情包状态"
+                data-mobile-pill-nav="true"
+                className="-mx-4 flex gap-2 overflow-x-auto overflow-y-hidden px-4 py-1 [scrollbar-width:none]"
+                style={{ touchAction: 'pan-x pan-y' }}
+              >
+                {statusOptions.map((option) => {
+                  const active = list.filters.status === option.value
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      aria-pressed={active}
+                      data-active={active ? 'true' : 'false'}
+                      onClick={() => list.setFilter('status', option.value)}
+                      className={cn(
+                        'h-9 shrink-0 rounded-full px-4 text-[15px]',
+                        active ? 'bg-foreground text-background font-semibold' : 'bg-card'
+                      )}
+                    >
+                      {option.label} {option.count}
+                    </button>
+                  )
+                })}
+              </nav>
+            )}
+          </div>
+        )}
 
-          {/* 手机：满宽三列网格，点按看详情、长按多选 */}
-          {isMobile && !list.isError && (
-            <MobileEmojiGrid
-              emojiList={emojiList}
-              total={total}
-              page={page}
-              pageSize={pageSize}
-              selecting={selecting}
-              selectedIds={list.selectedIds}
-              onPageChange={list.goToPage}
-              onOpen={handleViewDetail}
-              onStartSelecting={(id) => {
-                setMobileSelecting(true)
-                if (!list.isSelected(id)) list.toggle(id)
-              }}
-              onToggleSelect={list.toggle}
-            />
-          )}
-
-          {/* 表情包卡片列表 */}
-          <Card className={cn(isMobile && !list.isError && 'hidden')}>
-            <CardHeader className="pb-3">
-              <CardDescription>
-                {searchKeyword
-                  ? `搜索“${searchKeyword}”命中 ${total} 个表情包,当前第 ${page} 页`
-                  : `共 ${total} 个表情包,当前第 ${page} 页`}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {list.isError ? (
-                <div className="space-y-2 py-12 text-center">
-                  <p className="text-destructive text-sm">{list.error?.message}</p>
-                  <Button variant="outline" size="sm" onClick={() => list.refetch()}>
-                    重试
-                  </Button>
-                </div>
-              ) : (
-                <EmojiList
-                  emojiList={emojiList}
-                  loading={loading}
-                  total={total}
-                  page={page}
-                  pageSize={pageSize}
-                  selectedIds={list.selectedIds}
-                  cardSize={cardSize}
-                  jumpToPage={jumpToPage}
-                  onPageChange={list.goToPage}
-                  onJumpToPage={handleJumpToPage}
-                  onJumpToPageChange={setJumpToPage}
-                  onToggleSelect={list.toggle}
-                  onEdit={handleEdit}
-                  onViewDetail={handleViewDetail}
-                  onRegister={handleRegister}
-                  onBan={handleBan}
-                  onDelete={handleDelete}
-                />
-              )}
-            </CardContent>
-          </Card>
-
-          <EmojiCacheMaintenancePanel
-            onCacheChanged={() => {
-              list.invalidate()
-              void statsQuery.refetch()
+        {/* 手机：满宽三列网格，点按看详情、长按多选 */}
+        {isMobile && !list.isError && (
+          <MobileEmojiGrid
+            emojiList={emojiList}
+            total={total}
+            page={page}
+            pageSize={pageSize}
+            selecting={selecting}
+            selectedIds={list.selectedIds}
+            onPageChange={list.goToPage}
+            onOpen={handleViewDetail}
+            onStartSelecting={(id) => {
+              setMobileSelecting(true)
+              if (!list.isSelected(id)) list.toggle(id)
             }}
+            onToggleSelect={list.toggle}
           />
+        )}
 
-          {/* 详情对话框 */}
-          <EmojiDetailDialog
-            emoji={selectedEmoji}
-            open={detailDialogOpen}
-            onOpenChange={setDetailDialogOpen}
-            actions={
-              isMobile && selectedEmoji ? (
-                <div className="grid w-full grid-cols-2 gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setDetailDialogOpen(false)
-                      handleEdit(selectedEmoji)
-                    }}
-                  >
-                    编辑
-                  </Button>
-                  {selectedEmoji.status !== 'adopted' ? (
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        setDetailDialogOpen(false)
-                        handleRegister(selectedEmoji)
-                      }}
-                    >
-                      注册
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        setDetailDialogOpen(false)
-                        handleBan(selectedEmoji)
-                      }}
-                    >
-                      封禁
-                    </Button>
-                  )}
-                  <Button
-                    variant="destructive"
-                    className="col-span-2"
-                    onClick={() => {
-                      setDetailDialogOpen(false)
-                      handleDelete(selectedEmoji)
-                    }}
-                  >
-                    删除
-                  </Button>
-                </div>
-              ) : undefined
-            }
-          />
+        {isMobile && list.isError && (
+          <div className="py-12 text-center">
+            <p className="text-destructive">{list.error?.message}</p>
+            <Button variant="outline" size="sm" onClick={() => list.refetch()}>
+              重试
+            </Button>
+          </div>
+        )}
+        {isMobile && (
+          <Button variant="outline" size="sm" onClick={() => setCacheOpen(true)}>
+            缓存维护
+          </Button>
+        )}
+      </div>
+      <Dialog open={cacheOpen} onOpenChange={setCacheOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>缓存维护</DialogTitle>
+            <DialogDescription>管理缩略图和本地图片缓存</DialogDescription>
+          </DialogHeader>
+          <EmojiCacheMaintenancePanel onCacheChanged={refreshData} />
+        </DialogContent>
+      </Dialog>
+      {/* 详情对话框 */}
+      <EmojiDetailDialog
+        emoji={selectedEmoji}
+        open={detailDialogOpen}
+        onOpenChange={setDetailDialogOpen}
+        actions={
+          isMobile && selectedEmoji ? (
+            <div className="grid w-full grid-cols-2 gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setDetailDialogOpen(false)
+                  handleEdit(selectedEmoji)
+                }}
+              >
+                编辑
+              </Button>
+              {selectedEmoji.status !== 'adopted' ? (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setDetailDialogOpen(false)
+                    handleRegister(selectedEmoji)
+                  }}
+                >
+                  注册
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setDetailDialogOpen(false)
+                    handleBan(selectedEmoji)
+                  }}
+                >
+                  封禁
+                </Button>
+              )}
+              <Button
+                variant="destructive"
+                className="col-span-2"
+                onClick={() => {
+                  setDetailDialogOpen(false)
+                  handleDelete(selectedEmoji)
+                }}
+              >
+                删除
+              </Button>
+            </div>
+          ) : undefined
+        }
+      />
 
-          {/* 编辑对话框 */}
-          <EmojiEditDialog
-            emoji={selectedEmoji}
-            open={editDialogOpen}
-            onOpenChange={setEditDialogOpen}
-            onSuccess={() => list.invalidate()}
-          />
+      {/* 编辑对话框 */}
+      <EmojiEditDialog
+        emoji={selectedEmoji}
+        open={editDialogOpen}
+        onOpenChange={setEditDialogOpen}
+        onSuccess={refreshData}
+      />
 
-          {/* 上传对话框 */}
-          <EmojiUploadDialog
-            open={uploadDialogOpen}
-            onOpenChange={setUploadDialogOpen}
-            onSuccess={() => list.invalidate()}
-          />
-        </div>
-      </ScrollArea>
+      {/* 上传对话框 */}
+      <EmojiUploadDialog
+        open={uploadDialogOpen}
+        onOpenChange={setUploadDialogOpen}
+        onSuccess={refreshData}
+      />
 
       {/* 手机页头右上角：多选时为全选 / 完成，平时为筛选与新增 */}
       <MobileHeaderActions>
@@ -687,7 +534,10 @@ export function EmojiManagementPage() {
               aria-label="筛选与排序"
               onClick={() => setMobileFilterOpen(true)}
               data-mobile-header-icon-button="true"
-              className={cn('flex h-11 w-11 items-center justify-center rounded-full', MOBILE_GLASS_CLASS)}
+              className={cn(
+                'flex h-11 w-11 items-center justify-center rounded-full',
+                MOBILE_GLASS_CLASS
+              )}
             >
               <SlidersHorizontal className="h-5 w-5" strokeWidth={1.7} />
             </button>
@@ -696,7 +546,10 @@ export function EmojiManagementPage() {
               aria-label="新增表情包"
               onClick={() => setUploadDialogOpen(true)}
               data-mobile-header-button="true"
-              className={cn('flex h-11 w-11 items-center justify-center rounded-full', MOBILE_GLASS_CLASS)}
+              className={cn(
+                'flex h-11 w-11 items-center justify-center rounded-full',
+                MOBILE_GLASS_CLASS
+              )}
             >
               <Plus className="h-[22px] w-[22px]" strokeWidth={1.7} />
             </button>
@@ -707,43 +560,43 @@ export function EmojiManagementPage() {
       {/* 手机多选的批量操作栏，占据底部标签栏的位置；页面外层有 transform，需挂到 body 上才能贴底 */}
       {selecting &&
         createPortal(
-        <div
-          role="toolbar"
-          aria-label="批量操作"
-          data-mobile-batch-toolbar="true"
-          className={cn(
-            'fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+14px)] z-40 grid h-[62px] grid-cols-3 items-center rounded-full px-2',
-            MOBILE_GLASS_CLASS
-          )}
-        >
-          {[
-            { key: 'register', label: '注册' },
-            { key: 'ban', label: '禁用' },
-            { key: 'delete', label: '删除' },
-          ].map((action) => (
-            <button
-              key={action.key}
-              type="button"
-              data-mobile-batch-action={action.key}
-              disabled={list.selectedCount === 0 || batchStatusMutation.isPending}
-              onClick={() => {
-                const ids = Array.from(list.selectedIds)
-                if (action.key === 'delete') setBatchDeleteDialogOpen(true)
-                else
-                  batchStatusMutation.mutate({
-                    ids,
-                    action: action.key as 'register' | 'ban',
-                  })
-              }}
-              className={cn(
-                'h-12 rounded-full text-[15px] font-medium disabled:opacity-40',
-                action.key === 'delete' && 'text-[#ff3b30]'
-              )}
-            >
-              {action.label}
-            </button>
-          ))}
-        </div>,
+          <div
+            role="toolbar"
+            aria-label="批量操作"
+            data-mobile-batch-toolbar="true"
+            className={cn(
+              'fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+14px)] z-40 grid h-[62px] grid-cols-3 items-center rounded-full px-2',
+              MOBILE_GLASS_CLASS
+            )}
+          >
+            {[
+              { key: 'register', label: '注册' },
+              { key: 'ban', label: '禁用' },
+              { key: 'delete', label: '删除' },
+            ].map((action) => (
+              <button
+                key={action.key}
+                type="button"
+                data-mobile-batch-action={action.key}
+                disabled={list.selectedCount === 0 || batchStatusMutation.isPending}
+                onClick={() => {
+                  const ids = Array.from(list.selectedIds)
+                  if (action.key === 'delete') setBatchDeleteDialogOpen(true)
+                  else
+                    batchStatusMutation.mutate({
+                      ids,
+                      action: action.key as 'register' | 'ban',
+                    })
+                }}
+                className={cn(
+                  'h-12 rounded-full text-[15px] font-medium disabled:opacity-40',
+                  action.key === 'delete' && 'text-[#ff3b30]'
+                )}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>,
           document.body
         )}
 
@@ -752,13 +605,18 @@ export function EmojiManagementPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>筛选与排序</DialogTitle>
-            <DialogDescription className="sr-only">调整表情包的排序、格式与每页数量</DialogDescription>
+            <DialogDescription className="sr-only">
+              调整表情包的排序、格式与每页数量
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>排序方式</Label>
               <div className="flex gap-2">
-                <Select value={list.filters.sortBy} onValueChange={(value) => list.setFilter('sortBy', value)}>
+                <Select
+                  value={list.filters.sortBy}
+                  onValueChange={(value) => list.setFilter('sortBy', value)}
+                >
                   <SelectTrigger aria-label="排序字段" className="min-w-0 flex-1">
                     <SelectValue />
                   </SelectTrigger>
@@ -784,7 +642,10 @@ export function EmojiManagementPage() {
             </div>
             <div className="space-y-2">
               <Label>格式</Label>
-              <Select value={list.filters.format} onValueChange={(value) => list.setFilter('format', value)}>
+              <Select
+                value={list.filters.format}
+                onValueChange={(value) => list.setFilter('format', value)}
+              >
                 <SelectTrigger aria-label="格式">
                   <SelectValue />
                 </SelectTrigger>
@@ -800,13 +661,18 @@ export function EmojiManagementPage() {
             </div>
             <div className="space-y-2">
               <Label>每页显示</Label>
-              <Select value={preferredPageSize.toString()} onValueChange={(value) => setPreferredPageSize(parseInt(value))}>
+              <Select
+                value={preferredPageSize.toString()}
+                onValueChange={(value) => setPreferredPageSize(parseInt(value))}
+              >
                 <SelectTrigger aria-label="每页显示">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   {pageSizeOptions.map((option) => (
-                    <SelectItem key={option.value} value={option.value.toString()}>{option.count}</SelectItem>
+                    <SelectItem key={option.value} value={option.value.toString()}>
+                      {option.count}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>

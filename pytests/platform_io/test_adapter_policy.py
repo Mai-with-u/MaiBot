@@ -145,6 +145,27 @@ def test_adapter_policy_missing_file_defaults_to_allow(tmp_path: Path) -> None:
     assert result.reason == "default_allow"
 
 
+@pytest.mark.parametrize("platform", ["webui", "bot_console", "maisaka_cli"])
+@pytest.mark.parametrize("chat_type", ["group", "private"])
+def test_internal_platform_ignores_adapter_policy(tmp_path: Path, platform: str, chat_type: str) -> None:
+    policy_path = tmp_path / "adapter_policy.toml"
+    policy_path.write_text(
+        f'[defaults.{chat_type}]\ndefault_action = "block"\n'
+        f'[[adapters]]\nplatform = "{platform}"\ndisabled = true\n',
+        encoding="utf-8",
+    )
+    manager = AdapterPolicyManager(policy_path)
+
+    result = manager.evaluate(AdapterIdentity(platform=platform), chat_type=chat_type, target_id="target")
+
+    assert result.allowed is True
+    assert result.configured is False
+    assert result.source == "internal_platform"
+    assert result.reason == "internal_platform_exempt"
+    # 同一份全局阻止策略仍应约束外部适配器。
+    assert manager.evaluate(AdapterIdentity(platform="qq"), chat_type=chat_type, target_id="target").allowed is False
+
+
 def test_adapter_policy_group_and_private_defaults_are_independent(tmp_path: Path) -> None:
     policy_path = tmp_path / "adapter_policy.toml"
     manager = AdapterPolicyManager(policy_path)

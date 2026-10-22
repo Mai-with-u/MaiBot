@@ -1,0 +1,46 @@
+name: Check Merged Main Release
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  check-release:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.ref == 'dev' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Read merged release version
+        id: version
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+
+          with open("pyproject.toml", "rb") as source:
+              version = tomllib.load(source)["project"]["version"]
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={version}\n")
+          PY
+      - name: Run Publish MaiBot validation without publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          MERGED_COMMIT: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          gh workflow run publish-maibot.yml --repo "$GITHUB_REPOSITORY" --ref main \
+            -f version="$RELEASE_VERSION" -f ref="$MERGED_COMMIT" -f publish=false

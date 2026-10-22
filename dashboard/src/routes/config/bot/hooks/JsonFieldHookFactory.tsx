@@ -1,3 +1,4 @@
+import { Card } from '@/components/ui/card'
 import { useMemo, useState } from 'react'
 
 import { Textarea } from '@/components/ui/textarea'
@@ -66,7 +67,7 @@ export function createJsonFieldHook(options: JsonFieldHookOptions): FieldHookCom
     const description = resolveDescription(schema)
 
     return (
-      <div className="space-y-3 rounded-lg border bg-card p-4 sm:p-6">
+      <Card className="space-y-3 p-4 sm:p-6">
         <div className="space-y-1">
           <h3 className={fieldTitleClassName(schema, 'text-base font-semibold')}>{label}</h3>
           {description && (
@@ -98,7 +99,7 @@ export function createJsonFieldHook(options: JsonFieldHookOptions): FieldHookCom
         ) : (
           <p className="text-sm text-muted-foreground">JSON 有效，修改会立即写回配置草稿。</p>
         )}
-      </div>
+      </Card>
     )
   }
 

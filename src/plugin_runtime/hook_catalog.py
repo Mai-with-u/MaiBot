@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import List
 
+from src.common.startup_diagnostics import diagnostic_stage
 from src.plugin_runtime.host.hook_spec_registry import HookSpec, HookSpecRegistry
 
 
@@ -46,7 +47,10 @@ def register_builtin_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
         List[HookSpec]: 本次完成注册后的全部内置 Hook 规格。
     """
 
+    with diagnostic_stage("plugin_runtime.import_hook_registrars"):
+        registrars = _get_builtin_hook_spec_registrars()
     registered_specs: List[HookSpec] = []
-    for registrar in _get_builtin_hook_spec_registrars():
-        registered_specs.extend(registrar(registry))
+    with diagnostic_stage("plugin_runtime.register_hook_specs"):
+        for registrar in registrars:
+            registered_specs.extend(registrar(registry))
     return registered_specs

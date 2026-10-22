@@ -25,7 +25,8 @@ export const modelAssignmentTourSteps: Step[] = [
   },
   {
     target: '[data-tour="add-provider-button"]',
-    content: '点击"添加提供商"按钮，开始配置模型厂商的连接信息。',
+    content: '点击加号，在菜单中选择“添加 LLM 模型提供商”，开始配置模型厂商的连接信息。',
+    disableOverlay: true,
     placement: 'bottom' as Placement,
     disableBeacon: true,
     disableOverlayClose: true,

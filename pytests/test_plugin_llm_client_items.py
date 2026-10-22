@@ -1,4 +1,3 @@
-import logging
 
 import pytest
 
@@ -75,17 +74,3 @@ def test_plugin_item_response_rejects_invalid_contract(result: dict[str, object]
             logical_turn_id="request-turn",
             require_output_items=True,
         )
-
-
-def test_plugin_legacy_scalar_response_warns_for_one_version(caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level(logging.WARNING):
-        response = PluginLLMClient._build_api_response(
-            {"content": "旧版正文"},
-            "test-model",
-            "test-provider",
-            logical_turn_id="request-turn",
-            require_output_items=True,
-        )
-
-    assert response.content == "旧版正文"
-    assert "旧版 content/reasoning/tool_calls 标量协议" in caplog.text

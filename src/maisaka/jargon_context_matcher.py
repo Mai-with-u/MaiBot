@@ -306,7 +306,7 @@ def _extract_other_user_texts(context_messages: Sequence[LLMContextMessage]) -> 
         if message.source_kind != "user":
             continue
         original_message = message.original_message
-        if original_message is not None and is_bot_self(
+        if is_bot_self(
             original_message.platform,
             original_message.message_info.user_info.user_id,
         ):

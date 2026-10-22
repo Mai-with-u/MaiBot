@@ -1,3 +1,4 @@
+import { Card } from '@/components/ui/card'
 import {
   AlertTriangle,
   Check,
@@ -287,7 +288,7 @@ export function SecurityTab() {
       </Dialog>
 
       {/* Token 管理：随机生成与自定义更新共用一个区域 */}
-      <div className="rounded-lg border bg-card p-4 sm:p-6">
+      <Card className="p-4 sm:p-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-3 sm:mb-4">
           <h3 className="text-base sm:text-lg font-semibold">{t('settings.security.tokenManagement')}</h3>
           <AlertDialog>
@@ -383,7 +384,7 @@ export function SecurityTab() {
             {isUpdating ? t('settings.security.updating') : t('settings.security.updateBtn')}
           </Button>
         </div>
-      </div>
+      </Card>
 
       {/* 安全提示 */}
       <div className="rounded-lg border border-yellow-200 dark:border-yellow-900 bg-yellow-50 dark:bg-yellow-950/30 p-3 sm:p-4">

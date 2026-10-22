@@ -38,6 +38,9 @@ class MsgIDMapping:
 
 
 class SessionMessage(MaiMessage):
+    # 仅供当前 Maisaka 引用计数器使用，不序列化、不写入数据库。
+    _quote_counter_position: Optional[Tuple[object, int]] = None
+
     # 仅记录适配器成功回执明确提供的平台最终 ID；没有回执时保持 None，
     # 不得使用发送前生成的内部 message_id 代替。
     platform_message_id: Optional[str] = None

@@ -4,10 +4,11 @@
 WebUI 只负责检查更新与登记更新请求；代码与依赖的实际更新由 Runner 在重启间隙执行。
 """
 
+from contextlib import asynccontextmanager
 from dataclasses import asdict
-from typing import List, Optional
+from typing import AsyncIterator, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 import asyncio
@@ -17,22 +18,31 @@ from src.common.self_update import (
     OFFICIAL_REPOSITORY_URL,
     SelfUpdateError,
     UpdateCheck,
-    check_for_update,
     clear_pending_update,
-    evaluate_update,
     inspect_local,
     read_last_result,
     request_update,
 )
 from src.webui.dependencies import require_auth
 from src.webui.routers.system import schedule_restart
-from src.webui.services.git_mirror_service import get_git_mirror_service
+from src.common.network_security import validate_public_url
 
-router = APIRouter(prefix="/system/self-update", tags=["system"], dependencies=[Depends(require_auth)])
+from src.webui.services.self_update_cache import self_update_cache
+
+
+@asynccontextmanager
+async def _cache_lifespan(app: FastAPI) -> AsyncIterator[None]:
+    self_update_cache.start()
+    try:
+        yield
+    finally:
+        self_update_cache.stop()
+
+
+router = APIRouter(
+    prefix="/system/self-update", tags=["system"], dependencies=[Depends(require_auth)], lifespan=_cache_lifespan,
+)
 logger = get_logger("webui_self_update")
-
-# 最近一次联网检查的结论；状态接口据此展示新版本信息而不必每次联网。
-_last_check: Optional[UpdateCheck] = None
 
 
 class SelfUpdateCommitResponse(BaseModel):
@@ -89,7 +99,25 @@ class SelfUpdateStatusResponse(BaseModel):
     last_result: Optional[SelfUpdateResultResponse] = None
 
 
-class SelfUpdateApplyRequest(BaseModel):
+class SelfUpdateSourceRequest(BaseModel):
+    source_id: Literal["cnb", "github", "custom", "pypi", "tuna", "aliyun"]
+    custom_prefix: str = Field("", max_length=2048)
+
+    def validate_prefix(self) -> None:
+        if self.source_id == "custom":
+            try:
+                validate_public_url(self.custom_prefix, allow_fake_ip=True)
+            except ValueError as exc:
+                raise SelfUpdateError("invalid_source", str(exc)) from exc
+
+
+class SelfUpdateCheckRequest(SelfUpdateSourceRequest):
+    """手动检查默认强制刷新，自动检查显式传 false。"""
+
+    force: bool = True
+
+
+class SelfUpdateApplyRequest(SelfUpdateSourceRequest):
     """执行更新请求。"""
 
     expected_commit: str = Field(description="界面确认的更新目标：源码版为提交 SHA，包安装版为正式版本号")
@@ -135,44 +163,27 @@ def get_self_update_status() -> SelfUpdateStatusResponse:
     """获取自更新状态；只读取本地仓库，不联网。"""
 
     try:
-        local = inspect_local()
-        if local.blocker is not None:
-            return _build_status_response(UpdateCheck(local=local, blockers=[local.blocker]))
-
-        cached = _last_check
-        if (
-            cached is None
-            or cached.latest_commit is None
-            or cached.checked_at is None
-            or cached.local.branch != local.branch
-        ):
-            return _build_status_response(UpdateCheck(local=local))
-        # 本地状态可能在检查之后变化（如还原了本地改动），用最新的本地状态重新评估。
-        check = evaluate_update(local, cached.latest_commit, cached.checked_at)
-        check.source = cached.source
-        return _build_status_response(check)
+        return _build_status_response(self_update_cache.peek(inspect_local()))
     except SelfUpdateError as e:
         logger.exception(f"获取自更新状态失败: {e.message}")
         raise HTTPException(status_code=500, detail=e.message) from e
 
 
 @router.post("/check", response_model=SelfUpdateStatusResponse)
-def check_self_update() -> SelfUpdateStatusResponse:
-    """联网检查官方仓库是否有新版本。"""
+def check_self_update(request: SelfUpdateCheckRequest) -> SelfUpdateStatusResponse:
+    """自动检查优先复用 60 分钟缓存，手动检查强制联网。"""
 
-    global _last_check
-
-    # 源码更新与插件市场共用镜像；包安装只访问 PyPI。
-    if inspect_local().deployment_type == "git":
-        get_git_mirror_service()
+    # 检查缓存与插件市场独立；源码元数据并发查询，下载仍保留本次所选来源。
     try:
-        check = check_for_update()
+        request.validate_prefix()
+        check = self_update_cache.get(
+            force=request.force, source_id=request.source_id, custom_prefix=request.custom_prefix,
+        )
     except SelfUpdateError as e:
         logger.warning(f"检查更新失败: {e.message}")
-        status_code = 502 if e.code == "fetch_failed" else 500
+        status_code = 502 if e.code == "fetch_failed" else 400 if e.code == "invalid_source" else 500
         raise HTTPException(status_code=status_code, detail=e.message) from e
 
-    _last_check = check
     return _build_status_response(check)
 
 
@@ -181,7 +192,10 @@ async def apply_self_update(request: SelfUpdateApplyRequest) -> SelfUpdateApplyR
     """登记更新请求并重启；Runner 会在重启间隙完成更新。"""
 
     try:
-        pending = await asyncio.to_thread(request_update, request.expected_commit)
+        await asyncio.to_thread(request.validate_prefix)
+        pending = await asyncio.to_thread(
+            request_update, request.expected_commit, source_id=request.source_id, custom_prefix=request.custom_prefix
+        )
     except SelfUpdateError as e:
         logger.warning(f"登记更新请求失败: {e.message}")
         raise HTTPException(status_code=409, detail=e.message) from e

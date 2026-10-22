@@ -1,9 +1,55 @@
 from pathlib import Path
+from typing import List
 
 import pytest
 import tomlkit
 
 from src.webui.routers import config as config_routes
+
+
+@pytest.mark.asyncio
+async def test_web_section_replacement_removes_old_services_and_preserves_models(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_calls: List[List[str]]
+) -> None:
+    config_path = tmp_path / "model_config.toml"
+    _write_complete_model_config(config_path)
+    original = config_path.read_text(encoding="utf-8")
+    config_path.write_text("# keep model settings\n" + original, encoding="utf-8")
+    monkeypatch.setattr(config_routes, "CONFIG_DIR", tmp_path)
+
+    for name in ("old", "renamed"):
+        await config_routes.update_model_config_section(
+            "web",
+            {"services": {name: {"adapter": "tavily", "api_key": "test-key"}}},
+        )
+        saved = tomlkit.loads(config_path.read_text(encoding="utf-8")).unwrap()
+        assert set(saved["web"]["services"]) == {name}
+        assert saved["models"] == tomlkit.loads(original).unwrap()["models"]
+
+    await config_routes.update_model_config_section("web", {"services": {}})
+    content = config_path.read_text(encoding="utf-8")
+    assert tomlkit.loads(content).unwrap()["web"] == {"services": {}}
+    assert "# keep model settings" in content
+    assert reload_calls == [["model"], ["model"], ["model"]]
+
+
+@pytest.mark.asyncio
+async def test_invalid_web_update_does_not_write_or_expose_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_calls: List[List[str]]
+) -> None:
+    config_path = tmp_path / "model_config.toml"
+    _write_complete_model_config(config_path)
+    original = config_path.read_bytes()
+    monkeypatch.setattr(config_routes, "CONFIG_DIR", tmp_path)
+    with pytest.raises(config_routes.HTTPException) as exc_info:
+        await config_routes.update_model_config_section(
+            "web",
+            {"services": {"service": {"api_key": "secret-test-key", "timeout": -1}}},
+        )
+    assert exc_info.value.status_code == 400
+    assert "secret-test-key" not in str(exc_info.value.detail)
+    assert config_path.read_bytes() == original
+    assert reload_calls == []
 
 
 @pytest.fixture()
@@ -46,6 +92,7 @@ client_type = "openai"
 
 [[models]]
 name = "gpt-test"
+model_type = "llm"
 model_identifier = "gpt-test"
 api_provider = "openai"
 

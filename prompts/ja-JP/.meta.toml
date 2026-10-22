@@ -1,3 +1,8 @@
+[a_memorix_chat_summary]
+display_name = "長期記憶のチャット要約"
+advanced = false
+description = "現在のチャットから長期記憶に保存する追加情報と重要な知識を抽出します。"
+
 [maisaka_chat]
 display_name = "Planner"
 advanced = false
@@ -116,17 +121,17 @@ description = "実際のチャットからグループ固有の隠語候補を�
 [maisaka_chat_focus]
 display_name = "Focus Planner"
 advanced = true
-description = "Focus モード用の Maisaka 計画テンプレート。現在注目しているチャットとチャット横断概要をもとに次の行動を選択する。"
+description = "同グループの全チャットを共有して思考し、ツールの session_id で操作対象を指定する Focus Planner。"
+
+[maisaka_focus_summary]
+display_name = "Focus コンテキスト圧縮"
+advanced = true
+description = "出所チャット、重要な事実、完了した操作と未完了の課題を保ちながら、古い共有コンテキストを圧縮する。"
 
 [maisaka_chat_optimized]
 display_name = "Planner（最適化版）"
 advanced = true
 description = "実験機能 experimental.planner_optimized_prompt を有効にしたときに使う Maisaka メイン計画テンプレート。ボット自身を二人称で記述し、タスク説明を簡潔にしている。Focus モードでは引き続き Focus Planner を使う。"
-
-[maisaka_timing_gate]
-display_name = "Timing Gate"
-advanced = false
-description = "Maisaka のタイミング制御テンプレート。各メインループの前に待機、停止、思考と返信への継続を判断する。"
 
 [memory_fuzzy_modify_plan]
 display_name = "長期記憶の曖昧修正計画"

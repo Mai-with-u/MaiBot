@@ -3,6 +3,7 @@
 import * as React from 'react'
 import * as SelectPrimitive from '@radix-ui/react-select'
 import { cn } from '@/lib/utils'
+import { controlSizeClassNames, type ControlSize } from './control-size'
 import { Check, ChevronDown, ChevronUp } from 'lucide-react'
 
 const Select = SelectPrimitive.Root
@@ -13,13 +14,14 @@ const SelectValue = SelectPrimitive.Value
 
 const SelectTrigger = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Trigger>,
-  React.ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger>
->(({ className, children, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger> & { controlSize?: ControlSize }
+>(({ className, children, controlSize = 'default', ...props }, ref) => (
   <SelectPrimitive.Trigger
     ref={ref}
     data-dashboard-select-trigger="true"
     className={cn(
-      'border-input ring-offset-background data-[placeholder]:text-muted-foreground focus:ring-ring flex h-9 w-full cursor-pointer items-center justify-between rounded-md border bg-transparent px-3 py-2 text-sm whitespace-nowrap shadow-sm focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1',
+      'border-input ring-offset-background data-[placeholder]:text-muted-foreground focus:ring-ring flex w-full cursor-pointer items-center justify-between rounded-md border bg-transparent px-3 py-2 text-sm whitespace-nowrap shadow-sm focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1',
+      controlSizeClassNames[controlSize],
       className
     )}
     {...props}

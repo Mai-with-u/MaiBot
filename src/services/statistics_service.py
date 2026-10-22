@@ -9,7 +9,7 @@ from sqlmodel import col, select
 from src.common.database.database import get_db_session
 from src.common.database.database_model import Messages, ModelUsage, OnlineTime, ToolRecord
 from src.common.logger import get_logger
-from src.common.message_repository import count_messages
+from src.common.message_repository import count_messages, message_time_expression
 from src.manager.local_store_manager import local_storage
 from src.webui.schemas.statistics import (
     DashboardData,
@@ -22,7 +22,7 @@ from src.webui.schemas.statistics import (
 logger = get_logger("statistics_service")
 
 DASHBOARD_STATISTICS_CACHE_KEY = "webui_dashboard_statistics_cache"
-DASHBOARD_STATISTICS_CACHE_VERSION = 5
+DASHBOARD_STATISTICS_CACHE_VERSION = 6
 DEFAULT_DASHBOARD_CACHE_MAX_AGE_SECONDS = 20 * 60
 DEFAULT_DASHBOARD_CACHE_HOURS = (24, 168, 720)
 _SPARSE_TIME_SERIES_FIELDS = ("hourly_data", "daily_data")
@@ -404,11 +404,14 @@ def _get_summary_statistics_sync(start_time: datetime, end_time: datetime) -> St
         if end > start:
             summary.online_time += (end - start).total_seconds()
 
-    summary.total_messages = count_messages(start_time=start_time.timestamp(), end_time=end_time.timestamp())
+    summary.total_messages = count_messages(
+        start_time=start_time.timestamp(), end_time=end_time.timestamp(), time_field="statistics_time"
+    )
     summary.total_replies = count_messages(
         start_time=start_time.timestamp(),
         end_time=end_time.timestamp(),
         has_reply_to=True,
+        time_field="statistics_time",
     )
 
     if summary.online_time > 0:
@@ -796,7 +799,7 @@ def fetch_model_duration_aggregates_since(query_start_time: datetime) -> list[di
 class StatisticsMessageRow(NamedTuple):
     """统计任务所需的消息行投影。
 
-    仅保留统计实际使用的 6 个字段：整实体 select(Messages) 会在消息量达到
+    仅保留统计实际使用的字段：整实体 select(Messages) 会在消息量达到
     数十万条时把全部列（含 raw_content 二进制与 additional_config 长文本）
     物化为 ORM 实例，造成内存暴增。
     """
@@ -807,6 +810,12 @@ class StatisticsMessageRow(NamedTuple):
     group_id: str | None
     group_name: str | None
     user_nickname: str | None
+    received_at: datetime | None = None
+
+    @property
+    def statistics_time(self) -> datetime:
+        """新入站按接收时间分桶；旧记录、出站仍保留历史消息计数。"""
+        return self.received_at if self.received_at is not None else self.timestamp
 
 
 def fetch_messages_since(query_start_time: datetime) -> list[StatisticsMessageRow]:
@@ -819,7 +828,8 @@ def fetch_messages_since(query_start_time: datetime) -> list[StatisticsMessageRo
             col(Messages.group_id),
             col(Messages.group_name),
             col(Messages.user_nickname),
-        ).where(col(Messages.timestamp) >= query_start_time)
+            col(Messages.received_at),
+        ).where(message_time_expression("statistics_time") >= query_start_time)
         return [StatisticsMessageRow(*row) for row in session.exec(statement).all()]
 
 
@@ -836,7 +846,7 @@ def get_earliest_statistics_time(fallback_time: datetime) -> datetime:
         with get_db_session(auto_commit=False) as session:
             start_times = [
                 session.exec(select(func.min(ModelUsage.timestamp))).first(),
-                session.exec(select(func.min(Messages.timestamp))).first(),
+                session.exec(select(func.min(message_time_expression("statistics_time")))).first(),
                 session.exec(select(func.min(OnlineTime.start_timestamp))).first(),
                 session.exec(select(func.min(ToolRecord.timestamp))).first(),
             ]

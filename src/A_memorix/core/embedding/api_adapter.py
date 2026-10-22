@@ -68,7 +68,7 @@ class EmbeddingAPIAdapter:
         self._last_success_dimension: Optional[int] = None
         self._last_configuration_key = ""
 
-        logger.info(
+        logger.debug(
             "Embedding 初始化: "
             f"batch={self.batch_size}, "
             f"concurrent={self.max_concurrent}, "

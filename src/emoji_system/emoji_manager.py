@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Literal, Optional
 
 import asyncio
@@ -516,20 +517,22 @@ class EmojiManager:
         Raises:
             Exception: 如果加载过程中发生不可恢复错误，则抛出异常
         """
-        logger.debug("[数据库] 开始加载所有表情包记录...")
+        started_at = perf_counter()
+        logger.debug("[数据库] 开始加载已注册且未禁用的表情包记录...")
         try:
             with get_db_session() as session:
-                statement = select(Images)
+                # 在数据库中筛选，避免为普通图片和未启用表情构造 ORM 对象。
+                # 保留 no_file_flag 记录，让下方清理逻辑继续移除破损注册记录。
+                statement = select(Images).filter_by(
+                    image_type=ImageType.EMOJI,
+                    is_registered=True,
+                    is_banned=False,
+                )
                 results = session.exec(statement).all()
+                query_finished_at = perf_counter()
                 self.emojis = []
                 removed_record_count = 0
                 for record in results:
-                    if record.image_type != ImageType.EMOJI:
-                        continue
-                    if not record.is_registered:
-                        continue
-                    if record.is_banned:
-                        continue
                     try:
                         if record.no_file_flag or _resolve_existing_emoji_path(record.full_path) is None:
                             logger.warning(
@@ -549,10 +552,17 @@ class EmojiManager:
                         session.delete(record)
                         removed_record_count += 1
                 self._emoji_num = len(self.emojis)
-                logger.info(
-                    f"[数据库] 成功加载 {self._emoji_num} 个已注册表情包，"
-                    f"清理破损注册记录 {removed_record_count} 条"
-                )
+                records_finished_at = perf_counter()
+            # 查询阶段包含获取会话；退出上下文后再记录成功，计入提交和关闭会话的耗时。
+            finished_at = perf_counter()
+            logger.info(
+                f"[数据库] 成功加载 {self._emoji_num} 个已注册表情包，"
+                f"清理破损注册记录 {removed_record_count} 条，候选记录={len(results)}，"
+                f"查询={query_finished_at - started_at:.3f}s，"
+                f"校验构建={records_finished_at - query_finished_at:.3f}s，"
+                f"事务收尾={finished_at - records_finished_at:.3f}s，"
+                f"总耗时={finished_at - started_at:.3f}s"
+            )
         except Exception as e:
             logger.critical(f"[数据库] 加载表情包记录时发生不可恢复错误: {e}")
             self.emojis = []

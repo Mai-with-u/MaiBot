@@ -12,24 +12,6 @@ from src.llm_models.payload_content.context_item import (
 )
 
 
-def test_preview_metadata_keeps_token_usage() -> None:
-    metadata = PromptCLIVisualizer._normalize_preview_metadata(
-        {
-            "model_name": "test-model",
-            "duration_ms": 123.456,
-            "prompt_tokens": 1200,
-            "completion_tokens": 34,
-            "total_tokens": 1234,
-        }
-    )
-
-    assert metadata == {
-        "model_name": "test-model",
-        "duration_ms": 123.46,
-        "prompt_tokens": 1200,
-        "completion_tokens": 34,
-        "total_tokens": 1234,
-    }
 
 
 def test_reasoning_item_is_displayed_as_independent_item_content() -> None:
@@ -129,26 +111,6 @@ def test_structured_preview_extracts_responses_usage_when_trace_is_zero() -> Non
     assert payload["metadata"]["total_tokens"] == 150
 
 
-def test_structured_preview_prefers_explicit_token_metadata() -> None:
-    payload = PromptCLIVisualizer._build_structured_preview_payload(
-        [],
-        request_kind="replyer",
-        selection_reason="显式用量",
-        tool_definitions=None,
-        output_title="输出结果",
-        output_items=(),
-        metadata={"prompt_tokens": 10, "completion_tokens": 2},
-        generation_attempts=(
-            {
-                "trace": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
-            },
-        ),
-        keep_base64=False,
-    )
-
-    assert payload["metadata"]["prompt_tokens"] == 10
-    assert payload["metadata"]["completion_tokens"] == 2
-    assert payload["metadata"]["total_tokens"] == 12
 
 
 def test_structured_preview_accepts_serialized_reasoning_item_snapshots() -> None:

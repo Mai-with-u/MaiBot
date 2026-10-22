@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react'
 import { Link } from '@tanstack/react-router'
 import { AlertCircle, ArrowRight, ExternalLink, Pencil, RefreshCw, Settings } from 'lucide-react'
 import { motion, useReducedMotion } from 'motion/react'
-import { lazy, Suspense, useCallback, useContext, useEffect, useState } from 'react'
+import { createContext, lazy, memo, Suspense, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
@@ -54,7 +54,7 @@ import {
   StatisticsOverviewCard,
   TokenTrendCard,
 } from './home/StatisticsCards'
-import type { TimeSeriesData } from './home/types'
+import type { BotStatus, TimeSeriesData } from './home/types'
 
 const ExpressionReviewer = lazy(() =>
   import('@/components/expression-reviewer').then((module) => ({
@@ -62,12 +62,26 @@ const ExpressionReviewer = lazy(() =>
   }))
 )
 
+const BotRuntimeContext = createContext<{ botStatus: BotStatus | null; isBotStatusLoading: boolean }>({
+  botStatus: null,
+  isBotStatusLoading: true,
+})
+
+// 运行状态单独订阅；轮询只更新状态卡，版本变化才通知首页其余部分。
 // 主导出组件：包装 RestartProvider
 export function IndexPage() {
+  return <RestartProvider><HomeRuntime /></RestartProvider>
+}
+
+// 轮询必须在 RestartProvider 内部，避免同时重建重启上下文、唤醒首页订阅者。
+function HomeRuntime() {
+  const { botStatus, isBotStatusLoading, fetchBotStatus } = useBotStatus()
+  useEffect(() => { void fetchBotStatus(true) }, [fetchBotStatus])
+  const runtime = useMemo(() => ({ botStatus, isBotStatusLoading }), [botStatus, isBotStatusLoading])
   return (
-    <RestartProvider>
-      <IndexPageContent />
-    </RestartProvider>
+    <BotRuntimeContext.Provider value={runtime}>
+      <IndexPageContent botVersion={botStatus?.version} />
+    </BotRuntimeContext.Provider>
   )
 }
 
@@ -121,24 +135,31 @@ function FeatureStatusLight({
 }
 
 function BotStatusFlipCard({
-  botRuntimeLabel,
-  botRuntimeState,
   memoryEnabled,
   onlineData,
-  uptime,
   visualEnabled,
 }: {
-  botRuntimeLabel: string
-  botRuntimeState: BotRuntimeState
   memoryEnabled: boolean
   onlineData: TimeSeriesData[]
-  uptime: string | null
   visualEnabled: boolean
 }) {
   const { i18n, t } = useTranslation()
   const prefersReducedMotion = useReducedMotion()
   const [isFlipped, setIsFlipped] = useState(false)
-  const recentOnlineData = onlineData.slice(-24)
+  const [isFlipping, setIsFlipping] = useState(false)
+  const { botStatus, isBotStatusLoading } = useContext(BotRuntimeContext)
+  const botRuntimeState: BotRuntimeState =
+    isBotStatusLoading && !botStatus ? 'loading'
+      : botStatus?.running === true ? 'running' : botStatus ? 'stopped' : 'unknown'
+  const botRuntimeLabel = t(`home.botStatus.${botRuntimeState}`)
+  const uptime = botStatus ? t('home.botStatus.uptime', {
+    time: t('home.time.hoursMinutes', {
+      hours: Math.floor(botStatus.uptime / 3600),
+      minutes: Math.floor((botStatus.uptime % 3600) / 60),
+    }),
+  }) : null
+  // 状态轮询不改变在线曲线的数据引用，避免重新启动图表动画。
+  const recentOnlineData = useMemo(() => onlineData.slice(-24), [onlineData])
   const recentOnlineSeconds = recentOnlineData.reduce(
     (total, item) => total + item.online_seconds,
     0
@@ -161,17 +182,22 @@ function BotStatusFlipCard({
       aria-label={t(isFlipped ? 'home.botStatus.showStatus' : 'home.botStatus.showRecentOnline')}
       aria-pressed={isFlipped}
       className="group focus-visible:ring-primary/55 focus-visible:ring-offset-background relative isolate block h-full min-h-[136px] w-full overflow-visible rounded-lg text-left [perspective:900px] focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
-      onClick={() => setIsFlipped((current) => !current)}
+      onClick={() => {
+        setIsFlipping(!prefersReducedMotion)
+        setIsFlipped((current) => !current)
+      }}
     >
       <motion.div
         data-maibot-status-rotor="true"
         className="relative z-10 h-full min-h-[136px] w-full [will-change:transform] [transform-style:preserve-3d]"
         animate={{ rotateY: prefersReducedMotion ? 0 : isFlipped ? 180 : 0 }}
         transition={{ duration: prefersReducedMotion ? 0 : 0.46, ease: [0.22, 1, 0.36, 1] }}
+        onAnimationComplete={() => setIsFlipping(false)}
       >
         <motion.div
           data-maibot-status-face="front"
           aria-hidden={isFlipped}
+          inert={isFlipped || isFlipping}
           className={faceClassName}
           animate={{ opacity: prefersReducedMotion && isFlipped ? 0 : 1 }}
           transition={{ duration: prefersReducedMotion ? 0.12 : 0 }}
@@ -239,6 +265,7 @@ function BotStatusFlipCard({
         <motion.div
           data-maibot-status-face="back"
           aria-hidden={!isFlipped}
+          inert={!isFlipped || isFlipping}
           className={faceClassName}
           style={{ transform: prefersReducedMotion ? 'none' : 'rotateY(180deg)' }}
           animate={{ opacity: prefersReducedMotion && !isFlipped ? 0 : 1 }}
@@ -269,26 +296,30 @@ function BotStatusFlipCard({
                   >
                     <XAxis dataKey="timestamp" hide />
                     <YAxis domain={[0, 3600]} hide />
-                    <Tooltip
-                      cursor={{ fill: 'hsl(var(--muted) / 0.32)' }}
-                      contentStyle={{
-                        background: 'hsl(var(--popover))',
-                        border: '1px solid hsl(var(--border))',
-                        borderRadius: 8,
-                        color: 'hsl(var(--popover-foreground))',
-                        fontSize: 11,
-                      }}
-                      formatter={(value) => [
-                        formatOnlineTime(Number(value)),
-                        t('home.botStatus.online'),
-                      ]}
-                      labelFormatter={(value) =>
-                        new Intl.DateTimeFormat(i18n.resolvedLanguage ?? i18n.language, {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        }).format(new Date(String(value)))
-                      }
-                    />
+                    {/* Tooltip 按变换后的 DOM 尺寸反复测量、定位，3D 翻转中会形成更新循环。
+                        只在背面翻转完成后挂载；active=false 仍会测量，不能阻止循环。 */}
+                    {isFlipped && !isFlipping && (
+                      <Tooltip
+                        cursor={{ fill: 'hsl(var(--muted) / 0.32)' }}
+                        contentStyle={{
+                          background: 'hsl(var(--popover))',
+                          border: '1px solid hsl(var(--border))',
+                          borderRadius: 8,
+                          color: 'hsl(var(--popover-foreground))',
+                          fontSize: 11,
+                        }}
+                        formatter={(value) => [
+                          formatOnlineTime(Number(value)),
+                          t('home.botStatus.online'),
+                        ]}
+                        labelFormatter={(value) =>
+                          new Intl.DateTimeFormat(i18n.resolvedLanguage ?? i18n.language, {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          }).format(new Date(String(value)))
+                        }
+                      />
+                    )}
                     <Bar
                       dataKey="online_seconds"
                       fill="hsl(var(--primary) / 0.68)"
@@ -326,23 +357,7 @@ function formatStorageBytes(bytes: number): string {
   return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
 }
 
-function compareVersions(left: string, right: string): number {
-  const parseVersion = (version: string): number[] => {
-    const match = version.replace(/^v/i, '').match(/^\d+(?:\.\d+)*/)
-    return (match?.[0] ?? '0').split('.').map((part) => Number.parseInt(part, 10))
-  }
-  const leftParts = parseVersion(left)
-  const rightParts = parseVersion(right)
-  const length = Math.max(leftParts.length, rightParts.length)
-
-  for (let index = 0; index < length; index += 1) {
-    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0)
-    if (difference !== 0) return difference
-  }
-  return 0
-}
-
-function IndexPageContent() {
+const IndexPageContent = memo(function IndexPageContent({ botVersion }: { botVersion: string | undefined }) {
   const { i18n, t } = useTranslation()
   const { themeConfig } = useContext(ThemeProviderContext)
   const { triggerRestart, isRestarting } = useRestart()
@@ -355,7 +370,6 @@ function IndexPageContent() {
     loadingProgress,
     fetchDashboardData,
   } = useDashboardData()
-  const { botStatus, isBotStatusLoading, fetchBotStatus } = useBotStatus()
   const { featureStatus, fetchFeatureStatus } = useFeatureStatus()
   const { localCacheStats, isLocalCacheStatsLoading, fetchLocalCacheStats } = useLocalCacheMetrics()
   const { uncheckedCount, fetchReviewStats } = useReviewStats()
@@ -363,7 +377,6 @@ function IndexPageContent() {
     hitokoto,
     hitokotoLoading,
     hitokotoSettings,
-    maibotStableRelease,
     versionCompatibility,
     fetchHitokoto,
     saveHitokotoSettings,
@@ -403,7 +416,6 @@ function IndexPageContent() {
     /* eslint-disable react-hooks/set-state-in-effect -- 挂载时拉取仪表盘各数据源 */
     fetchDashboardData()
     fetchHitokoto()
-    fetchBotStatus(true)
     fetchFeatureStatus()
     fetchLocalCacheStats()
     fetchReviewStats()
@@ -411,7 +423,6 @@ function IndexPageContent() {
   }, [
     fetchDashboardData,
     fetchHitokoto,
-    fetchBotStatus,
     fetchFeatureStatus,
     fetchLocalCacheStats,
     fetchReviewStats,
@@ -451,13 +462,6 @@ function IndexPageContent() {
     )
   }
 
-  // 格式化时间显示
-  const formatTime = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600)
-    const minutes = Math.floor((seconds % 3600) / 60)
-    return t('home.time.hoursMinutes', { hours, minutes })
-  }
-
   const localCacheDirectories = localCacheStats?.directories ?? []
   const imageCacheDirectory = localCacheDirectories.find((item) => item.key === 'images')
   const emojiCacheDirectory = localCacheDirectories.find((item) => item.key === 'emoji')
@@ -477,15 +481,6 @@ function IndexPageContent() {
   )
   const totalStorageTableCount = localCacheStats?.database.tables.length ?? 0
   const hasLocalCacheStats = localCacheStats !== null
-  const botRuntimeState: BotRuntimeState =
-    isBotStatusLoading && !botStatus
-      ? 'loading'
-      : botStatus?.running === true
-        ? 'running'
-        : botStatus
-          ? 'stopped'
-          : 'unknown'
-  const botRuntimeLabel = t(`home.botStatus.${botRuntimeState}`)
   const storageDetails = [
     {
       key: 'images',
@@ -528,13 +523,8 @@ function IndexPageContent() {
       source: 'builtin',
       render: () => (
         <BotStatusFlipCard
-          botRuntimeLabel={botRuntimeLabel}
-          botRuntimeState={botRuntimeState}
           memoryEnabled={featureStatus.memoryEnabled}
           onlineData={dashboardData.hourly_data}
-          uptime={
-            botStatus ? t('home.botStatus.uptime', { time: formatTime(botStatus.uptime) }) : null
-          }
           visualEnabled={featureStatus.visualEnabled}
         />
       ),
@@ -845,15 +835,7 @@ function IndexPageContent() {
                           )}
                         </>
                         {storageDisplayMode === 'size' && (
-                          <div
-                            data-home-storage-progress="true"
-                            className="bg-muted col-span-3 h-1.5 min-w-0 overflow-hidden rounded-full"
-                          >
-                            <div
-                              className="bg-primary h-full rounded-full transition-all"
-                              style={{ width: `${visiblePercent}%` }}
-                            />
-                          </div>
+                          <Progress value={visiblePercent} aria-label={`${item.label}存储占用`} className="col-span-3 min-w-0" />
                         )}
                       </div>
                     )
@@ -940,11 +922,6 @@ function IndexPageContent() {
     ...homeCards.filter((card) => card.id === hitokotoCardId),
     ...homeCards.filter((card) => !firstRowCardIds.includes(card.id) && card.id !== hitokotoCardId),
   ]
-  const maibotUpdateAvailable = Boolean(
-    botStatus?.version &&
-    maibotStableRelease &&
-    compareVersions(maibotStableRelease.version, botStatus.version) > 0
-  )
   const versionsMismatch =
     versionCompatibility?.status !== undefined && versionCompatibility.status !== 'compatible'
   // 移动端由 Layout 的 main 滚动，内层按内容撑高并允许滚动传递，避免拦截触摸滑动。
@@ -1009,7 +986,7 @@ function IndexPageContent() {
               {t('home.versionCard.maibotVersion')}
             </span>
             <span className="text-base">
-              {botStatus?.version ? `V${botStatus.version}` : t('home.versionCard.unknown')}
+              {botVersion ? `V${botVersion}` : t('home.versionCard.unknown')}
             </span>
           </button>
           <button
@@ -1023,17 +1000,6 @@ function IndexPageContent() {
             </span>
             <span className="text-base">V{APP_VERSION}</span>
           </button>
-          {maibotUpdateAvailable && maibotStableRelease && (
-            <a
-              href={maibotStableRelease.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-sm text-sky-600 hover:underline dark:text-sky-400"
-            >
-              {t('home.versionCard.updateAvailable')} V{maibotStableRelease.version}
-              <ExternalLink className="h-3.5 w-3.5" />
-            </a>
-          )}
           {versionsMismatch && <span className="text-sm">{t('home.versionCard.mismatch')}</span>}
           <span
             aria-hidden="true"
@@ -1045,9 +1011,9 @@ function IndexPageContent() {
               viewBox="0 0 1100 180"
               preserveAspectRatio="none"
             >
-              <path data-spectrum-line="green" d="M0 84 H740 C850 84 880 18 1010 18 H1100" />
+              <path data-spectrum-line="green" d="M0 84 H1100" />
               <path data-spectrum-line="gold" d="M0 90 H1100" />
-              <path data-spectrum-line="orange" d="M0 96 H740 C850 96 880 162 1010 162 H1100" />
+              <path data-spectrum-line="orange" d="M0 96 H1100" />
             </svg>
           </span>
         </div>
@@ -1157,4 +1123,4 @@ function IndexPageContent() {
       </div>
     </ScrollArea>
   )
-}
+})

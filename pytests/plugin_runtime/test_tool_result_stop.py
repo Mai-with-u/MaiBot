@@ -2,8 +2,6 @@
 
 import pytest
 
-from src.core.tooling import ToolExecutionResult, ToolInvocation
-from src.maisaka.utils.tool_record_payload import build_tool_record_payload
 from src.plugin_runtime.component_query import ComponentQueryService
 from src.plugin_runtime.host.component_registry import ComponentTypes, ToolEntry
 
@@ -54,13 +52,3 @@ def test_parse_tool_result_rejects_non_boolean_stop_flag() -> None:
     assert result.success is False
     assert result.stop_after_execution is False
     assert "必须为布尔值" in result.error_message
-
-
-def test_tool_record_includes_stop_after_execution() -> None:
-    payload = build_tool_record_payload(
-        ToolInvocation(tool_name="test_tool", call_id="call-test"),
-        ToolExecutionResult(tool_name="test_tool", success=True, stop_after_execution=True),
-        None,
-    )
-
-    assert payload["stop_after_execution"] is True

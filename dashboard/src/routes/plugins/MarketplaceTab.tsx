@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 
 import type {
   GitStatus,
@@ -8,7 +8,6 @@ import type {
   PluginProgressById,
   PluginStatsData,
 } from './types'
-import { getPluginType } from './types'
 import { PluginCard } from './PluginCard'
 
 const SURPRISE_PLUGIN_COUNT = 4
@@ -36,15 +35,12 @@ interface MarketplaceScoreBasis {
 
 interface MarketplaceTabProps {
   plugins: PluginInfo[]
-  searchQuery: string
-  pluginTypeFilter: string
-  showCompatibleOnly: boolean
   sortBy: MarketplaceSortKey
   gitStatus: GitStatus | null
   maimaiVersion: MaimaiVersion | null
   pluginStats: Record<string, PluginStatsData>
-  /** 排序专用的统计快照：不随本次会话内的点赞变化，避免卡片在点击后当场换位；缺省时与 pluginStats 相同 */
-  sortPluginStats?: Record<string, PluginStatsData>
+  /** 排序快照不随本次会话内的点赞变化，避免卡片在点击后当场换位。 */
+  sortPluginStats: Record<string, PluginStatsData>
   pluginProgressById: PluginProgressById
   likingPluginIds: Set<string>
   onInstall: (plugin: PluginInfo) => void
@@ -56,13 +52,6 @@ interface MarketplaceTabProps {
   needsUpdate: (plugin: PluginInfo) => boolean
   getStatusBadge: (plugin: PluginInfo) => React.JSX.Element | null
   getIncompatibleReason: (plugin: PluginInfo) => string | null
-}
-
-function getMarketplaceColumnCount(): number {
-  if (window.matchMedia('(min-width: 1280px)').matches) return 4
-  if (window.matchMedia('(min-width: 768px)').matches) return 3
-  if (window.matchMedia('(min-width: 640px)').matches) return 2
-  return 1
 }
 
 function getPluginIdentity(plugin: PluginInfo): string {
@@ -256,14 +245,11 @@ function selectSurprisePlugins(
 
 export const MarketplaceTab = memo(function MarketplaceTab({
   plugins,
-  searchQuery,
-  pluginTypeFilter,
-  showCompatibleOnly,
   sortBy,
   gitStatus,
   maimaiVersion,
   pluginStats,
-  sortPluginStats = pluginStats,
+  sortPluginStats,
   pluginProgressById,
   likingPluginIds,
   onInstall,
@@ -276,13 +262,6 @@ export const MarketplaceTab = memo(function MarketplaceTab({
   getStatusBadge,
   getIncompatibleReason,
 }: MarketplaceTabProps) {
-  const [columnCount, setColumnCount] = useState(getMarketplaceColumnCount)
-  useEffect(() => {
-    const queries = [640, 768, 1280].map((width) => window.matchMedia(`(min-width: ${width}px)`))
-    const updateColumns = () => setColumnCount(getMarketplaceColumnCount())
-    queries.forEach((query) => query.addEventListener('change', updateColumns))
-    return () => queries.forEach((query) => query.removeEventListener('change', updateColumns))
-  }, [])
   const [surpriseSeed] = useState(() => {
     // 同一浏览器会话沿用抽选种子，返回市场或重挂载时不重新抽选推荐位。
     const savedSeed = sessionStorage.getItem(SURPRISE_SEED_STORAGE_KEY)
@@ -293,132 +272,92 @@ export const MarketplaceTab = memo(function MarketplaceTab({
   })
   const [renderTime] = useState(() => Date.now())
 
-  // 过滤插件
-  const getPluginStats = (plugin: PluginInfo): PluginStatsData | undefined => {
-    const statsIds = [plugin.manifest?.id, plugin.id].filter((id): id is string => Boolean(id))
+  // 排序只依赖插件、排序快照和筛选结果，不随点赞、进度或列数变化重算。
+  const displayPlugins = useMemo(() => {
+    const getPluginStats = (plugin: PluginInfo): PluginStatsData | undefined => {
+      const statsIds = [plugin.manifest?.id, plugin.id].filter((id): id is string => Boolean(id))
 
-    return statsIds.map((id) => sortPluginStats[id]).find(Boolean)
-  }
-
-  const getSortValue = (
-    plugin: PluginInfo,
-    scoreBasis: MarketplaceScoreBasis,
-    now: number
-  ): number => {
-    const stats = getPluginStats(plugin)
-
-    if (sortBy === 'default') {
-      const downloads = stats?.downloads ?? plugin.downloads ?? 0
-      const likes = stats?.likes ?? 0
-      const rating = stats?.rating ?? plugin.rating ?? 0
-      const ratingCount = stats?.rating_count ?? 0
-      const downloadScore = Math.log10(downloads + 1)
-      const likeScore = Math.log10(likes + 1)
-      const ratingScore = rating * Math.log10(ratingCount + 2)
-
-      return (
-        normalizeScore(downloadScore, scoreBasis.maxDownloadScore, 4) +
-        normalizeScore(likeScore, scoreBasis.maxLikeScore, 3) +
-        normalizeScore(ratingScore, scoreBasis.maxRatingScore, 2) +
-        getLaunchBoost(plugin, now) +
-        getUpdateBoost(plugin, now) +
-        getGrowthBoost(stats) +
-        getFreshnessBoost(plugin, scoreBasis.maxMarketplaceOrder, now)
-      )
-    }
-    if (sortBy === 'latest') {
-      return getPluginFreshness(plugin)
-    }
-    if (sortBy === 'downloads') {
-      return stats?.downloads ?? plugin.downloads ?? 0
-    }
-    if (sortBy === 'likes') {
-      return stats?.likes ?? 0
-    }
-    if (sortBy === 'rating') {
-      return stats?.rating ?? plugin.rating ?? 0
+      return statsIds.map((id) => sortPluginStats[id]).find(Boolean)
     }
 
-    return 0
-  }
-
-  const matchedPlugins = plugins.filter((plugin) => {
-    // 跳过没有 manifest 的插件
-    if (!plugin.manifest) {
-      console.warn('[过滤] 跳过无 manifest 的插件:', plugin.id)
-      return false
-    }
-
-    // 全部插件只展示 plugin-repo 中存在的市场插件，本地独有插件只在“已安装”显示。
-    if (plugin.source === 'local') {
-      return false
-    }
-
-    // 搜索过滤
-    const matchesSearch =
-      searchQuery === '' ||
-      plugin.manifest.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      plugin.manifest.author?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      plugin.manifest.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (plugin.manifest.keywords &&
-        plugin.manifest.keywords.some((k) => k.toLowerCase().includes(searchQuery.toLowerCase())))
-
-    // 类型过滤
-    const matchesType = pluginTypeFilter === 'all' || getPluginType(plugin) === pluginTypeFilter
-
-    // 兼容性过滤
-    const matchesCompatibility =
-      !showCompatibleOnly || !maimaiVersion || checkPluginCompatibility(plugin)
-
-    return matchesSearch && matchesType && matchesCompatibility
-  })
-  const scoreBasis = matchedPlugins.reduce<MarketplaceScoreBasis>(
-    (basis, plugin) => {
+    const getSortValue = (
+      plugin: PluginInfo,
+      scoreBasis: MarketplaceScoreBasis,
+      now: number
+    ): number => {
       const stats = getPluginStats(plugin)
-      const downloads = stats?.downloads ?? plugin.downloads ?? 0
-      const likes = stats?.likes ?? 0
-      const rating = stats?.rating ?? plugin.rating ?? 0
-      const ratingCount = stats?.rating_count ?? 0
 
-      return {
-        maxDownloadScore: Math.max(basis.maxDownloadScore, Math.log10(downloads + 1)),
-        maxLikeScore: Math.max(basis.maxLikeScore, Math.log10(likes + 1)),
-        maxRatingScore: Math.max(basis.maxRatingScore, rating * Math.log10(ratingCount + 2)),
-        maxMarketplaceOrder: Math.max(basis.maxMarketplaceOrder, plugin.marketplace_order ?? 0),
+      if (sortBy === 'default') {
+        const downloads = stats?.downloads ?? plugin.downloads ?? 0
+        const likes = stats?.likes ?? 0
+        const rating = stats?.rating ?? plugin.rating ?? 0
+        const ratingCount = stats?.rating_count ?? 0
+        const downloadScore = Math.log10(downloads + 1)
+        const likeScore = Math.log10(likes + 1)
+        const ratingScore = rating * Math.log10(ratingCount + 2)
+
+        return (
+          normalizeScore(downloadScore, scoreBasis.maxDownloadScore, 4) +
+          normalizeScore(likeScore, scoreBasis.maxLikeScore, 3) +
+          normalizeScore(ratingScore, scoreBasis.maxRatingScore, 2) +
+          getLaunchBoost(plugin, now) +
+          getUpdateBoost(plugin, now) +
+          getGrowthBoost(stats) +
+          getFreshnessBoost(plugin, scoreBasis.maxMarketplaceOrder, now)
+        )
       }
-    },
-    {
+      if (sortBy === 'latest') {
+        return getPluginFreshness(plugin)
+      }
+      if (sortBy === 'downloads') {
+        return stats?.downloads ?? plugin.downloads ?? 0
+      }
+      if (sortBy === 'likes') {
+        return stats?.likes ?? 0
+      }
+      if (sortBy === 'rating') {
+        return stats?.rating ?? plugin.rating ?? 0
+      }
+
+      return 0
+    }
+
+    const scoreBasis: MarketplaceScoreBasis = {
       maxDownloadScore: 0,
       maxLikeScore: 0,
       maxRatingScore: 0,
       maxMarketplaceOrder: 0,
     }
-  )
-  const now = renderTime
-  const filteredPlugins = matchedPlugins.sort((left, right) => {
-    const valueDiff = getSortValue(right, scoreBasis, now) - getSortValue(left, scoreBasis, now)
-    if (valueDiff !== 0) {
-      return valueDiff
+    // 下载量、点赞量等直接排序不需要计算综合评分的归一化基准。
+    if (sortBy === 'default') {
+      for (const plugin of plugins) {
+        const stats = getPluginStats(plugin)
+        const downloadScore = Math.log10((stats?.downloads ?? plugin.downloads ?? 0) + 1)
+        const likeScore = Math.log10((stats?.likes ?? 0) + 1)
+        const ratingScore = (stats?.rating ?? plugin.rating ?? 0) * Math.log10((stats?.rating_count ?? 0) + 2)
+        scoreBasis.maxDownloadScore = Math.max(scoreBasis.maxDownloadScore, downloadScore)
+        scoreBasis.maxLikeScore = Math.max(scoreBasis.maxLikeScore, likeScore)
+        scoreBasis.maxRatingScore = Math.max(scoreBasis.maxRatingScore, ratingScore)
+        scoreBasis.maxMarketplaceOrder = Math.max(scoreBasis.maxMarketplaceOrder, plugin.marketplace_order ?? 0)
+      }
     }
+    // 每个插件只计算一次分数和时间，排序比较时不重复解析版本日期。
+    const sortedPlugins = plugins.map((plugin) => ({
+      plugin,
+      score: getSortValue(plugin, scoreBasis, renderTime),
+      freshness: getPluginFreshness(plugin),
+    })).sort((left, right) =>
+      right.score - left.score || right.freshness - left.freshness
+      || (left.plugin.manifest.name || left.plugin.id).localeCompare(right.plugin.manifest.name || right.plugin.id)
+    ).map(({ plugin }) => plugin)
 
-    const freshnessDiff = getPluginFreshness(right) - getPluginFreshness(left)
-    if (freshnessDiff !== 0) {
-      return freshnessDiff
-    }
-
-    return (left.manifest?.name || left.id).localeCompare(right.manifest?.name || right.id)
-  })
-
-  const surprisePlugins = selectSurprisePlugins(filteredPlugins, sortBy, surpriseSeed)
-  const surprisePluginIds = new Set(surprisePlugins.map(getPluginIdentity))
-  const mainPlugins = filteredPlugins.filter(
-    (plugin) => !surprisePluginIds.has(getPluginIdentity(plugin))
-  )
-  const displayPlugins = [...surprisePlugins, ...mainPlugins]
-  const pluginRows: PluginInfo[][] = []
-  for (let index = 0; index < displayPlugins.length; index += columnCount) {
-    pluginRows.push(displayPlugins.slice(index, index + columnCount))
-  }
+    const surprisePlugins = selectSurprisePlugins(sortedPlugins, sortBy, surpriseSeed)
+    const surprisePluginIds = new Set(surprisePlugins.map(getPluginIdentity))
+    const mainPlugins = sortedPlugins.filter(
+      (plugin) => !surprisePluginIds.has(getPluginIdentity(plugin))
+    )
+    return [...surprisePlugins, ...mainPlugins]
+  }, [plugins, sortBy, sortPluginStats, renderTime, surpriseSeed])
   const isAnyPluginInstalling = Object.values(pluginProgressById).some(
     (progress) => progress.operation === 'install' && progress.stage === 'loading'
   )
@@ -429,10 +368,10 @@ export const MarketplaceTab = memo(function MarketplaceTab({
       plugin={plugin}
       gitStatus={gitStatus}
       maimaiVersion={maimaiVersion}
-      pluginStats={pluginStats}
+      stats={plugin.manifest?.id ? pluginStats[plugin.manifest.id] : undefined}
       loadProgress={pluginProgressById[plugin.id] ?? null}
       isAnyPluginInstalling={isAnyPluginInstalling}
-      likingPluginIds={likingPluginIds}
+      isLiking={likingPluginIds.has(plugin.manifest?.id || plugin.id)}
       onInstall={onInstall}
       onLike={onLike}
       onUpdate={onUpdate}
@@ -446,15 +385,21 @@ export const MarketplaceTab = memo(function MarketplaceTab({
   )
 
   return (
-    // 各行内部共享网格轨道；屏幕外行交给浏览器跳过布局和绘制，保留 DOM 与滚动状态。
-    <div className="flex flex-col gap-3">
-      {pluginRows.map((row) => (
+    // 卡片始终属于同一个网格，换列、筛选或排序只移动节点，不再按行拆卸重建。
+    // CSS 按容器宽度排布：最小 300px、最多四列；两条 subgrid 轨道保持操作区对齐。
+    <div
+      data-plugin-market-grid="true"
+      className="grid gap-x-6 gap-y-8"
+      style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, max(300px, (100% - 72px) / 4)), 1fr))' }}
+    >
+      {displayPlugins.map((plugin) => (
         <div
-          key={getPluginIdentity(row[0])}
-          className="-m-2 grid grid-cols-1 gap-3 p-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4"
+          key={plugin.id}
+          className="-mx-2 -my-4 row-span-2 grid grid-rows-subgrid gap-y-0 px-2 py-4"
+          // 屏幕外卡片跳过布局和绘制；预留空间让跨边框的榜单标签完整显示。
           style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}
         >
-          {row.map(renderPluginCard)}
+          {renderPluginCard(plugin)}
         </div>
       ))}
     </div>

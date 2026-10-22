@@ -329,9 +329,12 @@ class TokenManager:
             logger.error(f"标记首次配置完成失败: {e}")
             return False
 
-    def reset_setup_status(self) -> bool:
+    def reset_setup_status(self, *, reset_password: bool = False) -> bool:
         """
         重置首次配置状态，允许重新进入配置向导
+
+        Args:
+            reset_password: 同时生成临时密码，使向导重新显示密码设置步骤。
 
         Returns:
             bool: 是否重置成功
@@ -341,6 +344,11 @@ class TokenManager:
             config["first_setup_completed"] = False
             if "setup_completed_at" in config:
                 del config["setup_completed_at"]
+            # 密码和向导状态一次保存，避免重置到一半时仍跳过密码步骤。
+            if reset_password:
+                config["access_token"] = secrets.token_hex(32)
+                config["token_source"] = TOKEN_SOURCE_TEMPORARY
+                config["updated_at"] = self._get_current_timestamp()
             self._save_config(config)
             logger.info("首次配置状态已重置")
             return True

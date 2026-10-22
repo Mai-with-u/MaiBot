@@ -1,3 +1,4 @@
+import { Card } from '@/components/ui/card'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -14,7 +15,7 @@ export function AboutTab() {
   return (
     <div className="space-y-4 sm:space-y-6">
       {/* GitHub 开源地址 */}
-      <div className="rounded-lg border bg-card p-4 sm:p-6">
+      <Card className="p-4 sm:p-6">
         <div className="flex items-start gap-3 sm:gap-4">
           <div className="shrink-0 rounded-lg bg-primary/10 p-2 sm:p-3">
             <svg
@@ -39,7 +40,7 @@ export function AboutTab() {
             </p>
             <Button asChild>
               <a
-                href="https://github.com/Mai-with-u/MaiBot-Dashboard"
+                href="https://github.com/Mai-with-u/MaiBot"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -73,22 +74,22 @@ export function AboutTab() {
             </Button>
           </div>
         </div>
-      </div>
+      </Card>
 
       {/* 主程序更新 */}
       <SelfUpdateCard />
 
       {/* 应用信息 */}
-      <div className="rounded-lg border bg-card p-4 sm:p-6">
+      <Card className="p-4 sm:p-6">
         <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">{t('settings.about.aboutApp')} {APP_NAME}</h3>
         <div className="space-y-2 text-xs sm:text-sm text-muted-foreground">
           <p>{t('settings.about.version')} {APP_VERSION}</p>
           <p>{t('settings.about.appDesc')}</p>
         </div>
-      </div>
+      </Card>
 
       {/* 作者信息 */}
-      <div className="rounded-lg border bg-card p-4 sm:p-6">
+      <Card className="p-4 sm:p-6">
         <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">{t('settings.about.author')}</h3>
         <div className="space-y-3">
           <div className="space-y-1">
@@ -100,10 +101,10 @@ export function AboutTab() {
             <p className="text-xs sm:text-sm text-muted-foreground">Mai-with-u <a href="https://github.com/DrSmoothl" target="_blank" rel="noopener noreferrer" className="text-primary underline">@MotricSeven</a></p>
           </div>
         </div>
-      </div>
+      </Card>
 
       {/* 技术栈 */}
-      <div className="rounded-lg border bg-card p-4 sm:p-6">
+      <Card className="p-4 sm:p-6">
         <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">{t('settings.about.techStack')}</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs sm:text-sm text-muted-foreground">
           <div className="space-y-1.5">
@@ -141,10 +142,10 @@ export function AboutTab() {
             </ul>
           </div>
         </div>
-      </div>
+      </Card>
 
       {/* 开源感谢 */}
-      <div className="rounded-lg border bg-card p-4 sm:p-6">
+      <Card className="p-4 sm:p-6">
         <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">{t('settings.about.openSourceThanks')}</h3>
         <p className="text-xs sm:text-sm text-muted-foreground mb-3">
           {t('settings.about.openSourceThanksDesc')}
@@ -226,10 +227,10 @@ export function AboutTab() {
             </div>
           </div>
         </ScrollArea>
-      </div>
+      </Card>
 
       {/* 许可证 */}
-      <div className="rounded-lg border bg-card p-4 sm:p-6">
+      <Card className="p-4 sm:p-6">
         <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">{t('settings.about.openSourceLicense')}</h3>
         <div className="space-y-3">
           <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 sm:p-4">
@@ -253,7 +254,7 @@ export function AboutTab() {
             {t('settings.about.licenseDeps')}
           </p>
         </div>
-      </div>
+      </Card>
     </div>
   )
 }

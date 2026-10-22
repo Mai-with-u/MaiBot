@@ -100,7 +100,12 @@ export const MILLENNIUM_ICON_SET: MillenniumIconDef[] = [
     path: 'M4 4h11v11H4zM15 15l6 6',
   },
   {
-    lucide: ['globe', 'earth', 'languages'],
+    lucide: ['globe', 'earth'],
+    path: 'M12 3a9 9 0 1 0 0 18 9 9 0 1 0 0-18zM3 12h18M12 3c-5 5-5 13 0 18M12 3c5 5 5 13 0 18',
+    strokeWidth: 2,
+  },
+  {
+    lucide: ['languages'],
     path: 'M12 3v4M4 7h16M16 8L5 20M8 11l11 9',
   },
   {

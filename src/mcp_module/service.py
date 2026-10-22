@@ -8,23 +8,39 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Any, AsyncIterator, Optional, Sequence
+from typing import TYPE_CHECKING, Any, AsyncIterator, Optional, Sequence, Type
 
 import asyncio
 import json
 import threading
 
 from src.common.logger import get_logger
+from src.common.startup_diagnostics import diagnostic_stage
 from src.core.tooling import ToolExecutionContext, ToolExecutionResult, ToolInvocation, ToolSpec
 
 from .config import build_mcp_client_runtime_config, build_mcp_server_runtime_configs
-from .host_llm_bridge import MCPHostLLMBridge
-from .manager import MCPManager
 
 if TYPE_CHECKING:
     from src.config.official_configs import MCPConfig
 
+    from .host_llm_bridge import MCPHostLLMBridge
+    from .manager import MCPManager
+
 logger = get_logger("mcp_service")
+
+
+def _load_manager_class() -> Type[MCPManager]:
+    """只在线程中加载类定义，连接及其异步生命周期仍由 bot 循环创建。"""
+    from .manager import MCPManager
+
+    return MCPManager
+
+
+def _load_sampling_bridge_class() -> Type[MCPHostLLMBridge]:
+    """Sampling 未启用时，无需加载宿主大模型桥接依赖。"""
+    from .host_llm_bridge import MCPHostLLMBridge
+
+    return MCPHostLLMBridge
 
 
 class MCPService:
@@ -145,19 +161,24 @@ class MCPService:
             self._closed = False
             new_manager: Optional[MCPManager] = None
             if build_mcp_server_runtime_configs(mcp_config):
-                host_callbacks = (
-                    MCPHostLLMBridge(
-                        sampling_task_name=mcp_config.client.sampling.task_name,
-                    ).build_callbacks()
-                    if mcp_config.client.sampling.enable
-                    else None
-                )
-                new_manager = await MCPManager.from_app_config(
-                    mcp_config,
-                    host_callbacks=host_callbacks,
-                    discover_extended_features=False,
-                    allow_empty=True,
-                )
+                # 阶段包含线程排队和模块加载；SDK 首次导入另在工作线程单独计时。
+                # 后续配置重载只命中模块缓存，不应当作首次导入的性能数据。
+                with diagnostic_stage("mcp.prepare_manager"):
+                    manager_class = await asyncio.to_thread(_load_manager_class)
+                host_callbacks = None
+                if mcp_config.client.sampling.enable:
+                    with diagnostic_stage("mcp.prepare_sampling_bridge"):
+                        bridge_class = await asyncio.to_thread(_load_sampling_bridge_class)
+                        host_callbacks = bridge_class(
+                            sampling_task_name=mcp_config.client.sampling.task_name,
+                        ).build_callbacks()
+                with diagnostic_stage("mcp.connect_servers"):
+                    new_manager = await manager_class.from_app_config(
+                        mcp_config,
+                        host_callbacks=host_callbacks,
+                        discover_extended_features=False,
+                        allow_empty=True,
+                    )
 
             async with self._state_lock:
                 old_manager = self._manager

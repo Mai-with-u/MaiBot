@@ -3,24 +3,6 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
-class FetchRawFileRequest(BaseModel):
-    owner: str = Field(..., description="仓库所有者", examples=["MaiM-with-u"])
-    repo: str = Field(..., description="仓库名称", examples=["plugin-repo"])
-    branch: str = Field(..., description="分支名称", examples=["main"])
-    file_path: str = Field(..., description="文件路径", examples=["plugin_details.json"])
-    mirror_id: Optional[str] = Field(None, description="指定镜像源 ID")
-    custom_url: Optional[str] = Field(None, description="自定义完整 URL")
-
-
-class FetchRawFileResponse(BaseModel):
-    success: bool = Field(..., description="是否成功")
-    data: Optional[str] = Field(None, description="文件内容")
-    error: Optional[str] = Field(None, description="错误信息")
-    mirror_used: Optional[str] = Field(None, description="使用的镜像源")
-    attempts: int = Field(..., description="尝试次数")
-    url: Optional[str] = Field(None, description="实际请求的 URL")
-
-
 class CloneRepositoryRequest(BaseModel):
     owner: str = Field(..., description="仓库所有者", examples=["MaiM-with-u"])
     repo: str = Field(..., description="仓库名称", examples=["plugin-repo"])
@@ -39,37 +21,6 @@ class CloneRepositoryResponse(BaseModel):
     attempts: int = Field(..., description="尝试次数")
     url: Optional[str] = Field(None, description="实际克隆的 URL")
     message: Optional[str] = Field(None, description="附加信息")
-
-
-class MirrorConfigResponse(BaseModel):
-    id: str = Field(..., description="镜像源 ID")
-    name: str = Field(..., description="镜像源名称")
-    raw_prefix: str = Field(..., description="Raw 文件前缀")
-    clone_prefix: str = Field(..., description="克隆前缀")
-    enabled: bool = Field(..., description="是否启用")
-    priority: int = Field(..., description="优先级（数字越小优先级越高）")
-
-
-class AvailableMirrorsResponse(BaseModel):
-    mirrors: List[MirrorConfigResponse] = Field(..., description="镜像源列表")
-    default_priority: List[str] = Field(..., description="默认优先级顺序（ID 列表）")
-
-
-class AddMirrorRequest(BaseModel):
-    id: str = Field(..., description="镜像源 ID", examples=["custom-mirror"])
-    name: str = Field(..., description="镜像源名称", examples=["自定义镜像源"])
-    raw_prefix: str = Field(..., description="Raw 文件前缀", examples=["https://example.com/raw"])
-    clone_prefix: str = Field(..., description="克隆前缀", examples=["https://example.com/clone"])
-    enabled: bool = Field(True, description="是否启用")
-    priority: Optional[int] = Field(None, description="优先级")
-
-
-class UpdateMirrorRequest(BaseModel):
-    name: Optional[str] = Field(None, description="镜像源名称")
-    raw_prefix: Optional[str] = Field(None, description="Raw 文件前缀")
-    clone_prefix: Optional[str] = Field(None, description="克隆前缀")
-    enabled: Optional[bool] = Field(None, description="是否启用")
-    priority: Optional[int] = Field(None, description="优先级")
 
 
 class GitStatusResponse(BaseModel):

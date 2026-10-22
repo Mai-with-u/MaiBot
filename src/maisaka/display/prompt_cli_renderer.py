@@ -718,7 +718,9 @@ class PromptCLIVisualizer:
         """只接受运行时 Context Items 或已序列化 Item 快照。"""
 
         # 延迟导入以避开 request_snapshot -> model_client -> display 的初始化环。
-        from src.llm_models.request_snapshot import deserialize_context_item_snapshot
+        from src.llm_models.payload_content.context_snapshot import (
+            deserialize_context_item_snapshot,
+        )
 
         normalized_items: list[ContextItem] = []
         for item in items:
@@ -756,7 +758,9 @@ class PromptCLIVisualizer:
     ) -> list[dict[str, Any]]:
         """构建 Item-first 结构化记录；图片只在持久化边界替换为安全引用。"""
 
-        from src.llm_models.request_snapshot import serialize_context_item_snapshot
+        from src.llm_models.payload_content.context_snapshot import (
+            serialize_context_item_snapshot,
+        )
 
         structured_items: list[dict[str, Any]] = []
         for item in items:

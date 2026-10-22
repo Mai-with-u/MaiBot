@@ -13,12 +13,11 @@ from src.maisaka.context.message_adapter import (
     clone_message_sequence,
     format_speaker_content,
 )
-from .messages import LLMContextMessage, ModelOutputContextMessage, SessionBackedMessage, ToolResultMessage
+from .messages import LLMContextMessage, ModelOutputContextMessage, ToolResultMediaMessage, ToolResultMessage
 
 if TYPE_CHECKING:
     from src.chat.message_receive.message import SessionMessage
 
-TOOL_RESULT_MEDIA_SOURCE_KIND = "tool_result_media"
 
 
 def build_prefixed_message_sequence(
@@ -286,18 +285,7 @@ def _is_orphan_tool_result_media_message(
 ) -> bool:
     """判断 tool result 拆分出的媒体消息是否已经失去对应 tool_call。"""
 
-    if not isinstance(message, SessionBackedMessage):
-        return False
-    if message.source_kind != TOOL_RESULT_MEDIA_SOURCE_KIND:
-        return False
-
-    message_id = str(message.message_id or "").strip()
-    if not message_id.startswith("tool_result:"):
-        return False
-
-    _, _, remaining = message_id.partition("tool_result:")
-    tool_call_id, _, _ = remaining.rpartition(":")
-    return bool(tool_call_id) and tool_call_id not in available_media_owner_ids
+    return isinstance(message, ToolResultMediaMessage) and message.tool_call_id not in available_media_owner_ids
 
 
 def normalize_tool_result_order(

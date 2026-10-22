@@ -19,7 +19,10 @@ import re
 import sys
 
 from src.common.logger import get_logger
+from src.common.startup_diagnostics import diagnostic_stage
 from src.plugin_runtime.runner.manifest_validator import ManifestValidator, PluginManifest, is_reserved_plugin_directory
+
+from .plugin_enabled import is_plugin_disabled
 
 logger = get_logger("plugin_runtime.runner.plugin_loader")
 
@@ -36,6 +39,8 @@ class PluginMeta:
         module_name: str,
         plugin_instance: Any,
         manifest: PluginManifest,
+        *,
+        explicitly_disabled: bool = False,
     ) -> None:
         """初始化插件元数据。
 
@@ -45,11 +50,13 @@ class PluginMeta:
             module_name: 插件入口模块名。
             plugin_instance: 插件实例对象。
             manifest: 解析后的强类型 Manifest。
+            explicitly_disabled: 是否为跳过代码加载的禁用插件元数据。
         """
         self.plugin_id = plugin_id
         self.plugin_dir = plugin_dir
         self.module_name = module_name
         self.instance = plugin_instance
+        self.explicitly_disabled = explicitly_disabled
         self.manifest = manifest
         self.version = manifest.version
         self.plugin_type = manifest.plugin_type
@@ -137,11 +144,13 @@ class PluginLoader:
         Returns:
             List[PluginMeta]: 成功加载的插件元数据列表，按依赖顺序排列。
         """
-        candidates, duplicate_candidates = self._discover_candidates(plugin_dirs)
+        with diagnostic_stage("runner.plugin_discovery"):
+            candidates, duplicate_candidates = self._discover_candidates(plugin_dirs)
         self._record_duplicate_candidates(duplicate_candidates)
 
         # 第二阶段：依赖解析（拓扑排序）
-        load_order, failed_deps = self._resolve_dependencies(candidates, extra_available=extra_available)
+        with diagnostic_stage("runner.plugin_dependencies"):
+            load_order, failed_deps = self._resolve_dependencies(candidates, extra_available=extra_available)
         self._record_failed_dependencies(failed_deps)
 
         # 第三阶段：按依赖顺序加载
@@ -444,18 +453,23 @@ class PluginLoader:
         """
         return self._resolve_dependencies(candidates, extra_available=extra_available)
 
-    def load_candidate(self, plugin_id: str, candidate: PluginCandidate) -> Optional[PluginMeta]:
+    def load_candidate(
+        self, plugin_id: str, candidate: PluginCandidate, *, for_config_request: bool = False
+    ) -> Optional[PluginMeta]:
         """加载单个候选插件模块。
 
         Args:
             plugin_id: 插件 ID。
             candidate: 候选插件三元组。
+            for_config_request: 显式配置管理请求允许冷加载禁用插件，以读取其配置模型。
 
         Returns:
             Optional[PluginMeta]: 加载成功的插件元数据；失败时返回 ``None``。
         """
         plugin_dir, manifest, plugin_path = candidate
-        return self._load_single_plugin(plugin_id, plugin_dir, manifest, plugin_path)
+        return self._load_single_plugin(
+            plugin_id, plugin_dir, manifest, plugin_path, for_config_request=for_config_request
+        )
 
     def _resolve_dependencies(
         self,
@@ -472,7 +486,11 @@ class PluginLoader:
         dep_graph: Dict[str, Set[str]] = {}
         failed: Dict[str, str] = {}
 
-        for pid, (_, manifest, _) in candidates.items():
+        for pid, (plugin_dir, manifest, _) in candidates.items():
+            # 禁用插件不解析自身依赖，仍保留节点供 Runner 报告禁用状态和依赖方未激活状态。
+            if is_plugin_disabled(plugin_dir):
+                dep_graph[pid] = set()
+                continue
             resolved: Set[str] = set()
             missing_or_incompatible: List[str] = []
 
@@ -559,8 +577,14 @@ class PluginLoader:
         plugin_dir: Path,
         manifest: PluginManifest,
         plugin_path: Path,
+        *,
+        for_config_request: bool = False,
     ) -> Optional[PluginMeta]:
         """加载单个插件"""
+        if not for_config_request and is_plugin_disabled(plugin_dir):
+            # 只交付禁用状态所需元数据，不执行入口、工厂函数或配置迁移。
+            return PluginMeta(plugin_id, str(plugin_dir), "", None, manifest, explicitly_disabled=True)
+
         # 确保兼容层导入钩子已安装（旧版插件可能 import src.plugin_system）
         self._ensure_compat_hook()
 
@@ -583,12 +607,14 @@ class PluginLoader:
         try:
             with self._temporary_sys_path_entry(src_root):
                 with self._temporary_sys_path_entry(plugin_parent_dir):
-                    spec.loader.exec_module(module)
+                    with diagnostic_stage(f"runner.plugin_import:{plugin_id}"):
+                        spec.loader.exec_module(module)
 
                     # 优先使用新版 create_plugin 工厂函数
                     create_plugin = getattr(module, "create_plugin", None)
                     if create_plugin is not None:
-                        instance = create_plugin()
+                        with diagnostic_stage(f"runner.plugin_create:{plugin_id}"):
+                            instance = create_plugin()
                         self._validate_sdk_plugin_contract(plugin_id, instance)
                         logger.debug(f"插件 {plugin_id} v{manifest.version} 加载成功")
                         return PluginMeta(

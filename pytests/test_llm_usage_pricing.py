@@ -26,6 +26,7 @@ def _period(start: str = "23:00", end: str = "07:00", **prices: float) -> Dict[s
 def _model(**overrides: Any) -> ModelInfo:
     values = dict(
         name="test-model",
+        model_type="llm",
         model_identifier="test-model-id",
         api_provider="test-provider",
         price_in=2.0,
@@ -259,7 +260,7 @@ async def test_successful_attempt_time_survives_retry_or_model_switch(monkeypatc
     monkeypatch.setattr(
         orchestrator,
         "_select_model",
-        lambda exclude_models, model_name: (models[1] if exclude_models else models[0], provider, client),
+        AsyncMock(side_effect=lambda exclude_models, model_name: (models[1] if exclude_models else models[0], provider, client)),
     )
     monkeypatch.setattr(utils_model, "time", SimpleNamespace(time=lambda: clock.value))
     monkeypatch.setattr(utils_model.asyncio, "sleep", AsyncMock())

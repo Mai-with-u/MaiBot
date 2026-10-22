@@ -1,3 +1,4 @@
+import { Card } from '@/components/ui/card'
 import { AlertTriangle, Trash2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -54,7 +55,7 @@ export function ComponentCSSEditor({
         </Button>
       </div>
 
-      <div className="rounded-md border bg-card overflow-hidden">
+      <Card className="overflow-hidden">
         <CodeEditor
           value={value}
           onChange={disabled ? undefined : onChange}
@@ -77,7 +78,7 @@ export function ComponentCSSEditor({
             </ul>
           </div>
         )}
-      </div>
+      </Card>
     </div>
   )
 }

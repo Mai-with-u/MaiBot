@@ -47,6 +47,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
+import { SplitDropdownSelect } from '@/components/ui/split-dropdown-select'
 import { Switch } from '@/components/ui/switch'
 import { Slider } from '@/components/ui/slider'
 import { Badge } from '@/components/ui/badge'
@@ -86,6 +87,7 @@ import { TaskConfigCard, ModelTable, ModelCardList } from './model/components'
 import type { ModelCreationType } from './model/components/AddModelMenu'
 import { EmbeddingBuildProgress } from './model/components/EmbeddingBuildProgress'
 import { TaskRuntimeSummary } from './model/components/TaskRuntimeSummary'
+import { TaskUsageStats } from './model/components/TaskUsageStats'
 import { TASK_CONFIGS } from './model/constants'
 import { useModelTour, useModelFetcher, useModelConfig } from './model/hooks'
 import {
@@ -112,6 +114,8 @@ import {
 } from './model/deepSeekExtraParams'
 import { ProviderForm } from './modelProvider/ProviderForm'
 import { ProviderSidebar } from './modelProvider/ProviderSidebar'
+import { WebSearchDialog } from './webSearch/WebSearchDialog'
+import { WebSearchTaskCard } from './webSearch/WebSearchTaskCard'
 import type { APIProvider } from './modelProvider/types'
 
 // 导入模块化的类型定义和组件
@@ -219,6 +223,7 @@ function ModelConfigPageContent() {
 
   // 核心领域 hook：models / apiProviders / model_task_config 三份草稿及其全部编排
   const mc = useModelConfig()
+  const [webSearchEditor, setWebSearchEditor] = useState<{ name: string | null } | null>(null)
   const {
     // 草稿态
     models,
@@ -346,7 +351,7 @@ function ModelConfigPageContent() {
         (field) =>
           field.type === 'object' &&
           (advancedTaskSettingsVisible || !field.advanced || (taskConfig?.[field.name]?.model_list.length ?? 0) > 0)
-      ) ?? [],
+      ).sort((a, b) => Number(a.name === 'web_search') - Number(b.name === 'web_search')) ?? [],
     [advancedTaskSettingsVisible, taskConfig, taskConfigSchema]
   )
   const selectedTaskField =
@@ -757,53 +762,44 @@ function ModelConfigPageContent() {
               <TabsTrigger value="tasks" className="w-full" data-tour="tasks-tab-trigger">功能分配</TabsTrigger>
             </TabsList>
             <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
-              <Select
+              <SplitDropdownSelect
                 value="active"
+                label="模型配置副本"
+                icon={<History />}
+                className="flex-1 sm:w-[190px] sm:flex-none"
+                disabled={versionsLoading || saving || autoSaving || Boolean(switchingConfigVersion)}
                 onValueChange={(value) => {
                   if (value !== 'active') {
                     void handleSwitchConfigVersion(value)
                   }
                 }}
-                disabled={versionsLoading || saving || autoSaving || Boolean(switchingConfigVersion)}
-              >
-                <SelectTrigger className="h-9 min-w-0 flex-1 sm:w-[190px] sm:flex-none" aria-label="模型配置副本">
-                  <History className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
-                  <SelectValue placeholder={activeConfigVersion?.label || '默认配置'} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active">
-                    {activeConfigVersion?.label || '默认配置'}
-                  </SelectItem>
-                  {configVersions.map((version) => (
-                    <SelectItem key={version.id} value={version.id} disabled={!version.valid}>
-                      {version.label} · {formatVersionTime(version.modified_at)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                className="h-9 w-9 shrink-0"
-                title="保存当前配置副本"
-                aria-label="保存当前配置副本"
-                disabled={saving || autoSaving || creatingConfigVersion}
-                onClick={() => setCreateVersionDialogOpen(true)}
-              >
-                {creatingConfigVersion ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                className="h-9 w-9 shrink-0"
-                title="管理配置副本"
-                aria-label="管理配置副本"
-                onClick={() => setManageVersionsDialogOpen(true)}
-              >
-                <History className="h-4 w-4" />
-              </Button>
+                options={[
+                  { value: 'active', label: activeConfigVersion?.label || '默认配置' },
+                  ...configVersions.map((version) => ({
+                    value: version.id,
+                    label: version.label,
+                    description: formatVersionTime(version.modified_at),
+                    disabled: !version.valid,
+                  })),
+                ]}
+                actions={[
+                  {
+                    id: 'save',
+                    label: '保存副本',
+                    ariaLabel: '保存当前配置副本',
+                    icon: creatingConfigVersion ? <Loader2 className="animate-spin" /> : <Copy />,
+                    disabled: saving || autoSaving || creatingConfigVersion,
+                    onSelect: () => setCreateVersionDialogOpen(true),
+                  },
+                  {
+                    id: 'manage',
+                    label: '管理副本',
+                    ariaLabel: '管理配置副本',
+                    icon: <History />,
+                    onSelect: () => setManageVersionsDialogOpen(true),
+                  },
+                ]}
+              />
             </div>
           </div>
           {/* 厂商与模型合并配置视图 */}
@@ -832,6 +828,10 @@ function ModelConfigPageContent() {
                 testResults={testResults}
                 onSelectProvider={setModelProviderFilter}
                 onAdd={() => openProviderDialog(null, null)}
+                onAddWebSearch={() => setWebSearchEditor({ name: null })}
+                onEditWebSearch={(name) => setWebSearchEditor({ name })}
+                webConfig={mc.webConfig}
+                assignedWebService={taskConfig?.web_search?.model_list[0] ?? ''}
               />
 
               <section
@@ -915,8 +915,7 @@ function ModelConfigPageContent() {
                     <Button
                       type="button"
                       variant="outline"
-                      size="icon"
-                      className="h-8 w-8"
+                      size="icon-sm"
                       onClick={() => handleTestProviderConnection(selectedProviderInfo.name)}
                       disabled={testingProviders.has(selectedProviderInfo.name)}
                       title="测试连接"
@@ -931,8 +930,7 @@ function ModelConfigPageContent() {
                     <Button
                       type="button"
                       variant="outline"
-                      size="icon"
-                      className="border-primary! text-primary hover:text-primary h-8 w-8"
+                      size="icon-sm"
                       onClick={() => openProviderDialog(selectedProviderInfo, selectedProviderIndex)}
                       title="编辑厂商"
                       aria-label={`编辑厂商 ${selectedProviderInfo.name}`}
@@ -941,9 +939,8 @@ function ModelConfigPageContent() {
                     </Button>
                     <Button
                       type="button"
-                      variant="outline"
-                      size="icon"
-                      className="border-destructive! text-destructive hover:text-destructive h-8 w-8"
+                      variant="destructive"
+                      size="icon-sm"
                       onClick={() => openProviderDeleteDialog(selectedProviderIndex)}
                       title="删除厂商"
                       aria-label={`删除厂商 ${selectedProviderInfo.name}`}
@@ -998,23 +995,24 @@ function ModelConfigPageContent() {
             <div className="grid min-h-0 gap-4 lg:flex-1 lg:grid-cols-4 lg:overflow-hidden">
               <aside className="flex min-h-0 flex-col overflow-hidden rounded-lg border lg:h-full">
                 <div className="flex items-center justify-between gap-2 border-b px-3 py-2.5">
-                  <h2 className="text-sm font-semibold">模型类别</h2>
+                  <h2 className="text-sm font-semibold">功能任务</h2>
                   {taskConfigSchema.fields.some((field) => field.advanced) && (
-                    <Button
-                      type="button"
-                      variant={advancedTaskSettingsVisible ? 'default' : 'outline'}
-                      size="sm"
-                      className="h-7 px-2 text-xs"
-                      onClick={() => setAdvancedTaskSettingsVisible((current) => !current)}
-                    >
-                      高级设置
-                    </Button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Label htmlFor="advanced-task-settings" className="cursor-pointer whitespace-nowrap text-xs">
+                        高级
+                      </Label>
+                      <Switch
+                        id="advanced-task-settings"
+                        checked={advancedTaskSettingsVisible}
+                        onCheckedChange={setAdvancedTaskSettingsVisible}
+                      />
+                    </div>
                   )}
                 </div>
                 {/* 移动端用紧凑选择器，避免类别列表占满屏幕并接管页面纵向滚动。 */}
                 <div className="min-w-0 p-2 lg:hidden">
                   <Select value={selectedTaskField.name} onValueChange={setSelectedTaskName}>
-                    <SelectTrigger className="w-full min-w-0" aria-label="模型类别">
+                    <SelectTrigger className="w-full min-w-0" aria-label="功能任务">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1023,7 +1021,7 @@ function ModelConfigPageContent() {
 
                         return (
                           <SelectItem key={field.name} value={field.name}>
-                            {resolveFieldLabel(field, i18n.language)}
+                            {TASK_CONFIGS.find((task) => task.key === field.name)?.title ?? resolveFieldLabel(field, i18n.language)}
                             {field.advanced ? ' · 高级' : ''}
                             {assignedCount > 0 ? ` · 已配置 ${assignedCount}` : ' · 未配置'}
                           </SelectItem>
@@ -1059,7 +1057,7 @@ function ModelConfigPageContent() {
                           <span className="min-w-0 flex-1">
                             <span className="flex min-w-0 items-center gap-1.5">
                               <span className="truncate text-sm font-medium">
-                                {resolveFieldLabel(field, i18n.language)}
+                                {TASK_CONFIGS.find((task) => task.key === field.name)?.title ?? resolveFieldLabel(field, i18n.language)}
                               </span>
                               {field.advanced && (
                                 <span
@@ -1100,18 +1098,26 @@ function ModelConfigPageContent() {
                 </div>
               </aside>
 
-              <section className="min-h-0 min-w-0 rounded-lg border px-4 lg:col-span-3 lg:h-full lg:overflow-y-auto lg:overscroll-contain">
+              <section className="min-h-0 min-w-0 overflow-x-clip lg:col-span-3 lg:h-full lg:overflow-hidden">
                 <AnimatePresence mode="wait" initial={false}>
                   <motion.div
                     key={selectedTaskField.name}
+                    className="flex min-h-0 flex-col gap-3 p-1 lg:h-full lg:overflow-hidden"
                     data-config-field-path={`model_task_config.${selectedTaskField.name}`}
                     initial={reduceTaskMotion ? false : { opacity: 0, x: 12 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={reduceTaskMotion ? undefined : { opacity: 0, x: -8 }}
                     transition={{ duration: reduceTaskMotion ? 0 : 0.16, ease: 'easeOut' }}
                   >
-                    <TaskConfigCard
-                      title={resolveFieldLabel(selectedTaskField, i18n.language)}
+                    {selectedTaskField.name === 'web_search' ? (
+                      <WebSearchTaskCard
+                        config={mc.webConfig}
+                        selected={taskConfig.web_search?.model_list[0] ?? ''}
+                        onChange={(names) => updateTaskConfig('web_search', 'model_list', names)}
+                        onAdd={() => setWebSearchEditor({ name: null })}
+                      />
+                    ) : <TaskConfigCard
+                      title={selectedTaskMetadata?.title ?? resolveFieldLabel(selectedTaskField, i18n.language)}
                       description={selectedTaskField.description}
                       taskConfig={taskConfig[selectedTaskField.name] ?? { model_list: [] }}
                       modelNames={selectedTaskModelNames}
@@ -1123,18 +1129,25 @@ function ModelConfigPageContent() {
                       showAdvancedSettings={advancedTaskSettingsVisible}
                       singleModel={selectedTaskSingleModel}
                       dataTour="task-model-select"
-                    />
-                    {selectedTaskField.name === 'embedding' && (
-                      <EmbeddingBuildProgress
-                        selectedEmbeddingModel={taskConfig.embedding?.model_list[0] ?? ''}
-                      />
-                    )}
-                    {(selectedTaskField.name === 'planner' ||
-                      selectedTaskField.name === 'replyer') && (
-                      <TaskRuntimeSummary
+                      modelContent={selectedTaskField.name === 'embedding' && (
+                        <EmbeddingBuildProgress
+                          selectedEmbeddingModel={taskConfig.embedding?.model_list[0] ?? ''}
+                        />
+                      )}
+                    />}
+                    {selectedTaskField.name !== 'web_search' && (taskConfig[selectedTaskField.name]?.model_list.length ?? 0) > 0 && (
+                      <TaskUsageStats
+                        key={selectedTaskField.name}
                         taskName={selectedTaskField.name}
-                        modelList={taskConfig[selectedTaskField.name]?.model_list ?? []}
-                        models={models}
+                        summary={
+                          (selectedTaskField.name === 'planner' || selectedTaskField.name === 'replyer') && (
+                            <TaskRuntimeSummary
+                              taskName={selectedTaskField.name}
+                              modelList={taskConfig[selectedTaskField.name]?.model_list ?? []}
+                              models={models}
+                            />
+                          )
+                        }
                       />
                     )}
                   </motion.div>
@@ -1295,9 +1308,9 @@ function ModelConfigPageContent() {
                         {!isEmbeddingTest && (
                           <>
                             <div>
-                              <span className="text-muted-foreground">工具调用</span>
-                              <p className={selectedModelTestResult.tool_call_ok ? 'font-medium text-green-600' : 'font-medium text-destructive'}>
-                                {selectedModelTestResult.tool_call_ok ? '已返回测试工具调用' : '未返回测试工具调用'}
+                              <span className="text-muted-foreground">{selectedModelTestResult.test_kind === 'replyer' ? '测试方式' : '工具调用'}</span>
+                              <p className={selectedModelTestResult.test_kind === 'replyer' || selectedModelTestResult.tool_call_ok ? 'font-medium' : 'font-medium text-destructive'}>
+                                {selectedModelTestResult.test_kind === 'replyer' ? '模拟 replyer 任务（仅文本回复）' : selectedModelTestResult.tool_call_ok ? '已返回测试工具调用' : '未返回测试工具调用'}
                               </p>
                             </div>
                             <div>
@@ -1938,8 +1951,8 @@ function ModelConfigPageContent() {
                     <Button
                       type="button"
                       variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 shrink-0 text-destructive hover:text-destructive"
+                      size="icon-sm"
+                      className="shrink-0 text-destructive hover:text-destructive"
                       title={`删除时段 ${index + 1}`}
                       aria-label={`删除时段 ${index + 1}`}
                       onClick={() => updatePricePeriods((periods) => periods.filter((_, itemIndex) => itemIndex !== index))}
@@ -2505,14 +2518,26 @@ function ModelConfigPageContent() {
       </AlertDialog>
 
       {/* 重启遮罩层 */}
-      {/* 手机页头右上角的「+」：添加模型与厂商 */}
+      {webSearchEditor && (
+        <WebSearchDialog
+          config={mc.webConfig}
+          providers={apiProviders}
+          models={models}
+          editingName={webSearchEditor.name}
+          assignedService={taskConfig?.web_search?.model_list[0] ?? ''}
+          onClose={() => setWebSearchEditor(null)}
+          onSave={mc.saveWebConfig}
+        />
+      )}
+      {/* 手机页头右上角的「+」：添加模型、厂商与联网服务 */}
       <MobileHeaderActions>
         <MobileAddMenu
           label="添加"
           items={[
             { label: '添加 LLM 模型', onSelect: () => openAddModelDialog('llm') },
             { label: '添加嵌入模型', onSelect: () => openAddModelDialog('embedding') },
-            { label: '添加厂商', onSelect: () => openProviderDialog(null, null) },
+            { label: '添加 LLM 模型提供商', onSelect: () => openProviderDialog(null, null) },
+            { label: '添加联网搜索', onSelect: () => setWebSearchEditor({ name: null }) },
           ]}
         />
       </MobileHeaderActions>

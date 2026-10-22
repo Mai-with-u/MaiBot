@@ -12,8 +12,11 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, cast
 import asyncio
 import httpx
 import logging
+import sys
 
 from src.cli.console import console
+from src.common.http_client import get_shared_ssl_context, get_shared_ssl_context_async
+from src.common.startup_diagnostics import diagnostic_stage
 from src.core.tooling import ToolExecutionResult
 
 from .config import MCPClientRuntimeConfig, MCPServerRuntimeConfig
@@ -35,7 +38,10 @@ if TYPE_CHECKING:
 # MCPManager.from_app_config() 会检测到并返回 None，不影响主程序运行。
 
 try:
-    from mcp import ClientSession, types as mcp_types
+    # 已有 SDK 模块时可能命中缓存或等待另一线程；与首次导入阶段区分。
+    sdk_import_stage = "mcp.resolve_sdk" if "mcp" in sys.modules else "mcp.import_sdk"
+    with diagnostic_stage(sdk_import_stage):
+        from mcp import ClientSession, types as mcp_types
 
     try:
         from mcp.client.stdio import StdioServerParameters
@@ -212,6 +218,9 @@ class MCPConnection:
 
         if self.config.transport_type == "stdio":
             return await self._connect_stdio()
+        if self.config.transport_type in {"streamable_http", "sse"}:
+            # SDK 的客户端工厂是同步回调，提前异步准备其共享证书。
+            await get_shared_ssl_context_async()
         if self.config.transport_type == "streamable_http":
             return await self._connect_streamable_http()
         if self.config.transport_type == "sse":
@@ -319,6 +328,7 @@ class MCPConnection:
         if headers:
             merged_headers.update(headers)
         return httpx.AsyncClient(
+            verify=get_shared_ssl_context(),
             headers=merged_headers,
             timeout=timeout
             or httpx.Timeout(

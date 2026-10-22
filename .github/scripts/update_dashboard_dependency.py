@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+from subprocess import CalledProcessError, run
+from time import monotonic, sleep
 from typing import Iterable
 from urllib.request import urlopen
 
@@ -19,6 +21,34 @@ DASHBOARD_PACKAGE_PATH = Path("dashboard/package.json")
 PYPROJECT_PATH = Path("pyproject.toml")
 REQUIREMENTS_PATH = Path("requirements.txt")
 PYPI_JSON_URL = f"https://pypi.org/pypi/{PACKAGE_NAME}/json"
+PYPI_INDEX_URL = "https://pypi.org/simple"
+
+
+def wait_for_pypi_version(version: Version, timeout: float = 300, interval: float = 10) -> None:
+    # PyPI 按 Accept/Accept-Encoding 区分缓存，urllib 查询成功不能代表 uv 已可见。
+    # 用实际解析器检查精确版本；只等待新包尚不可见，其他解析或网络错误立即暴露。
+    deadline = monotonic() + timeout
+    requirement = f"{PACKAGE_NAME}=={version}"
+    command = [
+        "uv", "pip", "compile", "--no-deps", "--no-config",
+        "--index", PYPI_INDEX_URL, "--refresh-package", PACKAGE_NAME,
+        "--no-header", "--no-annotate", "-",
+    ]
+    while True:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise TimeoutError(f"等待 uv 从 {PYPI_INDEX_URL} 解析 {requirement} 超时（{timeout:g}s）")
+
+        result = run(command, input=f"{requirement}\n", capture_output=True, text=True, timeout=remaining)
+        if result.returncode == 0:
+            print(f"uv 已确认 PyPI 目标版本可解析: {requirement}", flush=True)
+            return
+        print(result.stderr, flush=True)
+        if f"there is no version of {requirement}" not in result.stderr:
+            raise CalledProcessError(result.returncode, command, output=result.stdout, stderr=result.stderr)
+
+        print(f"uv 尚未看到 {requirement}，继续等待", flush=True)
+        sleep(min(interval, max(0, deadline - monotonic())))
 
 
 def find_dashboard_requirement(requirements: Iterable[str]) -> Requirement:
@@ -152,6 +182,7 @@ def main() -> None:
     latest_version = get_target_dev_version(target_base_version)
     print(f"Dashboard {target_base_version} 序列目标 dev 版本: {latest_version}")
 
+    wait_for_pypi_version(latest_version)
     pyproject_updated = update_pyproject(latest_version)
     requirements_updated = update_requirements(latest_version)
 

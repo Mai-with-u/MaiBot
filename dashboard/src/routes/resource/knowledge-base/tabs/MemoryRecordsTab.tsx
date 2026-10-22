@@ -675,7 +675,7 @@ export function MemoryRecordsTab({ onAction, onCorrectionPlan, searchModeTabs }:
           >
             <Checkbox
               id="memory-record-select-all"
-              data-memory-record-checkbox="true"
+              size="sm"
               className="h-3.5 w-3.5 [&_svg]:size-2.5"
               aria-label="全选"
               checked={allChecked ? true : checkedRecords.length > 0 ? 'indeterminate' : false}
@@ -763,7 +763,7 @@ export function MemoryRecordsTab({ onAction, onCorrectionPlan, searchModeTabs }:
                       >
                         <Checkbox
                           id={`memory-record-select-${key}`}
-                          data-memory-record-checkbox="true"
+                          size="sm"
                           className="h-3.5 w-3.5 [&_svg]:size-2.5"
                           aria-label={`选择${RECORD_LABELS[record.type]}：${record.title || record.id}`}
                           checked={checked}

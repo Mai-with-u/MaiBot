@@ -1,0 +1,29 @@
+/* 状态灯不使用闪烁动画；关闭状态不发光，夜间减弱外溢辉光。 */
+[data-status-light='true'] {
+  --light-color: #22c55e;
+  --light-glow-strength: 45%;
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 0.5rem;
+  height: 0.5rem;
+  vertical-align: middle;
+  border: 1px solid color-mix(in srgb, var(--light-color) 65%, #18241c);
+  border-radius: 50%;
+  background: var(--light-color);
+}
+[data-status-light='true'][data-status='mixed'] { --light-color: #f59e0b; }
+[data-status-light='true'][data-status='error'] { --light-color: #ef4444; }
+[data-status-light='true'][data-status='off'] { --light-color: hsl(var(--muted-foreground)); }
+[data-status-light='true'][data-size='md'] { width: 0.75rem; height: 0.75rem; }
+[data-status-light='true'][data-size='lg'] { width: 1rem; height: 1rem; }
+[data-status-light='true'][data-glow='true'] {
+  box-shadow: 0 0 6px color-mix(in srgb, var(--light-color) var(--light-glow-strength), transparent),
+    0 0 12px color-mix(in srgb, var(--light-color) 20%, transparent);
+}
+:root.dark [data-status-light='true'] { --light-glow-strength: 32%; }
+:root:is([data-dashboard-style='millennium'], [data-dashboard-style='future-retro']) [data-status-light='true'] {
+  border-radius: 0;
+}
+:root[data-dashboard-style='millennium'] [data-status-light='true'][data-status='on'] {
+  --light-color: var(--mil-led);
+}

@@ -85,6 +85,16 @@ def _kernel_config(data_dir: Path, *, sparse_enabled: bool) -> Dict[str, Any]:
 
 
 def _patch_embedding(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def skip_live_embedding_probe(self: Any) -> None:
+        # 迁移测试使用固定的离线向量；在线模型探测会改变能力状态并访问真实服务。
+        # 嵌入恢复与模型切换由各自的运行时测试覆盖，这里只验证迁移后的存储读写。
+        return None
+
+    monkeypatch.setattr(
+        "src.A_memorix.core.runtime.services.background_task_service."
+        "MemoryBackgroundTaskService._embedding_probe_loop",
+        skip_live_embedding_probe,
+    )
     monkeypatch.setattr(
         kernel_module,
         "create_embedding_api_adapter",

@@ -7,6 +7,7 @@ import { Loader2, Pencil, Trash2, Zap } from 'lucide-react'
 import type { ModelTestResult } from '@/lib/config-api'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { DataPanel } from '@/components/ui/surface'
 import {
   Table,
   TableBody,
@@ -75,7 +76,9 @@ function getModelTestStatus(result: ModelTestResult | undefined, isTesting: bool
     const isEmbeddingTest = result.test_kind === 'text_embedding' || result.test_kind === 'image_embedding'
     const summary = isEmbeddingTest
       ? `测试通过：嵌入向量正常${result.embedding_dimension ? `（维度 ${result.embedding_dimension}）` : ''}`
-      : `测试通过：文本${result.visual_tested ? '、视觉' : ''}与工具调用正常`
+      : result.test_kind === 'replyer'
+        ? '测试通过：模拟 replyer 任务回复正常'
+        : `测试通过：文本${result.visual_tested ? '、视觉' : ''}与工具调用正常`
     return {
       description: `${summary}${
         result.latency_ms != null ? `，耗时 ${(result.latency_ms / 1000).toFixed(2)}s` : ''
@@ -107,9 +110,10 @@ export const ModelTable = React.memo(function ModelTable({
   onAdd,
 }: ModelTableProps) {
   return (
-    <div
+    <DataPanel
       data-model-config-table-surface="true"
-      className="hidden overflow-hidden rounded-lg border bg-transparent md:block"
+      padding="none"
+      className="hidden overflow-hidden md:block"
     >
         <Table aria-label="模型列表" className="table-fixed min-w-0 [&_th]:px-2 [&_td]:px-2 [&_td]:py-2">
           <TableHeader>
@@ -206,8 +210,8 @@ export const ModelTable = React.memo(function ModelTable({
                       <div className="flex justify-end gap-1">
                         <Button
                           variant="outline"
-                          size="icon"
-                          className="h-7 w-7 shrink-0"
+                          size="icon-xs"
+                          className="shrink-0"
                           onClick={() => onTest(model.name)}
                           disabled={isTesting}
                           title="测试模型"
@@ -221,8 +225,8 @@ export const ModelTable = React.memo(function ModelTable({
                         </Button>
                         <Button
                           variant="outline"
-                          size="icon"
-                          className="border-primary! text-primary hover:text-primary h-7 w-7 shrink-0"
+                          size="icon-xs"
+                          className="shrink-0"
                           onClick={() => onEdit(model, actualIndex)}
                           title="编辑"
                           aria-label={`编辑模型 ${model.name}`}
@@ -230,9 +234,9 @@ export const ModelTable = React.memo(function ModelTable({
                           <Pencil className="h-4 w-4" />
                         </Button>
                         <Button
-                          variant="outline"
-                          size="icon"
-                          className="border-destructive! text-destructive hover:text-destructive h-7 w-7 shrink-0"
+                          variant="destructive"
+                          size="icon-xs"
+                          className="shrink-0"
                           onClick={() => onDelete(actualIndex)}
                           title="删除"
                           aria-label={`删除模型 ${model.name}`}
@@ -247,6 +251,6 @@ export const ModelTable = React.memo(function ModelTable({
             )}
           </TableBody>
         </Table>
-    </div>
+    </DataPanel>
   )
 })

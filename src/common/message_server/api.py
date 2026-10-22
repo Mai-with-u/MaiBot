@@ -15,6 +15,9 @@ def get_global_api() -> MessageServer:  # sourcery skip: extract-method
     """获取全局MessageServer实例"""
     from src.config.config import global_config
 
+    if not global_config.maim_message.enabled:
+        raise RuntimeError("maim_message 服务已关闭；旧版适配器与新版 API 均不可用，修改配置后需重启")
+
     global global_api
     if global_api is None:
         # 检查maim_message版本

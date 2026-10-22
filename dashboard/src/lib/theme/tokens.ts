@@ -175,9 +175,9 @@ export type DashboardStyleConfig = {
 export const DEFAULT_DASHBOARD_STYLE: DashboardStyle = 'millennium'
 
 export const DEFAULT_FUTURE_RETRO_STYLE_CONFIG: FutureRetroStyleConfig = {
-  paperWarmth: 100,
-  textureStyle: 'fine',
-  textureIntensity: 55,
+  paperWarmth: 89,
+  textureStyle: 'coarse',
+  textureIntensity: 64,
   panelDepth: 100,
 }
 

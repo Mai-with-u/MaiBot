@@ -1,0 +1,66 @@
+/* 档位滑杆沿用公共 Slider 材质；这里只定义命中区域和运动。 */
+[data-dashboard-discrete-slider] [data-dashboard-slider] {
+  min-height: 2.25rem;
+  cursor: grab;
+}
+
+[data-dashboard-discrete-slider] [data-dashboard-slider-thumb] {
+  width: 1.5rem;
+  height: 1.5rem;
+  transition: transform 160ms ease;
+}
+
+/* Radix 用外层 span 定位滑块；只给定位层和填充层做吸附动画。 */
+[data-dashboard-discrete-slider] [data-dashboard-slider] > span:has(> [data-dashboard-slider-thumb]),
+[data-dashboard-discrete-slider] [data-dashboard-slider-range] {
+  transition: left 220ms cubic-bezier(.2, .8, .2, 1), right 220ms cubic-bezier(.2, .8, .2, 1);
+}
+
+[data-dashboard-discrete-slider][data-dragging='true'] [data-dashboard-slider] {
+  cursor: grabbing;
+}
+
+[data-dashboard-discrete-slider][data-dragging='true'] [data-dashboard-slider-thumb] {
+  transform: scale(1.15);
+}
+
+/* 拖动跟手，不让过渡追赶指针；松手/点选/键盘切档时再平滑吸附。 */
+[data-dashboard-discrete-slider][data-dragging='true'] [data-dashboard-slider] > span:has(> [data-dashboard-slider-thumb]),
+[data-dashboard-discrete-slider][data-dragging='true'] [data-dashboard-slider-range] {
+  transition: none;
+}
+
+[data-dashboard-discrete-slider] [data-active] {
+  transition: transform 160ms ease, background-color 160ms ease;
+}
+
+[data-dashboard-discrete-slider] [data-active='true'] {
+  background-color: var(--surface-ink);
+  transform: scaleY(1.5);
+  transform-origin: bottom;
+}
+
+[data-dashboard-discrete-slider] [data-dashboard-slider][data-disabled] {
+  cursor: not-allowed;
+}
+
+/* 标签只负责文字与点击，绿色选区由单独的随动底板绘制，避免各按钮跳变。 */
+[data-dashboard-discrete-slider] [data-discrete-slider-label] {
+  background: transparent;
+}
+
+:root[data-dashboard-style='millennium'] [data-discrete-slider-plate] {
+  background: var(--mil-on);
+}
+
+[data-discrete-slider-plate][data-disabled='true'] {
+  opacity: 0.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-dashboard-discrete-slider] *,
+  [data-dashboard-discrete-slider][data-dragging='true'] [data-dashboard-slider-thumb] {
+    transition: none;
+    transform: none;
+  }
+}

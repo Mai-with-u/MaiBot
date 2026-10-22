@@ -1,3 +1,4 @@
+import { Card } from '@/components/ui/card'
 import { useState, useMemo, useRef, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -77,6 +78,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { SegmentedControl } from '@/components/ui/management'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 import { hslToHex } from './types'
@@ -595,49 +597,21 @@ export function AppearanceTab() {
         <h3 className="mb-3 text-base font-semibold sm:mb-4 sm:text-lg">
           {t('settings.appearance.themeMode')}
         </h3>
-        <div
-          role="tablist"
+        <SegmentedControl
           aria-label={t('settings.appearance.themeMode')}
-          className="bg-muted/60 text-muted-foreground grid w-full max-w-2xl grid-cols-1 gap-1 rounded-lg border p-1 sm:grid-cols-3"
-        >
-          {themeModeOptions.map((option) => {
-            const selected = theme === option.value
+          value={theme}
+          onValueChange={(value) => {
+            const option = themeModeOptions.find((item) => item.value === value)
+            if (option) setTheme(option.value)
+          }}
+          options={themeModeOptions.map((option) => {
             const Icon = option.icon
-
-            return (
-              <button
-                key={option.value}
-                type="button"
-                role="tab"
-                aria-selected={selected}
-                onClick={() => setTheme(option.value)}
-                className={cn(
-                  'group flex min-h-16 flex-col justify-center rounded-md px-3 py-2 text-left transition-all',
-                  'focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none',
-                  selected
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'hover:bg-background/60 hover:text-foreground'
-                )}
-              >
-                <span className="flex items-center gap-2 text-sm font-semibold">
-                  <Icon
-                    className={cn(
-                      'h-4 w-4 transition-colors',
-                      selected
-                        ? 'text-primary'
-                        : 'text-muted-foreground group-hover:text-foreground'
-                    )}
-                    strokeWidth={2}
-                  />
-                  <span>{t(option.labelKey)}</span>
-                </span>
-                <span className="text-muted-foreground mt-1 block max-w-full truncate text-xs">
-                  {t(option.descriptionKey)}
-                </span>
-              </button>
-            )
+            return {
+              value: option.value,
+              label: <span className="inline-flex items-center gap-2" title={t(option.descriptionKey)}><Icon />{t(option.labelKey)}</span>,
+            }
           })}
-        </div>
+        />
       </div>
 
       {/* 界面风格 */}
@@ -744,7 +718,7 @@ export function AppearanceTab() {
 
             <div className="space-y-6">
               {/* 颜色选择器 */}
-              <div className="bg-card flex flex-col items-start gap-4 rounded-lg border p-4 sm:flex-row sm:items-center">
+              <Card className="flex flex-col items-start gap-4 p-4 sm:flex-row sm:items-center">
                 <div className="flex items-center gap-3">
                   <div className="border-border relative h-10 w-10 overflow-hidden rounded-full border-2 shadow-sm">
                     <input
@@ -774,7 +748,7 @@ export function AppearanceTab() {
                     maxLength={7}
                   />
                 </div>
-              </div>
+              </Card>
 
               {/* 实时色板预览 */}
               <div className="space-y-3">
@@ -1324,7 +1298,7 @@ export function AppearanceTab() {
             </Button>
           </div>
           <div className="grid gap-3 lg:grid-cols-2">
-            <div className="bg-card rounded-lg border p-3 sm:p-4">
+            <Card className="p-3 sm:p-4">
               <div className="mb-3 flex items-center justify-between">
                 <Label>{t('settings.appearance.baseFontSize')}</Label>
                 <span className="text-muted-foreground text-sm">{baseFontSizePx}px</span>
@@ -1341,9 +1315,9 @@ export function AppearanceTab() {
                   })
                 }}
               />
-            </div>
+            </Card>
 
-            <div className="bg-card rounded-lg border p-3 sm:p-4">
+            <Card className="p-3 sm:p-4">
               <div className="mb-3 flex items-center justify-between">
                 <div>
                   <Label>{t('settings.appearance.retroPaperWarmth')}</Label>
@@ -1367,10 +1341,10 @@ export function AppearanceTab() {
                 <span>{t('settings.appearance.retroPaperWhite')}</span>
                 <span>{t('settings.appearance.retroPaperWarm')}</span>
               </div>
-            </div>
+            </Card>
           </div>
 
-          <div className="bg-card mt-3 rounded-lg border p-3 sm:p-4">
+          <Card className="mt-3 p-3 sm:p-4">
             <div>
               <Label>{t('settings.appearance.retroTexture')}</Label>
               <p className="text-muted-foreground mt-0.5 text-xs">
@@ -1437,9 +1411,9 @@ export function AppearanceTab() {
                 }
               />
             </div>
-          </div>
+          </Card>
 
-          <div className="bg-card mt-3 rounded-lg border p-3 sm:p-4">
+          <Card className="mt-3 p-3 sm:p-4">
             <div className="mb-3 flex items-center justify-between">
               <div>
                 <Label>{t('settings.appearance.retroPanelDepth')}</Label>
@@ -1459,7 +1433,7 @@ export function AppearanceTab() {
               step={1}
               onValueChange={([panelDepth]) => updateFutureRetroConfig({ panelDepth })}
             />
-          </div>
+          </Card>
         </div>
       )}
 
@@ -1494,7 +1468,7 @@ export function AppearanceTab() {
             </Button>
           </div>
 
-          <div className="bg-card space-y-3 rounded-lg border p-3 sm:p-4">
+          <Card className="space-y-3 p-3 sm:p-4">
             <CodeEditor
               value={localCSS}
               language="css"
@@ -1516,7 +1490,7 @@ export function AppearanceTab() {
                 </ul>
               </div>
             )}
-          </div>
+          </Card>
         </div>
       )}
 
@@ -1527,7 +1501,7 @@ export function AppearanceTab() {
         </h3>
         <div className="space-y-2 sm:space-y-3">
           {/* 全局动画开关 */}
-          <div className="bg-card rounded-lg border p-3 sm:p-4">
+          <Card className="p-3 sm:p-4">
             <div className="flex items-center justify-between">
               <div className="flex-1 space-y-0.5">
                 <Label htmlFor="animations" className="cursor-pointer text-base font-medium">
@@ -1543,7 +1517,7 @@ export function AppearanceTab() {
                 onCheckedChange={setEnableAnimations}
               />
             </div>
-          </div>
+          </Card>
         </div>
       </div>
 
@@ -1553,7 +1527,7 @@ export function AppearanceTab() {
           <h3 className="mb-3 text-base font-semibold sm:mb-4 sm:text-lg">
             {t('settings.appearance.importExportTheme')}
           </h3>
-          <div className="bg-card space-y-3 rounded-lg border p-3 sm:p-4">
+          <Card className="space-y-3 p-3 sm:p-4">
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               {/* 导出按钮 */}
               <Button onClick={handleExport} variant="outline" className="gap-2">
@@ -1608,7 +1582,7 @@ export function AppearanceTab() {
             />
 
             <p className="text-muted-foreground text-xs">{t('settings.appearance.exportDesc')}</p>
-          </div>
+          </Card>
         </div>
       )}
     </div>

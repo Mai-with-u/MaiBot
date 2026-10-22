@@ -22,8 +22,8 @@ from src.llm_models.model_client.base_client import (
     client_registry,
 )
 from src.llm_models.payload_content.context_item import get_item_text
+from src.llm_models.payload_content.context_snapshot import deserialize_context_items_snapshot
 from src.llm_models.request_snapshot import (
-    deserialize_context_items_snapshot,
     deserialize_model_info_snapshot,
     deserialize_persisted_context_items_snapshot,
     deserialize_response_format_snapshot,

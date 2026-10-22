@@ -126,7 +126,7 @@ describe('ToolCallsCollapsible', () => {
     expect(screen.queryByText('完整工具调用 JSON')).not.toBeInTheDocument()
   })
 
-  it('展开后展示名称、来源、ID、参数和原始 JSON', async () => {
+  it('展开后展示名称、ID、参数和原始 JSON，隐藏来源标识', async () => {
     const user = userEvent.setup()
     render(
       <ToolCallsCollapsible
@@ -146,7 +146,7 @@ describe('ToolCallsCollapsible', () => {
 
     await user.click(screen.getByRole('button', { name: '工具调用 · 2 个' }))
     expect(await screen.findByText('lookup')).toBeInTheDocument()
-    expect(screen.getByText('推理中调用')).toBeInTheDocument()
+    expect(screen.queryByText('推理中调用')).not.toBeInTheDocument()
     expect(screen.getByText('call-1')).toBeInTheDocument()
     expect(screen.getByText(/"q": "晚饭"/)).toBeInTheDocument()
     expect(screen.getByText('silent')).toBeInTheDocument()

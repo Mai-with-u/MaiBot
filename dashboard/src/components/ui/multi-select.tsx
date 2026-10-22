@@ -237,7 +237,7 @@ export function MultiSelect({
           disabled={disabled}
           className={cn(
             'h-auto w-full justify-between',
-            compact ? 'min-h-9 px-2 py-1.5' : 'min-h-10',
+            compact ? 'min-h-[var(--control-height-sm)] px-2 py-1.5' : 'min-h-[var(--control-height)]',
             className
           )}
         >

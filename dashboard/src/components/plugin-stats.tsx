@@ -1,3 +1,4 @@
+import { DataPanel } from '@/components/ui/surface'
 import { Download, Star, ThumbsDown, ThumbsUp } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
@@ -35,15 +36,17 @@ type RecentRating = NonNullable<PluginStatsData['recent_ratings']>[number]
 
 /** 单条最近评价：有评分显示星级，有评论内容时展示评论正文。 */
 function RecentRatingItem({ item }: { item: RecentRating }) {
+  const displayName = item.anonymous || !item.username ? '匿名用户' : item.username
+
   return (
-    <div className="rounded-lg border bg-muted/50 p-3">
-      <div className={`flex items-center justify-between${item.comment ? ' mb-2' : ''}`}>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-medium">
-            {item.anonymous || !item.username ? '匿名用户' : item.username}
+    <div data-plugin-rating-item="true" className="rounded-lg border bg-muted/50 p-3">
+      <div className={`flex flex-wrap items-center justify-between gap-2${item.comment ? ' mb-2' : ''}`}>
+        <div className="grid grid-cols-[5em_auto] items-center gap-2 text-sm">
+          <span className="min-w-0 truncate font-medium" title={displayName}>
+            {displayName}
           </span>
           {item.rating != null && (
-            <div className="flex gap-1">
+            <div className="flex items-center gap-1">
               {[1, 2, 3, 4, 5].map((star) => (
                 <Star
                   key={star}
@@ -55,7 +58,7 @@ function RecentRatingItem({ item }: { item: RecentRating }) {
             </div>
           )}
         </div>
-        <span className="text-xs text-muted-foreground">
+        <span className="ml-auto shrink-0 whitespace-nowrap text-xs text-muted-foreground">
           {new Date(item.created_at).toLocaleDateString()}
         </span>
       </div>
@@ -318,30 +321,30 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <div className="flex flex-col items-center rounded-lg border bg-card p-3">
+      <div data-plugin-stat-tiles="true" className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <DataPanel data-plugin-stat-tile="true" className="flex flex-col items-center p-3">
           <Download className="mb-1 h-5 w-5 text-muted-foreground" />
           <span className="text-2xl font-bold">{stats.downloads.toLocaleString()}</span>
           <span className="text-xs text-muted-foreground">下载量</span>
-        </div>
+        </DataPanel>
 
-        <div className="flex flex-col items-center rounded-lg border bg-card p-3">
+        <DataPanel data-plugin-stat-tile="true" className="flex flex-col items-center p-3">
           <Star className="mb-1 h-5 w-5 fill-yellow-400 text-yellow-400" />
           <span className="text-2xl font-bold">{stats.rating.toFixed(1)}</span>
           <span className="text-xs text-muted-foreground">{stats.rating_count} 条评分</span>
-        </div>
+        </DataPanel>
 
-        <div className="flex flex-col items-center rounded-lg border bg-card p-3">
+        <DataPanel data-plugin-stat-tile="true" className="flex flex-col items-center p-3">
           <ThumbsUp className="mb-1 h-5 w-5 text-green-500" />
           <span className="text-2xl font-bold">{stats.likes}</span>
           <span className="text-xs text-muted-foreground">点赞</span>
-        </div>
+        </DataPanel>
 
-        <div className="flex flex-col items-center rounded-lg border bg-card p-3">
+        <DataPanel data-plugin-stat-tile="true" className="flex flex-col items-center p-3">
           <ThumbsDown className="mb-1 h-5 w-5 text-red-500" />
           <span className="text-2xl font-bold">{stats.dislikes}</span>
           <span className="text-xs text-muted-foreground">点踩</span>
-        </div>
+        </DataPanel>
       </div>
 
       <div className="flex items-center gap-2">
@@ -466,7 +469,7 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
       {/* 评分与评论是两种内容：有评论文字的归入「最近评论」并保留星级，仅有评分的归入「最近评分」 */}
       {recentComments.length > 0 && (
         <div className="space-y-2">
-          <h4 className="text-sm font-semibold">最近评论</h4>
+          <h4 data-plugin-stats-heading="true" className="text-sm font-semibold">最近评论</h4>
           <div className="space-y-3">
             {recentComments.map((item, index) => (
               <RecentRatingItem key={`${item.user_id}-${item.created_at}-${index}`} item={item} />
@@ -477,7 +480,7 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
 
       {recentRatingOnly.length > 0 && (
         <div className="space-y-2">
-          <h4 className="text-sm font-semibold">最近评分</h4>
+          <h4 data-plugin-stats-heading="true" className="text-sm font-semibold">最近评分</h4>
           <div className="space-y-3">
             {recentRatingOnly.map((item, index) => (
               <RecentRatingItem key={`${item.user_id}-${item.created_at}-${index}`} item={item} />

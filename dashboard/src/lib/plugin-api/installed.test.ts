@@ -31,8 +31,6 @@ async function loadInstalledModule() {
     getMock: vi.mocked(http.backendApi.get),
     ApiError: http.ApiError,
     getInstalledPlugins: mod.getInstalledPlugins,
-    getLocalPluginReadme: mod.getLocalPluginReadme,
-    getLocalPluginChangelog: mod.getLocalPluginChangelog,
   }
 }
 
@@ -175,51 +173,6 @@ describe('getInstalledPlugins', () => {
     getMock.mockResolvedValue({ success: true })
 
     await expect(getInstalledPlugins()).rejects.toThrow('已安装插件列表响应缺少有效的 plugins 数组')
-  })
-})
-
-describe('getLocalPluginReadme', () => {
-  it('成功时返回 README 文本，且插件 ID 经过 URL 编码', async () => {
-    const { getMock, getLocalPluginReadme } = await loadInstalledModule()
-    getMock.mockResolvedValue({ success: true, data: '# 演示插件' })
-
-    await expect(getLocalPluginReadme('demo/plugin')).resolves.toBe('# 演示插件')
-    expect(getMock).toHaveBeenCalledWith('/api/webui/plugins/local-readme/demo%2Fplugin', {
-      errorMessage: '获取 README 失败',
-    })
-  })
-
-  it('业务级失败时返回空字符串', async () => {
-    const { getMock, getLocalPluginReadme } = await loadInstalledModule()
-    getMock.mockResolvedValue({ success: false, error: '文件不存在' })
-
-    await expect(getLocalPluginReadme('demo')).resolves.toBe('')
-  })
-
-  it('success 为 true 但 data 缺省时返回空字符串', async () => {
-    const { getMock, getLocalPluginReadme } = await loadInstalledModule()
-    getMock.mockResolvedValue({ success: true })
-
-    await expect(getLocalPluginReadme('demo')).resolves.toBe('')
-  })
-})
-
-describe('getLocalPluginChangelog', () => {
-  it('成功时返回更新日志文本', async () => {
-    const { getMock, getLocalPluginChangelog } = await loadInstalledModule()
-    getMock.mockResolvedValue({ success: true, data: '## 1.2.0\n- 修复问题' })
-
-    await expect(getLocalPluginChangelog('demo')).resolves.toBe('## 1.2.0\n- 修复问题')
-    expect(getMock).toHaveBeenCalledWith('/api/webui/plugins/local-changelog/demo', {
-      errorMessage: '获取更新日志失败',
-    })
-  })
-
-  it('业务级失败时返回空字符串', async () => {
-    const { getMock, getLocalPluginChangelog } = await loadInstalledModule()
-    getMock.mockResolvedValue({ success: false, error: '文件不存在' })
-
-    await expect(getLocalPluginChangelog('demo')).resolves.toBe('')
   })
 })
 

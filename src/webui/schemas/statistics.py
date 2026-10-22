@@ -121,6 +121,11 @@ class DetailedDistributionItem(BaseModel):
 class DetailedStatisticsDistributions(BaseModel):
     """单个统计时段的分布图数据。"""
 
+    owner_tokens: List[DetailedDistributionItem]
+    model_tokens: List[DetailedDistributionItem]
+    module_tokens: List[DetailedDistributionItem]
+    request_type_tokens: List[DetailedDistributionItem]
+    chat_tokens: List[DetailedDistributionItem]
     owner_costs: List[DetailedDistributionItem]
     model_costs: List[DetailedDistributionItem]
     module_costs: List[DetailedDistributionItem]

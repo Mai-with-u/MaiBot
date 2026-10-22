@@ -6,18 +6,15 @@ import { menuSections } from './constants'
 import type { MenuSection } from './types'
 
 interface MenuFeatureFlags {
-  replyEffects: boolean
+  agent: boolean
 }
 
 function resolveMenuFeatureFlags(config: Record<string, unknown> | null): MenuFeatureFlags {
-  const debug = config?.debug
-  const replyEffects =
-    debug && typeof debug === 'object'
-      ? (debug as Record<string, unknown>).enable_reply_effect_tracking === true
-      : false
+  const agent = config?.agent
 
   return {
-    replyEffects,
+    agent: agent !== null && typeof agent === 'object'
+      && (agent as Record<string, unknown>).enabled === true,
   }
 }
 
@@ -26,7 +23,7 @@ function filterMenuSections(flags: MenuFeatureFlags | null): MenuSection[] {
     .map((section) => ({
       ...section,
       items: section.items.filter((item) => {
-        if (item.featureFlag === 'replyEffects') return flags?.replyEffects === true
+        if (item.featureFlag === 'agent') return flags?.agent === true
         return true
       }),
     }))
@@ -48,7 +45,7 @@ export function useMenuSections(): MenuSection[] {
         })
         .catch(() => {
           if (!cancelled) {
-            setFeatureFlags({ replyEffects: false })
+            setFeatureFlags({ agent: false })
           }
         })
     }

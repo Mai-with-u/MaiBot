@@ -1,9 +1,6 @@
+import { DataPagination } from '@/components/ui/data-pagination'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
   Minus,
   Plus,
   RefreshCw,
@@ -131,14 +128,6 @@ function getEventTypeLabel(type: string): string {
   return labels[type] ?? type
 }
 
-function getVisiblePageNumbers(currentPage: number, totalPages: number): number[] {
-  if (totalPages <= 5) {
-    return Array.from({ length: totalPages }, (_, index) => index + 1)
-  }
-  const start = Math.min(Math.max(currentPage - 2, 1), totalPages - 4)
-  return Array.from({ length: 5 }, (_, index) => start + index)
-}
-
 function getTimelineCategoryLabel(event: MemoryTimelineEventPayload): string {
   if (event.category !== 'maintenance') return getCategoryLabel(event.category)
   const kind = event.metadata?.reinforcement_kind
@@ -253,7 +242,6 @@ export function MemoryTimelineManager({
   const pageStartIndex = (safeCurrentPage - 1) * pageSize
   const pageEndIndex = Math.min(pageStartIndex + pageSize, events.length)
   const pageEvents = events.slice(pageStartIndex, pageEndIndex)
-  const pageNumbers = getVisiblePageNumbers(safeCurrentPage, totalPages)
 
   useEffect(() => {
     setCurrentPage(1)
@@ -360,31 +348,10 @@ export function MemoryTimelineManager({
                 ))}
               </div>
 
-              <div data-memory-timeline-pagination="true" className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1">
-                <div className="text-xs text-muted-foreground">
-                  <span>第 {safeCurrentPage} / {totalPages} 页 · {pageStartIndex + 1}-{pageEndIndex} / {events.length} 条</span>
-                </div>
-                <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-                  <TimelinePagination
-                    currentPage={safeCurrentPage}
-                    pageNumbers={pageNumbers}
-                    totalPages={totalPages}
-                    onPageChange={setCurrentPage}
-                  />
-                    <Select value={String(pageSize)} onValueChange={handlePageSizeChange}>
-                      <SelectTrigger id="timeline-page-size" className="h-7 w-[80px] px-2 text-xs" aria-label="每页显示条数">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {TIMELINE_PAGE_SIZE_OPTIONS.map((size) => (
-                          <SelectItem key={size} value={String(size)}>
-                            {size} 条
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                </div>
-              </div>
+              <DataPagination total={events.length} page={safeCurrentPage} pageSize={pageSize}
+                onPageChange={setCurrentPage} disabled={loading}
+                pageSizeOptions={TIMELINE_PAGE_SIZE_OPTIONS}
+                onPageSizeChange={(size) => handlePageSizeChange(String(size))} />
             </>
           ) : (
             <div className="min-h-0 flex-1 overflow-y-auto">
@@ -402,75 +369,6 @@ export function MemoryTimelineManager({
         onClose={() => setSelectedEvent(null)}
         onJump={onJump}
       />
-    </div>
-  )
-}
-
-function TimelinePagination({
-  currentPage,
-  pageNumbers,
-  totalPages,
-  onPageChange,
-}: {
-  currentPage: number
-  pageNumbers: number[]
-  totalPages: number
-  onPageChange: (page: number) => void
-}) {
-  return (
-    <div className="ml-auto flex flex-wrap items-center gap-1">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => onPageChange(1)}
-          disabled={currentPage <= 1}
-          aria-label="跳到第一页"
-        >
-          <ChevronsLeft className="h-4 w-4" />
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => onPageChange(Math.max(1, currentPage - 1))}
-          disabled={currentPage <= 1}
-        >
-          <ChevronLeft className="mr-1 h-4 w-4" />
-          上一页
-        </Button>
-        {pageNumbers.map((page) => (
-          <Button
-            key={page}
-            type="button"
-            variant={page === currentPage ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => onPageChange(page)}
-            aria-current={page === currentPage ? 'page' : undefined}
-          >
-            {page}
-          </Button>
-        ))}
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
-          disabled={currentPage >= totalPages}
-        >
-          下一页
-          <ChevronRight className="ml-1 h-4 w-4" />
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => onPageChange(totalPages)}
-          disabled={currentPage >= totalPages}
-          aria-label="跳到最后一页"
-        >
-          <ChevronsRight className="h-4 w-4" />
-        </Button>
     </div>
   )
 }

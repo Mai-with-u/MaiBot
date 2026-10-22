@@ -95,7 +95,7 @@ export function TaskRuntimeSummary({
   ]
 
   return (
-    <dl className="space-y-2 border-t pt-4 text-sm" aria-label={`${taskName} 运行方式`}>
+    <dl className="flex flex-wrap gap-x-6 gap-y-2 text-sm" aria-label={`${taskName} 运行方式`}>
       {rows.map((row) => (
         <div key={row.label} className="flex items-baseline gap-3">
           <dt className="text-muted-foreground w-10 shrink-0">{row.label}</dt>

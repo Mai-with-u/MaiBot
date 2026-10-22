@@ -75,6 +75,8 @@ export interface EmojiDeleteResponse {
  */
 export interface EmojiStats {
   total: number
+  recent_count?: number
+  collecting_enabled?: boolean
   registered: number
   banned: number
   unregistered: number

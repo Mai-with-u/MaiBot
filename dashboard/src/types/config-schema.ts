@@ -19,6 +19,7 @@ export type XWidgetType =
   | 'password'
   | 'select'
   | 'slider'
+  | 'discrete-slider'
   | 'switch'
   | 'tags'
   | 'talk-time'
@@ -34,6 +35,7 @@ export interface FieldSchema {
   label: LocalizedText
   description: string
   required: boolean
+  readOnly?: boolean
   default?: unknown
   options?: string[]
   minValue?: number

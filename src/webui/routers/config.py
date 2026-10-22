@@ -4,6 +4,7 @@
 
 from pathlib import Path
 from typing import Annotated, Any, Dict, List, Tuple, Union, get_args, get_origin
+import asyncio
 import copy
 import json
 import os
@@ -14,7 +15,7 @@ import types
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 import tomlkit
 
 from src.common.logger import get_logger
@@ -1231,12 +1232,26 @@ def get_maisaka_prompt_preview(path: str = Query(..., description="logs/maisaka_
     return FileResponse(preview_path, media_type=media_type)
 
 
+def _apply_retro_prompt_schema_lock(schema: Dict[str, Any]) -> None:
+    """按当前模型状态锁定复古开关，不污染缓存的基础 schema。"""
+    for field in schema["fields"]:
+        if field["name"] == "replyer_retro_prompt":
+            field["readOnly"] = config_manager.retro_prompt_forced
+
+
+def _validate_retro_prompt_setting(config_data: Dict[str, Any]) -> None:
+    """模型要求复古模板时，所有主配置写入入口均禁止手动关闭。"""
+    if config_manager.retro_prompt_forced and config_data.get("debug", {}).get("replyer_retro_prompt") is False:
+        raise HTTPException(status_code=400, detail="当前模型需要复古回复提示词，移除对应模型后才能关闭")
+
+
 @router.get("/schema/bot")
 def get_bot_config_schema():
     """获取麦麦主程序配置架构"""
     try:
         # Config 类包含所有子配置
-        schema = _get_cached_schema("bot", Config)
+        schema = copy.deepcopy(_get_cached_schema("bot", Config))
+        _apply_retro_prompt_schema_lock(schema["nested"]["debug"])
         return {"success": True, "schema": schema}
     except Exception as e:
         logger.error(f"获取配置架构失败: {e}")
@@ -1336,7 +1351,9 @@ def get_config_section_schema(section_name: str):
 
     try:
         config_class = section_map[section_name]
-        schema = _get_cached_schema(f"section:{section_name}", config_class, include_nested=False)
+        schema = copy.deepcopy(_get_cached_schema(f"section:{section_name}", config_class, include_nested=False))
+        if section_name == "debug":
+            _apply_retro_prompt_schema_lock(schema)
         return {"success": True, "schema": schema}
     except Exception as e:
         logger.error(f"获取配置节架构失败: {e}")
@@ -1503,6 +1520,7 @@ async def activate_model_config_version(version_id: str, request: ModelConfigVer
 def update_bot_config(config_data: ConfigBody):
     """更新麦麦主程序配置"""
     try:
+        _validate_retro_prompt_setting(config_data)
         config_data = _coerce_config_numeric_values(config_data, Config)
 
         # 验证配置数据
@@ -1557,6 +1575,8 @@ async def update_model_config(config_data: ConfigBody):
 def update_bot_config_section(section_name: str, section_data: SectionBody):
     """更新麦麦主程序配置的指定节（保留注释和格式）"""
     try:
+        if section_name == "debug" and isinstance(section_data, dict):
+            _validate_retro_prompt_setting({"debug": section_data})
         # 读取现有配置
         config_path = os.path.join(CONFIG_DIR, "bot_config.toml")
         if not os.path.exists(config_path):
@@ -1635,6 +1655,7 @@ def update_bot_config_raw(raw_content: RawContentBody):
             raise HTTPException(status_code=400, detail=f"TOML 格式错误: {str(e)}") from e
 
         # 验证配置数据结构
+        _validate_retro_prompt_setting(config_data)
         try:
             Config.from_dict(AttributeData(), _toml_to_plain_dict(config_data))
         except Exception as e:
@@ -1666,10 +1687,38 @@ def update_compat_bot_config_raw(raw_content: RawContentBody):
     return update_bot_config_raw(raw_content)
 
 
+def _save_web_config_section(section_data: Any) -> None:
+    """整体替换联网配置，避免递归合并使已删除或改名的服务复活。"""
+    if not isinstance(section_data, dict):
+        raise HTTPException(status_code=400, detail="联网配置必须是对象")
+    config_path = Path(CONFIG_DIR) / "model_config.toml"
+    if not config_path.exists():
+        raise HTTPException(status_code=404, detail="配置文件不存在")
+    doc = tomlkit.loads(config_path.read_text(encoding="utf-8"))
+    plain = _toml_to_plain_dict(doc)
+    plain["web"] = section_data
+    plain = _coerce_config_numeric_values(plain, ModelConfig)
+    try:
+        ModelConfig.from_dict(AttributeData(), copy.deepcopy(plain))
+    except ValidationError as exc:
+        # 不把 Pydantic 的输入快照返回给前端，其中可能包含服务密钥。
+        errors = exc.errors(include_input=False, include_context=False, include_url=False)
+        detail = "; ".join(f"{'.'.join(map(str, item['loc']))}: {item['msg']}" for item in errors)
+        raise HTTPException(status_code=400, detail=f"配置数据验证失败: {detail}") from exc
+    # 直接保存 TOMLDocument，保留其他配置节的注释，且不再次与磁盘旧字典合并。
+    doc["web"] = plain["web"]
+    save_toml_with_format(doc, str(config_path))
+
+
 @router.post("/model/section/{section_name}")
 async def update_model_config_section(section_name: str, section_data: SectionBody):
     """更新模型配置的指定节（保留注释和格式）"""
     try:
+        if section_name == "web":
+            await asyncio.to_thread(_save_web_config_section, section_data)
+            await _reload_model_config_after_save()
+            return {"success": True, "message": "配置节 'web' 已保存"}
+
         # 读取现有配置
         config_path = os.path.join(CONFIG_DIR, "model_config.toml")
         if not os.path.exists(config_path):

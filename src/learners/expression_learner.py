@@ -25,6 +25,7 @@ from src.services.llm_service import LLMServiceClient
 from .expression_review_store import append_ai_review_log
 from .expression_style_utils import normalize_expression_style_for_learning
 from .expression_utils import check_expression_suitability, parse_expression_response
+from .pending_learning_buffer import PendingLearningBuffer
 
 if TYPE_CHECKING:
     from src.chat.message_receive.message import SessionMessage
@@ -194,6 +195,10 @@ class ExpressionLearner:
 
         self.session_id = session_id
         self.min_messages_for_extraction = 10
+        self.pending_messages: PendingLearningBuffer["SessionMessage"] = PendingLearningBuffer(lambda item: item.message_id)
+        self.learning_status = "pending"
+        self.learning_retry_blocked = False
+        self.learning_detail = ""
 
     @staticmethod
     def _get_runtime_manager() -> Any:
@@ -272,6 +277,10 @@ class ExpressionLearner:
             normalized_expressions.append((situation, style, source_id))
         return normalized_expressions
 
+    def collect_context_messages(self, context_messages: Sequence["LLMContextMessage"]) -> None:
+        """先收集真实素材；间隔或并发条件不允许执行时也不丢掉本轮消息。"""
+        self.pending_messages.extend(self._extract_session_messages_from_context(context_messages))
+
     async def learn_from_context_messages(
         self,
         context_messages: Sequence["LLMContextMessage"],
@@ -284,16 +293,19 @@ class ExpressionLearner:
         规划器思考等上下文消息不会进入表达学习。
         """
 
-        source_messages = self._extract_session_messages_from_context(context_messages)
-        if not source_messages:
-            logger.debug("裁切历史中没有可用于表达学习的真实聊天消息")
-            return False
+        self.learning_retry_blocked = False
+        self.collect_context_messages(context_messages)
+        source_messages = self.pending_messages.snapshot()
         if len(source_messages) < self.min_messages_for_extraction:
-            logger.debug(
-                f"裁切历史可学习消息不足: 可学习={len(source_messages)} 阈值={self.min_messages_for_extraction}"
+            self.learning_status = "waiting" if source_messages else "skipped"
+            self.learning_detail = (
+                self.pending_messages.waiting_detail(self.min_messages_for_extraction)
+                if source_messages else "裁切历史中没有可学习的真实聊天消息"
             )
+            logger.debug(self.learning_detail)
             return False
 
+        self.learning_status, self.learning_detail = "running", ""
         return await self._learn_from_session_messages(
             source_messages,
             learned_contents=learned_contents,
@@ -309,28 +321,16 @@ class ExpressionLearner:
 
         source_messages: List["SessionMessage"] = []
         seen_message_ids: set[str] = set()
-        seen_object_ids: set[int] = set()
 
         for context_message in context_messages:
             if not isinstance(context_message, SessionBackedMessage):
                 continue
-            if context_message.source_kind not in {"user", "guided_reply", "outbound_send"}:
-                continue
 
             original_message = context_message.original_message
-            if original_message is None:
+            message_id = context_message.message_id
+            if message_id in seen_message_ids:
                 continue
-
-            message_id = str(original_message.message_id or "").strip()
-            if message_id:
-                if message_id in seen_message_ids:
-                    continue
-                seen_message_ids.add(message_id)
-            else:
-                object_id = id(original_message)
-                if object_id in seen_object_ids:
-                    continue
-                seen_object_ids.add(object_id)
+            seen_message_ids.add(message_id)
 
             source_messages.append(original_message)
 
@@ -347,6 +347,8 @@ class ExpressionLearner:
         learning_session_id = self._resolve_learning_session_id(pending_messages)
         if learning_session_id is None:
             logger.warning(f"表达学习已跳过：无法解析到有效聊天流，learner_session_id={self.session_id}")
+            self.learning_retry_blocked = True
+            self.learning_status, self.learning_detail = "skipped", "无法解析到有效聊天流，素材已保留"
             return False
         if learning_session_id != self.session_id:
             logger.info(
@@ -356,6 +358,14 @@ class ExpressionLearner:
 
         acquire_result = await expression_learning_batch_gate.acquire(learning_session_id)
         if not acquire_result.acquired:
+            reasons = {
+                "session_busy": "当前会话已有学习批次正在运行",
+                "global_limit": f"全局学习并发已满（{acquire_result.active_count}/{acquire_result.max_count}）",
+                "max_expression_learner <= 0": "学习并发配置小于或等于 0",
+            }
+            self.learning_retry_blocked = acquire_result.max_count <= 0
+            self.learning_status = "skipped" if self.learning_retry_blocked else "waiting"
+            self.learning_detail = reasons[acquire_result.reason] + f"，已保留 {len(self.pending_messages)} 条素材等待重试"
             if acquire_result.reason == "session_busy":
                 logger.info(f"{learning_session_id} 已有表达学习批次正在运行，放弃新的批次")
             elif acquire_result.reason == "global_limit":
@@ -371,6 +381,7 @@ class ExpressionLearner:
                 )
             return False
 
+        self.pending_messages.discard(pending_messages)
         try:
             return await self._run_learning_batch(
                 pending_messages,
@@ -420,6 +431,7 @@ class ExpressionLearner:
 
         if len(expressions) > 20:
             logger.info(f"表达方式数量超过20: {len(expressions)}")
+            self.learning_status, self.learning_detail = "no_results", f"模型返回 {len(expressions)} 条表达，超过单批 20 条限制"
             expressions = []
 
         after_extract_result = await self._get_runtime_manager().invoke_hook(
@@ -431,6 +443,7 @@ class ExpressionLearner:
         )
         if after_extract_result.aborted:
             logger.info(f"{self.session_id} 表达方式选择 Hook 中止")
+            self.learning_status, self.learning_detail = "skipped", "表达候选被 expression.learn.after_extract Hook 中止"
             return False
 
         after_extract_kwargs = after_extract_result.kwargs
@@ -440,6 +453,8 @@ class ExpressionLearner:
 
         if not expressions:
             logger.info("没有可学习的表达方式")
+            if not self.learning_detail:
+                self.learning_status, self.learning_detail = "no_results", "模型未提取出表达候选"
             return False
 
         # logger.info(f"可学习的表达方式: {expressions}")
@@ -447,6 +462,7 @@ class ExpressionLearner:
         learnt_expressions = self._filter_expressions(expressions, pending_messages)
         if not learnt_expressions:
             logger.info("没有可学习的表达方式通过过滤")
+            self.learning_status, self.learning_detail = "no_results", f"{len(expressions)} 条表达候选均未通过内容或来源校验"
             return False
 
         learnt_expressions_str = "\n".join(f"{situation}->{style}" for situation, style in learnt_expressions)
@@ -500,6 +516,11 @@ class ExpressionLearner:
         logger.info(
             f"[{session_display_name}] 表达学习完成 "
             f"候选={len(learnt_expressions)} 写入={len(written_expressions)}"
+        )
+        self.learning_status = "completed" if written_expressions else "no_results"
+        self.learning_detail = (
+            f"写入 {len(written_expressions)} 条表达" if written_expressions
+            else f"{len(learnt_expressions)} 条有效候选均被写入 Hook、审核或写入校验阻止"
         )
         return bool(written_expressions)
 

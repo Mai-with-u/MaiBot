@@ -45,11 +45,11 @@ const ScrollBar = React.forwardRef<
     orientation={orientation}
     data-dashboard-scrollbar="true"
     className={cn(
-      "flex touch-none select-none transition-colors",
+      "flex touch-none select-none bg-[var(--dashboard-scrollbar-track-bg,transparent)] transition-colors",
       orientation === "vertical" &&
-        "h-full w-2.5 border-l border-l-transparent p-px",
+        "h-full w-[var(--dashboard-scrollbar-size,0.625rem)] border-l border-l-transparent p-px",
       orientation === "horizontal" &&
-        "h-2.5 flex-col border-t border-t-transparent p-px",
+        "h-[var(--dashboard-scrollbar-size,0.625rem)] flex-col border-t border-t-transparent p-px",
       className
     )}
     {...props}

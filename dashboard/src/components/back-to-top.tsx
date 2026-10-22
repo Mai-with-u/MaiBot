@@ -37,21 +37,16 @@ export function BackToTop() {
 
   useEffect(() => {
     const handleScroll = (e: Event) => {
-      const target = e.target as HTMLElement
-      
-      // 简单的启发式：如果是主要滚动容器（通常高度较大）
-      // 我们假设页面中主要的滚动区域是高度最大的那个，或者就是当前触发滚动的这个
-      // 只要它有足够的滚动空间
-      if (target.scrollHeight > target.clientHeight + 100) {
-         scrollerRef.current = target
-         
-         const scrollTop = target.scrollTop
-         const height = target.scrollHeight - target.clientHeight
-         const scrolled = height > 0 ? (scrollTop / height) * 100 : 0
-         
-         setProgress(scrolled)
-         setVisible(scrollTop > 300)
-      }
+      const target = e.target
+
+      // 只跟随布局的主滚动区；表格、列表和弹窗内部的滚动不能接管页面回顶。
+      if (!(target instanceof HTMLElement) || !target.matches('[data-dashboard-main="true"]')) return
+
+      scrollerRef.current = target
+      const scrollTop = target.scrollTop
+      const height = target.scrollHeight - target.clientHeight
+      setProgress(height > 0 ? (scrollTop / height) * 100 : 0)
+      setVisible(height > 100 && scrollTop > 300)
     }
 
     const handleNavigation = () => {
@@ -60,7 +55,7 @@ export function BackToTop() {
       setVisible(false)
     }
 
-    // 使用捕获阶段监听所有滚动事件，因为 scroll 事件不冒泡
+    // scroll 不冒泡，在捕获阶段接收事件后只处理主滚动区。
     window.addEventListener('scroll', handleScroll, { capture: true, passive: true })
     window.addEventListener('popstate', handleNavigation)
     window.addEventListener('hashchange', handleNavigation)

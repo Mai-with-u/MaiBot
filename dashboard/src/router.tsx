@@ -84,11 +84,6 @@ const statisticsRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/logs'), 'StatisticsLogViewerPage'),
 })
 
-const replyEffectsRoute = createRoute({
-  getParentRoute: () => protectedRoute,
-  path: '/reply-effects',
-  component: lazyRouteComponent(() => import('./routes/reply-effects'), 'ReplyEffectsPage'),
-})
 
 // 配置路由 - 麦麦主程序配置
 const botConfigRoute = createRoute({
@@ -120,22 +115,21 @@ const promptManagementRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/config/prompts'), 'PromptManagementPage'),
 })
 
-// 资源管理路由 - 表情包管理
+// 旧表情包地址进入学习页的表情包页签。
 const emojiManagementRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/resource/emoji',
-  component: lazyRouteComponent(
-    () => import('./routes/resource/emoji/index.tsx'),
-    'EmojiManagementPage'
-  ),
+  beforeLoad: () => {
+    throw redirect({ to: '/resource/learning', search: { tab: 'emoji' }, replace: true })
+  },
 })
 
-// 资源管理路由 - 学习（表达方式与黑话）
+// 资源管理路由 - 学习（表达方式、黑话与表情包）
 const learningRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/resource/learning',
-  validateSearch: (search: Record<string, unknown>): { tab: 'expression' | 'jargon' } => ({
-    tab: search.tab === 'jargon' ? 'jargon' : 'expression',
+  validateSearch: (search: Record<string, unknown>): { tab: 'expression' | 'jargon' | 'emoji' } => ({
+    tab: search.tab === 'jargon' || search.tab === 'emoji' ? search.tab : 'expression',
   }),
   component: lazyRouteComponent(() => import('./routes/resource/learning'), 'LearningPage'),
 })
@@ -204,6 +198,12 @@ const plannerMonitorRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/planner-monitor',
   component: lazyRouteComponent(() => import('./routes/monitor/index.tsx'), 'PlannerMonitorPage'),
+})
+
+const agentRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/agent',
+  component: lazyRouteComponent(() => import('./routes/agent'), 'AgentPage'),
 })
 
 // 移动端管理页路由：底部标签栏「管理」，汇总侧栏的全部入口
@@ -388,7 +388,6 @@ const routeTree = rootRoute.addChildren([
     pluginWebUIManagerRoute,
     indexRoute,
     statisticsRoute,
-    replyEffectsRoute,
     botConfigRoute,
     modelConfigRoute,
     promptManagementRoute,
@@ -409,6 +408,7 @@ const routeTree = rootRoute.addChildren([
     logsRoute,
     reasoningProcessRoute,
     plannerMonitorRoute,
+    agentRoute,
     chatManagementRoute,
     chatRoute,
     manageRoute,

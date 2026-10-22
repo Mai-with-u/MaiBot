@@ -1,29 +1,11 @@
-import React from 'react'
-import {
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
-  Edit,
-  Globe,
-  HelpCircle,
-  Trash2,
-  X,
-} from 'lucide-react'
+import { Check, Edit, Globe, HelpCircle, Trash2, X } from 'lucide-react'
+import type { ReactNode } from 'react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { DataPagination } from '@/components/ui/data-pagination'
+import { DataPanel, PageFrame } from '@/components/ui/surface'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import {
   Table,
@@ -46,12 +28,12 @@ interface JargonListProps {
   selectedIds: Set<number>
   hideChatColumn?: boolean
   className?: string
+  toolbar?: ReactNode
   onEdit: (jargon: Jargon) => void
   onDelete: (jargon: Jargon) => void
   onToggleSelect: (id: number) => void
   onToggleSelectAll: () => void
   onPageChange: (page: number) => void
-  onJumpToPage: (page: string) => void
   onPageSizeChange?: (pageSize: number) => void
 }
 
@@ -117,36 +99,56 @@ export function JargonList({
   selectedIds,
   hideChatColumn = false,
   className,
+  toolbar,
   onEdit,
   onDelete,
   onToggleSelect,
   onToggleSelectAll,
   onPageChange,
-  onJumpToPage,
   onPageSizeChange,
 }: JargonListProps) {
-  const [jumpToPage, setJumpToPage] = React.useState('')
   const tableColSpan = hideChatColumn ? 6 : 7
-
-  const handleJumpToPage = () => {
-    onJumpToPage(jumpToPage)
-    setJumpToPage('')
-  }
+  const selectedCount = jargons.filter((jargon) => selectedIds.has(jargon.id)).length
 
   return (
-    <div className={cn('flex min-h-0 flex-col border-2 bg-transparent', className)}>
+    <PageFrame
+      desktopOnly
+      data-jargon-browser-panel="true"
+      className={cn('flex min-h-0 min-w-0 flex-col', className)}
+    >
+      {toolbar}
       {/* 桌面端表格视图 */}
-      <div
+      <DataPanel
+        padding="none"
+        inset
         data-jargon-table-viewport="true"
         className="hidden min-h-0 flex-1 overflow-auto md:block"
       >
-        <Table aria-label="黑话列表">
+        <Table density="compact" className="table-fixed" aria-label="黑话列表">
+          <colgroup>
+            <col className="w-11" />
+            <col className={hideChatColumn ? 'w-[26%]' : 'w-[22%]'} />
+            <col />
+            {!hideChatColumn && <col className="w-[18%]" />}
+            <col className="w-16" />
+            <col className="w-22" />
+            <col className="w-24" />
+          </colgroup>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-12">
+              <TableHead>
                 <Checkbox
-                  checked={selectedIds.size === jargons.length && jargons.length > 0}
+                  size="sm"
+                  aria-label="全选本页黑话"
+                  checked={
+                    selectedCount > 0 && selectedCount === jargons.length
+                      ? true
+                      : selectedCount > 0
+                        ? 'indeterminate'
+                        : false
+                  }
                   onCheckedChange={onToggleSelectAll}
+                  disabled={loading || jargons.length === 0}
                 />
               </TableHead>
               <TableHead>内容</TableHead>
@@ -154,7 +156,9 @@ export function JargonList({
               {!hideChatColumn && <TableHead>聊天</TableHead>}
               <TableHead className="text-center">手动</TableHead>
               <TableHead className="text-center">遇见次数</TableHead>
-              <TableHead className="text-right">操作</TableHead>
+              <TableHead>
+                <span className="sr-only">操作</span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -181,11 +185,13 @@ export function JargonList({
                 <TableRow key={jargon.id}>
                   <TableCell>
                     <Checkbox
+                      size="sm"
+                      aria-label={`选择黑话：${jargon.content}`}
                       checked={selectedIds.has(jargon.id)}
                       onCheckedChange={() => onToggleSelect(jargon.id)}
                     />
                   </TableCell>
-                  <TableCell className="max-w-[200px] font-medium">
+                  <TableCell>
                     <div className="flex items-center gap-1.5">
                       {jargon.is_global && (
                         <span title="全局黑话">
@@ -197,9 +203,9 @@ export function JargonList({
                       </span>
                     </div>
                   </TableCell>
-                  <TableCell className="max-w-[300px]" title={jargon.meaning || ''}>
+                  <TableCell title={jargon.meaning || ''}>
                     {jargon.meaning ? (
-                      <span className="line-clamp-2 text-sm leading-5 break-words whitespace-normal">
+                      <span className="bg-muted/30 inline-block max-w-full truncate border-l-2 border-orange-500/80 px-2 py-0.5 align-middle">
                         {jargon.meaning}
                       </span>
                     ) : (
@@ -207,10 +213,11 @@ export function JargonList({
                     )}
                   </TableCell>
                   {!hideChatColumn && (
-                    <TableCell className="max-w-[220px]" title={formatJargonChatDisplay(jargon)}>
-                      <span className="line-clamp-2 text-sm leading-5 break-words whitespace-normal">
-                        {formatJargonChatDisplay(jargon)}
-                      </span>
+                    <TableCell
+                      className="text-muted-foreground truncate"
+                      title={formatJargonChatDisplay(jargon)}
+                    >
+                      <span className="block truncate">{formatJargonChatDisplay(jargon)}</span>
                     </TableCell>
                   )}
                   <TableCell className="text-center">
@@ -220,11 +227,11 @@ export function JargonList({
                   </TableCell>
                   <TableCell className="text-center">{jargon.count}</TableCell>
                   <TableCell className="text-right">
-                    <div className="flex justify-end gap-2">
+                    <div className="flex justify-end gap-1">
                       <Button
-                        variant="default"
-                        size="icon"
-                        className="h-8 w-8"
+                        variant="ghost"
+                        size="icon-xs"
+                        className="text-muted-foreground/50 hover:text-foreground focus-visible:text-foreground"
                         onClick={() => onEdit(jargon)}
                         title="查看/编辑"
                         aria-label="查看或编辑黑话"
@@ -232,9 +239,10 @@ export function JargonList({
                         <Edit className="h-4 w-4" />
                       </Button>
                       <Button
-                        size="icon"
+                        variant="ghost"
+                        size="icon-xs"
+                        className="text-muted-foreground/50 hover:text-destructive focus-visible:text-destructive"
                         onClick={() => onDelete(jargon)}
-                        className="h-8 w-8 bg-red-600 text-white hover:bg-red-700"
                         title="删除"
                         aria-label="删除黑话"
                       >
@@ -247,10 +255,10 @@ export function JargonList({
             )}
           </TableBody>
         </Table>
-      </div>
+      </DataPanel>
 
       {/* 移动端卡片视图 */}
-      <div className="space-y-2 p-3 md:hidden">
+      <div className="min-w-0 space-y-2 md:hidden">
         {loading ? (
           <div className="text-muted-foreground py-8 text-center">
             <ThinkingIllustration size="sm" className="mx-auto" />
@@ -259,9 +267,14 @@ export function JargonList({
           <div className="text-muted-foreground py-8 text-center">暂无数据</div>
         ) : (
           jargons.map((jargon) => (
-            <div key={jargon.id} className="bg-card space-y-2 rounded-lg border p-3">
+            <div
+              key={jargon.id}
+              className="min-w-0 space-y-2 overflow-hidden rounded-lg border bg-transparent p-3"
+            >
               <div className="flex items-start gap-2.5">
                 <Checkbox
+                  size="sm"
+                  aria-label={`选择黑话：${jargon.content}`}
                   checked={selectedIds.has(jargon.id)}
                   onCheckedChange={() => onToggleSelect(jargon.id)}
                   className="mt-1"
@@ -315,103 +328,15 @@ export function JargonList({
       </div>
 
       {/* 分页 */}
-      {total > 0 && (
-        <div className="flex flex-col items-center justify-between gap-2 border-t px-3 py-2 sm:flex-row sm:py-1.5">
-          <div className="text-muted-foreground flex items-center gap-2 text-xs">
-            <span>
-              {total} 条 · {page}/{Math.ceil(total / pageSize)}
-            </span>
-            {onPageSizeChange && (
-              <div className="flex items-center gap-1.5">
-                <Label htmlFor="page-size" className="whitespace-nowrap">
-                  每页
-                </Label>
-                <Select
-                  value={pageSize.toString()}
-                  onValueChange={(value) => onPageSizeChange(parseInt(value))}
-                >
-                  <SelectTrigger id="page-size" className="h-7 w-16 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="10">10</SelectItem>
-                    <SelectItem value="20">20</SelectItem>
-                    <SelectItem value="50">50</SelectItem>
-                    <SelectItem value="100">100</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-          </div>
-          <div className="flex w-full flex-wrap items-center justify-center gap-1.5 sm:w-auto sm:flex-nowrap">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onPageChange(1)}
-              title="首页"
-              aria-label="首页"
-              disabled={page === 1}
-              className="hidden h-7 px-2 sm:flex"
-            >
-              <ChevronsLeft className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onPageChange(page - 1)}
-              title="上一页"
-              aria-label="上一页"
-              disabled={page === 1}
-              className="h-7 px-2"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </Button>
-            <div className="flex items-center gap-1.5">
-              <Input
-                type="number"
-                value={jumpToPage}
-                onChange={(e) => setJumpToPage(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleJumpToPage()}
-                placeholder={page.toString()}
-                className="h-7 w-12 text-center text-xs"
-                min={1}
-                max={Math.ceil(total / pageSize)}
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleJumpToPage}
-                disabled={!jumpToPage}
-                className="h-7 px-2"
-              >
-                跳
-              </Button>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onPageChange(page + 1)}
-              title="下一页"
-              aria-label="下一页"
-              disabled={page >= Math.ceil(total / pageSize)}
-              className="h-7 px-2"
-            >
-              <ChevronRight className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onPageChange(Math.ceil(total / pageSize))}
-              title="末页"
-              aria-label="末页"
-              disabled={page >= Math.ceil(total / pageSize)}
-              className="hidden h-7 px-2 sm:flex"
-            >
-              <ChevronsRight className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        </div>
-      )}
-    </div>
+      <DataPagination
+        total={total}
+        page={page}
+        pageSize={pageSize}
+        onPageChange={onPageChange}
+        onPageSizeChange={onPageSizeChange}
+        disabled={loading}
+        className="shrink-0"
+      />
+    </PageFrame>
   )
 }

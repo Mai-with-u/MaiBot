@@ -3,12 +3,12 @@ from typing import Dict
 
 import asyncio
 import time
-import traceback
 
 from src.chat.message_receive.chat_manager import BotChatSession, chat_manager
 from src.common.logger import get_logger
 from src.core.local_operator import LOCAL_PLATFORM_BOT_IDS
 from src.maisaka.runtime import MaisakaHeartFlowChatting
+from src.maisaka.focus import focus_mode_manager
 from src.platform_io.manager import get_platform_io_manager
 from src.platform_io.types import RouteKey
 
@@ -18,6 +18,10 @@ HEARTFLOW_ACTIVE_RETENTION_SECONDS = 24 * 60 * 60
 HEARTFLOW_MAX_ACTIVE_CHATS = 100
 
 
+class HeartflowPolicyDeniedError(PermissionError):
+    """适配器名单拒绝创建聊天运行实例。"""
+
+
 class HeartflowManager:
     """管理 session 级别的 Maisaka 心流实例。"""
 
@@ -25,9 +29,12 @@ class HeartflowManager:
         self.heartflow_chat_list: OrderedDict[str, MaisakaHeartFlowChatting] = OrderedDict()
         self._chat_create_locks: Dict[str, asyncio.Lock] = {}
         self._chat_last_active_at: Dict[str, float] = {}
+        self._stopping = False
 
     async def get_or_create_heartflow_chat(self, session_id: str) -> MaisakaHeartFlowChatting:
         """获取或创建指定会话对应的 Maisaka runtime。"""
+        focus_mode_manager.bind_loop()
+        self._ensure_running()
         try:
             if chat := self.heartflow_chat_list.get(session_id):
                 self._touch_chat(session_id)
@@ -35,6 +42,7 @@ class HeartflowManager:
 
             create_lock = self._chat_create_locks.setdefault(session_id, asyncio.Lock())
             async with create_lock:
+                self._ensure_running()
                 if chat := self.heartflow_chat_list.get(session_id):
                     self._touch_chat(session_id)
                     return chat
@@ -43,7 +51,8 @@ class HeartflowManager:
                 if not chat_session:
                     raise ValueError(f"未找到 session_id={session_id} 对应的聊天流")
                 if not await self._is_session_allowed(chat_session):
-                    raise PermissionError(f"适配器名单禁止创建聊天运行实例: {session_id}")
+                    raise HeartflowPolicyDeniedError(f"适配器名单禁止创建聊天运行实例: {session_id}")
+                self._ensure_running()
 
                 new_chat = MaisakaHeartFlowChatting(session_id=session_id)
                 await new_chat.start()
@@ -51,10 +60,31 @@ class HeartflowManager:
                 self._touch_chat(session_id)
                 await self._evict_over_limit_chats(protected_session_id=session_id)
                 return new_chat
+        except HeartflowPolicyDeniedError as exc:
+            logger.warning(str(exc))
+            raise
         except Exception as exc:
             logger.error(f"创建心流聊天 {session_id} 失败: {exc}", exc_info=True)
-            traceback.print_exc()
             raise
+
+    def _ensure_running(self) -> None:
+        if self._stopping:
+            raise RuntimeError("心流管理器正在关停，不能创建聊天运行实例")
+
+    async def shutdown(self) -> None:
+        """关闭创建入口，等待在途创建完成，再并发停止所有会话及其工具。"""
+        self._stopping = True
+        for lock in list(self._chat_create_locks.values()):
+            async with lock:
+                pass
+        chats = list(self.heartflow_chat_list.values())
+        results = await asyncio.gather(*(chat.stop() for chat in chats), return_exceptions=True)
+        failures = [result for result in results if isinstance(result, BaseException)]
+        if failures:
+            raise RuntimeError(f"{len(failures)} 个聊天运行实例未能停止") from failures[0]
+        self.heartflow_chat_list.clear()
+        self._chat_last_active_at.clear()
+        self._chat_create_locks.clear()
 
     def _touch_chat(self, session_id: str) -> None:
         """记录会话最近活跃时间，并维护心流实例的 LRU 顺序。"""
@@ -91,6 +121,8 @@ class HeartflowManager:
             return
 
         try:
+            if reason in {"clear_context_command", "adapter_policy_block"}:
+                await focus_mode_manager.clear_context(session_id)
             await chat.stop()
             logger.info(f"已淘汰心流聊天 {session_id}: reason={reason}")
         except Exception as exc:
@@ -100,6 +132,7 @@ class HeartflowManager:
         """停止并移除当前会话运行时，使其短期历史上下文立即失效。"""
 
         if session_id not in self.heartflow_chat_list:
+            await focus_mode_manager.clear_context(session_id)
             return False
 
         await self._evict_chat(session_id, reason="clear_context_command")

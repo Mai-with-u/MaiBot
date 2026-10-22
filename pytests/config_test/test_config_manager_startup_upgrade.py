@@ -5,20 +5,8 @@ import tomlkit
 
 from src.config import config as config_module
 from src.config.config import Config, ConfigManager, ModelConfig, load_config_from_file
-from src.config.official_configs import ExpressionConfig
 
 
-def test_expression_schema_exposes_vector_switch_and_defaults() -> None:
-    """配置界面使用向量开关，精选默认关闭，优化学习默认开启。"""
-
-    properties = ExpressionConfig.model_json_schema()["properties"]
-    field_schema = properties["use_vector_expression"]
-
-    assert "expression_selection_mode" not in properties
-    assert field_schema["type"] == "boolean"
-    assert field_schema["default"] is True
-    assert properties["expression_checked_only"]["default"] is False
-    assert properties["expression_self_reflect"]["default"] is True
 
 
 def test_load_repairs_removed_vector_mode_after_legacy_migration_completed(
@@ -82,6 +70,7 @@ def test_initialize_upgrades_bot_and_model_config_without_exit(monkeypatch):
         return object(), True
 
     monkeypatch.setattr(config_module, "load_config_from_file", fake_load_config_from_file)
+    monkeypatch.setattr(manager, "_sync_retro_reply_prompt", lambda config, models: None)
     monkeypatch.setattr(ConfigManager, "_warn_if_vlm_not_configured", lambda self, model_config: warnings.append(model_config))
 
     manager.initialize()

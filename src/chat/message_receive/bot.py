@@ -1,6 +1,7 @@
 """聊天消息入口与主链路调度。"""
 
 from copy import deepcopy
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import traceback
@@ -248,6 +249,7 @@ class ChatBot:
             tuple[HookDispatchResult, SessionMessage]: Hook 聚合结果以及可能被改写后的消息对象。
         """
 
+        received_at = message.received_at
         hook_result = await self._get_runtime_manager().invoke_hook(
             hook_name,
             message=serialize_session_message(message),
@@ -260,6 +262,8 @@ class ChatBot:
                 mutated_message = deserialize_session_message(raw_message)
             except Exception as exc:
                 logger.warning(f"Hook {hook_name} 返回的 message 无法反序列化，已忽略: {exc}")
+        # Hook 可以修改消息内容，但主程序的接收时刻始终沿用入口记录。
+        mutated_message.received_at = received_at
         return hook_result, mutated_message
 
     async def _process_commands(self, message: SessionMessage) -> tuple[bool, Optional[str], bool]:
@@ -718,6 +722,7 @@ class ChatBot:
         Args:
             message_data: 适配器整理后的统一消息字典。
         """
+        received_at = datetime.now()
         try:
             # 确保所有任务已启动
             await self._ensure_started()
@@ -733,7 +738,13 @@ class ChatBot:
             # print(message_data)
             # logger.debug(str(message_data))
             maim_raw_message = MessageBase.from_dict(message_data)
-            message = SessionMessage.from_maim_message(maim_raw_message)
+            # MessageBase 不保留顶层归属字段，必须从原始字典解析并传入内部消息。
+            route_key = RouteKeyFactory.from_message_dict(
+                {**message_data, "platform": maim_raw_message.message_info.platform}
+            )
+            message = SessionMessage.from_maim_message(
+                maim_raw_message, route_key=route_key, received_at=received_at
+            )
             await self.receive_message(message)
 
         except Exception as e:
@@ -747,6 +758,8 @@ class ChatBot:
             message: 待处理的会话消息。
         """
 
+        if message.received_at is None:
+            message.received_at = datetime.now()
         try:
             group_info = message.message_info.group_info
             user_info = message.message_info.user_info

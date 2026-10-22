@@ -2,11 +2,9 @@
 
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional
 
-import asyncio
 import json
-import time
 
 from src.common.logger import get_logger
 from src.common.version import PROJECT_ROOT
@@ -17,15 +15,6 @@ logger = get_logger("plugin_update_compatibility")
 
 UpdateCheckStatus = Literal["checking", "available", "unavailable", "not_found", "check_failed"]
 MarketplaceLoader = Callable[[], Awaitable[List[Dict[str, Any]]]]
-
-_PLUGIN_REPO_OWNER = "Mai-with-u"
-_PLUGIN_REPO_NAME = "plugin-repo"
-_PLUGIN_REPO_BRANCH = "main"
-_PLUGIN_DETAILS_FILE = "plugin_details.json"
-_MARKETPLACE_CACHE_TTL_SECONDS = 5 * 60
-_MARKETPLACE_FETCH_TIMEOUT_SECONDS = 10
-_marketplace_cache: Optional[Tuple[float, List[Dict[str, Any]]]] = None
-
 
 @dataclass(frozen=True)
 class IncompatiblePluginNotice:
@@ -212,43 +201,11 @@ def mark_compatible_marketplace_updates(
 
 
 async def _fetch_marketplace_plugins() -> List[Dict[str, Any]]:
-    global _marketplace_cache
+    from src.plugin_market.service import get_catalog
 
-    now = time.monotonic()
-    if _marketplace_cache is not None and now - _marketplace_cache[0] < _MARKETPLACE_CACHE_TTL_SECONDS:
-        return _marketplace_cache[1]
-
-    # 复用插件管理页的镜像源配置，避免启动检查与手动更新使用不同的数据源。
-    from src.webui.services.git_mirror_service import get_git_mirror_service
-
-    service = get_git_mirror_service()
-    try:
-        result = await asyncio.wait_for(
-            service.fetch_raw_file(
-                owner=_PLUGIN_REPO_OWNER,
-                repo=_PLUGIN_REPO_NAME,
-                branch=_PLUGIN_REPO_BRANCH,
-                file_path=_PLUGIN_DETAILS_FILE,
-                report_progress=False,
-            ),
-            timeout=_MARKETPLACE_FETCH_TIMEOUT_SECONDS,
-        )
-    except TimeoutError as exc:
-        raise RuntimeError("获取插件市场清单超时") from exc
-
-    if not result.get("success"):
-        raise RuntimeError(str(result.get("error") or "获取插件市场清单失败"))
-
-    raw_data = result.get("data")
-    if not isinstance(raw_data, str):
-        raise ValueError("插件市场清单响应缺少 data 字段")
-    marketplace_plugins = json.loads(raw_data)
-    if not isinstance(marketplace_plugins, list):
-        raise ValueError("插件市场清单顶层必须为数组")
-
-    normalized_plugins = [item for item in marketplace_plugins if isinstance(item, dict)]
-    _marketplace_cache = (time.monotonic(), normalized_plugins)
-    return normalized_plugins
+    # 启动检查同样使用公共市场服务，不维护独立索引或缓存。
+    catalog = await get_catalog()
+    return [{"id": item["marketplace_id"], "manifest": item["manifest"]} for item in catalog["plugins"]]
 
 
 async def collect_update_incompatible_plugins(

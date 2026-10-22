@@ -17,6 +17,7 @@
  */
 
 import { useEffect, useState, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import {
   Loader2,
@@ -220,7 +221,8 @@ function RestartOverlayContent({
     return `${mins}:${secs.toString().padStart(2, '0')}`
   }
 
-  return (
+  // 避开页面动画容器的 transform 和滚动裁剪，让遮罩始终相对视口定位。
+  return createPortal(
     <div
       className={cn(
         'fixed inset-0 bg-background/95 backdrop-blur-sm z-50 flex items-center justify-center',
@@ -278,7 +280,8 @@ function RestartOverlayContent({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 

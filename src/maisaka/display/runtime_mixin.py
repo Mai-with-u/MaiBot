@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 from rich.console import Group, RenderableType
 from rich.panel import Panel
@@ -45,12 +45,14 @@ class MaisakaRuntimeDisplayMixin:
         planner_tool_detail_results: Optional[list[dict[str, Any]]] = None,
         planner_prompt_section: Optional[RenderableType] = None,
         planner_extra_lines: Optional[list[str]] = None,
+        tool_prompt_panels: Optional[Dict[str, List[RenderableType]]] = None,
+        scope_lines: Optional[List[str]] = None,
     ) -> None:
         """在终端展示当前聊天流本轮 cycle 的最终结果。"""
         if not global_config.debug.show_maisaka_thinking:
             return
 
-        body_lines = [
+        body_lines = scope_lines if scope_lines is not None else [
             f"聊天流名称：{getattr(self, 'session_name', self.session_id)}",
             f"聊天流ID：{self.session_id}",
             f"当前回复频率：{self._format_reply_frequency_for_display(self._get_effective_reply_frequency())}",
@@ -80,6 +82,7 @@ class MaisakaRuntimeDisplayMixin:
             tool_results=planner_tool_results,
             tool_detail_results=planner_tool_detail_results,
             planner_style=True,
+            tool_prompt_panels=tool_prompt_panels,
         )
         if planner_tool_cards:
             renderables.extend(planner_tool_cards)
@@ -162,6 +165,7 @@ class MaisakaRuntimeDisplayMixin:
         tool_results: Optional[list[str]] = None,
         tool_detail_results: Optional[list[dict[str, Any]]] = None,
         planner_style: bool = False,
+        tool_prompt_panels: Optional[Dict[str, List[RenderableType]]] = None,
     ) -> list[RenderableType]:
         """构建与阶段同级的工具执行卡片列表。"""
 
@@ -170,6 +174,7 @@ class MaisakaRuntimeDisplayMixin:
             detail_results,
             stage_title=stage_title,
             planner_style=planner_style,
+            tool_prompt_panels=tool_prompt_panels,
         )
         if cards:
             return cards
@@ -446,62 +451,34 @@ class MaisakaRuntimeDisplayMixin:
             )
         return renderables
 
-    def _build_default_tool_detail_parts(
-        self,
-        *,
-        tool_name: str,
-        tool_call_id: str,
-        tool_args: Any,
-        summary: str,
-        duration_ms: Any,
-        detail: dict[str, Any],
-        planner_style: bool,
-    ) -> list[RenderableType]:
-        """构建工具卡片默认内容块。"""
+    def _prepare_tool_prompt_records(
+        self, tool_detail_results: List[Dict[str, Any]]
+    ) -> Dict[str, List[RenderableType]]:
+        """独立保存工具推理记录并回填 WebUI 入口，不依赖终端是否显示。"""
+        if not global_config.debug.save_maisaka_reasoning:
+            return {}
 
-        argument_border_style = "yellow"
-        metrics_border_style = "bright_yellow"
-        prompt_border_style = "bright_yellow"
-        reasoning_border_style = "yellow"
-        output_border_style = "bright_yellow"
-        extra_info_border_style = "yellow"
-        detail_labels = self._get_tool_detail_labels(tool_name)
-
-        parts: list[RenderableType] = []
-        header_lines: list[str] = []
-        if summary:
-            header_lines.append(summary)
-        if tool_call_id:
-            header_lines.append(f"调用ID：{tool_call_id}")
-        if isinstance(duration_ms, (int, float)):
-            header_lines.append(f"执行耗时：{round(float(duration_ms), 2)} ms")
-        if header_lines:
-            parts.append(Text("\n".join(header_lines)))
-
-        if isinstance(tool_args, dict) and tool_args:
-            parts.append(
-                Panel(
-                    Pretty(tool_args, expand_all=True),
-                    title="工具参数",
-                    border_style=argument_border_style,
-                    padding=(0, 1),
-                )
+        panels: Dict[str, List[RenderableType]] = {}
+        for tool_result in tool_detail_results:
+            detail = tool_result.get("detail")
+            if not isinstance(detail, dict):
+                continue
+            tool_call_id = str(tool_result.get("tool_call_id") or "").strip()
+            panels[tool_call_id] = self._save_tool_prompt_panels(
+                tool_name=str(tool_result.get("tool_name") or "unknown"),
+                tool_call_id=tool_call_id,
+                detail=detail,
             )
+        return panels
 
+    def _save_tool_prompt_panels(
+        self, *, tool_name: str, tool_call_id: str, detail: Dict[str, Any]
+    ) -> List[RenderableType]:
+        """保存主请求及附加请求，返回对应终端入口。"""
+        parts: List[RenderableType] = []
+        prompt_border_style = "bright_yellow"
         metrics = detail.get("metrics")
         preview_metadata = self._build_prompt_preview_metadata_from_tool_metrics(metrics)
-        if isinstance(metrics, dict):
-            metrics_text = self._build_tool_metrics_text(metrics)
-            if metrics_text:
-                parts.append(
-                    Panel(
-                        Text(metrics_text),
-                        title="执行指标",
-                        border_style=metrics_border_style,
-                        padding=(0, 1),
-                    )
-                )
-
         output_text = str(detail.get("output_text") or "").strip()
         output_items = detail.get("output_items") if isinstance(detail.get("output_items"), list) else None
         generation_attempts = (
@@ -566,6 +543,66 @@ class MaisakaRuntimeDisplayMixin:
             if prompt_record_uris:
                 detail["additional_prompt_html_uris"] = prompt_record_uris
 
+        return parts
+
+    def _build_default_tool_detail_parts(
+        self,
+        *,
+        tool_name: str,
+        tool_call_id: str,
+        tool_args: Any,
+        summary: str,
+        duration_ms: Any,
+        detail: dict[str, Any],
+        planner_style: bool,
+        prompt_panels: Optional[List[RenderableType]] = None,
+    ) -> list[RenderableType]:
+        """构建工具卡片默认内容块。"""
+
+        argument_border_style = "yellow"
+        metrics_border_style = "bright_yellow"
+        reasoning_border_style = "yellow"
+        output_border_style = "bright_yellow"
+        extra_info_border_style = "yellow"
+        detail_labels = self._get_tool_detail_labels(tool_name)
+
+        parts: list[RenderableType] = []
+        header_lines: list[str] = []
+        if summary:
+            header_lines.append(summary)
+        if tool_call_id:
+            header_lines.append(f"调用ID：{tool_call_id}")
+        if isinstance(duration_ms, (int, float)):
+            header_lines.append(f"执行耗时：{round(float(duration_ms), 2)} ms")
+        if header_lines:
+            parts.append(Text("\n".join(header_lines)))
+
+        if isinstance(tool_args, dict) and tool_args:
+            parts.append(
+                Panel(
+                    Pretty(tool_args, expand_all=True),
+                    title="工具参数",
+                    border_style=argument_border_style,
+                    padding=(0, 1),
+                )
+            )
+
+        metrics = detail.get("metrics")
+        if isinstance(metrics, dict):
+            metrics_text = self._build_tool_metrics_text(metrics)
+            if metrics_text:
+                parts.append(
+                    Panel(
+                        Text(metrics_text),
+                        title="执行指标",
+                        border_style=metrics_border_style,
+                        padding=(0, 1),
+                    )
+                )
+
+        parts.extend(prompt_panels or [])
+
+        output_text = str(detail.get("output_text") or "").strip()
         reasoning_text = str(detail.get("reasoning_text") or "").strip()
         if reasoning_text:
             parts.append(
@@ -613,6 +650,7 @@ class MaisakaRuntimeDisplayMixin:
         *,
         stage_title: str,
         planner_style: bool = False,
+        tool_prompt_panels: Optional[Dict[str, List[RenderableType]]] = None,
     ) -> list[RenderableType]:
         """将 tool monitor detail 渲染为与 Planner/Timing 平级的工具卡片。"""
 
@@ -655,6 +693,7 @@ class MaisakaRuntimeDisplayMixin:
                         duration_ms=duration_ms,
                         detail=detail_dict,
                         planner_style=planner_style,
+                        prompt_panels=(tool_prompt_panels or {}).get(tool_call_id),
                     )
                 )
 

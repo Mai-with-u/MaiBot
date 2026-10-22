@@ -148,7 +148,7 @@ export function useModelTour(options: UseModelTourOptions = {}): UseModelTourRet
         setTimeout(() => goToStep(2), 300)
       } else if (
         currentStep === 2 &&
-        didClickTourTarget(event, '[data-tour="add-provider-button"]')
+        didClickTourTarget(event, '[data-tour="add-llm-provider-item"]')
       ) {
         onOpenProviderDialog?.()
         setTimeout(() => goToStep(3), 300)

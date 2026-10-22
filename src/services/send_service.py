@@ -552,11 +552,11 @@ def _build_outbound_session_message(
             and target_stream.context.message.message_info.group_info
         ):
             group_name = target_stream.context.message.message_info.group_info.group_name
-        if group_name:
-            group_info = GroupInfo(
-                group_id=target_stream.group_id,
-                group_name=group_name,
-            )
+        # 群名仅用于显示；官方适配器可能不提供群名，仍须保留群 ID 以按群聊发送。
+        group_info = GroupInfo(
+            group_id=target_stream.group_id,
+            group_name=group_name,
+        )
 
     additional_config: Dict[str, object] = _inherit_platform_io_route_metadata(target_stream)
     if selected_expressions is not None:

@@ -12,14 +12,15 @@ from pydantic import BaseModel
 from sqlmodel import col, delete, select
 
 from src.chat.message_receive.bot import chat_bot
+from src.chat.message_receive.chat_manager import chat_manager as core_chat_manager
 from src.chat.message_receive.message import SessionMessage
 from src.chat.utils.utils import is_bot_self
 from src.common.database.database import get_db_session
 from src.common.database.database_model import Messages, PersonInfo
 from src.common.logger import get_logger
 from src.common.message_repository import find_messages
-from src.common.utils.utils_session import SessionUtils
 from src.config.config import global_config
+from src.services.bot_account_service import WEBUI_BOT_USER_ID
 
 from .serializers import serialize_message_sequence
 
@@ -188,12 +189,12 @@ class ChatHistoryManager:
                     getattr(user_info, "user_cardname", "") or ""
                 )
 
-    def _resolve_session_id(
+    def _resolve_session_ids(
         self,
         group_id: Optional[str] = None,
         user_id: Optional[str] = None,
-    ) -> Optional[str]:
-        """根据会话标识解析内部聊天会话 ID。
+    ) -> Set[str]:
+        """根据会话标识解析已存在的内部聊天会话 ID。
 
         优先按虚拟群聊解析；否则按 WebUI 私聊解析。
 
@@ -202,13 +203,16 @@ class ChatHistoryManager:
             user_id: 用户标识（私聊模式）。
 
         Returns:
-            Optional[str]: 内部聊天会话 ID；当 group_id 与 user_id 均未提供时返回 ``None``。
+            Set[str]: 已存在的聊天流 ID，包含迁移到正式账号归属前的历史聊天流。
         """
-        if group_id:
-            return SessionUtils.calculate_session_id(WEBUI_CHAT_PLATFORM, group_id=group_id)
-        if user_id:
-            return SessionUtils.calculate_session_id(WEBUI_CHAT_PLATFORM, user_id=user_id)
-        return None
+        target_id = group_id or user_id
+        if not target_id:
+            return set()
+        return core_chat_manager.resolve_session_ids_by_target(
+            platform=WEBUI_CHAT_PLATFORM,
+            target_id=target_id,
+            chat_type="group" if group_id else "private",
+        )
 
     def get_history(
         self,
@@ -226,17 +230,25 @@ class ChatHistoryManager:
         Returns:
             List[Dict[str, Any]]: 历史消息列表。
         """
-        session_id = self._resolve_session_id(group_id=group_id, user_id=user_id)
-        if session_id is None:
-            logger.debug("获取聊天历史时缺少 group_id 与 user_id，返回空列表")
+        session_ids = self._resolve_session_ids(group_id=group_id, user_id=user_id)
+        if not session_ids:
+            logger.debug("获取聊天历史时未找到已存在的聊天流，返回空列表")
             return []
         try:
-            messages = find_messages(
-                session_id=session_id,
-                limit=limit,
-                limit_mode="latest",
-                filter_command=False,
-            )
+            # 合并正式账号归属前后的真实聊天流，保持历史连续且不自行计算归属 ID。
+            messages: List[SessionMessage] = []
+            for session_id in session_ids:
+                messages.extend(
+                    find_messages(
+                        session_id=session_id,
+                        limit=limit,
+                        limit_mode="latest",
+                        filter_command=False,
+                    )
+                )
+            messages.sort(key=lambda message: (message.timestamp, message.message_id))
+            if limit > 0:
+                messages = messages[-limit:]
             # 构建 message_id -> SessionMessage 索引，用于回填历史中 reply 段的发送者/内容
             # （DB 中通常只存了 target_message_id，target_message_content/sender_* 缺失）。
             message_index: Dict[str, SessionMessage] = {}
@@ -250,7 +262,7 @@ class ChatHistoryManager:
                 item = self._message_to_dict(msg, group_id)
                 segments = item.get("segments")
                 if segments:
-                    self._enrich_reply_segments(segments, message_index, session_id)
+                    self._enrich_reply_segments(segments, message_index, msg.session_id)
                 result.append(item)
             logger.debug(
                 f"从数据库加载了 {len(result)} 条聊天记录 (group_id={group_id}, user_id={user_id})"
@@ -274,12 +286,12 @@ class ChatHistoryManager:
         Returns:
             int: 被删除的消息数量。
         """
-        session_id = self._resolve_session_id(group_id=group_id, user_id=user_id)
-        if session_id is None:
+        session_ids = self._resolve_session_ids(group_id=group_id, user_id=user_id)
+        if not session_ids:
             return 0
         try:
             with get_db_session() as session:
-                statement = delete(Messages).where(col(Messages.session_id) == session_id)
+                statement = delete(Messages).where(col(Messages.session_id).in_(session_ids))
                 result = session.exec(statement)
                 deleted = result.rowcount or 0
             logger.info(
@@ -1143,6 +1155,8 @@ def create_message_data(
     display_content = build_display_content(content, normalized_images, normalized_emojis, normalized_files, normalized_voices)
 
     return {
+        "account_id": WEBUI_BOT_USER_ID if platform == WEBUI_CHAT_PLATFORM else None,
+        "scope": None,
         "message_info": message_info,
         "message_segment": {
             "type": "seglist",

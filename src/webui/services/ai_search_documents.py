@@ -11,7 +11,7 @@ import httpx
 import jieba
 
 from src.common.logger import get_logger
-from src.webui.utils.http_client import get_shared_ssl_context
+from src.common.http_client import get_shared_ssl_context_async
 
 from .ai_search_models import AISearchCandidate
 
@@ -283,7 +283,7 @@ class AISearchDocumentStore:
 
         # 复用共享 SSLContext，避免每次拉取文档包都重新加载整套 CA 证书（实测约 5s/次）
         async with httpx.AsyncClient(
-            verify=get_shared_ssl_context(), follow_redirects=True, timeout=15.0
+            verify=await get_shared_ssl_context_async(), follow_redirects=True, timeout=15.0
         ) as client:
             response = await client.get(OFFICIAL_DOCS_BUNDLE_URL)
             response.raise_for_status()

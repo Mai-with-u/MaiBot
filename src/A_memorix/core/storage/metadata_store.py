@@ -114,7 +114,7 @@ class MetadataStore(
         self._connection_manager = SQLiteConnectionManager(db_path)
         self._connection_manager.connection()
 
-        logger.info(f"数据库已连接: {db_path}")
+        logger.debug(f"数据库已连接: {db_path}")
 
         # 每次建立新连接都按真实表结构判断，避免切换数据目录后沿用旧状态。
         cursor = self._conn.cursor()

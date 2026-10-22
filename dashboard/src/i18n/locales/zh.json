@@ -1,5 +1,19 @@
 {
   "pluginWebUI": {
+    "settingsTitle": "插件页面",
+    "settingsHint": "决定哪些插件页面出现在顶栏、按什么顺序。只保存在当前浏览器，不影响插件权限。",
+    "topbarPreview": "顶栏预览",
+    "moreShort": "更多",
+    "topbarLimit": "顶栏最多放 {{count}} 个，其余进入「更多」",
+    "orderAndVisibility": "排序与显示",
+    "pluginCount": "{{count}} 个插件",
+    "hiddenLabel": "已隐藏",
+    "topbarLabel": "顶栏",
+    "overflowLabel": "更多菜单",
+    "sidebarLabel": "侧栏",
+    "overflowGroup": "以下进入「更多」菜单",
+    "sidebarGroup": "以下插件仅提供侧栏页面",
+    "visibleLabel": "显示",
     "customReload": "重载页面",
     "customStop": "停止页面",
     "customStopped": "页面已停止。点击重载页面可再次运行。",
@@ -86,10 +100,10 @@
       "mcpSettings": "MCP 设置",
       "dataTransfer": "数据管理",
       "statistics": "详细统计数据",
-      "replyEffects": "回复效果",
       "logViewer": "日志查看器",
       "reasoningProcess": "推理过程",
       "maisakaMonitor": "麦麦观察",
+      "agent": "独立 Agent",
       "localChat": "本地聊天室",
       "settings": "WEBUI设置"
     }
@@ -174,6 +188,14 @@
       "messages": "消息数量"
     },
     "distributions": {
+      "metric": "统计指标",
+      "costs": "花费",
+      "tokens": "Token",
+      "ownerTokens": "调用来源Token分布",
+      "modelTokens": "模型Token分布",
+      "moduleTokens": "模块Token分布",
+      "requestTypeTokens": "请求类型Token分布",
+      "chatTokens": "聊天流Token分布",
       "ownerCosts": "调用来源花费分布",
       "modelCosts": "模型花费分布",
       "moduleCosts": "模块花费分布",
@@ -214,6 +236,54 @@
     "logs": "日志"
   },
   "chat": {
+    "computerDesktop": "电脑桌面与接管",
+    "computer": {
+      "desktopSetup": "连接 dsh Desktop",
+      "desktopInstall": "使用 Desktop 自带的 dsh 命令安装桥接插件（Desktop 0.2.1-rc.2 起）：",
+      "desktopConnect": "启动或重启 Desktop，桥接文件通常留空，模型选项留空沿用 Desktop 配置。麦麦的任务会出现在 Desktop 的“麦麦”会话中；退出麦麦不会退出 Desktop。",
+      "dshSetup": "dsh 快速连接步骤",
+      "dshInstall": "尚未安装 dsh 时执行：",
+      "dshModel": "打开 dsh 设置模型和 API Key（已配置可跳过）：",
+      "dshEnable": "选择 dsh CLI 连接方式，启用并保存，然后在“独立 Agent”页面发送任务。找不到程序时，将 ACP 启动程序填写为 dsh.cmd 的绝对路径。",
+      "dshCommand": "预设自动启动：",
+      "disabled": "Agent 未启用",
+      "reasoning": "思考记录",
+      "connecting": "正在连接",
+      "disabled": "电脑功能未启用",
+      "stopped": "沙盒未运行",
+      "manual": "人工接管",
+      "paused": "已暂停决策",
+      "resting": "休息中",
+      "autonomous": "自主运行",
+      "running": "操作执行中",
+      "pause": "暂停决策",
+      "takeover": "接管电脑",
+      "resume": "交还麦麦",
+      "stop": "停止沙盒",
+      "refresh": "刷新画面",
+      "help": "持续取图，接管后可点击画面、右键和输入文字。接管会请求取消当前操作；暂停决策不会中断已提交的操作。",
+      "screen": "电脑桌面",
+      "text": "接管后输入文字，支持中文",
+      "type": "输入文字",
+      "enter": "回车",
+      "takeoverFirst": "请先接管电脑",
+      "toolCall": "工具调用",
+      "toolResult": "执行结果",
+      "failed": "执行失败",
+      "thought": "思考",
+      "eventCount": "{{count}} 条记录",
+      "userMessage": "用户发言",
+      "systemEvent": "自主唤醒",
+      "queued": "等待处理",
+      "noEvents": "暂无运行记录",
+      "inputEvent": "输入与委托",
+      "stepEvent": "模型与工具",
+      "message": "给 Agent 下达任务",
+      "send": "发送",
+      "thinking": "思考中",
+      "tool": "操作中",
+      "idle": "空闲"
+    },
     "setupTrial": {
       "title": "试试和麦麦聊天",
       "description": "先发一句「你好」，确认麦麦能正常回复。",
@@ -385,6 +455,7 @@
     "title": "WEBUI设置",
     "description": "管理您的应用偏好设置",
     "tabs": {
+      "general": "通用",
       "appearance": "外观",
       "security": "安全",
       "other": "其他",
@@ -619,11 +690,18 @@
       "resetAllSettingsBtn": "重置所有设置为默认值",
       "confirmResetAll": "确认重置所有设置",
       "confirmResetAllDesc": "这将把所有界面设置恢复为默认值，包括主题、颜色、动画等偏好设置。此操作不会影响您的登录状态。确定要继续吗？",
-      "configWizardDesc": "重新进行初次配置向导，可以帮助您重新设置系统的基础配置。",
+      "configWizardDesc": "重新进行初次配置，可同时重置登录密码，从密码设置步骤重新开始。",
       "rerunSetup": "重新进行初次配置",
+      "resetSetupPassword": "同时重置登录密码",
+      "resetSetupPasswordDesc": "旧密码将立即失效，其他浏览器需要重新登录。当前浏览器会保持登录并进入密码设置页；新密码保存前使用临时凭证，重启后会重新生成。",
+      "setupPasswordResetSuccess": "密码已重置，即将进入密码设置页。",
+      "setupResetSuccess": "配置向导已重置，即将重新进入。",
+      "setupResetFailed": "无法重置配置向导，请重试。",
       "confirmRerunSetup": "确认重新配置",
       "confirmRerunSetupDesc": "这将带您重新进入初次配置向导。您可以重新设置系统的基础配置项。确定要继续吗？",
       "devToolsDesc": "以下功能仅供开发调试使用，可能会导致页面崩溃或异常。",
+      "alwaysShowUpdateButton": "永远显示更新按钮",
+      "alwaysShowUpdateButtonDesc": "开启后，无论是否检测到更新，始终显示右上角的主程序更新按钮。立即生效。",
       "alwaysShowUpdateNotice": "永远显示更新日志",
       "alwaysShowUpdateNoticeDesc": "开启后，每次进入 WebUI 都会依次弹出更新内容和插件兼容性提醒。刷新页面后生效。",
       "triggerError": "触发测试错误",
@@ -795,7 +873,8 @@
       },
       "customToken": {
         "title": "设置登录密码",
-        "description": ""
+        "description": "不设置的话，每次启动都会换一个随机密码。",
+        "label": "登录密码"
       },
       "botBasic": {
         "title": "Bot基础",
@@ -857,7 +936,7 @@
       "next": "下一步",
       "skip": "跳过向导",
       "complete": "完成配置",
-      "saveToken": "保存密码",
+      "saveToken": "保存并继续",
       "saving": "保存中...",
       "completing": "完成中..."
     },
@@ -870,6 +949,7 @@
     "defaults": {
       "personality": {
         "personality": "是一个大二女大学生，现在正在上网和群友聊天。有轻微攻击性",
+        "behaviorStyle": "自然参与日常聊天，不会没话题硬找话题；先理解上下文，再决定回复或保持安静。",
         "replyStyle": "你的风格平淡简短。可以参考贴吧，知乎和微博的回复风格。不浮夸不长篇大论，不要过分修辞和复杂句。",
         "multipleReplyStyles": {
           "plain": "你的风格平淡但不失讽刺，很简短，很白话。可以参考贴吧、微博的回复风格。",
@@ -887,11 +967,19 @@
         "noticeTitle": "当前仍在使用启动时随机密码",
         "noticeDescription": "需要修改登录密码，如果不修改，每次会随机生成密码",
         "label": "自定义密码 *",
-        "placeholder": "请输入一个安全且容易保存的密码",
+        "placeholder": "输入新密码",
         "description": "",
         "requirements": "密码要求",
-        "show": "显示密码",
-        "hide": "隐藏密码"
+        "show": "显示",
+        "hide": "隐藏",
+        "met": "已满足",
+        "unmet": "未满足",
+        "rules": {
+          "minLength": "10 位以上",
+          "hasUppercase": "大写字母",
+          "hasLowercase": "小写字母",
+          "hasSpecialChar": "特殊符号"
+        }
       },
       "botBasic": {
         "platform": {
@@ -917,7 +1005,7 @@
           "description": "机器人在该平台上的账号标识"
         },
         "nickname": {
-          "label": "昵称 *",
+          "label": "昵称",
           "placeholder": "请输入机器人的昵称",
           "description": "麦麦Bot的名称"
         },
@@ -930,15 +1018,26 @@
         }
       },
       "personality": {
+        "expand": "展开编辑{{field}}",
+        "presets": {
+          "default": "默认（麦麦）",
+          "label": "人设预设",
+          "description": "选择后会替换下方的人格特征、行为风格和回复风格，填入后仍可自由修改。"
+        },
         "personality": {
-          "label": "人格特征 *",
+          "label": "人格特征",
           "placeholder": "描述机器人的人格特质和身份特征（建议 120 字以内）",
-          "description": "例如：是一个女大学生，现在在读大二，会刷贴吧"
+          "description": "描述bot的核心人格特征，影响bot如何认识自己"
+        },
+        "behaviorStyle": {
+          "label": "行为风格",
+          "placeholder": "描述何时参与聊天、如何观察局面以及何时保持安静",
+          "description": "描述bot的行为，决定bot行为方式"
         },
         "replyStyle": {
-          "label": "表达风格 *",
+          "label": "表达风格",
           "placeholder": "描述机器人说话的表达风格、表达习惯",
-          "description": "例如：回复平淡一些，简短一些，说中文，参考贴吧、知乎和微博的回复风格"
+          "description": "直接影响bot如何说话，说话风格"
         },
         "multipleReplyStyle": {
           "label": "备用表达风格",
@@ -1007,7 +1106,7 @@
       "modelSetup": {
         "planner": {
           "identifier": {
-            "label": "用于规划的 模型 名称",
+            "label": "用于 规划思考 的模型",
             "description": "填写 API 服务商对应的模型标识，例如 deepseek-chat。"
           },
           "visual": {
@@ -1016,7 +1115,7 @@
         },
         "replyer": {
           "identifier": {
-            "label": "用于回复的 模型 名称",
+            "label": "用于 回复发言 的模型",
             "description": "填写 API 服务商对应的模型标识，例如 deepseek-chat。"
           },
           "visual": {
@@ -1147,9 +1246,8 @@
       "model": "麦麦模型配置",
       "modelDesc": "配置模型参数",
       "emoji": "表情包",
-      "emojiDesc": "管理麦麦的表情包",
       "expression": "表达方式",
-      "learningDesc": "管理麦麦学习到的表达方式、黑话和俚语",
+      "learningDesc": "管理麦麦学习到的表达方式、黑话和表情包",
       "expressionDesc": "管理麦麦的表达方式",
       "person": "人物信息管理",
       "personDesc": "管理人物信息",

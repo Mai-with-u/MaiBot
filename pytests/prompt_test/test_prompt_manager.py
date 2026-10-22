@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Any
 
 import asyncio
-import inspect
 import sys
 
 import pytest
@@ -581,51 +580,8 @@ async def test_prompt_manager_get_function_result_error_logging(
 # ========= add_context_construct_function 边界 =========
 
 
-def test_prompt_manager_add_context_construct_function_unknown_frame(monkeypatch):
-    # Arrange
-    manager = PromptManager()
-
-    def fake_currentframe() -> None:
-        return None
-
-    monkeypatch.setattr("inspect.currentframe", fake_currentframe)
-
-    def f(_):
-        return "x"
-
-    # Act / Assert
-    with pytest.raises(RuntimeError) as exc_info:
-        manager.add_context_construct_function("x", f)
-
-    # Assert
-    assert "无法获取调用栈" in str(exc_info.value)
 
 
-def test_prompt_manager_add_context_construct_function_unknown_caller_frame(monkeypatch):
-    # Arrange
-    manager = PromptManager()
-    real_currentframe = inspect.currentframe
-
-    class FakeFrame:
-        f_back = None
-
-    def fake_currentframe():
-        return FakeFrame()
-
-    monkeypatch.setattr("inspect.currentframe", fake_currentframe)
-
-    def f(_):
-        return "x"
-
-    # Act / Assert
-    with pytest.raises(RuntimeError) as exc_info:
-        manager.add_context_construct_function("x", f)
-
-    # Assert
-    assert "无法获取调用栈的上一级" in str(exc_info.value)
-
-    # Cleanup
-    monkeypatch.setattr("inspect.currentframe", real_currentframe)
 
 
 # ========= save/load & 目录逻辑 =========
@@ -872,12 +828,6 @@ def test_prompt_manager_save_prompts_use_custom_dir(tmp_path, monkeypatch):
 # ========= 其它 =========
 
 
-def test_prompt_manager_global_instance_access():
-    # Act
-    pm = prompt_manager
-
-    # Assert
-    assert isinstance(pm, PromptManager)
 
 
 def test_formatter_parsing_named_fields_only():

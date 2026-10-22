@@ -1,18 +1,9 @@
-import {
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
-  Edit,
-  ListFilter,
-  Star,
-  StarOff,
-  Trash2,
-} from 'lucide-react'
-import { useState } from 'react'
+import { Edit, ListFilter, Star, Trash2 } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { DataPagination } from '@/components/ui/data-pagination'
+import { DataPanel, PageFrame } from '@/components/ui/surface'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,15 +11,6 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import {
   Table,
@@ -38,7 +20,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 
 import type { Expression } from '@/types/expression'
@@ -59,6 +40,7 @@ export function ExpressionList({
   hideChatColumn = false,
   reviewFilter,
   className,
+  toolbar,
   onEdit,
   onDelete,
   onReviewFilterChange,
@@ -66,7 +48,6 @@ export function ExpressionList({
   onToggleSelect,
   onToggleSelectAll,
   onPageChange,
-  onJumpToPage,
   onPageSizeChange,
 }: {
   expressions: Expression[]
@@ -79,6 +60,7 @@ export function ExpressionList({
   hideChatColumn?: boolean
   reviewFilter: ReviewFilter
   className?: string
+  toolbar?: ReactNode
   onEdit: (expression: Expression) => void
   onDelete: (expression: Expression) => void
   onReviewFilterChange: (filter: ReviewFilter) => void
@@ -86,30 +68,19 @@ export function ExpressionList({
   onToggleSelect: (id: number) => void
   onToggleSelectAll: () => void
   onPageChange: (newPage: number) => void
-  onJumpToPage: (targetPage: string) => void
   onPageSizeChange?: (newPageSize: number) => void
 }) {
-  const { toast } = useToast()
   const [updatingReviewIds, setUpdatingReviewIds] = useState<Set<number>>(new Set())
 
   const getChatName = (expression: Expression): string => {
     return expression.chat_name || chatNameMap.get(expression.chat_id) || expression.chat_id
   }
 
-  const getReviewBadge = (expression: Expression) => {
-    const modifier = expression.modified_by?.toLowerCase()
-
-    if (expression.checked && modifier === 'user') {
-      return <Check className="h-4 w-4 stroke-[3]" aria-label="已精选" />
-    }
-    return null
-  }
-
-  const totalPages = Math.ceil(total / pageSize)
   const tableColSpan = hideChatColumn ? 5 : 6
+  const selectedCount = expressions.filter((expression) => selectedIds.has(expression.id)).length
 
   const isUserApproved = (expression: Expression) => {
-    return expression.checked && expression.modified_by === 'user'
+    return expression.checked && expression.modified_by?.toLowerCase() === 'user'
   }
 
   const handleToggleReviewStatus = async (expression: Expression) => {
@@ -125,51 +96,64 @@ export function ExpressionList({
     }
   }
 
-  const handleJumpToPage = (jumpToPage: string) => {
-    const targetPage = parseInt(jumpToPage)
-    if (targetPage >= 1 && targetPage <= totalPages) {
-      onJumpToPage(jumpToPage)
-    } else {
-      toast({
-        title: '无效的页码',
-        description: `请输入1-${totalPages}之间的页码`,
-        variant: 'destructive',
-      })
-    }
-  }
-
   return (
-    <div className={cn('flex min-h-0 min-w-0 flex-col bg-transparent md:border-2', className)}>
+    <PageFrame
+      desktopOnly
+      data-expression-browser-panel="true"
+      className={cn('flex min-h-0 min-w-0 flex-col', className)}
+    >
+      {toolbar}
       {/* 桌面端表格视图 */}
-      <div
+      <DataPanel
+        padding="none"
+        inset
         data-expression-table-viewport="true"
         className="hidden min-h-0 flex-1 overflow-auto md:block"
       >
-        <Table aria-label="表达方式列表">
+        <Table density="compact" className="table-fixed" aria-label="表达方式列表">
+          <colgroup>
+            <col className="w-11" />
+            <col className={hideChatColumn ? 'w-[36%]' : 'w-[28%]'} />
+            <col />
+            {!hideChatColumn && <col className="w-[18%]" />}
+            <col className="w-24" />
+            <col className="w-24" />
+          </colgroup>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-12">
+              <TableHead>
                 <Checkbox
-                  checked={selectedIds.size === expressions.length && expressions.length > 0}
+                  size="sm"
+                  aria-label="全选本页表达方式"
+                  checked={
+                    selectedCount > 0 && selectedCount === expressions.length
+                      ? true
+                      : selectedCount > 0
+                        ? 'indeterminate'
+                        : false
+                  }
                   onCheckedChange={onToggleSelectAll}
+                  disabled={loading || expressions.length === 0}
                 />
               </TableHead>
               <TableHead>情境</TableHead>
               <TableHead>风格</TableHead>
               {!hideChatColumn && <TableHead>聊天</TableHead>}
               <TableHead>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1">
                   <span>精选</span>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <button
+                      <Button
                         type="button"
-                        className="text-muted-foreground hover:text-foreground focus-visible:ring-ring inline-flex h-7 w-7 items-center justify-center transition-colors focus-visible:ring-1 focus-visible:outline-none"
+                        variant="ghost"
+                        size="icon-xs"
+                        className="text-muted-foreground"
                         title="筛选精选状态"
                         aria-label="筛选精选状态"
                       >
                         <ListFilter className="h-3.5 w-3.5" />
-                      </button>
+                      </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start">
                       <DropdownMenuRadioGroup
@@ -184,7 +168,9 @@ export function ExpressionList({
                   </DropdownMenu>
                 </div>
               </TableHead>
-              <TableHead className="text-right">操作</TableHead>
+              <TableHead>
+                <span className="sr-only">操作</span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -211,17 +197,26 @@ export function ExpressionList({
                 <TableRow key={expression.id}>
                   <TableCell>
                     <Checkbox
+                      size="sm"
+                      aria-label={`选择表达方式：${expression.situation}`}
                       checked={selectedIds.has(expression.id)}
                       onCheckedChange={() => onToggleSelect(expression.id)}
                     />
                   </TableCell>
-                  <TableCell className="max-w-xs truncate font-medium">
+                  <TableCell className="truncate" title={expression.situation}>
                     {expression.situation}
                   </TableCell>
-                  <TableCell className="max-w-xs truncate">{expression.style}</TableCell>
+                  <TableCell title={expression.style}>
+                    <span
+                      data-expression-style="true"
+                      className="bg-muted/30 inline-block max-w-full truncate border-l-2 border-orange-500/80 px-2 py-0.5 align-middle"
+                    >
+                      {expression.style}
+                    </span>
+                  </TableCell>
                   {!hideChatColumn && (
                     <TableCell
-                      className="max-w-[200px] truncate"
+                      className="text-muted-foreground truncate"
                       title={getChatName(expression)}
                       style={{ wordBreak: 'keep-all' }}
                     >
@@ -231,31 +226,25 @@ export function ExpressionList({
                     </TableCell>
                   )}
                   <TableCell>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {getReviewBadge(expression)}
-                    </div>
+                    <Button
+                      variant={isUserApproved(expression) ? 'outline' : 'ghost'}
+                      aria-pressed={isUserApproved(expression)}
+                      size="icon-xs"
+                      onClick={() => handleToggleReviewStatus(expression)}
+                      disabled={updatingReviewIds.has(expression.id)}
+                      title={isUserApproved(expression) ? '取消精选' : '精选'}
+                      aria-label={isUserApproved(expression) ? '取消精选' : '精选'}
+                      className={isUserApproved(expression) ? '' : 'text-muted-foreground'}
+                    >
+                      <Star className={isUserApproved(expression) ? 'text-orange-500' : ''} />
+                    </Button>
                   </TableCell>
                   <TableCell className="text-right">
-                    <div className="flex justify-end gap-2">
+                    <div className="flex justify-end gap-1">
                       <Button
-                        variant={isUserApproved(expression) ? 'outline' : 'default'}
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={() => handleToggleReviewStatus(expression)}
-                        disabled={updatingReviewIds.has(expression.id)}
-                        title={isUserApproved(expression) ? '取消精选' : '精选'}
-                        aria-label={isUserApproved(expression) ? '取消精选' : '精选'}
-                      >
-                        {isUserApproved(expression) ? (
-                          <StarOff className="h-4 w-4" />
-                        ) : (
-                          <Star className="h-4 w-4" />
-                        )}
-                      </Button>
-                      <Button
-                        variant="default"
-                        size="icon"
-                        className="h-8 w-8"
+                        variant="ghost"
+                        size="icon-xs"
+                        className="text-muted-foreground/50 hover:text-foreground focus-visible:text-foreground"
                         onClick={() => onEdit(expression)}
                         title="编辑"
                         aria-label="编辑"
@@ -263,9 +252,10 @@ export function ExpressionList({
                         <Edit className="h-4 w-4" />
                       </Button>
                       <Button
-                        size="icon"
+                        variant="ghost"
+                        size="icon-xs"
+                        className="text-muted-foreground/50 hover:text-destructive focus-visible:text-destructive"
                         onClick={() => onDelete(expression)}
-                        className="h-8 w-8 bg-red-600 text-white hover:bg-red-700"
                         title="删除"
                         aria-label="删除"
                       >
@@ -278,7 +268,7 @@ export function ExpressionList({
             )}
           </TableBody>
         </Table>
-      </div>
+      </DataPanel>
 
       {/* 移动端卡片视图 */}
       <div className="min-w-0 space-y-2 md:hidden">
@@ -297,6 +287,8 @@ export function ExpressionList({
               {/* 复选框和情境 */}
               <div className="flex items-start gap-2">
                 <Checkbox
+                  size="sm"
+                  aria-label={`选择表达方式：${expression.situation}`}
                   checked={selectedIds.has(expression.id)}
                   onCheckedChange={() => onToggleSelect(expression.id)}
                   className="mt-1"
@@ -337,17 +329,11 @@ export function ExpressionList({
                 </div>
               )}
 
-              {isUserApproved(expression) && (
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  {getReviewBadge(expression)}
-                  <span>已精选</span>
-                </div>
-              )}
-
               {/* 操作按钮 */}
               <div className="grid grid-cols-3 gap-2 border-t pt-2">
                 <Button
-                  variant={isUserApproved(expression) ? 'outline' : 'default'}
+                  variant="outline"
+                  aria-pressed={isUserApproved(expression)}
                   size="icon"
                   onClick={() => handleToggleReviewStatus(expression)}
                   disabled={updatingReviewIds.has(expression.id)}
@@ -355,11 +341,9 @@ export function ExpressionList({
                   title={isUserApproved(expression) ? '取消精选' : '精选'}
                   aria-label={isUserApproved(expression) ? '取消精选' : '精选'}
                 >
-                  {isUserApproved(expression) ? (
-                    <StarOff className="h-3 w-3" />
-                  ) : (
-                    <Star className="h-3 w-3" />
-                  )}
+                  <Star
+                    className={cn('h-3 w-3', isUserApproved(expression) && 'text-orange-500')}
+                  />
                 </Button>
                 <Button
                   variant="outline"
@@ -387,152 +371,15 @@ export function ExpressionList({
       </div>
 
       {/* 分页 */}
-      {total > 0 && (
-        <Pagination
-          total={total}
-          page={page}
-          pageSize={pageSize}
-          onPageChange={onPageChange}
-          onJumpToPage={handleJumpToPage}
-          onPageSizeChange={onPageSizeChange}
-        />
-      )}
-    </div>
-  )
-}
-
-/**
- * 分页组件
- */
-function Pagination({
-  total,
-  page,
-  pageSize,
-  onPageChange,
-  onJumpToPage,
-  onPageSizeChange,
-}: {
-  total: number
-  page: number
-  pageSize: number
-  onPageChange: (newPage: number) => void
-  onJumpToPage: (targetPage: string) => void
-  onPageSizeChange?: (newPageSize: number) => void
-}) {
-  const [jumpToPage, setJumpToPage] = useState('')
-  const totalPages = Math.ceil(total / pageSize)
-
-  const handleJump = () => {
-    if (jumpToPage) {
-      onJumpToPage(jumpToPage)
-      setJumpToPage('')
-    }
-  }
-
-  return (
-    <div className="flex flex-col items-center justify-between gap-2 border-t px-3 py-2 sm:flex-row sm:py-1.5">
-      <div className="text-muted-foreground flex items-center gap-2 text-xs">
-        <span>
-          {total} 条 · {page}/{totalPages}
-        </span>
-        {onPageSizeChange && (
-          <div className="flex items-center gap-1.5">
-            <Label htmlFor="page-size" className="whitespace-nowrap">
-              每页
-            </Label>
-            <Select
-              value={pageSize.toString()}
-              onValueChange={(value) => onPageSizeChange(parseInt(value))}
-            >
-              <SelectTrigger id="page-size" className="h-7 w-16 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="10">10</SelectItem>
-                <SelectItem value="20">20</SelectItem>
-                <SelectItem value="50">50</SelectItem>
-                <SelectItem value="100">100</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        )}
-      </div>
-      <div className="flex w-full flex-wrap items-center justify-center gap-1.5 sm:w-auto sm:flex-nowrap">
-        {/* 首页 */}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => onPageChange(1)}
-          disabled={page === 1}
-          className="hidden h-7 px-2 sm:flex"
-          title="首页"
-          aria-label="首页"
-        >
-          <ChevronsLeft className="h-3.5 w-3.5" />
-        </Button>
-
-        {/* 上一页 */}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => onPageChange(page - 1)}
-          disabled={page === 1}
-          className="h-7 px-2"
-          title="上一页"
-          aria-label="上一页"
-        >
-          <ChevronLeft className="h-3.5 w-3.5" />
-        </Button>
-
-        {/* 页码跳转 */}
-        <div className="flex items-center gap-1.5">
-          <Input
-            type="number"
-            value={jumpToPage}
-            onChange={(e) => setJumpToPage(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleJump()}
-            placeholder={page.toString()}
-            className="h-7 w-12 text-center text-xs"
-            min={1}
-            max={totalPages}
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleJump}
-            disabled={!jumpToPage}
-            className="h-7 px-2 text-xs"
-          >
-            跳
-          </Button>
-        </div>
-
-        {/* 下一页 */}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => onPageChange(page + 1)}
-          disabled={page >= totalPages}
-          className="h-7 px-2"
-          title="下一页"
-          aria-label="下一页"
-        >
-          <ChevronRight className="h-3.5 w-3.5" />
-        </Button>
-
-        {/* 末页 */}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => onPageChange(totalPages)}
-          disabled={page >= totalPages}
-          className="hidden h-7 px-2 sm:flex"
-          title="末页"
-          aria-label="末页"
-        >
-          <ChevronsRight className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-    </div>
+      <DataPagination
+        total={total}
+        page={page}
+        pageSize={pageSize}
+        onPageChange={onPageChange}
+        onPageSizeChange={onPageSizeChange}
+        disabled={loading}
+        className="shrink-0"
+      />
+    </PageFrame>
   )
 }

@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react'
+import { TimeRangeTrack, TimeRangeTicks } from '@/components/ui/time-range-track'
+import { formatTalkTimeRange, getTimelineSegments, parseTalkTimeRange, type TimelineRange } from '@/lib/time-range'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 
 import {
   AlertCircle,
@@ -210,15 +212,6 @@ interface TalkRuleTimelineGroup {
   hasWildcard: boolean
   items: TalkRuleTimelineItem[]
 }
-
-interface TimelineRange {
-  end: number
-  start: number
-}
-
-const DAY_MINUTES = 24 * 60
-const TIMELINE_TICKS = [0, 3, 6, 9, 12, 15, 18, 21, 24]
-const TIMELINE_DRAG_STEP_MINUTES = 5
 
 const ruleTypeLabel = (rule: unknown) => {
   if (rule === 'private') return '私聊'
@@ -1626,52 +1619,7 @@ function ExpressionGroupMemberItem({
   )
 }
 
-const parseTimelineMinute = (value: string) => {
-  const match = /^(\d{1,2}):(\d{1,2})$/.exec(value.trim())
-  if (!match) return null
-
-  const hour = Number(match[1])
-  const minute = Number(match[2])
-  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null
-  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null
-
-  return hour * 60 + minute
-}
-
-const formatTimelineMinute = (minute: number) => {
-  const normalizedMinute = Math.max(0, Math.min(DAY_MINUTES - 1, Math.round(minute)))
-  const hour = Math.floor(normalizedMinute / 60)
-  const minuteInHour = normalizedMinute % 60
-  return `${hour.toString().padStart(2, '0')}:${minuteInHour.toString().padStart(2, '0')}`
-}
-
-const parseTalkTimeRange = (time: string): TimelineRange | null => {
-  const [startRaw, endRaw, extra] = time.trim().split('-')
-  const start = startRaw ? parseTimelineMinute(startRaw) : null
-  const end = endRaw ? parseTimelineMinute(endRaw) : null
-  if (extra !== undefined || start === null || end === null) {
-    return null
-  }
-  return { start, end }
-}
-
-const formatTalkTimeRange = (range: TimelineRange) => {
-  return `${formatTimelineMinute(range.start)}-${formatTimelineMinute(range.end)}`
-}
-
-const getTimelineMinuteFromClient = (clientX: number, timelineElement: HTMLElement) => {
-  const rect = timelineElement.getBoundingClientRect()
-  const relativeX = Math.max(0, Math.min(rect.width, clientX - rect.left))
-  const rawMinute = (relativeX / rect.width) * (DAY_MINUTES - 1)
-  return Math.round(rawMinute / TIMELINE_DRAG_STEP_MINUTES) * TIMELINE_DRAG_STEP_MINUTES
-}
-
 const fullDaySegment = (): TimelineSegment => ({ left: 0, width: 100 })
-
-const segmentFromMinutes = (start: number, end: number): TimelineSegment => ({
-  left: (start / DAY_MINUTES) * 100,
-  width: Math.max(((end - start) / DAY_MINUTES) * 100, 0.18),
-})
 
 const parseTalkTimeSegments = (time: string): { invalid: boolean; label: string; segments: TimelineSegment[] } => {
   const normalizedTime = time.trim()
@@ -1686,17 +1634,7 @@ const parseTalkTimeSegments = (time: string): { invalid: boolean; label: string;
   if (!range) {
     return { invalid: true, label: '时间格式错误', segments: [fullDaySegment()] }
   }
-  const { end, start } = range
-
-  if (start <= end) {
-    return { invalid: false, label: normalizedTime, segments: [segmentFromMinutes(start, end + 1)] }
-  }
-
-  return {
-    invalid: false,
-    label: `${normalizedTime} 跨夜`,
-    segments: [segmentFromMinutes(start, DAY_MINUTES), segmentFromMinutes(0, end + 1)],
-  }
+  return { invalid: false, label: range.start > range.end ? `${normalizedTime} 跨夜` : normalizedTime, segments: getTimelineSegments(range) }
 }
 
 const normalizeTalkValue = (value: unknown) => {
@@ -1878,89 +1816,8 @@ function TalkValueTimelineOverview({
 }) {
   const timelineItems = buildTalkTimelineItems(items)
   const timelineGroups = groupTalkTimelineItems(timelineItems)
-  const dragFrameRef = useRef<number | null>(null)
   const draggingTrackRef = useRef<{ groupKey: string; index: number } | null>(null)
-  const lastDragTimeRef = useRef<string | null>(null)
-  const pendingDragRef = useRef<{
-    clientX: number
-    edge: 'end' | 'start'
-    item: TalkRuleTimelineItem
-    timelineElement: HTMLElement
-  } | null>(null)
-  if (timelineItems.length === 0) {
-    return null
-  }
-
-  const commitRangeUpdate = (
-    item: TalkRuleTimelineItem,
-    edge: 'end' | 'start',
-    timelineElement: HTMLElement,
-    clientX: number,
-  ) => {
-    if (!item.range) {
-      return
-    }
-
-    const nextMinute = getTimelineMinuteFromClient(clientX, timelineElement)
-    const nextRange =
-      edge === 'start'
-        ? { ...item.range, start: nextMinute }
-        : { ...item.range, end: nextMinute }
-    const nextTime = formatTalkTimeRange(nextRange)
-    if (lastDragTimeRef.current === nextTime) {
-      return
-    }
-
-    lastDragTimeRef.current = nextTime
-    onItemFieldChange(item.index, 'time', nextTime)
-  }
-
-  const scheduleRangeUpdate = (
-    event: PointerEvent<HTMLElement>,
-    item: TalkRuleTimelineItem,
-    edge: 'end' | 'start',
-  ) => {
-    const timelineElement = event.currentTarget.closest('[data-talk-timeline-track]')
-    if (!(timelineElement instanceof HTMLElement)) {
-      return
-    }
-
-    pendingDragRef.current = {
-      clientX: event.clientX,
-      edge,
-      item,
-      timelineElement,
-    }
-
-    if (dragFrameRef.current !== null) {
-      return
-    }
-
-    dragFrameRef.current = window.requestAnimationFrame(() => {
-      dragFrameRef.current = null
-      const pendingDrag = pendingDragRef.current
-      if (!pendingDrag) {
-        return
-      }
-      commitRangeUpdate(
-        pendingDrag.item,
-        pendingDrag.edge,
-        pendingDrag.timelineElement,
-        pendingDrag.clientX,
-      )
-    })
-  }
-
-  const startRangeDrag = (
-    event: PointerEvent<HTMLElement>,
-    item: TalkRuleTimelineItem,
-    edge: 'end' | 'start',
-  ) => {
-    event.preventDefault()
-    lastDragTimeRef.current = null
-    event.currentTarget.setPointerCapture(event.pointerId)
-    scheduleRangeUpdate(event, item, edge)
-  }
+  if (timelineItems.length === 0) return null
 
   const reorderTrack = (targetItem: TalkRuleTimelineItem) => {
     const draggingTrack = draggingTrackRef.current
@@ -1989,17 +1846,7 @@ function TalkValueTimelineOverview({
         <div className="min-w-[540px] p-2.5">
           <div className="grid grid-cols-[5.5rem_minmax(16rem,1fr)_6.5rem] gap-2 pb-1.5 text-[11px] text-muted-foreground">
             <div>轨道</div>
-            <div className="relative h-4 px-1">
-              {TIMELINE_TICKS.map((hour) => (
-                <span
-                  key={hour}
-                  className="absolute -translate-x-1/2"
-                  style={{ left: `${(hour / 24) * 100}%` }}
-                >
-                  {hour.toString().padStart(2, '0')}:00
-                </span>
-              ))}
-            </div>
+            <TimeRangeTicks />
             <div>频率</div>
           </div>
           <div className="space-y-2.5">
@@ -2092,67 +1939,10 @@ function TalkValueTimelineOverview({
                         </div>
                         </div>
                       </div>
-                      <div
-                        className="relative h-7 rounded-md border bg-background"
-                        data-talk-timeline-track
-                      >
-                        {TIMELINE_TICKS.slice(1, -1).map((hour) => (
-                          <span
-                            key={hour}
-                            className="absolute top-0 h-full border-l border-dashed border-muted-foreground/20"
-                            style={{ left: `${(hour / 24) * 100}%` }}
-                          />
-                        ))}
-                        {item.segments.map((segment, segmentIndex) => (
-                          <span
-                            key={segmentIndex}
-                            className={`absolute top-1/2 h-4 -translate-y-1/2 rounded-sm ${talkValueColor(item.value)} ${
-                              item.invalidTime ? 'opacity-35' : 'opacity-85'
-                            }`}
-                            style={{
-                              left: `${segment.left}%`,
-                              width: `${segment.width}%`,
-                            }}
-                            title={`${item.timeLabel} · 频率 ${item.value.toFixed(2)}`}
-                          />
-                        ))}
-                        {item.range && !item.invalidTime && (
-                          <>
-                            <button
-                              type="button"
-                              className="absolute top-1/2 h-6 w-2 -translate-x-1/2 -translate-y-1/2 rounded-sm border border-background bg-foreground/80 shadow-sm cursor-ew-resize"
-                              style={{ left: `${(item.range.start / DAY_MINUTES) * 100}%` }}
-                              aria-label={`调整${group.label}轨道 ${trackIndex + 1} 开始时间`}
-                              onPointerDown={(event) => startRangeDrag(event, item, 'start')}
-                              onPointerMove={(event) => {
-                                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                                  scheduleRangeUpdate(event, item, 'start')
-                                }
-                              }}
-                              onPointerUp={(event) => {
-                                pendingDragRef.current = null
-                                event.currentTarget.releasePointerCapture(event.pointerId)
-                              }}
-                            />
-                            <button
-                              type="button"
-                              className="absolute top-1/2 h-6 w-2 -translate-x-1/2 -translate-y-1/2 rounded-sm border border-background bg-foreground/80 shadow-sm cursor-ew-resize"
-                              style={{ left: `${((item.range.end + 1) / DAY_MINUTES) * 100}%` }}
-                              aria-label={`调整${group.label}轨道 ${trackIndex + 1} 结束时间`}
-                              onPointerDown={(event) => startRangeDrag(event, item, 'end')}
-                              onPointerMove={(event) => {
-                                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                                  scheduleRangeUpdate(event, item, 'end')
-                                }
-                              }}
-                              onPointerUp={(event) => {
-                                pendingDragRef.current = null
-                                event.currentTarget.releasePointerCapture(event.pointerId)
-                              }}
-                            />
-                          </>
-                        )}
-                      </div>
+                      <TimeRangeTrack range={item.range} segments={item.segments}
+                        disabled={item.invalidTime} label={`${group.label}轨道 ${trackIndex + 1} `}
+                        colorClassName={`${talkValueColor(item.value)} ${item.invalidTime ? 'opacity-35' : 'opacity-85'}`}
+                        onChange={(next) => onItemFieldChange(item.index, 'time', formatTalkTimeRange(next))} />
                       <div className="grid grid-cols-[minmax(0,1fr)_1.75rem] items-center gap-1.5">
                         <div>
                           <Slider
@@ -2161,8 +1951,8 @@ function TalkValueTimelineOverview({
                             max={1}
                             step={0.01}
                             onValueChange={(values) => onItemFieldChange(item.index, 'value', values[0])}
-                            data-dashboard-slider="config"
-                            data-dashboard-slider-value-format="fixed-2"
+                            variant="value"
+                            valueFormat="fixed-2"
                           />
                         </div>
                         <Button
@@ -2343,8 +2133,8 @@ function TalkValueGroupedRuleEditor({
                         max={1}
                         step={0.01}
                         onValueChange={(values) => onItemFieldChange(item.index, 'value', values[0])}
-                        data-dashboard-slider="config"
-                        data-dashboard-slider-value-format="fixed-2"
+                        variant="value"
+                        valueFormat="fixed-2"
                       />
                       <Input
                         type="number"
@@ -2680,7 +2470,7 @@ function createStringListHook(options: StringListHookOptions): FieldHookComponen
             {items.map((item, itemIndex) => (
               <div
                 key={itemIndex}
-                className={`grid gap-2 sm:grid-cols-[minmax(0,1fr)_2.5rem]${options.borderless ? '' : ' rounded-md border bg-muted/20 p-3'}`}
+                className={`grid grid-cols-[minmax(0,1fr)_2.5rem] items-start gap-2${options.borderless ? '' : ' rounded-md border bg-muted/20 p-3'}`}
               >
                 <InputComponent
                   value={item}
@@ -2746,6 +2536,7 @@ export const AliasNamesHook: FieldHookComponent = (props) => {
 
 export const MultipleReplyStyleHook = createStringListHook({
   addLabel: '添加表达风格',
+  borderless: true,
   emptyText: '暂无备用表达风格。',
   label: '备用表达风格',
   multiline: true,

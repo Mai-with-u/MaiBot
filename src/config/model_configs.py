@@ -2,6 +2,7 @@ from enum import Enum
 from typing import Any, List, Literal, Tuple
 
 from src.common.i18n import t
+from src.web_search.config import WebSearchTaskConfig
 
 from .config_base import ConfigBase, Field
 
@@ -443,6 +444,12 @@ class TaskConfig(ConfigBase):
 
 class ModelTaskConfig(ConfigBase):
     """模型配置类"""
+
+    web_search: WebSearchTaskConfig = Field(
+        default_factory=WebSearchTaskConfig,
+        json_schema_extra={"x-widget": "custom", "label": {"zh_CN": "联网搜索 (web_search)"}},
+    )
+    """选择已定义的联网服务，用于搜索和网页读取；未分配时不开放统一联网工具。"""
 
     replyer: TaskConfig = Field(
         default_factory=TaskConfig,

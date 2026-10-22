@@ -28,10 +28,11 @@ import { getChatTabDisplayName } from './utils'
 const SWIPE_ACTION_WIDTH = 76
 const SWIPE_OPEN_THRESHOLD = 40
 
-/** 顶栏随滚动隐藏前需要的最小滚动距离 */
-const FLOATING_HEADER_SCROLL_DELTA = 6
-/** 手指或滚轮操作后这段时间内的滚动才算用户滚动；自动跟随新消息不收起顶栏 */
-const FLOATING_HEADER_GESTURE_MS = 600
+/** 按同方向累计位移切换顶栏，过滤慢滑的小步进和手指抖动。 */
+const FLOATING_HEADER_HIDE_DISTANCE = 32
+const FLOATING_HEADER_SHOW_DISTANCE = 16
+/** 连续滚动事件延续手势，包含松手后的惯性；自动跟随新消息不收起顶栏。 */
+const FLOATING_HEADER_SCROLL_IDLE_MS = 180
 
 interface MobileFloatingHeaderProps {
   children: ReactNode
@@ -63,31 +64,51 @@ export function MobileFloatingHeader({ children }: MobileFloatingHeaderProps) {
   useEffect(() => {
     const container = headerRef.current?.parentElement
     if (!container) return
-    let lastGestureAt = 0
-    const lastScrollTops = new WeakMap<EventTarget, number>()
-    const markGesture = () => {
+    let lastGestureAt = -Infinity
+    let directionDistance = 0
+    let gestureViewport: HTMLElement | null = null
+    const lastScrollTops = new WeakMap<HTMLElement, number>()
+    const markGesture = (event: Event) => {
+      const target = event.target
+      if (!(target instanceof Element) || headerRef.current?.contains(target)) return
+      const viewport = target.closest<HTMLElement>('[data-radix-scroll-area-viewport]')
+      if (!viewport) return
+      if (event.type === 'touchstart' || gestureViewport !== viewport || Date.now() - lastGestureAt > FLOATING_HEADER_SCROLL_IDLE_MS) {
+        directionDistance = 0
+        lastScrollTops.set(viewport, viewport.scrollTop)
+      }
+      gestureViewport = viewport
       lastGestureAt = Date.now()
     }
     const handleScroll = (event: Event) => {
       const target = event.target
-      if (!(target instanceof HTMLElement) || headerRef.current?.contains(target)) return
-      const scrollTop = target.scrollTop
+      // 只观察时间线视口，代码块等内嵌滚动区域不控制顶栏。
+      if (!(target instanceof HTMLElement) || !target.matches('[data-radix-scroll-area-viewport]')) return
+      const scrollTop = Math.max(0, Math.min(target.scrollTop, target.scrollHeight - target.clientHeight))
       const previous = lastScrollTops.get(target) ?? scrollTop
       lastScrollTops.set(target, scrollTop)
-      // 回到顶部附近始终显示
+      // 回到顶部附近始终显示，边界回弹不触发方向切换。
       if (scrollTop <= 8) {
+        directionDistance = 0
         setHidden(false)
         return
       }
-      if (Date.now() - lastGestureAt > FLOATING_HEADER_GESTURE_MS) return
+      if (target !== gestureViewport || Date.now() - lastGestureAt > FLOATING_HEADER_SCROLL_IDLE_MS) return
+      lastGestureAt = Date.now()
       const delta = scrollTop - previous
-      if (delta > FLOATING_HEADER_SCROLL_DELTA) setHidden(true)
-      else if (delta < -FLOATING_HEADER_SCROLL_DELTA) setHidden(false)
+      if (delta === 0) return
+      directionDistance = Math.sign(delta) === Math.sign(directionDistance)
+        ? directionDistance + delta
+        : delta
+      if (directionDistance >= FLOATING_HEADER_HIDE_DISTANCE) setHidden(true)
+      else if (directionDistance <= -FLOATING_HEADER_SHOW_DISTANCE) setHidden(false)
     }
+    container.addEventListener('touchstart', markGesture, { passive: true })
     container.addEventListener('touchmove', markGesture, { passive: true })
     container.addEventListener('wheel', markGesture, { passive: true })
     container.addEventListener('scroll', handleScroll, { capture: true, passive: true })
     return () => {
+      container.removeEventListener('touchstart', markGesture)
       container.removeEventListener('touchmove', markGesture)
       container.removeEventListener('wheel', markGesture)
       container.removeEventListener('scroll', handleScroll, { capture: true })

@@ -1,5 +1,6 @@
 import { ChevronRight, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
 import { BackgroundLayer } from '@/components/background-layer'
@@ -45,12 +46,66 @@ export function Sidebar({
   const builtInMenuSections = useMenuSections()
   const menuSections = suppliedMenuSections ?? builtInMenuSections
   const [hoverExpanded, setHoverExpanded] = useState(false)
+  const [groupFlyout, setGroupFlyout] = useState<{
+    title: string
+    left: number
+    top: number
+    width: number
+    height: number
+  } | null>(null)
+  const groupSourceRef = useRef<HTMLLIElement | null>(null)
+  const groupBridgeRef = useRef<HTMLDivElement | null>(null)
   const [fixTransitionActive, setFixTransitionActive] = useState(false)
   const [collapseTransitionActive, setCollapseTransitionActive] = useState(false)
   const hoverExpandTimerRef = useRef<number | null>(null)
   const collapseTransitionTimerRef = useRef<number | null>(null)
   const sidebarRevealed = !isMillennium && (sidebarOpen || hoverExpanded || fixTransitionActive)
   const visuallyOpen = sidebarRevealed || (!isMillennium && collapseTransitionActive)
+
+  const closeGroupFlyout = useCallback(() => setGroupFlyout(null), [])
+  const handleGroupWheel = useCallback((event: WheelEvent) => {
+    if (event.ctrlKey || event.deltaY === 0) return
+    const viewport = groupSourceRef.current?.closest<HTMLElement>('[data-dashboard-scrollbar-viewport="true"]')
+    if (!viewport) return
+    // 组内间隙也属于侧栏，滚轮不能穿透到后面的页面。
+    event.preventDefault()
+    event.stopPropagation()
+    const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+      ? 16
+      : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? viewport.clientHeight : 1
+    viewport.scrollTop += event.deltaY * unit
+  }, [])
+  const setGroupBridgeRef = useCallback((node: HTMLDivElement | null) => {
+    groupBridgeRef.current?.removeEventListener('wheel', handleGroupWheel)
+    groupBridgeRef.current = node
+    node?.addEventListener('wheel', handleGroupWheel, { passive: false })
+  }, [handleGroupWheel])
+
+  const openGroupFlyout = (section: MenuSection, node: HTMLLIElement) => {
+    if (!isMillennium || !window.matchMedia('(min-width: 1024px)').matches) return
+    const links = Array.from(node.querySelectorAll<HTMLElement>('[data-dashboard-nav-item="true"]'))
+    if (!links.length) return
+    groupSourceRef.current = node
+    const firstRect = links[0].getBoundingClientRect()
+    const sectionRect = node.getBoundingClientRect()
+    const viewport = node.closest('[data-dashboard-scrollbar-viewport="true"]')!
+    const viewportRect = viewport.getBoundingClientRect()
+    // 组间透明接触面也限制在可滚动区域内，不能挡住顶栏或底部内容。
+    const top = Math.max(sectionRect.top, viewportRect.top)
+    const bottom = Math.min(sectionRect.bottom + 6, viewportRect.bottom)
+    // 所有键帽按组内最长标签展开为同宽，图标保持在原位。
+    const width = Math.max(...links.map((link) => {
+      const label = link.querySelector<HTMLElement>('[data-dashboard-nav-label="true"]')!
+      return (firstRect.width - 20) / 2 + 20 + 12 + label.scrollWidth + 16
+    }))
+    setGroupFlyout((current) => current?.title === section.title ? current : {
+      title: section.title,
+      left: firstRect.left,
+      top,
+      width,
+      height: Math.max(0, bottom - top),
+    })
+  }
 
   const cancelHoverExpand = useCallback(() => {
     if (hoverExpandTimerRef.current !== null) {
@@ -199,7 +254,21 @@ export function Sidebar({
             )}
           >
             {menuSections.map((section, sectionIndex) => (
-              <li key={section.title}>
+              <li
+                key={section.title}
+                data-dashboard-sidebar-group={section.title}
+                onPointerEnter={(event) => {
+                  if (event.pointerType === 'mouse') openGroupFlyout(section, event.currentTarget)
+                }}
+                onPointerLeave={closeGroupFlyout}
+                onFocus={(event) => openGroupFlyout(section, event.currentTarget)}
+                onBlur={(event) => {
+                  const next = event.relatedTarget
+                  if (!(next instanceof Element) || next.closest('[data-dashboard-sidebar-group]')?.getAttribute('data-dashboard-sidebar-group') !== section.title) {
+                    closeGroupFlyout()
+                  }
+                }}
+              >
                 {/* 块标题 - 移动端始终可见，千禧桌面端以小字常驻，其它风格根据 sidebarOpen 切换 */}
                 <div
                   className={cn(
@@ -252,10 +321,29 @@ export function Sidebar({
                       item={item}
                       sidebarOpen={sidebarRevealed}
                       expandOnHover={isMillennium}
+                      groupFlyoutWidth={isMillennium && groupFlyout?.title === section.title ? groupFlyout.width : undefined}
+                      groupFlyoutId={isMillennium ? section.title : undefined}
+                      onGroupFlyoutClose={isMillennium ? closeGroupFlyout : undefined}
                       onMobileMenuClose={onMobileMenuClose}
                     />
                   ))}
                 </ul>
+                {/* 透明接触面覆盖整组间隙，移到展开区域或在按钮之间移动时不会收起。 */}
+                {isMillennium && groupFlyout?.title === section.title && createPortal(
+                  <div
+                    ref={setGroupBridgeRef}
+                    aria-hidden="true"
+                    data-dashboard-sidebar-group={section.title}
+                    className="fixed z-[59] max-lg:hidden"
+                    style={{
+                      left: groupFlyout.left - 6,
+                      top: groupFlyout.top,
+                      width: groupFlyout.width + 12,
+                      height: groupFlyout.height,
+                    }}
+                  />,
+                  document.body
+                )}
               </li>
             ))}
           </ul>

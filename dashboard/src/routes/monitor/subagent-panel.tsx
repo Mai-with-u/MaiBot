@@ -103,9 +103,9 @@ export function SubagentToggleButton() {
 
   return (
     <Button
-      variant="ghost"
+      variant="outline"
       size="sm"
-      className={cn('h-6 shrink-0 border-0! px-2 text-[11px]', open && 'bg-accent')}
+      className="shrink-0"
       onClick={() => setSubagentPanelState({ open: !open, focusCallId: null })}
       title={open ? '收起子代理侧边栏' : '展开子代理侧边栏'}
       aria-pressed={open}

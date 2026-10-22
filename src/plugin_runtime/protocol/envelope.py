@@ -17,7 +17,7 @@ from src.plugin_runtime.webui_schema import WebUIExtension
 
 # ====== 协议常量 ======
 PROTOCOL_VERSION = "1.0.0"
-# 支持的 SDK 版本范围（Host 在握手时校验）
+# 建议的 SDK 版本范围（Host 握手时超出范围仅警告，不拒绝连接）
 MIN_SDK_VERSION = "1.0.0"
 MAX_SDK_VERSION = "2.99.99"
 

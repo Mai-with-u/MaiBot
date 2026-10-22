@@ -536,7 +536,7 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
                 value={levelFilter}
                 onValueChange={(value) => handleLevelFilterChange(value as LogLevelFilter)}
               >
-                <SelectTrigger className="h-8 w-full text-xs sm:flex-1">
+                <SelectTrigger controlSize="sm" className="w-full text-xs sm:flex-1">
                   <Filter className="mr-1.5 h-3.5 w-3.5" />
                   <SelectValue placeholder="最低级别" />
                 </SelectTrigger>
@@ -1148,16 +1148,16 @@ export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
           data-log-viewer-switcher={includeTopbarActions ? 'true' : undefined}
           data-log-viewer-switcher-compact={includeTopbarActions && compact ? 'true' : undefined}
         >
-          <TabsTrigger value="terminal" className={triggerClassName} aria-label="终端">
-            <Terminal className="h-4 w-4" />
+          <TabsTrigger value="terminal" size={includeTopbarActions ? 'sm' : 'default'} className={triggerClassName} aria-label="终端">
+            <Terminal className="h-4 w-4 shrink-0" />
             <span className={labelClassName}>终端</span>
           </TabsTrigger>
-          <TabsTrigger value="reasoning" className={triggerClassName} aria-label="推理过程">
-            <BrainCircuit className="h-4 w-4" />
+          <TabsTrigger value="reasoning" size={includeTopbarActions ? 'sm' : 'default'} className={triggerClassName} aria-label="推理过程">
+            <BrainCircuit className="h-4 w-4 shrink-0" />
             <span className={labelClassName}>推理过程</span>
           </TabsTrigger>
-          <TabsTrigger value="statistics" className={triggerClassName} aria-label="详细统计">
-            <BarChart3 className="h-4 w-4" />
+          <TabsTrigger value="statistics" size={includeTopbarActions ? 'sm' : 'default'} className={triggerClassName} aria-label="详细统计">
+            <BarChart3 className="h-4 w-4 shrink-0" />
             <span className={labelClassName}>详细统计</span>
           </TabsTrigger>
         </TabsList>

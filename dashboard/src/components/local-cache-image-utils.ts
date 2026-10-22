@@ -15,6 +15,13 @@ export function formatLocalCacheBytes(bytes: number): string {
   return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
 }
 
+export function formatLocalCacheModifiedTime(timestamp: number): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return '-'
+  }
+  return new Date(timestamp * 1000).toLocaleString('zh-CN')
+}
+
 export function formatLocalCacheCleanupDescription(result: {
   removed_bytes?: number
   removed_files?: number

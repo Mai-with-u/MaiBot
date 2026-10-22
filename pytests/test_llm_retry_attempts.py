@@ -12,6 +12,7 @@ from src.llm_models.utils_model import LLMOrchestrator
 import src.llm_models.model_client.openai_client as openai_client
 import src.llm_models.model_client.openai_responses_client as openai_responses_client
 import src.llm_models.utils_model as utils_model
+import src.services.model_task_usage_service as usage_service
 
 
 @pytest.mark.asyncio
@@ -36,6 +37,7 @@ async def test_timed_out_request_is_sent_at_most_max_retry_times(
         openai_responses_client, "save_failed_request_snapshot", lambda **kwargs: tmp_path / "snapshot.json"
     )
     monkeypatch.setattr(utils_model, "update_failed_request_attempt", lambda *args, **kwargs: None)
+    monkeypatch.setattr(usage_service, "record_model_task_usage", lambda *args, **kwargs: None)
     monkeypatch.setattr(LLMOrchestrator, "_schedule_llm_retry_event", lambda self, **kwargs: None)
 
     # 跳过重试间隔等待，但仍让出事件循环，避免 await_task_with_interrupt 的轮询变成忙等
@@ -67,11 +69,12 @@ async def test_timed_out_request_is_sent_at_most_max_retry_times(
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(always_time_out))
     )
     request = ResponseRequest(
-        model_info=ModelInfo(name="test-model", model_identifier="test-model", api_provider="test-provider"),
+        model_info=ModelInfo(model_type="llm", name="test-model", model_identifier="test-model", api_provider="test-provider"),
         context_items=[],
     )
 
     orchestrator = object.__new__(LLMOrchestrator)
+    orchestrator.task_name = "planner"
     orchestrator.request_type = "memory"
     with pytest.raises(ModelAttemptFailed):
         await orchestrator._attempt_request_on_model(provider, client, request)

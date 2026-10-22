@@ -1,5 +1,7 @@
 from typing import Any, TypeVar
 
+from src.web_search.config import WebConfig
+
 from .config_base import ConfigBase
 from .model_configs import APIProvider, ModelInfo, ModelTaskConfig, OpenAICompatibleAuthType, TaskConfig
 
@@ -125,6 +127,7 @@ def create_default_model_config(config_class: type[T]) -> T:
         task_config_fields[field_name] = TaskConfig(**task_template)
 
     return config_class(
+        web=WebConfig(),
         models=[ModelInfo(**model_template) for model_template in build_default_model_templates()],
         model_task_config=ModelTaskConfig(**task_config_fields),
         api_providers=[APIProvider(**provider_template) for provider_template in DEFAULT_PROVIDER_TEMPLATES],

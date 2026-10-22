@@ -245,7 +245,7 @@ class RuntimeCoreCapabilityMixin:
             return {"success": False, "error": str(exc)}
 
     async def _cap_maisaka_context_append(self, plugin_id: str, capability: str, args: Dict[str, Any]) -> Any:
-        """向指定 Maisaka 聊天运行时插入一条图文上下文消息。"""
+        """插入图文上下文；replyable=True 时要求 message_id、user_info，并登记为可回复的用户消息。"""
 
         del capability
 
@@ -259,7 +259,7 @@ class RuntimeCoreCapabilityMixin:
 
         try:
             from src.chat.heart_flow.heartflow_manager import heartflow_manager
-            from src.maisaka.context.messages import SessionBackedMessage
+            from src.maisaka.context.messages import InternalContextMessage, SessionBackedMessage
             from src.maisaka.context.message_adapter import build_visible_text_from_sequence
             from src.plugin_runtime.host.message_utils import PluginMessageUtils
 
@@ -272,13 +272,49 @@ class RuntimeCoreCapabilityMixin:
                 visible_text = "[插件上下文消息]"
 
             source_kind = str(args.get("source_kind") or f"plugin:{plugin_id}").strip() or f"plugin:{plugin_id}"
-            context_message = SessionBackedMessage(
-                raw_message=message_sequence,
-                visible_text=visible_text,
-                timestamp=datetime.now(),
-                message_id=str(args.get("message_id") or "").strip() or None,
-                source_kind=source_kind,
-            )
+            replyable = args.get("replyable", False)
+            if not isinstance(replyable, bool):
+                raise ValueError("replyable 必须为布尔值")
+            if replyable:
+                from src.maisaka.context.history import build_prefixed_message_sequence, build_session_message_visible_text
+                from src.maisaka.context.planner_messages import build_planner_prefix
+
+                # 可回复的插件材料保留真实作者和外部 ID，仅追加历史，不触发逐条入站回复。
+                stream = runtime.chat_stream
+                group_info = (
+                    {"group_id": stream.group_id, "group_name": stream.group_name or ""}
+                    if stream.group_id else None
+                )
+                message = PluginMessageUtils._build_session_message_from_dict({
+                    "message_id": str(args.get("message_id") or "").strip(),
+                    "platform": stream.platform,
+                    "account_id": stream.account_id,
+                    "scope": stream.scope,
+                    "session_id": stream_id,
+                    "message_info": {"user_info": args.get("user_info"), "group_info": group_info},
+                    "raw_message": segments,
+                    "processed_plain_text": visible_text,
+                })
+                user = message.message_info.user_info
+                prefix = build_planner_prefix(
+                    timestamp=message.timestamp,
+                    user_name=user.user_nickname,
+                    message_id=message.message_id,
+                )
+                context_message = SessionBackedMessage.from_session_message(
+                    message,
+                    raw_message=build_prefixed_message_sequence(message.raw_message, prefix),
+                    visible_text=build_session_message_visible_text(message),
+                    source_kind=source_kind,
+                )
+            else:
+                context_message = InternalContextMessage(
+                    raw_message=message_sequence,
+                    visible_text=visible_text,
+                    timestamp=datetime.now(),
+                    message_id=str(args.get("message_id") or "").strip() or None,
+                    source_kind=source_kind,
+                )
             runtime._chat_history.append(context_message)
             return {
                 "success": True,
@@ -286,6 +322,7 @@ class RuntimeCoreCapabilityMixin:
                 "stream_id": stream_id,
                 "visible_text": visible_text,
                 "source_kind": source_kind,
+                "replyable": replyable,
             }
         except Exception as exc:
             logger.error(f"[cap.maisaka.context.append] 执行失败: {exc}", exc_info=True)
@@ -293,6 +330,8 @@ class RuntimeCoreCapabilityMixin:
 
     async def _cap_maisaka_proactive_trigger(self, plugin_id: str, capability: str, args: Dict[str, Any]) -> Any:
         """请求 Maisaka 基于指定聊天流主动处理一轮对话。"""
+
+        from src.chat.heart_flow.heartflow_manager import HeartflowPolicyDeniedError, heartflow_manager
 
         del capability
 
@@ -304,7 +343,6 @@ class RuntimeCoreCapabilityMixin:
             return {"success": False, "error": "缺少必要参数 intent"}
 
         try:
-            from src.chat.heart_flow.heartflow_manager import heartflow_manager
             from src.chat.message_receive.chat_manager import chat_manager
 
             chat_session = chat_manager.get_existing_session_by_session_id(stream_id)
@@ -320,8 +358,66 @@ class RuntimeCoreCapabilityMixin:
                 metadata=args.get("metadata") if isinstance(args.get("metadata"), dict) else None,
             )
             return {"success": True, **result}
+        except HeartflowPolicyDeniedError as exc:
+            return {"success": False, "error": str(exc), "error_code": "adapter_policy_denied"}
         except Exception as exc:
             logger.error(f"[cap.maisaka.proactive.trigger] 执行失败: {exc}", exc_info=True)
+            return {"success": False, "error": str(exc)}
+
+    async def _cap_maisaka_reply_generate(self, plugin_id: str, capability: str, args: Dict[str, Any]) -> Any:
+        """复用 Replyer 人格、表达选择与 Hook 生成文本，结果仅返回调用插件。"""
+
+        del plugin_id, capability
+        from src.chat.heart_flow.heartflow_manager import heartflow_manager
+        from src.chat.message_receive.chat_manager import chat_manager
+        from src.chat.replyer.document_generator import DocumentReplyGenerator
+
+        stream_id = args.get("stream_id")
+        reference = args.get("reference")
+        format_instruction = args.get("format_instruction", "")
+        model_name = args.get("model_name", "")
+        if not isinstance(stream_id, str) or not stream_id.strip():
+            return {"success": False, "error": "缺少必要参数 stream_id"}
+        if not isinstance(reference, str) or not reference.strip() or len(reference) > 500000:
+            return {"success": False, "error": "reference 必须是 1–500000 字的非空文本"}
+        if not isinstance(format_instruction, str) or len(format_instruction) > 8000:
+            return {"success": False, "error": "format_instruction 必须是不超过 8000 字的文本"}
+        if not isinstance(model_name, str) or len(model_name) > 200:
+            return {"success": False, "error": "model_name 必须是不超过 200 字的宿主模型名称"}
+
+        stream_id = stream_id.strip()
+        chat_session = await asyncio.to_thread(chat_manager.get_existing_session_by_session_id, stream_id)
+        if chat_session is None:
+            return {"success": False, "error": f"未找到已存在的聊天流: {stream_id}"}
+
+        try:
+            runtime = await heartflow_manager.get_or_create_heartflow_chat(stream_id)
+
+            async def select_expressions(system_prompt: str) -> str:
+                response = await runtime.run_sub_agent(
+                    context_message_limit=10, system_prompt=system_prompt, request_kind="expression_selector",
+                )
+                return (response.content or "").strip()
+
+            # 独立实例与材料避免后台写作混入正在进行的聊天回复；仍使用真实会话配置和完整 Replyer 链路。
+            replyer = DocumentReplyGenerator(
+                chat_stream=chat_session, request_type="plugin.replyer", model_name=model_name.strip(),
+            )
+            success, result = await replyer.generate_reply_with_context(
+                stream_id=stream_id, chat_history=[], reply_message=None,
+                reply_tool_args={
+                    "reply_reference": reference, "reply_style": "长回复", "_plugin_reply_prompt": format_instruction,
+                },
+                sub_agent_runner=select_expressions, log_reply=False,
+            )
+            if not success:
+                return {"success": False, "error": result.error_message or "Replyer 生成失败"}
+            text = result.completion.response_text.strip()
+            if not text:
+                return {"success": False, "error": "Replyer 返回了空文本"}
+            return {"success": True, "text": text, "selected_expression_ids": result.selected_expression_ids}
+        except Exception as exc:
+            logger.error(f"[cap.maisaka.reply.generate] 执行失败: {exc}", exc_info=True)
             return {"success": False, "error": str(exc)}
 
     @staticmethod

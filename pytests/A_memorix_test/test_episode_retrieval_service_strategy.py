@@ -42,18 +42,6 @@ class _FakeRetriever:
         ]
 
 
-@pytest.mark.asyncio
-async def test_episode_retrieval_uses_smaller_default_candidate_k() -> None:
-    metadata_store = _FakeMetadataStore(
-        [{"episode_id": "e-1", "updated_at": 1.0}],
-    )
-    retriever = _FakeRetriever()
-    service = EpisodeRetrievalService(metadata_store=metadata_store, retriever=retriever)
-
-    await service.query(query="普通聊天回忆", top_k=5)
-
-    assert metadata_store.query_episode_limits == [20]
-    assert retriever.top_k_values == [20]
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,6 @@
 """Host 侧消息网关包装器。"""
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict
 
 from src.common.logger import get_logger
@@ -59,8 +60,10 @@ class MessageGateway:
         Args:
             external_message: 外部消息的字典格式数据。
         """
+        received_at = datetime.now()
         try:
             session_message = self.build_session_message(external_message)
+            session_message.received_at = received_at
         except Exception as e:
             logger.error(f"转换外部消息失败: {e}")
             return

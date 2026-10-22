@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { MaimaiVersion, PluginLoadProgress } from '../types'
 
-const MARKET_LIST_STORAGE_KEY = 'maibot-plugin-market-list-cache-v3'
+const MARKET_LIST_STORAGE_KEY = 'maibot-plugin-market-list-cache-v4'
 
 // 稳定的 mock：backendApi 方法与 ApiError 类在 vi.resetModules 后保持同一引用
 const httpMocks = vi.hoisted(() => {
@@ -47,199 +47,87 @@ async function loadMarketplace() {
 /** 构造一个满足必需字段的插件市场条目 */
 function createMarketItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    id: 'market-a',
-    manifest: {
-      manifest_version: 1,
-      id: 'plugin-a',
-      name: '插件 A',
-      version: '1.0.0',
-      description: '测试插件',
-      author: { name: '作者' },
-      license: 'MIT',
-      host_application: { min_version: '0.10.0' },
-      keywords: ['测试'],
-      plugin_type: 'chat',
-      default_locale: 'zh-CN',
-    },
+    id: 'plugin-a', marketplace_id: 'market-a', stats: null,
+    manifest: { manifest_version: 2, id: 'plugin-a', name: '插件 A', version: '1.0.0',
+      description: '测试插件', author: { name: '作者' }, license: 'MIT',
+      host_application: { min_version: '1.0.0' }, keywords: ['测试'],
+      plugin_type: 'chat', i18n: { default_locale: 'ja', locales_path: '_locales' } },
+    releases: { id: 'market-a', manifest_id: 'plugin-a', repositoryUrl: 'https://github.com/test/a',
+      mode: 'releases', versions: [], recommended_version: null },
     ...overrides,
   }
-}
-
-function mockFetchRawSuccess(items: Array<Record<string, unknown>>): void {
-  httpMocks.backendApi.post.mockResolvedValue({
-    success: true,
-    data: JSON.stringify(items),
-  })
 }
 
 describe('plugin-api/marketplace', () => {
   beforeEach(() => {
     vi.resetModules()
-    httpMocks.backendApi.get.mockImplementation(async (path: string) =>
-      path === '/api/webui/plugins/marketplace' ? { source: 'github' } : { plugins: [] })
+    vi.clearAllMocks()
+    httpMocks.backendApi.get.mockReset().mockResolvedValue({ source: 'official', plugins: [createMarketItem()] })
+    httpMocks.backendApi.post.mockReset()
     localStorage.clear()
     vi.spyOn(console, 'warn').mockImplementation(() => {})
   })
 
-  describe('fetchPluginList', () => {
-    it('兼容与全部列表分别请求和缓存，切换回来复用对应缓存', async () => {
-      httpMocks.backendApi.get.mockImplementation(async (_path: string, options: { query: { compatible_only: boolean } }) => ({
-        source: 'service',
-        details: options.query.compatible_only ? [createMarketItem()] : [createMarketItem(), createMarketItem({ id: 'market-b' })],
-        catalog: { plugins: [] },
-        stats: {},
-      }))
-      const marketplace = await loadMarketplace()
-      expect(await marketplace.fetchPluginList({ compatibleOnly: true })).toHaveLength(1)
-      expect(await marketplace.fetchPluginList({ compatibleOnly: false })).toHaveLength(2)
-      expect(await marketplace.fetchPluginList({ compatibleOnly: true })).toHaveLength(1)
-      expect(httpMocks.backendApi.get).toHaveBeenCalledTimes(2)
-      expect(marketplace.getCachedPluginList(true)).toHaveLength(1)
-      expect(marketplace.getCachedPluginList(false)).toHaveLength(2)
-      marketplace.invalidatePluginMarketCache()
-      expect(marketplace.getCachedPluginList(true)).toBeNull()
-      expect(marketplace.getCachedPluginList(false)).toBeNull()
-    })
-
-    it('插件中心复合列表保留统计，不再拉取 GitHub 清单，切换来源清空缓存', async () => {
-      httpMocks.backendApi.get.mockResolvedValue({
-        source: 'service',
-        details: [createMarketItem()],
-        catalog: { plugins: [] },
-        stats: { 'plugin-a': { plugin_id: 'plugin-a', downloads: 12, likes: 3, dislikes: 0, rating: 4, rating_count: 2, comment_count: 2 } },
-      })
+  describe('公共市场列表与文档', () => {
+    it.each(['official', 'cnb', 'github'])('信息源 %s 都只调用公共列表接口', async (source) => {
+      httpMocks.backendApi.get.mockResolvedValue({ source, plugins: [createMarketItem()] })
       const marketplace = await loadMarketplace()
       const plugins = await marketplace.fetchPluginList()
-      expect(plugins[0]).toMatchObject({ market_data_source: 'service', downloads: 12, rating: 4 })
-      expect(plugins[0].marketplace_stats?.likes).toBe(3)
+      expect(plugins[0]).toMatchObject({ id: 'plugin-a', marketplace_id: 'market-a', market_data_source: source })
+      expect(plugins[0].manifest).toMatchObject({ default_locale: 'ja', locales_path: '_locales' })
+      expect(httpMocks.backendApi.get).toHaveBeenCalledTimes(1)
       expect(httpMocks.backendApi.post).not.toHaveBeenCalled()
+    })
+
+    it('列表自带统计和发布版本，不再另拉摘要；强制刷新透传到 Host', async () => {
+      const stats = { plugin_id: 'plugin-a', downloads: 12, likes: 3, rating: 4, comment_count: 2 }
+      httpMocks.backendApi.get.mockResolvedValue({ source: 'official', plugins: [createMarketItem({ stats })] })
+      const marketplace = await loadMarketplace()
+      expect((await marketplace.fetchPluginList())[0]).toMatchObject({ downloads: 12, rating: 4, marketplace_stats: stats })
+      await marketplace.fetchPluginList()
+      expect(httpMocks.backendApi.get).toHaveBeenCalledTimes(1)
+      await marketplace.fetchPluginList({ forceRefresh: true })
+      expect(httpMocks.backendApi.get).toHaveBeenLastCalledWith('/api/webui/plugins/marketplace', {
+        query: { compatible_only: false, force_refresh: true }, errorMessage: '获取插件市场数据失败',
+      })
       marketplace.invalidatePluginMarketCache()
       expect(marketplace.getCachedPluginList()).toBeNull()
       expect(localStorage.getItem(MARKET_LIST_STORAGE_KEY)).toBeNull()
     })
 
-    it('解析插件列表并做字段归一化', async () => {
-      mockFetchRawSuccess([
-        createMarketItem({
-          assets: { icon_64: 'icons/a.png' },
-          published_at: 1700000000000,
-          updated_at: '2026-01-01T00:00:00Z',
-          changelog: '  修复若干问题  ',
-        }),
-      ])
+    it('兼容与全部列表分别缓存，请求失败不会写入缓存', async () => {
       const marketplace = await loadMarketplace()
-
-      const list = await marketplace.fetchPluginList()
-      expect(list).toHaveLength(1)
-      expect(list[0]).toMatchObject({
-        id: 'plugin-a',
-        marketplace_id: 'market-a',
-        marketplace_order: 0,
-        stats_ids: ['plugin-a'],
-        source: 'market',
-        installed: false,
-        changelog: '修复若干问题',
-        published_at: new Date(1700000000000).toISOString(),
-        updated_at: '2026-01-01T00:00:00Z',
-      })
-      // 相对路径资源被拼接为 GitHub raw 地址
-      expect(list[0].assets).toEqual({
-        icon_64: 'https://raw.githubusercontent.com/Mai-with-u/plugin-repo/main/icons/a.png',
-      })
-      expect(list[0].manifest.plugin_type).toBe('chat')
-
-      expect(httpMocks.backendApi.post).toHaveBeenCalledWith('/api/webui/plugins/fetch-raw', {
-        body: {
-          owner: 'Mai-with-u',
-          repo: 'plugin-repo',
-          branch: 'main',
-          file_path: 'plugin_details.json',
-        },
-        errorMessage: '获取插件列表失败',
-      })
-    })
-
-    it('过滤缺少 manifest、ID 或必需字段的条目', async () => {
-      mockFetchRawSuccess([
-        { id: 'no-manifest' },
-        createMarketItem({ id: undefined, manifest: { ...createMarketItem().manifest as object, id: undefined } }),
-        createMarketItem({
-          manifest: { ...(createMarketItem().manifest as object), name: undefined },
-        }),
-        createMarketItem(),
-      ])
-      const marketplace = await loadMarketplace()
-
-      const list = await marketplace.fetchPluginList()
-      expect(list).toHaveLength(1)
-      expect(list[0].id).toBe('plugin-a')
-      expect(list[0].marketplace_order).toBe(0)
-    })
-
-    it('未知插件类型归为 other，缺失时归为 extension，危险资源路径被丢弃', async () => {
-      const weirdTypeItem = createMarketItem({
-        id: 'market-b',
-        assets: { icon_64: '../evil.png' },
-      })
-      ;(weirdTypeItem.manifest as Record<string, unknown>).id = 'plugin-b'
-      ;(weirdTypeItem.manifest as Record<string, unknown>).plugin_type = 'weird-type'
-
-      const noTypeItem = createMarketItem({
-        id: 'market-c',
-        assets: { icon_64: 'https://cdn.example.com/icon.png' },
-      })
-      ;(noTypeItem.manifest as Record<string, unknown>).id = 'plugin-c'
-      delete (noTypeItem.manifest as Record<string, unknown>).plugin_type
-
-      mockFetchRawSuccess([weirdTypeItem, noTypeItem])
-      const marketplace = await loadMarketplace()
-
-      const list = await marketplace.fetchPluginList()
-      expect(list[0].manifest.plugin_type).toBe('other')
-      expect(list[0].assets).toBeUndefined()
-      expect(list[1].manifest.plugin_type).toBe('extension')
-      // 绝对 URL 保持原样
-      expect(list[1].assets).toEqual({ icon_64: 'https://cdn.example.com/icon.png' })
-    })
-
-    it('TTL 内复用内存缓存并写入 localStorage，forceRefresh 重新请求', async () => {
-      mockFetchRawSuccess([createMarketItem()])
-      const marketplace = await loadMarketplace()
-
+      await marketplace.fetchPluginList({ compatibleOnly: true })
       await marketplace.fetchPluginList()
-      await marketplace.fetchPluginList()
-      expect(httpMocks.backendApi.post).toHaveBeenCalledTimes(1)
-      expect(localStorage.getItem(MARKET_LIST_STORAGE_KEY)).not.toBeNull()
-
-      await marketplace.fetchPluginList({ forceRefresh: true })
-      expect(httpMocks.backendApi.post).toHaveBeenCalledTimes(2)
-    })
-
-    it('后端返回 success=false 时抛出 ApiError 且不写缓存', async () => {
-      httpMocks.backendApi.post.mockResolvedValue({ success: false, error: '仓库不可用' })
-      const marketplace = await loadMarketplace()
-
-      await expect(marketplace.fetchPluginList()).rejects.toThrow('仓库不可用')
-      expect(localStorage.getItem(MARKET_LIST_STORAGE_KEY)).toBeNull()
+      await marketplace.fetchPluginList({ compatibleOnly: true })
+      expect(httpMocks.backendApi.get).toHaveBeenCalledTimes(2)
+      marketplace.invalidatePluginMarketCache()
+      httpMocks.backendApi.get.mockRejectedValue(new Error('offline'))
+      await expect(marketplace.fetchPluginList()).rejects.toThrow('offline')
       expect(marketplace.getCachedPluginList()).toBeNull()
     })
-  })
 
-  describe('getCachedPluginList', () => {
-    it('无缓存时返回 null，localStorage 有缓存时直接返回', async () => {
-      const marketplaceEmpty = await loadMarketplace()
-      expect(marketplaceEmpty.getCachedPluginList()).toBeNull()
-
-      vi.resetModules()
-      localStorage.setItem(
-        MARKET_LIST_STORAGE_KEY,
-        JSON.stringify({ timestamp: Date.now(), data: [{ id: 'cached-plugin' }] })
-      )
+    it('不同信息源的详情都使用公共接口', async () => {
       const marketplace = await loadMarketplace()
+      const plugins = await marketplace.fetchPluginList()
+      httpMocks.backendApi.get.mockResolvedValue({ plugin: createMarketItem(), releases: plugins[0].releases })
+      const detail = await marketplace.fetchPluginDetail({ ...plugins[0], market_data_source: 'github' })
+      expect(detail.id).toBe('plugin-a')
+      expect(httpMocks.backendApi.get).toHaveBeenLastCalledWith('/api/webui/plugins/marketplace/plugin-a', {
+        errorMessage: '获取插件详情失败',
+      })
+    })
 
-      const cached = marketplace.getCachedPluginList()
-      expect(cached?.[0]?.id).toBe('cached-plugin')
-      expect(httpMocks.backendApi.post).not.toHaveBeenCalled()
+    it('文档只传插件 ID、所选 ref 和本地优先选项，不在前端解析仓库', async () => {
+      const marketplace = await loadMarketplace()
+      httpMocks.backendApi.get.mockResolvedValue({ content: '# 文档' })
+      const signal = new AbortController().signal
+      await expect(marketplace.fetchPluginDocument('plugin/a', 'readme', {
+        preferLocal: false, branch: 'commit', signal,
+      })).resolves.toBe('# 文档')
+      expect(httpMocks.backendApi.get).toHaveBeenCalledWith('/api/webui/plugins/marketplace/plugin%2Fa/readme', {
+        query: { prefer_local: false, branch: 'commit' }, signal, errorMessage: '获取插件文档失败',
+      })
     })
   })
 

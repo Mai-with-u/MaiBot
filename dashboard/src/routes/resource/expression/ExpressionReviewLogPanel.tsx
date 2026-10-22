@@ -1,3 +1,4 @@
+import { Card } from '@/components/ui/card'
 import { RefreshCw, RotateCcw, XCircle } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
@@ -156,7 +157,7 @@ export function ExpressionReviewLogPanel({ onRescued }: ExpressionReviewLogPanel
   }, [loadChatList])
 
   return (
-    <div className="bg-card flex h-full min-h-0 flex-col overflow-hidden rounded-lg border">
+    <Card className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="flex shrink-0 flex-col gap-3 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold">AI 审核记录</h2>
@@ -269,7 +270,7 @@ export function ExpressionReviewLogPanel({ onRescued }: ExpressionReviewLogPanel
           <div className="text-muted-foreground py-8 text-center">暂无 AI 审核记录</div>
         ) : (
           entries.map((entry) => (
-            <div key={entry.id} className="bg-card space-y-3 rounded-lg border p-4">
+            <Card key={entry.id} className="space-y-3 p-4">
               <div className="flex items-center justify-between gap-2">
                 <div className="text-muted-foreground text-xs">{formatTime(entry.created_at)}</div>
                 <div className="flex flex-wrap justify-end gap-1.5">
@@ -304,10 +305,10 @@ export function ExpressionReviewLogPanel({ onRescued }: ExpressionReviewLogPanel
                 <RotateCcw className="mr-1 h-4 w-4" />
                 人工通过救回
               </Button>
-            </div>
+            </Card>
           ))
         )}
       </div>
-    </div>
+    </Card>
   )
 }

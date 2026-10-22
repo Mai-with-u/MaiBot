@@ -1,5 +1,7 @@
 """WebUI API 路由"""
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
@@ -13,6 +15,7 @@ from src.webui.core import (
 )
 from src.webui.core.security import TOKEN_SOURCE_TEMPORARY
 from src.webui.dependencies import require_auth, verify_token_optional
+from src.webui.routers.agent import router as agent_router
 from src.webui.routers.avatar import router as avatar_router
 from src.webui.routers.bot_accounts import router as bot_accounts_router
 from src.webui.routers.config import router as config_router
@@ -27,7 +30,6 @@ from src.webui.routers.news import router as news_router
 from src.webui.routers.person import router as person_router
 from src.webui.routers.plugin import router as plugin_router
 from src.webui.routers.reasoning_process import router as reasoning_process_router
-from src.webui.routers.reply_effects import router as reply_effects_router
 from src.webui.routers.search import router as search_router
 from src.webui.routers.self_update import router as self_update_router
 from src.webui.routers.statistics import router as statistics_router
@@ -65,10 +67,10 @@ router.include_router(user_emoji_router)
 router.include_router(plugin_router)
 # 注册系统控制路由
 router.include_router(system_router)
+router.include_router(agent_router)
 router.include_router(self_update_router)
 router.include_router(data_transfer_router)
 router.include_router(reasoning_process_router)
-router.include_router(reply_effects_router)
 router.include_router(search_router)
 # 注册模型列表获取路由
 router.include_router(model_router)
@@ -133,6 +135,12 @@ class CompleteSetupResponse(BaseModel):
 
     success: bool = Field(..., description="是否成功")
     message: str = Field(..., description="结果消息")
+
+
+class ResetSetupRequest(BaseModel):
+    """重置配置请求；默认保留现有登录密码。"""
+
+    reset_password: bool = Field(False, description="同时重置为临时密码")
 
 
 class ResetSetupResponse(BaseModel):
@@ -395,7 +403,7 @@ async def complete_setup():
 
 
 @router.post("/setup/reset", response_model=ResetSetupResponse, dependencies=[Depends(require_auth)])
-async def reset_setup():
+def reset_setup(request: Request, response: Response, options: Optional[ResetSetupRequest] = None):
     """
     重置首次配置状态，允许重新进入配置向导
 
@@ -406,7 +414,14 @@ async def reset_setup():
         token_manager = get_token_manager()
 
         # 重置配置状态
-        success = token_manager.reset_setup_status()
+        reset_password = options is not None and options.reset_password
+        success = token_manager.reset_setup_status(reset_password=reset_password)
+
+        if success and reset_password:
+            # 旧凭证立即失效；只为发起重置的浏览器续上 HttpOnly Cookie，直接进入向导。
+            # 不把临时密码返回给 JavaScript 或写入浏览器存储。
+            set_auth_cookie(response, token_manager.get_token(), request)
+            response.headers["Cache-Control"] = "no-store"
 
         return ResetSetupResponse(success=success, message="配置状态已重置" if success else "重置失败")
     except HTTPException:

@@ -7,7 +7,6 @@ from src.maisaka.memory.mid_term import is_mid_term_memory_message
 
 from .history import drop_leading_orphan_tool_results, normalize_tool_call_result_pairs
 from .messages import (
-    FOCUS_WAKEUP_SOURCE_KINDS,
     LLMContextMessage,
     ModelOutputContextMessage,
     ToolResultMessage,
@@ -39,9 +38,6 @@ def process_chat_history_after_cycle(
     processed_history: list[LLMContextMessage] = []
     one_shot_removed_count = 0
     for message in chat_history:
-        if message.source in FOCUS_WAKEUP_SOURCE_KINDS:
-            one_shot_removed_count += 1
-            continue
         if not message.consume_once():
             one_shot_removed_count += 1
             continue

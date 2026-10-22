@@ -201,13 +201,12 @@ def print_opensource_notice():
         f"{Fore.GREEN}{t('startup.opensource_title')}{Style.RESET_ALL}",
         f"{Fore.CYAN}{'─' * 70}{Style.RESET_ALL}",
         f"{Fore.YELLOW}{t('startup.opensource_free_notice')}{Style.RESET_ALL}",
-        f"{Fore.WHITE}{t('startup.opensource_scamming_notice')}{Style.RESET_ALL}",
         "",
         f"{Fore.WHITE}{t('startup.opensource_repo')}{Fore.BLUE}{t('startup.opensource_repo_value')} {Style.RESET_ALL}",
         f"{Fore.WHITE}{t('startup.opensource_docs')}{Fore.BLUE}{t('startup.opensource_docs_value')} {Style.RESET_ALL}",
         f"{Fore.WHITE}{t('startup.opensource_group')}{Fore.BLUE}{t('startup.opensource_group_value')}{Style.RESET_ALL}",
         f"{Fore.CYAN}{'─' * 70}{Style.RESET_ALL}",
-        f"{Fore.RED}  ⚠ {t('startup.opensource_resale_warning').strip()}{Style.RESET_ALL}",
+        f"{Fore.RED}{t('startup.opensource_resale_warning')}{Style.RESET_ALL}",
         f"{Fore.CYAN}{'═' * 70}{Style.RESET_ALL}",
         "",
     ]
@@ -239,6 +238,32 @@ async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
         logger.info(t("startup.shutdown_started"))
         success = True
 
+        from src.common.logger import stop_ws_broadcasts
+        from src.chat.heart_flow.heartflow_manager import heartflow_manager
+
+        # 先关闭广播入口，后续关停日志只写文件/终端，不再派生 WebSocket 任务。
+        success = (
+            await _await_shutdown_step(stop_ws_broadcasts(), timeout=2.0, step_name="停止日志广播") and success
+        )
+
+        if main_system is not None and main_system.app is not None:
+            success = (
+                await _await_shutdown_step(main_system.app.stop(), timeout=5.0, step_name="停止消息入口") and success
+            )
+        # 消息生产者先于插件、电脑及存储关闭，避免在依赖销毁后继续调用工具。
+        success = (
+            await _await_shutdown_step(heartflow_manager.shutdown(), timeout=5.0, step_name="停止聊天循环")
+            and success
+        )
+
+        from src.agent.service import agent_service
+
+        # 实际 CLI 入口不经过 src.main.main 的 finally；保存电脑状态，保留沙盒供下次恢复。
+        success = (
+            await _await_shutdown_step(agent_service.stop(), timeout=8.0, step_name="保存并断开电脑")
+            and success
+        )
+
         # 关闭 WebUI 服务器
         if main_system is not None and main_system.webui_server is not None:
             success = (
@@ -252,11 +277,6 @@ async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
             await _await_shutdown_step(config_manager.stop_file_watcher(), timeout=5.0, step_name="停止配置监听")
             and success
         )
-        if main_system is not None and main_system.app is not None:
-            success = (
-                await _await_shutdown_step(main_system.app.stop(), timeout=5.0, step_name="停止消息入口") and success
-            )
-
         from src.core.event_bus import event_bus
         from src.core.types import EventType
 
@@ -316,7 +336,10 @@ async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
         )
         _shutdown_deadline = shutdown_deadline
         try:
-            emoji_manager.shutdown()
+            from src.common.shutdown_diagnostics import shutdown_step
+
+            with shutdown_step("关闭 Emoji"):
+                emoji_manager.shutdown()
         except Exception:
             logger.exception("Emoji 清理失败，继续后续关闭步骤")
             success = False
@@ -345,9 +368,12 @@ async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
 
             # 等待所有任务完成，设置超时
             try:
-                await asyncio.wait_for(
-                    asyncio.gather(*remaining_tasks, return_exceptions=True), timeout=_shutdown_time_left(5.0)
-                )
+                from src.common.shutdown_diagnostics import shutdown_step
+
+                with shutdown_step("取消剩余任务"):
+                    await asyncio.wait_for(
+                        asyncio.gather(*remaining_tasks, return_exceptions=True), timeout=_shutdown_time_left(5.0)
+                    )
                 logger.info(t("startup.remaining_tasks_cancelled"))
             except asyncio.TimeoutError:
                 logger.warning(t("startup.remaining_tasks_cancel_timeout"))
@@ -377,7 +403,10 @@ async def _await_shutdown_step(awaitable, *, timeout: float, step_name: str) -> 
     """步骤共享当前阶段预算；不响应取消/阻塞事件循环的代码最终由 Runner 有界终止。"""
 
     try:
-        await asyncio.wait_for(awaitable, timeout=_shutdown_time_left(timeout))
+        from src.common.shutdown_diagnostics import shutdown_step
+
+        with shutdown_step(step_name):
+            await asyncio.wait_for(awaitable, timeout=_shutdown_time_left(timeout))
         return True
     except asyncio.TimeoutError:
         logger.warning(f"{step_name} 超时，继续执行后续关停步骤")
@@ -676,6 +705,9 @@ if __name__ == "__main__":
 
             # 关闭日志系统，释放文件句柄
             try:
+                from src.common.memory_diagnostics import stop_memory_diagnostics
+
+                stop_memory_diagnostics()
                 shutdown_logging()
             except Exception as e:
                 print(t("startup.logging_shutdown_error", error=e))

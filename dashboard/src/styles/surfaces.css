@@ -1,0 +1,163 @@
+/* 公共外壳和数据屏：页面只提供布局，主题集中决定材质。 */
+:root {
+  --surface-frame-bg: hsl(var(--card));
+  --surface-data-bg: hsl(var(--background));
+  --surface-line: hsl(var(--border));
+  --surface-ink: hsl(var(--foreground));
+  --surface-radius: 0.5rem;
+  --surface-data-stroke: 1px;
+  --surface-separator-stroke: 1px;
+  --surface-frame-shadow: none;
+  --surface-data-shadow: none;
+  --surface-data-outset: 0px;
+  --surface-texture: none;
+  --surface-data-texture: none;
+  --surface-data-inset: 0;
+  --surface-list-padding: 0.25rem;
+  --list-selected-bg: hsl(var(--primary));
+  --list-selected-ink: hsl(var(--primary-foreground));
+  --list-hover-bg: hsl(var(--muted));
+  --surface-focus: hsl(var(--ring));
+}
+
+:root[data-dashboard-style='future-retro'] {
+  --surface-frame-bg: transparent;
+  --surface-data-bg: var(--retro-recessed);
+  --surface-line: var(--retro-line);
+  --surface-ink: var(--retro-ink);
+  --surface-radius: 0;
+  --surface-list-padding: 0;
+  --surface-data-stroke: var(--retro-stroke);
+  --list-selected-bg: var(--retro-rust);
+  /* 选中文字使用前景色；夜间纸面变黑，不能把它当作强调底色上的文字色。 */
+  --list-selected-ink: hsl(var(--primary-foreground));
+  --list-hover-bg: var(--retro-recessed);
+  --surface-focus: var(--retro-ink);
+}
+
+:root[data-dashboard-style='millennium'] {
+  --surface-frame-bg: var(--mil-panel);
+  --surface-data-bg: var(--mil-screen);
+  --surface-line: var(--mil-line);
+  --surface-ink: var(--mil-screen-ink);
+  --surface-radius: 0;
+  --surface-list-padding: 0;
+  --surface-data-stroke: 2px;
+  --surface-separator-stroke: 2px;
+  --surface-frame-shadow: var(--mil-raise);
+  --surface-data-shadow: var(--mil-sunk);
+  --surface-data-outset: var(--mil-sunk-outset);
+  --surface-texture: var(--mil-speck);
+  --surface-data-texture: var(--mil-screen-tex);
+  --surface-data-inset: 0.75rem 0.75rem 0.25rem;
+  --list-selected-bg: var(--mil-on);
+  --list-selected-ink: var(--mil-on-ink);
+  --list-hover-bg: var(--mil-key-hover);
+  --surface-focus: var(--mil-on-side);
+}
+
+[data-dashboard-page-frame='true'] {
+  background: var(--surface-texture) 0 0 / 5px 5px var(--surface-frame-bg);
+  border: 2px solid var(--surface-line);
+  border-radius: var(--surface-radius);
+  box-shadow: var(--surface-frame-shadow);
+}
+
+/* 正向徽标复用主题的成功色，不借用会被主题映射成中性色的 secondary。 */
+:root[data-dashboard-style='future-retro'] [data-dashboard-badge='true'][data-badge-variant='success'] {
+  background-color: var(--retro-success-soft);
+  border-color: var(--retro-success-border);
+  color: var(--retro-success-strong);
+}
+:root.dark[data-dashboard-style='future-retro'] [data-dashboard-badge='true'][data-badge-variant='success'] {
+  color: var(--retro-success);
+}
+:root[data-dashboard-style='millennium'] [data-dashboard-badge='true'][data-badge-variant='success'] {
+  background-color: var(--mil-on);
+  border-color: var(--mil-line);
+  color: var(--mil-on-ink);
+}
+
+[data-dashboard-data-panel='true'] {
+  background-color: var(--surface-data-bg);
+  background-image: var(--surface-data-texture);
+  background-size: 3px 3px;
+  border: var(--surface-data-stroke) solid var(--surface-line);
+  border-radius: var(--surface-radius);
+  box-shadow: var(--surface-data-shadow);
+  color: var(--surface-ink);
+}
+[data-dashboard-data-panel='true'][data-padding='default'] { padding: 0.75rem; }
+[data-dashboard-data-panel='true'][data-padding='none'] { padding: 0; }
+/* 圆角列表为行留出间距，避免容器裁出不同大小的上下圆角。 */
+[data-dashboard-data-panel='true'][data-padding='list'] { padding: var(--surface-list-padding); }
+/* 窗口里的列表、表格留出壳边，标题与页脚仍印在壳上。 */
+[data-dashboard-data-panel='true'][data-inset='true'] { margin: var(--surface-data-inset); }
+
+/* 数据屏已负责描边，里面的表格不再叠第二个外框。 */
+:root [data-dashboard-data-panel='true'] > [data-dashboard-table-wrapper='true'] {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+/* 内嵌卡片显式选 flat，不靠所在页面或标签名推断外观。 */
+:root [data-dashboard-card='true'][data-card-variant='flat'] {
+  box-shadow: none;
+  background-image: none;
+}
+:root[data-dashboard-style='millennium'] [data-dashboard-card='true'][data-card-variant='flat'] {
+  border-color: var(--mil-lo);
+}
+
+[data-dashboard-list-item='true'] {
+  border-radius: 0.25rem;
+  color: var(--surface-ink);
+  cursor: pointer;
+}
+[data-dashboard-list-item='true'][data-density='compact'] { padding-block: 6px; font-size: 0.75rem; line-height: 1.125rem; }
+[data-dashboard-list-item='true'][data-density='compact'] > span + span { font-size: 0.6875rem; line-height: 1rem; }
+[data-dashboard-list-item='true']:not(:disabled):not([data-selected='true']):hover { background-color: var(--list-hover-bg); }
+[data-dashboard-list-item='true'][data-selected='true'] {
+  background-color: var(--list-selected-bg);
+  color: var(--list-selected-ink);
+}
+:root [data-dashboard-list-item='true']:focus-visible {
+  outline: 2px solid var(--surface-focus) !important;
+  outline-offset: -2px;
+}
+:root:not([data-dashboard-style='modern']) [data-dashboard-list-item='true'] { border-radius: 0; }
+:root[data-dashboard-style='millennium'] [data-dashboard-list-item='true'] {
+  border-bottom: 2px dashed var(--mil-rule);
+  margin-top: 0;
+}
+
+/* 普通线使用主题线宽；刻线保留凹下的明暗两边。 */
+[data-dashboard-separator='true'] { background-color: var(--surface-line); }
+[data-dashboard-separator='true'][data-orientation='horizontal'] { height: var(--surface-separator-stroke); }
+[data-dashboard-separator='true'][data-orientation='vertical'] { width: var(--surface-separator-stroke); }
+[data-dashboard-separator='true'][data-variant='groove'] {
+  background: hsl(var(--border));
+}
+[data-dashboard-separator='true'][data-variant='groove'][data-orientation='horizontal'] { height: 4px; }
+[data-dashboard-separator='true'][data-variant='groove'][data-orientation='vertical'] { width: 4px; }
+:root[data-dashboard-style='millennium'] [data-dashboard-separator='true'][data-variant='groove'] {
+  background: var(--mil-lo);
+}
+:root[data-dashboard-style='millennium'] [data-dashboard-separator='true'][data-variant='groove'][data-orientation='horizontal'] { box-shadow: inset 0 -2px var(--mil-hi); }
+:root[data-dashboard-style='millennium'] [data-dashboard-separator='true'][data-variant='groove'][data-orientation='vertical'] { box-shadow: inset -2px 0 var(--mil-hi); }
+
+[data-dashboard-progress-indicator='true'][data-state='indeterminate'] {
+  width: 35%;
+  animation: dashboard-progress-pending 1.4s ease-in-out infinite alternate;
+}
+@keyframes dashboard-progress-pending {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(286%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-dashboard-progress-indicator='true'][data-state='indeterminate'] { animation: none; transform: translateX(93%); }
+}
+@media (max-width: 767px) {
+  [data-dashboard-page-frame='true'][data-desktop-only='true'] { background: transparent; border: 0; box-shadow: none; }
+}

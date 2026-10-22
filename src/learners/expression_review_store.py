@@ -115,7 +115,7 @@ def append_manual_rescue_log(
 
 
 def read_review_log_entries() -> List[Dict[str, Any]]:
-    """读取全部表达方式审核日志，跳过损坏行。"""
+    """读取全部表达方式审核日志；文件损坏时删除重建，继续本次学习。"""
 
     if not REVIEW_LOG_PATH.exists():
         return []
@@ -123,13 +123,15 @@ def read_review_log_entries() -> List[Dict[str, Any]]:
     try:
         with REVIEW_LOG_PATH.open("r", encoding="utf-8") as log_file:
             parsed = json.load(log_file)
-    except json.JSONDecodeError as exc:
-        logger.warning(f"表达方式审核日志 JSON 解析失败，已忽略当前文件: {exc}")
+        if not isinstance(parsed, list):
+            raise ValueError("表达方式审核日志格式异常，应为 JSON 数组")
+    except ValueError as exc:
+        # 审核历史损坏不应阻断当前表达入库，清空后由调用方继续记录本次审核。
+        REVIEW_LOG_PATH.unlink(missing_ok=True)
+        REVIEW_LOG_PATH.write_text("[]", encoding="utf-8")
+        logger.warning(f"表达方式审核日志损坏，已删除并重建 {REVIEW_LOG_PATH.as_posix()}: {exc}")
         return []
 
-    if not isinstance(parsed, list):
-        logger.warning("表达方式审核日志格式异常，应为 JSON 数组")
-        return []
     return [entry for entry in parsed if isinstance(entry, dict)]
 
 

@@ -1,3 +1,4 @@
+import { Card } from '@/components/ui/card'
 import { useEffect, useMemo, useState } from 'react'
 import { Command as CommandIcon, Search, ShieldCheck } from 'lucide-react'
 
@@ -92,7 +93,7 @@ export function CommandPermissions({ pluginSection, onChange }: Props) {
   }
 
   return (
-    <div className="grid min-h-[34rem] overflow-hidden rounded-xl border bg-card lg:grid-cols-[20rem_minmax(0,1fr)]">
+    <Card className="grid min-h-[34rem] overflow-hidden lg:grid-cols-[20rem_minmax(0,1fr)]">
       <aside className="border-b lg:border-r lg:border-b-0">
         <div className="border-b p-4">
           <div className="relative">
@@ -244,6 +245,6 @@ export function CommandPermissions({ pluginSection, onChange }: Props) {
           </div>
         )}
       </main>
-    </div>
+    </Card>
   )
 }

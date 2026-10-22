@@ -5,6 +5,7 @@ from typing import List
 import asyncio
 import time
 
+from src.common.async_work import run_sync_work
 from src.common.logger import get_logger
 
 from ...storage import VectorStoreIntegrityError
@@ -110,7 +111,8 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
         try:
-            kernel_module.run_startup_format_migration(self.data_dir)
+            # 连接在线程内创建和关闭；取消时等同步步骤退出，才能清理内核并释放写者锁。
+            await run_sync_work(kernel_module.run_startup_format_migration, self.data_dir)
         except Exception as exc:
             logger.exception(f"[sdk] 历史格式转换失败，将由各存储通道独立校验并降级: {exc}")
         try:

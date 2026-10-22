@@ -76,7 +76,7 @@ class DatabaseMigrationBootstrapper:
 
         migration_state = self.manager.describe_state(target_version=self.latest_schema_version)
         if not migration_state.requires_migration():
-            logger.info(
+            logger.debug(
                 f"数据库 schema 已是目标版本，无需迁移。当前版本={migration_state.resolved_version.version}"
             )
             return migration_state

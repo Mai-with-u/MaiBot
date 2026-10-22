@@ -67,6 +67,7 @@ class BufferCLI:
             message_id=f"maisaka_cli_{int(timestamp.timestamp() * 1000)}",
             timestamp=timestamp,
             platform=BufferCLI._CLI_PLATFORM,
+            received_at=timestamp,
         )
         message.account_id = MAISAKA_CLI_BOT_ID
         message.message_info = MessageInfo(

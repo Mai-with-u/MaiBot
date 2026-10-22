@@ -295,7 +295,7 @@ export function SurveyRenderer({
   return (
     <div className={cn("h-full flex flex-col", className)}>
       {/* 问卷头部 */}
-      <div className="rounded-lg border bg-card p-4 sm:p-6 mb-4 shrink-0">
+      <Card className="p-4 sm:p-6 mb-4 shrink-0">
         <h2 className="text-xl font-semibold">{config.title}</h2>
         {config.description && (
           <p className="text-muted-foreground mt-1 text-sm">{config.description}</p>
@@ -309,7 +309,7 @@ export function SurveyRenderer({
             <Progress value={progress} className="h-2" />
           </div>
         )}
-      </div>
+      </Card>
 
       {/* 问卷内容 - 可滚动区域 */}
       <ScrollArea className="flex-1 min-h-0">

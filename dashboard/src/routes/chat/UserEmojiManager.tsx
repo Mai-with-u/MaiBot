@@ -138,8 +138,8 @@ export function UserEmojiManager({ disabled, userId, onSendEmoji }: UserEmojiMan
         <Button
           type="button"
           variant="ghost"
-          size="icon"
-          className="h-9 w-9 shrink-0 rounded-full"
+          size="icon-sm"
+          className="shrink-0"
           disabled={disabled}
           aria-label={t('chat.actions.openEmojiManager')}
           title={t('chat.actions.openEmojiManager')}

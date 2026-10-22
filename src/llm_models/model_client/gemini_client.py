@@ -40,6 +40,7 @@ from google.genai.types import (
 )
 
 from src.common.logger import get_logger
+from src.common.http_client import get_shared_ssl_context
 from src.config.model_configs import APIProvider
 from src.llm_models.exceptions import (
     EmptyResponseException,
@@ -730,7 +731,11 @@ def _build_http_options(api_provider: APIProvider) -> HttpOptions:
     Returns:
         HttpOptions: Gemini SDK HTTP 选项对象。
     """
-    http_options_payload: Dict[str, Any] = {}
+    ssl_context = get_shared_ssl_context()
+    http_options_payload: Dict[str, Any] = {
+        "client_args": {"verify": ssl_context},
+        "async_client_args": {"verify": ssl_context},
+    }
     if api_provider.timeout is not None:
         http_options_payload["timeout"] = int(api_provider.timeout * 1000)
 

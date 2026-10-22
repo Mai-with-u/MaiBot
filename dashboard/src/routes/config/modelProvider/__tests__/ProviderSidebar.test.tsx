@@ -55,6 +55,8 @@ describe('ProviderSidebar', () => {
     expect(allButton).toHaveClass('bg-primary')
 
     await user.click(screen.getByRole('button', { name: '添加厂商' }))
+    expect(onAdd).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('menuitem', { name: '添加 LLM 模型提供商' }))
     await user.click(allButton)
     expect(onAdd).toHaveBeenCalledOnce()
     expect(onSelectProvider).toHaveBeenCalledWith('')

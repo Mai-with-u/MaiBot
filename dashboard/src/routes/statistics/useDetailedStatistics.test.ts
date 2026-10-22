@@ -52,6 +52,11 @@ const richerData: DetailedStatisticsData = {
       request_types: [],
       chats: [],
       distributions: {
+        owner_tokens: [],
+        model_tokens: [],
+        module_tokens: [],
+        request_type_tokens: [],
+        chat_tokens: [],
         owner_costs: [],
         model_costs: [],
         module_costs: [],

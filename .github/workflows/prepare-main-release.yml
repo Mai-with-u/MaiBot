@@ -9,12 +9,17 @@ concurrency:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   prepare-dashboard-release:
     name: Prepare Dashboard Stable Release
     runs-on: ubuntu-24.04
     environment: webui
+    # 与开发版依赖更新共用锁，避免发布期间并发改写同一组依赖文件。
+    concurrency:
+      group: dashboard-dependency-dev
+      cancel-in-progress: false
     steps:
       - name: Check out dev
         uses: actions/checkout@v4
@@ -160,3 +165,44 @@ jobs:
           git commit -m "chore: 准备 Dashboard 正式版 ${DASHBOARD_VERSION}"
           git pull --rebase origin dev
           git push origin HEAD:dev
+
+      - name: Create or update dev to main pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          # 依赖提交可能已变基，PR 内容以远端最新 dev 为准。
+          git pull --ff-only origin dev
+          uv run --no-project --with packaging python - <<'PY'
+          from pathlib import Path
+          import json
+          import os
+          import sys
+          import tomllib
+
+          sys.path.insert(0, str(Path(".github/scripts").resolve()))
+          from maibot_release import release_notes
+
+          version = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+          dashboard_version = json.loads(Path("dashboard/package.json").read_text(encoding="utf-8"))["version"]
+          notes = release_notes(Path("changelogs/changelog.md").read_text(encoding="utf-8"), version)
+          run_url = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+          body = (
+              notes
+              + "\n## 验证\n\n"
+              + f"- [Prepare Main Release]({run_url}) 已完成 WebUI 正式版准备、依赖更新及安装验证。\n"
+              + "- 合并后自动运行 Publish MaiBot 构建与安装验证，不上传 PyPI 或创建 Release。\n"
+          )
+          Path(os.environ["RUNNER_TEMP"], "main-release-pr.md").write_text(body, encoding="utf-8")
+          Path(os.environ["RUNNER_TEMP"], "main-release-title.txt").write_text(
+              f"feat: 发布 {version} 与 WebUI {dashboard_version}", encoding="utf-8"
+          )
+          PY
+          PR_NUMBER=$(gh pr list --repo "$GITHUB_REPOSITORY" --base main --head dev --state open --json number --jq '.[0].number // empty')
+          TITLE=$(cat "$RUNNER_TEMP/main-release-title.txt")
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file "$RUNNER_TEMP/main-release-pr.md"
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head dev --title "$TITLE" --body-file "$RUNNER_TEMP/main-release-pr.md"
+          fi

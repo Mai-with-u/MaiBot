@@ -20,6 +20,8 @@
     <a href="https://status.maibot.top"><picture><source media="(prefers-color-scheme: dark)" srcset="https://status.maibot.top/card/stat-plugins.svg?theme=night"><img src="https://status.maibot.top/card/stat-plugins.svg" alt="上架插件" width="24%"></picture></a>
   </p>
 
+  <p><strong>MaiBot 1.3.10</strong> &middot; WebUI 1.9.4</p>
+
   <!-- Badges Row -->
   <p>
     <img src="https://img.shields.io/badge/Python-3.12+-8fd6a0?style=flat-square&labelColor=5a544a" alt="Python Version">

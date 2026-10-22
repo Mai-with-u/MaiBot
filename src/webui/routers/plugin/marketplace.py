@@ -1,116 +1,121 @@
-"""插件中心 v2 代理与市场数据源设置。"""
+"""公共市场服务的 WebUI HTTP 适配层，不实现选源、合并或版本判断。"""
 
-from typing import Any, Dict, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
+from starlette.requests import Request
+from starlette.responses import Response
+from typing import Any, Awaitable, Callable, Dict
+from urllib.error import HTTPError
 
-from fastapi import APIRouter, Cookie, HTTPException
-from pydantic import BaseModel
-import asyncio
-
-import httpx
-
-from src.config.config import MMC_VERSION
-from src.webui.services.plugin_market_service import (
-    request_market,
-    request_market_detail,
-    save_market_source,
-    use_github_market_data,
-)
-
-from .releases import PluginReleaseEntry, describe_entry, parse_market_release_entry
-from .support import require_plugin_token
-
-router = APIRouter()
+from src.config.config import global_config
+from src.plugin_market import engagement, service
+from src.plugin_market.errors import MarketError
+from src.plugin_market.sources import PluginSourceSettings, load_source_settings, save_source_settings
+from src.webui.dependencies import require_auth
 
 
-class MarketSourceSettings(BaseModel):
-    use_github: bool
+class MarketRoute(APIRoute):
+    def get_route_handler(self) -> Callable[[Request], Awaitable[Response]]:
+        handler = super().get_route_handler()
+
+        async def handle(request: Request) -> Response:
+            try:
+                return await handler(request)
+            except (HTTPException, RequestValidationError):
+                raise
+            except MarketError as exc:
+                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+            except HTTPError as exc:
+                raise HTTPException(status_code=404 if exc.code == 404 else 502, detail=str(exc)) from exc
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise HTTPException(status_code=502, detail=f"插件市场请求失败：{exc}") from exc
+
+        return handle
 
 
-@router.get("/marketplace/source", response_model=MarketSourceSettings)
-def get_market_source(maibot_session: Optional[str] = Cookie(None)) -> MarketSourceSettings:
-    require_plugin_token(maibot_session)
-    return MarketSourceSettings(use_github=use_github_market_data())
+router = APIRouter(prefix="/marketplace", route_class=MarketRoute, dependencies=[Depends(require_auth)])
 
 
-@router.put("/marketplace/source", response_model=MarketSourceSettings)
-def update_market_source(
-    request: MarketSourceSettings, maibot_session: Optional[str] = Cookie(None)
-) -> MarketSourceSettings:
-    require_plugin_token(maibot_session)
-    save_market_source(request.use_github)
-    return request
+def _reply(reply: engagement.MarketReply) -> JSONResponse:
+    return JSONResponse(status_code=reply.status_code, content=reply.data)
 
 
-def market_entry(data: Dict[str, Any]) -> PluginReleaseEntry:
-    """服务端选中的版本仍由宿主校验 SDK、清单格式与依赖声明。"""
-    return PluginReleaseEntry.model_validate(
-        {
-            "id": data["marketplace_id"],
-            "manifest_id": data["id"],
-            "repositoryUrl": data["repository_url"],
-            "mode": data["install_mode"],
-            "versions": [data["release"]] if data.get("release") else [],
-            "sync_error": data.get("sync_error"),
-        }
-    )
+@router.get("/source", response_model=PluginSourceSettings)
+def get_market_source() -> PluginSourceSettings:
+    return load_source_settings()
 
 
-def describe_market_list(data: Dict[str, Any]) -> Dict[str, Any]:
-    details = []
-    catalog = []
-    stats = {}
-    for item in data["plugins"]:
-        entry = market_entry(item)
-        details.append(
-            {
-                "id": entry.id,
-                "manifest": item["manifest"],
-                "assets": {"icon_64": item["icon_url"]} if item.get("icon_url") else None,
-            }
-        )
-        description = describe_entry(entry)
-        # 未提供可推荐发布版本时不能让空版本列表被误判成分支插件。
-        if entry.mode == "releases" and not entry.versions:
-            description["recommended_version"] = None
-        catalog.append(description)
-        stats[item["id"]] = item["stats"]
-    return {
-        "source": "service",
-        "details": details,
-        "catalog": {"plugins": catalog},
-        "stats": stats,
-        "stats_as_of": data.get("stats_as_of"),
-        "growth_ranking": data.get("growth_ranking"),
-    }
+@router.put("/source", response_model=PluginSourceSettings)
+def update_market_source(request: PluginSourceSettings) -> PluginSourceSettings:
+    try:
+        save_source_settings(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return load_source_settings()
 
 
-@router.get("/marketplace")
-async def get_marketplace(
-    compatible_only: bool = False, maibot_session: Optional[str] = Cookie(None)
+@router.get("")
+async def get_marketplace(compatible_only: bool = False, force_refresh: bool = False) -> Dict[str, Any]:
+    return await service.get_catalog(compatible_only, force_refresh)
+
+
+@router.get("/review-identity")
+def get_review_identity() -> Dict[str, str]:
+    """默认评论昵称仅从本地读取，不发送给市场。"""
+    return {"username": global_config.bot.nickname}
+
+
+@router.get("/user-states")
+async def get_user_states(user_id: str = Query(min_length=1, max_length=300)) -> JSONResponse:
+    return _reply(await engagement.get_user_states(user_id))
+
+
+@router.post("/like")
+async def like_plugin(request: engagement.VoteRequest) -> JSONResponse:
+    return _reply(await engagement.vote(request))
+
+
+@router.post("/dislike")
+async def dislike_plugin(request: engagement.VoteRequest) -> JSONResponse:
+    return _reply(await engagement.vote(request, dislike=True))
+
+
+@router.post("/rate")
+async def rate_plugin(request: engagement.RatingRequest) -> JSONResponse:
+    return _reply(await engagement.rate(request))
+
+
+@router.post("/download")
+async def record_download(request: engagement.DownloadRequest) -> JSONResponse:
+    return _reply(await engagement.record_download(request))
+
+
+@router.get("/{plugin_id}/user-state")
+async def get_user_state(plugin_id: str, user_id: str = Query(min_length=1, max_length=300)) -> JSONResponse:
+    return _reply(await engagement.get_user_state(plugin_id, user_id))
+
+
+@router.get("/{plugin_id}/stats")
+async def get_stats(plugin_id: str, force_refresh: bool = False) -> Dict[str, Any]:
+    return await service.get_stats(plugin_id, force_refresh)
+
+
+@router.get("/{plugin_id}/readme")
+async def get_readme(
+    plugin_id: str, prefer_local: bool = True, branch: str = "main", force_refresh: bool = False,
 ) -> Dict[str, Any]:
-    require_plugin_token(maibot_session)
-    if await asyncio.to_thread(use_github_market_data):
-        return {"source": "github"}
-    try:
-        data = await request_market(
-            "plugins/summary", {"maibot_version": MMC_VERSION, "compatible_only": str(compatible_only).lower()}
-        )
-        return await asyncio.to_thread(describe_market_list, data)
-    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
-        raise HTTPException(status_code=502, detail=f"获取插件中心列表失败：{exc}") from exc
+    return await service.get_readme(plugin_id, 200000, prefer_local, branch, force_refresh)
 
 
-@router.get("/marketplace/{plugin_id}")
-async def get_marketplace_detail(plugin_id: str, maibot_session: Optional[str] = Cookie(None)) -> Dict[str, Any]:
-    require_plugin_token(maibot_session)
-    try:
-        data = await request_market_detail(plugin_id, MMC_VERSION)
-        entry = await asyncio.to_thread(parse_market_release_entry, data, plugin_id)
-        catalog = await asyncio.to_thread(describe_entry, entry)
-        return {"manifest": data["manifest"], "releases": catalog}
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 404:
-            raise HTTPException(status_code=404, detail="插件中心未找到该插件") from exc
-        raise HTTPException(status_code=502, detail=f"获取插件中心详情失败：{exc}") from exc
-    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
-        raise HTTPException(status_code=502, detail=f"获取插件中心详情失败：{exc}") from exc
+@router.get("/{plugin_id}/changelog")
+async def get_changelog(
+    plugin_id: str, prefer_local: bool = True, branch: str = "main", force_refresh: bool = False,
+) -> Dict[str, Any]:
+    return await service.get_changelog(plugin_id, 200000, prefer_local, branch, force_refresh)
+
+
+@router.get("/{plugin_id}")
+async def get_marketplace_detail(plugin_id: str, force_refresh: bool = False) -> Dict[str, Any]:
+    return await service.get_detail(plugin_id, force_refresh)

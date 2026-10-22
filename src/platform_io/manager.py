@@ -1,5 +1,6 @@
 """提供 Platform IO 层的中心 Broker 管理器。"""
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Set
 
 import asyncio
@@ -466,6 +467,12 @@ class PlatformIOManager:
             bool: 若消息被接受并继续转发给入站分发器，则返回 ``True``，
             否则返回 ``False``。
         """
+
+        # 在后台分发和媒体处理之前记录；RPC 入口已计时的消息沿用同一时刻。
+        if envelope.received_at is None:
+            envelope.received_at = datetime.now()
+        if envelope.session_message is not None:
+            envelope.session_message.received_at = envelope.received_at
 
         if not self._receive_route_table.has_binding_for_driver(envelope.route_key, envelope.driver_id):
             logger.info(

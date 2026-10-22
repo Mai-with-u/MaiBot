@@ -35,6 +35,7 @@ from src.plugin_runtime.local_sdk import activate_local_sdk_import_path
 activate_local_sdk_import_path()
 
 from src.common.logger import get_console_handler, get_logger, initialize_logging
+from src.common.startup_diagnostics import diagnostic_stage
 from src.config.config_utils import compare_versions
 from src.plugin_runtime import (
     ENV_BLOCKED_PLUGIN_REASONS,
@@ -495,7 +496,8 @@ class PluginRunner:
         config_error_plugins: Set[str] = set()
         available_plugin_versions: Dict[str, str] = dict(self._external_available_plugins)
         for meta in plugins:
-            preparation_status = self._prepare_plugin_activation(meta)
+            with diagnostic_stage(f"runner.plugin_config:{meta.plugin_id}"):
+                preparation_status = self._prepare_plugin_activation(meta)
             if preparation_status == PluginActivationStatus.INACTIVE:
                 inactive_plugins.add(meta.plugin_id)
                 explicitly_disabled_plugins.add(meta.plugin_id)
@@ -1239,7 +1241,7 @@ class PluginRunner:
             return None, False, error_message
 
         try:
-            meta = self._loader.load_candidate(plugin_id, candidate)
+            meta = self._loader.load_candidate(plugin_id, candidate, for_config_request=True)
         except Exception as exc:
             return None, False, str(exc)
         if meta is None:
@@ -1607,6 +1609,9 @@ class PluginRunner:
         返回禁用或初始化失败的终止状态；配置错误时仅注册管理状态，跳过业务激活。
         启动、重载和回滚共用此阶段，配置只读取和归一化一次。
         """
+        if meta.explicitly_disabled:
+            logger.debug(f"插件 {meta.plugin_id} 已在配置中禁用，跳过加载")
+            return PluginActivationStatus.INACTIVE
         self._inject_context(meta.plugin_id, meta.instance, meta.plugin_dir)
         try:
             plugin_config = self._apply_plugin_config(meta)
@@ -1635,17 +1640,25 @@ class PluginRunner:
             PluginActivationStatus: 插件激活结果。
         """
 
-        if not await self._bootstrap_plugin(meta, capabilities_required=[] if meta.config_error else None):
+        with diagnostic_stage(f"runner.plugin_bootstrap:{meta.plugin_id}"):
+            bootstrapped = await self._bootstrap_plugin(meta, capabilities_required=[] if meta.config_error else None)
+        if not bootstrapped:
             self._loader.purge_plugin_modules(meta.plugin_id, meta.plugin_dir)
             return PluginActivationStatus.FAILED
 
-        if not await self._register_plugin(meta):
+        with diagnostic_stage(f"runner.plugin_register:{meta.plugin_id}"):
+            registered = await self._register_plugin(meta)
+        if not registered:
             await self._invoke_plugin_on_unload(meta)
             await self._deactivate_plugin(meta)
             self._loader.purge_plugin_modules(meta.plugin_id, meta.plugin_dir)
             return PluginActivationStatus.FAILED
 
-        if not meta.config_error and not await self._invoke_plugin_on_load(meta):
+        on_load_succeeded = True
+        if not meta.config_error:
+            with diagnostic_stage(f"runner.plugin_on_load:{meta.plugin_id}"):
+                on_load_succeeded = await self._invoke_plugin_on_load(meta)
+        if not on_load_succeeded:
             await self._unregister_plugin(meta.plugin_id, reason="on_load_failed")
             await self._deactivate_plugin(meta)
             self._loader.purge_plugin_modules(meta.plugin_id, meta.plugin_dir)
@@ -2663,7 +2676,16 @@ def main() -> None:
     """进程入口（python -m src.plugin_runtime.runner.runner_main）"""
     initialize_logging(verbose=False)
     _disable_runner_console_logging()
-    asyncio.run(_async_main())
+    logger.info(
+        f"Runner 进程启动: pid={os.getpid()} group={os.environ.get(ENV_RUNNER_GROUP, 'unknown')} "
+        f"python={sys.version.split()[0]} platform={sys.platform}"
+    )
+    try:
+        asyncio.run(_async_main())
+    except Exception:
+        # 握手前 IPC 日志尚未接通，必须先把完整异常写入 Runner 自己的日志文件。
+        logger.exception("Runner 进程异常退出")
+        raise
 
 
 if __name__ == "__main__":

@@ -5,14 +5,11 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Dict, List, Literal, Optional
 
-from src.config.config import global_config
+from src.config.config import global_config, model_config
 from src.core.tooling import ToolAvailabilityContext, ToolExecutionContext, ToolExecutionResult, ToolInvocation, ToolSpec
 from src.llm_models.payload_content.tool_option import ToolDefinitionInput
-from src.maisaka.focus import focus_mode_manager
 
 from .context import BuiltinToolRuntimeContext
-from .fetch_history import get_tool_spec as get_fetch_history_tool_spec
-from .fetch_history import handle_tool as handle_fetch_history_tool
 from .query_memory import get_tool_spec as get_query_memory_tool_spec
 from .query_memory import handle_tool as handle_query_memory_tool
 from .query_image_memory import get_tool_spec as get_query_image_memory_tool_spec
@@ -27,14 +24,14 @@ from .send_emoji import get_tool_spec as get_send_emoji_tool_spec
 from .send_emoji import handle_tool as handle_send_emoji_tool
 from .show_emoji_list import get_tool_spec as get_show_emoji_list_tool_spec
 from .show_emoji_list import handle_tool as handle_show_emoji_list_tool
+from .stop import get_tool_spec as get_stop_tool_spec
+from .stop import handle_tool as handle_stop_tool
 from .subagent import get_status_tool_spec as get_subagent_status_tool_spec
 from .subagent import get_stop_tool_spec as get_subagent_stop_tool_spec
 from .subagent import get_tool_spec as get_subagent_tool_spec
 from .subagent import handle_status_tool as handle_subagent_status_tool
 from .subagent import handle_stop_tool as handle_subagent_stop_tool
 from .subagent import handle_tool as handle_subagent_tool
-from .switch_chat import get_tool_spec as get_switch_chat_tool_spec
-from .switch_chat import handle_tool as handle_switch_chat_tool
 from .tool_search import get_tool_spec as get_tool_search_tool_spec
 from .tool_search import handle_tool as handle_tool_search_tool
 from .view_forward_message import get_tool_spec as get_view_forward_message_tool_spec
@@ -92,6 +89,7 @@ def _get_query_image_memory_tool_spec() -> ToolSpec:
 
 BUILTIN_TOOL_ENTRIES: List[BuiltinToolEntry] = [
     BuiltinToolEntry("wait", get_wait_tool_spec, handle_wait_tool, stage="both"),
+    BuiltinToolEntry("stop", get_stop_tool_spec, handle_stop_tool, stage="action"),
     BuiltinToolEntry("reply", get_reply_tool_spec, handle_reply_tool, stage="action"),
     BuiltinToolEntry(
         "view_forward_message",
@@ -125,13 +123,6 @@ BUILTIN_TOOL_ENTRIES: List[BuiltinToolEntry] = [
         handle_read_tool_result_tool,
         stage="action",
     ),
-    BuiltinToolEntry(
-        "fetch_history",
-        get_fetch_history_tool_spec,
-        handle_fetch_history_tool,
-        stage="action",
-    ),
-    BuiltinToolEntry("switch_chat", get_switch_chat_tool_spec, handle_switch_chat_tool, stage="action"),
 ]
 
 
@@ -161,30 +152,20 @@ def _is_builtin_tool_enabled_by_config(entry: BuiltinToolEntry) -> bool:
         return global_config.emoji.use_new_send_logic
     if entry.name == "send_emoji":
         return not global_config.emoji.use_new_send_logic
-    if entry.name in {"fetch_history", "switch_chat"}:
-        return bool(global_config.experimental.focus_mode)
     if entry.name == "subagent":
-        return global_config.experimental.planner_subagent
+        return global_config.capabilities.planner_subagent
     if entry.name in {"subagent_status", "subagent_stop"}:
         # 只有后台子代理才有需要查看和终止的任务
-        return global_config.experimental.planner_subagent and global_config.experimental.advanced_sub_agent
+        return global_config.capabilities.planner_subagent and global_config.capabilities.advanced_sub_agent
     if entry.name == "read_tool_result":
-        # 只有开启超长结果整理时才会有被暂存的原文可读
-        return global_config.experimental.tool_result_condense
+        # 长结果整理和统一联网工具均会暂存原文，任一开启都需要回查入口。
+        return global_config.capabilities.tool_result_condense or bool(model_config.model_task_config.web_search.model_list)
     return True
 
 
 def _is_builtin_tool_available(entry: BuiltinToolEntry, context: ToolAvailabilityContext) -> bool:
     """判断内置工具是否适用于当前聊天。"""
 
-    if entry.name in {"fetch_history", "switch_chat"}:
-        if context.session_id:
-            return focus_mode_manager.is_enabled_for_session(
-                context.session_id,
-                is_group_chat=context.is_group_chat,
-            )
-        if not focus_mode_manager.is_enabled_for_chat(is_group_chat=context.is_group_chat):
-            return False
     if entry.chat_scope == "all":
         return True
     if entry.chat_scope == "group":

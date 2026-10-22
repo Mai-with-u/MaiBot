@@ -1,5 +1,19 @@
 {
   "pluginWebUI": {
+    "settingsTitle": "プラグインページ",
+    "settingsHint": "上部に表示するプラグインページと順序を設定します。このブラウザーにのみ保存され、プラグインの権限には影響しません。",
+    "topbarPreview": "上部バーのプレビュー",
+    "moreShort": "その他",
+    "topbarLimit": "上部には最大 {{count}} 件、残りは「その他」に表示",
+    "orderAndVisibility": "順序と表示",
+    "pluginCount": "{{count}} 件のプラグイン",
+    "hiddenLabel": "非表示",
+    "topbarLabel": "上部バー",
+    "overflowLabel": "その他メニュー",
+    "sidebarLabel": "サイドバー",
+    "overflowGroup": "以下は「その他」メニューに表示",
+    "sidebarGroup": "以下はサイドバーのページのみを提供",
+    "visibleLabel": "表示",
     "customReload": "ページを再読み込み",
     "customStop": "ページを停止",
     "customStopped": "ページを停止しました。再読み込みで再開できます。",
@@ -86,10 +100,10 @@
       "mcpSettings": "MCP 設定",
       "dataTransfer": "データ管理",
       "statistics": "詳細統計データ",
-      "replyEffects": "返信効果",
       "logViewer": "ログビューア",
       "reasoningProcess": "推論プロセス",
       "maisakaMonitor": "MaiSaka チャット監視",
+      "agent": "独立 Agent",
       "localChat": "ローカルチャット",
       "settings": "WebUI 設定"
     }
@@ -132,6 +146,14 @@
       "chat": "連絡先/グループ", "messages": "メッセージ数"
     },
     "distributions": {
+      "metric": "統計指標",
+      "costs": "費用",
+      "tokens": "Token",
+      "ownerTokens": "呼び出し元別Token分布",
+      "modelTokens": "モデル別Token分布",
+      "moduleTokens": "モジュール別Token分布",
+      "requestTypeTokens": "リクエスト種別Token分布",
+      "chatTokens": "チャット別Token分布",
       "ownerCosts": "呼び出し元の費用分布", "modelCosts": "モデル費用分布", "moduleCosts": "モジュール費用分布",
       "requestTypeCosts": "リクエスト種別の費用分布", "chatMessages": "チャットメッセージ分布", "chatCosts": "チャットストリーム費用分布"
     },
@@ -147,6 +169,54 @@
     "logs": "ログ"
   },
   "chat": {
+    "computerDesktop": "デスクトップと操作引き継ぎ",
+    "computer": {
+      "desktopSetup": "dsh Desktop に接続",
+      "desktopInstall": "Desktop 同梱の dsh コマンドでブリッジをインストール（0.2.1-rc.2 以降）：",
+      "desktopConnect": "Desktop を起動または再起動します。ブリッジファイルとモデル選択は空欄で既定値を使います。タスクは Desktop の「麦麦」会話に表示され、麦麦を終了しても Desktop は終了しません。",
+      "dshSetup": "dsh の接続手順",
+      "dshInstall": "dsh が未インストールの場合：",
+      "dshModel": "dsh でモデルと API キーを設定（設定済みなら省略）：",
+      "dshEnable": "接続方式で dsh CLI を選択して有効にし、保存してから Agent ページでタスクを送信します。プログラムが見つからない場合、Windows では ACP 起動プログラムに dsh.cmd の絶対パスを指定します。",
+      "dshCommand": "プリセットの起動コマンド：",
+      "disabled": "Agent は無効です",
+      "reasoning": "思考履歴",
+      "connecting": "接続中",
+      "disabled": "コンピューター機能は無効です",
+      "stopped": "サンドボックス停止中",
+      "manual": "手動操作",
+      "paused": "判断を一時停止中",
+      "resting": "休憩中",
+      "autonomous": "自律探索中",
+      "running": "操作実行中",
+      "pause": "判断を一時停止",
+      "takeover": "操作を引き継ぐ",
+      "resume": "麦麦に操作を返す",
+      "stop": "サンドボックスを停止",
+      "refresh": "画面を更新",
+      "help": "画面を継続的に取得します。操作を引き継ぐとクリック・右クリック・文字入力ができます。引き継ぎは実行中操作の取消を要求し、判断の一時停止だけでは操作を中断しません。",
+      "screen": "コンピューター画面",
+      "text": "操作を引き継いで文字を入力",
+      "type": "文字入力",
+      "enter": "Enter",
+      "takeoverFirst": "先に操作を引き継いでください",
+      "toolCall": "ツール呼び出し",
+      "toolResult": "実行結果",
+      "failed": "実行失敗",
+      "thought": "思考",
+      "eventCount": "{{count}} 件の記録",
+      "userMessage": "ユーザー",
+      "systemEvent": "自律起床",
+      "queued": "処理待ち",
+      "noEvents": "実行記録はありません",
+      "inputEvent": "入力と依頼",
+      "stepEvent": "モデルとツール",
+      "message": "Agent にタスクを依頼",
+      "send": "送信",
+      "thinking": "思考中",
+      "tool": "操作中",
+      "idle": "待機中"
+    },
     "setupTrial": {
       "title": "麦麦と話してみましょう",
       "description": "挨拶を送って、正常に返信できるか確認しましょう。",
@@ -318,6 +388,7 @@
     "title": "WebUI 設定",
     "description": "アプリの設定を管理する",
     "tabs": {
+      "general": "一般",
       "appearance": "外観",
       "security": "セキュリティ",
       "other": "その他",
@@ -552,11 +623,18 @@
       "resetAllSettingsBtn": "すべての設定をデフォルトにリセット",
       "confirmResetAll": "すべての設定のリセットを確認",
       "confirmResetAllDesc": "テーマ、色、アニメーションなどのインターフェース設定をデフォルトに戻します。ログイン状態には影響しません。続けますか？",
-      "configWizardDesc": "初回設定ウィザードを再実行してシステムの基本設定を再構成できます。",
+      "configWizardDesc": "初期設定をやり直します。ログインパスワードもリセットして、パスワード設定から始められます。",
       "rerunSetup": "初回設定を再実行",
+      "resetSetupPassword": "ログインパスワードもリセット",
+      "resetSetupPasswordDesc": "現在のパスワードは直ちに無効になり、他のブラウザーでは再ログインが必要です。このブラウザーはログインを維持し、パスワード設定画面に進みます。新しいパスワードを保存するまでは一時認証情報を使用し、再起動時に再生成されます。",
+      "setupPasswordResetSuccess": "パスワードをリセットしました。設定画面に移動します。",
+      "setupResetSuccess": "初期設定をリセットしました。設定画面に移動します。",
+      "setupResetFailed": "初期設定をリセットできませんでした。再試行してください。",
       "confirmRerunSetup": "再構成を確認",
       "confirmRerunSetupDesc": "初回設定ウィザードに戻ります。システムの基本設定を再設定できます。続けますか？",
       "devToolsDesc": "以下の機能は開発・デバッグ目的のみです。クラッシュや異常動作を引き起こす可能性があります。",
+      "alwaysShowUpdateButton": "更新ボタンを常に表示",
+      "alwaysShowUpdateButtonDesc": "更新が検出されていなくても、右上に本体の更新ボタンを常に表示します。すぐに反映されます。",
       "alwaysShowUpdateNotice": "更新ログを常に表示",
       "alwaysShowUpdateNoticeDesc": "有効にすると、WebUI を開くたびに更新内容とプラグイン互換性通知が順番に表示されます。ページ更新後に反映されます。",
       "triggerError": "テストエラーを発生させる",
@@ -728,7 +806,8 @@
       },
       "customToken": {
         "title": "ログイン Token を設定",
-        "description": "今回の起動で生成されたランダム Token を固定のカスタム Token に変更します"
+        "description": "設定しない場合、起動するたびにランダムなパスワードが生成されます。",
+        "label": "ログインパスワード"
       },
       "botBasic": {
         "title": "Bot基本設定",
@@ -790,7 +869,7 @@
       "next": "次へ",
       "skip": "ウィザードをスキップ",
       "complete": "設定を完了",
-      "saveToken": "Token を保存",
+      "saveToken": "保存して次へ",
       "saving": "保存中...",
       "completing": "完了処理中..."
     },
@@ -803,6 +882,7 @@
     "defaults": {
       "personality": {
         "personality": "女子大生で、現在大学2年生。掲示板を見るのが好き。",
+        "behaviorStyle": "日常会話に自然に参加する。無理に話題を作らず、文脈を理解してから返信するか静かにするかを決める。",
         "replyStyle": "返信は淡々と、短めにし、中国語で話してください。自分の学科背景をわざと強調しないでください。Tieba、Zhihu、Weibo の返信スタイルを参考にできます。",
         "multipleReplyStyles": {
           "plain": "淡々として少し皮肉っぽく、とても短く口語的に返信します。Tieba や Weibo の返信スタイルを参考にできます。",
@@ -820,11 +900,19 @@
         "noticeTitle": "現在は起動時のランダム Token を使用しています",
         "noticeDescription": "ランダム Token は次回起動時に変わります。固定のカスタム Token を設定し、今後の WebUI ログインに使用してください。",
         "label": "カスタム Token *",
-        "placeholder": "安全に保管できる Token を入力してください",
+        "placeholder": "新しいパスワードを入力",
         "description": "保存後、現在のログインは無効になります。新しい Token で再度ログインしてください。",
         "requirements": "Token の要件",
-        "show": "Token を表示",
-        "hide": "Token を非表示"
+        "show": "表示",
+        "hide": "非表示",
+        "met": "達成",
+        "unmet": "未達成",
+        "rules": {
+          "minLength": "10 文字以上",
+          "hasUppercase": "大文字",
+          "hasLowercase": "小文字",
+          "hasSpecialChar": "特殊記号"
+        }
       },
       "botBasic": {
         "platform": {
@@ -850,7 +938,7 @@
           "description": "このプラットフォーム上でのボットのアカウント識別子です"
         },
         "nickname": {
-          "label": "ニックネーム *",
+          "label": "ニックネーム",
           "placeholder": "ボットのニックネームを入力",
           "description": "ボットの主な呼び名です"
         },
@@ -863,15 +951,26 @@
         }
       },
       "personality": {
+        "expand": "{{field}}を拡大して編集",
+        "presets": {
+          "default": "デフォルト（マイマイ）",
+          "label": "キャラクター設定プリセット",
+          "description": "選択すると下の性格・行動スタイル・返信スタイルが置き換わります。適用後も自由に編集できます。"
+        },
         "personality": {
-          "label": "人格特性 *",
+          "label": "人格特性",
           "placeholder": "ボットの人格や設定を説明してください（120文字以内推奨）",
-          "description": "例：大学2年生の女子大生で、Tieba をよく見ている"
+          "description": "botの核となる性格を記述し、botの自己認識に影響します"
+        },
+        "behaviorStyle": {
+          "label": "行動スタイル",
+          "placeholder": "会話に参加するタイミングや、様子を見る・静かにする場面を記述",
+          "description": "botの行動を記述し、行動の仕方を決めます"
         },
         "replyStyle": {
-          "label": "話し方 *",
+          "label": "話し方",
           "placeholder": "ボットの話し方や表現の癖を説明してください",
-          "description": "例：返信は淡々と短めにし、中国語で話し、Tieba・Zhihu・Weibo の雰囲気を参考にする"
+          "description": "botの話し方や口調に直接影響します"
         },
         "multipleReplyStyle": {
           "label": "代替返信スタイル",
@@ -1081,9 +1180,8 @@
       "model": "モデル設定",
       "modelDesc": "モデルパラメーターを設定",
       "emoji": "絵文字管理",
-      "emojiDesc": "ボットの絵文字を管理",
       "expression": "表現管理",
-      "learningDesc": "学習した表現とスラングを管理",
+      "learningDesc": "学習した表現、スラング、絵文字を管理",
       "expressionDesc": "ボットの表現を管理",
       "person": "人物情報",
       "personDesc": "人物情報を管理",

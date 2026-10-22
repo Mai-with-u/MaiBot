@@ -78,11 +78,11 @@ export interface FlowStepEvent {
     removed_count: number
     remaining_count: number
     learning: {
-      status: 'pending' | 'running' | 'completed' | 'skipped' | 'cancelled' | 'failed'
+      status: 'pending' | 'running' | 'waiting' | 'completed' | 'no_results' | 'skipped' | 'cancelled' | 'failed'
       detail: string
       learners: {
         name: string
-        status: 'running' | 'completed' | 'disabled' | 'failed' | 'cancelled'
+        status: 'running' | 'waiting' | 'completed' | 'no_results' | 'skipped' | 'disabled' | 'failed' | 'cancelled'
         detail: string
         contents: string[]
       }[]
@@ -272,6 +272,8 @@ export interface MaisakaTimingGateBlock {
 }
 
 export interface MaisakaFinalizedToolResult {
+  session_id?: string
+  session_name?: string
   started_at?: number
   ended_at?: number
   tool_call_id: string
@@ -292,6 +294,8 @@ export interface MaisakaFinalizedToolResult {
 }
 
 export interface PlannerFinalizedEvent {
+  focus_scope_id?: string
+  focus_session_ids?: string[]
   planner_started_at?: number | null
   planner_ended_at?: number | null
   session_id: string

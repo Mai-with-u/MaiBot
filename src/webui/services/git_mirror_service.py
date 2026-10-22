@@ -1,21 +1,17 @@
-"""Git 镜像源服务 - 支持多镜像源、错误重试、Git 克隆和 Raw 文件获取"""
+"""使用公共 GitSource 的异步 Git 操作与插件进度服务。"""
 
-from datetime import datetime
-from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import asyncio
-import json
 import os
 import shutil
 import subprocess
 
-import httpx
-
+from src.common.git_source import GitSource
 from src.common.logger import get_logger
-from src.webui.utils.http_client import get_shared_ssl_context
-from src.webui.utils.network_security import validate_public_url
+from src.common.network_security import NonPublicAddressError, validate_public_url
 
 logger = get_logger("webui.git_mirror")
 
@@ -59,16 +55,19 @@ async def _run_git_process(cmd: List[str], cwd: Optional[Path] = None) -> subpro
         raise
 
 
-def _validate_mirror_prefix(url: str, field_name: str) -> str:
+def _validate_custom_outbound_url(url: str, source_name: str = "自定义源") -> str:
     try:
         return validate_public_url(url, allow_fake_ip=True)
-    except ValueError as e:
-        raise ValueError(f"{field_name} 非法: {e}") from e
-
-
-def _validate_custom_outbound_url(url: str) -> str:
-    try:
-        return validate_public_url(url, allow_fake_ip=True)
+    except NonPublicAddressError as e:
+        logger.warning(
+            f"下载源解析异常: source={source_name} host={e.hostname} "
+            f"addresses={','.join(sorted(e.resolved_addresses))} blocked={e.address}"
+        )
+        raise ValueError(
+            f"下载源 {source_name} 的目标 {e.hostname} 被当前系统解析为非公网地址 {e.address}，已阻止下载。"
+            "请检查运行麦麦的机器或容器的 DNS、hosts 和代理设置，"
+            "或在插件市场的下载源设置中切换来源后重试。"
+        ) from e
     except ValueError as e:
         raise ValueError(f"目标 URL 非法: {e}") from e
 
@@ -79,329 +78,11 @@ def set_update_progress_callback(callback):
     _update_progress = callback
 
 
-class MirrorType(str, Enum):
-    """镜像源类型"""
-
-    GITPROXY_MRHJX = "gitproxy-mrhjx"  # gitproxy.mrhjx.cn 镜像
-    GHPROXY_VIP = "ghproxy-vip"  # ghproxy.vip 镜像
-    GITHUB = "github"  # GitHub 官方源
-    GH_PROXY_COM = "gh-proxy-com"  # gh-proxy.com 镜像
-    V6_GH_PROXY = "v6-gh-proxy"  # v6.gh-proxy.org 镜像
-    CDN_GH_PROXY_COM = "cdn-gh-proxy-com"  # cdn.gh-proxy.com 镜像
-    CUSTOM = "custom"  # 自定义镜像源
-
-
-class GitMirrorConfig:
-    """Git 镜像源配置管理"""
-
-    # 配置文件路径
-    CONFIG_FILE = Path("data/webui.json")
-    LEGACY_DEFAULT_MIRROR_PRIORITIES = {
-        "gh-proxy": 1,
-        "hk-gh-proxy": 2,
-        "cdn-gh-proxy": 3,
-        "edgeone-gh-proxy": 4,
-        "meyzh-github": 5,
-        "github": 999,
-    }
-
-    # 默认镜像源配置
-    DEFAULT_MIRRORS = [
-        {
-            "id": "gitproxy-mrhjx",
-            "name": "gitproxy.mrhjx.cn 镜像",
-            "raw_prefix": "https://gitproxy.mrhjx.cn/https://raw.githubusercontent.com",
-            "clone_prefix": "https://gitproxy.mrhjx.cn/https://github.com",
-            "enabled": True,
-            "priority": 1,
-            "created_at": None,
-        },
-        {
-            "id": "ghproxy-vip",
-            "name": "ghproxy.vip 镜像",
-            "raw_prefix": "https://ghproxy.vip/https://raw.githubusercontent.com",
-            "clone_prefix": "https://ghproxy.vip/https://github.com",
-            "enabled": True,
-            "priority": 2,
-            "created_at": None,
-        },
-        {
-            "id": "github",
-            "name": "GitHub 官方源",
-            "raw_prefix": "https://raw.githubusercontent.com",
-            "clone_prefix": "https://github.com",
-            "enabled": True,
-            "priority": 3,
-            "created_at": None,
-        },
-        {
-            "id": "gh-proxy-com",
-            "name": "gh-proxy.com 镜像",
-            "raw_prefix": "https://gh-proxy.com/https://raw.githubusercontent.com",
-            "clone_prefix": "https://gh-proxy.com/https://github.com",
-            "enabled": True,
-            "priority": 4,
-            "created_at": None,
-        },
-        {
-            "id": "v6-gh-proxy",
-            "name": "v6.gh-proxy.org 镜像",
-            "raw_prefix": "https://v6.gh-proxy.org/https://raw.githubusercontent.com",
-            "clone_prefix": "https://v6.gh-proxy.org/https://github.com",
-            "enabled": True,
-            "priority": 5,
-            "created_at": None,
-        },
-        {
-            "id": "cdn-gh-proxy-com",
-            "name": "cdn.gh-proxy.com 镜像",
-            "raw_prefix": "https://cdn.gh-proxy.com/https://raw.githubusercontent.com",
-            "clone_prefix": "https://cdn.gh-proxy.com/https://github.com",
-            "enabled": True,
-            "priority": 6,
-            "created_at": None,
-        },
-    ]
-
-    def __init__(self):
-        """初始化配置管理器"""
-        self.config_file = self.CONFIG_FILE
-        self.mirrors: List[Dict[str, Any]] = []
-        self._load_config()
-
-    def _load_config(self) -> None:
-        """加载配置文件"""
-        try:
-            if self.config_file.exists():
-                with open(self.config_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-
-                # 检查是否有镜像源配置
-                if "git_mirrors" not in data or not data["git_mirrors"]:
-                    logger.info("配置文件中未找到镜像源配置，使用默认配置")
-                    self._init_default_mirrors()
-                else:
-                    self.mirrors = data["git_mirrors"]
-                    if self._is_legacy_default_mirrors(self.mirrors):
-                        logger.info("检测到旧默认镜像源配置，更新为新的默认配置")
-                        self._init_default_mirrors()
-                    else:
-                        logger.info(f"已加载 {len(self.mirrors)} 个镜像源配置")
-            else:
-                logger.info("配置文件不存在，创建默认配置")
-                self._init_default_mirrors()
-        except Exception as e:
-            logger.error(f"加载配置文件失败: {e}")
-            self._init_default_mirrors()
-
-    def _init_default_mirrors(self) -> None:
-        """初始化默认镜像源"""
-        current_time = datetime.now().isoformat()
-        self.mirrors = []
-
-        for mirror in self.DEFAULT_MIRRORS:
-            mirror_copy = mirror.copy()
-            mirror_copy["created_at"] = current_time
-            self.mirrors.append(mirror_copy)
-
-        self._save_config()
-        logger.info(f"已初始化 {len(self.mirrors)} 个默认镜像源")
-
-    def _is_legacy_default_mirrors(self, mirrors: List[Dict[str, Any]]) -> bool:
-        """判断当前配置是否为未手动修改过的旧默认镜像源列表。"""
-        if len(mirrors) != len(self.LEGACY_DEFAULT_MIRROR_PRIORITIES):
-            return False
-
-        for mirror in mirrors:
-            mirror_id = mirror.get("id")
-            if mirror_id not in self.LEGACY_DEFAULT_MIRROR_PRIORITIES:
-                return False
-            if mirror.get("updated_at"):
-                return False
-            if mirror.get("enabled") is not True:
-                return False
-            if mirror.get("priority") != self.LEGACY_DEFAULT_MIRROR_PRIORITIES[mirror_id]:
-                return False
-
-        return True
-
-    def _save_config(self, raise_on_error: bool = False) -> None:
-        """保存配置到文件"""
-        try:
-            # 确保目录存在
-            self.config_file.parent.mkdir(parents=True, exist_ok=True)
-
-            # 读取现有配置
-            existing_data = {}
-            if self.config_file.exists():
-                with open(self.config_file, "r", encoding="utf-8") as f:
-                    existing_data = json.load(f)
-
-            # 更新镜像源配置
-            existing_data["git_mirrors"] = self.mirrors
-
-            # 写入文件
-            with open(self.config_file, "w", encoding="utf-8") as f:
-                json.dump(existing_data, f, indent=2, ensure_ascii=False)
-
-            logger.debug(f"配置已保存到 {self.config_file}")
-        except Exception as e:
-            logger.error(f"保存配置文件失败: {e}")
-            if raise_on_error:
-                raise
-
-    def reset_default_mirrors(self) -> List[Dict[str, Any]]:
-        """恢复内置镜像源列表；保存失败时保留原来的内存配置。"""
-        previous_mirrors = self.mirrors
-        current_time = datetime.now().isoformat()
-        self.mirrors = [{**mirror, "created_at": current_time} for mirror in self.DEFAULT_MIRRORS]
-        try:
-            self._save_config(raise_on_error=True)
-        except Exception:
-            self.mirrors = previous_mirrors
-            raise
-        return self.get_all_mirrors()
-
-    def get_all_mirrors(self) -> List[Dict[str, Any]]:
-        """获取所有镜像源"""
-        return self.mirrors.copy()
-
-    def get_enabled_mirrors(self) -> List[Dict[str, Any]]:
-        """获取所有启用的镜像源，按优先级排序"""
-        enabled = [m for m in self.mirrors if m.get("enabled", False)]
-        return sorted(enabled, key=lambda x: x.get("priority", 999))
-
-    def get_mirror_by_id(self, mirror_id: str) -> Optional[Dict[str, Any]]:
-        """根据 ID 获取镜像源"""
-        matched_mirror = next((mirror for mirror in self.mirrors if mirror.get("id") == mirror_id), None)
-        return matched_mirror.copy() if matched_mirror is not None else None
-
-    def add_mirror(
-        self,
-        mirror_id: str,
-        name: str,
-        raw_prefix: str,
-        clone_prefix: str,
-        enabled: bool = True,
-        priority: Optional[int] = None,
-    ) -> Dict[str, Any]:
-        """
-        添加新的镜像源
-
-        Returns:
-            添加的镜像源配置
-
-        Raises:
-            ValueError: 如果镜像源 ID 已存在
-        """
-        # 检查 ID 是否已存在
-        if self.get_mirror_by_id(mirror_id):
-            raise ValueError(f"镜像源 ID 已存在: {mirror_id}")
-
-        raw_prefix = _validate_mirror_prefix(raw_prefix, "Raw 前缀")
-        clone_prefix = _validate_mirror_prefix(clone_prefix, "克隆前缀")
-
-        # 如果未指定优先级，使用最大优先级 + 1
-        if priority is None:
-            max_priority = max((m.get("priority", 0) for m in self.mirrors), default=0)
-            priority = max_priority + 1
-
-        new_mirror = {
-            "id": mirror_id,
-            "name": name,
-            "raw_prefix": raw_prefix,
-            "clone_prefix": clone_prefix,
-            "enabled": enabled,
-            "priority": priority,
-            "created_at": datetime.now().isoformat(),
-        }
-
-        self.mirrors.append(new_mirror)
-        self._save_config()
-
-        logger.info(f"已添加镜像源: {mirror_id} - {name}")
-        return new_mirror.copy()
-
-    def update_mirror(
-        self,
-        mirror_id: str,
-        name: Optional[str] = None,
-        raw_prefix: Optional[str] = None,
-        clone_prefix: Optional[str] = None,
-        enabled: Optional[bool] = None,
-        priority: Optional[int] = None,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        更新镜像源配置
-
-        Returns:
-            更新后的镜像源配置，如果不存在则返回 None
-        """
-        for mirror in self.mirrors:
-            if mirror.get("id") == mirror_id:
-                if name is not None:
-                    mirror["name"] = name
-                if raw_prefix is not None:
-                    raw_prefix = _validate_mirror_prefix(raw_prefix, "Raw 前缀")
-                    mirror["raw_prefix"] = raw_prefix
-                if clone_prefix is not None:
-                    clone_prefix = _validate_mirror_prefix(clone_prefix, "克隆前缀")
-                    mirror["clone_prefix"] = clone_prefix
-                if enabled is not None:
-                    mirror["enabled"] = enabled
-                if priority is not None:
-                    mirror["priority"] = priority
-
-                mirror["updated_at"] = datetime.now().isoformat()
-                self._save_config()
-
-                logger.info(f"已更新镜像源: {mirror_id}")
-                return mirror.copy()
-
-        return None
-
-    def delete_mirror(self, mirror_id: str) -> bool:
-        """
-        删除镜像源
-
-        Returns:
-            True 如果删除成功，False 如果镜像源不存在
-        """
-        for i, mirror in enumerate(self.mirrors):
-            if mirror.get("id") == mirror_id:
-                self.mirrors.pop(i)
-                self._save_config()
-                logger.info(f"已删除镜像源: {mirror_id}")
-                return True
-
-        return False
-
-    def get_default_priority_list(self) -> List[str]:
-        """获取默认优先级列表（仅启用的镜像源 ID）"""
-        enabled = self.get_enabled_mirrors()
-        return [m["id"] for m in enabled]
-
-
 class GitMirrorService:
-    """Git 镜像源服务"""
+    """WebUI 的异步 Git 执行与进度；源解析及 HTTP 统一委托 GitSource。"""
 
-    def __init__(self, max_retries: int = 3, timeout: int = 30, config: Optional[GitMirrorConfig] = None):
-        """
-        初始化 Git 镜像源服务
-
-        Args:
-            max_retries: 最大重试次数
-            timeout: 请求超时时间（秒）
-            config: 镜像源配置管理器（可选，默认创建新实例）
-        """
+    def __init__(self, max_retries: int = 3):
         self.max_retries = max_retries
-        self.timeout = timeout
-        self.config = config or GitMirrorConfig()
-        logger.info(f"Git镜像源服务初始化完成，已加载 {len(self.config.get_enabled_mirrors())} 个启用的镜像源")
-
-    def get_mirror_config(self) -> GitMirrorConfig:
-        """获取镜像源配置管理器"""
-        return self.config
 
     @staticmethod
     def check_git_installed() -> Dict[str, Any]:
@@ -444,186 +125,12 @@ class GitMirrorService:
             logger.error(f"检测 Git 时发生错误: {e}")
             return {"installed": False, "error": f"检测 Git 时发生错误: {str(e)}"}
 
-    async def fetch_raw_file(
-        self,
-        owner: str,
-        repo: str,
-        branch: str,
-        file_path: str,
-        mirror_id: Optional[str] = None,
-        custom_url: Optional[str] = None,
-        report_progress: bool = True,
-    ) -> Dict[str, Any]:
-        """
-        获取 GitHub 仓库的 Raw 文件内容
-
-        Args:
-            owner: 仓库所有者
-            repo: 仓库名称
-            branch: 分支名称
-            file_path: 文件路径
-            mirror_id: 指定的镜像源 ID
-            custom_url: 自定义完整 URL（如果提供，将忽略其他参数）
-            report_progress: 是否广播插件市场加载进度
-
-        Returns:
-            Dict 包含:
-                - success: bool - 是否成功
-                - data: str - 文件内容（成功时）
-                - error: str - 错误信息（失败时）
-                - mirror_used: str - 使用的镜像源
-                - attempts: int - 尝试次数
-        """
-        logger.info(f"开始获取 Raw 文件: {owner}/{repo}/{branch}/{file_path}")
-
-        if custom_url:
-            try:
-                custom_url = _validate_custom_outbound_url(custom_url)
-            except ValueError as e:
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "mirror_used": "custom",
-                    "attempts": 0,
-                    "url": custom_url,
-                    "status_code": 400,
-                }
-
-            return await self._fetch_with_url(custom_url, "custom")
-
-        # 确定要使用的镜像源列表
-        if mirror_id:
-            # 使用指定的镜像源
-            if (mirror := self.config.get_mirror_by_id(mirror_id)) is None:
-                return {"success": False, "error": f"未找到镜像源: {mirror_id}", "mirror_used": None, "attempts": 0}
-            mirrors_to_try = [mirror]
-        else:
-            # 使用所有启用的镜像源
-            mirrors_to_try = self.config.get_enabled_mirrors()
-
-        total_mirrors = len(mirrors_to_try)
-        validation_errors: List[str] = []
-
-        # 依次尝试每个镜像源
-        for index, mirror in enumerate(mirrors_to_try, 1):
-            # 推送进度：正在尝试第 N 个镜像源
-            if report_progress and _update_progress:
-                try:
-                    progress = 30 + int((index - 1) / total_mirrors * 40)  # 30% - 70%
-                    await _update_progress(
-                        stage="loading",
-                        progress=progress,
-                        message=f"正在尝试镜像源 {index}/{total_mirrors}: {mirror['name']}",
-                        total_plugins=0,
-                        loaded_plugins=0,
-                    )
-                except Exception as e:
-                    logger.warning(f"推送进度失败: {e}")
-
-            result = await self._fetch_raw_from_mirror(owner, repo, branch, file_path, mirror)
-
-            if result["success"]:
-                # 成功，推送进度
-                if report_progress and _update_progress:
-                    try:
-                        await _update_progress(
-                            stage="loading",
-                            progress=70,
-                            message=f"成功从 {mirror['name']} 获取数据",
-                            total_plugins=0,
-                            loaded_plugins=0,
-                        )
-                    except Exception as e:
-                        logger.warning(f"推送进度失败: {e}")
-                return result
-
-            if result.get("status_code") == 400:
-                validation_errors.append(f"{mirror['id']}: {result['error']}")
-
-            # 失败，记录日志并推送失败信息
-            logger.warning(f"镜像源 {mirror['id']} 失败: {result.get('error')}")
-
-            if report_progress and _update_progress and index < total_mirrors:
-                try:
-                    await _update_progress(
-                        stage="loading",
-                        progress=30 + int(index / total_mirrors * 40),
-                        message=f"镜像源 {mirror['name']} 失败，尝试下一个...",
-                        total_plugins=0,
-                        loaded_plugins=0,
-                    )
-                except Exception as e:
-                    logger.warning(f"推送进度失败: {e}")
-
-        # 所有镜像源都失败
-        return {
-            "success": False,
-            "error": "所有镜像源均失败" + ("；" + "；".join(validation_errors) if validation_errors else ""),
-            "mirror_used": None,
-            "attempts": len(mirrors_to_try),
-        }
-
-    async def _fetch_raw_from_mirror(
-        self, owner: str, repo: str, branch: str, file_path: str, mirror: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """从指定镜像源获取文件"""
-        try:
-            raw_prefix = _validate_mirror_prefix(mirror["raw_prefix"], "镜像 Raw 前缀")
-        except ValueError as e:
-            return {
-                "success": False,
-                "error": str(e),
-                "mirror_used": mirror.get("id"),
-                "attempts": 0,
-                "status_code": 400,
-            }
-
-        url = f"{raw_prefix}/{owner}/{repo}/{branch}/{file_path}"
-
-        return await self._fetch_with_url(url, mirror["id"])
-
-    async def _fetch_with_url(self, url: str, mirror_type: str) -> Dict[str, Any]:
-        """使用指定 URL 获取文件，支持重试"""
-        attempts = 0
-        last_error = None
-
-        for attempt in range(self.max_retries):
-            attempts += 1
-            try:
-                logger.debug(f"尝试 #{attempt + 1}: {url}")
-                # 复用共享 SSLContext：每次新建 AsyncClient 都会重新加载整套 CA 证书（实测约 5s/次），
-                # 镜像源逐个重试时该开销会成倍放大，且构造过程会阻塞 WebUI 事件循环。
-                async with httpx.AsyncClient(
-                    verify=get_shared_ssl_context(), timeout=self.timeout, follow_redirects=False
-                ) as client:
-                    response = await client.get(url)
-                    response.raise_for_status()
-
-                    logger.info(f"成功获取文件: {url}")
-                    return {
-                        "success": True,
-                        "data": response.text,
-                        "mirror_used": mirror_type,
-                        "attempts": attempts,
-                        "url": url,
-                    }
-            except httpx.HTTPStatusError as e:
-                last_error = f"HTTP {e.response.status_code}: {e}"
-                logger.warning(f"HTTP 错误 (尝试 {attempt + 1}/{self.max_retries}): {last_error}")
-            except httpx.TimeoutException as e:
-                last_error = f"请求超时: {e}"
-                logger.warning(f"超时 (尝试 {attempt + 1}/{self.max_retries}): {last_error}")
-            except Exception as e:
-                last_error = f"未知错误: {e}"
-                logger.error(f"错误 (尝试 {attempt + 1}/{self.max_retries}): {last_error}")
-
-        return {"success": False, "error": last_error, "mirror_used": mirror_type, "attempts": attempts, "url": url}
-
     async def pull_repository(
         self,
         repository_path: Path,
         branch: Optional[str] = None,
         remote_url: Optional[str] = None,
+        mirror_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         在已安装插件目录内执行 Git 更新。
@@ -635,6 +142,25 @@ class GitMirrorService:
             return {"success": False, "error": "插件目录不存在", "status_code": 404}
         if not git_dir.exists() or not git_dir.is_dir():
             return {"success": False, "error": "插件目录不是 Git 仓库，无法通过 Git 更新", "status_code": 400}
+
+        if not remote_url:
+            try:
+                origin = await _run_git_process(["git", "remote", "get-url", "origin"], cwd=repository_path)
+            except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+                return {"success": False, "error": str(exc)}
+            if origin.returncode == 0:
+                candidate = origin.stdout.strip()
+                if urlparse(candidate).netloc.lower() == "github.com":
+                    remote_url = candidate
+
+        # GitHub 分支更新使用与安装相同的单个下载源；网络或本地操作失败均直接暴露。
+        if remote_url:
+            parsed = urlparse(remote_url)
+            if parsed.query or parsed.fragment:
+                return {"success": False, "error": "仓库 URL 不允许包含查询参数或片段", "status_code": 400}
+            parts = parsed.path.strip("/").removesuffix(".git").split("/")
+            if parsed.scheme == "https" and parsed.netloc.lower() == "github.com" and len(parts) == 2:
+                return await self._pull_github_repository(repository_path, branch, parts[0], parts[1], mirror_id)
 
         commands: List[List[str]] = []
         if remote_url:
@@ -673,6 +199,45 @@ class GitMirrorService:
                 }
 
         return {"success": True, "path": str(repository_path), "branch": branch or "current", "commands": executed}
+
+    async def _pull_github_repository(
+        self, repository_path: Path, branch: Optional[str], owner: str, repo: str, mirror_id: Optional[str]
+    ) -> Dict[str, Any]:
+        executed: List[str] = []
+        try:
+            if branch is None:
+                current = await _run_git_process(["git", "symbolic-ref", "--short", "HEAD"], cwd=repository_path)
+                if current.returncode:
+                    return {"success": False, "error": "当前处于 detached HEAD，请明确选择更新分支", "status_code": 409}
+                branch = current.stdout.strip()
+            # 不允许以选项或 refspec 注入 Git 参数。
+            checked = await _run_git_process(["git", "check-ref-format", f"refs/heads/{branch}"], cwd=repository_path)
+            if checked.returncode or branch.startswith("-"):
+                return {"success": False, "error": "无效的更新分支", "status_code": 400}
+            from src.plugin_market.sources import download_source
+
+            source = await asyncio.to_thread(download_source)
+            try:
+                url = await asyncio.to_thread(_validate_custom_outbound_url, source.clone_url(owner, repo), source.name)
+            except ValueError as exc:
+                return {"success": False, "error": str(exc), "mirror_used": source.id, "status_code": 400}
+            cmd = ["git", "fetch", "--no-tags", url, f"refs/heads/{branch}"]
+            executed.append(" ".join(cmd))
+            fetched = await _run_git_process(cmd, cwd=repository_path)
+            if fetched.returncode:
+                return {"success": False, "error": f"Git fetch 失败: {fetched.stderr.strip() or fetched.stdout.strip()}",
+                        "commands": executed, "mirror_used": source.id, "status_code": 502}
+            # FETCH_HEAD 是本次实际下载的分支；不改变 origin 身份或触碰用户配置文件。
+            for cmd in (["git", "checkout", branch], ["git", "merge", "--ff-only", "FETCH_HEAD"]):
+                executed.append(" ".join(cmd))
+                result = await _run_git_process(cmd, cwd=repository_path)
+                if result.returncode:
+                    return {"success": False, "error": f"Git 更新失败: {result.stderr.strip() or result.stdout.strip()}",
+                            "commands": executed, "mirror_used": source.id, "status_code": 409}
+            return {"success": True, "path": str(repository_path), "branch": branch,
+                    "commands": executed, "mirror_used": source.id}
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            return {"success": False, "error": str(exc), "commands": executed}
 
     async def clone_repository(
         self,
@@ -736,79 +301,14 @@ class GitMirrorService:
                 total_mirrors=1,
             )
 
-        # 确定要使用的镜像源列表
-        if mirror_id:
-            # 使用指定的镜像源
-            if (mirror := self.config.get_mirror_by_id(mirror_id)) is None:
-                return {"success": False, "error": f"未找到镜像源: {mirror_id}", "mirror_used": None, "attempts": 0}
-            mirrors_to_try = [mirror]
-        else:
-            # 使用所有启用的镜像源
-            mirrors_to_try = self.config.get_enabled_mirrors()
+        # 插件下载固定使用设置中唯一选中的源，旧请求的 mirror_id 不再覆盖全局选择。
+        from src.plugin_market.sources import download_source
 
-        total_mirrors = len(mirrors_to_try)
-        validation_errors: List[str] = []
-
-        # 依次尝试每个镜像源
-        for index, mirror in enumerate(mirrors_to_try, 1):
-            if _update_progress:
-                try:
-                    await _update_progress(
-                        stage="loading",
-                        progress=20 + int((index - 1) / max(total_mirrors, 1) * 60),
-                        message=f"准备尝试镜像源 {index}/{total_mirrors}: {mirror['name']}",
-                        operation=operation,
-                        plugin_id=plugin_id,
-                        mirror_id=mirror.get("id"),
-                        mirror_name=mirror.get("name"),
-                        mirror_index=index,
-                        total_mirrors=total_mirrors,
-                    )
-                except Exception as e:
-                    logger.warning(f"推送进度失败: {e}")
-
-            result = await self._clone_from_mirror(
-                owner,
-                repo,
-                target_path,
-                branch,
-                depth,
-                mirror,
-                operation,
-                plugin_id=plugin_id,
-                mirror_index=index,
-                total_mirrors=total_mirrors,
-            )
-            if result["success"]:
-                return result
-            if result.get("status_code") == 400:
-                validation_errors.append(f"{mirror['id']}: {result['error']}")
-            logger.warning(f"镜像源 {mirror['id']} 克隆失败: {result.get('error')}")
-
-            if _update_progress and index < total_mirrors:
-                try:
-                    await _update_progress(
-                        stage="loading",
-                        progress=20 + int(index / max(total_mirrors, 1) * 60),
-                        message=f"镜像源 {mirror['name']} 克隆失败，正在切换下一个源...",
-                        operation=operation,
-                        plugin_id=plugin_id,
-                        error=str(result.get("error") or ""),
-                        mirror_id=mirror.get("id"),
-                        mirror_name=mirror.get("name"),
-                        mirror_index=index,
-                        total_mirrors=total_mirrors,
-                    )
-                except Exception as e:
-                    logger.warning(f"推送进度失败: {e}")
-
-        # 所有镜像源都失败
-        return {
-            "success": False,
-            "error": "所有镜像源克隆均失败" + ("；" + "；".join(validation_errors) if validation_errors else ""),
-            "mirror_used": None,
-            "attempts": len(mirrors_to_try),
-        }
+        source = await asyncio.to_thread(download_source)
+        return await self._clone_from_mirror(
+            owner, repo, target_path, branch, depth, source, operation,
+            plugin_id=plugin_id, mirror_index=1, total_mirrors=1,
+        )
 
     async def _clone_from_mirror(
         self,
@@ -817,7 +317,7 @@ class GitMirrorService:
         target_path: Path,
         branch: Optional[str],
         depth: Optional[int],
-        mirror: Dict[str, Any],
+        source: GitSource,
         operation: str = "install",
         plugin_id: Optional[str] = None,
         mirror_index: Optional[int] = None,
@@ -825,27 +325,25 @@ class GitMirrorService:
     ) -> Dict[str, Any]:
         """从指定镜像源克隆仓库"""
         try:
-            clone_prefix = _validate_mirror_prefix(mirror["clone_prefix"], "镜像克隆前缀")
+            url = await asyncio.to_thread(_validate_custom_outbound_url, source.clone_url(owner, repo), source.name)
         except ValueError as e:
             return {
                 "success": False,
                 "error": str(e),
-                "mirror_used": mirror.get("id"),
+                "mirror_used": source.id,
                 "attempts": 0,
                 "status_code": 400,
             }
-
-        url = f"{clone_prefix}/{owner}/{repo}.git"
 
         return await self._clone_with_url(
             url,
             target_path,
             branch,
             depth,
-            mirror["id"],
+            source.id,
             operation,
             plugin_id=plugin_id,
-            mirror_name=mirror.get("name"),
+            mirror_name=source.name,
             mirror_index=mirror_index,
             total_mirrors=total_mirrors,
         )

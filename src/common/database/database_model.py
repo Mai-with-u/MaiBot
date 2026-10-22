@@ -29,7 +29,9 @@ class Messages(SQLModel, table=True):
 
     # 消息元数据
     message_id: str = Field(index=True, max_length=255)  # 消息id
-    timestamp: datetime = Field(sa_column=Column(DateTime))  # 消息时间，单位为秒
+    timestamp: datetime = Field(sa_column=Column(DateTime))  # 上游消息时间，保留原始精度
+    received_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True, index=True))
+    # 主程序实际接收时间，保留微秒；旧消息与出站消息不补造接收时间。
     platform: str = Field(index=True, max_length=100)  # 顶层平台字段
     account_id: Optional[str] = Field(default=None, max_length=255, nullable=True)  # 机器人账号归属
     scope: Optional[str] = Field(default=None, max_length=255, nullable=True)  # 路由作用域
@@ -60,6 +62,22 @@ class Messages(SQLModel, table=True):
     additional_config: Optional[str] = Field(default=None)  # 额外配置，JSON格式存储
     reply_frequency: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
     # 消息发生时当前会话的生效回复频率；无法解析时为空
+
+
+class ModelTaskUsage(SQLModel, table=True):
+    """模型任务的分钟级调用汇总，包含失败尝试，不保存请求内容。"""
+
+    __tablename__ = "model_task_usage"  # type: ignore
+
+    # 与历史数据及统计查询保持本地无时区时间，避免依赖 SQLModel 的默认 UTC 类型。
+    bucket_time: datetime = Field(primary_key=True, index=True, sa_type=DateTime(timezone=False))
+    task_name: str = Field(primary_key=True, max_length=100)
+    model_name: str = Field(primary_key=True, max_length=255)
+    model_identifier: str = Field(primary_key=True, max_length=255)
+    provider_name: str = Field(primary_key=True, max_length=255)
+    request_count: int = Field(default=0)
+    failure_count: int = Field(default=0)
+    success_duration: float = Field(default=0.0)
 
 
 class ModelUsage(SQLModel, table=True):
@@ -167,41 +185,6 @@ class MaisakaMonitorEventRecord(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime))
 
 
-class MaisakaReplyEffect(SQLModel, table=True):
-    """可供 WebUI 聚合查询的 MaiSaka 回复效果记录。"""
-
-    __tablename__ = "maisaka_reply_effects"  # type: ignore
-    __table_args__ = (
-        Index("ix_reply_effect_session_finalized", "session_id", "finalized_at"),
-        Index("ix_reply_effect_strategy_finalized", "strategy_primary", "finalized_at"),
-        Index("ix_reply_effect_model_prompt", "model_name", "prompt_fingerprint"),
-        Index("ix_reply_effect_request_fingerprint", "request_fingerprint"),
-    )
-
-    effect_id: str = Field(primary_key=True, max_length=36)
-    session_id: str = Field(index=True, max_length=255)
-    session_name: str = Field(default="", max_length=255)
-    chat_type: str = Field(default="group", index=True, max_length=20)
-    status: str = Field(index=True, max_length=30)
-    created_at: datetime = Field(sa_column=Column(DateTime, index=True))
-    finalized_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, index=True, nullable=True))
-    strategy_primary: str = Field(default="other", index=True, max_length=40)
-    model_name: str = Field(default="", index=True, max_length=255)
-    request_fingerprint: str = Field(default="", index=True, max_length=64)
-    prompt_fingerprint: str = Field(default="", index=True, max_length=64)
-    # ORM 使用统一命名，物理列沿用 scorer_version 以避免重建回复效果表。
-    evaluation_version: int = Field(
-        default=2,
-        sa_column=Column("scorer_version", Integer, nullable=False, index=True),
-    )
-    response_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
-    reception_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
-    conversation_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
-    raw_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
-    relative_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
-    confidence: float = Field(default=0.0, sa_column=Column(Float, nullable=False, server_default="0"))
-    record_json: str = Field(default="{}", sa_column=Column(Text, nullable=False))
-    record_blob: Optional[bytes] = Field(default=None, sa_column=Column(LargeBinary, nullable=True))
 
 
 class OneTimeMaintenanceTask(SQLModel, table=True):

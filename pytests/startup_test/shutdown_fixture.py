@@ -41,6 +41,8 @@ def load_bot_functions(events, *, memory_failure=False, memory_delay=0, install_
         events.extend(["persist", "metadata_close", "writer_lock_release"])
 
     modules = {
+        "src.chat.heart_flow.heartflow_manager": {"heartflow_manager": SimpleNamespace(shutdown=record("chat_stop"))},
+        "src.agent.service": {"agent_service": SimpleNamespace(stop=record("agent_stop"))},
         "src.config.config": {"config_manager": SimpleNamespace(stop_file_watcher=record("watcher_stop"))},
         "src.core.event_bus": {"event_bus": SimpleNamespace(emit=record("on_stop"))},
         "src.core.types": {"EventType": SimpleNamespace(ON_STOP="on_stop")},

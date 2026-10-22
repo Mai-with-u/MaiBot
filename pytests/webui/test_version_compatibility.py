@@ -76,8 +76,8 @@ def test_read_webui_versions_from_project_files(
     ("webui_version", "expected_status"),
     [
         ("2.0.0.dev9", "webui_outdated"),
-        ("2.0.0.dev10", "compatible"),
-        ("2.0.0.dev11", "compatible"),
+        ("2.0.0.dev10", "webui_outdated"),
+        ("2.0.0.dev11", "webui_outdated"),
         ("2.0.0", "compatible"),
         ("2.0", "compatible"),
         ("2.0.1", "main_program_outdated"),
@@ -88,14 +88,24 @@ def test_get_webui_version_compatibility_distinguishes_update_target(
     webui_version: str,
     expected_status: str,
 ) -> None:
-    _write_project_files(tmp_path)
+    _write_project_files(tmp_path, required_webui_version="2.0.0")
 
     compatibility = get_webui_version_compatibility(webui_version, tmp_path)
 
     assert compatibility.status == expected_status
     assert compatibility.main_program_version == "1.2.3"
     assert compatibility.webui_version == webui_version
-    assert compatibility.required_webui_version == "2.0.0.dev10"
+    assert compatibility.required_webui_version == "2.0.0"
+
+
+@pytest.mark.parametrize("required_version", ["2.0.0.dev10", "2.0.0a1", "2.0.0b1", "2.0.0rc1"])
+@pytest.mark.parametrize("webui_version", ["1.9.0", "2.0.0", "2.1.0"])
+def test_prerelease_requirement_skips_mismatch(
+    tmp_path: Path, required_version: str, webui_version: str,
+) -> None:
+    _write_project_files(tmp_path, required_webui_version=required_version)
+
+    assert get_webui_version_compatibility(webui_version, tmp_path).status == "compatible"
 
 
 def test_read_required_webui_version_rejects_missing_dependency(tmp_path: Path) -> None:

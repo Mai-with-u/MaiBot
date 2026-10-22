@@ -1,3 +1,4 @@
+import { Card } from '@/components/ui/card'
 import { AlertTriangle, CheckCircle2, Download, Loader2, RefreshCw, XCircle } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -15,6 +16,10 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useToast } from '@/hooks/use-toast'
 import { RestartProvider, useRestart } from '@/lib/restart-context'
 import { markSelfUpdatePending } from '@/lib/self-update-pending'
@@ -22,8 +27,11 @@ import {
   applySelfUpdate,
   checkSelfUpdate,
   getSelfUpdateStatus,
+  getSelfUpdateCustomPrefix,
+  SELF_UPDATE_STATUS_EVENT,
   type SelfUpdateResult,
   type SelfUpdateStatus,
+  type SelfUpdateSourceSelection,
 } from '@/lib/system-api'
 
 // 更新要拉取代码并同步依赖，比普通重启慢得多：每 2 秒检查一次，最多等待约 15 分钟。
@@ -64,25 +72,47 @@ function SelfUpdateCardContent() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [checking, setChecking] = useState(false)
   const [applying, setApplying] = useState(false)
+  const [sourceDialogOpen, setSourceDialogOpen] = useState(false)
+  const [sourceId, setSourceId] = useState<SelfUpdateSourceSelection['source_id'] | ''>('')
+  const [customPrefix, setCustomPrefix] = useState(getSelfUpdateCustomPrefix)
+  const [checkedSource, setCheckedSource] = useState<SelfUpdateSourceSelection | null>(null)
 
   useEffect(() => {
     let cancelled = false
+    let receivedCheck = false
+    const handleStatus = (event: Event) => {
+      receivedCheck = true
+      setStatus((event as CustomEvent<SelfUpdateStatus>).detail)
+      // 自动检查只提供展示状态；应用更新仍由用户选择并确认本次来源。
+      setCheckedSource(null)
+      setLoadError(null)
+    }
+    window.addEventListener(SELF_UPDATE_STATUS_EVENT, handleStatus)
     getSelfUpdateStatus()
       .then((next) => {
-        if (!cancelled) setStatus(next)
+        if (!cancelled && !receivedCheck) setStatus(next)
       })
       .catch((error: unknown) => {
-        if (!cancelled) setLoadError(errorMessage(error))
+        if (!cancelled && !receivedCheck) setLoadError(errorMessage(error))
       })
     return () => {
       cancelled = true
+      window.removeEventListener(SELF_UPDATE_STATUS_EVENT, handleStatus)
     }
   }, [])
 
   const handleCheck = async () => {
+    if (!sourceId || (sourceId === 'custom' && !customPrefix.trim())) return
+    const selection: SelfUpdateSourceSelection = {
+      source_id: sourceId,
+      ...(sourceId === 'custom' ? { custom_prefix: customPrefix.trim() } : {}),
+    }
     setChecking(true)
+    setCheckedSource(null)
     try {
-      setStatus(await checkSelfUpdate())
+      setStatus(await checkSelfUpdate(selection))
+      setCheckedSource(selection)
+      setSourceDialogOpen(false)
       setLoadError(null)
     } catch (error) {
       toast({
@@ -97,11 +127,11 @@ function SelfUpdateCardContent() {
 
   const handleApply = async () => {
     const targetCommit = status?.latest_commit
-    if (!targetCommit) return
+    if (!targetCommit || !checkedSource) return
 
     setApplying(true)
     try {
-      await applySelfUpdate(targetCommit)
+      await applySelfUpdate(targetCommit, checkedSource)
     } catch (error) {
       toast({
         title: t('settings.selfUpdate.applyFailed'),
@@ -119,7 +149,7 @@ function SelfUpdateCardContent() {
   const busy = checking || applying || isRestarting
 
   return (
-    <div className="rounded-lg border bg-card p-4 sm:p-6" data-testid="self-update-card">
+    <Card className="p-4 sm:p-6" data-testid="self-update-card">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="text-base sm:text-lg font-semibold">{t('settings.selfUpdate.title')}</h3>
@@ -136,7 +166,11 @@ function SelfUpdateCardContent() {
         <Button
           variant="outline"
           size="sm"
-          onClick={handleCheck}
+          onClick={() => {
+            setSourceId('')
+            setCustomPrefix(getSelfUpdateCustomPrefix())
+            setSourceDialogOpen(true)
+          }}
           disabled={busy || !status?.supported}
         >
           {checking ? (
@@ -147,6 +181,48 @@ function SelfUpdateCardContent() {
           {checking ? t('settings.selfUpdate.checking') : t('settings.selfUpdate.check')}
         </Button>
       </div>
+
+      <Dialog open={sourceDialogOpen} onOpenChange={(open) => { if (!checking) setSourceDialogOpen(open) }}>
+        <DialogContent preventOutsideClose={checking}>
+          <DialogHeader>
+            <DialogTitle>选择本体更新源</DialogTitle>
+            <DialogDescription>本次检查和更新使用同一个来源，失败后可重新选择。</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="self-update-source">更新源</Label>
+              <Select value={sourceId} disabled={checking}
+                onValueChange={(value: SelfUpdateSourceSelection['source_id']) => setSourceId(value)}>
+                <SelectTrigger id="self-update-source"><SelectValue placeholder="请选择本次更新使用的来源" /></SelectTrigger>
+                <SelectContent>
+                  {status?.deployment_type === 'package' ? <>
+                    <SelectItem value="pypi">PyPI 官方</SelectItem>
+                    <SelectItem value="tuna">清华镜像</SelectItem>
+                    <SelectItem value="aliyun">阿里镜像</SelectItem>
+                  </> : <>
+                    <SelectItem value="cnb">CNB 镜像</SelectItem>
+                    <SelectItem value="github">GitHub 官方源</SelectItem>
+                    <SelectItem value="custom">自定义源</SelectItem>
+                  </>}
+                </SelectContent>
+              </Select>
+            </div>
+            {sourceId === 'custom' && <div className="space-y-2">
+              <Label htmlFor="self-update-custom-source">Git 镜像前缀</Label>
+              <Input id="self-update-custom-source" value={customPrefix} disabled={checking}
+                onChange={(event) => setCustomPrefix(event.target.value)}
+                placeholder="https://example.com/https://github.com" />
+              <p className="text-sm text-muted-foreground">只填写一个源前缀，后面会追加 /Mai-with-u/MaiBot.git。</p>
+            </div>}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" disabled={checking} onClick={() => setSourceDialogOpen(false)}>取消</Button>
+            <Button disabled={checking || !sourceId || (sourceId === 'custom' && !customPrefix.trim())} onClick={handleCheck}>
+              {checking && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}检查更新
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="mt-3 space-y-3 text-xs sm:text-sm">
         {loadError && (
@@ -175,19 +251,19 @@ function SelfUpdateCardContent() {
           </p>
         )}
         {status?.supported && status.update_available && (
-          <AvailableUpdate status={status} busy={busy} applying={applying} onApply={handleApply} />
+          <AvailableUpdate status={status} busy={busy || !checkedSource} applying={applying} onApply={handleApply} />
         )}
         {status?.last_result && <LastResult result={status.last_result} />}
         {status?.supported && (
           <p className="text-muted-foreground break-all">
             {status.source_name && `${t('settings.selfUpdate.source', { name: status.source_name })} · `}
-            {t(status.deployment_type === 'package'
-              ? 'settings.selfUpdate.packageSourceHint'
-              : 'settings.selfUpdate.sourceHint')}
+            {status.deployment_type === 'package'
+              ? '本体更新时选择 PyPI 官方、清华或阿里，失败不自动换源。版本信息从 PyPI 官方检查。'
+              : '本体更新时选择 CNB、GitHub 或一个自定义源，失败不自动换源。更新后的依赖按项目配置安装。'}
           </p>
         )}
       </div>
-    </div>
+    </Card>
   )
 }
 

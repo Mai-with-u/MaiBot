@@ -61,6 +61,9 @@ def record_monitor_event(event_type: str, payload: dict[str, Any]) -> dict[str, 
     with get_db_session() as session:
         cleaned_payload = sanitize_monitor_payload(payload, session=session)
         timestamp = _coerce_float(cleaned_payload.get("timestamp"), default=now)
+        if event_type in ("message.ingested", "message.updated"):
+            # 媒体处理完成可能很晚，账本按最初接收时刻索引；payload 的源时间仍原样保留。
+            timestamp = _coerce_float(cleaned_payload.get("received_at"), default=timestamp)
         session_id = str(cleaned_payload.get("session_id") or "")
         record = MaisakaMonitorEventRecord(
             event_type=event_type,

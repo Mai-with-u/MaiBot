@@ -36,6 +36,8 @@ vi.mock('@/lib/plugin-api', () => ({
   checkGitStatus: vi.fn(),
   checkPluginInstalled: vi.fn(),
   fetchPluginList: vi.fn(),
+  fetchPluginDetail: vi.fn(),
+  fetchPluginDocument: vi.fn(),
   getCachedPluginList: vi.fn(),
   getInstalledPluginVersion: vi.fn(),
   getInstalledPlugins: vi.fn(),
@@ -126,6 +128,8 @@ function renderPage(props: Parameters<typeof PluginDetailPage>[0] = {}) {
 
 beforeEach(() => {
   routerState.search = { pluginId: 'plug-1' }
+  vi.mocked(pluginApi.fetchPluginDetail).mockImplementation(async (plugin) => plugin)
+  vi.mocked(pluginApi.fetchPluginDocument).mockResolvedValue('')
   vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([makePlugin()])
   vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([])
   vi.mocked(pluginApi.checkGitStatus).mockResolvedValue({ installed: true, version: '2.40.0' })
@@ -181,9 +185,10 @@ describe('插件发布版本选择', () => {
     await waitFor(() => expect(pluginApi.installPlugin).toHaveBeenCalledWith(
       'plug-1', 'https://github.com/owner/repo.git', 'main', { version: '1.0.0' }
     ))
+    fireEvent.mouseDown(screen.getByRole('tab', { name: '更新日志' }), { button: 0, ctrlKey: false })
     expect(screen.getByText('1.0.0 发布说明')).toBeInTheDocument()
-    expect(httpLib.backendApi.post).toHaveBeenCalledWith('/api/webui/plugins/fetch-raw', expect.objectContaining({
-      body: expect.objectContaining({ branch: 'b'.repeat(40), file_path: 'README.md' }),
+    expect(pluginApi.fetchPluginDocument).toHaveBeenCalledWith('plug-1', 'readme', expect.objectContaining({
+      branch: 'b'.repeat(40), signal: expect.any(AbortSignal),
     }))
   })
 
@@ -239,7 +244,7 @@ describe('PluginDetailPage 详情渲染', () => {
     expect(screen.getAllByText('测试插件')).toHaveLength(2)
     expect(screen.getAllByText('v2.0.0').length).toBeGreaterThan(0)
     expect(screen.getByText('作者甲')).toBeInTheDocument()
-    expect(screen.getByText('MIT')).toBeInTheDocument()
+    expect(screen.getAllByText('MIT').length).toBeGreaterThan(0)
     // host_application 无 max_version 时展示「最新版本」
     expect(screen.getByText(/0\.10\.0\s*- 最新版本/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /GitHub/ })).toHaveAttribute(
@@ -261,7 +266,7 @@ describe('PluginDetailPage 详情渲染', () => {
     await waitFor(() => {
       expect(screen.getAllByText('本地插件').length).toBeGreaterThan(0)
     })
-    expect(screen.getByText('Unknown')).toBeInTheDocument()
+    expect(screen.getAllByText('Unknown').length).toBeGreaterThan(0)
     expect(screen.getByText(/已安装/)).toBeInTheDocument()
     // 本地版本与 manifest 版本一致：不出现「可更新」徽标
     expect(screen.queryByText('可更新')).not.toBeInTheDocument()
@@ -354,63 +359,6 @@ describe('PluginDetailPage 安装/更新/卸载', () => {
   })
 })
 
-describe('PluginDetailPage README 与更新日志', () => {
-  it('未安装插件从仓库地址解析 owner/repo 拉取远程 README', async () => {
-    vi.mocked(httpLib.backendApi.post).mockResolvedValue({
-      success: true,
-      data: '# 远程说明文档',
-    })
-    renderPage()
-    await waitDetailReady()
-
-    await waitFor(() => {
-      expect(
-        screen.getAllByTestId('markdown').some((node) => node.textContent === '# 远程说明文档')
-      ).toBe(true)
-    })
-    // .git 后缀会被剥离
-    expect(httpLib.backendApi.post).toHaveBeenCalledWith('/api/webui/plugins/fetch-raw', {
-      body: { owner: 'owner', repo: 'repo', branch: 'main', file_path: 'README.md' },
-      errorMessage: '获取 README 失败',
-      signal: expect.any(AbortSignal),
-    })
-  })
-
-  it('已安装插件优先读取本地 README', async () => {
-    vi.mocked(pluginApi.checkPluginInstalled).mockReturnValue(true)
-    vi.mocked(pluginApi.getInstalledPluginVersion).mockReturnValue('2.0.0')
-    vi.mocked(httpLib.backendApi.get).mockResolvedValue({ success: true, data: '本地说明内容' })
-    renderPage()
-    await waitDetailReady()
-
-    await waitFor(() => {
-      expect(
-        screen.getAllByTestId('markdown').some((node) => node.textContent === '本地说明内容')
-      ).toBe(true)
-    })
-    expect(httpLib.backendApi.get).toHaveBeenCalledWith(
-      '/api/webui/plugins/local-readme/plug-1',
-      { signal: expect.any(AbortSignal) }
-    )
-  })
-
-  it('远程 README 拉取失败时展示占位文案，内联多行更新日志直接渲染', async () => {
-    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([
-      makePlugin({ changelog: '## v2\n- 新增功能' }),
-    ])
-    renderPage()
-    await waitDetailReady()
-
-    await waitFor(() => {
-      const markdownTexts = screen.getAllByTestId('markdown').map((node) => node.textContent)
-      // README：fetch-raw 返回失败 → 占位文案
-      expect(markdownTexts).toContain('该插件暂无 README 文档')
-      // changelog：包含换行的内联文本无需请求即直接展示
-      expect(markdownTexts.some((text) => text?.includes('新增功能'))).toBe(true)
-    })
-  })
-})
-
 describe('PluginDetailPage 错误与空态', () => {
   it('详情请求抛出 Error 时展示具体错误信息', async () => {
     vi.mocked(pluginApi.fetchPluginList).mockRejectedValue(new Error('市场不可用'))
@@ -428,143 +376,6 @@ describe('PluginDetailPage 错误与空态', () => {
 
     await waitFor(() => {
       expect(screen.getAllByText('加载失败').length).toBeGreaterThanOrEqual(2)
-    })
-  })
-
-  it('README 与更新日志请求失败时分别展示失败文案', async () => {
-    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([
-      makePlugin({
-        manifest: {
-          ...makePlugin().manifest,
-          changelog: 'docs/CHANGELOG.md',
-        },
-      }),
-    ])
-    vi.mocked(httpLib.backendApi.post).mockImplementation(async (_url, options) => {
-      const filePath = (options as { body?: { file_path?: string } } | undefined)?.body?.file_path
-      if (filePath === 'README.md') {
-        throw new Error('readme down')
-      }
-      throw new Error('changelog down')
-    })
-    renderPage()
-    await waitDetailReady()
-
-    await waitFor(() => {
-      const markdownTexts = screen.getAllByTestId('markdown').map((node) => node.textContent)
-      expect(markdownTexts).toContain('加载 README 失败')
-      expect(markdownTexts).toContain('加载更新日志失败')
-    })
-  })
-
-  it('无仓库地址时 README/更新日志为空占位', async () => {
-    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([
-      makePlugin({
-        manifest: {
-          ...makePlugin().manifest,
-          repository_url: undefined,
-          keywords: [],
-        },
-      }),
-    ])
-    renderPage()
-    await waitDetailReady()
-
-    await waitFor(() => {
-      expect(screen.getByText('暂无说明文档')).toBeInTheDocument()
-      expect(screen.getByText('暂无更新日志')).toBeInTheDocument()
-    })
-    expect(screen.queryByRole('link', { name: /GitHub/ })).not.toBeInTheDocument()
-    expect(screen.queryByText('标签')).not.toBeInTheDocument()
-    expect(httpLib.backendApi.post).not.toHaveBeenCalled()
-  })
-
-  it('无法解析的仓库地址展示 README 解析失败文案', async () => {
-    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([
-      makePlugin({
-        manifest: {
-          ...makePlugin().manifest,
-          repository_url: 'https://gitlab.com/owner/repo',
-          changelog: 'CHANGELOG.md',
-        },
-      }),
-    ])
-    renderPage()
-    await waitDetailReady()
-
-    await waitFor(() => {
-      expect(
-        screen.getAllByTestId('markdown').some((node) => node.textContent === '无法解析仓库地址')
-      ).toBe(true)
-      expect(screen.getByText('暂无更新日志')).toBeInTheDocument()
-    })
-  })
-
-  it('已安装本地 README 失败后回退远程文档', async () => {
-    vi.mocked(pluginApi.checkPluginInstalled).mockReturnValue(true)
-    vi.mocked(pluginApi.getInstalledPluginVersion).mockReturnValue('2.0.0')
-    vi.mocked(httpLib.backendApi.get).mockImplementation(async (url) => {
-      if (String(url).includes('local-readme')) {
-        throw new Error('本地不存在')
-      }
-      return { success: false }
-    })
-    vi.mocked(httpLib.backendApi.post).mockResolvedValue({
-      success: true,
-      data: '# 远程回退说明',
-    })
-    renderPage()
-    await waitDetailReady()
-
-    await waitFor(() => {
-      expect(
-        screen.getAllByTestId('markdown').some((node) => node.textContent === '# 远程回退说明')
-      ).toBe(true)
-    })
-    expect(httpLib.backendApi.post).toHaveBeenCalledWith('/api/webui/plugins/fetch-raw', {
-      body: { owner: 'owner', repo: 'repo', branch: 'main', file_path: 'README.md' },
-      errorMessage: '获取 README 失败',
-      signal: expect.any(AbortSignal),
-    })
-  })
-
-  it('已安装插件优先读取本地更新日志', async () => {
-    vi.mocked(pluginApi.checkPluginInstalled).mockReturnValue(true)
-    vi.mocked(pluginApi.getInstalledPluginVersion).mockReturnValue('2.0.0')
-    vi.mocked(httpLib.backendApi.get).mockImplementation(async (url) => {
-      if (String(url).includes('local-changelog')) {
-        return { success: true, data: '本地更新日志正文' }
-      }
-      if (String(url).includes('local-readme')) {
-        return { success: true, data: '本地说明内容' }
-      }
-      return { success: false }
-    })
-    renderPage()
-    await waitDetailReady()
-
-    await waitFor(() => {
-      const markdownTexts = screen.getAllByTestId('markdown').map((node) => node.textContent)
-      expect(markdownTexts).toContain('本地说明内容')
-      expect(markdownTexts).toContain('本地更新日志正文')
-    })
-    expect(httpLib.backendApi.get).toHaveBeenCalledWith(
-      '/api/webui/plugins/local-changelog/plug-1',
-      { signal: expect.any(AbortSignal) }
-    )
-  })
-
-  it('单行 # / - 内联更新日志无需请求即可渲染', async () => {
-    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([
-      makePlugin({ changelog: '# 仅标题日志' }),
-    ])
-    renderPage()
-    await waitDetailReady()
-
-    await waitFor(() => {
-      expect(
-        screen.getAllByTestId('markdown').some((node) => node.textContent === '# 仅标题日志')
-      ).toBe(true)
     })
   })
 })
@@ -723,75 +534,6 @@ describe('PluginDetailPage 配置信息卡与交互', () => {
     })
   })
 
-  it('https 更新日志走 custom_url 拉取', async () => {
-    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([
-      makePlugin({ changelog: 'https://cdn.example/CHANGELOG.md' }),
-    ])
-    vi.mocked(httpLib.backendApi.post).mockImplementation(async (_url, options) => {
-      const body = (options as { body?: { file_path?: string; custom_url?: string } } | undefined)
-        ?.body
-      if (body?.custom_url) {
-        return { success: true, data: '# 远程更新日志' }
-      }
-      return { success: true, data: '# 远程说明文档' }
-    })
-    renderPage()
-    await waitDetailReady()
-
-    await waitFor(() => {
-      expect(
-        screen.getAllByTestId('markdown').some((node) => node.textContent === '# 远程更新日志')
-      ).toBe(true)
-    })
-    expect(httpLib.backendApi.post).toHaveBeenCalledWith('/api/webui/plugins/fetch-raw', {
-      body: {
-        owner: 'custom',
-        repo: 'custom',
-        branch: 'main',
-        file_path: 'CHANGELOG.md',
-        custom_url: 'https://cdn.example/CHANGELOG.md',
-      },
-      errorMessage: '获取更新日志失败',
-      signal: expect.any(AbortSignal),
-    })
-  })
-
-  it('相对路径更新日志按仓库文件拉取', async () => {
-    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([
-      makePlugin({
-        manifest: {
-          ...makePlugin().manifest,
-          changelog: 'docs/CHANGELOG.md',
-        },
-      }),
-    ])
-    vi.mocked(httpLib.backendApi.post).mockImplementation(async (_url, options) => {
-      const filePath = (options as { body?: { file_path?: string } } | undefined)?.body?.file_path
-      if (filePath === 'docs/CHANGELOG.md') {
-        return { success: true, data: '# 仓库更新日志' }
-      }
-      return { success: true, data: '# 远程说明文档' }
-    })
-    renderPage()
-    await waitDetailReady()
-
-    await waitFor(() => {
-      expect(
-        screen.getAllByTestId('markdown').some((node) => node.textContent === '# 仓库更新日志')
-      ).toBe(true)
-    })
-    expect(httpLib.backendApi.post).toHaveBeenCalledWith('/api/webui/plugins/fetch-raw', {
-      body: {
-        owner: 'owner',
-        repo: 'repo',
-        branch: 'main',
-        file_path: 'docs/CHANGELOG.md',
-      },
-      errorMessage: '获取更新日志失败',
-      signal: expect.any(AbortSignal),
-    })
-  })
-
   it('安装进行中展示加载文案', async () => {
     vi.mocked(pluginApi.installPlugin).mockReturnValue(new Promise(() => {}))
     renderPage()
@@ -840,12 +582,14 @@ describe('PluginDetailPage 配置信息卡与交互', () => {
     ])
     vi.mocked(pluginApi.checkPluginInstalled).mockReturnValue(true)
     vi.mocked(pluginApi.getInstalledPluginVersion).mockReturnValue('1.5.0')
+    vi.mocked(pluginApi.fetchPluginDocument).mockImplementation(async (_id, kind) =>
+      kind === 'changelog' ? '- 本地条目' : '')
     renderPage()
 
     await waitFor(() => {
       expect(screen.getAllByText('本地插件').length).toBeGreaterThan(0)
     })
-    expect(screen.getByText('Unknown')).toBeInTheDocument()
+    expect(screen.getAllByText('Unknown').length).toBeGreaterThan(0)
     expect(screen.getAllByText('通用扩展').length).toBeGreaterThan(0)
     expect(screen.getByRole('link', { name: /访问/ })).toHaveAttribute(
       'href',
@@ -855,6 +599,7 @@ describe('PluginDetailPage 配置信息卡与交互', () => {
       'href',
       'https://github.com/local/repo.git'
     )
+    fireEvent.mouseDown(screen.getByRole('tab', { name: '更新日志' }), { button: 0, ctrlKey: false })
     await waitFor(() => {
       expect(
         screen.getAllByTestId('markdown').some((node) => node.textContent === '- 本地条目')
@@ -871,3 +616,28 @@ describe('PluginDetailPage 配置信息卡与交互', () => {
   })
 })
 
+
+
+describe('公共插件文档展示', () => {
+  it('README 与更新日志都委托公共服务，展示返回内容', async () => {
+    vi.mocked(pluginApi.fetchPluginDocument).mockImplementation(async (_id, kind) =>
+      kind === 'readme' ? '# 公共服务 README' : '# 公共服务更新日志')
+    renderPage()
+    await waitDetailReady()
+    await waitFor(() => expect(screen.getByText('# 公共服务 README')).toBeInTheDocument())
+    fireEvent.mouseDown(screen.getByRole('tab', { name: '更新日志' }), { button: 0, ctrlKey: false })
+    await waitFor(() => expect(screen.getByText('# 公共服务更新日志')).toBeInTheDocument())
+    expect(pluginApi.fetchPluginDocument).toHaveBeenCalledWith('plug-1', 'readme', expect.objectContaining({
+      preferLocal: false, signal: expect.any(AbortSignal),
+    }))
+  })
+
+  it('服务错误在文档区域显示，未声明文档显示空态', async () => {
+    vi.mocked(pluginApi.fetchPluginDocument).mockRejectedValue(new Error('offline'))
+    renderPage()
+    await waitDetailReady()
+    await waitFor(() => expect(screen.getByText('加载 README 失败')).toBeInTheDocument())
+    fireEvent.mouseDown(screen.getByRole('tab', { name: '更新日志' }), { button: 0, ctrlKey: false })
+    await waitFor(() => expect(screen.getByText('加载更新日志失败')).toBeInTheDocument())
+  })
+})

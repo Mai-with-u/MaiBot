@@ -4,8 +4,8 @@ import * as SliderPrimitive from "@radix-ui/react-slider"
 import { cn } from "@/lib/utils"
 
 type SliderProps = React.ComponentPropsWithoutRef<typeof SliderPrimitive.Root> & {
-  "data-dashboard-slider"?: "config" | "default"
-  "data-dashboard-slider-value-format"?: "fixed-1" | "fixed-2" | "fixed-3"
+  variant?: "value" | "default"
+  valueFormat?: "fixed-1" | "fixed-2" | "fixed-3"
 }
 
 /**
@@ -13,7 +13,7 @@ type SliderProps = React.ComponentPropsWithoutRef<typeof SliderPrimitive.Root> &
  */
 function renderSliderValue(
   value: number | undefined,
-  valueFormat: SliderProps['data-dashboard-slider-value-format'],
+  valueFormat: SliderProps['valueFormat'],
 ): React.ReactNode {
   if (typeof value !== 'number' || !valueFormat) {
     return value
@@ -41,22 +41,21 @@ const Slider = React.forwardRef<
   className,
   value,
   defaultValue,
-  "data-dashboard-slider": dashboardSliderStyle,
-  "data-dashboard-slider-value-format": dashboardValueFormat,
+  variant = "default",
+  valueFormat,
+  onValueChange,
   ...props
 }, ref) => {
-  const dashboardSliderVariant = dashboardSliderStyle ?? 'default'
-  const hasDashboardValue = dashboardSliderVariant === 'config'
-  const currentValues = Array.isArray(value)
-    ? value
-    : Array.isArray(defaultValue)
-      ? defaultValue
-      : []
-  const thumbCount = Array.isArray(value)
-    ? value.length
-    : Array.isArray(defaultValue)
-      ? defaultValue.length
-      : 1
+  const hasDashboardValue = variant === 'value'
+  // 非受控滑条也要同步拖块上的读数，不能一直显示初始值。
+  const [internalValues, setInternalValues] = React.useState(defaultValue ?? [props.min ?? 0])
+  const currentValues = value ?? internalValues
+  const thumbCount = currentValues.length
+
+  const handleValueChange = (nextValues: number[]) => {
+    if (value === undefined) setInternalValues(nextValues)
+    onValueChange?.(nextValues)
+  }
 
   return (
     <SliderPrimitive.Root
@@ -67,8 +66,9 @@ const Slider = React.forwardRef<
       )}
       value={value}
       defaultValue={defaultValue}
-      data-dashboard-slider={dashboardSliderVariant}
-      data-dashboard-slider-value-format={dashboardValueFormat}
+      onValueChange={handleValueChange}
+      data-dashboard-slider={hasDashboardValue ? 'config' : 'default'}
+      data-dashboard-slider-value-format={valueFormat}
       {...props}
     >
       <SliderPrimitive.Track
@@ -86,6 +86,10 @@ const Slider = React.forwardRef<
       {Array.from({ length: Math.max(1, thumbCount) }).map((_, index) => (
         <SliderPrimitive.Thumb
           key={index}
+          aria-label={props["aria-label"]}
+          aria-labelledby={props["aria-labelledby"]}
+          aria-valuetext={props["aria-valuetext"]}
+          aria-describedby={props["aria-describedby"]}
           data-dashboard-slider-thumb="true"
           className={cn(
             "block h-4 w-4 rounded-full border border-primary/50 bg-background shadow transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
@@ -98,7 +102,7 @@ const Slider = React.forwardRef<
               data-dashboard-slider-value="true"
               className="pointer-events-none select-none"
             >
-              {renderSliderValue(currentValues[index], dashboardValueFormat)}
+              {renderSliderValue(currentValues[index], valueFormat)}
             </span>
           )}
         </SliderPrimitive.Thumb>

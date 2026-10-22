@@ -22,16 +22,16 @@ def get_tool_spec() -> ToolSpec:
     return ToolSpec(
         name=READ_TOOL_RESULT_TOOL_NAME,
         description=(
-            "取回某次工具调用的原始结果。超长的工具结果在你的上下文里只保留了整理后的结论，并附有一个编号（如 r3）；"
-            "当你需要整理里没有的细节时，用这个编号分段读取原文，或用 keyword 直接查找相关片段。"
-            "整理后的结论已经够用时不需要调用。"
+            "取回某次工具调用保存的原始结果。联网工具预览或超长结果的整理结论会附有编号（如 r3）；"
+            "当你需要其中没有的细节时，用这个编号分段读取原文，或用 keyword 直接查找相关片段。"
+            "已有内容够用时不需要调用。"
         ),
         parameters_schema={
             "type": "object",
             "properties": {
                 "result_id": {
                     "type": "string",
-                    "description": "原始结果的编号，写在整理结论下面的那一行里，例如 r3。",
+                    "description": "工具返回的原始结果编号，例如 r3。",
                 },
                 "keyword": {
                     "type": "string",

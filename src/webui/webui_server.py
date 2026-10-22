@@ -183,7 +183,7 @@ class WebUIServer:
         # 必须在本循环内设置：anyio 的线程池上限按事件循环保存。
         from src.webui.app import limit_sync_endpoint_concurrency
 
-        logger.info(f"同步路由端点并发上限: {limit_sync_endpoint_concurrency()}")
+        logger.debug(f"同步路由端点并发上限: {limit_sync_endpoint_concurrency()}")
 
         # 看门狗同样必须挂在本循环上：实测先卡住的往往正是 WebUI 这个循环。
         from src.common.event_loop_watchdog import start_watchdog

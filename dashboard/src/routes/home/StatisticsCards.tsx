@@ -23,6 +23,7 @@ import {
   YAxis,
 } from 'recharts'
 
+import { SegmentedControl } from '@/components/ui/management'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   ChartContainer,
@@ -35,7 +36,6 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { ZoomableChart } from '@/components/ui/zoomable-chart'
 import { ThemeProviderContext } from '@/lib/theme-context'
-import { cn } from '@/lib/utils'
 
 import { useDashboardData } from './hooks/useDashboardData'
 import {
@@ -103,7 +103,6 @@ interface StatisticsCardFrameProps {
   title: string
   icon: ComponentType<{ className?: string }>
   state: StatisticsCardData
-  titleless?: boolean
   children: (data: DashboardData) => ReactNode
 }
 
@@ -139,32 +138,13 @@ function TimeRangeTextSwitch({
   }
 
   return (
-    <div
-      data-home-time-range="true"
-      className="flex shrink-0 items-center text-xs"
+    <SegmentedControl
       aria-label={t('home.stats.timeRange')}
-    >
-      {TIME_RANGES.map((hours, index) => (
-        <span key={hours} className="inline-flex items-center">
-          {index > 0 && (
-            <span className="text-border px-2" aria-hidden="true">
-              |
-            </span>
-          )}
-          <button
-            type="button"
-            aria-pressed={value === hours}
-            className={cn(
-              'text-muted-foreground hover:text-foreground whitespace-nowrap transition-colors',
-              value === hours && 'text-primary font-semibold'
-            )}
-            onClick={() => onChange(hours)}
-          >
-            {labels[hours]}
-          </button>
-        </span>
-      ))}
-    </div>
+      value={String(value)}
+      onValueChange={(next) => onChange(Number(next))}
+      size="xs"
+      options={TIME_RANGES.map((hours) => ({ value: String(hours), label: labels[hours] }))}
+    />
   )
 }
 
@@ -172,34 +152,20 @@ function StatisticsCardFrame({
   title,
   icon: Icon,
   state,
-  titleless = false,
   children,
 }: StatisticsCardFrameProps) {
   return (
     <Card className="relative flex h-full min-h-0 flex-col">
-      {!titleless && (
-        <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-2 pb-3">
-          <div className="min-w-0">
-            <CardTitle className="flex items-center gap-2 text-sm font-medium">
-              <Icon className="h-4 w-4" />
-              {title}
-            </CardTitle>
-          </div>
-          <TimeRangeTextSwitch value={state.timeRange} onChange={state.setTimeRange} />
-        </CardHeader>
-      )}
-      <CardContent
-        data-home-titleless-content={titleless ? 'true' : undefined}
-        className={cn(
-          'flex min-h-0 flex-1 flex-col',
-          titleless && 'relative pt-4 sm:pt-5'
-        )}
-      >
-        {titleless && (
-          <div className="absolute top-3 right-4 z-10">
-            <TimeRangeTextSwitch value={state.timeRange} onChange={state.setTimeRange} />
-          </div>
-        )}
+      <CardHeader className="flex shrink-0 flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-3">
+        <div className="min-w-0">
+          <CardTitle className="flex items-center gap-2 text-sm font-medium">
+            <Icon className="h-4 w-4" />
+            {title}
+          </CardTitle>
+        </div>
+        <TimeRangeTextSwitch value={state.timeRange} onChange={state.setTimeRange} />
+      </CardHeader>
+      <CardContent className="flex min-h-0 flex-1 flex-col">
         {state.loading && !state.data ? (
           <div className="space-y-3">
             <Skeleton className="h-24 w-full" />
@@ -315,7 +281,6 @@ export function StatisticsOverviewCard() {
       title={t('home.stats.overviewTitle')}
       icon={BarChart3}
       state={state}
-      titleless
     >
       {({ summary }) => (
         <div
@@ -324,7 +289,7 @@ export function StatisticsOverviewCard() {
         >
           <div
             data-home-summary-primary-group="true"
-            className="divide-border grid min-h-0 w-full grid-cols-2 divide-x pr-28 sm:w-3/5"
+            className="divide-border grid min-h-0 w-full grid-cols-2 divide-x"
           >
             <PrimarySummaryMetric
               label={t('home.stats.totalRequests')}

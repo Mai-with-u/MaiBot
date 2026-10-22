@@ -28,6 +28,8 @@ export interface ChatInfo {
   is_group: boolean
   use_expression: boolean
   enable_learning: boolean
+  /** 聊天列表返回的表达记录数；导入目标和共享组成员未查询时为空。 */
+  expression_count?: number | null
 }
 
 /**

@@ -142,20 +142,14 @@ class AsyncTaskManager:
                     except Exception as e:
                         logger.warning(f"取消任务 '{name}' 时发生异常: {e}")
 
-            # 等待所有任务完成，添加超时保护
-            for task_name, task_inst in task_items:
-                if not task_inst.done():
-                    try:
-                        await asyncio.wait_for(task_inst, timeout=10.0)
-                        logger.debug(f"任务 '{task_name}' 已完成")
-                    except asyncio.TimeoutError:
-                        logger.warning(f"等待任务 '{task_name}' 完成超时")
-                    except asyncio.CancelledError:
-                        logger.info(f"任务 '{task_name}' 已取消")
-                    except Exception as e:
-                        logger.error(f"任务 '{task_name}' 执行时发生异常: {e}", exc_info=True)
+            # 同时等待全部任务；子任务取消作为结果返回，调用者取消必须向上传播。
+            # 不能把外层 wait_for 的取消误认成首个子任务取消后提前清空任务表。
+            if task_items:
+                await asyncio.wait_for(
+                    asyncio.gather(*(task for _, task in task_items), return_exceptions=True), timeout=10.0
+                )
 
-            # 清空任务列表
+            # 所有完成回调已落地后再清空任务列表。
             self.tasks.clear()
             self.abort_flag.clear()
             logger.info("所有异步任务已停止")

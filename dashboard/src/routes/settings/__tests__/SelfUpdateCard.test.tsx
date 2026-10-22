@@ -64,8 +64,8 @@ const available = makeStatus({
   update_available: true,
   can_apply: true,
   dependencies_changed: true,
-  source_id: 'ghproxy-vip',
-  source_name: 'ghproxy.vip 镜像',
+  source_id: 'github',
+  source_name: 'GitHub 官方源',
   commits: [
     { short_id: 'bbbbbbb', summary: '修复断句', committed_at: '2026-10-13T10:00:00+08:00' },
     { short_id: 'ccccccc', summary: '新增子代理', committed_at: '2026-10-12T10:00:00+08:00' },
@@ -78,6 +78,15 @@ beforeEach(() => {
 })
 afterEach(() => cleanup())
 
+async function chooseSourceAndCheck() {
+  fireEvent.click(screen.getByRole('button', { name: 'settings.selfUpdate.check' }))
+  expect(screen.getByRole('button', { name: '检查更新' })).toBeDisabled()
+  fireEvent.keyDown(screen.getByRole('combobox', { name: '更新源' }), { key: 'ArrowDown' })
+  fireEvent.click(await screen.findByRole('option', { name: 'GitHub 官方源' }))
+  fireEvent.click(screen.getByRole('button', { name: '检查更新' }))
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: '选择本体更新源' })).not.toBeInTheDocument())
+}
+
 describe('SelfUpdateCard', () => {
   it('检查到新版本后，确认即按界面上的提交发起更新并等待重启', async () => {
     api.getSelfUpdateStatus.mockResolvedValue(makeStatus())
@@ -86,17 +95,18 @@ describe('SelfUpdateCard', () => {
     render(<SelfUpdateCard />)
 
     expect(await screen.findByText('settings.selfUpdate.notChecked')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'settings.selfUpdate.check' }))
+    await chooseSourceAndCheck()
 
     expect(await screen.findByText('修复断句')).toBeInTheDocument()
     expect(screen.getByText(/settings\.selfUpdate\.newVersion.*1\.3\.8/)).toBeInTheDocument()
-    expect(screen.getByText(/settings\.selfUpdate\.source .*ghproxy\.vip 镜像/)).toBeInTheDocument()
+    expect(screen.getByText(/settings\.selfUpdate\.source .*GitHub 官方源/)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'settings.selfUpdate.apply' }))
     fireEvent.click(await screen.findByRole('button', { name: 'settings.selfUpdate.confirmAction' }))
 
     await waitFor(() => expect(triggerRestart).toHaveBeenCalledTimes(1))
-    expect(api.applySelfUpdate).toHaveBeenCalledWith(TARGET)
+    expect(api.checkSelfUpdate).toHaveBeenCalledWith({ source_id: 'github' })
+    expect(api.applySelfUpdate).toHaveBeenCalledWith(TARGET, { source_id: 'github' })
     expect(triggerRestart).toHaveBeenCalledWith({ skipApiCall: true, maxAttempts: 450 })
     expect(sessionStorage.getItem('maibot-self-update-pending')).toBe(TARGET)
   })
@@ -129,8 +139,11 @@ describe('SelfUpdateCard', () => {
     unmount()
 
     api.getSelfUpdateStatus.mockResolvedValue(available)
+    api.checkSelfUpdate.mockResolvedValue(available)
     api.applySelfUpdate.mockRejectedValue(new Error('存在未提交的本地改动'))
     render(<SelfUpdateCard />)
+    await screen.findByRole('button', { name: 'settings.selfUpdate.apply' })
+    await chooseSourceAndCheck()
     fireEvent.click(await screen.findByRole('button', { name: 'settings.selfUpdate.apply' }))
     fireEvent.click(await screen.findByRole('button', { name: 'settings.selfUpdate.confirmAction' }))
 

@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from html import escape
 from os import getenv
 from pathlib import Path
-from typing import TYPE_CHECKING, DefaultDict, cast
+from typing import TYPE_CHECKING, DefaultDict, Dict, Mapping, cast
 
 import asyncio
 import concurrent.futures
@@ -138,6 +138,7 @@ class StatPeriodData(TypedDict):
     tokens_by_model: defaultdict[str, int]
     tokens_by_module: defaultdict[str, int]
     tokens_by_task: DefaultDict[str, int]
+    tokens_by_chat: DefaultDict[str, int]
     costs_by_type: defaultdict[str, float]
     costs_by_user: defaultdict[str, float]
     costs_by_model: defaultdict[str, float]
@@ -201,6 +202,7 @@ TOTAL_TOK_BY_USER = "tokens_by_user"
 TOTAL_TOK_BY_MODEL = "tokens_by_model"
 TOTAL_TOK_BY_MODULE = "tokens_by_module"
 TOTAL_TOK_BY_TASK = "tokens_by_task"
+TOTAL_TOK_BY_CHAT = "tokens_by_chat"
 COST_BY_TYPE = "costs_by_type"
 COST_BY_USER = "costs_by_user"
 COST_BY_MODEL = "costs_by_model"
@@ -397,11 +399,10 @@ def _json_for_html_script(value: object) -> str:
     )
 
 
-def _build_llm_owner_costs(costs_by_type: defaultdict[str, float]) -> dict[str, float]:
-    """按 LLM 调用来源聚合花费，区分本体与各插件。"""
-
+def _build_llm_owner_distribution(values_by_type: Mapping[str, float]) -> Dict[str, float]:
+    """按相同的调用来源规则聚合花费或 Token，区分本体与各插件。"""
     owner_costs: defaultdict[str, float] = defaultdict(float)
-    for request_type, cost in costs_by_type.items():
+    for request_type, cost in values_by_type.items():
         normalized_request_type = str(request_type or "").strip()
         if normalized_request_type.startswith("plugin."):
             plugin_id = normalized_request_type.removeprefix("plugin.").strip()
@@ -494,8 +495,7 @@ class StatisticOutputTask(AsyncTask):
 
         output = [
             self.SEP_LINE,
-            f"  最近1小时的统计数据  (自{now.strftime('%Y-%m-%d %H:%M:%S')}开始，详细信息见文件：{self.record_file_path})",
-            self.SEP_LINE,
+            f"最近1小时统计 · {now:%Y-%m-%d %H:%M:%S}",
             self._format_total_stat(stats["last_hour"]),
             "",
             self._format_model_classified_stat(stats["last_hour"]),
@@ -586,6 +586,7 @@ class StatisticOutputTask(AsyncTask):
             TOTAL_TOK_BY_MODEL: defaultdict(int),
             TOTAL_TOK_BY_MODULE: defaultdict(int),
             TOTAL_TOK_BY_TASK: defaultdict(int),
+            TOTAL_TOK_BY_CHAT: defaultdict(int),
             TOTAL_COST: 0.0,
             COST_BY_TYPE: defaultdict(float),
             COST_BY_USER: defaultdict(float),
@@ -702,6 +703,9 @@ class StatisticOutputTask(AsyncTask):
                         prompt_tokens = cast(int | None, record["prompt_tokens"]) or 0
                         completion_tokens = cast(int | None, record["completion_tokens"]) or 0
                         total_tokens = prompt_tokens + completion_tokens
+                        StatisticOutputTask._add_defaultdict_int(
+                            stats[period_key], TOTAL_TOK_BY_CHAT, chat_cost_key, total_tokens
+                        )
                         prompt_cache_enabled = bool(record.get("prompt_cache_enabled"))
                         prompt_cache_hit_tokens = 0
                         prompt_cache_miss_tokens = 0
@@ -953,10 +957,11 @@ class StatisticOutputTask(AsyncTask):
         last_all_time_stat: dict[str, object] | None = None
 
         try:
-            # 新增任务维度后旧缓存缺少此数据，首次刷新重新收集完整历史。
+            # 新增统计维度后旧缓存缺少历史数据，首次刷新重新收集完整历史。
             if (
                 "last_full_statistics" in local_storage
                 and REQ_CNT_BY_TASK in local_storage["last_full_statistics"]["stat_data"]
+                and TOTAL_TOK_BY_CHAT in local_storage["last_full_statistics"]["stat_data"]
             ):
                 # 如果存在上次完整统计数据，则使用该数据进行增量统计
                 last_stat = cast(dict[str, object], local_storage["last_full_statistics"])
@@ -1148,188 +1153,81 @@ class StatisticOutputTask(AsyncTask):
 
     @staticmethod
     def _format_total_stat(stats: StatPeriodData) -> str:
-        """
-        格式化总统计数据
-        """
+        """格式化控制台总览，只保留核心统计。"""
         # 计算总token数（从所有模型的token数中累加）
-        total_tokens = sum(stats[TOTAL_TOK_BY_MODEL].values()) if stats[TOTAL_TOK_BY_MODEL] else 0
-        total_input_tokens = sum(stats[IN_TOK_BY_MODEL].values()) if stats[IN_TOK_BY_MODEL] else 0
-        total_output_tokens = sum(stats[OUT_TOK_BY_MODEL].values()) if stats[OUT_TOK_BY_MODEL] else 0
+        total_tokens = sum(stats[TOTAL_TOK_BY_MODEL].values())
+        total_input_tokens = sum(stats[IN_TOK_BY_MODEL].values())
+        total_output_tokens = sum(stats[OUT_TOK_BY_MODEL].values())
         cache_hit_tokens = cast(int, stats.get(CACHE_HIT_TOK, 0))
         cache_miss_tokens = cast(int, stats.get(CACHE_MISS_TOK, 0))
-
-        # 计算花费/消息数量指标（每100条）
-        cost_per_100_messages = (stats[TOTAL_COST] / stats[TOTAL_MSG_CNT] * 100) if stats[TOTAL_MSG_CNT] > 0 else 0.0
-
-        # 计算花费/时间指标（花费/小时）
-        online_hours = stats[ONLINE_TIME] / 3600.0 if stats[ONLINE_TIME] > 0 else 0.0
-        cost_per_hour = stats[TOTAL_COST] / online_hours if online_hours > 0 else 0.0
-
-        # 计算token/时间指标（token/小时）
-        tokens_per_hour = (total_tokens / online_hours) if online_hours > 0 else 0.0
-
-        # 计算花费/回复数量指标（每100条）
         total_replies = stats.get(TOTAL_REPLY_CNT, 0)
-        cost_per_100_replies = (stats[TOTAL_COST] / total_replies * 100) if total_replies > 0 else 0.0
-
-        # 计算花费/消息数量（排除自己回复）指标（每100条）
-        total_messages_excluding_replies = stats[TOTAL_MSG_CNT] - total_replies
-        cost_per_100_messages_excluding_replies = (
-            (stats[TOTAL_COST] / total_messages_excluding_replies * 100)
-            if total_messages_excluding_replies > 0
-            else 0.0
-        )
 
         output = [
-            f"总在线时间: {_format_online_time(int(stats[ONLINE_TIME]))}",
-            f"总消息数: {_format_large_number(stats[TOTAL_MSG_CNT])}",
-            f"总回复数: {_format_large_number(total_replies)}",
-            f"总请求数: {_format_large_number(stats[TOTAL_REQ_CNT])}",
-            f"总Token数: {_format_large_number(total_tokens)}",
-            f"总输入Token: {_format_large_number(total_input_tokens)}",
-            f"总输出Token: {_format_large_number(total_output_tokens)}",
-            f"Prompt缓存命中率: {_format_cache_hit_rate(cache_hit_tokens, cache_miss_tokens)}",
-            f"Prompt缓存命中Token: {_format_large_number(cache_hit_tokens)}",
-            f"Prompt缓存未命中Token: {_format_large_number(cache_miss_tokens)}",
-            f"总花费: {stats[TOTAL_COST]:.2f}¥",
-            f"花费/消息数量: {cost_per_100_messages:.4f}¥/100条" if stats[TOTAL_MSG_CNT] > 0 else "花费/消息数量: N/A",
-            f"花费/接受消息数量: {cost_per_100_messages_excluding_replies:.4f}¥/100条"
-            if total_messages_excluding_replies > 0
-            else "花费/消息数量(排除回复): N/A",
-            f"花费/回复消息数量: {cost_per_100_replies:.4f}¥/100条" if total_replies > 0 else "花费/回复数量: N/A",
-            f"花费/时间: {cost_per_hour:.2f}¥/小时" if online_hours > 0 else "花费/时间: N/A",
-            f"Token/时间: {_format_large_number(tokens_per_hour)}/小时" if online_hours > 0 else "Token/时间: N/A",
-            "",
+            f"在线 {_format_online_time(int(stats[ONLINE_TIME]))}  "
+            f"消息 {_format_large_number(stats[TOTAL_MSG_CNT])}  "
+            f"回复 {_format_large_number(total_replies)}  "
+            f"请求 {_format_large_number(stats[TOTAL_REQ_CNT])}",
+            f"Token {_format_large_number(total_tokens)} "
+            f"(输入 {_format_large_number(total_input_tokens)} / 输出 {_format_large_number(total_output_tokens)})  "
+            f"缓存命中 {_format_cache_hit_rate(cache_hit_tokens, cache_miss_tokens)}",
+            f"花费 {stats[TOTAL_COST]:.2f}¥",
         ]
-
         return "\n".join(output)
 
     @staticmethod
     def _format_model_classified_stat(stats: StatPeriodData) -> str:
-        """
-        格式化按模型分类的统计数据
-        """
+        """格式化按模型分类的控制台核心统计。"""
         if stats[TOTAL_REQ_CNT] <= 0:
             return ""
-        data_fmt = "{:<32}  {:>10}  {:>12}  {:>12}  {:>12}  {:>9.2f}¥  {:>10.1f}  {:>10.1f}  {:>12}  {:>12}  {:>12}  {:>12}"
-
-        total_replies = stats.get(TOTAL_REPLY_CNT, 0)
-
+        data_fmt = "{:<32}  {:>6}  {:>8}  {:>6.2f}¥  {:>6.1f}s  {:>7}"
         output = [
-            "按模型分类统计:",
-            " 模型名称                          调用次数    输入Token     输出Token     Token总量     累计花费    平均耗时(秒)  标准差(秒)  每次回复平均调用次数  每次回复平均Token数  每次调用平均Token     缓存命中率",
+            "模型                              调用     Token     花费      耗时     缓存命中",
         ]
         for model_name, count in sorted(stats[REQ_CNT_BY_MODEL].items()):
             name = f"{model_name[:29]}..." if len(model_name) > 32 else model_name
-            in_tokens = stats[IN_TOK_BY_MODEL][model_name]
-            out_tokens = stats[OUT_TOK_BY_MODEL][model_name]
-            tokens = stats[TOTAL_TOK_BY_MODEL][model_name]
-            cost = stats[COST_BY_MODEL][model_name]
-            avg_time_cost = stats[AVG_TIME_COST_BY_MODEL][model_name]
-            std_time_cost = stats[STD_TIME_COST_BY_MODEL][model_name]
             cache_hit_rate = _format_cache_hit_rate(
                 stats[CACHE_HIT_TOK_BY_MODEL][model_name],
                 stats[CACHE_MISS_TOK_BY_MODEL][model_name],
             )
-
-            # 计算每次回复平均值
-            avg_count_per_reply = count / total_replies if total_replies > 0 else 0.0
-            avg_tokens_per_reply = tokens / total_replies if total_replies > 0 else 0.0
-
-            # 计算每次调用平均token
-            avg_tokens_per_call = tokens / count if count > 0 else 0.0
-
-            # 格式化大数字
-            formatted_count = _format_large_number(count)
-            formatted_in_tokens = _format_large_number(in_tokens)
-            formatted_out_tokens = _format_large_number(out_tokens)
-            formatted_tokens = _format_large_number(tokens)
-            formatted_avg_count = _format_large_number(avg_count_per_reply) if total_replies > 0 else "N/A"
-            formatted_avg_tokens = _format_large_number(avg_tokens_per_reply) if total_replies > 0 else "N/A"
-            formatted_avg_tokens_per_call = _format_large_number(avg_tokens_per_call) if count > 0 else "N/A"
-
+            # 格式化大数字，省略输入输出拆分及每次回复等派生指标。
             output.append(
                 data_fmt.format(
                     name,
-                    formatted_count,
-                    formatted_in_tokens,
-                    formatted_out_tokens,
-                    formatted_tokens,
-                    cost,
-                    avg_time_cost,
-                    std_time_cost,
-                    formatted_avg_count,
-                    formatted_avg_tokens,
-                    formatted_avg_tokens_per_call,
+                    _format_large_number(count),
+                    _format_large_number(stats[TOTAL_TOK_BY_MODEL][model_name]),
+                    stats[COST_BY_MODEL][model_name],
+                    stats[AVG_TIME_COST_BY_MODEL][model_name],
                     cache_hit_rate,
                 )
             )
-
-        output.append("")
         return "\n".join(output)
 
     @staticmethod
     def _format_module_classified_stat(stats: StatPeriodData) -> str:
-        """
-        格式化按模块分类的统计数据
-        """
+        """格式化按模块分类的控制台核心统计。"""
         if stats[TOTAL_REQ_CNT] <= 0:
             return ""
-        data_fmt = "{:<32}  {:>10}  {:>12}  {:>12}  {:>12}  {:>9.2f}¥  {:>10.1f}  {:>10.1f}  {:>12}  {:>12}  {:>12}  {:>12}"
-
-        total_replies = stats.get(TOTAL_REPLY_CNT, 0)
-
+        data_fmt = "{:<32}  {:>6}  {:>8}  {:>6.2f}¥  {:>6.1f}s  {:>7}"
         output = [
-            "按模块分类统计:",
-            " 模块名称                          调用次数    输入Token     输出Token     Token总量     累计花费    平均耗时(秒)  标准差(秒)  每次回复平均调用次数  每次回复平均Token数  每次调用平均Token     缓存命中率",
+            "模块                              调用     Token     花费      耗时     缓存命中",
         ]
         for module_name, count in sorted(stats[REQ_CNT_BY_MODULE].items()):
             name = f"{module_name[:29]}..." if len(module_name) > 32 else module_name
-            in_tokens = stats[IN_TOK_BY_MODULE][module_name]
-            out_tokens = stats[OUT_TOK_BY_MODULE][module_name]
-            tokens = stats[TOTAL_TOK_BY_MODULE][module_name]
-            cost = stats[COST_BY_MODULE][module_name]
-            avg_time_cost = stats[AVG_TIME_COST_BY_MODULE][module_name]
-            std_time_cost = stats[STD_TIME_COST_BY_MODULE][module_name]
             cache_hit_rate = _format_cache_hit_rate(
                 stats[CACHE_HIT_TOK_BY_MODULE][module_name],
                 stats[CACHE_MISS_TOK_BY_MODULE][module_name],
             )
-
-            # 计算每次回复平均值
-            avg_count_per_reply = count / total_replies if total_replies > 0 else 0.0
-            avg_tokens_per_reply = tokens / total_replies if total_replies > 0 else 0.0
-
-            # 计算每次调用平均token
-            avg_tokens_per_call = tokens / count if count > 0 else 0.0
-
-            # 格式化大数字
-            formatted_count = _format_large_number(count)
-            formatted_in_tokens = _format_large_number(in_tokens)
-            formatted_out_tokens = _format_large_number(out_tokens)
-            formatted_tokens = _format_large_number(tokens)
-            formatted_avg_count = _format_large_number(avg_count_per_reply) if total_replies > 0 else "N/A"
-            formatted_avg_tokens = _format_large_number(avg_tokens_per_reply) if total_replies > 0 else "N/A"
-            formatted_avg_tokens_per_call = _format_large_number(avg_tokens_per_call) if count > 0 else "N/A"
-
+            # 格式化大数字，省略输入输出拆分及每次回复等派生指标。
             output.append(
                 data_fmt.format(
                     name,
-                    formatted_count,
-                    formatted_in_tokens,
-                    formatted_out_tokens,
-                    formatted_tokens,
-                    cost,
-                    avg_time_cost,
-                    std_time_cost,
-                    formatted_avg_count,
-                    formatted_avg_tokens,
-                    formatted_avg_tokens_per_call,
+                    _format_large_number(count),
+                    _format_large_number(stats[TOTAL_TOK_BY_MODULE][module_name]),
+                    stats[COST_BY_MODULE][module_name],
+                    stats[AVG_TIME_COST_BY_MODULE][module_name],
                     cache_hit_rate,
                 )
             )
-
-        output.append("")
         return "\n".join(output)
 
     def _format_chat_stat(self, stats: StatPeriodData) -> str:
@@ -1338,8 +1236,9 @@ class StatisticOutputTask(AsyncTask):
         """
         if stats[TOTAL_MSG_CNT] <= 0:
             return ""
-        output = ["聊天消息统计:", " 联系人/群组名称                  消息数量"]
-        for chat_id, count in sorted(stats[MSG_CNT_BY_CHAT].items()):
+        output = ["聊天消息（前5）:"]
+        chats = sorted(stats[MSG_CNT_BY_CHAT].items(), key=lambda item: item[1], reverse=True)
+        for chat_id, count in chats[:5]:
             try:
                 chat_name = self.name_mapping.get(chat_id, ("未知聊天", 0))[0]
                 formatted_count = _format_large_number(count)
@@ -1348,7 +1247,9 @@ class StatisticOutputTask(AsyncTask):
                 logger.warning(f"格式化聊天统计时发生错误，chat_id: {chat_id}, 错误: {e}")
                 formatted_count = _format_large_number(count)
                 output.append(f"{'未知聊天':<32}  {formatted_count:>10}")
-        output.append("")
+        if len(chats) > 5:
+            other_count = sum(count for _, count in chats[5:])
+            output.append(f"其余 {len(chats) - 5} 个会话合计: {_format_large_number(other_count)} 条")
         return "\n".join(output)
 
     def _get_chat_display_name_from_id(self, chat_id: str) -> str:
@@ -1510,9 +1411,22 @@ class StatisticOutputTask(AsyncTask):
                 else str(self.name_mapping.get(chat_id, (self._get_chat_display_name_from_id(chat_id), 0))[0])
             )
             chat_costs[chat_name] += cost
-        owner_costs = _build_llm_owner_costs(stat_data[COST_BY_TYPE])
+        owner_costs = _build_llm_owner_distribution(stat_data[COST_BY_TYPE])
+        chat_tokens: DefaultDict[str, int] = defaultdict(int)
+        for chat_id, tokens in stat_data[TOTAL_TOK_BY_CHAT].items():
+            chat_name = (
+                "全局"
+                if chat_id == GLOBAL_COST_SESSION_KEY
+                else str(self.name_mapping.get(chat_id, (self._get_chat_display_name_from_id(chat_id), 0))[0])
+            )
+            chat_tokens[chat_name] += tokens
 
         return DetailedStatisticsDistributions(
+            owner_tokens=self._build_distribution_items(_build_llm_owner_distribution(stat_data[TOTAL_TOK_BY_TYPE])),
+            model_tokens=self._build_distribution_items(dict(stat_data[TOTAL_TOK_BY_MODEL])),
+            module_tokens=self._build_distribution_items(dict(stat_data[TOTAL_TOK_BY_MODULE])),
+            request_type_tokens=self._build_distribution_items(dict(stat_data[TOTAL_TOK_BY_TYPE])),
+            chat_tokens=self._build_distribution_items(dict(chat_tokens)),
             owner_costs=self._build_distribution_items(dict(owner_costs)),
             model_costs=self._build_distribution_items(dict(stat_data[COST_BY_MODEL])),
             module_costs=self._build_distribution_items(dict(stat_data[COST_BY_MODULE])),
@@ -1751,7 +1665,7 @@ class StatisticOutputTask(AsyncTask):
             chat_cost_labels_json = _json_for_html_script(chat_cost_labels)
             chat_costs_json = _json_for_html_script(chat_costs)
 
-            owner_costs_by_label = _build_llm_owner_costs(stat_data[COST_BY_TYPE])
+            owner_costs_by_label = _build_llm_owner_distribution(stat_data[COST_BY_TYPE])
             owner_cost_labels = list(owner_costs_by_label.keys())
             owner_costs = [owner_costs_by_label[label] for label in owner_cost_labels]
             owner_cost_labels_json = _json_for_html_script(owner_cost_labels)
@@ -2547,7 +2461,7 @@ class StatisticOutputTask(AsyncTask):
         query_start_timestamp = start_time.timestamp()
         messages = fetch_messages_since(start_time)
         for message in messages:
-            message_time_ts = message.timestamp.timestamp()
+            message_time_ts = message.statistics_time.timestamp()
 
             # 找到对应的时间间隔索引
             time_diff = message_time_ts - query_start_timestamp
@@ -2926,7 +2840,7 @@ class StatisticOutputTask(AsyncTask):
         query_start_timestamp = start_time.timestamp()
         messages = fetch_messages_since(start_time)
         for message in messages:
-            message_time_ts = message.timestamp.timestamp()
+            message_time_ts = message.statistics_time.timestamp()
 
             time_diff = message_time_ts - query_start_timestamp
             interval_index = int(time_diff // interval_seconds)

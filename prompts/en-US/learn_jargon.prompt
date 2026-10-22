@@ -8,7 +8,7 @@ Extraction rules:
 - Exclude: personal names, @, content inside stickers/images, pure punctuation, and regular function words (such as 的, 了, 呢, 啊, etc.)
 - Each term is recommended to be 2-8 characters long (not mandatory), and should be as short as possible
 - Please extract as many possible jargon items as you can, up to 30 in total
-- You may extract from USER, ASSISTANT, TOOL_CALL, TOOL_RESULT, and other sources, but do not extract from sticker/image content
+- Extract only from USER sources. Do not learn from bot messages, analysis, reasoning, tool calls, or sticker/image content
 
 The jargon must be one of the following types:
 - Abbreviations made of letters and formed from the initials of Chinese pinyin, such as: nb, yyds, xswl

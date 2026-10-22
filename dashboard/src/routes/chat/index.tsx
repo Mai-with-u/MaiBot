@@ -1,3 +1,6 @@
+import { ChatConversationHeader } from './ChatConversationHeader'
+import { PageFrame } from '@/components/ui/surface'
+import { ConversationTransition } from '@/components/ui/conversation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useRouterState } from '@tanstack/react-router'
 import { motion } from 'motion/react'
@@ -1112,7 +1115,7 @@ export function ChatPage() {
   )
 
   // 关闭标签页
-  const closeTab = (tabId: string, e?: React.MouseEvent | React.KeyboardEvent) => {
+  const closeTab = useCallback((tabId: string, e?: React.MouseEvent | React.KeyboardEvent) => {
     e?.stopPropagation()
 
     // 不能关闭默认本地聊天标签页
@@ -1146,33 +1149,32 @@ export function ChatPage() {
       return newTabs
     })
 
-    if (activeTabId === tabId) {
-      setActiveTabId('webui-default')
-    }
-  }
+    setActiveTabId((current) => current === tabId ? 'webui-default' : current)
+  }, [])
 
   // 切换标签页
-  const switchTab = (tabId: string) => {
+  const switchTab = useCallback((tabId: string) => {
     setActiveObservedSessionId(null)
     setActiveTabId(tabId)
-  }
+  }, [])
 
-  const selectObservedSession = (sessionId: string) => {
+  const selectObservedSession = useCallback((sessionId: string) => {
     setSelectedObservedSession(sessionId)
     setActiveObservedSessionId(sessionId)
-  }
+  }, [setSelectedObservedSession])
 
   // 在页内直接打开观察聊天流的设置弹窗，不再跳转到聊天管理页
-  const openObservedSettings = (sessionId: string) => {
-    const info = knownSessions.get(sessionId)
+  const openObservedSettings = useCallback((sessionId: string) => {
+    // 名称来自聊天流资料，不依赖实时活动时间，避免每个监控事件都改变行回调。
+    const info = knownChatStreams.find((chat) => chat.session_id === sessionId)
     setSettingsChat({
       session_id: sessionId,
-      display_name: info?.sessionName || sessionId,
+      display_name: info?.display_name || sessionId,
     })
-  }
+  }, [knownChatStreams])
 
   return (
-    <div className="bg-background flex h-full min-h-0">
+    <div data-chat-workspace="true">
       {/* 桌面端：左侧会话侧边栏 */}
       <motion.div
         className="hidden shrink-0 md:block"
@@ -1226,8 +1228,8 @@ export function ChatPage() {
       )}
 
       {/* 主聊天区 */}
-      <motion.div
-        className={cn('flex min-w-0 flex-1 flex-col', !mobileRoomOpen && 'max-md:hidden')}
+      <PageFrame asChild><motion.div
+        className={cn('flex min-h-0 min-w-0 flex-1 flex-col', !mobileRoomOpen && 'max-md:hidden')}
         variants={{
           initial: { opacity: 0, y: '100%' },
           animate: { opacity: 1, y: 0 },
@@ -1260,6 +1262,7 @@ export function ChatPage() {
             )}
           </section>
         )}
+        <ConversationTransition mode={activeObservedSessionId ? 'observe' : 'chat'}>
         {/* 移动端对话页顶栏：返回列表、会话名片与单个操作；观察页的顶栏悬浮在时间线上方 */}
         <div className="md:hidden">
           {!activeObservedSessionId && activeTab && (
@@ -1284,7 +1287,7 @@ export function ChatPage() {
 
         {activeObservedSessionId ? (
           <div className="relative min-h-0 min-w-0 flex-1" data-chat-observed-session>
-            <MaisakaMonitor
+            <MaisakaMonitor sessionName={activeObservedSession?.sessionName}
               embedded
               reasoningReturnTo={`/chat?observe=${encodeURIComponent(activeObservedSessionId)}`}
               floatingToolbarContainer={isMobileChat ? observedToolbarSlot : undefined}
@@ -1319,6 +1322,11 @@ export function ChatPage() {
           </div>
         ) : (
           <>
+            {activeTab && (
+              <div className="hidden md:block">
+                <ChatConversationHeader tab={activeTab} onClear={() => setTabs(current => current.map(tab => tab.id === activeTab.id ? { ...tab, messages: [] } : tab))} />
+              </div>
+            )}
             <MessageList
               key={activeTab?.id ?? 'empty-chat'}
               messages={activeTab?.messages ?? []}
@@ -1360,7 +1368,8 @@ export function ChatPage() {
             />
           </>
         )}
-      </motion.div>
+        </ConversationTransition>
+      </motion.div></PageFrame>
 
       <ChatStreamSettingsDialog
         chat={settingsChat}

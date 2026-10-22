@@ -1,3 +1,4 @@
+import { Card } from '@/components/ui/card'
 import {
   CalendarDays,
   ChevronLeft,
@@ -27,6 +28,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { backendApi } from '@/lib/http'
 import {
   formatLocalCacheBytes,
+  formatLocalCacheModifiedTime,
   LOCAL_CACHE_IMAGE_PAGE_SIZE,
   type ImageDateFilters,
 } from '@/components/local-cache-image-utils'
@@ -36,13 +38,6 @@ import {
   type LocalCacheImageListResponse,
   type LocalCacheImageTarget,
 } from '@/lib/system-api'
-
-function formatModifiedTime(timestamp: number): string {
-  if (!Number.isFinite(timestamp) || timestamp <= 0) {
-    return '-'
-  }
-  return new Date(timestamp * 1000).toLocaleString('zh-CN')
-}
 
 function CacheImagePreview({
   item,
@@ -190,7 +185,7 @@ export function CacheImageListPanel({
         </div>
       </div>
 
-      <div className="rounded-lg border bg-card p-4">
+      <Card className="p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[360px]">
             <label className="space-y-1.5" htmlFor={`${target}-cache-start-date`}>
@@ -290,7 +285,7 @@ export function CacheImageListPanel({
             </AlertDialog>
           ))}
         </div>
-      </div>
+      </Card>
 
       <div className="space-y-3">
         {isLoading && !list ? (
@@ -337,7 +332,7 @@ export function CacheImageListPanel({
                   <p className="break-all text-xs text-muted-foreground">{item.relative_path}</p>
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                     <span>{formatLocalCacheBytes(item.size)}</span>
-                    <span>{formatModifiedTime(item.modified_time)}</span>
+                    <span>{formatLocalCacheModifiedTime(item.modified_time)}</span>
                     {item.image_hash && <span className="max-w-full truncate font-mono">hash: {item.image_hash}</span>}
                   </div>
                   {item.description && (

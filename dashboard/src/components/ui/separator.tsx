@@ -5,14 +5,16 @@ import { cn } from "@/lib/utils"
 
 const Separator = React.forwardRef<
   React.ElementRef<typeof SeparatorPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof SeparatorPrimitive.Root>
+  React.ComponentPropsWithoutRef<typeof SeparatorPrimitive.Root> & { variant?: 'line' | 'groove' }
 >(
   (
-    { className, orientation = "horizontal", decorative = true, ...props },
+    { className, orientation = "horizontal", decorative = true, variant = 'line', ...props },
     ref
   ) => (
     <SeparatorPrimitive.Root
       ref={ref}
+      data-dashboard-separator="true"
+      data-variant={variant}
       decorative={decorative}
       orientation={orientation}
       className={cn(

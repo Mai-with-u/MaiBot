@@ -43,11 +43,10 @@ from src.llm_models.payload_content.context_item import (
     get_response_tool_calls,
 )
 from src.llm_models.payload_content.tool_option import ToolCall
+from src.maisaka.visual.emoji_image_cache import emoji_image_cache
+from src.maisaka.visual.deferred_images import append_context_image
 
 FORWARD_PREVIEW_LIMIT = 4
-FOCUS_COOLDOWN_WAKEUP_SOURCE = "focus_cooldown_wakeup"
-FOCUS_AT_WAKEUP_SOURCE = "focus_at_wakeup"
-FOCUS_WAKEUP_SOURCE_KINDS = frozenset({FOCUS_COOLDOWN_WAKEUP_SOURCE, FOCUS_AT_WAKEUP_SOURCE})
 # 不受支持格式图片的转码结果缓存条数；规划器每轮都会重建上下文，缓存可避免同一张图片被反复解码转码。
 TRANSCODED_IMAGE_CACHE_SIZE = 16
 # 以图片字节的 SHA-256 摘要为键缓存转码结果，缓存键不长期持有原始图片字节；字典按插入顺序充当 LRU。
@@ -126,12 +125,21 @@ def _append_emoji_component(
     component: EmojiComponent,
     *,
     enable_visual_message: bool,
+    limit_emoji_size: bool = False,
 ) -> bool:
     """将表情组件追加到 LLM 消息构建器。"""
+    if enable_visual_message and limit_emoji_size and component.binary_data:
+        def encode_emoji() -> Tuple[str, str]:
+            part = emoji_image_cache.get(component.binary_hash, component.binary_data)
+            return part.image_format, part.image_base64
+
+        append_context_image(builder, encode_emoji)
+        return True
+
     image_format = _guess_image_format(component.binary_data)
     if enable_visual_message and image_format and component.binary_data:
         builder.add_text_content("[消息类型]表情包")
-        builder.add_image_content(*_encode_image_for_context(component.binary_data, image_format))
+        append_context_image(builder, lambda: _encode_image_for_context(component.binary_data, image_format))
         return True
 
     normalized_content = component.content.strip()
@@ -152,7 +160,7 @@ def _append_image_component(
     """将图片组件追加到 LLM 消息构建器。"""
     image_format = _guess_image_format(component.binary_data)
     if enable_visual_message and image_format and component.binary_data:
-        builder.add_image_content(*_encode_image_for_context(component.binary_data, image_format))
+        append_context_image(builder, lambda: _encode_image_for_context(component.binary_data, image_format))
         return True
 
     normalized_content = component.content.strip()
@@ -194,24 +202,6 @@ def contains_complex_message(message_sequence: MessageSequence) -> bool:
     """判断消息序列中是否包含需要通过转发浏览工具展开的组件。"""
 
     return any(isinstance(component, ForwardNodeComponent) for component in message_sequence.components)
-
-
-async def build_full_complex_message_content(message: SessionMessage, path: Sequence[int] = ()) -> str:
-    """按路径构造转发消息当前层级的文本内容。"""
-
-    if _prepare_unresolved_visual_components(message.raw_message.components):
-        await message.process(
-            enable_heavy_media_analysis=True,
-            enable_voice_transcription=False,
-        )
-
-    full_content = _build_complex_message_full_text(message.raw_message, path)
-    if full_content:
-        return full_content
-
-    if not message.processed_plain_text:
-        await message.process()
-    return (message.processed_plain_text or "").strip()
 
 
 def build_full_complex_message_content_from_sequence(
@@ -436,6 +426,7 @@ def _build_item_from_sequence(
     fallback_text: str,
     *,
     enable_visual_message: bool = True,
+    limit_emoji_size: bool = False,
     tool_call_id: Optional[str] = None,
     tool_name: Optional[str] = None,
     meta: ContextItemMeta | None = None,
@@ -463,6 +454,7 @@ def _build_item_from_sequence(
                     builder,
                     component,
                     enable_visual_message=enable_visual_message,
+                    limit_emoji_size=limit_emoji_size,
                 )
                 or has_content
             )
@@ -514,7 +506,6 @@ class ReferenceMessageType(str, Enum):
     CUSTOM = "custom"
     JARGON = "jargon"
     MEMORY = "memory"
-    PLANNER_TOOL_HINT = "planner_tool_hint"
     TOOL_HINT = "tool_hint"
 
 
@@ -522,6 +513,11 @@ class LLMContextMessage(ABC):
     """Maisaka 内部用于组织 LLM 上下文的统一消息抽象。"""
 
     timestamp: datetime
+
+    @property
+    def received_at(self) -> Optional[datetime]:
+        """返回真实入站接收时间；生成的上下文和未知历史不伪造接收时刻。"""
+        return None
 
     @property
     @abstractmethod
@@ -553,16 +549,28 @@ class LLMContextMessage(ABC):
 
 
 @dataclass(slots=True)
-class SessionBackedMessage(LLMContextMessage):
-    """真实会话上下文消息。"""
+class ContentContextMessage(LLMContextMessage):
+    """以 user 角色传给模型的图文内容；不表示内容来自 IM。"""
 
     raw_message: MessageSequence
     visible_text: str
     timestamp: datetime
     message_id: Optional[str] = None
-    original_message: Optional[SessionMessage] = None
     source_kind: str = "user"
     context_item_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+
+    @property
+    def media_sequence(self) -> MessageSequence:
+        """提供需要识别或刷新的原始媒体组件。"""
+        return self.raw_message
+
+    async def expand_forward_content(self, path: Sequence[int]) -> str:
+        """内部图文直接展开现有组件。"""
+        return build_full_complex_message_content_from_sequence(self.media_sequence, path)
+
+    def render_visible_text(self, *, include_reply_components: bool = True) -> str:
+        """返回用于展示的内容；内部上下文使用自己的可见文本。"""
+        return self.visible_text
 
     @property
     def role(self) -> str:
@@ -576,14 +584,68 @@ class SessionBackedMessage(LLMContextMessage):
     def source(self) -> str:
         return self.source_kind
 
-    def to_context_item(self, enable_visual_message: bool = True) -> ContextItem | None:
+    def to_context_item(
+        self, enable_visual_message: bool = True, *, limit_emoji_size: bool = False
+    ) -> ContextItem | None:
         return _build_item_from_sequence(
             RoleType.User,
             self.raw_message,
             self.processed_plain_text,
             enable_visual_message=enable_visual_message,
+            limit_emoji_size=limit_emoji_size,
             meta=ContextItemMeta.create(item_id=self.context_item_id, timestamp=self.timestamp),
         )
+
+
+@dataclass(slots=True)
+class InternalContextMessage(ContentContextMessage):
+    """内部生成或插件插入的上下文，不占据真实 IM 消息位置。"""
+
+    source_kind: str = "internal"
+
+
+@dataclass(slots=True)
+class ToolResultMediaMessage(InternalContextMessage):
+    """工具返回的媒体，显式关联所属调用，不从消息编号解析归属。"""
+
+    tool_call_id: str = field(kw_only=True)
+    session_id: str = ""
+    source_kind: str = "tool_result_media"
+
+    def __post_init__(self) -> None:
+        if not self.tool_call_id.strip():
+            raise ValueError("工具媒体必须关联有效的调用 ID")
+
+
+@dataclass(slots=True)
+class SessionBackedMessage(ContentContextMessage):
+    """真实接收或发送的 IM 消息，必须保留原始消息与消息编号。"""
+
+    message_id: str = field(kw_only=True)
+    original_message: SessionMessage = field(kw_only=True)
+
+    def __post_init__(self) -> None:
+        if self.original_message is None or not self.message_id:
+            raise ValueError("真实 IM 上下文必须具有原始消息和消息编号")
+
+    @property
+    def received_at(self) -> Optional[datetime]:
+        return self.original_message.received_at
+
+    @property
+    def media_sequence(self) -> MessageSequence:
+        return self.original_message.raw_message
+
+    async def expand_forward_content(self, path: Sequence[int]) -> str:
+        """真实 IM 转发先完成未解析媒体的分析，再展开请求的层级。"""
+        if _prepare_unresolved_visual_components(self.media_sequence.components):
+            await self.original_message.process(enable_heavy_media_analysis=True, enable_voice_transcription=False)
+        return build_full_complex_message_content_from_sequence(self.media_sequence, path)
+
+    def render_visible_text(self, *, include_reply_components: bool = True) -> str:
+        from .history import build_session_message_visible_text
+
+        return build_session_message_visible_text(self.original_message, include_reply_components=include_reply_components)
 
     @classmethod
     def from_session_message(
@@ -616,8 +678,10 @@ class ComplexSessionMessage(SessionBackedMessage):
     def source(self) -> str:
         return f"{self.source_kind}:{self.complex_message_type}"
 
-    def to_context_item(self, enable_visual_message: bool = True) -> ContextItem | None:
-        del enable_visual_message
+    def to_context_item(
+        self, enable_visual_message: bool = True, *, limit_emoji_size: bool = False
+    ) -> ContextItem | None:
+        del enable_visual_message, limit_emoji_size
         message_sequence = MessageSequence([TextComponent(self.prompt_text)])
         return _build_item_from_sequence(
             RoleType.User,
@@ -818,8 +882,13 @@ def build_context_items_from_history_entry(
     context_message: LLMContextMessage,
     *,
     enable_visual_message: bool = True,
+    limit_emoji_size: bool = False,
 ) -> tuple[ContextItem, ...]:
     """将 Maisaka 历史条目转换为发给 LLM 的统一 Context Items。"""
 
-    item = context_message.to_context_item(enable_visual_message=enable_visual_message)
+    # 尺寸限制由普通 planner/replyer 显式启用，复古模式等已有调用保持原来的图片策略。
+    if isinstance(context_message, ContentContextMessage) and limit_emoji_size:
+        item = context_message.to_context_item(enable_visual_message=enable_visual_message, limit_emoji_size=True)
+    else:
+        item = context_message.to_context_item(enable_visual_message=enable_visual_message)
     return (item,) if item is not None else ()

@@ -62,23 +62,23 @@ class IdleBackoffController:
             f"连续={self._count}次 等待={backoff_seconds:g}s"
         )
 
-    def should_delay(self, pending_count: int) -> bool:
-        """判断当前消息触发是否应被空闲退避延迟。"""
+    def get_delay_seconds(self, pending_count: int) -> float:
+        """返回当前消息触发还需被空闲退避推迟的秒数；不退避时为 0。"""
         runtime = self._runtime
         if runtime._is_focus_mode_active_for_current_chat():
             self.reset()
-            return False
+            return 0.0
 
         if not runtime.chat_stream.is_group_session:
-            return False
+            return 0.0
 
         if self._until <= 0:
-            return False
+            return 0.0
 
         remaining_seconds = self._until - time.time()
         if remaining_seconds <= 0:
             self._until = 0.0
-            return False
+            return 0.0
 
         bypass_pending_count = max(0, int(global_config.chat.reply_timing.no_action_backoff_bypass_pending_count))
         if bypass_pending_count > 0 and pending_count >= bypass_pending_count:
@@ -86,8 +86,6 @@ class IdleBackoffController:
                 f"{runtime.log_prefix} 空闲退避被待处理消息数绕过: "
                 f"待处理={pending_count} 阈值={bypass_pending_count}"
             )
-            return False
+            return 0.0
 
-        logger.debug(f"{runtime.log_prefix} 空闲退避中，延迟 {remaining_seconds:.2f} 秒后再检查")
-        runtime._defer_message_turn_check(remaining_seconds)
-        return True
+        return remaining_seconds
