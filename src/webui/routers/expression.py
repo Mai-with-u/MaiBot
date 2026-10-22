@@ -1301,8 +1301,6 @@ def get_expression_list(
                 chat_ids = [item for item in chat_ids if item in visible_chat_ids]
                 if not chat_ids:
                     return ExpressionListResponse(success=True, total=0, page=page, page_size=page_size, data=[])
-            elif not visible_chat_ids:
-                return ExpressionListResponse(success=True, total=0, page=page, page_size=page_size, data=[])
 
         statement = select(Expression)
 
@@ -1318,7 +1316,10 @@ def get_expression_list(
         elif chat_ids:
             statement = statement.where(col(Expression.session_id).in_(chat_ids))
         elif not include_legacy:
-            statement = statement.where(col(Expression.session_id).in_(visible_chat_ids))
+            # 全局表达（session_id IS NULL）对所有会话都可用，默认列表也应展示
+            statement = statement.where(
+                (col(Expression.session_id).in_(visible_chat_ids)) | (col(Expression.session_id).is_(None))
+            )
         else:
             statement = apply_valid_expression_session_scope(statement, valid_expression_chat_ids)
 
@@ -1346,7 +1347,9 @@ def get_expression_list(
             elif chat_ids:
                 count_statement = count_statement.where(col(Expression.session_id).in_(chat_ids))
             elif not include_legacy:
-                count_statement = count_statement.where(col(Expression.session_id).in_(visible_chat_ids))
+                count_statement = count_statement.where(
+                    (col(Expression.session_id).in_(visible_chat_ids)) | (col(Expression.session_id).is_(None))
+                )
             else:
                 count_statement = apply_valid_expression_session_scope(count_statement, valid_expression_chat_ids)
             count_statement = apply_expression_list_review_filter(count_statement, review_filter)
