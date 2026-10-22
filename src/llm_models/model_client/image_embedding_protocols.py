@@ -1,4 +1,4 @@
-"""百炼、豆包与硅基流动官方图片嵌入协议的自动适配。
+"""百炼、豆包与硅基流动官方图片嵌入协议的自动适配，以及豆包文本嵌入协议。
 
 百炼和豆包的多模态图片嵌入接口不是 OpenAI 兼容协议：端点路径、请求体结构
 和向量返回位置都与 `/embeddings` 不同。当 `client_type = "openai"` 的
@@ -32,6 +32,12 @@ DASHSCOPE_PROTOCOL = "dashscope"
 
 ARK_PROTOCOL = "ark"
 """火山引擎方舟（Ark）原生多模态嵌入协议标识。"""
+
+TEXT_EMBEDDING_PROTOCOL_EXTRA_PARAM = "text_embedding_protocol"
+"""仅供文本嵌入客户端使用的协议选择参数，不发送给 Provider。"""
+
+ARK_MULTIMODAL_TEXT_PROTOCOL = "ark_multimodal"
+"""显式选择火山引擎方舟原生多模态文本嵌入端点。"""
 
 _DASHSCOPE_NATIVE_PATH = "/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding"
 """百炼原生多模态向量接口路径；兼容层(/compatible-mode/v1)与原生(/api/v1)地址统一挂到该路径。"""
@@ -90,6 +96,34 @@ class NativeImageEmbeddingResult:
 
     usage: UsageTuple | None
     """统一使用量元组；响应未提供 usage 时为 None。嵌入调用不含缓存字段，末位恒为未上报。"""
+
+
+@dataclass(frozen=True)
+class NativeTextEmbeddingRequest:
+    """一次豆包原生文本嵌入请求的完整描述。"""
+
+    endpoint_url: str
+    """原生接口完整 URL；SDK 侧会按绝对地址直接发送。"""
+
+    payload: Dict[str, Any]
+    """按豆包多模态嵌入协议构造的文本请求体。"""
+
+    extra_headers: Dict[str, str] = field(default_factory=dict)
+    """extra_params.headers 透传的请求头。"""
+
+    extra_query: Dict[str, Any] = field(default_factory=dict)
+    """extra_params.query 透传的查询参数。"""
+
+
+@dataclass(frozen=True)
+class NativeTextEmbeddingResult:
+    """豆包原生文本嵌入响应的统一解析结果。"""
+
+    embedding: List[float]
+    """校验后的嵌入向量。"""
+
+    usage: UsageTuple | None
+    """统一使用量元组；响应未提供 usage 时为 None。"""
 
 
 def resolve_native_image_embedding_protocol(base_url: str) -> str | None:
@@ -190,6 +224,38 @@ def build_native_image_embedding_request(
     )
 
 
+def build_native_text_embedding_request(
+    *,
+    base_url: str,
+    model_identifier: str,
+    embedding_input: str,
+    extra_params: Mapping[str, Any] | None = None,
+) -> NativeTextEmbeddingRequest:
+    """构造豆包原生多模态端点的文本嵌入请求。"""
+    extra = _normalize_extra_params(extra_params)
+    extra.pop(TEXT_EMBEDDING_PROTOCOL_EXTRA_PARAM, None)
+    extra_headers = {str(key): str(value) for key, value in _pop_mapping(extra, "headers").items()}
+    extra_query = dict(_pop_mapping(extra, "query"))
+    body_mapping = _pop_mapping(extra, "body")
+    extra = {**body_mapping, **extra}
+    for key in _ARK_RESERVED_BODY_KEYS:
+        if key in extra:
+            _reject_reserved_conflict(ARK_PROTOCOL, key)
+
+    payload: Dict[str, Any] = {
+        "model": model_identifier,
+        "input": [{"type": "text", "text": embedding_input}],
+        "encoding_format": "float",
+    }
+    payload.update(extra)
+    return NativeTextEmbeddingRequest(
+        endpoint_url=_build_native_endpoint_url(base_url, ARK_PROTOCOL),
+        payload=payload,
+        extra_headers=extra_headers,
+        extra_query=extra_query,
+    )
+
+
 def _build_native_endpoint_url(base_url: str, protocol: str) -> str:
     """从 Provider 基础地址派生原生端点。
 
@@ -224,6 +290,15 @@ def parse_native_image_embedding_response(protocol: str, raw_response: Any) -> N
     else:
         raise ValueError(f"未知的图片嵌入原生协议: {protocol}")
     return NativeImageEmbeddingResult(embedding=_validate_embedding_vector(embedding), usage=usage)
+
+
+def parse_native_text_embedding_response(raw_response: Any) -> NativeTextEmbeddingResult:
+    """解析并校验豆包原生文本嵌入响应。"""
+    if not isinstance(raw_response, Mapping):
+        raise ValueError("豆包文本嵌入响应不是 JSON 对象")
+    embedding = _extract_ark_embedding(raw_response)
+    usage = _extract_ark_usage(raw_response.get("usage"))
+    return NativeTextEmbeddingResult(embedding=_validate_embedding_vector(embedding), usage=usage)
 
 
 def build_native_image_embedding_fingerprint(request: NativeImageEmbeddingRequest, model_identifier: str) -> str:
@@ -320,9 +395,9 @@ def _extract_ark_embedding(raw_response: Mapping[str, Any]) -> Any:
     # 豆包多模态嵌入的 data 是单个结果对象，与 OpenAI 的 data 列表不同
     data = raw_response.get("data")
     if not isinstance(data, Mapping):
-        raise ValueError("豆包图片嵌入响应缺少 data 对象")
+        raise ValueError("豆包嵌入响应缺少 data 对象")
     if "embedding" not in data:
-        raise ValueError("豆包图片嵌入响应的 data 缺少 embedding")
+        raise ValueError("豆包嵌入响应的 data 缺少 embedding")
     return data["embedding"]
 
 
@@ -352,11 +427,11 @@ def _as_non_negative_int(value: Any) -> int:
 def _validate_embedding_vector(embedding: Any) -> List[float]:
     """校验向量非空且全部为有限数值，避免把异常响应写进索引。"""
     if not isinstance(embedding, list) or not embedding:
-        raise ValueError("图片嵌入响应的向量为空或不是列表")
+        raise ValueError("嵌入响应的向量为空或不是列表")
     validated: List[float] = []
     for item in embedding:
         if isinstance(item, bool) or not isinstance(item, (int, float)) or not math.isfinite(item):
-            raise ValueError("图片嵌入响应的向量包含非有限数值")
+            raise ValueError("嵌入响应的向量包含非有限数值")
         validated.append(float(item))
     return validated
 
@@ -378,7 +453,9 @@ def _normalize_extra_params(extra_params: Mapping[str, Any] | None) -> Dict[str,
         return {}
     if not isinstance(extra_params, Mapping):
         raise ValueError("extra_params 必须是对象")
-    return dict(extra_params)
+    normalized = dict(extra_params)
+    normalized.pop(TEXT_EMBEDDING_PROTOCOL_EXTRA_PARAM, None)
+    return normalized
 
 
 def _pop_mapping(extra: Dict[str, Any], key: str) -> Mapping[str, Any]:

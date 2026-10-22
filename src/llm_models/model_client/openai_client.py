@@ -89,11 +89,16 @@ from .base_client import (
     client_registry,
 )
 from .image_embedding_protocols import (
+    ARK_MULTIMODAL_TEXT_PROTOCOL,
+    ARK_PROTOCOL,
+    TEXT_EMBEDDING_PROTOCOL_EXTRA_PARAM,
     build_compatible_image_embedding_fingerprint,
     build_native_image_embedding_diagnostic_payload,
     build_native_image_embedding_fingerprint,
     build_native_image_embedding_request,
+    build_native_text_embedding_request,
     parse_native_image_embedding_response,
+    parse_native_text_embedding_response,
     resolve_compatible_image_embedding_input,
     resolve_native_image_embedding_protocol,
 )
@@ -1789,6 +1794,7 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
         """
 
         extra_params = dict(request.extra_params)
+        extra_params.pop(TEXT_EMBEDDING_PROTOCOL_EXTRA_PARAM, None)
         if "image_embedding_input" in extra_params or "image_embedding_body" in extra_params:
             return await self._get_openai_compatible_image_embedding(request, extra_params)
         native_protocol = resolve_native_image_embedding_protocol(self.api_provider.base_url)
@@ -1985,6 +1991,16 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
         model_info = request.model_info
         embedding_input = request.embedding_input
         extra_params = request.extra_params
+        if TEXT_EMBEDDING_PROTOCOL_EXTRA_PARAM in extra_params:
+            text_protocol = extra_params[TEXT_EMBEDDING_PROTOCOL_EXTRA_PARAM]
+            if text_protocol != ARK_MULTIMODAL_TEXT_PROTOCOL:
+                raise ValueError(
+                    f"不支持的文本嵌入协议: {text_protocol!r}；当前仅支持 {ARK_MULTIMODAL_TEXT_PROTOCOL!r}"
+                )
+            if resolve_native_image_embedding_protocol(self.api_provider.base_url) != ARK_PROTOCOL:
+                raise ValueError(f"{ARK_MULTIMODAL_TEXT_PROTOCOL!r} 仅适用于火山引擎方舟官方 Provider 地址")
+            return await self._execute_ark_multimodal_text_embedding(request)
+
         snapshot_provider_request = {
             "base_url": self.api_provider.base_url,
             "endpoint": "/embeddings",
@@ -2081,6 +2097,73 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
 
         usage_record = _extract_usage_record(getattr(raw_response, "usage", None))
         return response, usage_record
+
+    async def _execute_ark_multimodal_text_embedding(
+        self,
+        request: EmbeddingRequest,
+    ) -> Tuple[APIResponse, UsageTuple | None]:
+        """通过豆包官方多模态端点执行显式选择的文本嵌入请求。"""
+        model_info = request.model_info
+        validate_image_embedding_transport(self.api_provider.base_url)
+        native_request = build_native_text_embedding_request(
+            base_url=self.api_provider.base_url,
+            model_identifier=model_info.model_identifier,
+            embedding_input=request.embedding_input,
+            extra_params=request.extra_params,
+        )
+        endpoint = urlparse(native_request.endpoint_url).path
+        operation = "ark_multimodal_text_embedding"
+        provider_request = {
+            "base_url": self.api_provider.base_url,
+            "endpoint": endpoint,
+            "method": "POST",
+            "operation": operation,
+            "request_kwargs": {
+                "extra_headers": native_request.extra_headers or None,
+                "extra_query": native_request.extra_query or None,
+                "model": model_info.model_identifier,
+                "payload": native_request.payload,
+            },
+        }
+        options: Dict[str, Any] = {}
+        request_headers = self._build_request_headers(native_request.extra_headers)
+        if request_headers:
+            options["headers"] = request_headers
+        if native_request.extra_query:
+            options["params"] = native_request.extra_query
+
+        try:
+            raw_response = await self.client.post(
+                native_request.endpoint_url,
+                cast_to=object,
+                body=native_request.payload,
+                options=options,
+            )
+        except APIConnectionError as exc:
+            wrapped_error: Exception = NetworkConnectionError(str(exc))
+        except APIStatusError as exc:
+            wrapped_error = RespNotOkException(exc.status_code, _build_api_status_message(exc))
+        else:
+            try:
+                parsed = parse_native_text_embedding_response(raw_response)
+            except Exception as exc:
+                wrapped_error = RespParseException(raw_response, f"豆包文本嵌入响应解析失败: {exc}")
+            else:
+                return APIResponse(embedding=parsed.embedding, raw_data=raw_response), parsed.usage
+
+        snapshot_path = await asyncio.to_thread(
+            save_failed_request_snapshot,
+            api_provider=self.api_provider,
+            client_type="openai",
+            error=wrapped_error,
+            internal_request=serialize_embedding_request_snapshot(request),
+            model_info=model_info,
+            operation=operation,
+            provider_request=provider_request,
+            trace_context=request.trace_context,
+        )
+        attach_request_snapshot(wrapped_error, snapshot_path)
+        raise wrapped_error
 
     async def _execute_audio_transcription_request(
         self,
