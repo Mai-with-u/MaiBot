@@ -499,6 +499,7 @@ export function useModelConfig() {
         base_url: provider.base_url,
         api_key: provider.api_key,
         client_type: provider.client_type,
+        auth_type: provider.auth_type,
         default_headers: provider.default_headers,
         max_retry: provider.max_retry,
         timeout: provider.timeout,
@@ -970,6 +971,7 @@ export function useModelConfig() {
         base_url: '',
         api_key: '',
         client_type: 'openai',
+        auth_type: 'bearer',
       }
     )
     setEditingProviderIndex(index)
