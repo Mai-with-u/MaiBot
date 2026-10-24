@@ -65,6 +65,27 @@ def resolve_message_image(components: Sequence[Any], image_index: int) -> Tuple[
     return image_components[image_index]
 
 
+def _parse_image_index(raw_value: Any) -> int:
+    """解析工具参数中的图片序号，只接受非负整数或整数字符串。
+
+    int() 会把 1.9 截断成 1、把 True 折叠成 1，这类输入会静默查到另一张图，
+    因此布尔值和浮点数必须在转换前拒绝。
+    """
+
+    error_message = f"`image_index` 必须是从 0 开始的整数，当前值为 {raw_value!r}。"
+    if raw_value is None or raw_value == "":
+        return 0
+    if isinstance(raw_value, bool) or isinstance(raw_value, float):
+        raise ValueError(error_message)
+    try:
+        image_index = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(error_message) from exc
+    if image_index < 0:
+        raise ValueError(error_message)
+    return image_index
+
+
 async def handle_tool(
     tool_ctx: BuiltinToolRuntimeContext,
     invocation: ToolInvocation,
@@ -82,16 +103,10 @@ async def handle_tool(
             "查询图片记忆工具需要提供有效的 `message_id` 参数。",
         )
 
-    raw_image_index = invocation.arguments.get("image_index")
-    if raw_image_index is None or raw_image_index == "":
-        raw_image_index = 0
     try:
-        image_index = int(raw_image_index)
-    except (TypeError, ValueError):
-        return tool_ctx.build_failure_result(
-            invocation.tool_name,
-            f"`image_index` 必须是从 0 开始的整数，当前值为 {raw_image_index!r}。",
-        )
+        image_index = _parse_image_index(invocation.arguments.get("image_index"))
+    except ValueError as exc:
+        return tool_ctx.build_failure_result(invocation.tool_name, str(exc))
     try:
         limit = max(1, min(_MAX_LIMIT, int(invocation.arguments.get("limit") or _DEFAULT_LIMIT)))
     except (TypeError, ValueError):
