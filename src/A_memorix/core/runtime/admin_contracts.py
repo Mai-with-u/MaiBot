@@ -143,6 +143,11 @@ _RUNTIME_ACTIONS = {
     "recover_embedding",
     "rebuild_all_vectors",
     "paragraph_backfill_once",
+    # 向量空间管理：VectorRuntimeService.memory_runtime_admin 已实现这两个动作，
+    # webui 的 /memory/runtime/vectors/spaces 与 .../spaces/{space_id} 也在调用，
+    # 但白名单遗漏会让请求在校验层直接被拒（前端报“读取已保存向量库失败”）。
+    "list_vector_spaces",
+    "delete_vector_space",
 }
 _IMPORT_ACTIONS = {
     "settings",
