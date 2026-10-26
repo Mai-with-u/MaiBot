@@ -32,8 +32,14 @@ def test_host_awaits_kernel_and_propagates_storage_failure(tmp_path, failure):
 
 
 async def check_host_shutdown(tmp_path, monkeypatch, failure):
+    from typing import Any, Sequence, get_type_hints
+
     from src.A_memorix.host_service import AMemorixHostService
     from src.A_memorix.core.runtime.sdk_memory_kernel import SDKMemoryKernel
+    from src.A_memorix.core.utils.summary_identity import SummaryIdentityContext
+
+    # 宿主聊天模块不可用时，内核和运行时类型注解仍应能够加载。
+    assert get_type_hints(SummaryIdentityContext.__init__)["messages"] == Sequence[Any]
 
     events = []
     kernel = SDKMemoryKernel(plugin_root=tmp_path, config={"storage": {"data_dir": str(tmp_path / "memory")}})

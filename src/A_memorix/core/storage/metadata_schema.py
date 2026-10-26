@@ -16,12 +16,38 @@ from .knowledge_types import (
 
 logger = get_logger("A_Memorix.MetadataSchema")
 
-SCHEMA_VERSION = 27
+SCHEMA_VERSION = 29
 RUNTIME_AUTO_MIGRATION_MIN_SCHEMA_VERSION = 9
 
 
 class MetadataSchemaMixin:
     """维护元数据数据库表结构、版本迁移与数据规范化。"""
+
+    @staticmethod
+    def _ensure_person_identity_tables(cursor: sqlite3.Cursor) -> None:
+        """昵称历史独立于人物画像和记忆正文保存，身份仅按平台用户 ID 确定。"""
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS person_identities (
+                person_id TEXT PRIMARY KEY,
+                platform TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                canonical_name TEXT NOT NULL UNIQUE,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                UNIQUE(platform, user_id)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS person_identity_aliases (
+                person_id TEXT NOT NULL REFERENCES person_identities(person_id) ON DELETE CASCADE,
+                alias TEXT NOT NULL,
+                group_id TEXT NOT NULL DEFAULT '',
+                first_seen REAL NOT NULL,
+                last_seen REAL NOT NULL,
+                PRIMARY KEY(person_id, alias, group_id)
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_person_identity_alias ON person_identity_aliases(alias)")
 
     @staticmethod
     def _ensure_episode_empty_group_table(cursor: sqlite3.Cursor) -> None:
@@ -36,7 +62,7 @@ class MetadataSchemaMixin:
 
     @staticmethod
     def _ensure_summary_checkpoint_tables(cursor: sqlite3.Cursor) -> None:
-        """保存成功空摘要的幂等标识与触发进度，不生成可检索段落。"""
+        """独立保存已完成摘要窗口的标识与进度，空增量也能推进游标。"""
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS chat_summary_checkpoints (
                 external_id TEXT PRIMARY KEY,
@@ -49,6 +75,15 @@ class MetadataSchemaMixin:
             CREATE INDEX IF NOT EXISTS idx_chat_summary_checkpoints_chat
             ON chat_summary_checkpoints(chat_id, trigger_message_count)
         """)
+        columns = {row[1] for row in cursor.execute("PRAGMA table_info(chat_summary_checkpoints)")}
+        if "phase" not in columns:
+            cursor.execute("ALTER TABLE chat_summary_checkpoints ADD COLUMN phase TEXT NOT NULL DEFAULT 'complete'")
+        if "result_json" not in columns:
+            cursor.execute("ALTER TABLE chat_summary_checkpoints ADD COLUMN result_json TEXT")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_fact_claims_scope_value "
+                       "ON fact_claims(scope_type, scope_id, value_normalized, status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_external_memory_refs_chat "
+                       "ON external_memory_refs(source_type, json_extract(metadata_json, '$.chat_id'))")
 
     def _assert_schema_compatible(self, db_existed: bool) -> None:
         """运行时执行 post-1.0 自动迁移；legacy/vNext 仍要求离线迁移。"""
@@ -86,7 +121,8 @@ class MetadataSchemaMixin:
         self._migrate_schema()
         alias_result = self.rebuild_relation_hash_aliases()
         knowledge_type_result = self.normalize_paragraph_knowledge_types()
-        fact_result = self.backfill_person_fact_claims()
+        # 28 已具备事实账本，29 只扩展写入检查点，不重新扫描和迁移存量人物记忆。
+        fact_result = self.backfill_person_fact_claims() if current_version < 28 else {"migrated": 0}
         self.set_schema_version(SCHEMA_VERSION)
         logger.info(
             f"metadata schema 运行时自动迁移完成: {current_version} -> {SCHEMA_VERSION}, "
@@ -1518,6 +1554,7 @@ class MetadataSchemaMixin:
             )
         """)
         self._ensure_person_profile_alias_override_table(cursor)
+        self._ensure_person_identity_tables(cursor)
 
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_person_profile_switches_enabled
@@ -1845,6 +1882,7 @@ class MetadataSchemaMixin:
         cursor = self._conn.cursor()
         self._ensure_person_profile_snapshot_columns(cursor)
         self._ensure_person_profile_alias_override_table(cursor)
+        self._ensure_person_identity_tables(cursor)
 
         # vNext 关键表兜底：历史库可能缺失，需在迁移阶段主动补齐。
         cursor.execute("""

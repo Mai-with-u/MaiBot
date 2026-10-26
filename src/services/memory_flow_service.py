@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Dict, List, Optional
 
 import asyncio
 import json
@@ -635,15 +635,25 @@ class ChatSummaryWritebackService:
             if metadata_store is None:
                 return 0
 
-            checkpoint_count = metadata_store.get_summary_checkpoint_count(session_id)
-            paragraphs = metadata_store.get_paragraphs_by_source(f"chat_summary:{session_id}")
+            checkpoint_count, paragraphs = await asyncio.to_thread(
+                lambda: (
+                    metadata_store.get_summary_checkpoint_count(session_id),
+                    metadata_store.get_paragraphs_by_source(f"chat_summary:{session_id}"),
+                )
+            )
             if not paragraphs:
                 return min(total_message_count, checkpoint_count)
 
-            latest_paragraph = max(paragraphs, key=self._paragraph_created_at)
-            metadata = self._paragraph_metadata(latest_paragraph)
-            trigger_message_count = self._coerce_positive_int(metadata.get("trigger_message_count"))
-            if trigger_message_count > 0:
+            # 正文去重会复用较早的段落，created_at 不能代表最后完成的窗口。
+            trigger_message_count = max(
+                (
+                    self._coerce_positive_int(metadata.get("trigger_message_count"))
+                    for paragraph in paragraphs
+                    if (metadata := self._paragraph_metadata(paragraph)).get("chat_id", session_id) == session_id
+                ),
+                default=0,
+            )
+            if max(trigger_message_count, checkpoint_count) > 0:
                 return min(total_message_count, max(trigger_message_count, checkpoint_count))
 
             # 兼容旧摘要数据：没有触发计数时，只能退化为对齐当前计数，
@@ -1007,13 +1017,59 @@ class MemoryAutomationService:
     async def on_incoming_message(self, message: Any) -> None:
         if not self._started:
             await self.start()
-        await self.image_writeback.enqueue(message)
+        await self._run_message_tasks(self._observe_sender_identity(message), self.image_writeback.enqueue(message))
 
     async def on_message_sent(self, message: Any) -> None:
         if not self._started:
             await self.start()
-        await self.fact_writeback.enqueue(message)
-        await self.chat_summary_writeback.enqueue(message)
+        await self._run_message_tasks(
+            self._observe_sender_identity(message),
+            self.fact_writeback.enqueue(message),
+            self.chat_summary_writeback.enqueue(message),
+        )
+
+    @staticmethod
+    async def _run_message_tasks(*tasks: Awaitable[None]) -> None:
+        """独立完成身份登记和各队列入队，再向调用方完整报告失败。"""
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        failures: List[Exception] = []
+        for result in results:
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            if isinstance(result, Exception):
+                failures.append(result)
+        if failures:
+            raise ExceptionGroup("记忆身份登记或写回入队失败", failures)
+
+    @staticmethod
+    async def _observe_sender_identity(message: Any) -> None:
+        """在昵称被后续消息覆盖前，按真实发送者 ID 保存本次观察到的称呼。"""
+        if not global_config.a_memorix.plugin.enabled:
+            return
+        user = message.message_info.user_info
+        group = message.message_info.group_info
+        if not message.platform.strip() or not user.user_id.strip():
+            raise ValueError("消息缺少真实的发送者 platform/user_id")
+        identity = {
+            "platform": message.platform,
+            "user_id": user.user_id,
+            "aliases": [user.user_nickname, user.user_cardname or ""],
+            "group_id": group.group_id if group else "",
+        }
+        # 短暂的内核初始化或存储故障可以重试；原始 ID 和本次昵称始终来自同一条消息。
+        for attempt in range(3):
+            try:
+                result = await memory_service.profile_admin(action="observe_identity", **identity)
+                if not result.get("success"):
+                    detail = result.get("error") or result.get("message") or result.get("reason")
+                    raise RuntimeError(f"登记发送者身份失败: {detail}")
+                return
+            except Exception:
+                if attempt == 2:
+                    raise
+                delay = 0.1 * (attempt + 1)
+                logger.warning(f"登记发送者身份失败，{delay:.1f} 秒后重试", exc_info=True)
+                await asyncio.sleep(delay)
 
 
 memory_automation_service = MemoryAutomationService()

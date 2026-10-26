@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Set
 
+import asyncio
 import time
 import unicodedata
 
@@ -14,6 +15,7 @@ from ...utils.feedback_policy import (
 from ...utils.metadata import coerce_metadata_dict
 from ...utils.profile_evidence import profile_evidence_type_from_source, profile_relation_content
 from ...utils.runtime_payloads import tokens
+from ...utils.summary_identity import observe_identity
 from .base import KernelServiceBase
 
 
@@ -101,7 +103,9 @@ class MemoryProfileAdminService(KernelServiceBase):
 
         pid = str(person_id or "").strip()
         if not pid and person_keyword:
-            pid = self.person_profile_service.resolve_person_id(str(person_keyword or "").strip())
+            pid = self.person_profile_service.resolve_person_id(
+                str(person_keyword or "").strip(), metadata_store=self.metadata_store
+            )
 
         dirty_request = self.metadata_store.get_person_profile_refresh_request(pid) if pid else None
         should_force_refresh = bool(force_refresh)
@@ -225,6 +229,23 @@ class MemoryProfileAdminService(KernelServiceBase):
         assert self.person_profile_service is not None
 
         act = str(action or "").strip().lower()
+        if act == "resolve_identity":
+            person_id = await asyncio.to_thread(
+                self.person_profile_service.resolve_person_id,
+                str(kwargs["identifier"]).strip(),
+                metadata_store=self.metadata_store,
+            )
+            return {"success": True, "person_id": person_id}
+        if act == "observe_identity":
+            identity = await asyncio.to_thread(
+                observe_identity,
+                self.metadata_store,
+                platform=str(kwargs["platform"]),
+                user_id=str(kwargs["user_id"]),
+                aliases=list(kwargs["aliases"]),
+                group_id=str(kwargs.get("group_id", "")),
+            )
+            return {"success": True, **identity}
         if act == "query":
             profile = await self._query_person_profile_with_feedback_refresh(
                 person_id=str(kwargs.get("person_id", "") or "").strip(),

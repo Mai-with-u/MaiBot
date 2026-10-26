@@ -229,7 +229,7 @@ class _EpisodeMetadataStub:
         return []
 
 
-class _IncompleteEpisodeSegmentationStub:
+class _OverlappingEpisodeSegmentationStub:
     async def segment(self, **_kwargs: Any) -> Dict[str, Any]:
         return {
             "segmentation_model": "test",
@@ -250,10 +250,10 @@ class _IncompleteEpisodeSegmentationStub:
 
 
 @pytest.mark.asyncio
-async def test_episode_invalid_partition_falls_back_to_complete_partition() -> None:
+async def test_episode_preserves_overlap_without_synthesizing_omitted_paragraphs() -> None:
     service = EpisodeService(
         metadata_store=_EpisodeMetadataStub(),
-        segmentation_service=_IncompleteEpisodeSegmentationStub(),
+        segmentation_service=_OverlappingEpisodeSegmentationStub(),
     )
     group = {
         "source": "test",
@@ -267,10 +267,10 @@ async def test_episode_invalid_partition_falls_back_to_complete_partition() -> N
 
     result = await service._build_episode_payloads_for_group(group)
 
-    assert result["fallback_count"] == 1
-    assert result["done_hashes"] == ["a", "b", "c"]
-    assert len(result["payloads"]) == 1
-    assert result["payloads"][0]["evidence_ids"] == ["a", "b", "c"]
+    # 当前分段协议允许重叠和省略，不应为未选中的 c 编造一个兜底情景。
+    assert result["fallback_count"] == 0
+    assert result["done_hashes"] == ["a", "b"]
+    assert [item["evidence_ids"] for item in result["payloads"]] == [["a", "b"], ["b"]]
 
 
 class _EmbeddingStub:

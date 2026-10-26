@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
@@ -19,6 +20,9 @@ from src.services import llm_service as llm_api
 
 class _SummaryCheckpoints:
     """测试替身实现空摘要进度接口，避免测试依赖私有连接。"""
+
+    def get_db_path(self) -> Path:
+        return Path(f"summary-test-{id(self)}.db")
 
     def get_summary_checkpoint(self, external_id: str) -> Optional[Dict[str, Any]]:
         return self.__dict__.setdefault("checkpoints", {}).get(external_id)
@@ -198,6 +202,7 @@ def test_summary_prompt_requires_incremental_output_from_current_window() -> Non
     prompt = SUMMARY_PROMPT_TEMPLATE.format(
         bot_name="测试机器人",
         personality_context="",
+        identity_catalog="[]",
         previous_summary_context="\n历史净化摘要回顾：\n- 用户喜欢绿茶。\n",
         chat_history="用户：今天天气不错。",
         image_evidence_catalog="无",
@@ -215,6 +220,7 @@ def test_summary_prompt_locales_share_image_evidence_contract(locale: str) -> No
         locale=locale,
         bot_name="Mai",
         personality_context="",
+        identity_catalog="[]",
         previous_summary_context="",
         chat_history="message",
         image_evidence_catalog="message_id=m1, component_path=0",
@@ -234,8 +240,8 @@ async def test_empty_incremental_summary_is_successful_noop(monkeypatch) -> None
             return None
 
         @staticmethod
-        def get_live_paragraphs_by_source(source: str):
-            assert source == "chat_summary:stream-1"
+        def get_chat_summary_history(source: str):
+            assert source == "stream-1"
             return [{"content": "用户喜欢绿茶。", "created_at": 1.0, "metadata": {}}]
 
     importer = SummaryImporter(
@@ -264,8 +270,8 @@ async def test_empty_incremental_summary_is_successful_noop(monkeypatch) -> None
         lambda **kwargs: [SimpleNamespace(timestamp=2.0)],
     )
     monkeypatch.setattr(
-        "src.A_memorix.core.utils.summary_importer.message_api.build_readable_messages",
-        lambda messages: "用户：今天天气不错。",
+        "src.A_memorix.core.utils.summary_importer.SummaryIdentityContext",
+        lambda store, messages: SimpleNamespace(render=lambda: ("用户：今天天气不错。", "[]")),
     )
     monkeypatch.setattr(llm_api, "get_available_models", _fake_available_models)
     monkeypatch.setattr(llm_api, "generate", fake_generate)
@@ -293,8 +299,8 @@ async def test_history_only_followup_windows_do_not_write_repeated_paragraphs(mo
         def get_external_memory_ref(self, external_id: str):
             return self.refs.get(external_id)
 
-        def get_live_paragraphs_by_source(self, source: str):
-            assert source == "chat_summary:stream-1"
+        def get_chat_summary_history(self, source: str):
+            assert source == "stream-1"
             return list(self.paragraphs)
 
         def upsert_external_memory_ref(self, *, external_id: str, paragraph_hash: str, **kwargs):
@@ -355,8 +361,12 @@ async def test_history_only_followup_windows_do_not_write_repeated_paragraphs(mo
         lambda **kwargs: [SimpleNamespace(timestamp=2.0)],
     )
     monkeypatch.setattr(
-        "src.A_memorix.core.utils.summary_importer.message_api.build_readable_messages",
-        lambda messages: "用户：继续聊刚才的话题。",
+        "src.A_memorix.core.utils.summary_importer.SummaryIdentityContext",
+        lambda store, messages: SimpleNamespace(
+            render=lambda: ("用户：继续聊刚才的话题。", "[]"),
+            metadata=lambda texts: {"person_ids": [], "identity_bindings": {}},
+            restore_text=lambda text: text,
+        ),
     )
     monkeypatch.setattr(llm_api, "get_available_models", _fake_available_models)
     monkeypatch.setattr(llm_api, "generate", fake_generate)
@@ -460,8 +470,8 @@ def test_summary_external_id_cannot_be_reused_across_streams() -> None:
 def test_summary_review_uses_explicit_supersession_instead_of_keywords() -> None:
     class SummaryStore:
         @staticmethod
-        def get_live_paragraphs_by_source(source: str):
-            assert source == "chat_summary:stream-1"
+        def get_chat_summary_history(source: str):
+            assert source == "stream-1"
             return [
                 {
                     "content": "此前的错误值已经失效。",

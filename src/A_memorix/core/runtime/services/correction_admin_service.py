@@ -111,7 +111,7 @@ class MemoryCorrectionAdminService(KernelServiceBase):
             return {"success": False, "error": "按所选记忆修正时请使用 memory 范围，不要同时指定人物或聊天流"}
         if scope_token == "person_profile":
             if not pid and keyword and self.person_profile_service is not None:
-                pid = self.person_profile_service.resolve_person_id(keyword)
+                pid = self.person_profile_service.resolve_person_id(keyword, metadata_store=self.metadata_store)
             if not pid:
                 return {"success": False, "error": "人物画像修改需要提供 person_id 或 person_keyword"}
         elif targets is None and not chat_id and not fuzzy_modify_cfg_allow_global_scope():

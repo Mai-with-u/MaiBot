@@ -86,7 +86,7 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
         resolved: List[str] = []
         seen = set()
         for candidate in candidates:
-            person_id = PersonProfileService.resolve_person_id(candidate)
+            person_id = PersonProfileService.resolve_person_id(candidate, metadata_store=self.metadata_store)
             if not person_id or person_id in seen:
                 continue
             seen.add(person_id)

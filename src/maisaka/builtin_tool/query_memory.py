@@ -94,24 +94,24 @@ def _normalize_optional_time(raw_value: Any) -> str | float | None:
     return time_text
 
 
-def _resolve_person_id(
+async def _resolve_person_id(
     *,
     person_name: str,
     platform: str,
     user_id: str,
     group_id: str,
 ) -> Tuple[str, str]:
-    """按约定顺序解析长期记忆检索使用的 person_id。"""
+    """显式人物称呼按持久映射解析；当前私聊 ID 只用于未指定人物的查询。"""
 
     clean_person_name = str(person_name or "").strip()
     if clean_person_name:
-        person_id = resolve_person_id_for_memory(
-            person_name=clean_person_name,
-            platform=platform,
-            user_id=user_id,
+        result = await memory_service.profile_admin(
+            action="resolve_identity",
+            identifier=clean_person_name,
         )
-        if person_id:
-            return person_id, clean_person_name
+        if not result.get("success"):
+            raise RuntimeError(f"人物身份解析失败: {result.get('error', '')}")
+        return str(result["person_id"]), clean_person_name
 
     if not group_id and platform and user_id:
         person_id = resolve_person_id_for_memory(
@@ -221,12 +221,20 @@ async def handle_tool(
     platform = str(chat_stream.platform or "").strip()
     user_id = str(chat_stream.user_id or "").strip()
     group_id = str(chat_stream.group_id or "").strip()
-    person_id, person_name = _resolve_person_id(
-        person_name=str(invocation.arguments.get("person_name") or ""),
-        platform=platform,
-        user_id=user_id,
-        group_id=group_id,
-    )
+    try:
+        person_id, person_name = await _resolve_person_id(
+            person_name=str(invocation.arguments.get("person_name") or ""),
+            platform=platform,
+            user_id=user_id,
+            group_id=group_id,
+        )
+    except RuntimeError as exc:
+        return tool_ctx.build_failure_result(invocation.tool_name, str(exc))
+    if person_name and not person_id:
+        return tool_ctx.build_failure_result(
+            invocation.tool_name,
+            f"无法唯一确认人物 {person_name}，请使用明确的人物 ID 或不重名的称呼。",
+        )
     respect_filter = bool(invocation.arguments.get("respect_filter", True))
     fallback_applied = False
     fallback_reason = ""

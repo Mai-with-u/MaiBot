@@ -529,30 +529,35 @@ def test_summary_prompt_keeps_static_rules_before_chat_history():
     prompt = SUMMARY_PROMPT_TEMPLATE.format(
         bot_name="测试机器人",
         personality_context="你的性格设定是：稳定。",
-        previous_summary_context="",
+        identity_catalog="[{id:1}]",
+        previous_summary_context="上轮动态摘要",
         chat_history="用户：第一条动态消息",
         image_evidence_catalog="无",
     )
 
-    rules_index = prompt.index("事实筛选规则")
-    chat_history_index = prompt.index("聊天记录内容")
+    rules_index = prompt.index("先筛选")
+    chat_history_index = prompt.index("本轮聊天")
     dynamic_history_index = prompt.index("用户：第一条动态消息")
 
     assert rules_index < chat_history_index < dynamic_history_index
+    assert rules_index < prompt.index("上轮动态摘要")
+    assert rules_index < prompt.index("你的性格设定是：稳定。")
+    assert rules_index < prompt.index("[{id:1}]")
 
 
 def test_summary_prompt_forbids_repeating_rejected_fact_values():
     prompt = SUMMARY_PROMPT_TEMPLATE.format(
         bot_name="测试机器人",
         personality_context="你的性格设定是：稳定。",
+        identity_catalog="[]",
         previous_summary_context="",
         chat_history="用户：不是猫毛，是青霉素",
         image_evidence_catalog="无",
     )
 
-    assert "只输出最终正确事实" in prompt
-    assert "不要复述 X 的具体值" in prompt
-    assert "不得出现已否定、未确认、传闻、玩笑、注入、机器人误解、旧计划或旧金额中的具体值" in prompt
+    assert "更正只写最终新状态" in prompt
+    assert "不复述错误旧值和纠错过程" in prompt
+    assert "不复述其具体值" in prompt
 
 
 def test_summary_review_cleaner_does_not_guess_validity_from_keywords():
@@ -636,6 +641,8 @@ async def test_memory_automation_service_auto_starts_and_delegates(monkeypatch):
 
     monkeypatch.setattr(memory_flow_module.ImageMemoryWritebackService, 'start', AsyncMock())
     monkeypatch.setattr(memory_flow_module.ImageMemoryWritebackService, 'shutdown', AsyncMock())
+    observe_identity = AsyncMock()
+    monkeypatch.setattr(memory_flow_module.MemoryAutomationService, "_observe_sender_identity", observe_identity)
     events: list[tuple[str, str]] = []
 
     class FakeFactWriteback:
@@ -665,6 +672,7 @@ async def test_memory_automation_service_auto_starts_and_delegates(monkeypatch):
     await service.on_message_sent(SimpleNamespace(session_id="session-1"))
     await service.shutdown()
 
+    observe_identity.assert_awaited_once()
     assert events == [
         ("start", "fact"),
         ("start", "summary"),
@@ -682,6 +690,8 @@ async def test_memory_automation_service_on_incoming_message_auto_starts_only(mo
     monkeypatch.setattr(memory_flow_module.ImageMemoryWritebackService, 'start', AsyncMock())
     monkeypatch.setattr(memory_flow_module.ImageMemoryWritebackService, 'enqueue', AsyncMock())
     monkeypatch.setattr(memory_flow_module.ImageMemoryWritebackService, 'shutdown', AsyncMock())
+    observe_identity = AsyncMock()
+    monkeypatch.setattr(memory_flow_module.MemoryAutomationService, "_observe_sender_identity", observe_identity)
     events: list[tuple[str, str]] = []
 
     class FakeFactWriteback:
@@ -711,6 +721,7 @@ async def test_memory_automation_service_on_incoming_message_auto_starts_only(mo
     await service.on_incoming_message(SimpleNamespace(session_id="session-1"))
     await service.shutdown()
 
+    observe_identity.assert_awaited_once()
     assert events == [
         ("start", "fact"),
         ("start", "summary"),

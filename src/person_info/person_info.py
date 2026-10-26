@@ -58,9 +58,9 @@ def get_person_id_by_person_name(person_name: str) -> str:
     """根据用户名获取用户ID"""
     try:
         with get_db_session(auto_commit=False) as session:
-            statement = select(PersonInfo.person_id).where(col(PersonInfo.person_name) == person_name).limit(1)
-            person_id = session.exec(statement).first()
-            return str(person_id) if person_id else ""
+            statement = select(PersonInfo.person_id).where(col(PersonInfo.person_name) == person_name).limit(2)
+            person_ids = session.exec(statement).all()
+            return str(person_ids[0]) if len(person_ids) == 1 else ""
     except Exception as e:
         logger.error(f"根据用户名 {person_name} 获取用户ID时出错: {e}")
         return ""
@@ -76,15 +76,10 @@ def resolve_person_id_for_memory(
     """解析长期记忆检索/写入使用的人物 ID。
 
     解析顺序：
-    1. 优先按 `person_name` 映射数据库中的 `person_id`
-    2. 回退到 `platform + user_id` 生成稳定 `person_id`
+    1. 有 `platform + user_id` 时只按真实 ID 确认身份，不让同名人物覆盖它
+    2. 没有 ID 时才按唯一的 `person_name` 映射数据库中的 `person_id`
     3. 若 `strict_known=True`，则要求该 `person_id` 已被认识
     """
-    clean_name = str(person_name or "").strip()
-    if clean_name:
-        if by_name := get_person_id_by_person_name(clean_name):
-            return by_name
-
     clean_platform = str(platform or "").strip()
     clean_user_id = str(user_id or "").strip()
     if clean_platform and clean_user_id:
@@ -92,6 +87,12 @@ def resolve_person_id_for_memory(
         if strict_known and not is_person_known(person_id=candidate):
             return ""
         return candidate
+
+    clean_name = str(person_name or "").strip()
+    if clean_name:
+        candidate = get_person_id_by_person_name(clean_name)
+        if candidate and (not strict_known or is_person_known(person_id=candidate)):
+            return candidate
 
     return ""
 
@@ -574,6 +575,7 @@ async def store_person_memory_from_answer(
             participants=[participant_name] if participant_name else [],
             tags=["person_fact"],
             metadata={
+                "platform": session_platform,
                 "person_id": person_id,
                 "person_name": participant_name,
                 "writeback_source": "memory_flow_service",

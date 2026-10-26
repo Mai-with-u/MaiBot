@@ -34,6 +34,7 @@ from ..retrieval import (
 )
 from ..storage import MetadataStore, GraphStore, VectorStore
 from .metadata import coerce_metadata_dict
+from .fact_deduplication import visible_fact_metadata
 from .model_routing import (
     ResolvedLLMModel,
     generate_with_resolved_model,
@@ -251,8 +252,8 @@ class PersonProfileService:
             return None
 
     @staticmethod
-    def resolve_person_id(identifier: str) -> str:
-        """按 person_id 或姓名/别名解析 person_id。"""
+    def resolve_person_id(identifier: str, *, metadata_store: Optional[MetadataStore] = None) -> str:
+        """按 ID 或唯一的确切称呼解析；同名、子串匹配不能用来认领身份。"""
         if not identifier:
             return ""
         key = str(identifier).strip()
@@ -265,24 +266,29 @@ class PersonProfileService:
                 if record:
                     return str(record)
 
-                record = session.exec(
-                    select(PersonInfo.person_id)
-                    .where(
+                records = session.exec(
+                    select(PersonInfo).where(
                         or_(
                             PersonInfo.person_name == key,
                             PersonInfo.user_nickname == key,
+                            PersonInfo.group_cardname.contains(key),
                         )
                     )
-                    .limit(1)
-                ).first()
-                if record:
-                    return str(record)
-
-                record = session.exec(
-                    select(PersonInfo.person_id).where(PersonInfo.group_cardname.contains(key)).limit(1)
-                ).first()
-                if record:
-                    return str(record)
+                ).all()
+                candidates = {
+                    str(record.person_id)
+                    for record in records
+                    if key
+                    in [
+                        record.person_name,
+                        record.user_nickname,
+                        *PersonProfileService._parse_group_nicks(record.group_cardname),
+                    ]
+                }
+                if metadata_store is not None:
+                    candidates.update(item["person_id"] for item in metadata_store.find_person_identities(key))
+                if candidates:
+                    return next(iter(candidates)) if len(candidates) == 1 else ""
         except Exception as e:
             logger.warning(f"按别名解析 person_id 失败: identifier={key}, err={e}")
 
@@ -291,7 +297,8 @@ class PersonProfileService:
 
         return ""
 
-    def _parse_group_nicks(self, raw_value: Any) -> List[str]:
+    @staticmethod
+    def _parse_group_nicks(raw_value: Any) -> List[str]:
         if not raw_value:
             return []
         if isinstance(raw_value, list):
@@ -389,23 +396,27 @@ class PersonProfileService:
         return suggestions
 
     def _get_derived_person_aliases(self, person_id: str) -> Tuple[List[str], str, List[str]]:
-        """只从人物主档案中的可信身份字段推导自动别名。"""
+        """从 ID 绑定的历史称呼和人物主档案推导自动别名。"""
         aliases: List[str] = []
         primary_name = ""
         memory_traits: List[str] = []
         if not person_id:
             return aliases, primary_name, memory_traits
+        identity = self.metadata_store.get_person_identity(person_id)
+        if identity:
+            aliases = list(identity["aliases"])
+            primary_name = str(identity["canonical_name"])
         try:
             with get_db_session(auto_commit=False) as session:
                 record = session.exec(select(PersonInfo).where(PersonInfo.person_id == person_id).limit(1)).first()
                 if not record:
-                    return [person_id], person_id, memory_traits
+                    return aliases or [person_id], primary_name or person_id, memory_traits
             person_name = str(record.person_name or "").strip()
             nickname = str(record.user_nickname or "").strip()
             group_nicks = self._parse_group_nicks(record.group_cardname)
             memory_traits = self._parse_memory_traits(record.memory_points)
 
-            primary_name = (
+            primary_name = primary_name or (
                 person_name
                 or nickname
                 or next((item for item in group_nicks if item), "")
@@ -413,7 +424,8 @@ class PersonProfileService:
                 or person_id
             )
 
-            candidates = [person_name, nickname] + group_nicks
+            candidates = [*aliases, person_name, nickname] + group_nicks
+            aliases = []
             seen = set()
             for item in candidates:
                 norm = str(item or "").strip()
@@ -492,9 +504,19 @@ class PersonProfileService:
             relations = [rel for rel in relations if self._is_relation_bound_to_person(rel, person_id=person_id)]
         relations.sort(key=lambda item: float(item.get("confidence", 0.0)), reverse=True)
         relations = relations[: max(1, int(limit))]
+        supporting = (
+            self.metadata_store.get_paragraphs_by_relation_hashes([row["hash"] for row in relations])
+            if relations
+            else {}
+        )
 
         edges: List[Dict[str, Any]] = []
         for rel in relations:
+            paragraphs = supporting.get(rel["hash"], [])
+            if paragraphs and not any(
+                self.metadata_store.fact_relation_has_support(rel["hash"], row) for row in paragraphs
+            ):
+                continue
             edges.append(
                 {
                     "hash": str(rel.get("hash", "")),
@@ -545,7 +567,13 @@ class PersonProfileService:
 
         source = f"person_fact:{token}"
         paragraphs = [
-            row for row in self.metadata_store.get_paragraphs_by_source(source) if not bool(row.get("is_deleted", 0))
+            row
+            for row in self.metadata_store.get_paragraphs_by_source(source)
+            if not bool(row.get("is_deleted", 0))
+            and coerce_metadata_dict(row.get("metadata")).get("dedup_phase") != "pending"
+        ]
+        paragraphs = [
+            value for row in paragraphs if (value := self.metadata_store.project_fact_paragraph(row)) is not None
         ]
         paragraphs.sort(
             key=lambda item: float(item.get("updated_at") or item.get("created_at") or 0.0),
@@ -674,6 +702,28 @@ class PersonProfileService:
         self,
         evidence: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
+        projected: List[Dict[str, Any]] = []
+        for item in evidence:
+            item_metadata = coerce_metadata_dict(item.get("metadata"))
+            if (
+                item.get("type") == "paragraph"
+                and item.get("hash")
+                and (item_metadata.get("dedup_managed") or item_metadata.get("dedup_phase") == "pending")
+            ):
+                paragraph = self.metadata_store.get_paragraph(item["hash"])
+                if paragraph is not None and (
+                    coerce_metadata_dict(paragraph.get("metadata")).get("dedup_managed")
+                    or coerce_metadata_dict(paragraph.get("metadata")).get("dedup_phase") == "pending"
+                ):
+                    paragraph = self.metadata_store.project_fact_paragraph(paragraph)
+                    if paragraph is None:
+                        continue
+                    # 投影只删除失效事实，不能扩大调用方已经截断的证据预算。
+                    item = {**item, "content": paragraph["content"][: len(item["content"])]}
+            if "metadata" in item:
+                item = {**item, "metadata": visible_fact_metadata(coerce_metadata_dict(item["metadata"]))}
+            projected.append(item)
+        evidence = projected
         memory_cfg = global_config.a_memorix.integration
         if not bool(getattr(memory_cfg, "feedback_correction_paragraph_hard_filter_enabled", True)):
             return evidence
@@ -1144,7 +1194,7 @@ class PersonProfileService:
         """查询或刷新人物画像。"""
         pid = str(person_id or "").strip()
         if not pid and person_keyword:
-            pid = self.resolve_person_id(person_keyword)
+            pid = self.resolve_person_id(person_keyword, metadata_store=self.metadata_store)
 
         if not pid:
             return {

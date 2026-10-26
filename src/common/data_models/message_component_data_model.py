@@ -480,7 +480,15 @@ class MessageSequence:
                 },
             }
         elif isinstance(item, ReplyComponent):
-            return {"type": "reply", "data": item.target_message_id}
+            # 原消息可能不在本地历史中，摘要重读时仍需要已确认的引用作者和正文。
+            return {
+                "type": "reply",
+                "data": item.target_message_id,
+                "target_message_content": item.target_message_content,
+                "target_message_sender_id": item.target_message_sender_id,
+                "target_message_sender_nickname": item.target_message_sender_nickname,
+                "target_message_sender_cardname": item.target_message_sender_cardname,
+            }
         elif isinstance(item, ForwardNodeComponent):
             return {
                 "type": "forward",
@@ -534,7 +542,13 @@ class MessageSequence:
                 uses_configured_bot_nickname=item["data"].get("uses_configured_bot_nickname", False),
             )
         elif item_type == "reply":
-            return ReplyComponent(target_message_id=item["data"])
+            return ReplyComponent(
+                target_message_id=item["data"],
+                target_message_content=item.get("target_message_content"),
+                target_message_sender_id=item.get("target_message_sender_id"),
+                target_message_sender_nickname=item.get("target_message_sender_nickname"),
+                target_message_sender_cardname=item.get("target_message_sender_cardname"),
+            )
         elif item_type == "dict":
             raw_data = item.get("data") or {}
             if isinstance(raw_data, dict) and str(raw_data.get("type") or "").strip().lower() == "file":
