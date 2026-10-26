@@ -251,7 +251,7 @@ async def test_existing_voice_transcript_remains_authored_content(learning, quot
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("content", ["[语音消息]", "[语音消息，转录失败]"])
+@pytest.mark.parametrize("content", ["[语音消息]", "[语音消息，转录失败]", "[语音: ]", "[语音:   ]"])
 async def test_voice_placeholder_is_not_authored_content(learning, content):
     voice = learning.VoiceComponent(binary_hash="voice", content=content)
     msg = message(learning, [voice], processed=content)
@@ -260,4 +260,17 @@ async def test_voice_placeholder_is_not_authored_content(learning, content):
     request = await learner._build_multi_learning_messages([msg], "system")
 
     assert content not in request[1].text
+    assert request[1].text.endswith("[空消息]")
     assert learner._filter_expressions([("场景", "模型给定句式", "1")], [msg]) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", ["[语音消息]", "[语音消息，转录失败]", "[语音: ]", "[语音:   ]"])
+async def test_typed_voice_placeholder_remains_authored_content(learning, content):
+    msg = message(learning, [learning.TextComponent(content)], processed=content)
+    learner = learning.ExpressionLearner()
+
+    request = await learner._build_multi_learning_messages([msg], "system")
+
+    assert request[1].text.endswith(content)
+    assert learner._filter_expressions([("场景", "自己的文字", "1")], [msg]) == [("场景", "自己的文字")]
