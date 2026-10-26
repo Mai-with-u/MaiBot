@@ -568,7 +568,13 @@ class ExpressionLearner:
             or (
                 isinstance(component, VoiceComponent)
                 and component.content.strip() not in {"[语音消息]", "[语音消息，转录失败]"}
-                and component.content.strip().removeprefix("[语音:").removesuffix("]").strip()
+                and (
+                    not (
+                        component.content.strip().startswith("[语音:")
+                        and component.content.strip().endswith("]")
+                    )
+                    or component.content.strip().removeprefix("[语音:").removesuffix("]").strip()
+                )
             )
         ).strip()
 

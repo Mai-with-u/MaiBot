@@ -274,3 +274,16 @@ async def test_typed_voice_placeholder_remains_authored_content(learning, conten
 
     assert request[1].text.endswith(content)
     assert learner._filter_expressions([("场景", "自己的文字", "1")], [msg]) == [("场景", "自己的文字")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", ["]", "没有包装的有效转写"])
+async def test_prefilled_voice_text_without_wrapper_remains_authored(learning, content):
+    voice = learning.VoiceComponent(binary_hash="voice", content=content)
+    msg = message(learning, [voice], processed=content)
+    learner = learning.ExpressionLearner()
+
+    request = await learner._build_multi_learning_messages([msg], "system")
+
+    assert request[1].text.endswith(content)
+    assert learner._filter_expressions([("场景", "自己的转写", "1")], [msg]) == [("场景", "自己的转写")]
