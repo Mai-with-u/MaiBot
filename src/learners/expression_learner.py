@@ -11,6 +11,7 @@ from src.chat.replyer.expression_vector_index import ExpressionVectorIndexUpsert
 from src.chat.utils.utils import is_bot_self
 from src.common.data_models.expression_data_model import MaiExpression
 from src.common.data_models.llm_service_data_models import LLMResponseResult
+from src.common.data_models.message_component_data_model import TextComponent, VoiceComponent
 from src.common.database.database import get_db_session
 from src.common.database.database_model import Expression, ModifiedBy
 from src.common.logger import get_logger
@@ -556,6 +557,16 @@ class ExpressionLearner:
         )
         return None
 
+    @staticmethod
+    def _learning_text_from_message(message: "SessionMessage") -> str:
+        """只学习本次正文和已有语音转写，不把引用、转发或图片描述归给发送者。"""
+
+        return " ".join(
+            component.text if isinstance(component, TextComponent) else component.content
+            for component in message.raw_message.components
+            if isinstance(component, (TextComponent, VoiceComponent))
+        ).strip()
+
     async def _build_multi_learning_messages(
         self,
         messages: List["SessionMessage"],
@@ -579,7 +590,7 @@ class ExpressionLearner:
             user_info = message.message_info.user_info
             speaker_name = user_info.user_cardname or user_info.user_nickname or "未知用户"
             speaker_kind = "SELF" if is_bot_self(message.platform, user_info.user_id) else "USER"
-            content = (message.processed_plain_text or "").strip()
+            content = self._learning_text_from_message(message)
             if not content:
                 content = "[空消息]"
             learning_messages.append(
@@ -676,8 +687,8 @@ class ExpressionLearner:
             # 过滤掉从 bot 自己发言中提取到的表达方式
             if is_bot_self(current_msg.platform, current_msg.message_info.user_info.user_id):
                 continue
-            # 过滤掉无上下文的表达方式
-            context = (current_msg.processed_plain_text or "").strip()
+            # 与学习请求使用同一份自写正文，纯引用/转发没有可学习来源。
+            context = self._learning_text_from_message(current_msg)
             if not context:
                 continue
             # 过滤掉包含 SELF 的内容（不学习）
