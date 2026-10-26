@@ -10,6 +10,7 @@ from src.common.logger import get_logger
 from ...storage import VectorStore
 from ...utils import profile_policy
 from ...utils.hash import compute_hash, normalize_text
+from ...utils.fact_deduplication import FactDeduplicator, fact_scope_lock, observation_id
 from ...utils.metadata import coerce_metadata_dict
 from ...utils.relation_write_service import RelationWriteService
 from ...utils.runtime_payloads import (
@@ -303,7 +304,84 @@ class MemoryIngestService(KernelServiceBase):
             group_id=group_id,
         )
 
-    async def ingest_text(
+    async def ingest_text(self, **kwargs: Any) -> Dict[str, Any]:
+        metadata = coerce_metadata_dict(kwargs.get("metadata"))
+        # 只有宿主已经确认目标人物和实际来源的自动写回参与语义去重。
+        if (kwargs.get("source_type") == "person_fact" and not metadata.get("dedup_managed")
+                and metadata.get("evidence_message_ids") and len(tokens(kwargs.get("person_ids"))) == 1
+                and metadata.get("writeback_source") == "memory_flow_service"):
+            if self._is_chat_filtered(respect_filter=kwargs.get("respect_filter", True),
+                                      stream_id=kwargs.get("chat_id", ""), group_id=kwargs.get("group_id", ""),
+                                      user_id=kwargs.get("user_id", "")):
+                return {"success": True, "stored_ids": [], "detail": "chat_filtered"}
+            await self.initialize()
+            person_id = tokens(kwargs["person_ids"])[0]
+            async with fact_scope_lock(self.metadata_store, "person", person_id):
+                return await self._ingest_person_fact(kwargs, metadata, person_id)
+        return await self._ingest_text_raw(**kwargs)
+
+    async def _ingest_person_fact(self, kwargs: Dict[str, Any], metadata: Dict[str, Any], person_id: str) -> Dict[str, Any]:
+        content = normalize_text(kwargs["text"])
+        if not content:
+            return {"success": True, "stored_ids": [], "reason": "empty_text"}
+        source = {"platform": str(metadata.get("platform", "")), "chat_id": kwargs["chat_id"],
+                  "message_ids": sorted(set(str(value) for value in metadata["evidence_message_ids"])),
+                  "observed_at": kwargs.get("timestamp")}
+        source["observation_id"] = observation_id(platform=source["platform"], chat_id=source["chat_id"],
+                                                   message_ids=source["message_ids"])
+        external_id = f"{kwargs['external_id']}:{source['observation_id']}"
+        receipt = await asyncio.to_thread(self.metadata_store.get_external_memory_ref, external_id)
+        dedup = FactDeduplicator(self.metadata_store, self.embedding_manager, self.vector_store)
+        if receipt:
+            saved = receipt["metadata"]
+            if saved.get("input_text") != content or saved.get("person_id") != person_id:
+                raise ValueError("人物事实来源标识与已保存的输入不一致")
+            if saved.get("dedup_phase") == "complete":
+                paragraph = await asyncio.to_thread(self.metadata_store.get_paragraph, receipt["paragraph_hash"])
+                if paragraph is None or paragraph.get("is_deleted"):
+                    raise ValueError("人物事实来源已处理，但关联段落已删除")
+                return {"success": True, "stored_ids": [], "skipped_ids": [receipt["paragraph_hash"]],
+                        "fact_claim_ids": saved["claim_ids"], "detail": "dedup_replayed"}
+            plan = saved["dedup_plan"]
+            paragraph_hash = receipt["paragraph_hash"]
+        else:
+            plan = await dedup.plan(scope_type="person", scope_id=person_id,
+                                    facts=[{"fact_id": "f1", "text": content}], source=source)
+            decision = plan["decisions"][0]
+            if decision["action"] == "reuse":
+                paragraph_hash = decision["target"]["paragraph_hash"]
+            else:
+                paragraph_hash = await asyncio.to_thread(
+                    self.metadata_store.add_paragraph, content=content, source=f"person_fact:{person_id}",
+                    knowledge_type="factual", metadata={**metadata, "dedup_phase": "pending",
+                                                        "chat_id": kwargs["chat_id"], "person_ids": [person_id]},
+                )
+            saved = {"person_id": person_id, "chat_id": kwargs["chat_id"], "input_text": content,
+                     "dedup_phase": "pending", "dedup_plan": plan}
+            await asyncio.to_thread(self.metadata_store.upsert_external_memory_ref, external_id=external_id,
+                                   paragraph_hash=paragraph_hash, source_type="person_fact", metadata=saved)
+        reused = plan["decisions"][0]["action"] == "reuse"
+        if not reused:
+            await self._ingest_text_raw(**{**kwargs, "external_id": external_id,
+                "metadata": {**metadata, "dedup_managed": True, "dedup_phase": "pending",
+                             "dedup_fact_texts": [content],
+                             "dedup_receipt": saved}})
+        claim_ids = await asyncio.to_thread(dedup.commit, plan, paragraph_hash, metadata.get("fact_claim"))
+        if not reused:
+            await asyncio.to_thread(self.metadata_store.update_paragraph_metadata, paragraph_hash,
+                                   {"fact_claim_ids": claim_ids, "dedup_phase": "complete"}, merge=True)
+            await asyncio.to_thread(self.metadata_store.enqueue_episode_source_rebuild, f"person_fact:{person_id}",
+                                   reason="dedup_person_fact_complete")
+        await asyncio.to_thread(self._persist)
+        await asyncio.to_thread(self.metadata_store.upsert_external_memory_ref, external_id=external_id,
+                               paragraph_hash=paragraph_hash, source_type="person_fact",
+                               metadata={**saved, "dedup_phase": "complete", "claim_ids": claim_ids})
+        self._enqueue_person_profile_refresh(person_id, reason="person_fact_deduplicated")
+        return {"success": True, "stored_ids": [] if reused else [paragraph_hash],
+                "skipped_ids": [paragraph_hash] if reused else [], "fact_claim_ids": claim_ids,
+                "detail": "fact_reused" if reused else "fact_added"}
+
+    async def _ingest_text_raw(
         self,
         *,
         external_id: str,
@@ -352,7 +430,7 @@ class MemoryIngestService(KernelServiceBase):
             return {"stored_ids": [], "skipped_ids": [external_token], "reason": "empty_text"}
 
         existing_ref = await asyncio.to_thread(self.metadata_store.get_external_memory_ref, external_token)
-        if existing_ref:
+        if existing_ref and existing_ref.get("metadata", {}).get("dedup_phase") != "pending":
             if source_type == "person_fact":
                 paragraph_hash = str(existing_ref.get("paragraph_hash", "") or "")
                 paragraph = await asyncio.to_thread(self.metadata_store.get_paragraph, paragraph_hash)
@@ -394,6 +472,7 @@ class MemoryIngestService(KernelServiceBase):
         entity_tokens = merge_tokens(entities, participant_tokens)
         source = build_source(source_type, chat_id, person_tokens)
         paragraph_meta = coerce_metadata_dict(metadata)
+        receipt_metadata = paragraph_meta.pop("dedup_receipt", {})
         paragraph_meta.update(
             {
                 "external_id": external_token,
@@ -406,7 +485,7 @@ class MemoryIngestService(KernelServiceBase):
         )
         warnings: List[str] = []
 
-        paragraph_hash = self.metadata_store.add_paragraph(
+        paragraph_hash = await asyncio.to_thread(self.metadata_store.add_paragraph,
             content=content,
             source=source,
             metadata=paragraph_meta,
@@ -423,7 +502,7 @@ class MemoryIngestService(KernelServiceBase):
             warnings.append(warning)
 
         for name in entity_tokens:
-            entity_hash = self.metadata_store.add_entity(name=name, source_paragraph=paragraph_hash)
+            entity_hash = await asyncio.to_thread(self.metadata_store.add_entity, name=name, source_paragraph=paragraph_hash)
             await self._ensure_entity_vector({"hash": entity_hash, "name": name})
 
         stored_relations: List[str] = []
@@ -445,12 +524,12 @@ class MemoryIngestService(KernelServiceBase):
                 else {"external_id": external_token, "source_type": source_type},
                 write_vector=self.relation_vectors_enabled,
             )
-            self.metadata_store.link_paragraph_relation(paragraph_hash, result.hash_value)
+            await asyncio.to_thread(self.metadata_store.link_paragraph_relation, paragraph_hash, result.hash_value)
             stored_relations.append(result.hash_value)
 
         fact_claim_ids: List[str] = []
-        if str(source_type or "").strip() == "person_fact":
-            fact_claim_ids = self._write_person_fact_claims(
+        if str(source_type or "").strip() == "person_fact" and not paragraph_meta.get("dedup_managed"):
+            fact_claim_ids = await asyncio.to_thread(self._write_person_fact_claims,
                 paragraph_hash=paragraph_hash,
                 content=content,
                 person_ids=person_tokens,
@@ -458,19 +537,21 @@ class MemoryIngestService(KernelServiceBase):
                 timestamp=timestamp,
             )
             if fact_claim_ids:
-                self.metadata_store.update_paragraph_metadata(
+                await asyncio.to_thread(self.metadata_store.update_paragraph_metadata,
                     paragraph_hash,
                     {"fact_claim_ids": fact_claim_ids},
                     merge=True,
                 )
 
-        self.metadata_store.upsert_external_memory_ref(
+        await asyncio.to_thread(self.metadata_store.upsert_external_memory_ref,
             external_id=external_token,
             paragraph_hash=paragraph_hash,
             source_type=source_type,
-            metadata={"chat_id": chat_id, "person_ids": person_tokens},
+            metadata={"chat_id": chat_id, "person_ids": person_tokens,
+                      **receipt_metadata,
+                      **({"dedup_phase": "pending"} if paragraph_meta.get("dedup_phase") == "pending" else {})},
         )
-        self._persist()
+        await asyncio.to_thread(self._persist)
         for person_id in person_tokens:
             self._mark_person_active(person_id)
             self._enqueue_person_profile_refresh(person_id, reason=str(source_type or "ingest_text"))

@@ -201,8 +201,13 @@ async def test_shared_chat_scope_executes_once_and_reinforces_only_final_results
 
 
 class _FilteringMetadataStore:
-    def __init__(self, metadata_by_hash: dict[str, dict[str, Any]]) -> None:
+    def __init__(self, metadata_by_hash: dict[str, dict[str, Any]], content_by_hash: dict[str, str]) -> None:
         self.metadata_by_hash = metadata_by_hash
+        self.content_by_hash = content_by_hash
+
+    @staticmethod
+    def project_fact_paragraph(paragraph: dict[str, Any]) -> dict[str, Any]:
+        return paragraph
 
     def get_relation_status_batch(self, hashes: list[str]) -> dict[str, dict[str, Any]]:
         return {
@@ -224,6 +229,7 @@ class _FilteringMetadataStore:
         return {
             paragraph_hash: {
                 "hash": paragraph_hash,
+                "content": self.content_by_hash[paragraph_hash],
                 "metadata": dict(self.metadata_by_hash[paragraph_hash]),
                 "source": self.metadata_by_hash[paragraph_hash].get("source", ""),
             }
@@ -286,7 +292,9 @@ async def test_person_visibility_and_type_filtered_hits_are_not_reinforced(
         _relation_result("relation-keep-2", score=4.0),
     ]
     metadata_by_hash = {item.hash_value: dict(item.metadata) for item in candidates}
-    kernel.metadata_store = _FilteringMetadataStore(metadata_by_hash)  # type: ignore[assignment]
+    kernel.metadata_store = _FilteringMetadataStore(
+        metadata_by_hash, {item.hash_value: item.content for item in candidates}
+    )  # type: ignore[assignment]
     reinforced: list[list[str]] = []
     scope = RetrievalScope(
         key="chat:session-current,session-other",

@@ -147,7 +147,10 @@ class MetadataEpisodeMixin:
                 END,
                 retry_count = 0,
                 last_error = NULL,
-                reason = excluded.reason,
+                reason = CASE
+                    WHEN episode_rebuild_sources.reason = 'fact_evidence_retracted'
+                     AND episode_rebuild_sources.desired_revision > episode_rebuild_sources.built_revision
+                    THEN episode_rebuild_sources.reason ELSE excluded.reason END,
                 requested_at = excluded.requested_at,
                 updated_at = excluded.updated_at,
                 desired_revision = COALESCE(episode_rebuild_sources.desired_revision, 0) + 1,
@@ -658,11 +661,13 @@ class MetadataEpisodeMixin:
             FROM paragraphs
             WHERE TRIM(COALESCE(source, '')) = ?
               AND (is_deleted IS NULL OR is_deleted = 0)
+              AND COALESCE(json_extract(metadata, '$.dedup_phase'), 'complete') = 'complete'
             ORDER BY created_at ASC, hash ASC
             """,
             (token,),
         )
         rows = [self._row_to_dict(row, "paragraph") for row in cursor.fetchall()]
+        rows = [value for row in rows if (value := self.project_fact_paragraph(row)) is not None]
         if not exclude_stale:
             return rows
         paragraph_hashes = [
@@ -741,16 +746,20 @@ class MetadataEpisodeMixin:
         placeholders = ",".join("?" for _ in tokens)
         cursor.execute(
             f"""
-            SELECT source, desired_revision, built_revision
+            SELECT source, desired_revision, built_revision, reason
             FROM episode_rebuild_sources
             WHERE source IN ({placeholders})
             """,
             tuple(tokens),
         )
         # 仅「登记了重建、但一个完整物化版本都没有」的来源需要进一步核对 episodes
+        source_rows = cursor.fetchall()
+        invalidated = {row["source"] for row in source_rows
+                       if row["reason"] == "fact_evidence_retracted"
+                       and int(row["desired_revision"] or 0) > int(row["built_revision"] or 0)}
         candidates = {
             row["source"]
-            for row in cursor.fetchall()
+            for row in source_rows
             if int(row["built_revision"] or 0) <= 0 and int(row["desired_revision"] or 0) > 0
         }
         materialized: set[str] = set()
@@ -766,7 +775,7 @@ class MetadataEpisodeMixin:
             materialized = {row["source"] for row in cursor.fetchall() if row["source"]}
 
         return {
-            source: token in candidates and token not in materialized
+            source: token in invalidated or (token in candidates and token not in materialized)
             for source, token in normalized.items()
         }
 

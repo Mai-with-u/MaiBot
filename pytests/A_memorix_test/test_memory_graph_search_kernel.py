@@ -45,6 +45,14 @@ class _DummyMetadataStore:
 
 
 class _ScopedSearchMetadataStore:
+    @staticmethod
+    def fact_relation_has_support(relation_hash, paragraph):
+        return True
+
+    @staticmethod
+    def project_fact_paragraph(paragraph):
+        return paragraph
+
     def __init__(self) -> None:
         self.paragraphs = {
             "para-current": {

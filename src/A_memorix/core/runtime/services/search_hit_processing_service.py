@@ -14,6 +14,7 @@ from ...utils.feedback_policy import (
     feedback_cfg_paragraph_hard_filter_enabled,
 )
 from ...utils.metadata import coerce_metadata_dict
+from ...utils.fact_deduplication import visible_fact_metadata
 from ...utils.runtime_payloads import optional_float, tokens
 from ...utils.time_parser import format_timestamp, parse_query_datetime_to_timestamp
 from ..models import _NormalizedSearchTimeWindow
@@ -97,7 +98,36 @@ class MemorySearchHitProcessingService(KernelServiceBase):
         return filtered
 
     def _filter_user_visible_hits(self, hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        return self._filter_current_effective_hits(self._filter_active_relation_hits(self._filter_episode_hits(hits)))
+        hits = self._filter_fact_paragraph_hits(hits)
+        hits = self._filter_current_effective_hits(self._filter_active_relation_hits(self._filter_episode_hits(hits)))
+        return [{**hit, "metadata": visible_fact_metadata(coerce_metadata_dict(hit["metadata"]))}
+                if "metadata" in hit else hit for hit in hits]
+
+    def _filter_fact_paragraph_hits(self, hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """写入未完成和证据撤销后的事实不能通过段落或关系旁路回到提示词。"""
+        if self.metadata_store is None:
+            return hits
+        paragraph_ids = [item["hash"] for item in hits if item.get("type") == "paragraph" and item.get("hash")]
+        relation_ids = [item["hash"] for item in hits if item.get("type") == "relation" and item.get("hash")]
+        paragraphs = self.metadata_store.get_paragraphs_by_hashes(paragraph_ids) if paragraph_ids else {}
+        relation_paragraphs = self.metadata_store.get_paragraphs_by_relation_hashes(relation_ids) if relation_ids else {}
+        result = []
+        for hit in hits:
+            if hit.get("type") == "paragraph" and hit.get("hash") in paragraphs:
+                paragraph = self.metadata_store.project_fact_paragraph(paragraphs[hit["hash"]])
+                if paragraph is None:
+                    continue
+                hit = {**hit, "content": paragraph["content"], "metadata": paragraph["metadata"]}
+            elif hit.get("type") == "relation" and relation_paragraphs.get(hit.get("hash")):
+                supported = False
+                for row in relation_paragraphs[hit["hash"]]:
+                    if self.metadata_store.fact_relation_has_support(hit["hash"], row):
+                        supported = True
+                        break
+                if not supported:
+                    continue
+            result.append(hit)
+        return result
 
     def _filter_current_effective_hits(self, hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if self.metadata_store is None:
@@ -133,6 +163,8 @@ class MemorySearchHitProcessingService(KernelServiceBase):
                 if stored is not None:
                     metadata = coerce_metadata_dict(stored.get("metadata"))
             memory_change = metadata.get("memory_change") if isinstance(metadata.get("memory_change"), dict) else {}
+            if metadata.get("dedup_phase") == "pending":
+                continue
             valid_to = optional_float(memory_change.get("valid_to"))
             if valid_to is not None and valid_to <= now:
                 continue
@@ -142,7 +174,8 @@ class MemorySearchHitProcessingService(KernelServiceBase):
         return filtered
 
     def _current_effective_filter_store_check_needed(self, hits: List[Dict[str, Any]]) -> bool:
-        if any(isinstance(coerce_metadata_dict(item.get("metadata")).get("memory_change"), dict) for item in hits):
+        if any(isinstance(coerce_metadata_dict(item.get("metadata")).get("memory_change"), dict)
+               or coerce_metadata_dict(item.get("metadata")).get("dedup_phase") == "pending" for item in hits):
             return True
         cache = self._current_effective_filter_cache
         now = time.time()
@@ -168,6 +201,8 @@ class MemorySearchHitProcessingService(KernelServiceBase):
         for item in hits:
             metadata = coerce_metadata_dict(item.get("metadata"))
             memory_change = metadata.get("memory_change") if isinstance(metadata.get("memory_change"), dict) else {}
+            if metadata.get("dedup_phase") == "pending":
+                continue
             valid_to = optional_float(memory_change.get("valid_to"))
             if valid_to is not None and valid_to <= now:
                 continue
