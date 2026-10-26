@@ -559,12 +559,16 @@ class ExpressionLearner:
 
     @staticmethod
     def _learning_text_from_message(message: "SessionMessage") -> str:
-        """只学习本次正文和已有语音转写，不把引用、转发或图片描述归给发送者。"""
+        """只学习本次正文和已有语音转写，排除引用、转发、媒体描述及语音占位。"""
 
         return " ".join(
             component.text if isinstance(component, TextComponent) else component.content
             for component in message.raw_message.components
-            if isinstance(component, (TextComponent, VoiceComponent))
+            if isinstance(component, TextComponent)
+            or (
+                isinstance(component, VoiceComponent)
+                and component.content.strip() not in {"[语音消息]", "[语音消息，转录失败]"}
+            )
         ).strip()
 
     async def _build_multi_learning_messages(
