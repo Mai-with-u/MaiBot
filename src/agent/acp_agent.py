@@ -218,9 +218,9 @@ class AcpAgent(AgentSession):
                     from .messaging import tell
                     await tell(self.service, self.service.agent_id, self._turn_reply_text, target)
                 elif len(set(sources)) > 1:
-                    logger.warning("LLM 未调用 agent_talk 且本回合含多个来源会话 %s，无法确定回复目标，回复文本被丢弃：%s", set(sources), self._turn_reply_text[:200])
+                    logger.warning("LLM 未调用 agent_talk 且本回合含多个来源会话 %s，无法确定回复目标，回复文本被丢弃", set(sources))
                 else:
-                    logger.warning("LLM 未调用 agent_talk 且存在无来源会话标记的记录，回复文本被丢弃：%s", self._turn_reply_text[:200])
+                    logger.warning("LLM 未调用 agent_talk 且存在无来源会话标记的记录，回复文本被丢弃")
         finally:
             self.state = "idle"
 

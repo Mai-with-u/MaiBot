@@ -48,9 +48,9 @@ class AgentMCPServer:
 
         @server.call_tool()
         async def call_tool(name: str, arguments: Dict[str, Any]) -> types.CallToolResult:
-            if name == "agent_talk":
-                self.agent._agent_talk_called = True
             result = await provider.invoke(ToolInvocation(name, arguments), ToolExecutionContext(session_id=self.agent.service.agent_id))
+            if name == "agent_talk" and result.success:
+                self.agent._agent_talk_called = True
             content = [types.TextContent(type="text", text=result.get_history_content())]
             content.extend(types.ImageContent(type="image", data=item.data, mimeType=item.mime_type)
                            for item in result.content_items if item.content_type == "image")
