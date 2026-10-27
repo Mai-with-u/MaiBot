@@ -57,15 +57,22 @@ class AgentMCPServer:
             return types.CallToolResult(content=content, isError=not result.success)
 
         bind_host = self.agent.config.mcp_bind_host
-        addrinfo = socket.getaddrinfo(bind_host, 0, type=socket.SOCK_STREAM)[0]
+        timeout = self.agent.config.acp_timeout
+        addrinfo = (await asyncio.wait_for(asyncio.to_thread(socket.getaddrinfo, bind_host, 0, type=socket.SOCK_STREAM), timeout))[0]
         family = addrinfo[0]
         sock = socket.socket(family, socket.SOCK_STREAM)
         sock.bind(addrinfo[4])
         port = sock.getsockname()[1]
-        advertise = self.agent.config.mcp_advertise_host or (
-            bind_host if bind_host not in ("0.0.0.0", "::") else socket.gethostbyname(socket.gethostname())
-        )
-        if socket.getaddrinfo(advertise, None)[0][0] != family:
+        advertise = self.agent.config.mcp_advertise_host
+        if not advertise:
+            if bind_host == "::":
+                raise ValueError("MCP 监听 :: 时必须显式配置 mcp_advertise_host")
+            if bind_host == "0.0.0.0":
+                advertise = await asyncio.wait_for(asyncio.to_thread(socket.gethostbyname, socket.gethostname()), timeout)
+            else:
+                advertise = bind_host
+        advertise_infos = await asyncio.wait_for(asyncio.to_thread(socket.getaddrinfo, advertise, None), timeout)
+        if not any(info[0] == family for info in advertise_infos):
             raise ValueError(f"MCP advertise 地址 {advertise} 的地址族与 bind 地址 {bind_host} 不一致")
         bind_fmt = f"[{bind_host}]" if ":" in bind_host else bind_host
         advertise_fmt = f"[{advertise}]" if ":" in advertise else advertise
