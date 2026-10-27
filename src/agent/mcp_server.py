@@ -48,6 +48,8 @@ class AgentMCPServer:
 
         @server.call_tool()
         async def call_tool(name: str, arguments: Dict[str, Any]) -> types.CallToolResult:
+            if name == "agent_talk":
+                self.agent._agent_talk_called = True
             result = await provider.invoke(ToolInvocation(name, arguments), ToolExecutionContext(session_id=self.agent.service.agent_id))
             content = [types.TextContent(type="text", text=result.get_history_content())]
             content.extend(types.ImageContent(type="image", data=item.data, mimeType=item.mime_type)
@@ -64,8 +66,11 @@ class AgentMCPServer:
         self.url = f"http://{advertise}:{port}/mcp"
         if bind_host not in ("127.0.0.1", "::1"):
             logger.warning("MCP 服务监听 %s，非本机连接通过 HTTP 明文 Bearer token 认证，请确保网络可信", bind_host)
+        allowed_hosts = [f"{bind_host}:{port}"]
+        if advertise != bind_host:
+            allowed_hosts.append(f"{advertise}:{port}")
         manager = StreamableHTTPSessionManager(server, json_response=True, stateless=True, security_settings=TransportSecuritySettings(
-            enable_dns_rebinding_protection=(bind_host == "127.0.0.1"), allowed_hosts=[f"{bind_host}:{port}"], allowed_origins=[],
+            enable_dns_rebinding_protection=(bind_host == "127.0.0.1"), allowed_hosts=allowed_hosts, allowed_origins=[],
         ))
         endpoint = StreamableHTTPASGIApp(manager)
         token = self.token

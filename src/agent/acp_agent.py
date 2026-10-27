@@ -138,8 +138,6 @@ class AcpAgent(AgentSession):
             raw = record["items"][0]
             if kind == "tool_call":
                 raw["tool_call"] = {"func_name": title, "args": update.get("rawInput", {})}
-                if title == "agent_talk":
-                    self._agent_talk_called = True
             else:
                 raw.update(tool_name=title, success=status != "failed",
                            output=json.dumps(update.get("rawOutput", update.get("content", update)), ensure_ascii=False))
@@ -213,16 +211,16 @@ class AcpAgent(AgentSession):
             self.pending = None
             await self.save()
             if not self._agent_talk_called and self._turn_reply_text.strip() and result.get("stopReason") == "completed":
-                sources = {record.get("source_session", "") for record in batch if record.get("source_session")}
-                if len(sources) == 1:
-                    target = sources.pop()
+                sources = [record.get("source_session", "") for record in batch]
+                if sources and all(sources) and len(set(sources)) == 1:
+                    target = sources[0]
                     logger.warning("LLM 未调用 agent_talk，兜底发送回复到 %s", target)
                     from .messaging import tell
                     await tell(self.service, self.service.agent_id, self._turn_reply_text, target)
-                elif len(sources) > 1:
-                    logger.warning("LLM 未调用 agent_talk 且本回合含多个来源会话 %s，无法确定回复目标，回复文本被丢弃：%s", sources, self._turn_reply_text[:200])
+                elif len(set(sources)) > 1:
+                    logger.warning("LLM 未调用 agent_talk 且本回合含多个来源会话 %s，无法确定回复目标，回复文本被丢弃：%s", set(sources), self._turn_reply_text[:200])
                 else:
-                    logger.warning("LLM 未调用 agent_talk 且无来源会话标记，回复文本被丢弃：%s", self._turn_reply_text[:200])
+                    logger.warning("LLM 未调用 agent_talk 且存在无来源会话标记的记录，回复文本被丢弃：%s", self._turn_reply_text[:200])
         finally:
             self.state = "idle"
 
