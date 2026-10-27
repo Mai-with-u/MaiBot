@@ -61,6 +61,9 @@ class AgentConfig(ConfigBase):
     mcp_bind_host: str = Field(default="127.0.0.1", json_schema_extra={"label": {"zh_CN": "MCP 监听地址"}, "advanced": True})
     """MCP 服务监听地址，默认 127.0.0.1 仅本机；远程 Agent 可配 0.0.0.0 或内网 IP，需配合 token 认证。"""
 
+    mcp_advertise_host: str = Field(default="", json_schema_extra={"label": {"zh_CN": "MCP 对外地址"}, "advanced": True})
+    """生成给外部 Agent 的连接 URL 时使用的主机名；留空取 mcp_bind_host，bind 为 0.0.0.0 时取本机内网 IP。"""
+
     acp_allowed_hosts: List[str] = Field(default_factory=lambda: ["127.0.0.1"], json_schema_extra={"label": {"zh_CN": "Desktop 连接白名单"}, "advanced": True})
     """dsh Desktop 桥接允许的 host 列表，默认仅本机；远程连接需显式加入白名单。"""
 

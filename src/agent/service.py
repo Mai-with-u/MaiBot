@@ -100,6 +100,7 @@ class AgentService:
                 self.activity["paused_at"] = datetime.now().astimezone().isoformat()
             elif not self.paused:
                 self.activity.pop("paused_at", None)
+                self.activity.pop("paused_reason", None)
             state = {"paused": self.paused, "takeover": self.takeover, "error": self.error,
                      "activity": dict(self.activity)}
             def save() -> None:
@@ -131,13 +132,15 @@ class AgentService:
                 self.activity, self.paused, self.takeover, self.error = state["activity"], state["paused"], state["takeover"], state["error"]
                 if self.paused and self.config.paused_auto_recover_minutes > 0:
                     paused_at = self.activity.get("paused_at")
-                    if paused_at:
+                    if paused_at and self.activity.get("paused_reason") == "error":
                         elapsed = (datetime.now().astimezone() - datetime.fromisoformat(paused_at)).total_seconds() / 60
                         if elapsed >= self.config.paused_auto_recover_minutes:
-                            logger.warning("agent paused %.0f 分钟，自动恢复", elapsed)
+                            logger.warning("agent 异常暂停 %.0f 分钟，自动恢复", elapsed)
                             self.paused = False
                             self.error = ""
                             self.activity.pop("paused_at", None)
+                            self.activity.pop("paused_reason", None)
+                            await self.persist()
             if self.desktop_enabled:
                 try:
                     await self.bridge.restore()
@@ -211,6 +214,7 @@ class AgentService:
                 raise
             except Exception as exc:
                 self.error, self.paused = str(exc), True
+                self.activity["paused_reason"] = "error"
                 logger.exception("Agent 执行失败，已暂停")
                 await self.persist()
 
@@ -236,6 +240,7 @@ class AgentService:
             self.require_desktop()
         if operation in {"pause", "takeover", "stop", "restart"}:
             self.paused = True
+            self.activity["paused_reason"] = "manual"
             await _cancel_task(self._turn_task)
         if operation == "takeover":
             self.takeover = True
@@ -251,12 +256,14 @@ class AgentService:
             self.paused = False
             self.takeover = False
             self.error = ""
+            self.activity.pop("paused_reason", None)
         elif operation in {"stop", "restart"}:
             await self.bridge.close()
             if operation == "restart":
                 self.paused = False
                 self.takeover = False
                 self.error = ""
+                self.activity.pop("paused_reason", None)
         self._wake.set()
         await self.persist()
         return self.status()

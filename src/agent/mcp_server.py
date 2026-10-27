@@ -18,10 +18,13 @@ import secrets
 import socket
 import uvicorn
 
+from src.common.logger import get_logger
 from src.core.tooling import ToolAvailabilityContext, ToolExecutionContext, ToolInvocation
 
 if TYPE_CHECKING:
     from .acp_agent import AcpAgent
+
+logger = get_logger("agent.mcp")
 
 
 class AgentMCPServer:
@@ -55,7 +58,12 @@ class AgentMCPServer:
         sock = socket.socket()
         sock.bind((bind_host, 0))
         port = sock.getsockname()[1]
-        self.url = f"http://{bind_host}:{port}/mcp"
+        advertise = self.agent.config.mcp_advertise_host or (
+            bind_host if bind_host != "0.0.0.0" else socket.gethostbyname(socket.gethostname())
+        )
+        self.url = f"http://{advertise}:{port}/mcp"
+        if bind_host not in ("127.0.0.1", "::1"):
+            logger.warning("MCP 服务监听 %s，非本机连接通过 HTTP 明文 Bearer token 认证，请确保网络可信", bind_host)
         manager = StreamableHTTPSessionManager(server, json_response=True, stateless=True, security_settings=TransportSecuritySettings(
             enable_dns_rebinding_protection=(bind_host == "127.0.0.1"), allowed_hosts=[f"{bind_host}:{port}"], allowed_origins=[],
         ))

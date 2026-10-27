@@ -54,6 +54,8 @@ class ACPConnection:
         allowed = allowed_hosts if allowed_hosts is not None else ["127.0.0.1"]
         if info["host"] not in allowed:
             raise ValueError(f"Desktop 桥接 host {info['host']} 不在允许列表 {allowed} 中。")
+        if info["host"] not in ("127.0.0.1", "::1", "localhost"):
+            logger.warning("Desktop 桥接 host %s 非本机，token 通过明文 TCP 传输，请确保网络可信", info["host"])
         if not isinstance(info["port"], int) or not 1 <= info["port"] <= 65535 or not isinstance(info["token"], str) or not info["token"]:
             raise ValueError("无效的 Desktop 桥接端口或认证信息。")
         async with asyncio.timeout(timeout):

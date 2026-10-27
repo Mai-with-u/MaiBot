@@ -55,7 +55,8 @@ class AcpAgent(AgentSession):
                 return
             await self.close()
         cwd = await asyncio.to_thread(Path(self.config.acp_cwd).expanduser().resolve) if self.config.acp_cwd else self.history.root / "workspace"
-        if self.config.connection != "custom":
+        # custom 模式且显式配置 acp_cwd 时目录由用户管理；其余情况麦麦负责创建默认工作目录。
+        if not (self.config.connection == "custom" and self.config.acp_cwd):
             await asyncio.to_thread(cwd.mkdir, parents=True, exist_ok=True)
         if self.backend_state.get("cwd", str(cwd)) != str(cwd):
             raise ValueError("ACP 会话的主机工作目录已改变，请恢复原工作目录再连接。")
@@ -212,13 +213,16 @@ class AcpAgent(AgentSession):
             self.pending = None
             await self.save()
             if not self._agent_talk_called and self._turn_reply_text.strip() and result.get("stopReason") == "completed":
-                target = next((record.get("source_session", "") for record in reversed(batch) if record.get("source_session")), "")
-                if target:
+                sources = {record.get("source_session", "") for record in batch if record.get("source_session")}
+                if len(sources) == 1:
+                    target = sources.pop()
                     logger.warning("LLM 未调用 agent_talk，兜底发送回复到 %s", target)
                     from .messaging import tell
                     await tell(self.service, self.service.agent_id, self._turn_reply_text, target)
+                elif len(sources) > 1:
+                    logger.warning("LLM 未调用 agent_talk 且本回合含多个来源会话 %s，无法确定回复目标，回复文本被丢弃：%s", sources, self._turn_reply_text[:200])
                 else:
-                    logger.warning("LLM 未调用 agent_talk 且无法确定回复目标，回复文本被丢弃：%s", self._turn_reply_text[:200])
+                    logger.warning("LLM 未调用 agent_talk 且无来源会话标记，回复文本被丢弃：%s", self._turn_reply_text[:200])
         finally:
             self.state = "idle"
 

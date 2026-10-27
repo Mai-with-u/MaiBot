@@ -55,7 +55,10 @@ class AgentSession:
             state = {"inbox": deepcopy(self.inbox), "backends": deepcopy(self._backends)}
             await run_sync_work(write_json, self.history.root / "state.json", state)
 
-    async def enqueue(self, text: str, images: Sequence[ImageComponent] = (), *, kind: Literal["user", "system"] = "user", source_session: str = "") -> str:
+    async def enqueue(
+        self, text: str, images: Sequence[ImageComponent] = (), *,
+        kind: Literal["user", "system"] = "user", source_session: str = "",
+    ) -> str:
         builder = ContextItemBuilder().add_text_content(text)
         for image in images:
             # 接口中的图片已校验、存入工作区；上下文直接带实际图像。
