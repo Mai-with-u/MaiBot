@@ -57,18 +57,24 @@ class AgentMCPServer:
             return types.CallToolResult(content=content, isError=not result.success)
 
         bind_host = self.agent.config.mcp_bind_host
-        sock = socket.socket()
-        sock.bind((bind_host, 0))
+        addrinfo = socket.getaddrinfo(bind_host, 0, type=socket.SOCK_STREAM)[0]
+        family = addrinfo[0]
+        sock = socket.socket(family, socket.SOCK_STREAM)
+        sock.bind(addrinfo[4])
         port = sock.getsockname()[1]
         advertise = self.agent.config.mcp_advertise_host or (
-            bind_host if bind_host != "0.0.0.0" else socket.gethostbyname(socket.gethostname())
+            bind_host if bind_host not in ("0.0.0.0", "::") else socket.gethostbyname(socket.gethostname())
         )
-        self.url = f"http://{advertise}:{port}/mcp"
+        if socket.getaddrinfo(advertise, None)[0][0] != family:
+            raise ValueError(f"MCP advertise 地址 {advertise} 的地址族与 bind 地址 {bind_host} 不一致")
+        bind_fmt = f"[{bind_host}]" if ":" in bind_host else bind_host
+        advertise_fmt = f"[{advertise}]" if ":" in advertise else advertise
+        self.url = f"http://{advertise_fmt}:{port}/mcp"
         if bind_host not in ("127.0.0.1", "::1"):
             logger.warning("MCP 服务监听 %s，非本机连接通过 HTTP 明文 Bearer token 认证，请确保网络可信", bind_host)
-        allowed_hosts = [f"{bind_host}:{port}"]
+        allowed_hosts = [f"{bind_fmt}:{port}"]
         if advertise != bind_host:
-            allowed_hosts.append(f"{advertise}:{port}")
+            allowed_hosts.append(f"{advertise_fmt}:{port}")
         manager = StreamableHTTPSessionManager(server, json_response=True, stateless=True, security_settings=TransportSecuritySettings(
             enable_dns_rebinding_protection=(bind_host == "127.0.0.1"), allowed_hosts=allowed_hosts, allowed_origins=[],
         ))

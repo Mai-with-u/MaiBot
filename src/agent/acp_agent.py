@@ -216,7 +216,10 @@ class AcpAgent(AgentSession):
                     target = sources[0]
                     logger.warning("LLM 未调用 agent_talk，兜底发送回复到 %s", target)
                     from .messaging import tell
-                    await tell(self.service, self.service.agent_id, self._turn_reply_text, target)
+                    try:
+                        await tell(self.service, self.service.agent_id, self._turn_reply_text, target)
+                    except ValueError:
+                        logger.warning("兜底发送回复到 %s 失败，目标会话可能已移除", target)
                 elif len(set(sources)) > 1:
                     logger.warning("LLM 未调用 agent_talk 且本回合含多个来源会话 %s，无法确定回复目标，回复文本被丢弃", set(sources))
                 else:
