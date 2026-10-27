@@ -1,6 +1,7 @@
 """外接 Agent 接口：任务队列、执行记录、双向传话及可选沙盒桌面。"""
 
 from contextlib import AsyncExitStack, suppress
+from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from typing import Any, Dict, List, Optional
 import asyncio
@@ -95,6 +96,10 @@ class AgentService:
 
     async def persist(self) -> None:
         async with self._state_lock:
+            if self.paused and not self.activity.get("paused_at"):
+                self.activity["paused_at"] = datetime.now().astimezone().isoformat()
+            elif not self.paused:
+                self.activity.pop("paused_at", None)
             state = {"paused": self.paused, "takeover": self.takeover, "error": self.error,
                      "activity": dict(self.activity)}
             def save() -> None:
@@ -124,6 +129,15 @@ class AgentService:
             if await asyncio.to_thread(state_path.exists):
                 state = await asyncio.to_thread(read_json, state_path)
                 self.activity, self.paused, self.takeover, self.error = state["activity"], state["paused"], state["takeover"], state["error"]
+                if self.paused and self.config.paused_auto_recover_minutes > 0:
+                    paused_at = self.activity.get("paused_at")
+                    if paused_at:
+                        elapsed = (datetime.now().astimezone() - datetime.fromisoformat(paused_at)).total_seconds() / 60
+                        if elapsed >= self.config.paused_auto_recover_minutes:
+                            logger.warning("agent paused %.0f 分钟，自动恢复", elapsed)
+                            self.paused = False
+                            self.error = ""
+                            self.activity.pop("paused_at", None)
             if self.desktop_enabled:
                 try:
                     await self.bridge.restore()

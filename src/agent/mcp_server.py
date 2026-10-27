@@ -51,12 +51,13 @@ class AgentMCPServer:
                            for item in result.content_items if item.content_type == "image")
             return types.CallToolResult(content=content, isError=not result.success)
 
+        bind_host = self.agent.config.mcp_bind_host
         sock = socket.socket()
-        sock.bind(("127.0.0.1", 0))
+        sock.bind((bind_host, 0))
         port = sock.getsockname()[1]
-        self.url = f"http://127.0.0.1:{port}/mcp"
+        self.url = f"http://{bind_host}:{port}/mcp"
         manager = StreamableHTTPSessionManager(server, json_response=True, stateless=True, security_settings=TransportSecuritySettings(
-            enable_dns_rebinding_protection=True, allowed_hosts=[f"127.0.0.1:{port}"], allowed_origins=[],
+            enable_dns_rebinding_protection=(bind_host == "127.0.0.1"), allowed_hosts=[f"{bind_host}:{port}"], allowed_origins=[],
         ))
         endpoint = StreamableHTTPASGIApp(manager)
         token = self.token

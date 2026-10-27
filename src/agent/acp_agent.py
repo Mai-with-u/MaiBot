@@ -8,6 +8,8 @@ import asyncio
 import json
 import os
 
+from src.common.logger import get_logger
+
 from src.llm_models.payload_content.context_item import (
     AssistantMessageItem, ContextImagePart, ContextItemBuilder, ContextItemMeta, ContextTextPart,
     ProviderActivityItem, ReasoningItem, ReasoningRepresentation, RoleType, get_item_text,
@@ -20,6 +22,8 @@ from .mcp_server import AgentMCPServer
 if TYPE_CHECKING:
     from .service import AgentService
 
+logger = get_logger("agent.acp")
+
 
 class AcpAgent(AgentSession):
     backend = "acp"
@@ -31,6 +35,8 @@ class AcpAgent(AgentSession):
         self.mcp: Optional[AgentMCPServer] = None
         self.capabilities: Dict[str, Any] = {}
         self._connected_session_id: Optional[str] = None
+        self._agent_talk_called = False
+        self._turn_reply_text = ""
 
     @property
     def desktop_manifest(self) -> Path:
@@ -49,7 +55,8 @@ class AcpAgent(AgentSession):
                 return
             await self.close()
         cwd = await asyncio.to_thread(Path(self.config.acp_cwd).expanduser().resolve) if self.config.acp_cwd else self.history.root / "workspace"
-        await asyncio.to_thread(cwd.mkdir, parents=True, exist_ok=True)
+        if self.config.connection != "custom":
+            await asyncio.to_thread(cwd.mkdir, parents=True, exist_ok=True)
         if self.backend_state.get("cwd", str(cwd)) != str(cwd):
             raise ValueError("ACP 会话的主机工作目录已改变，请恢复原工作目录再连接。")
         self.mcp = AgentMCPServer(self)
@@ -57,9 +64,14 @@ class AcpAgent(AgentSession):
         try:
             mount = await self.mcp.start()
             if self.config.connection == "dsh_desktop":
-                await self.connection.connect_desktop(self.desktop_manifest, self.config.acp_timeout)
+                await self.connection.connect_desktop(self.desktop_manifest, self.config.acp_timeout, self.config.acp_allowed_hosts)
             else:
-                args = ["--profile", "acp"] if self.config.connection == "dsh" else self.config.acp_args
+                if self.config.connection == "dsh":
+                    args = ["--profile", "acp"]
+                else:
+                    from urllib.parse import urlparse
+                    mcp_port = urlparse(mount["url"]).port
+                    args = [a.replace("{mcp_port}", str(mcp_port)) for a in self.config.acp_args]
                 await self.connection.start(self.config.acp_command, args, str(cwd), self.config.acp_env)
             initialized = await self.connection.request("initialize", {
                 "protocolVersion": 1, "clientInfo": {"name": "maibot-agent", "version": "1"},
@@ -100,6 +112,8 @@ class AcpAgent(AgentSession):
         if kind in {"agent_message_chunk", "agent_thought_chunk"}:
             content = update["content"]
             if content["type"] == "text" and content["text"]:
+                if kind == "agent_message_chunk":
+                    self._turn_reply_text += content["text"]
                 meta = ContextItemMeta.create(logical_turn_id=str(update.get("messageId", params["sessionId"])))
                 # 流式片段必须原样保存；完整响应的归一化会吞掉片段间的空格和换行。
                 items = [ReasoningItem(meta=meta, text_parts=(content["text"],),
@@ -123,6 +137,8 @@ class AcpAgent(AgentSession):
             raw = record["items"][0]
             if kind == "tool_call":
                 raw["tool_call"] = {"func_name": title, "args": update.get("rawInput", {})}
+                if title == "agent_talk":
+                    self._agent_talk_called = True
             else:
                 raw.update(tool_name=title, success=status != "failed",
                            output=json.dumps(update.get("rawOutput", update.get("content", update)), ensure_ascii=False))
@@ -154,6 +170,8 @@ class AcpAgent(AgentSession):
             batch = list(self.inbox)
             if not batch:
                 return
+            self._agent_talk_called = False
+            self._turn_reply_text = ""
             items = await asyncio.to_thread(self.history.unpack, [item for record in batch for item in record["items"]])
             prompt = []
             if not self.backend_state.get("policy_sent", False):
@@ -193,6 +211,14 @@ class AcpAgent(AgentSession):
             self.backend_state["stop_reason"] = result["stopReason"]
             self.pending = None
             await self.save()
+            if not self._agent_talk_called and self._turn_reply_text.strip() and result.get("stopReason") == "completed":
+                target = next((record.get("source_session", "") for record in reversed(batch) if record.get("source_session")), "")
+                if target:
+                    logger.warning("LLM 未调用 agent_talk，兜底发送回复到 %s", target)
+                    from .messaging import tell
+                    await tell(self.service, self.service.agent_id, self._turn_reply_text, target)
+                else:
+                    logger.warning("LLM 未调用 agent_talk 且无法确定回复目标，回复文本被丢弃：%s", self._turn_reply_text[:200])
         finally:
             self.state = "idle"
 

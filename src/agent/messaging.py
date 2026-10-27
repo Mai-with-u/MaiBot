@@ -87,7 +87,7 @@ async def tell(
         runtime = await heartflow_manager.get_or_create_heartflow_chat(target)
         receipt = runtime.enqueue_internal_task(source_kind=service.relay_kind, text=relay_text, reason=service.name + "传话", images=media)
     else:
-        receipt = {"task_id": await agent.enqueue(relay_text, media), "queued": True}
+        receipt = {"task_id": await agent.enqueue(relay_text, media, source_session=caller), "queued": True}
     return {"delivered": True, "relay_id": relay_id, "target": target,
             "name": chat_manager.get_session_name(target) if from_agent else service.name,
             "images": attachments, **receipt}

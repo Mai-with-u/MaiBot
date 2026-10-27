@@ -10,6 +10,10 @@ import os
 import shutil
 import subprocess
 
+from src.common.logger import get_logger
+
+logger = get_logger("agent.acp")
+
 
 class ACPConnection:
     def __init__(self, update: Callable[[Dict[str, Any]], Awaitable[None]]) -> None:
@@ -38,15 +42,18 @@ class ACPConnection:
         self._reader = asyncio.create_task(self._read(), name="agent.acp.read")
         self._stderr = asyncio.create_task(self._read_errors(), name="agent.acp.stderr")
 
-    async def connect_desktop(self, manifest: Path, timeout: float) -> None:
+    async def connect_desktop(self, manifest: Path, timeout: float, allowed_hosts: Optional[List[str]] = None) -> None:
         def read_manifest() -> Dict[str, Any]:
             if not manifest.is_file():
                 raise FileNotFoundError("未找到 dsh Desktop 桥接信息；请安装 dsh-maibot-bridge 插件并启动 Desktop。")
             return json.loads(manifest.read_text(encoding="utf-8"))
 
         info = await asyncio.to_thread(read_manifest)
-        if info["version"] != 1 or info["host"] != "127.0.0.1":
-            raise ValueError("Desktop 桥接只接受本机的 v1 连接信息。")
+        if info["version"] != 1:
+            raise ValueError("Desktop 桥接只支持 v1 连接信息。")
+        allowed = allowed_hosts if allowed_hosts is not None else ["127.0.0.1"]
+        if info["host"] not in allowed:
+            raise ValueError(f"Desktop 桥接 host {info['host']} 不在允许列表 {allowed} 中。")
         if not isinstance(info["port"], int) or not 1 <= info["port"] <= 65535 or not isinstance(info["token"], str) or not info["token"]:
             raise ValueError("无效的 Desktop 桥接端口或认证信息。")
         async with asyncio.timeout(timeout):
@@ -92,7 +99,9 @@ class ACPConnection:
 
     async def _read_errors(self) -> None:
         while line := await self.process.stderr.readline():
-            self._errors.append(line.decode("utf-8", errors="replace").rstrip())
+            text = line.decode("utf-8", errors="replace").rstrip()
+            self._errors.append(text)
+            logger.warning("ACP stderr: %s", text)
 
     async def _read(self) -> None:
         try:

@@ -58,3 +58,12 @@ class AgentConfig(ConfigBase):
     screenshot_max_edge: int = Field(default=1600, ge=0, json_schema_extra={"label": {"zh_CN": "截图最长边（像素）"}, "advanced": True})
     """截图最长边，0 表示原始分辨率；鼠标坐标始终按返回截图换算。"""
 
+    mcp_bind_host: str = Field(default="127.0.0.1", json_schema_extra={"label": {"zh_CN": "MCP 监听地址"}, "advanced": True})
+    """MCP 服务监听地址，默认 127.0.0.1 仅本机；远程 Agent 可配 0.0.0.0 或内网 IP，需配合 token 认证。"""
+
+    acp_allowed_hosts: List[str] = Field(default_factory=lambda: ["127.0.0.1"], json_schema_extra={"label": {"zh_CN": "Desktop 连接白名单"}, "advanced": True})
+    """dsh Desktop 桥接允许的 host 列表，默认仅本机；远程连接需显式加入白名单。"""
+
+    paused_auto_recover_minutes: int = Field(default=0, ge=0, json_schema_extra={"label": {"zh_CN": "paused 自动恢复（分钟）"}, "advanced": True})
+    """agent 异常暂停后自动恢复的分钟数，0 表示不自动恢复需手动 resume。"""
+
