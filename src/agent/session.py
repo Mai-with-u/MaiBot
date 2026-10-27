@@ -55,7 +55,10 @@ class AgentSession:
             state = {"inbox": deepcopy(self.inbox), "backends": deepcopy(self._backends)}
             await run_sync_work(write_json, self.history.root / "state.json", state)
 
-    async def enqueue(self, text: str, images: Sequence[ImageComponent] = (), *, kind: Literal["user", "system"] = "user") -> str:
+    async def enqueue(
+        self, text: str, images: Sequence[ImageComponent] = (), *,
+        kind: Literal["user", "system"] = "user", source_session: str = "",
+    ) -> str:
         builder = ContextItemBuilder().add_text_content(text)
         for image in images:
             # 接口中的图片已校验、存入工作区；上下文直接带实际图像。
@@ -68,6 +71,8 @@ class AgentSession:
             fmt = await asyncio.to_thread(image_format, image.binary_data)
             builder.add_image_content(fmt, base64.b64encode(image.binary_data).decode())
         record = await self.record(kind, [builder.build()])
+        if source_session:
+            record["source_session"] = source_session
         self.inbox.append(record)
         await self.save()
         self.service._wake.set()

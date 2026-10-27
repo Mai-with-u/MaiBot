@@ -18,10 +18,13 @@ import secrets
 import socket
 import uvicorn
 
+from src.common.logger import get_logger
 from src.core.tooling import ToolAvailabilityContext, ToolExecutionContext, ToolInvocation
 
 if TYPE_CHECKING:
     from .acp_agent import AcpAgent
+
+logger = get_logger("agent.mcp")
 
 
 class AgentMCPServer:
@@ -46,17 +49,41 @@ class AgentMCPServer:
         @server.call_tool()
         async def call_tool(name: str, arguments: Dict[str, Any]) -> types.CallToolResult:
             result = await provider.invoke(ToolInvocation(name, arguments), ToolExecutionContext(session_id=self.agent.service.agent_id))
+            if name == "agent_talk" and result.success:
+                self.agent._agent_talk_called = True
             content = [types.TextContent(type="text", text=result.get_history_content())]
             content.extend(types.ImageContent(type="image", data=item.data, mimeType=item.mime_type)
                            for item in result.content_items if item.content_type == "image")
             return types.CallToolResult(content=content, isError=not result.success)
 
-        sock = socket.socket()
-        sock.bind(("127.0.0.1", 0))
+        bind_host = self.agent.config.mcp_bind_host
+        timeout = self.agent.config.acp_timeout
+        addrinfo = (await asyncio.wait_for(asyncio.to_thread(socket.getaddrinfo, bind_host, 0, type=socket.SOCK_STREAM), timeout))[0]
+        family = addrinfo[0]
+        sock = socket.socket(family, socket.SOCK_STREAM)
+        sock.bind(addrinfo[4])
         port = sock.getsockname()[1]
-        self.url = f"http://127.0.0.1:{port}/mcp"
+        advertise = self.agent.config.mcp_advertise_host
+        if not advertise:
+            if bind_host == "::":
+                raise ValueError("MCP 监听 :: 时必须显式配置 mcp_advertise_host")
+            if bind_host == "0.0.0.0":
+                advertise = await asyncio.wait_for(asyncio.to_thread(socket.gethostbyname, socket.gethostname()), timeout)
+            else:
+                advertise = bind_host
+        advertise_infos = await asyncio.wait_for(asyncio.to_thread(socket.getaddrinfo, advertise, None), timeout)
+        if not any(info[0] == family for info in advertise_infos):
+            raise ValueError(f"MCP advertise 地址 {advertise} 的地址族与 bind 地址 {bind_host} 不一致")
+        bind_fmt = f"[{bind_host}]" if ":" in bind_host else bind_host
+        advertise_fmt = f"[{advertise}]" if ":" in advertise else advertise
+        self.url = f"http://{advertise_fmt}:{port}/mcp"
+        if bind_host not in ("127.0.0.1", "::1"):
+            logger.warning("MCP 服务监听 %s，非本机连接通过 HTTP 明文 Bearer token 认证，请确保网络可信", bind_host)
+        allowed_hosts = [f"{bind_fmt}:{port}"]
+        if advertise != bind_host:
+            allowed_hosts.append(f"{advertise_fmt}:{port}")
         manager = StreamableHTTPSessionManager(server, json_response=True, stateless=True, security_settings=TransportSecuritySettings(
-            enable_dns_rebinding_protection=True, allowed_hosts=[f"127.0.0.1:{port}"], allowed_origins=[],
+            enable_dns_rebinding_protection=(bind_host == "127.0.0.1"), allowed_hosts=allowed_hosts, allowed_origins=[],
         ))
         endpoint = StreamableHTTPASGIApp(manager)
         token = self.token
