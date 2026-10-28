@@ -637,7 +637,7 @@ class RuntimeDataCapabilityMixin:
             return {"success": False, "error": "缺少必要参数 description"}
 
         try:
-            emoji = await emoji_manager.get_emoji_for_emotion(description)
+            emoji = await emoji_manager.get_emoji_for_emotion(description, quiet=args.get("quiet") is True)
             if emoji is None:
                 return {"success": True, "emoji": None}
             serialized = self._serialize_emoji_payload(emoji)
