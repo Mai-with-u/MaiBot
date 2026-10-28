@@ -3,6 +3,7 @@
 from base64 import b64decode
 from datetime import datetime
 from io import BytesIO
+from threading import Event as ThreadEvent
 from types import SimpleNamespace
 from typing import Any, List
 from unittest.mock import AsyncMock, Mock
@@ -611,7 +612,15 @@ def test_failed_stage_overrides_wait_without_changing_member_state_protocol(setu
 
 @pytest.mark.asyncio
 async def test_completed_tools_and_sent_receipts_are_preserved_without_replay(setup_group):
+    """恢复保留执行前及执行中的发送回执，不重放已完成工具。"""
     group, members, trace = setup_group
+    invoke = members["A"].provider.invoke
+
+    async def echo_with_receipt(invocation, context=None):
+        group.record_sent_message(members["A"], _history("工具执行期间的回执"))
+        return await invoke(invocation, context)
+
+    members["A"].provider.invoke = echo_with_receipt
     group._build_references = AsyncMock(return_value=[])
     completed = _response(calls=[ToolCall("sent-once", "echo", {"session_id": "A", "text": "sent"})])
     planner = AsyncMock(side_effect=[completed, TimeoutError("后续规划失败"), _response()])
@@ -629,6 +638,7 @@ async def test_completed_tools_and_sent_receipts_are_preserved_without_replay(se
     assert len(trace) == 1
     assert receipt in group.history
     assert any(message.processed_plain_text == "已发送的消息" for message in group.history)
+    assert any(message.processed_plain_text == "工具执行期间的回执" for message in group.history)
     assert planner.await_count == 3
     assert group.has_message("A", "first")
     await group.stop()
@@ -944,6 +954,250 @@ def _seed_planner_snapshot(group):
         ResponseRequest(model_info=ModelInfo(model_type="llm", name="planner", model_identifier="remote", api_provider="test"),
                         context_items=[]), tuple(group.history),
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("summary_fails", [False, True])
+@pytest.mark.parametrize("outcome", ["unknown", "cancelled", "partial-send", "completed"])
+async def test_compacted_tool_batch_keeps_recovery_safety(setup_group, monkeypatch, summary_fails, outcome):
+    """真实批次被摘要或裁切后，未知调用仍阻断恢复，完成调用不阻断。"""
+    group, members, trace = setup_group
+    group._hydrating = True
+    monkeypatch.setattr(global_config.chat, "max_context_size", 2)
+    response = _response(calls=[ToolCall("old-call", "echo", {"session_id": "A", "text": "old"})])
+    batch = FocusContextEntry(list(response.raw_messages), {"A", "B"})
+    group.entries = [batch]
+    await group.tools.refresh()
+    if outcome == "cancelled":
+        entered = asyncio.Event()
+
+        async def interrupted(invocation, context=None):
+            entered.set()
+            await asyncio.Event().wait()
+
+        members["A"].provider.invoke = interrupted
+        group._worker = asyncio.create_task(group._execute_tools(response, batch, "turn", group._generation))
+        await asyncio.wait_for(entered.wait(), 2)
+        await group.remove_member("A", clear_context=False)
+    else:
+        if outcome == "unknown":
+            members["A"].provider.invoke = AsyncMock(side_effect=TimeoutError("副作用后的异常"))
+        elif outcome == "partial-send":
+            members["A"].provider.invoke = AsyncMock(
+                return_value=ToolExecutionResult(
+                    tool_name="echo", success=False, metadata={"sent_message_ids": ["sent-part"], "send_results": []}
+                )
+            )
+        await group._execute_tools(response, batch, "turn", group._generation)
+    assert group._can_recover_planner_failure() is (outcome == "completed")
+    group.entries.extend(FocusContextEntry([_chat_history(str(i), "B")], {"B"}) for i in range(6))
+    summary = ContextSummaryMessage(content="旧批次摘要", timestamp=datetime.now(), remaining_uses_value=None)
+    builder = AsyncMock(side_effect=TimeoutError("摘要失败")) if summary_fails else AsyncMock(return_value=summary)
+    monkeypatch.setattr(group_module, "build_context_summary", builder)
+    _seed_planner_snapshot(group)
+    await group._compact()
+    builder.assert_awaited_once()
+    assert len(group.entries) == 6
+    assert group.entries[0].messages == ([] if summary_fails else [summary])
+    assert not any(isinstance(message, ToolResultMessage) for message in group.history)
+    assert group._can_recover_planner_failure() is (outcome == "completed")
+    await FocusGroupRuntime.checkpoint(group)
+    restored = FocusGroupRuntime(group.scope_id)
+    restored._store = group._store
+    # 重启时所有旧成员均已失效，账本也不能随着材料过滤而消失。
+    monkeypatch.setattr(group_module.chat_manager, "get_existing_session_by_session_id", lambda sid: None)
+    await restored.restore()
+    assert restored.entries == []
+    assert restored._can_recover_planner_failure() is (outcome == "completed")
+    assert restored._failed is (outcome != "completed")
+    if outcome != "completed":
+        member = ChatServices("B", restored, [])
+        restored.add_member(member)
+        await restored.register_message(member, _incoming("B", "after-restart", at=True), _chat_history("restart", "B"))
+        assert restored.state == "failed"
+        assert restored._worker is None
+    await restored.stop()
+    if outcome != "completed":
+        group._hydrating = False
+        group._build_references = AsyncMock(return_value=[])
+        group._service.chat_loop_step = AsyncMock(side_effect=TimeoutError("后续规划失败"))
+        await group.register_message(members["B"], _incoming("B", "first", at=True), _chat_history("first", "B"))
+        worker = group._worker
+        await asyncio.wait_for(asyncio.shield(worker), 2)
+        await group.register_message(members["B"], _incoming("B", "new", at=True), _chat_history("new", "B"))
+        assert group.state == "failed"
+        assert group._recovery_token is None
+        assert group._worker is worker
+        assert group._service.chat_loop_step.await_count == 1
+        assert not trace
+    await group.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("success", [False, True])
+async def test_checkpoint_inflight_marker_clears_on_matching_receipt(setup_group, success):
+    """快照的临时 unknown 只由原调用的确定结果解除，普通失败回执也可闭合。"""
+    group, members, _ = setup_group
+    response = _response(calls=[ToolCall("inflight", "echo", {"session_id": "A", "text": "x"})])
+    batch = FocusContextEntry(list(response.raw_messages), {"A"})
+    group.entries = [batch]
+    await FocusGroupRuntime.checkpoint(group)
+    assert group._store.load()["unverified_tool_calls"]
+    assert not any(isinstance(message, ToolResultMessage) for message in group.history)
+    other_response = _response(calls=[ToolCall("inflight", "echo", {"session_id": "A", "text": "other"})])
+    other_batch = FocusContextEntry(list(other_response.raw_messages), {"A"})
+    members["A"].provider.invoke = AsyncMock(return_value=ToolExecutionResult(tool_name="echo", success=success))
+    await group.tools.refresh()
+    await group._execute_tools(other_response, other_batch, "other", group._generation)
+    # call_id 相同，但不属于原逻辑轮次，不能核实旧调用。
+    assert not group._can_recover_planner_failure()
+    await group._execute_tools(response, batch, "original", group._generation)
+    assert group._can_recover_planner_failure()
+    await FocusGroupRuntime.checkpoint(group)
+    assert group._store.load()["unverified_tool_calls"] == []
+    await group.stop()
+
+
+@pytest.mark.asyncio
+async def test_new_unverified_call_revokes_existing_recovery_eligibility(setup_group):
+    """恢复令牌授予后出现未知状态时，输入保存成功仍不能消费旧资格。"""
+    group, members, _ = setup_group
+    group.checkpoint = lambda: FocusGroupRuntime.checkpoint(group)
+    group._build_references = AsyncMock(return_value=[])
+    group._service.chat_loop_step = AsyncMock(side_effect=TimeoutError("首轮失败"))
+    await group.register_message(members["A"], _incoming("A", "first", at=True), _chat_history("first"))
+    worker = group._worker
+    await asyncio.wait_for(asyncio.shield(worker), 2)
+    assert group._recovery_token is not None
+    response = _response(calls=[ToolCall("unverified", "echo", {"session_id": "A", "text": "x"})])
+    group.entries.append(FocusContextEntry(list(response.raw_messages), {"A"}))
+    await group.register_message(members["B"], _incoming("B", "new", at=True), _chat_history("new", "B"))
+    assert group._worker is worker
+    assert group.state == "failed"
+    assert group._service.chat_loop_step.await_count == 1
+    await group.stop()
+
+
+@pytest.mark.asyncio
+async def test_receipt_save_failure_keeps_durable_unknown_and_fail_stop(setup_group, monkeypatch):
+    """完成回执落盘失败时，旧 checkpoint 的 unknown 仍阻断重启和本实例恢复。"""
+    group, members, _ = setup_group
+    group.checkpoint = lambda: FocusGroupRuntime.checkpoint(group)
+    response = _response(calls=[ToolCall("durable", "echo", {"session_id": "A", "text": "x"})])
+    batch = FocusContextEntry(list(response.raw_messages), {"A"})
+    group.entries = [batch]
+    await group.checkpoint()
+    await group.tools.refresh()
+    write = group._store._write
+    monkeypatch.setattr(group._store, "_write", Mock(side_effect=OSError("完成回执保存失败")))
+    with pytest.raises(OSError):
+        await group._execute_tools(response, batch, "turn", group._generation)
+    assert group.state == "failed"
+    assert group._recovery_token is None
+    restored = FocusGroupRuntime(group.scope_id)
+    restored._store = group._store
+    monkeypatch.setattr(group_module.chat_manager, "get_existing_session_by_session_id", lambda sid: None)
+    await restored.restore()
+    assert restored._failed
+    assert not restored._can_recover_planner_failure()
+    monkeypatch.setattr(group._store, "_write", write)
+    await group.register_message(members["B"], _incoming("B", "new", at=True), _chat_history("new", "B"))
+    assert group.state == "failed"
+    assert group._worker is None
+    await group.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_clearing_members_and_purging_preserve_tool_recovery_state(setup_group, legacy, tmp_path):
+    """在线清空和离线清理都不能把未知动作或旧版不完整状态变成安全。"""
+    group, _, _ = setup_group
+    group._hydrating = True
+    response = _response(calls=[ToolCall("interrupted", "echo", {"session_id": "A", "text": "x"})])
+    group.entries = [FocusContextEntry(list(response.raw_messages), {"A", "B"})]
+    await group.remove_member("A", clear_context=True)
+    assert group.entries == []
+    assert not group._can_recover_planner_failure()
+    await FocusGroupRuntime.checkpoint(group)
+    if legacy:
+        payload = json.loads(group._store.path.read_text(encoding="utf-8"))
+        payload["version"] = 1
+        del payload["unverified_tool_calls"], payload["tool_recovery_state_incomplete"]
+        group._store.path.write_text(json.dumps(payload), encoding="utf-8")
+    FocusCheckpointStore.purge_session("B", set(), tmp_path)
+    payload = group._store.load()
+    assert payload["version"] == 2
+    assert payload["tool_recovery_state_incomplete"] is legacy
+    assert bool(payload["unverified_tool_calls"]) is (not legacy)
+    restored = FocusGroupRuntime(group.scope_id)
+    restored._store = group._store
+    await restored.restore()
+    assert restored._failed
+    assert not restored._can_recover_planner_failure()
+    await restored.checkpoint()
+    assert restored._store.load()["tool_recovery_state_incomplete"] is legacy
+    await restored.stop()
+    await group.stop()
+
+
+@pytest.mark.parametrize("damage", ["missing-ledger", "missing-completeness", "invalid-key", "invalid-completeness"])
+def test_checkpoint_rejects_damaged_v2_recovery_state(tmp_path, damage):
+    """V2 恢复字段缺失或损坏时拒绝加载，不默认为安全。"""
+    store = FocusCheckpointStore("damaged", tmp_path)
+    store.save([], {})
+    payload = json.loads(store.path.read_text(encoding="utf-8"))
+    if damage == "missing-ledger":
+        del payload["unverified_tool_calls"]
+    elif damage == "missing-completeness":
+        del payload["tool_recovery_state_incomplete"]
+    elif damage == "invalid-key":
+        payload["unverified_tool_calls"] = [["", "call"]]
+    else:
+        payload["tool_recovery_state_incomplete"] = "false"
+    store.path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="工具恢复状态"):
+        store.load()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_checkpoint_cannot_overwrite_newer_tool_ledger(setup_group, monkeypatch):
+    """取消必须等线程内保存结束才释放锁，避免旧空账本覆盖较新的 unknown。"""
+    group, _, _ = setup_group
+    entered, release = asyncio.Event(), ThreadEvent()
+    loop = asyncio.get_running_loop()
+    save = group._store.save
+
+    def slow_save(entries, state):
+        if not state["unverified_tool_calls"]:
+            loop.call_soon_threadsafe(entered.set)
+            if not release.wait(5):
+                raise TimeoutError("测试未释放保存线程")
+        save(entries, state)
+
+    monkeypatch.setattr(group._store, "save", slow_save)
+    first = asyncio.create_task(FocusGroupRuntime.checkpoint(group))
+    second = None
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        first.cancel()
+        await asyncio.sleep(0)
+        assert not first.done()
+        first.cancel()
+        await asyncio.sleep(0)
+        assert not first.done()
+        response = _response(calls=[ToolCall("new-pending", "echo", {"session_id": "A", "text": "x"})])
+        group.entries = [FocusContextEntry(list(response.raw_messages), {"A"})]
+        second = asyncio.create_task(FocusGroupRuntime.checkpoint(group))
+        await asyncio.sleep(0)
+        assert not second.done()
+    finally:
+        release.set()
+        await asyncio.gather(first, *([second] if second is not None else []), return_exceptions=True)
+    assert first.cancelled()
+    assert second is not None and second.exception() is None
+    assert group._store.load()["unverified_tool_calls"]
+    monkeypatch.setattr(group._store, "save", save)
+    await group.stop()
 
 
 @pytest.mark.asyncio

@@ -43,7 +43,7 @@ from src.maisaka.mode_policy import build_consecutive_wait_reminders
 from src.maisaka.monitor.events import emit_flow_step, emit_planner_snapshot
 from src.maisaka.tool_result_condenser import condense_tool_result, should_condense_tool_result
 
-from .context import FocusCheckpointStore, FocusContextEntry
+from .context import FocusCheckpointStore, FocusContextEntry, update_unverified_tool_calls
 from .tools import FocusToolRouter
 
 if TYPE_CHECKING:
@@ -81,6 +81,8 @@ class FocusGroupRuntime:
         self._closed = False
         self._failed = False
         self._recovery_token: Optional[object] = None
+        self._unverified_tool_calls: Set[Tuple[str, str]] = set()
+        self._tool_recovery_state_incomplete = False
         self._hydrating = False
         self.restored_session_ids: Set[str] = set()
         self._wait_until: Optional[float] = None
@@ -119,10 +121,17 @@ class FocusGroupRuntime:
         return self._state
 
     async def restore(self) -> None:
+        """先恢复安全账本再清理失效成员，未核实操作不能随重启重新放行。"""
         payload = await asyncio.to_thread(self._store.load)
         if not payload:
             return
         self.entries = payload["entries"]
+        # 必须先读恢复账本，再过滤已退出的成员；清空上下文不能证明动作未执行。
+        self._unverified_tool_calls = {tuple(pair) for pair in payload["unverified_tool_calls"]}
+        self._tool_recovery_state_incomplete = payload["tool_recovery_state_incomplete"]
+        if not self._can_recover_planner_failure():
+            self._failed = True
+            logger.error("Focus 检查点含未核实工具状态，已停止共享 Planner: scope=%s", self.scope_id)
         self.restored_session_ids = set().union(*(entry.session_ids for entry in self.entries))
         from .manager import focus_mode_manager
 
@@ -153,6 +162,7 @@ class FocusGroupRuntime:
             )
 
     async def checkpoint(self) -> None:
+        """保存闭合快照与恢复账本；线程写入结束前，即使取消也不释放保存锁。"""
         async with self._checkpoint_lock:
             entries = self._closed_entries()
             pending = [entry for batch in self._pending.values() for entry in batch]
@@ -166,9 +176,21 @@ class FocusGroupRuntime:
                 "wait_session_id": self._wait_session_id,
                 "wait_token": self._wait_token,
                 "consecutive_waits": self._consecutive_waits,
+                "unverified_tool_calls": sorted(self._unverified_tool_calls),
+                "tool_recovery_state_incomplete": self._tool_recovery_state_incomplete,
             }
             try:
-                await asyncio.to_thread(self._store.save, entries, state)
+                save_task = asyncio.create_task(asyncio.to_thread(self._store.save, entries, state))
+                cancelled = False
+                while not save_task.done():
+                    try:
+                        await asyncio.shield(save_task)
+                    except asyncio.CancelledError:
+                        # to_thread 的文件写入不会随协程取消；旧快照不能晚于新快照替换落盘。
+                        cancelled = True
+                save_task.result()
+                if cancelled:
+                    raise asyncio.CancelledError
             except Exception:
                 # 任意入口的持久化失败都撤销恢复资格，也使在途模型/工具结果失效。
                 self._failed = True
@@ -179,7 +201,7 @@ class FocusGroupRuntime:
                 raise
 
     def _closed_entries(self) -> List[FocusContextEntry]:
-        """只在快照/取消时闭合未完成调用，不修改仍在执行的实时工具批次。"""
+        """快照/取消时闭合并登记未完成调用，不修改仍在执行的实时工具批次。"""
         entries = [
             FocusContextEntry(
                 list(entry.messages),
@@ -209,10 +231,13 @@ class FocusGroupRuntime:
                             )
             if original is self._active_batch:
                 entry.messages.extend(self._post_messages)
+        update_unverified_tool_calls(self._unverified_tool_calls, entries)
         return entries
 
     def add_member(self, runtime: MaisakaHeartFlowChatting) -> None:
         self.members[runtime.session_id] = runtime
+        if self._failed:
+            self._set_stage("失败", "共享 Planner 已停止；请检查日志并核实工具与存储状态")
         # 恢复只属于目标聊天的工具媒体与表情编号映射，不把共享思考链送给回复器。
         for message in self.history:
             if (
@@ -302,7 +327,7 @@ class FocusGroupRuntime:
             # 也不能在最终保存失败或关闭取消后重新开放组。
             if self._worker is not None:
                 await asyncio.shield(self._worker)
-            if not self._closed and recovery_token is self._recovery_token:
+            if not self._closed and recovery_token is self._recovery_token and self._can_recover_planner_failure():
                 self._recovery_token = None
                 self._failed = False
                 # 普通消息也必须进入首次恢复快照，不能在它仍防抖时重做旧周期。
@@ -427,26 +452,11 @@ class FocusGroupRuntime:
             runtime._update_stage_status(stage, f"Focus 共享组 · {detail}", wait_until=self._wait_until)
 
     def _can_recover_planner_failure(self) -> bool:
-        """不在未闭合批次或带有不确定执行回执的历史上自动继续规划。"""
-        if self._active_batch is not None:
-            return False
-        for entry in self.entries:
-            results = {message.tool_call_id for message in entry.messages if isinstance(message, ToolResultMessage)}
-            for message in entry.messages:
-                # 当前执行状态标记用于中断后需核实的回执，不能当成可安全重试。
-                if isinstance(message, ToolResultMessage):
-                    if "execution_state" in message.metadata:
-                        return False
-                    # reply 的逐段回执会保留已发送部分；失败并不代表完全未发送。
-                    if not message.success and (
-                        "send_results" in message.metadata or "sent_message_ids" in message.metadata
-                    ):
-                        return False
-                if isinstance(message, ModelOutputContextMessage) and any(
-                    call.call_id not in results for call in message.tool_calls
-                ):
-                    return False
-        return True
+        """恢复依据独立账本，不能因摘要、成员过滤或重启而遗忘未知动作。"""
+        update_unverified_tool_calls(self._unverified_tool_calls, self.entries)
+        return not (
+            self._active_batch is not None or self._unverified_tool_calls or self._tool_recovery_state_incomplete
+        )
 
     def _take_ready_inputs(self) -> List[FocusContextEntry]:
         entries = []
@@ -737,6 +747,7 @@ class FocusGroupRuntime:
                     metadata=metadata,
                 )
             )
+            update_unverified_tool_calls(self._unverified_tool_calls, [batch])
             if runtime is not None:
                 before_media = len(runtime._chat_history)
                 runtime._reasoning_engine._append_tool_result_media_messages(call, result)
@@ -875,6 +886,8 @@ class FocusGroupRuntime:
         if planner_snapshot is None:
             return
         snapshot = list(self.entries)
+        # 在规范化/摘要前记录；孤立回执和完整旧批次都可能被后处理移除。
+        update_unverified_tool_calls(self._unverified_tool_calls, snapshot)
         generation = self._generation
         history = self.history
         plan = process_chat_history_after_cycle(

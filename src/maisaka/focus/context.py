@@ -29,7 +29,7 @@ from src.maisaka.context.messages import (
 from src.maisaka.context.emoji_candidates import EmojiCandidateMessage
 from src.maisaka.context.compaction import ContextSummaryMessage, message_text_for_compaction
 
-CHECKPOINT_VERSION = 1
+CHECKPOINT_VERSION = 2
 _ITEM_TYPES = {
     name: cls
     for name, cls in vars(items).items()
@@ -101,6 +101,49 @@ class FocusContextEntry:
         ]
         return f"session_ids={json.dumps(sorted(self.session_ids), ensure_ascii=False)}\n" + "\n".join(parts)
 
+
+def update_unverified_tool_calls(unverified: Set[Tuple[str, str]], entries: List[FocusContextEntry]) -> None:
+    """保留未核实调用；只有相同逻辑轮次与调用 ID 的确定回执能消除记录。"""
+    calls = set()
+    completed = set()
+    uncertain = set()
+    for entry in entries:
+        for message in entry.messages:
+            if isinstance(message, ModelOutputContextMessage):
+                calls.update((message.output_item.meta.logical_turn_id, call.call_id) for call in message.tool_calls)
+            elif isinstance(message, ToolResultMessage):
+                key = (message.logical_turn_id, message.tool_call_id)
+                # 中断后待核实的状态不能当成安全重试；reply 失败也可能已发送部分消息。
+                if "execution_state" in message.metadata or (
+                    not message.success
+                    and ("send_results" in message.metadata or "sent_message_ids" in message.metadata)
+                ):
+                    uncertain.add(key)
+                else:
+                    completed.add(key)
+    unverified.difference_update(completed)
+    unverified.update(calls - completed)
+    unverified.update(uncertain)
+
+
+def _upgrade_tool_recovery_state(payload: Dict[str, Any]) -> None:
+    """V1 无法证明已裁掉的调用安全；迁移后保持停止，V2 缺损则拒绝加载。"""
+    if payload["version"] == 1:
+        payload.update(version=CHECKPOINT_VERSION, unverified_tool_calls=[], tool_recovery_state_incomplete=True)
+    elif payload["version"] != CHECKPOINT_VERSION:
+        raise ValueError("Focus 检查点版本不匹配")
+    calls = payload.get("unverified_tool_calls")
+    if (
+        type(payload.get("tool_recovery_state_incomplete")) is not bool
+        or not isinstance(calls, list)
+        or any(
+            not isinstance(pair, (list, tuple))
+            or len(pair) != 2
+            or any(not isinstance(value, str) or not value.strip() for value in pair)
+            for pair in calls
+        )
+    ):
+        raise ValueError("Focus 检查点缺少有效的工具恢复状态")
 
 
 def _encode(value: Any) -> Any:
@@ -246,11 +289,13 @@ class FocusCheckpointStore:
         self.path = root / (sha256(scope_id.encode()).hexdigest() + ".json")
 
     def load(self) -> Dict[str, Any]:
+        """迁移旧版安全状态，并在调用者过滤历史前收集尚未核实的操作。"""
         if not self.path.exists():
             return {}
         payload = json.loads(self.path.read_text(encoding="utf-8"))
-        if payload["version"] != CHECKPOINT_VERSION or payload["scope_id"] != self.scope_id:
-            raise ValueError("Focus 检查点版本或共享组身份不匹配")
+        if payload["scope_id"] != self.scope_id:
+            raise ValueError("Focus 检查点共享组身份不匹配")
+        _upgrade_tool_recovery_state(payload)
         payload["entries"] = [
             FocusContextEntry(
                 [deserialize_message(message) for message in entry["messages"]],
@@ -261,13 +306,21 @@ class FocusCheckpointStore:
             )
             for entry in payload["entries"]
         ]
+        unverified = {tuple(pair) for pair in payload["unverified_tool_calls"]}
+        update_unverified_tool_calls(unverified, payload["entries"])
+        payload["unverified_tool_calls"] = sorted(unverified)
         return payload
 
     def save(self, entries: List[FocusContextEntry], state: Dict[str, Any]) -> None:
+        """将独立账本与历史原子保存；确定回执仅解除其对应调用。"""
+        unverified = {tuple(pair) for pair in state.get("unverified_tool_calls", [])}
+        update_unverified_tool_calls(unverified, entries)
         payload = {
+            **state,
             "version": CHECKPOINT_VERSION,
             "scope_id": self.scope_id,
-            **state,
+            "unverified_tool_calls": sorted(unverified),
+            "tool_recovery_state_incomplete": state.get("tool_recovery_state_incomplete", False),
             "entries": [
                 {
                     "messages": [serialize_message(message) for message in entry.messages],
@@ -302,14 +355,13 @@ class FocusCheckpointStore:
             if path in excluded:
                 continue
             payload = json.loads(path.read_text(encoding="utf-8"))
-            if payload["version"] != CHECKPOINT_VERSION:
-                raise ValueError("Focus 检查点版本不匹配")
             store = cls(payload["scope_id"], root)
             if store.path != path:
                 raise ValueError("Focus 检查点路径与共享组身份不匹配")
-            payload["entries"] = [entry for entry in payload["entries"] if session_id not in entry["session_ids"]]
+            payload = store.load()
+            entries = [entry for entry in payload.pop("entries") if session_id not in entry.session_ids]
             payload["considered"].pop(session_id, None)
             payload["seen"] = [key for key in payload["seen"] if not key.startswith(session_id + "\0")]
             if payload["wait_session_id"] == session_id:
                 payload.update(wait_until=None, wait_session_id=None, wait_token=None, consecutive_waits=0)
-            store._write(payload)
+            store.save(entries, payload)
