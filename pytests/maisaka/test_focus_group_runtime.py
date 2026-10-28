@@ -20,6 +20,7 @@ from src.common.data_models.mai_message_data_model import MessageInfo, UserInfo
 from src.common.data_models.message_component_data_model import MessageSequence, TextComponent
 from src.config.config import global_config
 from src.core.tooling import ToolExecutionResult, ToolRegistry, ToolSpec
+from src.files import service as file_service_module
 from src.llm_models.exceptions import (
     EmptyResponseException,
     LLMTaskTimeoutError,
@@ -48,12 +49,18 @@ from src.maisaka.context import compaction as compaction_module
 from src.maisaka.context.compaction import ContextSummaryMessage, PlannerRequestSnapshot
 from src.maisaka.focus import group_runtime as group_module
 from src.maisaka.focus import context as context_module
+from src.maisaka.focus import manager as manager_module
 from src.maisaka.focus.context import FocusCheckpointStore, FocusContextEntry
 from src.maisaka.focus.group_runtime import FocusGroupRuntime
 from src.maisaka.focus.manager import FocusModeManager
 from src.maisaka.focus.tools import routed_schema
 from src.maisaka.reasoning_engine import MaisakaReasoningEngine
 from src.maisaka.runtime import MaisakaHeartFlowChatting
+from src.plugin_runtime import tool_provider as plugin_provider_module
+from src.plugin_runtime.component_query import ComponentQueryService
+from src.plugin_runtime.host.component_registry import ComponentRegistry
+from src.plugin_runtime.protocol.errors import ErrorCode, RPCError
+from src.plugin_runtime.tool_provider import PluginToolProvider
 
 
 def _history(text: str) -> InternalContextMessage:
@@ -611,9 +618,14 @@ def test_failed_stage_overrides_wait_without_changing_member_state_protocol(setu
 
 
 @pytest.mark.asyncio
-async def test_completed_tools_and_sent_receipts_are_preserved_without_replay(setup_group):
+@pytest.mark.parametrize("checkpoint_round_trip", [False, True])
+async def test_completed_tools_and_sent_receipts_are_preserved_without_replay(
+    setup_group, monkeypatch, checkpoint_round_trip
+):
     """恢复保留执行前及执行中的发送回执，不重放已完成工具。"""
     group, members, trace = setup_group
+    if checkpoint_round_trip:
+        group.checkpoint = lambda: FocusGroupRuntime.checkpoint(group)
     invoke = members["A"].provider.invoke
 
     async def echo_with_receipt(invocation, context=None):
@@ -642,6 +654,30 @@ async def test_completed_tools_and_sent_receipts_are_preserved_without_replay(se
     assert planner.await_count == 3
     assert group.has_message("A", "first")
     await group.stop()
+    if checkpoint_round_trip:
+        saved = group._store.load()
+        restored = FocusGroupRuntime(group.scope_id)
+        restored._store = group._store
+        monkeypatch.setattr(
+            group_module.chat_manager, "get_existing_session_by_session_id", lambda sid: members[sid].chat_stream
+        )
+        monkeypatch.setattr(manager_module.focus_mode_manager, "is_enabled_for_session", lambda sid: True)
+        monkeypatch.setattr(manager_module.focus_mode_manager, "get_focus_scope_key", lambda sid: group.scope_id)
+        await restored.restore()
+        for history in ([message for entry in saved["entries"] for message in entry.messages], restored.history):
+            assert sum(message.processed_plain_text == "已发送的消息" for message in history) == 1
+            assert sum(message.processed_plain_text == "工具执行期间的回执" for message in history) == 1
+            receipts = [message for message in history if isinstance(message, ToolResultMessage)]
+            assert len(receipts) == 1
+            assert receipts[0].tool_call_id == "sent-once"
+            assert receipts[0].success is True
+        assert restored._can_recover_planner_failure()
+        assert not restored._failed
+        assert restored._ready == set()
+        assert restored._worker is None
+        assert len(trace) == 1
+        assert planner.await_count == 3
+        await restored.stop()
 
 
 @pytest.mark.asyncio
@@ -1034,6 +1070,82 @@ async def test_compacted_tool_batch_keeps_recovery_safety(setup_group, monkeypat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outcome, recoverable",
+    [
+        ("rpc-error", False),
+        ("transport-failure", False),
+        ("tool-failure", False),
+        ("invalid-stop", False),
+        ("completed", True),
+        ("rejected", True),
+    ],
+)
+async def test_plugin_result_safety_survives_compaction_and_restart(setup_group, monkeypatch, outcome, recoverable):
+    """真实插件 Provider/RPC 回执进入 Focus 后，摘要和重启不能解除未知状态。"""
+    group, members, trace = setup_group
+    service = ComponentQueryService()
+    registry = ComponentRegistry()
+    registry.register_component("plugin_tool", "TOOL", "test_plugin", {})
+    supervisor = SimpleNamespace(component_registry=registry, invoke_plugin=AsyncMock())
+    monkeypatch.setattr(service, "_iter_supervisors", lambda: [supervisor])
+    monkeypatch.setattr(plugin_provider_module, "component_query_service", service)
+    monkeypatch.setattr(file_service_module, "get_file_service", lambda: SimpleNamespace(enabled=False, revoke=Mock()))
+    if outcome == "rpc-error":
+        supervisor.invoke_plugin.side_effect = RPCError(ErrorCode.E_TIMEOUT)
+    elif outcome == "rejected":
+        supervisor.invoke_plugin.side_effect = RPCError(ErrorCode.E_METHOD_NOT_ALLOWED)
+    else:
+        result = {
+            "success": outcome != "tool-failure",
+            "stop_after_execution": "true" if outcome == "invalid-stop" else False,
+        }
+        supervisor.invoke_plugin.return_value = SimpleNamespace(
+            payload={"success": outcome != "transport-failure", "result": result}
+        )
+    members["A"]._tool_registry.register_provider(PluginToolProvider())
+    response = _response(calls=[ToolCall("plugin-once", "plugin_tool", {"session_id": "A"})])
+    batch = FocusContextEntry(list(response.raw_messages), {"A"})
+    group.entries = [batch]
+    await group.tools.refresh()
+    await group._execute_tools(response, batch, "turn", group._generation)
+    assert group._can_recover_planner_failure() is recoverable
+    await FocusGroupRuntime.checkpoint(group)
+    saved = group._store.load()
+    receipt = next(
+        message for entry in saved["entries"] for message in entry.messages if isinstance(message, ToolResultMessage)
+    )
+    assert (receipt.metadata.get("execution_state") == "unknown") is (not recoverable)
+    assert bool(saved["unverified_tool_calls"]) is (not recoverable)
+
+    monkeypatch.setattr(global_config.chat, "max_context_size", 2)
+    group.entries.extend(FocusContextEntry([_chat_history(str(i))], {"A"}) for i in range(6))
+    summary = ContextSummaryMessage(content="旧插件批次摘要", timestamp=datetime.now(), remaining_uses_value=None)
+    monkeypatch.setattr(group_module, "build_context_summary", AsyncMock(return_value=summary))
+    _seed_planner_snapshot(group)
+    await group._compact()
+    assert all(entry is not batch for entry in group.entries)
+    assert not any(isinstance(message, ToolResultMessage) for message in group.history)
+    assert group._can_recover_planner_failure() is recoverable
+    await FocusGroupRuntime.checkpoint(group)
+    restored = FocusGroupRuntime(group.scope_id)
+    restored._store = group._store
+    monkeypatch.setattr(group_module.chat_manager, "get_existing_session_by_session_id", lambda sid: None)
+    await restored.restore()
+    assert restored._can_recover_planner_failure() is recoverable
+    assert restored._failed is (not recoverable)
+    if not recoverable:
+        member = ChatServices("A", restored, trace)
+        restored.add_member(member)
+        await restored.register_message(member, _incoming("A", "new", at=True), _chat_history("new"))
+        assert restored._worker is None
+    supervisor.invoke_plugin.assert_awaited_once()
+    assert not trace
+    await restored.stop()
+    await group.stop()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("success", [False, True])
 async def test_checkpoint_inflight_marker_clears_on_matching_receipt(setup_group, success):
     """快照的临时 unknown 只由原调用的确定结果解除，普通失败回执也可闭合。"""
@@ -1055,6 +1167,48 @@ async def test_checkpoint_inflight_marker_clears_on_matching_receipt(setup_group
     assert group._can_recover_planner_failure()
     await FocusGroupRuntime.checkpoint(group)
     assert group._store.load()["unverified_tool_calls"] == []
+    await group.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("success", [False, True])
+async def test_receipt_cannot_clear_compacted_call_from_another_turn(setup_group, success):
+    """原批次完全移除后，同 ID 的其他轮次回执仍不能清除独立账本。"""
+    group, _, trace = setup_group
+    response = _response(calls=[ToolCall("reused-id", "echo", {"session_id": "A", "text": "x"})])
+    group.entries = [FocusContextEntry(list(response.raw_messages), {"A"})]
+    await FocusGroupRuntime.checkpoint(group)
+    (original_key,) = group._unverified_tool_calls
+    group.entries.clear()
+    assert not group.entries
+    assert group._unverified_tool_calls == {original_key}
+
+    def receipt(turn):
+        return FocusContextEntry(
+            [
+                ToolResultMessage(
+                    content="已核实",
+                    timestamp=datetime.now(),
+                    tool_call_id="reused-id",
+                    logical_turn_id=turn,
+                    tool_name="echo",
+                    success=success,
+                    metadata={},
+                )
+            ],
+            {"A"},
+        )
+
+    group.entries.append(receipt("another-turn"))
+    assert original_key[0] != "another-turn"
+    assert not group._can_recover_planner_failure()
+    await FocusGroupRuntime.checkpoint(group)
+    assert group._store.load()["unverified_tool_calls"] == [original_key]
+    group.entries.append(receipt(original_key[0]))
+    assert group._can_recover_planner_failure()
+    await FocusGroupRuntime.checkpoint(group)
+    assert group._store.load()["unverified_tool_calls"] == []
+    assert not trace
     await group.stop()
 
 
@@ -1467,6 +1621,189 @@ async def test_purge_removes_cleared_session_from_unloaded_checkpoints(setup_gro
     assert [message.processed_plain_text for entry in payload["entries"] for message in entry.messages] == ["B 内容"]
     assert payload["seen"] == ["B\0two"]
     assert payload["wait_until"] is None
+
+
+@pytest.mark.parametrize("damage", ["json", "version", "message", "ledger", "read", "write", "none"])
+def test_purge_processes_all_files_and_reports_partial_failure(tmp_path, monkeypatch, damage):
+    """坏文件不阻断后续清理；已提交清理、原始异常、V1/V2 账本均保留。"""
+    response = _response(calls=[ToolCall("unverified", "echo", {"session_id": "A", "text": "x"})])
+    entries = [FocusContextEntry(list(response.raw_messages), {"A"}), FocusContextEntry([_history("B 内容")], {"B"})]
+    state = {
+        "sequence": 2,
+        "considered": {"A": 1, "B": 2},
+        "seen": ["A\0one", "B\0two"],
+        "wait_until": 123.0,
+        "wait_session_id": "A",
+        "wait_token": "wait-A",
+        "consecutive_waits": 1,
+    }
+    stores = [
+        FocusCheckpointStore(name, tmp_path) for name in ("broken", "target-v2", "identity", "target-v1", "unrelated")
+    ]
+    broken, target_v2, identity, target_v1, unrelated = stores
+    for store in stores:
+        store.save(entries if store is not unrelated else entries[1:], state)
+    legacy = json.loads(target_v1.path.read_text(encoding="utf-8"))
+    legacy["version"] = 1
+    del legacy["unverified_tool_calls"], legacy["tool_recovery_state_incomplete"]
+    target_v1.path.write_text(json.dumps(legacy), encoding="utf-8")
+    excluded = tmp_path / "excluded.json"
+    excluded.write_text("excluded invalid json", encoding="utf-8")
+
+    expected_error = ValueError
+    if damage != "none":
+        identity_payload = json.loads(identity.path.read_text(encoding="utf-8"))
+        identity_payload["scope_id"] = "not-the-file-identity"
+        identity.path.write_text(json.dumps(identity_payload), encoding="utf-8")
+        payload = json.loads(broken.path.read_text(encoding="utf-8"))
+        if damage == "json":
+            broken.path.write_text("{invalid json", encoding="utf-8")
+            expected_error = json.JSONDecodeError
+        elif damage in {"version", "message", "ledger"}:
+            if damage == "version":
+                payload["version"] = 999
+            elif damage == "message":
+                payload["entries"][0]["messages"][0]["item"] = {"$datetime": "invalid-date"}
+            else:
+                del payload["unverified_tool_calls"]
+            broken.path.write_text(json.dumps(payload), encoding="utf-8")
+        else:
+            expected_error = OSError
+            if damage == "read":
+                read = type(tmp_path).read_text
+
+                def fail_read(path, *args, **kwargs):
+                    if path == broken.path:
+                        raise OSError("checkpoint read failed")
+                    return read(path, *args, **kwargs)
+
+                monkeypatch.setattr(type(tmp_path), "read_text", fail_read)
+            else:
+                write = FocusCheckpointStore._write
+
+                def fail_write(store, payload):
+                    if store.path == broken.path:
+                        raise OSError("checkpoint write failed")
+                    write(store, payload)
+
+                monkeypatch.setattr(FocusCheckpointStore, "_write", fail_write)
+    protected = {path: path.read_bytes() for path in (broken.path, identity.path, excluded)}
+    # 固定坏文件在前、两个有效目标分布在错误之间和之后，不依赖文件系统枚举顺序。
+    glob = type(tmp_path).glob
+    monkeypatch.setattr(
+        type(tmp_path),
+        "glob",
+        lambda path, pattern: (
+            iter([store.path for store in stores] + [excluded]) if path == tmp_path else glob(path, pattern)
+        ),
+    )
+    caught = None
+    try:
+        FocusCheckpointStore.purge_session("A", {excluded}, tmp_path)
+    except Exception as exc:
+        caught = exc
+
+    for store in (target_v2, target_v1):
+        saved = store.load()
+        assert [message.processed_plain_text for entry in saved["entries"] for message in entry.messages] == ["B 内容"]
+        assert saved["considered"] == {"B": 2}
+        assert saved["seen"] == ["B\0two"]
+        assert saved["wait_until"] is None
+        assert saved["wait_session_id"] is None
+        assert saved["wait_token"] is None
+        assert saved["consecutive_waits"] == 0
+        assert saved["version"] == 2
+        assert saved["tool_recovery_state_incomplete"] is (store is target_v1)
+        assert saved["unverified_tool_calls"] == [
+            (response.raw_messages[0].output_item.meta.logical_turn_id, "unverified")
+        ]
+    assert unrelated.load()["seen"] == ["B\0two"]
+    assert unrelated.load()["entries"][0].messages[0].processed_plain_text == "B 内容"
+    assert excluded.read_bytes() == protected[excluded]
+    if damage == "none":
+        assert caught is None
+    else:
+        assert isinstance(caught, ExceptionGroup)
+        assert len(caught.exceptions) == 2
+        assert isinstance(caught.exceptions[0], expected_error)
+        assert isinstance(caught.exceptions[1], ValueError)
+        assert "身份不匹配" in str(caught.exceptions[1])
+        for error, path in zip(caught.exceptions, (broken.path, identity.path), strict=True):
+            assert any(str(path) in note for note in error.__notes__)
+            assert path.read_bytes() == protected[path]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("live", [False, True])
+@pytest.mark.parametrize("damaged", [False, True])
+async def test_clear_context_propagates_partial_purge_failure(tmp_path, monkeypatch, live, damaged):
+    """真实离线清理失败不能被在线实例淘汰吞掉，也不能跳过旧实例停止。"""
+    from src.agent import planner_state
+    from src.chat.heart_flow.heartflow_manager import HeartflowManager
+
+    group = FocusGroupRuntime("purge-target")
+    group._store = FocusCheckpointStore(group.scope_id, tmp_path)
+    group.entries = [FocusContextEntry([_history("A 内容")], {"A"}), FocusContextEntry([_history("B 内容")], {"B"})]
+    await group.checkpoint()
+    paths = [group._store.path]
+    if damaged:
+        bad = tmp_path / "broken.json"
+        bad.write_text("{invalid json", encoding="utf-8")
+        paths.insert(0, bad)
+    glob = type(tmp_path).glob
+    monkeypatch.setattr(
+        type(tmp_path), "glob", lambda path, pattern: iter(paths) if path == tmp_path else glob(path, pattern)
+    )
+    purge = FocusCheckpointStore.purge_session
+    monkeypatch.setattr(FocusCheckpointStore, "purge_session", lambda sid, excluded: purge(sid, excluded, tmp_path))
+    focus_manager = FocusModeManager()
+    monkeypatch.setattr(manager_module.focus_mode_manager, "clear_context", focus_manager.clear_context)
+    reset = AsyncMock()
+    monkeypatch.setattr(planner_state, "reset_planner_session", reset)
+    manager = HeartflowManager()
+    chat = SimpleNamespace(stop=AsyncMock())
+    if live:
+        manager.heartflow_chat_list["A"] = chat
+
+    if damaged:
+        with pytest.raises(ExceptionGroup) as caught:
+            await manager.clear_chat_history_context("A")
+        assert len(caught.value.exceptions) == 1
+        assert isinstance(caught.value.exceptions[0], json.JSONDecodeError)
+        assert bad.read_text(encoding="utf-8") == "{invalid json"
+        reset.assert_not_awaited()
+    else:
+        assert await manager.clear_chat_history_context("A") is live
+        reset.assert_awaited_once_with("A")
+    assert chat.stop.await_count == int(live)
+    assert "A" not in manager.heartflow_chat_list
+    saved = group._store.load()
+    assert [message.processed_plain_text for entry in saved["entries"] for message in entry.messages] == ["B 内容"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("purge_fails", [False, True])
+async def test_clear_context_stop_failure_preserves_purge_error(monkeypatch, purge_fails):
+    """停止也失败时向上传播，异常链仍保留先前清理失败的原始错误。"""
+    from src.agent import planner_state
+    from src.chat.heart_flow.heartflow_manager import HeartflowManager
+
+    purge_error = ExceptionGroup("部分清理失败", [ValueError("坏检查点")]) if purge_fails else None
+    clear = AsyncMock(side_effect=purge_error)
+    monkeypatch.setattr(manager_module.focus_mode_manager, "clear_context", clear)
+    reset = AsyncMock()
+    monkeypatch.setattr(planner_state, "reset_planner_session", reset)
+    stop_error = OSError("停止失败")
+    chat = SimpleNamespace(stop=AsyncMock(side_effect=stop_error))
+    manager = HeartflowManager()
+    manager.heartflow_chat_list["A"] = chat
+    with pytest.raises(OSError) as caught:
+        await manager.clear_chat_history_context("A")
+    assert caught.value is stop_error
+    assert caught.value.__context__ is purge_error
+    clear.assert_awaited_once_with("A")
+    chat.stop.assert_awaited_once()
+    reset.assert_not_awaited()
 
 
 @pytest.mark.asyncio

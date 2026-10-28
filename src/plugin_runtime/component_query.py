@@ -23,6 +23,7 @@ from src.core.types import ActionActivationType, ActionInfo, CommandInfo, Compon
 from src.llm_models.payload_content.tool_option import normalize_tool_option
 from src.plugin_runtime.host.component_timeout import resolve_component_rpc_timeout_ms
 from src.plugin_runtime.host.message_utils import PluginMessageUtils
+from src.plugin_runtime.protocol.errors import ErrorCode, RPCError
 
 if TYPE_CHECKING:
     from src.plugin_runtime.host.component_registry import ActionEntry, CommandEntry, ComponentEntry, ToolEntry
@@ -985,11 +986,20 @@ class ComponentQueryService:
             )
         except Exception as exc:
             logger.error(f"运行时工具 {tool_entry.plugin_id}.{tool_entry.name} 执行失败: {exc}", exc_info=True)
+            metadata = {"plugin_id": tool_entry.plugin_id}
+            # 这些 RPC 错误仅在入队/组件执行前拒绝；超时、断连和关停也可能发生在副作用之后。
+            if not isinstance(exc, RPCError) or exc.code not in {
+                ErrorCode.E_BAD_PAYLOAD,
+                ErrorCode.E_PLUGIN_NOT_FOUND,
+                ErrorCode.E_METHOD_NOT_ALLOWED,
+                ErrorCode.E_BACK_PRESSURE,
+            }:
+                metadata["execution_state"] = "unknown"
             return ToolExecutionResult(
                 tool_name=tool_entry.name,
                 success=False,
                 error_message=str(exc),
-                metadata={"plugin_id": tool_entry.plugin_id},
+                metadata=metadata,
             )
 
         finally:
@@ -1004,9 +1014,13 @@ class ComponentQueryService:
                 success=False,
                 error_message="" if result is None else str(result),
                 structured_content=result,
-                metadata={"plugin_id": tool_entry.plugin_id},
+                metadata={"plugin_id": tool_entry.plugin_id, "execution_state": "unknown"},
             )
-        return self._parse_tool_invoke_result(tool_entry, result)
+        parsed_result = self._parse_tool_invoke_result(tool_entry, result)
+        # 插件返回失败或结果字段校验失败，都不能证明已发生的副作用已撤销。
+        if not parsed_result.success:
+            parsed_result.metadata["execution_state"] = "unknown"
+        return parsed_result
 
     def get_llm_available_tools(self) -> Dict[str, ToolInfo]:
         """获取当前可供 LLM 选择的工具集合。

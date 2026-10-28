@@ -121,12 +121,18 @@ class HeartflowManager:
             return
 
         try:
-            if reason in {"clear_context_command", "adapter_policy_block"}:
-                await focus_mode_manager.clear_context(session_id)
-            await chat.stop()
+            try:
+                if reason in {"clear_context_command", "adapter_policy_block"}:
+                    await focus_mode_manager.clear_context(session_id)
+            finally:
+                # 已移出管理表的实例仍必须停止，不能因部分检查点清理失败而继续运行。
+                await chat.stop()
             logger.info(f"已淘汰心流聊天 {session_id}: reason={reason}")
         except Exception as exc:
             logger.warning(f"淘汰心流聊天 {session_id} 失败: {exc}", exc_info=True)
+            if reason == "clear_context_command":
+                # 显式清空的调用者不能在部分失败后发送成功确认。
+                raise
 
     async def clear_chat_history_context(self, session_id: str) -> bool:
         """停止并移除当前会话运行时，使其短期历史上下文立即失效。"""

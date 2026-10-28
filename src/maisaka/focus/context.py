@@ -350,18 +350,26 @@ class FocusCheckpointStore:
         excluded: Set[Path],
         root: Path = PROJECT_ROOT / "data" / "focus",
     ) -> None:
-        """清理尚未加载的新版检查点，避免重启或重新启用旧分组时恢复已清空的材料。"""
+        """清理离线检查点，避免恢复已清空材料；逐文件保留清理结果，最后汇总失败。"""
+        errors: List[Exception] = []
         for path in root.glob("*.json"):
             if path in excluded:
                 continue
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            store = cls(payload["scope_id"], root)
-            if store.path != path:
-                raise ValueError("Focus 检查点路径与共享组身份不匹配")
-            payload = store.load()
-            entries = [entry for entry in payload.pop("entries") if session_id not in entry.session_ids]
-            payload["considered"].pop(session_id, None)
-            payload["seen"] = [key for key in payload["seen"] if not key.startswith(session_id + "\0")]
-            if payload["wait_session_id"] == session_id:
-                payload.update(wait_until=None, wait_session_id=None, wait_token=None, consecutive_waits=0)
-            store.save(entries, payload)
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                store = cls(payload["scope_id"], root)
+                if store.path != path:
+                    raise ValueError("Focus 检查点路径与共享组身份不匹配")
+                payload = store.load()
+                entries = [entry for entry in payload.pop("entries") if session_id not in entry.session_ids]
+                payload["considered"].pop(session_id, None)
+                payload["seen"] = [key for key in payload["seen"] if not key.startswith(session_id + "\0")]
+                if payload["wait_session_id"] == session_id:
+                    payload.update(wait_until=None, wait_session_id=None, wait_token=None, consecutive_waits=0)
+                store.save(entries, payload)
+            except Exception as exc:
+                # 无法确认归属的文件不能删除，也不能阻断其他检查点的隐私清理。
+                exc.add_note(f"Focus 检查点清理失败: {path}")
+                errors.append(exc)
+        if errors:
+            raise ExceptionGroup("Focus 检查点部分清理失败", errors)
