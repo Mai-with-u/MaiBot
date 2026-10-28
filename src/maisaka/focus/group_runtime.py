@@ -18,6 +18,13 @@ from src.common.message_repository import find_messages
 from src.common.utils.utils_config import ChatConfigUtils
 from src.config.config import global_config
 from src.core.tooling import ToolExecutionResult
+from src.llm_models.exceptions import (
+    EmptyResponseException,
+    LLMTaskTimeoutError,
+    NetworkConnectionError,
+    RespNotOkException,
+    RespParseException,
+)
 from src.llm_models.payload_content.context_item import FunctionCallItem
 from src.maisaka.chat_loop_service import ChatResponse, MaisakaChatLoopService
 from src.maisaka.context.messages import (
@@ -46,6 +53,10 @@ logger = get_logger("maisaka_focus")
 MAX_SEEN_MESSAGES = 20000
 
 
+class _PlannerRequestFailed(Exception):
+    """已知模型请求失败；不包含 checkpoint、工具执行或运行时错误。"""
+
+
 class FocusChatLoopService(MaisakaChatLoopService):
     """组级请求没有默认聊天，不把某个成员的身份或额外规则冒充成整个组。"""
 
@@ -69,6 +80,7 @@ class FocusGroupRuntime:
         self._worker: Optional[asyncio.Task] = None
         self._closed = False
         self._failed = False
+        self._recovery_token: Optional[object] = None
         self._hydrating = False
         self.restored_session_ids: Set[str] = set()
         self._wait_until: Optional[float] = None
@@ -155,7 +167,16 @@ class FocusGroupRuntime:
                 "wait_token": self._wait_token,
                 "consecutive_waits": self._consecutive_waits,
             }
-            await asyncio.to_thread(self._store.save, entries, state)
+            try:
+                await asyncio.to_thread(self._store.save, entries, state)
+            except Exception:
+                # 任意入口的持久化失败都撤销恢复资格，也使在途模型/工具结果失效。
+                self._failed = True
+                self._recovery_token = None
+                self._generation += 1
+                self._event.set()
+                self._set_stage("失败", "检查点保存失败，已停止共享 Planner；请检查日志")
+                raise
 
     def _closed_entries(self) -> List[FocusContextEntry]:
         """只在快照/取消时闭合未完成调用，不修改仍在执行的实时工具批次。"""
@@ -256,6 +277,8 @@ class FocusGroupRuntime:
     ) -> None:
         if not self._remember(runtime.session_id, message.message_id):
             return
+        # 只承认失败之后到达的去重新输入；失败前已经排队的消息不能触发恢复。
+        recovery_token = self._recovery_token if history_message is not None else None
         if history_message is not None:
             self._queue_entry(runtime.session_id, history_message)
         awakened = message.is_at and self._wait_until is not None
@@ -274,6 +297,17 @@ class FocusGroupRuntime:
             self._ready.add(runtime.session_id)
             self._event.set()
         await self.checkpoint()
+        if recovery_token is not None and recovery_token is self._recovery_token:
+            # 旧 Worker 可能仍在 finally 中保存检查点。等它退出，不能并发重建，
+            # 也不能在最终保存失败或关闭取消后重新开放组。
+            if self._worker is not None:
+                await asyncio.shield(self._worker)
+            if not self._closed and recovery_token is self._recovery_token:
+                self._recovery_token = None
+                self._failed = False
+                # 普通消息也必须进入首次恢复快照，不能在它仍防抖时重做旧周期。
+                self._ready.add(runtime.session_id)
+                self._set_stage("恢复", "新消息已保存，继续共享 Planner；不重放旧工具")
         self._ensure_worker()
 
     def _remember(self, session_id: str, message_id: str) -> bool:
@@ -367,6 +401,7 @@ class FocusGroupRuntime:
                 await self.checkpoint()
         except Exception:
             self._failed = True
+            self._recovery_token = None
             self._generation += 1
             logger.exception("Focus 回调事件保存失败: scope=%s", self.scope_id)
             await self._cancel_worker()
@@ -384,8 +419,34 @@ class FocusGroupRuntime:
     def _set_stage(self, stage: str, detail: str) -> None:
         self._state = "failed" if self._failed else ("wait" if self._wait_until is not None else "running")
         for runtime in self.members.values():
-            runtime._agent_state = runtime._STATE_WAIT if self._wait_until is not None else runtime._STATE_RUNNING
+            runtime._agent_state = (
+                runtime._STATE_STOP if self._failed
+                else runtime._STATE_WAIT if self._wait_until is not None
+                else runtime._STATE_RUNNING
+            )
             runtime._update_stage_status(stage, f"Focus 共享组 · {detail}", wait_until=self._wait_until)
+
+    def _can_recover_planner_failure(self) -> bool:
+        """不在未闭合批次或带有不确定执行回执的历史上自动继续规划。"""
+        if self._active_batch is not None:
+            return False
+        for entry in self.entries:
+            results = {message.tool_call_id for message in entry.messages if isinstance(message, ToolResultMessage)}
+            for message in entry.messages:
+                # 当前执行状态标记用于中断后需核实的回执，不能当成可安全重试。
+                if isinstance(message, ToolResultMessage):
+                    if "execution_state" in message.metadata:
+                        return False
+                    # reply 的逐段回执会保留已发送部分；失败并不代表完全未发送。
+                    if not message.success and (
+                        "send_results" in message.metadata or "sent_message_ids" in message.metadata
+                    ):
+                        return False
+                if isinstance(message, ModelOutputContextMessage) and any(
+                    call.call_id not in results for call in message.tool_calls
+                ):
+                    return False
+        return True
 
     def _take_ready_inputs(self) -> List[FocusContextEntry]:
         entries = []
@@ -456,7 +517,7 @@ class FocusGroupRuntime:
 
     async def run(self) -> None:
         try:
-            while not self._closed and self.members:
+            while not self._closed and not self._failed and self.members:
                 if self._wait_until is not None:
                     self._set_stage("等待", "整组暂停，@ 可以提前唤醒")
                     remaining = max(0.0, self._wait_until - time.time())
@@ -485,9 +546,17 @@ class FocusGroupRuntime:
                 await self._run_turn()
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
+            recoverable = (
+                isinstance(exc, _PlannerRequestFailed) and not self._failed and self._can_recover_planner_failure()
+            )
             self._failed = True
-            self._set_stage("失败", "共享 Planner 运行失败，输入已保留；请检查日志并重启运行时")
+            self._recovery_token = object() if recoverable else None
+            self._set_stage(
+                "失败",
+                "模型请求失败，输入已保留；等待新的用户消息后继续" if recoverable
+                else "共享 Planner 运行失败，已停止；请检查日志并核实工具与存储状态",
+            )
             logger.exception("Focus 共享 Planner 运行失败: scope=%s", self.scope_id)
         finally:
             await self.checkpoint()
@@ -496,13 +565,19 @@ class FocusGroupRuntime:
         from src.maisaka.runtime import MAX_INTERNAL_ROUNDS
 
         for _ in range(MAX_INTERNAL_ROUNDS):
-            if self._closed or self._wait_until is not None:
+            if self._closed or self._failed or self._wait_until is not None:
                 return
+            generation = self._generation
             self._take_ready_inputs()
             await self._compact()
+            if self._closed or self._failed or generation != self._generation:
+                return
             await self.tools.refresh()
-            generation = self._generation
+            if self._closed or self._failed or generation != self._generation:
+                return
             references = await self._build_references()
+            if self._closed or self._failed or generation != self._generation:
+                return
             # 整理参考信息期间到达的就绪输入也接入本次请求；请求发出后使用固定快照。
             self._take_ready_inputs()
             related = set(self.members)
@@ -513,16 +588,24 @@ class FocusGroupRuntime:
             self._set_stage("Planner", f"汇合 {len(self.members)} 个聊天，等待模型响应")
             started = time.time()
             self._planner_started_at = started
-            response = await self._service.chat_loop_step(
-                history,
-                tool_definitions=self.tools.definitions(),
-                injected_user_messages=[self._roster(), self.tools.deferred_notice(), *references],
-                tail_user_messages=build_consecutive_wait_reminders(self._consecutive_waits),
-                max_context_size=max(self.max_context_size, sum(message.count_in_context for message in history) + 1),
-                logical_turn_id=logical_turn_id,
-            )
+            try:
+                response = await self._service.chat_loop_step(
+                    history,
+                    tool_definitions=self.tools.definitions(),
+                    injected_user_messages=[self._roster(), self.tools.deferred_notice(), *references],
+                    tail_user_messages=build_consecutive_wait_reminders(self._consecutive_waits),
+                    max_context_size=max(self.max_context_size, sum(message.count_in_context for message in history) + 1),
+                    logical_turn_id=logical_turn_id,
+                )
+            except (
+                EmptyResponseException, LLMTaskTimeoutError, NetworkConnectionError,
+                RespNotOkException, RespParseException, TimeoutError,
+            ) as exc:
+                self._planner_ended_at = time.time()
+                self._service.planner_request_snapshot = None
+                raise _PlannerRequestFailed("Focus 模型请求最终失败") from exc
             self._planner_ended_at = time.time()
-            if generation != self._generation or self._closed:
+            if generation != self._generation or self._closed or self._failed:
                 self._service.planner_request_snapshot = None
                 return
             # 有效模型响应确认本次快照覆盖的消息；工具成功与否单独记录，不能误认为已回复。
@@ -610,7 +693,7 @@ class FocusGroupRuntime:
             runtime = None
             spec = None
             condensed = None
-            if paused or generation != self._generation or self._closed:
+            if paused or generation != self._generation or self._closed or self._failed:
                 result = ToolExecutionResult(
                     tool_name=call.func_name,
                     success=False,

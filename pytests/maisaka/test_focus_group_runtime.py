@@ -19,6 +19,14 @@ from src.common.data_models.mai_message_data_model import MessageInfo, UserInfo
 from src.common.data_models.message_component_data_model import MessageSequence, TextComponent
 from src.config.config import global_config
 from src.core.tooling import ToolExecutionResult, ToolRegistry, ToolSpec
+from src.llm_models.exceptions import (
+    EmptyResponseException,
+    LLMTaskTimeoutError,
+    NetworkConnectionError,
+    ReqAbortException,
+    RespNotOkException,
+    RespParseException,
+)
 from src.llm_models.payload_content.tool_option import ToolCall
 from src.llm_models.payload_content.context_item import (
     ContextImagePart,
@@ -247,6 +255,484 @@ def setup_group(monkeypatch, tmp_path):
     monkeypatch.setattr(global_config.capabilities, "tool_result_condense", False)
     monkeypatch.setattr(group_module, "emit_flow_step", AsyncMock())
     return group, members, trace
+
+
+@pytest.mark.asyncio
+async def test_planner_failure_stops_members_and_only_new_input_recovers(setup_group):
+    group, members, _ = setup_group
+    group.checkpoint = lambda: FocusGroupRuntime.checkpoint(group)
+    group._build_references = AsyncMock(return_value=[])
+    group._service.chat_loop_step = AsyncMock(side_effect=TimeoutError("Planner 重试耗尽"))
+    await group.register_message(members["A"], _incoming("A", "first", at=True), _chat_history("first"))
+    first_worker = group._worker
+    await asyncio.wait_for(asyncio.shield(first_worker), 2)
+    assert group.state == "failed"
+    assert all(member._agent_state == member._STATE_STOP for member in members.values())
+    assert group._considered == {}
+    assert group._store.load()["seen"] == ["A\0first"]
+
+    # 就绪事件、后台任务和重复投递均不能重启原失败周期。
+    group._event.set()
+    group.register_proactive(members["B"], _incoming("B", "background"))
+    await group._checkpoint_task
+    await group.register_message(members["A"], _incoming("A", "first", at=True), _chat_history("重复消息"))
+    group._ensure_worker()
+    assert group._worker is first_worker
+    assert group._service.chat_loop_step.await_count == 1
+
+    recovered = asyncio.Event()
+
+    async def planner(*args, **kwargs):
+        recovered.set()
+        return _response()
+
+    group._service.chat_loop_step = planner
+    await group.register_message(members["B"], _incoming("B", "new", at=True), _chat_history("new", "B"))
+    await asyncio.wait_for(recovered.wait(), 2)
+    assert group._worker is not first_worker
+    assert not group._failed
+    assert group._considered == {"A": 1, "B": 3}
+    assert group.has_message("A", "first")
+    assert all(text in [message.processed_plain_text for message in group.history] for text in ("first", "new"))
+    await group.stop()
+
+
+@pytest.mark.asyncio
+async def test_each_new_input_allows_only_one_failed_worker(setup_group):
+    group, members, _ = setup_group
+    group._build_references = AsyncMock(return_value=[])
+    planner = AsyncMock(side_effect=TimeoutError("持续故障"))
+    group._service.chat_loop_step = planner
+    workers = []
+    for index in range(3):
+        await group.register_message(
+            members["A"],
+            _incoming("A", str(index), at=True),
+            _chat_history(str(index)),
+        )
+        worker = group._worker
+        await asyncio.wait_for(asyncio.shield(worker), 2)
+        workers.append(worker)
+        group._ensure_worker()
+        await asyncio.sleep(0)
+        assert group._worker is worker
+        assert planner.await_count == index + 1
+        assert group.state == "failed"
+    assert len(set(workers)) == 3
+    assert group._considered == {}
+    await group.stop()
+
+
+@pytest.mark.asyncio
+async def test_normal_recovery_input_is_in_first_snapshot_even_before_debounce(setup_group):
+    group, members, _ = setup_group
+    group._build_references = AsyncMock(return_value=[])
+    group._service.chat_loop_step = AsyncMock(side_effect=TimeoutError("初次失败"))
+    await group.register_message(members["A"], _incoming("A", "first", at=True), _chat_history("first"))
+    await asyncio.wait_for(asyncio.shield(group._worker), 2)
+    worker = group._worker
+    # 没有可进入快照的新上下文时不能开放恢复。
+    await group.register_message(members["B"], _incoming("B", "empty"), None)
+    assert group._worker is worker
+    await group._debounce_tasks["B"]
+    members["B"]._wait_for_message_quiet_period = asyncio.Event().wait
+    recovered = asyncio.Event()
+    requests = []
+
+    async def planner(history, **kwargs):
+        requests.append(list(history))
+        recovered.set()
+        return _response()
+
+    group._service.chat_loop_step = planner
+    await group.register_message(members["B"], _incoming("B", "normal"), _chat_history("normal", "B"))
+    await asyncio.wait_for(recovered.wait(), 2)
+    assert not group._debounce_tasks["B"].done()
+    assert any(message.processed_plain_text == "normal" for message in requests[0])
+    assert len(requests) == 1
+    await group.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        NetworkConnectionError("网络失败"),
+        RespNotOkException(503),
+        EmptyResponseException(),
+        RespParseException(),
+        LLMTaskTimeoutError("planner", "test", 1),
+    ],
+)
+async def test_known_final_model_errors_recover_on_normal_message(setup_group, error):
+    group, members, _ = setup_group
+    group._build_references = AsyncMock(return_value=[])
+    planner = AsyncMock(side_effect=[error, _response()])
+    group._service.chat_loop_step = planner
+    await group.register_message(members["A"], _incoming("A", "first", at=True), _chat_history("first"))
+    await asyncio.wait_for(asyncio.shield(group._worker), 2)
+    assert group.state == "failed"
+    await group.register_message(members["A"], _incoming("A", "new"), _chat_history("new"))
+    # 用同一 Worker 的空闲状态作为本轮已完成的屏障，不依赖固定 sleep 时长。
+    idle = asyncio.Event()
+    members["A"]._update_stage_status.side_effect = lambda stage, *a, **kw: idle.set() if stage == "空闲" else None
+    await asyncio.wait_for(idle.wait(), 2)
+    assert planner.await_count == 2
+    assert group.state == "stop"
+    assert group._considered == {"A": 2}
+    await group.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error", [RuntimeError("程序错误"), ValueError("非法状态"), OSError("存储错误"), ReqAbortException()]
+)
+async def test_unknown_errors_and_request_abort_are_not_recoverable(setup_group, error):
+    group, members, _ = setup_group
+    group._build_references = AsyncMock(return_value=[])
+    planner = AsyncMock(side_effect=error)
+    group._service.chat_loop_step = planner
+    await group.register_message(members["A"], _incoming("A", "first", at=True), _chat_history("first"))
+    worker = group._worker
+    await asyncio.wait_for(asyncio.shield(worker), 2)
+    await group.register_message(members["B"], _incoming("B", "new", at=True), _chat_history("new", "B"))
+    assert group.state == "failed"
+    assert group._worker is worker
+    assert planner.await_count == 1
+    await group.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("point", ["ingress", "response", "final", "callback", "recovery"])
+async def test_checkpoint_failure_is_fail_stop_even_if_next_save_succeeds(setup_group, monkeypatch, point):
+    group, members, _ = setup_group
+    group.checkpoint = lambda: FocusGroupRuntime.checkpoint(group)
+    group._build_references = AsyncMock(return_value=[])
+    planner = (
+        AsyncMock(side_effect=TimeoutError("模型失败"))
+        if point in {"final", "recovery"}
+        else AsyncMock(return_value=_response())
+    )
+    group._service.chat_loop_step = planner
+    save = group._store.save
+    fail_save = False
+
+    def save_or_fail(*args):
+        if fail_save:
+            raise OSError("故障注入：磁盘不可写")
+        save(*args)
+
+    monkeypatch.setattr(group._store, "save", save_or_fail)
+    if point in {"ingress", "callback"}:
+        fail_save = True
+    if point == "callback":
+        group.register_proactive(members["A"], _incoming("A", "background"))
+        await group._checkpoint_task
+    elif point == "ingress":
+        with pytest.raises(OSError):
+            await group.register_message(members["A"], _incoming("A", "first", at=True), _chat_history("first"))
+    else:
+        await group.register_message(members["A"], _incoming("A", "first", at=True), _chat_history("first"))
+        if point in {"response", "final"}:
+            # create_task 尚未取得执行权，只让入站保存成功，故障发生在 Worker 内。
+            fail_save = True
+            with pytest.raises(OSError):
+                await asyncio.wait_for(asyncio.shield(group._worker), 2)
+        else:
+            await asyncio.wait_for(asyncio.shield(group._worker), 2)
+            fail_save = True
+            with pytest.raises(OSError):
+                await group.register_message(
+                    members["B"], _incoming("B", "recover", at=True), _chat_history("recover", "B")
+                )
+    assert group.state == "failed"
+    assert all(member._agent_state == member._STATE_STOP for member in members.values())
+    worker = group._worker
+    calls = planner.await_count
+    fail_save = False
+    await group.register_message(members["B"], _incoming("B", "later", at=True), _chat_history("later", "B"))
+    assert group._worker is worker
+    assert planner.await_count == calls
+    assert group.state == "failed"
+    await group.stop()
+
+
+@pytest.mark.asyncio
+async def test_messages_queued_before_failure_cannot_restart_worker(setup_group):
+    group, members, _ = setup_group
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def planner(*args, **kwargs):
+        started.set()
+        await release.wait()
+        raise TimeoutError("本次请求失败")
+
+    group._build_references = AsyncMock(return_value=[])
+    group._service.chat_loop_step = AsyncMock(side_effect=planner)
+    await group.register_message(members["A"], _incoming("A", "first", at=True), _chat_history("first"))
+    await asyncio.wait_for(started.wait(), 2)
+    await group.register_message(members["B"], _incoming("B", "queued", at=True), _chat_history("queued", "B"))
+    worker = group._worker
+    release.set()
+    await asyncio.wait_for(asyncio.shield(worker), 2)
+    group._ensure_worker()
+    assert group._worker is worker
+    assert group._service.chat_loop_step.await_count == 1
+    assert group._pending["B"][0].messages[0].processed_plain_text == "queued"
+    await group.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("close", [False, True])
+async def test_planner_cancellation_propagates_without_recovery_latch(setup_group, close):
+    group, members, _ = setup_group
+    started = asyncio.Event()
+
+    async def planner(*args, **kwargs):
+        started.set()
+        await asyncio.Event().wait()
+
+    group._build_references = AsyncMock(return_value=[])
+    group._service.chat_loop_step = AsyncMock(side_effect=planner)
+    await group.register_message(members["A"], _incoming("A", "first", at=True), _chat_history("first"))
+    await asyncio.wait_for(started.wait(), 2)
+    worker = group._worker
+    if close:
+        await group.stop()
+    else:
+        worker.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await worker
+    assert not group._failed
+    if close:
+        await group.register_message(members["B"], _incoming("B", "later", at=True), _chat_history("later", "B"))
+        assert group._worker is None
+    assert group._service.chat_loop_step.await_count == 1
+    await group.stop()
+
+
+@pytest.mark.asyncio
+async def test_recovery_waits_for_final_checkpoint_and_starts_only_one_worker(setup_group):
+    group, members, _ = setup_group
+    final_save, release_save, recovered = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    calls = 0
+
+    async def checkpoint():
+        if asyncio.current_task() is group._worker and group._failed:
+            final_save.set()
+            await release_save.wait()
+
+    async def planner(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise TimeoutError("初次失败")
+        recovered.set()
+        return _response()
+
+    group.checkpoint = checkpoint
+    group._build_references = AsyncMock(return_value=[])
+    group._service.chat_loop_step = planner
+    await group.register_message(members["A"], _incoming("A", "first", at=True), _chat_history("first"))
+    await asyncio.wait_for(final_save.wait(), 2)
+    old_worker = group._worker
+    inputs = [
+        asyncio.create_task(
+            group.register_message(
+                members[sid],
+                _incoming(sid, "new-" + sid, at=True),
+                _chat_history("new-" + sid, sid),
+            )
+        )
+        for sid in ("A", "B")
+    ]
+    await asyncio.sleep(0)
+    assert not old_worker.done()
+    assert group._worker is old_worker
+    assert calls == 1
+    release_save.set()
+    await asyncio.wait_for(asyncio.gather(*inputs), 2)
+    await asyncio.wait_for(recovered.wait(), 2)
+    assert group._worker is not old_worker
+    assert calls == 2
+    await group.stop()
+
+
+@pytest.mark.asyncio
+async def test_final_save_failure_revokes_recovery_while_new_input_waits(setup_group, monkeypatch):
+    group, members, _ = setup_group
+    final_save, release_save, input_saved = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    save = group._store.save
+
+    async def checkpoint():
+        if asyncio.current_task() is group._worker and group._failed:
+            final_save.set()
+            await release_save.wait()
+        await FocusGroupRuntime.checkpoint(group)
+        if group.has_message("B", "new"):
+            input_saved.set()
+
+    group.checkpoint = checkpoint
+    group._build_references = AsyncMock(return_value=[])
+    group._service.chat_loop_step = AsyncMock(side_effect=TimeoutError("模型失败"))
+    await group.register_message(members["A"], _incoming("A", "first", at=True), _chat_history("first"))
+    await asyncio.wait_for(final_save.wait(), 2)
+    worker = group._worker
+    registration = asyncio.create_task(
+        group.register_message(
+            members["B"],
+            _incoming("B", "new", at=True),
+            _chat_history("new", "B"),
+        )
+    )
+    await asyncio.wait_for(input_saved.wait(), 2)
+    monkeypatch.setattr(group._store, "save", Mock(side_effect=OSError("最终保存失败")))
+    release_save.set()
+    with pytest.raises(OSError):
+        await asyncio.wait_for(registration, 2)
+    assert group._worker is worker
+    assert group.state == "failed"
+    monkeypatch.setattr(group._store, "save", save)
+    await group.register_message(members["B"], _incoming("B", "later", at=True), _chat_history("later", "B"))
+    assert group._worker is worker
+    assert group._service.chat_loop_step.await_count == 1
+    await group.stop()
+
+
+def test_failed_stage_overrides_wait_without_changing_member_state_protocol(setup_group):
+    group, members, _ = setup_group
+    group.execute_control("wait", {"seconds": 60}, "A")
+    group._failed = True
+    group._set_stage("失败", "故障注入")
+    assert group.state == "failed"
+    assert all(member._agent_state == member._STATE_STOP for member in members.values())
+    assert all(member._update_stage_status.call_args.args[0] == "失败" for member in members.values())
+
+
+@pytest.mark.asyncio
+async def test_completed_tools_and_sent_receipts_are_preserved_without_replay(setup_group):
+    group, members, trace = setup_group
+    group._build_references = AsyncMock(return_value=[])
+    completed = _response(calls=[ToolCall("sent-once", "echo", {"session_id": "A", "text": "sent"})])
+    planner = AsyncMock(side_effect=[completed, TimeoutError("后续规划失败"), _response()])
+    group._service.chat_loop_step = planner
+    group.record_sent_message(members["A"], _history("已发送的消息"))
+    await group.register_message(members["A"], _incoming("A", "first", at=True), _chat_history("first"))
+    await asyncio.wait_for(asyncio.shield(group._worker), 2)
+    receipt = next(message for message in group.history if isinstance(message, ToolResultMessage))
+    assert receipt.tool_call_id == "sent-once"
+    assert group._considered == {"A": 1}
+    idle = asyncio.Event()
+    members["A"]._update_stage_status.side_effect = lambda stage, *a, **kw: idle.set() if stage == "空闲" else None
+    await group.register_message(members["B"], _incoming("B", "new", at=True), _chat_history("new", "B"))
+    await asyncio.wait_for(idle.wait(), 2)
+    assert len(trace) == 1
+    assert receipt in group.history
+    assert any(message.processed_plain_text == "已发送的消息" for message in group.history)
+    assert planner.await_count == 3
+    assert group.has_message("A", "first")
+    await group.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["unclosed", "unknown", "partial", "invalid", "partial-send", "unknown-send"])
+async def test_uncertain_tool_or_send_history_prevents_recovery(setup_group, state):
+    group, members, trace = setup_group
+    group._build_references = AsyncMock(return_value=[])
+    response = _response(calls=[ToolCall("never-replay", "echo", {"session_id": "A", "text": "old"})])
+    batch = FocusContextEntry(list(response.raw_messages), {"A"})
+    if state != "unclosed":
+        metadata = {"execution_state": state}
+        if state in {"partial-send", "unknown-send"}:
+            metadata = {
+                "sent_message_ids": ["sent-part"] if state == "partial-send" else [],
+                "send_results": [{"success": True, "message_id": "sent-part"}] if state == "partial-send" else [],
+            }
+        batch.messages.append(
+            ToolResultMessage(
+                content="发送状态需核实",
+                timestamp=datetime.now(),
+                tool_call_id="never-replay",
+                logical_turn_id="old-turn",
+                tool_name="echo",
+                success=False,
+                metadata=metadata,
+            )
+        )
+    group.entries.append(batch)
+    planner = AsyncMock(side_effect=TimeoutError("后续请求失败"))
+    group._service.chat_loop_step = planner
+    await group.register_message(members["A"], _incoming("A", "first", at=True), _chat_history("first"))
+    worker = group._worker
+    await asyncio.wait_for(asyncio.shield(worker), 2)
+    await group.register_message(members["B"], _incoming("B", "new", at=True), _chat_history("new", "B"))
+    assert group._worker is worker
+    assert group.state == "failed"
+    assert planner.await_count == 1
+    assert group.entries[0] is batch
+    assert not trace
+    await group.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["router", "provider"])
+async def test_tool_timeout_is_not_a_recoverable_planner_timeout(setup_group, boundary):
+    group, members, _ = setup_group
+    group.checkpoint = lambda: FocusGroupRuntime.checkpoint(group)
+    group._build_references = AsyncMock(return_value=[])
+    target = group.tools if boundary == "router" else members["A"].provider
+    target.invoke = AsyncMock(side_effect=TimeoutError("发送回执未知"))
+    response = _response(calls=[ToolCall("uncertain", "echo", {"session_id": "A", "text": "old"})])
+    planner = AsyncMock(side_effect=[response, TimeoutError("后续规划失败")])
+    group._service.chat_loop_step = planner
+    await group.register_message(members["A"], _incoming("A", "first", at=True), _chat_history("first"))
+    worker = group._worker
+    await asyncio.wait_for(asyncio.shield(worker), 2)
+    saved = group._store.load()
+    receipts = [
+        message for entry in saved["entries"] for message in entry.messages if isinstance(message, ToolResultMessage)
+    ]
+    assert receipts[-1].metadata["execution_state"] == "unknown"
+    await group.register_message(members["B"], _incoming("B", "new", at=True), _chat_history("new", "B"))
+    assert group._worker is worker
+    assert planner.await_count == (1 if boundary == "router" else 2)
+    target.invoke.assert_awaited_once()
+    await group.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["_compact", "refresh", "_build_references", "chat_loop_step"])
+async def test_concurrent_ingress_save_failure_invalidates_inflight_turn(setup_group, monkeypatch, boundary):
+    group, members, trace = setup_group
+    group.checkpoint = lambda: FocusGroupRuntime.checkpoint(group)
+    entered, release = asyncio.Event(), asyncio.Event()
+    response = _response(calls=[ToolCall("must-not-send", "echo", {"session_id": "A", "text": "unsafe"})])
+    planner = AsyncMock(return_value=response)
+    group._service.chat_loop_step = planner
+    group._build_references = AsyncMock(return_value=[])
+    target = group.tools if boundary == "refresh" else group._service if boundary == "chat_loop_step" else group
+    original = target.__getattribute__(boundary)
+
+    async def blocked(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(target, boundary, blocked)
+    await group.register_message(members["A"], _incoming("A", "first", at=True), _chat_history("first"))
+    await asyncio.wait_for(entered.wait(), 2)
+    save = group._store.save
+    monkeypatch.setattr(group._store, "save", Mock(side_effect=OSError("入站保存失败")))
+    with pytest.raises(OSError):
+        await group.register_message(members["B"], _incoming("B", "new", at=True), _chat_history("new", "B"))
+    monkeypatch.setattr(group._store, "save", save)
+    release.set()
+    await asyncio.wait_for(asyncio.shield(group._worker), 2)
+    assert group.state == "failed"
+    assert planner.await_count == (1 if boundary == "chat_loop_step" else 0)
+    assert not trace
+    assert group._considered == {}
+    await group.stop()
 
 
 @pytest.mark.asyncio

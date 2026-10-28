@@ -431,6 +431,8 @@ class ToolRegistry:
                     tool_name=invocation.tool_name,
                     success=False,
                     error_message=error_message,
+                    # Provider 抛错可能发生在副作用之后，失败不能证明动作未执行。
+                    metadata={"execution_state": "unknown"},
                 )
 
         return ToolExecutionResult(
