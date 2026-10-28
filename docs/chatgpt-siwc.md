@@ -69,6 +69,6 @@ maibot chatgpt logout --directory /path/to/instance --account personal
 
 ## 验证状态
 
-新增测试覆盖生成签名身份的验证、模拟回调、PKCE、账号绑定、刷新锁和恢复、撤销失败，以及通过 OpenAI SDK + MockTransport 验证的 Responses 成功/错误/断流和禁止计费后备。没有使用真实账号进行授权、模型发现或推理验证；此预览仍需维护者和自愿测试者检查官方账号资格、工具兼容性及真实使用体验。
+新增测试覆盖生成签名身份的验证、模拟回调、PKCE、账号绑定、刷新锁和恢复、撤销失败，以及通过 OpenAI SDK + MockTransport 验证的 Responses 成功/错误/断流和禁止计费后备。2026-10-28 已在 macOS 上经用户明确同意，完成独立官方授权、模型目录发现和 `gpt-6.1-terra` 的真实 Responses 流式文本验证；MaiBot 客户端收到了完成终态。图片理解、真实工具往返、更多账号/工作区和其他系统尚待验证；此预览仍需维护者与自愿测试者继续检查。
 
 官方参考：[登录](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)、[账号与会话](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions)、[模型与推理](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)、[预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。
