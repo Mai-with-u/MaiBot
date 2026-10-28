@@ -64,6 +64,19 @@ async def test_five_valid_segments_preserve_original_separators(splitter, separa
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("comma", ["，", ","])
+async def test_leading_model_whitespace_is_kept_in_original_separator(splitter, comma):
+    module, client = splitter
+    text = f"Hello{comma} world"
+    client.generate_response.return_value = SimpleNamespace(response=json.dumps([f"Hello{comma}", " world"]))
+
+    result = await module.split_text_with_llm(text)
+
+    assert result == [("Hello", comma + " "), ("world", "")]
+    assert "".join(content + separator for content, separator in result) == text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("comma", ["，", ","])
 async def test_deleted_comma_is_rejected(splitter, comma):
     module, client = splitter
     text = f"Alice 先确认时间{comma}Bob 再准备资料。"
