@@ -1,7 +1,7 @@
 """Focus 共享思考的跨会话路由、等待、并发输入和恢复边界。"""
 
 from base64 import b64decode
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
 from types import SimpleNamespace
 from typing import Any, List
@@ -19,6 +19,15 @@ from src.common.data_models.mai_message_data_model import MessageInfo, UserInfo
 from src.common.data_models.message_component_data_model import MessageSequence, TextComponent
 from src.config.config import global_config
 from src.core.tooling import ToolExecutionResult, ToolRegistry, ToolSpec
+from src.llm_models.exceptions import (
+    EmptyResponseException,
+    LLMTaskTimeoutError,
+    ModelAttemptFailed,
+    NetworkConnectionError,
+    ReqAbortException,
+    RespNotOkException,
+    RespParseException,
+)
 from src.llm_models.payload_content.tool_option import ToolCall
 from src.llm_models.payload_content.context_item import (
     ContextImagePart,
@@ -27,7 +36,7 @@ from src.llm_models.payload_content.context_item import (
     ReasoningRepresentation,
     RoleType,
 )
-from src.maisaka.chat_loop_service import ChatResponse
+from src.maisaka.chat_loop_service import ChatResponse, MaisakaChatLoopService
 from src.maisaka.context.messages import (
     InternalContextMessage,
     ModelOutputContextMessage,
@@ -45,6 +54,7 @@ from src.maisaka.focus.manager import FocusModeManager
 from src.maisaka.focus.tools import routed_schema
 from src.maisaka.reasoning_engine import MaisakaReasoningEngine
 from src.maisaka.runtime import MaisakaHeartFlowChatting
+from src.services.llm_service import LLMServiceClient
 
 
 def _history(text: str) -> InternalContextMessage:
@@ -247,6 +257,568 @@ def setup_group(monkeypatch, tmp_path):
     monkeypatch.setattr(global_config.capabilities, "tool_result_condense", False)
     monkeypatch.setattr(group_module, "emit_flow_step", AsyncMock())
     return group, members, trace
+
+
+@pytest.fixture
+def planner_failure_group(setup_group, monkeypatch):
+    """运行真实 Focus/Planner 方法，只替换模型请求、插件 hook 和外部参考资料。"""
+    group, members, trace = setup_group
+    group.checkpoint = lambda: FocusGroupRuntime.checkpoint(group)
+    group._build_references = AsyncMock(return_value=[])
+
+    async def hook(name, **kwargs):
+        return SimpleNamespace(kwargs=kwargs)
+
+    manager = SimpleNamespace(invoke_hook=AsyncMock(side_effect=hook), supervisors=[])
+    monkeypatch.setattr(MaisakaChatLoopService, "_get_runtime_manager", staticmethod(lambda: manager))
+    monkeypatch.setattr(global_config.debug, "save_maisaka_reasoning", False)
+    request = AsyncMock(side_effect=NetworkConnectionError("mock final model failure"))
+    monkeypatch.setattr(LLMServiceClient, "generate_response_with_context", request)
+    return group, members, trace, request
+
+
+async def _register_user(group, member, message_id, *, at=True):
+    message = _incoming(member.session_id, message_id, at=at)
+    history = SessionBackedMessage.from_session_message(
+        message,
+        raw_message=message.raw_message,
+        visible_text=message_id,
+    )
+    await group.register_message(member, message, history)
+    return message
+
+
+@pytest.mark.asyncio
+async def test_final_planner_failure_stops_member_stage(planner_failure_group):
+    """最终 Planner 故障应让共享组及所有成员进入失败停止状态。"""
+    group, members, _, request = planner_failure_group
+    try:
+        await _register_user(group, members["A"], "first")
+        await asyncio.wait_for(asyncio.shield(group._worker), 2)
+        assert request.await_count == 1
+        assert group.state == "failed"
+        assert all(member._agent_state == member._STATE_STOP for member in members.values())
+    finally:
+        await group.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        NetworkConnectionError("offline"),
+        EmptyResponseException(),
+        LLMTaskTimeoutError("planner", "mock", 1),
+        RespNotOkException(429),
+        RespNotOkException(503),
+    ],
+)
+async def test_new_user_recovers_failed_planner_without_queue_retry(planner_failure_group, error):
+    """仅故障后新用户输入可唤醒 Worker，而非重试旧输入。"""
+    group, members, trace, request = planner_failure_group
+    request.side_effect = error
+    completed = asyncio.Event()
+
+    async def success(*args, **kwargs):
+        completed.set()
+        return LLMResponseResult.from_portable_output(response="new turn")
+
+    try:
+        await _register_user(group, members["A"], "first")
+        old_worker = group._worker
+        await asyncio.wait_for(asyncio.shield(old_worker), 2)
+        group._ensure_worker()
+        group._event.set()
+        await asyncio.sleep(0)
+        assert group._worker is old_worker
+        assert request.await_count == 1
+        request.side_effect = success
+        await _register_user(group, members["B"], "fresh")
+        assert group._worker is not old_worker
+        await asyncio.wait_for(completed.wait(), 2)
+        assert not group._failed
+        assert any(message.processed_plain_text == "fresh" for message in group.history)
+        assert request.await_count == 2
+        assert not trace
+    finally:
+        await group.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError("synthetic final planner failure"),
+        ValueError("invalid request"),
+        TimeoutError("unclassified timeout"),
+        RespNotOkException(400),
+        RespNotOkException(401),
+        RespParseException(),
+        ReqAbortException(),
+        ModelAttemptFailed("unknown attempts"),
+    ],
+)
+async def test_unclassified_planner_failures_remain_fail_stop(planner_failure_group, error):
+    """无法确认来源或安全性的异常必须维持停止。"""
+    group, members, trace, request = planner_failure_group
+    request.side_effect = error
+    try:
+        await _register_user(group, members["A"], "first")
+        worker = group._worker
+        await asyncio.wait_for(asyncio.shield(worker), 2)
+        await _register_user(group, members["B"], "fresh")
+        assert group._worker is worker
+        assert group._failed
+        assert group._recovery_token is None
+        assert all(member._agent_state == "stop" for member in members.values())
+        assert request.await_count == 1
+        assert not trace
+        assert any(
+            message.processed_plain_text == "fresh"
+            for entry in group._store.load()["entries"]
+            for message in entry.messages
+        )
+    finally:
+        await group.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["hook", "references", "tool_refresh"])
+async def test_model_exception_outside_request_is_not_recoverable(planner_failure_group, boundary):
+    """仅真实模型请求边界的异常有恢复资格。"""
+    group, members, _, request = planner_failure_group
+    failure = AsyncMock(side_effect=NetworkConnectionError("not the planner request"))
+    if boundary == "hook":
+        group._service._get_runtime_manager().invoke_hook = failure
+    elif boundary == "references":
+        group._build_references = failure
+    else:
+        group.tools.refresh = failure
+    try:
+        await _register_user(group, members["A"], "first")
+        worker = group._worker
+        await asyncio.wait_for(asyncio.shield(worker), 2)
+        await _register_user(group, members["B"], "fresh")
+        assert group._worker is worker
+        assert group._recovery_token is None
+        failure.assert_awaited_once()
+        request.assert_not_awaited()
+    finally:
+        await group.stop()
+
+
+@pytest.mark.asyncio
+async def test_plugin_appearing_during_request_build_blocks_recovery(planner_failure_group, monkeypatch):
+    """请求构建期间加载过插件也不能忽略可能的副作用。"""
+    group, members, _, request = planner_failure_group
+    manager = group._service._get_runtime_manager()
+    build = group._service._build_request_messages
+
+    def plugin_loaded(*args, **kwargs):
+        manager.supervisors = [object()]
+        return build(*args, **kwargs)
+
+    async def plugin_unloaded(name, **kwargs):
+        manager.supervisors.clear()
+        return SimpleNamespace(kwargs=kwargs)
+
+    monkeypatch.setattr(group._service, "_build_request_messages", plugin_loaded)
+    manager.invoke_hook.side_effect = plugin_unloaded
+    try:
+        await _register_user(group, members["A"], "first")
+        worker = group._worker
+        await asyncio.wait_for(asyncio.shield(worker), 2)
+        assert not manager.supervisors
+        await _register_user(group, members["B"], "fresh")
+        assert group._worker is worker
+        assert group._recovery_token is None
+        assert request.await_count == 1
+    finally:
+        await group.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("signal", ["duplicate", "delayed", "internal", "no_history", "proactive", "sent"])
+async def test_only_new_user_input_can_consume_recovery(planner_failure_group, signal):
+    """机器人、重复、旧时间戳和内部消息不能消费恢复令牌。"""
+    group, members, _, request = planner_failure_group
+    try:
+        old_message = await _register_user(group, members["A"], "first")
+        worker = group._worker
+        await asyncio.wait_for(asyncio.shield(worker), 2)
+        token = group._recovery_token
+        assert token is not None
+        message = _incoming("B", "not-new-user", at=True)
+        history = SessionBackedMessage.from_session_message(
+            message,
+            raw_message=message.raw_message,
+            visible_text="not-new-user",
+        )
+        if signal == "duplicate":
+            await group.register_message(members["A"], old_message, _chat_history("first"))
+        elif signal == "proactive":
+            group.register_proactive(members["B"], message)
+            await group._checkpoint_task
+        elif signal == "sent":
+            group.record_sent_message(members["B"], history)
+            await group._checkpoint_task
+        else:
+            if signal == "delayed":
+                message.received_at = datetime.fromtimestamp(token[1]) - timedelta(seconds=1)
+            elif signal == "internal":
+                history.source_kind = "guided_reply"
+            else:
+                history = None
+            await group.register_message(members["B"], message, history)
+        group._ensure_worker()
+        assert group._worker is worker
+        assert group._failed
+        assert request.await_count == 1
+    finally:
+        await group.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalidation", ["generation", "member", "remove", "cancel", "stop", "wait", "hydrate"])
+async def test_recovery_token_cannot_cross_lifecycle_change(planner_failure_group, invalidation):
+    """成员变化、取消或控制事件会撤销先前恢复资格。"""
+    group, members, _, request = planner_failure_group
+    try:
+        await _register_user(group, members["A"], "first")
+        await asyncio.wait_for(asyncio.shield(group._worker), 2)
+        assert group._recovery_token is not None
+        if invalidation == "generation":
+            group._generation += 1
+        elif invalidation == "member":
+            members["A"]._running = False
+        elif invalidation == "remove":
+            await group.remove_member("A", clear_context=False)
+        elif invalidation == "cancel":
+            await group._cancel_worker()
+        elif invalidation == "stop":
+            await group.stop()
+        elif invalidation == "wait":
+            group.execute_control("wait", {"seconds": 60}, "A")
+        else:
+            group._hydrating = True
+        worker = group._worker
+        await _register_user(group, members["B"], "fresh")
+        assert group._worker is worker
+        assert group._failed
+        assert request.await_count == 1
+    finally:
+        await group.stop()
+
+
+@pytest.mark.asyncio
+async def test_recovery_waits_for_checkpoint_and_concurrent_inputs_start_one_worker(planner_failure_group):
+    """输入必须持久化后恢复，且并发只创建一个 Worker。"""
+    group, members, _, request = planner_failure_group
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    completed = asyncio.Event()
+
+    async def checkpoint():
+        entered.set()
+        await release.wait()
+        await FocusGroupRuntime.checkpoint(group)
+
+    async def success(*args, **kwargs):
+        completed.set()
+        return LLMResponseResult.from_portable_output(response="new turn")
+
+    tasks = []
+    try:
+        await _register_user(group, members["A"], "first")
+        old_worker = group._worker
+        await asyncio.wait_for(asyncio.shield(old_worker), 2)
+        group.checkpoint = checkpoint
+        tasks = [asyncio.create_task(_register_user(group, members[sid], "fresh-" + sid, at=False)) for sid in members]
+        await asyncio.wait_for(entered.wait(), 2)
+        assert group._failed
+        assert group._worker is old_worker
+        request.side_effect = success
+        release.set()
+        await asyncio.gather(*tasks)
+        new_worker = group._worker
+        assert new_worker is not old_worker
+        assert group._recovery_token is None
+        await asyncio.wait_for(completed.wait(), 2)
+        group._ensure_worker()
+        assert group._worker is new_worker
+        assert request.await_count == 2
+        assert all(any(message.processed_plain_text == "fresh-" + sid for message in group.history) for sid in members)
+    finally:
+        release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await group.stop()
+
+
+@pytest.mark.asyncio
+async def test_recovery_first_request_includes_new_user_before_debounce(planner_failure_group):
+    """防抖期间的新消息必须进入恢复后的首轮 Planner 请求。"""
+    group, members, _, request = planner_failure_group
+    completed = asyncio.Event()
+    observed = []
+
+    async def success(context_factory, *args, **kwargs):
+        observed.extend(context_factory(None))
+        completed.set()
+        return LLMResponseResult.from_portable_output(response="new turn")
+
+    try:
+        await _register_user(group, members["A"], "old-input")
+        await asyncio.wait_for(asyncio.shield(group._worker), 2)
+        members["B"]._wait_for_message_quiet_period = asyncio.Event().wait
+        request.side_effect = success
+        await _register_user(group, members["B"], "fresh-during-debounce", at=False)
+        await asyncio.wait_for(completed.wait(), 2)
+        assert any("fresh-during-debounce" in context_module.items.get_item_text(item) for item in observed)
+        assert request.await_count == 2
+    finally:
+        await group.stop()
+
+
+@pytest.mark.asyncio
+async def test_pending_input_at_failure_cannot_restart_worker(planner_failure_group):
+    """失败前排队的输入不可自行唤醒已结束的 Worker。"""
+    group, members, _, request = planner_failure_group
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def failure(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        raise NetworkConnectionError("final request failed")
+
+    request.side_effect = failure
+    try:
+        await _register_user(group, members["A"], "first")
+        worker = group._worker
+        await asyncio.wait_for(entered.wait(), 2)
+        await _register_user(group, members["B"], "old-pending")
+        release.set()
+        await asyncio.wait_for(asyncio.shield(worker), 2)
+        await asyncio.gather(*group._debounce_tasks.values())
+        group._ensure_worker()
+        group._event.set()
+        assert group._worker is worker
+        assert request.await_count == 1
+        assert group._pending["B"][0].messages[0].processed_plain_text == "old-pending"
+        assert any(
+            message.processed_plain_text == "old-pending"
+            for entry in group._store.load()["entries"]
+            for message in entry.messages
+        )
+    finally:
+        release.set()
+        await group.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_new_input_checkpoint_failure_revokes_recovery(planner_failure_group, monkeypatch, cancel):
+    """新输入的 checkpoint 保存失败必须撤销恢复资格。"""
+    group, members, _, request = planner_failure_group
+    entered = asyncio.Event()
+    task = None
+    original_save = group._store.save
+
+    async def interrupted_checkpoint():
+        entered.set()
+        await FocusGroupRuntime.checkpoint(group)
+
+    try:
+        await _register_user(group, members["A"], "first")
+        worker = group._worker
+        await asyncio.wait_for(asyncio.shield(worker), 2)
+        if cancel:
+            await group._checkpoint_lock.acquire()
+            group.checkpoint = interrupted_checkpoint
+            task = asyncio.create_task(_register_user(group, members["B"], "cancelled"))
+            await asyncio.wait_for(entered.wait(), 2)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            group._checkpoint_lock.release()
+            group.checkpoint = lambda: FocusGroupRuntime.checkpoint(group)
+        else:
+            monkeypatch.setattr(group._store, "save", Mock(side_effect=OSError("disk full")))
+            with pytest.raises(OSError, match="disk full"):
+                await _register_user(group, members["B"], "unsaved")
+            monkeypatch.setattr(group._store, "save", original_save)
+        await _register_user(group, members["B"], "fresh")
+        assert group._worker is worker
+        assert group._failed
+        assert group._recovery_token is None
+        assert request.await_count == 1
+    finally:
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            if group._checkpoint_lock.locked():
+                group._checkpoint_lock.release()
+        group.checkpoint = lambda: FocusGroupRuntime.checkpoint(group)
+        monkeypatch.setattr(group._store, "save", original_save)
+        await group.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["stage", "checkpoint", "cancel_checkpoint"])
+async def test_worker_terminal_failure_cannot_be_recovered(planner_failure_group, failure):
+    """旧 Worker 的异常结束或取消不允许被错误恢复。"""
+    group, members, _, request = planner_failure_group
+    entered = asyncio.Event()
+
+    def stage(name, *args, **kwargs):
+        if name == "失败":
+            raise RuntimeError("failed stage update")
+
+    async def checkpoint():
+        if group._failed:
+            if failure == "cancel_checkpoint":
+                entered.set()
+                await asyncio.Event().wait()
+            raise OSError("failed terminal checkpoint")
+        await FocusGroupRuntime.checkpoint(group)
+
+    try:
+        if failure == "stage":
+            members["A"]._update_stage_status.side_effect = stage
+        else:
+            group.checkpoint = checkpoint
+        await _register_user(group, members["A"], "first")
+        worker = group._worker
+        if failure == "cancel_checkpoint":
+            await asyncio.wait_for(entered.wait(), 2)
+            worker.cancel()
+        expected = {"stage": RuntimeError, "checkpoint": OSError, "cancel_checkpoint": asyncio.CancelledError}[failure]
+        with pytest.raises(expected):
+            await asyncio.wait_for(asyncio.shield(worker), 2)
+        group.checkpoint = lambda: FocusGroupRuntime.checkpoint(group)
+        await _register_user(group, members["B"], "fresh")
+        assert group._failed
+        assert group._worker is worker
+        assert all(member._agent_state == "stop" for member in members.values())
+        assert request.await_count == 1
+    finally:
+        group.checkpoint = lambda: FocusGroupRuntime.checkpoint(group)
+        await group.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["success", "unknown", "partial_send", "exception"])
+async def test_tool_history_blocks_final_planner_recovery_even_after_compaction(
+    planner_failure_group,
+    monkeypatch,
+    outcome,
+):
+    """执行过工具后即使压缩历史，也不得误判可安全恢复。"""
+    group, members, trace, request = planner_failure_group
+
+    async def tool(invocation, context=None):
+        trace.append(invocation)
+        if outcome == "exception":
+            raise NetworkConnectionError("tool failure is not a Planner failure")
+        return ToolExecutionResult(
+            tool_name=invocation.tool_name,
+            success=outcome == "success",
+            content="tool outcome",
+            metadata={"execution_state": outcome},
+        )
+
+    for member in members.values():
+        member.provider.invoke = tool
+    request.side_effect = [
+        LLMResponseResult.from_portable_output(
+            response="tool",
+            tool_calls=[ToolCall("call", "echo", {"session_id": "A", "text": "action"})],
+        ),
+        NetworkConnectionError("final Planner failed after tool"),
+    ]
+    try:
+        await _register_user(group, members["A"], "first")
+        worker = group._worker
+        await asyncio.wait_for(asyncio.shield(worker), 2)
+        assert request.await_count == 2
+        assert len(trace) == 1
+        assert group._active_batch is None
+        # 真正压掉包含工具结果的旧段；不能仅靠当前 history 检测未知副作用。
+        group.entries.extend(FocusContextEntry([_chat_history(str(i))], {"A"}) for i in range(6))
+        monkeypatch.setattr(global_config.chat, "max_context_size", 2)
+        monkeypatch.setattr(group_module, "build_context_summary", AsyncMock(return_value=None))
+        _seed_planner_snapshot(group)
+        await group._compact()
+        assert not any(isinstance(message, ToolResultMessage) for message in group.history)
+        await _register_user(group, members["B"], "fresh")
+        assert group._worker is worker
+        assert group._failed
+        assert group._recovery_token is None
+        assert request.await_count == 2
+        assert len(trace) == 1
+    finally:
+        await group.stop()
+
+
+@pytest.mark.asyncio
+async def test_active_tool_batch_cannot_grant_recovery(planner_failure_group):
+    """未闭合工具批次和副作用未明时禁止恢复。"""
+    group, members, _, request = planner_failure_group
+    group._active_batch = FocusContextEntry([], {"A"})
+    try:
+        await _register_user(group, members["A"], "first")
+        worker = group._worker
+        await asyncio.wait_for(asyncio.shield(worker), 2)
+        await _register_user(group, members["B"], "fresh")
+        assert group._worker is worker
+        assert group._recovery_token is None
+        assert request.await_count == 1
+    finally:
+        await group.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("version", [1, 2])
+async def test_restore_keeps_baseline_format_contract_and_disables_recovery(
+    planner_failure_group,
+    monkeypatch,
+    version,
+):
+    """恢复旧格式检查点不迁移数据且不授予新增恢复资格。"""
+    from src.maisaka.focus.manager import focus_mode_manager
+
+    group, members, _, request = planner_failure_group
+    # 旧格式可能只剩摘要，无法从当前工具条目证明过去没有副作用。
+    summary = ContextSummaryMessage(content="prior compacted history", timestamp=datetime.now())
+    group.entries = [FocusContextEntry([summary], {"A"}, 1)]
+    group._sequence = 1
+    await group.checkpoint()
+    payload = json.loads(group._store.path.read_text(encoding="utf-8"))
+    payload["version"] = version
+    group._store.path.write_text(json.dumps(payload), encoding="utf-8")
+    original = group._store.path.read_bytes()
+    monkeypatch.setattr(group_module.chat_manager, "get_existing_session_by_session_id", lambda sid: object())
+    monkeypatch.setattr(focus_mode_manager, "is_enabled_for_session", lambda sid: True)
+    monkeypatch.setattr(focus_mode_manager, "get_focus_scope_key", lambda sid: group.scope_id)
+    if version == 2:
+        # 官方基线仅接受顶层 V1；不能把拒绝未知版本改成隐式迁移或覆盖。
+        with pytest.raises(ValueError, match="版本"):
+            await group.restore()
+        assert group._store.path.read_bytes() == original
+        return
+    try:
+        await group.restore()
+        assert group.history[0].content == summary.content
+        assert group._store.path.read_bytes() == original
+        await _register_user(group, members["A"], "first")
+        worker = group._worker
+        await asyncio.wait_for(asyncio.shield(worker), 2)
+        await _register_user(group, members["B"], "fresh")
+        assert group._worker is worker
+        assert group._recovery_token is None
+        assert request.await_count == 1
+    finally:
+        await group.stop()
 
 
 @pytest.mark.asyncio
