@@ -1,4 +1,4 @@
-import type { APIProvider } from './types'
+import type { APIProvider, FormErrors } from './types'
 
 /**
  * 清理后的 provider：可空数值字段已归一为 undefined，缺省字段不会向下发
@@ -34,9 +34,9 @@ export const validateProvider = (
   editingIndex: number | null = null
 ): {
   isValid: boolean
-  errors: { name?: string; base_url?: string; api_key?: string }
+  errors: FormErrors
 } => {
-  const errors: { name?: string; base_url?: string; api_key?: string } = {}
+  const errors: FormErrors = {}
 
   if (!provider) {
     return { isValid: false, errors: { name: '提供商数据为空' } }
@@ -61,8 +61,14 @@ export const validateProvider = (
   if (!provider.base_url?.trim()) {
     errors.base_url = '请输入基础 URL'
   }
-  if (!provider.api_key?.trim()) {
+  if (provider.client_type !== 'chatgpt' && !provider.api_key?.trim()) {
     errors.api_key = '请输入 API Key'
+  }
+  if (provider.client_type === 'chatgpt' && provider.api_key?.trim()) {
+    errors.api_key = 'ChatGPT 使用独立登录，不应填写 API Key 或令牌'
+  }
+  if (provider.client_type === 'chatgpt' && !/^[A-Za-z0-9_-]{1,64}$/.test(provider.chatgpt_account ?? 'default')) {
+    errors.chatgpt_account = '账号标签只允许 1–64 个字母、数字、下划线或短横线'
   }
 
   return {

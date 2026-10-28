@@ -29,9 +29,9 @@ describe('getProviderTestStatus', () => {
     })
   })
 
-  it('网络可达且 API Key 有效时返回带延迟的成功状态', () => {
+  it('网络可达且 授权有效时返回带延迟的成功状态', () => {
     expect(getProviderTestStatus(makeResult({ latency_ms: 123 }), false)).toEqual({
-      description: '连接正常：网络可访问，API Key 有效，延迟 123ms',
+      description: '连接正常：网络可访问，授权有效，延迟 123ms',
       className: 'border-green-500',
     })
   })
@@ -42,11 +42,11 @@ describe('getProviderTestStatus', () => {
     ).toEqual({ description: '401 未授权', className: 'border-red-500' })
   })
 
-  it('API Key 有效性未知时返回可访问状态', () => {
+  it('授权有效性未知时返回可访问状态', () => {
     expect(
       getProviderTestStatus(makeResult({ api_key_valid: null, latency_ms: 88 }), false)
     ).toEqual({
-      description: '可访问：网络连接正常，但未确认 API Key 是否有效，延迟 88ms',
+      description: '可访问：网络连接正常，但未确认授权是否有效，延迟 88ms',
       className: 'border-blue-500',
     })
   })

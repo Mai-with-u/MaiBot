@@ -1455,6 +1455,11 @@ class LLMOrchestrator:
                 raise e
 
             except ModelAttemptFailed as e:
+                if api_provider.client_type == "chatgpt":
+                    self._adjust_model_usage(model_info.name, usage_penalty_delta=-1)
+                    raise ReqAbortException(
+                        "ChatGPT 请求失败或超时；未自动切换账号或其他计费提供商。"
+                    ) from None
                 last_exception = e.original_exception or e
                 if not has_request_snapshot(last_exception):
                     snapshot_path = await asyncio.to_thread(

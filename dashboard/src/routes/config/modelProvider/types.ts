@@ -8,6 +8,7 @@ export interface APIProvider {
   base_url: string
   api_key: string
   client_type: string
+  chatgpt_account?: string
   default_headers?: Record<string, string>
   max_retry?: number | null
   timeout?: number | null
@@ -33,4 +34,5 @@ export interface FormErrors {
   name?: string
   base_url?: string
   api_key?: string
+  chatgpt_account?: string
 }

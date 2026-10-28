@@ -4,8 +4,9 @@
 并且不会回退到 OpenAI 兼容接口使用的 Bearer 认证方式。
 """
 
-import importlib
 import base64
+import importlib
+import ipaddress
 import struct
 import sys
 import zlib
@@ -37,6 +38,13 @@ def load_model_routes(monkeypatch: pytest.MonkeyPatch):
 
     dependencies_module.__dict__["require_auth"] = require_auth
     monkeypatch.setitem(sys.modules, "src.webui.dependencies", dependencies_module)
+
+    # HTTP is mocked in these unit tests; DNS must not depend on the host network either.
+    # Keep the real URL validation, but resolve its test hostnames to a public address.
+    monkeypatch.setattr(
+        "src.common.network_security._resolve_ip_addresses",
+        lambda hostname, port: {ipaddress.ip_address("93.184.216.34")},
+    )
 
     sys.modules.pop("src.webui.routers.model", None)
     return importlib.import_module("src.webui.routers.model")
@@ -294,6 +302,7 @@ async def test_test_model_capability_requires_tool_call_and_keeps_visual_flag(
         """
 [[models]]
 name = "vision-model"
+model_type = "llm"
 model_identifier = "vision-model-id"
 api_provider = "Fake"
 visual = true
@@ -350,6 +359,7 @@ async def test_test_model_capability_tests_embedding_task_model_via_embedding(
         """
 [[models]]
 name = "embed-model"
+model_type = "embedding"
 model_identifier = "embed-model-id"
 api_provider = "Fake"
 
@@ -400,11 +410,11 @@ async def test_test_model_capability_tests_visual_embedding_via_images(
     model_identifier: str,
     image_task_config: str,
 ) -> None:
-    """模型标识或图片嵌入任务应让模型测试发送图片，而非走对话或文本嵌入。"""
+    """显式图片嵌入类型应发送图片，不依赖模型名或任务配置推断类型。"""
     model_routes = load_model_routes(monkeypatch)
     (tmp_path / "model_config.toml").write_text(
         f'[[models]]\nname = "my-vector"\nmodel_identifier = "{model_identifier}"\n'
-        f'api_provider = "Fake"\n\n{image_task_config}',
+        f'api_provider = "Fake"\nmodel_type = "image_embedding"\n\n{image_task_config}',
         encoding="utf-8",
     )
     monkeypatch.setattr(model_routes, "CONFIG_DIR", str(tmp_path))
@@ -449,6 +459,7 @@ async def test_test_model_capability_keeps_chat_test_for_non_embedding_model(
         """
 [[models]]
 name = "chat-model"
+model_type = "llm"
 model_identifier = "chat-model-id"
 api_provider = "Fake"
 
@@ -514,3 +525,40 @@ def test_model_test_image_base64_is_valid_png(monkeypatch: pytest.MonkeyPatch) -
     assert chunk_types[0] == b"IHDR"
     assert b"IDAT" in chunk_types
     assert chunk_types[-1] == b"IEND"
+
+
+@pytest.mark.asyncio
+async def test_chatgpt_catalog_uses_saved_label_and_ignores_endpoint_overrides(monkeypatch):
+    from src.common.chatgpt_auth import ChatGPTAccountStore
+
+    model_routes = load_model_routes(monkeypatch)
+    monkeypatch.setattr(model_routes, "_get_provider_config", lambda name: {
+        "client_type": "chatgpt", "chatgpt_account": "work", "api_key": "",
+    })
+    labels = []
+
+    def catalog(self, label):
+        labels.append(label)
+        return [{"id": "test-model", "name": "Test"}]
+
+    async def wrong_transport(**kwargs):
+        raise AssertionError("ChatGPT must not use the API-key transport")
+
+    monkeypatch.setattr(ChatGPTAccountStore, "models", catalog)
+    monkeypatch.setattr(model_routes, "_fetch_models_from_provider", wrong_transport)
+    result = await model_routes.get_provider_models(
+        provider_name="ChatGPT", parser="gemini", endpoint="https://example.invalid/override",
+    )
+    assert labels == ["work"]
+    assert result["models"] == [{"id": "test-model", "name": "Test"}]
+
+
+@pytest.mark.asyncio
+async def test_chatgpt_url_probe_rejects_api_key_input(monkeypatch):
+    model_routes = load_model_routes(monkeypatch)
+    with pytest.raises(model_routes.HTTPException) as error:
+        await model_routes.get_models_by_url(
+            base_url="https://example.invalid", api_key="test-only", client_type="chatgpt",
+        )
+    assert error.value.status_code == 400
+    assert "test-only" not in error.value.detail

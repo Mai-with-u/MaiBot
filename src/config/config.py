@@ -75,7 +75,7 @@ MODEL_CONFIG_PATH: Path = (CONFIG_DIR / "model_config.toml").resolve().absolute(
 LEGACY_ENV_PATH: Path = (PROJECT_ROOT / ".env").resolve().absolute()
 MMC_VERSION: str = read_project_version(PROJECT_ROOT)
 CONFIG_VERSION: str = "8.15.62"
-MODEL_CONFIG_VERSION: str = "1.17.25"
+MODEL_CONFIG_VERSION: str = "1.17.26"
 
 logger = get_logger("config")
 

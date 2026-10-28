@@ -68,7 +68,10 @@ class APIProvider(ConfigBase):
             "x-widget": "select",
         },
     )
-    """客户端类型。内置支持 openai、openai_responses 和 gemini，也可由插件扩展。"""
+    """客户端类型。内置支持 openai、openai_responses、chatgpt 和 gemini，也可由插件扩展。"""
+
+    chatgpt_account: str = Field(default="default", pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    """chatgpt 客户端使用的本机账号注册标签；令牌由 maibot chatgpt login 单独管理。"""
 
     auth_type: str = Field(
         default=OpenAICompatibleAuthType.BEARER.value,
@@ -196,7 +199,20 @@ class APIProvider(ConfigBase):
         Raises:
             ValueError: 当配置项缺失或组合不合法时抛出。
         """
-        if self.auth_type != OpenAICompatibleAuthType.NONE and not self.api_key:
+        if self.client_type == "chatgpt":
+            if self.base_url.rstrip("/") != "https://api.openai.com/v1":
+                raise ValueError("ChatGPT SIWC 仅允许 https://api.openai.com/v1")
+            if (
+                self.api_key
+                or self.auth_type != "bearer"
+                or self.default_headers
+                or self.default_query
+                or self.organization
+                or self.project
+                or self.model_list_endpoint != "/models"
+            ):
+                raise ValueError("ChatGPT SIWC 使用独立本机授权；不要填写 API Key、自定义鉴权或请求头。")
+        elif self.auth_type != OpenAICompatibleAuthType.NONE and not self.api_key:
             raise ValueError(t("config.api_key_empty"))
         if not self.base_url and self.client_type != "gemini":  # TODO: 允许gemini使用base_url
             raise ValueError(t("config.api_base_url_empty"))
