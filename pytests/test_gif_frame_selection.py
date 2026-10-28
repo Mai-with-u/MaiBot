@@ -4,6 +4,7 @@ from io import BytesIO
 from typing import List
 
 from PIL import Image
+import numpy as np
 import pytest
 
 from src.common.utils.utils_image import ImageUtils
@@ -46,3 +47,42 @@ def test_gif_frame_selection_uses_strict_mse_threshold() -> None:
         assert image.size == (400, 200)
         assert image.getpixel((100, 100)) == (0, 0, 0)
         assert all(abs(channel - 31) <= 2 for channel in image.getpixel((300, 100)))
+
+
+def test_gif_frame_selection_skips_frame_at_exact_mse_threshold() -> None:
+    result = ImageUtils.gif_2_static_image(_build_gif([0, 30]), similarity_threshold=900.0)
+
+    with Image.open(BytesIO(result)) as image:
+        assert image.size == (200, 200)
+        assert image.getpixel((100, 100)) == (0, 0, 0)
+
+
+def test_gif_frame_selection_keeps_frame_just_above_mse_threshold() -> None:
+    pixels = np.full((128, 128, 3), 31, dtype=np.uint8)
+    pixels.reshape(-1)[:30399] = 32
+    pixels.reshape(-1)[30399:30413] = 33
+    buffer = BytesIO()
+    Image.new("RGB", (128, 128)).save(
+        buffer,
+        format="GIF",
+        save_all=True,
+        append_images=[Image.fromarray(pixels)],
+        duration=100,
+        loop=0,
+    )
+    gif_bytes = buffer.getvalue()
+
+    with Image.open(BytesIO(gif_bytes)) as gif:
+        assert gif.n_frames == 2
+        assert not np.any(np.array(gif.convert("RGB")))
+        gif.seek(1)
+        decoded_pixels = np.array(gif.convert("RGB"))
+        np.testing.assert_array_equal(decoded_pixels, pixels)
+        # MSE = 1000 + 1 / 49152，float32 均值会将其舍入为 1000。
+        assert np.sum(decoded_pixels.astype(np.float32) ** 2, dtype=np.float64) == 49152001
+
+    result = ImageUtils.gif_2_static_image(gif_bytes)
+
+    with Image.open(BytesIO(result)) as image:
+        assert image.format == "JPEG"
+        assert image.size == (400, 200)

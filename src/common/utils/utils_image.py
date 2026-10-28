@@ -109,7 +109,7 @@ class ImageUtils:
                     last_selected_frame_np = frame_np
                 else:
                     # 计算和上一张选中帧的差异（均方误差 MSE）
-                    mse = np.mean((frame_np - last_selected_frame_np) ** 2)
+                    mse = np.mean((frame_np - last_selected_frame_np) ** 2, dtype=np.float64)
                     # logger.debug(f"帧 {frame_index} 与上一选中帧的 MSE: {mse}")
                     if mse > similarity_threshold:
                         selected_frames.append(frame_rgb.copy())
