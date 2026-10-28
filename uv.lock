@@ -979,10 +979,10 @@ dev = [
 [[package]]
 name = "maibot-dashboard"
 version = "1.9.10"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/27/58/75d5e4f4e8c6e457100fa71919d41175fcef72269110b1ceef1f44b8fbdd/maibot_dashboard-1.9.10.tar.gz", hash = "sha256:c52beee42ef74835d6e3ddbf98f34ae951b1bd20a89f7493de032a8669954504", size = 3112101, upload-time = "2026-10-27T16:18:35.25Z" }
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/27/58/75d5e4f4e8c6e457100fa71919d41175fcef72269110b1ceef1f44b8fbdd/maibot_dashboard-1.9.10.tar.gz", hash = "sha256:c52beee42ef74835d6e3ddbf98f34ae951b1bd20a89f7493de032a8669954504" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f8/54/6e97f2202c143dacbbe29b8f985867fb09d8c2be29ec157c23570618d47b/maibot_dashboard-1.9.10-py3-none-any.whl", hash = "sha256:517701131855d1effb917f8f0c361ce7a74e13647f98ca72ea54deb5c5c09981", size = 3197490, upload-time = "2026-10-27T16:18:33.722Z" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/f8/54/6e97f2202c143dacbbe29b8f985867fb09d8c2be29ec157c23570618d47b/maibot_dashboard-1.9.10-py3-none-any.whl", hash = "sha256:517701131855d1effb917f8f0c361ce7a74e13647f98ca72ea54deb5c5c09981" },
 ]
 
 [[package]]
