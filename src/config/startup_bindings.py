@@ -99,8 +99,11 @@ def _collapse_hosts_covered_by_wildcards(hosts: list[str]) -> list[str]:
 
 
 def _apply_http_host_env(address: BindAddress) -> BindAddress:
-    # HTTP_HOST 可追加容器或其他部署所需的监听地址。
-    http_host_env = _parse_host_env(os.getenv("HTTP_HOST"))
+    # HTTP_HOST 优先；兼容只更新镜像、仍使用 WEBUI_HOST 的 Docker 部署。
+    env_value = os.getenv("HTTP_HOST")
+    if env_value is None:
+        env_value = os.getenv("WEBUI_HOST")
+    http_host_env = _parse_host_env(env_value)
     if http_host_env is None:
         return address
     return BindAddress(hosts=_merge_host(address.hosts, http_host_env), port=address.port)

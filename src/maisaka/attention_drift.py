@@ -1,4 +1,4 @@
-from typing import Mapping
+from typing import Mapping, Optional
 
 from src.common.i18n import get_locale
 from src.config.config import global_config
@@ -69,10 +69,16 @@ def _localized_text(texts: Mapping[str, str]) -> str:
     return texts.get(locale, texts["zh-CN"])
 
 
-def build_attention_drift_prompt_block() -> str:
-    """构建注意力漂移模式的 prompt 注入块。"""
+def build_attention_drift_prompt_block(is_group_chat: Optional[bool]) -> str:
+    """按聊天类型构建注意力漂移模式的 prompt 注入块；未知类型不注入。"""
 
-    config = global_config.experimental.attention_drift
+    if is_group_chat is None:
+        return ""
+    config = (
+        global_config.experimental.group_attention_drift
+        if is_group_chat
+        else global_config.experimental.private_attention_drift
+    )
     if not config.enabled:
         return ""
 

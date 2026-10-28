@@ -27,7 +27,7 @@ PAGE_HEIGHT = 460
 PAGE = Path(__file__).parent / "web" / "index.html"
 
 # 页面就绪前先放行桌宠所在的大致区域，与 index.html 中 #pet 的位置一致。
-INITIAL_HIT_RECT = [47.0, PAGE_HEIGHT - 4 - 107 - 8.0, 166.0, 123.0, 42.0]
+INITIAL_HIT_RECT = [47.0, PAGE_HEIGHT - 4 - 107 - 24.0, 166.0, 139.0, 42.0]
 # 默认位置距工作区右边缘的留白（CSS 像素）。
 EDGE_MARGIN = 8
 

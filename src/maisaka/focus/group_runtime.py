@@ -764,6 +764,7 @@ class FocusGroupRuntime:
             planner_selected_history_count=response.selected_history_count,
             planner_tool_count=response.tool_count,
             planner_content=response.content or "",
+            planner_reasoning=response.reasoning,
             planner_tool_calls=list(response.tool_calls),
             planner_native_tool_calls=list(response.native_tool_calls),
             planner_prompt_tokens=response.prompt_tokens,

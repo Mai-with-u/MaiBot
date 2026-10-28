@@ -31,7 +31,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: dashboard
-        run: bun install --frozen-lockfile
+        run: bash ../.github/scripts/install_dashboard_dependencies.sh
 
       - name: Type check
         working-directory: dashboard

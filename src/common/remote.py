@@ -9,6 +9,7 @@ from src.common.logger import get_logger
 from src.config.config import global_config, MMC_VERSION
 from src.manager.async_task_manager import AsyncTask
 from src.manager.local_store_manager import local_storage
+from src.services.telemetry_platform_service import collect_telemetry_adapters
 from src.services.telemetry_stats_service import build_telemetry_stats_payload, clamp_period_start
 
 logger = get_logger("remote")
@@ -140,7 +141,7 @@ class TelemetryHeartBeatTask(AsyncTask):
                 async with session.post(
                     f"{self.server_url}/stat/client_heartbeat",
                     headers=headers,
-                    json=self.info_dict,
+                    json={**self.info_dict, "adapters": collect_telemetry_adapters()},
                     timeout=aiohttp.ClientTimeout(total=5),  # 设置超时时间为5秒
                 ) as response:
                     logger.debug(f"Response status: {response.status}")
@@ -277,12 +278,16 @@ class TelemetryStatsUploadTask(AsyncTask):
         if period_end <= period_start:
             return
 
-        payload = build_telemetry_stats_payload(
+        # 驱动快照在主循环采集，数据库聚合在线程池执行，避免阻塞心跳和消息处理。
+        adapters = collect_telemetry_adapters()
+        payload = await asyncio.to_thread(
+            build_telemetry_stats_payload,
             client_uuid=self.client_uuid,
             period_start=period_start,
             period_end=period_end,
             truncated=truncated,
             client_info=self.info_dict,
         )
+        payload["adapters"] = adapters
         if await self._send_stats_payload(payload):
             self._save_cursor(period_end)

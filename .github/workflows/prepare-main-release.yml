@@ -93,7 +93,7 @@ jobs:
         if: steps.dashboard-version.outputs.published == 'false'
         working-directory: dashboard
         run: |
-          bun install --frozen-lockfile
+          bash ../.github/scripts/install_dashboard_dependencies.sh
           bun run build
 
       - name: Prepare Dashboard package

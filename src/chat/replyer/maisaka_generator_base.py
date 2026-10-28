@@ -553,7 +553,8 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         except Exception:
             system_prompt = "你是一个友好的 AI 助手，请根据聊天记录自然回复。"
 
-        if attention_drift := build_attention_drift_prompt_block():
+        is_group_chat, _ = get_chat_type_and_target_info(session_id)
+        if attention_drift := build_attention_drift_prompt_block(is_group_chat):
             system_prompt += f"\n\n{attention_drift}"
         return system_prompt
 

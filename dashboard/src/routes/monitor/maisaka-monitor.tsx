@@ -1227,8 +1227,17 @@ function PlannerFinalizedCard({
         </div>
 
         {/* 没有文本内容时只保留标题行，后面直接跟工具 */}
+        {planner?.reasoning?.trim() && (
+          <div className="border-muted-foreground/30 bg-muted/40 space-y-1 rounded-r-md border-l-2 px-3 py-2">
+            <div className="text-muted-foreground text-xs font-medium">模型思考</div>
+            <CollapsibleText text={planner.reasoning} maxLines={6} className="text-muted-foreground text-xs" />
+          </div>
+        )}
         {planner?.content && (
-          <CollapsibleText text={planner.content} maxLines={6} className="text-foreground/90" />
+          <div className="space-y-1">
+            {planner.reasoning?.trim() && <div className="text-xs font-medium">正文</div>}
+            <CollapsibleText text={planner.content} maxLines={6} className="text-foreground/90" />
+          </div>
         )}
       </div>
     </TraceStep>

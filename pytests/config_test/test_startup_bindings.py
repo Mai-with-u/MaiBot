@@ -2,6 +2,8 @@ from pathlib import Path
 from types import SimpleNamespace
 import sys
 
+import pytest
+
 from src.config.legacy_migration import migrate_legacy_bind_env_to_bot_config_dict
 from src.config.startup_bindings import (
     BindAddress,
@@ -53,6 +55,32 @@ def test_resolve_bindings_prefer_initialized_global_config(monkeypatch):
 
     assert resolve_main_bind_address() == BindAddress(hosts=["10.0.0.2"], port=32000)
     assert resolve_http_bind_address() == BindAddress(hosts=["10.0.0.3"], port=32001)
+
+
+@pytest.mark.parametrize(
+    ("http_host", "expected_hosts"),
+    [
+        (None, ["0.0.0.0", "::1"]),
+        ("192.168.1.8", ["127.0.0.1", "::1", "192.168.1.8"]),
+        ("", ["127.0.0.1", "::1"]),
+    ],
+)
+def test_http_host_env_precedence_for_bootstrap_and_loaded_config(tmp_path, monkeypatch, http_host, expected_hosts):
+    monkeypatch.setenv("WEBUI_HOST", "0.0.0.0")
+    if http_host is None:
+        monkeypatch.delenv("HTTP_HOST", raising=False)
+    else:
+        monkeypatch.setenv("HTTP_HOST", http_host)
+
+    expected = BindAddress(hosts=expected_hosts, port=8001)
+    assert get_startup_http_bind_address(tmp_path / "missing.toml") == expected
+
+    http_config = SimpleNamespace(host=["127.0.0.1", "::1"], port=8001)
+    monkeypatch.setitem(
+        sys.modules, "src.config.config", SimpleNamespace(global_config=SimpleNamespace(http=http_config))
+    )
+    assert resolve_http_bind_address() == expected
+    assert http_config.host == ["127.0.0.1", "::1"]
 
 
 def test_legacy_env_bindings_are_migrated_when_fields_missing_or_default(monkeypatch):

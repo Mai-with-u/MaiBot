@@ -65,6 +65,9 @@
 [data-conversation-item='true']:last-child {
   border-bottom: 0;
 }
+[data-conversation-hover-anchor='true']:not(:last-child) > [data-conversation-item='true'] {
+  border-bottom: 1px dotted var(--surface-line);
+}
 [data-conversation-item='true'][data-selected='true'] {
   background: var(--list-selected-bg);
   color: var(--list-selected-ink);

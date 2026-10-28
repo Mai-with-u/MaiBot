@@ -245,6 +245,7 @@ export interface MaisakaNativeToolCall {
 
 export interface MaisakaPlannerBlock {
   content: string | null
+  reasoning?: string | null
   model_name?: string | null
   tool_calls: MaisakaToolCall[]
   native_tool_calls?: MaisakaNativeToolCall[]

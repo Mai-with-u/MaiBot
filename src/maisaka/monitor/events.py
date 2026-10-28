@@ -336,11 +336,13 @@ def _serialize_planner_block(
     prompt_cache_hit_tokens: Optional[int] = None,
     prompt_cache_miss_tokens: Optional[int] = None,
     model_name: Optional[str] = None,
+    reasoning: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """标准化 planner 结果区块。"""
 
     if (
         content is None
+        and reasoning is None
         and tool_calls is None
         and native_tool_calls is None
         and prompt_tokens is None
@@ -354,6 +356,7 @@ def _serialize_planner_block(
 
     return {
         "content": content,
+        "reasoning": reasoning,
         "model_name": model_name,
         "tool_calls": _serialize_tool_calls_from_objects(list(tool_calls or [])),
         "native_tool_calls": _serialize_native_tool_calls(list(native_tool_calls or [])),
@@ -632,6 +635,7 @@ async def emit_planner_snapshot(
     planner_selected_history_count: Optional[int],
     planner_tool_count: Optional[int],
     planner_content: Optional[str],
+    planner_reasoning: Optional[str] = None,
     planner_tool_calls: Optional[List[Any]],
     planner_native_tool_calls: Optional[List[Any]],
     planner_prompt_tokens: Optional[int],
@@ -684,6 +688,7 @@ async def emit_planner_snapshot(
             planner_prompt_cache_hit_tokens,
             planner_prompt_cache_miss_tokens,
             model_name=planner_model_name,
+            reasoning=planner_reasoning,
         ),
         "tools": _serialize_tool_results(list(tools or [])),
         "active_tool_call_id": active_tool_call_id,

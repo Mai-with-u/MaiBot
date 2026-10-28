@@ -30,17 +30,22 @@ def test_replyer_keeps_using_personality(monkeypatch: pytest.MonkeyPatch) -> Non
     assert "这段行为风格只应提供给 Planner。" not in prompt
 
 
+@pytest.mark.parametrize("is_group_chat", [True, False])
 @pytest.mark.parametrize("prompt_name", ["maisaka_chat", "maisaka_chat_focus", "maisaka_replyer"])
 @pytest.mark.parametrize(
     ("locale", "heading"),
     [("zh-CN", "注意力漂移风格："), ("en-US", "Attention drift style:"), ("ja-JP", "注意ドリフトスタイル：")],
 )
 def test_attention_drift_follows_live_config_in_planner_and_replyer(
-    monkeypatch: pytest.MonkeyPatch, prompt_name: str, locale: str, heading: str
+    monkeypatch: pytest.MonkeyPatch, prompt_name: str, locale: str, heading: str, is_group_chat: bool
 ) -> None:
     if prompt_name == "maisaka_replyer":
         generator = object.__new__(BaseMaisakaReplyGenerator)
         generator._load_prompt = load_prompt
+        monkeypatch.setattr(
+            "src.chat.replyer.maisaka_generator_base.get_chat_type_and_target_info",
+            lambda session_id: (is_group_chat, None),
+        )
         monkeypatch.setattr(generator, "_build_group_chat_attention_block", lambda session_id: "")
         monkeypatch.setattr(generator, "_build_personality_prompt", lambda: "测试人设")
         monkeypatch.setattr(generator, "_select_reply_style", lambda: "测试回复风格")
@@ -48,19 +53,30 @@ def test_attention_drift_follows_live_config_in_planner_and_replyer(
         def build_prompt() -> str:
             return generator._build_system_prompt(None, "测试回复原因", stream_id="test-session")
     else:
-        service = MaisakaChatLoopService()
+        service = MaisakaChatLoopService(is_group_chat=is_group_chat)
         monkeypatch.setattr(service, "_get_chat_prompt_name", lambda: prompt_name)
         build_prompt = service._build_chat_system_prompt
 
+    config = (
+        global_config.experimental.group_attention_drift
+        if is_group_chat
+        else global_config.experimental.private_attention_drift
+    )
+    other_config = (
+        global_config.experimental.private_attention_drift
+        if is_group_chat
+        else global_config.experimental.group_attention_drift
+    )
+    monkeypatch.setattr(other_config, "enabled", True)
     with use_locale(locale):
-        monkeypatch.setattr(global_config.experimental.attention_drift, "enabled", False)
+        monkeypatch.setattr(config, "enabled", False)
         baseline = build_prompt()
         if prompt_name == "maisaka_replyer":
             assert "测试人设" in baseline
         assert heading not in baseline
-        monkeypatch.setattr(global_config.experimental.attention_drift, "enabled", True)
+        monkeypatch.setattr(config, "enabled", True)
         assert build_prompt().count(heading) == 1
-        monkeypatch.setattr(global_config.experimental.attention_drift, "enabled", False)
+        monkeypatch.setattr(config, "enabled", False)
         assert build_prompt() == baseline
 
 

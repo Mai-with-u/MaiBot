@@ -33,7 +33,7 @@ jobs:
       - name: Build dashboard
         working-directory: dashboard
         run: |
-          bun install --frozen-lockfile
+          bash ../.github/scripts/install_dashboard_dependencies.sh
           bun run build
 
       - name: Prepare dist package

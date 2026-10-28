@@ -774,7 +774,7 @@ class MaisakaChatLoopService:
             **self.build_prompt_template_context(tools_section, bot_nickname_notice),
         )
         # 每轮读取实验开关，普通与专注模式共用同一份本地化风格指令。
-        if attention_drift := build_attention_drift_prompt_block():
+        if attention_drift := build_attention_drift_prompt_block(self._is_group_chat):
             system_prompt += f"\n\n{attention_drift}"
         return system_prompt
 

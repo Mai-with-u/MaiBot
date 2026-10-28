@@ -961,6 +961,18 @@ class AttentionDriftConfig(ConfigBase):
     """控制短句、吐槽、语气词等短反应在漂移风格中的使用方式。"""
 
 
+class GroupAttentionDriftConfig(AttentionDriftConfig):
+    """群聊注意力漂移配置。"""
+
+    __ui_label__ = "群聊注意力漂移"
+
+
+class PrivateAttentionDriftConfig(AttentionDriftConfig):
+    """私聊注意力漂移配置。"""
+
+    __ui_label__ = "私聊注意力漂移"
+
+
 class CapabilitiesConfig(ConfigBase):
     """能力配置类"""
 
@@ -1055,8 +1067,29 @@ class ExperimentalConfig(ConfigBase):
     )
     """仅作用于普通聊天模式：Planner 不调用工具而输出正文时，将正文作为自然语言指导启动一次回复；篇幅、表达偏好和插件相关需求直接写入指导，引用与附件由并行回复补充器编排。关闭时使用原有 reply 工具。切换从下一轮思考生效，Focus 不受影响。"""
 
-    attention_drift: AttentionDriftConfig = Field(default_factory=AttentionDriftConfig)
-    """注意力漂移实验模式；让麦麦在群聊/私聊中表现出更活跃的联想和轻微话题漂移。"""
+    group_attention_drift: GroupAttentionDriftConfig = Field(
+        default_factory=GroupAttentionDriftConfig,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "群聊注意力漂移",
+                "en_US": "Group chat attention drift",
+                "ja_JP": "グループチャットの注意ドリフト",
+            },
+        },
+    )
+    """群聊注意力漂移实验模式；让麦麦在群聊中表现出更活跃的联想和轻微话题漂移。"""
+
+    private_attention_drift: PrivateAttentionDriftConfig = Field(
+        default_factory=PrivateAttentionDriftConfig,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "私聊注意力漂移",
+                "en_US": "Private chat attention drift",
+                "ja_JP": "個人チャットの注意ドリフト",
+            },
+        },
+    )
+    """私聊注意力漂移实验模式；让麦麦在私聊中表现出更活跃的联想和轻微话题漂移。"""
 
     focus_mode: bool = Field(
         default=False,

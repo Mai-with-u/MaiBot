@@ -455,8 +455,6 @@ function collectRoutePaths(node: RouteNode): string[] {
   return [...currentPath, ...childPaths]
 }
 
-export const registeredRoutePaths = new Set(collectRoutePaths(routeTree as RouteNode))
-
 // 创建路由器
 export const router = createRouter({
   routeTree,
@@ -468,6 +466,9 @@ export const router = createRouter({
   defaultPreload: 'intent',
   defaultPreloadDelay: 80,
 })
+
+// createRouter 初始化后才有 fullPath，搜索索引必须在此时采集已注册路径。
+export const registeredRoutePaths = new Set(collectRoutePaths(routeTree as RouteNode))
 
 // 类型声明
 declare module '@tanstack/react-router' {

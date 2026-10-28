@@ -221,12 +221,10 @@ describe('router 路由表', () => {
     }
   })
 
-  it('registeredRoutePaths 现状为空集合（特征化已知缺陷）', () => {
-    // 现状缺陷：registeredRoutePaths 在 createRouter 初始化 fullPath 之前采集，
-    // 采集时各路由的 fullPath 均为 undefined，因此集合恒为空。
-    // search-dialog 依赖该集合过滤菜单路由，当前会把所有路由项过滤掉。
-    // 此测试锁定现状，修复源码后应同步更新为断言完整路径集合。
-    expect(registeredRoutePaths.size).toBe(0)
+  it('registeredRoutePaths 包含初始化后的完整路由路径', () => {
+    // 搜索依赖完整路径过滤菜单，必须在 createRouter 初始化 fullPath 后采集。
+    expect(registeredRoutePaths).toEqual(new Set(Object.keys(router.routesByPath)))
+    expect(registeredRoutePaths.has('/config/bot')).toBe(true)
   })
 
   it('配置模板详情路由导出且路径带 packId 参数', () => {

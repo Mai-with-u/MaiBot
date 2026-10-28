@@ -40,6 +40,8 @@
     touch-action: none;
   }
   .dragging #pet { cursor: grabbing; }
+  /* 叶子摆动和跳跃会超出 SVG 视口，允许绘制到外层预留的动画区域。 */
+  #builtin-pet { overflow: visible; }
 
   #float { animation: bob 3.2s ease-in-out infinite; }
   .dragging #float { animation-play-state: paused; }
@@ -297,14 +299,15 @@
     <defs>
       <path id="body-shape" d="M39 96C39 68 72 48 128 44C174 41 201 64 201 93C201 124 172 141 127 141C74 141 39 124 39 96Z"/>
       <clipPath id="body-clip"><use href="#body-shape"/></clipPath>
-      <path id="lobe" d="M0 0C-6 -6 -17 -13 -17 -22C-17 -29 -11 -33 -6 -31C-3 -30 -1 -28 0 -25C1 -28 3 -30 6 -31C11 -33 17 -29 17 -22C17 -13 6 -6 0 0Z"/>
+      <path id="tail-leaf" d="M-4 0C-13 -4 -18 -18 -14 -29C-10 -43 10 -43 14 -29C18 -18 13 -4 4 0Q0 2 -4 0Z"/>
     </defs>
     <g id="float">
       <g id="squash">
-        <g id="tail" fill="var(--leaf)">
-          <use href="#lobe" transform="translate(42 92) scale(1.02 1.22)"/>
-          <use href="#lobe" transform="translate(45 94) rotate(-90) scale(1.02 1.2)"/>
-          <use href="#lobe" transform="translate(42 96) rotate(180) scale(1.02 1.18)"/>
+        <g id="tail" fill="var(--leaf)" stroke="var(--ink)" stroke-width="1.9" stroke-linejoin="round">
+          <use href="#tail-leaf" transform="translate(44 96)"/>
+          <use href="#tail-leaf" transform="translate(44 96) rotate(90)"/>
+          <use href="#tail-leaf" transform="translate(44 96) rotate(180)"/>
+          <use href="#tail-leaf" transform="translate(44 96) rotate(270)"/>
         </g>
         <g id="sprout" stroke="var(--ink)" stroke-width="1.7" stroke-linejoin="round" fill="var(--leaf)">
           <path d="M143.6 47C144.2 38 143.8 29 143.4 21H148.4C148.6 29 149.2 38 149 47Z"/>
@@ -331,10 +334,10 @@
             <path d="M128.5 88Q135 79.5 141.5 88"/>
             <path d="M171 88Q177.5 79.5 184 88"/>
           </g>
-          <ellipse id="mouth" cx="157.3" cy="112" rx="4.2" ry="3" fill="#b8473f"/>
+          <ellipse id="mouth" cx="157.3" cy="108" rx="4.2" ry="3" fill="#b8473f"/>
           <g fill="var(--ink)" stroke="var(--ink)" stroke-width="1.4" stroke-linejoin="round">
-            <path d="M148.6 106H166L162.1 111H152.5Z"/>
-            <path id="jaw" d="M152.5 111.4H162.1L157.3 116.4Z"/>
+            <path d="M148.6 102H166L162.1 107H152.5Z"/>
+            <path id="jaw" d="M152.5 107.4H162.1L157.3 112.4Z"/>
           </g>
         </g>
       </g>
@@ -425,7 +428,9 @@
           x += box[0]; y += box[1]; w = box[2]; h = box[3];
         }
         if (!w || !h) continue;
-        rects.push([x - pad, y - pad, w + pad * 2, h + pad * 2, Number(el.dataset.hit) + pad]);
+        // 桌宠跳跃时顶部超出布局盒，原生窗口区域也要保留这段绘制空间。
+        const topPad = el === pet ? 24 : pad;
+        rects.push([x - pad, y - topPad, w + pad * 2, h + topPad + pad, Number(el.dataset.hit) + pad]);
       }
       api.region(rects, devicePixelRatio);
     });

@@ -1434,6 +1434,7 @@ class PluginRunnerSupervisor:
         plugin_id: str,
         gateway_entry: Any,
         route_key: RouteKey,
+        protocol: Optional[str] = None,
     ) -> None:
         """为消息网关注册驱动并绑定发送/接收路由。
 
@@ -1441,6 +1442,7 @@ class PluginRunnerSupervisor:
             plugin_id: 插件 ID。
             gateway_entry: 消息网关组件条目。
             route_key: 当前链路对应的路由键。
+            protocol: 当前连接上报的协议或实现名称；未提供时使用网关声明。
         """
 
         await self._unregister_message_gateway_driver(plugin_id, gateway_entry.name)
@@ -1456,10 +1458,10 @@ class PluginRunnerSupervisor:
             supports_send=bool(gateway_entry.supports_send),
             supervisor=self,
             metadata={
-                "protocol": gateway_entry.protocol,
                 "route_type": gateway_entry.route_type,
                 "plugin_type": str(getattr(self._registered_plugins.get(plugin_id), "plugin_type", "") or "").strip(),
                 **gateway_entry.metadata,
+                "protocol": gateway_entry.protocol if protocol is None else protocol,
             },
         )
 
@@ -1479,10 +1481,10 @@ class PluginRunnerSupervisor:
         binding_metadata = {
             "plugin_id": plugin_id,
             "gateway_name": gateway_entry.name,
-            "protocol": gateway_entry.protocol,
             "route_type": gateway_entry.route_type,
             "plugin_type": str(getattr(self._registered_plugins.get(plugin_id), "plugin_type", "") or "").strip(),
             **gateway_entry.metadata,
+            "protocol": gateway_entry.protocol if protocol is None else protocol,
         }
         binding = RouteBinding(
             route_key=route_key,
@@ -1737,6 +1739,9 @@ class PluginRunnerSupervisor:
 
         try:
             if payload.ready:
+                protocol = payload.metadata.get("protocol")
+                if "protocol" in payload.metadata and not isinstance(protocol, str):
+                    raise ValueError("消息网关运行时 protocol 必须是字符串")
                 route_key = self._build_message_gateway_route_key(gateway_entry, payload)
                 if route_key.account_id:
                     await asyncio.to_thread(
@@ -1750,7 +1755,9 @@ class PluginRunnerSupervisor:
                         ),
                         BOT_ACCOUNT_SOURCE_READY,
                     )
-                await self._register_message_gateway_driver(envelope.plugin_id, gateway_entry, route_key)
+                await self._register_message_gateway_driver(
+                    envelope.plugin_id, gateway_entry, route_key, protocol=protocol
+                )
             else:
                 await self._unregister_message_gateway_driver(envelope.plugin_id, gateway_entry.name)
             runtime_state, route_key_dict = self._apply_message_gateway_state(
@@ -1848,8 +1855,8 @@ class PluginRunnerSupervisor:
                 metadata={
                     "plugin_id": envelope.plugin_id,
                     "gateway_name": gateway_entry.name,
-                    "protocol": gateway_entry.protocol,
                     **payload.route_metadata,
+                    "protocol": runtime_state.metadata.get("protocol", gateway_entry.protocol),
                 },
             )
         )
