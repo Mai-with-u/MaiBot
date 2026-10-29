@@ -12,7 +12,7 @@ import json
 
 import pytest
 from json_repair import repair_json
-from sqlalchemy import Column, DateTime, Text, update
+from sqlalchemy import Column, DateTime, Text, event, text, update
 from sqlmodel import Field, Session, SQLModel, col, create_engine, select
 
 
@@ -41,15 +41,18 @@ class Messages(SQLModel, table=True):
 
 
 def evidence(*ids):
+    """Serialize evidence groups exactly as the learner persists them."""
     return json.dumps([[{"platform": "qq", "message_id": item}] for item in ids], ensure_ascii=False)
 
 
 def get_row(engine, item_id):
+    """Load the committed jargon row in a fresh database session."""
     with Session(engine) as session:
         return session.get(Jargon, item_id)
 
 
 def append_group(engine, item_id, message_id):
+    """Commit one additional evidence group through another session."""
     with Session(engine) as session:
         item = session.get(Jargon, item_id)
         groups = json.loads(item.evidence_messages or "[]")
@@ -60,6 +63,7 @@ def append_group(engine, item_id, message_id):
 
 @pytest.fixture
 def env(tmp_path):
+    """Build a real SQLite fixture while isolating external model dependencies."""
     engine = create_engine(
         f"sqlite:///{(tmp_path / 'jargon.sqlite').as_posix()}",
         connect_args={"check_same_thread": False},
@@ -93,6 +97,7 @@ def env(tmp_path):
         "asyncio": asyncio,
         "json": json,
         "select": select,
+        "text": text,
         "update": update,
         "col": col,
         "Jargon": Jargon,
@@ -175,6 +180,7 @@ GOOD3 = '{"is_similar": false}'
     ids=["stage1-empty", "stage1-invalid", "stage2-empty", "stage2-invalid", "stage3-empty", "stage3-invalid"],
 )
 async def test_failed_inference_keeps_evidence(env, replies):
+    """Model/parse failures at any stage must retain the evidence snapshot."""
     env.responses(*replies)
     await env.miner.infer_meaning(env.obj())
     row = get_row(env.engine, env.ident)
@@ -185,6 +191,7 @@ async def test_failed_inference_keeps_evidence(env, replies):
 
 @pytest.mark.asyncio
 async def test_aborted_hook_keeps_evidence(env):
+    """A finalization hook abort must leave persisted evidence untouched."""
     env.responses(GOOD1, GOOD2, GOOD3)
     env.hooks.invoke_hook = AsyncMock(return_value=SimpleNamespace(aborted=True, kwargs={}))
     await env.miner.infer_meaning(env.obj())
@@ -193,6 +200,7 @@ async def test_aborted_hook_keeps_evidence(env):
 
 @pytest.mark.asyncio
 async def test_success_consumes_only_the_initial_snapshot(env):
+    """A successful inference consumes its committed evidence snapshot."""
     env.responses(GOOD1, GOOD2, GOOD3)
     await env.miner.infer_meaning(env.obj())
     row = get_row(env.engine, env.ident)
@@ -202,6 +210,7 @@ async def test_success_consumes_only_the_initial_snapshot(env):
 
 @pytest.mark.asyncio
 async def test_no_info_updates_threshold_and_consumes_after_commit(env):
+    """A legitimate no-info decision consumes evidence only after commit."""
     env.responses('{"no_info": true, "meaning": ""}')
     await env.miner.infer_meaning(env.obj())
     row = get_row(env.engine, env.ident)
@@ -210,6 +219,7 @@ async def test_no_info_updates_threshold_and_consumes_after_commit(env):
 
 @pytest.mark.asyncio
 async def test_concurrent_append_survives_success(env):
+    """Evidence added during LLM inference survives successful consumption."""
     replies = [GOOD1, GOOD2, GOOD3]
 
     async def model(*args, **kwargs):
@@ -226,6 +236,8 @@ async def test_concurrent_append_survives_success(env):
 
 @pytest.mark.asyncio
 async def test_concurrent_append_survives_failure(env):
+    """New evidence and old evidence both survive a failed inference."""
+
     async def model(*args, **kwargs):
         append_group(env.engine, env.ident, "new")
         return SimpleNamespace(response="")
@@ -237,6 +249,7 @@ async def test_concurrent_append_survives_failure(env):
 
 @pytest.mark.asyncio
 async def test_final_persist_error_does_not_consume(env, monkeypatch):
+    """Rejected final writes cannot consume evidence."""
     env.responses(GOOD1, GOOD2, GOOD3)
 
     def fail(*args, **kwargs):
@@ -250,6 +263,7 @@ async def test_final_persist_error_does_not_consume(env, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_manual_jargon_is_unchanged(env):
+    """Manual jargon entries remain unaffected by automatic inference."""
     with Session(env.engine) as session:
         row = session.get(Jargon, env.ident)
         row.created_by = "MANUAL"
@@ -263,6 +277,7 @@ async def test_manual_jargon_is_unchanged(env):
 async def test_stale_extraction_object_cannot_resurrect_consumed_groups(env):
     # Keep an ORM snapshot from before inference, then append new evidence
     # through the real extraction writer after the inference has committed.
+    """A stale candidate cannot resurrect evidence already consumed."""
     stale = get_row(env.engine, env.ident)
     env.responses(GOOD1, GOOD2, GOOD3)
     await env.miner.infer_meaning(env.obj())
@@ -278,6 +293,7 @@ async def test_stale_extraction_object_cannot_resurrect_consumed_groups(env):
 async def test_no_valid_text_prunes_only_invalid_snapshot(env):
     # The old group cannot be learned, while a new group arrives just after
     # evidence loading and before the invalid-group cleanup transaction.
+    """Pruning invalid evidence never removes newly written valid evidence."""
     with Session(env.engine) as session:
         msg = session.exec(select(Messages).where(Messages.message_id == "old")).first()
         msg.raw_content = b""
@@ -298,6 +314,8 @@ async def test_no_valid_text_prunes_only_invalid_snapshot(env):
 
 @pytest.mark.asyncio
 async def test_original_inference_remains_inert_if_record_turns_manual(env):
+    """Changing an entry to manual prevents old inference writeback."""
+
     async def switched_to_manual(*args, **kwargs):
         with Session(env.engine) as session:
             row = session.get(Jargon, env.ident)
@@ -314,6 +332,7 @@ async def test_original_inference_remains_inert_if_record_turns_manual(env):
 
 @pytest.mark.asyncio
 async def test_real_commit_exception_rolls_back_result_and_evidence(env):
+    """Transaction failures roll back result and evidence together."""
     env.responses(GOOD1, GOOD2, GOOD3)
     original_session = env.ns["get_db_session"]
 
@@ -338,6 +357,7 @@ async def test_real_commit_exception_rolls_back_result_and_evidence(env):
 
 @pytest.mark.asyncio
 async def test_stale_inference_does_not_overwrite_newer_decision(env):
+    """A stale inference cannot overwrite a newer completed decision."""
     pending = env.obj()
     with Session(env.engine) as session:
         row = session.get(Jargon, env.ident)
@@ -355,6 +375,7 @@ async def test_stale_inference_does_not_overwrite_newer_decision(env):
 
 @pytest.mark.asyncio
 async def test_model_exception_keeps_evidence(env):
+    """An exception from the model must preserve the source evidence."""
     env.ns["llm_inference"].generate_response = AsyncMock(side_effect=RuntimeError("synthetic upstream API failure"))
     with pytest.raises(RuntimeError, match="synthetic upstream"):
         await env.miner.infer_meaning(env.obj())
@@ -364,6 +385,8 @@ async def test_model_exception_keeps_evidence(env):
 
 @pytest.mark.asyncio
 async def test_no_info_does_not_consume_newly_added_evidence(env):
+    """No-info must leave concurrent new evidence available."""
+
     async def model(*args, **kwargs):
         append_group(env.engine, env.ident, "new")
         return SimpleNamespace(response='{"no_info": true, "meaning": ""}')
@@ -373,3 +396,80 @@ async def test_no_info_does_not_consume_newly_added_evidence(env):
     row = get_row(env.engine, env.ident)
     assert row.evidence_messages == evidence("new")
     assert row.last_inference_count == 4
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response", ['{"no_info": false}', '{"no_info": false, "meaning": ""}', '{"meaning": ""}'])
+async def test_invalid_empty_meaning_is_not_consumed(env, response):
+    """An invalid, non-no_info inference must not advance or consume its evidence."""
+    env.responses(response)
+    await env.miner.infer_meaning(env.obj())
+    row = get_row(env.engine, env.ident)
+    assert row.evidence_messages == evidence("old")
+    assert row.last_inference_count == 0
+    assert row.meaning == ""
+
+
+@pytest.mark.parametrize("is_complete", [False, True])
+def test_extraction_refreshes_inference_fields_before_threshold_gate(env, is_complete):
+    """After an atomic update, threshold checks use current committed fields."""
+    stale = get_row(env.engine, env.ident)
+    assert stale.last_inference_count == 0
+    with Session(env.engine) as session:
+        current = session.get(Jargon, env.ident)
+        current.last_inference_count = 4
+        current.is_complete = is_complete
+        current.count = 4
+        session.commit()
+    assert env.miner._update_jargon(stale, [[{"platform": "qq", "message_id": "new"}]]) is True
+    assert stale.count == 5
+    assert stale.last_inference_count == 4
+    assert stale.is_complete is is_complete
+    assert env.miner._should_infer_meaning(stale) is False
+
+
+def test_parallel_candidate_merges_do_not_drop_evidence_or_counts(env):
+    """More than five concurrent candidates must all survive competing writes."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    workers = 6
+    barrier = Barrier(workers)
+
+    def persist(n):
+        stale = get_row(env.engine, env.ident)
+        barrier.wait(timeout=5)
+        return env.miner._update_jargon(stale, [[{"platform": "qq", "message_id": f"parallel-{n}"}]])
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        assert list(executor.map(persist, range(workers))) == [True] * workers
+
+    row = get_row(env.engine, env.ident)
+    assert row.count == 4 + workers
+    groups = json.loads(row.evidence_messages)
+    assert {group[0]["message_id"] for group in groups} == {"old", *(f"parallel-{i}" for i in range(workers))}
+    assert json.loads(row.session_id_dict) == {"test-session": workers}
+
+
+@pytest.mark.asyncio
+async def test_append_between_inference_select_and_update_preserved(env):
+    """If evidence changes after SELECT but before CAS UPDATE, retry must preserve it."""
+    injected = False
+
+    def inject(conn, cursor, statement, params, context, many):
+        nonlocal injected
+        if injected or not statement.lstrip().upper().startswith("UPDATE JARGONS"):
+            return
+        injected = True
+        append_group(env.engine, env.ident, "new")
+
+    event.listen(env.engine, "before_cursor_execute", inject)
+    try:
+        env.responses(GOOD1, GOOD2, GOOD3)
+        await env.miner.infer_meaning(env.obj())
+    finally:
+        event.remove(env.engine, "before_cursor_execute", inject)
+    assert injected
+    row = get_row(env.engine, env.ident)
+    assert row.meaning == "useful"
+    assert row.evidence_messages == evidence("new")

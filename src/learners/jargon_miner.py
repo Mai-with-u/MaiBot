@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict
 
 from json_repair import repair_json
-from sqlalchemy import update
+from sqlalchemy import text, update
 from sqlmodel import col, select
 
 import asyncio
@@ -504,7 +504,10 @@ class JargonMiner:
 
         no_info = inference1.get("no_info", False)
         meaning1: str = inference1.get("meaning", "").strip()
-        if no_info or not meaning1:
+        if not no_info and not meaning1:
+            logger.warning(f"jargon {content} 推断1缺少 meaning 且未标记 no_info=true，保留本轮证据")
+            return
+        if no_info:
             logger.info(f"jargon {content} 推断1表示信息不足无法推断，放弃本次推断，待下次更新")
             # 更新最后一次判定的count值，避免在同一阈值重复尝试
             jargon_obj.last_inference_count = jargon_obj.count or 0
@@ -808,57 +811,48 @@ class JargonMiner:
         return merged_groups
 
     def _update_jargon(self, db_jargon: Jargon, evidence_message_groups: List[JargonEvidenceMessageGroup]) -> bool:
-        """从数据库最新状态合并新增证据与次数；遇到并发修改时重新读取。"""
+        """在 SQLite 写事务内读取并合并候选，避免并发 CAS 耗尽后丢弃证据。
+
+        BEGIN IMMEDIATE 在读取旧引用前获得 SQLite 写锁。其他写入方必须等到
+        本事务提交后才能修改该行，因此没有有限次乐观重试导致候选丢失的路径。
+        """
         if db_jargon.created_by == JargonCreatedBy.MANUAL or db_jargon.id is None:
             return False
 
         try:
-            for _attempt in range(5):
-                with get_db_session(auto_commit=False) as session:
-                    current = session.exec(select(Jargon).filter_by(id=db_jargon.id).limit(1)).first()
-                    if current is None or current.created_by == JargonCreatedBy.MANUAL:
-                        return False
+            with get_db_session(auto_commit=False) as session:
+                # 项目数据库固定使用 SQLite；先获取写锁，避免读取后发生写竞争。
+                session.exec(text("BEGIN IMMEDIATE"))
+                current = session.exec(select(Jargon).filter_by(id=db_jargon.id).limit(1)).first()
+                if current is None or current.created_by == JargonCreatedBy.MANUAL:
+                    return False
 
-                    old_evidence = current.evidence_messages
-                    old_count = current.count
-                    old_sessions = current.session_id_dict
-                    stored_groups = self._normalize_evidence_message_groups(
-                        self._load_json_list(old_evidence, "evidence_messages")
-                    )
-                    merged_groups = self._merge_evidence_message_groups(stored_groups, evidence_message_groups)
-                    merged_evidence = json.dumps(merged_groups, ensure_ascii=False) if merged_groups else old_evidence
-                    session_counts: Dict[str, int] = json.loads(old_sessions)
-                    session_counts[self.session_id] = session_counts.get(self.session_id, 0) + 1
-                    new_sessions = json.dumps(session_counts)
-                    now = datetime.now()
-                    statement = (
-                        update(Jargon)
-                        .where(col(Jargon.id) == db_jargon.id)
-                        .where(col(Jargon.created_by) != JargonCreatedBy.MANUAL)
-                        .where(col(Jargon.evidence_messages) == old_evidence)
-                        .where(col(Jargon.count) == old_count)
-                        .where(col(Jargon.session_id_dict) == old_sessions)
-                        .values(
-                            count=old_count + 1,
-                            evidence_messages=merged_evidence,
-                            session_id_dict=new_sessions,
-                            updated_timestamp=now,
-                        )
-                    )
-                    result = session.exec(statement)
-                    if result.rowcount == 1:
-                        session.commit()
-                        db_jargon.count = old_count + 1
-                        db_jargon.evidence_messages = merged_evidence
-                        db_jargon.session_id_dict = new_sessions
-                        db_jargon.updated_timestamp = now
-                        return True
+                existing = self._normalize_evidence_message_groups(
+                    self._load_json_list(current.evidence_messages, "evidence_messages")
+                )
+                merged = self._merge_evidence_message_groups(existing, evidence_message_groups)
+                current.evidence_messages = (
+                    json.dumps(merged, ensure_ascii=False) if merged else current.evidence_messages
+                )
+                current.count += 1
+                session_counts: Dict[str, int] = json.loads(current.session_id_dict)
+                session_counts[self.session_id] = session_counts.get(self.session_id, 0) + 1
+                current.session_id_dict = json.dumps(session_counts)
+                current.updated_timestamp = datetime.now()
+                session.add(current)
+                session.commit()
+
+                # 推断阈值必须使用刚提交的数据库状态，而不是陈旧的候选对象。
+                db_jargon.count = current.count
+                db_jargon.evidence_messages = current.evidence_messages
+                db_jargon.session_id_dict = current.session_id_dict
+                db_jargon.last_inference_count = current.last_inference_count
+                db_jargon.is_complete = current.is_complete
+                db_jargon.updated_timestamp = current.updated_timestamp
+                return True
         except Exception as exc:
             logger.error(f"更新黑话 '{db_jargon.content}' 失败: {exc}")
             return False
-
-        logger.warning(f"更新黑话 '{db_jargon.content}' 并发冲突，已重试 5 次")
-        return False
 
     def _parse_result(self, response: str) -> Optional[Dict[str, str]]:
         try:
