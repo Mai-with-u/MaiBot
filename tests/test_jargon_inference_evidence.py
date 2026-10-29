@@ -152,6 +152,20 @@ async def test_no_context_cleans_only_unchanged_evidence(database, monkeypatch):
         assert session.get(Jargon, item.item_id).evidence_messages is None
 
 
+@pytest.mark.asyncio
+async def test_no_context_preserves_changed_evidence(database, monkeypatch):
+    engine, item = database
+    newer = '[[{"platform":"p","message_id":"2"}]]'
+    with Session(engine) as session:
+        session.get(Jargon, item.item_id).evidence_messages = newer
+        session.commit()
+    miner = module.JargonMiner("session", "test")
+    monkeypatch.setattr(miner, "_load_evidence_contexts", lambda _: ([], None, True))
+    await miner.infer_meaning(item)
+    with Session(engine) as session:
+        assert session.get(Jargon, item.item_id).evidence_messages == newer
+
+
 def test_database_failure_rolls_back_result_and_evidence(database):
     engine, item = database
     snapshot = item.evidence_messages
