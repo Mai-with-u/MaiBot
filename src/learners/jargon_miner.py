@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict
 
 from json_repair import repair_json
+from sqlalchemy import update
 from sqlmodel import col, select
 
 import asyncio
@@ -341,21 +342,61 @@ class JargonMiner:
             return []
         return parsed if isinstance(parsed, list) else []
 
+    @staticmethod
+    def _evidence_group_key(group: JargonEvidenceMessageGroup) -> Tuple[Tuple[str, str], ...]:
+        """返回完整证据组的稳定引用键。"""
+        return tuple((ref["platform"], ref["message_id"]) for ref in group)
+
+    @classmethod
+    def _remaining_evidence_messages(
+        cls, current_value: Optional[str], consumed: List[JargonEvidenceMessageGroup]
+    ) -> Optional[str]:
+        """只扣除本轮已消费的证据组，保留推断期间新增的其他证据组。"""
+        consumed_keys = {cls._evidence_group_key(group) for group in cls._normalize_evidence_message_groups(consumed)}
+        current_groups = cls._normalize_evidence_message_groups(cls._load_json_list(current_value, "evidence_messages"))
+        remaining = [group for group in current_groups if cls._evidence_group_key(group) not in consumed_keys]
+        return json.dumps(remaining, ensure_ascii=False) if remaining else None
+
     def _cleanup_jargon_evidence_messages(
         self, jargon_obj: MaiJargon, cleaned_evidence_messages: Optional[str]
     ) -> None:
-        """写回清理后的证据消息引用。"""
-
+        """仅剔除本轮确认无效的证据组，不覆盖同时追加的证据。"""
         if not jargon_obj.item_id:
             return
 
-        with get_db_session() as session:
-            statement = select(Jargon).filter_by(id=jargon_obj.item_id).limit(1)
-            if db_record := session.exec(statement).first():
-                db_record.evidence_messages = cleaned_evidence_messages
-                db_record.updated_timestamp = datetime.now()
-                session.add(db_record)
-                jargon_obj.evidence_messages = cleaned_evidence_messages
+        original_groups = self._normalize_evidence_message_groups(
+            self._load_json_list(jargon_obj.evidence_messages, "evidence_messages")
+        )
+        cleaned_groups = self._normalize_evidence_message_groups(
+            self._load_json_list(cleaned_evidence_messages, "evidence_messages")
+        )
+        keep_keys = {self._evidence_group_key(group) for group in cleaned_groups}
+        invalid_groups = [group for group in original_groups if self._evidence_group_key(group) not in keep_keys]
+        if not invalid_groups:
+            return
+
+        for _attempt in range(5):
+            with get_db_session(auto_commit=False) as session:
+                db_record = session.exec(select(Jargon).filter_by(id=jargon_obj.item_id).limit(1)).first()
+                if db_record is None or db_record.created_by == JargonCreatedBy.MANUAL:
+                    return
+                previous = db_record.evidence_messages
+                remaining = self._remaining_evidence_messages(previous, invalid_groups)
+                if remaining == previous:
+                    return
+                statement = (
+                    update(Jargon)
+                    .where(col(Jargon.id) == jargon_obj.item_id)
+                    .where(col(Jargon.evidence_messages) == previous)
+                    .where(col(Jargon.created_by) != JargonCreatedBy.MANUAL)
+                    .values(evidence_messages=remaining, updated_timestamp=datetime.now())
+                )
+                result = session.exec(statement)
+                if result.rowcount == 1:
+                    session.commit()
+                    jargon_obj.evidence_messages = remaining
+                    return
+        raise RuntimeError(f"jargon {jargon_obj.content} evidence cleanup conflicted repeatedly")
 
     def _log_inference_prompt_preview(
         self,
@@ -410,13 +451,13 @@ class JargonMiner:
         raw_content_list, cleaned_evidence_messages, evidence_changed = await asyncio.to_thread(
             self._load_evidence_contexts, jargon_obj
         )
-        used_evidence_messages = bool(raw_content_list)
-        if used_evidence_messages:
-            await asyncio.to_thread(self._cleanup_jargon_evidence_messages, jargon_obj, None)
-        elif evidence_changed:
-            await asyncio.to_thread(self._cleanup_jargon_evidence_messages, jargon_obj, cleaned_evidence_messages)
-
+        # Capture the evidence identity before calling the LLM; consumption is committed
+        # together with the inference result, never before the model returns.
+        consumed_evidence_messages = jargon_obj.evidence_messages
+        expected_previous_last_inference_count = jargon_obj.last_inference_count
         if not raw_content_list:
+            if evidence_changed:
+                await asyncio.to_thread(self._cleanup_jargon_evidence_messages, jargon_obj, cleaned_evidence_messages)
             logger.warning(f"jargon {content} 没有可用证据上下文，跳过推断")
             return
 
@@ -469,7 +510,13 @@ class JargonMiner:
             jargon_obj.last_inference_count = jargon_obj.count or 0
 
             try:
-                self._modify_jargon_entry(jargon_obj)
+                if not await asyncio.to_thread(
+                    self._modify_jargon_entry,
+                    jargon_obj,
+                    consumed_evidence_messages=consumed_evidence_messages,
+                    expected_previous_last_inference_count=expected_previous_last_inference_count,
+                ):
+                    logger.warning(f"jargon {content} 推断1未提交：记录已不存在或发生更新")
             except Exception as e:
                 logger.error(f"jargon {content} 推断1更新last_inference_count失败: {e}")
             return
@@ -563,9 +610,17 @@ class JargonMiner:
         jargon_obj.is_complete = is_complete
 
         try:
-            self._modify_jargon_entry(jargon_obj)
+            if not await asyncio.to_thread(
+                self._modify_jargon_entry,
+                jargon_obj,
+                consumed_evidence_messages=consumed_evidence_messages,
+                expected_previous_last_inference_count=expected_previous_last_inference_count,
+            ):
+                logger.warning(f"jargon {content} 推断结果未提交：记录已不存在或发生更新")
+                return
         except Exception as e:
             logger.error(f"jargon {content} 推断结果更新失败: {e}")
+            return
         logger.debug(
             f"jargon {content} 推断完成: is_jargon={is_jargon}, meaning={jargon_obj.meaning}, last_inference_count={jargon_obj.last_inference_count}, is_complete={jargon_obj.is_complete}"
         )
@@ -676,7 +731,8 @@ class JargonMiner:
                     self._add_to_cache(content)
                     continue
                 # 已存在记录，更新 count 和证据消息引用
-                self._update_jargon(matched_jargon, evidence_messages)
+                if not await asyncio.to_thread(self._update_jargon, matched_jargon, evidence_messages):
+                    continue
                 if self._should_infer_meaning(matched_jargon):
                     asyncio.create_task(self._infer_meaning_by_id(matched_jargon.id))  # type: ignore
                 updated += 1
@@ -751,52 +807,58 @@ class JargonMiner:
             merged_groups.append(group)
         return merged_groups
 
-    def _update_jargon(
-        self,
-        db_jargon: Jargon,
-        evidence_message_groups: List[JargonEvidenceMessageGroup],
-    ) -> None:
-        """更新已有黑话记录并写回数据库。
-
-        Args:
-            db_jargon: 已命中的黑话 ORM 对象。
-            evidence_message_groups: 本次新增的证据消息引用组。
-        """
-        if db_jargon.created_by == JargonCreatedBy.MANUAL:
-            logger.debug(f"黑话 '{db_jargon.content}' 是手动记录，跳过 AI 更新")
-            return
-
-        db_jargon.count += 1
-        db_jargon.updated_timestamp = datetime.now()
-        existing_evidence_groups = self._normalize_evidence_message_groups(
-            self._load_json_list(db_jargon.evidence_messages, "evidence_messages")
-        )
-        merged_evidence_groups = self._merge_evidence_message_groups(existing_evidence_groups, evidence_message_groups)
-        db_jargon.evidence_messages = (
-            json.dumps(merged_evidence_groups, ensure_ascii=False)
-            if merged_evidence_groups
-            else db_jargon.evidence_messages
-        )
-        session_id_dict: Dict[str, int] = json.loads(db_jargon.session_id_dict)
-        session_id_dict[self.session_id] = session_id_dict.get(self.session_id, 0) + 1
-        db_jargon.session_id_dict = json.dumps(session_id_dict)
+    def _update_jargon(self, db_jargon: Jargon, evidence_message_groups: List[JargonEvidenceMessageGroup]) -> bool:
+        """从数据库最新状态合并新增证据与次数；遇到并发修改时重新读取。"""
+        if db_jargon.created_by == JargonCreatedBy.MANUAL or db_jargon.id is None:
+            return False
 
         try:
-            with get_db_session() as session:
-                if db_jargon.id is None:
-                    raise ValueError("黑话记录缺少 id，无法更新数据库")
-                statement = select(Jargon).filter_by(id=db_jargon.id).limit(1)
-                if persisted_jargon := session.exec(statement).first():
-                    persisted_jargon.count = db_jargon.count
-                    persisted_jargon.evidence_messages = db_jargon.evidence_messages
-                    persisted_jargon.session_id_dict = db_jargon.session_id_dict
-                    persisted_jargon.is_global = db_jargon.is_global
-                    persisted_jargon.updated_timestamp = db_jargon.updated_timestamp
-                    session.add(persisted_jargon)
-                else:
-                    logger.warning(f"黑话 ID {db_jargon.id} 在数据库中未找到，无法更新")
-        except Exception as e:
-            logger.error(f"更新黑话 '{db_jargon.content}' 失败: {e}")
+            for _attempt in range(5):
+                with get_db_session(auto_commit=False) as session:
+                    current = session.exec(select(Jargon).filter_by(id=db_jargon.id).limit(1)).first()
+                    if current is None or current.created_by == JargonCreatedBy.MANUAL:
+                        return False
+
+                    old_evidence = current.evidence_messages
+                    old_count = current.count
+                    old_sessions = current.session_id_dict
+                    stored_groups = self._normalize_evidence_message_groups(
+                        self._load_json_list(old_evidence, "evidence_messages")
+                    )
+                    merged_groups = self._merge_evidence_message_groups(stored_groups, evidence_message_groups)
+                    merged_evidence = json.dumps(merged_groups, ensure_ascii=False) if merged_groups else old_evidence
+                    session_counts: Dict[str, int] = json.loads(old_sessions)
+                    session_counts[self.session_id] = session_counts.get(self.session_id, 0) + 1
+                    new_sessions = json.dumps(session_counts)
+                    now = datetime.now()
+                    statement = (
+                        update(Jargon)
+                        .where(col(Jargon.id) == db_jargon.id)
+                        .where(col(Jargon.created_by) != JargonCreatedBy.MANUAL)
+                        .where(col(Jargon.evidence_messages) == old_evidence)
+                        .where(col(Jargon.count) == old_count)
+                        .where(col(Jargon.session_id_dict) == old_sessions)
+                        .values(
+                            count=old_count + 1,
+                            evidence_messages=merged_evidence,
+                            session_id_dict=new_sessions,
+                            updated_timestamp=now,
+                        )
+                    )
+                    result = session.exec(statement)
+                    if result.rowcount == 1:
+                        session.commit()
+                        db_jargon.count = old_count + 1
+                        db_jargon.evidence_messages = merged_evidence
+                        db_jargon.session_id_dict = new_sessions
+                        db_jargon.updated_timestamp = now
+                        return True
+        except Exception as exc:
+            logger.error(f"更新黑话 '{db_jargon.content}' 失败: {exc}")
+            return False
+
+        logger.warning(f"更新黑话 '{db_jargon.content}' 并发冲突，已重试 5 次")
+        return False
 
     def _parse_result(self, response: str) -> Optional[Dict[str, str]]:
         try:
@@ -813,25 +875,59 @@ class JargonMiner:
             return None
         return result
 
-    def _modify_jargon_entry(self, jargon_obj: MaiJargon) -> None:
+    def _modify_jargon_entry(
+        self,
+        jargon_obj: MaiJargon,
+        *,
+        consumed_evidence_messages: Optional[str],
+        expected_previous_last_inference_count: int,
+    ) -> bool:
+        """在同一次数据库提交中写入推断结果并消费本轮证据。"""
         if jargon_obj.created_by == JargonCreatedBy.MANUAL:
-            logger.debug(f"黑话 '{jargon_obj.content}' 是手动记录，跳过推断结果写回")
-            return
+            return False
+        if not jargon_obj.item_id:
+            raise ValueError("jargon_obj must have item_id to update")
 
-        with get_db_session() as session:
-            if not jargon_obj.item_id:
-                raise ValueError("jargon_obj must have item_id to update")
-            statement = select(Jargon).filter_by(id=jargon_obj.item_id).limit(1)
-            if db_record := session.exec(statement).first():
-                if db_record.created_by == JargonCreatedBy.MANUAL:
-                    logger.debug(f"黑话 '{db_record.content}' 是手动记录，跳过推断结果写回")
-                    return
-                db_record.is_jargon = jargon_obj.is_jargon
-                db_record.meaning = jargon_obj.meaning
-                db_record.last_inference_count = jargon_obj.last_inference_count
-                db_record.is_complete = jargon_obj.is_complete
-                db_record.updated_timestamp = datetime.now()
-                session.add(db_record)
+        consumed_groups = self._normalize_evidence_message_groups(
+            self._load_json_list(consumed_evidence_messages, "evidence_messages")
+        )
+        for _attempt in range(5):
+            with get_db_session(auto_commit=False) as session:
+                db_record = session.exec(select(Jargon).filter_by(id=jargon_obj.item_id).limit(1)).first()
+                if db_record is None or db_record.created_by == JargonCreatedBy.MANUAL:
+                    return False
+
+                previous_evidence = db_record.evidence_messages
+                previous_last_count = db_record.last_inference_count
+                if previous_last_count != expected_previous_last_inference_count:
+                    # Another inference has committed since this snapshot was loaded.
+                    return False
+                remaining = (
+                    self._remaining_evidence_messages(previous_evidence, consumed_groups)
+                    if consumed_evidence_messages is not None
+                    else previous_evidence
+                )
+                statement = (
+                    update(Jargon)
+                    .where(col(Jargon.id) == jargon_obj.item_id)
+                    .where(col(Jargon.created_by) != JargonCreatedBy.MANUAL)
+                    .where(col(Jargon.evidence_messages) == previous_evidence)
+                    .where(col(Jargon.last_inference_count) == previous_last_count)
+                    .values(
+                        is_jargon=jargon_obj.is_jargon,
+                        meaning=jargon_obj.meaning,
+                        last_inference_count=jargon_obj.last_inference_count,
+                        is_complete=jargon_obj.is_complete,
+                        evidence_messages=remaining,
+                        updated_timestamp=datetime.now(),
+                    )
+                )
+                result = session.exec(statement)
+                if result.rowcount == 1:
+                    session.commit()
+                    jargon_obj.evidence_messages = remaining
+                    return True
+        raise RuntimeError(f"jargon {jargon_obj.content} inference commit conflicted repeatedly")
 
     def _should_infer_meaning(self, jargon_obj: Jargon) -> bool:
         """
