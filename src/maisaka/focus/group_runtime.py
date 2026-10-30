@@ -13,11 +13,18 @@ import uuid
 
 from src.chat.message_receive.message import SessionMessage
 from src.chat.message_receive.chat_manager import chat_manager
+from src.common.data_models.llm_service_data_models import ContextFactory, LLMGenerationOptions, LLMResponseResult
 from src.common.logger import get_logger
 from src.common.message_repository import find_messages
 from src.common.utils.utils_config import ChatConfigUtils
 from src.config.config import global_config
 from src.core.tooling import ToolExecutionResult
+from src.llm_models.exceptions import (
+    EmptyResponseException,
+    LLMTaskTimeoutError,
+    NetworkConnectionError,
+    RespNotOkException,
+)
 from src.llm_models.payload_content.context_item import FunctionCallItem
 from src.maisaka.chat_loop_service import ChatResponse, MaisakaChatLoopService
 from src.maisaka.context.messages import (
@@ -35,6 +42,7 @@ from src.maisaka.context.post_processor import process_chat_history_after_cycle
 from src.maisaka.mode_policy import build_consecutive_wait_reminders
 from src.maisaka.monitor.events import emit_flow_step, emit_planner_snapshot
 from src.maisaka.tool_result_condenser import condense_tool_result, should_condense_tool_result
+from src.services.llm_service import LLMServiceClient
 
 from .context import FocusCheckpointStore, FocusContextEntry
 from .tools import FocusToolRouter
@@ -46,11 +54,55 @@ logger = get_logger("maisaka_focus")
 MAX_SEEN_MESSAGES = 20000
 
 
+class _PlannerRequestFailure(Exception):
+    """仅标记原生 Planner 模型请求的已知暂时故障，原异常保留在 cause 中。"""
+
+
+class _FocusPlannerClient(LLMServiceClient):
+    async def generate_response_with_context(
+        self,
+        context_factory: ContextFactory,
+        options: Optional[LLMGenerationOptions] = None,
+        *,
+        session_id: str = "",
+    ) -> LLMResponseResult:
+        """仅标记原生 Planner 模型请求边界内的可恢复暂时故障。"""
+        try:
+            return await super().generate_response_with_context(context_factory, options, session_id=session_id)
+        except (EmptyResponseException, LLMTaskTimeoutError, NetworkConnectionError) as exc:
+            raise _PlannerRequestFailure(str(exc)) from exc
+        except RespNotOkException as exc:
+            if exc.status_code == 429 or 500 <= exc.status_code < 600:
+                raise _PlannerRequestFailure(str(exc)) from exc
+            raise
+
+
 class FocusChatLoopService(MaisakaChatLoopService):
     """组级请求没有默认聊天，不把某个成员的身份或额外规则冒充成整个组。"""
 
+    recovery_blocked: bool = False
+
     def _get_chat_prompt_name(self) -> str:
         return "maisaka_chat_focus"
+
+    def _get_runtime_manager(self) -> Any:
+        """记录实际接触插件运行时的历史，避免插件卸载后误判无副作用。"""
+        manager = super()._get_runtime_manager()
+        # 在每次实际 hook 调用前锁存；构建请求期间可能加载插件，失败前也可能已卸载。
+        if manager.supervisors:
+            self.recovery_blocked = True
+        return manager
+
+    def _get_llm_chat_client(self, request_kind: str) -> LLMServiceClient:
+        """仅为原生 Planner 选择可保留错误来源的客户端，其他请求沿用原实现。"""
+        if request_kind != "planner":
+            return super()._get_llm_chat_client(request_kind)
+        task_name = self._resolve_model_task_name(request_kind)
+        request_type = self._resolve_llm_request_type(request_kind)
+        key = f"{task_name}:{request_type}"
+        if key not in self._llm_chat_clients:
+            self._llm_chat_clients[key] = _FocusPlannerClient(task_name, request_type, self._session_id)
+        return self._llm_chat_clients[key]
 
 
 class FocusGroupRuntime:
@@ -69,6 +121,9 @@ class FocusGroupRuntime:
         self._worker: Optional[asyncio.Task] = None
         self._closed = False
         self._failed = False
+        self._recovery_token: Optional[Tuple[int, float]] = None
+        # 只允许可证明没有外部执行历史的实例恢复；压缩不能洗掉这个限制。
+        self._recovery_blocked = False
         self._hydrating = False
         self.restored_session_ids: Set[str] = set()
         self._wait_until: Optional[float] = None
@@ -110,6 +165,8 @@ class FocusGroupRuntime:
         payload = await asyncio.to_thread(self._store.load)
         if not payload:
             return
+        # 现有格式不能证明压缩前的工具副作用。保留原恢复语义，但不给此实例自动恢复资格。
+        self._recovery_blocked = True
         self.entries = payload["entries"]
         self.restored_session_ids = set().union(*(entry.session_ids for entry in self.entries))
         from .manager import focus_mode_manager
@@ -155,7 +212,13 @@ class FocusGroupRuntime:
                 "wait_token": self._wait_token,
                 "consecutive_waits": self._consecutive_waits,
             }
-            await asyncio.to_thread(self._store.save, entries, state)
+            try:
+                await asyncio.to_thread(self._store.save, entries, state)
+            except BaseException:
+                # 保存失败或取消都不能由下一条输入重新取得恢复资格。
+                self._recovery_blocked = True
+                self._recovery_token = None
+                raise
 
     def _closed_entries(self) -> List[FocusContextEntry]:
         """只在快照/取消时闭合未完成调用，不修改仍在执行的实时工具批次。"""
@@ -191,6 +254,8 @@ class FocusGroupRuntime:
         return entries
 
     def add_member(self, runtime: MaisakaHeartFlowChatting) -> None:
+        if self.members.get(runtime.session_id) is not runtime:
+            self._recovery_token = None
         self.members[runtime.session_id] = runtime
         # 恢复只属于目标聊天的工具媒体与表情编号映射，不把共享思考链送给回复器。
         for message in self.history:
@@ -254,6 +319,15 @@ class FocusGroupRuntime:
         message: SessionMessage,
         history_message: Optional[LLMContextMessage],
     ) -> None:
+        token = self._recovery_token
+        recover = (
+            token is not None
+            and message.received_at is not None
+            and message.received_at.timestamp() > token[1]
+            and isinstance(history_message, SessionBackedMessage)
+            and history_message.original_message is message
+            and history_message.source_kind == "user"
+        )
         if not self._remember(runtime.session_id, message.message_id):
             return
         if history_message is not None:
@@ -273,7 +347,31 @@ class FocusGroupRuntime:
             # @ 只排队，不取消当前请求；下一次快照必须包含它，不能被普通防抖推迟到再下一轮。
             self._ready.add(runtime.session_id)
             self._event.set()
-        await self.checkpoint()
+        try:
+            await self.checkpoint()
+        except BaseException:
+            self._recovery_blocked = True
+            self._recovery_token = None
+            raise
+        if (
+            recover
+            and token is self._recovery_token
+            and self._failed
+            and token[0] == self._generation
+            and self.members.get(runtime.session_id) is runtime
+            and self._can_recover_planner()
+            and self._worker is not None
+            and self._worker.done()
+            and not self._worker.cancelled()
+            and not self._worker.cancelling()
+            and self._worker.exception() is None
+        ):
+            # 入站已保存，旧 worker 已完成 finally；此处到建新 worker 之间不能 await。
+            self._recovery_token = None
+            self._failed = False
+            # 恢复首轮必须包含触发它的新输入，不能被尚未结束的普通消息防抖留在队列中。
+            self._ready.add(runtime.session_id)
+            self._event.set()
         self._ensure_worker()
 
     def _remember(self, session_id: str, message_id: str) -> bool:
@@ -329,6 +427,7 @@ class FocusGroupRuntime:
             self._event.set()
 
     def register_proactive(self, runtime: MaisakaHeartFlowChatting, trigger: SessionMessage) -> None:
+        self._recovery_blocked = True
         if not self._remember(runtime.session_id, "internal:" + trigger.message_id):
             return
         text = trigger.processed_plain_text
@@ -350,6 +449,7 @@ class FocusGroupRuntime:
         self._schedule_checkpoint()
 
     def record_sent_message(self, runtime: MaisakaHeartFlowChatting, message: LLMContextMessage) -> None:
+        self._recovery_blocked = True
         # 发言可在工具执行过程中到达，延后追加，保证 function call/result 原子段不被拆开。
         self._sent.append(FocusContextEntry([message], {runtime.session_id}))
         self._schedule_checkpoint()
@@ -381,10 +481,30 @@ class FocusGroupRuntime:
         if self._worker is None or self._worker.done():
             self._worker = asyncio.create_task(self.run())
 
+    def _can_recover_planner(self) -> bool:
+        """核查当前实例、工具副作用及生命周期是否允许受控恢复。"""
+        return (
+            not self._recovery_blocked
+            and not self._service.recovery_blocked
+            and not self._closed
+            and not self._hydrating
+            and self._wait_until is None
+            and self._active_batch is None
+            and bool(self.members)
+            and all(self.is_member_valid(member) for member in self.members.values())
+        )
+
     def _set_stage(self, stage: str, detail: str) -> None:
         self._state = "failed" if self._failed else ("wait" if self._wait_until is not None else "running")
         for runtime in self.members.values():
-            runtime._agent_state = runtime._STATE_WAIT if self._wait_until is not None else runtime._STATE_RUNNING
+            runtime._agent_state = (
+                runtime._STATE_STOP
+                if self._failed
+                else runtime._STATE_WAIT
+                if self._wait_until is not None
+                else runtime._STATE_RUNNING
+            )
+        for runtime in self.members.values():
             runtime._update_stage_status(stage, f"Focus 共享组 · {detail}", wait_until=self._wait_until)
 
     def _take_ready_inputs(self) -> List[FocusContextEntry]:
@@ -413,6 +533,7 @@ class FocusGroupRuntime:
         return "\n".join(chats)
 
     def execute_control(self, name: str, arguments: Dict[str, Any], session_id: str) -> ToolExecutionResult:
+        self._recovery_token = None
         if name == "wait":
             seconds = arguments.get("seconds")
             if type(seconds) is not int or seconds < 0:
@@ -484,13 +605,25 @@ class FocusGroupRuntime:
                 self._take_ready_inputs()
                 await self._run_turn()
         except asyncio.CancelledError:
+            self._recovery_token = None
             raise
         except Exception:
             self._failed = True
-            self._set_stage("失败", "共享 Planner 运行失败，输入已保留；请检查日志并重启运行时")
+            detail = (
+                "模型请求失败，输入已保留；等待新的用户消息"
+                if self._recovery_token is not None
+                else "共享 Planner 运行失败，输入已保留；请检查日志并核实未完成操作"
+            )
+            self._set_stage("失败", detail)
             logger.exception("Focus 共享 Planner 运行失败: scope=%s", self.scope_id)
         finally:
-            await self.checkpoint()
+            try:
+                await self.checkpoint()
+            except BaseException:
+                self._recovery_token = None
+                self._failed = True
+                self._set_stage("失败", "共享 Planner 检查点未完成，已停止；请检查日志")
+                raise
 
     async def _run_turn(self) -> None:
         from src.maisaka.runtime import MAX_INTERNAL_ROUNDS
@@ -513,14 +646,19 @@ class FocusGroupRuntime:
             self._set_stage("Planner", f"汇合 {len(self.members)} 个聊天，等待模型响应")
             started = time.time()
             self._planner_started_at = started
-            response = await self._service.chat_loop_step(
-                history,
-                tool_definitions=self.tools.definitions(),
-                injected_user_messages=[self._roster(), self.tools.deferred_notice(), *references],
-                tail_user_messages=build_consecutive_wait_reminders(self._consecutive_waits),
-                max_context_size=max(self.max_context_size, sum(message.count_in_context for message in history) + 1),
-                logical_turn_id=logical_turn_id,
-            )
+            try:
+                response = await self._service.chat_loop_step(
+                    history,
+                    tool_definitions=self.tools.definitions(),
+                    injected_user_messages=[self._roster(), self.tools.deferred_notice(), *references],
+                    tail_user_messages=build_consecutive_wait_reminders(self._consecutive_waits),
+                    max_context_size=max(self.max_context_size, sum(message.count_in_context for message in history) + 1),
+                    logical_turn_id=logical_turn_id,
+                )
+            except _PlannerRequestFailure:
+                if generation == self._generation and self._can_recover_planner():
+                    self._recovery_token = (generation, time.time())
+                raise
             self._planner_ended_at = time.time()
             if generation != self._generation or self._closed:
                 self._service.planner_request_snapshot = None
@@ -618,6 +756,8 @@ class FocusGroupRuntime:
                 )
             else:
                 self._set_stage("工具执行", f"{call.func_name} → {call.args.get('session_id', '')}")
+                # 即使工具返回 success，也不代表发送/后台任务的全部副作用已经核实。
+                self._recovery_blocked = True
                 invocation, result, runtime, spec = await self.tools.invoke(
                     call.func_name,
                     dict(call.args),
@@ -882,6 +1022,7 @@ class FocusGroupRuntime:
                 runtime._chat_history = runtime._chat_history[-keep:]
 
     async def _cancel_worker(self) -> None:
+        self._recovery_token = None
         worker = self._worker
         if worker is asyncio.current_task():
             return
