@@ -45,18 +45,18 @@ class AgentToolProvider:
     def _allowed_chat(self, context: Optional[ToolAvailabilityContext | ToolExecutionContext]) -> bool:
         """判断当前聊天是否有权指挥外接 Agent。"""
 
+        if context is not None and context.session_id and context.session_id == self.service.agent_id:
+            return True
         raw_users = self.service.config.allow_users
         raw_groups = self.service.config.allow_groups
         if not raw_users and not raw_groups:
             return True
+        if context is None:
+            return False
         allow_users = normalize_operator_permissions(raw_users)
         allow_groups = normalize_operator_permissions(raw_groups)
         if not allow_users and not allow_groups:
             return False
-        if context is None:
-            return False
-        if context.session_id and context.session_id == self.service.agent_id:
-            return True
         platform = (context.platform or "").strip().lower()
         group_id = (context.group_id or "").strip()
         user_id = (context.user_id or "").strip()

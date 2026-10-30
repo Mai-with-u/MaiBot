@@ -98,3 +98,9 @@ def test_invoke_allows_whitelisted_chat(monkeypatch):
     assert isinstance(result, ToolExecutionResult)
     assert result.success is True
     assert calls == {"caller": "chat-1", "text": "hi", "target": ""}
+
+
+def test_agent_own_session_survives_blank_allowlist():
+    provider = build_provider(allow_users=["   "])
+    names = set(list_tool_names(provider, build_context(session_id=AGENT_ID)))
+    assert {"agent_talk", "agent_status", "agent_chats", "agent_recent"} <= names
