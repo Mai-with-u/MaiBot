@@ -40,6 +40,7 @@ logger = get_logger("webui")
 router = APIRouter(prefix="/models", tags=["models"], dependencies=[Depends(require_auth)])
 # 模型获取器配置
 MODEL_FETCHER_CONFIG = {
+    "chatgpt": {"endpoint": "/models", "parser": "chatgpt"},
     # OpenAI 兼容格式的提供商
     "openai": {
         "endpoint": "/models",
@@ -742,6 +743,17 @@ async def get_provider_models(
     api_key = provider_config.get("api_key")
     client_type = provider_config.get("client_type", "openai")
 
+    if client_type == "chatgpt":
+        from src.common.chatgpt_auth import ChatGPTAccountStore, ChatGPTAuthError
+
+        try:
+            models = await asyncio.to_thread(
+                ChatGPTAccountStore().models, provider_config.get("chatgpt_account", "default")
+            )
+        except ChatGPTAuthError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from None
+        return {"success": True, "models": models, "provider": provider_name, "count": len(models)}
+
     if not base_url:
         raise HTTPException(status_code=400, detail="提供商配置缺少 base_url")
     if not api_key:
@@ -786,6 +798,8 @@ async def get_models_by_url(
     auth_query_name: str = Query("api_key", description="Query 鉴权参数名"),
 ):
     """通过 URL 直接获取模型列表。"""
+    if client_type == "chatgpt":
+        raise HTTPException(status_code=400, detail="ChatGPT 使用本机账号标签；请先保存提供商，再按名称获取模型。")
     models = await _fetch_models_from_provider(
         base_url=base_url,
         api_key=api_key,
@@ -920,6 +934,8 @@ async def test_provider_connection(
     client_type: str = Query("openai", description="客户端类型 (openai | openai_responses | gemini)"),
 ):
     """测试任意厂商地址；该入口只允许访问公网目标。"""
+    if client_type == "chatgpt":
+        raise HTTPException(status_code=400, detail="请先保存 ChatGPT 账号标签，再按提供商名称测试授权。")
     return await _test_provider_connection(
         base_url=base_url,
         api_key=api_key,
@@ -954,6 +970,17 @@ async def test_provider_connection_by_name(
     base_url = provider.get("base_url", "")
     api_key = provider.get("api_key", "")
     client_type = provider.get("client_type", "openai")
+
+    if client_type == "chatgpt":
+        from src.common.chatgpt_auth import ChatGPTAccountStore, ChatGPTAuthError
+
+        start = time.monotonic()
+        try:
+            await asyncio.to_thread(ChatGPTAccountStore().models, provider.get("chatgpt_account", "default"))
+        except ChatGPTAuthError as error:
+            return {"network_ok": False, "api_key_valid": False, "error": str(error), "http_status": None}
+        return {"network_ok": True, "api_key_valid": True, "error": None,
+                "latency_ms": (time.monotonic() - start) * 1000, "http_status": 200}
 
     if not base_url:
         raise HTTPException(status_code=400, detail="提供商配置缺少 base_url")

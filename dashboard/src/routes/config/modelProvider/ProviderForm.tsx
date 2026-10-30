@@ -150,14 +150,14 @@ export function ProviderForm({
     const options = [...clientTypes]
     const knownTypes = new Set(options.map((item) => item.client_type))
 
-    for (const clientType of ['openai', 'openai_responses', 'gemini', localProvider?.client_type].filter(Boolean) as string[]) {
+    for (const clientType of ['openai', 'openai_responses', 'chatgpt', 'gemini', localProvider?.client_type].filter(Boolean) as string[]) {
       if (!knownTypes.has(clientType)) {
         options.push({
           client_type: clientType,
           owner_plugin_id: null,
           version: '',
           description: '',
-          builtin: clientType === 'openai' || clientType === 'openai_responses' || clientType === 'gemini',
+          builtin: ['openai', 'openai_responses', 'chatgpt', 'gemini'].includes(clientType),
         })
         knownTypes.add(clientType)
       }
@@ -478,7 +478,22 @@ export function ProviderForm({
                       )}
                     </div>
 
-                    <div className="grid gap-2" data-tour="provider-apikey-input">
+                    {localProvider?.client_type === 'chatgpt' ? (
+                      <div className="grid gap-2">
+                        <Label htmlFor="chatgpt_account">ChatGPT 账号标签</Label>
+                        <Input id="chatgpt_account" value={localProvider.chatgpt_account ?? 'default'}
+                          onChange={(event) => setLocalProvider((previous) => previous
+                            ? { ...previous, chatgpt_account: event.target.value, api_key: '' } : null)} />
+                        {formErrors.chatgpt_account && <p role="alert" className="text-xs text-destructive">{formErrors.chatgpt_account}</p>}
+                        {formErrors.api_key && <p role="alert" className="text-xs text-destructive">{formErrors.api_key}</p>}
+                        <p className="text-xs text-muted-foreground">
+                          在实例目录运行 <code>maibot chatgpt login --account 标签</code>，通过系统浏览器继续登录。
+                          此处只填写注册标签，请勿粘贴令牌。保存后获取该账号的模型列表；初次接入支持 macOS/Linux。
+                        </p>
+                        <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noreferrer"
+                          className="text-sm underline">Manage usage — 管理 ChatGPT 用量与授权</a>
+                      </div>
+                    ) : <div className="grid gap-2" data-tour="provider-apikey-input">
                       <div className="flex items-center gap-1.5">
                         <Label htmlFor="api_key" className={formErrors.api_key ? 'text-destructive' : ''}>API Key *</Label>
                         <HelpTooltip
@@ -542,7 +557,7 @@ export function ProviderForm({
                       {formErrors.api_key && (
                         <p id="api-key-error" role="alert" className="text-xs text-destructive">{formErrors.api_key}</p>
                       )}
-                    </div>
+                    </div>}
 
                   </div>
                 </motion.div>
@@ -695,9 +710,9 @@ function TemplateInfo({ description }: { description: string }) {
     <TooltipProvider delayDuration={200}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <span tabIndex={0} className="ml-1 inline-flex cursor-help text-muted-foreground" aria-label={description}>
+          <button type="button" className="ml-1 inline-flex cursor-help text-muted-foreground" aria-label={description}>
             <Info className="h-4 w-4" />
-          </span>
+          </button>
         </TooltipTrigger>
         <TooltipContent className="z-[70] max-w-xs whitespace-pre-line">{description}</TooltipContent>
       </Tooltip>

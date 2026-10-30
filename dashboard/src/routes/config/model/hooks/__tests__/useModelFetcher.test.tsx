@@ -33,6 +33,26 @@ describe('useModelFetcher', () => {
     vi.restoreAllMocks()
   })
 
+  it('ChatGPT 使用独立账号标签获取模型，切换标签不复用另一账号缓存', async () => {
+    let account = 'first'
+    const { result } = renderFetcher(() => ({
+      ...openaiProvider, name: 'ChatGPT', api_key: '', client_type: 'chatgpt', chatgpt_account: account,
+    }))
+    vi.mocked(fetchProviderModels).mockResolvedValue([{ id: 'first-model', name: 'First' }])
+    await act(async () => { await result.current.fetchModelsForProvider('ChatGPT') })
+    expect(result.current.matchedTemplate?.id).toBe('chatgpt')
+    expect(result.current.availableModels[0].id).toBe('first-model')
+    account = 'second'
+    vi.mocked(fetchProviderModels).mockResolvedValue([{ id: 'second-model', name: 'Second' }])
+    await act(async () => { await result.current.fetchModelsForProvider('ChatGPT') })
+    expect(fetchProviderModels).toHaveBeenCalledTimes(2)
+    expect(result.current.availableModels[0].id).toBe('second-model')
+    vi.mocked(fetchProviderModels).mockRejectedValue(new Error('ChatGPT 套餐权限未授权'))
+    await act(async () => { await result.current.fetchModelsForProvider('ChatGPT', true) })
+    expect(result.current.modelFetchError).toBe('ChatGPT 套餐权限未授权')
+    expect(result.current.availableModels).toEqual([])
+  })
+
   it('自定义 OpenAI 兼容端点会尝试自动获取模型列表', async () => {
     vi.mocked(fetchProviderModels).mockResolvedValue([
       { id: 'custom-model', name: 'custom-model' },

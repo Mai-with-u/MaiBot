@@ -19,8 +19,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     for command, description in (("init", "初始化实例（保留已有配置）"), ("run", "运行实例")):
         subparser = commands.add_parser(command, help=description)
         subparser.add_argument("--directory", "-d", type=Path, default=Path.cwd(), help="实例目录，默认当前目录")
+    chatgpt = commands.add_parser("chatgpt", help="管理 MaiBot 独立的 Sign in with ChatGPT 授权")
+    chatgpt.add_argument("action", choices=("login", "accounts", "models", "logout"))
+    chatgpt.add_argument("--directory", "-d", type=Path, default=Path.cwd())
+    chatgpt.add_argument("--account", default="default", help="独立账号/工作区注册标签")
     args = parser.parse_args(argv)
     directory = args.directory.expanduser().resolve()
+    if args.command == "chatgpt":
+        from src.cli.chatgpt import run_chatgpt_command
+
+        return run_chatgpt_command(args.action, directory, args.account)
     if args.command == "run":
         missing = [name for name in ("bot_config.toml", "model_config.toml") if not (directory / "config" / name).is_file()]
         if missing:

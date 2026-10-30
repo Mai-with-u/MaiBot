@@ -22,8 +22,8 @@ export interface ProviderTemplate {
   base_url: string
   // 额外匹配的 base_url 正则（可选，用于含账号/地域变量的官方地址；对规范化后的 URL 整体匹配）
   baseUrlPattern?: RegExp
-  client_type: 'openai' | 'openai_responses' | 'gemini'
-  allowed_client_types?: Array<'openai' | 'openai_responses' | 'gemini'>
+  client_type: 'openai' | 'openai_responses' | 'chatgpt' | 'gemini'
+  allowed_client_types?: Array<'openai' | 'openai_responses' | 'chatgpt' | 'gemini'>
   display_name: string
   description?: string
   defaultApiKey?: string
@@ -38,6 +38,17 @@ export interface ProviderTemplate {
 
 // 内置提供商模板
 export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
+  {
+    id: 'chatgpt',
+    name: 'ChatGPT',
+    base_url: 'https://api.openai.com/v1',
+    client_type: 'chatgpt',
+    display_name: 'ChatGPT（Sign in with ChatGPT）',
+    description: '使用本机独立登录的 ChatGPT 套餐。无需 API Key；可用模型与额度以账号为准。',
+    defaultApiKey: '',
+    modelFetcher: { endpoint: '/models', parser: 'openai' },
+    providerDefaults: { max_retry: 1, timeout: 120, retry_interval: 4 },
+  },
   // 国内提供商
   {
     id: 'deepseek',
@@ -338,7 +349,7 @@ export function normalizeUrl(url: string): string {
  * @param baseUrl 提供商的 base_url
  * @returns 匹配的模板，如果未找到则返回 null
  */
-export function findTemplateByBaseUrl(baseUrl: string): ProviderTemplate | null {
+export function findTemplateByBaseUrl(baseUrl: string, clientType?: string): ProviderTemplate | null {
   if (!baseUrl) return null
 
   const normalizedUrl = normalizeUrl(baseUrl)
@@ -347,6 +358,7 @@ export function findTemplateByBaseUrl(baseUrl: string): ProviderTemplate | null 
     PROVIDER_TEMPLATES.find(
       (template) =>
         template.id !== 'custom' &&
+        (template.id !== 'chatgpt' || clientType === 'chatgpt') &&
         (normalizeUrl(template.base_url) === normalizedUrl ||
           (template.baseUrlPattern?.test(normalizedUrl) ?? false))
     ) || null
@@ -396,7 +408,7 @@ export function resolveModelFetcherTemplate(
   baseUrl: string,
   clientType = 'openai'
 ): ProviderTemplate | null {
-  const matchedTemplate = findTemplateByBaseUrl(baseUrl)
+  const matchedTemplate = findTemplateByBaseUrl(baseUrl, clientType)
   if (matchedTemplate) {
     return matchedTemplate.modelFetcher
       ? matchedTemplate
