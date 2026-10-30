@@ -6,6 +6,7 @@ import asyncio
 import json
 import traceback
 
+from src.core.local_operator import normalize_operator_permissions
 from src.core.tooling import ToolAvailabilityContext, ToolContentItem, ToolExecutionContext, ToolExecutionResult, ToolInvocation, ToolSpec
 
 from . import messaging
@@ -41,8 +42,32 @@ class AgentToolProvider:
     def __init__(self, service: AgentService = agent_service) -> None:
         self.service = service
 
+    def _allowed_chat(self, context: Optional[ToolAvailabilityContext | ToolExecutionContext]) -> bool:
+        """判断当前聊天是否有权指挥外接 Agent。"""
+
+        if context is not None and context.session_id and context.session_id == self.service.agent_id:
+            return True
+        raw_users = self.service.config.allow_users
+        raw_groups = self.service.config.allow_groups
+        if not raw_users and not raw_groups:
+            return True
+        if context is None:
+            return False
+        allow_users = normalize_operator_permissions(raw_users)
+        allow_groups = normalize_operator_permissions(raw_groups)
+        if not allow_users and not allow_groups:
+            return False
+        platform = (context.platform or "").strip().lower()
+        group_id = (context.group_id or "").strip()
+        user_id = (context.user_id or "").strip()
+        if group_id:
+            return f"{platform}:{group_id}" in allow_groups
+        return bool(user_id) and f"{platform}:{user_id}" in allow_users
+
     async def list_tools(self, context: Optional[ToolAvailabilityContext] = None) -> List[ToolSpec]:
         if not self.service.config.enabled:
+            return []
+        if not self._allowed_chat(context):
             return []
         trusted = context is not None and context.session_id == self.service.agent_id
         tools = []
@@ -58,6 +83,8 @@ class AgentToolProvider:
         try:
             if context is None:
                 raise PermissionError("Agent 工具需要可信执行上下文。")
+            if not self._allowed_chat(context):
+                raise PermissionError("当前聊天没有指挥外接 Agent 的权限。")
             self.service.require_agent()
             name, args = invocation.tool_name, invocation.arguments
             if name not in CHAT_TOOLS:

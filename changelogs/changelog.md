@@ -1,5 +1,11 @@
 # 更新日志
 
+# [1.3.20] - 2026-10-30
+
+## 细节与修复
+
+- 外接 Agent：新增 `agent.allow_users` / `agent.allow_groups` 白名单。留空保持原有的「任何聊天都能指挥」；填写任意一个后按 `platform:user_id` / `platform:group_id` 放行，未命中的聊天不再向 Planner 暴露 `agent_talk` 等工具，直接调用也会被拒绝。
+
 # [1.3.19] - 2026-10-30
 
 ## 细节与修复
