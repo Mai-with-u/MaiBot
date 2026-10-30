@@ -1,3 +1,4 @@
+import { AgentPage } from '@/routes/agent'
 import { ChatConversationHeader } from './ChatConversationHeader'
 import { PageFrame } from '@/components/ui/surface'
 import { ConversationTransition } from '@/components/ui/conversation'
@@ -264,6 +265,11 @@ export function ChatPage() {
   const setupTrial = useRouterState({
     select: (state) => new URLSearchParams(state.location.searchStr).get('setupTrial') === 'true',
   })
+  const agentParam = useRouterState({
+    select: (state) => new URLSearchParams(state.location.searchStr).get('agent') === 'true',
+  })
+  const [agentSelected, setAgentSelected] = useState(agentParam)
+  const [handledAgentParam, setHandledAgentParam] = useState(agentParam)
   const [trialReplied, setTrialReplied] = useState(false)
   const trialMessagePending = useRef(false)
   const canOpenMessagePlatform = typeof window.maibotDesktopHost?.openMessagePlatform === 'function'
@@ -383,8 +389,13 @@ export function ChatPage() {
   // 手机端观察页的工具栏挂到悬浮顶栏里
   const [observedToolbarSlot, setObservedToolbarSlot] = useState<HTMLDivElement | null>(null)
   const [mobileRoomOpen, setMobileRoomOpen] = useState(
-    () => setupTrial || getRequestedObservedSessionId() !== null
+    () => setupTrial || agentParam || getRequestedObservedSessionId() !== null
   )
+  if (agentParam !== handledAgentParam) {
+    setHandledAgentParam(agentParam)
+    setAgentSelected(agentParam)
+    if (agentParam) setMobileRoomOpen(true)
+  }
   useHideMobileTabBar(isMobileChat && mobileRoomOpen)
 
   // 「麦麦实时」条等入口通过 ?observe= 直达某个聊天流；已在聊天页时也要跟着切换
@@ -395,6 +406,7 @@ export function ChatPage() {
   if (observeParam !== handledObserveParam) {
     setHandledObserveParam(observeParam)
     if (observeParam) {
+      setAgentSelected(false)
       setActiveObservedSessionId(observeParam)
       setMobileRoomOpen(true)
     }
@@ -407,6 +419,8 @@ export function ChatPage() {
   const [inputValue, setInputValue] = useState('')
   const [selectedImages, setSelectedImages] = useState<ChatImageAttachment[]>([])
   const { flags: featureFlags } = useFeatureFlags()
+  const agentEnabled = featureFlags?.agent === true
+  const agentActive = agentEnabled && agentSelected
   const filesEnabled = featureFlags?.files === true
   const [filesByTab, setFilesByTab] = useState<Record<string, StoredFile[]>>({})
   const [uploadingFiles, setUploadingFiles] = useState(false)
@@ -1189,11 +1203,13 @@ export function ChatPage() {
 
   // 切换标签页
   const switchTab = useCallback((tabId: string) => {
+    setAgentSelected(false)
     setActiveObservedSessionId(null)
     setActiveTabId(tabId)
   }, [])
 
   const selectObservedSession = useCallback((sessionId: string) => {
+    setAgentSelected(false)
     setSelectedObservedSession(sessionId)
     setActiveObservedSessionId(sessionId)
   }, [setSelectedObservedSession])
@@ -1225,6 +1241,9 @@ export function ChatPage() {
         transition={{ type: 'spring', stiffness: 360, damping: 30, mass: 0.75 }}
       >
         <ChatWorkspaceSidebar
+          agentEnabled={agentEnabled}
+          agentActive={agentActive}
+          onSelectAgent={() => setAgentSelected(true)}
           tabs={tabs}
           activeTabId={activeTabId}
           activeObservedSessionId={activeObservedSessionId}
@@ -1243,6 +1262,11 @@ export function ChatPage() {
       {!mobileRoomOpen && (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col md:hidden">
           <MobileChatList
+            agentEnabled={agentEnabled}
+            onOpenAgent={() => {
+              setAgentSelected(true)
+              setMobileRoomOpen(true)
+            }}
             tabs={tabs}
             observedSessions={knownSessions}
             observedSessionsError={knownChatStreamsError}
@@ -1297,6 +1321,14 @@ export function ChatPage() {
             )}
           </section>
         )}
+        {agentActive ? (
+          <>
+            <div className="md:hidden">
+              <Button variant="ghost" onClick={() => setMobileRoomOpen(false)}>{t('chat.mobile.back')}</Button>
+            </div>
+            <div className="min-h-0 flex-1"><AgentPage /></div>
+          </>
+        ) : (
         <ConversationTransition mode={activeObservedSessionId ? 'observe' : 'chat'}>
         {/* 移动端对话页顶栏：返回列表、会话名片与单个操作；观察页的顶栏悬浮在时间线上方 */}
         <div className="md:hidden">
@@ -1407,6 +1439,7 @@ export function ChatPage() {
           </>
         )}
         </ConversationTransition>
+        )}
       </motion.div></PageFrame>
 
       <ChatStreamSettingsDialog

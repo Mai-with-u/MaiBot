@@ -392,10 +392,12 @@ def load_log_config():  # sourcery skip: use-contextlib-suppress
         "suppress_libraries": [
             "faiss",
             "httpx",
+            "httpx2",
             "urllib3",
             "asyncio",
             "websockets",
             "httpcore",
+            "httpcore2",
             "requests",
             "sqlalchemy",
             "openai",

@@ -1,7 +1,6 @@
 """Maisaka 历史消息轮次结束后处理。"""
 
 from dataclasses import dataclass
-from math import ceil
 from typing import Dict, List, Optional, Set, Tuple
 
 from .compaction import ContextSummaryMessage
@@ -13,9 +12,8 @@ from .messages import (
     ToolResultMessage,
 )
 
-# 触发阈值和保留目标均以配置的上下文条数为基准。
+# 达到配置的上下文条数即触发裁切，保留目标按配置条数计算。
 TRIM_TARGET_RATIO = 0.2
-TRIM_THRESHOLD_RATIO = 1.2
 MIN_RETAINED_CHAT_MESSAGES = 5
 
 
@@ -54,8 +52,7 @@ def process_chat_history_after_cycle(
 
     compact_removed_count = 0
     removed_messages: list[LLMContextMessage] = []
-    trim_threshold = ceil(max_context_size * TRIM_THRESHOLD_RATIO)
-    if remaining_context_count >= trim_threshold:
+    if remaining_context_count >= max_context_size:
         target_context_count = max(MIN_RETAINED_CHAT_MESSAGES, int(max_context_size * TRIM_TARGET_RATIO))
         removed_messages = _trim_history_to_context_target(
             processed_history,

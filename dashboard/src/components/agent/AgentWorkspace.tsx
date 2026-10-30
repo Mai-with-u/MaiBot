@@ -161,7 +161,7 @@ export function AgentWorkspace({ api, titleKey, desktopView }: { api: AgentApi; 
   return <PageFrame className="flex h-full min-h-0 flex-col">
     <header className="flex flex-wrap items-center gap-2 border-b p-4">
       <h1 className="mr-auto font-semibold">{t(titleKey)}</h1>
-      <Button size="sm" variant={desktop ? 'ghost' : 'secondary'} aria-pressed={!desktop} onClick={() => setDesktop(false)}><BrainCircuit className="mr-1.5 size-4" />{t('chat.computer.reasoning')}</Button>
+      {desktopView && desktopEnabled && <Button size="sm" variant={desktop ? 'ghost' : 'secondary'} aria-pressed={!desktop} onClick={() => setDesktop(false)}><BrainCircuit className="mr-1.5 size-4" />{t('chat.computer.reasoning')}</Button>}
       {desktopView && desktopEnabled && <Button size="sm" variant={desktop ? 'secondary' : 'ghost'} aria-pressed={desktop} onClick={() => setDesktop(true)}><Monitor className="mr-1.5 size-4" />{t('chat.computerDesktop')}</Button>}
     </header>
     {desktop && desktopView ? desktopView : <AgentHistory submitted={submitted} api={api} onDesktopEnabled={setDesktopEnabled} />}

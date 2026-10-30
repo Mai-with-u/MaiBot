@@ -1,8 +1,5 @@
 {
-  "startup.agreement_confirm_prompt": "\"동의\" 또는 \"confirmed\"를 입력하거나, 환경 변수 \"EULA_AGREE={eula_hash}\"와 \"PRIVACY_AGREE={privacy_hash}\"를 설정하여 계속 실행하세요",
-  "startup.agreement_confirm_retry": "계속 실행하려면 \"동의\" 또는 \"confirmed\"를 입력하세요",
-  "startup.agreement_reconfirm": "EULA 또는 개인정보 처리방침이 업데이트되었습니다. 내용을 확인한 후 재동의해 주세요. 계속 실행하면 업데이트된 두 약관에 동의한 것으로 간주됩니다",
-  "startup.agreement_updated": "{agreement_name} 확인 파일 {file_hash} 업데이트됨",
+  "startup.usage_notice": "이용 안내는 EULA.md, 개인정보 처리 안내는 PRIVACY.md를 참고하세요.",
   "startup.brain_external_world_failed": "브레인 및 외부 세계 시작 실패: {error}",
   "startup.chat_manager_initialized": "채팅 관리자 초기화 완료",
   "startup.child_process_force_kill": "자식 프로세스가 응답하지 않아 강제 종료 중...",
@@ -13,10 +10,7 @@
   "startup.env_created": ".env 파일을 찾을 수 없어 template/template.env에서 자동으로 생성했습니다",
   "startup.env_file_missing": ".env 파일이 존재하지 않습니다. 파일을 생성하고 필요한 환경 변수를 설정해 주세요",
   "startup.env_template_missing": ".env 파일과 템플릿 template/template.env 모두 찾을 수 없습니다",
-  "startup.eula_name": "EULA",
-  "startup.eula_privacy_checked": "EULA 및 개인정보 처리방침 확인 완료",
   "startup.event_loop_closed": "[메인 프로세스] 이벤트 루프가 닫혔습니다",
-  "startup.file_not_found": "{file_type} 파일이 존재하지 않습니다",
   "startup.graceful_shutdown_error": "정상 종료 중 오류 발생: {error}",
   "startup.initialization_completed_banner": "\n--------------------------------\n모든 시스템 초기화 완료, {nickname} 깨어났습니다\n--------------------------------\n{nickname}의 기능을 커스터마이즈하려면 참고하세요: https://docs.mai-mai.org/manual/usage/\n문제가 발생했다면 공식 문서를 방문하세요: https://docs.mai-mai.org/\n--------------------------------\n플러그인 개발 또는 관련 내용을 알고 싶다면 개발 문서를 방문하세요: https://docs.mai-mai.org/develop/\n--------------------------------\n모델 사용량 및 MaiBot 통계 데이터를 확인하려면 루트 디렉터리의 maibot_statistics.html 파일을 열어보세요\n",
   "startup.initialization_completed_cycles": "초기화 완료, 뉴런 발화 {init_time}회",
@@ -34,7 +28,6 @@
   "startup.opensource_docs": "  공식 문서: ",
   "startup.opensource_docs_value": "https://docs.mai-mai.org",
   "startup.prepare_exit": "[메인 프로세스] 종료 준비 중...",
-  "startup.privacy_name": "개인정보 처리방침",
   "startup.program_exited": "프로그램이 종료되었습니다 (종료 코드 {return_code})",
   "startup.remaining_tasks_cancelling": {
     "one": "{count}개의 남은 작업을 취소 중...",

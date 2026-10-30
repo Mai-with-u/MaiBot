@@ -9,6 +9,7 @@ Worker（WebUI）只负责检查更新与登记更新请求；真正改动代码
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from threading import Lock
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote
@@ -17,6 +18,7 @@ from urllib.request import Request, urlopen
 import base64
 import importlib.util
 import json
+import logging
 import os
 import re
 import shutil
@@ -287,18 +289,60 @@ def _dependency_command(tool: str) -> List[str]:
     return [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "-r", "requirements.txt"]
 
 
-def _sync_dependencies(root: Path, tool: str) -> None:
+def _failed_dependency_index(root: Path, output: str) -> Optional[Dict[str, Any]]:
+    """只排除能从网络错误明确定位到的命名索引，不猜测下载 CDN 或依赖冲突的归属。"""
+    if not re.search(
+        r"operation timed out|connection (?:reset|refused|closed)|dns error|"
+        r"failed to lookup address|network is unreachable|connection timed out",
+        output, re.IGNORECASE,
+    ):
+        return None
+    failed = re.search(r"Failed to fetch:\s*`(https?://[^`]+)`", output)
+    if failed is None:
+        return None
+    config_path = root / "uv.toml"
+    if config_path.is_file():
+        config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    else:
+        config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8")).get("tool", {}).get("uv", {})
+    for index in config.get("index", []):
+        name, url = index.get("name"), index.get("url", "")
+        if name and url and failed.group(1).startswith(url.rstrip("/") + "/"):
+            return index
+    return None
+
+
+def _sync_dependencies(root: Path, tool: str, logger: Any = None) -> None:
     command = _dependency_command(tool)
-    try:
-        result = _run_command(command, root, DEPENDENCY_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired as exc:
-        raise SelfUpdateError(
-            "dependency_timeout",
-            f"依赖同步超时（{DEPENDENCY_TIMEOUT_SECONDS:g} 秒）: {' '.join(command)}\n{_timeout_output(exc)}",
-        ) from exc
-    if result.returncode != 0:
-        output = (result.stderr.strip() or result.stdout.strip())[-4000:]
-        raise SelfUpdateError("dependency_failed", f"依赖同步失败: {' '.join(command)}\n{output}")
+    excluded: Set[str] = set()
+    deadline = time.monotonic() + DEPENDENCY_TIMEOUT_SECONDS
+    logger = logger if logger is not None else logging.getLogger(__name__)
+    # uv 没有排除单个索引的开关。用同名的空本地索引覆盖故障源，保留其余配置、
+    # 选版本策略及 sources 的显式绑定；不修改 pyproject，也不把绑定包切到别的源。
+    with TemporaryDirectory(prefix="maibot-update-index-") as empty_index:
+        while True:
+            remaining = deadline - time.monotonic()
+            try:
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, DEPENDENCY_TIMEOUT_SECONDS)
+                result = _run_command(command, root, remaining)
+            except subprocess.TimeoutExpired as exc:
+                raise SelfUpdateError(
+                    "dependency_timeout",
+                    f"依赖同步超时（{DEPENDENCY_TIMEOUT_SECONDS:g} 秒）: {' '.join(command)}\n{_timeout_output(exc)}",
+                ) from exc
+            if result.returncode == 0:
+                return
+            output = result.stderr.strip() or result.stdout.strip()
+            index = _failed_dependency_index(root, output) if tool == "uv" else None
+            if index is None or index["name"] in excluded:
+                detail = f"\n本次已临时排除故障源：{', '.join(sorted(excluded))}" if excluded else ""
+                raise SelfUpdateError("dependency_failed", f"依赖同步失败: {' '.join(command)}\n{output[-4000:]}{detail}")
+            name = index["name"]
+            excluded.add(name)
+            logger.warning(f"自更新：依赖源 {name} 网络故障，本次临时排除后重试；保留原版本约束和选版本策略")
+            option = "--default-index" if index.get("default", False) else "--index"
+            command.extend([option, f"{name}={Path(empty_index).as_uri()}"])
 
 
 def inspect_local(root: Path = PROJECT_ROOT) -> LocalState:
@@ -692,7 +736,7 @@ def _execute_update(pending: PendingUpdate, result: UpdateResult, logger: Any, r
         result.stage = "dependencies"
         logger.info(f"自更新：正在同步依赖（{local.dependency_tool}），可能需要几分钟")
         try:
-            _sync_dependencies(root, local.dependency_tool)
+            _sync_dependencies(root, local.dependency_tool, logger)
         except SelfUpdateError:
             _rollback(pending, local.dependency_tool, result, logger, root)
             raise
@@ -716,7 +760,7 @@ def _rollback(
         # precheck 已确认没有未提交的已跟踪改动，这里丢弃的只有本次更新写入的内容。
         _git(root, "reset", "--hard", pending.base_commit)
         if dependency_tool is not None:
-            _sync_dependencies(root, dependency_tool)
+            _sync_dependencies(root, dependency_tool, logger)
     except SelfUpdateError as exc:
         result.rollback_error = exc.message
         logger.error(f"自更新：回滚失败，请手动检查仓库与依赖状态: {exc.message}")

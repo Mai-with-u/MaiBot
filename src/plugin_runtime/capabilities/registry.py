@@ -5,7 +5,7 @@ from src.files.capability import file_capability
 from src.plugin_runtime.host.capability_service import CapabilityImpl
 from src.plugin_runtime.upload_store import claim_upload
 
-from . import desktop_pet, internal_chat, market, web
+from . import desktop_pet, internal_chat, market, personality, web
 
 if TYPE_CHECKING:
     from src.plugin_runtime.host.supervisor import PluginSupervisor
@@ -20,6 +20,8 @@ def register_capability_impls(manager: "PluginRuntimeManager", supervisor: "Plug
     cap_service.register_capability("webui.claim_upload", claim_upload)
     cap_service.register_capability("internal_chat.identity", internal_chat.identity)
     cap_service.register_capability("internal_chat.send", internal_chat.send)
+    for action in ("list", "get_current", "switch"):
+        cap_service.register_capability(f"personality.{action}", personality.handle)
     for action in ("status", "show", "hide", "say", "set_thinking"):
         cap_service.register_capability(f"desktop_pet.{action}", desktop_pet.control)
     for action in desktop_pet.ANIMATION_ACTIONS:

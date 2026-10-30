@@ -1,8 +1,5 @@
 {
-  "startup.agreement_confirm_prompt": "\"同意\" または \"confirmed\" と入力するか、環境変数 \"EULA_AGREE={eula_hash}\" および \"PRIVACY_AGREE={privacy_hash}\" を設定して実行を続けてください",
-  "startup.agreement_confirm_retry": "実行を続けるには \"同意\" または \"confirmed\" と入力してください",
-  "startup.agreement_reconfirm": "EULA またはプライバシーポリシーの内容が更新されました。内容をご確認のうえ再度同意してください。実行を続けると、更新後の両規約に同意したものとみなされます",
-  "startup.agreement_updated": "{agreement_name} の確認ファイルを更新しました: {file_hash}",
+  "startup.usage_notice": "利用上の注意は EULA.md、プライバシー情報は PRIVACY.md をご覧ください。",
   "startup.brain_external_world_failed": "ブレインと外部世界の起動に失敗しました: {error}",
   "startup.chat_manager_initialized": "チャットマネージャーの初期化が完了しました",
   "startup.child_process_force_kill": "子プロセスが応答しないため、強制終了します...",
@@ -13,10 +10,7 @@
   "startup.env_created": ".env が見つからなかったため、template/template.env から自動作成しました",
   "startup.env_file_missing": ".env ファイルが存在しません。ファイルを作成し、必要な環境変数を設定してください",
   "startup.env_template_missing": ".env ファイルが見つからず、テンプレート template/template.env も見つかりませんでした",
-  "startup.eula_name": "EULA",
-  "startup.eula_privacy_checked": "EULA およびプライバシーポリシーの確認が完了しました",
   "startup.event_loop_closed": "[メインプロセス] イベントループが閉じました",
-  "startup.file_not_found": "{file_type} ファイルが存在しません",
   "startup.graceful_shutdown_error": "グレースフルシャットダウン中にエラーが発生しました: {error}",
   "startup.initialization_completed_banner": "\n--------------------------------\n全システムの初期化が完了しました。{nickname} の起動に成功しました\n--------------------------------\n{nickname} の機能をカスタマイズしたい場合はこちら: https://docs.mai-mai.org/manual/usage/\n問題が発生した場合はドキュメントをご参照ください: https://docs.mai-mai.org/\n--------------------------------\nプラグインの開発や詳細については開発ドキュメントをご覧ください: https://docs.mai-mai.org/develop/\n--------------------------------\nモデルの使用量やMaiBotの統計データは、ルートディレクトリの maibot_statistics.html からご確認いただけます\n",
   "startup.initialization_completed_cycles": "初期化完了、ニューロンが {init_time} 回発火しました",
@@ -34,7 +28,6 @@
   "startup.opensource_docs": "  公式ドキュメント: ",
   "startup.opensource_docs_value": "https://docs.mai-mai.org",
   "startup.prepare_exit": "[メインプロセス] 終了を準備しています...",
-  "startup.privacy_name": "プライバシーポリシー",
   "startup.program_exited": "プログラムが終了しました（終了コード: {return_code}）",
   "startup.remaining_tasks_cancelling": {
     "one": "残り {count} 件のタスクをキャンセルしています...",

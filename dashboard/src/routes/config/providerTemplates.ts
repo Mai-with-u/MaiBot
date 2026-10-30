@@ -242,6 +242,14 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
 
   // 国际提供商
   {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    base_url: 'https://openrouter.ai/api/v1',
+    client_type: 'openai',
+    display_name: 'OpenRouter',
+    modelFetcher: { endpoint: '/models', parser: 'openai' },
+  },
+  {
     id: 'openai',
     name: 'OpenAI',
     base_url: 'https://api.openai.com/v1',

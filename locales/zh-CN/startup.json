@@ -1,8 +1,5 @@
 {
-  "startup.agreement_confirm_prompt": "输入\"同意\"或\"confirmed\"，或设置环境变量\"EULA_AGREE={eula_hash}\"和\"PRIVACY_AGREE={privacy_hash}\"继续运行",
-  "startup.agreement_confirm_retry": "请输入\"同意\"或\"confirmed\"以继续运行",
-  "startup.agreement_reconfirm": "EULA 或隐私条款内容已更新，请在阅读后重新确认，继续运行视为同意更新后的以上两款协议",
-  "startup.agreement_updated": "更新 {agreement_name} 确认文件 {file_hash}",
+  "startup.usage_notice": "使用须知见 EULA.md，隐私说明见 PRIVACY.md。",
   "startup.brain_external_world_failed": "启动大脑和外部世界失败: {error}",
   "startup.chat_manager_initialized": "聊天管理器初始化成功",
   "startup.child_process_force_kill": "子进程未响应，强制关闭...",
@@ -13,10 +10,7 @@
   "startup.env_created": "未找到 .env，已从 template/template.env 自动创建",
   "startup.env_file_missing": ".env 文件不存在，请创建并配置所需的环境变量",
   "startup.env_template_missing": "未找到 .env 文件，也未找到模板 template/template.env",
-  "startup.eula_name": "EULA",
-  "startup.eula_privacy_checked": "检查 EULA 和隐私条款完成",
   "startup.event_loop_closed": "[主程序] 事件循环已关闭",
-  "startup.file_not_found": "{file_type} 文件不存在",
   "startup.graceful_shutdown_error": "优雅关闭时发生错误: {error}",
   "startup.initialization_completed_banner": "全部系统初始化完成，{nickname} 已成功唤醒",
   "startup.initialization_completed_cycles": "初始化完成，神经元放电 {init_time} 次",
@@ -34,7 +28,6 @@
   "startup.opensource_docs": "  官方文档: ",
   "startup.opensource_docs_value": "https://docs.mai-mai.org",
   "startup.prepare_exit": "[主程序] 准备退出...",
-  "startup.privacy_name": "隐私条款",
   "startup.program_exited": "程序已退出（退出码 {return_code}）",
   "startup.remaining_tasks_cancelling": {
     "one": "正在取消 {count} 个剩余任务...",

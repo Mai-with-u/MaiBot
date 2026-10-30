@@ -21,6 +21,9 @@ import { ObservedConversationHoverCard } from './ObservedConversationHoverCard'
 
 interface ChatWorkspaceSidebarProps {
   className?: string
+  agentEnabled?: boolean
+  agentActive?: boolean
+  onSelectAgent?: () => void
   tabs: ChatTab[]
   activeTabId: string
   activeObservedSessionId: string | null
@@ -191,6 +194,9 @@ const ObservedConversationItem = memo(function ObservedConversationItem({
 
 export function ChatWorkspaceSidebar({
   className,
+  agentEnabled = false,
+  agentActive = false,
+  onSelectAgent,
   tabs,
   activeTabId,
   activeObservedSessionId,
@@ -227,10 +233,11 @@ export function ChatWorkspaceSidebar({
       : sortedObservedSessions,
     [normalizedQuery, sortedObservedSessions]
   )
+  const showAgent = agentEnabled && (!normalizedQuery || t('sidebar.menu.agent').toLowerCase().includes(normalizedQuery))
   const showLocalSection = !normalizedQuery || filteredTabs.length > 0
   const showObservedSection = !normalizedQuery || filteredObservedSessions.length > 0
   const showNoResults =
-    normalizedQuery.length > 0 && filteredTabs.length === 0 && filteredObservedSessions.length === 0
+    normalizedQuery.length > 0 && !showAgent && filteredTabs.length === 0 && filteredObservedSessions.length === 0
 
   return (
     <PageFrame asChild>
@@ -276,7 +283,7 @@ export function ChatWorkspaceSidebar({
                 {filteredTabs.map((tab) => (
                   <ConversationItem
                     key={tab.id}
-                    active={activeObservedSessionId === null && activeTabId === tab.id}
+                    active={!agentActive && activeObservedSessionId === null && activeTabId === tab.id}
                     tab={tab}
                     onSwitch={onSwitch}
                     onClose={onClose}
@@ -284,6 +291,18 @@ export function ChatWorkspaceSidebar({
                 ))}
               </DataPanel>
             </section>
+          )}
+
+          {showAgent && onSelectAgent && (
+            <DataPanel padding="none" className="shrink-0">
+              <ConversationListItem
+                title={t('sidebar.menu.agent')}
+                preview=""
+                selected={agentActive}
+                onSelect={onSelectAgent}
+                avatar={<ConversationAvatar name={t('sidebar.menu.agent')} bot />}
+              />
+            </DataPanel>
           )}
 
           {showObservedSection && (
@@ -323,7 +342,7 @@ export function ChatWorkspaceSidebar({
                           session={session}
                           status={observedStageStatuses.get(session.sessionId)}
                           latestMessage={observedLatestMessages.get(session.sessionId)}
-                          active={activeObservedSessionId === session.sessionId}
+                          active={!agentActive && activeObservedSessionId === session.sessionId}
                           onSelect={onSelectObserved}
                           onOpenSettings={onOpenObservedSettings}
                         />

@@ -1,8 +1,5 @@
 {
-  "startup.agreement_confirm_prompt": "Enter \"agreed\" or \"confirmed\", or set environment variables \"EULA_AGREE={eula_hash}\" and \"PRIVACY_AGREE={privacy_hash}\" to continue",
-  "startup.agreement_confirm_retry": "Please enter \"agreed\" or \"confirmed\" to continue",
-  "startup.agreement_reconfirm": "The EULA or Privacy Policy has been updated. Please read and re-confirm. Continuing to run indicates your agreement to the updated terms.",
-  "startup.agreement_updated": "Updated {agreement_name} confirmation file {file_hash}",
+  "startup.usage_notice": "See EULA.md for usage notes and PRIVACY.md for privacy information.",
   "startup.brain_external_world_failed": "Failed to start brain and external world: {error}",
   "startup.chat_manager_initialized": "Chat manager initialized successfully",
   "startup.child_process_force_kill": "Child process not responding, force killing...",
@@ -13,10 +10,7 @@
   "startup.env_created": ".env not found, auto-created from template/template.env",
   "startup.env_file_missing": ".env file does not exist. Please create it and configure the required environment variables.",
   "startup.env_template_missing": ".env file not found, and template template/template.env is also missing",
-  "startup.eula_name": "EULA",
-  "startup.eula_privacy_checked": "EULA and Privacy Policy check completed",
   "startup.event_loop_closed": "[Main] Event loop closed",
-  "startup.file_not_found": "{file_type} file does not exist",
   "startup.graceful_shutdown_error": "Error during graceful shutdown: {error}",
   "startup.initialization_completed_banner": "\n--------------------------------\nAll systems initialized. {nickname} has been awakened successfully.\n--------------------------------\nTo customize {nickname}'s behavior, see: https://docs.mai-mai.org/manual/usage/\nOr if you've run into issues, visit our documentation: https://docs.mai-mai.org/\n--------------------------------\nTo write or learn about plugins, visit the developer docs: https://docs.mai-mai.org/develop/\n--------------------------------\nTo view model usage and MaiBot statistics, open maibot_statistics.html in the root directory.\n",
   "startup.initialization_completed_cycles": "Initialization complete, neurons fired {init_time} times",
@@ -34,7 +28,6 @@
   "startup.opensource_docs": "  Official documentation: ",
   "startup.opensource_docs_value": "https://docs.mai-mai.org",
   "startup.prepare_exit": "[Main] Preparing to exit...",
-  "startup.privacy_name": "Privacy Policy",
   "startup.program_exited": "Program exited (exit code {return_code})",
   "startup.remaining_tasks_cancelling": {
     "one": "Cancelling {count} remaining task...",

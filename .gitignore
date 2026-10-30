@@ -386,3 +386,4 @@ agentlite/
 /qwen_mai/
 /MaiMaiFocusPet-Godot/
 start_mac.command
+/.dsh-maibot-manager.lock

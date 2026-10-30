@@ -74,7 +74,7 @@ BOT_CONFIG_PATH: Path = (CONFIG_DIR / "bot_config.toml").resolve().absolute()
 MODEL_CONFIG_PATH: Path = (CONFIG_DIR / "model_config.toml").resolve().absolute()
 LEGACY_ENV_PATH: Path = (PROJECT_ROOT / ".env").resolve().absolute()
 MMC_VERSION: str = read_project_version(PROJECT_ROOT)
-CONFIG_VERSION: str = "8.15.63"
+CONFIG_VERSION: str = "8.15.68"
 MODEL_CONFIG_VERSION: str = "1.17.26"
 
 logger = get_logger("config")
@@ -612,13 +612,15 @@ class ConfigManager:
                 global_updated = False
                 model_updated = False
                 if "bot" in normalized_scopes or global_config_new is None:
-                    global_config_new, global_updated = load_config_from_file(
+                    global_config_new, global_updated = await asyncio.to_thread(
+                        load_config_from_file,
                         Config,
                         self.bot_config_path,
                         CONFIG_VERSION,
                     )
                 if "model" in normalized_scopes or model_config_new is None:
-                    model_config_new, model_updated = load_config_from_file(
+                    model_config_new, model_updated = await asyncio.to_thread(
+                        load_config_from_file,
                         ModelConfig,
                         self.model_config_path,
                         MODEL_CONFIG_VERSION,

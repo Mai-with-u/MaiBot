@@ -12,6 +12,7 @@ import { RoutePendingFallback } from './components/route-pending-fallback'
 import { checkAuth } from './hooks/use-auth'
 import { RouteErrorBoundary } from './components/error-boundary'
 import { rememberMarketInstall } from './lib/plugin-market-navigation'
+import { rememberPersonalityImport } from './lib/personality-import'
 
 // Root 路由
 const rootRoute = createRootRoute({
@@ -91,6 +92,9 @@ const botConfigRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/config/bot',
   beforeLoad: ({ location }) => {
+    if (rememberPersonalityImport(location.hash)) {
+      throw redirect({ href: '/config/bot?tab=bot', replace: true })
+    }
     const params = new URLSearchParams(location.searchStr)
     if (params.get('mode') !== 'webui') return
     params.delete('mode')
@@ -218,7 +222,9 @@ const filesRoute = createRoute({
 const agentRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/agent',
-  component: lazyRouteComponent(() => import('./routes/agent'), 'AgentPage'),
+  beforeLoad: () => {
+    throw redirect({ to: '/chat', search: { agent: true }, replace: true })
+  },
 })
 
 // 移动端管理页路由：底部标签栏「管理」，汇总侧栏的全部入口
@@ -232,7 +238,8 @@ const manageRoute = createRoute({
 const chatRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/chat',
-  validateSearch: (search: Record<string, unknown>): { setupTrial?: boolean; observe?: string } => ({
+  validateSearch: (search: Record<string, unknown>): { setupTrial?: boolean; observe?: string; agent?: boolean } => ({
+    agent: search.agent === true || search.agent === 'true' ? true : undefined,
     setupTrial: search.setupTrial === true || search.setupTrial === 'true' ? true : undefined,
     observe: typeof search.observe === 'string' && search.observe ? search.observe : undefined,
   }),

@@ -21,6 +21,8 @@ import { cn } from '@/lib/utils'
 import type { SessionInfo, StageStatusInfo } from '@/routes/monitor/use-maisaka-monitor'
 import { StageStatusLabel } from '@/routes/monitor/StageStatusLabel'
 
+import { ConversationAvatar } from '@/components/ui/conversation'
+
 import type { ChatTab, ObservedMessagePreview } from './types'
 import { getChatTabDisplayName } from './utils'
 
@@ -347,6 +349,8 @@ function ObservedAvatar({ session }: { session: SessionInfo }) {
 }
 
 interface MobileChatListProps {
+  agentEnabled?: boolean
+  onOpenAgent?: () => void
   tabs: ChatTab[]
   observedSessions: Map<string, SessionInfo>
   observedSessionsError?: boolean
@@ -360,6 +364,8 @@ interface MobileChatListProps {
 
 /** 手机端会话列表：点按进入全屏对话页，左滑露出设置/关闭 */
 export function MobileChatList({
+  agentEnabled = false,
+  onOpenAgent,
   tabs,
   observedSessions,
   observedSessionsError = false,
@@ -499,6 +505,15 @@ export function MobileChatList({
       {/* 与麦麦的会话和麦麦的聊天流放在同一个列表里 */}
       <div data-mobile-chat-screen="true">
         {localSection}
+        {agentEnabled && onOpenAgent && (!normalizedQuery || t('sidebar.menu.agent').toLowerCase().includes(normalizedQuery)) && (
+          <ChatRow
+            avatar={<ConversationAvatar name={t('sidebar.menu.agent')} bot />}
+            title={t('sidebar.menu.agent')}
+            preview=""
+            time=""
+            onOpen={onOpenAgent}
+          />
+        )}
         {observedSection}
       </div>
     </div>

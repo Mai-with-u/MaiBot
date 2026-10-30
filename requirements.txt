@@ -12,8 +12,8 @@ idna>=3.15
 jieba>=0.42.1
 json-repair>=0.60.1,<0.61
 jsonschema>=4.26.0,<5
-maibot-dashboard==1.9.12.dev20261028563
-maibot-plugin-sdk>=2.19.0
+maibot-dashboard==1.9.13.dev20261029566
+maibot-plugin-sdk>=2.20.0
 maim-message==0.6.8
 mcp>=1.28.1,<2
 msgpack>=1.2.1
