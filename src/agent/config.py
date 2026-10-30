@@ -12,6 +12,20 @@ class AgentConfig(ConfigBase):
     enabled: bool = Field(default=False, json_schema_extra={"label": {"zh_CN": "启用 Agent连接"}})
     """启用与普通聊天并行的外接 Agent 接口，通过 ACP 连接 dsh 等外部程序。"""
 
+    allow_users: List[str] = Field(default_factory=list, json_schema_extra={
+        "label": {"zh_CN": "允许指挥 Agent 的私聊用户"},
+    })
+    """填写后只允许这些用户私聊指挥外接 Agent，格式为 platform:user_id，例如 qq:123456789；空列表表示不限制。
+    群聊不区分具体成员，需要放开某个群时改用 allow_groups。
+    """
+
+    allow_groups: List[str] = Field(default_factory=list, json_schema_extra={
+        "label": {"zh_CN": "允许指挥 Agent 的群聊"},
+    })
+    """填写后只允许这些群聊指挥外接 Agent，格式为 platform:group_id，例如 qq:987654321；空列表表示不限制。
+    allow_users 与 allow_groups 都为空时不限制任何聊天；填写任意一个后按白名单放行，未命中的聊天不再向 Planner 暴露 Agent 工具。
+    """
+
     planner_enabled: bool = Field(default=False, json_schema_extra={
         "label": {"zh_CN": "启用外接 Planner（实验）"}, "x-widget": "switch",
     })
