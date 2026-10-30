@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from src.maisaka.runtime import MaisakaHeartFlowChatting
 
 
-TurnGateDecision = Literal["trigger", "wait", "delay"]
+TurnGateDecision = Literal["trigger", "wait", "delay", "consume"]
 logger = get_logger("maisaka_turn_scheduler")
 RECENT_PRESENCE_WINDOW_SECONDS = 300.0
 """统计近期消息量与麦麦发言占比的时间窗口。"""
@@ -34,10 +34,17 @@ class TurnGateResult:
     decision: TurnGateDecision
     detail: str
     delay_seconds: float = 0.0
+    probability: float = 0.0
+    threshold: float = 0.0
+    consumed_count: Optional[int] = None
 
     @property
     def should_trigger(self) -> bool:
         return self.decision == "trigger"
+
+    @property
+    def should_consume(self) -> bool:
+        return self.decision == "consume"
 
 
 class DynamicReplyTurnGate:
@@ -103,7 +110,44 @@ class DynamicReplyTurnGate:
         return TurnGateResult(
             decision="trigger" if gate_decision.should_trigger else "wait",
             detail=f"动态门控: {gate_decision.detail} 判定={decision_label}",
+            probability=gate_decision.probability,
+            threshold=gate_decision.threshold,
         )
+
+    def apply_external_probability(
+        self,
+        *,
+        probability: float,
+        frequency: float,
+        threshold_override: Optional[float] = None,
+        now: Optional[float] = None,
+    ) -> TurnGateResult:
+        """使用外部 Hook 融合后的概率更新当前虚拟轮次需求，并重新计算动态门控判定。"""
+
+        eval_time = time.time() if now is None else now
+        clamped_probability = min(1.0, max(0.0, float(probability)))
+        self._gate.update_latest_proactive_demand(clamped_probability, eval_time)
+        gate_decision = self._gate.evaluate(clamped_probability, frequency, eval_time)
+        effective_threshold = (
+            min(1.0, max(0.0, float(threshold_override)))
+            if threshold_override is not None
+            else gate_decision.threshold
+        )
+        should_trigger = clamped_probability >= effective_threshold
+        if should_trigger:
+            self._gate.close_round()
+        decision_label = "进入Planner" if should_trigger else "等待更多消息"
+        return TurnGateResult(
+            decision="trigger" if should_trigger else "wait",
+            detail=f"动态门控: {gate_decision.detail} 判定={decision_label}",
+            probability=clamped_probability,
+            threshold=effective_threshold,
+        )
+
+    def close_round(self) -> None:
+        """结束当前虚拟轮次。"""
+
+        self._gate.close_round()
 
     def _filter_external_messages(self, pending_messages: Sequence[SessionMessage]) -> List[SessionMessage]:
         online_accounts = {platform: get_online_bot_accounts(platform) for platform in {m.platform for m in pending_messages}}
