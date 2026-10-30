@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict
 
 from json_repair import repair_json
+from sqlalchemy import update
 from sqlmodel import col, select
 
 import asyncio
@@ -342,7 +343,7 @@ class JargonMiner:
         return parsed if isinstance(parsed, list) else []
 
     def _cleanup_jargon_evidence_messages(
-        self, jargon_obj: MaiJargon, cleaned_evidence_messages: Optional[str]
+        self, jargon_obj: MaiJargon, cleaned_evidence_messages: Optional[str], evidence_snapshot: Optional[str]
     ) -> None:
         """写回清理后的证据消息引用。"""
 
@@ -350,12 +351,13 @@ class JargonMiner:
             return
 
         with get_db_session() as session:
-            statement = select(Jargon).filter_by(id=jargon_obj.item_id).limit(1)
-            if db_record := session.exec(statement).first():
-                db_record.evidence_messages = cleaned_evidence_messages
-                db_record.updated_timestamp = datetime.now()
-                session.add(db_record)
-                jargon_obj.evidence_messages = cleaned_evidence_messages
+            evidence = col(Jargon.evidence_messages)
+            unchanged = evidence.is_(None) if evidence_snapshot is None else evidence == evidence_snapshot
+            session.exec(
+                update(Jargon)
+                .where(col(Jargon.id) == jargon_obj.item_id, unchanged)
+                .values(evidence_messages=cleaned_evidence_messages, updated_timestamp=datetime.now())
+            )
 
     def _log_inference_prompt_preview(
         self,
@@ -407,16 +409,16 @@ class JargonMiner:
             logger.debug(f"jargon {content} 是手动记录，跳过含义推断")
             return
 
+        evidence_snapshot = jargon_obj.evidence_messages
         raw_content_list, cleaned_evidence_messages, evidence_changed = await asyncio.to_thread(
             self._load_evidence_contexts, jargon_obj
         )
-        used_evidence_messages = bool(raw_content_list)
-        if used_evidence_messages:
-            await asyncio.to_thread(self._cleanup_jargon_evidence_messages, jargon_obj, None)
-        elif evidence_changed:
-            await asyncio.to_thread(self._cleanup_jargon_evidence_messages, jargon_obj, cleaned_evidence_messages)
 
         if not raw_content_list:
+            if evidence_changed:
+                await asyncio.to_thread(
+                    self._cleanup_jargon_evidence_messages, jargon_obj, cleaned_evidence_messages, evidence_snapshot
+                )
             logger.warning(f"jargon {content} 没有可用证据上下文，跳过推断")
             return
 
@@ -465,13 +467,6 @@ class JargonMiner:
         meaning1: str = inference1.get("meaning", "").strip()
         if no_info or not meaning1:
             logger.info(f"jargon {content} 推断1表示信息不足无法推断，放弃本次推断，待下次更新")
-            # 更新最后一次判定的count值，避免在同一阈值重复尝试
-            jargon_obj.last_inference_count = jargon_obj.count or 0
-
-            try:
-                self._modify_jargon_entry(jargon_obj)
-            except Exception as e:
-                logger.error(f"jargon {content} 推断1更新last_inference_count失败: {e}")
             return
 
         # 步骤2: 基于content-only进行推断
@@ -563,9 +558,13 @@ class JargonMiner:
         jargon_obj.is_complete = is_complete
 
         try:
-            self._modify_jargon_entry(jargon_obj)
+            saved = await asyncio.to_thread(self._finalize_jargon_inference, jargon_obj, evidence_snapshot)
         except Exception as e:
             logger.error(f"jargon {content} 推断结果更新失败: {e}")
+            return
+        if not saved:
+            logger.info(f"jargon {content} 的证据已变化或记录不可写，保留证据并跳过过期推断结果")
+            return
         logger.debug(
             f"jargon {content} 推断完成: is_jargon={is_jargon}, meaning={jargon_obj.meaning}, last_inference_count={jargon_obj.last_inference_count}, is_complete={jargon_obj.is_complete}"
         )
@@ -832,6 +831,30 @@ class JargonMiner:
                 db_record.is_complete = jargon_obj.is_complete
                 db_record.updated_timestamp = datetime.now()
                 session.add(db_record)
+
+    def _finalize_jargon_inference(self, jargon_obj: MaiJargon, evidence_snapshot: Optional[str]) -> bool:
+        """Atomically save the result and consume evidence only if it has not changed."""
+        if not jargon_obj.item_id:
+            raise ValueError("jargon_obj must have item_id to update")
+        with get_db_session() as session:
+            evidence = col(Jargon.evidence_messages)
+            unchanged = evidence.is_(None) if evidence_snapshot is None else evidence == evidence_snapshot
+            statement = (
+                update(Jargon)
+                .where(col(Jargon.id) == jargon_obj.item_id)
+                .where(col(Jargon.created_by) != JargonCreatedBy.MANUAL)
+                .where(unchanged)
+                .values(
+                    is_jargon=jargon_obj.is_jargon,
+                    meaning=jargon_obj.meaning,
+                    last_inference_count=jargon_obj.last_inference_count,
+                    is_complete=jargon_obj.is_complete,
+                    updated_timestamp=datetime.now(),
+                    evidence_messages=None,
+                )
+            )
+            result = session.exec(statement)
+            return result.rowcount == 1
 
     def _should_infer_meaning(self, jargon_obj: Jargon) -> bool:
         """
