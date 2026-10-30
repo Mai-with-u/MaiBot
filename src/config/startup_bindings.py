@@ -134,6 +134,32 @@ def _load_bootstrap_config_dict(config_path: Path = BOT_CONFIG_PATH) -> Dict[str
     return config_data
 
 
+_DEFAULT_MAX_FRAME_SIZE_MIB = 16
+_MIN_MAX_FRAME_SIZE_MIB = 1
+_MAX_MAX_FRAME_SIZE_MIB = 1024
+
+
+def get_startup_max_frame_size_mib(config_path: Path = BOT_CONFIG_PATH) -> int:
+    """读取插件运行时单帧上限（MiB），供传输层在完整配置加载前使用。"""
+
+    config_data = _load_bootstrap_config_dict(config_path)
+    plugin_runtime = _as_mapping(config_data.get("plugin_runtime"))
+    if plugin_runtime is None:
+        return _DEFAULT_MAX_FRAME_SIZE_MIB
+
+    raw_value = plugin_runtime.get("max_frame_size_mib")
+    if raw_value is None:
+        return _DEFAULT_MAX_FRAME_SIZE_MIB
+    if isinstance(raw_value, bool) or not isinstance(raw_value, int):
+        raise ValueError("plugin_runtime.max_frame_size_mib 必须是整数")
+    if raw_value < _MIN_MAX_FRAME_SIZE_MIB or raw_value > _MAX_MAX_FRAME_SIZE_MIB:
+        raise ValueError(
+            "plugin_runtime.max_frame_size_mib 必须在 "
+            f"{_MIN_MAX_FRAME_SIZE_MIB}..{_MAX_MAX_FRAME_SIZE_MIB} MiB 之间"
+        )
+    return raw_value
+
+
 def _resolve_bind_address_from_section(
     section: Mapping[str, Any],
     host_key: str,

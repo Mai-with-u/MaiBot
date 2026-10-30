@@ -6135,6 +6135,21 @@ class PluginRuntimeConfig(ConfigBase):
     )
     """是否启用新版插件运行时。"""
 
+    max_frame_size_mib: int = Field(
+        default=16,
+        ge=1,
+        le=1024,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "单帧上限（MiB）",
+                "en_US": "Max frame size (MiB)",
+                "ja_JP": "最大フレームサイズ（MiB）",
+            },
+            "x-widget": "number",
+        },
+    )
+    """插件 RPC 单帧上限（MiB）；修改后需重启 host 与 runner。"""
+
     health_check_interval_sec: float = Field(
         default=30.0,
         json_schema_extra={
