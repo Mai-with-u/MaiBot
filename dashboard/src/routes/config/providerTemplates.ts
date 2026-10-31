@@ -6,6 +6,7 @@
 
 import type { ThinkingFormatConfig } from './model/thinkingFormats'
 import type { ModelInfo } from './model/types'
+import type { ProviderAuthType } from './modelProvider/types'
 
 // 模型获取器配置定义
 export interface ModelFetcherConfig {
@@ -27,6 +28,7 @@ export interface ProviderTemplate {
   display_name: string
   description?: string
   defaultApiKey?: string
+  auth_type?: ProviderAuthType
   // 选择模板后随提供商一起保存的模型配置。
   models?: Array<Omit<ModelInfo, 'api_provider'>>
   providerDefaults?: { max_retry: number; timeout: number; retry_interval: number }
