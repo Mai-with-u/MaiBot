@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional, Tupl
 
 import asyncio
 import json
+import re
 import traceback
 
 from src.chat.replyer.replyer_manager import replyer_manager
@@ -32,11 +33,18 @@ if TYPE_CHECKING:
 
 logger = get_logger("maisaka_builtin_reply")
 _REPLY_TOOL_INTERNAL_ARGUMENTS = {"msg_id", "_reply_id", "_plugin_reply_prompt"}
+# 入站表情在模型上下文中渲染为 “[表情包: 描述]”，模型可能照此格式在正文里自编标签，发送前需剥离。
+_EMOJI_PLACEHOLDER_PATTERN = re.compile(r"\[表情包(?:[:：][^\]]*)?\]")
 _DUPLICATE_TARGET_REPLY_REMINDER_ARG = "_duplicate_target_reply_reminder"
 _DUPLICATE_TARGET_REPLY_REMINDER_TEMPLATE = (
     "你刚刚已经回复过这条消息，你刚刚的发言是：“{previous_reply}”\n"
     "你现在想再次回复这条消息，进行补充，注意请不要和之前你的发言重复。"
 )
+
+
+def strip_emoji_placeholders(reply_text: str) -> str:
+    """剥离模型在回复正文中自编的 “[表情包: 描述]” 占位文本。"""
+    return _EMOJI_PLACEHOLDER_PATTERN.sub("", reply_text).strip()
 
 
 def _normalize_reply_arguments(raw_arguments: dict[str, Any]) -> tuple[dict[str, Any], str]:
@@ -544,7 +552,7 @@ async def execute_reply(
             metadata={"reply_id": extension_execution.reply_id},
         )
 
-    reply_text = reply_result.completion.response_text.strip() if success else ""
+    reply_text = strip_emoji_placeholders(reply_result.completion.response_text) if success else ""
 
     if not reply_text:
         reply_result.monitor_detail = build_reply_monitor_detail(reply_result)
