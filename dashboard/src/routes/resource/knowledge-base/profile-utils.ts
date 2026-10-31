@@ -94,13 +94,19 @@ export function evidenceTypeLabel(type?: string): string {
 }
 
 export function formatEvidenceScore(item: MemoryProfileEvidenceItemPayload): string {
-  const confidence = Number(item.confidence)
-  if (Number.isFinite(confidence)) {
-    return `置信度 ${confidence.toFixed(2)}`
+  // 段落/人物事实类证据没有 confidence（后端返回 null），必须先判空：
+  // Number(null) === 0 且 Number.isFinite(0) 为真，会把它误显示成「置信度 0.00」。
+  if (item.confidence != null) {
+    const confidence = Number(item.confidence)
+    if (Number.isFinite(confidence)) {
+      return `置信度 ${confidence.toFixed(2)}`
+    }
   }
-  const score = Number(item.score)
-  if (Number.isFinite(score)) {
-    return `分数 ${score.toFixed(2)}`
+  if (item.score != null) {
+    const score = Number(item.score)
+    if (Number.isFinite(score)) {
+      return `分数 ${score.toFixed(2)}`
+    }
   }
   return '-'
 }
