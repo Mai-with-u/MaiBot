@@ -5,12 +5,37 @@
   const builtin = document.getElementById('builtin-pet');
   const canvas = document.getElementById('skin-canvas');
   const ctx = canvas.getContext('2d');
-  let skin = null, images = {}, active = null, visible = true, switching = 0;
+  let skin = null, images = {}, resident = new Set(), active = null, visible = true, switching = 0;
   let selected = '', started = performance.now(), flash = null;
   const history = new Map();
   let builtinEffectNodes = [];
   const fail = (code, message) => ({error: {code, message}});
   const state = () => ['dragging', 'talking', 'thinking'].find(name => stage.classList.contains(name)) || 'idle';
+  const filesOf = (target, names) => new Set(names.flatMap(name => target.animations[name]?.sequence?.map(frame => frame.file) || []));
+  async function decode(target, files) {
+    const loaded = {};
+    await Promise.all([...files].map(async file => {
+      const image = new Image(); image.src = target.resources[file]; await image.decode(); loaded[file] = image;
+    }));
+    return loaded;
+  }
+  // 按需动画解码为 ImageBitmap，播完 close() 立即归还位图内存；Image 的解码缓存要等 GC 才释放。
+  async function decodeBitmaps(target, files) {
+    const loaded = {};
+    try {
+      await Promise.all([...files].map(async file => {
+        const blob = await (await fetch(target.resources[file])).blob();
+        loaded[file] = await createImageBitmap(blob);
+      }));
+    } catch (error) {
+      for (const bitmap of Object.values(loaded)) bitmap.close();
+      throw error;
+    }
+    return loaded;
+  }
+  function release(files) {
+    for (const file of files) { images[file]?.close?.(); delete images[file]; }
+  }
   function finish(status, reason) {
     if (!active) return;
     if (skin?.id === 'builtin') builtin.classList.remove(active.animation);
@@ -20,17 +45,19 @@
     while (history.size > 128) history.delete(history.keys().next().value);
     active = null;
     selected = '';
+    // 按需解码的精灵图播完即释放，常驻内存只保留状态与事件动画。
+    release(Object.keys(images).filter(file => !resident.has(file)));
   }
   function info() { return {id: skin?.id || 'builtin', name: skin?.name || '麦麦（内置）', version: skin?.version || '1'}; }
   async function install(next) {
     const revision = ++switching;
-    const loaded = {};
-    await Promise.all(Object.entries(next.resources || {}).map(async ([name, src]) => {
-      const image = new Image(); image.src = src; await image.decode(); loaded[name] = image;
-    }));
+    // 仅预解码状态与事件动画；插件动画在播放时解码，避免多动画皮肤的解码位图全部常驻内存。
+    const required = next.id === 'builtin' ? new Set()
+      : filesOf(next, [...Object.values(next.states || {}), ...Object.values(next.events || {})]);
+    const loaded = await decode(next, required);
     if (revision !== switching) throw new Error('皮肤切换已被新请求替代');
     finish('interrupted', 'skin_changed');
-    skin = next; images = loaded; flash = null; selected = '';
+    skin = next; images = loaded; resident = required; flash = null; selected = '';
     const c = skin.canvas;
     // 落脚点固定在窗口底边中点，气泡随皮肤锚点调整，输入区仍由主页面管理。
     pet.style.width = c.width + 'px'; pet.style.height = c.height + 'px';
@@ -55,6 +82,18 @@
     active = {playback_id: crypto.randomUUID(), owner, skin_id: skin.id, animation: name, status: 'playing',
               duration_ms: duration, started: performance.now()};
     flash = null; selected = '';
+    const missing = skin.id === 'builtin' ? [] : [...filesOf(skin, [name])].filter(file => !images[file]);
+    if (missing.length) {
+      // 解码完成前继续显示当前状态动画，计时从真正开始播放时算起。
+      const entry = active, revision = switching;
+      entry.loading = true;
+      decodeBitmaps(skin, missing).then(loaded => {
+        if (active !== entry || revision !== switching) { for (const bitmap of Object.values(loaded)) bitmap.close(); return; }
+        Object.assign(images, loaded);
+        entry.loading = false;
+        entry.started = performance.now();
+      }, () => { if (active === entry) finish('interrupted', 'decode_failed'); });
+    }
     if (skin.id === 'builtin') {
       builtin.classList.remove(name); void builtin.offsetWidth; builtin.classList.add(name);
       const selector = {squish: '#squash', happy: '#squash', shake: '#squash', blink: '.eye-open'}[name];
@@ -68,13 +107,14 @@
     if (!skin) return;
     const current = state();
     if (active && ['talking', 'dragging'].includes(current)) finish('interrupted', current);
-    if (active && now - active.started >= active.duration_ms) finish('finished', 'completed');
+    if (active && !active.loading && now - active.started >= active.duration_ms) finish('finished', 'completed');
     if (flash && now >= flash.until) flash = null;
     if (skin.id === 'builtin' || !visible) return;
-    const name = active?.animation || (['talking', 'dragging'].includes(current) ? skin.states[current] : flash?.name || skin.states[current]);
+    const playing = active?.loading ? null : active;
+    const name = playing?.animation || (['talking', 'dragging'].includes(current) ? skin.states[current] : flash?.name || skin.states[current]);
     if (selected !== name) { selected = name; started = now; }
     const animation = skin.animations[name];
-    const elapsed = now - (active?.started ?? started);
+    const elapsed = now - (playing?.started ?? started);
     let progress = elapsed % animation.duration_ms;
     let frame = animation.sequence[0];
     for (const candidate of animation.sequence) { frame = candidate; if (progress < frame.duration_ms) break; progress -= frame.duration_ms; }
