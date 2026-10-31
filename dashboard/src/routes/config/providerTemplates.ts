@@ -176,7 +176,8 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
   {
     id: 'minimax',
     name: 'MiniMax',
-    base_url: 'https://api.minimax.chat/v1',
+    base_url: 'https://api.minimax.cn/v1',
+    baseUrlPattern: /^https:\/\/api\.(?:minimax\.(?:cn|io|chat)|minimaxi\.com)\/v1$/,
     client_type: 'openai',
     display_name: 'MiniMax (海螺 AI)',
     modelFetcher: { endpoint: '/models', parser: 'openai' },
@@ -371,7 +372,36 @@ export function resolveThinkingFormatForModel(
     }
   }
 
+  if (template?.id === 'minimax' && modelIdentifier.trim() === 'MiniMax-M3.1-Flash') {
+    return {
+      ...thinking,
+      canDisable: false,
+      effortParam: 'reasoning_effort',
+      efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultEffort: 'max',
+      disableNote: 'MiniMax-M3.1-Flash requires adaptive thinking.',
+      note: 'Flash does not support service_tier or reasoning_split: false.',
+    }
+  }
+
   return thinking
+}
+
+/** Keep current MiniMax text choices first without changing saved or custom IDs. */
+export function resolveModelChoices<T extends { id: string; name: string }>(
+  template: ProviderTemplate,
+  models: T[]
+): Array<T | { id: string; name: string }> {
+  if (template.id !== 'minimax') return models
+
+  const currentIds = ['MiniMax-M3.1-Flash', 'MiniMax-M3']
+  const currentModels = currentIds.map(
+    (id) => models.find((model) => model.id === id) ?? { id, name: id }
+  )
+  return [
+    ...currentModels,
+    ...models.filter((model) => !/^(?:minimax-(?:m\d|text)|abab\d.*(?:chat|text))/i.test(model.id)),
+  ]
 }
 
 /**
@@ -398,6 +428,10 @@ export function resolveModelFetcherTemplate(
 ): ProviderTemplate | null {
   const matchedTemplate = findTemplateByBaseUrl(baseUrl)
   if (matchedTemplate) {
+    // Responses uses reasoning.effort, not the Chat Completions thinking controls.
+    if (matchedTemplate.id === 'minimax' && clientType !== 'openai') {
+      return { ...matchedTemplate, thinking: undefined }
+    }
     return matchedTemplate.modelFetcher
       ? matchedTemplate
       : { ...matchedTemplate, modelFetcher: defaultModelFetcher(clientType) }

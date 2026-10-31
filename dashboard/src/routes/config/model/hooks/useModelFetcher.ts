@@ -3,7 +3,7 @@
  */
 import { useState, useCallback, useEffect } from 'react'
 import { fetchProviderModels, type ModelListItem } from '@/lib/config-api'
-import { resolveModelFetcherTemplate, type ProviderTemplate } from '../../providerTemplates'
+import { resolveModelChoices, resolveModelFetcherTemplate, type ProviderTemplate } from '../../providerTemplates'
 import { modelListCache, CACHE_TTL } from '../constants'
 import type { ProviderConfig } from '../types'
 
@@ -79,7 +79,7 @@ export function useModelFetcher(options: UseModelFetcherOptions): UseModelFetche
       const cacheKey = `${providerName}:${config.base_url}`
       const cached = modelListCache.get(cacheKey)
       if (!forceRefresh && cached && Date.now() - cached.timestamp < CACHE_TTL) {
-        setAvailableModels(cached.models)
+        setAvailableModels(resolveModelChoices(template, cached.models))
         setModelFetchError(null)
         return
       }
@@ -94,7 +94,7 @@ export function useModelFetcher(options: UseModelFetcherOptions): UseModelFetche
           template.modelFetcher.parser,
           template.modelFetcher.endpoint
         )
-        setAvailableModels(models)
+        setAvailableModels(resolveModelChoices(template, models))
         // 更新缓存
         modelListCache.set(cacheKey, { models, timestamp: Date.now() })
       } catch (error) {
