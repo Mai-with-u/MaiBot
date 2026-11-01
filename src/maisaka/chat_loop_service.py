@@ -617,6 +617,74 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                 allow_abort=False,
                 allow_kwargs_mutation=True,
             ),
+            HookSpec(
+                name="maisaka.turn_trigger.evaluate",
+                description="在 Maisaka 普通群聊动态门控评估时触发，可融合外部预判概率、覆盖触发动作或标记静默已读。",
+                parameters_schema=build_object_schema(
+                    {
+                        "session_id": {
+                            "type": "string",
+                            "description": "当前会话 ID。",
+                        },
+                        "is_group_session": {
+                            "type": "boolean",
+                            "description": "当前会话是否为群聊。",
+                        },
+                        "frequency": {
+                            "type": "number",
+                            "description": "当前会话生效的回复频率。",
+                        },
+                        "probability": {
+                            "type": "number",
+                            "description": "当前待处理消息批次的估计回复概率；Hook 可改写该值。",
+                        },
+                        "threshold": {
+                            "type": "number",
+                            "description": "动态门控计算出的当前放行阈值；Hook 可改写该值。",
+                        },
+                        "decision": {
+                            "type": "string",
+                            "description": "触发判定（trigger / wait / delay / consume）；Hook 可改写该值，设为 consume 时静默已读并推进游标。",
+                        },
+                        "detail": {
+                            "type": "string",
+                            "description": "门控判定日志详情；Hook 可补充说明。",
+                        },
+                        "delay_seconds": {
+                            "type": "number",
+                            "description": "decision=delay 时的延迟重查秒数。",
+                        },
+                        "consumed_count": {
+                            "type": "integer",
+                            "description": "decision=consume 时推进的待处理消息条数（0 表示消费本次评估的全部待处理消息）。",
+                        },
+                        "pending_messages": {
+                            "type": "array",
+                            "description": "当前待处理外部消息的序列化列表。",
+                        },
+                        "recent_messages": {
+                            "type": "array",
+                            "description": "近期聊天历史摘要列表（包含 sender、text、is_self）。",
+                        },
+                    },
+                    required=[
+                        "session_id",
+                        "is_group_session",
+                        "frequency",
+                        "probability",
+                        "threshold",
+                        "decision",
+                        "detail",
+                        "delay_seconds",
+                        "consumed_count",
+                        "pending_messages",
+                        "recent_messages",
+                    ],
+                ),
+                default_timeout_ms=6000,
+                allow_abort=True,
+                allow_kwargs_mutation=True,
+            ),
         ]
     )
 

@@ -4,6 +4,7 @@ from datetime import datetime
 from math import ceil
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Literal, Optional, Sequence
 import asyncio
+import contextlib
 import json
 import time
 import uuid
@@ -544,6 +545,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         await focus_mode_manager.detach(self)
         self._fixed_message_debouncer.consume()
         self._mark_message_turn_unscheduled()
+        self._message_turn_scheduler.cancel_pending_tasks()
         self._cancel_deferred_message_turn_task()
         self._cancel_wait_timeout_task()
         await self._cancel_trimmed_history_learning_task()
@@ -1640,6 +1642,47 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         # )
         return pending_messages
 
+    async def _consume_pending_messages_silently(self, count: Optional[int] = None) -> int:
+        """门控判定静默已读时推进 _last_processed_index，把消息同步入历史并裁剪缓存，不进入 Planner。
+
+        Args:
+            count: 期望静默消费的消息条数；为空或小于等于 0 时默认消费至当前全部待处理消息。
+
+        Returns:
+            int: 实际完成静默消费并接入历史的消息条数。
+        """
+
+        lock = getattr(self, "_message_ingest_lock", None)
+        async with lock if lock is not None else contextlib.nullcontext():
+            # 若当前正处于运行中状态（Planner 正在思考或生成回复），推迟静默消费，避免与 Planner 并发修改 _chat_history
+            while getattr(self, "_agent_state", "") == getattr(self, "_STATE_RUNNING", "running") and getattr(self, "_running", True):
+                await asyncio.sleep(0.1)
+
+            start_index = self._last_processed_index
+            total = len(self.message_cache)
+            if start_index >= total:
+                return 0
+
+            target = total if count is None or count <= 0 else min(total, start_index + int(count))
+            consumed_messages = self.message_cache[start_index:target]
+            if not consumed_messages:
+                return 0
+
+            # 先将消息接入历史，避免任务取消或执行异常时游标已推进但历史未记录
+            if hasattr(self, "_reasoning_engine") and self._reasoning_engine is not None:
+                await self._reasoning_engine._ingest_messages(consumed_messages)
+                cycle_detail = CycleDetail(cycle_id=self._cycle_counter)
+                await self._reasoning_engine._post_process_chat_history_after_cycle(
+                    cycle_detail,
+                    enable_compaction=False,
+                )
+
+            # 推进游标时只增不减，防止与并发 Planner 推进游标发生回退冲突
+            self._last_processed_index = max(self._last_processed_index, target)
+            if self._last_processed_index >= total:
+                self._fixed_message_debouncer.consume()
+            self._prune_processed_message_cache()
+            return len(consumed_messages)
     def _get_message_quiet_period_remaining_seconds(self) -> float:
         """返回本批消息距离防抖截止还需等待的秒数；关闭防抖或批次已到期时为 0。"""
         if not self._is_message_debounce_enabled():
