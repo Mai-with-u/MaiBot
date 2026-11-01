@@ -1097,6 +1097,39 @@ class MaisakaChatLoopService:
         for boundary_timestamp in deferred_boundary_timestamps:
             self._append_time_user_message(items, boundary_timestamp)
 
+        orphaned_turn_ids, orphaned_call_ids = self._find_unanchored_function_call_turn_ids(history_context_items)
+        if orphaned_call_ids:
+            orphaned_call_id_set = set(orphaned_call_ids)
+
+            def is_orphaned_item(item: ContextItem) -> bool:
+                if item.meta.logical_turn_id in orphaned_turn_ids:
+                    return True
+                if isinstance(item, FunctionCallItem):
+                    return item.tool_call.call_id in orphaned_call_id_set
+                if isinstance(item, FunctionCallOutputItem):
+                    return item.call_id in orphaned_call_id_set
+                return False
+
+            history_context_items = [item for item in history_context_items if not is_orphaned_item(item)]
+            selected_history[:] = [
+                message
+                for message in selected_history
+                if self._get_history_logical_turn_id(message) not in orphaned_turn_ids
+                and not (
+                    isinstance(message, ModelOutputContextMessage)
+                    and isinstance(message.output_item, FunctionCallItem)
+                    and message.output_item.tool_call.call_id in orphaned_call_id_set
+                )
+                and not (
+                    isinstance(message, ToolResultMessage) and message.tool_call_id in orphaned_call_id_set
+                )
+            ]
+            items = [item for item in items if not is_orphaned_item(item)]
+            logger.warning(
+                "Maisaka 请求上下文丢弃缺少前置锚点的历史工具轮次: "
+                f"call_ids={orphaned_call_ids} logical_turn_ids={sorted(orphaned_turn_ids)}"
+            )
+
         # 历史上下文到此结束，后续追加的都是当轮即时提示
         history_item_count = len(items) - 1
 
@@ -1154,6 +1187,29 @@ class MaisakaChatLoopService:
                     f"请求上下文中的 function call 缺少前置 user/function output 锚点: call_id={item.tool_call.call_id}"
                 )
 
+    @staticmethod
+    def _find_unanchored_function_call_turn_ids(items: Sequence[ContextItem]) -> tuple[set[str], list[str]]:
+        """返回缺少有效前置锚点的 function call 逻辑轮次。"""
+
+        has_function_call_anchor = False
+        orphaned_turn_ids: set[str] = set()
+        orphaned_call_ids: list[str] = []
+        for item in items:
+            if isinstance(item, UserMessageItem):
+                has_function_call_anchor = True
+                continue
+            if isinstance(item, FunctionCallOutputItem):
+                if item.meta.logical_turn_id not in orphaned_turn_ids:
+                    has_function_call_anchor = True
+                continue
+            if isinstance(item, FunctionCallItem) and not has_function_call_anchor:
+                logical_turn_id = item.meta.logical_turn_id
+                if logical_turn_id:
+                    orphaned_turn_ids.add(logical_turn_id)
+                orphaned_call_ids.append(item.tool_call.call_id)
+
+        return orphaned_turn_ids, orphaned_call_ids
+
     async def chat_loop_step(
         self,
         chat_history: List[LLMContextMessage],
@@ -1188,6 +1244,7 @@ class MaisakaChatLoopService:
             max_context_size=max_context_size,
             is_group_chat=self._is_group_chat,
         )
+        selected_history_before_build = tuple(selected_history)
         # 上下文可能触发表情包解码、缩放和缓存等待，在线程池执行，避免阻塞事件循环。
         built_messages, history_item_count = await asyncio.to_thread(
             self._build_request_messages,
@@ -1201,6 +1258,35 @@ class MaisakaChatLoopService:
             ),
             system_prompt=system_prompt,
         )
+        remaining_selected_ids = {id(message) for message in selected_history}
+        removed_selected_messages = tuple(
+            message for message in selected_history_before_build if id(message) not in remaining_selected_ids
+        )
+        orphaned_turn_ids = {
+            logical_turn_id
+            for message in removed_selected_messages
+            if (logical_turn_id := self._get_history_logical_turn_id(message))
+        }
+        orphaned_call_ids = {
+            message.output_item.tool_call.call_id
+            for message in removed_selected_messages
+            if isinstance(message, ModelOutputContextMessage)
+            and isinstance(message.output_item, FunctionCallItem)
+        }
+        removed_selected_ids = {id(message) for message in removed_selected_messages}
+        if removed_selected_ids:
+            chat_history[:] = [
+                message
+                for message in chat_history
+                if id(message) not in removed_selected_ids
+                and self._get_history_logical_turn_id(message) not in orphaned_turn_ids
+                and not (isinstance(message, ToolResultMessage) and message.tool_call_id in orphaned_call_ids)
+                and not (
+                    isinstance(message, ModelOutputContextMessage)
+                    and isinstance(message.output_item, FunctionCallItem)
+                    and message.output_item.tool_call.call_id in orphaned_call_ids
+                )
+            ]
         if enable_visual_message:
             built_messages = limit_latest_images_in_messages(
                 built_messages,
