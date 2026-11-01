@@ -214,37 +214,49 @@ class HTMLRenderService:
         semaphore = self._get_render_semaphore()
         async with semaphore:
             start_time = time.perf_counter()
-            browser = await self._ensure_browser(config)
-            context: Any = None
-            try:
-                context = await browser.new_context(
-                    device_scale_factor=normalized_request.device_scale_factor,
-                    locale="zh-CN",
-                    viewport={
-                        "width": normalized_request.viewport_width,
-                        "height": normalized_request.viewport_height,
-                    },
-                )
-                page = await context.new_page()
-                await self._configure_page(page, normalized_request)
-                image_bytes = await self._capture_image(page, normalized_request)
-                width, height = self._measure_image_size(image_bytes)
-                self._render_count += 1
-                await self._maybe_restart_browser(config)
-                return HtmlRenderResult(
-                    image_base64=base64.b64encode(image_bytes).decode("utf-8"),
-                    mime_type="image/png",
-                    width=width,
-                    height=height,
-                    render_ms=int((time.perf_counter() - start_time) * 1000),
-                )
-            except Exception:
-                await self.reset_browser(restart_playwright=False)
-                raise
-            finally:
-                if context is not None:
-                    with contextlib.suppress(Exception):
-                        await context.close()
+            driver_disconnect_retried = False
+            while True:
+                browser = await self._ensure_browser(config)
+                playwright = self._playwright
+                context: Any = None
+                try:
+                    context = await browser.new_context(
+                        device_scale_factor=normalized_request.device_scale_factor,
+                        locale="zh-CN",
+                        viewport={
+                            "width": normalized_request.viewport_width,
+                            "height": normalized_request.viewport_height,
+                        },
+                    )
+                    page = await context.new_page()
+                    await self._configure_page(page, normalized_request)
+                    image_bytes = await self._capture_image(page, normalized_request)
+                    width, height = self._measure_image_size(image_bytes)
+                    self._render_count += 1
+                    await self._maybe_restart_browser(config)
+                    return HtmlRenderResult(
+                        image_base64=base64.b64encode(image_bytes).decode("utf-8"),
+                        mime_type="image/png",
+                        width=width,
+                        height=height,
+                        render_ms=int((time.perf_counter() - start_time) * 1000),
+                    )
+                except Exception as exc:
+                    driver_disconnected = self._is_playwright_driver_disconnected(exc)
+                    await self._reset_browser_after_render_error(
+                        browser,
+                        playwright,
+                        restart_playwright=driver_disconnected,
+                    )
+                    if driver_disconnected and not driver_disconnect_retried:
+                        driver_disconnect_retried = True
+                        logger.warning("Playwright 驱动连接已断开，重启运行时并重试本次渲染")
+                        continue
+                    raise
+                finally:
+                    if context is not None:
+                        with contextlib.suppress(Exception):
+                            await context.close()
 
     async def reset_browser(self, restart_playwright: bool = False) -> None:
         """关闭当前缓存的浏览器实例。
@@ -254,6 +266,20 @@ class HTMLRenderService:
         """
 
         async with self._browser_lock:
+            await self._close_browser_unlocked(restart_playwright=restart_playwright)
+
+    async def _reset_browser_after_render_error(
+        self,
+        browser: Any,
+        playwright: Any,
+        *,
+        restart_playwright: bool,
+    ) -> None:
+        async with self._browser_lock:
+            if self._playwright is not playwright:
+                return
+            if self._browser is not None and self._browser is not browser:
+                return
             await self._close_browser_unlocked(restart_playwright=restart_playwright)
 
     async def _close_browser_unlocked(self, restart_playwright: bool = False) -> None:
@@ -331,6 +357,10 @@ class HTMLRenderService:
 
         self._playwright = await async_playwright().start()
         return self._playwright
+
+    @staticmethod
+    def _is_playwright_driver_disconnected(error: Exception) -> bool:
+        return "connection closed while reading from the driver" in str(error).casefold()
 
     @staticmethod
     def _is_browser_connected(browser: Any) -> bool:
