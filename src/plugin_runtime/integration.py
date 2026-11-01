@@ -2044,7 +2044,9 @@ class PluginRuntimeManager(
     def _iter_registered_plugin_paths(self) -> Iterable[Tuple[str, Path]]:
         """迭代当前所有已注册插件的实际目录路径。"""
         for supervisor in self.supervisors:
-            for plugin_id in getattr(supervisor, "_registered_plugins", {}).keys():
+            # 目录解析在线程池执行时，Runner 仍可能在主循环注册插件。
+            # 先取 ID 快照，避免解析路径或 yield 期间注册表发生变化。
+            for plugin_id in tuple(supervisor._registered_plugins):
                 if plugin_path := self._get_plugin_path_for_supervisor(supervisor, plugin_id):
                     yield plugin_id, plugin_path
 
