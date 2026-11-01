@@ -850,12 +850,13 @@ class EmojiManager:
         logger.info(f"[取消注册表情包] 成功取消注册表情包: {emoji.file_name}")
         return True
 
-    async def get_emoji_for_emotion(self, emotion_label: str) -> Optional[MaiEmoji]:
+    async def get_emoji_for_emotion(self, emotion_label: str, *, quiet: bool = False) -> Optional[MaiEmoji]:
         """
         根据文本情感标签获取合适的表情包
 
         Args:
             emotion_label (str): 文本的情感标签
+            quiet (bool): 批量获取时省略逐条匹配信息，警告仍正常输出
         Returns:
             return (Optional[MaiEmoji]): 返回表情包对象，如果未找到则返回 None
         """
@@ -865,16 +866,18 @@ class EmojiManager:
 
         emoji_similarities = await asyncio.to_thread(self._calculate_emotion_similarity_list, emotion_label)
         if not emoji_similarities:
-            logger.info("[获取表情包] 未找到匹配的表情包")
+            if not quiet:
+                logger.info("[获取表情包] 未找到匹配的表情包")
             return None
 
         # 获取前10个相似度最高的表情包
         top_emojis = heapq.nlargest(10, emoji_similarities, key=lambda x: x[1])
         selected_emoji, similarity = random.choice(top_emojis)
-        logger.info(
-            f"[获取表情包] 为[{emotion_label}]选中表情包: "
-            f"{selected_emoji.file_name}({','.join(_get_emoji_emotions(selected_emoji))})，相似度: {similarity:.4f}",
-        )
+        if not quiet:
+            logger.info(
+                f"[获取表情包] 为[{emotion_label}]选中表情包: "
+                f"{selected_emoji.file_name}({','.join(_get_emoji_emotions(selected_emoji))})，相似度: {similarity:.4f}",
+            )
         return selected_emoji
 
     async def replace_an_emoji_by_llm(self, new_emoji: MaiEmoji, *, session_id: str = "") -> bool:
