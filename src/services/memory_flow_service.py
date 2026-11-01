@@ -16,6 +16,7 @@ from src.common.logger import get_logger
 from src.common.database.database import ROOT_PATH
 from src.common.message_repository import count_messages, find_messages
 from src.common.data_models.message_component_data_model import TextComponent
+from src.common.utils.utils_image import ImageUtils
 from src.chat.utils.utils import is_bot_self
 from src.config.config import global_config
 from src.person_info.person_info import Person, get_person_id, store_person_memory_from_answer
@@ -948,9 +949,13 @@ class ImageMemoryWritebackService:
             try:
                 if not component.binary_data:
                     await component.load_image_binary()
+                image_bytes = bytes(component.binary_data)
+                # 图片记忆只保存静态图，将 GIF 帧拼成静态图后再入库。
+                if image_bytes.startswith((b"GIF87a", b"GIF89a")):
+                    image_bytes = await asyncio.to_thread(ImageUtils.gif_2_static_image, image_bytes)
                 result = await memory_service.image_memory(
                     action="ingest",
-                    image_bytes=bytes(component.binary_data),
+                    image_bytes=image_bytes,
                     source_kind="chat",
                     external_ref=build_chat_external_ref(
                         chat_id=chat_id,
