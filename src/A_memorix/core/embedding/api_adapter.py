@@ -25,6 +25,8 @@ from src.config.model_configs import APIProvider, ModelInfo
 from src.llm_models.exceptions import NetworkConnectionError
 from src.llm_models.model_client.base_client import EmbeddingRequest, client_registry
 
+from .long_input import request_embedding_with_long_input
+
 logger = get_logger("A_Memorix.EmbeddingAPIAdapter")
 
 
@@ -315,7 +317,8 @@ class EmbeddingAPIAdapter:
                     include_dimension=should_include_dimension,
                 )
 
-                response = await self._request_with_retry(
+                response = await request_embedding_with_long_input(
+                    self._request_with_retry,
                     client=client,
                     model_info=model_info,
                     text=text,
