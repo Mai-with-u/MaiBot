@@ -188,6 +188,8 @@ class AdapterPolicyManager:
                 "allow_ids": allow_ids,
                 "deny_ids": deny_ids,
             }
+            if typed_policy is not None and typed_policy.get("disabled_ids"):
+                result[chat_type]["disabled_ids"] = self._normalize_id_list(typed_policy["disabled_ids"])
         if best_policy is not None and "policy_groups" in best_policy:
             groups = best_policy["policy_groups"]
             active_group = best_policy.get("active_group")
@@ -313,6 +315,7 @@ class AdapterPolicyManager:
                 chat_policy["default_action"] = default_action
             self._set_or_remove_id_list(chat_policy, "allow_ids", normalized_policy["allow_ids"])
             self._set_or_remove_id_list(chat_policy, "deny_ids", normalized_policy["deny_ids"])
+            self._set_or_remove_id_list(chat_policy, "disabled_ids", normalized_policy.get("disabled_ids", []))
             self._prune_empty_ui_policy(adapter_policy, chat_type)
 
         self._prune_empty_adapter_policy(adapters, adapter_policy)
@@ -340,6 +343,13 @@ class AdapterPolicyManager:
                 "allow_ids": allow_ids,
                 "deny_ids": deny_ids,
             }
+
+            disabled_ids = [
+                item for item in self._normalize_id_list(raw_policy.get("disabled_ids"))
+                if item in allow_ids or item in deny_ids
+            ]
+            if disabled_ids:
+                normalized_policies[chat_type]["disabled_ids"] = disabled_ids
 
         return normalized_policies
 
@@ -395,6 +405,11 @@ class AdapterPolicyManager:
             allow_ids = [item for item in allow_ids if item != normalized_target_id]
             deny_ids = [item for item in deny_ids if item != normalized_target_id]
 
+        # 显式修改聊天覆盖规则时恢复该条目，避免停用状态屏蔽用户的新选择。
+        self._set_or_remove_id_list(
+            chat_policy, "disabled_ids",
+            [item for item in self._normalize_id_list(chat_policy.get("disabled_ids")) if item != normalized_target_id],
+        )
         self._set_or_remove_id_list(chat_policy, "allow_ids", allow_ids)
         self._set_or_remove_id_list(chat_policy, "deny_ids", deny_ids)
         self._prune_empty_ui_policy(adapter_policy, normalized_chat_type)
@@ -486,8 +501,10 @@ class AdapterPolicyManager:
                 reason="adapter_disabled",
             )
 
-        deny_ids = self._normalize_id_list(policy.get("deny_ids"))
-        allow_ids = self._normalize_id_list(policy.get("allow_ids"))
+        # 停用条目仍保存在名单中，但不参与运行时匹配（包括通配符）。
+        disabled_ids = set(self._normalize_id_list(policy.get("disabled_ids")))
+        deny_ids = [item for item in self._normalize_id_list(policy.get("deny_ids")) if item not in disabled_ids]
+        allow_ids = [item for item in self._normalize_id_list(policy.get("allow_ids")) if item not in disabled_ids]
         if target_id in deny_ids or "*" in deny_ids:
             return AdapterPolicyResult(
                 allowed=False,
@@ -816,6 +833,9 @@ class AdapterPolicyManager:
                 "allow_ids": list(policy.get("allow_ids", [])),
                 "deny_ids": list(policy.get("deny_ids", [])),
             }
+
+            if policy.get("disabled_ids"):
+                selected[chat_type]["disabled_ids"] = list(policy["disabled_ids"])
 
     @staticmethod
     def _prune_empty_ui_policy(adapter_policy: Table, chat_type: str) -> None:

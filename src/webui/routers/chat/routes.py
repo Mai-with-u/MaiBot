@@ -101,6 +101,7 @@ class AdapterHostPolicySectionRequest(BaseModel):
     """单类聊天的主程序适配器放行规则。"""
 
     default_action: Literal["inherit", "allow", "block"] = Field(default="inherit")
+    disabled_ids: List[str] = Field(default_factory=list)
     allow_ids: List[str] = Field(default_factory=list)
     deny_ids: List[str] = Field(default_factory=list)
 
