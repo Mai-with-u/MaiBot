@@ -151,6 +151,9 @@ class ReplyExtensionEntry(ComponentEntry):
         self.platforms: Set[str] = _normalize_platforms(metadata.get("platforms"), "ReplyExtension")
         if not name.strip() or chat_scope.strip().lower() not in {"all", "group", "private"}:
             raise ValueError("回复扩展名称不能为空，chat_scope 必须是 all/group/private")
+        self.generation_prompt = metadata.get("generation_prompt", "")
+        if not isinstance(self.generation_prompt, str):
+            raise ValueError("generation_prompt 必须是字符串")
         self.parameters_schema: Dict[str, Any] = validate_parameter_schema(metadata.get("parameters_schema"))
         self.description: str = metadata.get("description", "")
         self.priority: int = metadata.get("priority", 0)

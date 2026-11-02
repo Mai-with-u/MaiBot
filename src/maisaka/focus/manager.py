@@ -10,6 +10,7 @@ import json
 
 from src.chat.message_receive.chat_manager import chat_manager
 from src.common.utils.utils_config import ChatConfigUtils
+from src.maisaka.scenes.factory import get_scene
 from src.config.config import config_manager, global_config
 from src.maisaka.context.messages import SessionBackedMessage
 
@@ -54,12 +55,6 @@ class FocusModeManager:
         for runtime in list(heartflow_manager.heartflow_chat_list.values()):
             await self.reconcile(runtime)
 
-    def is_enabled(self) -> bool:
-        return global_config.experimental.focus_mode
-
-    def is_enabled_for_chat(self, *, is_group_chat: Optional[bool] = None) -> bool:
-        return self.is_enabled() and (is_group_chat is not False or global_config.experimental.focus_on_private)
-
     def is_enabled_for_session(self, session_id: str, *, is_group_chat: Optional[bool] = None) -> bool:
         if not session_id:
             return False
@@ -68,9 +63,9 @@ class FocusModeManager:
             if session is None:
                 return False
             is_group_chat = session.is_group_session
-        if not self.is_enabled_for_chat(is_group_chat=is_group_chat):
+        if not global_config.experimental.focus_mode:
             return False
-        if not is_group_chat and ChatConfigUtils.is_private_reply_paused(session_id):
+        if not get_scene(is_group_chat).allows_focus(session_id):
             return False
         targets = global_config.experimental.focus_chat_whitelist
         if targets and not any(

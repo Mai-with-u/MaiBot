@@ -218,6 +218,16 @@ display_name = "外接 Planner 继续执行"
 advanced = true
 description = "外接 Planner 继续执行。"
 
+[planner_reply_capabilities]
+display_name = "Planner reply capabilities"
+advanced = true
+description = "Available plugin reply capabilities for the current chat."
+
+[reply_cache]
+display_name = "回复缓存任务"
+advanced = true
+description = "在 Planner 上下文末尾切换到创意模式 Replyer 回复任务。"
+
 [desktop_pet_proactive_wake]
 display_name = "桌宠定期主动思考"
 advanced = false

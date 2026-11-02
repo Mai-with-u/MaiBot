@@ -186,7 +186,7 @@ def get_builtin_tool_visibility(tool_spec: ToolSpec) -> BuiltinToolVisibility:
 def is_builtin_tool_in_action_stage(tool_spec: ToolSpec, *, passive_replyer: bool = False) -> bool:
     """统一 Planner 工具集：被动式使用独立控制，其余模式使用 reply.after_reply。"""
 
-    if tool_spec.name in {"stop", "wait"} and not passive_replyer:
+    if tool_spec.name == "stop" and not passive_replyer:
         return False
     if tool_spec.name == "reply" and passive_replyer:
         return False

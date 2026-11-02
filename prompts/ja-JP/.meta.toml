@@ -223,6 +223,16 @@ display_name = "外部 Planner 継続実行"
 advanced = true
 description = "外部 Planner 継続実行。"
 
+[planner_reply_capabilities]
+display_name = "Planner reply capabilities"
+advanced = true
+description = "Available plugin reply capabilities for the current chat."
+
+[reply_cache]
+display_name = "返信キャッシュタスク"
+advanced = true
+description = "Planner の文脈末尾でクリエイティブ返信生成へ切り替えます。"
+
 [desktop_pet_proactive_wake]
 display_name = "デスクトップペットの定期的な思考"
 advanced = false

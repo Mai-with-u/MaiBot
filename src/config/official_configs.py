@@ -590,7 +590,7 @@ class ChatReplyTimingConfig(ConfigBase):
     planner_message_steering: bool = Field(
         default=False,
         json_schema_extra={
-            "x-chat-settings": {"scope": "common", "row": 10},
+            "x-chat-settings": {"scope": "group", "row": 10},
             "label": {
                 "zh_CN": "快速反应模式",
                 "en_US": "Quick reaction mode",
@@ -599,7 +599,7 @@ class ChatReplyTimingConfig(ConfigBase):
             "x-widget": "switch",
         },
     )
-    """强制 Planner 使用流式请求；思考或输出期间收到新消息立即打断并带上新消息重新请求，wait 等待也可被新消息提前结束。"""
+    """仅群聊生效：强制 Planner 使用流式请求，思考或输出期间收到新消息立即打断并带上新消息重新请求。私聊及 wait 等待唤醒不受此开关控制。"""
 
     talk_value: float = Field(
         default=1,
@@ -872,14 +872,14 @@ class ChatConfig(ConfigBase):
     __ui_root_sub_label__ = "聊天设置"
 
     creative_mode: bool = Field(
-        default=False,
+        default=True,
         json_schema_extra={
             "x-chat-settings": {"scope": "common", "row": 10},
             "label": {"zh_CN": "创意模式", "en_US": "Creative mode", "ja_JP": "クリエイティブモード"},
             "x-widget": "switch",
         },
     )
-    """普通聊天模型使用通用复古模板，保留表达习惯、关键词反应和插件要求；关闭时使用常规模板。Mai Replier 始终按实际选中的模型使用专用适配，长文生成不受影响。"""
+    """使用单次构建的prompt，激发模型回复表现的创造力，减少AI刻板句式。关闭可能提高缓存率。"""
 
     enable_reply_at: bool = Field(
         default=True,
@@ -1094,6 +1094,16 @@ class ExperimentalConfig(ConfigBase):
         },
     )
     """仅作用于普通聊天模式：Planner 不调用工具而输出正文时，将正文作为自然语言指导启动一次回复；篇幅、表达偏好和插件相关需求直接写入指导，引用与附件由并行回复补充器编排。关闭时使用原有 reply 工具。切换从下一轮思考生效，Focus 不受影响。"""
+
+    reply_cache: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {"zh_CN": "回复缓存模式", "en_US": "Reply cache mode", "ja_JP": "返信キャッシュモード"},
+            "x-widget": "switch",
+        },
+    )
+    """复用本轮 Planner 请求前缀及实际模型，在末尾追加创意模式 Replyer 的完整 system/user 内容生成回复。
+    独立于被动式 replyer；不使用 Replyer 模型配置，强制使用创意模板。缓存命中由服务端决定，缺少 Planner 快照时明确失败。"""
 
     group_attention_drift: GroupAttentionDriftConfig = Field(
         default_factory=GroupAttentionDriftConfig,

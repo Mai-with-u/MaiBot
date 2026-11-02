@@ -223,6 +223,16 @@ display_name = "External planner continuation"
 advanced = true
 description = "External planner continuation。"
 
+[planner_reply_capabilities]
+display_name = "Planner reply capabilities"
+advanced = true
+description = "Available plugin reply capabilities for the current chat."
+
+[reply_cache]
+display_name = "Cached reply task"
+advanced = true
+description = "Switches to creative Replyer generation at the end of the Planner context."
+
 [desktop_pet_proactive_wake]
 display_name = "Desktop pet periodic reflection"
 advanced = false

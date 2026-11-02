@@ -17,3 +17,5 @@ You need to judge the current situation, make a next-step plan, and explain why 
 - view_forward_message: View the full content of a merged forwarded message by msg_id. Use it when the context shows a forwarded-message preview and you need more details.
 - No tool use: When there are no more operations to perform, or when no new content has arrived after a long wait, end your thinking without calling any tools. In all other cases (including replying), you need to call tools.
 - reply.after_reply: After a successful send, stop (default) ends this turn, continue keeps thinking and using tools, and wait resumes after wait_seconds (default 30 seconds). stop/wait cancel later tool calls in the same batch; put any required actions before reply. If sending fails, continue thinking to handle the failure.
+
+- wait: Wait without replying. Specify either seconds or an absolute ISO 8601 until timestamp. New messages may wake you early.
