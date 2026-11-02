@@ -1,10 +1,19 @@
-"""Gemini 客户端内联思考草稿泄漏剥离与上下文清洗回归测试（#2362）。"""
+"""Gemini 思考草稿泄漏剥离与发送阻断回归测试（#2362）。
+
+覆盖三个层面：
+1. `gemini_client` 只剥离已闭合的思考块，未闭合的原样留在正文里；
+2. `gemini_output.normalize_gemini_reply` 对未闭合思考块直接抛错阻断发送；
+3. 历史消息只清洗 `AssistantMessageItem`，用户消息与工具回执保持原文。
+"""
 
 import io
 import json
+import time
 
+import pytest
 from google.genai.types import Candidate, Content, GenerateContentResponse, Part
 
+from src.chat.replyer.gemini_output import GeminiReplyFormatError, normalize_gemini_reply
 from src.llm_models.model_client.gemini_client import (
     _build_stream_api_response,
     _convert_messages,
@@ -24,6 +33,14 @@ from src.llm_models.payload_content.context_item import (
 
 
 def _make_response(text: str) -> GenerateContentResponse:
+    """构造只含一个文本 Part 的 Gemini 响应。
+
+    Args:
+        text: 模型返回的正文文本。
+
+    Returns:
+        GenerateContentResponse: 可直接喂给解析器的响应对象。
+    """
     return GenerateContentResponse(
         candidates=[
             Candidate(
@@ -36,108 +53,99 @@ def _make_response(text: str) -> GenerateContentResponse:
     )
 
 
+def _assistant_text(api_resp) -> str:
+    """从统一响应里取出助手消息正文。
+
+    Args:
+        api_resp: `_default_normal_response_parser` 或 `_build_stream_api_response` 的返回值。
+
+    Returns:
+        str: 助手消息正文文本。
+    """
+    items = [item for item in api_resp.output_items if isinstance(item, AssistantMessageItem)]
+    assert len(items) == 1
+    return items[0].parts[0].text
+
+
+CLOSED_VARIANTS = (
+    ("[:thought\n用户问几点睡，简短傲娇回答。\n:]少乱叫宝宝啦，看情况困了就睡", "少乱叫宝宝啦，看情况困了就睡"),
+    ("[_thought\n构思：选14字回复\n]_这还差不多，勉强再陪你水两句喵", "这还差不多，勉强再陪你水两句喵"),
+    ("⌊thought\n思考过程：调侃面包人当夜宵。⌋看着怪香的，抓一个抹点果酱吃", "看着怪香的，抓一个抹点果酱吃"),
+    ("<thought>内部草稿</thought>正常回复内容", "正常回复内容"),
+    ("⌊thought Plan a greeting.⌋Hello", "Hello"),
+)
+
+
 def test_normal_response_strips_closed_thought_variants() -> None:
-    samples = [
-        (
-            "[:thought\n用户问几点睡，简短傲娇回答。\n:]少乱叫宝宝啦，看情况困了就睡",
-            "少乱叫宝宝啦，看情况困了就睡",
-        ),
-        (
-            "[_thought\n构思：选14字回复\n]_这还差不多，勉强再陪你水两句喵",
-            "这还差不多，勉强再陪你水两句喵",
-        ),
-        (
-            "⌊thought\n思考过程：调侃面包人当夜宵。⌋看着怪香的，抓一个抹点果酱吃",
-            "看着怪香的，抓一个抹点果酱吃",
-        ),
-        (
-            "<thought>内部草稿</thought>正常回复内容",
-            "正常回复内容",
-        ),
-    ]
-    for raw_text, expected_body in samples:
+    """非流式解析应剥离四种已闭合变体，含英文句号后闭合的 `⌋`。"""
+    for raw_text, expected_body in CLOSED_VARIANTS:
         api_resp, _ = _default_normal_response_parser(
             _make_response(raw_text),
             logical_turn_id="turn-closed",
         )
-        reasoning_items = [item for item in api_resp.output_items if isinstance(item, ReasoningItem)]
-        assistant_items = [item for item in api_resp.output_items if isinstance(item, AssistantMessageItem)]
-        assert len(reasoning_items) == 1
-        assert len(assistant_items) == 1
-        assert assistant_items[0].parts[0].text == expected_body
+        assert _assistant_text(api_resp) == expected_body
 
 
-def test_issue_2362_floor_thinking_process_samples() -> None:
-    case_01 = (
+def test_stream_response_strips_closed_and_keeps_unclosed() -> None:
+    """流式响应剥离已闭合块；未闭合块原样保留，交由 replyer 阻断。"""
+    closed = "[:thought\n草稿\n:]干净回复"
+    closed_resp = _build_stream_api_response(
+        io.StringIO(closed),
+        io.StringIO(""),
+        [],
+        None,
+        "turn-stream-closed",
+    )
+    assert _assistant_text(closed_resp) == "干净回复"
+
+    unclosed = "[:thought 还没写完的草稿"
+    unclosed_resp = _build_stream_api_response(
+        io.StringIO(unclosed),
+        io.StringIO(""),
+        [],
+        None,
+        "turn-stream-unclosed",
+    )
+    assert _assistant_text(unclosed_resp) == unclosed
+    reasoning_items = [item for item in unclosed_resp.output_items if isinstance(item, ReasoningItem)]
+    assert reasoning_items == []
+
+
+def test_normalize_gemini_reply_strips_closed_and_blocks_unclosed() -> None:
+    """发送前只剥离有明确闭合边界的块，未闭合一律抛错阻断。"""
+    assert normalize_gemini_reply("[_thought 草稿 ]_正文") == "正文"
+    assert normalize_gemini_reply("⌊thought Plan a greeting.⌋Hello") == "Hello"
+
+    for unclosed in ("[:thought 草稿", "[_thought 草稿", "⌊thought 草稿"):
+        with pytest.raises(GeminiReplyFormatError):
+            normalize_gemini_reply(unclosed)
+
+
+def test_normalize_gemini_reply_blocks_issue_2362_samples() -> None:
+    """#2362 的 `⌊Thinking Process:` 缺少 `⌈` 分界时必须阻断发送。"""
+    sample = (
         "⌊Thinking Process:\n\n"
         "1.  **Analyze the Request:**\n"
-        "    *   Do not reuse inner monologue `⌊...⌉`. Short, casual, spoken style.\n"
+        "    *   Do not reuse inner monologue `⌊...⌉`.\n"
         "2.  **Drafting:**\n"
-        '    *   "抬手按住被揉乱的发梢。喂喂，手下留情呀，再这么搓下去我这头卷发可都要起静电炸毛啦。" '
-        "(42 chars) - fits well!"
-        "抬手按住被揉乱的发梢。喂喂，手下留情呀，再这么搓下去我这头卷发可都要起静电炸毛啦。"
+        '    *   "抬手按住被揉乱的发梢。" - fits well!'
     )
-    case_02 = (
-        "⌊Thinking Process:\n\n"
-        "1. **Analyze the input:**\n"
-        "   - Guidance: Short, casual, spoken style.\n"
-        "3. **Check constraints:**\n"
-        "   - No `⌊...⌉`, no `<reject>`, no markdown, natural spoken tone, under 50 words."
-        "诶，怎么还往下转移阵地了，我的脸又不是面团，再捏下去可要收你点心费咯。"
-    )
-
-    resp_01, _ = _default_normal_response_parser(_make_response(case_01), logical_turn_id="turn-2362-1")
-    assistant_01 = [item for item in resp_01.output_items if isinstance(item, AssistantMessageItem)]
-    assert len(assistant_01) == 1
-    assert (
-        assistant_01[0].parts[0].text
-        == "抬手按住被揉乱的发梢。喂喂，手下留情呀，再这么搓下去我这头卷发可都要起静电炸毛啦。"
-    )
-
-    resp_02, _ = _default_normal_response_parser(_make_response(case_02), logical_turn_id="turn-2362-2")
-    assistant_02 = [item for item in resp_02.output_items if isinstance(item, AssistantMessageItem)]
-    assert len(assistant_02) == 1
-    assert assistant_02[0].parts[0].text == "诶，怎么还往下转移阵地了，我的脸又不是面团，再捏下去可要收你点心费咯。"
+    with pytest.raises(GeminiReplyFormatError):
+        normalize_gemini_reply(sample)
 
 
-def test_stream_response_preserves_normal_monologue_and_strips_unclosed_tail() -> None:
-    normal_monologue = "⌊既然你都发话了……⌉噗，连你平时都这么干，那我以后有好玩的吐槽可就光明正大顺手丢出来啦。"
-    normal_resp = _build_stream_api_response(
-        io.StringIO(normal_monologue),
-        io.StringIO(""),
-        [],
-        None,
-        "turn-normal",
-    )
-    assistant_items = [item for item in normal_resp.output_items if isinstance(item, AssistantMessageItem)]
-    assert len(assistant_items) == 1
-    assert assistant_items[0].parts[0].text == normal_monologue
-
-    unclosed_with_transition = (
-        "[:thought\nThinking Process:\nDrafting reply...\nLet's go with this!少起哄啦，刚才那是输入法抽风喵"
-    )
-    leaked_resp = _build_stream_api_response(
-        io.StringIO(unclosed_with_transition),
-        io.StringIO(""),
-        [],
-        None,
-        "turn-unclosed",
-    )
-    leaked_assistant = [item for item in leaked_resp.output_items if isinstance(item, AssistantMessageItem)]
-    leaked_reasoning = [item for item in leaked_resp.output_items if isinstance(item, ReasoningItem)]
-    assert len(leaked_reasoning) == 1
-    assert len(leaked_assistant) == 1
-    assert leaked_assistant[0].parts[0].text == "少起哄啦，刚才那是输入法抽风喵"
+def test_normalize_gemini_reply_keeps_plain_monologue() -> None:
+    """普通角色旁白 `⌊...⌉` 不是思考块，必须原样保留。"""
+    monologue = "⌊既然你都发话了……⌉噗，连你平时都这么干，那我以后有好玩的吐槽可就光明正大顺手丢出来啦。"
+    assert normalize_gemini_reply(monologue) == monologue
 
 
-def test_convert_messages_scrubs_history_across_assistant_user_and_tool_json() -> None:
+def test_convert_messages_only_scrubs_assistant_history() -> None:
+    """只清洗模型历史；用户消息与工具回执里的字面量必须完整保留。"""
     call_id = "call-reply-1"
+    literal = "<thought>示例</thought>"
     tool_output_json = json.dumps(
-        {
-            "success": True,
-            "content": '已发送回复"[_thought\n内部草稿\n]_谁是ai啦，我可是正经猫娘群友"',
-            "other": "]_UNRELATED",
-        },
+        {"success": True, "content": f"已发送回复{literal}", "other": "]_UNRELATED"},
         ensure_ascii=False,
     )
     contents, _ = _convert_messages(
@@ -145,12 +153,7 @@ def test_convert_messages_scrubs_history_across_assistant_user_and_tool_json() -
             SystemMessageItem(meta=ContextItemMeta.create(), parts=(ContextTextPart("system"),)),
             UserMessageItem(
                 meta=ContextItemMeta.create(),
-                parts=(
-                    ContextTextPart(
-                        '<message msg_id="1" is_self_message="true">\n'
-                        "[_thought\n内部草稿\n]_谁是ai啦，我可是正经猫娘群友"
-                    ),
-                ),
+                parts=(ContextTextPart(f"{literal}普通群友手打的示例"),),
             ),
             AssistantMessageItem(
                 meta=ContextItemMeta.create(),
@@ -176,9 +179,16 @@ def test_convert_messages_scrubs_history_across_assistant_user_and_tool_json() -
     model_text = contents[1].parts[0].text
     func_resp = contents[2].parts[0].function_response.response
 
-    assert "_thought" not in user_text
-    assert "谁是ai啦，我可是正经猫娘群友" in user_text
+    assert user_text == f"{literal}普通群友手打的示例"
     assert model_text == "干净的历史回复"
-    assert func_resp["success"] is True
-    assert func_resp["content"] == '已发送回复"谁是ai啦，我可是正经猫娘群友"'
+    assert func_resp["content"] == f"已发送回复{literal}"
     assert func_resp["other"] == "]_UNRELATED"
+
+
+def test_open_label_regex_is_linear() -> None:
+    """恶意长空白串不得触发二次方回溯（16 KB 需远低于 20 ms）。"""
+    payload = "[" + " " * 16000 + "x"
+    started = time.perf_counter()
+    _default_normal_response_parser(_make_response(payload), logical_turn_id="turn-redos")
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    assert elapsed_ms < 20, f"耗时 {elapsed_ms:.2f} ms，疑似回溯"
