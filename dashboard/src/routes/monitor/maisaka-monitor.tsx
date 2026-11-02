@@ -731,7 +731,7 @@ function StageStatusContent({
         {status.roundText && <span>{status.roundText}</span>}
         {agentStateLabel && <span>{agentStateLabel}</span>}
         <span className="text-muted-foreground ml-auto text-[11px]">
-          {floating ? (
+          {floating || status.stage === '组织上下文' ? (
             <ToolExecutionElapsed key={status.stageStartedAt} startedAt={status.stageStartedAt} />
           ) : (
             `更新于 ${formatRelativeTime(status.updatedAt)}`
@@ -739,7 +739,7 @@ function StageStatusContent({
         </span>
       </div>
       {status.detail && (
-        <p className="text-muted-foreground max-w-72 truncate text-xs" title={status.detail}>
+        <p className="text-muted-foreground max-w-72 text-xs break-words" title={status.detail}>
           {status.detail}
         </p>
       )}
@@ -1447,6 +1447,7 @@ function ToolFullJsonBlock({
 }: {
   tool: {
     duration_ms: number
+    error_message?: string
     prompt_html_uri?: string
     success: boolean
     summary: string
@@ -1463,6 +1464,7 @@ function ToolFullJsonBlock({
     tool_name: tool.tool_name,
     tool_args: tool.tool_args,
     success: tool.success,
+    error_message: tool.error_message || undefined,
     duration_ms: tool.duration_ms,
     summary: tool.summary,
     prompt_html_uri: tool.prompt_html_uri,
@@ -1718,9 +1720,9 @@ function PlannerToolResultCard({
           <ReplyToolArguments tool={tool} messages={messages} onJumpToMessage={onJumpToMessage} />
         )}
         {isToolSearch && !tool.status && tool.success && <ToolDiscoveryBlock tools={[tool]} />}
-        {!isToolSearch && tool.tool_name !== 'reply' && argumentEntries.length > 0 && (
+        {((!isToolSearch && tool.tool_name !== 'reply' && argumentEntries.length > 0) || (!tool.status && !tool.success && tool.error_message)) && (
           <div className="flex flex-wrap items-center gap-1.5">
-            {argumentEntries.map(([name, value]) => (
+            {!isToolSearch && tool.tool_name !== 'reply' && argumentEntries.map(([name, value]) => (
               <ToolArgumentBlock key={name} name={name} value={value} />
             ))}
             {!tool.status && <ToolFullJsonBlock tool={tool} />}

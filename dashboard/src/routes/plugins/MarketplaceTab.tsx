@@ -1,5 +1,8 @@
 import { memo, useMemo, useState } from 'react'
 
+import { isNapcatAdapter } from '@/lib/plugin-info'
+import type { PluginStatsStatus } from '@/lib/plugin-stats'
+
 import type {
   GitStatus,
   MaimaiVersion,
@@ -19,6 +22,7 @@ const LAUNCH_BOOST_WEIGHT = 12
 const LAUNCH_BOOST_FULL_HOURS = 24
 const LAUNCH_BOOST_DECAY_HOURS = 48
 const UPDATE_BOOST_WEIGHT = 3
+const ICON_BOOST_WEIGHT = 0.5
 const UPDATE_BOOST_WINDOW_DAYS = 14
 const GROWTH_BOOST_RANK_LIMIT = 8
 const GROWTH_BOOST_WEIGHT_7D = 1
@@ -38,7 +42,8 @@ interface MarketplaceTabProps {
   sortBy: MarketplaceSortKey
   gitStatus: GitStatus | null
   maimaiVersion: MaimaiVersion | null
-  pluginStats: Record<string, PluginStatsData>
+  pluginStats: Record<string, Partial<PluginStatsData>>
+  statsStatus?: PluginStatsStatus
   /** 排序快照不随本次会话内的点赞变化，避免卡片在点击后当场换位。 */
   sortPluginStats: Record<string, PluginStatsData>
   pluginProgressById: PluginProgressById
@@ -229,7 +234,7 @@ function selectSurprisePlugins(
     Math.max(SURPRISE_PLUGIN_COUNT, Math.ceil(plugins.length * 0.3))
   )
 
-  return [...plugins]
+  return plugins.filter((plugin) => !isNapcatAdapter(plugin))
     .sort((left, right) => {
       const freshnessDiff = getPluginFreshness(right) - getPluginFreshness(left)
       if (freshnessDiff !== 0) {
@@ -249,6 +254,7 @@ export const MarketplaceTab = memo(function MarketplaceTab({
   gitStatus,
   maimaiVersion,
   pluginStats,
+  statsStatus = 'ready',
   sortPluginStats,
   pluginProgressById,
   likingPluginIds,
@@ -274,10 +280,9 @@ export const MarketplaceTab = memo(function MarketplaceTab({
 
   // 排序只依赖插件、排序快照和筛选结果，不随点赞、进度或列数变化重算。
   const displayPlugins = useMemo(() => {
+    if (statsStatus !== 'ready' && ['downloads', 'likes', 'rating'].includes(sortBy)) return plugins
     const getPluginStats = (plugin: PluginInfo): PluginStatsData | undefined => {
-      const statsIds = [plugin.manifest?.id, plugin.id].filter((id): id is string => Boolean(id))
-
-      return statsIds.map((id) => sortPluginStats[id]).find(Boolean)
+      return plugin.manifest.id ? sortPluginStats[plugin.manifest.id] : undefined
     }
 
     const getSortValue = (
@@ -296,7 +301,7 @@ export const MarketplaceTab = memo(function MarketplaceTab({
         const likeScore = Math.log10(likes + 1)
         const ratingScore = rating * Math.log10(ratingCount + 2)
 
-        return (
+        const score = (
           normalizeScore(downloadScore, scoreBasis.maxDownloadScore, 4) +
           normalizeScore(likeScore, scoreBasis.maxLikeScore, 3) +
           normalizeScore(ratingScore, scoreBasis.maxRatingScore, 2) +
@@ -305,6 +310,9 @@ export const MarketplaceTab = memo(function MarketplaceTab({
           getGrowthBoost(stats) +
           getFreshnessBoost(plugin, scoreBasis.maxMarketplaceOrder, now)
         )
+        const icon = plugin.manifest.display?.icon
+        const hasIcon = Boolean(icon?.value?.trim()) && (icon?.type !== 'local' || Boolean(plugin.assets?.icon_64?.trim()))
+        return (isNapcatAdapter(plugin) ? score * 0.05 : score) + (hasIcon ? ICON_BOOST_WEIGHT : 0)
       }
       if (sortBy === 'latest') {
         return getPluginFreshness(plugin)
@@ -357,7 +365,7 @@ export const MarketplaceTab = memo(function MarketplaceTab({
       (plugin) => !surprisePluginIds.has(getPluginIdentity(plugin))
     )
     return [...surprisePlugins, ...mainPlugins]
-  }, [plugins, sortBy, sortPluginStats, renderTime, surpriseSeed])
+  }, [plugins, sortBy, sortPluginStats, statsStatus, renderTime, surpriseSeed])
   const isAnyPluginInstalling = Object.values(pluginProgressById).some(
     (progress) => progress.operation === 'install' && progress.stage === 'loading'
   )
@@ -369,6 +377,7 @@ export const MarketplaceTab = memo(function MarketplaceTab({
       gitStatus={gitStatus}
       maimaiVersion={maimaiVersion}
       stats={plugin.manifest?.id ? pluginStats[plugin.manifest.id] : undefined}
+      statsStatus={statsStatus}
       loadProgress={pluginProgressById[plugin.id] ?? null}
       isAnyPluginInstalling={isAnyPluginInstalling}
       isLiking={likingPluginIds.has(plugin.manifest?.id || plugin.id)}
@@ -396,8 +405,7 @@ export const MarketplaceTab = memo(function MarketplaceTab({
         <div
           key={plugin.id}
           className="-mx-2 -my-4 row-span-2 grid grid-rows-subgrid gap-y-0 px-2 py-4"
-          // 屏幕外卡片跳过布局和绘制；预留空间让跨边框的榜单标签完整显示。
-          style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}
+          // 保留跨边框标签空间，并让卡片内容参与 subgrid 行高计算。
         >
           {renderPluginCard(plugin)}
         </div>

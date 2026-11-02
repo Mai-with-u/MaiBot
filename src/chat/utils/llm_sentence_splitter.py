@@ -4,6 +4,7 @@ from typing import List, Tuple
 
 import json
 
+from src.common.llm_json import normalize_llm_json, parse_llm_json
 from src.common.logger import get_logger
 from src.services.llm_service import LLMServiceClient
 
@@ -23,16 +24,6 @@ _SPLITTER_PROMPT = """
 
 原文：
 """
-
-
-def _normalize_json_payload(payload: str) -> str:
-    """去除模型偶尔添加的 Markdown JSON 代码块包装。"""
-    normalized = payload.strip()
-    if normalized.startswith("```json") and normalized.endswith("```"):
-        return normalized[7:-3].strip()
-    if normalized.startswith("```") and normalized.endswith("```"):
-        return normalized[3:-3].strip()
-    return normalized
 
 
 def _is_no_split_marker(payload: str) -> bool:
@@ -104,14 +95,14 @@ async def split_text_with_llm(text: str) -> List[Tuple[str, str]]:
 
     client = LLMServiceClient(task_name="fast_model", request_type="response.splitter")
     result = await client.generate_response(_SPLITTER_PROMPT + text)
-    payload = _normalize_json_payload(result.response)
+    payload = normalize_llm_json(result.response)
 
     # 模型判断不需要拆分时只返回标记，此时作为单独一段，并同样处理段尾逗号
     if _is_no_split_marker(payload):
         return [_extract_trailing_comma(text)]
 
     try:
-        sentences = json.loads(payload)
+        sentences = parse_llm_json(payload)
     except json.JSONDecodeError as exc:
         raise ValueError("LLM 断句结果不是合法 JSON 数组") from exc
 

@@ -51,6 +51,7 @@ def test_tool_records_and_webui_links_are_independent_of_console(monkeypatch, sa
         "output_items": list(result.output_items),
         "output_text": "完整回复",
         "metrics": {"model_name": "test", "prompt_tokens": 123},
+        "source_planner_uri": "/api/webui/config/maisaka-prompt-preview?path=planner%2Ftest-session%2F123.json",
         "generation_attempts": [{"attempt_id": "attempt-1", "status": "succeeded"}],
         "additional_prompt_records": [{"prompt_text": "附加请求", "output_text": "附加输出"}],
     }
@@ -65,6 +66,7 @@ def test_tool_records_and_webui_links_are_independent_of_console(monkeypatch, sa
         assert payload["output_items"][0]["text_parts"] == ["完整推理"]
         assert payload["generation_attempts"][0]["attempt_id"] == "attempt-1"
         assert payload["metadata"]["prompt_tokens"] == 123
+        assert payload["metadata"]["source_planner_uri"] == detail["source_planner_uri"]
         assert serialized["prompt_html_uri"].startswith("/api/webui/config/maisaka-prompt-preview?")
         assert len(serialized["detail"]["additional_prompt_html_uris"]) == 1
     else:

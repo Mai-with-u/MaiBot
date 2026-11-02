@@ -42,7 +42,7 @@ from src.platform_io import DeliveryBatch, DriverKind, get_platform_io_manager
 from src.platform_io.route_key_factory import RouteKeyFactory
 from src.plugin_runtime.hook_payloads import deserialize_session_message, serialize_session_message
 from src.plugin_runtime.hook_schema_utils import build_object_schema
-from src.plugin_runtime.host.hook_dispatcher import HookDispatchResult
+from src.plugin_runtime.host.hook_dispatcher import HookAbortedError, HookDispatchResult
 from src.plugin_runtime.host.hook_spec_registry import HookSpec, HookSpecRegistry
 
 logger = get_logger("send_service")
@@ -854,6 +854,7 @@ async def _send_via_platform_io(
     reply_message: Optional[MaiMessage] = None,
     storage_message: bool,
     show_log: bool,
+    raise_on_hook_abort: bool = False,
 ) -> Optional[SessionMessage]:
     """通过 Platform IO 发送消息。
 
@@ -879,6 +880,8 @@ async def _send_via_platform_io(
     )
     if before_send_result.aborted:
         logger.info(f"[SendService] 消息 {message.message_id} 在发送前被 Hook 中止")
+        if raise_on_hook_abort:
+            raise HookAbortedError(before_send_result)
         return None
 
     before_kwargs = before_send_result.kwargs
@@ -983,8 +986,9 @@ async def send_session_message_with_message(
     show_log: bool = True,
     sync_to_maisaka_history: bool = False,
     maisaka_source_kind: str = "outbound_send",
+    raise_on_hook_abort: bool = False,
 ) -> Optional[SessionMessage]:
-    """统一发送一条内部消息，并返回最终发送成功的消息对象。"""
+    """统一发送消息；raise_on_hook_abort 允许调用方接收带原因的 HookAbortedError。"""
     if not message.message_id:
         logger.error("[SendService] 消息缺少 message_id，无法发送")
         raise ValueError("消息缺少 message_id，无法发送")
@@ -997,6 +1001,7 @@ async def send_session_message_with_message(
         reply_message=reply_message,
         storage_message=storage_message,
         show_log=show_log,
+        raise_on_hook_abort=raise_on_hook_abort,
     )
     if sent_message is not None and sync_to_maisaka_history:
         _sync_sent_message_to_maisaka_history(
@@ -1101,6 +1106,7 @@ async def _send_to_target_with_message(
     selected_expressions: Optional[List[int]] = None,
     sync_to_maisaka_history: bool = False,
     maisaka_source_kind: str = "outbound_send",
+    raise_on_hook_abort: bool = False,
 ) -> Optional[SessionMessage]:
     """向指定目标构建并发送消息。
 
@@ -1114,6 +1120,7 @@ async def _send_to_target_with_message(
         storage_message: 是否将发送结果写入消息存储。
         show_log: 是否输出发送日志。
         selected_expressions: 可选的表情候选索引列表。
+        raise_on_hook_abort: 为 True 时向调用方传递带原因的 Hook 中止。
 
     Returns:
         bool: 发送成功返回 ``True``，否则返回 ``False``。
@@ -1148,6 +1155,8 @@ async def _send_to_target_with_message(
         )
         if after_build_result.aborted:
             logger.info(f"[SendService] 消息 {outbound_message.message_id} 在构建后被 Hook 中止")
+            if raise_on_hook_abort:
+                raise HookAbortedError(after_build_result)
             return None
 
         after_build_kwargs = after_build_result.kwargs
@@ -1166,6 +1175,7 @@ async def _send_to_target_with_message(
             show_log=show_log,
             sync_to_maisaka_history=sync_to_maisaka_history,
             maisaka_source_kind=maisaka_source_kind,
+            raise_on_hook_abort=raise_on_hook_abort,
         )
         if sent_message is not None:
             logger.debug(f"[SendService] 成功发送消息到 {stream_id}")
@@ -1173,6 +1183,8 @@ async def _send_to_target_with_message(
 
         logger.error("[SendService] 发送消息失败")
         return None
+    except HookAbortedError:
+        raise
     except Exception as exc:
         logger.exception(f"[SendService] 发送消息时出错: {exc}")
         return None
@@ -1252,6 +1264,7 @@ async def emoji_to_stream_with_message(
     reply_message: Optional[MaiMessage] = None,
     sync_to_maisaka_history: bool = False,
     maisaka_source_kind: str = "outbound_send",
+    raise_on_hook_abort: bool = False,
 ) -> Optional[SessionMessage]:
     """向指定流发送表情消息，并返回发送成功后的消息对象。"""
     return await _send_to_target_with_message(
@@ -1263,6 +1276,7 @@ async def emoji_to_stream_with_message(
         reply_message=reply_message,
         sync_to_maisaka_history=sync_to_maisaka_history,
         maisaka_source_kind=maisaka_source_kind,
+        raise_on_hook_abort=raise_on_hook_abort,
     )
 
 

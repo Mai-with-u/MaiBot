@@ -3,12 +3,14 @@ from zipfile import ZipFile, ZipInfo
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import asyncio
 import json
 import stat
 
 import pytest
 
 from src.plugin_runtime.runner.manifest_validator import ManifestValidator
+from src.plugin_runtime.integration import PluginRuntimeManager
 from src.webui.routers.plugin import support, zip_install
 
 
@@ -19,6 +21,10 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(support, "get_plugins_dir", lambda: root)
     monkeypatch.setattr(zip_install, "get_plugins_dir", lambda: root)
     monkeypatch.setattr(zip_install, "require_plugin_token", lambda _: "ok")
+    manager = PluginRuntimeManager()
+    manager._plugin_catalog._roots = {root: False}
+    asyncio.run(manager._plugin_catalog.refresh())
+    monkeypatch.setattr(zip_install, "get_plugin_runtime_manager", lambda: manager)
     monkeypatch.setattr(
         zip_install,
         "ManifestValidator",
@@ -70,6 +76,7 @@ def test_install_valid_archive_and_refuse_overwrite(client, prefix):
     data = archive(prefix)
     response = api.post("/install-zip", files={"file": ("plugin.zip", data)})
     assert response.status_code == 200, response.text
+    assert [entry.plugin_id for entry in zip_install.get_plugin_runtime_manager()._plugin_catalog.entries] == ["example.demo"]
     assert (root / "example_demo" / "plugin.py").is_file()
     original = (root / "example_demo" / "_manifest.json").read_bytes()
     assert api.post("/install-zip", files={"file": ("plugin.zip", data)}).status_code == 409

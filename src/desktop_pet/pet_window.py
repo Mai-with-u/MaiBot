@@ -8,6 +8,7 @@
 from ctypes import wintypes
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, TextIO, Tuple
+from uuid import uuid4
 
 import argparse
 import ctypes
@@ -16,9 +17,10 @@ import json
 import os
 import sys
 import threading
-import webview
 
 if TYPE_CHECKING:
+    import webview
+
     from .todos import TodoStore
 
 # 页面设计尺寸（CSS 像素），与 index.html 布局一致。
@@ -43,6 +45,8 @@ DCX_CACHE = 0x0002
 BLACK_BRUSH = 4
 SPI_GETWORKAREA = 0x0030
 MONITOR_DEFAULTTONULL = 0
+DWMWA_SYSTEMBACKDROP_TYPE = 38
+DWMSBT_NONE = 1
 
 user32 = ctypes.windll.user32 if sys.platform == "win32" else None
 gdi32 = ctypes.windll.gdi32 if sys.platform == "win32" else None
@@ -59,6 +63,8 @@ class MARGINS(ctypes.Structure):
 
 
 def _bind_win32() -> None:
+    dwmapi.DwmSetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+    dwmapi.DwmSetWindowAttribute.restype = ctypes.c_long
     dwmapi.DwmExtendFrameIntoClientArea.argtypes = [wintypes.HWND, ctypes.POINTER(MARGINS)]
     dwmapi.DwmExtendFrameIntoClientArea.restype = ctypes.c_long
     user32.SetProcessDPIAware.restype = wintypes.BOOL
@@ -199,22 +205,38 @@ class PetApi:
         self._state_path = state_path
         self._request_dir = request_dir
         request_dir.mkdir(parents=True, exist_ok=True)
-        self._window: Optional[webview.Window] = None
+        self._window: Optional["webview.Window"] = None
         self._hwnd = 0
         self._size = (0, 0)
         self._placed_size = (0, 0)
         self._anchor: Optional[Tuple[int, int]] = saved_anchor(state_path)
         self._placed_by_user = self._anchor is not None
         self._drag_start: Optional[Tuple[int, int, int, int]] = None
+        self._drag_id = ""
+        self._dragging = False
+        self._drag_lock = threading.Lock()
+        self._scale = 1.0
         self._closing = False
 
-    def _attach(self, window: webview.Window) -> None:
+    def _attach(self, window: "webview.Window") -> None:
         """在窗口首次显示前（GUI 线程）调整样式与位置。"""
         # pythonnet 由 pywebview 的 WinForms 后端加载，只能在窗口创建后导入。
+        from Microsoft.Win32 import SystemEvents
         from System.Drawing import Color
 
         self._window = window
         self._hwnd = window.native.Handle.ToInt64()
+        # 无标题栏的透明窗口不需要标题栏主题同步。pywebview 在深色模式下会开启
+        # Mica，将整个透明客户区填成实色；取消订阅，避免系统主题变化时再次开启。
+        SystemEvents.UserPreferenceChanged -= window.native.on_system_theme_changed
+        # 系统背景属性从 Windows 11 22H2 起可用，旧系统没有这一层背景。
+        if sys.getwindowsversion().build >= 22621:
+            backdrop = ctypes.c_int(DWMSBT_NONE)
+            result = dwmapi.DwmSetWindowAttribute(
+                self._hwnd, DWMWA_SYSTEMBACKDROP_TYPE, ctypes.byref(backdrop), ctypes.sizeof(backdrop),
+            )
+            if result != 0:
+                raise OSError(f"关闭桌宠系统背景失败: 0x{result & 0xFFFFFFFF:08X}")
         # 工具窗口不出现在任务栏和 Alt+Tab 中。
         style = user32.GetWindowLongPtrW(self._hwnd, GWL_EXSTYLE)
         user32.SetWindowLongPtrW(self._hwnd, GWL_EXSTYLE, (style | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW)
@@ -252,6 +274,7 @@ class PetApi:
 
     def fit(self, scale: float) -> None:
         """按页面实际缩放调整窗口尺寸，保持桌宠站立点不动。"""
+        self._scale = scale
         self._size = (round(PAGE_WIDTH * scale), round(PAGE_HEIGHT * scale))
         if not self._placed_by_user:
             self._anchor = default_anchor(scale)
@@ -283,19 +306,56 @@ class PetApi:
         self._todos.done(todo_id)
 
     def drag_begin(self) -> None:
-        self._drag_start = (*cursor_pos(), *self._anchor)
+        with self._drag_lock:
+            self._drag_start = (*cursor_pos(), *self._anchor)
+            self._drag_id = uuid4().hex
+            self._dragging = False
 
     def drag_move(self) -> None:
-        start_x, start_y, anchor_x, anchor_y = self._drag_start
-        x, y = cursor_pos()
-        self._anchor = (anchor_x + x - start_x, anchor_y + y - start_y)
-        self._place()
+        # 页面桥接与隐藏窗口指令来自不同线程，锁内成对更新状态和发出事件。
+        with self._drag_lock:
+            if self._drag_start is None:
+                return  # 隐藏或取消后，页面队列中尚未执行的移动不再有效。
+            start_x, start_y, anchor_x, anchor_y = self._drag_start
+            x, y = cursor_pos()
+            self._anchor = (anchor_x + x - start_x, anchor_y + y - start_y)
+            self._place()
+            if not self._dragging:
+                # 页面越过拖动阈值后才会调用 drag_move，按下或单击不应触发提起计时。
+                self._dragging = True
+                self._outbox.emit({
+                    "type": "drag_started", "gesture_id": self._drag_id,
+                    "offset_x": anchor_x - start_x, "offset_y": anchor_y - start_y,
+                    "scale": self._scale,
+                })
 
     def drag_end(self) -> None:
-        self._drag_start = None
-        self._placed_by_user = True
-        anchor_x, anchor_y = self._anchor
-        self._state_path.write_text(json.dumps({"anchor_x": anchor_x, "anchor_y": anchor_y}), "utf-8")
+        with self._drag_lock:
+            if self._drag_start is None:
+                return  # pointercancel 与 lostpointercapture 可能结束同一次拖动。
+            gesture_id, dragging = self._drag_id, self._dragging
+            self._drag_start = None
+            self._drag_id = ""
+            self._dragging = False
+            if not dragging:
+                return
+            self._placed_by_user = True
+            anchor_x, anchor_y = self._anchor
+            self._state_path.write_text(json.dumps({"anchor_x": anchor_x, "anchor_y": anchor_y}), "utf-8")
+            self._outbox.emit({"type": "drag_ended", "gesture_id": gesture_id})
+
+    def clicked(self) -> None:
+        self._outbox.emit({"type": "clicked"})
+
+    def refresh_buttons(self) -> None:
+        self._outbox.emit({"type": "buttons_refresh"})
+
+    def click_button(self, plugin_id: str, button_id: str) -> None:
+        if not isinstance(plugin_id, str) or not 1 <= len(plugin_id) <= 200:
+            raise ValueError("无效的插件 ID")
+        if not isinstance(button_id, str) or not 1 <= len(button_id) <= 64:
+            raise ValueError("无效的按钮 ID")
+        self._outbox.emit({"type": "button_click", "plugin_id": plugin_id, "button_id": button_id})
 
     def region(self, rects: List[List[float]], scale: float) -> None:
         apply_region(self._hwnd, rects, scale)
@@ -303,7 +363,7 @@ class PetApi:
         clear_gdi_layer(self._hwnd)
 
 
-def pump_commands(api: PetApi, window: webview.Window, commands: TextIO) -> None:
+def pump_commands(api: PetApi, window: "webview.Window", commands: TextIO) -> None:
     """执行主程序指令并回执；管道关闭即主程序已停止，桌宠随之退出。"""
     try:
         for line in commands:
@@ -316,6 +376,7 @@ def pump_commands(api: PetApi, window: webview.Window, commands: TextIO) -> None
                     window.show()
                     window.evaluate_js("window.petSkin.visibility(true)")
                 elif command["type"] == "hide":
+                    api.drag_end()
                     window.hide()
                     window.evaluate_js("window.petSkin.visibility(false)")
                 elif command["type"] == "skin":
@@ -358,7 +419,7 @@ def pump_commands(api: PetApi, window: webview.Window, commands: TextIO) -> None
                         except Exception as exc:
                             # 数据已保存；界面刷新失败不能误报为写入失败并诱发重复新增。
                             result["display_error"] = str(exc)
-                elif command["type"] in {"reply", "notice", "thinking", "idle", "failed", "accepted"}:
+                elif command["type"] in {"reply", "notice", "thinking", "idle", "failed", "accepted", "buttons", "button_result"}:
                     window.evaluate_js(f"window.pet.receive({json.dumps(command)})")
                 else:
                     raise ValueError(f"未知的桌宠指令: {command['type']}")
@@ -376,6 +437,8 @@ def main() -> None:
     parser.add_argument("--data-dir", type=Path, required=True)
     parser.add_argument("--runtime-dir", type=Path, required=True)
     args = parser.parse_args()
+
+    import webview
 
     from todos import TodoStore
 

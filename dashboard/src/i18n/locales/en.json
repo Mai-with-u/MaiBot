@@ -701,6 +701,11 @@
       "confirmRerunSetup": "Confirm Re-run Setup",
       "confirmRerunSetupDesc": "This will take you back to the initial setup wizard. You can reconfigure the system basics. Are you sure?",
       "devToolsDesc": "The following features are for development and debugging only. They may cause crashes or abnormal behavior.",
+      "resetNotificationStates": "Reset all notification states",
+      "resetNotificationStatesDesc": "Clears news read records, the home news bar dismissal, and dismissed page notices so they show again. Completed tours are kept.",
+      "resetNotificationStatesAction": "Reset",
+      "notificationsResetDone": "Notification states reset",
+      "notificationsResetDoneDesc": "Cleared {{count}} items. Changes apply when you revisit the page.",
       "alwaysShowUpdateButton": "Always show update button",
       "alwaysShowUpdateButtonDesc": "Always show the main program update button in the top-right corner, even when no update is detected. Takes effect immediately.",
       "alwaysShowUpdateNotice": "Always Show Update Notice",
@@ -1697,7 +1702,9 @@
       "openLink": "Open source link",
       "openPlugin": "View plugin",
       "pinned": "Pinned",
-      "empty": "No news yet"
+      "empty": "No news yet",
+      "dismiss": "Hide news bar",
+      "next": "Next news"
     },
     "storage": {
       "title": "Storage Usage",

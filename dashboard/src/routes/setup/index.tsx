@@ -133,7 +133,7 @@ function SetupPageContent() {
     replyer_model_name: '',
     replyer_model_identifier: '',
     replyer_visual: false,
-    replyer_thinking: true,
+    replyer_thinking: false,
   })
 
   const setupSteps: SetupStep[] = [
@@ -178,7 +178,7 @@ function SetupPageContent() {
       planner_reasoning_effort: 'high',
       replyer_model_identifier: 'deepseek-flash',
       replyer_model_name: 'deepseek-flash',
-      replyer_thinking: true,
+      replyer_thinking: false,
       replyer_reasoning_effort: 'high',
     }))
   }, [apiProviderSetup.base_url])

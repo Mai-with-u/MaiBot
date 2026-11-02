@@ -859,6 +859,15 @@ class ChatConfig(ConfigBase):
     __ui_use_subtabs__ = True
     __ui_root_sub_label__ = "聊天设置"
 
+    creative_mode: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {"zh_CN": "创意模式", "en_US": "Creative mode", "ja_JP": "クリエイティブモード"},
+            "x-widget": "switch",
+        },
+    )
+    """普通聊天模型使用通用复古模板，保留表达习惯、关键词反应和插件要求；关闭时使用常规模板。Mai Replier 始终按实际选中的模型使用专用适配，长文生成不受影响。"""
+
     enable_reply_at: bool = Field(
         default=True,
         json_schema_extra={
@@ -903,22 +912,6 @@ class ChatConfig(ConfigBase):
         },
     )
     """私聊回复时参考的最近消息数量。"""
-
-    context_compaction_summary_max_chars: int = Field(
-        default=6000,
-        ge=1000,
-        le=8000,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "状态摘要字符上限",
-                "en_US": "State summary character limit",
-                "ja_JP": "状態要約の文字数上限",
-            },
-            "x-widget": "input",
-            "advanced": True,
-        },
-    )
-    """滚动状态摘要的最大字符数；使用 utils 模型生成，摘要始终随 Planner 上下文发送。"""
 
     reply_timing: ChatReplyTimingConfig = Field(default_factory=ChatReplyTimingConfig)
     """什么时候回复、回复频率与等待退避配置。"""
@@ -4126,7 +4119,7 @@ class ExpressionConfig(ConfigBase):
             "advanced": False,
         },
     )
-    """表达选择档位：false 为快速，加权随机抽样后直接注入，不额外调用选择 LLM；true 为精细，使用表达意图与嵌入召回，再由 LLM 筛选，需要配置嵌入模型。复古回复不使用表达选择。"""
+    """表达选择档位：false 为快速，加权随机抽样后直接注入，不额外调用选择 LLM；true 为精细，使用表达意图与嵌入召回，再由 LLM 筛选，需要配置嵌入模型。Mai Replier 专用适配不使用表达选择，创意模式保留表达选择。"""
 
     expression_vector_index_path: str = Field(
         default="data/expression_selection/expression_vector_index.json",
@@ -5064,19 +5057,6 @@ class DebugConfig(ConfigBase):
 
     __ui_parent__ = "log"
     __ui_label__ = "其他"
-
-    replyer_retro_prompt: bool = Field(
-        default=False,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "复古回复提示词",
-                "en_US": "Retro reply prompt",
-                "ja_JP": "レトロ返信プロンプト",
-            },
-            "x-widget": "switch",
-        },
-    )
-    """按旧版（0.12.x）的方式组织 replyer 提示词：全部回复指令集中在一份完整模板里，用块占位符填充，群聊/私聊/简短回复各用一套模板，并整段作为一条 user 消息发送。仅检查实际分配给 replyer 的模型：名称或标识包含 mai_replier（兼容 mai-replier），或为 v2p1-contract、v2p1-raw 时自动开启且不可关闭；解除这些模型的 replyer 分配后清除自动开关，未分配的模型不影响此设置。其他模型可手动开启。"""
 
     enable_console_input: bool = Field(
         default=True,

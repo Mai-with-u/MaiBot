@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
 import { useToast } from '@/hooks/use-toast'
-import { clearLocalCache, DEFAULT_SETTINGS, exportSettings, formatBytes, getSetting, getStorageUsage, importSettings, resetAllGuidesAndNotices, resetAllSettings, setSetting } from '@/lib/settings-manager'
+import { clearLocalCache, DEFAULT_SETTINGS, exportSettings, formatBytes, getSetting, getStorageUsage, importSettings, resetAllGuidesAndNotices, resetAllNotificationStates, resetAllSettings, setSetting } from '@/lib/settings-manager'
 import { logWebSocket } from '@/lib/log-websocket'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
 
@@ -222,6 +222,15 @@ export function OtherTab() {
     toast({
       title: t('settings.other.guidesResetDone'),
       description: t('settings.other.guidesResetDoneDesc', { count: clearedCount }),
+    })
+  }
+
+  const handleResetNotificationStates = () => {
+    const clearedCount = resetAllNotificationStates()
+    refreshStorageUsage()
+    toast({
+      title: t('settings.other.notificationsResetDone'),
+      description: t('settings.other.notificationsResetDoneDesc', { count: clearedCount }),
     })
   }
 
@@ -606,6 +615,18 @@ export function OtherTab() {
               }}
               aria-label={t('settings.other.alwaysShowUpdateButton')}
             />
+          </div>
+          <div className="flex items-start justify-between gap-4 rounded-lg bg-muted/50 p-3 sm:p-4">
+            <div className="min-w-0 space-y-1">
+              <p className="text-sm font-medium">{t('settings.other.resetNotificationStates')}</p>
+              <p className="text-xs text-muted-foreground">
+                {t('settings.other.resetNotificationStatesDesc')}
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={handleResetNotificationStates} className="shrink-0 gap-2">
+              <RotateCcw className="h-4 w-4" />
+              {t('settings.other.resetNotificationStatesAction')}
+            </Button>
           </div>
           <AlertDialog>
             <AlertDialogTrigger asChild>

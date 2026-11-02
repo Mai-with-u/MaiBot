@@ -289,6 +289,12 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
 
   const renderField = (field: FieldSchema) => {
     const fieldPath = buildFieldPath(basePath, field.name)
+    if (
+      basePath === 'chat.reply_timing' && values.planner_message_steering === true &&
+      (field.name === 'message_debounce_mode' || field.name === 'private_message_debounce_mode')
+    ) {
+      field = { ...field, readOnly: true }
+    }
     const nestedSchema = schema.nested?.[field.name]
 
     if (hooks.has(fieldPath)) {
@@ -471,7 +477,7 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
                   ? "grid-cols-[minmax(0,1fr)_auto]"
                   : isVisualImageCompressionRow
                   ? "grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1.1fr)] items-center"
-                  : rowKey === 'chat-quote-frequency'
+                  : rowKey === 'chat-quote-frequency' || rowKey === 'message-debounce'
                   ? "md:grid-cols-2"
                   : "md:grid-cols-2 xl:grid-cols-3",
               )}

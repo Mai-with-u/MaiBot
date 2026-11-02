@@ -26,7 +26,7 @@ from src.platform_io.route_key_factory import RouteKeyFactory
 from src.plugin_runtime.component_query import component_query_service
 from src.plugin_runtime.hook_payloads import deserialize_session_message, serialize_session_message
 from src.plugin_runtime.hook_schema_utils import build_object_schema
-from src.plugin_runtime.host.hook_dispatcher import HookDispatchResult
+from src.plugin_runtime.host.hook_dispatcher import HookAbortedError, HookDispatchResult
 from src.plugin_runtime.host.hook_spec_registry import HookSpec, HookSpecRegistry
 from src.maisaka.context.clear_context import (
     CLEAR_CONTEXT_COMMAND,
@@ -332,7 +332,7 @@ class ChatBot:
                     matched_groups=dict(matched_groups),
                 )
                 if before_result.aborted:
-                    logger.info(f"命令 {command_name} 被 Hook 中止，跳过命令执行")
+                    logger.info(f"命令 {command_name} 跳过执行：{HookAbortedError(before_result)}")
                     return True, None, False
 
                 hook_kwargs = before_result.kwargs
@@ -808,7 +808,7 @@ class ChatBot:
                 message,
             )
             if before_process_result.aborted:
-                logger.info(f"消息 {message.message_id} 在预处理前被 Hook 中止")
+                logger.info(f"消息 {message.message_id} 在预处理前中止：{HookAbortedError(before_process_result)}")
                 return
 
             group_info = message.message_info.group_info
@@ -832,7 +832,7 @@ class ChatBot:
                 message,
             )
             if after_process_result.aborted:
-                logger.info(f"消息 {message.message_id} 在预处理后被 Hook 中止")
+                logger.info(f"消息 {message.message_id} 在预处理后中止：{HookAbortedError(after_process_result)}")
                 return
 
             group_info = message.message_info.group_info

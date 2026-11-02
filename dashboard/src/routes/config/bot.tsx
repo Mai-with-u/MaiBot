@@ -47,6 +47,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { CodeEditor } from '@/components/CodeEditor'
 import { DynamicConfigForm } from '@/components/dynamic-form'
+import { ConfigSectionDialog } from '@/components/dynamic-form/ConfigSectionDialog'
 import { RestartOverlay } from '@/components/restart-overlay'
 import { useToast } from '@/hooks/use-toast'
 import { usePinnedConfigTabs } from '@/hooks/use-pinned-config-tabs'
@@ -102,6 +103,7 @@ const TOAST_DISPLAY_DELAY = 500
 const FILE_MODE_NOTICE_DISMISSED_KEY = 'bot-config-file-mode-notice-dismissed'
 const EXPERIMENTAL_FEATURES_NOTICE_DISMISSED_KEY =
   'bot-config-experimental-features-notice-dismissed'
+const CONFIG_DIALOG_SECTIONS = new Set(['chat.reply_style'])
 
 // ==================== Tab 分组类型与构建 ====================
 
@@ -110,6 +112,7 @@ interface SubtabPane {
   content: ReactNode
   id: string
   label: string
+  presentation?: 'tab' | 'dialog'
 }
 
 // 主导出组件：包装 RestartProvider
@@ -1017,6 +1020,7 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
   const initialActiveTab = tabGroups[0]?.id ?? ''
   const [expandedSubtabGroups, setExpandedSubtabGroups] = useState<Record<string, boolean>>({})
   const [activeSubtabByGroup, setActiveSubtabByGroup] = useState<Record<string, string>>({})
+  const [openConfigDialog, setOpenConfigDialog] = useState<string | null>(null)
   const [alternateStylesOpen, setAlternateStylesOpen] = useState(false)
   const [experimentalNoticeOpen, setExperimentalNoticeOpen] = useState(
     () =>
@@ -1059,9 +1063,12 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
         const isChatQuoteField = searchFieldPath === 'chat.reply_style.private_quote_frequency' ||
           searchFieldPath === 'chat.reply_style.group_quote_frequency'
         const subtabId = isChatQuoteField ? 'chat' : `${sectionName}.${subcategoryName}`
+        if (CONFIG_DIALOG_SECTIONS.has(subtabId)) {
+          setOpenConfigDialog(subtabId)
+        }
         setActiveSubtabByGroup((current) => ({
           ...current,
-          [targetTab.id]: subtabId,
+          [targetTab.id]: CONFIG_DIALOG_SECTIONS.has(subtabId) ? sectionName : subtabId,
         }))
         setExpandedSubtabGroups((current) => ({
           ...current,
@@ -1093,7 +1100,7 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
         window.cancelAnimationFrame(nestedFrameId)
       }
     }
-  }, [activeSubtabByGroup, activeTab, advancedVisible, alternateStylesOpen, searchFieldPath])
+  }, [activeSubtabByGroup, activeTab, advancedVisible, alternateStylesOpen, openConfigDialog, searchFieldPath])
 
   if (tabGroups.length === 0 || !configSchema?.nested) {
     return null
@@ -1282,10 +1289,21 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
         ...schema,
         nested: {
           ...schema.nested,
+          ...(replyTimingSchema && {
+            reply_timing: {
+              ...replyTimingSchema,
+              fields: replyTimingSchema.fields.map((field) =>
+                ['message_debounce_mode', 'private_message_debounce_mode'].includes(field.name)
+                  ? { ...field, 'x-row': 'message-debounce' }
+                  : field
+              ),
+            },
+          }),
           reply_style: {
             ...replyStyleSchema,
             uiLabel: '聊天流prompt',
             uiSubLabel: '聊天流prompt',
+            uiPresentation: CONFIG_DIALOG_SECTIONS.has('chat.reply_style') ? 'dialog' : 'tab',
             uiAdvanced: false,
             fields: replyStyleSchema.fields.filter((field) =>
               !chatQuoteFieldNames.has(field.name) &&
@@ -1433,6 +1451,7 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
           advanced: Boolean(subcategorySchema.uiAdvanced),
           id: `${sectionName}.${subcategoryName}`,
           label: getSubtabLabel(subcategorySchema, subcategoryName),
+          presentation: subcategorySchema.uiPresentation,
           content: (
             <DynamicConfigForm
               schema={subcategorySchema}
@@ -1474,15 +1493,17 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
     const subtabExpanded = Boolean(expandedSubtabGroups[tabId])
     const defaultSubtabPanes = subtabPanes.filter((pane) => !pane.advanced)
     const expandedSubtabPanes = subtabPanes.filter((pane) => pane.advanced)
-    const visibleSubtabPanes = subtabExpanded
+    const visiblePanes = subtabExpanded
       ? [...defaultSubtabPanes, ...expandedSubtabPanes]
       : defaultSubtabPanes
+    const visibleSubtabPanes = visiblePanes.filter((pane) => pane.presentation !== 'dialog')
+    const visibleDialogPanes = visiblePanes.filter((pane) => pane.presentation === 'dialog')
     const hasCollapsibleSubtabs = subtabPanes.some((pane) => pane.advanced)
     const visibleSubtabIds = new Set(visibleSubtabPanes.map((pane) => pane.id))
     const activeSubtab = activeSubtabByGroup[tabId]
     const resolvedActiveSubtab = visibleSubtabIds.has(activeSubtab)
       ? activeSubtab
-      : (visibleSubtabPanes[0]?.id ?? subtabPanes[0].id)
+      : (visibleSubtabPanes[0]?.id ?? '')
 
     const toggleSubtabsExpanded = () => {
       if (
@@ -1541,6 +1562,14 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
         {visibleSubtabPanes.map((pane) => (
           <TabsContent key={pane.id} value={pane.id} className="mt-0">
             {pane.content}
+            {visibleDialogPanes.filter((dialog) => dialog.id.startsWith(`${pane.id}.`)).map((dialog) => (
+              <div key={dialog.id} className="mt-3">
+                <ConfigSectionDialog label={dialog.label} open={openConfigDialog === dialog.id}
+                  onOpenChange={(open) => setOpenConfigDialog(open ? dialog.id : null)}>
+                  {dialog.content}
+                </ConfigSectionDialog>
+              </div>
+            ))}
           </TabsContent>
         ))}
       </Tabs>

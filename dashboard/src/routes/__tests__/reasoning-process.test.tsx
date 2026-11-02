@@ -36,6 +36,7 @@ vi.mock('@tanstack/react-router', () => ({
 
 vi.mock('@/lib/avatar-url', () => ({
   useAvatarFetchEnabled: () => useAvatarFetchEnabledMock(),
+  useResolvedAvatarUrl: () => undefined,
 }))
 
 vi.mock('@/lib/api-base', () => ({
@@ -47,6 +48,7 @@ vi.mock('@/lib/config-api', () => ({
 }))
 
 vi.mock('@/lib/reasoning-process-api', () => ({
+  listRelatedReasoningRecords: vi.fn(),
   findReasoningToolCallRecords: vi.fn(),
   findReasoningToolCallSource: vi.fn(),
   listReasoningPromptFiles: vi.fn(),
@@ -428,6 +430,7 @@ function lastFilesQuery() {
 
 function installDefaultApiMocks() {
   vi.mocked(reasoningApi.findReasoningToolCallRecords).mockResolvedValue({ records: [] })
+  vi.mocked(reasoningApi.listRelatedReasoningRecords).mockResolvedValue({ records: [] })
   vi.mocked(reasoningApi.findReasoningToolCallSource).mockResolvedValue({ record: null })
   vi.mocked(reasoningApi.listReasoningPromptStages).mockResolvedValue({
     stages: defaultStages,
@@ -641,6 +644,27 @@ describe('ReasoningProcessPage 类型列表', () => {
 })
 
 describe('ReasoningProcessPage 浏览筛选与分页', () => {
+  it('关联步骤标记当前记录，并能跳到同轮次回复器', async () => {
+    vi.mocked(reasoningApi.listRelatedReasoningRecords).mockResolvedValue({ records: [
+      { call_id: '', stage: 'planner', session: plannerItem.session_id, stem: plannerItem.stem },
+      { call_id: '', stage: 'replyer', session: replyerItem.session_id, stem: replyerItem.stem },
+      { call_id: '', stage: 'memory_heuristic', session: plannerItem.session_id, stem: '100' },
+    ] })
+    const user = userEvent.setup()
+    renderPage()
+    await enterStage(user, 'planner')
+    await selectRecord('晚饭计划')
+    const card = await screen.findByRole('region', { name: '关联步骤' })
+    expect(await within(card).findByRole('button', { name: /规划器 · 当前/ })).toBeDisabled()
+    expect(within(card).getByRole('button', { name: /记忆拉取/ })).toBeInTheDocument()
+    await user.click(within(card).getByRole('button', { name: /回复器/ }))
+    await waitFor(() => {
+      expect(reasoningApi.listReasoningPromptFiles).toHaveBeenCalledWith(expect.objectContaining({
+        stage: 'replyer', session: replyerItem.session_id, targetStem: replyerItem.stem,
+      }))
+    })
+  })
+
   it('进入阶段后渲染记录元数据、行为点与回复器预览', async () => {
     const user = userEvent.setup()
     renderPage()

@@ -136,6 +136,8 @@
   .orb:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ink); }
   #orb-chat { left: 92px; background: var(--orange); --from: 44px 22px; }
   #orb-todo { left: 166px; background: var(--leaf); --from: -30px 22px; }
+  #orb-plugins { left: 18px; background: var(--cream); --from: 100px 22px; }
+  #orb-plugins[data-empty="true"] { display: none; }
   [data-mode="menu"] .orb { display: grid; animation: pop .34s cubic-bezier(.3, 1.6, .5, 1) both; }
   [data-mode="menu"] #orb-todo { animation-delay: .05s; }
   @keyframes pop {
@@ -173,7 +175,12 @@
     transform: rotate(45deg);
     border-bottom-right-radius: 3px;
   }
-  [data-mode="chat"] #chat, [data-mode="todo"] #todo { display: flex; }
+  [data-mode="chat"] #chat, [data-mode="todo"] #todo, [data-mode="plugins"] #plugins { display: flex; }
+  #plugin-buttons { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; max-height: 140px; }
+  .plugin-button { text-align: left; padding: 7px 9px; border: 1.5px solid var(--ink); border-radius: 10px; background: var(--paper-2); cursor: pointer; }
+  .plugin-button:disabled { opacity: .55; cursor: default; }
+  .plugin-button small { display: block; color: #605747; font-size: 11px; }
+  #plugin-error { color: #a03022; font-size: 11px; overflow-wrap: anywhere; max-height: 45px; overflow-y: auto; }
   @keyframes rise {
     from { opacity: 0; translate: 0 10px; }
     to { opacity: 1; translate: 0 0; }
@@ -287,7 +294,7 @@
     animation: rise .22s cubic-bezier(.3, 1.4, .5, 1) both;
   }
   #say.show { display: block; }
-  [data-mode="chat"] #say, [data-mode="todo"] #say, [data-mode="menu"] #say { display: none; }
+  [data-mode="chat"] #say, [data-mode="todo"] #say, [data-mode="menu"] #say, [data-mode="plugins"] #say { display: none; }
   #say .line { max-width: none; }
   #say .line + .line { margin-top: 4px; }
 </style>
@@ -346,6 +353,9 @@
 
   </div>
 
+  <button id="orb-plugins" class="orb" data-hit="23" data-empty="true" aria-label="插件扩展" title="插件扩展">
+    <svg viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round"><path d="M4 4h6v3a2 2 0 1 0 4 0V4h6v6h-3a2 2 0 1 0 0 4h3v6h-6v-3a2 2 0 1 0-4 0v3H4v-6h3a2 2 0 1 0 0-4H4Z"/></svg>
+  </button>
   <button id="orb-chat" class="orb" data-hit="23" aria-label="chat">
     <svg viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round">
       <path d="M4.5 7C4.5 5.3 5.8 4 7.5 4H16.5C18.2 4 19.5 5.3 19.5 7V12.5C19.5 14.2 18.2 15.5 16.5 15.5H11.5L7.5 19V15.5C5.8 15.5 4.5 14.2 4.5 12.5Z" fill="var(--paper)"/>
@@ -372,6 +382,11 @@
     <form id="todo-form"><input id="todo-input" maxlength="200" autocomplete="off" spellcheck="false"></form>
   </div>
 
+  <div id="plugins" class="bubble" data-hit="18">
+    <strong>插件扩展</strong>
+    <div id="plugin-buttons"></div>
+    <div id="plugin-error" role="status"></div>
+  </div>
   <div id="say-wrap"><div id="say" data-hit="16"></div></div>
 </div>
 
@@ -447,6 +462,11 @@
     } else if (mode === "todo") {
       todoInput.focus();
       todoList.scrollTop = todoList.scrollHeight;
+    } else if (mode === "plugins") {
+      api.refresh_buttons().catch((error) => {
+        document.getElementById("plugin-error").textContent = String(error);
+        updateRegion();
+      });
     }
     look(mode === "chat" || mode === "todo" ? [-0.6, -2] : [0, 0]);
     updateRegion();
@@ -515,26 +535,34 @@
     if (!drag) return;
     const { moved } = drag;
     drag = null;
+    queueDrag(() => api.drag_end());
     if (moved) {
       stage.classList.remove("dragging");
       look([0, 0]);
-      queueDrag(() => api.drag_end());
       return;
     }
     flash("squish", 400);
+    api.clicked().catch((error) => console.error(error));
     const mode = stage.dataset.mode;
     setMode(mode === "idle" ? "menu" : "idle");
   });
-  pet.addEventListener("pointercancel", () => {
+  function cancelDrag() {
+    if (!drag) return;
     drag = null;
     stage.classList.remove("dragging");
-  });
+    look([0, 0]);
+    queueDrag(() => api.drag_end());
+  }
+  pet.addEventListener("pointercancel", cancelDrag);
+  pet.addEventListener("lostpointercapture", cancelDrag);
 
   document.getElementById("orb-chat").addEventListener("click", () => setMode("chat"));
   document.getElementById("orb-todo").addEventListener("click", () => setMode("todo"));
+  document.getElementById("orb-plugins").addEventListener("click", () => setMode("plugins"));
   say.addEventListener("click", () => setMode("chat"));
 
   window.addEventListener("blur", () => {
+    cancelDrag();
     if (!drag && stage.dataset.mode !== "idle") setMode("idle");
   });
   document.addEventListener("keydown", (event) => {
@@ -718,6 +746,51 @@
   });
 
   // ---------- 与宿主通信 ----------
+  let extensionButtons = [];
+  const pendingButtons = new Set();
+  const buttonKey = (button) => JSON.stringify([button.plugin_id, button.id]);
+  function renderExtensionButtons() {
+    const visible = extensionButtons.filter((button) => button.visible);
+    document.getElementById("orb-plugins").dataset.empty = String(visible.length === 0);
+    const icons = {puzzle: "🧩", volume: "🔊", settings: "⚙", refresh: "↻", star: "★", heart: "♥", book: "📖", bell: "🔔"};
+    const nodes = visible.map((item) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "plugin-button";
+      const busy = pendingButtons.has(buttonKey(item));
+      button.disabled = item.disabled || busy;
+      button.title = item.plugin_name + (item.text ? "：" + item.text : "");
+      button.append(document.createTextNode(icons[item.icon] + " " + item.label + (busy ? "…" : "")));
+      if (item.text) {
+        const text = document.createElement("small");
+        text.textContent = item.text;
+        button.append(text);
+      }
+      button.addEventListener("click", async () => {
+        const key = buttonKey(item);
+        if (pendingButtons.has(key)) return;
+        pendingButtons.add(key);
+        document.getElementById("plugin-error").textContent = "";
+        renderExtensionButtons();
+        try {
+          await api.click_button(item.plugin_id, item.id);
+        } catch (error) {
+          pendingButtons.delete(key);
+          document.getElementById("plugin-error").textContent = String(error);
+          renderExtensionButtons();
+        }
+      });
+      return button;
+    });
+    if (!nodes.length) {
+      const empty = document.createElement("span");
+      empty.textContent = "暂无可用的插件按钮";
+      nodes.push(empty);
+    }
+    document.getElementById("plugin-buttons").replaceChildren(...nodes);
+    updateRegion();
+  }
+
   let todoRefresh = 0;
   window.pet = {
     async refreshTodos() {
@@ -728,7 +801,14 @@
       updateRegion();
     },
     receive(message) {
-      if (message.type === "accepted") {
+      if (message.type === "buttons") {
+        extensionButtons = message.buttons;
+        renderExtensionButtons();
+      } else if (message.type === "button_result") {
+        pendingButtons.delete(JSON.stringify([message.plugin_id, message.button_id]));
+        document.getElementById("plugin-error").textContent = message.error;
+        renderExtensionButtons();
+      } else if (message.type === "accepted") {
         finishSend(message);
       } else if (message.type === "reply") {
         speak(message.parts);

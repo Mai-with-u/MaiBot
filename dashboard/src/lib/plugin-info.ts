@@ -1,6 +1,19 @@
 import type { InstalledPlugin } from '@/lib/plugin-api'
 import type { PluginInfo } from '@/types/plugin'
 
+export function isNapcatAdapter(plugin: PluginInfo): boolean {
+  const repository = plugin.manifest.repository_url || plugin.manifest.urls?.repository
+  if (!repository) return false
+  try {
+    const url = new URL(repository)
+    // 仅匹配独立 NapCat 适配器，避免误伤支持 NapCat 的 SnowLuma。
+    return ['github.com', 'cnb.cool'].includes(url.hostname.toLowerCase())
+      && /^\/(?:mai-with-u|maim-with-u)\/maibot-napcat-adapter(?:\.git)?\/?$/i.test(url.pathname)
+  } catch {
+    return false
+  }
+}
+
 /** 本地插件的展示资料，供市场列表和详情页共用。 */
 export function buildLocalPluginInfo(installedPlugin: InstalledPlugin): PluginInfo {
   const urls = installedPlugin.manifest.urls as PluginInfo['manifest']['urls'] | undefined
@@ -26,16 +39,12 @@ export function buildLocalPluginInfo(installedPlugin: InstalledPlugin): PluginIn
       default_locale: (installedPlugin.manifest.default_locale as string) || 'zh-CN',
       locales_path: installedPlugin.manifest.locales_path as string | undefined,
     },
-    downloads: 0,
-    rating: 0,
-    review_count: 0,
     installed: true,
     installed_version: installedPlugin.manifest.version,
     installed_release: installedPlugin.release,
     stats_ids: [installedPlugin.manifest.id].filter(Boolean) as string[],
     published_at: '',
     updated_at: '',
-    changelog: installedPlugin.changelog ?? undefined,
     source: 'local',
   }
 }

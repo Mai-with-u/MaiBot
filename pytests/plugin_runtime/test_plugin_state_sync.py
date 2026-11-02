@@ -8,6 +8,8 @@ import pytest
 
 from src.config.file_watcher import FileChange
 from src.plugin_runtime.integration import PluginRuntimeManager
+from src.plugin_runtime.host.status_badges import RuntimeStatusBadges
+from src.plugin_runtime.plugin_catalog import PluginCatalogEntry
 from src.plugin_runtime.protocol.envelope import InspectPluginConfigResultPayload
 from src.plugin_runtime.runner.manifest_validator import ManifestValidator
 from src.webui.routers.websocket import plugin_runtime as runtime_ws
@@ -76,15 +78,18 @@ async def test_cold_enable_installs_dependencies_before_config_import(tmp_path, 
 async def test_snapshot_only_marks_plugins_in_their_loading_supervisor(tmp_path, monkeypatch):
     manager = PluginRuntimeManager()
     manager._started = True
-    extension = SimpleNamespace(_plugin_dirs=[tmp_path], is_loading=False)
-    core = SimpleNamespace(_plugin_dirs=[tmp_path], is_loading=True)
+    extension = SimpleNamespace(group_name="third_party", is_loading=False, startup_load_status="not_loaded", startup_load_reason="")
+    core = SimpleNamespace(group_name="builtin", is_loading=True, startup_load_status="loading", startup_load_reason="")
+    extension.runtime_status_badges = RuntimeStatusBadges(lambda: None)
+    core.runtime_status_badges = RuntimeStatusBadges(lambda: None)
     manager._builtin_supervisor = core
     manager._third_party_supervisor = extension
-    monkeypatch.setattr(manager, "_iter_discovered_plugin_paths", lambda dirs: iter([
-        ("demo.extension", tmp_path / "extension"), ("demo.adapter", tmp_path / "adapter"),
-    ]))
-    monkeypatch.setattr(manager, "_supervisor_accepts_plugin_path", lambda sv, path:
-                        (sv is core) == (path.name == "adapter"))
+    manager._plugin_catalog._entries = {
+        tmp_path / name: PluginCatalogEntry(f"demo.{name}", tmp_path / name, {"plugin_type": name}, False, True, "", None)
+        for name in ("extension", "adapter")
+    }
+    manager._plugin_catalog._initialized = True
+    monkeypatch.setattr(manager, "_iter_discovered_plugin_paths", lambda dirs: pytest.fail("snapshot scanned disk"))
     monkeypatch.setattr(manager, "get_plugin_load_statuses", lambda: {})
     monkeypatch.setattr(manager, "get_plugin_load_failure_reasons", lambda: {})
     monkeypatch.setattr(manager, "get_plugin_circuit_statuses", lambda: {})
@@ -236,6 +241,7 @@ async def test_failed_config_notification_does_not_mark_running_plugin_as_failed
     monkeypatch.setattr(manager, "get_plugin_load_statuses", lambda: {"demo": "success"})
     with pytest.raises(RuntimeError, match="插件配置更新通知失败"):
         await manager.apply_plugin_config("demo")
+    await manager._plugin_catalog.refresh()
     snapshot = await manager.get_plugin_state_snapshot()
     assert snapshot["statuses"]["demo"] == "success"
     assert not manager._plugin_transitions

@@ -286,6 +286,7 @@ export function MultiSelect({
                   <CommandItem
                     key={option.value}
                     value={option.value}
+                    keywords={[option.label]}
                     disabled={disabled}
                     onSelect={() => handleSelect(option.value)}
                   >

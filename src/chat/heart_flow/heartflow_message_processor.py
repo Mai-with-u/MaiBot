@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 import traceback
 
 from src.chat.heart_flow.heartflow_manager import heartflow_manager
+from src.chat.message_receive.chat_manager import chat_manager
 
 # from src.chat.utils.chat_message_builder import replace_user_references
 from src.common.utils.utils_message import MessageUtils
@@ -65,7 +66,8 @@ class HeartFCMessageReceiver:
             await memory_automation_service.on_incoming_message(message)
 
             # 3. 日志记录
-            mes_name = group_info.group_name if group_info else "私聊"
+            # 官方平台事件可能不带群名，使用已登记会话中的真实名称，与 Maisaka 日志保持一致。
+            mes_name = chat_manager.get_session_name(message.session_id) or ("群聊" if group_info else "私聊")
 
             # TODO: 修复引用格式替换
             # # 应用用户引用格式替换，将回复<aaa:bbb>和@<aaa:bbb>格式转换为可读格式

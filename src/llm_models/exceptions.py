@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List
 
+from src.common.exceptions import OperationAbortedError
+
 
 @dataclass
 class InterruptedStreamOutput:
@@ -53,7 +55,7 @@ class ImageEmbeddingUnsupportedError(Exception):
     """当前 Provider 或模型没有实现图片嵌入协议。"""
 
 
-class ReqAbortException(Exception):
+class ReqAbortException(OperationAbortedError):
     """请求异常退出，常见于请求被中断或取消"""
 
     def __init__(self, message: str | None = None, partial_output: InterruptedStreamOutput | None = None):

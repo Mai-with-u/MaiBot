@@ -827,7 +827,7 @@ class FocusGroupRuntime:
                     f"messages={[(message.timestamp.isoformat(), message.source) for message in item.messages]}"
                     for item in snapshot
                 ),
-                session_id=self.scope_id, max_summary_chars=global_config.chat.context_compaction_summary_max_chars,
+                session_id=self.scope_id,
             )
         except Exception:
             logger.exception("Focus 上下文压缩失败，将丢弃本批旧原文并继续共享 Planner: scope=%s", self.scope_id)

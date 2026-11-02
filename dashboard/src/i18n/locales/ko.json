@@ -616,6 +616,11 @@
       "confirmRerunSetup": "재구성 확인",
       "confirmRerunSetupDesc": "초기 설정 마법사로 돌아갑니다. 시스템 기본 설정을 재구성할 수 있습니다. 계속하시겠습니까?",
       "devToolsDesc": "아래 기능은 개발 및 디버깅 전용입니다. 페이지 충돌이나 비정상 동작을 유발할 수 있습니다.",
+      "resetNotificationStates": "모든 알림 상태 초기화",
+      "resetNotificationStatesDesc": "뉴스 읽음 기록, 홈 뉴스 바 닫기 상태, 각 페이지 알림의 닫기 기록을 지워 다시 표시되도록 합니다. 완료한 가이드는 유지됩니다.",
+      "resetNotificationStatesAction": "초기화",
+      "notificationsResetDone": "알림 상태를 초기화했습니다",
+      "notificationsResetDoneDesc": "{{count}}개 항목을 지웠습니다. 해당 페이지에 다시 들어가면 적용됩니다.",
       "alwaysShowUpdateButton": "업데이트 버튼 항상 표시",
       "alwaysShowUpdateButtonDesc": "업데이트 감지 여부와 관계없이 오른쪽 상단에 메인 프로그램 업데이트 버튼을 항상 표시합니다. 즉시 적용됩니다.",
       "alwaysShowUpdateNotice": "업데이트 로그 항상 표시",
@@ -1612,7 +1617,9 @@
       "openLink": "원문 링크 열기",
       "openPlugin": "플러그인 보기",
       "pinned": "고정됨",
-      "empty": "아직 뉴스가 없습니다"
+      "empty": "아직 뉴스가 없습니다",
+      "dismiss": "뉴스 바 닫기",
+      "next": "다음 뉴스"
     },
     "storage": {
       "title": "저장소 사용량",

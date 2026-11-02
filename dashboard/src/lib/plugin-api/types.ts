@@ -24,6 +24,7 @@ export interface MaimaiVersion {
  * 已安装插件信息
  */
 export interface InstalledPlugin {
+  status_badges?: Array<{ id: string; label: string; expires_at?: number | null }>
   release?: { version: string; commit: string } | null
   id: string
   manifest: {
@@ -50,13 +51,12 @@ export interface InstalledPlugin {
     [key: string]: unknown // 允许其他字段
   }
   path: string
-  changelog?: string | null
   enabled?: boolean | null
   disabled?: boolean
   loaded?: boolean
   /** 后端累计的实际运行秒数，不含禁用或停机时间。 */
   usage_seconds?: number
-  load_status?: 'success' | 'failed' | 'inactive' | 'disabled' | 'offline' | 'unknown' | 'loading' | 'stopping' | 'not_loaded' | 'stopped'
+  load_status?: 'success' | 'failed' | 'inactive' | 'disabled' | 'offline' | 'unknown' | 'loading' | 'timed_out' | 'stopping' | 'not_loaded' | 'stopped'
   load_error?: string
   circuit_status?: {
     state: 'open' | 'half_open'

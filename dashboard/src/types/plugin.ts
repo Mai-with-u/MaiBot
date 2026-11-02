@@ -19,18 +19,18 @@ export interface HostApplication {
 
 export type PluginType =
   | 'adapter'
-  | 'chat'
-  | 'creative'
+  | 'tool'
   | 'provider'
   | 'management'
-  | 'search'
-  | 'knowledge'
+  | 'data'
   | 'media'
   | 'game'
-  | 'security'
-  | 'automation'
-  | 'extension'
+  | 'integration'
   | 'other'
+  | 'chat'
+  | 'creative'
+  | 'automation'
+  | 'deskpet'
 
 export interface PluginDisplayIcon {
   type: 'lucide' | 'emoji' | 'local'
@@ -137,12 +137,12 @@ export interface PluginInfo {
   manifest: PluginManifest
   /** 插件市场生成的派生资源 */
   assets?: PluginAssets
-  /** 下载量 */
-  downloads: number
+  /** 官方统计尚未获取或不存在时没有读数。 */
+  downloads?: number
   /** 评分 (0-5) */
-  rating: number
+  rating?: number
   /** 评价数量 */
-  review_count: number
+  review_count?: number
   /** 是否已安装 */
   installed: boolean
   /** 安装的版本（如果已安装） */

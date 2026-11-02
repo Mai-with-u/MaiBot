@@ -122,6 +122,14 @@ class ReplyGenerationResult(BaseDataModel):
         default_factory=str,
         metadata={"description": "失败时的错误描述；成功时通常为空字符串。"},
     )
+    error_code: str = field(
+        default="",
+        metadata={"description": "可供调用方区分的失败类型；成功时为空字符串。"},
+    )
+    error_details: Dict[str, Any] = field(
+        default_factory=dict,
+        metadata={"description": "结构化失败详情，例如中止回复的 Hook、处理器和原因。"},
+    )
     monitor_detail: Optional[Dict[str, Any]] = field(
         default=None,
         metadata={"description": "供监控层直接消费的通用 tool 展示详情。"},

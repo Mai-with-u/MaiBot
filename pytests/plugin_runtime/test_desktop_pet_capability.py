@@ -59,6 +59,20 @@ async def test_unavailable_window_is_not_reported_as_success():
 
 
 @pytest.mark.asyncio
+async def test_window_interactions_dispatch_observe_hooks(monkeypatch):
+    service = DesktopPetService()
+    dispatch = AsyncMock()
+    monkeypatch.setattr(service, "_dispatch_hook", dispatch)
+    service._handle_event({"type": "clicked"})
+    service._handle_event({"type": "drag_started", "gesture_id": "one", "offset_x": 2, "offset_y": 30, "scale": 1.5})
+    service._handle_event({"type": "drag_ended", "gesture_id": "one"})
+    await asyncio.gather(*service._notifications)
+    assert [call.args[0] for call in dispatch.await_args_list] == ["clicked", "drag_started", "drag_ended"]
+    assert dispatch.await_args_list[1].kwargs == {"gesture_id": "one", "offset_x": 2, "offset_y": 30, "scale": 1.5}
+    assert dispatch.await_args_list[2].kwargs == {"gesture_id": "one"}
+
+
+@pytest.mark.asyncio
 async def test_control_waits_for_ack_and_preserves_visibility_on_failure():
     service = DesktopPetService()
     service._ready = service._visible = True

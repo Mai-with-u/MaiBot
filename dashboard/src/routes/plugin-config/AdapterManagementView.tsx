@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
   AlertCircle,
   ArrowUp,
@@ -45,6 +45,29 @@ interface AdapterManagementViewProps {
   onFailureDetails: (plugin: InstalledPlugin) => void
   renderIcon?: (plugin: InstalledPlugin) => ReactNode
   onInstalled: () => void
+}
+
+function RuntimeBadges({ badges }: { badges: NonNullable<InstalledPlugin['status_badges']> }) {
+  const [revision, setRevision] = useState(0)
+  useEffect(() => {
+    const deadlines = badges.flatMap(badge =>
+      badge.expires_at && badge.expires_at * 1000 > Date.now() ? [badge.expires_at * 1000] : []
+    )
+    if (!deadlines.length) return
+    // 即使运行时推送暂时断开，带期限的标记也在浏览器本地按时消失。
+    const timer = window.setTimeout(
+      () => setRevision(value => value + 1),
+      Math.min(...deadlines) - Date.now() + 10
+    )
+    return () => window.clearTimeout(timer)
+  }, [badges, revision])
+  return (
+    <>
+      {badges.filter(badge => badge.expires_at == null || badge.expires_at * 1000 > Date.now()).map(badge => (
+        <Badge key={badge.id} variant="outline" className="text-xs font-normal">{badge.label}</Badge>
+      ))}
+    </>
+  )
 }
 
 /** 适配器列表只组织展示，启停与生命周期操作仍由原有领域 hook 统一处理。 */
@@ -163,6 +186,9 @@ export function AdapterManagementView({
                           )}
                           {status.label}
                         </span>
+                        {plugin.load_status === 'success' && plugin.status_badges && (
+                          <RuntimeBadges badges={plugin.status_badges} />
+                        )}
                         {update.hasUpdate && !incompatible && (
                           <Badge variant="outline" className="text-xs">
                             可更新

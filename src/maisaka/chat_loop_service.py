@@ -297,7 +297,7 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
             ),
             HookSpec(
                 name="maisaka.replyer.before_request",
-                description="在 Maisaka replyer 向模型发起请求前触发，可读取或改写本次 reply 工具透传参数。",
+                description="在 Maisaka replyer 向模型发起请求前触发，可改写参数，或以 action=abort 取消本次回复并通过 custom_result.reason 说明原因。",
                 parameters_schema=build_object_schema(
                     {
                         "session_id": {
@@ -365,12 +365,12 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                     ],
                 ),
                 default_timeout_ms=6000,
-                allow_abort=False,
+                allow_abort=True,
                 allow_kwargs_mutation=True,
             ),
             HookSpec(
                 name="maisaka.replyer.before_model_request",
-                description="在 Maisaka replyer 构造完本次模型请求后触发，可改写实际发送的 Context Items。",
+                description="在 Maisaka replyer 构造完本次模型请求后触发，可改写 Context Items，或以 action=abort 取消本次回复并通过 custom_result.reason 说明原因。",
                 parameters_schema=build_object_schema(
                     {
                         "items": {
@@ -453,12 +453,12 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                     ],
                 ),
                 default_timeout_ms=6000,
-                allow_abort=False,
+                allow_abort=True,
                 allow_kwargs_mutation=True,
             ),
             HookSpec(
                 name="maisaka.replyer.after_response",
-                description="在 Maisaka replyer 收到模型响应后触发，可要求重新生成或改写回复文本。",
+                description="在 Maisaka replyer 收到模型响应后触发，可重生成、改写回复，或以 action=abort 中止回复并通过 custom_result.reason 说明原因。",
                 parameters_schema=build_object_schema(
                     {
                         "response": {
@@ -566,12 +566,12 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                     ],
                 ),
                 default_timeout_ms=6000,
-                allow_abort=False,
+                allow_abort=True,
                 allow_kwargs_mutation=True,
             ),
             HookSpec(
                 name="maisaka.reply.before_post_process",
-                description="在 Maisaka 对最终可见回复执行文本后处理前触发，可按本次回复调整后处理策略。",
+                description="在最终可见回复后处理前触发，可调整后处理策略，或以 action=abort 取消本次回复并通过 custom_result.reason 说明原因。",
                 parameters_schema=build_object_schema(
                     {
                         "response": {
@@ -614,7 +614,7 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                     ],
                 ),
                 default_timeout_ms=6000,
-                allow_abort=False,
+                allow_abort=True,
                 allow_kwargs_mutation=True,
             ),
         ]

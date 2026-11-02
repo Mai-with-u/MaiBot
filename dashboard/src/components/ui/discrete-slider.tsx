@@ -61,7 +61,7 @@ export function DiscreteSlider<T extends string | number>({
   }
 
   return (
-    <div data-dashboard-discrete-slider="true" data-dragging={position !== null} className={cn('min-w-0 py-2', className)}>
+    <div data-dashboard-discrete-slider="true" data-dragging={position !== null} className={cn('min-w-0 py-2', disabled && 'opacity-50', className)}>
       {/* 轨道端点对齐首尾标签中心，避免长文字伸出字段边界。 */}
       <div className="relative py-3" style={{ marginInline: `${50 / options.length}%` }}>
         {selected ? (
@@ -121,7 +121,13 @@ export function DiscreteSlider<T extends string | number>({
           </button>
         ))}
       </div>
-      {preview?.description && <p id={descriptionId} className="mt-2 text-xs leading-relaxed text-muted-foreground">{preview.description}</p>}
+      {preview?.description && (
+        <div data-discrete-slider-description="true">
+          <div className="min-h-0 overflow-hidden">
+            <p id={descriptionId} className="pt-2 text-xs leading-relaxed text-muted-foreground">{preview.description}</p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

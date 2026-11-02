@@ -2,9 +2,7 @@
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-import json
 
-from json_repair import repair_json
 from sqlalchemy import update
 from sqlmodel import select
 
@@ -12,6 +10,7 @@ from src.chat.message_receive.message import SessionMessage
 from src.chat.replyer.expression_vector_index import expression_vector_index
 from src.common.database.database import get_db_session
 from src.common.database.database_model import Expression, ModifiedBy
+from src.common.llm_json import parse_llm_json
 from src.common.logger import get_logger
 from src.common.prompt_i18n import load_prompt
 from src.common.utils.utils_config import ChatConfigUtils, ExpressionConfigUtils
@@ -22,6 +21,7 @@ from src.learners.expression_style_utils import (
 )
 from src.learners.weighted_sampling import weighted_sample
 from src.maisaka.context.messages import ContentContextMessage, LLMContextMessage, ModelOutputContextMessage
+from src.plugin_runtime.host.hook_dispatcher import HookAbortedError
 
 logger = get_logger("maisaka_expression_selector")
 
@@ -36,6 +36,7 @@ class MaisakaExpressionSelectionResult:
     expression_habits: str = ""
     selected_expression_ids: List[int] = field(default_factory=list)
     selected_expressions: List[Dict[str, Any]] = field(default_factory=list)
+    hook_abort: Optional[Dict[str, Any]] = None
 
 
 class MaisakaExpressionSelector:
@@ -281,7 +282,7 @@ class MaisakaExpressionSelector:
         if not raw_response.strip():
             return []
         try:
-            parsed_result = json.loads(repair_json(raw_response))
+            parsed_result = parse_llm_json(raw_response, repair=True)
         except Exception:
             logger.warning(f"表达方式选择结果解析失败: {raw_response!r}")
             return []
@@ -623,8 +624,9 @@ class MaisakaExpressionSelector:
             **hook_kwargs,
         )
         if before_select_result.aborted:
-            logger.info(f"表达方式选择在开始前被 Hook 中止：session_id={session_id}")
-            return MaisakaExpressionSelectionResult()
+            interruption = HookAbortedError(before_select_result)
+            logger.info(f"表达方式选择跳过：session_id={session_id} {interruption}")
+            return MaisakaExpressionSelectionResult(hook_abort=interruption.to_dict())
 
         before_kwargs = before_select_result.kwargs
         candidates = self._normalize_candidate_list(before_kwargs.get("candidates"), candidates)
@@ -659,8 +661,9 @@ class MaisakaExpressionSelector:
             },
         )
         if after_selection_result.aborted:
-            logger.info(f"表达方式选择结果被 Hook 中止：session_id={session_id}")
-            return MaisakaExpressionSelectionResult()
+            interruption = HookAbortedError(after_selection_result)
+            logger.info(f"表达方式选择跳过：session_id={session_id} {interruption}")
+            return MaisakaExpressionSelectionResult(hook_abort=interruption.to_dict())
 
         after_kwargs = after_selection_result.kwargs
         raw_selected_ids = after_kwargs.get("selected_expression_ids")

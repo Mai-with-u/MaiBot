@@ -1,6 +1,7 @@
 """WebUI 本地用户表情包管理接口。"""
 
 from pathlib import Path
+import asyncio
 import mimetypes
 import re
 import uuid
@@ -9,6 +10,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.responses import FileResponse
 
 from src.common.paths import get_instance_root
+from src.core.internal_chat import INTERNAL_CHAT_USER_ID
 from src.webui.dependencies import require_auth
 from src.webui.routers.avatar import WEBUI_USER_ID_PATTERN, detect_supported_image_suffix
 
@@ -28,7 +30,7 @@ USER_EMOJI_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$")
 
 def _resolve_user_emoji_directory(user_id: str) -> Path:
     normalized_user_id = user_id.strip()
-    if not WEBUI_USER_ID_PATTERN.fullmatch(normalized_user_id):
+    if normalized_user_id != INTERNAL_CHAT_USER_ID and not WEBUI_USER_ID_PATTERN.fullmatch(normalized_user_id):
         raise HTTPException(status_code=400, detail="WebUI 用户 ID 不合法")
 
     directory = (USER_EMOJI_ROOT / normalized_user_id).resolve()
@@ -134,8 +136,9 @@ async def add_user_emoji(
     finally:
         await file.close()
 
-    emoji_path = save_user_emoji(user_id, file.content_type or "", image_bytes)
-    return {"item": _build_user_emoji_record(user_id.strip(), emoji_path)}
+    emoji_path = await asyncio.to_thread(save_user_emoji, user_id, file.content_type or "", image_bytes)
+    item = await asyncio.to_thread(_build_user_emoji_record, user_id.strip(), emoji_path)
+    return {"item": item}
 
 
 @router.get("/{emoji_id}/content")

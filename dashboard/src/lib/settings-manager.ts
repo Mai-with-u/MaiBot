@@ -51,6 +51,11 @@ const GUIDE_AND_NOTICE_LOCAL_STORAGE_KEYS = [
 
 const GUIDE_AND_NOTICE_SESSION_STORAGE_KEYS = ['http-warning-dismissed'] as const
 
+/** 资讯的已读记录和首页资讯条的关闭记录。 */
+const NEWS_NOTIFICATION_STORAGE_KEYS = ['maibot:news:read', 'maibot:news:strip-dismissed'] as const
+
+export const NOTIFICATIONS_RESET_EVENT = 'maibot-notifications-reset'
+
 // 默认设置值
 export const DEFAULT_SETTINGS = {
   // 外观
@@ -268,6 +273,35 @@ export function resetAllGuidesAndNotices(): number {
   }
 
   window.dispatchEvent(new CustomEvent('maibot-guides-reset'))
+  return clearedCount
+}
+
+/**
+ * 调试用：重置所有通知状态，包括资讯已读、资讯条关闭以及各页面提示的关闭记录。
+ * 已完成的引导教程不在此列，仍由 resetAllGuidesAndNotices 负责。
+ */
+export function resetAllNotificationStates(): number {
+  let clearedCount = 0
+  const localKeys = [
+    ...NEWS_NOTIFICATION_STORAGE_KEYS,
+    ...GUIDE_AND_NOTICE_LOCAL_STORAGE_KEYS.filter((key) => key !== STORAGE_KEYS.COMPLETED_TOURS),
+  ]
+
+  for (const key of localKeys) {
+    if (localStorage.getItem(key) !== null) {
+      localStorage.removeItem(key)
+      clearedCount += 1
+    }
+  }
+
+  for (const key of GUIDE_AND_NOTICE_SESSION_STORAGE_KEYS) {
+    if (sessionStorage.getItem(key) !== null) {
+      sessionStorage.removeItem(key)
+      clearedCount += 1
+    }
+  }
+
+  window.dispatchEvent(new CustomEvent(NOTIFICATIONS_RESET_EVENT))
   return clearedCount
 }
 

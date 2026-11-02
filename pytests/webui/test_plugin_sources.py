@@ -107,12 +107,11 @@ def test_marketplace_listing_only_calls_selected_information_source(monkeypatch,
     ("text/html", 32, 502),
     ("image/webp", 512 * 1024 + 1, 502),
 ])
-def test_cnb_icon_proxy_validates_and_caches_images(monkeypatch, media_type, size, status):
+def test_cnb_icon_proxy_validates_images_and_sets_browser_cache(monkeypatch, media_type, size, status):
     from fastapi import HTTPException
 
     monkeypatch.setattr(icon_routes, "require_plugin_token", lambda token: None)
     monkeypatch.setattr(icon_routes, "validate_public_url", lambda url, **kw: url)
-    monkeypatch.setattr(icon_routes, "_market_icon_cache", MarketCache())
     monkeypatch.setattr(icon_routes, "get_shared_ssl_context", lambda: None)
     response = BytesIO(b"x" * size)
     response.headers = Message()
@@ -126,12 +125,11 @@ def test_cnb_icon_proxy_validates_and_caches_images(monkeypatch, media_type, siz
             icon_routes.get_market_icon(url, "session")
         assert error.value.status_code == status
     else:
-        first = icon_routes.get_market_icon(url, "session")
-        second = icon_routes.get_market_icon(url, "session")
-        assert first.body == second.body == b"x" * size
-        assert first.media_type == "image/webp"
-        assert first.headers["cache-control"].startswith("private, max-age=")
-        assert "cross-origin-resource-policy" not in first.headers
+        result = icon_routes.get_market_icon(url, "session")
+        assert result.body == b"x" * size
+        assert result.media_type == "image/webp"
+        assert result.headers["cache-control"] == "private, max-age=3600"
+        assert "cross-origin-resource-policy" not in result.headers
     assert opener.open.call_count == 1
     assert opener.open.call_args.args[0].full_url == url
 

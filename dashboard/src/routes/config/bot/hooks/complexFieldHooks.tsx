@@ -2613,10 +2613,7 @@ export const ChatPromptsHook = createListItemEditorHook({
   helperText: '为指定平台和聊天流添加额外提示。platform、item_id 和 prompt 同时留空时表示空条目；填写任意一项后这三项都需要填写。',
   emptyText: '尚未配置任何聊天额外 Prompt。',
   addButtonPlacement: 'top',
-  fieldRows: [
-    ['platform', 'item_id'],
-    ['rule_type'],
-  ],
+  fieldRows: [['platform', 'item_id', 'rule_type']],
   fieldSchemaOverrides: {
     item_id: {
       'x-input-width': '6.5rem',

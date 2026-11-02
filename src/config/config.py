@@ -74,7 +74,7 @@ BOT_CONFIG_PATH: Path = (CONFIG_DIR / "bot_config.toml").resolve().absolute()
 MODEL_CONFIG_PATH: Path = (CONFIG_DIR / "model_config.toml").resolve().absolute()
 LEGACY_ENV_PATH: Path = (PROJECT_ROOT / ".env").resolve().absolute()
 MMC_VERSION: str = read_project_version(PROJECT_ROOT)
-CONFIG_VERSION: str = "8.15.68"
+CONFIG_VERSION: str = "8.15.71"
 MODEL_CONFIG_VERSION: str = "1.17.26"
 
 logger = get_logger("config")
@@ -269,28 +269,6 @@ class ConfigManager:
         self._last_hot_reload_monotonic: float = 0.0
         self._config_file_fingerprints: dict[str, str] = {}
         self.reload_revision: int = 0
-        self.retro_prompt_forced: bool = False
-
-    def _sync_retro_reply_prompt(self, config: Config, models: ModelConfig) -> None:
-        """仅检查分配给 replyer 的模型，解除指定模型分配时清除自动开关。"""
-        retro_models = {"v2p1-contract", "v2p1-raw"}
-        replyer_model_names = set(models.model_task_config.replyer.model_list)
-        forced = any(
-            model_name in retro_models or "mai-replier" in model_name
-            for model in models.models
-            if model.name in replyer_model_names
-            for value in (model.name, model.model_identifier)
-            for model_name in (value.strip().lower().replace("_", "-"),)
-        )
-        if forced or self.retro_prompt_forced:
-            # 仅更新该字段，保留磁盘上其他配置、注释以及尚未热重载的修改。
-            doc = tomlkit.loads(self.bot_config_path.read_text(encoding="utf-8"))
-            debug = doc.setdefault("debug", tomlkit.table())
-            if debug.get("replyer_retro_prompt") != forced:
-                debug["replyer_retro_prompt"] = forced
-                self.bot_config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
-            config.debug.replyer_retro_prompt = forced
-        self.retro_prompt_forced = forced
 
     def initialize(self):
         logger.info(t("config.current_version", version=MMC_VERSION))
@@ -302,7 +280,6 @@ class ConfigManager:
             MODEL_CONFIG_VERSION,
             True,
         )
-        self._sync_retro_reply_prompt(self.global_config, self.model_config)
         if global_updated or model_updated:
             logger.info("配置已自动升级，将继续使用更新后的配置启动")
         self._update_config_file_fingerprints(("bot", "model"))
@@ -626,7 +603,6 @@ class ConfigManager:
                         MODEL_CONFIG_VERSION,
                         True,
                     )
-                await asyncio.to_thread(self._sync_retro_reply_prompt, global_config_new, model_config_new)
             except Exception as exc:
                 logger.error(t("config.reload_failed", error=exc))
                 return False

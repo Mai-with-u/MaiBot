@@ -3,7 +3,7 @@
 from collections import deque
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, Coroutine, Deque, Dict, List, Optional, Set
+from typing import Any, Callable, Coroutine, Deque, Dict, List, Optional, Set
 import asyncio
 import json
 import subprocess
@@ -38,6 +38,9 @@ class DesktopPetService:
         self._write_lock = asyncio.Lock()
         self._pending: Dict[str, asyncio.Future[Any]] = {}
         self._notifications: Set[asyncio.Task[None]] = set()
+        self._button_unsubscribe: Optional[Callable[[], None]] = None
+        self._button_sync_task: Optional[asyncio.Task[None]] = None
+        self._button_revision = 0
 
     def status(self) -> Dict[str, Any]:
         return {
@@ -51,6 +54,14 @@ class DesktopPetService:
         }
 
     async def start(self) -> None:
+        if self._button_unsubscribe is None:
+            from src.plugin_runtime.integration import get_plugin_runtime_manager
+
+            loop = asyncio.get_running_loop()
+            def changed() -> None:
+                if not loop.is_closed():
+                    loop.call_soon_threadsafe(self._buttons_changed)
+            self._button_unsubscribe = get_plugin_runtime_manager().subscribe_status_changes(changed)
         if not self._reload_registered:
             config_manager.register_reload_callback(self.reload, sections=("desktop_pet",))
             self._reload_registered = True
@@ -79,6 +90,9 @@ class DesktopPetService:
     async def stop(self) -> None:
         async with self._lifecycle_lock:
             await self._stop()
+        if self._button_unsubscribe is not None:
+            self._button_unsubscribe()
+            self._button_unsubscribe = None
 
     async def _stop(self) -> None:
         self._closing = True
@@ -133,6 +147,7 @@ class DesktopPetService:
             self._error = str(exc)
             logger.exception("桌宠窗口运行失败")
         finally:
+            was_ready = self._ready
             self._ready = self._visible = False
             self._process = None
             for future in self._pending.values():
@@ -145,6 +160,8 @@ class DesktopPetService:
                 stderr_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await stderr_task
+            if was_ready:
+                self._observe(self._dispatch_hook("closed", reason="stopped" if self._closing else "unexpected"))
 
     async def _collect_stderr(self, process: asyncio.subprocess.Process, tail: Deque[str]) -> None:
         # 窗口进程的 stderr 混有 WebView2 的噪声，平时只记调试日志，异常退出时再整体输出。
@@ -160,6 +177,20 @@ class DesktopPetService:
             self._ready = self._visible = True
             logger.info("内置桌宠已出现在桌面上")
             self._observe(self.apply_skin(global_config.desktop_pet.skin_id))
+            self._observe(self._dispatch_hook("ready"))
+            self._buttons_changed()
+        elif kind == "buttons_refresh":
+            self._buttons_changed()
+        elif kind == "button_click":
+            self._observe(self._click_button(event["plugin_id"], event["button_id"]))
+        elif kind == "clicked":
+            self._observe(self._dispatch_hook(kind))
+        elif kind == "drag_started":
+            self._observe(self._dispatch_hook(kind, **{
+                key: event[key] for key in ("gesture_id", "offset_x", "offset_y", "scale")
+            }))
+        elif kind == "drag_ended":
+            self._observe(self._dispatch_hook(kind, gesture_id=event["gesture_id"]))
         elif kind == "chat":
             self._observe(self._chat(event["request_id"]))
         elif kind == "ack":
@@ -172,7 +203,12 @@ class DesktopPetService:
         else:
             raise ValueError(f"未知的桌宠事件: {kind}")
 
-    def _observe(self, coro: Coroutine[Any, Any, None]) -> None:
+    async def _dispatch_hook(self, name: str, **kwargs: Any) -> None:
+        from src.plugin_runtime.integration import get_plugin_runtime_manager
+
+        await get_plugin_runtime_manager().invoke_hook(f"desktop_pet.{name}", **kwargs)
+
+    def _observe(self, coro: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
         # 窗口通信故障需要完整记录，但不能阻断聊天发送或模型请求；SDK 调用则直接抛出异常。
         def finished(task: asyncio.Task[None]) -> None:
             self._notifications.discard(task)
@@ -183,6 +219,57 @@ class DesktopPetService:
         task = asyncio.create_task(coro)
         self._notifications.add(task)
         task.add_done_callback(finished)
+        return task
+
+    def _buttons_changed(self) -> None:
+        self._button_revision += 1
+        if not self._ready or self._closing:
+            return
+        if self._button_sync_task is None or self._button_sync_task.done():
+            self._button_sync_task = self._observe(self._sync_buttons())
+
+    async def _sync_buttons(self) -> None:
+        """读取各插件的桌宠按钮状态并推送给窗口；同步期间按钮又有变动时重新同步一轮。"""
+        from src.plugin_runtime.integration import get_plugin_runtime_manager
+
+        runtime = get_plugin_runtime_manager()
+        while self._ready and not self._closing:
+            revision = self._button_revision
+            plugins = runtime.get_desktop_pet_button_plugins()
+            results = await asyncio.gather(
+                *(runtime.desktop_pet_buttons(plugin_id) for plugin_id in plugins), return_exceptions=True,
+            )
+            current = runtime.get_desktop_pet_button_plugins()
+            buttons: List[Dict[str, Any]] = []
+            # gather 按 plugins 的顺序逐个返回结果，两边数量必然相等。
+            for (plugin_id, contribution), result in zip(plugins.items(), results, strict=True):
+                if current.get(plugin_id) != contribution:
+                    continue  # 请求期间已卸载或重载的贡献不能重新出现在窗口里。
+                if isinstance(result, BaseException):
+                    logger.warning("插件 %s 桌宠按钮状态读取失败: %s", plugin_id, result)
+                    states = {button["id"]: {"visible": True, "disabled": True, "text": str(result)[:200]}
+                              for button in contribution["buttons"]}
+                else:
+                    states = result["states"]
+                buttons.extend({**button, **states[button["id"]], "plugin_id": plugin_id,
+                                "plugin_name": contribution["name"]} for button in contribution["buttons"])
+            buttons.sort(key=lambda button: (button["order"], button["plugin_id"], button["id"]))
+            await self._command({"type": "buttons", "buttons": buttons})
+            if revision == self._button_revision:
+                return
+
+    async def _click_button(self, plugin_id: str, button_id: str) -> None:
+        from src.plugin_runtime.integration import get_plugin_runtime_manager
+
+        error = ""
+        try:
+            await get_plugin_runtime_manager().desktop_pet_buttons(plugin_id, button_id)
+        except Exception as exc:
+            error = str(exc)
+            logger.exception("插件 %s 桌宠按钮 %s 执行失败", plugin_id, button_id)
+        if self._ready and not self._closing:
+            await self._command({"type": "button_result", "plugin_id": plugin_id, "button_id": button_id, "error": error})
+            self._buttons_changed()
 
     async def _chat(self, request_id: str) -> None:
         from src.webui.routers.chat.service import relay_plugin_chat_message
@@ -219,7 +306,10 @@ class DesktopPetService:
                     await process.stdin.drain()
                     result = await future
                     if command["type"] in {"show", "hide"}:
-                        self._visible = command["type"] == "show"
+                        visible = command["type"] == "show"
+                        if self._visible != visible:
+                            self._visible = visible
+                            self._observe(self._dispatch_hook("visibility_changed", visible=visible))
                     return result
         finally:
             self._pending.pop(command_id, None)
@@ -231,8 +321,11 @@ class DesktopPetService:
 
         skin = await asyncio.to_thread(find_skin, get_instance_root(), skin_id)
         await self._command({"type": "skin", "skin": skin})
+        changed = self._skin_id != skin_id
         self._skin_id = skin_id
         self._error = ""
+        if changed:
+            self._observe(self._dispatch_hook("skin_changed", skin_id=skin_id))
 
     async def animation(self, owner: str, action: str, args: Dict[str, Any]) -> Dict[str, Any]:
         result = await self._command({"type": "animation", "owner": owner, "action": action, "args": args})
@@ -244,6 +337,9 @@ class DesktopPetService:
     async def control(self, action: str, *, text: str = "", active: bool = True) -> Dict[str, Any]:
         """仅接受已校验的公开操作，调用方负责切换到主循环。"""
         if action == "status":
+            return self.status()
+        if action == "refresh_buttons":
+            self._buttons_changed()
             return self.status()
         if action in {"show", "hide"}:
             command = {"type": action}

@@ -479,6 +479,8 @@ class MaisakaRuntimeDisplayMixin:
         prompt_border_style = "bright_yellow"
         metrics = detail.get("metrics")
         preview_metadata = self._build_prompt_preview_metadata_from_tool_metrics(metrics)
+        if isinstance(detail.get("source_planner_uri"), str):
+            preview_metadata["source_planner_uri"] = detail["source_planner_uri"]
         output_text = str(detail.get("output_text") or "").strip()
         output_items = detail.get("output_items") if isinstance(detail.get("output_items"), list) else None
         generation_attempts = (

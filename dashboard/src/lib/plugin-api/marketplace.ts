@@ -1,4 +1,4 @@
-import type { PluginInfo, PluginReleaseCatalog, PluginType } from '@/types/plugin'
+import type { PluginInfo, PluginReleaseCatalog } from '@/types/plugin'
 
 import { ApiError, backendApi } from '@/lib/http'
 import { pluginProgressClient } from '@/lib/plugin-progress-client'
@@ -9,22 +9,7 @@ import type { GitStatus, MaimaiVersion } from './types'
  * 插件市场展示缓存
  */
 const PLUGIN_LIST_CACHE_TTL = 5 * 60 * 1000
-const PLUGIN_LIST_STORAGE_KEY = 'maibot-plugin-market-list-cache-v4'
-const PLUGIN_TYPES = new Set<PluginType>([
-  'adapter',
-  'chat',
-  'creative',
-  'provider',
-  'management',
-  'search',
-  'knowledge',
-  'media',
-  'game',
-  'security',
-  'automation',
-  'extension',
-  'other',
-])
+const PLUGIN_LIST_STORAGE_KEY = 'maibot-plugin-market-list-cache-v5'
 
 const pluginListCaches = new Map<boolean, { timestamp: number; result: PluginInfo[] }>()
 const pluginListRequests = new Map<boolean, Promise<PluginInfo[]>>()
@@ -36,6 +21,21 @@ export function invalidatePluginMarketCache(): void {
   pluginListRequests.clear()
   localStorage.removeItem(PLUGIN_LIST_STORAGE_KEY)
   localStorage.removeItem(`${PLUGIN_LIST_STORAGE_KEY}-compatible`)
+}
+
+/** 互动只使带有旧统计的官方快照失效，镜像清单继续复用。 */
+export function invalidatePluginMarketStats(): void {
+  cacheGeneration += 1
+  // 在途官方快照也可能带旧统计，后续调用不能继续复用它；镜像清单缓存保留。
+  pluginListRequests.clear()
+  for (const compatibleOnly of [false, true]) {
+    const cached = pluginListCaches.get(compatibleOnly)?.result
+      ?? readPluginListStorageCache(compatibleOnly)?.data
+    if (cached?.some((plugin) => plugin.market_data_source === 'official')) {
+      pluginListCaches.delete(compatibleOnly)
+      localStorage.removeItem(compatibleOnly ? `${PLUGIN_LIST_STORAGE_KEY}-compatible` : PLUGIN_LIST_STORAGE_KEY)
+    }
+  }
 }
 
 interface PluginListStorageCache {
@@ -81,6 +81,7 @@ interface PluginApiResponse {
     }
     keywords: string[]
     plugin_type?: string
+    type?: string
     display?: PluginInfo['manifest']['display']
     changelog?: string
     default_locale?: string
@@ -93,19 +94,6 @@ interface PluginApiResponse {
 
 function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
-}
-
-function normalizePluginType(value: unknown): PluginType {
-  if (typeof value !== 'string' || !value.trim()) {
-    return 'extension'
-  }
-
-  const normalizedValue = value.trim()
-  if (PLUGIN_TYPES.has(normalizedValue as PluginType)) {
-    return normalizedValue as PluginType
-  }
-
-  return 'other'
 }
 
 function normalizePluginManifest(manifest: PluginApiResponse['manifest']): PluginInfo['manifest'] {
@@ -126,7 +114,7 @@ function normalizePluginManifest(manifest: PluginApiResponse['manifest']): Plugi
     repository_url: repositoryUrl,
     urls: manifest.urls,
     keywords: manifest.keywords || [],
-    plugin_type: normalizePluginType(manifest.plugin_type),
+    plugin_type: normalizeOptionalString(manifest.plugin_type ?? manifest.type),
     display: manifest.display,
     changelog: normalizeOptionalString(manifest.changelog),
     default_locale: manifest.i18n?.default_locale || manifest.default_locale || 'zh-CN',
@@ -226,9 +214,9 @@ async function fetchPluginListUncached(compatibleOnly: boolean, forceRefresh: bo
     manifest: normalizePluginManifest(item.manifest),
     releases: item.releases,
     assets: item.assets ?? undefined,
-    downloads: item.stats?.downloads ?? 0,
-    rating: item.stats?.rating ?? 0,
-    review_count: item.stats?.comment_count ?? 0,
+    downloads: item.stats?.downloads,
+    rating: item.stats?.rating,
+    review_count: item.stats?.comment_count,
     installed: false,
     source: 'market' as const,
     changelog: normalizeOptionalString(item.changelog),

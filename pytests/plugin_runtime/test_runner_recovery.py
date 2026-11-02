@@ -10,15 +10,18 @@ from collections import deque
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, Deque, Dict, List, Optional
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import asyncio
 import os
 
 import pytest
 
+from src.plugin_runtime import integration as integration_module
 from src.plugin_runtime.host import supervisor as supervisor_module
 from src.plugin_runtime.host.supervisor import PluginRunnerSupervisor
+from src.plugin_runtime.integration import DependencySyncState, PluginRuntimeManager
+from src.plugin_runtime.plugin_catalog import PluginCatalogEntry
 from src.plugin_runtime.protocol.envelope import (
     Envelope,
     HealthPayload,
@@ -27,6 +30,7 @@ from src.plugin_runtime.protocol.envelope import (
     ReloadPluginResultPayload,
     ReloadPluginsResultPayload,
     RunnerReadyPayload,
+    RunnerStartupProgressPayload,
     UnloadPluginsResultPayload,
     UnregisterPluginPayload,
 )
@@ -471,3 +475,249 @@ async def test_explicit_lifecycle_discards_old_recovery_targets(runtime, monkeyp
 
     assert supervisor._plugin_recovery_targets == set()
     await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_start_waits_for_load_round_including_failed_plugins(runtime, monkeypatch) -> None:
+    supervisor, boundary = runtime
+    supervisor._running = False
+    connected = asyncio.Event()
+
+    async def spawn_loading_runner() -> None:
+        supervisor._runner_process = _Process()
+        boundary.is_connected = True
+        await _register(supervisor, _QQ)
+        connected.set()
+
+    monkeypatch.setattr(supervisor, "_spawn_runner", spawn_loading_runner)
+    monkeypatch.setattr(supervisor, "_health_check_loop", AsyncMock())
+    startup = asyncio.create_task(supervisor.start())
+    try:
+        await asyncio.wait_for(connected.wait(), timeout=1.0)
+        assert not startup.done()
+        assert supervisor.is_loading
+        assert supervisor._health_task is None
+
+        await _ready(supervisor, RunnerReadyPayload(
+            loaded_plugins=[_QQ], failed_plugins=[_EXTENSION], inactive_plugins=[_IRC],
+        ))
+        await asyncio.wait_for(startup, timeout=1.0)
+        assert not supervisor.is_loading
+        assert supervisor.get_plugin_load_statuses()[_EXTENSION] == "failed"
+    finally:
+        if not startup.done():
+            startup.cancel()
+        await asyncio.gather(startup, return_exceptions=True)
+        await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_registration_cannot_override_reported_failure_or_supply_dependency_version(runtime):
+    supervisor, _ = runtime
+    await _register(supervisor, _QQ)
+    assert supervisor.get_plugin_load_statuses()[_QQ] == "loading"
+    assert supervisor.get_loaded_plugin_versions() == {}
+
+    await _ready(supervisor, RunnerReadyPayload(
+        failed_plugins=[_QQ], failed_plugin_reasons={_QQ: "on_load failed"},
+    ))
+    assert supervisor.get_plugin_load_statuses()[_QQ] == "failed"
+    assert supervisor.get_plugin_load_failure_reasons()[_QQ] == "on_load failed"
+    assert supervisor.get_loaded_plugin_versions() == {}
+
+    supervisor._apply_plugin_reload_result(
+        reloaded_plugins=[_QQ], inactive_plugins=[], explicitly_disabled_plugins=[], failed_plugins={},
+    )
+    assert supervisor.get_plugin_load_statuses()[_QQ] == "success"
+    assert _QQ in supervisor.get_loaded_plugin_versions()
+
+
+@pytest.mark.asyncio
+async def test_connection_timeout_stops_unconnected_runner(runtime, monkeypatch) -> None:
+    supervisor, boundary = runtime
+    supervisor._running = False
+    supervisor._runner_spawn_timeout = 0.01
+    process = _Process()
+
+    async def spawn_loading_runner() -> None:
+        supervisor._runner_process = process
+        boundary.is_connected = False
+
+    monkeypatch.setattr(supervisor, "_spawn_runner", spawn_loading_runner)
+    with pytest.raises(TimeoutError):
+        await supervisor.start()
+
+    assert process.returncode is not None
+    assert supervisor._runner_process is None
+    assert not supervisor._running
+    assert not supervisor.is_loading
+    assert supervisor.get_loaded_plugin_ids() == []
+    assert supervisor._health_task is None
+    assert not boundary.is_connected
+
+
+@pytest.mark.asyncio
+async def test_repeated_loading_timeouts_keep_runner_and_publish_partial_results(runtime, monkeypatch) -> None:
+    supervisor, boundary = runtime
+    supervisor._running = False
+    supervisor._runner_spawn_timeout = 0.01
+    timed_out_twice = asyncio.Event()
+    timeout_count = 0
+    process = _Process()
+
+    def status_changed() -> None:
+        nonlocal timeout_count
+        if supervisor.startup_load_status == "timed_out":
+            timeout_count += 1
+            if timeout_count >= 2:
+                timed_out_twice.set()
+
+    async def spawn_loading_runner() -> None:
+        supervisor._runner_process = process
+        boundary.is_connected = True
+        await _register(supervisor, _QQ)
+        await _register(supervisor, _EXTENSION)
+        progress = RunnerStartupProgressPayload(
+            loaded_plugins=[_QQ], failed_plugins=[_IRC], loading_plugins=[_EXTENSION],
+            failed_plugin_reasons={_IRC: "on_load raised an error"},
+        )
+        await supervisor._handle_startup_progress(_request("runner.startup_progress", progress.model_dump()))
+
+    monkeypatch.setattr(supervisor, "_spawn_runner", spawn_loading_runner)
+    monkeypatch.setattr(supervisor, "_status_changed_callback", status_changed)
+    monkeypatch.setattr(supervisor, "_health_check_loop", AsyncMock())
+    startup = asyncio.create_task(supervisor.start())
+    try:
+        await asyncio.wait_for(timed_out_twice.wait(), 1.0)
+        assert not startup.done()
+        assert process.returncode is None
+        assert supervisor._runner_process is process
+        assert supervisor.get_plugin_load_statuses() == {_QQ: "success", _IRC: "failed", _EXTENSION: "timed_out"}
+        reasons = supervisor.get_plugin_load_failure_reasons()
+        assert reasons[_IRC] == "on_load raised an error"
+        assert "仍在后台加载" in reasons[_EXTENSION]
+        assert supervisor.startup_load_status == "timed_out"
+
+        await _ready(supervisor, RunnerReadyPayload(loaded_plugins=[_QQ, _EXTENSION], failed_plugins=[_IRC]))
+        await asyncio.wait_for(startup, 1.0)
+        assert process.returncode is None
+        assert supervisor.get_plugin_load_statuses()[_EXTENSION] == "success"
+        assert supervisor.startup_load_reason == ""
+        # 最终 ready 优先于迟到的启动进度。
+        await supervisor._handle_startup_progress(_request(
+            "runner.startup_progress", RunnerStartupProgressPayload(loading_plugins=[_EXTENSION]).model_dump(),
+        ))
+        assert supervisor.get_plugin_load_statuses()[_EXTENSION] == "success"
+    finally:
+        startup.cancel()
+        await asyncio.gather(startup, return_exceptions=True)
+        await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_start_cleans_loading_runner(runtime, monkeypatch) -> None:
+    supervisor, boundary = runtime
+    supervisor._running = False
+    connected = asyncio.Event()
+    process = _Process()
+
+    async def spawn_loading_runner() -> None:
+        supervisor._runner_process = process
+        boundary.is_connected = True
+        connected.set()
+
+    monkeypatch.setattr(supervisor, "_spawn_runner", spawn_loading_runner)
+    startup = asyncio.create_task(supervisor.start())
+    await asyncio.wait_for(connected.wait(), timeout=1.0)
+    startup.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await startup
+    assert process.returncode is not None
+    assert supervisor._runner_process is None
+    assert not supervisor._running
+    assert supervisor._health_task is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("load_result", ["ready", "late_ready", "failed"])
+async def test_manager_starts_watcher_only_after_runner_load_round(runtime, monkeypatch, tmp_path, load_result):
+    supervisor, boundary = runtime
+    supervisor._running = False
+    supervisor._runner_spawn_timeout = 1.0 if load_result == "ready" else 0.01
+    connected = asyncio.Event()
+    manager = PluginRuntimeManager()
+    platform_io = SimpleNamespace(
+        set_inbound_dispatcher=Mock(), ensure_send_pipeline_ready=AsyncMock(),
+        clear_inbound_dispatcher=Mock(), stop=AsyncMock(),
+    )
+
+    async def spawn_loading_runner() -> None:
+        supervisor._runner_process = _Process()
+        boundary.is_connected = True
+        await _register(supervisor, _QQ)
+        connected.set()
+
+    def build_supervisors(*args) -> None:
+        manager._builtin_supervisor = supervisor
+
+    watcher_start = AsyncMock()
+    async def initialize_catalog(*args):
+        manager._plugin_catalog._entries = {
+            tmp_path / "qq": PluginCatalogEntry(_QQ, tmp_path / "qq", {"plugin_type": "adapter"}, False, True, "", None),
+        }
+        manager._plugin_catalog._initialized = True
+
+    monkeypatch.setattr(manager._plugin_catalog, "start", initialize_catalog)
+    monkeypatch.setattr(supervisor, "_spawn_runner", spawn_loading_runner)
+    monkeypatch.setattr(supervisor, "_health_check_loop", AsyncMock())
+    monkeypatch.setattr(manager, "_resolve_runtime_plugin_dirs", lambda: ([tmp_path], []))
+    monkeypatch.setattr(manager, "_build_supervisors", build_supervisors)
+    monkeypatch.setattr(manager, "_sync_plugin_dependencies", AsyncMock(return_value=DependencySyncState(set(), False)))
+    monkeypatch.setattr(manager, "ensure_builtin_hook_specs_registered", Mock())
+    monkeypatch.setattr(manager, "_start_plugin_usage_tracking", AsyncMock())
+    monkeypatch.setattr(manager, "_build_group_start_order", lambda *args, **kwargs: ["builtin"])
+    monkeypatch.setattr(manager, "_get_group_dependency_flags", lambda *args, **kwargs: (False, False))
+    monkeypatch.setattr(manager, "_start_plugin_file_watcher", watcher_start)
+    monkeypatch.setattr(integration_module, "get_platform_io_manager", lambda: platform_io)
+    monkeypatch.setattr(integration_module.config_manager.get_global_config().plugin_runtime, "enabled", True)
+    monkeypatch.setattr(integration_module.config_manager, "register_reload_callback", Mock())
+    monkeypatch.setattr(integration_module.config_manager, "unregister_reload_callback", Mock())
+
+    startup = asyncio.create_task(manager.start())
+    try:
+        await asyncio.wait_for(connected.wait(), timeout=1.0)
+        watcher_start.assert_not_awaited()
+        assert not manager._started
+        if load_result == "ready":
+            await _ready(supervisor, RunnerReadyPayload(loaded_plugins=[_QQ], failed_plugins=[_EXTENSION]))
+        else:
+            async def wait_for_timeout():
+                while supervisor.startup_load_status != "timed_out":
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(wait_for_timeout(), 1.0)
+            watcher_start.assert_not_awaited()
+            assert not manager._started
+            assert not startup.done()
+            assert supervisor._runner_process.returncode is None
+            if load_result == "failed":
+                supervisor._runner_process.returncode = 1
+            else:
+                await _ready(supervisor, RunnerReadyPayload(loaded_plugins=[_QQ]))
+        await asyncio.wait_for(startup, timeout=1.0)
+
+        if load_result == "failed":
+            watcher_start.assert_not_awaited()
+            assert not manager._started
+            assert manager._builtin_supervisor is supervisor
+            snapshot = await manager.get_plugin_state_snapshot()
+            assert snapshot["statuses"][_QQ] == "failed"
+            assert "退出码 1" in snapshot["failure_reasons"][_QQ]
+        else:
+            watcher_start.assert_awaited_once()
+            assert manager._started
+    finally:
+        if not startup.done():
+            startup.cancel()
+        await asyncio.gather(startup, return_exceptions=True)
+        await manager.stop()

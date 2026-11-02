@@ -10,6 +10,7 @@ from src.common.data_models.image_data_model import MaiEmoji
 from src.common.logger import get_logger
 from src.common.utils.image_path import resolve_stored_image_path
 from src.common.utils.utils_image import ImageUtils
+from src.plugin_runtime.host.hook_dispatcher import HookAbortedError
 from src.services import send_service
 
 from .emoji_manager import (
@@ -146,12 +147,7 @@ async def send_emoji_for_maisaka(
         abort_message="表情选择已被 Hook 中止。",
     )
     if before_select_result.aborted:
-        abort_message = str(before_select_result.kwargs.get("abort_message") or "表情选择已被 Hook 中止。").strip()
-        return MaisakaEmojiSendResult(
-            success=False,
-            message=abort_message or "表情选择已被 Hook 中止。",
-            requested_emotion=normalized_requested_emotion,
-        )
+        raise HookAbortedError(before_select_result)
 
     before_select_kwargs = before_select_result.kwargs
     normalized_requested_emotion = str(
@@ -181,13 +177,7 @@ async def send_emoji_for_maisaka(
         abort_message="表情发送已被 Hook 中止。",
     )
     if after_select_result.aborted:
-        abort_message = str(after_select_result.kwargs.get("abort_message") or "表情发送已被 Hook 中止。").strip()
-        return MaisakaEmojiSendResult(
-            success=False,
-            message=abort_message or "表情发送已被 Hook 中止。",
-            requested_emotion=normalized_requested_emotion,
-            matched_emotion=matched_emotion,
-        )
+        raise HookAbortedError(after_select_result)
 
     after_select_kwargs = after_select_result.kwargs
     normalized_requested_emotion = str(
@@ -244,8 +234,11 @@ async def send_emoji_for_maisaka(
                 reply_message=reply_message,
                 sync_to_maisaka_history=True,
                 maisaka_source_kind="guided_reply",
+                raise_on_hook_abort=True,
             )
             sent = sent_message is not None
+    except HookAbortedError:
+        raise
     except Exception as exc:
         return MaisakaEmojiSendResult(
             success=False,

@@ -1238,26 +1238,12 @@ def get_maisaka_prompt_preview(path: str = Query(..., description="logs/maisaka_
     return FileResponse(preview_path, media_type=media_type)
 
 
-def _apply_retro_prompt_schema_lock(schema: Dict[str, Any]) -> None:
-    """按当前模型状态锁定复古开关，不污染缓存的基础 schema。"""
-    for field in schema["fields"]:
-        if field["name"] == "replyer_retro_prompt":
-            field["readOnly"] = config_manager.retro_prompt_forced
-
-
-def _validate_retro_prompt_setting(config_data: Dict[str, Any]) -> None:
-    """模型要求复古模板时，所有主配置写入入口均禁止手动关闭。"""
-    if config_manager.retro_prompt_forced and config_data.get("debug", {}).get("replyer_retro_prompt") is False:
-        raise HTTPException(status_code=400, detail="当前 replyer 模型需要复古回复提示词，解除对应模型的 replyer 分配后才能关闭")
-
-
 @router.get("/schema/bot")
 def get_bot_config_schema():
     """获取麦麦主程序配置架构"""
     try:
         # Config 类包含所有子配置
         schema = copy.deepcopy(_get_cached_schema("bot", Config))
-        _apply_retro_prompt_schema_lock(schema["nested"]["debug"])
         return {"success": True, "schema": schema}
     except Exception as e:
         logger.error(f"获取配置架构失败: {e}")
@@ -1356,8 +1342,6 @@ def get_config_section_schema(section_name: str):
     try:
         config_class = section_map[section_name]
         schema = copy.deepcopy(_get_cached_schema(f"section:{section_name}", config_class, include_nested=False))
-        if section_name == "debug":
-            _apply_retro_prompt_schema_lock(schema)
         return {"success": True, "schema": schema}
     except Exception as e:
         logger.error(f"获取配置节架构失败: {e}")
@@ -1524,7 +1508,6 @@ async def activate_model_config_version(version_id: str, request: ModelConfigVer
 def update_bot_config(config_data: ConfigBody):
     """更新麦麦主程序配置"""
     try:
-        _validate_retro_prompt_setting(config_data)
         config_data = _coerce_config_numeric_values(config_data, Config)
 
         # 验证配置数据
@@ -1579,8 +1562,6 @@ async def update_model_config(config_data: ConfigBody):
 def update_bot_config_section(section_name: str, section_data: SectionBody):
     """更新麦麦主程序配置的指定节（保留注释和格式）"""
     try:
-        if section_name == "debug" and isinstance(section_data, dict):
-            _validate_retro_prompt_setting({"debug": section_data})
         # 读取现有配置
         config_path = os.path.join(CONFIG_DIR, "bot_config.toml")
         if not os.path.exists(config_path):
@@ -1659,7 +1640,6 @@ def update_bot_config_raw(raw_content: RawContentBody):
             raise HTTPException(status_code=400, detail=f"TOML 格式错误: {str(e)}") from e
 
         # 验证配置数据结构
-        _validate_retro_prompt_setting(config_data)
         try:
             Config.from_dict(AttributeData(), _toml_to_plain_dict(config_data))
         except Exception as e:

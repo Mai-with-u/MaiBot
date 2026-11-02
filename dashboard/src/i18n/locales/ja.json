@@ -634,6 +634,11 @@
       "confirmRerunSetup": "再構成を確認",
       "confirmRerunSetupDesc": "初回設定ウィザードに戻ります。システムの基本設定を再設定できます。続けますか？",
       "devToolsDesc": "以下の機能は開発・デバッグ目的のみです。クラッシュや異常動作を引き起こす可能性があります。",
+      "resetNotificationStates": "すべての通知状態をリセット",
+      "resetNotificationStatesDesc": "ニュースの既読記録、ホームのニュースバーの非表示状態、各ページの通知の非表示記録を消去し、再び表示されるようにします。完了したガイドはそのままです。",
+      "resetNotificationStatesAction": "リセット",
+      "notificationsResetDone": "通知状態をリセットしました",
+      "notificationsResetDoneDesc": "{{count}} 件の状態を消去しました。該当ページを開き直すと反映されます。",
       "alwaysShowUpdateButton": "更新ボタンを常に表示",
       "alwaysShowUpdateButtonDesc": "更新が検出されていなくても、右上に本体の更新ボタンを常に表示します。すぐに反映されます。",
       "alwaysShowUpdateNotice": "更新ログを常に表示",
@@ -1630,7 +1635,9 @@
       "openLink": "原文リンクを開く",
       "openPlugin": "プラグインを見る",
       "pinned": "ピン留め",
-      "empty": "ニュースはまだありません"
+      "empty": "ニュースはまだありません",
+      "dismiss": "ニュースバーを閉じる",
+      "next": "次のニュース"
     },
     "storage": {
       "title": "ストレージ使用量",

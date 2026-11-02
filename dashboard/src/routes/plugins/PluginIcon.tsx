@@ -21,8 +21,11 @@ import {
 import { cn } from '@/lib/utils'
 import type { PluginDisplayIcon, PluginType } from '@/types/plugin'
 
+import { getPluginType } from './types'
+
 interface PluginIconManifest {
   id?: string
+  version?: string
   plugin_type?: PluginType | string
   display?: {
     icon?: PluginDisplayIcon
@@ -33,6 +36,7 @@ interface PluginIconProps {
   pluginId: string
   manifest?: PluginIconManifest
   installed?: boolean
+  installedVersion?: string
   marketplaceIconUrl?: string
   className?: string
   iconClassName?: string
@@ -61,27 +65,9 @@ const LUCIDE_ICONS: Record<string, LucideIcon> = {
 }
 
 const DEFAULT_TYPE_ICONS: Record<PluginType, LucideIcon> = {
-  adapter: Plug,
-  chat: Bot,
-  creative: ImageIcon,
-  provider: Cloud,
-  management: Shield,
-  search: Search,
-  knowledge: BookOpen,
-  media: ImageIcon,
-  game: Gamepad2,
-  security: Shield,
-  automation: Settings,
-  extension: Puzzle,
-  other: Package,
-}
-
-function normalizePluginType(value: PluginType | string | undefined): PluginType {
-  if (!value?.trim()) {
-    return 'extension'
-  }
-
-  return value in DEFAULT_TYPE_ICONS ? (value as PluginType) : 'other'
+  adapter: Plug, tool: Wrench, provider: Cloud, management: Shield,
+  data: Database, media: ImageIcon, game: Gamepad2, integration: Plug,
+  other: Package, chat: Bot, creative: ImageIcon, automation: Settings, deskpet: Bot,
 }
 
 function resolveLucideIcon(name: string | undefined): LucideIcon | undefined {
@@ -93,21 +79,24 @@ function resolveLucideIcon(name: string | undefined): LucideIcon | undefined {
 }
 
 function getFallbackIcon(manifest?: PluginIconManifest, icon?: PluginDisplayIcon): LucideIcon {
-  return resolveLucideIcon(icon?.fallback) ?? DEFAULT_TYPE_ICONS[normalizePluginType(manifest?.plugin_type)]
+  const type = getPluginType({ manifest })
+  return resolveLucideIcon(icon?.fallback) ?? (type ? DEFAULT_TYPE_ICONS[type] : Puzzle)
 }
 
 function getImageSource(
   pluginId: string,
   icon: PluginDisplayIcon,
   installed?: boolean,
-  marketplaceIconUrl?: string
+  marketplaceIconUrl?: string,
+  version?: string
 ): string | null {
   if (icon.type !== 'local') {
     return null
   }
 
   if (installed) {
-    return `/api/webui/plugins/icon/${encodeURIComponent(pluginId)}`
+    const cacheKey = new URLSearchParams({ version: version ?? '', icon: icon.value })
+    return `/api/webui/plugins/icon/${encodeURIComponent(pluginId)}?${cacheKey}`
   }
 
   const url = marketplaceIconUrl?.trim()
@@ -122,6 +111,7 @@ export function PluginIcon({
   pluginId,
   manifest,
   installed,
+  installedVersion,
   marketplaceIconUrl,
   className,
   iconClassName
@@ -129,8 +119,8 @@ export function PluginIcon({
   const icon = manifest?.display?.icon
   const [failedImageSource, setFailedImageSource] = useState<string | null>(null)
   const imageSource = useMemo(
-    () => icon ? getImageSource(pluginId, icon, installed, marketplaceIconUrl) : null,
-    [icon, installed, marketplaceIconUrl, pluginId]
+    () => icon ? getImageSource(pluginId, icon, installed, marketplaceIconUrl, installedVersion ?? manifest?.version) : null,
+    [icon, installed, installedVersion, manifest?.version, marketplaceIconUrl, pluginId]
   )
 
   const style: CSSProperties | undefined = icon?.background ? { backgroundColor: icon.background } : undefined

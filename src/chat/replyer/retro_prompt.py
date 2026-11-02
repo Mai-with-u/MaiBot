@@ -1,8 +1,8 @@
 """复古 replyer 提示词组装。
 
-开启 `debug.replyer_retro_prompt` 后，replyer 按旧版（0.12.x）的组织方式生成提示词：
+开启 `chat.creative_mode` 或实际选中 Mai Replier 后，replyer 按旧版（0.12.x）的组织方式生成提示词：
 
-- 人设和聊天注意事项合并为首条 system 消息，其余回复指令由模板占位符拼接而成；
+- 通用模式的人设和聊天注意事项合并为首条 system 消息，Mai Replier 仅保留人设；
 - 群聊、群聊简短回复、私聊、私聊补充自己发言各用一套模板；
 - 回复风格保留在模板原位置，整段模板作为一条 user 消息发送。
 
@@ -41,6 +41,7 @@ from src.llm_models.payload_content.context_item import (
     RoleType,
     UserMessageItem,
 )
+from src.maisaka.attention_drift import build_attention_drift_prompt_block
 from src.maisaka.context.history import build_session_message_visible_text
 from src.maisaka.context.message_adapter import (
     build_visible_text_from_sequence,
@@ -117,6 +118,7 @@ class RetroReplyPromptMixin:
         think_level: int = 1,
         reply_tool_args: Optional[Dict[str, Any]] = None,
         enable_visual_message: bool = False,
+        mai_replier: bool = False,
     ) -> List[ContextItem]:
         """构建首条人设与注意事项 system 消息，以及复古模板 user 消息。
 
@@ -147,8 +149,9 @@ class RetroReplyPromptMixin:
             stream_id=stream_id,
             think_level=think_level,
             reply_tool_args=reply_tool_args,
+            mai_replier=mai_replier,
         )
-        # 复古回复器对齐训练分布：system 消息仅保留人设（训练数据 persona-only，
+        # Mai Replier 对齐训练分布：system 消息仅保留人设（训练数据 persona-only，
         # 无 gca 注意事项块与 attention_drift 块——线上注入属训练外成分，会把回复带向啰嗦/书面）。
         system_prompt = "\n\n".join(
             block.strip()
@@ -157,6 +160,25 @@ class RetroReplyPromptMixin:
             )
             if block.strip()
         )
+        if not mai_replier:
+            session_id = self._resolve_session_id(stream_id)
+            is_group_chat, _ = get_chat_type_and_target_info(session_id)
+            system_prompt = "\n\n".join(filter(None, (
+                system_prompt,
+                self._build_group_chat_attention_block(session_id),
+                build_attention_drift_prompt_block(is_group_chat),
+            )))
+            # 通用复古保留普通回复中的附件参考、重复回复提醒及篇幅要求。
+            extra_blocks = [reply_requirements]
+            args = reply_tool_args or {}
+            extra_blocks.append(str(args.get("_duplicate_target_reply_reminder", "")).strip())
+            attachment_prompt = self._build_reply_attachment_prompt(
+                chat_history=chat_history, reply_message=reply_message, reply_tool_args=reply_tool_args,
+            )
+            if attachment_prompt.strip():
+                extra_blocks.append("【额外发送内容参考】\n" + attachment_prompt.strip())
+            extra_blocks.append(self._build_requested_reply_style_message(str(args.get("reply_style", ""))))
+            reply_requirements = "\n\n".join(block for block in extra_blocks if block.strip())
         template_context = self._build_retro_template_context(
             chat_history=chat_history,
             reply_message=reply_message,
@@ -164,6 +186,7 @@ class RetroReplyPromptMixin:
             reply_reference=str((reply_tool_args or {}).get("reply_reference") or ""),
             expression_habits=expression_habits,
             reply_requirements=reply_requirements,
+            mai_replier=mai_replier,
         )
         user_builder = ContextItemBuilder().set_role(RoleType.User)
         if enable_visual_message:
@@ -286,12 +309,15 @@ class RetroReplyPromptMixin:
         stream_id: Optional[str],
         think_level: int,
         reply_tool_args: Optional[Dict[str, Any]],
+        mai_replier: bool = False,
     ) -> str:
         """按群聊/私聊、是否简短回复、是否补充自己发言挑选模板。"""
 
         if self._is_retro_group_chat(stream_id):
-            # 复古回复器对齐训练分布：训练数据 100% 使用标准模板（retro_replyer），
-            # light 模板（口语化/尽量简短/不要太有条理）属训练外成分。群聊恒用标准模板。
+            # Mai Replier 对齐训练分布：训练数据 100% 使用标准模板（retro_replyer），
+            # light 模板（口语化/尽量简短/不要太有条理）属训练外成分。Mai Replier 群聊恒用标准模板。
+            if not mai_replier and self._is_retro_short_reply(think_level, reply_tool_args):
+                return RETRO_GROUP_LIGHT_PROMPT
             return RETRO_GROUP_PROMPT
 
         if reply_message is not None:
@@ -329,27 +355,33 @@ class RetroReplyPromptMixin:
         reply_reference: str,
         expression_habits: str,
         reply_requirements: str,
+        mai_replier: bool = False,
     ) -> Dict[str, str]:
         """按旧版的块顺序准备模板占位符内容。"""
 
         combined_reference = self._build_reply_reference_message(reply_reason, reply_reference)
+        reply_target_block = self._build_retro_reply_target_block(reply_message, chat_history)
+        if reply_target_block:
+            reply_target_block += "." if self._get_prompt_locale().startswith("en") else "。"
         # 旧版按概率用备选表达风格整体替换人设里的表达风格，而不是追加一条风格消息
         reply_style = self._select_temporary_reply_style() or self._select_reply_style()
         return {
             "bot_name": global_config.bot.nickname,
             "sender_name": self._build_retro_sender_name(chat_history, reply_message),
             "reply_style": reply_style,
-            # 复古回复器对齐训练分布：表达习惯参考块在训练数据中仅 bdpan 源少量出现，
-            # 线上动态注入会把回复带向套用句式模板、变书面。retro 路径跳过该块。
-            "expression_habits_block": "",
+            # Mai Replier 对齐训练分布：表达习惯参考块在训练数据中仅 bdpan 源少量出现，
+            # 线上动态注入会把回复带向套用句式模板、变书面。Mai Replier 路径跳过该块。
+            "expression_habits_block": "" if mai_replier else expression_habits.strip(),
             "extra_info_block": self._build_retro_extra_info_block(reply_requirements),
             "dialogue_prompt": self._build_retro_dialogue_block(chat_history),
             "time_block": f"当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            "reply_target_block": self._build_retro_reply_target_block(reply_message, chat_history),
+            "reply_target_block": reply_target_block,
             "planner_reasoning": combined_reference,
-            # 复古回复器对齐训练分布：关键词反应提示（"人机"否定/定型文模板等）
-            # 在训练数据中不存在，线上注入属训练外成分。retro 路径跳过。
-            "keywords_reaction_prompt": "",
+            # Mai Replier 对齐训练分布：关键词反应提示（"人机"否定/定型文模板等）
+            # 在训练数据中不存在，线上注入属训练外成分。Mai Replier 路径跳过。
+            "keywords_reaction_prompt": "" if mai_replier else self._build_keyword_reaction_prompt(
+                chat_history=chat_history, reply_message=reply_message,
+            ),
         }
 
     @staticmethod

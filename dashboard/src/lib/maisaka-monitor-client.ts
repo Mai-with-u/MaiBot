@@ -285,6 +285,7 @@ export interface MaisakaFinalizedToolResult {
   tool_call_source?: string
   tool_call_source_label?: string
   success: boolean
+  error_message?: string
   stop_after_execution?: boolean
   duration_ms: number
   summary: string

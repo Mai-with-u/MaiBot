@@ -10,6 +10,7 @@ from src.maisaka.builtin_tool.context import BuiltinToolRuntimeContext
 from src.maisaka.builtin_tool.reply import _invoke_before_post_process_hook, _resolve_segment_reply_context
 from src.maisaka.chat_loop_service import register_maisaka_hook_specs
 from src.plugin_runtime.host.hook_spec_registry import HookSpecRegistry
+from src.plugin_runtime.host.hook_dispatcher import HookDispatchResult
 
 
 def test_skip_post_process_returns_original_reply(monkeypatch) -> None:
@@ -110,9 +111,10 @@ async def test_before_post_process_hook_controls_current_reply_only() -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
     class RuntimeManager:
-        async def invoke_hook(self, hook_name: str, **kwargs: object) -> SimpleNamespace:
+        async def invoke_hook(self, hook_name: str, **kwargs: object) -> HookDispatchResult:
             calls.append((hook_name, kwargs))
-            return SimpleNamespace(
+            return HookDispatchResult(
+                hook_name=hook_name,
                 kwargs={
                     **kwargs,
                     "skip_post_process": kwargs["response"] == "本次保持原文",

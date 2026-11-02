@@ -22,7 +22,7 @@ def register_capability_impls(manager: "PluginRuntimeManager", supervisor: "Plug
     cap_service.register_capability("internal_chat.send", internal_chat.send)
     for action in ("list", "get_current", "switch"):
         cap_service.register_capability(f"personality.{action}", personality.handle)
-    for action in ("status", "show", "hide", "say", "set_thinking"):
+    for action in ("status", "show", "hide", "say", "set_thinking", "refresh_buttons"):
         cap_service.register_capability(f"desktop_pet.{action}", desktop_pet.control)
     for action in desktop_pet.ANIMATION_ACTIONS:
         cap_service.register_capability(f"desktop_pet.{action}", desktop_pet.animation)
@@ -102,6 +102,7 @@ def register_capability_impls(manager: "PluginRuntimeManager", supervisor: "Plug
     _register("tool.get_definitions", manager._cap_tool_get_definitions)
 
     _register("api.call", manager._cap_api_call)
+    _register("runtime.set_status_badges", manager._cap_runtime_set_status_badges)
     _register("api.get", manager._cap_api_get)
     _register("api.list", manager._cap_api_list)
     _register("api.replace_dynamic", manager._cap_api_replace_dynamic)

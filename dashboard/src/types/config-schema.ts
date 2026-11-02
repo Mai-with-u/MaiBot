@@ -71,6 +71,7 @@ export interface ConfigSchema {
   uiOrder?: number
   uiUseSubTabs?: boolean
   uiSubLabel?: string
+  uiPresentation?: 'tab' | 'dialog'
   uiRootSubLabel?: string
 }
 

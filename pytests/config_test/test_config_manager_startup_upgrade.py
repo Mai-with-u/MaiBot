@@ -70,7 +70,6 @@ def test_initialize_upgrades_bot_and_model_config_without_exit(monkeypatch):
         return object(), True
 
     monkeypatch.setattr(config_module, "load_config_from_file", fake_load_config_from_file)
-    monkeypatch.setattr(manager, "_sync_retro_reply_prompt", lambda config, models: None)
     monkeypatch.setattr(ConfigManager, "_warn_if_vlm_not_configured", lambda self, model_config: warnings.append(model_config))
 
     manager.initialize()

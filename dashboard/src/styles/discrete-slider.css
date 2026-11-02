@@ -57,6 +57,18 @@
   opacity: 0.5;
 }
 
+[data-discrete-slider-description] {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 200ms ease, opacity 200ms ease;
+}
+
+[data-dashboard-discrete-slider][data-dragging='true'] [data-discrete-slider-description] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
 @media (prefers-reduced-motion: reduce) {
   [data-dashboard-discrete-slider] *,
   [data-dashboard-discrete-slider][data-dragging='true'] [data-dashboard-slider-thumb] {

@@ -701,6 +701,11 @@
       "confirmRerunSetup": "确认重新配置",
       "confirmRerunSetupDesc": "这将带您重新进入初次配置向导。您可以重新设置系统的基础配置项。确定要继续吗？",
       "devToolsDesc": "以下功能仅供开发调试使用，可能会导致页面崩溃或异常。",
+      "resetNotificationStates": "重置所有通知状态",
+      "resetNotificationStatesDesc": "清除资讯已读记录、首页资讯条的关闭状态，以及各页面提示的关闭记录，相关通知会重新出现。不影响已完成的引导教程。",
+      "resetNotificationStatesAction": "重置",
+      "notificationsResetDone": "通知状态已重置",
+      "notificationsResetDoneDesc": "已清除 {{count}} 项状态，重新进入对应页面后生效。",
       "alwaysShowUpdateButton": "永远显示更新按钮",
       "alwaysShowUpdateButtonDesc": "开启后，无论是否检测到更新，始终显示右上角的主程序更新按钮。立即生效。",
       "alwaysShowUpdateNotice": "永远显示更新日志",
@@ -1694,7 +1699,9 @@
       "openLink": "打开原文链接",
       "openPlugin": "查看插件",
       "pinned": "置顶",
-      "empty": "暂无资讯"
+      "empty": "暂无资讯",
+      "dismiss": "关闭资讯条",
+      "next": "下一条资讯"
     },
     "storage": {
       "title": "存储占用",
