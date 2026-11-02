@@ -10,8 +10,8 @@ class GeminiReplyFormatError(ValueError):
 _HEADER = r"(?:thinking\s+process|thought\s+process|思考过程|思维链)"
 _ANGLE_START = re.compile(rf"⌊\s*{_HEADER}\s*(?:⌉|[:：])", re.IGNORECASE)
 _PLAIN_START = re.compile(rf"(?:#{{1,6}}\s+)?(?:\*\*)?{_HEADER}(?:\*\*)?\s*[:：]", re.IGNORECASE)
-_XML_START = re.compile(r"<(think|thinking|thought|analysis)>", re.IGNORECASE)
-_XML_TAG = re.compile(r"</?(?:think|thinking|thought|analysis)>", re.IGNORECASE)
+_XML_START = re.compile(r"<\s*(?:[:_~-]\s*)?(think|thinking|thought|analysis)\s*>", re.IGNORECASE)
+_XML_TAG = re.compile(r"</?\s*(?:[:_~-]\s*)?(think|thinking|thought|analysis)\s*>", re.IGNORECASE)
 
 # 内联 thought 定界块：纯字面量正则，零回溯写法。
 _INLINE_BRACKET_START = re.compile(r"^\[\s*(?:[:_~-]\s*)?thought(?![A-Za-z])", re.IGNORECASE)
@@ -82,7 +82,7 @@ def normalize_gemini_reply(text: str) -> str:
             stack = []
             end = None
             for tag in _XML_TAG.finditer(remaining):
-                name = tag.group().strip("</>").lower()
+                name = tag.group(1).lower()
                 if tag.group().startswith("</"):
                     if not stack or stack.pop() != name:
                         raise GeminiReplyFormatError("Gemini 思考标签配对错误，已阻止发送。")

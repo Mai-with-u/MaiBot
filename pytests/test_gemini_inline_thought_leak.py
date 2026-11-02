@@ -6,6 +6,7 @@
 3. 历史消息只清洗 `AssistantMessageItem`，用户消息与工具回执保持原文。
 """
 
+import base64
 import io
 import json
 import time
@@ -21,6 +22,7 @@ from src.llm_models.model_client.gemini_client import (
 )
 from src.llm_models.payload_content.context_item import (
     AssistantMessageItem,
+    ContextImagePart,
     ContextItemMeta,
     ContextTextPart,
     ContextToolCall,
@@ -185,9 +187,128 @@ def test_convert_messages_only_scrubs_assistant_history() -> None:
     assert func_resp["other"] == "]_UNRELATED"
 
 
-def test_open_label_regex_is_linear() -> None:
-    """恶意长空白串不得触发二次方回溯（16 KB 需远低于 20 ms）。"""
-    payload = "[" + " " * 16000 + "x"
+# 嵌套 XML 草稿：只认第一个闭标签会把后半段草稿当正文放出去。
+NESTED_XML = "<thought>OUTER<thought>INNER</thought>MORE_SECRET</thought>ANSWER"
+
+
+def test_nested_xml_thought_matches_pre_send_check() -> None:
+    """嵌套 `<thought>` 必须整体剥完，客户端与发送前检查都只留 `ANSWER`。"""
+    assert normalize_gemini_reply(NESTED_XML) == "ANSWER"
+
+    normal_resp, _ = _default_normal_response_parser(_make_response(NESTED_XML), logical_turn_id="turn-nested")
+    assert _assistant_text(normal_resp) == "ANSWER"
+
+    stream_resp = _build_stream_api_response(io.StringIO(NESTED_XML), io.StringIO(""), [], None, "turn-nested-stream")
+    assert _assistant_text(stream_resp) == "ANSWER"
+
+
+def test_thought_process_header_is_left_to_pre_send_check() -> None:
+    """`⌊Thought Process:` 不是内联草稿，客户端不得抢先剥离，必须由发送前检查阻断。"""
+    sample = "⌊Thought Process: SECRET⌋MORE_SECRET"
+    with pytest.raises(GeminiReplyFormatError):
+        normalize_gemini_reply(sample)
+
+    normal_resp, _ = _default_normal_response_parser(_make_response(sample), logical_turn_id="turn-process")
+    assert _assistant_text(normal_resp) == sample
+    with pytest.raises(GeminiReplyFormatError):
+        normalize_gemini_reply(_assistant_text(normal_resp))
+
+
+@pytest.mark.parametrize("variant", ["< thought>SECRET", "<_thought>SECRET", "<-thought>SECRET"])
+def test_spaced_and_prefixed_unclosed_xml_is_blocked(variant: str) -> None:
+    """`< thought>` / `<_thought>` / `<-thought>` 的未闭合块同样必须阻断发送。
+
+    Args:
+        variant: 待验证的 XML 变体样本。
+    """
+    with pytest.raises(GeminiReplyFormatError):
+        normalize_gemini_reply(variant)
+
+    normal_resp, _ = _default_normal_response_parser(_make_response(variant), logical_turn_id="turn-variant")
+    assert _assistant_text(normal_resp) == variant
+    with pytest.raises(GeminiReplyFormatError):
+        normalize_gemini_reply(_assistant_text(normal_resp))
+
+
+def _fake_image_part() -> ContextImagePart:
+    """构造一个占位图片片段，避免测试依赖真实图片文件。
+
+    Returns:
+        ContextImagePart: 仅含 16 字节占位数据的图片片段。
+    """
+    return ContextImagePart(
+        image_format="png",
+        image_base64=base64.b64encode(b"fake-image-bytes").decode(),
+    )
+
+
+def test_convert_messages_scrubs_thought_across_image_part() -> None:
+    """模型历史的未闭合草稿跨图片累积，闭合后只留干净正文，图片位置不变。"""
+    contents, _ = _convert_messages(
+        [
+            AssistantMessageItem(
+                meta=ContextItemMeta.create(),
+                parts=(
+                    ContextTextPart("[:thought SECRET"),
+                    _fake_image_part(),
+                    ContextTextPart("MORE_SECRET:]ANSWER"),
+                ),
+            )
+        ]
+    )
+
+    parts = contents[0].parts
+    assert parts[0].inline_data is not None
+    assert parts[0].inline_data.mime_type == "image/png"
+    assert parts[1].text == "ANSWER"
+    assert "SECRET" not in "".join(part.text or "" for part in parts)
+
+
+def test_convert_messages_keeps_user_thought_across_image_part() -> None:
+    """用户消息跨图片的草稿字面量必须完整保留，顺序不变。"""
+    contents, _ = _convert_messages(
+        [
+            UserMessageItem(
+                meta=ContextItemMeta.create(),
+                parts=(
+                    ContextTextPart("[:thought SECRET"),
+                    _fake_image_part(),
+                    ContextTextPart("MORE_SECRET:]ANSWER"),
+                ),
+            )
+        ]
+    )
+
+    parts = contents[0].parts
+    assert parts[0].text == "[:thought SECRET"
+    assert parts[1].inline_data is not None
+    assert parts[2].text == "MORE_SECRET:]ANSWER"
+
+
+def test_convert_messages_keeps_unclosed_thought_at_item_end() -> None:
+    """跨图片后仍未闭合时，暂存草稿原样输出，留给发送前检查阻断。"""
+    contents, _ = _convert_messages(
+        [
+            AssistantMessageItem(
+                meta=ContextItemMeta.create(),
+                parts=(ContextTextPart("[:thought SECRET"), _fake_image_part()),
+            )
+        ]
+    )
+
+    parts = contents[0].parts
+    assert parts[0].inline_data is not None
+    assert parts[1].text == "[:thought SECRET"
+
+
+@pytest.mark.parametrize("prefix", ["[", "⌊", "【", "<"])
+def test_open_label_regex_is_linear(prefix: str) -> None:
+    """恶意长空白串不得触发二次方回溯（16 KB 需远低于 20 ms）。
+
+    Args:
+        prefix: 四种思考开标签的首字符。
+    """
+    payload = prefix + " " * 16000 + "x"
     started = time.perf_counter()
     _default_normal_response_parser(_make_response(payload), logical_turn_id="turn-redos")
     elapsed_ms = (time.perf_counter() - started) * 1000
