@@ -7,6 +7,7 @@ import base64
 import binascii
 import io
 import json
+import re
 import uuid
 
 from google import genai
@@ -166,20 +167,129 @@ def _normalize_image_mime_type(image_format: str) -> str:
     return f"image/{normalized_image_format}"
 
 
-def _build_non_tool_parts(item: UserMessageItem | AssistantMessageItem) -> List[Part]:
+_THOUGHT_LABEL = r"(?:thought(?![A-Za-z])|thinking\s+process\s*:)"
+_THOUGHT_OPEN_TOKEN = (
+    r"(?:\[\s*[:_~-]?\s*"
+    + _THOUGHT_LABEL
+    + r"|⌊\s*[:_~-]?\s*"
+    + _THOUGHT_LABEL
+    + r"|<\s*[:_~-]?\s*thought\s*>"
+    + r"|【\s*[:_~-]?\s*"
+    + _THOUGHT_LABEL
+    + r")"
+)
+_THOUGHT_CLOSE_TOKEN = r"(?:[:_~-]\s*\]|\]\s*[:_~-]|(?<!\.)(?<!…)[⌋⌉](?!\s*`)|</\s*thought\s*>|[:_~-]\s*】|】\s*[:_~-])"
+_THOUGHT_TAIL_MARKER = (
+    r"(?:Let's\s+(?:go\s+with|output|use|send|reply\s+with)\s+this(?:[!:.]+|\s+)"
+    r"|(?:[-*]\s*)?fits\s+well[!:.]+\s*"
+    r"|under\s+\d+\s+(?:words|chars|characters)[!:.]+\s*)"
+)
+
+_INLINE_THOUGHT_OPEN_RE = re.compile(r"^\s*" + _THOUGHT_OPEN_TOKEN, re.IGNORECASE)
+_INLINE_THOUGHT_CLOSE_RE = re.compile(
+    r"^\s*" + _THOUGHT_OPEN_TOKEN + r"([\s\S]*?)" + _THOUGHT_CLOSE_TOKEN + r"\s*([\s\S]*)$",
+    re.IGNORECASE,
+)
+_INLINE_THOUGHT_TAIL_RE = re.compile(
+    r"^\s*" + _THOUGHT_OPEN_TOKEN + r"([\s\S]*?" + _THOUGHT_TAIL_MARKER + r")([\s\S]+)$",
+    re.IGNORECASE,
+)
+_INLINE_THOUGHT_ANY_RE = re.compile(_THOUGHT_OPEN_TOKEN, re.IGNORECASE)
+_INLINE_CLOSED_BLOCK_SUB_RE = re.compile(
+    _THOUGHT_OPEN_TOKEN + r"[\s\S]*?" + _THOUGHT_CLOSE_TOKEN + r"\s*",
+    re.IGNORECASE,
+)
+_INLINE_TAIL_BLOCK_SUB_RE = re.compile(
+    _THOUGHT_OPEN_TOKEN + r"[\s\S]*?" + _THOUGHT_TAIL_MARKER,
+    re.IGNORECASE,
+)
+_INLINE_OPEN_TAIL_SUB_RE = re.compile(
+    _THOUGHT_OPEN_TOKEN + r"[\s\S]*$",
+    re.IGNORECASE,
+)
+
+
+def _strip_leaked_thought_prefix(text: str) -> Tuple[str, str]:
+    """将误入正文的思考草稿前缀拆分为 `(reasoning, clean_text)`。"""
+    if not text or not _INLINE_THOUGHT_OPEN_RE.match(text):
+        return "", text
+
+    thinking_parts: List[str] = []
+    remaining = text
+    while True:
+        match = _INLINE_THOUGHT_CLOSE_RE.match(remaining)
+        if not match:
+            break
+        thinking_parts.append(match.group(1))
+        remaining = match.group(2)
+        if not _INLINE_THOUGHT_OPEN_RE.match(remaining):
+            return "".join(thinking_parts), remaining
+
+    if _INLINE_THOUGHT_OPEN_RE.match(remaining):
+        tail = _INLINE_THOUGHT_TAIL_RE.match(remaining)
+        if tail:
+            thinking_parts.append(tail.group(1))
+            return "".join(thinking_parts), tail.group(2)
+        thinking_parts.append(_INLINE_THOUGHT_OPEN_RE.sub("", remaining, count=1))
+        return "".join(thinking_parts), ""
+
+    return "".join(thinking_parts), remaining
+
+
+def _absorb_leaked_thought(content: Optional[str], reasoning_content: str) -> Tuple[Optional[str], str]:
+    """当可见正文以思考标记开头时，将其剥离并归入 reasoning_content。"""
+    text = content or ""
+    if not text or not _INLINE_THOUGHT_OPEN_RE.match(text):
+        return content, reasoning_content
+    leaked_thinking, cleaned_text = _strip_leaked_thought_prefix(text)
+    merged_reasoning = leaked_thinking + "\n" + reasoning_content if reasoning_content else leaked_thinking
+    return cleaned_text, merged_reasoning
+
+
+def _scrub_embedded_thought_blocks(text: str) -> str:
+    """清除嵌在历史消息或工具回执字符串内部的泄漏思考块。"""
+    if not text or not _INLINE_THOUGHT_ANY_RE.search(text):
+        return text
+    cleaned = _INLINE_CLOSED_BLOCK_SUB_RE.sub("", text)
+    cleaned = _INLINE_TAIL_BLOCK_SUB_RE.sub("", cleaned)
+    return _INLINE_OPEN_TAIL_SUB_RE.sub("", cleaned)
+
+
+def _build_non_tool_parts(
+    item: UserMessageItem | AssistantMessageItem,
+    *,
+    strip_leaked_thought: bool = False,
+) -> List[Part]:
     """将消息中的文本与图片片段转换为 Gemini `Part` 列表。
 
     Args:
         item: 内部消息 Item。
+        strip_leaked_thought: 是否剥离模型历史中的思考前缀。
 
     Returns:
         List[Part]: Gemini 所需的内容片段列表。
     """
     converted_parts: List[Part] = []
+    text_buffer: List[str] = []
+
+    def flush_text_buffer() -> None:
+        if not text_buffer:
+            return
+        text_value = "".join(text_buffer)
+        text_buffer.clear()
+        if strip_leaked_thought and _INLINE_THOUGHT_OPEN_RE.match(text_value):
+            _, cleaned_text = _strip_leaked_thought_prefix(text_value)
+            text_value = cleaned_text
+        text_value = _scrub_embedded_thought_blocks(text_value)
+        if not text_value:
+            return
+        converted_parts.append(Part.from_text(text=text_value))
+
     for message_part in item.parts:
         if isinstance(message_part, ContextTextPart):
-            converted_parts.append(Part.from_text(text=message_part.text))
+            text_buffer.append(message_part.text)
             continue
+        flush_text_buffer()
         if isinstance(message_part, ContextRefusalPart):
             converted_parts.append(Part.from_text(text=message_part.refusal))
             continue
@@ -190,7 +300,19 @@ def _build_non_tool_parts(item: UserMessageItem | AssistantMessageItem) -> List[
                     mime_type=_normalize_image_mime_type(message_part.normalized_image_format),
                 )
             )
+    flush_text_buffer()
     return converted_parts
+
+
+def _scrub_json_strings(value: Any) -> Any:
+    """递归清洗 JSON 结构中的字符串叶子节点，保持外层结构完整。"""
+    if isinstance(value, str):
+        return _scrub_embedded_thought_blocks(value)
+    if isinstance(value, list):
+        return [_scrub_json_strings(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _scrub_json_strings(item) for key, item in value.items()}
+    return value
 
 
 def _normalize_function_response_payload(item: FunctionCallOutputItem) -> Dict[str, Any]:
@@ -208,10 +330,10 @@ def _normalize_function_response_payload(item: FunctionCallOutputItem) -> Dict[s
     try:
         parsed_content = json.loads(stripped_content)
     except json.JSONDecodeError:
-        return {"result": item.output}
+        return {"result": _scrub_embedded_thought_blocks(item.output)}
     if isinstance(parsed_content, dict):
-        return parsed_content
-    return {"result": parsed_content}
+        return _scrub_json_strings(parsed_content)
+    return {"result": _scrub_json_strings(parsed_content)}
 
 
 def _build_gemini_tool_call_extra_content(thought_signature: bytes | None) -> Dict[str, Any] | None:
@@ -352,7 +474,7 @@ def _convert_messages(items: List[ContextItem]) -> Tuple[ContentListUnion, str |
             ]
             for group_item in group_items:
                 if isinstance(group_item, AssistantMessageItem):
-                    assistant_parts.extend(_build_non_tool_parts(group_item))
+                    assistant_parts.extend(_build_non_tool_parts(group_item, strip_leaked_thought=True))
             if group_tool_calls:
                 for tool_call_index, tool_call in enumerate(group_tool_calls):
                     assistant_parts.append(
@@ -590,6 +712,7 @@ def _build_stream_api_response(
     """
     content = content_buffer.getvalue().strip()
     reasoning_content = reasoning_buffer.getvalue().strip()
+    content, reasoning_content = _absorb_leaked_thought(content, reasoning_content)
     content_buffer.close()
     reasoning_buffer.close()
 
@@ -695,6 +818,7 @@ def _default_normal_response_parser(
 
     content = "".join(visible_parts).strip() or getattr(response, "text", None)
     reasoning_content = "".join(reasoning_parts).strip()
+    content, reasoning_content = _absorb_leaked_thought(content, reasoning_content)
     tool_calls = _collect_function_calls(response)
 
     usage_record = _extract_usage_record(response)
@@ -966,6 +1090,7 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
         Returns:
             ProviderStreamResponseHandler[AsyncIterator[GenerateContentResponse]]: 默认流式处理器。
         """
+
         async def default_stream_handler(
             response_stream: AsyncIterator[GenerateContentResponse],
             interrupt_flag: asyncio.Event | None,
@@ -990,6 +1115,7 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
         Returns:
             ProviderResponseParser[GenerateContentResponse]: 默认非流式解析器。
         """
+
         def default_response_parser(
             response: GenerateContentResponse,
         ) -> Tuple[APIResponse, Optional[UsageTuple]]:
