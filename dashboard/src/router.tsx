@@ -198,13 +198,6 @@ const reasoningProcessRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/logs'), 'ReasoningLogViewerPage'),
 })
 
-// MaiSaka 聊天流监控路由
-const plannerMonitorRoute = createRoute({
-  getParentRoute: () => protectedRoute,
-  path: '/planner-monitor',
-  component: lazyRouteComponent(() => import('./routes/monitor/index.tsx'), 'PlannerMonitorPage'),
-})
-
 const computerRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/computer',
@@ -435,7 +428,6 @@ const routeTree = rootRoute.addChildren([
     dataTransferRoute,
     logsRoute,
     reasoningProcessRoute,
-    plannerMonitorRoute,
     agentRoute,
     computerRoute,
     filesRoute,

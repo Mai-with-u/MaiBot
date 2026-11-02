@@ -237,6 +237,8 @@ def _serialize_tool_results(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]
             "stop_after_execution": bool(tool.get("stop_after_execution", False)),
             "duration_ms": float(tool.get("duration_ms", 0.0) or 0.0),
             "summary": str(tool.get("summary", "")),
+            "reply_schedule": _normalize_payload_value(tool.get("reply_schedule")),
+            "reply_supplement": _normalize_payload_value(tool.get("reply_supplement")),
         }
         detail = tool.get("detail")
         for key in ("started_at", "ended_at"):

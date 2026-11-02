@@ -317,6 +317,8 @@ class ConfigSchemaGenerator:
             schema["uiParent"] = ui_parent
         if ui_label:
             schema["uiLabel"] = ui_label
+        if config_class.__ui_section_label__:
+            schema["uiSectionLabel"] = config_class.__ui_section_label__
         if ui_use_subtabs:
             schema["uiUseSubTabs"] = ui_use_subtabs
         if ui_sub_label:

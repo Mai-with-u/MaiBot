@@ -53,6 +53,12 @@ export interface FieldSchema {
   'x-option-descriptions'?: Record<string, string>
   'x-placeholder'?: string
   'x-row'?: string
+  'x-chat-settings'?: {
+    scope: 'common' | 'group' | 'private'
+    row: number
+    quick?: boolean
+    dialog?: string
+  }
   'x-display-as-section'?: boolean
   'x-textarea-min-height'?: number
   'x-textarea-rows'?: number
@@ -67,6 +73,7 @@ export interface ConfigSchema {
   nested?: Record<string, ConfigSchema>
   uiParent?: string
   uiLabel?: string
+  uiSectionLabel?: string
   uiAdvanced?: boolean
   uiOrder?: number
   uiUseSubTabs?: boolean

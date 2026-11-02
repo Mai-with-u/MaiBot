@@ -4,7 +4,8 @@ import { getApiBaseUrl } from '@/lib/api-base'
 import { getPluginUsageSeconds, type InstalledPlugin } from '@/lib/plugin-api'
 import type { PluginInfo } from '@/types/plugin'
 
-const REVIEW_PROMPT_USAGE_SECONDS = 3 * 24 * 60 * 60
+const REVIEW_PROMPT_MIN_USAGE_SECONDS = 24 * 60 * 60
+const REVIEW_PROMPT_USAGE_SPREAD_SECONDS = 96 * 60 * 60
 const REVIEW_PROMPT_LABELS = [
   '给插件评分？',
   '喵喵喵打个分？',
@@ -17,6 +18,16 @@ interface PluginReviewPrompt {
   label: string
   marketPluginId: string
   storageKey: string
+}
+
+function getReviewPromptUsageSeconds(storageKey: string): number {
+  // 按实例和插件身份生成固定的伪随机门槛（24～120 小时），避免刷新或重启后重新抽取。
+  let hash = 2166136261
+  for (let index = 0; index < storageKey.length; index += 1) {
+    hash = Math.imul(hash ^ storageKey.charCodeAt(index), 16777619)
+  }
+  return REVIEW_PROMPT_MIN_USAGE_SECONDS
+    + ((hash >>> 0) / 0x100000000) * REVIEW_PROMPT_USAGE_SPREAD_SECONDS
 }
 
 export function usePluginReviewPrompts(
@@ -46,7 +57,7 @@ export function usePluginReviewPrompts(
 
           const marketPlugin = marketPluginsById[plugin.manifest.id || plugin.id] || marketPluginsById[plugin.id]
           const usage = usageSeconds[plugin.manifest.id || plugin.id]
-          if (!marketPlugin || usage === undefined || usage < REVIEW_PROMPT_USAGE_SECONDS) continue
+          if (!marketPlugin || usage === undefined || usage < getReviewPromptUsageSeconds(storageKey)) continue
 
           // 每个插件在本次页面访问中固定文案，运行状态刷新时不重新随机。
           let label = labels.current.get(storageKey)

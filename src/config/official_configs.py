@@ -539,6 +539,7 @@ class ChatReplyTimingConfig(ConfigBase):
     message_debounce_mode: Literal["off", "fast", "natural", "steady"] = Field(
         default="natural",
         json_schema_extra={
+            "x-chat-settings": {"scope": "group", "row": 20},
             "label": {
                 "zh_CN": "群聊消息防抖",
                 "en_US": "Group message debouncing",
@@ -564,6 +565,7 @@ class ChatReplyTimingConfig(ConfigBase):
     private_message_debounce_mode: Literal["off", "fast", "natural", "steady"] = Field(
         default="natural",
         json_schema_extra={
+            "x-chat-settings": {"scope": "private", "row": 20},
             "label": {
                 "zh_CN": "私聊消息防抖",
                 "en_US": "Private message debouncing",
@@ -588,6 +590,7 @@ class ChatReplyTimingConfig(ConfigBase):
     planner_message_steering: bool = Field(
         default=False,
         json_schema_extra={
+            "x-chat-settings": {"scope": "common", "row": 10},
             "label": {
                 "zh_CN": "快速反应模式",
                 "en_US": "Quick reaction mode",
@@ -603,13 +606,13 @@ class ChatReplyTimingConfig(ConfigBase):
         ge=0,
         le=1,
         json_schema_extra={
+            "x-chat-settings": {"scope": "group", "row": 10, "quick": True},
             "label": {
                 "zh_CN": "群聊频率",
                 "en_US": "Group talk frequency",
                 "ja_JP": "グループ発言頻度",
             },
             "x-widget": "slider",
-            "x-row": "talk-values",
             "step": 0.001,
         },
     )
@@ -618,13 +621,13 @@ class ChatReplyTimingConfig(ConfigBase):
     private_reply_paused: bool = Field(
         default=False,
         json_schema_extra={
+            "x-chat-settings": {"scope": "private", "row": 10, "quick": True},
             "label": {
                 "zh_CN": "暂停私聊回复",
                 "en_US": "Pause private replies",
                 "ja_JP": "個別チャットの返信を一時停止",
             },
             "x-widget": "switch",
-            "x-row": "talk-values",
         },
     )
     """开启后私聊只接收消息并维护历史，不进入思考；单个私聊可通过暂停规则覆盖此设置。"""
@@ -632,6 +635,7 @@ class ChatReplyTimingConfig(ConfigBase):
     private_reply_pause_rules: List[PrivateReplyPauseRule] = Field(
         default_factory=list,
         json_schema_extra={
+            "x-chat-settings": {"scope": "private", "row": 30},
             "label": {
                 "zh_CN": "单个私聊暂停规则",
                 "en_US": "Private reply pause overrides",
@@ -645,13 +649,13 @@ class ChatReplyTimingConfig(ConfigBase):
     mentioned_bot_reply: bool = Field(
         default=True,
         json_schema_extra={
+            "x-chat-settings": {"scope": "group", "row": 40, "quick": True},
             "label": {
                 "zh_CN": "提及必回复",
                 "en_US": "Always reply when mentioned",
                 "ja_JP": "メンション時に必ず返信",
             },
             "x-widget": "switch",
-            "x-row": "reply-switches",
         },
     )
     """开启后，只要消息提到麦麦名字就更容易回复。"""
@@ -659,13 +663,13 @@ class ChatReplyTimingConfig(ConfigBase):
     inevitable_at_reply: bool = Field(
         default=True,
         json_schema_extra={
+            "x-chat-settings": {"scope": "group", "row": 40, "quick": True},
             "label": {
                 "zh_CN": "At 必回复",
                 "en_US": "Always reply to @",
                 "ja_JP": "@ に必ず返信",
             },
             "x-widget": "switch",
-            "x-row": "reply-switches",
         },
     )
     """开启后，被 @ 时会尽量回复。"""
@@ -674,6 +678,7 @@ class ChatReplyTimingConfig(ConfigBase):
         default=15,
         ge=0,
         json_schema_extra={
+            "x-chat-settings": {"scope": "group", "row": 50},
             "label": {
                 "zh_CN": "空闲退避基准",
                 "en_US": "Idle backoff base",
@@ -692,6 +697,7 @@ class ChatReplyTimingConfig(ConfigBase):
         default=300,
         ge=0,
         json_schema_extra={
+            "x-chat-settings": {"scope": "group", "row": 50},
             "label": {
                 "zh_CN": "空闲退避上限",
                 "en_US": "Idle backoff cap",
@@ -708,6 +714,7 @@ class ChatReplyTimingConfig(ConfigBase):
         default=2,
         ge=1,
         json_schema_extra={
+            "x-chat-settings": {"scope": "group", "row": 60},
             "label": {
                 "zh_CN": "空闲退避起点",
                 "en_US": "Idle backoff start",
@@ -724,6 +731,7 @@ class ChatReplyTimingConfig(ConfigBase):
         default=6,
         ge=0,
         json_schema_extra={
+            "x-chat-settings": {"scope": "group", "row": 60},
             "label": {
                 "zh_CN": "空闲退避绕过消息数",
                 "en_US": "Idle backoff bypass messages",
@@ -739,6 +747,7 @@ class ChatReplyTimingConfig(ConfigBase):
     enable_talk_value_rules: bool = Field(
         default=False,
         json_schema_extra={
+            "x-chat-settings": {"scope": "group", "row": 70},
             "label": {
                 "zh_CN": "启用动态发言频率规则",
                 "en_US": "Enable dynamic talk frequency rules",
@@ -755,6 +764,7 @@ class ChatReplyTimingConfig(ConfigBase):
             TalkRulesItem(platform="", item_id="", rule_type="group", time="09:00-18:59", value=1.0),
         ],
         json_schema_extra={
+            "x-chat-settings": {"scope": "group", "row": 80, "dialog": "动态发言规则"},
             "label": {
                 "zh_CN": "动态发言频率规则",
                 "en_US": "Dynamic talk frequency rules",
@@ -777,6 +787,7 @@ class ChatReplyStyleConfig(ConfigBase):
     group_quote_frequency: Literal["never", "occasionally", "often"] = Field(
         default="occasionally",
         json_schema_extra={
+            "x-chat-settings": {"scope": "group", "row": 20},
             "label": {
                 "zh_CN": "群聊引用频率",
                 "en_US": "Group reply quote frequency",
@@ -791,6 +802,7 @@ class ChatReplyStyleConfig(ConfigBase):
     private_quote_frequency: Literal["never", "occasionally", "often"] = Field(
         default="occasionally",
         json_schema_extra={
+            "x-chat-settings": {"scope": "private", "row": 20},
             "label": {
                 "zh_CN": "私聊引用频率",
                 "en_US": "Private reply quote frequency",
@@ -862,6 +874,7 @@ class ChatConfig(ConfigBase):
     creative_mode: bool = Field(
         default=False,
         json_schema_extra={
+            "x-chat-settings": {"scope": "common", "row": 10},
             "label": {"zh_CN": "创意模式", "en_US": "Creative mode", "ja_JP": "クリエイティブモード"},
             "x-widget": "switch",
         },
@@ -871,6 +884,7 @@ class ChatConfig(ConfigBase):
     enable_reply_at: bool = Field(
         default=True,
         json_schema_extra={
+            "x-chat-settings": {"scope": "group", "row": 30},
             "label": {
                 "zh_CN": "允许回复时 @ 用户",
                 "en_US": "Allow mentions in replies",
@@ -884,6 +898,7 @@ class ChatConfig(ConfigBase):
     max_context_size: int = Field(
         default=50,
         json_schema_extra={
+            "x-chat-settings": {"scope": "group", "row": 10, "quick": True},
             "label": {
                 "zh_CN": "群聊上下文",
                 "en_US": "Group context size",
@@ -892,7 +907,6 @@ class ChatConfig(ConfigBase):
             "x-widget": "input",
             "x-layout": "inline-right",
             "x-input-width": "6.5rem",
-            "x-row": "chat-context-controls",
         },
     )
     """群聊回复时参考的最近消息数量；越大越懂上下文，也更耗模型。"""
@@ -900,6 +914,7 @@ class ChatConfig(ConfigBase):
     max_private_context_size: int = Field(
         default=75,
         json_schema_extra={
+            "x-chat-settings": {"scope": "private", "row": 10, "quick": True},
             "label": {
                 "zh_CN": "私聊上下文",
                 "en_US": "Private context size",
@@ -908,7 +923,6 @@ class ChatConfig(ConfigBase):
             "x-widget": "input",
             "x-layout": "inline-right",
             "x-input-width": "6.5rem",
-            "x-row": "chat-context-controls",
         },
     )
     """私聊回复时参考的最近消息数量。"""
@@ -1161,7 +1175,8 @@ class ExperimentalConfig(ConfigBase):
 class MessageReceiveConfig(ConfigBase):
     """消息接收配置类"""
 
-    __ui_label__ = "消息接收"
+    __ui_label__ = "消息处理"
+    __ui_section_label__ = "消息接收"
     __ui_advanced__ = True
     __ui_order__ = 70
 
@@ -4244,13 +4259,18 @@ class JargonConfig(ConfigBase):
 class VoiceConfig(ConfigBase):
     """语音识别配置类"""
 
-    __ui_parent__ = "message_receive"
+    __ui_parent__ = "capabilities"
     __ui_label__ = "语音"
     __ui_advanced__ = True
 
     enable_asr: bool = Field(
         default=False,
         json_schema_extra={
+            "label": {
+                "zh_CN": "启用语音识别",
+                "en_US": "Enable speech recognition",
+                "ja_JP": "音声認識を有効化",
+            },
             "x-widget": "switch",
         },
     )
@@ -4539,6 +4559,7 @@ class ResponsePostProcessConfig(ConfigBase):
     """回复后处理配置类"""
 
     __ui_label__ = "后处理"
+    __ui_parent__ = "message_receive"
     __ui_advanced__ = True
     __ui_order__ = 100
 
@@ -5346,7 +5367,8 @@ class MaimMessageConfig(ConfigBase):
 class WebUIConfig(ConfigBase):
     """WebUI配置类"""
 
-    __ui_label__ = "WebUI"
+    __ui_label__ = "网络"
+    __ui_section_label__ = "WebUI"
     __ui_advanced__ = True
     __ui_order__ = 110
 

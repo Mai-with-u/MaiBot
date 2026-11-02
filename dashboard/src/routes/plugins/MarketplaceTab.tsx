@@ -395,7 +395,7 @@ export const MarketplaceTab = memo(function MarketplaceTab({
 
   return (
     // 卡片始终属于同一个网格，换列、筛选或排序只移动节点，不再按行拆卸重建。
-    // CSS 按容器宽度排布：最小 300px、最多四列；两条 subgrid 轨道保持操作区对齐。
+    // CSS 按容器宽度排布：最小 300px、最多四列；卡片独立布局，避免交互触发整页 subgrid 测量。
     <div
       data-plugin-market-grid="true"
       className="grid gap-x-6 gap-y-8"
@@ -404,8 +404,9 @@ export const MarketplaceTab = memo(function MarketplaceTab({
       {displayPlugins.map((plugin) => (
         <div
           key={plugin.id}
-          className="-mx-2 -my-4 row-span-2 grid grid-rows-subgrid gap-y-0 px-2 py-4"
-          // 保留跨边框标签空间，并让卡片内容参与 subgrid 行高计算。
+          className="-mx-2 -my-4 grid min-w-0 px-2 py-4"
+          // 保留跨边框标签与阴影空间；屏幕外跳过布局和绘制，已显示卡片记住实际高度。
+          style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 320px' }}
         >
           {renderPluginCard(plugin)}
         </div>

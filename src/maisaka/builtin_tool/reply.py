@@ -257,14 +257,12 @@ def _build_monitor_metadata(reply_result: ReplyGenerationResult, reply_id: str =
 
     monitor_detail = reply_result.monitor_detail
     metadata: Dict[str, object] = {"reply_id": reply_id} if reply_id else {}
+    metadata["reply_schedule"] = reply_result.metrics.extra.get("reply_schedule")
     supplement_detail = reply_result.metrics.extra.get("reply_supplement")
     if isinstance(supplement_detail, dict):
         metadata["reply_supplement"] = supplement_detail
         monitor_detail = dict(monitor_detail)
-        monitor_detail["extra_sections"] = [
-            *monitor_detail.get("extra_sections", []),
-            {"title": "回复补充编排", "content": json.dumps(supplement_detail, ensure_ascii=False, indent=2)},
-        ]
+        monitor_detail["reply_supplement"] = supplement_detail
     if isinstance(monitor_detail, dict):
         metadata["monitor_detail"] = monitor_detail
     return metadata

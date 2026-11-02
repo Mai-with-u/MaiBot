@@ -134,7 +134,7 @@ export const PluginCard = memo(function PluginCard({
       data-plugin-market-card="true"
       data-plugin-installed={plugin.installed ? 'true' : undefined}
       data-plugin-recent-activity={recentActivities.length > 0 || downloadGrowth || likeGrowth ? 'true' : undefined}
-      className="relative isolate row-span-2 grid h-full min-w-0 cursor-pointer grid-cols-1 grid-rows-subgrid gap-y-0"
+      className="relative isolate grid h-full min-w-0 cursor-pointer grid-cols-1 grid-rows-[auto_1fr] gap-y-0"
       onPointerEnter={measureTitleOverflow}
       onFocusCapture={measureTitleOverflow}
       onClick={(event) => {

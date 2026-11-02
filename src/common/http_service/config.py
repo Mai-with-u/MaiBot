@@ -7,6 +7,7 @@ class HTTPConfig(ConfigBase):
     """后端 HTTP 监听配置，文件服务和 WebUI 共用。"""
 
     __ui_label__ = "HTTP 服务"
+    __ui_parent__ = "webui"
     __ui_advanced__ = True
     __ui_order__ = 109
 

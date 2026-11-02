@@ -517,6 +517,8 @@ class MaisakaReasoningEngine:
                 "tool_call_id": execution_id,
                 "tool_name": "reply",
                 "tool_args": arguments,
+                "reply_schedule": result.metadata.get("reply_schedule"),
+                "reply_supplement": normalize_tool_record_value(result.metadata.get("reply_supplement")),
                 "tool_call_source": "planner_text",
                 "tool_call_source_label": "Planner 正文触发",
                 "success": result.success,

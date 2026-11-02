@@ -27,6 +27,7 @@ export interface MaisakaToolCall {
 }
 
 export interface SessionStartEvent {
+  focus_session_ids?: string[]
   session_id: string
   session_name: string
   is_group_chat?: boolean
@@ -37,6 +38,7 @@ export interface SessionStartEvent {
 }
 
 export interface StageStatusEvent {
+  focus_session_ids?: string[]
   session_id: string
   session_name?: string
   platform?: string
@@ -291,6 +293,9 @@ export interface MaisakaFinalizedToolResult {
   summary: string
   prompt_html_uri?: string
   detail?: unknown
+  reply_schedule?: { mode: 'serial' | 'parallel'; dependencies: string[] } | null
+  reply_supplement?: Record<string, unknown>
+  reply_text?: string
   matched_tool_names?: string[]
   newly_discovered_tool_names?: string[]
 }
@@ -347,8 +352,6 @@ export interface SubagentStartedEvent {
   call_id: string
   description: string
   granted_tools: string[]
-  /** 是否在后台运行（开启高级子代理） */
-  background: boolean
   max_rounds: number
   timestamp: number
 }

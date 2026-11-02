@@ -39,7 +39,7 @@ function buildFieldPath(basePath: string, fieldName: string) {
 }
 
 function resolveSectionTitle(schema: ConfigSchema) {
-  return schema.uiLabel || schema.classDoc || schema.className
+  return schema.uiSectionLabel || schema.uiLabel || schema.classDoc || schema.className
 }
 
 function resolveFieldSectionTitle(field: FieldSchema) {
@@ -66,7 +66,6 @@ function orderInlineFields(schema: ConfigSchema, fields: FieldSchema[]) {
     .map(({ field }) => field)
 }
 
-const CHAT_TALK_RULE_FIELD_NAMES = new Set(['enable_talk_value_rules', 'talk_value_rules'])
 
 export function AdvancedSettingsButton({
   active,
@@ -477,8 +476,6 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
                   ? "grid-cols-[minmax(0,1fr)_auto]"
                   : isVisualImageCompressionRow
                   ? "grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1.1fr)] items-center"
-                  : rowKey === 'chat-quote-frequency' || rowKey === 'message-debounce'
-                  ? "md:grid-cols-2"
                   : "md:grid-cols-2 xl:grid-cols-3",
               )}
             >
@@ -537,35 +534,12 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
     </>
   )
 
-  const renderVisibleFields = () => {
-    if (basePath !== 'chat.reply_timing') {
-      return renderFieldList(visibleFields)
-    }
-
-    const talkRuleFields = visibleFields.filter((field) => CHAT_TALK_RULE_FIELD_NAMES.has(field.name))
-    if (talkRuleFields.length === 0) {
-      return renderFieldList(visibleFields)
-    }
-
-    const commonFields = visibleFields.filter((field) => !CHAT_TALK_RULE_FIELD_NAMES.has(field.name))
-    if (commonFields.length === 0) {
-      return renderFieldList(talkRuleFields)
-    }
-
-    return (
-      <div className="min-w-0 space-y-4">
-        {renderFieldList(commonFields)}
-        <Separator className="my-2 bg-border/50" />
-        {renderFieldList(talkRuleFields)}
-      </div>
-    )
-  }
 
   return (
     <div className="min-w-0 space-y-4">
       {visibleFields.length > 0 && (
         <div>
-          {renderVisibleFields()}
+          {renderFieldList(visibleFields)}
         </div>
       )}
 
