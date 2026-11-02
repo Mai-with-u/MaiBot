@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { APIProvider } from '../types'
-import { cleanProviderData, validateProvider } from '../utils'
+import { cleanProviderData, isNoAuthProvider, resolveAuthType, validateProvider } from '../utils'
 
 /** 构造一个字段齐全的合法提供商，按需覆盖部分字段 */
 const makeProvider = (overrides: Partial<APIProvider> = {}): APIProvider => ({
@@ -104,5 +104,67 @@ describe('validateProvider', () => {
     const result = validateProvider(makeProvider(), [], null)
     expect(result.isValid).toBe(true)
     expect(result.errors).toEqual({})
+  })
+})
+
+describe('auth_type 与 api_key 必填校验', () => {
+  it('auth_type=none 时 api_key 留空校验通过（Ollama 等无鉴权端点）', () => {
+    const result = validateProvider(makeProvider({ auth_type: 'none', api_key: '' }))
+    expect(result.isValid).toBe(true)
+    expect(result.errors).toEqual({})
+  })
+
+  it('auth_type=none 时名称/URL 为空仍报对应错误，但不报 api_key 错误', () => {
+    const result = validateProvider(
+      makeProvider({ auth_type: 'none', name: '', base_url: '', api_key: '' })
+    )
+    expect(result.isValid).toBe(false)
+    expect(result.errors.name).toBe('请输入提供商名称')
+    expect(result.errors.base_url).toBe('请输入基础 URL')
+    expect(result.errors.api_key).toBeUndefined()
+  })
+
+  it.each(['bearer', 'header', 'query'])(
+    'auth_type=%s 时 api_key 留空仍报「请输入 API Key」',
+    (authType) => {
+      const result = validateProvider(makeProvider({ auth_type: authType, api_key: '  ' }))
+      expect(result.isValid).toBe(false)
+      expect(result.errors.api_key).toBe('请输入 API Key')
+    }
+  )
+
+  it('未设置 auth_type 的存量配置按 bearer 处理，api_key 留空仍报错', () => {
+    const result = validateProvider(makeProvider({ api_key: '' }))
+    expect(result.isValid).toBe(false)
+    expect(result.errors.api_key).toBe('请输入 API Key')
+  })
+})
+
+describe('resolveAuthType / isNoAuthProvider', () => {
+  it('合法值原样返回，缺失或非法值归一为 bearer', () => {
+    expect(resolveAuthType({ auth_type: 'none' })).toBe('none')
+    expect(resolveAuthType({ auth_type: 'header' })).toBe('header')
+    expect(resolveAuthType({ auth_type: 'query' })).toBe('query')
+    expect(resolveAuthType({})).toBe('bearer')
+    expect(resolveAuthType({ auth_type: 'unknown' })).toBe('bearer')
+  })
+
+  it('仅 auth_type=none 判定为无鉴权', () => {
+    expect(isNoAuthProvider({ auth_type: 'none' })).toBe(true)
+    expect(isNoAuthProvider({ auth_type: 'bearer' })).toBe(false)
+    expect(isNoAuthProvider({})).toBe(false)
+  })
+})
+
+describe('cleanProviderData 的 auth_type 下发', () => {
+  it('auth_type=none 显式保留在下发数据中，api_key 可为空字符串', () => {
+    const cleaned = cleanProviderData(makeProvider({ auth_type: 'none', api_key: '' }))
+    expect(cleaned.auth_type).toBe('none')
+    expect(cleaned.api_key).toBe('')
+  })
+
+  it('缺失 auth_type 时下发后端默认值 bearer，避免存量配置语义漂移', () => {
+    const cleaned = cleanProviderData(makeProvider())
+    expect(cleaned.auth_type).toBe('bearer')
   })
 })

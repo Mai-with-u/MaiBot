@@ -56,8 +56,8 @@ export function useModelFetcher(options: UseModelFetcherOptions): UseModelFetche
         return
       }
 
-      // 检查 API Key 是否已配置
-      if (!config.api_key) {
+      // 检查 API Key 是否已配置（auth_type=none 的无鉴权端点除外）
+      if (!config.api_key && config.auth_type !== 'none') {
         setAvailableModels([])
         setMatchedTemplate(null)
         setModelFetchError('该提供商未配置 API Key，请先在"模型厂商设置"中填写')

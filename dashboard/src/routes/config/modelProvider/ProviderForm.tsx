@@ -19,8 +19,8 @@ import { AnimationContext } from '@/lib/animation-context'
 import { fetchModelClientTypes, type ModelClientType } from '@/lib/config-api'
 
 import { PROVIDER_TEMPLATES } from '../providerTemplates'
-import type { APIProvider, FormErrors } from './types'
-import { validateProvider } from './utils'
+import { DEFAULT_AUTH_TYPE, type APIProvider, type FormErrors } from './types'
+import { AUTH_TYPE_OPTIONS, isNoAuthProvider, resolveAuthType, validateProvider } from './utils'
 
 const PROVIDER_TEMPLATE_OPTIONS = PROVIDER_TEMPLATES.filter((template) => template.id !== 'custom')
 const DEFAULT_PROVIDER_TEMPLATE = PROVIDER_TEMPLATES.find(
@@ -139,6 +139,7 @@ export function ProviderForm({
 
   const isUsingTemplate = useMemo(() => selectedTemplate !== 'custom', [selectedTemplate])
   const isMaiReplier = selectedTemplate === 'mai_replier'
+  const providerIsNoAuth = localProvider ? isNoAuthProvider(localProvider) : false
   const selectedTemplateConfig = useMemo(
     () => PROVIDER_TEMPLATES.find((template) => template.id === selectedTemplate),
     [selectedTemplate]
@@ -187,6 +188,7 @@ export function ProviderForm({
       base_url: template.base_url,
       client_type: template.client_type,
       ...template.providerDefaults,
+      auth_type: template.auth_type ?? DEFAULT_AUTH_TYPE,
       api_key: template.defaultApiKey ?? (
         PROVIDER_TEMPLATES.some((item) => item.defaultApiKey === prev?.api_key)
           ? ''
@@ -436,6 +438,50 @@ export function ProviderForm({
                         </SelectContent>
                       </Select>
                     </div>
+                    <div className="grid gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <Label htmlFor="auth_type">鉴权方式</Label>
+                        <HelpTooltip
+                          content={
+                            <div className="space-y-2">
+                              <p className="font-medium">鉴权方式</p>
+                              <p>指定调用提供商接口时如何携带 API Key，与后端 auth_type 配置一致。</p>
+                              <ul className="list-disc list-inside space-y-1 text-xs">
+                                <li><strong>Bearer Token：</strong>以 Authorization: Bearer 方式发送（默认）</li>
+                                <li><strong>自定义请求头：</strong>通过自定义请求头发送</li>
+                                <li><strong>查询参数：</strong>通过 URL 查询参数发送</li>
+                                <li><strong>无鉴权：</strong>端点不需要密钥（如本地 Ollama），API Key 可留空</li>
+                              </ul>
+                            </div>
+                          }
+                          side="right"
+                          maxWidth="350px"
+                        />
+                      </div>
+                      <Select
+                        value={resolveAuthType(localProvider ?? {})}
+                        onValueChange={(value) => {
+                          setLocalProvider((prev) =>
+                            prev ? { ...prev, auth_type: value } : null
+                          )
+                          // 切到无鉴权后，先前因缺少 API Key 产生的错误不再成立
+                          if (value === 'none') {
+                            setFormErrors((prev) => ({ ...prev, api_key: undefined }))
+                          }
+                        }}
+                      >
+                        <SelectTrigger id="auth_type">
+                          <SelectValue placeholder="选择鉴权方式" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {AUTH_TYPE_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                     <div className="grid gap-2" data-tour="provider-url-input">
                       <div className="flex items-center gap-1.5">
                         <Label htmlFor="base_url" className={formErrors.base_url ? 'text-destructive' : ''}>基础 URL *</Label>
@@ -480,7 +526,7 @@ export function ProviderForm({
 
                     <div className="grid gap-2" data-tour="provider-apikey-input">
                       <div className="flex items-center gap-1.5">
-                        <Label htmlFor="api_key" className={formErrors.api_key ? 'text-destructive' : ''}>API Key *</Label>
+                        <Label htmlFor="api_key" className={formErrors.api_key ? 'text-destructive' : ''}>{providerIsNoAuth ? 'API Key' : 'API Key *'}</Label>
                         <HelpTooltip
                           content={
                             <div className="space-y-2">
@@ -491,6 +537,7 @@ export function ProviderForm({
                                 <li>请妥善保管，不要泄露给他人</li>
                                 <li>可以点击眼睛图标切换显示/隐藏</li>
                                 <li>点击复制图标可快速复制密钥</li>
+                                <li>鉴权方式选择「无鉴权」时可留空，如本地 Ollama 等端点</li>
                               </ul>
                             </div>
                           }
@@ -511,7 +558,7 @@ export function ProviderForm({
                               setFormErrors((prev) => ({ ...prev, api_key: undefined }))
                             }
                           }}
-                          placeholder="sk-..."
+                          placeholder={providerIsNoAuth ? '无需鉴权，可留空' : 'sk-...'}
                           aria-invalid={formErrors.api_key ? true : undefined}
                           aria-describedby={formErrors.api_key ? 'api-key-error' : undefined}
                           className={`flex-1 ${formErrors.api_key ? 'border-destructive focus-visible:ring-destructive' : ''}`}

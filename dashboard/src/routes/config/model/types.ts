@@ -40,6 +40,7 @@ export interface ProviderConfig {
   base_url: string
   api_key: string
   client_type: string
+  auth_type?: string
   default_headers?: Record<string, string>
   max_retry?: number
   timeout?: number

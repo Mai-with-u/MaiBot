@@ -150,6 +150,26 @@ describe('useModelFetcher', () => {
     )
   })
 
+  it('auth_type=none 的无鉴权端点未配置 API Key 时仍尝试获取模型列表', async () => {
+    vi.mocked(fetchProviderModels).mockResolvedValue([{ id: 'llama3.1', name: 'llama3.1' }])
+
+    const { result } = renderFetcher(() => ({
+      name: 'ollama',
+      base_url: 'http://localhost:11434/v1',
+      api_key: '',
+      client_type: 'openai',
+      auth_type: 'none',
+    }))
+
+    await act(async () => {
+      await result.current.fetchModelsForProvider('ollama')
+    })
+
+    expect(fetchProviderModels).toHaveBeenCalledWith('ollama', 'openai', '/models')
+    expect(result.current.availableModels).toEqual([{ id: 'llama3.1', name: 'llama3.1' }])
+    expect(result.current.modelFetchError).toBeNull()
+  })
+
   it('未配置 modelFetcher 的内置模板默认乐观尝试 /models', async () => {
     vi.mocked(fetchProviderModels).mockResolvedValue([{ id: 'claude', name: 'claude' }])
 

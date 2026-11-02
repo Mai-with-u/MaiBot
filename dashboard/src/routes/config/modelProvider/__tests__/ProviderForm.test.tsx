@@ -557,3 +557,116 @@ describe('ProviderForm 字段编辑补全', () => {
     await user.click(screen.getByRole('option', { name: 'gemini' }))
   })
 })
+
+describe('ProviderForm 鉴权方式', () => {
+  it('默认鉴权方式为 Bearer Token，API Key 带必填星号', async () => {
+    renderForm({ editingProvider: makeProvider(), editingIndex: 0 })
+    expect(screen.getByRole('combobox', { name: '鉴权方式' })).toHaveTextContent('Bearer Token')
+    expect(screen.getByLabelText('API Key *')).toBeInTheDocument()
+  })
+
+  it('编辑 auth_type=none 的提供商时回显「无鉴权」，API Key 不带必填星号', async () => {
+    renderForm({
+      editingProvider: makeProvider({
+        name: 'Ollama',
+        base_url: 'http://localhost:11434/v1',
+        api_key: '',
+        auth_type: 'none',
+      }),
+      editingIndex: 0,
+    })
+    expect(screen.getByRole('combobox', { name: '鉴权方式' })).toHaveTextContent('无鉴权')
+    expect(screen.getByLabelText('API Key')).toBeInTheDocument()
+    expect(screen.queryByLabelText('API Key *')).not.toBeInTheDocument()
+  })
+
+  it('auth_type=none 时不填 API Key 可以保存，onSave 收到 auth_type=none 与空 api_key', async () => {
+    const user = userEvent.setup()
+    const { onSave } = renderForm({
+      editingProvider: makeProvider({
+        name: 'Ollama',
+        base_url: 'http://localhost:11434/v1',
+        api_key: '',
+        auth_type: 'none',
+      }),
+      editingIndex: 0,
+    })
+
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({ auth_type: 'none', api_key: '' }),
+        0
+      )
+    )
+    expect(screen.queryByText('请输入 API Key')).not.toBeInTheDocument()
+  })
+
+  it('在表单中切换到「无鉴权」后，留空 API Key 可以新增保存；切回 Bearer 后恢复必填', async () => {
+    const user = userEvent.setup()
+    const { onSave } = renderForm()
+    await user.click(screen.getByRole('button', { name: '使用自定义提供商' }))
+    await user.clear(screen.getByLabelText('名称 *'))
+    await user.type(screen.getByLabelText('名称 *'), 'Ollama')
+    await user.clear(screen.getByLabelText('基础 URL *'))
+    await user.type(screen.getByLabelText('基础 URL *'), 'http://localhost:11434/v1')
+
+    const authSelect = screen.getByRole('combobox', { name: '鉴权方式' })
+    await user.click(authSelect)
+    await user.click(await screen.findByRole('option', { name: '无鉴权' }))
+    expect(authSelect).toHaveTextContent('无鉴权')
+    expect(screen.getByLabelText('API Key')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Ollama', auth_type: 'none', api_key: '' }),
+        null
+      )
+    )
+
+    // 切回 Bearer Token 后 API Key 恢复必填，留空保存应被拦截
+    await user.click(authSelect)
+    await user.click(await screen.findByRole('option', { name: 'Bearer Token' }))
+    expect(screen.getByLabelText('API Key *')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    expect(await screen.findByText('请输入 API Key')).toBeInTheDocument()
+  })
+
+  it('鉴权方式下拉包含与后端枚举对齐的四个选项', async () => {
+    const user = userEvent.setup()
+    renderForm({ editingProvider: makeProvider(), editingIndex: 0 })
+    await user.click(screen.getByRole('combobox', { name: '鉴权方式' }))
+    expect(await screen.findByRole('option', { name: 'Bearer Token' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: '自定义请求头' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: '查询参数' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: '无鉴权' })).toBeInTheDocument()
+  })
+})
+
+
+describe('ProviderForm 模板切换时的鉴权方式', () => {
+  it('先选「无鉴权」再切回供应商模板时，auth_type 回退为模板默认值（bearer），API Key 恢复必填', async () => {
+    const user = userEvent.setup()
+    const { onSave } = renderForm()
+
+    // 进入自定义模式，把鉴权方式改成「无鉴权」
+    await user.click(screen.getByRole('button', { name: '使用自定义提供商' }))
+    const authSelect = screen.getByRole('combobox', { name: '鉴权方式' })
+    await user.click(authSelect)
+    await user.click(await screen.findByRole('option', { name: '无鉴权' }))
+    expect(authSelect).toHaveTextContent('无鉴权')
+    expect(screen.queryByLabelText('API Key *')).not.toBeInTheDocument()
+
+    // 切回供应商模板（DeepSeek，未声明 auth_type）：不应保留之前的「无鉴权」
+    await user.click(screen.getByRole('button', { name: '使用供应商模板' }))
+    await waitFor(() => expect(getTemplateTrigger()).toHaveTextContent('DeepSeek'))
+    expect(authSelect).toHaveTextContent('Bearer Token')
+    expect(screen.getByLabelText('API Key *')).toBeInTheDocument()
+
+    // 模板未提供默认 Key 且未填写时，保存应被必填校验拦截
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    expect(await screen.findByText('请输入 API Key')).toBeInTheDocument()
+    expect(onSave).not.toHaveBeenCalled()
+  })
+})
