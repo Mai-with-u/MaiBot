@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useRouterState } from '@tanstack/react-router'
 import {
   Check,
@@ -32,7 +32,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { DashboardTabBar, DashboardTabTrigger } from '@/components/ui/dashboard-tabs'
+import { DashboardFolderPanel, DashboardFolderTabBar } from '@/components/ui/dashboard-tabs'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -92,6 +92,7 @@ import {
 } from './bot/hooks'
 import { collectChatSettings } from '@/lib/chat-settings-schema'
 import { ChatSettings } from './bot/ChatSettings'
+import { VisualSettings } from './bot/VisualSettings'
 import { CommandPermissions } from './bot/CommandPermissions'
 import { GlobalLearningSettings } from './bot/GlobalLearningSettings'
 import { PersonalityProfiles } from './bot/PersonalityProfiles'
@@ -1473,6 +1474,7 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
     const visibleSubtabPanes = visiblePanes.filter((pane) => pane.presentation !== 'dialog')
     const visibleDialogPanes = visiblePanes.filter((pane) => pane.presentation === 'dialog')
     const hasCollapsibleSubtabs = subtabPanes.some((pane) => pane.advanced)
+    const hasSubtabBar = visibleSubtabPanes.length > 1 || hasCollapsibleSubtabs
     const visibleSubtabIds = new Set(visibleSubtabPanes.map((pane) => pane.id))
     const activeSubtab = activeSubtabByGroup[tabId]
     const resolvedActiveSubtab = visibleSubtabIds.has(activeSubtab)
@@ -1506,48 +1508,45 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
             [tabId]: value,
           }))
         }
-        className="space-y-3"
       >
-        {(visibleSubtabPanes.length > 1 || hasCollapsibleSubtabs) && (
-          <DashboardTabBar
-            data-config-bot-subtab-list="true"
-            variant="scroll"
-            className="bg-background/80 h-11 border"
-          >
+        {hasSubtabBar && (
+          <DashboardFolderTabBar data-config-page-folder-tabs="true" data-config-bot-subtab-list="true">
             {visibleSubtabPanes.map((pane) => (
-              <Fragment key={pane.id}>
-                <DashboardTabTrigger
-                  value={pane.id}
-                  data-config-bot-extra-tab={pane.advanced ? 'true' : undefined}
-                  className={cn(
-                    'min-h-8 text-base font-semibold',
-                    pane.advanced &&
-                      'overflow-hidden text-muted-foreground/80 hover:bg-background/70 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none motion-safe:animate-[config-tab-enter_300ms_ease-out_both]'
-                  )}
-                >
-                  {pane.label}
-                </DashboardTabTrigger>
-              </Fragment>
+              <TabsTrigger
+                key={pane.id}
+                value={pane.id}
+                data-config-bot-extra-tab={pane.advanced ? 'true' : undefined}
+                className={cn(pane.advanced && 'motion-safe:animate-[config-tab-enter_300ms_ease-out_both]')}
+              >
+                {pane.label}
+              </TabsTrigger>
             ))}
             {hasCollapsibleSubtabs && (
               <ConfigTabsExpandButton expanded={subtabExpanded} onClick={toggleSubtabsExpanded} />
             )}
-          </DashboardTabBar>
+          </DashboardFolderTabBar>
         )}
 
-        {visibleSubtabPanes.map((pane) => (
-          <TabsContent key={pane.id} value={pane.id} className="mt-0">
-            {pane.content}
-            {visibleDialogPanes.filter((dialog) => dialog.id.startsWith(`${pane.id}.`)).map((dialog) => (
-              <div key={dialog.id} className="mt-3">
-                <ConfigSectionDialog label={dialog.label} open={openConfigDialog === dialog.id}
-                  onOpenChange={(open) => setOpenConfigDialog(open ? dialog.id : null)}>
-                  {dialog.content}
-                </ConfigSectionDialog>
-              </div>
-            ))}
-          </TabsContent>
-        ))}
+        {visibleSubtabPanes.map((pane) => {
+          const content = (
+            <>
+              {pane.content}
+              {visibleDialogPanes.filter((dialog) => dialog.id.startsWith(`${pane.id}.`)).map((dialog) => (
+                <div key={dialog.id} className="mt-3">
+                  <ConfigSectionDialog label={dialog.label} open={openConfigDialog === dialog.id}
+                    onOpenChange={(open) => setOpenConfigDialog(open ? dialog.id : null)}>
+                    {dialog.content}
+                  </ConfigSectionDialog>
+                </div>
+              ))}
+            </>
+          )
+          return (
+            <TabsContent key={pane.id} value={pane.id} className="mt-0">
+              {hasSubtabBar ? <DashboardFolderPanel className="p-4">{content}</DashboardFolderPanel> : content}
+            </TabsContent>
+          )
+        })}
       </Tabs>
     )
   }
@@ -1562,6 +1561,17 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
 
     if (tabNestedEntries.length === 0) {
       return null
+    }
+
+    if (tabNestedEntries.length === 1 && tabNestedEntries[0][0] === 'visual') {
+      return (
+        <VisualSettings
+          schema={tabNestedEntries[0][1]}
+          values={sectionValues.visual ?? {}}
+          onChange={(path, value) => updateSectionValueByPath('visual', path, value)}
+          advancedVisible={advancedVisible}
+        />
+      )
     }
 
     if (tabNestedEntries.some(([, sectionSchema]) => sectionSchema.uiUseSubTabs)) {
@@ -1599,14 +1609,7 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
           sectionTrailingContent={sectionTrailingContent}
           fieldTrailingContent={fieldTrailingContent}
         />
-        {tab.id === 'bot' && configSchema.nested?.chat && (
-          <Card>
-            <CardHeader className="border-b border-border/50 pb-3">
-              <CardTitle className="text-base text-primary">聊天</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-3">{renderChatSettings(true)}</CardContent>
-          </Card>
-        )}
+        {tab.id === 'bot' && renderChatSettings(true)}
         {tab.id === 'bot' && basicMemoryFields.length > 0 && (
           <Card>
             <CardHeader className="border-b border-border/50 pb-3">

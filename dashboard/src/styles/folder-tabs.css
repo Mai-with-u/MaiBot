@@ -1,0 +1,140 @@
+/* 文件夹标签：子页切换的公共样式。标签压住面板上沿 2px，选中项与面板连成一体。 */
+[data-dashboard-folder-tabs] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.375rem 0.75rem;
+  padding-left: 1rem;
+  position: relative;
+  z-index: 1;
+  margin-bottom: -2px;
+}
+
+[data-dashboard-folder-tabs] > [data-dashboard-tabs-list='true'] {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: flex-end;
+  gap: 0.25rem;
+  width: auto;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+[data-dashboard-folder-tabs] > [data-dashboard-tabs-list='true']::-webkit-scrollbar {
+  display: none;
+}
+
+[data-dashboard-folder-tabs-trailing] {
+  margin-left: auto;
+  padding: 0 0.25rem 0.25rem 0;
+}
+
+/* 右侧内容不撑高标签行，否则标签会被顶下去，和上方多出一段空白。 */
+[data-dashboard-folder-tabs-trailing] [data-dynamic-field] {
+  min-height: 0;
+  padding-block: 0;
+}
+
+/* 尺寸不随主题变化；公共键帽的最小高度和内边距在这里全部收掉。 */
+:root [data-dashboard-folder-tabs] [data-dashboard-tabs-trigger='true'] {
+  min-height: 0 !important;
+  height: 1.875rem !important;
+  padding: 0 0.75rem !important;
+  transform: none !important;
+}
+
+[data-dashboard-folder-tabs] [data-dashboard-tabs-list='true'] > button:not([role='tab']) {
+  align-self: flex-end;
+  height: 1.875rem;
+  margin-bottom: 2px;
+}
+
+:root [data-dashboard-folder-tabs] [data-dashboard-tabs-trigger='true'][data-state='active'] {
+  height: 2.25rem !important;
+}
+
+/* 未选中项不画下边框，直接坐在面板上沿那条线上，所有标签的下边界才对得齐。 */
+[data-dashboard-folder-tabs] [data-dashboard-tabs-trigger='true']:not([data-state='active']) {
+  margin-bottom: 2px;
+  border-bottom-width: 0 !important;
+}
+
+[data-dashboard-folder-tabs] [data-dashboard-tabs-trigger='true'] {
+  flex: none;
+  border: 2px solid hsl(var(--border));
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  background: hsl(var(--muted));
+  box-shadow: none;
+  color: hsl(var(--muted-foreground));
+  font-size: 1rem;
+  font-weight: 600;
+  transform: none;
+}
+
+[data-dashboard-folder-tabs] [data-dashboard-tabs-trigger='true'][data-state='active'] {
+  background: hsl(var(--card));
+  border-bottom-color: hsl(var(--card));
+  color: hsl(var(--foreground));
+}
+
+[data-dashboard-folder-panel] {
+  min-width: 0;
+}
+
+/* ---------- 千禧风格：标签是面板同材质的塑料片，选中项顶上一条指示光 ---------- */
+:root[data-dashboard-style='millennium'] [data-dashboard-folder-tabs] [data-dashboard-tabs-trigger='true'] {
+  border-color: var(--mil-line);
+  border-radius: 0;
+  background: var(--mil-lo);
+  box-shadow: inset 2px 2px 0 var(--mil-hi);
+  color: var(--mil-ink);
+  font-family: var(--mil-font-pixel);
+  font-weight: 400;
+  letter-spacing: 0.1em;
+}
+
+:root[data-dashboard-style='millennium'] [data-dashboard-folder-tabs] [data-dashboard-tabs-trigger='true'][data-state='active'] {
+  background-color: var(--mil-panel);
+  background-image: var(--mil-speck);
+  background-size: 5px 5px;
+  border-bottom-color: var(--mil-panel);
+  box-shadow:
+    inset 2px 2px 0 var(--mil-hi),
+    inset 0 3px 0 var(--mil-meter);
+}
+
+/* ---------- 未来复古：直角纸片，选中项与纸面同色，顶边用锈红强调 ---------- */
+:root[data-dashboard-style='future-retro'] [data-dashboard-folder-tabs] [data-dashboard-tabs-trigger='true'] {
+  border-color: var(--retro-line);
+  background: var(--retro-recessed);
+  color: var(--retro-ink);
+  font-size: 1rem !important;
+}
+
+:root[data-dashboard-style='future-retro'] [data-dashboard-folder-tabs] [data-dashboard-tabs-trigger='true'][data-state='active'] {
+  background: hsl(var(--card));
+  border-top-color: var(--retro-rust);
+  border-bottom-color: var(--retro-paper);
+}
+
+:root[data-dashboard-style='future-retro'] [data-dashboard-folder-tabs] > [data-config-bot-subtab-list='true'] {
+  height: auto !important;
+}
+
+:root[data-dashboard-style='future-retro'] [data-dashboard-folder-tabs] > [data-dashboard-tabs-list='true'] {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+:root[data-dashboard-style='future-retro'] [data-dashboard-folder-tabs] [data-dashboard-tabs-trigger='true'][data-state='active'] {
+  background: var(--retro-paper) !important;
+  color: var(--retro-ink) !important;
+  border-top-width: 3px;
+}
