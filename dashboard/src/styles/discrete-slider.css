@@ -11,8 +11,8 @@
 }
 
 /* Radix 用外层 span 定位滑块；只给定位层和填充层做吸附动画。 */
-[data-dashboard-discrete-slider] [data-dashboard-slider] > span:has(> [data-dashboard-slider-thumb]),
-[data-dashboard-discrete-slider] [data-dashboard-slider-range] {
+[data-dashboard-discrete-slider][data-interacted='true'] [data-dashboard-slider] > span:has(> [data-dashboard-slider-thumb]),
+[data-dashboard-discrete-slider][data-interacted='true'] [data-dashboard-slider-range] {
   transition: left 220ms cubic-bezier(.2, .8, .2, 1), right 220ms cubic-bezier(.2, .8, .2, 1);
 }
 
@@ -51,6 +51,12 @@
 
 :root[data-dashboard-style='millennium'] [data-discrete-slider-plate] {
   background: var(--mil-on);
+}
+
+/* 方正的两套主题里滑块是竖长的键帽，不是正方块。 */
+:root:is([data-dashboard-style='millennium'], [data-dashboard-style='future-retro']) [data-dashboard-discrete-slider] [data-dashboard-slider-thumb] {
+  width: 1rem;
+  height: 1.625rem;
 }
 
 [data-discrete-slider-plate][data-disabled='true'] {

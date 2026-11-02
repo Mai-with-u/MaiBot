@@ -1,5 +1,5 @@
 import { motion, useMotionValue, useReducedMotion, useSpring, useTransform } from 'motion/react'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 
 import { Slider } from '@/components/ui/slider'
 import { cn } from '@/lib/utils'
@@ -26,6 +26,8 @@ export function DiscreteSlider<T extends string | number>({
   const selectedIndex = options.findIndex(option => option.value === value)
   const selected = options[selectedIndex]
   const [position, setPosition] = useState<number | null>(null)
+  // 只有用户操作后才播放吸附动画；切页挂载和配置载入时滑块直接就位。
+  const [interacted, setInteracted] = useState(false)
   const pointerPosition = useRef<number | null>(null)
   const previewIndex = Math.round(position ?? selectedIndex)
   const preview = options[previewIndex]
@@ -33,18 +35,43 @@ export function DiscreteSlider<T extends string | number>({
   const targetPosition = useMotionValue(selectedIndex)
   const springPosition = useSpring(targetPosition, { stiffness: 460, damping: 38, mass: 0.6 })
   const animatedPosition = reduceMotion ? targetPosition : springPosition
+  const labelRow = useRef<HTMLDivElement>(null)
+  const [labelRects, setLabelRects] = useState<Array<{ left: number; width: number }>>([])
+  // 底板按档位文字的实际位置定位，档位名怎么排布都贴得上；量到之前先按等分估算。
+  useLayoutEffect(() => {
+    const row = labelRow.current
+    if (!row) return
+    const labels = [...row.querySelectorAll<HTMLElement>('[data-discrete-slider-label]')]
+    const measure = () => setLabelRects(labels.map(label => ({ left: label.offsetLeft, width: label.offsetWidth })))
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(row)
+    labels.forEach(label => observer.observe(label))
+    return () => observer.disconnect()
+  }, [options.length])
   // 底板中心连续跟随拖杆；跨越两档时拉宽，到达刻度时收回，点选也走同一动画。
+  const plateStretch = (current: number) => reduceMotion ? 0 : Math.sin(Math.PI * (current - Math.floor(current))) * 0.28
+  const plateRect = (current: number) => {
+    const from = labelRects[Math.floor(current)]
+    const to = labelRects[Math.ceil(current)] ?? from
+    if (!from || !to) return null
+    const ratio = current - Math.floor(current)
+    return { left: from.left + (to.left - from.left) * ratio, width: from.width + (to.width - from.width) * ratio }
+  }
   const plateLeft = useTransform(animatedPosition, current => {
-    const stretch = reduceMotion ? 0 : Math.sin(Math.PI * (current - Math.floor(current))) * 0.28
-    return `calc(${(current - stretch / 2) * 100 / options.length}% + 2px)`
+    const stretch = plateStretch(current)
+    const rect = plateRect(current)
+    return rect ? `${rect.left - rect.width * stretch / 2}px` : `calc(${(current - stretch / 2) * 100 / options.length}% + 2px)`
   })
   const plateWidth = useTransform(animatedPosition, current => {
-    const stretch = reduceMotion ? 0 : Math.sin(Math.PI * (current - Math.floor(current))) * 0.28
-    return `calc(${(1 + stretch) * 100 / options.length}% - 4px)`
+    const stretch = plateStretch(current)
+    const rect = plateRect(current)
+    return rect ? `${rect.width * (1 + stretch)}px` : `calc(${(1 + stretch) * 100 / options.length}% - 4px)`
   })
   useEffect(() => {
     targetPosition.set(position ?? selectedIndex)
-  }, [position, selectedIndex, targetPosition])
+    if (!interacted) springPosition.jump(position ?? selectedIndex)
+  }, [interacted, position, selectedIndex, springPosition, targetPosition])
   if (options.length < 2) throw new Error('DiscreteSlider requires at least two ordered options')
 
   // 拖动只更新本地位置，松手才提交枚举值，避免拖动途中反复保存配置。
@@ -61,7 +88,7 @@ export function DiscreteSlider<T extends string | number>({
   }
 
   return (
-    <div data-dashboard-discrete-slider="true" data-dragging={position !== null} className={cn('min-w-0 py-2', disabled && 'opacity-50', className)}>
+    <div data-dashboard-discrete-slider="true" data-dragging={position !== null} data-interacted={interacted} onPointerDownCapture={() => setInteracted(true)} onKeyDownCapture={() => setInteracted(true)} className={cn('min-w-0 py-2', disabled && 'opacity-50', className)}>
       {/* 轨道端点对齐首尾标签中心，避免长文字伸出字段边界。 */}
       <div className="relative py-3" style={{ marginInline: `${50 / options.length}%` }}>
         {selected ? (
@@ -108,7 +135,7 @@ export function DiscreteSlider<T extends string | number>({
           {options.map((option, index) => <span key={option.value} data-active={index === previewIndex} className="h-1.5 w-0.5 bg-foreground/40" />)}
         </div>
       </div>
-      <div className="relative isolate mt-1 grid" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>
+      <div ref={labelRow} className="relative isolate mt-1 grid" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>
         {selected && <motion.div aria-hidden="true" data-discrete-slider-plate="true"
           data-disabled={disabled} className="pointer-events-none absolute inset-y-0 -z-10 rounded-[var(--surface-radius)] bg-secondary"
           style={{ left: plateLeft, width: plateWidth }} />}
