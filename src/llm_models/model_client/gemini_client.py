@@ -176,7 +176,7 @@ _INLINE_BRACKET_CLOSED_RE = re.compile(
     re.IGNORECASE,
 )
 _INLINE_FLOOR_CLOSED_RE = re.compile(
-    r"^\s*⌊\s*(?:[:_~-]\s*)?thought(?![A-Za-z])([\s\S]{0,32768}?)⌋"
+    r"^\s*⌊\s*(?:[:_~-]\s*)?thought(?![A-Za-z])(?!\s+process\b)([\s\S]{0,32768}?)⌋"
     r"\s*([\s\S]*)$",
     re.IGNORECASE,
 )
@@ -185,18 +185,66 @@ _INLINE_CN_CLOSED_RE = re.compile(
     r"(?:[:_~-]\s*】|】\s*[:_~-])\s*([\s\S]*)$",
     re.IGNORECASE,
 )
-_INLINE_XML_CLOSED_RE = re.compile(
-    r"^\s*<\s*(?:[:_~-]\s*)?thought\s*>([\s\S]{0,32768}?)"
-    r"</\s*thought\s*>\s*([\s\S]*)$",
-    re.IGNORECASE,
-)
-# 四种已闭合变体：方括号、下取整、全角方括号、XML 标签。
+# XML 变体改用栈式配对：嵌套的 `<thought>` 必须整体剥完，绝不能只认第一个闭标签。
+_XML_THOUGHT_START_RE = re.compile(r"^\s*<\s*(?:[:_~-]\s*)?thought\s*>", re.IGNORECASE)
+_XML_THOUGHT_TAG_RE = re.compile(r"</?\s*(?:[:_~-]\s*)?thought\s*>", re.IGNORECASE)
+# 三种已闭合变体：方括号、下取整、全角方括号；XML 由栈式配对单独处理。
 _INLINE_THOUGHT_CLOSED_RES = (
     _INLINE_BRACKET_CLOSED_RE,
     _INLINE_FLOOR_CLOSED_RE,
     _INLINE_CN_CLOSED_RE,
-    _INLINE_XML_CLOSED_RE,
 )
+# 开标签识别：与 `gemini_output._INLINE_*_START` 同源，用于判断草稿是否仍未闭合。
+_THOUGHT_OPEN_RE = re.compile(
+    r"^\s*(?:"
+    r"\[\s*(?:[:_~-]\s*)?thought(?![A-Za-z])"
+    r"|⌊\s*(?:[:_~-]\s*)?thought(?![A-Za-z])(?!\s+process\b)"
+    r"|【\s*(?:[:_~-]\s*)?thought(?![A-Za-z])"
+    r"|<\s*(?:[:_~-]\s*)?thought\s*>"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _split_closed_xml_thought(text: str) -> Optional[Tuple[str, str]]:
+    """按栈配对剥离开头最外层的已闭合 XML 思考块。
+
+    嵌套的 `<thought>` 必须等最外层闭合才结束，否则内层闭标签会把后半段
+    草稿当成正文放出去。
+
+    Args:
+        text: 待处理文本。
+
+    Returns:
+        Optional[Tuple[str, str]]: `(思考内容, 剩余正文)`；未命中或未闭合返回 `None`。
+    """
+    start = _XML_THOUGHT_START_RE.match(text)
+    if start is None:
+        return None
+    depth = 1
+    for tag in _XML_THOUGHT_TAG_RE.finditer(text, start.end()):
+        if tag.group().startswith("</"):
+            depth -= 1
+            if depth == 0:
+                return text[start.end() : tag.start()], text[tag.end() :]
+        else:
+            depth += 1
+    return None
+
+
+def _starts_with_unclosed_thought(text: str) -> bool:
+    """判断文本是否以尚未闭合的思考开标签开头。
+
+    Args:
+        text: 待检查文本。
+
+    Returns:
+        bool: 已剥完闭合块后仍以思考开标签开头时返回 `True`。
+    """
+    if not text:
+        return False
+    _, remaining = _strip_leaked_thought_prefix(text)
+    return _THOUGHT_OPEN_RE.match(remaining) is not None
 
 
 def _strip_leaked_thought_prefix(text: str) -> Tuple[str, str]:
@@ -218,6 +266,11 @@ def _strip_leaked_thought_prefix(text: str) -> Tuple[str, str]:
     thinking_parts: List[str] = []
     remaining = text
     while True:
+        xml_split = _split_closed_xml_thought(remaining)
+        if xml_split is not None:
+            thinking_parts.append(xml_split[0])
+            remaining = xml_split[1]
+            continue
         for pattern in _INLINE_THOUGHT_CLOSED_RES:
             match = pattern.match(remaining)
             if match:
@@ -257,7 +310,8 @@ def _build_non_tool_parts(
 ) -> List[Part]:
     """将消息中的文本与图片片段转换为 Gemini `Part` 列表。
 
-    连续文本片段先拼接再处理，避免思考块被拆进多个 Part 时漏剥；只有
+    连续文本片段先拼接再处理，避免思考块被拆进多个 Part 时漏剥；未闭合的
+    思考草稿还会跨过中间的图片片段继续累积，直到出现闭合定界符为止。只有
     `AssistantMessageItem`（`strip_leaked_thought=True`）会剥离开头已闭合的
     思考块，用户消息与工具回执一律保持原文。
 
@@ -270,9 +324,12 @@ def _build_non_tool_parts(
     """
     converted_parts: List[Part] = []
     text_buffer: List[str] = []
+    pending_thought = False
 
     def flush_text_buffer() -> None:
         """合并并处理已累积的连续文本片段。"""
+        nonlocal pending_thought
+        pending_thought = False
         if not text_buffer:
             return
         text_value = "".join(text_buffer)
@@ -286,8 +343,12 @@ def _build_non_tool_parts(
     for message_part in item.parts:
         if isinstance(message_part, ContextTextPart):
             text_buffer.append(message_part.text)
+            if strip_leaked_thought:
+                pending_thought = _starts_with_unclosed_thought("".join(text_buffer))
             continue
-        flush_text_buffer()
+        # 未闭合的思考草稿跨图片继续累积：图片原位输出，草稿留到出现闭合符再丢弃。
+        if not (pending_thought and isinstance(message_part, ContextImagePart)):
+            flush_text_buffer()
         if isinstance(message_part, ContextRefusalPart):
             converted_parts.append(Part.from_text(text=message_part.refusal))
             continue
