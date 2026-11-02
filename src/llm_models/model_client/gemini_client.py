@@ -167,92 +167,87 @@ def _normalize_image_mime_type(image_format: str) -> str:
     return f"image/{normalized_image_format}"
 
 
-_THOUGHT_LABEL = r"(?:thought(?![A-Za-z])|thinking\s+process\s*:)"
-_THOUGHT_OPEN_TOKEN = (
-    r"(?:\[\s*[:_~-]?\s*"
-    + _THOUGHT_LABEL
-    + r"|⌊\s*[:_~-]?\s*"
-    + _THOUGHT_LABEL
-    + r"|<\s*[:_~-]?\s*thought\s*>"
-    + r"|【\s*[:_~-]?\s*"
-    + _THOUGHT_LABEL
-    + r")"
-)
-_THOUGHT_CLOSE_TOKEN = r"(?:[:_~-]\s*\]|\]\s*[:_~-]|(?<!\.)(?<!…)[⌋⌉](?!\s*`)|</\s*thought\s*>|[:_~-]\s*】|】\s*[:_~-])"
-_THOUGHT_TAIL_MARKER = (
-    r"(?:Let's\s+(?:go\s+with|output|use|send|reply\s+with)\s+this(?:[!:.]+|\s+)"
-    r"|(?:[-*]\s*)?fits\s+well[!:.]+\s*"
-    r"|under\s+\d+\s+(?:words|chars|characters)[!:.]+\s*)"
-)
-
-_INLINE_THOUGHT_OPEN_RE = re.compile(r"^\s*" + _THOUGHT_OPEN_TOKEN, re.IGNORECASE)
-_INLINE_THOUGHT_CLOSE_RE = re.compile(
-    r"^\s*" + _THOUGHT_OPEN_TOKEN + r"([\s\S]*?)" + _THOUGHT_CLOSE_TOKEN + r"\s*([\s\S]*)$",
+# 思考标签识别：一律使用纯字面量正则，避免变量拼接触发 ast-grep 的
+# redos-non-literal-regex-python 告警；用 \s*(?:[:_~-]\s*)? 取代
+# \s*[:_~-]?\s*，消除相邻空白量词造成的二次方回溯；跨行匹配加上 32768 上界。
+_INLINE_BRACKET_CLOSED_RE = re.compile(
+    r"^\s*\[\s*(?:[:_~-]\s*)?thought(?![A-Za-z])([\s\S]{0,32768}?)"
+    r"(?:[:_~-]\s*\]|\]\s*[:_~-])\s*([\s\S]*)$",
     re.IGNORECASE,
 )
-_INLINE_THOUGHT_TAIL_RE = re.compile(
-    r"^\s*" + _THOUGHT_OPEN_TOKEN + r"([\s\S]*?" + _THOUGHT_TAIL_MARKER + r")([\s\S]+)$",
+_INLINE_FLOOR_CLOSED_RE = re.compile(
+    r"^\s*⌊\s*(?:[:_~-]\s*)?thought(?![A-Za-z])([\s\S]{0,32768}?)⌋"
+    r"\s*([\s\S]*)$",
     re.IGNORECASE,
 )
-_INLINE_THOUGHT_ANY_RE = re.compile(_THOUGHT_OPEN_TOKEN, re.IGNORECASE)
-_INLINE_CLOSED_BLOCK_SUB_RE = re.compile(
-    _THOUGHT_OPEN_TOKEN + r"[\s\S]*?" + _THOUGHT_CLOSE_TOKEN + r"\s*",
+_INLINE_CN_CLOSED_RE = re.compile(
+    r"^\s*【\s*(?:[:_~-]\s*)?thought(?![A-Za-z])([\s\S]{0,32768}?)"
+    r"(?:[:_~-]\s*】|】\s*[:_~-])\s*([\s\S]*)$",
     re.IGNORECASE,
 )
-_INLINE_TAIL_BLOCK_SUB_RE = re.compile(
-    _THOUGHT_OPEN_TOKEN + r"[\s\S]*?" + _THOUGHT_TAIL_MARKER,
+_INLINE_XML_CLOSED_RE = re.compile(
+    r"^\s*<\s*(?:[:_~-]\s*)?thought\s*>([\s\S]{0,32768}?)"
+    r"</\s*thought\s*>\s*([\s\S]*)$",
     re.IGNORECASE,
 )
-_INLINE_OPEN_TAIL_SUB_RE = re.compile(
-    _THOUGHT_OPEN_TOKEN + r"[\s\S]*$",
-    re.IGNORECASE,
+# 四种已闭合变体：方括号、下取整、全角方括号、XML 标签。
+_INLINE_THOUGHT_CLOSED_RES = (
+    _INLINE_BRACKET_CLOSED_RE,
+    _INLINE_FLOOR_CLOSED_RE,
+    _INLINE_CN_CLOSED_RE,
+    _INLINE_XML_CLOSED_RE,
 )
 
 
 def _strip_leaked_thought_prefix(text: str) -> Tuple[str, str]:
-    """将误入正文的思考草稿前缀拆分为 `(reasoning, clean_text)`。"""
-    if not text or not _INLINE_THOUGHT_OPEN_RE.match(text):
+    """剥离开头的已闭合思考块。
+
+    只认明确闭合定界符（`:]`、`]_`、`⌋`、`】`、`</thought>`）。未闭合的草稿
+    原样留在正文里，交给 replyer 的 `normalize_gemini_reply` 抛错触发重生成，
+    这里绝不猜测草稿中的哪一句才是正文。
+
+    Args:
+        text: 待处理文本。
+
+    Returns:
+        Tuple[str, str]: (思考内容, 剩余正文)。
+    """
+    if not text:
         return "", text
 
     thinking_parts: List[str] = []
     remaining = text
     while True:
-        match = _INLINE_THOUGHT_CLOSE_RE.match(remaining)
-        if not match:
+        for pattern in _INLINE_THOUGHT_CLOSED_RES:
+            match = pattern.match(remaining)
+            if match:
+                thinking_parts.append(match.group(1))
+                remaining = match.group(2)
+                break
+        else:
             break
-        thinking_parts.append(match.group(1))
-        remaining = match.group(2)
-        if not _INLINE_THOUGHT_OPEN_RE.match(remaining):
-            return "".join(thinking_parts), remaining
-
-    if _INLINE_THOUGHT_OPEN_RE.match(remaining):
-        tail = _INLINE_THOUGHT_TAIL_RE.match(remaining)
-        if tail:
-            thinking_parts.append(tail.group(1))
-            return "".join(thinking_parts), tail.group(2)
-        thinking_parts.append(_INLINE_THOUGHT_OPEN_RE.sub("", remaining, count=1))
-        return "".join(thinking_parts), ""
-
     return "".join(thinking_parts), remaining
 
 
 def _absorb_leaked_thought(content: Optional[str], reasoning_content: str) -> Tuple[Optional[str], str]:
-    """当可见正文以思考标记开头时，将其剥离并归入 reasoning_content。"""
+    """可见正文以已闭合思考块开头时，把它并入 reasoning 内容。
+
+    Args:
+        content: 可见正文。
+        reasoning_content: 已有思考内容。
+
+    Returns:
+        Tuple[Optional[str], str]: (清理后的正文, 合并后的思考内容)。
+    """
     text = content or ""
-    if not text or not _INLINE_THOUGHT_OPEN_RE.match(text):
+    if not text:
         return content, reasoning_content
     leaked_thinking, cleaned_text = _strip_leaked_thought_prefix(text)
-    merged_reasoning = leaked_thinking + "\n" + reasoning_content if reasoning_content else leaked_thinking
-    return cleaned_text, merged_reasoning
-
-
-def _scrub_embedded_thought_blocks(text: str) -> str:
-    """清除嵌在历史消息或工具回执字符串内部的泄漏思考块。"""
-    if not text or not _INLINE_THOUGHT_ANY_RE.search(text):
-        return text
-    cleaned = _INLINE_CLOSED_BLOCK_SUB_RE.sub("", text)
-    cleaned = _INLINE_TAIL_BLOCK_SUB_RE.sub("", cleaned)
-    return _INLINE_OPEN_TAIL_SUB_RE.sub("", cleaned)
+    if not leaked_thinking:
+        return content, reasoning_content
+    if reasoning_content:
+        return cleaned_text, leaked_thinking + "\n" + reasoning_content
+    return cleaned_text, leaked_thinking
 
 
 def _build_non_tool_parts(
@@ -262,9 +257,13 @@ def _build_non_tool_parts(
 ) -> List[Part]:
     """将消息中的文本与图片片段转换为 Gemini `Part` 列表。
 
+    连续文本片段先拼接再处理，避免思考块被拆进多个 Part 时漏剥；只有
+    `AssistantMessageItem`（`strip_leaked_thought=True`）会剥离开头已闭合的
+    思考块，用户消息与工具回执一律保持原文。
+
     Args:
         item: 内部消息 Item。
-        strip_leaked_thought: 是否剥离模型历史中的思考前缀。
+        strip_leaked_thought: 是否剥离模型历史开头的已闭合思考块。
 
     Returns:
         List[Part]: Gemini 所需的内容片段列表。
@@ -273,14 +272,13 @@ def _build_non_tool_parts(
     text_buffer: List[str] = []
 
     def flush_text_buffer() -> None:
+        """合并并处理已累积的连续文本片段。"""
         if not text_buffer:
             return
         text_value = "".join(text_buffer)
         text_buffer.clear()
-        if strip_leaked_thought and _INLINE_THOUGHT_OPEN_RE.match(text_value):
-            _, cleaned_text = _strip_leaked_thought_prefix(text_value)
-            text_value = cleaned_text
-        text_value = _scrub_embedded_thought_blocks(text_value)
+        if strip_leaked_thought:
+            _, text_value = _strip_leaked_thought_prefix(text_value)
         if not text_value:
             return
         converted_parts.append(Part.from_text(text=text_value))
@@ -304,19 +302,11 @@ def _build_non_tool_parts(
     return converted_parts
 
 
-def _scrub_json_strings(value: Any) -> Any:
-    """递归清洗 JSON 结构中的字符串叶子节点，保持外层结构完整。"""
-    if isinstance(value, str):
-        return _scrub_embedded_thought_blocks(value)
-    if isinstance(value, list):
-        return [_scrub_json_strings(item) for item in value]
-    if isinstance(value, dict):
-        return {key: _scrub_json_strings(item) for key, item in value.items()}
-    return value
-
-
 def _normalize_function_response_payload(item: FunctionCallOutputItem) -> Dict[str, Any]:
     """将内部工具结果消息转换为 Gemini 函数响应负载。
+
+    工具回执保持原文：直接对序列化 JSON 做正则替换会破坏结构，未经确认的
+    改写也可能影响下游解析，因此这里不做任何思考块清洗。
 
     Args:
         item: 工具结果 Item。
@@ -330,10 +320,10 @@ def _normalize_function_response_payload(item: FunctionCallOutputItem) -> Dict[s
     try:
         parsed_content = json.loads(stripped_content)
     except json.JSONDecodeError:
-        return {"result": _scrub_embedded_thought_blocks(item.output)}
+        return {"result": item.output}
     if isinstance(parsed_content, dict):
-        return _scrub_json_strings(parsed_content)
-    return {"result": _scrub_json_strings(parsed_content)}
+        return parsed_content
+    return {"result": parsed_content}
 
 
 def _build_gemini_tool_call_extra_content(thought_signature: bytes | None) -> Dict[str, Any] | None:
