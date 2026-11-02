@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from src.common.data_models.message_component_data_model import ImageComponent
+from src.common.data_models.message_component_data_model import EmojiComponent, ImageComponent
 
 from .message_id_alias import build_alias_map, to_display_message_id
 from .messages import ContentContextMessage
@@ -13,8 +13,12 @@ if TYPE_CHECKING:
 
 async def resolve_context_image(
     runtime: "MaisakaHeartFlowChatting", source_id: str, image_index: int = 0,
-) -> ImageComponent:
-    """按当前上下文消息编号或工具媒体索引读取图片，保留原始图片序号。"""
+) -> ImageComponent | EmojiComponent:
+    """按当前上下文消息编号或工具媒体索引读取图片，保留原始图片序号。
+
+    表情包在上下文中同样以图片展示给模型，因此与图片按出现顺序共同编号；
+    返回时保留表情包类型，让平台仍按表情包发送。
+    """
 
     if not isinstance(source_id, str) or not source_id.strip():
         raise ValueError("图片附件需要提供 msg_id 或 media_index。")
@@ -44,12 +48,20 @@ async def resolve_context_image(
         raise ValueError(f"没有找到消息：{reference}")
 
     # 保留原始图片序号；不能过滤加载失败的图片，否则会发送另一张图。
-    images = [component for component in context_message.raw_message.components if isinstance(component, ImageComponent)]
+    # 表情包也计入序号：模型看到的是同一串图片，只数 ImageComponent 会让表情包无法被引用。
+    images = [
+        component
+        for component in context_message.raw_message.components
+        if isinstance(component, (ImageComponent, EmojiComponent))
+    ]
     if image_index >= len(images):
         raise ValueError(f"图片序号超出范围：index={image_index}，该消息共有 {len(images)} 张图片。")
     image = images[image_index]
     if not image.binary_data:
-        await image.load_image_binary()
+        if isinstance(image, EmojiComponent):
+            await image.load_emoji_binary()
+        else:
+            await image.load_image_binary()
     if not image.binary_data:
         raise ValueError(f"目标图片数据不可读取：{reference}，index={image_index}")
-    return ImageComponent(binary_hash=image.binary_hash, content=image.content, binary_data=image.binary_data)
+    return type(image)(binary_hash=image.binary_hash, content=image.content, binary_data=image.binary_data)

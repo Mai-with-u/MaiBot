@@ -9,11 +9,16 @@ import json
 
 import pytest
 
-from src.common.data_models.message_component_data_model import ImageComponent, MessageSequence, TextComponent
+from src.common.data_models.message_component_data_model import (
+    EmojiComponent,
+    ImageComponent,
+    MessageSequence,
+    TextComponent,
+)
 from src.llm_models.payload_content.context_item import get_item_text
 from src.maisaka.context.image_attachment import resolve_context_image
 from src.maisaka.context.message_id_alias import to_display_message_id
-from src.maisaka.context.messages import ToolResultMediaMessage
+from src.maisaka.context.messages import InternalContextMessage, ToolResultMediaMessage
 from src.maisaka.runtime import MaisakaHeartFlowChatting
 
 
@@ -69,6 +74,30 @@ async def test_svg_relay_is_text_and_fabricated_media_index_is_reported_verbatim
     assert "mhglskb" not in str(error.value)
     with pytest.raises(ValueError, match="该消息共有 0 张图片"):
         await resolve_context_image(chat, to_display_message_id(receipt["task_id"]))
+
+
+@pytest.mark.asyncio
+async def test_emoji_in_message_is_numbered_with_images_and_keeps_emoji_type():
+    chat = runtime()
+    message_id = "1566716611891699777"
+    emoji = EmojiComponent(binary_hash="emoji-hash", binary_data=picture("yellow").binary_data)
+    image = picture("purple")
+    # 模型在上下文里按顺序看到「表情包、图片」两张图，序号应与之一致
+    chat._chat_history.append(InternalContextMessage(
+        raw_message=MessageSequence([TextComponent("发这张"), emoji, image]),
+        visible_text="发这张", timestamp=datetime.now(), message_id=message_id,
+    ))
+
+    resolved_emoji = await resolve_context_image(chat, to_display_message_id(message_id), 0)
+    assert type(resolved_emoji) is EmojiComponent
+    assert (resolved_emoji.binary_hash, resolved_emoji.binary_data) == (emoji.binary_hash, emoji.binary_data)
+
+    resolved_image = await resolve_context_image(chat, message_id, 1)
+    assert type(resolved_image) is ImageComponent
+    assert resolved_image.binary_data == image.binary_data
+
+    with pytest.raises(ValueError, match="该消息共有 2 张图片"):
+        await resolve_context_image(chat, message_id, 2)
 
 
 @pytest.mark.asyncio

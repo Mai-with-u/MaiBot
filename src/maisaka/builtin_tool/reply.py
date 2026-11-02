@@ -202,7 +202,7 @@ def get_tool_spec(context: Optional[ToolAvailabilityContext] = None) -> ToolSpec
                 },
                 "index": {
                     "type": "integer",
-                    "description": "同一消息中的图片序号，从 0 开始。",
+                    "description": "同一消息中的图片序号，表情包按出现顺序一并计入，从 0 开始。",
                     "default": 0,
                 },
             },
