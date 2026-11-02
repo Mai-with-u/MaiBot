@@ -54,6 +54,7 @@ import type {
 } from './types'
 import { clearPluginProgress, getPluginType, mergePluginProgress, PLUGIN_TYPE_OPTIONS } from './types'
 import { PluginDetailPage } from '../plugin-detail'
+import './marketplace-toolbar.css'
 
 // 返回列表后保留详情，但设置、筛选、点赞等无关状态不能重新渲染其中的文档。
 const MemoizedPluginDetailPage = memo(PluginDetailPage)
@@ -140,6 +141,10 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const scrollViewportRef = useRef<HTMLDivElement | null>(null)
+  const toolbarAnchorRef = useRef<HTMLDivElement | null>(null)
+  const toolbarRef = useRef<HTMLDivElement | null>(null)
+  const [toolbarPinned, setToolbarPinned] = useState(false)
+  const [toolbarHeight, setToolbarHeight] = useState<number>()
   const scrollRestoredRef = useRef(false)
   const [initialViewState] = useState(readPluginMarketplaceViewState)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -955,6 +960,39 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
     return { counts, total: matchingPlugins.length }
   }, [plugins, searchQuery, showCompatibleOnly, waitingForCompatibility, checkPluginCompatibility])
 
+  useLayoutEffect(() => {
+    const viewport = scrollViewportRef.current
+    const anchor = toolbarAnchorRef.current
+    const toolbar = toolbarRef.current
+    if (!viewport || !anchor || !toolbar) return
+
+    const desktop = window.matchMedia('(min-width: 1024px)')
+    const updatePinned = () => {
+      setToolbarPinned(desktop.matches && anchor.getBoundingClientRect().top < viewport.getBoundingClientRect().top + 8)
+    }
+    // 用独立锚点判断吸顶，并保留展开高度，避免工具栏缩短引起滚动位置跳动。
+    const updateToolbarLayout = () => {
+      // 展开动画结束后再更新占位，避免将动画中间高度写回列表布局。
+      if (toolbar.dataset.compact !== 'true' && toolbar.getAnimations().length === 0) {
+        setToolbarHeight(toolbar.offsetHeight)
+      }
+      updatePinned()
+    }
+    const observer = new ResizeObserver(updateToolbarLayout)
+    observer.observe(toolbar)
+    observer.observe(viewport)
+    toolbar.addEventListener('transitionend', updateToolbarLayout)
+    viewport.addEventListener('scroll', updatePinned, { passive: true })
+    desktop.addEventListener('change', updatePinned)
+    updatePinned()
+    return () => {
+      observer.disconnect()
+      toolbar.removeEventListener('transitionend', updateToolbarLayout)
+      viewport.removeEventListener('scroll', updatePinned)
+      desktop.removeEventListener('change', updatePinned)
+    }
+  }, [restartNoticeVisible, gitStatus?.installed])
+
   const marketplaceContent = (
     <ScrollArea
       data-dashboard-page-scroll="true"
@@ -1009,7 +1047,9 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
         )}
 
         {/* 搜索和筛选栏 */}
-        <Card data-plugin-market-toolbar="true" className="p-4">
+        <div ref={toolbarAnchorRef} className="marketplace-toolbar-anchor" aria-hidden="true" />
+        <div className="marketplace-toolbar-sticky" style={{ minHeight: toolbarHeight }}>
+        <Card ref={toolbarRef} data-plugin-market-toolbar="true" data-compact={toolbarPinned} className="p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             {/* 搜索框 */}
             <div className="relative w-full sm:max-w-md sm:flex-1">
@@ -1137,6 +1177,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
             </div>
           )}
         </Card>
+        </div>
 
         {/* 加载错误显示 */}
         {marketplaceProgress
