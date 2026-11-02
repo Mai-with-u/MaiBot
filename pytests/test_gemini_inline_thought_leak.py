@@ -286,7 +286,7 @@ def test_convert_messages_keeps_user_thought_across_image_part() -> None:
 
 
 def test_convert_messages_keeps_unclosed_thought_at_item_end() -> None:
-    """跨图片后仍未闭合时，暂存草稿原样输出，留给发送前检查阻断。"""
+    """整条消息都无法闭合时不得重排图文，严格保持 `[文本, 图片]` 原始顺序。"""
     contents, _ = _convert_messages(
         [
             AssistantMessageItem(
@@ -297,8 +297,61 @@ def test_convert_messages_keeps_unclosed_thought_at_item_end() -> None:
     )
 
     parts = contents[0].parts
-    assert parts[0].inline_data is not None
-    assert parts[1].text == "[:thought SECRET"
+    assert parts[0].text == "[:thought SECRET"
+    assert parts[1].inline_data is not None
+
+
+@pytest.mark.parametrize(
+    "crossed",
+    [
+        "<thought><analysis>SECRET</thought>MORE_SECRET</analysis>ANSWER",
+        "<thought><think>SECRET</thought>MORE_SECRET</think>ANSWER",
+        "<analysis><thought>SECRET</analysis>MORE_SECRET</thought>ANSWER",
+    ],
+)
+def test_crossed_xml_tags_are_left_to_pre_send_check(crossed: str) -> None:
+    """交叉 XML 标签属于配对错误，客户端不得剥离开标签，必须原样交给发送前阻断。
+
+    Args:
+        crossed: 交叉配对错误的合成样本。
+    """
+    with pytest.raises(GeminiReplyFormatError):
+        normalize_gemini_reply(crossed)
+
+    normal_resp, _ = _default_normal_response_parser(_make_response(crossed), logical_turn_id="turn-crossed")
+    assert _assistant_text(normal_resp) == crossed
+    stream_resp = _build_stream_api_response(io.StringIO(crossed), io.StringIO(""), [], None, "turn-crossed-stream")
+    assert _assistant_text(stream_resp) == crossed
+
+
+@pytest.mark.parametrize(
+    ("raw_text", "expected_body"),
+    [
+        ("[:thought:]Hello", "Hello"),
+        ("[_thought]_Hi", "Hi"),
+        ("⌊thought⌋Plain", "Plain"),
+        ("<thought></thought>Pure", "Pure"),
+    ],
+)
+def test_empty_closed_thought_block_is_stripped(raw_text: str, expected_body: str) -> None:
+    """空思考块同样算已命中，正文取闭合符之后的部分。
+
+    Args:
+        raw_text: 空闭合块样本。
+        expected_body: 期望得到的正文。
+    """
+    normal_resp, _ = _default_normal_response_parser(_make_response(raw_text), logical_turn_id="turn-empty")
+    assert _assistant_text(normal_resp) == expected_body
+
+    stream_resp = _build_stream_api_response(io.StringIO(raw_text), io.StringIO(""), [], None, "turn-empty-stream")
+    assert _assistant_text(stream_resp) == expected_body
+
+
+def test_closed_block_longer_than_32kb_is_still_stripped() -> None:
+    """去掉长度硬限后，超长闭合思考块也必须能剥离。"""
+    long_draft = "[:thought " + "铺" * 40000 + ":]正文还在"
+    normal_resp, _ = _default_normal_response_parser(_make_response(long_draft), logical_turn_id="turn-long")
+    assert _assistant_text(normal_resp) == "正文还在"
 
 
 @pytest.mark.parametrize("prefix", ["[", "⌊", "【", "<"])
