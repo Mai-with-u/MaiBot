@@ -5058,6 +5058,20 @@ class DebugConfig(ConfigBase):
     __ui_parent__ = "log"
     __ui_label__ = "其他"
 
+    gemini_reply_compatibility: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "兼容 Gemini 回复输出",
+                "en_US": "Gemini reply output compatibility",
+                "ja_JP": "Gemini 返信出力の互換処理",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """兼容回复正文中的显式思考标签及 Gemini 非标准思考分隔符，适用于原生和转接接口。
+    无法可靠分离正文时重生成一次，仍异常则阻止发送；不依赖回复后处理开关。不保证识别无标签草稿。"""
+
     enable_console_input: bool = Field(
         default=True,
         json_schema_extra={

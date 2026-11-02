@@ -64,6 +64,7 @@ from src.maisaka.visual.mode_utils import resolve_enable_visual_planner
 from src.plugin_runtime.hook_payloads import deserialize_prompt_items, serialize_prompt_items
 from src.plugin_runtime.host.hook_dispatcher import HookAbortedError
 
+from .gemini_output import GeminiReplyFormatError, normalize_gemini_reply
 from .maisaka_expression_selector import maisaka_expression_selector
 from .retro_prompt import RetroReplyPromptMixin
 
@@ -1106,6 +1107,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         reasoning_continuation_count = 0
         reasoning_regeneration_requested = False
         retro_period_regeneration_requested = False
+        gemini_regeneration_requested = False
         default_task_name = str(getattr(self.express_model, "task_name", "") or "replyer").strip() or "replyer"
 
         while True:
@@ -1387,6 +1389,33 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             matched_regex_pattern = str(after_response_kwargs.get("matched_regex_pattern") or "").strip()
             matched_regex_description = str(after_response_kwargs.get("matched_regex_description") or "").strip()
             retry_reason = str(after_response_kwargs.get("retry_reason") or "").strip()
+            if global_config.debug.gemini_reply_compatibility:
+                try:
+                    compatible_response = normalize_gemini_reply(response_text)
+                except GeminiReplyFormatError as exc:
+                    # 清空可见投影后复用有限重试，异常正文不进入发送及后续聊天历史。
+                    response_text = ""
+                    generation_result.output_items = replace_output_projection(
+                        generation_result.output_items, content="", replace_content=True,
+                    )
+                    logger.warning(f"Gemini 回复兼容处理: session={preview_chat_id} {exc}")
+                    if gemini_regeneration_requested or retry_count >= REPLYER_MAX_HOOK_RETRIES:
+                        result.error_code = "gemini_reply_format_error"
+                        result.error_message = str(exc)
+                        break
+                    gemini_regeneration_requested = True
+                    retry_requested = True
+                    retry_reason = "请重新生成正式聊天正文，不要输出思考过程、分析标题、草稿或思考标签。"
+                else:
+                    if compatible_response != response_text:
+                        logger.info(
+                            f"Gemini 回复兼容处理: session={preview_chat_id} "
+                            f"正文长度={len(response_text)}->{len(compatible_response)}"
+                        )
+                        response_text = compatible_response
+                        generation_result.output_items = replace_output_projection(
+                            generation_result.output_items, content=response_text, replace_content=True,
+                        )
             # 复古回复偶尔会脱离话题询问句号；每次生成流程仅为这两种句式重生成一次。
             if (
                 active_prompt_profile == "mai_replier"
@@ -1524,7 +1553,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         )
 
         if not result.success:
-            if result.error_code != "plugin_aborted":
+            if result.error_code not in {"plugin_aborted", "gemini_reply_format_error"}:
                 result.error_message = (
                     "插件 Hook 将回复正文修改为空。请调整回复目标或停止本次回复，勿原样重复调用。"
                     if result.error_code == "plugin_empty_response"

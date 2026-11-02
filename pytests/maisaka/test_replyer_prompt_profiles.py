@@ -115,3 +115,50 @@ async def test_hook_model_switch_and_retry_keep_actual_profile(generator, monkey
     assert observed == expected * 2
     assert select.await_count == int("ordinary" in models)
     assert history.await_count == int(creative or "mai_replier" in models)
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled,outputs,expected,calls", [
+    (False, ["⌊Thinking Process: draft"], "⌊Thinking Process: draft", 1),
+    (True, ["⌊思考过程⌉\n分析\n⌈正式回复"], "正式回复", 1),
+    (True, ["⌊Thinking Process: draft", "正常重发"], "正常重发", 2),
+    (True, ["⌊Thinking Process: draft", "思维链：仍然泄露"], "", 2),
+])
+async def test_gemini_compatibility_before_completion(generator, monkeypatch, enabled, outputs, expected, calls):
+    from src.desktop_pet.service import desktop_pet_service
+
+    monkeypatch.setattr(global_config.debug, "gemini_reply_compatibility", enabled)
+    monkeypatch.setattr(global_config.response_post_process, "enable_response_post_process", False)
+    monkeypatch.setattr(global_config.chat, "creative_mode", False)
+    monkeypatch.setattr(desktop_pet_service, "notify_thinking", AsyncMock())
+    monkeypatch.setattr(generator, "_persist_reply_preview", Mock())
+    monkeypatch.setattr(generator, "_build_reply_context", AsyncMock(return_value=MaisakaReplyContext()))
+
+    async def hook(name, **kwargs):
+        return HookDispatchResult(hook_name=name, kwargs=kwargs)
+
+    monkeypatch.setattr(generator, "_get_runtime_manager", lambda: SimpleNamespace(invoke_hook=hook))
+    count = 0
+
+    async def generate(*, context_factory, options):
+        nonlocal count
+        await context_factory(
+            SimpleNamespace(api_provider=SimpleNamespace(client_type="openai")),
+            SimpleNamespace(name="alias", model_identifier="alias", visual=False),
+        )
+        text = outputs[count]
+        count += 1
+        return LLMResponseResult(output_items=(
+            ContextItemBuilder().set_role(RoleType.Assistant).add_text_content(text).build(),
+        ), model_name="alias")
+
+    generator.express_model = SimpleNamespace(task_name="replyer", generate_response_with_context=generate)
+    success, result = await generator.generate_reply_with_context(chat_history=[])
+    assert success == bool(expected)
+    assert result.completion.response_text == expected
+    assert count == calls
+    if enabled:
+        assert "Thinking Process" not in str(result.output_items)
+        assert "分析" not in str(result.output_items)
+    if not expected:
+        assert result.error_code == "gemini_reply_format_error"
+        assert "阻止发送" in result.error_message
