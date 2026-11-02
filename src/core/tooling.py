@@ -184,6 +184,7 @@ class ToolExecutionContext:
     user_id: str = ""
     platform: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
+    is_focus: bool = False
 
 
 @dataclass(slots=True)
@@ -196,6 +197,7 @@ class ToolAvailabilityContext:
     group_id: str = ""
     user_id: str = ""
     platform: str = ""
+    is_focus: bool = False
 
 
 @dataclass(slots=True)
@@ -401,6 +403,7 @@ class ToolRegistry:
                 group_id=context.group_id,
                 user_id=context.user_id,
                 platform=context.platform,
+                is_focus=context.is_focus,
             )
 
         route = (await self._list_routes(availability_context)).get(invocation.tool_name)

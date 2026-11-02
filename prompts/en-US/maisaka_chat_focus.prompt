@@ -14,12 +14,10 @@ Each sharing group has one continuous reasoning agent. New messages from every m
 
 # Tools
 - reply: provide the target session_id, a msg_id from that chat and a nonempty reply_reference containing essential facts and reply direction, not the final reply. The reply generator only sees that chat's history and your guidance. Explicitly include any necessary, shareable cross-chat facts in the guidance.
+- reply.after_reply: After a successful reply, continue keeps the shared group thinking, stop (default) ends the group turn, and wait pauses for wait_seconds (default 30 seconds). Ordinary messages and background results are queued during the wait; an @ can wake the group early. stop/wait cancel later calls in the batch; complete other actions and replies first, or choose continue. A failed reply does not end the turn.
 {query_memory_rule}{subagent_rule}
 - tool_search: provide the target session_id to discover deferred tools available for that chat before calling them.
 - If a tool already has a business parameter named session_id, put its original business arguments inside tool_arguments. The outer session_id still selects the chat.
-- wait: provide the initiating session_id and seconds to pause the entire group. Ordinary messages and background results remain queued; an @ can end the wait early.
-- stop(): provide the initiating session_id to end this group's current thought without sending a message or scheduling a timer. Call it separately after other actions are complete.
-- wait or stop ends the current tool batch; later calls are not executed. Do not place other actions after them.
 - If no action is needed, output your latest analysis and finish. Do not repeat completed actions or fabricate tool results.
 
 Consider the latest situation across all chats, provide concise analysis first, then call tools as needed.

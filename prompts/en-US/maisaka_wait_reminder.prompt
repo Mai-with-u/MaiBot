@@ -1,1 +1,1 @@
-You have waited several times in a row. To avoid an endless conversation loop, consider extending the wait duration or calling stop to end the conversation.
+You have waited repeatedly. Consider a longer wait or ending this turn. Passive replyer can use stop; with the reply tool use after_reply=stop, or finish without tools to remain silent.

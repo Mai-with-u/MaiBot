@@ -135,6 +135,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
     _STATE_RUNNING: Literal["running"] = "running"
     _STATE_WAIT: Literal["wait"] = "wait"
     _STATE_STOP: Literal["stop"] = "stop"
+    _pending_wait_after_reply: bool = False
 
     def __init__(self, session_id: str):
         self.session_id = session_id
@@ -1006,10 +1007,10 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
 
     async def register_message(self, message: SessionMessage) -> None:
         """缓存一条新消息并唤醒主循环。"""
-        await focus_mode_manager.reconcile(self)
         async with self._message_ingest_lock:
             if not self._running:
                 raise RuntimeError(f"聊天运行时已停止，不能接收入站消息：{self.session_id}")
+            await focus_mode_manager._reconcile_member(self)
             await self._register_message(message)
 
     async def _register_message(self, message: SessionMessage) -> None:
@@ -1025,7 +1026,8 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         # 媒体预处理可能使较早收到的消息较晚入队，不能回退静默窗口。
         self._last_message_received_at = max(self._last_message_received_at, received_at)
         self._update_message_trigger_state(message)
-        self._observe_message_debounce(message, received_at)
+        if self._focus_group is None:
+            self._observe_message_debounce(message, received_at)
         self.message_cache.append(message)
         self._emit_monitor_message_ingested(message)
         self._prune_processed_message_cache()
@@ -1034,6 +1036,8 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
             if history_message is not None:
                 self._chat_history.append(history_message)
             await self._focus_group.register_message(self, message, history_message)
+            # Focus 统一维护处理进度，本聊天缓存仅用于查询原始消息。
+            self._last_processed_index = len(self.message_cache)
             return
         self._request_planner_interrupt_for_message(message)
         if self._running:
@@ -1717,6 +1721,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         """清理 wait 工具挂起状态与超时任务。"""
 
         self._pending_wait_tool_call_id = None
+        self._pending_wait_after_reply = False
         self._pending_wait_logical_turn_id = None
         self._pending_wait_started_at = None
         self._pending_wait_seconds = None
@@ -1735,6 +1740,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         seconds: Optional[float] = None,
         tool_call_id: Optional[str] = None,
         logical_turn_id: Optional[str] = None,
+        after_reply: bool = False,
     ) -> int:
         """进入 wait 状态并返回连续次数；多次等待由下一轮上下文提醒，不强制停止。"""
 
@@ -1743,6 +1749,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
             seconds=seconds,
             tool_call_id=tool_call_id,
             logical_turn_id=logical_turn_id,
+            after_reply=after_reply,
         )
         return self._consecutive_wait_count
 
@@ -1759,6 +1766,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         seconds: Optional[float] = None,
         tool_call_id: Optional[str] = None,
         logical_turn_id: Optional[str] = None,
+        after_reply: bool = False,
     ) -> None:
         """切换到等待状态。"""
 
@@ -1766,6 +1774,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
             raise ValueError("进入 wait 状态必须绑定非空 tool_call_id 和 logical_turn_id")
         self._agent_state = self._STATE_WAIT
         self._pending_wait_tool_call_id = tool_call_id
+        self._pending_wait_after_reply = after_reply
         self._pending_wait_logical_turn_id = logical_turn_id
         self._pending_wait_started_at = time.time()
         self._pending_wait_seconds = seconds
@@ -1818,6 +1827,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         started_at = self._pending_wait_started_at
         requested_seconds = self._pending_wait_seconds
         elapsed_seconds = max(0.0, time.time() - started_at) if started_at is not None else 0.0
+        self._pending_wait_after_reply = False
         self._cancel_wait_timeout_task()
         self._pending_wait_tool_call_id = None
         self._pending_wait_logical_turn_id = None

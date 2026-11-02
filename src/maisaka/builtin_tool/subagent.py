@@ -3,20 +3,18 @@
 子代理在独立上下文里运行，看不到当前聊天，只拿到 Planner 写的任务说明和被授权的工具；
 它可以自己多轮调用这些工具，最后只把结论交还给 Planner，中间过程不进入 Planner 上下文。
 
-默认情况下 Planner 等子代理跑完，结论作为本次工具结果返回。开启
-``capabilities.advanced_sub_agent`` 后子代理改在后台运行：调用立刻返回任务 id，结论在任务结束时
-作为一条新的 user 消息送回并唤醒 Planner，另外提供 subagent_status / subagent_stop 查看和终止任务。
+子代理在后台运行：调用立刻返回任务 id，结论在任务结束时作为一条新的 user 消息送回并唤醒
+Planner，另外提供 subagent_status / subagent_stop 查看和终止任务。
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import asyncio
 import json
 import time
 
 from src.common.logger import get_logger
-from src.config.config import global_config
 from src.core.tooling import ToolExecutionContext, ToolExecutionResult, ToolInvocation, ToolSpec
 from src.llm_models.payload_content.context_item import FunctionCallItem
 from src.llm_models.payload_content.tool_option import ToolCall
@@ -42,9 +40,7 @@ SUBAGENT_TOOL_NAME = "subagent"
 SUBAGENT_STATUS_TOOL_NAME = "subagent_status"
 SUBAGENT_STOP_TOOL_NAME = "subagent_stop"
 # 子代理最多进行的模型请求轮数；用完后再给一次不带工具的收尾机会。
-# 同步运行时 Planner 在等结论，轮数要少；后台运行不挡着 Planner，可以放宽。
-SUBAGENT_MAX_ROUNDS = 5
-SUBAGENT_BACKGROUND_MAX_ROUNDS = 20
+SUBAGENT_MAX_ROUNDS = 20
 # 子代理上下文里单条工具结果的上限
 SUBAGENT_TOOL_RESULT_MAX_CHARS = 20000
 # 子代理内部上下文按条数计的窗口，足够容纳全部轮次
@@ -83,19 +79,13 @@ _STATUS_LABELS = {"running": "运行中", "completed": "已完成", "failed": "�
 def get_tool_spec() -> ToolSpec:
     """获取 subagent 工具声明。"""
 
-    if global_config.capabilities.advanced_sub_agent:
-        result_description = (
-            "子代理在后台运行：调用后立刻返回任务 id，你可以继续处理聊天，不需要为它等待；"
-            "它结束时结论会作为一条 <subagent_result> 消息送回给你，中间的原始结果不会进入你的上下文。"
-            f"需要时用 {SUBAGENT_STATUS_TOOL_NAME} 查看进度，用 {SUBAGENT_STOP_TOOL_NAME} 终止不再需要的任务。"
-        )
-    else:
-        result_description = "最后只把结论返回给你，中间的原始结果不会进入你的上下文。"
     return ToolSpec(
         name=SUBAGENT_TOOL_NAME,
         description=(
             "把一个自包含的查询或整理任务交给子代理。子代理在独立上下文里工作，可以自己多次调用你授权的工具，"
-            f"{result_description}"
+            "子代理在后台运行：调用后立刻返回任务 id，你可以继续处理聊天，不需要为它等待；"
+            "它结束时结论会作为一条 <subagent_result> 消息送回给你，中间的原始结果不会进入你的上下文。"
+            f"需要时用 {SUBAGENT_STATUS_TOOL_NAME} 查看进度，用 {SUBAGENT_STOP_TOOL_NAME} 终止不再需要的任务。"
             "适合需要多次查询、交叉比对，或会返回大量原始内容的任务；只需要一次简单查询时直接调用对应工具即可。"
             "子代理看不到当前聊天，也不能发言：发言、等待和群管理操作必须由你自己完成。"
         ),
@@ -197,7 +187,6 @@ async def _run_sub_agent_rounds(
     task: str,
     granted_specs: List[ToolSpec],
     tool_usage: Dict[str, int],
-    max_rounds: int,
 ) -> SubAgentOutcome:
     """在独立上下文里多轮运行子代理，直到它给出结论或用完轮数。
 
@@ -207,7 +196,6 @@ async def _run_sub_agent_rounds(
         task: Planner 写给子代理的任务说明。
         granted_specs: 授权给子代理的工具声明。
         tool_usage: 工具调用次数；运行过程中原地更新，后台任务可以据此展示进度。
-        max_rounds: 可以调用工具的轮数上限。
     """
 
     runtime = tool_ctx.runtime
@@ -227,8 +215,8 @@ async def _run_sub_agent_rounds(
     execution_context = engine._build_tool_execution_context(task)
     conclusion = ""
 
-    for round_index in range(max_rounds + 1):
-        is_final_round = round_index == max_rounds
+    for round_index in range(SUBAGENT_MAX_ROUNDS + 1):
+        is_final_round = round_index == SUBAGENT_MAX_ROUNDS
         if is_final_round:
             sub_agent_history.append(
                 ReferenceMessage(
@@ -307,7 +295,6 @@ async def _run_and_report(
     task: str,
     granted_specs: List[ToolSpec],
     tool_usage: Dict[str, int],
-    max_rounds: int,
 ) -> SubAgentOutcome:
     """运行子代理，并把完成或失败上报给观察页；被终止的任务由终止方上报。"""
 
@@ -320,7 +307,6 @@ async def _run_and_report(
             task=task,
             granted_specs=granted_specs,
             tool_usage=tool_usage,
-            max_rounds=max_rounds,
         )
     except asyncio.CancelledError:
         raise
@@ -352,7 +338,7 @@ async def handle_tool(
     invocation: ToolInvocation,
     context: Optional[ToolExecutionContext] = None,
 ) -> ToolExecutionResult:
-    """执行 subagent：运行一个带工具的多轮子代理，同步返回结论或在后台运行。"""
+    """执行 subagent：运行一个带工具的多轮子代理，在后台运行并返回任务 id。"""
 
     del context
     task = str(invocation.arguments.get("task") or "").strip()
@@ -393,9 +379,7 @@ async def handle_tool(
     )
 
     task_manager = runtime._subagent_tasks
-    run_in_background_mode = global_config.capabilities.advanced_sub_agent
-    max_rounds = SUBAGENT_BACKGROUND_MAX_ROUNDS if run_in_background_mode else SUBAGENT_MAX_ROUNDS
-    if run_in_background_mode and task_manager.running_count >= SUBAGENT_MAX_RUNNING_TASKS:
+    if task_manager.running_count >= SUBAGENT_MAX_RUNNING_TASKS:
         return tool_ctx.build_failure_result(
             invocation.tool_name,
             f"已有 {task_manager.running_count} 个子代理在后台运行，达到上限；"
@@ -409,66 +393,36 @@ async def handle_tool(
         call_id=invocation.call_id,
         description=task,
         granted_tools=granted_tool_names,
-        background=run_in_background_mode,
-        max_rounds=max_rounds,
+        max_rounds=SUBAGENT_MAX_ROUNDS,
     )
 
-    if run_in_background_mode:
-        async def run_in_background(background_task: SubAgentTask) -> SubAgentOutcome:
-            return await _run_and_report(
-                tool_ctx,
-                task_id=task_id,
-                task=task,
-                granted_specs=granted_specs,
-                tool_usage=background_task.tool_usage,
-                max_rounds=max_rounds,
-            )
-
-        background_task = task_manager.start(
+    async def run_in_background(background_task: SubAgentTask) -> SubAgentOutcome:
+        return await _run_and_report(
+            tool_ctx,
             task_id=task_id,
-            description=task,
-            granted_tools=granted_tool_names,
-            runner=run_in_background,
-            on_finished=runtime.deliver_subagent_result,
-        )
-        logger.info(f"{runtime.log_prefix} 子代理任务已转入后台 task_id={background_task.task_id}")
-        return tool_ctx.build_success_result(
-            invocation.tool_name,
-            f"子代理已在后台开始工作，任务 id：{background_task.task_id}。"
-            "它结束时结论会作为一条 <subagent_result> 消息送回给你；现在可以继续处理聊天，不需要为它等待。"
-            f"{rejected_note}",
-            structured_content={
-                "task_id": background_task.task_id,
-                "granted_tools": granted_tool_names,
-                "rejected_tools": rejected_tool_names,
-            },
+            task=task,
+            granted_specs=granted_specs,
+            tool_usage=background_task.tool_usage,
         )
 
-    outcome = await _run_and_report(
-        tool_ctx,
+    background_task = task_manager.start(
         task_id=task_id,
-        task=task,
-        granted_specs=granted_specs,
-        tool_usage={},
-        max_rounds=max_rounds,
+        description=task,
+        granted_tools=granted_tool_names,
+        runner=run_in_background,
+        on_finished=runtime.deliver_subagent_result,
     )
-    usage_text = format_tool_usage(outcome.tool_usage)
-    if not outcome.conclusion:
-        return tool_ctx.build_failure_result(
-            invocation.tool_name,
-            f"子代理没有给出结论（工具使用：{usage_text}）。",
-        )
-
-    structured_content: Dict[str, Any] = {
-        "task_id": task_id,
-        "tool_usage": outcome.tool_usage,
-        "granted_tools": granted_tool_names,
-        "rejected_tools": rejected_tool_names,
-    }
+    logger.info(f"{runtime.log_prefix} 子代理任务已转入后台 task_id={background_task.task_id}")
     return tool_ctx.build_success_result(
         invocation.tool_name,
-        f"[子代理结论｜工具使用：{usage_text}]\n{outcome.conclusion}{rejected_note}",
-        structured_content=structured_content,
+        f"子代理已在后台开始工作，任务 id：{background_task.task_id}。"
+        "它结束时结论会作为一条 <subagent_result> 消息送回给你；现在可以继续处理聊天，不需要为它等待。"
+        f"{rejected_note}",
+        structured_content={
+            "task_id": background_task.task_id,
+            "granted_tools": granted_tool_names,
+            "rejected_tools": rejected_tool_names,
+        },
     )
 
 

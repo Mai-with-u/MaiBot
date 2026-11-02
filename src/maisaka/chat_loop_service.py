@@ -47,7 +47,7 @@ from src.plugin_runtime.hook_schema_utils import build_object_schema
 from src.plugin_runtime.host.hook_spec_registry import HookSpec, HookSpecRegistry
 from src.services.llm_service import LLMServiceClient
 
-from src.maisaka.builtin_tool import get_builtin_tools
+from src.maisaka.builtin_tool import get_builtin_tools, is_builtin_tool_in_action_stage
 from src.maisaka.context.history import collect_tool_turn_anchor_indices, normalize_tool_call_result_pairs
 from src.maisaka.context.messages import (
     IMAGE_QUALITY_MAX_SIDE,
@@ -883,9 +883,9 @@ class MaisakaChatLoopService:
 
         return self._localized_text(
             {
-                "en-US": "Consider all chats in the shared context. Every tool requires its target session_id. Use wait only to pause the entire group; otherwise finish this thought when no action is needed.",
-                "ja-JP": "共有コンテキスト内の全チャットを判断してください。すべてのツールに対象の session_id が必要です。wait はグループ全体を待機させる場合だけ使い、行動が不要なら思考を終了してください。",
-                "zh-CN": "结合共享上下文中的所有聊天判断，每个工具填写目标 session_id；只有需要整个组暂停等待时才使用 wait，没有需要执行的动作时结束本轮思考。",
+                "en-US": "Consider all chats in the shared context. Every tool requires its target session_id. reply.after_reply controls the entire group: stop by default, continue for further actions, or wait with wait_seconds. Finish without tools when no action is needed.",
+                "ja-JP": "共有コンテキスト内の全チャットを判断し、各ツールに対象の session_id を指定してください。reply.after_reply はグループ全体に適用され、既定は stop、行動を続けるなら continue、待機するなら wait と wait_seconds を使います。行動が不要ならツールを呼ばず終了してください。",
+                "zh-CN": "结合共享上下文中的所有聊天判断，每个工具填写目标 session_id；reply.after_reply 作用于整个组，默认 stop，需继续操作选 continue，需等待选 wait 并填写 wait_seconds。没有需要执行的动作时不调用工具，静默结束本轮思考。",
             }
         )
 
@@ -921,14 +921,13 @@ class MaisakaChatLoopService:
                 "zh-CN": "- subagent()：遇到需要查资料才能回答或判断的事（查文档、搜网页、查版本或插件信息、找图、核实某个说法等），优先交给子代理：写清楚要查什么，把用得上的工具授权给它；它查完只把结论交给你。只有一步就能完成的事才直接调用对应工具。",
             }
         )
-        if global_config.capabilities.advanced_sub_agent:
-            rule += self._localized_text(
-                {
-                    "en-US": " The sub-agent runs in the background: after dispatching it you do not need to wait and can keep chatting; its conclusion will be sent back to you later.",
-                    "ja-JP": "サブエージェントはバックグラウンドで動作します。依頼したあとは待つ必要はなく、会話を続けてかまいません。結論は後であなたに返されます。",
-                    "zh-CN": "子代理在后台运行，派发后不用等它，可以继续聊天，结论稍后会送回给你。",
-                }
-            )
+        rule += self._localized_text(
+            {
+                "en-US": " The sub-agent runs in the background: after dispatching it you do not need to wait and can keep chatting; its conclusion will be sent back to you later.",
+                "ja-JP": "サブエージェントはバックグラウンドで動作します。依頼したあとは待つ必要はなく、会話を続けてかまいません。結論は後であなたに返されます。",
+                "zh-CN": "子代理在后台运行，派发后不用等它，可以继续聊天，结论稍后会送回给你。",
+            }
+        )
         return f"\n{rule}"
 
     def _build_current_chat_attention_tail_message(self) -> str:
@@ -1234,6 +1233,10 @@ class MaisakaChatLoopService:
                 is_group_chat=self._is_group_chat,
             )
             tool_specs = await self._tool_registry.list_tools(availability_context)
+            tool_specs = [
+                spec for spec in tool_specs if spec.provider_name != "maisaka_builtin"
+                or is_builtin_tool_in_action_stage(spec, passive_replyer=self._get_chat_prompt_name() == "maisaka_chat_passive")
+            ]
             all_tools = [tool_spec.to_llm_definition() for tool_spec in tool_specs]
             tool_provider_types = [tool_spec.provider_type for tool_spec in tool_specs]
         else:
@@ -1242,7 +1245,9 @@ class MaisakaChatLoopService:
                 stream_id=self._session_id,
                 is_group_chat=self._is_group_chat,
             )
-            builtin_definitions = get_builtin_tools(availability_context)
+            builtin_definitions = get_builtin_tools(
+                availability_context, passive_replyer=self._get_chat_prompt_name() == "maisaka_chat_passive",
+            )
             all_tools = [*builtin_definitions, *self._extra_tools]
             tool_provider_types = ["builtin"] * len(builtin_definitions) + [""] * len(self._extra_tools)
 

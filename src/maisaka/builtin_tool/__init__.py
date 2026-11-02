@@ -152,11 +152,8 @@ def _is_builtin_tool_enabled_by_config(entry: BuiltinToolEntry) -> bool:
         return global_config.emoji.use_new_send_logic
     if entry.name == "send_emoji":
         return not global_config.emoji.use_new_send_logic
-    if entry.name == "subagent":
+    if entry.name in {"subagent", "subagent_status", "subagent_stop"}:
         return global_config.capabilities.planner_subagent
-    if entry.name in {"subagent_status", "subagent_stop"}:
-        # 只有后台子代理才有需要查看和终止的任务
-        return global_config.capabilities.planner_subagent and global_config.capabilities.advanced_sub_agent
     if entry.name == "read_tool_result":
         # 长结果整理和统一联网工具均会暂存原文，任一开启都需要回查入口。
         return global_config.capabilities.tool_result_condense or bool(model_config.model_task_config.web_search.model_list)
@@ -186,8 +183,13 @@ def get_builtin_tool_visibility(tool_spec: ToolSpec) -> BuiltinToolVisibility:
     return "visible"
 
 
-def is_builtin_tool_in_action_stage(tool_spec: ToolSpec) -> bool:
-    """判断内置工具是否属于 Action Loop 阶段。"""
+def is_builtin_tool_in_action_stage(tool_spec: ToolSpec, *, passive_replyer: bool = False) -> bool:
+    """统一 Planner 工具集：被动式使用独立控制，其余模式使用 reply.after_reply。"""
+
+    if tool_spec.name in {"stop", "wait"} and not passive_replyer:
+        return False
+    if tool_spec.name == "reply" and passive_replyer:
+        return False
 
     return str(tool_spec.metadata.get("builtin_stage") or "").strip() in {"action", "both"}
 
@@ -198,14 +200,19 @@ def get_all_builtin_tool_specs(context: Optional[ToolAvailabilityContext] = None
     return [entry.build_spec(context) for entry in _get_builtin_tool_entries(context=context)]
 
 
-def get_builtin_tools(context: Optional[ToolAvailabilityContext] = None) -> List[ToolDefinitionInput]:
+def get_builtin_tools(
+    context: Optional[ToolAvailabilityContext] = None, *, passive_replyer: bool = False,
+) -> List[ToolDefinitionInput]:
     """获取默认暴露给模型层的内置工具定义。"""
 
     tool_specs = [
         entry.build_spec(context)
         for entry in _get_builtin_tool_entries(stage="action", visibility="visible", context=context)
     ]
-    return [tool_spec.to_llm_definition() for tool_spec in tool_specs if tool_spec.enabled]
+    return [
+        tool_spec.to_llm_definition() for tool_spec in tool_specs
+        if tool_spec.enabled and is_builtin_tool_in_action_stage(tool_spec, passive_replyer=passive_replyer)
+    ]
 
 
 def build_builtin_tool_handlers(tool_ctx: BuiltinToolRuntimeContext) -> Dict[str, BuiltinToolHandler]:

@@ -787,6 +787,13 @@ class ReferenceMessage(LLMContextMessage):
 
 
 @dataclass(slots=True)
+class WaitCompletedMessage(ReferenceMessage):
+    """回复后的等待完成提醒，延续原思考轮但不重复生成 reply 工具回执。"""
+
+    logical_turn_id: str = field(kw_only=True)
+
+
+@dataclass(slots=True)
 class ModelOutputContextMessage(LLMContextMessage):
     """单个模型输出 Item 的 MaiSaka 历史条目。"""
 

@@ -1058,20 +1058,7 @@ class CapabilitiesConfig(ConfigBase):
             "x-widget": "switch",
         },
     )
-    """给 Planner 提供 subagent 工具：把自包含的查询或整理任务交给子代理，子代理在独立上下文里多轮调用被授权的工具，只把结论交还给 Planner。"""
-
-    advanced_sub_agent: bool = Field(
-        default=False,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "高级子代理",
-                "en_US": "Advanced sub-agents",
-                "ja_JP": "高度なサブエージェント",
-            },
-            "x-widget": "switch",
-        },
-    )
-    """子代理改为在后台运行：派发后立刻返回任务 id，麦麦可以继续聊天，子代理结束时结论作为一条新消息送回并唤醒 Planner；同时提供查看和终止后台任务的工具。需要先开启“子代理任务派发”。"""
+    """给 Planner 提供 subagent 工具：把自包含的查询或整理任务交给子代理，子代理在独立上下文里后台多轮调用被授权的工具，派发后立即返回任务 id，结束时回传结论并唤醒 Planner；支持查看状态和终止任务。"""
 
 
 class ExperimentalConfig(ConfigBase):
@@ -1155,7 +1142,7 @@ class ExperimentalConfig(ConfigBase):
             "x-widget": "custom",
         },
     )
-    """_wrap_Focus 白名单。配置后只有命中的群聊或私聊会进入 Focus；留空表示所有符合聊天类型开关的聊天都可进入 Focus。"""
+    """_wrap_Focus 白名单。在已匹配共享组的聊天中进一步限制 Focus 范围；留空表示不额外限制，仍须匹配共享组。"""
 
     focus_groups: list["ChatStreamGroup"] = Field(
         default_factory=list,
@@ -1168,7 +1155,7 @@ class ExperimentalConfig(ConfigBase):
             "x-widget": "custom",
         },
     )
-    """_wrap_同组聊天共享 Planner 与完整上下文，不同组独立运行；未匹配的聊天各自形成独立组。"""
+    """_wrap_同组聊天共享 Planner 与完整上下文，不同组独立运行；未匹配任何共享组的聊天使用原本模式。留空时所有聊天均使用原本模式。"""
 
 
 class MessageReceiveConfig(ConfigBase):
