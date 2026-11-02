@@ -5,6 +5,7 @@ from unittest.mock import Mock
 
 from PIL import Image
 
+import hashlib
 import json
 
 import pytest
@@ -98,6 +99,36 @@ async def test_emoji_in_message_is_numbered_with_images_and_keeps_emoji_type():
 
     with pytest.raises(ValueError, match="该消息共有 2 张图片"):
         await resolve_context_image(chat, message_id, 2)
+
+
+@pytest.mark.asyncio
+async def test_emoji_without_binary_data_is_loaded_as_emoji(monkeypatch):
+    chat = runtime()
+    message_id = "1566716611891699778"
+    stored = picture("orange").binary_data
+    # 表情库以文件字节的 SHA256 作为 hash
+    stored_hash = hashlib.sha256(stored).hexdigest()
+    loaded_hashes = []
+
+    async def load_emoji_binary(self):
+        loaded_hashes.append(self.binary_hash)
+        self.binary_data = stored
+
+    async def load_image_binary(self):
+        raise AssertionError("表情包不应按图片加载")
+
+    monkeypatch.setattr(EmojiComponent, "load_emoji_binary", load_emoji_binary)
+    monkeypatch.setattr(ImageComponent, "load_image_binary", load_image_binary)
+    # 历史消息中的表情包可能只剩 hash，需要按表情包从表情库加载
+    chat._chat_history.append(InternalContextMessage(
+        raw_message=MessageSequence([EmojiComponent(binary_hash=stored_hash, binary_data=b"")]),
+        visible_text="[表情包]", timestamp=datetime.now(), message_id=message_id,
+    ))
+
+    resolved = await resolve_context_image(chat, message_id, 0)
+    assert type(resolved) is EmojiComponent
+    assert (resolved.binary_hash, resolved.binary_data) == (stored_hash, stored)
+    assert loaded_hashes == [stored_hash]
 
 
 @pytest.mark.asyncio
