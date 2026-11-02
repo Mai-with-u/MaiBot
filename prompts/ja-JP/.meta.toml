@@ -222,3 +222,23 @@ description = "外部 Planner 中断復帰。"
 display_name = "外部 Planner 継続実行"
 advanced = true
 description = "外部 Planner 継続実行。"
+
+[desktop_pet_proactive_wake]
+display_name = "デスクトップペットの定期的な思考"
+advanced = false
+description = "定期起動時に自主的な探索と必要に応じた交流を促す内部プロンプト。"
+
+[desktop_pet_screen_read]
+display_name = "デスクトップペットの画面読み取り"
+advanced = false
+description = "本機のメイン画面を一度確認、または継続的に変化を読み取ります。"
+
+[desktop_pet_todo_context]
+display_name = "主人のタスク常駐コンテキスト"
+advanced = false
+description = "毎ターン最新タスクを読み込み、条件成立による起動を判断します。"
+
+[desktop_pet_exploration]
+display_name = "デスクトップペットの探索"
+advanced = false
+description = "人が設定した目標に沿ってツールの組み合わせを探索し、実験の証拠がある候補図式を保存します。"

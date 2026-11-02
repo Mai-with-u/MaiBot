@@ -8,15 +8,19 @@ import asyncio
 import json
 import subprocess
 import sys
+import time
 import uuid
 
+from src.common.data_models.message_component_data_model import ImageComponent
 from src.common.logger import get_logger
 from src.common.paths import get_instance_root
 from src.common.runtime_loop import run_on_main_loop
 from src.config.config import config_manager, global_config
 from src.core.internal_chat import INTERNAL_CHAT_PLATFORM, INTERNAL_CHAT_USER_ID
 
+from .app_conditions import matching_application, running_applications
 from .rendering import render_parts
+from .screen import DesktopScreenshot, ScreenTimeline, capture_desktop, compose_screen_timeline
 
 logger = get_logger("desktop_pet")
 WINDOW_SCRIPT = Path(__file__).parent / "pet_window.py"
@@ -41,6 +45,11 @@ class DesktopPetService:
         self._button_unsubscribe: Optional[Callable[[], None]] = None
         self._button_sync_task: Optional[asyncio.Task[None]] = None
         self._button_revision = 0
+        self._proactive_wake_task: Optional[asyncio.Task[None]] = None
+        self._screen_reader_task: Optional[asyncio.Task[None]] = None
+        self._screen_busy = False
+        self._screen_error = ""
+        self._screen_last_capture = ""
 
     def status(self) -> Dict[str, Any]:
         return {
@@ -51,6 +60,7 @@ class DesktopPetService:
             "visible": self._visible,
             "error": self._error,
             "skin_id": self._skin_id,
+            "screen_reading": self._screen_reading(),
         }
 
     async def start(self) -> None:
@@ -75,6 +85,10 @@ class DesktopPetService:
             if self._ready and global_config.desktop_pet.enabled:
                 if self._skin_id != global_config.desktop_pet.skin_id:
                     await self.apply_skin(global_config.desktop_pet.skin_id)
+                self._restart_proactive_wake()
+                if not global_config.desktop_pet.screen_read_enabled:
+                    await self._stop_screen_reader()
+                await self._publish_screen_state()
                 return
             await self._stop()
             self._error = ""
@@ -149,6 +163,8 @@ class DesktopPetService:
         finally:
             was_ready = self._ready
             self._ready = self._visible = False
+            self._restart_proactive_wake()
+            await self._stop_screen_reader()
             self._process = None
             for future in self._pending.values():
                 if not future.done():
@@ -179,6 +195,9 @@ class DesktopPetService:
             self._observe(self.apply_skin(global_config.desktop_pet.skin_id))
             self._observe(self._dispatch_hook("ready"))
             self._buttons_changed()
+            self._observe(self._run_todos())
+            self._restart_proactive_wake()
+            self._observe(self._publish_screen_state())
         elif kind == "buttons_refresh":
             self._buttons_changed()
         elif kind == "button_click":
@@ -191,8 +210,14 @@ class DesktopPetService:
             }))
         elif kind == "drag_ended":
             self._observe(self._dispatch_hook(kind, gesture_id=event["gesture_id"]))
+        elif kind == "screen_action":
+            self._observe(self._screen_action(event["action"]))
         elif kind == "chat":
             self._observe(self._chat(event["request_id"]))
+        elif kind == "exploration_tasks":
+            self._observe(self._publish_exploration_tasks(event["task_id"], event["request_id"]))
+        elif kind == "explore":
+            self._observe(self._explore(event["goal"]))
         elif kind == "ack":
             future = self._pending.get(event["id"])
             if future is not None and not future.done():
@@ -202,6 +227,285 @@ class DesktopPetService:
                     future.set_result(event.get("result"))
         else:
             raise ValueError(f"未知的桌宠事件: {kind}")
+
+    def _screen_reading(self) -> bool:
+        return self._screen_reader_task is not None and not self._screen_reader_task.done()
+
+    def _require_screen_access(self) -> None:
+        if not global_config.desktop_pet.screen_read_enabled:
+            raise PermissionError("请先在 WebUI 桌宠设置开启允许读取桌面")
+        if not self._ready or self._closing:
+            raise RuntimeError("桌宠未就绪，无法读取桌面")
+
+    async def capture_screen(self) -> DesktopScreenshot:
+        self._require_screen_access()
+        shot = await asyncio.to_thread(capture_desktop)
+        # 截图期间关闭权限时，不再把结果交给模型。
+        self._require_screen_access()
+        return shot
+
+    async def _publish_screen_state(self) -> None:
+        if self._ready and not self._closing:
+            await self._command({"type": "screen_state", "enabled": global_config.desktop_pet.screen_read_enabled,
+                "reading": self._screen_reading(), "busy": self._screen_busy,
+                "captured_at": self._screen_last_capture, "error": self._screen_error})
+
+    async def _stop_screen_reader(self) -> None:
+        task, self._screen_reader_task = self._screen_reader_task, None
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def _screen_action(self, action: str) -> None:
+        try:
+            self._screen_error = ""
+            if action == "stop":
+                await self._stop_screen_reader()
+            elif action == "start":
+                self._require_screen_access()
+                if not self._screen_reading():
+                    self._screen_reader_task = self._observe(self._run_screen_reader())
+            elif action == "read":
+                await self._read_screen_once()
+            else:
+                raise ValueError("未知桌面读取操作")
+        except Exception as exc:
+            self._screen_error = str(exc)
+            logger.exception("桌宠桌面读取失败")
+        finally:
+            await self._publish_screen_state()
+
+    async def _run_screen_reader(self) -> None:
+        timeline = ScreenTimeline()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + global_config.desktop_pet.screen_read_interval_seconds
+        try:
+            while self._ready and not self._closing and global_config.desktop_pet.screen_read_enabled:
+                shot = await self.capture_screen()
+                await asyncio.to_thread(timeline.add, shot, global_config.desktop_pet.screen_change_threshold)
+                if loop.time() >= deadline:
+                    if timeline.changed:
+                        frames = list(timeline.frames)
+                        storyboard = await asyncio.to_thread(compose_screen_timeline, frames)
+                        await self._deliver_screen(storyboard, frame_times=[frame.captured_at for frame in frames])
+                        timeline.delivered()
+                    # 不追赶休眠期间的周期；采样与投递串行，不堆积待处理截图。
+                    deadline = loop.time() + global_config.desktop_pet.screen_read_interval_seconds
+                await asyncio.sleep(min(global_config.desktop_pet.screen_sample_interval_seconds,
+                                        max(0, deadline - loop.time())))
+        except Exception as exc:
+            self._screen_error = str(exc)
+            logger.exception("桌宠持续阅读停止")
+        finally:
+            if self._screen_reader_task is asyncio.current_task():
+                self._screen_reader_task = None
+            await self._publish_screen_state()
+
+    async def _read_screen_once(self) -> None:
+        if self._screen_busy:
+            return
+        self._screen_busy = True
+        try:
+            await self._publish_screen_state()
+            shot = await self.capture_screen()
+            await self._deliver_screen(shot)
+        finally:
+            self._screen_busy = False
+            await self._publish_screen_state()
+
+    async def _deliver_screen(self, shot: DesktopScreenshot, *, frame_times: Optional[List[str]] = None) -> None:
+        self._screen_busy = True
+        try:
+            await self._publish_screen_state()
+            from src.prompt.prompt_manager import prompt_manager
+
+            template = await asyncio.to_thread(prompt_manager.get_prompt, "desktop_pet_screen_read")
+            text = await prompt_manager.render_prompt(template)
+            mode = "continuous" if frame_times is not None else "once"
+            text += f"\n[captured_at={shot.captured_at}; mode={mode}; screen=primary]"
+            if frame_times is not None:
+                text += "\n[timeline: left-to-right, top-to-bottom; selected keyframes; not a live single frame]\n"
+                text += json.dumps({"frame_times": frame_times}, ensure_ascii=False)
+            self._require_screen_access()
+            await self._enqueue_owner_task(source_kind="desktop_pet_screen",
+                text=text, reason="桌宠桌面阅读",
+                images=[ImageComponent(binary_hash=shot.digest, binary_data=shot.data)])
+            self._screen_last_capture = shot.captured_at
+        finally:
+            self._screen_busy = False
+            await self._publish_screen_state()
+
+    def _restart_proactive_wake(self) -> None:
+        if self._proactive_wake_task is not None:
+            self._proactive_wake_task.cancel()
+            self._proactive_wake_task = None
+        if self._ready and not self._closing and global_config.desktop_pet.proactive_wake_enabled:
+            self._proactive_wake_task = self._observe(self._run_proactive_wake())
+
+    async def _run_proactive_wake(self) -> None:
+        # 从就绪或配置热更新起等待完整间隔；恢复后只触发一次，不累积离线周期。
+        while self._ready and not self._closing and global_config.desktop_pet.proactive_wake_enabled:
+            await asyncio.sleep(global_config.desktop_pet.proactive_wake_interval_minutes * 60)
+            if not self._ready or self._closing or not global_config.desktop_pet.proactive_wake_enabled:
+                return
+            try:
+                await self._wake_proactively()
+            except Exception as exc:
+                self._error = str(exc)
+                logger.exception("桌宠定期主动思考唤醒失败")
+
+    async def _exploration_session_id(self) -> str:
+        from src.chat.message_receive.chat_manager import chat_manager
+
+        sessions = await asyncio.to_thread(chat_manager.resolve_sessions_by_target,
+            platform=INTERNAL_CHAT_PLATFORM, target_id=INTERNAL_CHAT_USER_ID, chat_type="private")
+        if len(sessions) != 1:
+            raise ValueError("请先在桌宠或网页聊天中建立唯一的主人会话")
+        return sessions[0].session_id
+
+    async def _publish_exploration_tasks(self, task_id: str, request_id: str) -> None:
+        from .exploration import exploration_tasks
+
+        payload: Dict[str, Any] = {"type": "exploration_tasks", "request_id": request_id,
+                                   "items": [], "selected": None, "error": ""}
+        try:
+            session_id = await self._exploration_session_id()
+            records = await asyncio.to_thread(exploration_tasks, session_id)
+            payload["items"] = [{key: item[key] for key in ("id", "goal", "status", "created_at", "updated_at")}
+                                for item in records]
+            payload["selected"] = next((item for item in records if item["id"] == task_id), None)
+            if not task_id and records:
+                payload["selected"] = records[0]
+        except Exception as exc:
+            payload["error"] = str(exc)
+            logger.exception("读取探索任务失败")
+        await self._command(payload)
+
+    async def _explore(self, goal: str) -> None:
+        from src.prompt.prompt_manager import prompt_manager
+        from .exploration import exploration_tasks, validate_goal
+
+        error = ""
+        task = None
+        try:
+            goal = validate_goal(goal)
+            session_id = await self._exploration_session_id()
+            task = await asyncio.to_thread(exploration_tasks, session_id, "create", goal=goal)
+            template = await asyncio.to_thread(prompt_manager.get_prompt, "desktop_pet_exploration")
+            text = await prompt_manager.render_prompt(template)
+            await self._enqueue_owner_task(source_kind="desktop_pet_exploration",
+                text=text + f"\n[exploration_task_id={task['id']}]\n" + goal, reason="主人发起探索任务")
+        except Exception as exc:
+            error = str(exc)
+            logger.exception("桌宠探索任务投递失败")
+            if task is not None:
+                await asyncio.to_thread(exploration_tasks, session_id, "fail", task["id"], summary=error[:2000])
+        await self._command({"type": "exploration_result", "error": error, "task_id": task["id"] if task else ""})
+
+    async def _wake_proactively(self) -> None:
+        from src.prompt.prompt_manager import prompt_manager
+
+        template = await asyncio.to_thread(prompt_manager.get_prompt, "desktop_pet_proactive_wake")
+        text = await prompt_manager.render_prompt(template)
+        await self._enqueue_owner_task(
+            source_kind="desktop_pet_proactive_wake", text=text, reason="桌宠定期主动思考",
+        )
+
+    async def _run_todos(self) -> None:
+        next_app_check = 0.0
+        while self._ready and not self._closing:
+            result = await self._command({"type": "todo", "action": "claim_due"})
+            for item in result["items"]:
+                # 编辑、删除已领取但尚未投递的事项时，不再执行旧版本。
+                current = await self._command({"type": "todo", "action": "list"})
+                if not any(entry["id"] == item["id"] and entry["revision"] == item["revision"]
+                           for entry in current["items"]):
+                    continue
+                error = ""
+                try:
+                    await self._activate_todo(item)
+                except Exception as exc:
+                    error = str(exc)
+                    logger.exception("桌宠定时事项 %s 触发失败", item["id"])
+                await self._command({"type": "todo", "action": "finish", "todo_id": item["id"],
+                                     "revision": item["revision"], "error": error})
+            if not self._closing and time.monotonic() >= next_app_check:
+                try:
+                    await self._check_app_todos()
+                except Exception as exc:
+                    self._error = str(exc)
+                    logger.exception("桌宠应用条件检测失败")
+                next_app_check = time.monotonic() + 5
+            await asyncio.sleep(1)
+
+    async def _check_app_todos(self) -> None:
+        result = await self._command({"type": "todo", "action": "list"})
+        candidates = [item for item in result["items"] if item.get("condition_type") == "app"
+                      and item["status"] == "pending" and (item["due_at"] is None or item["due_at"] <= time.time())]
+        if not candidates:
+            return
+        applications = await asyncio.to_thread(running_applications)
+        for item in candidates:
+            evidence = matching_application(item["condition"], applications)
+            if evidence:
+                try:
+                    await self.trigger_condition_todo(item["id"], item["revision"], evidence, applications=applications)
+                except ValueError as exc:
+                    logger.info("应用条件待办本次未触发: %s", exc)
+
+    async def trigger_condition_todo(
+        self, todo_id: str, revision: str, evidence: str, *, applications: Optional[List[Dict[str, str]]] = None,
+    ) -> Dict[str, Any]:
+        snapshot = await self._command({"type": "todo", "action": "list"})
+        original = next((item for item in snapshot["items"] if item["id"] == todo_id), None)
+        if original is None or original["revision"] != revision:
+            raise ValueError("待办已修改或删除，请重新查询")
+        if original.get("condition_type") == "app":
+            if applications is None:
+                applications = await asyncio.to_thread(running_applications)
+            evidence = matching_application(original["condition"], applications)
+            if not evidence:
+                raise ValueError("未检测到匹配的应用，不能触发")
+        result = await self._command({"type": "todo", "action": "claim_condition", "todo_id": todo_id,
+                                      "revision": revision, "evidence": evidence})
+        item = result["item"]
+        current = await self._command({"type": "todo", "action": "list"})
+        if not any(entry["id"] == todo_id and entry["revision"] == revision for entry in current["items"]):
+            raise ValueError("待办已修改或删除，本次触发取消")
+        try:
+            await self._activate_todo(item)
+        except Exception as exc:
+            await self._command({"type": "todo", "action": "finish", "todo_id": todo_id,
+                                 "revision": revision, "error": str(exc)})
+            raise
+        await self._command({"type": "todo", "action": "finish", "todo_id": todo_id, "revision": revision})
+        return {"id": todo_id, "status": "triggered", "evidence": item["evidence"]}
+
+    async def _activate_todo(self, item: Dict[str, Any]) -> None:
+        if item["kind"] == "user":
+            await self.control("show")
+            await self._command({"type": "reply", "parts": [{"kind": "text", "text": "⏰ 提醒：" + item["text"]}]})
+            return
+        await self._enqueue_owner_task(source_kind="desktop_pet_todo",
+            text=f"[Bot 待办已触发，事项 ID: {item['id']}，这是内部任务]\n{item['text']}\n"
+                 "请执行此待办；完成后可使用 desktop_pet_todo 删除事项。触发不代表任务已完成。",
+            reason="桌宠待办触发")
+
+    async def _enqueue_owner_task(
+        self, *, source_kind: str, text: str, reason: str, images: Optional[List[ImageComponent]] = None,
+    ) -> None:
+        from src.chat.message_receive.chat_manager import chat_manager
+        from src.chat.heart_flow.heartflow_manager import heartflow_manager
+
+        sessions = await asyncio.to_thread(chat_manager.resolve_sessions_by_target,
+            platform=INTERNAL_CHAT_PLATFORM, target_id=INTERNAL_CHAT_USER_ID, chat_type="private")
+        if len(sessions) != 1:
+            raise ValueError("无法确定主人聊天流，请先在桌宠或网页聊天中建立唯一的主人会话")
+        session = sessions[0]
+        if not await heartflow_manager._is_session_allowed(session):
+            raise PermissionError("当前策略禁止唤醒主人聊天流")
+        runtime = await heartflow_manager.get_or_create_heartflow_chat(session.session_id)
+        runtime.enqueue_internal_task(source_kind=source_kind, text=text, reason=reason, images=images if images is not None else [])
 
     async def _dispatch_hook(self, name: str, **kwargs: Any) -> None:
         from src.plugin_runtime.integration import get_plugin_runtime_manager
@@ -375,6 +679,9 @@ class DesktopPetService:
         if skipped:
             logger.info("桌宠气泡不显示 %s 消息段，完整内容见网页聊天室", "、".join(skipped))
         if parts:
+            # 主人会话的实际发言主动显示窗口；插件 notice 仍保持原有隐藏语义。
+            if not self._visible:
+                await self.control("show")
             await self._command({"type": "reply", "parts": parts})
 
 

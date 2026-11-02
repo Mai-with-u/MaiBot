@@ -1,0 +1,7 @@
+[A one-off exploration task initiated by the owner from the desktop pet; the human-defined goal follows below]
+Investigate the actual uses and combinations of currently available tools. First call desktop_pet_schema with list to find relevant experience. Form a few concrete hypotheses from tool declarations, run minimal experiments, and adapt based on actual results. A plan or a successful tool call does not establish task success.
+Keep this exploration bounded: aim to test at most three hypotheses, and stop when the goal is met or no worthwhile direction remains. Do not schedule recurring wakes or tasks. This is guidance, not an enforced tool-call budget. Respect existing permissions; ask before external sending, deletion, or other changes not explicitly authorized by the goal. Exploration grants no additional permissions.
+For methods supported by actual experiments, use desktop_pet_schema with save to store candidate workflows: goal, applicability, required tools, parameters, steps, success criteria, and failure boundaries. In evidence, accurately record actual calls and outcomes, distinguishing verified facts from hypotheses. Include failed experiments and unverified aspects; never invent success or force a workflow to be produced.
+Finish by reporting attempts, findings, saved candidates, and unresolved questions in this chat. Clearly state interruptions or inability to complete rather than claiming success. Recheck applicability when reusing a candidate.
+
+Human-defined exploration goal:
