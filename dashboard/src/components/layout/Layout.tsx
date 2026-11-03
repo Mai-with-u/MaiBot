@@ -90,9 +90,9 @@ export function Layout({ children }: LayoutProps) {
   // 麦麦聊天已并入麦麦设置侧边栏，/chat 属于设置工作区
   const workspaceMode: WorkspaceMode = isLogsPath ? 'logs' : workspaceForPath(pathname)
   const isSettingsWorkspace = workspaceMode !== 'logs'
-  // 聊天与规划监控自己管理滚动区域，其余设置页按内容撑高、由 main 滚动
+  // 聊天自己管理滚动区域，其余设置页按内容撑高、由 main 滚动
   const isScrollablePage =
-    isSettingsWorkspace && pathname !== '/chat' && pathname !== '/planner-monitor'
+    isSettingsWorkspace && pathname !== '/chat'
   const showBackToTop = isScrollablePage
 
   const [sidebarOpen, setSidebarOpen] = useState(() =>
@@ -228,7 +228,6 @@ export function Layout({ children }: LayoutProps) {
       }
     }
     pathToLabel['/chat'] = t('workspace.chat')
-    pathToLabel['/planner-monitor'] = t('sidebar.menu.maisakaMonitor')
     pathToLabel['/logs'] = t('workspace.logs')
     pathToLabel['/reasoning-process'] = t('sidebar.menu.reasoningProcess')
 

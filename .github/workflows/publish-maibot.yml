@@ -21,6 +21,12 @@ on:
       resume_run_id:
         default: ''
         type: string
+    secrets:
+      # 仅验证的调用无需提供；正式发布时传给 Docker 工作流。
+      DOCKERHUB_USERNAME:
+        required: false
+      DOCKERHUB_TOKEN:
+        required: false
   workflow_dispatch:
     inputs:
       version:
@@ -33,7 +39,7 @@ on:
         default: main
         type: string
       publish:
-        description: '上传 PyPI 并创建 GitHub Release（关闭时只构建验证）'
+        description: '上传 PyPI、推送 Docker 版本镜像并创建 GitHub Release（关闭时只构建验证）'
         default: false
         type: boolean
       resume_run_id:
@@ -200,8 +206,19 @@ jobs:
       - name: Verify all files on PyPI before creating a release
         run: uv run --no-project --with packaging python .github/scripts/maibot_release.py pypi-verify
 
-  create-release:
+  # 镜像与 PyPI 使用同一份已验证的发布身份；推送失败时不创建 Release。
+  publish-docker:
     needs: [build-and-check, publish-pypi]
+    uses: ./.github/workflows/docker-image-main.yml
+    with:
+      source_ref: ${{ needs.build-and-check.outputs.commit }}
+      version: ${{ needs.build-and-check.outputs.version }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  create-release:
+    needs: [build-and-check, publish-pypi, publish-docker]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -219,7 +236,7 @@ jobs:
           path: release-dist
       - name: Verify the original artifact again
         run: uv run --no-project --with packaging python .github/scripts/maibot_release.py verify
-      - name: Create release only after PyPI upload succeeds
+      - name: Create release only after PyPI and Docker publishing succeed
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.build-and-check.outputs.tag }}

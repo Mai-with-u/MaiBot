@@ -117,12 +117,25 @@
   @keyframes mouth { to { opacity: 1; } }
 
   /* ---------- 菜单按钮 ---------- */
-  .orb {
+  .pet-menu {
     position: absolute;
+    left: 12px;
+    right: 12px;
     bottom: var(--pet-top, 112px);
+    display: none;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px;
+  }
+  [data-mode="menu"] .pet-menu { display: flex; }
+  .orb {
+    position: relative;
+    flex: 0 0 46px;
+    --from: 0 10px;
+    background: var(--cream);
     width: 46px;
     height: 46px;
-    display: none;
+    display: grid;
     place-items: center;
     padding: 0;
     border: 2.2px solid var(--ink);
@@ -134,11 +147,12 @@
   .orb svg { width: 26px; height: 26px; }
   .orb:hover { transform: translateY(-2px); box-shadow: 0 5px 0 var(--ink); }
   .orb:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ink); }
-  #orb-chat { left: 92px; background: var(--orange); --from: 44px 22px; }
-  #orb-todo { left: 166px; background: var(--leaf); --from: -30px 22px; }
-  #orb-plugins { left: 18px; background: var(--cream); --from: 100px 22px; }
+  #orb-chat { background: var(--orange); }
+  #orb-todo { background: var(--leaf); }
+  #orb-plugins { background: var(--cream); }
+  #orb-explore { background: var(--cream); }
   #orb-plugins[data-empty="true"] { display: none; }
-  [data-mode="menu"] .orb { display: grid; animation: pop .34s cubic-bezier(.3, 1.6, .5, 1) both; }
+  [data-mode="menu"] .orb { animation: pop .34s cubic-bezier(.3, 1.6, .5, 1) both; }
   [data-mode="menu"] #orb-todo { animation-delay: .05s; }
   @keyframes pop {
     from { opacity: 0; translate: var(--from); scale: .3; }
@@ -176,8 +190,12 @@
     border-bottom-right-radius: 3px;
   }
   [data-mode="chat"] #chat, [data-mode="todo"] #todo, [data-mode="plugins"] #plugins { display: flex; }
+  [data-mode="explore"] #explore { display: flex; }
+  #explore-form { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+  #explore-goal { width: 100%; resize: none; min-height: 55px; }
+  #explore-status { font-size: 12px; overflow-y: auto; max-height: 44px; white-space: pre-wrap; }
   #plugin-buttons { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; max-height: 140px; }
-  .plugin-button { text-align: left; padding: 7px 9px; border: 1.5px solid var(--ink); border-radius: 10px; background: var(--paper-2); cursor: pointer; }
+  .plugin-button { display: block; text-align: left; padding: 7px 9px; }
   .plugin-button:disabled { opacity: .55; cursor: default; }
   .plugin-button small { display: block; color: #605747; font-size: 11px; }
   #plugin-error { color: #a03022; font-size: 11px; overflow-wrap: anywhere; max-height: 45px; overflow-y: auto; }
@@ -197,20 +215,64 @@
   .scroll::-webkit-scrollbar { width: 5px; }
   .scroll::-webkit-scrollbar-thumb { background: #dcc4a3; border-radius: 3px; }
 
-  input, textarea {
-    width: 100%;
-    padding: 6px 11px;
+  /* 共用控件：新功能复用 pet-input / pet-select / pet-button；图标按钮加 pet-icon-button。
+     颜色沿用桌宠主题变量，所有按钮保留键盘焦点、禁用和按压反馈。 */
+  .pet-input, .pet-select, .pet-button {
+    min-width: 0;
     border: 2px solid var(--ink);
     border-radius: 12px;
-    background: #fff;
+    background: var(--paper-2);
     color: var(--ink);
     font: inherit;
-    outline: none;
+    transition: background .12s, border-color .12s, box-shadow .12s, transform .12s;
+  }
+  .pet-input:focus, .pet-select:focus { outline: none; border-color: var(--orange); }
+  #todos:focus-visible { outline: none; }
+  .pet-input, .pet-select {
+    width: 100%;
+    padding: 6px 9px;
+    background: #fff;
     caret-color: var(--orange);
     user-select: text;
   }
-  input:focus, textarea:focus { box-shadow: 0 0 0 3px rgba(236, 147, 65, .35); }
+  .pet-select {
+    appearance: none;
+    padding-right: 25px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4 3 3 3-3' fill='none' stroke='%231d1d1b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    cursor: pointer;
+  }
+  .pet-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 5px 9px;
+    box-shadow: 0 2px 0 var(--ink);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .pet-button--primary { background: var(--leaf); }
+  .pet-icon-button { width: 28px; height: 28px; padding: 4px; border-radius: 50%; }
+  .pet-icon { width: 15px; height: 15px; flex-shrink: 0; vertical-align: -2px; }
+  .pet-button:hover:not(:disabled) { background: var(--cream); transform: translateY(-1px); box-shadow: 0 3px 0 var(--ink); }
+  .pet-button:active:not(:disabled) { transform: translateY(1px); box-shadow: none; }
+  .pet-input:focus-visible, .pet-select:focus-visible, .pet-button:focus-visible, .tick:focus-visible {
+    outline: none;
+    border-color: var(--orange);
+  }
+  .pet-button:disabled, .pet-input:disabled, .pet-select:disabled { opacity: .55; cursor: default; }
+  [hidden] { display: none !important; }
 
+  .screen-controls { display: flex; align-items: center; gap: 7px; flex-shrink: 0; }
+  .screen-controls .pet-button { font-size: 11px; }
+  .pet-button[aria-pressed="true"] { background: var(--leaf); }
+  #screen-status { color: #786650; font-size: 10px; }
+  #screen-error { color: #a03022; font-size: 11px; max-height: 30px; overflow-y: auto; }
+  #screen-error:empty { display: none; }
+  #screen-indicator { position: absolute; right: 6px; top: 4px; width: 12px; height: 12px;
+    border: 2px solid var(--ink); border-radius: 50%; background: var(--leaf); }
   #chat-form { flex-shrink: 0; }
   #chat-input { display: block; resize: none; min-width: 0; }
   #attachments { display: flex; gap: 4px; overflow-x: auto; flex-shrink: 0; }
@@ -239,15 +301,38 @@
   }
 
   /* 待办 */
-  #todos { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  #todo-form { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+  .todo-controls { display: flex; align-items: center; gap: 6px; }
+  .todo-controls .pet-select { flex: 1; }
+  .todo-entry .pet-input { flex: 1; }
+  #todo-error:empty { display: none; }
+  #todo-error { max-height: 30px; overflow-y: auto; }
+  .todo-meta { display: flex; align-items: center; gap: 4px; color: #786650; font-size: 10px; margin-top: 3px; }
+  .todo-meta[data-status="failed"] { color: #a03022; }
+  .todo-meta[data-status="triggered"] { color: #55773c; }
+  #todo-form input, #todo-form select { min-width: 0; max-width: 100%; }
+  #todo-error { color: #a03022; font-size: 11px; overflow-wrap: anywhere; }
+  #todo { max-height: calc(100% - var(--pet-top, 116px) - 12px); }
+  #todos { height: var(--todo-list-height, 0px); flex: 0 1 auto; scroll-behavior: smooth;
+    transition: height .38s cubic-bezier(.22, 1, .36, 1); overscroll-behavior: contain; }
+  #todos li { flex-shrink: 0; }
+  .todo-title-viewport { display: block; max-height: 40px; overflow: hidden; line-height: 20px; }
+  .todo-title { display: block; white-space: pre-wrap; }
+  #todos .todo-meta[data-status="failed"] { max-height: 32px; overflow-y: auto; }
+  @media (prefers-reduced-motion: reduce) {
+    #todos { transition: none; scroll-behavior: auto; }
+  }
+  #todos { list-style: none; margin: 0; padding: 0 8px 0 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; display: flex; flex-direction: column; gap: 4px; }
+  #todos li[data-edited="true"] { border-bottom-color: var(--orange); }
   #todos li {
+    border-bottom: 2px solid transparent;
     display: flex;
     align-items: flex-start;
     gap: 8px;
     padding: 2px 0;
     transition: opacity .35s .3s;
   }
-  #todos li span { flex: 1; word-break: break-word; user-select: text; transition: color .2s; }
+  #todos li > span { flex: 1; min-width: 0; word-break: break-word; user-select: text; transition: color .2s; }
   .tick {
     flex: none;
     width: 18px;
@@ -270,7 +355,9 @@
 
   /* 主动说话 */
   #say-wrap {
+    transition: bottom .36s cubic-bezier(.22, 1, .36, 1);
     position: absolute;
+    z-index: 2;
     left: 10px;
     right: 10px;
     bottom: var(--pet-top, 116px);
@@ -294,7 +381,11 @@
     animation: rise .22s cubic-bezier(.3, 1.4, .5, 1) both;
   }
   #say.show { display: block; }
-  [data-mode="chat"] #say, [data-mode="todo"] #say, [data-mode="menu"] #say, [data-mode="plugins"] #say { display: none; }
+  /* 菜单出现时为圆形按钮让出空间，发言继续保持可见。 */
+  [data-mode="menu"] #say-wrap { bottom: calc(var(--pet-top, 116px) + var(--menu-height, 46px) + 14px); }
+  @media (prefers-reduced-motion: reduce) { #say-wrap { transition: none; } }
+  /* 聊天已展开时由记录接续发言。 */
+  [data-mode="chat"] #say { display: none; }
   #say .line { max-width: none; }
   #say .line + .line { margin-top: 4px; }
 </style>
@@ -302,7 +393,7 @@
 <body>
 <div id="stage" data-mode="idle">
 
-  <div id="pet" data-hit="34"><canvas id="skin-canvas" style="display:none"></canvas><svg id="builtin-pet" width="150" height="107" viewBox="0 0 210 150" aria-hidden="true">
+  <div id="pet" data-hit="34"><span id="screen-indicator" role="status" aria-label="正在持续阅读桌面" title="正在持续阅读桌面，可在聊天面板停止" hidden></span><canvas id="skin-canvas" style="display:none"></canvas><svg id="builtin-pet" width="150" height="107" viewBox="0 0 210 150" aria-hidden="true">
     <defs>
       <path id="body-shape" d="M39 96C39 68 72 48 128 44C174 41 201 64 201 93C201 124 172 141 127 141C74 141 39 124 39 96Z"/>
       <clipPath id="body-clip"><use href="#body-shape"/></clipPath>
@@ -353,6 +444,7 @@
 
   </div>
 
+  <div id="pet-menu" class="pet-menu">
   <button id="orb-plugins" class="orb" data-hit="23" data-empty="true" aria-label="插件扩展" title="插件扩展">
     <svg viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round"><path d="M4 4h6v3a2 2 0 1 0 4 0V4h6v6h-3a2 2 0 1 0 0 4h3v6h-6v-3a2 2 0 1 0-4 0v3H4v-6h3a2 2 0 1 0 0-4H4Z"/></svg>
   </button>
@@ -371,15 +463,48 @@
     </svg>
   </button>
 
+  <button id="orb-explore" class="orb" data-hit="23" aria-label="探索" title="探索能力与组合工作流">
+    <svg viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m16 8-2 6-6 2 2-6Z"/></svg>
+  </button>
+  </div>
+
+  <div id="explore" class="bubble" data-hit="18">
+    <form id="explore-form">
+      <label for="explore-goal">这次想探索什么？</label>
+      <textarea class="pet-input" id="explore-goal" rows="3" maxlength="2000" required placeholder="例如：探索现有工具怎样整理讨论成果"></textarea>
+      <button class="pet-button pet-button--primary" id="explore-start" type="submit">开始一轮探索</button>
+    </form>
+    <div id="explore-status" role="status">使用当前聊天工具；探索结果在聊天中汇报。</div>
+  </div>
+
   <div id="chat" class="bubble" data-hit="18">
+    <div class="screen-controls">
+      <button class="pet-button" type="button" id="screen-toggle" disabled aria-pressed="false" title="需在 WebUI 桌宠设置开启允许读取桌面"></button>
+      <span id="screen-status" role="status"></span>
+    </div>
+    <div id="screen-error" role="status"></div>
     <div id="log" class="scroll"></div>
     <div id="attachments"></div><div id="chat-error" role="status"></div>
-    <form id="chat-form"><textarea id="chat-input" rows="1" maxlength="10000" autocomplete="off" spellcheck="false" placeholder="输入文字或粘贴图片"></textarea></form>
+    <form id="chat-form"><textarea class="pet-input" id="chat-input" rows="1" maxlength="10000" autocomplete="off" spellcheck="false" placeholder="输入文字或粘贴图片"></textarea></form>
   </div>
 
   <div id="todo" class="bubble" data-hit="18">
     <ul id="todos" class="scroll"></ul>
-    <form id="todo-form"><input id="todo-input" maxlength="200" autocomplete="off" spellcheck="false"></form>
+    <form id="todo-form">
+      <div class="todo-controls todo-entry">
+        <input class="pet-input" id="todo-input" aria-label="事项内容" placeholder="记一件事…" maxlength="200" autocomplete="off" required>
+        <button class="pet-button pet-button--primary pet-icon-button" type="submit" id="todo-save" title="添加" aria-label="添加"></button>
+        <button class="pet-button pet-icon-button" type="button" id="todo-cancel" title="取消编辑" aria-label="取消编辑" hidden></button>
+      </div>
+      <div class="todo-controls">
+        <select class="pet-select" id="todo-kind" aria-label="事项类型"><option value="user">提醒我</option><option value="bot">Bot 待办</option></select>
+        <select class="pet-select" id="todo-time-mode" aria-label="时间方式"><option value="none">不定时</option><option value="absolute">指定时间</option><option value="relative">多久以后</option><option value="condition">条件触发</option><option value="app">应用打开</option></select>
+      </div>
+      <input class="pet-input" id="todo-date" aria-label="提醒时间" type="datetime-local" hidden>
+      <input class="pet-input" id="todo-delay" aria-label="多少分钟后" type="number" min="0.01" step="any" placeholder="分钟后" hidden>
+      <input class="pet-input" id="todo-condition" aria-label="触发条件" maxlength="500" placeholder="当桌面出现……时" hidden>
+      <div id="todo-error" role="status"></div>
+    </form>
   </div>
 
   <div id="plugins" class="bubble" data-hit="18">
@@ -404,6 +529,7 @@
   const todoList = document.getElementById("todos");
   const todoInput = document.getElementById("todo-input");
   const say = document.getElementById("say");
+  const menu = document.getElementById("pet-menu");
   const pupils = document.querySelectorAll(".pupil");
 
   const MAX_LOG = 30;
@@ -418,7 +544,7 @@
   let regionFrame = 0;
   // 用不受 transform 影响的布局盒计算，弹出动画进行中也按最终大小放行点击。
   function layoutBox(el) {
-    if (el instanceof SVGElement) {
+    if (el instanceof SVGElement || el === say || el.id === "chat") {
       const rect = el.getBoundingClientRect();
       return [rect.left, rect.top, rect.width, rect.height];
     }
@@ -426,6 +552,13 @@
     for (let node = el; node; node = node.offsetParent) {
       x += node.offsetLeft;
       y += node.offsetTop;
+    }
+    if (el.classList.contains("orb")) {
+      // 裁剪区域包含静止和动画中的按钮范围，弹出位移与缩放不会切掉两侧。
+      const rect = el.getBoundingClientRect();
+      const left = Math.min(x, rect.left), top = Math.min(y, rect.top);
+      return [left, top, Math.max(x + el.offsetWidth, rect.right) - left,
+        Math.max(y + el.offsetHeight, rect.bottom) - top];
     }
     return [x, y, el.offsetWidth, el.offsetHeight];
   }
@@ -452,23 +585,57 @@
   }
 
   // ---------- 模式 ----------
+  // 启动时预留透明画布；面板开关只改变内容和裁剪区域，不调整原生窗口尺寸。
+  const petViewportHeight = Math.max(460, Math.min(900, screen.availHeight));
+  let modeAnimation = null;
+  let modeRegionFrame = 0;
+  function followModeRegion() {
+    cancelAnimationFrame(modeRegionFrame);
+    const until = performance.now() + 400;
+    function frame(now) {
+      // 位移动画不改变元素尺寸，ResizeObserver 不会触发，需跟随更新原生裁剪区域。
+      updateRegion();
+      if (now < until) modeRegionFrame = requestAnimationFrame(frame);
+    }
+    modeRegionFrame = requestAnimationFrame(frame);
+  }
   function setMode(mode) {
     if (stage.dataset.mode === mode) return;
+    const fromBubble = mode === "chat" && say.classList.contains("show") ? say.getBoundingClientRect() : null;
+    modeAnimation?.cancel();
+    modeAnimation = null;
+    document.getElementById("chat").style.removeProperty("animation");
     stage.dataset.mode = mode;
+    if (mode === "menu") stage.style.setProperty("--menu-height", `${menu.offsetHeight}px`);
+    if (mode !== "todo") todoExpandedHeight = 0;
     if (mode === "chat") {
       hideSay();
-      chatInput.focus();
+      chatInput.focus({preventScroll: true});
       scrollLog();
     } else if (mode === "todo") {
-      todoInput.focus();
-      todoList.scrollTop = todoList.scrollHeight;
+      todoInput.focus({preventScroll: true});
+      todoExpandedHeight = 0;
+      todoStickBottom = true;
+      sizeTodoList();
+      scrollTodosToBottom();
     } else if (mode === "plugins") {
       api.refresh_buttons().catch((error) => {
         document.getElementById("plugin-error").textContent = String(error);
         updateRegion();
       });
     }
+    if (fromBubble && fromBubble.width && fromBubble.height && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      const chat = document.getElementById("chat");
+      // 从发言气泡的实际位置和尺寸展开聊天，已有发言由同一份聊天记录承接。
+      chat.style.animation = "none";
+      const target = chat.getBoundingClientRect();
+      modeAnimation = chat.animate([
+        {transformOrigin: "top left", transform: `translate(${fromBubble.left - target.left}px, ${fromBubble.top - target.top}px) scale(${fromBubble.width / target.width}, ${fromBubble.height / target.height})`, borderRadius: "16px"},
+        {transformOrigin: "top left", transform: "translate(0, 0) scale(1, 1)", borderRadius: "18px"},
+      ], {duration: 360, easing: "cubic-bezier(.22, 1, .36, 1)"});
+    }
     look(mode === "chat" || mode === "todo" ? [-0.6, -2] : [0, 0]);
+    followModeRegion();
     updateRegion();
   }
 
@@ -559,6 +726,28 @@
   document.getElementById("orb-chat").addEventListener("click", () => setMode("chat"));
   document.getElementById("orb-todo").addEventListener("click", () => setMode("todo"));
   document.getElementById("orb-plugins").addEventListener("click", () => setMode("plugins"));
+  document.getElementById("orb-explore").addEventListener("click", () => setMode("explore"));
+  const exploreStart = document.getElementById("explore-start");
+  const exploreStatus = document.getElementById("explore-status");
+  let explorationTimer = null;
+  document.getElementById("explore-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (exploreStart.disabled) return;
+    const goal = document.getElementById("explore-goal").value.trim();
+    if (!goal) return;
+    exploreStart.disabled = true;
+    exploreStatus.textContent = "正在提交探索任务…";
+    explorationTimer = setTimeout(() => {
+      exploreStart.disabled = false;
+      exploreStatus.textContent = "未收到提交回执，请先查看聊天，避免重复提交。";
+    }, 30000);
+    try { await api.explore(goal); }
+    catch (error) {
+      clearTimeout(explorationTimer);
+      exploreStart.disabled = false;
+      exploreStatus.textContent = String(error);
+    }
+  });
   say.addEventListener("click", () => setMode("chat"));
 
   window.addEventListener("blur", () => {
@@ -715,34 +904,272 @@
   }
 
   // ---------- 待办 ----------
+  // 共用线条图标；只接受此处定义的图标名，用户内容始终通过 textContent 写入。
+  function controlIcon(name, label = "") {
+    const paths = {
+      eye: "M1 8s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5ZM10 8a2 2 0 1 1-4 0 2 2 0 0 1 4 0",
+      stop: "M4 4h8v8H4z",
+      play: "m5 3 8 5-8 5V3Z",
+      plus: "M8 3v10M3 8h10", check: "m3 8 3 3 7-7", close: "m4 4 8 8M12 4l-8 8",
+      edit: "m10 3 3 3M3 13l1-4 7-7 3 3-7 7-4 1Z",
+      clock: "M8 4v4l3 2M14 8A6 6 0 1 1 2 8a6 6 0 0 1 12 0",
+      bell: "M3 11h10l-1-2V6a4 4 0 0 0-8 0v3l-1 2M6 14h4",
+      bot: "M8 1v2M3 4h10v9H3zM6 7v1M10 7v1M6 11h4",
+      alert: "M8 2 15 14H1L8 2ZM8 6v4M8 12v.1",
+    };
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.setAttribute("viewBox", "0 0 16 16");
+    icon.setAttribute("class", "pet-icon");
+    icon.setAttribute("fill", "none");
+    icon.setAttribute("stroke", "currentColor");
+    icon.setAttribute("stroke-width", "1.6");
+    icon.setAttribute("stroke-linecap", "round");
+    icon.setAttribute("stroke-linejoin", "round");
+    if (label) { icon.setAttribute("role", "img"); icon.setAttribute("aria-label", label); }
+    else icon.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS(icon.namespaceURI, "path");
+    path.setAttribute("d", paths[name]);
+    icon.append(path);
+    return icon;
+  }
+  function setControlIcon(button, name, label) {
+    button.replaceChildren(controlIcon(name));
+    button.title = label;
+    button.setAttribute("aria-label", label);
+  }
+  setControlIcon(document.getElementById("todo-save"), "plus", "添加");
+  setControlIcon(document.getElementById("todo-cancel"), "close", "取消编辑");
+  const screenToggle = document.getElementById("screen-toggle");
+  let screenReading = false;
+  screenToggle.append(controlIcon("play"), document.createTextNode("持续阅读"));
+  function screenState(state) {
+    screenReading = state.reading;
+    screenToggle.disabled = !state.enabled;
+    screenToggle.title = state.enabled ? (state.reading ? "停止持续阅读" : "比较屏幕变化，按时间拼图阅读") : "请在 WebUI 桌宠设置开启允许读取桌面";
+    screenToggle.setAttribute("aria-pressed", String(state.reading));
+    screenToggle.replaceChildren(controlIcon(state.reading ? "stop" : "play"), document.createTextNode(state.reading ? "停止阅读" : "持续阅读"));
+    document.getElementById("screen-indicator").hidden = !state.reading;
+    const status = document.getElementById("screen-status");
+    status.textContent = state.busy ? "…" : state.reading ? "●" : "";
+    status.title = state.captured_at ? `上次读取 ${new Date(state.captured_at).toLocaleString()}` : "";
+    document.getElementById("screen-error").textContent = state.error;
+    updateRegion();
+  }
+  async function screenAction(action, button) {
+    if (!api) return;
+    button.disabled = true;
+    try { await api.screen_action(action); }
+    catch (error) {
+      document.getElementById("screen-error").textContent = String(error);
+      button.disabled = false;
+      updateRegion();
+    }
+  }
+  screenToggle.addEventListener("click", () => screenAction(screenReading ? "stop" : "start", screenToggle));
+  let todoExpandedHeight = 0;
+  let todoStickBottom = true;
+  function scrollTodosToBottom() {
+    todoList.scrollTo({top: todoList.scrollHeight, behavior: "instant"});
+  }
+  // 初次展开的高度动画期间保持底部，用户开始浏览后立即停止跟随。
+  new ResizeObserver(() => {
+    if (stage.dataset.mode === "todo" && todoStickBottom) scrollTodosToBottom();
+  }).observe(todoList);
+  function sizeTodoList() {
+    if (stage.dataset.mode !== "todo") return;
+    const rows = [...todoList.children];
+    const rowsHeight = entries => Math.max(0, entries.reduce((height, row) => height + row.offsetHeight + 4, -4));
+    const fiveRows = rowsHeight(rows.slice(-5));
+    const contentHeight = rowsHeight(rows);
+    const panel = document.getElementById("todo");
+    const room = Math.max(40, panel.getBoundingClientRect().bottom - 12
+      - document.getElementById("todo-form").offsetHeight - 32);
+    // 用实际条目高度封顶，不能用包含空白视口高度的 scrollHeight。
+    const height = Math.min(room, contentHeight, Math.max(fiveRows, todoExpandedHeight));
+    todoList.style.setProperty("--todo-list-height", `${height}px`);
+    updateRegion();
+  }
+  // 滚动时逐步向上展开，离开待办模式后恢复五条；ResizeObserver 同步原生点击区域。
+  function expandTodos() {
+    if (todoList.scrollHeight <= todoList.clientHeight + 1) return;
+    todoExpandedHeight = Math.max(todoExpandedHeight, todoList.clientHeight) + 100;
+    sizeTodoList();
+  }
+  todoList.addEventListener("wheel", event => {
+    todoStickBottom = false;
+    if (event.deltaY < 0) expandTodos();
+  }, {passive: true});
+  let todoTouchY = null;
+  todoList.addEventListener("touchstart", event => {
+    todoStickBottom = false;
+    todoTouchY = event.touches[0].clientY;
+  }, {passive: true});
+  todoList.addEventListener("touchmove", event => {
+    const y = event.touches[0].clientY;
+    if (todoTouchY !== null && y > todoTouchY) expandTodos();
+    todoTouchY = y;
+  }, {passive: true});
+  todoList.addEventListener("pointerdown", () => { todoStickBottom = false; }, {passive: true});
+  todoList.addEventListener("keydown", event => {
+    if (["ArrowDown", "ArrowUp", "PageDown", "PageUp", "End", "Home"].includes(event.key)) todoStickBottom = false;
+    if (["ArrowUp", "PageUp", "Home"].includes(event.key)) expandTodos();
+  });
+  todoList.tabIndex = 0;
+  // scroll 也会由焦点、布局变化和滚动锚定触发，不能用它判断用户要求展开。
+  window.addEventListener("resize", () => {
+    sizeTodoList();
+    updateRegion();
+  });
+  let editingTodo = null;
+  const todoKind = document.getElementById("todo-kind");
+  const timeMode = document.getElementById("todo-time-mode");
+  const todoDate = document.getElementById("todo-date");
+  const todoCondition = document.getElementById("todo-condition");
+  const todoDelay = document.getElementById("todo-delay");
+  const todoError = document.getElementById("todo-error");
+  function timeFields() {
+    todoDate.hidden = timeMode.value !== "absolute";
+    todoDelay.hidden = timeMode.value !== "relative";
+    todoCondition.hidden = !["condition", "app"].includes(timeMode.value);
+    todoCondition.placeholder = timeMode.value === "app" ? "进程名或窗口标题，如 code.exe" : "当桌面出现……时";
+    todoCondition.required = !todoCondition.hidden;
+    sizeTodoList();
+    updateRegion();
+  }
+  timeMode.addEventListener("change", timeFields);
+  function resetTodo() {
+    editingTodo = null;
+    document.getElementById("todo-form").reset();
+    setControlIcon(document.getElementById("todo-save"), "plus", "添加");
+    document.getElementById("todo-cancel").hidden = true;
+    todoError.textContent = "";
+    timeFields();
+  }
+  document.getElementById("todo-cancel").addEventListener("click", resetTodo);
   function todoNode(item) {
     const li = document.createElement("li");
+    if (item.updated_at != null) {
+      li.dataset.edited = "true";
+      li.title = `已编辑 · ${new Date(item.updated_at * 1000).toLocaleString()}`;
+    }
     const tick = document.getElementById("tick-tpl").content.firstElementChild.cloneNode(true);
     const text = document.createElement("span");
-    text.textContent = item.text;
-    tick.addEventListener("click", async () => {
-      if (li.classList.contains("done")) return;
-      li.classList.add("done");
-      flash("happy", 1200);
-      await api.done_todo(item.id);
-      setTimeout(() => {
-        li.remove();
-        updateRegion();
-      }, 700);
+    const statuses = {pending: "待触发", dispatching: "触发中", triggered: "已触发", failed: "触发失败"};
+    const viewport = document.createElement("span");
+    viewport.className = "todo-title-viewport";
+    const title = document.createElement("span");
+    title.className = "todo-title";
+    title.textContent = item.text;
+    viewport.append(title);
+    text.append(viewport);
+    let scrollingTitle = null;
+    function browseTitle() {
+      const distance = title.scrollHeight - viewport.clientHeight;
+      if (distance <= 0 || scrollingTitle) return;
+      scrollingTitle = title.animate([
+        {transform: "translateY(0)", offset: 0},
+        {transform: "translateY(0)", offset: .12},
+        {transform: `translateY(-${distance}px)`, offset: .88},
+        {transform: `translateY(-${distance}px)`, offset: 1},
+      ], {duration: Math.max(2500, distance / 18 * 1000), direction: "alternate", iterations: Infinity});
+    }
+    function resetTitle() { scrollingTitle?.cancel(); scrollingTitle = null; }
+    li.addEventListener("mouseenter", browseTitle);
+    li.addEventListener("mouseleave", resetTitle);
+    li.addEventListener("focusin", browseTitle);
+    li.addEventListener("focusout", resetTitle);
+    const detail = document.createElement("small");
+    detail.className = "todo-meta";
+    detail.dataset.status = item.status;
+    const kindLabel = item.kind === "bot" ? "Bot 待办" : "用户提醒";
+    const statusLabel = item.due_at || item.condition ? statuses[item.status] : "未定时";
+    detail.title = `${kindLabel} · ${statusLabel}${item.due_at ? " · " + new Date(item.due_at * 1000).toLocaleString() : ""}`;
+    detail.append(controlIcon(item.kind === "bot" ? "bot" : "bell", kindLabel));
+    if (item.due_at) {
+      detail.append(controlIcon(item.status === "failed" ? "alert" : item.status === "triggered" ? "check" : "clock", statusLabel));
+      detail.append(document.createTextNode(new Date(item.due_at * 1000).toLocaleString(undefined, {
+        month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit",
+      })));
+    }
+    if (item.condition) {
+      const conditionLabel = document.createElement("small");
+      conditionLabel.className = "todo-meta";
+      conditionLabel.style.whiteSpace = "nowrap";
+      conditionLabel.style.overflow = "hidden";
+      conditionLabel.style.textOverflow = "ellipsis";
+      conditionLabel.style.display = "block";
+      conditionLabel.textContent = (item.condition_type === "app" ? "▣ " : "◇ ") + item.condition;
+      conditionLabel.title = `${item.condition} · ${statusLabel}`;
+      conditionLabel.dataset.status = item.status;
+      text.append(conditionLabel);
+    }
+    text.append(detail);
+    if (item.error) {
+      const error = document.createElement("small");
+      error.className = "todo-meta";
+      error.dataset.status = "failed";
+      error.textContent = item.error;
+      text.append(error);
+    }
+    tick.title = "完成并删除";
+    tick.setAttribute("aria-label", `完成并删除：${item.text}`);
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "pet-button pet-icon-button";
+    setControlIcon(edit, "edit", "编辑事项");
+    edit.addEventListener("click", () => {
+      editingTodo = item;
+      todoInput.value = item.text;
+      todoKind.value = item.kind;
+      timeMode.value = item.condition ? (item.condition_type === "app" ? "app" : "condition") : item.due_at ? "absolute" : "none";
+      todoCondition.value = item.condition || "";
+      if (item.due_at) {
+        const date = new Date(item.due_at * 1000);
+        todoDate.value = new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      }
+      setControlIcon(document.getElementById("todo-save"), "check", "保存");
+      document.getElementById("todo-cancel").hidden = false;
+      todoError.textContent = "";
+      timeFields();
     });
-    li.append(tick, text);
+    tick.addEventListener("click", async () => {
+      tick.disabled = true;
+      try {
+        await api.done_todo(item.id);
+        if (editingTodo?.id === item.id) resetTodo();
+        await window.pet.refreshTodos();
+      } catch (error) { todoError.textContent = String(error); }
+      finally { tick.disabled = false; updateRegion(); }
+    });
+    li.append(tick, text, edit);
     return li;
   }
   document.getElementById("todo-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const text = todoInput.value.trim();
     if (!text || !api) return;
-    todoInput.value = "";
-    await api.add_todo(text);
-    await window.pet.refreshTodos();
-    todoList.scrollTop = todoList.scrollHeight;
-    flash("happy", 1200);
-    updateRegion();
+    const save = document.getElementById("todo-save");
+    save.disabled = true;
+    try {
+      const options = {kind: todoKind.value, condition: ["condition", "app"].includes(timeMode.value) ? todoCondition.value.trim() : "",
+        condition_type: timeMode.value === "app" ? "app" : "natural"};
+      if (["condition", "app"].includes(timeMode.value)) {
+        if (!options.condition) throw new Error("请填写触发条件");
+        if (!editingTodo?.condition) options.due_at = null;
+      } else if (timeMode.value === "relative") options.delay_seconds = Number(todoDelay.value) * 60;
+      else if (timeMode.value === "absolute") {
+        const due = new Date(todoDate.value);
+        if (!Number.isFinite(due.getTime())) throw new Error("请选择提醒时间");
+        // 未改变时间时保留触发状态，避免编辑文字意外重新触发。
+        if (!editingTodo || Math.floor(editingTodo.due_at / 60) !== Math.floor(due.getTime() / 60000)) options.due_at = due.toISOString();
+      } else options.due_at = null;
+      if (editingTodo) await api.update_todo(editingTodo.id, text, options);
+      else await api.add_todo(text, options);
+      resetTodo();
+      await window.pet.refreshTodos();
+      flash("happy", 1200);
+    } catch (error) { todoError.textContent = String(error); }
+    finally { save.disabled = false; updateRegion(); }
   });
 
   // ---------- 与宿主通信 ----------
@@ -756,7 +1183,7 @@
     const nodes = visible.map((item) => {
       const button = document.createElement("button");
       button.type = "button";
-      button.className = "plugin-button";
+      button.className = "pet-button plugin-button";
       const busy = pendingButtons.has(buttonKey(item));
       button.disabled = item.disabled || busy;
       button.title = item.plugin_name + (item.text ? "：" + item.text : "");
@@ -797,11 +1224,22 @@
       const revision = ++todoRefresh;
       const items = await api.todos();
       if (revision !== todoRefresh) return;
+      const wasAtBottom = todoList.scrollHeight - todoList.clientHeight - todoList.scrollTop <= 2;
       todoList.replaceChildren(...items.map(todoNode));
+      todoStickBottom = todoStickBottom || wasAtBottom;
+      sizeTodoList();
+      if (todoStickBottom) scrollTodosToBottom();
       updateRegion();
     },
     receive(message) {
-      if (message.type === "buttons") {
+      if (message.type === "exploration_result") {
+        clearTimeout(explorationTimer);
+        exploreStart.disabled = false;
+        exploreStatus.textContent = message.error || "探索任务已提交，尚不代表完成。请在聊天中查看结果；图式可让麦麦查询。";
+        updateRegion();
+      } else if (message.type === "screen_state") {
+        screenState(message);
+      } else if (message.type === "buttons") {
         extensionButtons = message.buttons;
         renderExtensionButtons();
       } else if (message.type === "button_result") {
@@ -836,7 +1274,7 @@
   // 系统缩放或“文本大小”变化（含拖到另一块屏幕）时，让窗口跟着页面缩放重新定尺寸。
   function watchScale() {
     matchMedia(`(resolution: ${devicePixelRatio}dppx)`).addEventListener("change", async () => {
-      await api.fit(devicePixelRatio);
+      await api.fit(devicePixelRatio, petViewportHeight);
       updateRegion();
       watchScale();
     }, { once: true });
@@ -844,10 +1282,14 @@
 
   window.addEventListener("pywebviewready", async () => {
     api = window.pywebview.api;
-    await api.fit(devicePixelRatio);
+    await api.fit(devicePixelRatio, petViewportHeight);
     watchScale();
     await window.pet.refreshTodos();
-    const observer = new ResizeObserver(updateRegion);
+    const observer = new ResizeObserver(() => {
+      if (menu.offsetHeight) stage.style.setProperty("--menu-height", `${menu.offsetHeight}px`);
+      updateRegion();
+    });
+    observer.observe(menu);
     for (const el of document.querySelectorAll("[data-hit]")) observer.observe(el);
     updateRegion();
     api.ready();

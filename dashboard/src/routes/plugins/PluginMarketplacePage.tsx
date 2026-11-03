@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { useReducedMotion } from 'motion/react'
@@ -54,6 +54,10 @@ import type {
 } from './types'
 import { clearPluginProgress, getPluginType, mergePluginProgress, PLUGIN_TYPE_OPTIONS } from './types'
 import { PluginDetailPage } from '../plugin-detail'
+import './marketplace-toolbar.css'
+
+// 返回列表后保留详情，但设置、筛选、点赞等无关状态不能重新渲染其中的文档。
+const MemoizedPluginDetailPage = memo(PluginDetailPage)
 
 const PLUGIN_MARKET_COMPATIBLE_ONLY_KEY = 'plugins-market-compatible-only'
 const PLUGIN_MARKET_SCROLL_TOP_KEY = 'plugins-market-scroll-top'
@@ -137,17 +141,21 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const scrollViewportRef = useRef<HTMLDivElement | null>(null)
+  const toolbarAnchorRef = useRef<HTMLDivElement | null>(null)
+  const toolbarRef = useRef<HTMLDivElement | null>(null)
+  const [toolbarPinned, setToolbarPinned] = useState(false)
+  const [toolbarHeight, setToolbarHeight] = useState<number>()
   const scrollRestoredRef = useRef(false)
-  const initialViewStateRef = useRef(readPluginMarketplaceViewState())
+  const [initialViewState] = useState(readPluginMarketplaceViewState)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [sourceRevision, setSourceRevision] = useState(0)
   const [restartNoticeVisible, setRestartNoticeVisible] = useState(
     () => localStorage.getItem('plugins-restart-notice-dismissed') !== 'true'
   )
-  const [searchQuery, setSearchQuery] = useState(initialViewStateRef.current.searchQuery)
-  const [pluginTypeFilter, setPluginTypeFilter] = useState(initialViewStateRef.current.pluginTypeFilter)
+  const [searchQuery, setSearchQuery] = useState(initialViewState.searchQuery)
+  const [pluginTypeFilter, setPluginTypeFilter] = useState(initialViewState.pluginTypeFilter)
   const [marketplaceSortBy, setMarketplaceSortBy] = useState<MarketplaceSortKey>(
-    initialViewStateRef.current.marketplaceSortBy
+    initialViewState.marketplaceSortBy
   )
   const [showCompatibleOnly, setShowCompatibleOnly] = useState(
     () => localStorage.getItem(PLUGIN_MARKET_COMPATIBLE_ONLY_KEY) !== 'false'
@@ -277,6 +285,15 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
   }, [detailPluginId, routeDetailPluginId, reducedMotion, syncDetailAddress])
 
   const handleDetail = useCallback((plugin: PluginInfo) => setDetailPluginId(plugin.id), [setDetailPluginId])
+  const handleCloseDetail = useCallback(() => setDetailPluginId(null), [setDetailPluginId])
+  const handleDetailInstalledPluginsChange = useCallback((installed: InstalledPlugin[]) => {
+    syncInstalledPlugins(installed)
+    setPlugins((currentPlugins) => mergeInstalledPluginInfo(currentPlugins, installed))
+  }, [syncInstalledPlugins])
+  const detailInitialRuntime = useMemo(
+    () => gitStatus && maimaiVersion ? { gitStatus, maimaiVersion, installedPlugins } : undefined,
+    [gitStatus, maimaiVersion, installedPlugins],
+  )
 
   const { toast } = useToast()
   useEffect(() => {
@@ -321,6 +338,15 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
 
   const setPluginProgress = useCallback((progress: PluginLoadProgress) => {
     setPluginProgressById((currentProgress) => mergePluginProgress(currentProgress, progress))
+  }, [])
+
+  const resetCompletedPluginProgress = useCallback((pluginId: string) => {
+    setPluginProgressById((currentProgress) => {
+      const progress = currentProgress[pluginId]
+      return progress && progress.stage !== 'loading'
+        ? clearPluginProgress(currentProgress, pluginId, progress)
+        : currentProgress
+    })
   }, [])
 
   const setCompletedPluginProgress = useCallback((progress: PluginLoadProgress) => {
@@ -934,8 +960,42 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
     return { counts, total: matchingPlugins.length }
   }, [plugins, searchQuery, showCompatibleOnly, waitingForCompatibility, checkPluginCompatibility])
 
+  useLayoutEffect(() => {
+    const viewport = scrollViewportRef.current
+    const anchor = toolbarAnchorRef.current
+    const toolbar = toolbarRef.current
+    if (!viewport || !anchor || !toolbar) return
+
+    const desktop = window.matchMedia('(min-width: 1024px)')
+    const updatePinned = () => {
+      setToolbarPinned(desktop.matches && anchor.getBoundingClientRect().top < viewport.getBoundingClientRect().top + 8)
+    }
+    // 用独立锚点判断吸顶，并保留展开高度，避免工具栏缩短引起滚动位置跳动。
+    const updateToolbarLayout = () => {
+      // 展开动画结束后再更新占位，避免将动画中间高度写回列表布局。
+      if (toolbar.dataset.compact !== 'true' && toolbar.getAnimations().length === 0) {
+        setToolbarHeight(toolbar.offsetHeight)
+      }
+      updatePinned()
+    }
+    const observer = new ResizeObserver(updateToolbarLayout)
+    observer.observe(toolbar)
+    observer.observe(viewport)
+    toolbar.addEventListener('transitionend', updateToolbarLayout)
+    viewport.addEventListener('scroll', updatePinned, { passive: true })
+    desktop.addEventListener('change', updatePinned)
+    updatePinned()
+    return () => {
+      observer.disconnect()
+      toolbar.removeEventListener('transitionend', updateToolbarLayout)
+      viewport.removeEventListener('scroll', updatePinned)
+      desktop.removeEventListener('change', updatePinned)
+    }
+  }, [restartNoticeVisible, gitStatus?.installed])
+
   const marketplaceContent = (
     <ScrollArea
+      data-dashboard-page-scroll="true"
       className="h-full max-lg:h-auto max-lg:overflow-visible max-lg:[&>[data-dashboard-scrollbar]]:hidden"
       viewportClassName="max-lg:h-auto max-lg:!overflow-visible max-lg:overscroll-auto"
       scrollbars="vertical"
@@ -987,7 +1047,9 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
         )}
 
         {/* 搜索和筛选栏 */}
-        <Card data-plugin-market-toolbar="true" className="p-4">
+        <div ref={toolbarAnchorRef} className="marketplace-toolbar-anchor" aria-hidden="true" />
+        <div className="marketplace-toolbar-sticky" style={{ minHeight: toolbarHeight }}>
+        <Card ref={toolbarRef} data-plugin-market-toolbar="true" data-compact={toolbarPinned} className="p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             {/* 搜索框 */}
             <div className="relative w-full sm:max-w-md sm:flex-1">
@@ -1115,6 +1177,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
             </div>
           )}
         </Card>
+        </div>
 
         {/* 加载错误显示 */}
         {marketplaceProgress
@@ -1225,17 +1288,14 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
           aria-hidden={detailPluginId === null}
         >
           {displayedDetailPluginId ? (
-            <PluginDetailPage
+            <MemoizedPluginDetailPage
               embedded={embedded}
               mode="panel"
               deferContent={deferDetailContent}
-              onClose={() => setDetailPluginId(null)}
-              onInstalledPluginsChange={(installed) => {
-                syncInstalledPlugins(installed)
-                setPlugins((currentPlugins) => mergeInstalledPluginInfo(currentPlugins, installed))
-              }}
+              onClose={handleCloseDetail}
+              onInstalledPluginsChange={handleDetailInstalledPluginsChange}
               initialPlugin={plugins.find((plugin) => plugin.id === displayedDetailPluginId)}
-              initialRuntime={gitStatus && maimaiVersion ? { gitStatus, maimaiVersion, installedPlugins } : undefined}
+              initialRuntime={detailInitialRuntime}
               pluginId={displayedDetailPluginId}
             />
           ) : null}
@@ -1254,6 +1314,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
       <PluginInstallDialog
         ref={installDialogRef}
         progressById={pluginProgressById}
+        onResetProgress={resetCompletedPluginProgress}
         onInstall={handleInstall}
       />
       <RestartOverlay />

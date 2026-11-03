@@ -410,6 +410,18 @@ def get_chat_active_context(session_id: str = Query(..., min_length=1)):
     from src.maisaka.context.messages import ReferenceMessage, ReferenceMessageType
     from src.maisaka.context.compaction import ContextSummaryMessage
 
+    if session_id.startswith("focus:"):
+        from src.maisaka.focus import focus_mode_manager
+
+        group = focus_mode_manager.groups.get(session_id.removeprefix("focus:"))
+        return ChatActiveContextResponse(
+            memory=[message.processed_plain_text for message in group.history
+                    if isinstance(message, ContextSummaryMessage)] if group is not None else [],
+            expressions=[], jargon=[],
+            tools=list(group._service._active_tool_names) if group is not None else [],
+            runtime_active=group is not None, replyer_timestamp=None,
+        )
+
     chat_manager = _get_chat_manager()
     if chat_manager.get_existing_session_by_session_id(session_id) is None:
         raise HTTPException(status_code=404, detail="聊天流不存在")
@@ -2315,7 +2327,7 @@ def find_reasoning_tool_call_source(
     if not normalized_call_id or not stem.isdigit():
         return ReasoningToolCallSourceResponse()
 
-    # 被动回复不产生工具调用输出，直接使用保存时记录的真实 Planner 来源。
+    # 普通聊天回复不产生工具调用输出，直接使用保存时记录的真实 Planner 来源。
     tool_file = PROMPT_LOG_ROOT / tool_stage / session / f"{stem}.json"
     if tool_file.is_file():
         metadata = _load_prompt_json(tool_file).get("metadata")

@@ -85,7 +85,12 @@ class BotConsole:
     _COMMAND_COMPLETIONS = [
         "/help",
         "/offline",
+        "/offline group",
+        "/offline private",
         "/online",
+        "/online group",
+        "/online private",
+        "/list chat",
         "/pm",
         "/pm alias",
         "/pm alias add",
@@ -217,6 +222,9 @@ class BotConsole:
 - `/clear <聊天名>`：清空指定真实聊天的 Maisaka 历史；输入 `/clear ` 后按 Tab 选择
 - `/offline`：关闭当前所有适配器插件
 - `/online`：恢复本次运行中由 `/offline` 关闭的适配器插件
+- `/offline group|private|<聊天流ID>`：暂停全部群聊、全部私聊或指定聊天流的回复，重启后解除
+- `/online group|private|<聊天流ID>`：解除对应暂停；单流命令覆盖类型规则，批量命令清除该类型的单流覆盖
+- `/list chat`：仅列出当前活跃及本次运行已暂停的群聊名称、平台、状态与 ID
 - `/pm help`：查看插件与组件管理指令
 - `exit()`：关闭终端输入，Bot 继续运行
 

@@ -222,3 +222,33 @@ description = "External planner recovery。"
 display_name = "External planner continuation"
 advanced = true
 description = "External planner continuation。"
+
+[planner_reply_capabilities]
+display_name = "Planner reply capabilities"
+advanced = true
+description = "Available plugin reply capabilities for the current chat."
+
+[reply_cache]
+display_name = "Cached reply task"
+advanced = true
+description = "Switches to creative Replyer generation at the end of the Planner context."
+
+[desktop_pet_proactive_wake]
+display_name = "Desktop pet periodic reflection"
+advanced = false
+description = "Internal prompt for periodic reflection, autonomous exploration, and optional conversation."
+
+[desktop_pet_screen_read]
+display_name = "Desktop pet screen reading"
+advanced = false
+description = "Understand a local primary-screen capture, once or continuously."
+
+[desktop_pet_todo_context]
+display_name = "Resident owner todos"
+advanced = false
+description = "Refresh todos every turn and guide condition-based triggering."
+
+[desktop_pet_exploration]
+display_name = "Desktop pet exploration"
+advanced = false
+description = "Explore tool combinations for a human-defined goal and save evidence-backed candidate workflows."

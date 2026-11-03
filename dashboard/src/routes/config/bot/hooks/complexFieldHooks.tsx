@@ -17,6 +17,7 @@ import {
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import {
   Command,
@@ -840,7 +841,7 @@ function LearningScopeFields({
     <div className="min-w-0 space-y-1.5">
       <div className="flex min-w-0 flex-wrap items-center gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <Label className="shrink-0 whitespace-nowrap text-[11px] leading-none text-muted-foreground">平台</Label>
+          <Label className={scopeKind === 'chat' ? 'shrink-0 whitespace-nowrap text-[11px] leading-none text-muted-foreground' : 'sr-only'}>平台</Label>
           <div className="w-28 min-w-0">
             <LearningPlatformControl
               invalid={invalidChatTarget}
@@ -1278,17 +1279,43 @@ function LearningRuleItem({
   }
 
   return (
-    <div className="space-y-2 rounded-md border bg-muted/20 p-2.5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <TableRow>
+      <TableCell>
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          <span className="truncate text-sm font-semibold">
-            {scopeLabel}
-          </span>
-          <Badge variant="secondary" className="px-1.5 py-0 text-[11px]">
-            {ruleTypeLabel(ruleType)}
-          </Badge>
+          <span className="truncate font-semibold">{scopeLabel}</span>
           {scopeKind === 'chat' && <ChatTargetResolutionPreview state={chatTargetState} />}
         </div>
+      </TableCell>
+      <TableCell>{ruleTypeLabel(ruleType)}</TableCell>
+      <TableCell>
+        {scopeKind === 'default' || scopeKind === 'global' ? (
+          <span className="text-muted-foreground">全部平台</span>
+        ) : (
+          <LearningScopeFields
+            chatTargetState={chatTargetState}
+            item={item}
+            onFieldChange={updateScopeField}
+            platformOptions={platformOptions}
+            scopeKind={scopeKind}
+            usePlatformSelect={usePlatformSelect}
+          />
+        )}
+      </TableCell>
+      <TableCell>
+        <Switch
+          aria-label={`使用 ${scopeLabel}`}
+          checked={Boolean(item.use)}
+          onCheckedChange={(checked) => onItemFieldChange(index, 'use', checked)}
+        />
+      </TableCell>
+      <TableCell>
+        <Switch
+          aria-label={`学习 ${scopeLabel}`}
+          checked={Boolean(item.learn)}
+          onCheckedChange={(checked) => onItemFieldChange(index, 'learn', checked)}
+        />
+      </TableCell>
+      <TableCell className="text-right">
         <Button
           type="button"
           size="icon"
@@ -1300,47 +1327,8 @@ function LearningRuleItem({
         >
           <Trash2 className="h-4 w-4" />
         </Button>
-      </div>
-
-      <div className="space-y-2">
-        <div className="grid min-w-0 items-center gap-2 lg:grid-cols-[max-content_minmax(13rem,14rem)]">
-          <div className="min-w-0">
-            {scopeKind === 'default' || scopeKind === 'global' ? (
-              <div className="rounded-md border bg-background/70 px-2.5 py-2 text-xs text-muted-foreground">
-                当前范围不需要填写平台或聊天流 ID。
-              </div>
-            ) : (
-              <LearningScopeFields
-                chatTargetState={chatTargetState}
-                item={item}
-                onFieldChange={updateScopeField}
-                platformOptions={platformOptions}
-                scopeKind={scopeKind}
-                usePlatformSelect={usePlatformSelect}
-              />
-            )}
-          </div>
-          <div className="grid min-w-0 grid-cols-2 gap-1.5">
-            <div className="flex min-w-0 items-center justify-between gap-2 rounded-md border bg-background/70 px-2 py-1.5">
-              <Label className="whitespace-nowrap text-xs">使用</Label>
-              <Switch
-                className="shrink-0"
-                checked={Boolean(item.use)}
-                onCheckedChange={(checked) => onItemFieldChange(index, 'use', checked)}
-              />
-            </div>
-            <div className="flex min-w-0 items-center justify-between gap-2 rounded-md border bg-background/70 px-2 py-1.5">
-              <Label className="whitespace-nowrap text-xs">学习</Label>
-              <Switch
-                className="shrink-0"
-                checked={Boolean(item.learn)}
-                onCheckedChange={(checked) => onItemFieldChange(index, 'learn', checked)}
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+      </TableCell>
+    </TableRow>
   )
 }
 
@@ -1425,20 +1413,32 @@ function LearningRuleEditor({
           {emptyText}
         </div>
       ) : (
-        <div className="space-y-2">
-          {items.map((item, index) => (
-            <LearningRuleItem
-              key={index}
-              index={index}
-              item={item}
-              onItemFieldChange={onItemFieldChange}
-              onRemoveItem={removeRule}
-              platformOptions={getPlatformOptions(item.platform)}
-              scopeKindOverride={scopeKindOverrides[index]}
-              usePlatformSelect={usePlatformSelect}
-            />
-          ))}
-        </div>
+        <Table className="min-w-[40rem]">
+          <TableHeader>
+            <TableRow>
+              <TableHead>范围</TableHead>
+              <TableHead className="w-24">类型</TableHead>
+              <TableHead className="w-[22rem]">平台</TableHead>
+              <TableHead className="w-24">使用</TableHead>
+              <TableHead className="w-24">学习</TableHead>
+              <TableHead className="w-14"><span className="sr-only">操作</span></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.map((item, index) => (
+              <LearningRuleItem
+                key={index}
+                index={index}
+                item={item}
+                onItemFieldChange={onItemFieldChange}
+                onRemoveItem={removeRule}
+                platformOptions={getPlatformOptions(item.platform)}
+                scopeKindOverride={scopeKindOverrides[index]}
+                usePlatformSelect={usePlatformSelect}
+              />
+            ))}
+          </TableBody>
+        </Table>
       )}
 
       <Button

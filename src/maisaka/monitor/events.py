@@ -237,6 +237,8 @@ def _serialize_tool_results(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]
             "stop_after_execution": bool(tool.get("stop_after_execution", False)),
             "duration_ms": float(tool.get("duration_ms", 0.0) or 0.0),
             "summary": str(tool.get("summary", "")),
+            "reply_schedule": _normalize_payload_value(tool.get("reply_schedule")),
+            "reply_supplement": _normalize_payload_value(tool.get("reply_supplement")),
         }
         detail = tool.get("detail")
         for key in ("started_at", "ended_at"):
@@ -371,6 +373,34 @@ def _serialize_planner_block(
     }
 
 
+def _focus_message_payload(event: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """成员消息另存一份组级观察记录，保留来源并隔离各聊天的消息编号。"""
+    if event not in {"message.ingested", "message.sent", "message.updated"}:
+        return None
+    from src.chat.heart_flow.heartflow_manager import heartflow_manager
+
+    runtime = heartflow_manager.heartflow_chat_list.get(data["session_id"])
+    if runtime is None or runtime._focus_group is None:
+        return None
+    group = runtime._focus_group
+    payload = {
+        **data,
+        "session_id": group.monitor_id,
+        "session_name": group.monitor_name,
+        "source_session_id": runtime.session_id,
+        "source_session_name": runtime.session_name,
+        "speaker_name": f"{runtime.session_name} · {data['speaker_name']}",
+        "message_id": f"{runtime.session_id}:{data['message_id']}",
+        "platform": "", "group_id": None, "user_id": None, "is_group_chat": False,
+    }
+    if data.get("reply_to"):
+        payload["reply_to"] = {
+            **data["reply_to"],
+            "message_id": f"{runtime.session_id}:{data['reply_to']['message_id']}",
+        }
+    return payload
+
+
 async def _broadcast(event: str, data: Dict[str, Any]) -> None:
     """通过统一 WebSocket 管理器向监控主题广播事件。"""
 
@@ -378,20 +408,22 @@ async def _broadcast(event: str, data: Dict[str, Any]) -> None:
         from src.webui.routers.websocket.manager import websocket_manager
 
         data = _enrich_session_identity(data)
+        focus_payload = _focus_message_payload(event, data)
         # 写库分配 event_id 与广播须在同一临界区内完成，保证前端按 event_id 递增收到事件；
         # 否则并发广播可能乱序，前端补发游标越过尚未送达的事件，断线重连后该事件永久丢失。
         async with _get_broadcast_lock():
-            broadcast_data = data
-            if event not in NON_PERSISTED_EVENTS:
-                from src.maisaka.monitor.event_store import record_monitor_event
+            for payload in ([data, focus_payload] if focus_payload is not None else [data]):
+                broadcast_data = payload
+                if event not in NON_PERSISTED_EVENTS:
+                    from src.maisaka.monitor.event_store import record_monitor_event
 
-                broadcast_data = await asyncio.to_thread(record_monitor_event, event, data)
-            await websocket_manager.broadcast_to_topic(
-                domain=MONITOR_DOMAIN,
-                topic=MONITOR_TOPIC,
-                event=event,
-                data=broadcast_data,
-            )
+                    broadcast_data = await asyncio.to_thread(record_monitor_event, event, payload)
+                await websocket_manager.broadcast_to_topic(
+                    domain=MONITOR_DOMAIN,
+                    topic=MONITOR_TOPIC,
+                    event=event,
+                    data=broadcast_data,
+                )
     except Exception as exc:
         logger.warning(f"MaiSaka 监控事件广播失败: {exc}", exc_info=True)
 
@@ -404,12 +436,14 @@ async def emit_session_start(
     group_id: Optional[str],
     user_id: Optional[str],
     platform: str,
+    focus_session_ids: Optional[List[str]] = None,
 ) -> None:
     """广播会话开始事件。"""
 
     await _broadcast("session.start", {
         "session_id": session_id,
         "session_name": session_name,
+        **({"focus_session_ids": list(focus_session_ids)} if focus_session_ids is not None else {}),
         "is_group_chat": is_group_chat,
         "group_id": group_id,
         "user_id": user_id,
@@ -430,12 +464,14 @@ async def emit_stage_status(
     stage_started_at: float,
     updated_at: float,
     timestamp: float,
+    focus_session_ids: Optional[List[str]] = None,
 ) -> None:
     """广播单个聊天流的当前阶段状态。"""
 
     await _broadcast("stage.status", {
         "session_id": session_id,
         "session_name": session_name,
+        **({"focus_session_ids": list(focus_session_ids)} if focus_session_ids is not None else {}),
         "stage": stage,
         "detail": detail,
         "round_text": round_text,
@@ -724,7 +760,6 @@ async def emit_subagent_started(
     call_id: str,
     description: str,
     granted_tools: List[str],
-    background: bool,
     max_rounds: int,
 ) -> None:
     """广播子代理任务开始；call_id 是 Planner 发起这次派发的工具调用 id。"""
@@ -735,7 +770,6 @@ async def emit_subagent_started(
         "call_id": call_id,
         "description": _clip_subagent_event_text(description, SUBAGENT_EVENT_TEXT_MAX_CHARS),
         "granted_tools": list(granted_tools),
-        "background": background,
         "max_rounds": max_rounds,
         "timestamp": time.time(),
     })

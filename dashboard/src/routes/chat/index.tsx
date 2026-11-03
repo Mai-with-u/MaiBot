@@ -35,8 +35,9 @@ import { loadUserEmojiPayload, type UserEmojiItem } from '@/lib/user-emoji-api'
 import { cn } from '@/lib/utils'
 import { MaisakaMonitor } from '@/routes/monitor/maisaka-monitor'
 import { StageStatusLabel } from '@/routes/monitor/StageStatusLabel'
-import { useMaisakaMonitorOverview, type SessionInfo } from '@/routes/monitor/use-maisaka-monitor'
+import { useMaisakaMonitorOverview } from '@/routes/monitor/use-maisaka-monitor'
 
+import { buildObservedSessions, isFocusFlowId } from './observed-sessions'
 import { ChatComposer } from './ChatComposer'
 import { ChatWorkspaceSidebar } from './ChatWorkspaceSidebar'
 import { MessageList } from './MessageList'
@@ -300,27 +301,10 @@ export function ChatPage() {
     }
   }, [observedSessions, queryClient])
 
-  // 数据库中的真实聊天流为列表来源，实时监控事件只更新对应项的活动时间。
-  const knownSessions = useMemo(() => {
-    const sessions = new Map<string, SessionInfo>()
-    for (const chat of knownChatStreams) {
-      const live = observedSessions.get(chat.session_id)
-      sessions.set(chat.session_id, {
-        sessionId: chat.session_id,
-        sessionName: chat.display_name,
-        isGroupChat: chat.chat_type === 'group',
-        groupId: chat.group_id,
-        userId: chat.user_id,
-        platform: chat.platform,
-        lastActivity: Math.max(
-          chat.last_active_at ?? chat.created_at ?? 0,
-          live?.lastActivity ?? 0
-        ),
-        eventCount: live?.eventCount ?? 0,
-      })
-    }
-    return sessions
-  }, [knownChatStreams, observedSessions])
+  const { sessions: knownSessions, focusFlowByMember } = useMemo(
+    () => buildObservedSessions(knownChatStreams, observedSessions, observedStageStatuses),
+    [knownChatStreams, observedSessions, observedStageStatuses]
+  )
 
   // 最新消息由监控仓库增量维护，状态/Planner 更新不再触发扫描全部历史。
   const observedLatestMessages = useMemo(() => {
@@ -376,6 +360,11 @@ export function ChatPage() {
   const [activeObservedSessionId, setActiveObservedSessionId] = useState(
     getRequestedObservedSessionId
   )
+
+  useEffect(() => {
+    const flowId = activeObservedSessionId ? focusFlowByMember.get(activeObservedSessionId) : undefined
+    if (flowId) setActiveObservedSessionId(flowId)
+  }, [activeObservedSessionId, focusFlowByMember])
 
   const activeObservedSession = activeObservedSessionId
     ? knownSessions.get(activeObservedSessionId)
@@ -1355,7 +1344,6 @@ export function ChatPage() {
         {activeObservedSessionId ? (
           <div className="relative min-h-0 min-w-0 flex-1" data-chat-observed-session>
             <MaisakaMonitor sessionName={activeObservedSession?.sessionName}
-              embedded
               reasoningReturnTo={`/chat?observe=${encodeURIComponent(activeObservedSessionId)}`}
               floatingToolbarContainer={isMobileChat ? observedToolbarSlot : undefined}
             />
@@ -1377,7 +1365,7 @@ export function ChatPage() {
                     ) : null
                   }
                   onBack={() => setMobileRoomOpen(false)}
-                  onOpenSettings={() => openObservedSettings(activeObservedSessionId)}
+                  onOpenSettings={isFocusFlowId(activeObservedSessionId) ? undefined : () => openObservedSettings(activeObservedSessionId)}
                 />
                 <div
                   ref={setObservedToolbarSlot}

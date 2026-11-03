@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 # 页面设计尺寸（CSS 像素），与 index.html 布局一致。
 PAGE_WIDTH = 260
-PAGE_HEIGHT = 460
+PAGE_HEIGHT = 900
 PAGE = Path(__file__).parent / "web" / "index.html"
 
 # 页面就绪前先放行桌宠所在的大致区域，与 index.html 中 #pet 的位置一致。
@@ -249,7 +249,9 @@ class PetApi:
         # 页面缩放要等页面加载后才知道，先按系统 DPI 摆放，就绪后由 fit() 校正。
         scale = user32.GetDpiForWindow(self._hwnd) / 96
         self.fit(scale)
-        apply_region(self._hwnd, [INITIAL_HIT_RECT], scale)
+        initial_rect = list(INITIAL_HIT_RECT)
+        initial_rect[1] += self._size[1] / scale - PAGE_HEIGHT
+        apply_region(self._hwnd, [initial_rect], scale)
 
     def _place(self) -> None:
         width, height = self._size
@@ -272,10 +274,11 @@ class PetApi:
         self._closing = True
         self._window.destroy()
 
-    def fit(self, scale: float) -> None:
+    def fit(self, scale: float, height: float = PAGE_HEIGHT) -> None:
         """按页面实际缩放调整窗口尺寸，保持桌宠站立点不动。"""
         self._scale = scale
-        self._size = (round(PAGE_WIDTH * scale), round(PAGE_HEIGHT * scale))
+        height = max(460, min(PAGE_HEIGHT, height))
+        self._size = (round(PAGE_WIDTH * scale), round(height * scale))
         if not self._placed_by_user:
             self._anchor = default_anchor(scale)
         self._place()
@@ -296,11 +299,24 @@ class PetApi:
         path.write_bytes(payload)
         self._outbox.emit({"type": "chat", "request_id": request_id})
 
+    def exploration_tasks(self, task_id: str, request_id: str) -> None:
+        if not isinstance(task_id, str) or len(task_id) > 64 or not isinstance(request_id, str) or len(request_id) > 64:
+            raise ValueError("无效探索任务请求")
+        self._outbox.emit({"type": "exploration_tasks", "task_id": task_id, "request_id": request_id})
+
+    def explore(self, goal: str) -> None:
+        if not isinstance(goal, str) or not 1 <= len(goal.strip()) <= 2000:
+            raise ValueError("探索目标必须为 1 至 2000 字")
+        self._outbox.emit({"type": "explore", "goal": goal.strip()})
+
     def todos(self) -> List[Dict[str, Any]]:
         return self._todos.list()
 
-    def add_todo(self, text: str) -> Dict[str, Any]:
-        return self._todos.add(text)
+    def add_todo(self, text: str, options: Dict[str, Any]) -> Dict[str, Any]:
+        return self._todos.add(text, **options)
+
+    def update_todo(self, todo_id: str, text: str, options: Dict[str, Any]) -> Dict[str, Any]:
+        return self._todos.update(todo_id, text, **options)
 
     def done_todo(self, todo_id: str) -> None:
         self._todos.done(todo_id)
@@ -346,6 +362,11 @@ class PetApi:
 
     def clicked(self) -> None:
         self._outbox.emit({"type": "clicked"})
+
+    def screen_action(self, action: str) -> None:
+        if action not in {"read", "start", "stop"}:
+            raise ValueError("未知桌面读取操作")
+        self._outbox.emit({"type": "screen_action", "action": action})
 
     def refresh_buttons(self) -> None:
         self._outbox.emit({"type": "buttons_refresh"})
@@ -404,22 +425,29 @@ def pump_commands(api: PetApi, window: "webview.Window", commands: TextIO) -> No
                     if action == "list":
                         result = {"items": api._todos.list()}
                     elif action == "add":
-                        result = {"item": api._todos.add(command["text"])}
+                        result = {"item": api._todos.add(command["text"], **command.get("options", {}))}
                     elif action == "update":
-                        result = {"item": api._todos.update(command["todo_id"], command["text"])}
+                        result = {"item": api._todos.update(command["todo_id"], command.get("text"), **command.get("options", {}))}
+                    elif action == "claim_due":
+                        result = {"items": api._todos.claim_due()}
+                    elif action == "claim_condition":
+                        result = {"item": api._todos.claim_condition(command["todo_id"], command["revision"], command["evidence"])}
+                    elif action == "finish":
+                        api._todos.finish(command["todo_id"], command["revision"], command.get("error", ""))
+                        result = {}
                     elif action == "delete":
                         api._todos.done(command["todo_id"])
                         result = {"deleted": command["todo_id"]}
                     else:
                         raise ValueError("未知待办操作")
                     ack["result"] = result
-                    if action != "list":
+                    if action not in {"list", "claim_due"}:
                         try:
                             window.evaluate_js("window.pet.refreshTodos()")
                         except Exception as exc:
                             # 数据已保存；界面刷新失败不能误报为写入失败并诱发重复新增。
                             result["display_error"] = str(exc)
-                elif command["type"] in {"reply", "notice", "thinking", "idle", "failed", "accepted", "buttons", "button_result"}:
+                elif command["type"] in {"reply", "notice", "thinking", "idle", "failed", "accepted", "buttons", "button_result", "screen_state", "exploration_result", "exploration_tasks"}:
                     window.evaluate_js(f"window.pet.receive({json.dumps(command)})")
                 else:
                     raise ValueError(f"未知的桌宠指令: {command['type']}")

@@ -27,7 +27,7 @@ from src.maisaka.context.messages import (
     build_context_items_from_history_entry,
 )
 from src.maisaka.context.emoji_candidates import EmojiCandidateMessage
-from src.maisaka.context.compaction import ContextSummaryMessage, message_text_for_compaction
+from src.maisaka.context.compaction import ContextSummaryMessage
 
 CHECKPOINT_VERSION = 1
 _ITEM_TYPES = {
@@ -89,18 +89,6 @@ class FocusContextEntry:
     @property
     def progress(self) -> Dict[str, int]:
         return self.watermarks or ({sid: self.sequence for sid in self.session_ids} if self.sequence else {})
-
-    @property
-    def size(self) -> int:
-        return sum(message.count_in_context for message in self.messages)
-
-    def summary_text(self) -> str:
-        parts = [
-            text for message in self.messages if not isinstance(message, ContextSummaryMessage)
-            if (text := message_text_for_compaction(message))
-        ]
-        return f"session_ids={json.dumps(sorted(self.session_ids), ensure_ascii=False)}\n" + "\n".join(parts)
-
 
 
 def _encode(value: Any) -> Any:
@@ -311,5 +299,5 @@ class FocusCheckpointStore:
             payload["considered"].pop(session_id, None)
             payload["seen"] = [key for key in payload["seen"] if not key.startswith(session_id + "\0")]
             if payload["wait_session_id"] == session_id:
-                payload.update(wait_until=None, wait_session_id=None, wait_token=None, consecutive_waits=0)
+                payload.update(wait_until=None, wait_session_id=None, consecutive_waits=0)
             store._write(payload)

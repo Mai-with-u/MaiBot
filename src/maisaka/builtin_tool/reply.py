@@ -1,7 +1,7 @@
-﻿"""reply 工具适配与共用回复执行服务。"""
+"""reply 工具适配与共用回复执行服务。"""
 
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 import asyncio
 import json
@@ -16,6 +16,7 @@ from src.common.data_models.reply_generation_data_models import ReplyGenerationR
 from src.common.llm_json import parse_llm_json
 from src.common.logger import get_logger
 from src.config import config as config_module
+from src.maisaka.scenes.factory import get_scene
 from src.core.tooling import ToolAvailabilityContext, ToolExecutionContext, ToolExecutionResult, ToolInvocation, ToolSpec
 from src.maisaka.quote import decide_quote
 from src.maisaka.context.message_adapter import build_visible_text_from_sequence, parse_speaker_content
@@ -24,7 +25,7 @@ from src.maisaka.context.messages import LLMContextMessage, SessionBackedMessage
 from src.maisaka.context.planner_messages import extract_quote_ids_from_message_sequence
 from src.plugin_runtime.host.hook_dispatcher import HookAbortedError, build_hook_abort_tool_result
 from src.plugin_runtime.host.message_utils import PluginMessageUtils
-from src.plugin_runtime.host.reply_extensions import ReplyExtensionExecution, build_reply_extensions_schema
+from src.plugin_runtime.host.reply_extensions import ReplyExtensionExecution, build_reply_extensions_schema, get_reply_extensions
 from src.services import send_service
 
 from .context import BuiltinToolRuntimeContext, PostProcessedReplyMessage
@@ -33,7 +34,7 @@ if TYPE_CHECKING:
     from src.maisaka.reply_supplement import ReplySupplement
 
 logger = get_logger("maisaka_builtin_reply")
-_REPLY_TOOL_INTERNAL_ARGUMENTS = {"msg_id", "_reply_id", "_plugin_reply_prompt"}
+_REPLY_TOOL_INTERNAL_ARGUMENTS = {"msg_id", "_reply_id", "_plugin_reply_prompt", "after_reply", "wait_seconds"}
 _DUPLICATE_TARGET_REPLY_REMINDER_ARG = "_duplicate_target_reply_reminder"
 _DUPLICATE_TARGET_REPLY_REMINDER_TEMPLATE = (
     "你刚刚已经回复过这条消息，你刚刚的发言是：“{previous_reply}”\n"
@@ -127,6 +128,18 @@ def get_tool_spec(context: Optional[ToolAvailabilityContext] = None) -> ToolSpec
     """获取 reply 工具声明。"""
 
     properties: dict[str, Any] = {
+        "after_reply": {
+            "type": "string",
+            "enum": ["continue", "stop", "wait"],
+            "default": "stop",
+            "description": "回复发送成功后的行为：continue 继续思考和调用工具；stop 结束本轮（默认）；wait 等待后再判断。stop/wait 会取消同批后续工具。",
+        },
+        "wait_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 30,
+            "description": "after_reply=wait 时的等待秒数，默认 30 秒。",
+        },
         "msg_id": {
             "type": "string",
             "description": "要回复的消息msg_id。",
@@ -215,7 +228,7 @@ def get_tool_spec(context: Optional[ToolAvailabilityContext] = None) -> ToolSpec
             "minimum": 0,
             "description": "可选。从 show_emoji_list 的拼图选择一个表情包，填写图片序号，在文字后发送；0 或不填表示不发送表情包。",
         }
-    if config_module.global_config.chat.enable_reply_at and context is not None and context.is_group_chat:
+    if context is not None and context.is_group_chat is not None and get_scene(context.is_group_chat).allow_reply_at:
         properties["attach_at"] = {
             "type": "array",
             "description": "可选。随本次回复 at 一个或多个目标消息的发送者，填写目标 msg_id。",
@@ -245,14 +258,12 @@ def _build_monitor_metadata(reply_result: ReplyGenerationResult, reply_id: str =
 
     monitor_detail = reply_result.monitor_detail
     metadata: Dict[str, object] = {"reply_id": reply_id} if reply_id else {}
+    metadata["reply_schedule"] = reply_result.metrics.extra.get("reply_schedule")
     supplement_detail = reply_result.metrics.extra.get("reply_supplement")
     if isinstance(supplement_detail, dict):
         metadata["reply_supplement"] = supplement_detail
         monitor_detail = dict(monitor_detail)
-        monitor_detail["extra_sections"] = [
-            *monitor_detail.get("extra_sections", []),
-            {"title": "回复补充编排", "content": json.dumps(supplement_detail, ensure_ascii=False, indent=2)},
-        ]
+        monitor_detail["reply_supplement"] = supplement_detail
     if isinstance(monitor_detail, dict):
         metadata["monitor_detail"] = monitor_detail
     return metadata
@@ -323,10 +334,7 @@ async def _resolve_reply_quote(
 ) -> Tuple[bool, Optional[float]]:
     """群聊和私聊分别按固定公式及频率决定引用。"""
     stream = tool_ctx.runtime.chat_stream
-    frequency = (
-        config_module.global_config.chat.reply_style.group_quote_frequency if stream.is_group_session
-        else config_module.global_config.chat.reply_style.private_quote_frequency
-    )
+    frequency = get_scene(stream.is_group_session).quote_frequency
     if frequency == "never" or stream.platform == CLI_PLATFORM_NAME:
         return False, 0.0
     bot_user_id = str(stream.account_id or "").strip()
@@ -406,10 +414,48 @@ async def handle_tool(
             f"{tool_ctx.runtime.log_prefix} 检测到 reply 工具参数被重复包裹，已自动解包: "
             f"调用编号={invocation.call_id}"
         )
-    return await execute_reply(tool_ctx, invocation_arguments, call_id=invocation.call_id)
+    after_reply = invocation_arguments.get("after_reply", "stop")
+    if after_reply not in ("continue", "stop", "wait"):
+        return tool_ctx.build_failure_result("reply", "after_reply 必须为 continue、stop 或 wait。")
+    wait_seconds = invocation_arguments.get("wait_seconds", 30)
+    if type(wait_seconds) is not int or wait_seconds < 0:
+        return tool_ctx.build_failure_result("reply", "wait_seconds 必须为非负整数。")
+    result = await execute_reply(tool_ctx, invocation_arguments, call_id=invocation.call_id)
+    if result.success:
+        # 控制由各自的 Planner 循环执行，避免 Focus 意外暂停单个成员的普通循环。
+        result.metadata["after_reply"] = after_reply
+        if after_reply == "wait":
+            result.metadata["wait_seconds"] = wait_seconds
+    return result
 
 
 async def execute_reply(
+    tool_ctx: BuiltinToolRuntimeContext,
+    arguments: Dict[str, Any],
+    *,
+    call_id: str,
+    target_message: Optional[SessionMessage] = None,
+    supplement_runner: Optional[Callable[[], Awaitable["ReplySupplement"]]] = None,
+) -> ToolExecutionResult:
+    """持有本轮补充任务，失败或取消时回收任务，禁止后台任务越过发送边界。"""
+    task = asyncio.create_task(supplement_runner()) if supplement_runner is not None else None
+
+    async def resolve_supplement() -> "ReplySupplement":
+        return await asyncio.shield(task)
+
+    try:
+        return await _execute_reply(
+            tool_ctx, arguments, call_id=call_id, target_message=target_message,
+            supplement_runner=resolve_supplement if task is not None else None,
+        )
+    finally:
+        if task is not None:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+async def _execute_reply(
     tool_ctx: BuiltinToolRuntimeContext,
     arguments: Dict[str, Any],
     *,
@@ -421,10 +467,20 @@ async def execute_reply(
 
     普通 Planner 直接调用；Focus 的 reply 工具经参数解包后调用同一入口。
     target_message 可传入请求前固定的真实消息，避免生成期间历史变化影响引用目标。
-    supplement_runner 在正文生成时并行运行；补充失败时跳过补充，正文成功即可发送。
+    正文与补充编排并行；Mai Replier 按实际模型等待补充器确定目标。
     """
 
     invocation_arguments = deepcopy(arguments)
+    planner_snapshot = None
+    if config_module.global_config.experimental.reply_cache:
+        # Focus 使用共享 Planner 快照，普通聊天使用所属会话的快照。
+        planner_service = (
+            tool_ctx.runtime._focus_group._service if tool_ctx.runtime._focus_group is not None
+            else tool_ctx.runtime._chat_loop_service
+        )
+        planner_snapshot = planner_service.planner_request_snapshot
+        if planner_snapshot is None:
+            return tool_ctx.build_failure_result("reply", "回复缓存模式缺少本轮 Planner 请求快照，无法生成回复。")
     if type(invocation_arguments.get("attach_emoji")) is int and invocation_arguments["attach_emoji"] == 0:
         invocation_arguments.pop("attach_emoji")
     reply_reference = invocation_arguments.get("reply_reference")
@@ -465,31 +521,52 @@ async def execute_reply(
             f"未找到要回复的目标消息，msg_id={to_display_message_id(target_message_id)}",
         )
 
-    extension_execution = ReplyExtensionExecution(
-        context=ToolAvailabilityContext(
-            session_id=tool_ctx.runtime.session_id,
-            stream_id=tool_ctx.runtime.session_id,
-            platform=tool_ctx.runtime.chat_stream.platform,
-        ),
-        reply_message_id=target_message_id,
-        call_id=call_id,
+    context = ToolAvailabilityContext(
+        session_id=tool_ctx.runtime.session_id, stream_id=tool_ctx.runtime.session_id,
+        platform=tool_ctx.runtime.chat_stream.platform,
+        is_group_chat=tool_ctx.runtime.chat_stream.is_group_session,
+        group_id=tool_ctx.runtime.chat_stream.group_id, user_id=tool_ctx.runtime.chat_stream.user_id,
     )
-    if invocation_arguments.get("plugin_options"):
-        extension_execution.context.is_group_chat = tool_ctx.runtime.chat_stream.is_group_session
-        extension_execution.context.group_id = tool_ctx.runtime.chat_stream.group_id
-        extension_execution.context.user_id = tool_ctx.runtime.chat_stream.user_id
-    try:
+    available_extensions = get_reply_extensions(context)
+    dependencies: List[str] = []
+    schedule: Dict[str, Any] = {"mode": "parallel", "dependencies": dependencies}
+    # 条件式能力提示不依赖本轮参数，正文无需等待补充器选择插件。
+    reply_tool_args["_plugin_reply_prompt"] = "\n\n".join(
+        target.entry.generation_prompt for target in available_extensions.values()
+        if supplement_runner is not None and target.entry.generation_prompt
+    )
+    supplement: Optional["ReplySupplement"] = None
+    extension_execution = ReplyExtensionExecution(context=context, reply_message_id=target_message_id, call_id=call_id)
+    preparation_metadata: Dict[str, Any] = {"reply_id": extension_execution.reply_id, "reply_schedule": schedule}
+
+    async def collect_supplement() -> Optional[SessionMessage]:
+        nonlocal supplement, target_message, target_message_id
+        if supplement_runner is not None and supplement is None:
+            try:
+                supplement = await supplement_runner()
+            except Exception as exc:
+                preparation_metadata["reply_supplement"] = {"status": "failed", "error": str(exc)}
+                raise
+            if supplement.target_message is not None:
+                target_message = supplement.target_message
+                target_message_id = target_message.message_id
+                invocation_arguments["msg_id"] = target_message_id
+            invocation_arguments["plugin_options"] = supplement.plan.plugin_options
+            preparation_metadata["reply_supplement"] = {**supplement.metadata, "status": "completed"}
+            extension_execution.reply_message_id = target_message_id
+        return supplement.target_message if supplement is not None else target_message
+
+    async def resolve_reply_target() -> Optional[SessionMessage]:
+        if "replyer:reply_target" not in dependencies:
+            dependencies.append("replyer:reply_target")
+        schedule["mode"] = "serial"
+        return await collect_supplement()
+
+    async def prepare_extensions() -> None:
         await extension_execution.prepare(invocation_arguments.get("plugin_options", {}))
-    except Exception as exc:
-        logger.exception(f"{tool_ctx.runtime.log_prefix} 准备插件回复扩展失败: {exc}")
-        return tool_ctx.build_failure_result(
-            "reply", f"准备插件回复扩展失败：{exc}",
-            metadata={"reply_id": extension_execution.reply_id},
-        )
-    if extension_execution.targets:
-        reply_tool_args["plugin_options"] = deepcopy(extension_execution.parameters)
-        reply_tool_args["_reply_id"] = extension_execution.reply_id
-        reply_tool_args["_plugin_reply_prompt"] = extension_execution.extra_prompt
+        if extension_execution.targets:
+            reply_tool_args["plugin_options"] = deepcopy(extension_execution.parameters)
+            reply_tool_args["_reply_id"] = extension_execution.reply_id
 
     try:
         replyer = replyer_manager.get_replyer(
@@ -503,7 +580,7 @@ async def execute_reply(
         return tool_ctx.build_failure_result(
             "reply",
             "获取 Maisaka 回复生成器时发生异常。",
-            metadata={"reply_id": extension_execution.reply_id},
+            metadata=preparation_metadata,
         )
 
     if replyer is None:
@@ -511,7 +588,7 @@ async def execute_reply(
         return tool_ctx.build_failure_result(
             "reply",
             "Maisaka 回复生成器当前不可用。",
-            metadata={"reply_id": extension_execution.reply_id},
+            metadata=preparation_metadata,
         )
 
     replyer_chat_history = list(tool_ctx.runtime._chat_history)
@@ -521,13 +598,17 @@ async def execute_reply(
     )
     if previous_target_reply:
         reply_tool_args = _with_duplicate_target_reply_reminder(reply_tool_args, previous_target_reply)
-    supplement: Optional["ReplySupplement"] = None
     try:
-        tool_ctx.runtime._update_stage_status("Replyer", "生成可见回复及富文本编排" if supplement_runner else "生成可见回复")
+        tool_ctx.runtime._update_stage_status("Replyer", "生成可见回复")
+        if supplement_runner is None:
+            # 原有 reply 工具先准备插件参数及正文要求，实验链路才等待并行编排。
+            await prepare_extensions()
+            reply_tool_args["_plugin_reply_prompt"] = extension_execution.extra_prompt
         generation = replyer.generate_reply_with_context(
             reply_reason="",
             stream_id=tool_ctx.runtime.session_id,
             reply_message=target_message if supplement_runner is None else None,
+            resolve_reply_target=resolve_reply_target if supplement_runner is not None else None,
             chat_history=replyer_chat_history,
             retro_history_builder=tool_ctx.runtime.build_retro_reply_history,
             image_recognition_refresher=lambda history: (
@@ -542,29 +623,17 @@ async def execute_reply(
                 system_prompt,
             ),
             log_reply=False,
+            planner_snapshot=planner_snapshot,
         )
-        if supplement_runner is None:
-            success, reply_result = await generation
-        else:
-            async def run_optional_supplement() -> Optional["ReplySupplement"]:
-                try:
-                    return await supplement_runner()
-                except Exception:
-                    logger.exception(f"{tool_ctx.runtime.log_prefix} 回复补充生成失败，跳过补充并继续发送正文")
-                    return None
-
-            # 明确收回另一分支：失败或取消后不能遗留仍在生成的后台任务。
-            tasks = [asyncio.create_task(generation), asyncio.create_task(run_optional_supplement())]
-            try:
-                generation_result, supplement = await asyncio.gather(*tasks)
-                success, reply_result = generation_result
-            finally:
-                for task in tasks:
-                    if not task.done():
-                        task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
-            if supplement is not None:
-                reply_result.metrics.extra["reply_supplement"] = supplement.metadata
+        success, reply_result = await generation
+        if supplement_runner is not None:
+            await collect_supplement()
+            await prepare_extensions()
+            if extension_execution.extra_prompt:
+                raise ValueError("平行补充器模式下请通过 generation_prompt 声明正文要求，prepare 不能在正文生成后追加要求")
+            reply_result.metrics.extra["reply_schedule"] = schedule
+        if supplement is not None:
+            reply_result.metrics.extra["reply_supplement"] = {**supplement.metadata, "status": "completed"}
     except Exception as exc:
         logger.exception(
             f"{tool_ctx.runtime.log_prefix} 回复生成器执行异常: 目标消息编号={target_message_id} 异常={exc}"
@@ -572,7 +641,7 @@ async def execute_reply(
         return tool_ctx.build_failure_result(
             "reply",
             f"生成可见回复或补充内容时发生异常：{type(exc).__name__}: {exc}",
-            metadata={"reply_id": extension_execution.reply_id},
+            metadata=preparation_metadata,
         )
 
     reply_text = reply_result.completion.response_text.strip() if success else ""
@@ -592,12 +661,6 @@ async def execute_reply(
         )
 
     if supplement is not None:
-        # msg_id 只决定发送时的引用；正文仍根据 Planner 指导生成，不等待补充器。
-        if supplement.quote_message is not None:
-            target_message = supplement.quote_message
-            target_message_id = target_message.message_id
-            invocation_arguments["msg_id"] = target_message_id
-            extension_execution.reply_message_id = target_message_id
         reply_tool_args["reply_supplement"] = supplement.plan.model_dump()
         invocation_arguments["reply_supplement"] = supplement.plan.model_dump()
 
@@ -694,13 +757,9 @@ async def execute_reply(
         "".join(c.text for c in reply_sequences[first_reply_index].components if isinstance(c, TextComponent))
         if reply_sequences else ""
     )
-    if supplement is None or supplement.quote_message is not None:
-        set_quote, quote_probability = await _resolve_reply_quote(tool_ctx, first_text, target_message)
-    else:
-        # 补充器未选择引用目标时，不对原始回复目标额外发起引用。
-        set_quote, quote_probability = False, 0.0
+    set_quote, quote_probability = await _resolve_reply_quote(tool_ctx, first_text, target_message)
     if supplement is not None:
-        reply_metadata["reply_supplement"] = supplement.metadata
+        reply_metadata["reply_supplement"] = {**supplement.metadata, "status": "completed"}
     # 补充器选中的引用同样遵守群聊/私聊的三档频率与 CLI 平台限制。
     effective_set_quote = set_quote
     if quote_probability is not None:
@@ -732,11 +791,7 @@ async def execute_reply(
                 segment_set_quote, segment_reply_message = _resolve_segment_reply_context(
                     index=index,
                     quote_previous=reply_item.quote_previous and (
-                        (
-                            config_module.global_config.chat.reply_style.group_quote_frequency
-                            if tool_ctx.runtime.chat_stream.is_group_session
-                            else config_module.global_config.chat.reply_style.private_quote_frequency
-                        ) != "never"
+                        get_scene(tool_ctx.runtime.chat_stream.is_group_session).quote_frequency != "never"
                     ),
                     effective_set_quote=effective_set_quote,
                     target_message=target_message,

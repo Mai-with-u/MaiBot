@@ -46,10 +46,6 @@ class IdleBackoffController:
             return
 
         runtime = self._runtime
-        if not runtime.chat_stream.is_group_session:
-            self.reset()
-            return
-
         self._count += 1
         backoff_seconds = self._get_backoff_seconds()
         if backoff_seconds <= 0:
@@ -67,9 +63,6 @@ class IdleBackoffController:
         runtime = self._runtime
         if runtime._is_focus_mode_active_for_current_chat():
             self.reset()
-            return 0.0
-
-        if not runtime.chat_stream.is_group_session:
             return 0.0
 
         if self._until <= 0:

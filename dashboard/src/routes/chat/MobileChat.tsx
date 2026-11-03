@@ -23,6 +23,7 @@ import { StageStatusLabel } from '@/routes/monitor/StageStatusLabel'
 
 import { ConversationAvatar } from '@/components/ui/conversation'
 
+import { isFocusFlowId } from './observed-sessions'
 import type { ChatTab, ObservedMessagePreview } from './types'
 import { getChatTabDisplayName } from './utils'
 
@@ -454,7 +455,7 @@ export function MobileChatList({
           return (
             <SwipeRow
               key={session.sessionId}
-              actions={[
+              actions={isFocusFlowId(session.sessionId) ? [] : [
                 {
                   label: t('chat.mobile.settings'),
                   onClick: () => onOpenObservedSettings(session.sessionId),
@@ -464,7 +465,7 @@ export function MobileChatList({
               <ChatRow
                 avatar={<ObservedAvatar session={session} />}
                 title={session.sessionName}
-                badge={t('chat.sidebar.observedBadge')}
+                badge={isFocusFlowId(session.sessionId) ? 'Focus 共享流' : t('chat.sidebar.observedBadge')}
                 preview={preview}
                 time={formatRowTime(session.lastActivity, language)}
                 onOpen={() => onOpenObserved(session.sessionId)}

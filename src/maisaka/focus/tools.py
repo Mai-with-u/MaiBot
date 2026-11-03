@@ -35,6 +35,7 @@ def availability_context(runtime: MaisakaHeartFlowChatting) -> ToolAvailabilityC
         group_id=stream.group_id or "",
         user_id=stream.user_id or "",
         platform=stream.platform,
+        is_focus=True,
     )
 
 
@@ -48,6 +49,7 @@ def execution_context(runtime: MaisakaHeartFlowChatting, reasoning: str) -> Tool
         group_id=scope.group_id,
         user_id=scope.user_id,
         platform=scope.platform,
+        is_focus=True,
     )
 
 
@@ -246,19 +248,16 @@ class FocusToolRouter:
             return failure(f"工具参数声明已经变化：{exc.message}")
         invocation.arguments = native_arguments
         invocation.metadata["focus_scope_id"] = self.group.scope_id
-        if tool_name in {"wait", "stop"} and original.provider_name == "maisaka_builtin":
-            result = self.group.execute_control(tool_name, native_arguments, session_id)
-        else:
-            native = ToolInvocation(
-                tool_name=original.name,
-                arguments=native_arguments,
-                call_id=call_id,
-                session_id=session_id,
-                stream_id=session_id,
-                reasoning=reasoning,
-                metadata=dict(invocation.metadata),
-            )
-            result = await runtime._tool_registry.invoke(native, execution_context(runtime, reasoning))
-            result.tool_name = tool_name
+        native = ToolInvocation(
+            tool_name=original.name,
+            arguments=native_arguments,
+            call_id=call_id,
+            session_id=session_id,
+            stream_id=session_id,
+            reasoning=reasoning,
+            metadata=dict(invocation.metadata),
+        )
+        result = await runtime._tool_registry.invoke(native, execution_context(runtime, reasoning))
+        result.tool_name = tool_name
         result.metadata["session_id"] = session_id
         return invocation, result, runtime, original

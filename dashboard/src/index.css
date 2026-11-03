@@ -2,6 +2,20 @@
 @source './**/*.{js,ts,jsx,tsx}';
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* 全主题统一关闭焦点框；重要声明放入独立层，覆盖主题中的重要样式。
+   只清除轮廓和 Tailwind 光圈，保留控件原有的立体阴影与选中状态。 */
+@layer dashboard-focus {
+  :focus,
+  :focus-visible,
+  :focus::before,
+  :focus::after {
+    outline: none !important;
+    --tw-ring-shadow: 0 0 #0000 !important;
+    --tw-ring-offset-shadow: 0 0 #0000 !important;
+    --tw-inset-ring-shadow: 0 0 #0000 !important;
+  }
+}
+
 @theme inline {
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));

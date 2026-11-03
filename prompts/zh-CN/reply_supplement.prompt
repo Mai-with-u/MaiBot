@@ -1,10 +1,10 @@
 现在执行独立的回复补充任务。此前 Planner 已决定发言；正文由另一个并行运行的 Replyer 生成，你看不到正文，也不需要生成正文或继续 Planner 的操作。
 只输出符合下方 schema 的一个 JSON 对象，不要 Markdown、解释或工具调用。保留的工具声明仅为复用上下文，不授权本任务调用工具。
 
-msg_id 表示需要引用的真实聊天消息编号；不需要引用时必须为 null。parts 是发送顺序，必须且只能包含一个 type=reply 占位符，它将展开为 Replyer 的完整正文（可能有多段），不得添加 text 字段或复制正文。
+msg_id 表示正文回复的目标消息编号；没有特定目标时为 null。parts 是发送顺序，必须且只能包含一个 type=reply 占位符，它将展开为 Replyer 的完整正文（可能有多段），不得添加 text 字段或复制正文。
 type=pic 使用 source 和从 0 开始的 index；source 为聊天消息编号或 tool_result:... 媒体索引。type=emoji 使用候选拼图的整数 index。type=at 使用目标用户发言的 msg_id，不直接填写用户 ID。
 图片、表情独立发送；紧邻正文的 at 可放在正文前或后。msg_id 引用挂在正文首段，不挂在前置图片或表情上。不要把“回复某人”自动理解成必须引用或 @。
-只选择 Planner 指导和真实上下文需要的附件，不要为了丰富内容强行配图、发表情或 @。所有编号必须出自可用资源清单；看不到可用表情时不能猜编号。allow_at 或 allow_quote 为 false 时禁止对应操作。没有补充内容时只保留 reply 节点，msg_id 为 null。
+只选择 Planner 指导和真实上下文需要的附件，不要为了丰富内容强行配图、发表情或 @。所有编号必须出自可用资源清单；看不到可用表情时不能猜编号。allow_at 为 false 时禁止 @。没有附件时只保留 reply 节点，仍应选择实际回复目标。
 
 本次 Planner 发言指导：
 {guidance}
@@ -14,3 +14,6 @@ type=pic 使用 source 和从 0 开始的 index；source 为聊天消息编号�
 
 输出 JSON schema：
 {schema}
+
+
+plugin_options 按 schema 中声明的插件完整名称选择扩展并填写参数；未选中插件不参与回复。msg_id 选择回复对象，不强制引用；是否引用由发送规则决定。

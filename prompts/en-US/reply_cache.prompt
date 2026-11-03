@@ -1,0 +1,3 @@
+The Planner decision stage is complete. Perform only the reply generation task now. The complete Replyer system requirements and user context follow; use their persona, reply guidance, and expression requirements to produce the final message for the chat user.
+Do not continue planning, call tools, output reply guidance, or explain the task switch. Output only the reply that can be sent directly. Retained tool definitions preserve the original request prefix and must not be used for this task.
+If a Planner assistant message precedes this request, use it as guidance for this reply; it has not been sent to the chat user.

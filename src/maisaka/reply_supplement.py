@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
+from jsonschema import validate
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 import asyncio
@@ -17,6 +18,9 @@ from src.common.llm_json import validate_llm_json
 from src.common.logger import get_logger
 from src.common.prompt_i18n import load_prompt
 from src.config.config import global_config
+from src.maisaka.scenes.factory import get_scene
+from src.core.tooling import ToolAvailabilityContext
+from src.plugin_runtime.host.reply_extensions import build_reply_extensions_schema
 from src.llm_models.model_client.base_client import ResponseRequest
 from src.llm_models.payload_content.context_item import ContextItemBuilder, RoleType
 from src.llm_models.request_snapshot import serialize_tool_options_snapshot
@@ -58,6 +62,7 @@ class EmojiNode(SupplementNode):
 class ReplySupplementPlan(SupplementNode):
     """一份发送编排；reply 只能出现一次，不能携带或改写正文。"""
 
+    plugin_options: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     msg_id: Optional[str] = Field(min_length=1)
     parts: List[Annotated[Union[ReplyNode, AtNode, PictureNode, EmojiNode], Field(discriminator="type")]] = Field(
         min_length=1, max_length=16,
@@ -98,12 +103,9 @@ class SupplementResources:
                     pictures[message.message_id] = images
             if isinstance(message, EmojiCandidateMessage):
                 emojis.update(message.emoji_hashes)
-        frequency = (
-            global_config.chat.reply_style.group_quote_frequency if is_group
-            else global_config.chat.reply_style.private_quote_frequency
-        )
-        return cls(messages, pictures, emojis, is_group and global_config.chat.enable_reply_at,
-                   global_config.emoji.use_new_send_logic, frequency != "never")
+        scene = get_scene(is_group)
+        return cls(messages, pictures, emojis, scene.allow_reply_at,
+                   global_config.emoji.use_new_send_logic, scene.quote_frequency != "never")
 
     @staticmethod
     def resolve_id(value: str, candidates: Dict[str, Any]) -> str:
@@ -119,14 +121,13 @@ class SupplementResources:
                           "indices": list(range(len(images)))} for key, images in self.pictures.items()],
             "emoji_indices": list(self.emojis) if self.allow_emoji else [],
             "allow_at": self.allow_at,
-            "allow_quote": self.allow_quote,
         }
 
 
 @dataclass
 class ReplySupplement:
     plan: ReplySupplementPlan
-    quote_message: Optional[SessionMessage]
+    target_message: Optional[SessionMessage]
     components: List[Optional[BaseMessageComponentModel]]
     metadata: Dict[str, Any]
 
@@ -160,8 +161,6 @@ async def resolve_supplement(
     """严格解析快照中的资源，全部成功后才能进入发送链路。"""
     quote = None
     if plan.msg_id is not None:
-        if not resources.allow_quote:
-            raise ValueError("当前会话已关闭引用，回复补充器不能设置 msg_id")
         quote = resources.messages[resources.resolve_id(plan.msg_id, resources.messages)]
     components: List[Optional[BaseMessageComponentModel]] = []
     for part in plan.parts:
@@ -194,7 +193,7 @@ async def resolve_supplement(
 async def generate_reply_supplement(
     snapshot: PlannerRequestSnapshot, guidance: str, session_id: str, is_group: bool,
 ) -> ReplySupplement:
-    """补充生成失败时携带错误重生成一次，再失败由回复链路跳过补充。"""
+    """补充生成失败时携带错误重生成一次，再失败则终止本次回复。"""
     try:
         return await _generate_reply_supplement_once(snapshot, guidance, session_id, is_group)
     except Exception as exc:
@@ -208,10 +207,18 @@ async def _generate_reply_supplement_once(
 ) -> ReplySupplement:
     """保留 Planner 的模型、工具及消息前缀，只在末尾追加编排任务。"""
     resources = SupplementResources.capture(snapshot, session_id, is_group)
+    context = ToolAvailabilityContext(session_id=session_id, stream_id=session_id, is_group_chat=is_group)
+    if resources.messages:
+        message = next(iter(resources.messages.values()))
+        context.platform = message.platform
+        context.group_id = message.message_info.group_info.group_id if message.message_info.group_info else ""
+        context.user_id = message.message_info.user_info.user_id
+    extension_schema = build_reply_extensions_schema(context) or {"type": "object", "properties": {}, "additionalProperties": False}
 
     def build_request() -> Union[ResponseRequest, ACPPlannerSnapshot]:
         request = snapshot.request.detached_snapshot()
         schema = ReplySupplementPlan.model_json_schema()
+        schema["properties"]["plugin_options"] = extension_schema
         if not resources.allow_at:
             # 在请求声明中移除不可用的 @ 节点，私聊不向模型提供该选项。
             node_schema = schema["properties"]["parts"]["items"]
@@ -262,5 +269,6 @@ async def _generate_reply_supplement_once(
     if result.tool_calls or result.native_tool_calls:
         raise ValueError("回复补充器不得调用工具")
     plan = validate_llm_json(result.response, ReplySupplementPlan)
+    validate(plan.plugin_options, extension_schema)
     metadata["plan"] = plan.model_dump()
     return await resolve_supplement(plan, resources, metadata)

@@ -24,7 +24,7 @@ import base64
 from PIL import Image, ImageOps
 
 from src.chat.message_receive.message import SessionMessage
-from src.chat.utils.utils import get_chat_type_and_target_info, is_bot_self
+from src.chat.utils.utils import is_bot_self
 from src.common.data_models.message_component_data_model import (
     EmojiComponent,
     ImageComponent,
@@ -41,7 +41,6 @@ from src.llm_models.payload_content.context_item import (
     RoleType,
     UserMessageItem,
 )
-from src.maisaka.attention_drift import build_attention_drift_prompt_block
 from src.maisaka.context.history import build_session_message_visible_text
 from src.maisaka.context.message_adapter import (
     build_visible_text_from_sequence,
@@ -162,11 +161,10 @@ class RetroReplyPromptMixin:
         )
         if not mai_replier:
             session_id = self._resolve_session_id(stream_id)
-            is_group_chat, _ = get_chat_type_and_target_info(session_id)
             system_prompt = "\n\n".join(filter(None, (
                 system_prompt,
-                self._build_group_chat_attention_block(session_id),
-                build_attention_drift_prompt_block(is_group_chat),
+                self._build_chat_attention_block(session_id),
+                self._get_reply_scene(session_id).prompts.attention_drift_block() if session_id else "",
             )))
             # 通用复古保留普通回复中的附件参考、重复回复提醒及篇幅要求。
             extra_blocks = [reply_requirements]
@@ -313,30 +311,16 @@ class RetroReplyPromptMixin:
     ) -> str:
         """按群聊/私聊、是否简短回复、是否补充自己发言挑选模板。"""
 
-        if self._is_retro_group_chat(stream_id):
-            # Mai Replier 对齐训练分布：训练数据 100% 使用标准模板（retro_replyer），
-            # light 模板（口语化/尽量简短/不要太有条理）属训练外成分。Mai Replier 群聊恒用标准模板。
-            if not mai_replier and self._is_retro_short_reply(think_level, reply_tool_args):
-                return RETRO_GROUP_LIGHT_PROMPT
-            return RETRO_GROUP_PROMPT
-
-        if reply_message is not None:
-            user_info = reply_message.message_info.user_info
-            if is_bot_self(reply_message.platform, user_info.user_id):
-                return RETRO_PRIVATE_SELF_PROMPT
-        return RETRO_PRIVATE_PROMPT
-
-    def _is_retro_group_chat(self, stream_id: Optional[str]) -> bool:
-        """判断当前会话是否为群聊，群聊与私聊使用不同模板。"""
-
-        if self.chat_stream is not None:
-            return bool(self.chat_stream.is_group_session)
-
         session_id = self._resolve_session_id(stream_id)
-        if not session_id:
-            return False
-        is_group_chat, _ = get_chat_type_and_target_info(session_id)
-        return is_group_chat is True
+        scene = self._get_reply_scene(session_id)
+        self_reply = reply_message is not None and is_bot_self(
+            reply_message.platform, reply_message.message_info.user_info.user_id,
+        )
+        return scene.prompts.select_retro_template(
+            short_reply=self._is_retro_short_reply(think_level, reply_tool_args),
+            self_reply=self_reply,
+            mai_replier=mai_replier,
+        )
 
     def _is_retro_short_reply(self, think_level: int, reply_tool_args: Optional[Dict[str, Any]]) -> bool:
         """判断本次回复是否属于简短回复，对应旧版 think_level=0 的轻量模板。"""

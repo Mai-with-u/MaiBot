@@ -43,7 +43,8 @@ function getRecentPluginActivities(plugin: PluginInfo): Array<{ timeLabel: strin
   const firstPublishedTime = Number.isFinite(publishedTime)
     ? publishedTime
     : releaseTimes.length > 1 ? Math.min(...releaseTimes) : NaN
-  const updateTimes = [updatedTime, ...(Number.isFinite(firstPublishedTime) ? releaseTimes : [])]
+  // 即使摘要仅返回最新版本、缺少首次发布时间，仍可展示该版本的更新活动。
+  const updateTimes = [updatedTime, ...releaseTimes]
     .filter((time) => Number.isFinite(time) && (!Number.isFinite(firstPublishedTime) || time > firstPublishedTime))
   const latestUpdateTime = updateTimes.length > 0 ? Math.max(...updateTimes) : NaN
 
@@ -133,7 +134,7 @@ export const PluginCard = memo(function PluginCard({
       data-plugin-market-card="true"
       data-plugin-installed={plugin.installed ? 'true' : undefined}
       data-plugin-recent-activity={recentActivities.length > 0 || downloadGrowth || likeGrowth ? 'true' : undefined}
-      className="relative isolate row-span-2 grid h-full min-w-0 cursor-pointer grid-cols-1 grid-rows-subgrid gap-y-0"
+      className="relative isolate grid h-full min-w-0 cursor-pointer grid-cols-1 grid-rows-[auto_1fr] gap-y-0"
       onPointerEnter={measureTitleOverflow}
       onFocusCapture={measureTitleOverflow}
       onClick={(event) => {

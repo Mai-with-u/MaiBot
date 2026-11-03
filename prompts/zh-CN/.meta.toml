@@ -217,3 +217,33 @@ description = "外接 Planner 中断恢复。"
 display_name = "外接 Planner 继续执行"
 advanced = true
 description = "外接 Planner 继续执行。"
+
+[planner_reply_capabilities]
+display_name = "Planner reply capabilities"
+advanced = true
+description = "Available plugin reply capabilities for the current chat."
+
+[reply_cache]
+display_name = "回复缓存任务"
+advanced = true
+description = "在 Planner 上下文末尾切换到创意模式 Replyer 回复任务。"
+
+[desktop_pet_proactive_wake]
+display_name = "桌宠定期主动思考"
+advanced = false
+description = "桌宠周期唤醒时的内部任务提示，引导自主探索并选择是否交流。"
+
+[desktop_pet_screen_read]
+display_name = "桌宠桌面阅读"
+advanced = false
+description = "理解本机主屏截图，支持单次查看和持续关注画面变化。"
+
+[desktop_pet_todo_context]
+display_name = "主人待办常驻上下文"
+advanced = false
+description = "每轮读取最新待办，并指导条件触发判断。"
+
+[desktop_pet_exploration]
+display_name = "桌宠探索任务"
+advanced = false
+description = "人工设定目标后探索工具组合，并保存有实验证据的候选图式。"

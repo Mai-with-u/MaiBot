@@ -1,7 +1,9 @@
-import type { ComponentPropsWithoutRef } from 'react'
+import type { ComponentPropsWithoutRef, ReactNode } from 'react'
 
+import { Card } from '@/components/ui/card'
 import { TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
+import '@/styles/folder-tabs.css'
 
 type DashboardTabBarVariant = 'grid' | 'scroll'
 
@@ -69,4 +71,23 @@ function DashboardTabTrigger({
   )
 }
 
-export { DashboardTabBar, DashboardTabTrigger }
+interface DashboardFolderTabBarProps extends ComponentPropsWithoutRef<typeof TabsList> {
+  /** 排在标签行右侧的内容，不属于任何一页。 */
+  trailing?: ReactNode
+}
+
+/** 子页切换的文件夹标签，放在 DashboardFolderPanel 正上方。 */
+function DashboardFolderTabBar({ trailing, ...props }: DashboardFolderTabBarProps) {
+  return (
+    <div data-dashboard-folder-tabs="true">
+      <TabsList {...props} />
+      {trailing && <div data-dashboard-folder-tabs-trailing="true">{trailing}</div>}
+    </div>
+  )
+}
+
+function DashboardFolderPanel({ children, ...props }: ComponentPropsWithoutRef<typeof Card>) {
+  return <Card data-dashboard-folder-panel="true" {...props}>{children}</Card>
+}
+
+export { DashboardFolderPanel, DashboardFolderTabBar, DashboardTabBar, DashboardTabTrigger }
