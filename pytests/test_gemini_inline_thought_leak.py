@@ -114,23 +114,19 @@ def test_stream_response_strips_closed_and_keeps_unclosed() -> None:
 
 
 @pytest.mark.parametrize("thought_only", ["<think>draft</think>", "[:thought draft:]", "⌊thought draft⌋"])
-def test_thought_only_response_keeps_regenerate_signal(thought_only: str) -> None:
-    """整段只有思考块时不得静默吞成空正文，必须保留原文让发送前检查抛错。
+def test_thought_only_response_hands_body_to_regenerate(thought_only: str) -> None:
+    """整段只有思考块时正文归零、只留推理项，交给 Replyer 的纯推理重生成分支。
 
     Args:
         thought_only: 仅含闭合思考块的响应样本。
     """
     normal_resp, _ = _default_normal_response_parser(_make_response(thought_only), logical_turn_id="turn-only")
-    normal_text = _assistant_text(normal_resp)
-    assert normal_text.strip()
-    with pytest.raises(GeminiReplyFormatError):
-        normalize_gemini_reply(normal_text)
+    assert all(isinstance(item, ReasoningItem) for item in normal_resp.output_items)
+    assert [item for item in normal_resp.output_items if isinstance(item, ReasoningItem)]
 
     stream_resp = _build_stream_api_response(io.StringIO(thought_only), io.StringIO(""), [], None, "turn-only-stream")
-    stream_text = _assistant_text(stream_resp)
-    assert stream_text.strip()
-    with pytest.raises(GeminiReplyFormatError):
-        normalize_gemini_reply(stream_text)
+    assert all(isinstance(item, ReasoningItem) for item in stream_resp.output_items)
+    assert [item for item in stream_resp.output_items if isinstance(item, ReasoningItem)]
 
 
 def test_normalize_gemini_reply_strips_closed_and_blocks_unclosed() -> None:
@@ -382,6 +378,27 @@ def test_convert_messages_scrubs_partial_xml_open_tag_across_image_part() -> Non
     assert "SECRET" not in "".join(part.text or "" for part in parts)
 
 
+def test_convert_messages_keeps_literal_after_image() -> None:
+    """消息已进入正文后，图片后的字面量不得因图片刷新缓冲而被当作思考块删除。"""
+    contents, _ = _convert_messages(
+        [
+            AssistantMessageItem(
+                meta=ContextItemMeta.create(),
+                parts=(
+                    ContextTextPart("Example: "),
+                    _fake_image_part(),
+                    ContextTextPart("<analysis>literal</analysis>TAIL"),
+                ),
+            )
+        ]
+    )
+
+    parts = contents[0].parts
+    assert parts[0].text == "Example: "
+    assert parts[1].inline_data is not None
+    assert parts[2].text == "<analysis>literal</analysis>TAIL"
+
+
 @pytest.mark.parametrize(
     "crossed",
     [
@@ -447,3 +464,26 @@ def test_open_label_regex_is_linear(prefix: str) -> None:
     _default_normal_response_parser(_make_response(payload), logical_turn_id="turn-redos")
     elapsed_ms = (time.perf_counter() - started) * 1000
     assert elapsed_ms < 20, f"耗时 {elapsed_ms:.2f} ms，疑似回溯"
+
+
+def test_consecutive_thought_blocks_scan_is_linear() -> None:
+    """连续思考块按偏移推进，8000 块必须在 20 ms 内剥完。"""
+    payload = "[:thought:]" * 8000 + "Hello"
+    started = time.perf_counter()
+    api_resp, _ = _default_normal_response_parser(_make_response(payload), logical_turn_id="turn-many")
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    assert _assistant_text(api_resp) == "Hello"
+    assert elapsed_ms < 20, f"耗时 {elapsed_ms:.2f} ms，疑似二次方扫描"
+
+
+@pytest.mark.parametrize("monologue", ["⌊Thought you would say that⌉Fine.", "⌊既然你都发话了……⌉Fine."])
+def test_floor_monologue_with_closing_bracket_is_preserved(monologue: str) -> None:
+    """用 `⌉` 正常闭合的角色旁白不是思考块，必须原样保留。
+
+    Args:
+        monologue: 角色旁白样本。
+    """
+    assert normalize_gemini_reply(monologue) == monologue
+
+    normal_resp, _ = _default_normal_response_parser(_make_response(monologue), logical_turn_id="turn-monologue")
+    assert _assistant_text(normal_resp) == monologue
