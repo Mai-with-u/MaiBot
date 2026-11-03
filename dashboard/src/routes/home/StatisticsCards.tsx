@@ -389,6 +389,7 @@ function StatisticsChartLegend({ config }: { config: ChartConfig }) {
   return (
     <div
       data-home-chart-guide="true"
+      data-chart-legend="true"
       className="flex h-7 shrink-0 items-center gap-4 px-2 text-[11px]"
     >
       {Object.entries(config).map(([key, item]) => (

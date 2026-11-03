@@ -556,6 +556,51 @@ describe('StatisticsPage', () => {
     })
   })
 
+  it('千禧主题下 HTML 图例与图表使用同一套配色变量', async () => {
+    // jsdom 不继承自定义属性，这里直接比较图表容器与图例容器上匹配到的配色变量
+    // Vitest 会把 CSS 导入（含 ?raw）替换为空串，这里直接读取主题样式源文件
+    const { readFileSync } = await vi.importActual<{
+      readFileSync: (path: string, encoding: 'utf8') => string
+    }>('node:fs')
+    const { fileURLToPath } = await vi.importActual<{
+      fileURLToPath: (url: string) => string
+    }>('node:url')
+    // 基准地址先存入变量，避免 Vite 把 new URL(..., import.meta.url) 改写成资源地址
+    const testFileUrl = import.meta.url
+    const style = document.createElement('style')
+    style.textContent = readFileSync(
+      fileURLToPath(new URL('../../../styles/millennium.css', testFileUrl).href),
+      'utf8'
+    )
+    document.head.appendChild(style)
+    document.documentElement.dataset.dashboardStyle = 'millennium'
+    try {
+      const user = userEvent.setup()
+      await renderFreshPage()
+      await waitForPageData()
+
+      const chartColor = (element: Element) =>
+        getComputedStyle(element).getPropertyValue('--color-chart-1')
+      const assertLegendMatchesChart = () => {
+        const chart = document.querySelector('[data-chart]')
+        const legend = screen.getAllByTitle('statisticsPage.charts.toggleSeries')[0].parentElement
+        expect(chart).not.toBeNull()
+        expect(chartColor(chart!)).not.toBe('')
+        expect(chartColor(legend!)).toBe(chartColor(chart!))
+      }
+
+      // 数据分布环形图
+      assertLegendMatchesChart()
+
+      // 趋势折线图
+      await user.click(screen.getByRole('tab', { name: 'statisticsPage.tabs.trends' }))
+      assertLegendMatchesChart()
+    } finally {
+      delete document.documentElement.dataset.dashboardStyle
+      style.remove()
+    }
+  })
+
   it('没有周期数据时回退到趋势页签', async () => {
     vi.mocked(backendApi.get).mockResolvedValue(
       makeData({

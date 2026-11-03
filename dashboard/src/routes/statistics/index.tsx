@@ -566,7 +566,10 @@ function DistributionChart({
                 </Pie>
               </PieChart>
             </ChartContainer>
-            <div className="grid max-h-28 shrink-0 grid-cols-1 content-start gap-1 overflow-y-auto sm:max-h-[340px] sm:w-44 lg:w-52">
+            <div
+              data-chart-legend="true"
+              className="grid max-h-28 shrink-0 grid-cols-1 content-start gap-1 overflow-y-auto sm:max-h-[340px] sm:w-44 lg:w-52"
+            >
               {chartData.map((item) => {
                 const hidden = hiddenNames.has(item.name)
                 return (
@@ -779,7 +782,10 @@ function MultiSeriesChart({
                 ))}
               </LineChart>
             </ChartContainer>
-            <div className="mt-2 flex max-h-24 flex-wrap gap-1 overflow-y-auto">
+            <div
+              data-chart-legend="true"
+              className="mt-2 flex max-h-24 flex-wrap gap-1 overflow-y-auto"
+            >
               {definitions.map((definition) => {
                 const hidden = hiddenKeys.has(definition.key)
                 return (
