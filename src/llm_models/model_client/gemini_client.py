@@ -205,7 +205,7 @@ _THOUGHT_OPEN_RE = re.compile(
     r"\[\s*(?:[:_~-]\s*)?thought(?![A-Za-z])"
     r"|⌊\s*(?:[:_~-]\s*)?thought(?![A-Za-z])(?!\s+process\b)"
     r"|【\s*(?:[:_~-]\s*)?thought(?![A-Za-z])"
-    r"|<\s*(?:[:_~-]\s*)?(?:think|thinking|thought|analysis)\s*>"
+    r"|<\s*(?:[:_~-]\s*)?(?:think|thinking|thought|analysis)\s*(?:>|$)"
     r")",
     re.IGNORECASE,
 )
@@ -278,7 +278,9 @@ def _absorb_leaked_thought(content: Optional[str], reasoning_content: str) -> Tu
     """可见正文以已闭合思考块开头时，把它并入 reasoning 内容。
 
     空思考块（如 `[:thought:]Hello`）同样按已命中处理：正文照样取闭合符之后
-    的部分，只是没有可并入 reasoning 的内容。
+    的部分，只是没有可并入 reasoning 的内容。若剥离后不再剩下任何可见正文
+    （整段只有思考块），则保留原始正文不剥离，让下游发送前检查继续抛出
+    `GeminiReplyFormatError` 触发重生成，不能把纯推理响应静默吞成空正文。
 
     Args:
         content: 可见正文。
@@ -291,7 +293,7 @@ def _absorb_leaked_thought(content: Optional[str], reasoning_content: str) -> Tu
     if not text:
         return content, reasoning_content
     leaked_thinking, cleaned_text = _strip_leaked_thought_prefix(text)
-    if cleaned_text == text:
+    if cleaned_text == text or not cleaned_text.strip():
         return content, reasoning_content
     if not leaked_thinking:
         return cleaned_text, reasoning_content
@@ -356,7 +358,7 @@ def _build_non_tool_parts(
         if strip_leaked_thought and text_buffer and isinstance(message_part, ContextImagePart):
             # 只有剩余未闭合尾部还能被后续文本闭合时才跨图片延迟，否则保持原序。
             _, tail_after_local_strip = _strip_leaked_thought_prefix("".join(text_buffer))
-            if _THOUGHT_OPEN_RE.match(tail_after_local_strip) is not None:
+            if tail_after_local_strip.strip() and _THOUGHT_OPEN_RE.match(tail_after_local_strip) is not None:
                 later_text = "".join(
                     later_part.text for later_part in item.parts[index + 1 :] if isinstance(later_part, ContextTextPart)
                 )

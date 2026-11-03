@@ -113,6 +113,26 @@ def test_stream_response_strips_closed_and_keeps_unclosed() -> None:
     assert reasoning_items == []
 
 
+@pytest.mark.parametrize("thought_only", ["<think>draft</think>", "[:thought draft:]", "⌊thought draft⌋"])
+def test_thought_only_response_keeps_regenerate_signal(thought_only: str) -> None:
+    """整段只有思考块时不得静默吞成空正文，必须保留原文让发送前检查抛错。
+
+    Args:
+        thought_only: 仅含闭合思考块的响应样本。
+    """
+    normal_resp, _ = _default_normal_response_parser(_make_response(thought_only), logical_turn_id="turn-only")
+    normal_text = _assistant_text(normal_resp)
+    assert normal_text.strip()
+    with pytest.raises(GeminiReplyFormatError):
+        normalize_gemini_reply(normal_text)
+
+    stream_resp = _build_stream_api_response(io.StringIO(thought_only), io.StringIO(""), [], None, "turn-only-stream")
+    stream_text = _assistant_text(stream_resp)
+    assert stream_text.strip()
+    with pytest.raises(GeminiReplyFormatError):
+        normalize_gemini_reply(stream_text)
+
+
 def test_normalize_gemini_reply_strips_closed_and_blocks_unclosed() -> None:
     """发送前只剥离有明确闭合边界的块，未闭合一律抛错阻断。"""
     assert normalize_gemini_reply("[_thought 草稿 ]_正文") == "正文"
@@ -330,6 +350,27 @@ def test_convert_messages_scrubs_analysis_tag_across_image_part() -> None:
                     ContextTextPart("<analysis>SECRET"),
                     _fake_image_part(),
                     ContextTextPart("</analysis>ANSWER"),
+                ),
+            )
+        ]
+    )
+
+    parts = contents[0].parts
+    assert parts[0].inline_data is not None
+    assert parts[1].text == "ANSWER"
+    assert "SECRET" not in "".join(part.text or "" for part in parts)
+
+
+def test_convert_messages_scrubs_partial_xml_open_tag_across_image_part() -> None:
+    """`<analysis` 这种半截开标签跨图片时也要延迟清洗，结果只留正文。"""
+    contents, _ = _convert_messages(
+        [
+            AssistantMessageItem(
+                meta=ContextItemMeta.create(),
+                parts=(
+                    ContextTextPart("<analysis"),
+                    _fake_image_part(),
+                    ContextTextPart(">SECRET</analysis>ANSWER"),
                 ),
             )
         ]
