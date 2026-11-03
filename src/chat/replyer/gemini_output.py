@@ -16,9 +16,7 @@ _XML_TAG = re.compile(r"</?\s*(?:[:_~-]\s*)?(think|thinking|thought|analysis)\s*
 # 内联 thought 定界块：纯字面量正则，零回溯写法。
 _INLINE_BRACKET_START = re.compile(r"^\[\s*(?:[:_~-]\s*)?thought(?![A-Za-z])", re.IGNORECASE)
 _INLINE_BRACKET_END = re.compile(r"(?:[:_~-]\s*\]|\]\s*[:_~-])")
-_INLINE_FLOOR_START = re.compile(
-    r"^(?!⌊[^⌊⌋]*⌉)⌊\s*(?:[:_~-]\s*)?thought(?![A-Za-z])(?!\s+process\b)", re.IGNORECASE
-)
+_INLINE_FLOOR_START = re.compile(r"^(?!⌊[^⌊⌋]*⌉)⌊\s*(?:[:_~-]\s*)?thought(?![A-Za-z])(?!\s+process\b)", re.IGNORECASE)
 _INLINE_FLOOR_END = re.compile(r"⌋")
 _INLINE_CN_START = re.compile(r"^【\s*(?:[:_~-]\s*)?thought(?![A-Za-z])", re.IGNORECASE)
 _INLINE_CN_END = re.compile(r"(?:[:_~-]\s*】|】\s*[:_~-])")

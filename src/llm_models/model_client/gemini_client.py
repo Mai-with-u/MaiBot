@@ -169,27 +169,26 @@ def _normalize_image_mime_type(image_format: str) -> str:
 
 # 思考标签识别：一律使用纯字面量正则，避免变量拼接触发 ast-grep 的
 # redos-non-literal-regex-python 告警；用 \s*(?:[:_~-]\s*)? 取代
-# \s*[:_~-]?\s*，消除相邻空白量词造成的二次方回溯，开标签锚定后 `[\s\S]*?`
-# 本身就是线性扫描，不再需要长度硬限。
+# \s*[:_~-]?\s*，消除相邻空白量词造成的二次方回溯。这些正则只匹配单个闭合块
+# 本身（不带后缀捕获组），配合整数偏移逐块推进，连续块扫描保持线性。
 _INLINE_BRACKET_CLOSED_RE = re.compile(
-    r"^\s*\[\s*(?:[:_~-]\s*)?thought(?![A-Za-z])([\s\S]*?)"
-    r"(?:[:_~-]\s*\]|\]\s*[:_~-])\s*([\s\S]*)$",
+    r"\s*\[\s*(?:[:_~-]\s*)?thought(?![A-Za-z])([\s\S]*?)"
+    r"(?:[:_~-]\s*\]|\]\s*[:_~-])\s*",
     re.IGNORECASE,
 )
 _INLINE_FLOOR_CLOSED_RE = re.compile(
-    r"^\s*⌊\s*(?:[:_~-]\s*)?thought(?![A-Za-z])(?!\s+process\b)([\s\S]*?)⌋"
-    r"\s*([\s\S]*)$",
+    r"\s*(?!⌊[^⌊⌋]*⌉)⌊\s*(?:[:_~-]\s*)?thought(?![A-Za-z])(?!\s+process\b)([\s\S]*?)⌋\s*",
     re.IGNORECASE,
 )
 _INLINE_CN_CLOSED_RE = re.compile(
-    r"^\s*【\s*(?:[:_~-]\s*)?thought(?![A-Za-z])([\s\S]*?)"
-    r"(?:[:_~-]\s*】|】\s*[:_~-])\s*([\s\S]*)$",
+    r"\s*【\s*(?:[:_~-]\s*)?thought(?![A-Za-z])([\s\S]*?)"
+    r"(?:[:_~-]\s*】|】\s*[:_~-])\s*",
     re.IGNORECASE,
 )
 # XML 变体改用名称栈配对：标签集合与 `gemini_output._XML_TAG` 保持一致，
 # 交叉标签（如 `<thought><analysis>…</thought>`）必须原样保留交给发送前阻断。
 _XML_THOUGHT_START_RE = re.compile(
-    r"^\s*<\s*(?:[:_~-]\s*)?(think|thinking|thought|analysis)\s*>",
+    r"\s*<\s*(?:[:_~-]\s*)?(think|thinking|thought|analysis)\s*>",
     re.IGNORECASE,
 )
 _XML_THOUGHT_TAG_RE = re.compile(r"</?\s*(?:[:_~-]\s*)?(think|thinking|thought|analysis)\s*>", re.IGNORECASE)
@@ -203,7 +202,7 @@ _INLINE_THOUGHT_CLOSED_RES = (
 _THOUGHT_OPEN_RE = re.compile(
     r"^\s*(?:"
     r"\[\s*(?:[:_~-]\s*)?thought(?![A-Za-z])"
-    r"|⌊\s*(?:[:_~-]\s*)?thought(?![A-Za-z])(?!\s+process\b)"
+    r"|(?!⌊[^⌊⌋]*⌉)⌊\s*(?:[:_~-]\s*)?thought(?![A-Za-z])(?!\s+process\b)"
     r"|【\s*(?:[:_~-]\s*)?thought(?![A-Za-z])"
     r"|<\s*(?:[:_~-]\s*)?(?:think|thinking|thought|analysis)\s*(?:>|$)"
     r")",
@@ -211,19 +210,20 @@ _THOUGHT_OPEN_RE = re.compile(
 )
 
 
-def _split_closed_xml_thought(text: str) -> Optional[Tuple[str, str]]:
-    """按名称栈剥离开头最外层的已闭合 XML 思考块。
+def _split_closed_xml_thought(text: str, pos: int = 0) -> Optional[Tuple[str, int]]:
+    """从指定偏移按名称栈剥离最外层的已闭合 XML 思考块。
 
     嵌套必须按名称配对结束，交叉标签一律视为配对错误并返回 `None`，原样交给
     发送前检查阻断，绝不先删掉保护性的开标签。
 
     Args:
         text: 待处理文本。
+        pos: 起始扫描偏移。
 
     Returns:
-        Optional[Tuple[str, str]]: `(思考内容, 剩余正文)`；未命中、未闭合或配对错误返回 `None`。
+        Optional[Tuple[str, int]]: `(思考内容, 剥完后的偏移)`；未命中、未闭合或配对错误返回 `None`。
     """
-    start = _XML_THOUGHT_START_RE.match(text)
+    start = _XML_THOUGHT_START_RE.match(text, pos)
     if start is None:
         return None
     stack: List[str] = [start.group(1).lower()]
@@ -233,7 +233,7 @@ def _split_closed_xml_thought(text: str) -> Optional[Tuple[str, str]]:
             if not stack or stack.pop() != name:
                 return None
             if not stack:
-                return text[start.end() : tag.start()], text[tag.end() :]
+                return text[start.end() : tag.start()], tag.end()
         else:
             stack.append(name)
     return None
@@ -244,7 +244,7 @@ def _strip_leaked_thought_prefix(text: str) -> Tuple[str, str]:
 
     只认明确闭合定界符（`:]`、`]_`、`⌋`、`】`、`</thought>`）。未闭合的草稿
     原样留在正文里，交给 replyer 的 `normalize_gemini_reply` 抛错触发重生成，
-    这里绝不猜测草稿中的哪一句才是正文。
+    这里绝不猜测草稿中的哪一句才是正文。逐块用整数偏移推进，连续块也是线性。
 
     Args:
         text: 待处理文本。
@@ -256,31 +256,32 @@ def _strip_leaked_thought_prefix(text: str) -> Tuple[str, str]:
         return "", text
 
     thinking_parts: List[str] = []
-    remaining = text
+    pos = 0
     while True:
-        xml_split = _split_closed_xml_thought(remaining)
+        xml_split = _split_closed_xml_thought(text, pos)
         if xml_split is not None:
             thinking_parts.append(xml_split[0])
-            remaining = xml_split[1]
+            pos = xml_split[1]
             continue
         for pattern in _INLINE_THOUGHT_CLOSED_RES:
-            match = pattern.match(remaining)
+            match = pattern.match(text, pos)
             if match:
                 thinking_parts.append(match.group(1))
-                remaining = match.group(2)
+                pos = match.end()
                 break
         else:
             break
-    return "".join(thinking_parts), remaining
+    if pos == 0:
+        return "", text
+    return "".join(thinking_parts), text[pos:]
 
 
 def _absorb_leaked_thought(content: Optional[str], reasoning_content: str) -> Tuple[Optional[str], str]:
     """可见正文以已闭合思考块开头时，把它并入 reasoning 内容。
 
     空思考块（如 `[:thought:]Hello`）同样按已命中处理：正文照样取闭合符之后
-    的部分，只是没有可并入 reasoning 的内容。若剥离后不再剩下任何可见正文
-    （整段只有思考块），则保留原始正文不剥离，让下游发送前检查继续抛出
-    `GeminiReplyFormatError` 触发重生成，不能把纯推理响应静默吞成空正文。
+    的部分，只是没有可并入 reasoning 的内容。整段只有思考块时正文归零，由
+    Replyer 的纯推理重生成分支接手，绝不把草稿留在可见正文里。
 
     Args:
         content: 可见正文。
@@ -293,7 +294,7 @@ def _absorb_leaked_thought(content: Optional[str], reasoning_content: str) -> Tu
     if not text:
         return content, reasoning_content
     leaked_thinking, cleaned_text = _strip_leaked_thought_prefix(text)
-    if cleaned_text == text or not cleaned_text.strip():
+    if cleaned_text == text:
         return content, reasoning_content
     if not leaked_thinking:
         return cleaned_text, reasoning_content
@@ -309,12 +310,13 @@ def _build_non_tool_parts(
 ) -> List[Part]:
     """将消息中的文本与图片片段转换为 Gemini `Part` 列表。
 
-    连续文本片段先拼接再处理，避免思考块被拆进多个 Part 时漏剥。遇图片时按
-    当前缓冲动态判定：先剥掉已闭合的前置块，若剩余尾部仍是未闭合思考块，且
-    后续文本确实能把它闭合，才跨图片延迟合并，图片原位输出；否则当场按原始
-    顺序输出文本与图片，绝不重排。只有 `AssistantMessageItem`
-    （`strip_leaked_thought=True`）会剥离开头已闭合的思考块，用户消息与工具
-    回执一律保持原文。
+    连续文本片段先拼接再处理，避免思考块被拆进多个 Part 时漏剥。思考块清洗
+    只发生在消息开头（`at_message_start`）或跨图片延迟累积（`in_deferred_thought`）
+    期间；一旦已经输出过可见正文，后续文本不再当作“消息开头的思考块”处理，
+    避免误删正文里的字面量。遇图片时先剥掉已闭合的前置块，若剩余尾部仍是未
+    闭合思考块、且后续文本确实能把它闭合，才跨图片延迟合并，图片原位输出；
+    否则当场按原始顺序输出文本与图片，绝不重排。只有 `AssistantMessageItem`
+    （`strip_leaked_thought=True`）会做这些清洗，用户消息与工具回执一律保持原文。
 
     Args:
         item: 内部消息 Item。
@@ -325,18 +327,24 @@ def _build_non_tool_parts(
     """
     converted_parts: List[Part] = []
     text_buffer: List[str] = []
+    at_message_start = True
+    in_deferred_thought = False
 
     def flush_text_buffer() -> None:
         """合并并处理已累积的连续文本片段。"""
+        nonlocal at_message_start, in_deferred_thought
         if not text_buffer:
             return
         text_value = "".join(text_buffer)
         text_buffer.clear()
-        if strip_leaked_thought:
+        should_strip = strip_leaked_thought and (at_message_start or in_deferred_thought)
+        in_deferred_thought = False
+        if should_strip:
             _, text_value = _strip_leaked_thought_prefix(text_value)
         if not text_value:
             return
         converted_parts.append(Part.from_text(text=text_value))
+        at_message_start = False
 
     def append_image(message_part: ContextImagePart) -> None:
         """将图片片段转换为 Gemini `Part` 并输出。
@@ -355,7 +363,12 @@ def _build_non_tool_parts(
         if isinstance(message_part, ContextTextPart):
             text_buffer.append(message_part.text)
             continue
-        if strip_leaked_thought and text_buffer and isinstance(message_part, ContextImagePart):
+        if (
+            strip_leaked_thought
+            and text_buffer
+            and isinstance(message_part, ContextImagePart)
+            and (at_message_start or in_deferred_thought)
+        ):
             # 只有剩余未闭合尾部还能被后续文本闭合时才跨图片延迟，否则保持原序。
             _, tail_after_local_strip = _strip_leaked_thought_prefix("".join(text_buffer))
             if tail_after_local_strip.strip() and _THOUGHT_OPEN_RE.match(tail_after_local_strip) is not None:
@@ -366,11 +379,14 @@ def _build_non_tool_parts(
                 can_close_tail = bool(later_text) and (_strip_leaked_thought_prefix(combined_tail)[1] != combined_tail)
                 if can_close_tail:
                     text_buffer[:] = [tail_after_local_strip]
+                    in_deferred_thought = True
                     append_image(message_part)
                     continue
         flush_text_buffer()
         if isinstance(message_part, ContextRefusalPart):
             converted_parts.append(Part.from_text(text=message_part.refusal))
+            at_message_start = False
+            in_deferred_thought = False
             continue
         if isinstance(message_part, ContextImagePart):
             append_image(message_part)
