@@ -301,6 +301,46 @@ def test_convert_messages_keeps_unclosed_thought_at_item_end() -> None:
     assert parts[1].inline_data is not None
 
 
+def test_convert_messages_keeps_order_when_only_prefix_block_is_closed() -> None:
+    """前块已闭合、后块仍未闭合时，图片前的剩余草稿必须原位保留，不得重排。"""
+    contents, _ = _convert_messages(
+        [
+            AssistantMessageItem(
+                meta=ContextItemMeta.create(),
+                parts=(
+                    ContextTextPart("[:thought FIRST:][:thought SECOND"),
+                    _fake_image_part(),
+                ),
+            )
+        ]
+    )
+
+    parts = contents[0].parts
+    assert parts[0].text == "[:thought SECOND"
+    assert parts[1].inline_data is not None
+
+
+def test_convert_messages_scrubs_analysis_tag_across_image_part() -> None:
+    """`<analysis>` 跨图片分段时同样要清洗，只留闭合后的正文且图片保持原位。"""
+    contents, _ = _convert_messages(
+        [
+            AssistantMessageItem(
+                meta=ContextItemMeta.create(),
+                parts=(
+                    ContextTextPart("<analysis>SECRET"),
+                    _fake_image_part(),
+                    ContextTextPart("</analysis>ANSWER"),
+                ),
+            )
+        ]
+    )
+
+    parts = contents[0].parts
+    assert parts[0].inline_data is not None
+    assert parts[1].text == "ANSWER"
+    assert "SECRET" not in "".join(part.text or "" for part in parts)
+
+
 @pytest.mark.parametrize(
     "crossed",
     [

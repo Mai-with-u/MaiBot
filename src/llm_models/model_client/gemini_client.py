@@ -205,7 +205,7 @@ _THOUGHT_OPEN_RE = re.compile(
     r"\[\s*(?:[:_~-]\s*)?thought(?![A-Za-z])"
     r"|⌊\s*(?:[:_~-]\s*)?thought(?![A-Za-z])(?!\s+process\b)"
     r"|【\s*(?:[:_~-]\s*)?thought(?![A-Za-z])"
-    r"|<\s*(?:[:_~-]\s*)?thought\s*>"
+    r"|<\s*(?:[:_~-]\s*)?(?:think|thinking|thought|analysis)\s*>"
     r")",
     re.IGNORECASE,
 )
@@ -237,21 +237,6 @@ def _split_closed_xml_thought(text: str) -> Optional[Tuple[str, str]]:
         else:
             stack.append(name)
     return None
-
-
-def _starts_with_unclosed_thought(text: str) -> bool:
-    """判断文本是否以尚未闭合的思考开标签开头。
-
-    Args:
-        text: 待检查文本。
-
-    Returns:
-        bool: 已剥完闭合块后仍以思考开标签开头时返回 `True`。
-    """
-    if not text:
-        return False
-    _, remaining = _strip_leaked_thought_prefix(text)
-    return _THOUGHT_OPEN_RE.match(remaining) is not None
 
 
 def _strip_leaked_thought_prefix(text: str) -> Tuple[str, str]:
@@ -322,11 +307,12 @@ def _build_non_tool_parts(
 ) -> List[Part]:
     """将消息中的文本与图片片段转换为 Gemini `Part` 列表。
 
-    连续文本片段先拼接再处理，避免思考块被拆进多个 Part 时漏剥；只有在整条
-    消息的文本合起来确实能闭合思考块时，未闭合草稿才跨过中间的图片片段继续
-    累积，否则严格按原始 Part 顺序输出，不重排图文。只有
-    `AssistantMessageItem`（`strip_leaked_thought=True`）会剥离开头已闭合的
-    思考块，用户消息与工具回执一律保持原文。
+    连续文本片段先拼接再处理，避免思考块被拆进多个 Part 时漏剥。遇图片时按
+    当前缓冲动态判定：先剥掉已闭合的前置块，若剩余尾部仍是未闭合思考块，且
+    后续文本确实能把它闭合，才跨图片延迟合并，图片原位输出；否则当场按原始
+    顺序输出文本与图片，绝不重排。只有 `AssistantMessageItem`
+    （`strip_leaked_thought=True`）会剥离开头已闭合的思考块，用户消息与工具
+    回执一律保持原文。
 
     Args:
         item: 内部消息 Item。
@@ -337,15 +323,9 @@ def _build_non_tool_parts(
     """
     converted_parts: List[Part] = []
     text_buffer: List[str] = []
-    pending_thought = False
-    combined_text = "".join(part.text for part in item.parts if isinstance(part, ContextTextPart))
-    # 预检：只有后续文本确实能让草稿闭合时才跨图片延迟合并，否则保持原序。
-    can_close_across_parts = strip_leaked_thought and _strip_leaked_thought_prefix(combined_text)[1] != combined_text
 
     def flush_text_buffer() -> None:
         """合并并处理已累积的连续文本片段。"""
-        nonlocal pending_thought
-        pending_thought = False
         if not text_buffer:
             return
         text_value = "".join(text_buffer)
@@ -356,25 +336,42 @@ def _build_non_tool_parts(
             return
         converted_parts.append(Part.from_text(text=text_value))
 
-    for message_part in item.parts:
+    def append_image(message_part: ContextImagePart) -> None:
+        """将图片片段转换为 Gemini `Part` 并输出。
+
+        Args:
+            message_part: 待转换的图片片段。
+        """
+        converted_parts.append(
+            Part.from_bytes(
+                data=base64.b64decode(message_part.image_base64),
+                mime_type=_normalize_image_mime_type(message_part.normalized_image_format),
+            )
+        )
+
+    for index, message_part in enumerate(item.parts):
         if isinstance(message_part, ContextTextPart):
             text_buffer.append(message_part.text)
-            if strip_leaked_thought:
-                pending_thought = can_close_across_parts and _starts_with_unclosed_thought("".join(text_buffer))
             continue
-        # 能闭合的未闭合草稿跨图片继续累积：图片原位输出，草稿留到闭合符再丢弃。
-        if not (pending_thought and isinstance(message_part, ContextImagePart)):
-            flush_text_buffer()
+        if strip_leaked_thought and text_buffer and isinstance(message_part, ContextImagePart):
+            # 只有剩余未闭合尾部还能被后续文本闭合时才跨图片延迟，否则保持原序。
+            _, tail_after_local_strip = _strip_leaked_thought_prefix("".join(text_buffer))
+            if _THOUGHT_OPEN_RE.match(tail_after_local_strip) is not None:
+                later_text = "".join(
+                    later_part.text for later_part in item.parts[index + 1 :] if isinstance(later_part, ContextTextPart)
+                )
+                combined_tail = tail_after_local_strip + later_text
+                can_close_tail = bool(later_text) and (_strip_leaked_thought_prefix(combined_tail)[1] != combined_tail)
+                if can_close_tail:
+                    text_buffer[:] = [tail_after_local_strip]
+                    append_image(message_part)
+                    continue
+        flush_text_buffer()
         if isinstance(message_part, ContextRefusalPart):
             converted_parts.append(Part.from_text(text=message_part.refusal))
             continue
         if isinstance(message_part, ContextImagePart):
-            converted_parts.append(
-                Part.from_bytes(
-                    data=base64.b64decode(message_part.image_base64),
-                    mime_type=_normalize_image_mime_type(message_part.normalized_image_format),
-                )
-            )
+            append_image(message_part)
     flush_text_buffer()
     return converted_parts
 
