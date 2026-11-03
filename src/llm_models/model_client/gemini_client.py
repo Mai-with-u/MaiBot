@@ -7,6 +7,7 @@ import base64
 import binascii
 import io
 import json
+import re
 import uuid
 
 from google import genai
@@ -166,35 +167,238 @@ def _normalize_image_mime_type(image_format: str) -> str:
     return f"image/{normalized_image_format}"
 
 
-def _build_non_tool_parts(item: UserMessageItem | AssistantMessageItem) -> List[Part]:
+# 思考标签识别：一律使用纯字面量正则，避免变量拼接触发 ast-grep 的
+# redos-non-literal-regex-python 告警；用 \s*(?:[:_~-]\s*)? 取代
+# \s*[:_~-]?\s*，消除相邻空白量词造成的二次方回溯。这些正则只匹配单个闭合块
+# 本身（不带后缀捕获组），配合整数偏移逐块推进，连续块扫描保持线性。
+_INLINE_BRACKET_CLOSED_RE = re.compile(
+    r"\s*\[\s*(?:[:_~-]\s*)?thought(?![A-Za-z])([\s\S]*?)"
+    r"(?:[:_~-]\s*\]|\]\s*[:_~-])\s*",
+    re.IGNORECASE,
+)
+_INLINE_FLOOR_CLOSED_RE = re.compile(
+    r"\s*(?!⌊[^⌊⌋]*⌉)⌊\s*(?:[:_~-]\s*)?thought(?![A-Za-z])(?!\s+process\b)([\s\S]*?)⌋\s*",
+    re.IGNORECASE,
+)
+_INLINE_CN_CLOSED_RE = re.compile(
+    r"\s*【\s*(?:[:_~-]\s*)?thought(?![A-Za-z])([\s\S]*?)"
+    r"(?:[:_~-]\s*】|】\s*[:_~-])\s*",
+    re.IGNORECASE,
+)
+# XML 变体改用名称栈配对：标签集合与 `gemini_output._XML_TAG` 保持一致，
+# 交叉标签（如 `<thought><analysis>…</thought>`）必须原样保留交给发送前阻断。
+_XML_THOUGHT_START_RE = re.compile(
+    r"\s*<\s*(?:[:_~-]\s*)?(think|thinking|thought|analysis)\s*>",
+    re.IGNORECASE,
+)
+_XML_THOUGHT_TAG_RE = re.compile(r"</?\s*(?:[:_~-]\s*)?(think|thinking|thought|analysis)\s*>", re.IGNORECASE)
+# 三种已闭合变体：方括号、下取整、全角方括号；XML 由栈式配对单独处理。
+_INLINE_THOUGHT_CLOSED_RES = (
+    _INLINE_BRACKET_CLOSED_RE,
+    _INLINE_FLOOR_CLOSED_RE,
+    _INLINE_CN_CLOSED_RE,
+)
+# 开标签识别：与 `gemini_output._INLINE_*_START` 同源，用于判断草稿是否仍未闭合。
+_THOUGHT_OPEN_RE = re.compile(
+    r"^\s*(?:"
+    r"\[\s*(?:[:_~-]\s*)?thought(?![A-Za-z])"
+    r"|(?!⌊[^⌊⌋]*⌉)⌊\s*(?:[:_~-]\s*)?thought(?![A-Za-z])(?!\s+process\b)"
+    r"|【\s*(?:[:_~-]\s*)?thought(?![A-Za-z])"
+    r"|<\s*(?:[:_~-]\s*)?(?:think|thinking|thought|analysis)\s*(?:>|$)"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _split_closed_xml_thought(text: str, pos: int = 0) -> Optional[Tuple[str, int]]:
+    """从指定偏移按名称栈剥离最外层的已闭合 XML 思考块。
+
+    嵌套必须按名称配对结束，交叉标签一律视为配对错误并返回 `None`，原样交给
+    发送前检查阻断，绝不先删掉保护性的开标签。
+
+    Args:
+        text: 待处理文本。
+        pos: 起始扫描偏移。
+
+    Returns:
+        Optional[Tuple[str, int]]: `(思考内容, 剥完后的偏移)`；未命中、未闭合或配对错误返回 `None`。
+    """
+    start = _XML_THOUGHT_START_RE.match(text, pos)
+    if start is None:
+        return None
+    stack: List[str] = [start.group(1).lower()]
+    for tag in _XML_THOUGHT_TAG_RE.finditer(text, start.end()):
+        name = tag.group(1).lower()
+        if tag.group().startswith("</"):
+            if not stack or stack.pop() != name:
+                return None
+            if not stack:
+                return text[start.end() : tag.start()], tag.end()
+        else:
+            stack.append(name)
+    return None
+
+
+def _strip_leaked_thought_prefix(text: str) -> Tuple[str, str]:
+    """剥离开头的已闭合思考块。
+
+    只认明确闭合定界符（`:]`、`]_`、`⌋`、`】`、`</thought>`）。未闭合的草稿
+    原样留在正文里，交给 replyer 的 `normalize_gemini_reply` 抛错触发重生成，
+    这里绝不猜测草稿中的哪一句才是正文。逐块用整数偏移推进，连续块也是线性。
+
+    Args:
+        text: 待处理文本。
+
+    Returns:
+        Tuple[str, str]: (思考内容, 剩余正文)。
+    """
+    if not text:
+        return "", text
+
+    thinking_parts: List[str] = []
+    pos = 0
+    while True:
+        xml_split = _split_closed_xml_thought(text, pos)
+        if xml_split is not None:
+            thinking_parts.append(xml_split[0])
+            pos = xml_split[1]
+            continue
+        for pattern in _INLINE_THOUGHT_CLOSED_RES:
+            match = pattern.match(text, pos)
+            if match:
+                thinking_parts.append(match.group(1))
+                pos = match.end()
+                break
+        else:
+            break
+    if pos == 0:
+        return "", text
+    return "".join(thinking_parts), text[pos:]
+
+
+def _absorb_leaked_thought(content: Optional[str], reasoning_content: str) -> Tuple[Optional[str], str]:
+    """可见正文以已闭合思考块开头时，把它并入 reasoning 内容。
+
+    空思考块（如 `[:thought:]Hello`）同样按已命中处理：正文照样取闭合符之后
+    的部分，只是没有可并入 reasoning 的内容。整段只有思考块时正文归零，由
+    Replyer 的纯推理重生成分支接手，绝不把草稿留在可见正文里。
+
+    Args:
+        content: 可见正文。
+        reasoning_content: 已有思考内容。
+
+    Returns:
+        Tuple[Optional[str], str]: (清理后的正文, 合并后的思考内容)。
+    """
+    text = content or ""
+    if not text:
+        return content, reasoning_content
+    leaked_thinking, cleaned_text = _strip_leaked_thought_prefix(text)
+    if cleaned_text == text:
+        return content, reasoning_content
+    if not leaked_thinking:
+        return cleaned_text, reasoning_content
+    if reasoning_content:
+        return cleaned_text, leaked_thinking + "\n" + reasoning_content
+    return cleaned_text, leaked_thinking
+
+
+def _build_non_tool_parts(
+    item: UserMessageItem | AssistantMessageItem,
+    *,
+    strip_leaked_thought: bool = False,
+) -> List[Part]:
     """将消息中的文本与图片片段转换为 Gemini `Part` 列表。
+
+    连续文本片段先拼接再处理，避免思考块被拆进多个 Part 时漏剥。思考块清洗
+    只发生在消息开头（`at_message_start`）或跨图片延迟累积（`in_deferred_thought`）
+    期间；一旦已经输出过可见正文，后续文本不再当作“消息开头的思考块”处理，
+    避免误删正文里的字面量。遇图片时先剥掉已闭合的前置块，若剩余尾部仍是未
+    闭合思考块、且后续文本确实能把它闭合，才跨图片延迟合并，图片原位输出；
+    否则当场按原始顺序输出文本与图片，绝不重排。只有 `AssistantMessageItem`
+    （`strip_leaked_thought=True`）会做这些清洗，用户消息与工具回执一律保持原文。
 
     Args:
         item: 内部消息 Item。
+        strip_leaked_thought: 是否剥离模型历史开头的已闭合思考块。
 
     Returns:
         List[Part]: Gemini 所需的内容片段列表。
     """
     converted_parts: List[Part] = []
-    for message_part in item.parts:
+    text_buffer: List[str] = []
+    at_message_start = True
+    in_deferred_thought = False
+
+    def flush_text_buffer() -> None:
+        """合并并处理已累积的连续文本片段。"""
+        nonlocal at_message_start, in_deferred_thought
+        if not text_buffer:
+            return
+        text_value = "".join(text_buffer)
+        text_buffer.clear()
+        should_strip = strip_leaked_thought and (at_message_start or in_deferred_thought)
+        in_deferred_thought = False
+        if should_strip:
+            _, text_value = _strip_leaked_thought_prefix(text_value)
+        if not text_value:
+            return
+        converted_parts.append(Part.from_text(text=text_value))
+        at_message_start = False
+
+    def append_image(message_part: ContextImagePart) -> None:
+        """将图片片段转换为 Gemini `Part` 并输出。
+
+        Args:
+            message_part: 待转换的图片片段。
+        """
+        converted_parts.append(
+            Part.from_bytes(
+                data=base64.b64decode(message_part.image_base64),
+                mime_type=_normalize_image_mime_type(message_part.normalized_image_format),
+            )
+        )
+
+    for index, message_part in enumerate(item.parts):
         if isinstance(message_part, ContextTextPart):
-            converted_parts.append(Part.from_text(text=message_part.text))
+            text_buffer.append(message_part.text)
             continue
+        if (
+            strip_leaked_thought
+            and text_buffer
+            and isinstance(message_part, ContextImagePart)
+            and (at_message_start or in_deferred_thought)
+        ):
+            # 只有剩余未闭合尾部还能被后续文本闭合时才跨图片延迟，否则保持原序。
+            _, tail_after_local_strip = _strip_leaked_thought_prefix("".join(text_buffer))
+            if tail_after_local_strip.strip() and _THOUGHT_OPEN_RE.match(tail_after_local_strip) is not None:
+                later_text = "".join(
+                    later_part.text for later_part in item.parts[index + 1 :] if isinstance(later_part, ContextTextPart)
+                )
+                combined_tail = tail_after_local_strip + later_text
+                can_close_tail = bool(later_text) and (_strip_leaked_thought_prefix(combined_tail)[1] != combined_tail)
+                if can_close_tail:
+                    text_buffer[:] = [tail_after_local_strip]
+                    in_deferred_thought = True
+                    append_image(message_part)
+                    continue
+        flush_text_buffer()
         if isinstance(message_part, ContextRefusalPart):
             converted_parts.append(Part.from_text(text=message_part.refusal))
+            at_message_start = False
+            in_deferred_thought = False
             continue
         if isinstance(message_part, ContextImagePart):
-            converted_parts.append(
-                Part.from_bytes(
-                    data=base64.b64decode(message_part.image_base64),
-                    mime_type=_normalize_image_mime_type(message_part.normalized_image_format),
-                )
-            )
+            append_image(message_part)
+    flush_text_buffer()
     return converted_parts
 
 
 def _normalize_function_response_payload(item: FunctionCallOutputItem) -> Dict[str, Any]:
     """将内部工具结果消息转换为 Gemini 函数响应负载。
+
+    工具回执保持原文：直接对序列化 JSON 做正则替换会破坏结构，未经确认的
+    改写也可能影响下游解析，因此这里不做任何思考块清洗。
 
     Args:
         item: 工具结果 Item。
@@ -352,7 +556,7 @@ def _convert_messages(items: List[ContextItem]) -> Tuple[ContentListUnion, str |
             ]
             for group_item in group_items:
                 if isinstance(group_item, AssistantMessageItem):
-                    assistant_parts.extend(_build_non_tool_parts(group_item))
+                    assistant_parts.extend(_build_non_tool_parts(group_item, strip_leaked_thought=True))
             if group_tool_calls:
                 for tool_call_index, tool_call in enumerate(group_tool_calls):
                     assistant_parts.append(
@@ -590,6 +794,7 @@ def _build_stream_api_response(
     """
     content = content_buffer.getvalue().strip()
     reasoning_content = reasoning_buffer.getvalue().strip()
+    content, reasoning_content = _absorb_leaked_thought(content, reasoning_content)
     content_buffer.close()
     reasoning_buffer.close()
 
@@ -695,6 +900,7 @@ def _default_normal_response_parser(
 
     content = "".join(visible_parts).strip() or getattr(response, "text", None)
     reasoning_content = "".join(reasoning_parts).strip()
+    content, reasoning_content = _absorb_leaked_thought(content, reasoning_content)
     tool_calls = _collect_function_calls(response)
 
     usage_record = _extract_usage_record(response)
@@ -966,6 +1172,7 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
         Returns:
             ProviderStreamResponseHandler[AsyncIterator[GenerateContentResponse]]: 默认流式处理器。
         """
+
         async def default_stream_handler(
             response_stream: AsyncIterator[GenerateContentResponse],
             interrupt_flag: asyncio.Event | None,
@@ -990,6 +1197,7 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
         Returns:
             ProviderResponseParser[GenerateContentResponse]: 默认非流式解析器。
         """
+
         def default_response_parser(
             response: GenerateContentResponse,
         ) -> Tuple[APIResponse, Optional[UsageTuple]]:

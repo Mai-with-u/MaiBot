@@ -1467,8 +1467,9 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                     "上一次回复出现了异常的句号问话，请根据实际聊天内容重新生成回复。",
                 )))
             # Chat 不回放推理项；纯推理且 Hook 未补正文时，复用重生成流程尝试一次。
+            # Gemini 的解析层始终把闭合思考块归入 reasoning，正文为空即触发这条有界重生成。
             if (
-                active_client_type == "openai"
+                active_client_type in ("openai", "gemini")
                 and not reasoning_regeneration_requested
                 and not response_text
                 and generation_result.output_items
