@@ -18,7 +18,9 @@ import {
 } from '@/components/ui/table'
 
 import type { ModelInfo } from '../types'
-import { AddModelMenu, type ModelCreationType } from './AddModelMenu'
+import type { ModelCreationType } from './AddModelMenu'
+import '@/styles/model-library.css'
+import { ModelTaskSummary } from './TaskAssignmentBoard'
 
 interface ModelTableProps {
   /** 当前页显示的模型 (分页后的) */
@@ -41,21 +43,33 @@ interface ModelTableProps {
   onToggleSelectAll: () => void
   /** 检查模型是否被使用 */
   isModelUsed: (modelName: string) => boolean
+  /** 模型负责的工作名称，和「分工」页对应 */
+  getModelTasks?: (modelName: string) => string[]
   /** 正在测试的模型名称集合 */
   testingModels: Set<string>
   /** 模型测试结果 */
   modelTestResults: Map<string, ModelTestResult>
   /** 搜索关键词 */
   searchQuery: string
-  /** 添加模型回调 */
-  onAdd: (type: ModelCreationType) => void
+  /** 添加模型回调；添加入口已移到列表工具栏，保留参数兼容旧调用 */
+  onAdd?: (type: ModelCreationType) => void
 }
 
-// 操作列固定右缘；表格宽度跟随容器，不设置最小宽度，避免固定列覆盖溢出的价格列。
-// 状态、价格与操作列保留宽度，三个文本列平分剩余空间，长文本截断。
-// 固定列使用不透明背景，retro 主题的纸面实色见 index.css。
-const ACTION_CELL_CLASS = 'sticky right-0 z-10 w-28 bg-background text-right whitespace-nowrap'
+// 操作列宽度固定，和表格同一底色；表格宽度跟随容器，三个文本列平分剩余空间，长文本截断。
+const ACTION_CELL_CLASS = 'w-24 text-right whitespace-nowrap'
 const ACTION_CELL_ATTR = { 'data-model-config-action-cell': 'true' } as const
+
+/** 能力标签：嵌入模型只标嵌入类型，对话模型标出能否看图。 */
+function modelCapabilityTags(model: ModelInfo) {
+  if (model.model_type === 'embedding') return ['文本嵌入']
+  if (model.model_type === 'image_embedding') return ['图片嵌入']
+  return model.visual ? ['对话', '视觉'] : ['对话']
+}
+
+/** 价格只写数字，单位放在表头；没填写的显示 -。 */
+function formatModelPrice(value: number | null | undefined) {
+  return value == null ? '-' : String(value)
+}
 
 function getModelTestStatus(result: ModelTestResult | undefined, isTesting: boolean) {
   if (isTesting) {
@@ -104,10 +118,10 @@ export const ModelTable = React.memo(function ModelTable({
   onToggleSelection,
   onToggleSelectAll,
   isModelUsed,
+  getModelTasks,
   testingModels,
   modelTestResults,
   searchQuery,
-  onAdd,
 }: ModelTableProps) {
   return (
     <DataPanel
@@ -126,26 +140,22 @@ export const ModelTable = React.memo(function ModelTable({
                   onCheckedChange={onToggleSelectAll}
                 />
               </TableHead>
-              <TableHead className="w-10 text-center whitespace-nowrap">使用</TableHead>
-              <TableHead>模型名称</TableHead>
-              <TableHead>模型标识符</TableHead>
-              <TableHead>提供商</TableHead>
-              <TableHead className="w-10 text-center whitespace-nowrap">视觉</TableHead>
-              <TableHead className="w-20 text-right whitespace-nowrap">默认输入</TableHead>
-              <TableHead className="w-20 text-right whitespace-nowrap">默认输出</TableHead>
+              <TableHead className="w-[26%]">模型</TableHead>
+              <TableHead className="w-[14%]">厂商</TableHead>
+              <TableHead className="w-[12%]">能力</TableHead>
+              <TableHead className="w-[13%] whitespace-nowrap">
+                价格 <span className="font-normal text-muted-foreground">¥/M</span>
+              </TableHead>
+              <TableHead className="whitespace-nowrap">负责的工作</TableHead>
               <TableHead {...ACTION_CELL_ATTR} className={ACTION_CELL_CLASS}>
-                <AddModelMenu
-                  onAdd={onAdd}
-                  className="h-8 shrink-0"
-                  dataTour="add-model-button"
-                />
+                <span className="sr-only">操作</span>
               </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {paginatedModels.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={9} className="text-muted-foreground py-8 text-center">
+                <TableCell colSpan={7} className="text-muted-foreground py-8 text-center">
                   {searchQuery ? '未找到匹配的模型' : '暂无模型配置'}
                 </TableCell>
               </TableRow>
@@ -164,52 +174,46 @@ export const ModelTable = React.memo(function ModelTable({
                         onCheckedChange={() => onToggleSelection(actualIndex)}
                       />
                     </TableCell>
-                    <TableCell className="text-center">
+                    <TableCell>
                       <span
-                        className={`mx-auto block h-3 w-3 rounded-full border ${
-                          used
-                            ? 'border-green-500 bg-green-500 shadow-[0_0_0_3px_rgba(34,197,94,0.18)]'
-                            : 'border-green-700/40 bg-green-950/20'
-                        }`}
-                        title={used ? '已使用' : '未使用'}
-                        aria-label={used ? '已使用' : '未使用'}
-                      />
-                    </TableCell>
-                    <TableCell className="font-medium">
-                      <span
-                        className={`block truncate border-b-2 pb-0.5 ${testStatus.className}`}
+                        className={`block w-fit max-w-full truncate border-b-2 font-mono text-sm ${testStatus.className}`}
                         title={`${model.name}：${testStatus.description}`}
                         aria-label={testStatus.description}
                       >
                         {model.name}
                       </span>
+                      <span
+                        className="block truncate font-mono text-xs text-muted-foreground"
+                        title={model.model_identifier}
+                      >
+                        {model.model_identifier}
+                      </span>
+                    </TableCell>
+                    <TableCell className="truncate font-mono text-sm" title={model.api_provider}>{model.api_provider}</TableCell>
+                    <TableCell>
+                      <span
+                        data-model-capabilities="true"
+                        className="block truncate text-xs text-muted-foreground"
+                        aria-label={model.visual ? '已启用视觉' : '未启用视觉'}
+                      >
+                        {modelCapabilityTags(model).join(' · ')}
+                      </span>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap font-mono text-sm" title={`输入 ¥${model.price_in}/M，输出 ¥${model.price_out}/M`}>
+                      {formatModelPrice(model.price_in)} · {formatModelPrice(model.price_out)}
                       {!!model.price_periods?.length && (
-                        <span className="block truncate text-xs font-normal text-muted-foreground">
+                        <span className="block text-xs font-normal text-primary">
                           {model.price_periods.length} 个价格时段
                         </span>
                       )}
                     </TableCell>
-                    <TableCell className="max-w-xs truncate" title={model.model_identifier}>
-                      {model.model_identifier}
+                    <TableCell>
+                      <ModelTaskSummary used={used} tasks={getModelTasks?.(model.name) ?? []} />
                     </TableCell>
-                    <TableCell className="truncate" title={model.api_provider}>{model.api_provider}</TableCell>
-                    <TableCell className="text-center">
-                      <span
-                        className={`mx-auto block h-3 w-3 rounded-full border ${
-                          model.visual
-                            ? 'border-green-500 bg-green-500 shadow-[0_0_0_3px_rgba(34,197,94,0.18)]'
-                            : 'border-green-700/40 bg-green-950/20'
-                        }`}
-                        title={model.visual ? '已启用视觉' : '未启用视觉'}
-                        aria-label={model.visual ? '已启用视觉' : '未启用视觉'}
-                      />
-                    </TableCell>
-                    <TableCell className="truncate text-right" title={`¥${model.price_in}/M`}>¥{model.price_in}/M</TableCell>
-                    <TableCell className="truncate text-right" title={`¥${model.price_out}/M`}>¥{model.price_out}/M</TableCell>
                     <TableCell {...ACTION_CELL_ATTR} className={ACTION_CELL_CLASS}>
-                      <div className="flex justify-end gap-1">
+                      <div data-model-row-actions="true">
                         <Button
-                          variant="outline"
+                          variant="ghost"
                           size="icon-xs"
                           className="shrink-0"
                           onClick={() => onTest(model.name)}
@@ -224,7 +228,7 @@ export const ModelTable = React.memo(function ModelTable({
                           )}
                         </Button>
                         <Button
-                          variant="outline"
+                          variant="ghost"
                           size="icon-xs"
                           className="shrink-0"
                           onClick={() => onEdit(model, actualIndex)}
@@ -234,8 +238,9 @@ export const ModelTable = React.memo(function ModelTable({
                           <Pencil className="h-4 w-4" />
                         </Button>
                         <Button
-                          variant="destructive"
+                          variant="ghost"
                           size="icon-xs"
+                          data-action="delete"
                           className="shrink-0"
                           onClick={() => onDelete(actualIndex)}
                           title="删除"

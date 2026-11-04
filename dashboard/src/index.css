@@ -2125,9 +2125,8 @@ button[data-dashboard-logo-spectrum-block='true']:is(:hover, :focus-visible, [da
   background-color: transparent;
 }
 
-/* 模型表格操作列固定右缘、统计表名称列固定左缘：retro 主题下 .bg-background 为透明，需用纸面实色遮盖滚动内容。
+/* 统计表名称列固定左缘：retro 主题下 .bg-background 为透明，需用纸面实色遮盖滚动内容。
    放在 .bg-background 透明规则之后，避免被其覆盖。 */
-:root[data-dashboard-style='future-retro'] [data-model-config-action-cell='true'],
 :root[data-dashboard-style='future-retro'] [data-statistics-sticky-cell='true'] {
   background-color: var(--retro-paper) !important;
   background-image: var(--retro-paper-brightness-overlay), var(--retro-paper-texture) !important;

@@ -74,15 +74,33 @@ function DashboardTabTrigger({
 interface DashboardFolderTabBarProps extends ComponentPropsWithoutRef<typeof TabsList> {
   /** 排在标签行右侧的内容，不属于任何一页。 */
   trailing?: ReactNode
+  /** large 用于页面级切换，标签里放图标、名称和一句说明 */
+  size?: 'default' | 'large'
 }
 
 /** 子页切换的文件夹标签，放在 DashboardFolderPanel 正上方。 */
-function DashboardFolderTabBar({ trailing, ...props }: DashboardFolderTabBarProps) {
+function DashboardFolderTabBar({ trailing, size = 'default', ...props }: DashboardFolderTabBarProps) {
   return (
-    <div data-dashboard-folder-tabs="true">
+    <div data-dashboard-folder-tabs="true" data-size={size}>
       <TabsList {...props} />
       {trailing && <div data-dashboard-folder-tabs-trailing="true">{trailing}</div>}
     </div>
+  )
+}
+
+interface DashboardFolderTabProps extends ComponentPropsWithoutRef<typeof TabsTrigger> {
+  icon?: ReactNode
+  description?: ReactNode
+}
+
+/** 大号文件夹标签：图标、名称和一句说明，说明在窄屏下隐藏。 */
+function DashboardFolderTab({ icon, description, children, ...props }: DashboardFolderTabProps) {
+  return (
+    <TabsTrigger data-dashboard-folder-tab="true" {...props}>
+      {icon && <span data-dashboard-folder-tab-icon="true" aria-hidden="true">{icon}</span>}
+      <span data-dashboard-folder-tab-label="true">{children}</span>
+      {description && <span data-dashboard-folder-tab-description="true">{description}</span>}
+    </TabsTrigger>
   )
 }
 
@@ -90,4 +108,4 @@ function DashboardFolderPanel({ children, ...props }: ComponentPropsWithoutRef<t
   return <Card data-dashboard-folder-panel="true" {...props}>{children}</Card>
 }
 
-export { DashboardFolderPanel, DashboardFolderTabBar, DashboardTabBar, DashboardTabTrigger }
+export { DashboardFolderPanel, DashboardFolderTab, DashboardFolderTabBar, DashboardTabBar, DashboardTabTrigger }

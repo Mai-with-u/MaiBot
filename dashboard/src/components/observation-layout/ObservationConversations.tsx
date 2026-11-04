@@ -11,6 +11,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { useFeatureFlags } from '@/hooks/use-feature-flags'
 import { useResolvedAvatarUrl } from '@/lib/avatar-url'
 import { getAllChatStreams } from '@/lib/chat-management-api'
+import { useLocalBotAvatarUrl } from '@/routes/chat/local-bot-avatar'
 import { buildObservedSessions, isFocusFlowId } from '@/routes/chat/observed-sessions'
 import { StageStatusLabel } from '@/routes/monitor/StageStatusLabel'
 import { getStageStatusLight } from '@/routes/monitor/stage-status-light'
@@ -68,6 +69,7 @@ const ObservedRow = memo(function ObservedRow({
  */
 export function ObservationConversations({ collapsed }: { collapsed: boolean }) {
   const { t } = useTranslation()
+  const localBotAvatarUrl = useLocalBotAvatarUrl()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
@@ -164,7 +166,7 @@ export function ObservationConversations({ collapsed }: { collapsed: boolean }) 
                   preview={t('observation.localChatPreview')}
                   selected={selection.kind === 'chat'}
                   onSelect={() => void navigate({ to: '/chat', search: {} })}
-                  avatar={<ConversationAvatar name={t('chat.botNameFallback')} bot />}
+                  avatar={<ConversationAvatar src={localBotAvatarUrl} name={t('chat.botNameFallback')} bot />}
                 />
               </div>
               {flags?.agent === true && (

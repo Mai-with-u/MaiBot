@@ -1,11 +1,11 @@
-import { type CSSProperties, type MouseEvent, type UIEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { type UIEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useRouterState } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tabs, TabsContent } from '@/components/ui/tabs'
+import { DashboardFolderPanel, DashboardFolderTab, DashboardFolderTabBar } from '@/components/ui/dashboard-tabs'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import {
@@ -43,16 +43,16 @@ import { Badge } from '@/components/ui/badge'
 import {
   AlertTriangle,
   Copy,
-  GraduationCap,
   History,
   Loader2,
   Pencil,
   Plus,
-  Save,
   Search,
   Settings,
   Trash2,
   Zap,
+  Boxes,
+  ListChecks,
 } from 'lucide-react'
 import { resolveFieldLabel } from '@/lib/config-label'
 import {
@@ -60,21 +60,21 @@ import {
   getModelConfigTabForField,
   scrollToConfigSearchField,
 } from '@/lib/config-search-navigation'
-import { cn } from '@/lib/utils'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { HelpTooltip } from '@/components/ui/help-tooltip'
 import { MobileAddMenu } from '@/components/layout/MobileAddMenu'
 import { MobileHeaderActions } from '@/components/layout/MobileHeaderActions'
 import { RestartOverlay } from '@/components/restart-overlay'
-import { RestartProvider, useRestart } from '@/lib/restart-context'
+import { RestartProvider } from '@/lib/restart-context'
 import { ExtraParamsDialog } from '@/components/ui/extra-params-dialog'
-import { TaskConfigCard, ModelTable, ModelCardList } from './model/components'
-import type { ModelCreationType } from './model/components/AddModelMenu'
+import { ModelTable, ModelCardList } from './model/components'
+import { TaskAssignmentBoard } from './model/components/TaskAssignmentBoard'
+import { taskShortName } from './model/taskMeta'
+import { AddModelMenu, type ModelCreationType } from './model/components/AddModelMenu'
 import { EmbeddingBuildProgress } from './model/components/EmbeddingBuildProgress'
 import { TaskRuntimeSummary } from './model/components/TaskRuntimeSummary'
 import { TaskUsageStats } from './model/components/TaskUsageStats'
 import { ThinkingProbeControls } from './model/components/ThinkingProbeControls'
-import { TASK_CONFIGS } from './model/constants'
 import { useModelTour, useModelFetcher, useModelConfig } from './model/hooks'
 import {
   getThinkingBudget,
@@ -101,7 +101,6 @@ import {
 import { ProviderForm } from './modelProvider/ProviderForm'
 import { ProviderSidebar } from './modelProvider/ProviderSidebar'
 import { WebSearchDialog } from './webSearch/WebSearchDialog'
-import { WebSearchTaskCard } from './webSearch/WebSearchTaskCard'
 import type { APIProvider } from './modelProvider/types'
 
 // 导入模块化的类型定义和组件
@@ -109,73 +108,6 @@ import type { ModelInfo, ModelPricePeriod } from './model/types'
 
 const MODEL_CONFIG_TABS = ['configuration', 'tasks'] as const
 type ModelConfigTab = (typeof MODEL_CONFIG_TABS)[number]
-
-interface ModelIdentifierMarqueeProps {
-  text: string
-  className?: string
-  textClassName?: string
-}
-
-function ModelIdentifierMarquee({ text, className, textClassName }: ModelIdentifierMarqueeProps) {
-  const containerRef = useRef<HTMLSpanElement>(null)
-  const textRef = useRef<HTMLSpanElement>(null)
-  const [scrollDistance, setScrollDistance] = useState(0)
-
-  useEffect(() => {
-    const containerElement = containerRef.current
-    const textElement = textRef.current
-    if (!containerElement || !textElement) {
-      return
-    }
-
-    const updateOverflowState = () => {
-      setScrollDistance(Math.max(0, textElement.scrollWidth - containerElement.clientWidth))
-    }
-
-    updateOverflowState()
-
-    if (typeof ResizeObserver === 'undefined') {
-      window.addEventListener('resize', updateOverflowState)
-      return () => window.removeEventListener('resize', updateOverflowState)
-    }
-
-    const resizeObserver = new ResizeObserver(updateOverflowState)
-    resizeObserver.observe(containerElement)
-    resizeObserver.observe(textElement)
-    return () => resizeObserver.disconnect()
-  }, [text])
-
-  const shouldScroll = scrollDistance > 1
-  const durationMs = Math.min(Math.max(scrollDistance * 45, 1800), 6000)
-
-  return (
-    <span
-      ref={containerRef}
-      className={cn('group/model-marquee block min-w-0 overflow-hidden', className)}
-      title={text}
-    >
-      <span
-        ref={textRef}
-        className={cn(
-          'model-identifier-marquee-text block max-w-full overflow-hidden text-ellipsis whitespace-nowrap',
-          shouldScroll &&
-            'group-hover/model-marquee:w-max group-hover/model-marquee:max-w-none group-hover/model-marquee:animate-[model-identifier-marquee_var(--model-identifier-marquee-duration)_ease-in-out_infinite_alternate] group-hover/model-marquee:overflow-visible group-hover/model-option:w-max group-hover/model-option:max-w-none group-hover/model-option:animate-[model-identifier-marquee_var(--model-identifier-marquee-duration)_ease-in-out_infinite_alternate] group-hover/model-option:overflow-visible',
-          textClassName
-        )}
-        style={
-          shouldScroll
-            ? ({
-                '--model-identifier-marquee-distance': `-${scrollDistance}px`,
-                '--model-identifier-marquee-duration': `${durationMs}ms`,
-              } as CSSProperties)
-            : undefined
-        }
-      >
-        {text}
-      </span>
-    </span>
-  )
-}
 
 function getInitialModelConfigTab(): ModelConfigTab {
   if (typeof window === 'undefined') {
@@ -190,6 +122,15 @@ function getInitialModelConfigTab(): ModelConfigTab {
 }
 
 // 主导出组件：包装 RestartProvider
+type ModelKindFilter = 'all' | 'used' | 'visual' | 'embedding'
+
+const MODEL_KIND_FILTERS: Array<{ value: ModelKindFilter; label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: 'used', label: '使用中' },
+  { value: 'visual', label: '视觉' },
+  { value: 'embedding', label: '嵌入' },
+]
+
 export function ModelConfigPage() {
   return (
     <RestartProvider>
@@ -201,7 +142,6 @@ export function ModelConfigPage() {
 // 内部实现组件
 function ModelConfigPageContent() {
   const { i18n } = useTranslation()
-  const { isRestarting } = useRestart()
   const routeSearch = useRouterState({ select: (state) => state.location.searchStr })
   const searchFieldPath = getConfigSearchField(routeSearch)
   const scrolledSearchFieldRef = useRef('')
@@ -221,13 +161,11 @@ function ModelConfigPageContent() {
     loading,
     saving,
     autoSaving,
-    hasUnsavedChanges,
     activeConfigVersion,
     configVersions,
     versionsLoading,
     switchingConfigVersion,
     creatingConfigVersion,
-    saveConfig,
     handleCreateConfigVersion,
     handleSwitchConfigVersion,
     handleDeleteConfigVersion,
@@ -278,7 +216,6 @@ function ModelConfigPageContent() {
     // 模型批量
     selectedModels,
     toggleModelSelection,
-    toggleSelectAll,
     batchDeleteDialogOpen,
     setBatchDeleteDialogOpen,
     openBatchDeleteDialog,
@@ -301,12 +238,30 @@ function ModelConfigPageContent() {
   const [activeTab, setActiveTab] = useState<ModelConfigTab>(getInitialModelConfigTab)
   const [modelConfigurationHeight, setModelConfigurationHeight] = useState<number>()
   const [visibleModelCount, setVisibleModelCount] = useState(20)
-  const visibleModels = useMemo(
-    () => filteredModels.slice(0, visibleModelCount),
-    [filteredModels, visibleModelCount]
+  // 模型列表上方的筛选键：全部 / 使用中 / 视觉 / 嵌入，只影响显示
+  const [modelKindFilter, setModelKindFilter] = useState<ModelKindFilter>('all')
+  const shownModels = useMemo(
+    () =>
+      filteredModels.filter((model) => {
+        if (modelKindFilter === 'used') return isModelUsed(model.name)
+        if (modelKindFilter === 'visual') return model.model_type === 'llm' && Boolean(model.visual)
+        if (modelKindFilter === 'embedding') return model.model_type !== 'llm'
+        return true
+      }),
+    [filteredModels, isModelUsed, modelKindFilter]
   )
+  const visibleModels = useMemo(
+    () => shownModels.slice(0, visibleModelCount),
+    [shownModels, visibleModelCount]
+  )
+  // 全选只作用于当前筛选出的模型
+  const toggleShownSelectAll = () => {
+    const indices = shownModels.map((shown) => models.findIndex((model) => model === shown))
+    const allSelected = indices.length > 0 && indices.every((index) => selectedModels.has(index))
+    mc.setSelectedModels(allSelected ? new Set() : new Set(indices))
+  }
 
-  const modelListFilterKey = `${modelProviderFilter}:${searchQuery}`
+  const modelListFilterKey = `${modelProviderFilter}:${searchQuery}:${modelKindFilter}`
   const [seenModelListFilterKey, setSeenModelListFilterKey] = useState(modelListFilterKey)
   if (seenModelListFilterKey !== modelListFilterKey) {
     setSeenModelListFilterKey(modelListFilterKey)
@@ -323,12 +278,18 @@ function ModelConfigPageContent() {
   const [advancedModelSettingsVisible, setAdvancedModelSettingsVisible] = useState(false)
   const [advancedTaskSettingsVisible, setAdvancedTaskSettingsVisible] = useState(false)
   const [selectedTaskName, setSelectedTaskName] = useState('replyer')
+  // 模型库里每个模型负责哪些工作，和「分工」页互相对应
+  const getModelTasks = (modelName: string) =>
+    Object.entries(taskConfig ?? {})
+      .filter(([task, config]) => task !== 'web_search' && config?.model_list?.includes(modelName))
+      .map(([task]) => taskShortName(task))
+  // 分工页编辑抽屉里正在编辑的工作；搜索定位到某项工作时直接打开它
+  const [taskDrawerTask, setTaskDrawerTask] = useState<string | null>(null)
   const [extraParamsDialogOpen, setExtraParamsDialogOpen] = useState(false)
   // 用户是否手动编辑过模型名称；编辑过后，名称不再跟随模型标识符自动填充
   const [modelNameTouched, setModelNameTouched] = useState(false)
   const [createVersionDialogOpen, setCreateVersionDialogOpen] = useState(false)
   const [manageVersionsDialogOpen, setManageVersionsDialogOpen] = useState(false)
-  const reduceTaskMotion = useReducedMotion()
   const visibleTaskFields = useMemo(
     () =>
       taskConfigSchema?.fields.filter(
@@ -340,27 +301,6 @@ function ModelConfigPageContent() {
   )
   const selectedTaskField =
     visibleTaskFields.find((field) => field.name === selectedTaskName) ?? visibleTaskFields[0]
-  const selectedTaskMetadata = TASK_CONFIGS.find((config) => config.key === selectedTaskField?.name)
-  const selectedTaskHideTemperature = Boolean(
-    selectedTaskMetadata && 'hideTemperature' in selectedTaskMetadata && selectedTaskMetadata.hideTemperature
-  )
-  const selectedTaskHideMaxTokens = Boolean(
-    selectedTaskMetadata && 'hideMaxTokens' in selectedTaskMetadata && selectedTaskMetadata.hideMaxTokens
-  )
-  const selectedTaskHideSelectionStrategy = Boolean(
-    selectedTaskMetadata &&
-      'hideSelectionStrategy' in selectedTaskMetadata &&
-      selectedTaskMetadata.hideSelectionStrategy
-  )
-  const selectedTaskSingleModel = Boolean(
-    selectedTaskMetadata && 'singleModel' in selectedTaskMetadata && selectedTaskMetadata.singleModel
-  )
-  const selectedTaskModelNames =
-    selectedTaskField?.name === 'embedding' || selectedTaskField?.name === 'image_embedding'
-      ? models
-          .filter((model) => model.model_type === 'embedding' || model.model_type === 'image_embedding')
-          .map((model) => model.name)
-      : models.filter((model) => model.model_type === 'llm').map((model) => model.name)
 
   if (selectedTaskField && selectedTaskField.name !== selectedTaskName) {
     setSelectedTaskName(selectedTaskField.name)
@@ -387,6 +327,7 @@ function ModelConfigPageContent() {
       }
       if (searchedTaskName) {
         setSelectedTaskName(searchedTaskName)
+        setTaskDrawerTask(searchedTaskName)
       }
     })
 
@@ -429,9 +370,6 @@ function ModelConfigPageContent() {
   }, [activeTab, advancedModelSettingsVisible, advancedTaskSettingsVisible, loading, searchFieldPath, selectedTaskName])
   const [newVersionLabel, setNewVersionLabel] = useState('')
   const [deletingVersionId, setDeletingVersionId] = useState<string | null>(null)
-  const [tourEntryVisible, setTourEntryVisible] = useState(
-    () => localStorage.getItem('model-assignment-tour-entry-dismissed') !== 'true'
-  )
 
   useLayoutEffect(() => {
     const updateConfigurationHeight = () => {
@@ -460,7 +398,7 @@ function ModelConfigPageContent() {
       window.removeEventListener('resize', updateConfigurationHeight)
       window.visualViewport?.removeEventListener('resize', updateConfigurationHeight)
     }
-  }, [activeTab, loading, tourEntryVisible])
+  }, [activeTab, loading])
 
   const providerModelCounts = useMemo(() => {
     const counts = new Map<string, number>()
@@ -595,12 +533,6 @@ function ModelConfigPageContent() {
     }
   }, [editDialogOpen, editingModel?.api_provider, fetchModelsForProvider])
 
-  const dismissTourEntry = (event: MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation()
-    localStorage.setItem('model-assignment-tour-entry-dismissed', 'true')
-    setTourEntryVisible(false)
-  }
-
   const handleActiveTabChange = (value: string) => {
     const nextTab = MODEL_CONFIG_TABS.includes(value as ModelConfigTab)
       ? (value as ModelConfigTab)
@@ -645,7 +577,7 @@ function ModelConfigPageContent() {
     : null
 
   // Tour 引导 (使用 hook 封装的逻辑)
-  const { startTour: handleStartTour, isRunning: tourIsRunning } = useModelTour({
+  const { startTour: handleStartTour, stopTour: handleStopTour, isRunning: tourIsRunning } = useModelTour({
     onOpenEditDialog: () => openEditDialog(null, null),
     onCloseEditDialog: () => setEditDialogOpen(false),
     onOpenProviderDialog: () => openProviderDialog(null, null),
@@ -653,6 +585,8 @@ function ModelConfigPageContent() {
     onOpenProvidersTab: () => handleActiveTabChange('configuration'),
     onOpenModelsTab: () => handleActiveTabChange('configuration'),
     onOpenTasksTab: () => handleActiveTabChange('tasks'),
+    onOpenTaskEditor: () => setTaskDrawerTask('replyer'),
+    onCloseTaskEditor: () => setTaskDrawerTask(null),
   })
 
   if (loading) {
@@ -722,25 +656,6 @@ function ModelConfigPageContent() {
         )}
 
 
-        {/* 新手引导入口 - 仅在桌面端显示，移动端隐藏 */}
-        {tourEntryVisible && (
-        <Alert className="hidden lg:flex border-primary/30 bg-primary/5 cursor-pointer hover:bg-primary/10 transition-colors" onClick={handleStartTour}>
-          <GraduationCap className="h-4 w-4 text-primary" />
-          <AlertDescription className="flex items-center justify-between">
-            <span>
-              <strong className="text-primary">新手引导：</strong>不知道如何配置模型？点击这里开始学习如何为麦麦的组件分配模型。
-            </span>
-            <div className="ml-4 flex shrink-0 items-center gap-2">
-            <Button variant="outline" size="sm">
-              开始引导
-            </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={dismissTourEntry}>
-              关闭
-            </Button>
-            </div>
-          </AlertDescription>
-        </Alert>
-        )}
 
         {/* 标签页 */}
         <Tabs
@@ -750,19 +665,32 @@ function ModelConfigPageContent() {
         >
           <div
             data-model-config-tabs-bar="true"
-            className="sticky top-0 z-40 -mx-4 flex w-[calc(100%+2rem)] flex-wrap items-stretch gap-2 bg-background px-4 py-2 sm:-mx-6 sm:w-[calc(100%+3rem)] sm:px-6"
+            className="sticky top-0 z-40 -mx-4 flex w-[calc(100%+2rem)] flex-wrap items-end gap-2 bg-background px-4 pt-2 sm:-mx-6 sm:w-[calc(100%+3rem)] sm:px-6"
           >
-            <TabsList
-              data-model-config-tabs-list="true"
-              className="grid h-9 min-w-[min(100%,22rem)] flex-1 grid-cols-2 bg-transparent shadow-none"
-            >
-              <TabsTrigger value="configuration" className="w-full" data-tour="providers-tab-trigger">模型设置</TabsTrigger>
-              <TabsTrigger value="tasks" className="w-full" data-tour="tasks-tab-trigger">功能分配</TabsTrigger>
-            </TabsList>
-            <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
+            {/* 「分工」决定每项工作由谁来做，「模型库」管理可用的厂商和模型；分工在前，是这一页的主入口。 */}
+            <DashboardFolderTabBar size="large" data-model-config-tabs-list="true" aria-label="模型页">
+              <DashboardFolderTab
+                value="tasks"
+                data-tour="tasks-tab-trigger"
+                icon={<ListChecks />}
+                description="麦麦的每项工作由谁来做"
+              >
+                分工
+              </DashboardFolderTab>
+              <DashboardFolderTab
+                value="configuration"
+                data-tour="providers-tab-trigger"
+                icon={<Boxes />}
+                description="厂商、模型和联网服务"
+              >
+                模型库
+              </DashboardFolderTab>
+            </DashboardFolderTabBar>
+            <div className="flex w-full min-w-0 items-center gap-2 pb-2 sm:ml-auto sm:w-auto">
               <SplitDropdownSelect
                 value="active"
                 label="Bot 任务配置副本"
+                controlSize="sm"
                 icon={<History />}
                 className="flex-1 sm:w-[190px] sm:flex-none"
                 disabled={versionsLoading || saving || autoSaving || Boolean(switchingConfigVersion)}
@@ -803,12 +731,13 @@ function ModelConfigPageContent() {
           {/* 厂商与模型合并配置视图 */}
           <TabsContent
             value="configuration"
-            className="mt-0 min-h-0 flex-1 overflow-visible lg:overflow-hidden"
+            className="mt-0 flex min-h-0 flex-1 flex-col overflow-visible lg:overflow-hidden"
           >
+            <DashboardFolderPanel className="flex min-h-0 flex-1 flex-col p-3 sm:p-4">
             <div
               ref={modelConfigurationRef}
               data-model-config-layout="true"
-              className="grid min-h-0 gap-4 lg:grid-cols-4 lg:overflow-hidden"
+              className="grid min-h-0 gap-5 lg:grid-cols-[17rem_minmax(0,1fr)] lg:overflow-hidden"
               style={
                 modelConfigurationHeight === undefined
                   ? undefined
@@ -833,57 +762,52 @@ function ModelConfigPageContent() {
               />
 
               <section
-                className="flex min-h-0 min-w-0 flex-col gap-4 lg:col-span-3 lg:h-full lg:overflow-hidden"
+                className="flex min-h-0 min-w-0 flex-col gap-2 lg:h-full lg:overflow-hidden"
                 data-tour="models-tab-trigger"
               >
-          {/* 搜索与模型操作 */}
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-1 sm:flex-row sm:items-center">
-              <div className="relative w-full sm:max-w-sm">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          {/* 列表标签、筛选键、搜索和添加入口排在同一行 */}
+          <div data-library-label="true" className="flex-wrap gap-y-2">
+            <b>MODELS</b>
+            <h2>模型列表</h2>
+            <div role="group" aria-label="筛选模型" data-library-filters="true" className="ml-1">
+              {MODEL_KIND_FILTERS.map((item) => (
+                <Button
+                  key={item.value}
+                  type="button"
+                  size="xs"
+                  variant={modelKindFilter === item.value ? 'default' : 'outline'}
+                  aria-pressed={modelKindFilter === item.value}
+                  onClick={() => setModelKindFilter(item.value)}
+                >
+                  {item.label}
+                </Button>
+              ))}
+            </div>
+            <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
+              {searchQuery && (
+                <span className="text-xs text-muted-foreground whitespace-nowrap">
+                  找到 {shownModels.length} 个
+                </span>
+              )}
+              <div className="relative w-full sm:w-60">
+                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
-                  placeholder="搜索模型名称、标识符或提供商..."
+                  placeholder="搜索名称、标识符或厂商"
+                  aria-label="搜索模型"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9"
+                  controlSize="sm"
+                  className="pl-8"
                 />
               </div>
-              {/* 桌面端添加模型按钮位于表格表头；手机上由页头右上角的「+」添加 */}
-              {searchQuery && (
-                <p className="text-sm text-muted-foreground whitespace-nowrap">
-                  找到 {filteredModels.length} 个结果
-                </p>
-              )}
-            </div>
-
-          {/* 模型列表 - 移动端卡片视图 */}
-            <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row sm:items-center sm:justify-end">
-              <Button 
-                onClick={saveConfig} 
-                disabled={saving || autoSaving || !hasUnsavedChanges || isRestarting} 
-                size="icon"
-                variant="outline"
-                className="h-9 w-9 shrink-0"
-                title={saving ? '保存中' : autoSaving ? '自动保存中' : hasUnsavedChanges ? '保存配置' : '已保存'}
-                aria-label={saving ? '保存中' : autoSaving ? '自动保存中' : hasUnsavedChanges ? '保存配置' : '已保存'}
-              >
-                {saving || autoSaving ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Save className="h-4 w-4" strokeWidth={2} fill="none" />
-                )}
-              </Button>
               {selectedModels.size > 0 && (
-                <Button
-                  onClick={openBatchDeleteDialog}
-                  size="sm"
-                  variant="destructive"
-                  className="w-full sm:w-auto"
-                >
-                  <Trash2 className="mr-2 h-4 w-4" strokeWidth={2} fill="none" />
-                  <span className="text-sm">批量删除 ({selectedModels.size})</span>
+                <Button onClick={openBatchDeleteDialog} size="sm" variant="destructive">
+                  <Trash2 className="h-4 w-4" strokeWidth={2} fill="none" />
+                  批量删除 ({selectedModels.size})
                 </Button>
               )}
+              {/* 手机上由页头右上角的「+」添加 */}
+              <AddModelMenu onAdd={openAddModelDialog} className="hidden md:inline-flex" dataTour="add-model-button" />
             </div>
           </div>
 
@@ -956,6 +880,7 @@ function ModelConfigPageContent() {
               onDelete={openDeleteDialog}
               onTest={handleTestModelCapability}
               isModelUsed={isModelUsed}
+              getModelTasks={getModelTasks}
               testingModels={testingModels}
               modelTestResults={modelTestResults}
               searchQuery={searchQuery}
@@ -965,14 +890,15 @@ function ModelConfigPageContent() {
             <ModelTable
               paginatedModels={visibleModels}
               allModels={models}
-              filteredModels={filteredModels}
+              filteredModels={shownModels}
               selectedModels={selectedModels}
               onEdit={openEditDialog}
               onDelete={openDeleteDialog}
               onTest={handleTestModelCapability}
               onToggleSelection={toggleModelSelection}
-              onToggleSelectAll={toggleSelectAll}
+              onToggleSelectAll={toggleShownSelectAll}
               isModelUsed={isModelUsed}
+              getModelTasks={getModelTasks}
               testingModels={testingModels}
               modelTestResults={modelTestResults}
               searchQuery={searchQuery}
@@ -982,6 +908,7 @@ function ModelConfigPageContent() {
 
               </section>
             </div>
+            </DashboardFolderPanel>
           </TabsContent>
 
         {/* 模型任务配置标签页 */}
@@ -989,171 +916,49 @@ function ModelConfigPageContent() {
           value="tasks"
           className="mt-0 flex min-h-0 flex-1 flex-col gap-3 overflow-visible lg:overflow-hidden"
         >
-          {taskConfig && taskConfigSchema && selectedTaskField && (
-            <div className="grid min-h-0 gap-4 lg:flex-1 lg:grid-cols-4 lg:overflow-hidden">
-              <aside className="flex min-h-0 flex-col overflow-hidden rounded-lg border lg:h-full">
-                <div className="flex items-center justify-between gap-2 border-b px-3 py-2.5">
-                  <h2 className="text-sm font-semibold">功能任务</h2>
-                  {taskConfigSchema.fields.some((field) => field.advanced) && (
-                    <div className="flex shrink-0 items-center gap-2">
-                      <Label htmlFor="advanced-task-settings" className="cursor-pointer whitespace-nowrap text-xs">
-                        高级
-                      </Label>
-                      <Switch
-                        id="advanced-task-settings"
-                        checked={advancedTaskSettingsVisible}
-                        onCheckedChange={setAdvancedTaskSettingsVisible}
-                      />
-                    </div>
+          <DashboardFolderPanel className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
+          {taskConfig && taskConfigSchema && (
+            <TaskAssignmentBoard
+              fields={taskConfigSchema.fields}
+              taskConfig={taskConfig}
+              models={models}
+              webServices={Object.keys(mc.webConfig.services)}
+              openTask={taskDrawerTask}
+              onOpenTaskChange={(task) => {
+                if (task === null && tourIsRunning) handleStopTour()
+                setTaskDrawerTask(task)
+              }}
+              onChange={updateTaskConfig}
+              onAddWebService={() => setWebSearchEditor({ name: null })}
+              hasProviders={providers.length > 0}
+              onStartTour={handleStartTour}
+              tourRunning={tourIsRunning}
+              fallbackLabel={(field) => resolveFieldLabel(field, i18n.language)}
+              renderExtra={(task) => (
+                <>
+                  {task === 'embedding' && (
+                    <EmbeddingBuildProgress selectedEmbeddingModel={taskConfig.embedding?.model_list[0] ?? ''} />
                   )}
-                </div>
-                {/* 移动端用紧凑选择器，避免类别列表占满屏幕并接管页面纵向滚动。 */}
-                <div className="min-w-0 p-2 lg:hidden">
-                  <Select value={selectedTaskField.name} onValueChange={setSelectedTaskName}>
-                    <SelectTrigger className="w-full min-w-0" aria-label="功能任务">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {visibleTaskFields.map((field) => {
-                        const assignedCount = taskConfig[field.name]?.model_list.length ?? 0
-
-                        return (
-                          <SelectItem key={field.name} value={field.name}>
-                            {TASK_CONFIGS.find((task) => task.key === field.name)?.title ?? resolveFieldLabel(field, i18n.language)}
-                            {field.advanced ? ' · 高级' : ''}
-                            {assignedCount > 0 ? ` · 已配置 ${assignedCount}` : ' · 未配置'}
-                          </SelectItem>
+                  {task !== 'web_search' && (taskConfig[task]?.model_list.length ?? 0) > 0 && (
+                    <TaskUsageStats
+                      key={task}
+                      taskName={task}
+                      summary={
+                        (task === 'planner' || task === 'replyer') && (
+                          <TaskRuntimeSummary
+                            taskName={task}
+                            modelList={taskConfig[task]?.model_list ?? []}
+                            models={models}
+                          />
                         )
-                      })}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="hidden min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain p-2 lg:block lg:h-0">
-                  <AnimatePresence initial={false}>
-                    {visibleTaskFields.map((field) => {
-                      const isSelected = field.name === selectedTaskField.name
-                      const assignedModels = taskConfig[field.name]?.model_list ?? []
-                      const isConfigured = assignedModels.length > 0
-                      const modelSummary = isConfigured ? assignedModels.join('、') : '未配置模型'
-
-                      return (
-                        <motion.button
-                          layout={!reduceTaskMotion}
-                          key={field.name}
-                          type="button"
-                          className={cn(
-                            'flex w-full min-w-0 items-center justify-between gap-3 overflow-hidden rounded-md px-3 py-2 text-left transition-colors',
-                            isSelected ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
-                          )}
-                          initial={reduceTaskMotion ? false : { height: 0, opacity: 0, y: -6 }}
-                          animate={{ height: 'auto', opacity: 1, y: 0 }}
-                          exit={reduceTaskMotion ? undefined : { height: 0, opacity: 0, y: -6 }}
-                          transition={{ duration: reduceTaskMotion ? 0 : 0.18, ease: 'easeOut' }}
-                          onClick={() => setSelectedTaskName(field.name)}
-                          aria-pressed={isSelected}
-                        >
-                          <span className="min-w-0 flex-1">
-                            <span className="flex min-w-0 items-center gap-1.5">
-                              <span className="truncate text-sm font-medium">
-                                {TASK_CONFIGS.find((task) => task.key === field.name)?.title ?? resolveFieldLabel(field, i18n.language)}
-                              </span>
-                              {field.advanced && (
-                                <span
-                                  className={cn(
-                                    'shrink-0 text-[10px]',
-                                    isSelected ? 'text-primary-foreground/70' : 'text-amber-600 dark:text-amber-400'
-                                  )}
-                                >
-                                  高级
-                                </span>
-                              )}
-                            </span>
-                            <ModelIdentifierMarquee
-                              text={modelSummary}
-                              className="mt-0.5"
-                              textClassName={cn(
-                                'text-xs',
-                                isSelected ? 'text-primary-foreground/70' : 'text-muted-foreground'
-                              )}
-                            />
-                          </span>
-                          <span
-                            className={cn(
-                              'shrink-0 text-xs',
-                              isSelected
-                                ? 'text-primary-foreground/75'
-                                : isConfigured
-                                  ? 'text-emerald-600 dark:text-emerald-400'
-                                  : 'text-muted-foreground'
-                            )}
-                          >
-                            {isConfigured ? `已配置 · ${assignedModels.length}` : '未配置'}
-                          </span>
-                        </motion.button>
-                      )
-                    })}
-                  </AnimatePresence>
-                </div>
-              </aside>
-
-              <section className="min-h-0 min-w-0 overflow-x-clip lg:col-span-3 lg:h-full lg:overflow-hidden">
-                <AnimatePresence mode="wait" initial={false}>
-                  <motion.div
-                    key={selectedTaskField.name}
-                    className="flex min-h-0 flex-col gap-3 p-1 lg:h-full lg:overflow-hidden"
-                    data-config-field-path={`model_task_config.${selectedTaskField.name}`}
-                    initial={reduceTaskMotion ? false : { opacity: 0, x: 12 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={reduceTaskMotion ? undefined : { opacity: 0, x: -8 }}
-                    transition={{ duration: reduceTaskMotion ? 0 : 0.16, ease: 'easeOut' }}
-                  >
-                    {selectedTaskField.name === 'web_search' ? (
-                      <WebSearchTaskCard
-                        config={mc.webConfig}
-                        selected={taskConfig.web_search?.model_list[0] ?? ''}
-                        onChange={(names) => updateTaskConfig('web_search', 'model_list', names)}
-                        onAdd={() => setWebSearchEditor({ name: null })}
-                      />
-                    ) : <TaskConfigCard
-                      title={selectedTaskMetadata?.title ?? resolveFieldLabel(selectedTaskField, i18n.language)}
-                      description={selectedTaskField.description}
-                      taskConfig={taskConfig[selectedTaskField.name] ?? { model_list: [] }}
-                      modelNames={selectedTaskModelNames}
-                      modelProviders={Object.fromEntries(models.map((model) => [model.name, model.api_provider]))}
-                      onChange={(field, value) => updateTaskConfig(selectedTaskField.name, field, value)}
-                      hideTemperature={selectedTaskHideTemperature}
-                      hideMaxTokens={selectedTaskHideMaxTokens}
-                      hideSelectionStrategy={selectedTaskHideSelectionStrategy}
-                      advanced={selectedTaskField.advanced}
-                      showAdvancedSettings={advancedTaskSettingsVisible}
-                      singleModel={selectedTaskSingleModel}
-                      dataTour="task-model-select"
-                      modelContent={selectedTaskField.name === 'embedding' && (
-                        <EmbeddingBuildProgress
-                          selectedEmbeddingModel={taskConfig.embedding?.model_list[0] ?? ''}
-                        />
-                      )}
-                    />}
-                    {selectedTaskField.name !== 'web_search' && (taskConfig[selectedTaskField.name]?.model_list.length ?? 0) > 0 && (
-                      <TaskUsageStats
-                        key={selectedTaskField.name}
-                        taskName={selectedTaskField.name}
-                        summary={
-                          (selectedTaskField.name === 'planner' || selectedTaskField.name === 'replyer') && (
-                            <TaskRuntimeSummary
-                              taskName={selectedTaskField.name}
-                              modelList={taskConfig[selectedTaskField.name]?.model_list ?? []}
-                              models={models}
-                            />
-                          )
-                        }
-                      />
-                    )}
-                  </motion.div>
-                </AnimatePresence>
-              </section>
-            </div>
+                      }
+                    />
+                  )}
+                </>
+              )}
+            />
           )}
+          </DashboardFolderPanel>
         </TabsContent>
       </Tabs>
 
