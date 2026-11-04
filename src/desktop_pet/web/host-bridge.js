@@ -1,4 +1,4 @@
-/* Electron 与本体内嵌窗口共用页面；没有 Electron 桥时由 pywebview 正常初始化。 */
+/* 独立客户端与本体内嵌窗口共用页面；没有桌面桥时由 pywebview 正常初始化。 */
 (() => {
   'use strict';
   const bridge = window.desktopPetBridge;
@@ -38,7 +38,7 @@
     } catch (error) { bridge.commandResult(id, null, String(error.message || error)); }
   });
   window.addEventListener('DOMContentLoaded', () => {
-    // 探索记录使用系统标题栏拖动；按钮仍由现有页面处理。
+    // 支持原生标题栏拖动的客户端可接管标题区域；按钮仍由现有页面处理。
     const title = document.getElementById('title-drag');
     if (title) title.style.setProperty('-webkit-app-region', 'drag');
     for (const edge of document.querySelectorAll('.resize-edge')) {

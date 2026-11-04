@@ -8,7 +8,7 @@ if errorlevel 1 (
 )
 pushd "%~dp0"
 if errorlevel 1 exit /b 1
-if not exist "node_modules\.bin\electron.cmd" (
+if not exist "node_modules\.bin\tauri.cmd" (
     echo Client dependencies are missing. Run npm ci in this directory first.
     popd
     pause

@@ -1,6 +1,6 @@
 'use strict';
 const login = window.desktopPetBridge.login;
-const server = document.querySelector('#server'), password = document.querySelector('#password');
+const server = document.querySelector('#server');
 const bots = document.querySelector('#bot'), botField = document.querySelector('#bot-field');
 const connect = document.querySelector('#connect'), status = document.querySelector('#status');
 const screenAccess = document.querySelector('#screen');
@@ -8,7 +8,7 @@ let savedBot = '', choices = null, busy = false;
 
 // 机器人选择与报错按需出现，窗口随内容收放，不为隐藏字段预留空白。
 const content = document.querySelector('main');
-new ResizeObserver(() => login.fit(content.getBoundingClientRect().height).catch(console.error)).observe(content);
+new ResizeObserver(() => login.fit(content.getBoundingClientRect().height, devicePixelRatio).catch(console.error)).observe(content);
 
 function message(text = '', error = false) {
   status.textContent = text;
@@ -17,7 +17,7 @@ function message(text = '', error = false) {
 }
 
 function showError(error) {
-  // 控制台保留完整错误；界面不显示 Electron IPC 包装和异常类名。
+  // 控制台保留完整错误；界面只展示简明原因。
   console.error(error);
   const detail = String(error.message || error)
     .replace(/^Error invoking remote method '[^']+':\s*/, '')
@@ -33,9 +33,9 @@ function showError(error) {
 
 function setBusy(value) {
   busy = value;
-  server.disabled = password.disabled = screenAccess.disabled = connect.disabled = value;
+  server.disabled = screenAccess.disabled = connect.disabled = value;
   bots.disabled = value || !choices;
-  connect.textContent = value ? '连接中…' : choices ? '启动桌宠' : '连接';
+  connect.textContent = value ? '等待 WebUI 登录…' : choices ? '启动桌宠' : '通过 WebUI 连接';
 }
 
 function resetBots() {
@@ -43,12 +43,11 @@ function resetBots() {
   botField.hidden = true;
   bots.disabled = true;
   bots.replaceChildren(new Option('请选择机器人', ''));
-  connect.textContent = '连接';
+  connect.textContent = '通过 WebUI 连接';
   message();
 }
 
 server.addEventListener('input', resetBots);
-password.addEventListener('input', resetBots);
 login.profile().then(profile => {
   server.value = profile.server || 'http://127.0.0.1:8001';
   savedBot = profile.botId || '';
@@ -61,7 +60,7 @@ document.querySelector('#connection').addEventListener('submit', async event => 
   message();
   try {
     if (!choices) {
-      const items = await login.discover(server.value, password.value);
+      const items = await login.discover(server.value);
       if (!items.length) { message('还没有机器人，请先在宿主中创建。'); return; }
       choices = items;
       bots.replaceChildren(new Option('请选择机器人', ''), ...items.map(bot => new Option(bot.name, bot.bot_id)));
@@ -72,9 +71,8 @@ document.querySelector('#connection').addEventListener('submit', async event => 
     }
     const bot = choices.find(item => item.bot_id === bots.value);
     if (!bot) { bots.focus(); return; }
-    await login.connect({ server: server.value, password: password.value, botId: bot.bot_id,
+    await login.connect({ server: server.value, botId: bot.bot_id,
       botName: bot.name, allowScreenRead: screenAccess.checked });
-    password.value = '';
   } catch (error) {
     // 失败后重新读取机器人，避免保留已过期的选择或登录状态。
     resetBots();

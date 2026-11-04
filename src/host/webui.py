@@ -7,11 +7,12 @@ from typing import Any, Dict, Iterator, List, Optional
 from urllib.parse import urlsplit
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
 
 import asyncio
+import re
 import socket
 import uvicorn
 
@@ -27,6 +28,13 @@ from .settings import register_common_settings
 from .static import report_static_status, resolve_static_path, static_response
 from .supervisor import BotSupervisor
 from .webui_auth import authenticate, register_host_auth
+
+
+_DESKTOP_PET_SESSION_HTML = """<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>桌宠连接 · MaiBot</title></head>
+<body><p>桌宠已连接，可返回桌宠窗口</p></body></html>"""
 
 
 class SessionRequest(BaseModel):
@@ -152,6 +160,28 @@ def create_host_app(
     @app.get("/api/host/session", dependencies=[Depends(require_session)])
     async def session_status() -> Dict[str, bool]:
         return {"authenticated": True}
+
+    @app.get("/api/host/desktop-pet/session", response_class=HTMLResponse, dependencies=[Depends(require_session)])
+    def desktop_pet_session(request: Request) -> HTMLResponse:
+        # 原生客户端在认证后停留于此，不持续加载完整 WebUI；仅注入的客户端代码负责传输。
+        # WebView 对 'self' 与 WS scheme 的匹配不同，显式允许同 Host 的 WS/WSS，兼容 TLS 反代。
+        host = request.headers.get("host", "")
+        if re.fullmatch(r"(?:[A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?", host) is None:
+            raise HTTPException(400, "无效的 WebUI 地址")
+        try:
+            parsed = urlsplit("http://" + host)
+            if parsed.port == 0:
+                raise ValueError("invalid port")
+        except ValueError as exc:
+            raise HTTPException(400, "无效的 WebUI 地址") from exc
+        return HTMLResponse(_DESKTOP_PET_SESSION_HTML, headers={
+            "Cache-Control": "no-store",
+            "Content-Security-Policy": (
+                "default-src 'none'; "
+                f"connect-src 'self' ipc: http://ipc.localhost ws://{host} wss://{host}; "
+                "base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+            ),
+        })
 
     @app.delete("/api/host/session", dependencies=[Depends(require_session)])
     async def logout(request: Request, response: Response) -> Dict[str, bool]:

@@ -1,29 +1,35 @@
 # 内置桌宠与插件 SDK
 
-桌宠无需安装 `sengokucola.desktop-pet` 插件。独立 Electron 客户端提供 Windows、macOS 和 Linux 构建，可连接本机或远端 MaiBot 宿主，自带浏览器运行时。原有 Python 内嵌桌宠继续支持 Windows，需要 WebView2 Runtime；其依赖随 Windows 主程序安装，源码环境更新依赖可运行 `uv sync --inexact`（保留插件额外依赖）。
+桌宠无需安装 `sengokucola.desktop-pet` 插件。独立 Tauri 2 客户端提供 Windows、macOS 和 Linux 构建，可连接本机或远端 MaiBot 宿主，使用系统 WebView 和 Rust 原生能力。原有 Python 内嵌桌宠继续支持 Windows，需要 WebView2 Runtime；其依赖随 Windows 主程序安装，源码环境更新依赖可运行 `uv sync --inexact`（保留插件额外依赖）。
 
-在 WebUI 主程序配置的「桌宠」启用 `desktop_pet.enabled`，默认关闭。`desktop_pet.mode` 默认为 `local`，由主程序启动并回收 Python 内嵌窗口；设置为 `remote` 后等待独立 Electron 客户端连接。Electron 连接本机 MaiBot 时也使用 `remote` 模式。两种模式共用桌宠网页界面和本体业务，配置支持热重载；窗口与网络通信在主程序事件循环之外运行。
+在 WebUI 主程序配置的「桌宠」启用 `desktop_pet.enabled`，默认关闭。`desktop_pet.mode` 默认为 `local`，由主程序启动并回收 Python 内嵌窗口；设置为 `remote` 后等待独立 Tauri 2 客户端连接。独立客户端连接本机 MaiBot 时也使用 `remote` 模式。两种模式共用桌宠网页界面和本体业务，配置支持热重载；窗口与网络通信在主程序事件循环之外运行。
 
 旧桌宠插件会被明确阻止加载并显示内置替代提示，避免同时启动两个窗口；插件源码保留。继续读写 `data/plugins/sengokucola.desktop-pet/todos.json` 和 `window.json`，已有待办和窗口位置无需复制。临时 WebView 数据改用 `temp/desktop_pet`。
 
 桌宠聊天继续使用 `internal / owner`，昵称由网页聊天室统一设置。麦麦给主人的回复在桌宠和网页同步展示；旧 `webui` 私聊不迁移。桌宠提交的消息保留界面来源标记，不具备受保护命令权限。主人聊天流有实际发言时会主动显示桌宠；聊天面板未展开时弹出消息气泡，不受菜单、待办或插件面板状态限制，点击气泡可查看聊天记录。
 
-## Electron 客户端与部署
+## Tauri 2 客户端与部署
 
 ### 服务器
 
 1. 更新 MaiBot 本体，并正常启动宿主和目标 Bot。
 2. 在目标 Bot 的 WebUI「桌宠」设置启用桌宠，将运行模式设为 `remote`。服务器无需安装图形桌面或启动桌宠窗口。
-3. 准备宿主 WebUI 地址和登录密码，在客户端点击「连接」；多个机器人时再按名称选择目标。客户端通过宿主认证与 Bot 代理连接，不直接暴露 Bot 内部端口。
+3. 在客户端填写宿主 WebUI 地址，点击「通过 WebUI 连接」，在打开的 WebUI 页面完成首次登录；多个机器人时再按名称选择目标。客户端通过宿主认证与 Bot 代理连接，不直接暴露 Bot 内部端口。
 4. 公网部署使用 HTTPS/WSS。已有反向代理需要支持 WebSocket Upgrade，并允许长连接；客户端提供心跳和自动重连。宿主也可使用已有的 TLS 配置直接提供 HTTPS/WSS。
 
 每个 Bot 同时接入一个独立桌宠。连接本机时填写本机宿主 WebUI 地址，例如 `http://127.0.0.1:8001`，端口以实际部署为准。`remote` 表示由独立客户端连接，并不要求宿主在另一台电脑；`local` 则由本体启动 Windows Python 内嵌窗口。模式显式选择，断线不会自动切换。
 
-### 启动 Electron 客户端
+### 启动 Tauri 2 客户端
 
-使用对应系统的 Electron 分发包时，无需安装 Python、WebView2、Node.js 或完整 MaiBot。启动后填写宿主地址和密码即可连接；只有多个机器人时才需要选择目标。
+使用对应系统的分发包时，无需安装 Python、Node.js、Rust 或完整 MaiBot。Windows 使用 WebView2 Runtime，安装器在缺少时在线安装；macOS 使用系统 WKWebView，Linux 使用 WebKitGTK 4.1 及相应桌面运行库。启动后填写宿主地址，在 WebUI 页面中登录；只有多个机器人时才需要选择目标。
 
-从源码运行时，安装 Node.js 22 或更高版本及 npm，在仓库根目录执行：
+桌宠没有独立密码框，也不把密码写入本地配置。Windows、Linux 和 macOS 14 及以上为各服务器使用独立 WebView 数据存储；macOS 10.15～13 使用默认 WebKit 数据存储，遵循浏览器的 Cookie 域和路径隔离规则。宿主会话当前有效期为 8 小时；有效期内再次连接可复用，过期、撤销或宿主认证状态变化导致失效时重新显示 WebUI 登录页。桌宠 WebView 和另外打开的浏览器各自管理会话。
+
+认证完成后切换到同源的独立轻量连接页，维持桌宠通信，不持续加载完整 React WebUI。服务端需要同步更新，提供 `/api/host/desktop-pet/session`；该页面复用现有宿主会话校验，未经认证返回 401，不绕过宿主登录或 Nginx 等反向代理认证。
+
+若 Nginx 等反向代理启用 HTTP Basic Auth，原生 WebView 的认证对话框可能另行要求代理账号密码。凭据缓存受 WebView 和代理控制，缓存失效或重新启动后可能需要再次认证，不保证永久免输。托盘菜单提供「打开 WebUI 登录」及「更换连接 / 屏幕授权」。
+
+从源码运行时，安装 Node.js 22 或更高版本、npm、Rust stable（当前依赖至少需要 1.90），以及系统编译工具。Windows 需要 Visual Studio Build Tools 的 C++ 桌面开发和 Windows SDK；macOS 需要 Xcode Command Line Tools；Linux 需要 WebKitGTK/GTK、托盘、XCB/XRandR、D-Bus、PipeWire、Clang 等开发依赖。详见 [Tauri 前置依赖](https://v2.tauri.app/start/prerequisites/)、[xcap Linux 依赖](https://github.com/nashaofu/xcap#linux-system-requirements) 和[客户端说明](../desktop-pet-client/README.md)。在仓库根目录执行：
 
 ```sh
 cd desktop-pet-client
@@ -31,15 +37,15 @@ npm ci
 npm start
 ```
 
-Windows 完成 `npm ci` 后也可以双击 `desktop-pet-client/start.cmd`；依赖未安装时启动器会提示先安装。登录密码不写入本地配置文件。
+Windows 准备好工具链并完成 `npm ci` 后也可以双击 `desktop-pet-client/start.cmd`；首次启动会编译 Rust 原生程序。
 
 独立客户端支持聊天图文、回复气泡、思考状态、皮肤、待办及图片附件、探索记录和插件按钮。聊天、待办与探索数据由服务器管理，窗口位置和本地资源缓存留在客户端。断网时显示连接状态并自动重连；已经发出但未获确认的操作不会自动重放，避免重复聊天或重复新增待办。客户端离线不停止服务器上的 Bot 定时待办和主动思考；用户提醒等到客户端连接后显示，桌面采集在离线时停止。
 
 ### 截图授权与平台限制
 
-截图和持续阅读需同时满足服务器「允许读取桌面」及客户端本地授权，实际读取的是客户端电脑。macOS 还需要系统「屏幕录制」权限，权限变更后可能需要重启客户端。Linux 使用 X11 窗口模式，Wayland 会话需要 XWayland；截图可能受 PipeWire/系统来源选择器限制，窗口透明、置顶、位置控制和鼠标穿透也需在目标桌面验证。参见 [Electron 屏幕采集文档](https://www.electronjs.org/docs/latest/api/desktop-capturer)。
+截图和持续阅读需同时满足服务器「允许读取桌面」及客户端本次连接的本地授权，实际读取的是客户端电脑主屏；无法确定主屏时会报错。macOS 还需要系统「屏幕录制」权限，拒绝时不会返回截图，权限变更后可能需要重启客户端。Linux 使用 X11 窗口模式，Wayland 会话需要 XWayland；xcap 的截图门户可能每次要求确认，不能保证无人值守连续采样。窗口透明、置顶、位置控制和鼠标穿透也需在目标桌面验证。参见 [xcap 平台支持范围](https://github.com/nashaofu/xcap#implementation-status)。
 
-Windows 的应用条件支持进程名和窗口标题；macOS/Linux 当前按进程名匹配。当前运行验证在 Windows 完成，macOS/Linux 已提供构建配置但尚未进行实机验证。
+Windows 的应用条件支持进程名和窗口标题；macOS/Linux 当前按进程名匹配。当前在 Windows 上进行运行验证，macOS/Linux 已提供构建配置但尚未进行实机验证；macOS 最低配置版本为 10.15。
 
 ### 构建与分发
 
@@ -51,7 +57,7 @@ npm run dist:mac
 npm run dist:linux
 ```
 
-产物位于仓库的 `dist/desktop-pet-client/`，分别为 Windows ZIP、macOS DMG 和 Linux AppImage。构建使用共用桌宠网页资源，不包含 Bot 配置、密码、聊天数据库或模型依赖。建议在目标操作系统构建和验证对应产物；macOS 签名与公证需要相应环境。客户端依赖由 `desktop-pet-client/package.json` 和 lockfile 管理。
+原始安装包位于 `desktop-pet-client/src-tauri/target/release/bundle/`，构建脚本同时收集到仓库的 `dist/desktop-pet-client/`，分别为 Windows NSIS 安装器、macOS DMG，以及 Linux DEB、RPM、AppImage。默认构建当前工具链的单一架构，请在目标操作系统和架构上构建、验证；macOS 签名与公证需要相应环境。构建使用共用桌宠网页资源，不包含完整浏览器、Bot 配置、密码、聊天数据库或模型依赖。JavaScript 依赖由 `desktop-pet-client/package-lock.json` 管理，Rust 依赖由 `desktop-pet-client/src-tauri/Cargo.lock` 管理。
 
 ## 插件控制
 
@@ -216,7 +222,7 @@ async def on_desktop_pet_panel_action(self, button_id, action_id):
 
 ## 查看桌面与持续阅读
 
-在 WebUI「桌宠」开启「允许读取桌面」（`screen_read_enabled`，默认关闭）。Python 本机模式读取 Windows 主屏；Electron 独立客户端读取客户端电脑上的屏幕来源，并遵守客户端授权与系统权限。此功能和 Windows Sandbox 电脑工具分开，不控制鼠标键盘。截图会发给当前聊天模型，可能包含屏幕上可见的私人信息；模型需要支持图片理解。
+在 WebUI「桌宠」开启「允许读取桌面」（`screen_read_enabled`，默认关闭）。Python 本机模式读取 Windows 主屏；Tauri 2 独立客户端读取客户端电脑的主屏，并遵守客户端授权与系统权限。此功能和 Windows Sandbox 电脑工具分开，不控制鼠标键盘。截图会发给当前聊天模型，可能包含屏幕上可见的私人信息；模型需要支持图片理解。
 
 - 主人聊天可调用 `desktop_pet_screen`，获得当前截图、捕获时间和尺寸。普通群聊无法使用。
 - 单次查看由 Bot 根据聊天需要调用截图工具，界面不提供「看一眼」按钮；用户也可以直接在聊天中提出查看桌面的需求。
@@ -224,7 +230,7 @@ async def on_desktop_pet_panel_action(self, button_id, action_id):
 
 差异检测在 320×180 缩略图上比较亮度，忽略低于 20/255 的单像素变化；明显变化的像素比例达到 `screen_change_threshold`（默认 0.015，即 1.5%）才保留新帧。比较基准为上次保留的帧，小变化可以累积；小面积文字变化也可能被过滤，可降低阈值提高敏感度。无明显变化不重复投递。
 
-每次最多拼接 6 帧，按从左到右、从上到下排列，标注序号及 UTC 捕获时间。保留时间段起点和最新五个变化帧，过早的中间帧会被舍弃；上一批末帧作为下一批起点。拼图每格 960×572 像素（含时间标签），保持原画面比例。持续阅读提示词只鼓励在有意义的变化或帮助机会出现时交流，不要求每次发消息；它是按差异筛选的定期截图，不是视频流。已有配置里的投递间隔（例如 60 秒）会保留，可在 WebUI 调至 10 秒。可编辑中英日提示词 `desktop_pet_screen_read`。截图最长边缩至 1920 像素，捕获模块只在内存中处理，不另存截图文件；图片会进入主人会话的模型上下文，持续阅读在上下文中仅保留最近两张时间拼图供对照，避免长期堆积。
+每次最多拼接 6 帧，按从左到右、从上到下排列，标注序号及 UTC 捕获时间。保留时间段起点和最新五个变化帧，过早的中间帧会被舍弃；上一批末帧作为下一批起点。拼图每格 960×572 像素（含时间标签），保持原画面比例。持续阅读提示词只鼓励在有意义的变化或帮助机会出现时交流，不要求每次发消息；它是按差异筛选的定期截图，不是视频流。已有配置里的投递间隔（例如 60 秒）会保留，可在 WebUI 调至 10 秒。可编辑中英日提示词 `desktop_pet_screen_read`。截图最长边缩至 1920 像素。Python 本机模式及 Tauri 的 Windows、macOS、纯 X11 截图路径在内存中处理；Linux Wayland 的 GNOME/门户路径可能生成系统临时 PNG，xcap 读取后执行清理。图片会进入主人会话的模型上下文，持续阅读在上下文中仅保留最近两张时间拼图供对照，避免长期堆积。
 
 截图或投递失败会停止持续阅读并显示原因，修复后手动重新开始。关闭读取权限、关闭桌宠或主程序退出会停止；重启后不会自动恢复。隐藏桌宠窗口不停止阅读。已有模型任务不因点击停止而撤回，但不会继续采集和投递新的画面。
 
