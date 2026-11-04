@@ -12,7 +12,7 @@ import sys
 import tomllib
 
 
-from src.common.paths import INSTANCE_DIRECTORY_ENV, PACKAGE_ROOT, PACKAGED_INSTALL, SOURCE_ROOT
+from src.common.paths import INSTANCE_DIRECTORY_ENV, PACKAGED_INSTALL, SOURCE_ROOT
 from src.common.process_lease import ProcessLease
 from src.common.runtime_context import RUNTIME_CONTEXT_ENV
 from src.config.shared_models import SHARED_MODELS_ENV
@@ -20,7 +20,6 @@ from src.config.legacy_upgrade_confirmation import LEGACY_UPGRADE_CONFIRM_ENV
 
 from .config import HostConfig, config_from_bot, load_host_config, save_host_config
 from .registry import BotRecord, Registry
-from .workspace_migration import migrate_workspace_config
 
 
 MOVED_MARKER = "MOVED_TO_WORKSPACE.txt"
@@ -66,6 +65,8 @@ def open_workspace(root: Path) -> Workspace:
 
         for bot in registry.list_bots():
             recover_import(bot, root / "host")
+        from .workspace_migration import migrate_workspace_config
+
         migrate_workspace_config(root, registry.list_bots())
         return Workspace(root=root, registry=registry, config=load_host_config(root))
 

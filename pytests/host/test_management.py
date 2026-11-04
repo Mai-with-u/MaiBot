@@ -172,26 +172,20 @@ def test_updater_restarts_only_after_success_or_safe_rollback(workspace, monkeyp
     from src.host import updater
     monkeypatch.setenv("MAIBOT_INSTANCE_DIR", str(workspace.root))
     monkeypatch.setenv("MAIBOT_PACKAGE_RUNNER", "1")
-    launched = []
     monkeypatch.setattr(updater, 'register_host_instance', lambda _: nullcontext())
     monkeypatch.setattr(updater, 'FileLock', lambda _: nullcontext())
     monkeypatch.setattr(updater, 'ensure_other_instances_stopped', lambda *args: None)
-    monkeypatch.setattr(updater.os, 'execv', lambda *args: launched.append(args))
     monkeypatch.setattr(updater, 'PACKAGED_INSTALL', False)
     result = SimpleNamespace(success=True, rollback_error='', stage='done', rolled_back=False)
     monkeypatch.setattr(self_update, 'apply_pending_update', lambda *args: result)
-    updater.main(workspace.root)
-    assert launched and 'src.host.bootstrap' in launched[0][1]
-    launched.clear()
+    assert updater.main(workspace.root) == 0
     result.success = False
     result.rollback_error = 'rollback failed'
     with pytest.raises(RuntimeError, match='回滚未完成'):
         updater.main(workspace.root)
-    assert not launched
     result.rollback_error = ''
     result.rolled_back = True
-    updater.main(workspace.root)
-    assert launched
+    assert updater.main(workspace.root) == 0
 
 
 @pytest.mark.asyncio

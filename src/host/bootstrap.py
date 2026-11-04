@@ -12,6 +12,7 @@ from src.config.shared_models import CATALOG_FILENAME, SHARED_MODELS_ENV
 from src.config.legacy_upgrade_confirmation import LEGACY_UPGRADE_CONFIRM_ENV, collect_legacy_upgrade_reasons
 
 from .layout import Workspace, open_workspace
+from .launcher import UPDATE_REQUESTED
 
 
 def confirm_upgrades(workspace: Workspace) -> Set[str]:
@@ -51,7 +52,7 @@ def confirm_upgrades(workspace: Workspace) -> Set[str]:
     return confirmed
 
 
-def main(root: Path) -> None:
+def main(root: Path) -> int:
     os.environ[INSTANCE_DIRECTORY_ENV] = str(root.resolve())
     # 仅宿主入口提供此标记，Bot 不得自行升级共享环境。
     os.environ["MAIBOT_PACKAGE_RUNNER"] = "1"
@@ -63,10 +64,14 @@ def main(root: Path) -> None:
 
     with register_host_instance(workspace.root):
         update_requested = asyncio.run(run_host(workspace, upgrade_confirmed=confirmed))
-    if update_requested:
-        # 彻底释放已加载的 WebUI/扩展模块，再执行代码与依赖更新（Windows 也需要）。
-        os.execv(sys.executable, [sys.executable, "-m", "src.host.updater", str(workspace.root)])
+    # 先完整退出并释放模块，再由稳定启动器启动更新阶段；Windows execv 会提前退出父 PID。
+    return UPDATE_REQUESTED if update_requested else 0
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]))
+    try:
+        code = main(Path(sys.argv[1]))
+    except (RuntimeError, ValueError) as exc:
+        print(f"宿主启动失败：{exc}", file=sys.stderr)
+        code = 2
+    raise SystemExit(code)

@@ -13,7 +13,7 @@ from src.common.process_lease import ProcessLease
 from .update_locks import register_host_instance, update_environment
 
 
-def main(root: Path) -> None:
+def main(root: Path) -> int:
     root = root.resolve()
     os.environ[INSTANCE_DIRECTORY_ENV] = str(root)
     os.environ["MAIBOT_PACKAGE_RUNNER"] = "1"
@@ -35,9 +35,9 @@ def main(root: Path) -> None:
             raise RuntimeError(f"更新回滚未完成，未启动 Bot：{result.rollback_error}")
         if not result.success and result.stage in {"merge", "dependencies"} and not result.rolled_back:
             raise RuntimeError(f"更新失败且未确认回滚，未启动 Bot：{result.error}")
-    # 成功或已安全回滚，都用全新的解释器加载代码并恢复登记的期望状态。
-    os.execv(sys.executable, [sys.executable, "-m", "src.host.bootstrap", str(root)])
+    # 成功或已安全回滚才通知启动器恢复宿主，由新解释器加载更新后的代码。
+    return 0
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]))
+    raise SystemExit(main(Path(sys.argv[1])))

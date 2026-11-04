@@ -5,20 +5,27 @@ from typing import Optional, Sequence
 
 import argparse
 import os
+import sys
 
 from src.common.paths import INSTANCE_DIRECTORY_ENV
 from src.common.version import read_project_version
-from src.host.cli import add_host_command, run_host_command
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(prog="maibot", description="MaiBot 工作区运行与管理")
     parser.add_argument("--version", action="version", version=read_project_version())
     commands = parser.add_subparsers(dest="command", required=True)
     for command, description in (("run", "运行宿主及工作区内的全部 Bot"), ("init", "在目录中生成 Bot 配置（保留已有配置）")):
         subparser = commands.add_parser(command, help=description)
         subparser.add_argument("--directory", "-d", type=Path, default=Path.cwd(), help="工作区或 Bot 目录，默认当前目录")
-    add_host_command(commands)
+    # run 的父进程只加载标准库，避免更新期间持有被替换的扩展模块。
+    if argv and argv[0] == "host":
+        from src.host.cli import add_host_command, run_host_command
+
+        add_host_command(commands)
+    else:
+        commands.add_parser("host", help="管理工作区内的 Bot")
     args = parser.parse_args(argv)
     if args.command == "host":
         # 宿主不能改变进程级实例路径，也不能在自身进程内加载单 Bot 的配置模块。
@@ -27,10 +34,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     directory.mkdir(parents=True, exist_ok=True)
     if args.command == "run":
         # 宿主按目录内容决定布局：已有配置原地运行，空目录创建新工作区。
-        from src.host.bootstrap import main as run_host
+        from src.host.launcher import main as run_host
 
         try:
-            run_host(directory)
+            return run_host(directory)
         except (RuntimeError, ValueError) as exc:
             parser.error(str(exc))
         return 0
