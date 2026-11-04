@@ -189,7 +189,7 @@ export function AdapterManagementView({
                         {plugin.load_status === 'success' && plugin.status_badges && (
                           <RuntimeBadges badges={plugin.status_badges} />
                         )}
-                        {update.hasUpdate && !incompatible && (
+                        {!plugin.builtin && update.hasUpdate && !incompatible && (
                           <Badge variant="outline" className="text-xs">
                             可更新
                           </Badge>

@@ -75,6 +75,7 @@ namespaces = true
 "src.computer" = ["guest.ps1"]
 "src.desktop_pet" = ["web/*.html", "web/*.js", "web/*.css", "web/fonts/*", "LICENSE"]
 "src.plugins.built_in.weixin_clawbot_adapter" = ["webui.json", "web/*.html", "icon-mascot.webp", "config.toml.example"]
+"src.plugins.built_in.qq_official_adapter" = ["webui.json", "webui/*.html", "assets/*"]
 "*" = ["_manifest.json", "config_schema.json", "LICENSE", "LICENSE-MAIBOT-GPL.md"]
 
 [dependency-groups]
