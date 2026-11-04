@@ -98,8 +98,8 @@ def _create_fresh(root: Path, registry: Registry) -> None:
 
 
 def copy_builtin_plugin_configs(directory: Path) -> None:
-    """内置插件配置归各 Bot 所有；旧实例写在程序目录里的配置复制一份到 Bot 目录。"""
-    builtin_root = PACKAGE_ROOT / "plugins" / "built_in"
+    """只迁入该旧部署自身的内置插件配置；不能从当前宿主的程序目录复制用户设置。"""
+    builtin_root = directory / "src" / "plugins" / "built_in"
     for source in sorted(builtin_root.glob("*/config.toml")):
         target = directory / "config" / "builtin_plugins" / source.parent.name / "config.toml"
         if not target.exists():

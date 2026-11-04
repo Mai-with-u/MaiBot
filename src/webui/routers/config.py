@@ -1488,6 +1488,13 @@ async def activate_model_config_version(version_id: str, request: ModelConfigVer
     selected_metadata = _model_version_metadata_by_id().get(normalized_version_id, {})
     selected_label = str(selected_metadata.get("label") or normalized_version_id)
 
+    if shared_models_path() is not None:
+        try:
+            document = await asyncio.to_thread(lambda: tomlkit.parse(version_path.read_text(encoding="utf-8")))
+        except (ValueError, OSError) as exc:
+            raise HTTPException(400, f"模型配置副本无效: {exc}") from exc
+        if "models" in document or "api_providers" in document or "services" in document.get("web", {}):
+            raise HTTPException(409, "旧模型配置副本尚未迁移，请重启宿主完成统一迁移后再激活")
     _validate_model_config_file(version_path)
     if request.archive_current:
         archive_label = request.archive_label.strip() or _default_model_config_archive_label()
@@ -1495,15 +1502,7 @@ async def activate_model_config_version(version_id: str, request: ModelConfigVer
 
     temp_path = active_path.with_name(f".{active_path.name}.{normalized_version_id}.tmp")
     try:
-        if shared_models_path() is not None:
-            document = tomlkit.parse(version_path.read_text(encoding="utf-8"))
-            document.pop("models", None)
-            document.pop("api_providers", None)
-            if "web" in document:
-                document["web"].pop("services", None)
-            temp_path.write_text(tomlkit.dumps(document), encoding="utf-8")
-        else:
-            shutil.copy2(version_path, temp_path)
+        shutil.copy2(version_path, temp_path)
         os.replace(temp_path, active_path)
     finally:
         if temp_path.exists():

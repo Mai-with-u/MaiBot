@@ -186,3 +186,27 @@ def test_retention_migration_preserves_old_policy_and_removes_duplicates(tmp_pat
     before = (host / "config.toml").read_bytes()
     migrate_workspace_config(tmp_path, bots)
     assert (host / "config.toml").read_bytes() == before
+
+
+@pytest.mark.parametrize("mode", ["register", "move"])
+def test_adopt_preserves_source_builtin_plugin_settings(tmp_path, monkeypatch, mode):
+    workspace = open_workspace(tmp_path / "workspace")
+    source = tmp_path / "old"
+    write_instance(source)
+    package = tmp_path / "host-package"
+    host_config = package / "plugins/built_in/example/config.toml"
+    host_config.parent.mkdir(parents=True)
+    host_config.write_text("[plugin]\nenabled = true\n", encoding="utf-8")
+    monkeypatch.setattr(layout_module, "PACKAGE_ROOT", package)
+    old_config = source / "src/plugins/built_in/example/config.toml"
+    old_config.parent.mkdir(parents=True)
+    old_bytes = b"[plugin]\nenabled = false\n"
+    old_config.write_bytes(old_bytes)
+    record = adopt(workspace, source, mode)
+    target = record.directory / "config/builtin_plugins/example/config.toml"
+    assert target.read_bytes() == old_bytes
+    # 新配置已被用户修改时，再次调用不能覆盖它，也不能修改共享代码目录。
+    target.write_text("[plugin]\nenabled = true\n", encoding="utf-8")
+    layout_module.copy_builtin_plugin_configs(record.directory)
+    assert target.read_bytes() == host_config.read_bytes()
+    assert (record.directory / "src/plugins/built_in/example/config.toml").read_bytes() == old_bytes

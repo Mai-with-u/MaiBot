@@ -1,5 +1,7 @@
 """发布前统一迁移：旧单实例一次升级，失败不留下部分公共配置。"""
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import json
 import pytest
@@ -81,16 +83,19 @@ def test_1319_migration_is_one_commit_and_one_backup(tmp_path, monkeypatch):
 def test_failure_preserves_all_original_files(tmp_path, monkeypatch, failure):
     bot = old_workspace(tmp_path)
     model = bot.directory / "config/model_config.toml"
+    version = bot.directory / "config/versions/model/old.toml"
+    version.parent.mkdir(parents=True)
+    version.write_bytes(model.read_bytes())
     if failure == "validation":
         model.write_text(model.read_text(encoding="utf-8").replace('api_provider = "provider"', 'api_provider = "missing"'), encoding="utf-8")
-    originals = {path: path.read_bytes() for path in [model, bot.directory / "config/bot_config.toml", tmp_path / "host/config.toml"]}
+    originals = {path: path.read_bytes() for path in [model, version, bot.directory / "config/bot_config.toml", tmp_path / "host/config.toml"]}
     if failure == "write":
         real_write = config_transaction.write_private
         failed = False
 
         def write(path, content):
             nonlocal failed
-            if path == model and not failed:
+            if path == version and not failed:
                 failed = True
                 raise OSError("simulated disk failure")
             return real_write(path, content)
@@ -128,3 +133,51 @@ def test_new_instances_write_final_config_without_migration(tmp_path):
         assert "webui" not in config
         assert "models" not in model and "api_providers" not in model
         assert "services" not in model.get("web", {})
+
+
+@pytest.mark.asyncio
+async def test_old_model_versions_keep_their_own_provider_after_migration_and_activation(tmp_path, monkeypatch):
+    from src.config.shared_models import read_effective_config
+    from src.webui.routers import config as routes
+
+    bot_a = old_workspace(tmp_path)
+    config_b = tmp_path / "bot-b/config"
+    config_b.mkdir(parents=True)
+    (config_b / "bot_config.toml").write_bytes((bot_a.directory / "config/bot_config.toml").read_bytes())
+    original = (bot_a.directory / "config/model_config.toml").read_text(encoding="utf-8")
+    (config_b / "model_config.toml").write_text(original.replace('"secret"', '"b-current"'), encoding="utf-8")
+    bot_b = Registry(tmp_path).add_bot("B", config_b.parent, owned=False, initialization="initialized")
+    versions = config_b / "versions/model"
+    versions.mkdir(parents=True)
+    for name, key in (("same", "b-current"), ("historical", "b-historical")):
+        (versions / f"{name}.toml").write_text(original.replace('"secret"', f'"{key}"'), encoding="utf-8")
+    monkeypatch.setenv("MAIBOT_SHARED_MODEL_CATALOG", str(tmp_path / "host/model_catalog.toml"))
+    monkeypatch.setattr(routes, "CONFIG_DIR", config_b)
+    before = (config_b / "model_config.toml").read_bytes()
+    with pytest.raises(routes.HTTPException) as rejected:
+        await routes.activate_model_config_version("historical", routes.ModelConfigVersionSwitchRequest())
+    assert rejected.value.status_code == 409
+    assert (config_b / "model_config.toml").read_bytes() == before
+    assert (versions / "historical.toml").exists()
+    migrate_workspace_config(tmp_path, [bot_a, bot_b])
+
+    def provider_key(path):
+        data = read_effective_config(path)
+        model_name = data["model_task_config"]["planner"]["model_list"][0]
+        model = next(entry for entry in data["models"] if entry["name"] == model_name)
+        return next(entry["api_key"] for entry in data["api_providers"] if entry["name"] == model["api_provider"])
+
+    assert provider_key(config_b / "model_config.toml") == "b-current"
+    assert provider_key(versions / "same.toml") == "b-current"
+    assert provider_key(versions / "historical.toml") == "b-historical"
+    assert provider_key(bot_a.directory / "config/model_config.toml") == "secret"
+    snapshot = {path: path.read_bytes() for path in [tmp_path / "host/model_catalog.toml", *versions.glob("*.toml")]}
+    migrate_workspace_config(tmp_path, [bot_a, bot_b])
+    assert all(path.read_bytes() == content for path, content in snapshot.items())
+    monkeypatch.setattr(routes, "CONFIG_DIR", config_b)
+    monkeypatch.setattr(routes, "config_manager", SimpleNamespace(
+        model_config_path=config_b / "model_config.toml", reload_config=AsyncMock(return_value=True)))
+    response = await routes.activate_model_config_version("historical", routes.ModelConfigVersionSwitchRequest(archive_current=False))
+    assert response.success
+    assert provider_key(config_b / "model_config.toml") == "b-historical"
+    assert provider_key(bot_a.directory / "config/model_config.toml") == "secret"

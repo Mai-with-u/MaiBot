@@ -28,6 +28,7 @@ def migrate_workspace_config(root: Path, bots: List[BotRecord]) -> None:
         for bot in bots:
             if bot.initialization == "initialized":
                 paths.extend(bot.directory / "config" / name for name in ("bot_config.toml", "model_config.toml"))
+                paths.extend(sorted((bot.directory / "config" / "versions" / "model").glob("*.toml")))
         for path in paths:
             if path.exists():
                 originals[path] = path.read_bytes().decode("utf-8")
