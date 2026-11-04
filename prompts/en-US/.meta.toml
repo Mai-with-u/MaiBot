@@ -38,6 +38,16 @@ display_name = "Reply attachments"
 advanced = true
 description = "Explains that the system sends reply images, mentions and emojis, preventing attachment information from being repeated in the reply text."
 
+[replyer_super_creative]
+display_name = "Super creative mode: Japanese output"
+advanced = true
+description = "Adds the Japanese output requirement for super creative mode."
+
+[replyer_translate]
+display_name = "Super creative mode: Chinese translation"
+advanced = true
+description = "Translates the Replyer's Japanese reply into Chinese, preserving meaning, tone, and output format."
+
 [retro_replyer]
 display_name = "Retro reply"
 advanced = true

@@ -38,6 +38,16 @@ display_name = "回复附件提示"
 advanced = true
 description = "说明回复附带的图片、@ 和表情包由系统发送，避免正文重复输出附件信息。"
 
+[replyer_super_creative]
+display_name = "超级创意模式：日语输出"
+advanced = true
+description = "超级创意模式下追加的日语输出要求。"
+
+[replyer_translate]
+display_name = "超级创意模式：中文翻译"
+advanced = true
+description = "将 Replyer 的日语正文翻译为中文，保持原意、语气和输出格式。"
+
 [retro_replyer]
 display_name = "复古回复"
 advanced = true
