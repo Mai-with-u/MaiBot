@@ -882,20 +882,6 @@ class ChatConfig(ConfigBase):
     )
     """使用单次构建的prompt，激发模型回复表现的创造力，减少AI刻板句式。关闭可能提高缓存率。"""
 
-    super_creative_mode: bool = Field(
-        default=False,
-        json_schema_extra={
-            "x-chat-settings": {"scope": "common", "row": 20},
-            "label": {
-                "zh_CN": "超级创意模式",
-                "en_US": "Super creative mode",
-                "ja_JP": "スーパークリエイティブモード",
-            },
-            "x-widget": "switch",
-        },
-    )
-    """实验性功能：Replyer 统一使用日语 Prompt 生成日语回复，再由同一实际 Replyer 模型翻译为中文输出。优先于回复缓存模式，每次回复增加一次模型请求，会增加耗时和费用。"""
-
     enable_reply_at: bool = Field(
         default=True,
         json_schema_extra={
@@ -1096,6 +1082,28 @@ class ExperimentalConfig(ConfigBase):
     __ui_label__ = "实验性功能"
     __ui_advanced__ = True
     __ui_order__ = 140
+
+    super_creative_mode: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "超级创意模式",
+                "en_US": "Super creative mode",
+                "ja_JP": "スーパークリエイティブモード",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """实验性功能：Replyer 使用所选语言 Prompt 生成回复，再由同一实际 Replyer 模型翻译为中文。优先于回复缓存模式，翻译会增加耗时和费用。"""
+
+    super_creative_language: Literal["ja-JP", "ru-RU", "fr-FR"] = Field(
+        default="ja-JP",
+        json_schema_extra={
+            "label": {"zh_CN": "超级创意生成语言"},
+            "x-option-labels": {"ja-JP": "日语", "ru-RU": "俄语", "fr-FR": "法语"},
+        },
+    )
+    """超级创意模式使用的 Prompt 和生成语言，中文材料原样保留。"""
 
     passive_replyer: bool = Field(
         default=False,

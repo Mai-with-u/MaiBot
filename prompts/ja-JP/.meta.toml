@@ -38,16 +38,6 @@ display_name = "返信の添付案内"
 advanced = true
 description = "返信に添付する画像、メンション、絵文字はシステムが送信することを示し、本文での添付情報の重複を防ぎます。"
 
-[replyer_super_creative]
-display_name = "スーパークリエイティブモード：日本語出力"
-advanced = true
-description = "スーパークリエイティブモードで日本語の出力指示を追加します。"
-
-[replyer_translate]
-display_name = "スーパークリエイティブモード：中国語訳"
-advanced = true
-description = "Replyer の日本語返信を、意味・口調・出力形式を保ちながら中国語に翻訳します。"
-
 [retro_replyer]
 display_name = "レトロ返信"
 advanced = true

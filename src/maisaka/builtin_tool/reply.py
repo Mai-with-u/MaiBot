@@ -476,7 +476,7 @@ async def _execute_reply(
 
     invocation_arguments = deepcopy(arguments)
     planner_snapshot = None
-    if config_module.global_config.experimental.reply_cache and not config_module.global_config.chat.super_creative_mode:
+    if config_module.global_config.experimental.reply_cache and not config_module.global_config.experimental.super_creative_mode:
         # Focus 使用共享 Planner 快照，普通聊天使用所属会话的快照。
         planner_service = (
             tool_ctx.runtime._focus_group._service if tool_ctx.runtime._focus_group is not None

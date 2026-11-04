@@ -8,15 +8,16 @@ import asyncio
 import pytest
 
 from src.chat.replyer import maisaka_generator_base
+from src.chat.replyer.creative_language import load_reply_prompt
 from src.chat.replyer.document_generator import DocumentReplyGenerator
 from src.chat.replyer.maisaka_generator_base import BaseMaisakaReplyGenerator, MaisakaReplyContext
 from src.common.data_models.llm_service_data_models import LLMResponseResult
 from src.common.i18n import get_locale, use_locale
-from src.common.prompt_i18n import load_prompt
+from src.common.prompt_i18n import PROMPTS_ROOT, clear_prompt_cache, extract_prompt_placeholders, load_prompt
 from src.config.config import global_config
 from src.config.model_configs import ModelInfo
 from src.desktop_pet.service import desktop_pet_service
-from src.llm_models.payload_content.context_item import SystemMessageItem, get_item_text
+from src.llm_models.payload_content.context_item import SystemMessageItem, UserMessageItem, get_item_text
 from src.llm_models.payload_content.tool_option import ToolCall
 from src.plugin_runtime.host.hook_dispatcher import HookDispatchResult
 
@@ -29,7 +30,8 @@ def _response(text: str, **kwargs: Any) -> LLMResponseResult:
 
 @pytest.fixture
 def replyer(monkeypatch):
-    monkeypatch.setattr(global_config.chat, "super_creative_mode", True)
+    monkeypatch.setattr(global_config.experimental, "super_creative_mode", True)
+    monkeypatch.setattr(global_config.experimental, "super_creative_language", "ja-JP")
     monkeypatch.setattr(global_config.chat, "creative_mode", True)
     monkeypatch.setattr(global_config.debug, "gemini_reply_compatibility", False)
     monkeypatch.setattr(global_config.personality, "multiple_probability", 0)
@@ -43,9 +45,11 @@ def replyer(monkeypatch):
         model_type="llm", name="actual-replyer", model_identifier="provider-model", api_provider="test-provider",
     )
 
+    state.model_info = model_info
+
     async def generate_response_with_context(context_factory, options):
         client = SimpleNamespace(api_provider=SimpleNamespace(client_type="openai"))
-        items = await context_factory(client, model_info)
+        items = await context_factory(client, state.model_info)
         calls.append({"items": items, "options": options})
         response = responses.pop(0)
         if isinstance(response, Exception):
@@ -89,12 +93,14 @@ async def test_enabled_translates_with_actual_replyer_and_hooks_receive_chinese(
     assert language_instruction in get_item_text(system)
     assert replyer.calls[0]["options"].model_name is None
     assert replyer.calls[1]["options"].model_name == "actual-replyer"
-    assert get_item_text(replyer.calls[1]["items"][-1]) == "月が笑っています。"
-    assert "日语回复翻译成中文" in get_item_text(replyer.calls[1]["items"][0])
+    assert get_item_text(replyer.calls[1]["items"][-1]).endswith("待翻译内容：月が笑っています。")
+    assert len(replyer.calls[1]["items"]) == 1
+    assert isinstance(replyer.calls[1]["items"][0], UserMessageItem)
+    assert "请将以下内容翻译成中文" in get_item_text(replyer.calls[1]["items"][0])
     assert replyer.after_responses == ["月亮正在微笑。"]
     assert result.completion.response_text == "月亮正在微笑。"
     assert result.text_fragments == ["月亮正在微笑。"]
-    assert "日语回复翻译成中文" in result.completion.request_prompt
+    assert "请将以下内容翻译成中文" in result.completion.request_prompt
     assert "月が笑っています。" in result.completion.request_prompt
     assert result.metrics.extra["replyer_translation_count"] == 1
     assert result.metrics.extra["replyer_attempt_count"] == 2
@@ -108,13 +114,15 @@ async def test_gemini_analysis_is_removed_before_translation(replyer, monkeypatc
     success, result = await replyer.generator.generate_reply_with_context(chat_history=[])
 
     assert success and result.text_fragments == ["月亮正在微笑。"]
-    assert get_item_text(replyer.calls[1]["items"][-1]) == "月が笑っています。"
+    assert get_item_text(replyer.calls[1]["items"][-1]).endswith("待翻译内容：月が笑っています。")
+    assert len(replyer.calls[1]["items"]) == 1
+    assert isinstance(replyer.calls[1]["items"][0], UserMessageItem)
     assert "不应翻译" not in result.completion.request_prompt
 
 
 @pytest.mark.asyncio
 async def test_disabled_keeps_single_request_and_current_locale(replyer, monkeypatch) -> None:
-    monkeypatch.setattr(global_config.chat, "super_creative_mode", False)
+    monkeypatch.setattr(global_config.experimental, "super_creative_mode", False)
     replyer.responses[:] = [_response("直接回复")]
     with use_locale("en-US"):
         original_items = replyer.generator._build_request_messages(
@@ -179,7 +187,7 @@ async def test_super_creative_does_not_use_planner_snapshot(replyer) -> None:
     assert len(replyer.calls) == 2
 
 
-@pytest.mark.parametrize("profile", ["standard", "retro", "mai_replier", "document"])
+@pytest.mark.parametrize("profile", ["standard", "retro", "document"])
 def test_each_prompt_profile_loads_japanese_templates(replyer, monkeypatch, profile: str) -> None:
     personality = "喜欢观察月亮的中文人设"
     monkeypatch.setattr(global_config.personality, "personality", personality)
@@ -229,3 +237,71 @@ async def test_parallel_prompt_builders_keep_separate_locales(replyer, monkeypat
     assert "今回の返信は日本語で" in get_item_text(japanese[0])
     assert "中文参考" in get_item_text(japanese[-1])
     assert "今回の返信は日本語で" not in get_item_text(normal[0])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language,word", [("ru-RU", "по-русски"), ("fr-FR", "en français")])
+async def test_language_uses_same_replyer_for_translation(replyer, monkeypatch, language, word):
+    monkeypatch.setattr(global_config.experimental, "super_creative_language", language)
+    success, result = await replyer.generator.generate_reply_with_context(chat_history=[])
+    assert success and result.text_fragments == ["月亮正在微笑。"]
+    assert len(replyer.calls) == 2
+    assert word in get_item_text(replyer.calls[0]["items"][0])
+    assert "如果已经是中文，不用翻译。" in get_item_text(replyer.calls[1]["items"][0])
+    assert replyer.calls[1]["options"].model_name == "actual-replyer"
+    assert result.metrics.extra["replyer_attempt_count"] == 2
+    assert result.metrics.extra["replyer_aggregate_total_tokens"] == 30
+
+
+@pytest.mark.parametrize("locale", ["ru-RU", "fr-FR"])
+def test_translated_templates_keep_chinese_structure(locale, tmp_path):
+    names = ("retro_replyer", "retro_replyer_light", "retro_private_replyer", "retro_private_replyer_self",
+             "maisaka_replyer", "maisaka_replyer_document", "reply_attachments")
+    with use_locale(locale):
+        for name in names:
+            original = (PROMPTS_ROOT / "zh-CN" / f"{name}.prompt").read_text(encoding="utf-8")
+            translated = load_reply_prompt(load_prompt, name)
+            assert extract_prompt_placeholders(original) == extract_prompt_placeholders(translated)
+            assert len(original.splitlines()) == len(translated.splitlines())
+            assert translated != original
+        # 与模板固定句相同的用户材料也必须原样保留，不能在填充后整体替换。
+        material = "请注意把握聊天内容。"
+        rendered = load_reply_prompt(load_prompt, "reply_attachments", attachments=material)
+        assert rendered.startswith(material + "\n")
+        custom_path = tmp_path / "zh-CN" / "reply_attachments.prompt"
+        custom_path.parent.mkdir()
+        original = (PROMPTS_ROOT / "zh-CN" / "reply_attachments.prompt").read_text(encoding="utf-8")
+        custom_path.write_text("自定义首行\n" + original, encoding="utf-8")
+        custom = load_reply_prompt(
+            load_prompt, "reply_attachments", custom_prompts_root=tmp_path, attachments=material,
+        )
+        assert custom == "自定义首行\n" + rendered
+        outdated_template = "旧自定义模板 {removed_name}"
+        custom_path.write_text(outdated_template, encoding="utf-8")
+        clear_prompt_cache()
+        fallback = load_reply_prompt(
+            load_prompt, "reply_attachments", custom_prompts_root=tmp_path, attachments=material,
+        )
+        assert fallback == rendered
+        assert custom_path.read_text(encoding="utf-8") == outdated_template
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("creative", [False, True])
+@pytest.mark.parametrize("super_creative", [False, True])
+async def test_mai_replier_ignores_both_creative_modes(replyer, monkeypatch, creative, super_creative):
+    monkeypatch.setattr(global_config.chat, "creative_mode", creative)
+    monkeypatch.setattr(global_config.experimental, "super_creative_mode", super_creative)
+    replyer.state.model_info = ModelInfo(
+        model_type="llm", name="mai-replier", model_identifier="mai_replier", api_provider="test-provider",
+    )
+    replyer.responses[:] = [_response("直接输出中文")]
+    with use_locale("zh-CN"):
+        success, result = await replyer.generator.generate_reply_with_context(chat_history=[])
+    assert success and result.text_fragments == ["直接输出中文"]
+    assert len(replyer.calls) == 1
+    assert "今回の返信" not in get_item_text(replyer.calls[0]["items"][0])
+    assert "你正在qq群里聊天" in get_item_text(replyer.calls[0]["items"][1])
+    assert result.selected_expression_ids == []
+    assert result.metrics.extra["replyer_translation_count"] == 0
+    assert result.metrics.extra["replyer_super_creative_mode"] is False

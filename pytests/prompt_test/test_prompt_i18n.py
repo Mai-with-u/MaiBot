@@ -134,8 +134,9 @@ def test_load_prompt_strict_mode_raises_on_missing_placeholder(tmp_path: Path, m
 
 
 @pytest.mark.parametrize("outdated_template", ["Old {removed_name}", "Old {user_name", "Old {}"])
+@pytest.mark.parametrize("transform", [False, True])
 def test_outdated_custom_prompt_uses_builtin_template(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture, outdated_template: str
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, outdated_template: str, transform: bool
 ) -> None:
     prompts_root = tmp_path / "prompts"
     custom_root = tmp_path / "custom"
@@ -147,7 +148,8 @@ def test_outdated_custom_prompt_uses_builtin_template(
     assert load_prompt(
         "replyer", locale="en-US", prompts_root=prompts_root,
         custom_prompts_root=custom_root, user_name="Mai",
-    ) == "Default Mai"
+        transform_template=(lambda template: template.replace("Default", "Translated")) if transform else None,
+    ) == ("Translated Mai" if transform else "Default Mai")
     assert "已过期，使用默认模板" in caplog.text
     assert all(record.exc_info is None and record.levelname == "WARNING" for record in caplog.records)
     assert (custom_root / "en-US" / "replyer.prompt").read_text(encoding="utf-8") == outdated_template
