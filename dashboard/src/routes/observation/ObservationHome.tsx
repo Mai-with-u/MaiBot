@@ -1,5 +1,16 @@
 import { Link, useNavigate } from '@tanstack/react-router'
-import { ArrowRight, ArrowUpDown, ExternalLink, Send, Sparkles } from 'lucide-react'
+import {
+  ArrowRight,
+  ArrowUpDown,
+  ExternalLink,
+  GripVertical,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Send,
+  Sparkles,
+  X,
+} from 'lucide-react'
 import {
   lazy,
   Suspense,
@@ -7,7 +18,9 @@ import {
   useEffect,
   useMemo,
   useState,
+  type CSSProperties,
   type FormEvent,
+  type KeyboardEvent,
   type ReactNode,
 } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -15,11 +28,10 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 
 import { useAskMai } from '@/components/observation-layout/ask-context'
 import { RestartOverlay } from '@/components/restart-overlay'
-import { Board, BoardModule, BoardScreen } from '@/components/ui/board'
+import { Board, BoardGrid, BoardModule, BoardRule, BoardScreen } from '@/components/ui/board'
 import { Button } from '@/components/ui/button'
 import { CHART_INITIAL_DIMENSION } from '@/components/ui/chart'
 import { ConversationAvatar } from '@/components/ui/conversation'
-import { SegmentedControl } from '@/components/ui/management'
 import { SegmentedMeter } from '@/components/ui/segmented-meter'
 import { StatusLight } from '@/components/ui/status-light'
 import { Tooltip as UiTooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -47,7 +59,20 @@ import {
   selectChartTimeSeries,
 } from '@/routes/home/statistics-chart-utils'
 import type { TimeSeriesData } from '@/routes/home/types'
-import { ObservationQuote } from './ObservationQuote'
+import {
+  HOME_CARD_SPANS,
+  HOME_CARD_ZONE,
+  homeGridRows,
+  loadHomeLayout,
+  missingHomeCards,
+  resetHomeLayout,
+  saveHomeLayout,
+  type HomeCardId,
+  type HomeCardSlot,
+  type HomeCardSpan,
+  type HomeLayout,
+  type HomeZone,
+} from './home-layout'
 
 const ExpressionReviewer = lazy(() =>
   import('@/components/expression-reviewer').then((module) => ({
@@ -56,6 +81,17 @@ const ExpressionReviewer = lazy(() =>
 )
 
 const TIME_RANGES = [24, 168, 720] as const
+const PERIOD_LABELS = ['24H', '7D', '30D'] as const
+const SPAN_LABELS: Record<HomeCardSpan, string> = { 3: 'S', 6: 'M', 12: 'L' }
+
+/** 一张卡片的外观与内容；排在哪、占几列由首页排法决定 */
+interface HomeCardDef {
+  code: string
+  title: string
+  tone: number
+  actions?: ReactNode
+  body: ReactNode
+}
 const COMPOSER_MODE_STORAGE_KEY = 'maibot-observation-composer-mode'
 const COMPOSER_MODES = ['chat', 'ask'] as const
 type ComposerMode = (typeof COMPOSER_MODES)[number]
@@ -104,6 +140,10 @@ function ObservationHomeContent() {
   const [draft, setDraft] = useState('')
   const [composerMode, setComposerMode] = useState<ComposerMode>(loadComposerMode)
   const askMai = useAskMai()
+  const [layout, setLayout] = useState<HomeLayout>(loadHomeLayout)
+  const [editing, setEditing] = useState(false)
+  const [libraryOpen, setLibraryOpen] = useState(true)
+  const [dragId, setDragId] = useState<HomeCardId | null>(null)
 
   const handleRestart = useCallback(async () => {
     await triggerRestart()
@@ -186,6 +226,44 @@ function ObservationHomeContent() {
     `home.timeRange.${timeRange === 24 ? '24h' : timeRange === 168 ? '7d' : '30d'}`
   )
 
+  const updateLayout = (next: HomeLayout) => {
+    setLayout(next)
+    saveHomeLayout(next)
+  }
+  const updateZone = (zone: HomeZone, slots: HomeCardSlot[]) =>
+    updateLayout({ ...layout, [zone]: slots })
+  const resizeCard = (zone: HomeZone, id: HomeCardId, span: HomeCardSpan) =>
+    updateZone(
+      zone,
+      layout[zone].map((slot) => (slot.id === id ? { ...slot, span } : slot))
+    )
+  const removeCard = (zone: HomeZone, id: HomeCardId) =>
+    updateZone(
+      zone,
+      layout[zone].filter((slot) => slot.id !== id)
+    )
+  const addCard = (id: HomeCardId) => {
+    const zone = HOME_CARD_ZONE[id]
+    updateZone(zone, [...layout[zone], { id, span: zone === 'stats' ? 6 : 3 }])
+  }
+  // 把 id 挪到 index 位置；位置没变就不写存储，拖动经过同一张卡时不会反复重排
+  const moveCard = (zone: HomeZone, id: HomeCardId, index: number) => {
+    const list = [...layout[zone]]
+    const from = list.findIndex((slot) => slot.id === id)
+    if (from < 0) return
+    const [item] = list.splice(from, 1)
+    const to = Math.max(0, Math.min(index, list.length))
+    if (to === from) return
+    list.splice(to, 0, item)
+    updateZone(zone, list)
+  }
+  const dragOverCard = (zone: HomeZone, targetId: HomeCardId, after: boolean) => {
+    if (!dragId || dragId === targetId || HOME_CARD_ZONE[dragId] !== zone) return
+    const others = layout[zone].filter((slot) => slot.id !== dragId)
+    const target = others.findIndex((slot) => slot.id === targetId)
+    moveCard(zone, dragId, target + (after ? 1 : 0))
+  }
+
   const changeComposerMode = (next: string) => {
     const mode: ComposerMode = next === 'ask' ? 'ask' : 'chat'
     setComposerMode(mode)
@@ -208,21 +286,433 @@ function ObservationHomeContent() {
     void navigate({ to: '/chat', search: {} })
   }
 
-  return (
-    <div data-observation-home="true">
-      <header data-observation-home-head="true">
-        <div data-observation-home-heading="true">
-          <h1>{t('sidebar.menu.maisakaMonitor')}</h1>
-          <ObservationQuote
-            text={
-              hitokoto
-                ? `“${hitokoto.hitokoto}”${hitokoto.from ? ` —— ${hitokoto.from}` : ''}`
-                : ''
+  const cards: Record<HomeCardId, HomeCardDef> = {
+    status: {
+      code: 'STATUS',
+      title: t('home.botStatus.title'),
+      tone: 0,
+      body: (
+        <BoardScreen className="flex flex-col justify-between gap-3">
+          <div className="flex items-end justify-between gap-3">
+            <strong data-observation-hero={runtimeState}>
+              {t(`home.botStatus.${runtimeState}`)}
+            </strong>
+            {botStatus && (
+              <span className="flex flex-col items-end gap-0.5">
+                <span data-board-label="true">{t('observation.uptime')}</span>
+                <span data-board-number="true" className="text-lg">
+                  {t('home.time.hoursMinutes', {
+                    hours: Math.floor(botStatus.uptime / 3600),
+                    minutes: Math.floor((botStatus.uptime % 3600) / 60),
+                  })}
+                </span>
+              </span>
+            )}
+          </div>
+          <div data-board-divider="true" className="flex gap-6 pt-3 text-sm">
+            <span className="inline-flex items-center gap-2">
+              <StatusLight status={featureStatus.visualEnabled ? 'on' : 'off'} decorative />
+              {t('home.botStatus.visualEnabled')}
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <StatusLight status={featureStatus.memoryEnabled ? 'on' : 'off'} decorative />
+              {t('home.botStatus.memoryEnabled')}
+            </span>
+          </div>
+        </BoardScreen>
+      ),
+    },
+    quote: {
+      code: 'QUOTE',
+      title: t('home.hitokoto.title'),
+      tone: 1,
+      actions: (
+        <>
+          <button
+            type="button"
+            data-observation-card-action="true"
+            aria-label={t('observation.refreshQuote')}
+            title={t('observation.refreshQuote')}
+            onClick={() => void fetchHitokoto()}
+          >
+            <RefreshCw aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            data-observation-card-action="true"
+            aria-label={t('home.hitokoto.edit')}
+            title={t('home.hitokoto.edit')}
+            onClick={() => setHitokotoEditorOpen(true)}
+          >
+            <Pencil aria-hidden="true" />
+          </button>
+        </>
+      ),
+      body: (
+        <BoardScreen className="flex flex-col justify-between gap-2">
+          <p data-observation-quote-text="true">{hitokoto?.hitokoto ?? t('observation.loading')}</p>
+          {hitokoto?.from && <span data-observation-quote-from="true">—— {hitokoto.from}</span>}
+        </BoardScreen>
+      ),
+    },
+    keys: {
+      code: 'KEYS',
+      title: t('home.quickActions.title'),
+      tone: 2,
+      body: (
+        <BoardScreen flush className="grid grid-cols-2 grid-rows-3 gap-2">
+          {selectedQuickShortcuts.slice(0, 6).map((shortcut) => {
+            const Icon = shortcut.icon
+            const content = (
+              <>
+                <Icon
+                  className={
+                    shortcut.id === 'action:restart' && isRestarting ? 'animate-spin' : undefined
+                  }
+                />
+                <span className="min-w-0 flex-1 truncate text-left">{shortcut.label}</span>
+                {shortcut.badge && <span data-observation-key-badge="true">{shortcut.badge}</span>}
+                {shortcut.external && <ExternalLink className="h-3.5 w-3.5 shrink-0" />}
+              </>
+            )
+            if (shortcut.href && !shortcut.external) {
+              const url = new URL(shortcut.href, window.location.origin)
+              return (
+                <Button
+                  key={shortcut.id}
+                  variant="outline"
+                  asChild
+                  data-observation-shortcut="true"
+                >
+                  <Link
+                    to={url.pathname}
+                    search={Object.fromEntries(url.searchParams)}
+                    hash={url.hash.slice(1)}
+                    title={shortcut.label}
+                  >
+                    {content}
+                  </Link>
+                </Button>
+              )
             }
-            editLabel={t('home.hitokoto.edit')}
-            onEdit={() => setHitokotoEditorOpen(true)}
+            if (shortcut.href) {
+              return (
+                <Button
+                  key={shortcut.id}
+                  variant="outline"
+                  asChild
+                  data-observation-shortcut="true"
+                >
+                  <a
+                    href={shortcut.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={shortcut.label}
+                  >
+                    {content}
+                  </a>
+                </Button>
+              )
+            }
+            return (
+              <Button
+                key={shortcut.id}
+                variant="outline"
+                data-observation-shortcut="true"
+                onClick={shortcut.action}
+                disabled={shortcut.disabled}
+                title={shortcut.label}
+              >
+                {content}
+              </Button>
+            )
+          })}
+        </BoardScreen>
+      ),
+    },
+    disk: {
+      code: 'DISK',
+      title: t('home.storage.title'),
+      tone: 0,
+      actions: (
+        <Link to="/data-transfer" hash="local-cache" data-board-link="true">
+          {t('home.storage.manage')} <ArrowRight aria-hidden="true" />
+        </Link>
+      ),
+      body: (
+        <BoardScreen className="flex flex-col justify-between gap-2">
+          <div className="flex items-baseline justify-between">
+            <strong
+              data-board-number="true"
+              data-observation-disk-total="true"
+              className="text-2xl"
+            >
+              {localCacheStats
+                ? formatBytes(diskTotal)
+                : isLocalCacheStatsLoading
+                  ? t('home.storage.reading')
+                  : pending}
+            </strong>
+          </div>
+          {diskRows.map((row) => (
+            <div
+              key={row.key}
+              data-observation-disk-row="true"
+              className="grid grid-cols-[3.5rem_minmax(0,1fr)_4.5rem] items-center gap-3 text-xs"
+            >
+              <span className="truncate">{row.label}</span>
+              <SegmentedMeter
+                label={row.label}
+                total={diskTotal}
+                segments={[{ label: row.label, value: row.size, className: 'bg-primary' }]}
+                className="h-2"
+              />
+              <span data-board-number="true" className="text-right">
+                {formatBytes(row.size)}
+              </span>
+            </div>
+          ))}
+        </BoardScreen>
+      ),
+    },
+    news: {
+      code: 'NEWS',
+      title: t('home.news.title'),
+      tone: 1,
+      actions:
+        unreadCount > 0 ? (
+          <span data-board-badge="true">{t('observation.unread', { count: unreadCount })}</span>
+        ) : undefined,
+      body: (
+        <BoardScreen className="flex flex-col">
+          {news.length === 0 ? (
+            <p data-board-label="true" className="m-auto">
+              {newsState.isNewsLoading ? t('observation.loading') : t('observation.noNews')}
+            </p>
+          ) : (
+            news.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                data-observation-news-row="true"
+                onClick={() => openNews(item)}
+              >
+                <span
+                  data-unread={newsReadState.isUnread(item) ? 'true' : 'false'}
+                  aria-hidden="true"
+                />
+                <span className="min-w-0 flex-1 truncate text-left">{item.title}</span>
+                <span data-board-label="true">
+                  {new Date(item.published_at).toLocaleDateString(locale, {
+                    month: '2-digit',
+                    day: '2-digit',
+                  })}
+                </span>
+              </button>
+            ))
+          )}
+        </BoardScreen>
+      ),
+    },
+    usage: {
+      code: 'USAGE',
+      title: t('home.stats.overviewTitle'),
+      tone: 2,
+      actions: (
+        <Link to="/statistics" data-board-link="true">
+          {t('observation.detailedStats')} <ArrowRight aria-hidden="true" />
+        </Link>
+      ),
+      body: (
+        <BoardScreen
+          className="grid grid-cols-[repeat(2,minmax(0,1.2fr))_repeat(2,minmax(0,1fr))] grid-rows-2"
+          flush={false}
+        >
+          <div data-observation-usage-big="true">
+            <span data-board-label="true">{t('home.stats.totalRequests')}</span>
+            <strong data-board-number="true">
+              {summary ? formatNumber(summary.total_requests, locale) : pending}
+            </strong>
+            <span data-board-label="true">{rangeLabel}</span>
+          </div>
+          <div data-observation-usage-big="true">
+            <span data-board-label="true">{t('home.stats.totalCost')}</span>
+            <strong data-board-number="true">
+              {summary ? `¥${summary.total_cost.toFixed(2)}` : pending}
+            </strong>
+            <span data-board-label="true">{rangeLabel}</span>
+          </div>
+          {[
+            {
+              label: t('home.stats.tokenUsage'),
+              value: summary ? formatNumber(summary.total_tokens, locale) : pending,
+            },
+            {
+              label: t('home.stats.avgResponse'),
+              value: summary ? `${summary.avg_response_time.toFixed(2)}s` : pending,
+            },
+            {
+              label: t('home.stats.onlineTime'),
+              value: summary ? `${(summary.online_time / 3600).toFixed(1)}h` : pending,
+            },
+            {
+              label: t('home.stats.messageProcessing'),
+              value: summary ? formatNumber(summary.total_messages, locale) : pending,
+            },
+          ].map((metric) => (
+            <div key={metric.label} data-observation-usage-small="true">
+              <span data-board-label="true">{metric.label}</span>
+              <strong data-board-number="true">{metric.value}</strong>
+            </div>
+          ))}
+        </BoardScreen>
+      ),
+    },
+    cache: {
+      code: 'CACHE',
+      title: t('home.cache.title'),
+      tone: 0,
+      body: (
+        <BoardScreen className="flex flex-col">
+          {[
+            { label: t('home.cache.all'), rate: summary?.cache_hit_rate ?? null },
+            { label: t('home.cache.chat'), rate: summary?.chat_cache_hit_rate ?? null },
+          ].map((item) => (
+            <div key={item.label} data-observation-cache-row="true">
+              <div className="flex items-baseline justify-between gap-2">
+                <span data-board-label="true">{item.label}</span>
+                <strong data-board-number="true" className="text-2xl">
+                  {summary ? formatCacheRate(item.rate) : pending}
+                </strong>
+              </div>
+              <SegmentedMeter
+                label={item.label}
+                total={100}
+                segments={[
+                  {
+                    label: item.label,
+                    value: item.rate === null ? 0 : item.rate * 100,
+                    className: 'bg-primary',
+                  },
+                ]}
+                className="h-2"
+              />
+            </div>
+          ))}
+        </BoardScreen>
+      ),
+    },
+    models: {
+      code: 'MODELS',
+      title: t('home.charts.modelDistribution'),
+      tone: 1,
+      body: (
+        <BoardScreen className="flex flex-col justify-between gap-2">
+          {models.rows.length === 0 ? (
+            <p data-board-label="true" className="m-auto">
+              {t('observation.noData')}
+            </p>
+          ) : (
+            <>
+              <div data-observation-model-bar="true" aria-hidden="true">
+                {models.rows.map((row, index) => (
+                  <span key={row.name} data-model-index={index} style={{ flexGrow: row.value }} />
+                ))}
+              </div>
+              {models.rows.map((row, index) => (
+                <div
+                  key={row.name}
+                  data-observation-model-row={index}
+                  className="flex items-center gap-2 text-xs"
+                >
+                  <span data-observation-model-dot={index} aria-hidden="true" />
+                  <span className="min-w-0 flex-1 truncate">{row.name}</span>
+                  <span data-board-number="true">
+                    {models.total > 0
+                      ? `${((row.value / models.total) * 100).toFixed(1)}%`
+                      : pending}
+                  </span>
+                </div>
+              ))}
+            </>
+          )}
+        </BoardScreen>
+      ),
+    },
+    requests: {
+      code: 'REQUESTS',
+      title: t('home.charts.requestTrend'),
+      tone: 2,
+      body: (
+        <BoardScreen flush className="min-h-0">
+          <ObservationBarChart
+            data={series}
+            keys={[
+              {
+                key: 'requests',
+                label: t('home.stats.totalRequests'),
+                color: 'var(--board-chart-1)',
+              },
+            ]}
+            timeRange={timeRange}
+            locale={locale}
           />
+        </BoardScreen>
+      ),
+    },
+    tokens: {
+      code: 'TOKENS',
+      title: t('home.charts.tokenUsage'),
+      tone: 0,
+      body: (
+        <BoardScreen flush className="min-h-0">
+          <ObservationBarChart
+            data={series}
+            keys={[
+              {
+                key: 'input_tokens',
+                label: t('home.stats.inputTokens'),
+                color: 'var(--board-chart-1)',
+              },
+              {
+                key: 'output_tokens',
+                label: t('home.stats.outputTokens'),
+                color: 'var(--board-chart-2)',
+              },
+            ]}
+            timeRange={timeRange}
+            locale={locale}
+            tokenAxis
+          />
+        </BoardScreen>
+      ),
+    },
+  }
+
+  const renderZone = (zone: HomeZone) =>
+    layout[zone].map((slot, index) => (
+      <HomeCard
+        key={slot.id}
+        def={cards[slot.id]}
+        slot={slot}
+        editing={editing}
+        dragging={dragId === slot.id}
+        onResize={(span) => resizeCard(zone, slot.id, span)}
+        onRemove={() => removeCard(zone, slot.id)}
+        onMove={(offset) => moveCard(zone, slot.id, index + offset)}
+        onDragStart={() => setDragId(slot.id)}
+        onDragOver={(after) => dragOverCard(zone, slot.id, after)}
+        onDragEnd={() => setDragId(null)}
+      />
+    ))
+
+  return (
+    <div data-observation-home="true" data-editing={editing ? 'true' : 'false'}>
+      <header data-observation-home-head="true">
+        <div data-observation-news-strip="true">
+          <NewsStrip news={newsState.news} readState={newsReadState} onOpen={openNews} />
         </div>
+        <span data-observation-head-spacer="true" />
         <div data-observation-versions="true">
           <button type="button" onClick={() => openUpdateNotice('maibot')}>
             <span>MaiBot</span>
@@ -235,370 +725,91 @@ function ObservationHomeContent() {
             <span data-observation-version-value="true">V{APP_VERSION}</span>
           </button>
         </div>
-        <div data-observation-news-strip="true">
-          <NewsStrip news={newsState.news} readState={newsReadState} onOpen={openNews} />
-        </div>
-        <SegmentedControl
-          aria-label={t('home.stats.timeRange')}
-          value={String(timeRange)}
-          onValueChange={(next) => setTimeRange(Number(next))}
-          options={TIME_RANGES.map((hours) => ({
-            value: String(hours),
-            label: t(`home.timeRange.${hours === 24 ? '24h' : hours === 168 ? '7d' : '30d'}`),
-          }))}
-        />
+        {editing ? (
+          <div data-observation-edit-tools="true">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-pressed={libraryOpen}
+              onClick={() => setLibraryOpen((open) => !open)}
+            >
+              <Plus aria-hidden="true" />
+              {t('observation.cardLibrary')}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setLayout(resetHomeLayout())}
+            >
+              {t('observation.resetLayout')}
+            </Button>
+            <Button type="button" size="sm" onClick={() => setEditing(false)}>
+              {t('observation.doneEditing')}
+            </Button>
+          </div>
+        ) : (
+          <UiTooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                data-observation-edit-button="true"
+                aria-label={t('observation.editCards')}
+                onClick={() => {
+                  setLibraryOpen(true)
+                  setEditing(true)
+                }}
+              >
+                <Pencil aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{t('observation.editCards')}</TooltipContent>
+          </UiTooltip>
+        )}
       </header>
 
-      <Board rows="minmax(11.5rem, auto) minmax(12.5rem, auto) minmax(10rem, 1fr)">
-        <BoardModule code="STATUS" title={t('home.botStatus.title')} span={3} tone={0}>
-          <BoardScreen className="flex flex-col justify-between gap-3">
-            <div className="flex items-end justify-between gap-3">
-              <strong data-observation-hero={runtimeState}>
-                {t(`home.botStatus.${runtimeState}`)}
-              </strong>
-              {botStatus && (
-                <span className="flex flex-col items-end gap-0.5">
-                  <span data-board-label="true">{t('observation.uptime')}</span>
-                  <span data-board-number="true" className="text-lg">
-                    {t('home.time.hoursMinutes', {
-                      hours: Math.floor(botStatus.uptime / 3600),
-                      minutes: Math.floor((botStatus.uptime % 3600) / 60),
-                    })}
-                  </span>
-                </span>
-              )}
-            </div>
-            <div data-board-divider="true" className="flex gap-6 pt-3 text-sm">
-              <span className="inline-flex items-center gap-2">
-                <StatusLight status={featureStatus.visualEnabled ? 'on' : 'off'} decorative />
-                {t('home.botStatus.visualEnabled')}
-              </span>
-              <span className="inline-flex items-center gap-2">
-                <StatusLight status={featureStatus.memoryEnabled ? 'on' : 'off'} decorative />
-                {t('home.botStatus.memoryEnabled')}
-              </span>
-            </div>
-          </BoardScreen>
-        </BoardModule>
-
-        <BoardModule code="KEYS" title={t('home.quickActions.title')} span={3} tone={1}>
-          <BoardScreen flush className="grid grid-cols-2 grid-rows-3 gap-2">
-            {selectedQuickShortcuts.slice(0, 6).map((shortcut) => {
-              const Icon = shortcut.icon
-              const content = (
-                <>
-                  <Icon
-                    className={
-                      shortcut.id === 'action:restart' && isRestarting ? 'animate-spin' : undefined
-                    }
-                  />
-                  <span className="min-w-0 flex-1 truncate text-left">{shortcut.label}</span>
-                  {shortcut.badge && (
-                    <span data-observation-key-badge="true">{shortcut.badge}</span>
-                  )}
-                  {shortcut.external && <ExternalLink className="h-3.5 w-3.5 shrink-0" />}
-                </>
-              )
-              if (shortcut.href && !shortcut.external) {
-                const url = new URL(shortcut.href, window.location.origin)
-                return (
-                  <Button
-                    key={shortcut.id}
-                    variant="outline"
-                    asChild
-                    data-observation-shortcut="true"
-                  >
-                    <Link
-                      to={url.pathname}
-                      search={Object.fromEntries(url.searchParams)}
-                      hash={url.hash.slice(1)}
-                      title={shortcut.label}
-                    >
-                      {content}
-                    </Link>
-                  </Button>
-                )
-              }
-              if (shortcut.href) {
-                return (
-                  <Button
-                    key={shortcut.id}
-                    variant="outline"
-                    asChild
-                    data-observation-shortcut="true"
-                  >
-                    <a
-                      href={shortcut.href}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title={shortcut.label}
-                    >
-                      {content}
-                    </a>
-                  </Button>
-                )
-              }
-              return (
-                <Button
-                  key={shortcut.id}
-                  variant="outline"
-                  data-observation-shortcut="true"
-                  onClick={shortcut.action}
-                  disabled={shortcut.disabled}
-                  title={shortcut.label}
-                >
-                  {content}
-                </Button>
-              )
-            })}
-          </BoardScreen>
-        </BoardModule>
-
-        <BoardModule
-          code="DISK"
-          title={t('home.storage.title')}
-          span={3}
-          tone={2}
-          actions={
-            <Link to="/data-transfer" hash="local-cache" data-board-link="true">
-              {t('home.storage.manage')} <ArrowRight aria-hidden="true" />
-            </Link>
-          }
-        >
-          <BoardScreen className="flex flex-col justify-between gap-2">
-            <div className="flex items-baseline justify-between">
-              <strong
-                data-board-number="true"
-                data-observation-disk-total="true"
-                className="text-2xl"
-              >
-                {localCacheStats
-                  ? formatBytes(diskTotal)
-                  : isLocalCacheStatsLoading
-                    ? t('home.storage.reading')
-                    : pending}
-              </strong>
-            </div>
-            {diskRows.map((row) => (
-              <div
-                key={row.key}
-                data-observation-disk-row="true"
-                className="grid grid-cols-[3.5rem_minmax(0,1fr)_4.5rem] items-center gap-3 text-xs"
-              >
-                <span className="truncate">{row.label}</span>
-                <SegmentedMeter
-                  label={row.label}
-                  total={diskTotal}
-                  segments={[{ label: row.label, value: row.size, className: 'bg-primary' }]}
-                  className="h-2"
+      <div data-observation-board-row="true">
+        <Board sections>
+          {layout.top.length > 0 && (
+            <BoardGrid
+              rows={homeGridRows(layout.top, 'var(--obs-top-row)', 'var(--obs-chart-row)')}
+            >
+              {renderZone('top')}
+            </BoardGrid>
+          )}
+          {layout.stats.length > 0 && (
+            <>
+              <BoardRule code="STATS">
+                <PeriodSwitch
+                  value={timeRange}
+                  label={t('home.stats.timeRange')}
+                  onChange={setTimeRange}
                 />
-                <span data-board-number="true" className="text-right">
-                  {formatBytes(row.size)}
-                </span>
-              </div>
-            ))}
-          </BoardScreen>
-        </BoardModule>
-
-        <BoardModule
-          code="NEWS"
-          title={t('home.news.title')}
-          span={3}
-          tone={0}
-          actions={
-            unreadCount > 0 ? (
-              <span data-board-badge="true">{t('observation.unread', { count: unreadCount })}</span>
-            ) : undefined
-          }
-        >
-          <BoardScreen className="flex flex-col">
-            {news.length === 0 ? (
-              <p data-board-label="true" className="m-auto">
-                {newsState.isNewsLoading ? t('observation.loading') : t('observation.noNews')}
-              </p>
-            ) : (
-              news.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  data-observation-news-row="true"
-                  onClick={() => openNews(item)}
-                >
-                  <span
-                    data-unread={newsReadState.isUnread(item) ? 'true' : 'false'}
-                    aria-hidden="true"
-                  />
-                  <span className="min-w-0 flex-1 truncate text-left">{item.title}</span>
-                  <span data-board-label="true">
-                    {new Date(item.published_at).toLocaleDateString(locale, {
-                      month: '2-digit',
-                      day: '2-digit',
-                    })}
-                  </span>
-                </button>
-              ))
-            )}
-          </BoardScreen>
-        </BoardModule>
-
-        <BoardModule
-          code="USAGE"
-          title={t('home.stats.overviewTitle')}
-          span={6}
-          tone={1}
-          actions={
-            <Link to="/statistics" data-board-link="true">
-              {t('observation.detailedStats')} <ArrowRight aria-hidden="true" />
-            </Link>
-          }
-        >
-          <BoardScreen
-            className="grid grid-cols-[repeat(2,minmax(0,1.2fr))_repeat(2,minmax(0,1fr))] grid-rows-2"
-            flush={false}
-          >
-            <div data-observation-usage-big="true">
-              <span data-board-label="true">{t('home.stats.totalRequests')}</span>
-              <strong data-board-number="true">
-                {summary ? formatNumber(summary.total_requests, locale) : pending}
-              </strong>
-              <span data-board-label="true">{rangeLabel}</span>
-            </div>
-            <div data-observation-usage-big="true">
-              <span data-board-label="true">{t('home.stats.totalCost')}</span>
-              <strong data-board-number="true">
-                {summary ? `¥${summary.total_cost.toFixed(2)}` : pending}
-              </strong>
-              <span data-board-label="true">{rangeLabel}</span>
-            </div>
-            {[
-              {
-                label: t('home.stats.tokenUsage'),
-                value: summary ? formatNumber(summary.total_tokens, locale) : pending,
-              },
-              {
-                label: t('home.stats.avgResponse'),
-                value: summary ? `${summary.avg_response_time.toFixed(2)}s` : pending,
-              },
-              {
-                label: t('home.stats.onlineTime'),
-                value: summary ? `${(summary.online_time / 3600).toFixed(1)}h` : pending,
-              },
-              {
-                label: t('home.stats.messageProcessing'),
-                value: summary ? formatNumber(summary.total_messages, locale) : pending,
-              },
-            ].map((metric) => (
-              <div key={metric.label} data-observation-usage-small="true">
-                <span data-board-label="true">{metric.label}</span>
-                <strong data-board-number="true">{metric.value}</strong>
-              </div>
-            ))}
-          </BoardScreen>
-        </BoardModule>
-
-        <BoardModule code="CACHE" title={t('home.cache.title')} span={3} tone={2}>
-          <BoardScreen className="flex flex-col">
-            {[
-              { label: t('home.cache.all'), rate: summary?.cache_hit_rate ?? null },
-              { label: t('home.cache.chat'), rate: summary?.chat_cache_hit_rate ?? null },
-            ].map((item) => (
-              <div key={item.label} data-observation-cache-row="true">
-                <div className="flex items-baseline justify-between gap-2">
-                  <span data-board-label="true">{item.label}</span>
-                  <strong data-board-number="true" className="text-2xl">
-                    {summary ? formatCacheRate(item.rate) : pending}
-                  </strong>
-                </div>
-                <SegmentedMeter
-                  label={item.label}
-                  total={100}
-                  segments={[
-                    {
-                      label: item.label,
-                      value: item.rate === null ? 0 : item.rate * 100,
-                      className: 'bg-primary',
-                    },
-                  ]}
-                  className="h-2"
-                />
-              </div>
-            ))}
-          </BoardScreen>
-        </BoardModule>
-
-        <BoardModule code="MODELS" title={t('home.charts.modelDistribution')} span={3} tone={0}>
-          <BoardScreen className="flex flex-col justify-between gap-2">
-            {models.rows.length === 0 ? (
-              <p data-board-label="true" className="m-auto">
-                {t('observation.noData')}
-              </p>
-            ) : (
-              <>
-                <div data-observation-model-bar="true" aria-hidden="true">
-                  {models.rows.map((row, index) => (
-                    <span key={row.name} data-model-index={index} style={{ flexGrow: row.value }} />
-                  ))}
-                </div>
-                {models.rows.map((row, index) => (
-                  <div
-                    key={row.name}
-                    data-observation-model-row={index}
-                    className="flex items-center gap-2 text-xs"
-                  >
-                    <span data-observation-model-dot={index} aria-hidden="true" />
-                    <span className="min-w-0 flex-1 truncate">{row.name}</span>
-                    <span data-board-number="true">
-                      {models.total > 0
-                        ? `${((row.value / models.total) * 100).toFixed(1)}%`
-                        : pending}
-                    </span>
-                  </div>
-                ))}
-              </>
-            )}
-          </BoardScreen>
-        </BoardModule>
-
-        <BoardModule code="REQUESTS" title={t('home.charts.requestTrend')} span={6} tone={1}>
-          <BoardScreen flush className="min-h-0">
-            <ObservationBarChart
-              data={series}
-              keys={[
-                {
-                  key: 'requests',
-                  label: t('home.stats.totalRequests'),
-                  color: 'var(--board-chart-1)',
-                },
-              ]}
-              timeRange={timeRange}
-              locale={locale}
-            />
-          </BoardScreen>
-        </BoardModule>
-
-        <BoardModule code="TOKENS" title={t('home.charts.tokenUsage')} span={6} tone={2}>
-          <BoardScreen flush className="min-h-0">
-            <ObservationBarChart
-              data={series}
-              keys={[
-                {
-                  key: 'input_tokens',
-                  label: t('home.stats.inputTokens'),
-                  color: 'var(--board-chart-1)',
-                },
-                {
-                  key: 'output_tokens',
-                  label: t('home.stats.outputTokens'),
-                  color: 'var(--board-chart-2)',
-                },
-              ]}
-              timeRange={timeRange}
-              locale={locale}
-              tokenAxis
-            />
-          </BoardScreen>
-        </BoardModule>
-      </Board>
+              </BoardRule>
+              <BoardGrid
+                grow
+                rows={homeGridRows(layout.stats, 'var(--obs-stat-row)', 'var(--obs-chart-row)')}
+              >
+                {renderZone('stats')}
+              </BoardGrid>
+            </>
+          )}
+          {layout.top.length === 0 && layout.stats.length === 0 && (
+            <p data-observation-board-empty="true">{t('observation.emptyBoard')}</p>
+          )}
+        </Board>
+        {editing && libraryOpen && (
+          <HomeCardLibrary
+            missing={missingHomeCards(layout)}
+            cards={cards}
+            onAdd={addCard}
+            onClose={() => setLibraryOpen(false)}
+          />
+        )}
+      </div>
 
       <form
         data-observation-composer="true"
@@ -708,6 +919,214 @@ function ObservationHomeContent() {
         </Suspense>
       )}
     </div>
+  )
+}
+
+/** 统计刻线右端的三档拨杆：一颗键帽停在当前档，档位名刻在槽里 */
+function PeriodSwitch({
+  value,
+  label,
+  onChange,
+}: {
+  value: number
+  label: string
+  onChange: (hours: number) => void
+}) {
+  const index = Math.max(0, TIME_RANGES.indexOf(value as (typeof TIME_RANGES)[number]))
+  // 方向键在三档之间循环，焦点跟着选中的那一档走
+  const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    const offset =
+      event.key === 'ArrowRight' || event.key === 'ArrowDown'
+        ? 1
+        : event.key === 'ArrowLeft' || event.key === 'ArrowUp'
+          ? -1
+          : 0
+    if (!offset) return
+    event.preventDefault()
+    const next = (index + offset + TIME_RANGES.length) % TIME_RANGES.length
+    onChange(TIME_RANGES[next])
+    event.currentTarget.parentElement?.querySelectorAll('button')[next]?.focus()
+  }
+  return (
+    <div
+      role="radiogroup"
+      aria-label={label}
+      data-observation-period="true"
+      style={{ '--period-index': index } as CSSProperties}
+    >
+      <span data-observation-period-thumb="true" aria-hidden="true" />
+      {TIME_RANGES.map((hours, i) => (
+        <button
+          key={hours}
+          type="button"
+          role="radio"
+          aria-checked={hours === value}
+          tabIndex={hours === value ? 0 : -1}
+          onClick={() => onChange(hours)}
+          onKeyDown={handleKeyDown}
+        >
+          {PERIOD_LABELS[i]}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/** 首页的一张卡片；编辑态下标题条换成拖动柄、宽度档和移除键，内容变淡且不可点 */
+function HomeCard({
+  def,
+  slot,
+  editing,
+  dragging,
+  onResize,
+  onRemove,
+  onMove,
+  onDragStart,
+  onDragOver,
+  onDragEnd,
+}: {
+  def: HomeCardDef
+  slot: HomeCardSlot
+  editing: boolean
+  dragging: boolean
+  onResize: (span: HomeCardSpan) => void
+  onRemove: () => void
+  onMove: (offset: number) => void
+  onDragStart: () => void
+  onDragOver: (after: boolean) => void
+  onDragEnd: () => void
+}) {
+  const { t } = useTranslation()
+  const editActions = (
+    <>
+      <span role="group" aria-label={t('observation.cardWidth')} data-observation-card-sizes="true">
+        {HOME_CARD_SPANS.map((span) => (
+          <button
+            key={span}
+            type="button"
+            aria-pressed={slot.span === span}
+            onClick={() => onResize(span)}
+          >
+            {SPAN_LABELS[span]}
+          </button>
+        ))}
+      </span>
+      <button
+        type="button"
+        data-observation-card-remove="true"
+        aria-label={t('observation.removeCard', { name: def.title })}
+        title={t('observation.removeCard', { name: def.title })}
+        onClick={onRemove}
+      >
+        <X aria-hidden="true" />
+      </button>
+    </>
+  )
+  return (
+    <BoardModule
+      code={def.code}
+      title={def.title}
+      span={slot.span}
+      tone={def.tone}
+      actions={editing ? editActions : def.actions}
+      leading={
+        editing ? (
+          <button
+            type="button"
+            data-observation-card-grip="true"
+            aria-label={t('observation.moveCard', { name: def.title })}
+            title={t('observation.moveCard', { name: def.title })}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') onMove(-1)
+              else if (event.key === 'ArrowRight' || event.key === 'ArrowDown') onMove(1)
+              else return
+              event.preventDefault()
+            }}
+          >
+            <GripVertical aria-hidden="true" />
+          </button>
+        ) : undefined
+      }
+      data-span={slot.span}
+      data-editing={editing ? 'true' : 'false'}
+      data-dragging={dragging ? 'true' : 'false'}
+      draggable={editing}
+      onDragStart={(event) => {
+        event.dataTransfer.effectAllowed = 'move'
+        event.dataTransfer.setData('text/plain', slot.id)
+        onDragStart()
+      }}
+      onDragOver={(event) => {
+        if (!editing) return
+        event.preventDefault()
+        const rect = event.currentTarget.getBoundingClientRect()
+        onDragOver(event.clientX > rect.left + rect.width / 2)
+      }}
+      onDrop={(event) => event.preventDefault()}
+      onDragEnd={onDragEnd}
+    >
+      {def.body}
+    </BoardModule>
+  )
+}
+
+/** 编辑态右侧的卡片库：列出不在面板上的卡片，点 + 加回它所属的那一段 */
+function HomeCardLibrary({
+  missing,
+  cards,
+  onAdd,
+  onClose,
+}: {
+  missing: HomeCardId[]
+  cards: Record<HomeCardId, HomeCardDef>
+  onAdd: (id: HomeCardId) => void
+  onClose: () => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <aside data-observation-library="true" aria-label={t('observation.cardLibrary')}>
+      <header data-observation-library-head="true">
+        <span data-board-rule-code="true">LIBRARY</span>
+        <span>{t('observation.cardLibrary')}</span>
+        <button
+          type="button"
+          data-observation-card-action="true"
+          aria-label={t('observation.closeLibrary')}
+          onClick={onClose}
+        >
+          <X aria-hidden="true" />
+        </button>
+      </header>
+      <p data-observation-library-hint="true">{t('observation.libraryHint')}</p>
+      {missing.length === 0 ? (
+        <p data-observation-library-empty="true">{t('observation.libraryEmpty')}</p>
+      ) : (
+        <ul data-observation-library-list="true">
+          {missing.map((id) => (
+            <li key={id}>
+              <span data-observation-library-name="true">
+                <b>{cards[id].title}</b>
+                <span>
+                  {cards[id].code} ·{' '}
+                  {HOME_CARD_ZONE[id] === 'stats'
+                    ? t('observation.zoneStats')
+                    : t('observation.zoneTop')}
+                </span>
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label={t('observation.addCard', { name: cards[id].title })}
+                onClick={() => onAdd(id)}
+              >
+                <Plus aria-hidden="true" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </aside>
   )
 }
 

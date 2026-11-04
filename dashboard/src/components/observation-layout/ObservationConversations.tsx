@@ -1,6 +1,5 @@
 import { useNavigate, useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Eye } from 'lucide-react'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -17,6 +16,7 @@ import { StageStatusLabel } from '@/routes/monitor/StageStatusLabel'
 import { getStageStatusLight } from '@/routes/monitor/stage-status-light'
 import { useMaisakaMonitorOverview } from '@/routes/monitor/use-maisaka-monitor'
 import type { SessionInfo, StageStatusInfo } from '@/routes/monitor/use-maisaka-monitor'
+import { P2FishIcon } from './P2FishIcon'
 
 type Selection = { kind: 'overview' } | { kind: 'chat' } | { kind: 'agent' } | { kind: 'observed'; id: string } | { kind: 'none' }
 
@@ -151,32 +151,32 @@ export function ObservationConversations({ collapsed }: { collapsed: boolean }) 
         >
           {!normalizedQuery && (
             <>
-              <div title={collapsed ? t('sidebar.menu.maisakaMonitor') : undefined}>
+              <div title={collapsed ? t('sidebar.menu.home') : undefined}>
                 <ConversationListItem
-                  title={t('sidebar.menu.maisakaMonitor')}
-                  preview={t('observation.overviewPreview')}
+                  title={t('sidebar.menu.home')}
+                  preview=""
                   selected={selection.kind === 'overview'}
                   onSelect={() => void navigate({ to: '/' })}
-                  avatar={<span data-observation-overview-avatar="true"><Eye aria-hidden="true" /></span>}
+                  avatar={<span data-observation-overview-avatar="true"><P2FishIcon /></span>}
                 />
               </div>
               <div title={collapsed ? t('chat.botNameFallback') : undefined}>
                 <ConversationListItem
                   title={t('chat.botNameFallback')}
-                  preview={t('observation.localChatPreview')}
+                  preview=""
                   selected={selection.kind === 'chat'}
                   onSelect={() => void navigate({ to: '/chat', search: {} })}
                   avatar={<ConversationAvatar src={localBotAvatarUrl} name={t('chat.botNameFallback')} bot />}
                 />
               </div>
               {flags?.agent === true && (
-                <div title={collapsed ? t('sidebar.menu.agent') : undefined}>
+                <div title={collapsed ? t('observation.agentHelper') : undefined}>
                   <ConversationListItem
-                    title={t('sidebar.menu.agent')}
+                    title={t('observation.agentHelper')}
                     preview=""
                     selected={selection.kind === 'agent'}
                     onSelect={() => void navigate({ to: '/chat', search: { agent: true } })}
-                    avatar={<ConversationAvatar name={t('sidebar.menu.agent')} bot />}
+                    avatar={<ConversationAvatar name={t('observation.agentHelper')} bot />}
                   />
                 </div>
               )}

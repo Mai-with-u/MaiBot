@@ -21,7 +21,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { toggleThemeWithTransition, useTheme } from '@/components/use-theme'
 import { promptCatalogQueryOptions } from '@/lib/prompt-query'
 import { queryClient } from '@/lib/query'
-import { APP_VERSION } from '@/lib/version'
 import { useBotAvailable } from '@/host/state'
 import { BotSwitcher } from '@/host/BotSwitcher'
 
@@ -160,17 +159,6 @@ export function ObservationSidebar({
           </button>
         </BotSwitcher>
         {!collapsed && <span data-observation-brand-vent="true" aria-hidden="true" />}
-        <KeyTooltip label={`${t('common.search')} · Ctrl K`} side={collapsed ? 'right' : 'bottom'}>
-          <button
-            type="button"
-            data-observation-icon-key="true"
-            aria-label={t('common.search')}
-            aria-keyshortcuts="Control+K Meta+K"
-            onClick={onOpenSearch}
-          >
-            <Search aria-hidden="true" />
-          </button>
-        </KeyTooltip>
         <button
           type="button"
           data-observation-icon-key="true"
@@ -272,7 +260,18 @@ export function ObservationSidebar({
           {actualTheme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
         </button>
 
-        {!collapsed && <span data-observation-version="true">V{APP_VERSION}</span>}
+        <KeyTooltip label={`${t('common.search')} · Ctrl K`} side={collapsed ? 'right' : 'bottom'}>
+          <button
+            type="button"
+            data-observation-icon-key="true"
+            className={collapsed ? undefined : 'ml-auto'}
+            aria-label={t('common.search')}
+            aria-keyshortcuts="Control+K Meta+K"
+            onClick={onOpenSearch}
+          >
+            <Search aria-hidden="true" />
+          </button>
+        </KeyTooltip>
       </footer>
     </aside>
   )
