@@ -36,6 +36,10 @@
     text-shadow: 1px 1px var(--ink), -1px -1px var(--ink), 1px -1px var(--ink), -1px 1px var(--ink);
   }
   #thinking-caption span { display: inline-block; animation: caption-hop var(--wave) ease-in-out infinite; animation-delay: calc(var(--i) * 85ms); }
+  #remote-indicator { position: absolute; right: 2px; bottom: 5px; width: 10px; height: 10px; border: 2px solid var(--ink); border-radius: 50%; background: #c75c47; z-index: 4; }
+  #remote-indicator[data-connected="true"] { background: var(--leaf); }
+  #remote-controls { width: 100%; max-height: 72px; overflow-y: auto; padding: 5px 8px; background: var(--paper); border: 2px solid var(--ink); border-radius: 10px; font-size: 11px; overflow-wrap: anywhere; }
+  #remote-controls button { float: right; font-size: 11px; margin-left: 5px; }
   @keyframes caption-hop { 0%, 25%, 100% { transform: translateY(0); } 12% { transform: translateY(-3px); } }
   @media (prefers-reduced-motion: reduce) { #thinking-caption span { animation: none; } }
 
@@ -496,6 +500,7 @@
   </div>
 
   <div id="pet-menu" class="pet-menu">
+  <div id="remote-controls" data-hit="10" hidden><button id="remote-exit" class="pet-button" type="button">退出</button><span id="remote-status" role="status"></span></div>
   <button id="orb-plugins" class="orb" data-hit="23" data-empty="true" aria-label="插件扩展" title="插件扩展">
     <svg viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round"><path d="M4 4h6v3a2 2 0 1 0 4 0V4h6v6h-3a2 2 0 1 0 0 4h3v6h-6v-3a2 2 0 1 0-4 0v3H4v-6h3a2 2 0 1 0 0-4H4Z"/></svg>
   </button>
@@ -1556,6 +1561,10 @@
 
   let todoRefresh = 0;
   window.pet = {
+    todoError(text) {
+      todoError.textContent = text;
+      updateRegion();
+    },
     async refreshTodos() {
       const revision = ++todoRefresh;
       const items = await api.todos(todoShowingCompleted);
@@ -1568,6 +1577,45 @@
       updateRegion();
     },
     receive(message) {
+      if (message.type === "connection") {
+        document.getElementById("remote-controls").hidden = false;
+        document.getElementById("remote-status").textContent = message.text;
+        let indicator = document.getElementById("remote-indicator");
+        if (!indicator) {
+          indicator = document.createElement("span");
+          indicator.id = "remote-indicator";
+          indicator.dataset.hit = "5";
+          indicator.setAttribute("role", "status");
+          document.getElementById("pet").append(indicator);
+        }
+        const wasConnected = indicator.dataset.connected === "true";
+        indicator.dataset.connected = String(message.connected);
+        indicator.title = message.text;
+        indicator.setAttribute("aria-label", message.text);
+        if (message.connected) {
+          window.pet.refreshTodos().then(() => { todoError.textContent = ""; }).catch(error => window.pet.todoError(String(error)));
+        } else {
+          stopWaiting();
+          const caption = document.getElementById("thinking-caption");
+          caption.replaceChildren();
+          caption.dataset.revision = "-1";
+          caption.dataset.text = "";
+          caption.hidden = true;
+          screenState({enabled: false, reading: false, busy: false, error: "远端未连接"});
+          if (pendingSend) finishSend({type: "failed", request_id: pendingSend.id, error: "连接已中断，发送结果尚未确认，请先查看聊天记录。"});
+          pendingButtons.clear();
+          extensionButtons = [];
+          activePluginPanel = null;
+          requestedPluginPanel = null;
+          renderExtensionButtons();
+          clearTimeout(explorationTimer);
+          exploreStart.disabled = false;
+          explorationPendingAt = 0;
+          if (wasConnected) showSay([{kind: "text", text: "远端连接已中断，正在重连。"}]);
+        }
+        updateRegion();
+        return;
+      }
       if (message.type === "thinking_caption") {
         const caption = document.getElementById("thinking-caption");
         if (message.revision < Number(caption.dataset.revision || 0)) return;
@@ -1671,7 +1719,7 @@
     api = window.pywebview.api;
     await api.fit(devicePixelRatio, petViewportHeight);
     watchScale();
-    await window.pet.refreshTodos();
+    await window.pet.refreshTodos().catch(error => window.pet.todoError(String(error)));
     const observer = new ResizeObserver(() => {
       if (menu.offsetHeight) stage.style.setProperty("--menu-height", `${menu.offsetHeight}px`);
       updateRegion();
@@ -1681,6 +1729,8 @@
     updateRegion();
     api.ready();
   });
+
+  document.getElementById("remote-exit").addEventListener("click", () => api.exit_client());
 
   blinkLoop();
   setTimeout(lookLoop, 2000);

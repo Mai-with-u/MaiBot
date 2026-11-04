@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "maibot-desktop-pet-client"
+version = "1.0.0"
+description = "MaiBot 远端桌宠 Windows 客户端"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = [
+    "aiohttp>=3.14.3",
+    "pillow>=12.3.0",
+    "pywebview>=6.2,<7; sys_platform == 'win32'",
+]
+
+[project.scripts]
+maibot-desktop-pet = "maibot_desktop_pet.remote_client:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["maibot_desktop_pet*"]
+
+[tool.setuptools.package-data]
+maibot_desktop_pet = ["web/*.html", "web/*.js", "web/*.css", "web/fonts/*", "LICENSE"]

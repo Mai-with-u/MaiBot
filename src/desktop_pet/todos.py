@@ -155,12 +155,12 @@ class TodoStore:
             mime = Image.MIME[image.format]
         return f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")
 
-    def claim_due(self) -> List[Dict[str, Any]]:
+    def claim_due(self, kind: Optional[str] = None) -> List[Dict[str, Any]]:
         """持锁领取到期事项；重启时重新投递未获得回执的事项。"""
         with self._lock:
             due = [dict(item, status="dispatching") for item in self._items
                    if item["status"] == "pending" and not item["condition"] and item["due_at"] is not None
-                   and item["due_at"] <= time.time()]
+                   and item["due_at"] <= time.time() and (kind is None or item["kind"] == kind)]
             claimed = {item["id"]: item for item in due}
             if due:
                 self._save([claimed.get(item["id"], item) for item in self._items])

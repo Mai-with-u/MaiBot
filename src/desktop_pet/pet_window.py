@@ -508,84 +508,87 @@ class ExplorationRecordsApi:
         window.native.Invoke(Action(begin))
 
 
+def execute_command(api: PetApi, window: "webview.Window", command: Dict[str, Any]) -> Dict[str, Any]:
+    """本机和远端共用的窗口指令处理器；完成操作后返回回执。"""
+    ack = {"type": "ack", "id": command["id"]}
+    try:
+        if command["type"] == "show":
+            window.show()
+            window.evaluate_js("window.petSkin.visibility(true)")
+        elif command["type"] == "hide":
+            api.drag_end()
+            window.hide()
+            window.evaluate_js("window.petSkin.visibility(false)")
+        elif command["type"] == "skin":
+            completed = threading.Event()
+            results = []
+            def loaded(result, results=results, completed=completed):
+                results.append(result)
+                completed.set()
+            window.evaluate_js(
+                f"window.petSkin.install({json.dumps(command['skin'])}).catch(e => ({{error: String(e.message || e)}}))",
+                callback=loaded,
+            )
+            if not completed.wait(10):
+                window.evaluate_js("window.petSkin.cancelInstall()")
+                raise TimeoutError("皮肤资源解码超时")
+            if results[0].get("error"):
+                raise ValueError(results[0]["error"])
+            ack["result"] = results[0]
+        elif command["type"] == "animation":
+            ack["result"] = window.evaluate_js(
+                f"window.petSkin.command({json.dumps(command['action'])}, {json.dumps(command['args'])}, {json.dumps(command['owner'])})"
+            )
+        elif command["type"] == "todo":
+            action = command["action"]
+            if action == "list":
+                result = {"items": api._todos.list(include_completed=command.get("include_completed", False))}
+            elif action == "add":
+                result = {"item": api._todos.add(command["text"], **command.get("options", {}))}
+            elif action == "update":
+                result = {"item": api._todos.update(command["todo_id"], command.get("text"), **command.get("options", {}))}
+            elif action == "claim_due":
+                result = {"items": api._todos.claim_due()}
+            elif action == "claim_condition":
+                result = {"item": api._todos.claim_condition(command["todo_id"], command["revision"], command["evidence"])}
+            elif action == "finish":
+                api._todos.finish(command["todo_id"], command["revision"], command.get("error", ""))
+                result = {}
+            elif action == "complete":
+                api._todos.done(command["todo_id"])
+                result = {"completed": command["todo_id"]}
+            elif action == "delete":
+                api._todos.delete(command["todo_id"])
+                result = {"deleted": command["todo_id"]}
+            else:
+                raise ValueError("未知待办操作")
+            ack["result"] = result
+            if action not in {"list", "claim_due"}:
+                try:
+                    window.evaluate_js("window.pet.refreshTodos()")
+                except Exception as exc:
+                    # 数据已保存；界面刷新失败不能误报为写入失败并诱发重复新增。
+                    result["display_error"] = str(exc)
+        elif command["type"] == "exploration_tasks" and command["request_id"].startswith("records:"):
+            # 窗口关闭后的迟到回执直接丢弃，不影响桌宠面板自己的查询。
+            records_window = api._exploration_window
+            if records_window is not None:
+                records_window.evaluate_js(f"window.records.receive({json.dumps(command)})")
+        elif command["type"] in {"reply", "notice", "thinking_caption", "thinking", "idle", "failed", "accepted", "buttons", "button_result", "screen_state", "exploration_result", "exploration_tasks"}:
+            window.evaluate_js(f"window.pet.receive({json.dumps(command)})")
+        else:
+            raise ValueError(f"未知的桌宠指令: {command['type']}")
+    except Exception as exc:
+        ack["error"] = str(exc)
+    return ack
+
+
 def pump_commands(api: PetApi, window: "webview.Window", commands: TextIO) -> None:
     """执行主程序指令并回执；管道关闭即主程序已停止，桌宠随之退出。"""
     try:
         for line in commands:
-            if not line.strip():
-                continue
-            command = json.loads(line)
-            ack = {"type": "ack", "id": command["id"]}
-            try:
-                if command["type"] == "show":
-                    window.show()
-                    window.evaluate_js("window.petSkin.visibility(true)")
-                elif command["type"] == "hide":
-                    api.drag_end()
-                    window.hide()
-                    window.evaluate_js("window.petSkin.visibility(false)")
-                elif command["type"] == "skin":
-                    completed = threading.Event()
-                    results = []
-                    def loaded(result, results=results, completed=completed):
-                        results.append(result)
-                        completed.set()
-                    window.evaluate_js(
-                        f"window.petSkin.install({json.dumps(command['skin'])}).catch(e => ({{error: String(e.message || e)}}))",
-                        callback=loaded,
-                    )
-                    if not completed.wait(10):
-                        window.evaluate_js("window.petSkin.cancelInstall()")
-                        raise TimeoutError("皮肤资源解码超时")
-                    if results[0].get("error"):
-                        raise ValueError(results[0]["error"])
-                    ack["result"] = results[0]
-                elif command["type"] == "animation":
-                    ack["result"] = window.evaluate_js(
-                        f"window.petSkin.command({json.dumps(command['action'])}, {json.dumps(command['args'])}, {json.dumps(command['owner'])})"
-                    )
-                elif command["type"] == "todo":
-                    action = command["action"]
-                    if action == "list":
-                        result = {"items": api._todos.list(include_completed=command.get("include_completed", False))}
-                    elif action == "add":
-                        result = {"item": api._todos.add(command["text"], **command.get("options", {}))}
-                    elif action == "update":
-                        result = {"item": api._todos.update(command["todo_id"], command.get("text"), **command.get("options", {}))}
-                    elif action == "claim_due":
-                        result = {"items": api._todos.claim_due()}
-                    elif action == "claim_condition":
-                        result = {"item": api._todos.claim_condition(command["todo_id"], command["revision"], command["evidence"])}
-                    elif action == "finish":
-                        api._todos.finish(command["todo_id"], command["revision"], command.get("error", ""))
-                        result = {}
-                    elif action == "complete":
-                        api._todos.done(command["todo_id"])
-                        result = {"completed": command["todo_id"]}
-                    elif action == "delete":
-                        api._todos.delete(command["todo_id"])
-                        result = {"deleted": command["todo_id"]}
-                    else:
-                        raise ValueError("未知待办操作")
-                    ack["result"] = result
-                    if action not in {"list", "claim_due"}:
-                        try:
-                            window.evaluate_js("window.pet.refreshTodos()")
-                        except Exception as exc:
-                            # 数据已保存；界面刷新失败不能误报为写入失败并诱发重复新增。
-                            result["display_error"] = str(exc)
-                elif command["type"] == "exploration_tasks" and command["request_id"].startswith("records:"):
-                    # 窗口关闭后的迟到回执直接丢弃，不影响桌宠面板自己的查询。
-                    records_window = api._exploration_window
-                    if records_window is not None:
-                        records_window.evaluate_js(f"window.records.receive({json.dumps(command)})")
-                elif command["type"] in {"reply", "notice", "thinking_caption", "thinking", "idle", "failed", "accepted", "buttons", "button_result", "screen_state", "exploration_result", "exploration_tasks"}:
-                    window.evaluate_js(f"window.pet.receive({json.dumps(command)})")
-                else:
-                    raise ValueError(f"未知的桌宠指令: {command['type']}")
-            except Exception as exc:
-                ack["error"] = str(exc)
-            api._outbox.emit(ack)
+            if line.strip():
+                api._outbox.emit(execute_command(api, window, json.loads(line)))
     finally:
         api._shutdown()
 
