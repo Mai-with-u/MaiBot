@@ -160,6 +160,7 @@ export function AddConnectionDialog({ onClose, onInstalled }: AddConnectionDialo
           )}
         </div>
         <InstallDialog open={selected !== null} plugin={selected} loadProgress={progress}
+          onDependenciesChanged={() => { setRevision(value => value + 1); onInstalled() }}
           onOpenChange={open => { if (!open && !installingRef.current) setSelected(null) }}
           onInstall={target => void handleInstall(target)} />
       </DialogContent>
