@@ -20,6 +20,31 @@ export interface SetupStatus {
 }
 
 /**
+ * 使用 AbortController 同时处理超时和外部取消，兼容缺少 AbortSignal.any 的浏览器。
+ */
+async function withAuthTimeout<T>(
+  request: (signal: AbortSignal) => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  const controller = new AbortController()
+  const abort = () => controller.abort(signal?.reason)
+  if (signal?.aborted) {
+    abort()
+  } else {
+    signal?.addEventListener('abort', abort, { once: true })
+  }
+  const timeout = setTimeout(() => {
+    controller.abort(new DOMException('认证请求超时', 'TimeoutError'))
+  }, 10_000)
+  try {
+    return await request(controller.signal)
+  } finally {
+    clearTimeout(timeout)
+    signal?.removeEventListener('abort', abort)
+  }
+}
+
+/**
  * 调用登出接口并跳转到登录页
  */
 export async function logout(): Promise<void> {
@@ -44,11 +69,13 @@ export async function checkAuthStatus(signal?: AbortSignal): Promise<boolean> {
  */
 export async function getAuthStatus(signal?: AbortSignal): Promise<AuthStatus> {
   try {
-    const timeout = AbortSignal.timeout(10_000)
-    const data = await authApi.get<AuthStatus>('/api/webui/auth/check', {
-      cache: 'no-store',
-      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-    })
+    const data = await withAuthTimeout(
+      (requestSignal) => authApi.get<AuthStatus>('/api/webui/auth/check', {
+        cache: 'no-store',
+        signal: requestSignal,
+      }),
+      signal,
+    )
     if (typeof data?.authenticated !== 'boolean') {
       throw new Error('认证接口返回了无效的登录状态')
     }
@@ -71,10 +98,12 @@ export async function getAuthStatus(signal?: AbortSignal): Promise<AuthStatus> {
  */
 export async function getSetupStatus(signal?: AbortSignal): Promise<SetupStatus | null> {
   try {
-    const timeout = AbortSignal.timeout(10_000)
-    return await authApi.get<SetupStatus>('/api/webui/setup/status', {
-      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-    })
+    return await withAuthTimeout(
+      (requestSignal) => authApi.get<SetupStatus>('/api/webui/setup/status', {
+        signal: requestSignal,
+      }),
+      signal,
+    )
   } catch {
     return null
   }
