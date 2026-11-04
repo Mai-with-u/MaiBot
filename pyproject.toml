@@ -39,6 +39,8 @@ dependencies = [
     "pillow>=12.3.0",
     "playwright==1.58.0",
     "pyarrow>=20.0.0",
+    "pycryptodome>=3.20,<4",
+    "qrcode>=8,<9",
     "pydantic>=2.11.7",
     "pypinyin>=0.54.0",
     "pywebview>=6.2,<7; sys_platform == 'win32'",
@@ -72,6 +74,7 @@ namespaces = true
 [tool.setuptools.package-data]
 "src.computer" = ["guest.ps1"]
 "src.desktop_pet" = ["web/*.html", "web/*.js", "LICENSE"]
+"src.plugins.built_in.weixin_clawbot_adapter" = ["webui.json", "web/*.html", "icon-mascot.webp", "config.toml.example"]
 "*" = ["_manifest.json", "config_schema.json", "LICENSE", "LICENSE-MAIBOT-GPL.md"]
 
 [dependency-groups]
