@@ -35,9 +35,10 @@
     "files": ["src/**/*", "renderer/**/*", "package.json"],
     "extraResources": [
       { "from": "../src/desktop_pet/web", "to": "web", "filter": ["**/*"] },
-      { "from": "../LICENSE", "to": "LICENSE-maibot.txt" }
+      { "from": "../LICENSE", "to": "LICENSE-maibot.txt" },
+      { "from": "../dashboard/public/maimai.ico", "to": "maimai.ico" }
     ],
-    "win": { "target": "zip", "signAndEditExecutable": false },
+    "win": { "target": "zip", "icon": "../dashboard/public/maimai.ico", "signExecutable": false },
     "mac": {
       "target": "dmg",
       "category": "public.app-category.entertainment",

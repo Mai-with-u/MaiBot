@@ -14,6 +14,7 @@ const MAX_ACK_BYTES = 24 * 1024 * 1024;
 const MAX_EVENT_BYTES = 64 * 1024;
 const HTTP_TIMEOUT = 60_000;
 const HANDSHAKE_TIMEOUT = 15_000;
+const COMMAND_TIMEOUT = 25_000;
 const REQUEST_ID = /^[0-9a-f]{32}$/;
 const USER_EVENTS = new Set([
   'clicked', 'buttons_refresh', 'button_click', 'drag_started', 'drag_ended',
@@ -163,8 +164,8 @@ async function discoverBots(server, password) {
   const base = normalizeServer(server);
   passwordValue(password);
   const jar = new CookieJar();
-  await authenticate(jar, base, password);
   try {
+    await authenticate(jar, base, password);
     const result = await jsonRequest(jar, base + '/api/host/bots', { timeout: HANDSHAKE_TIMEOUT, limit: MAX_AUTH_BYTES });
     if (!Array.isArray(result.bots) || result.bots.some(bot => !object(bot) || typeof bot.bot_id !== 'string')) {
       throw new ProtocolError('服务器返回的机器人列表无效');
@@ -174,6 +175,26 @@ async function discoverBots(server, password) {
     // 发现操作不保留临时登录；注销失败也清空内存 Cookie，不覆盖原来的读取结果。
     await logout(jar, base).catch(() => {});
   }
+}
+
+function commandResult(execute, command, signal) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (handler, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener('abort', aborted);
+      handler(value);
+    };
+    const aborted = () => finish(reject, new Error('桌宠连接已断开'));
+    const timer = setTimeout(() => finish(reject, new Error('桌宠指令执行超时')), COMMAND_TIMEOUT);
+    signal.addEventListener('abort', aborted, { once: true });
+    Promise.resolve().then(() => {
+      signal.throwIfAborted();
+      return execute(command);
+    }).then(result => finish(resolve, result), error => finish(reject, error));
+  });
 }
 
 class RemoteConnection extends EventEmitter {
@@ -271,7 +292,8 @@ class RemoteConnection extends EventEmitter {
       || (method === 'GET' && /^\/todos\/images\/[0-9a-f]{64}$/.test(path));
     if (!allowed) throw new TypeError('不支持的桌宠接口');
     if (method === 'POST' && !object(payload)) throw new TypeError('请求必须是 JSON 对象');
-    if (path === '/todos' && payload.action !== 'list' && !REQUEST_ID.test(payload.request_id || '')) {
+    if (path === '/todos' && payload.action !== 'list'
+      && (typeof payload.request_id !== 'string' || !REQUEST_ID.test(payload.request_id))) {
       throw new TypeError('修改待办必须提供 32 位十六进制 request_id');
     }
     const connectionId = this._connectionId;
@@ -318,13 +340,14 @@ class RemoteConnection extends EventEmitter {
     signal.throwIfAborted();
     const url = new URL(this.base + '/ws');
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-    await new Promise((resolve, reject) => {
+    await new Promise((_resolve, reject) => {
       const socket = new WebSocket(url, {
         headers: cookie ? { Cookie: cookie } : {}, followRedirects: false, rejectUnauthorized: true,
         handshakeTimeout: HANDSHAKE_TIMEOUT, maxPayload: MAX_SERVER_MESSAGE, perMessageDeflate: false,
       });
       this._socket = socket;
-      this._sessionController = new AbortController();
+      const sessionController = new AbortController();
+      this._sessionController = sessionController;
       let stage = 'hello';
       let finished = false;
       let timer;
@@ -342,7 +365,7 @@ class RemoteConnection extends EventEmitter {
         clearTimeout(timer);
         clearInterval(heartbeat);
         signal.removeEventListener('abort', aborted);
-        this._sessionController.abort();
+        sessionController.abort();
         this._endConnection = null;
         this._socket = null;
         if (socket.readyState !== WebSocket.CLOSED) socket.terminate();
@@ -424,7 +447,7 @@ class RemoteConnection extends EventEmitter {
           queue = queue.then(async () => {
             if (!active()) return;
             try {
-              const result = await this.executeCommand(command);
+              const result = await commandResult(this.executeCommand, command, sessionController.signal);
               if (active()) await this._send(socket, { type: 'ack', id: command.id, result });
             } catch (error) {
               if (active()) await this._send(socket, { type: 'ack', id: command.id, error: messageOf(error) });

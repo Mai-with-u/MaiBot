@@ -17,8 +17,8 @@ async function installLocalPages(session, webRoot, loginRoot) {
     // 现有页面含内联脚本，按打包内容精确授权，禁止任意内联代码与 eval。
     const hashes = filename.endsWith('.html') ? [...bytes.toString().matchAll(/<script>([\s\S]*?)<\/script>/g)]
       .map(match => `'sha256-${createHash('sha256').update(match[1].replaceAll('\r\n', '\n')).digest('base64')}'`) : [];
-    const policy = `default-src 'none'; script-src 'self' ${hashes.join(' ')}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'`;
-    return [url, { bytes, headers: { 'Content-Type': types[path.extname(filename)], 'Content-Security-Policy': policy, 'X-Content-Type-Options': 'nosniff' } }];
+    const policy = `default-src 'none'; script-src 'self' ${hashes.join(' ')}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; media-src https: http:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'`;
+    return [url, { bytes, headers: { 'Content-Type': types[path.extname(filename)], 'Content-Security-Policy': policy, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' } }];
   })));
   session.protocol.handle('petapp', request => {
     const url = new URL(request.url);

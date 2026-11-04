@@ -18,13 +18,32 @@ function validateRects(rects) {
   return rects;
 }
 
+function shapeRects(rects, width, height) {
+  const shapes = [];
+  for (const [x, y, w, h, corner] of rects) {
+    const radius = Math.min(corner, w / 2, h / 2);
+    let previous;
+    for (let row = Math.max(0, Math.floor(y)); row < Math.min(height, Math.ceil(y + h)); row++) {
+      const dy = Math.max(y + radius - (row + .5), 0, row + .5 - (y + h - radius));
+      const inset = radius - Math.sqrt(Math.max(0, radius * radius - dy * dy));
+      const left = Math.max(0, Math.floor(x + inset)), right = Math.min(width, Math.ceil(x + w - inset));
+      if (right <= left) continue;
+      if (previous && previous.x === left && previous.width === right - left && previous.y + previous.height === row) previous.height++;
+      else { previous = { x: left, y: row, width: right - left, height: 1 }; shapes.push(previous); }
+    }
+  }
+  // 空数组表示恢复整个窗口，使用窗口外的小区域表达“没有可点击内容”。
+  return shapes.length ? shapes : [{ x: -1, y: -1, width: 1, height: 1 }];
+}
+
 /** Electron 的窗口、屏幕光标均采用 DIP，不能再次乘 devicePixelRatio。 */
 class PetWindowController {
-  constructor(window, screen, { anchor, emit, save }) {
+  constructor(window, screen, { anchor, emit, save, platform = process.platform }) {
     this.window = window;
     this.screen = screen;
     this.emit = emit;
     this.save = save;
+    this.shaped = platform === 'win32' || platform === 'linux';
     this.drag = null;
     this.height = Math.min(900, screen.getPrimaryDisplay().workArea.height);
     this.anchor = anchor && screen.getAllDisplays().some(({ workArea: a }) =>
@@ -33,9 +52,9 @@ class PetWindowController {
     this.rects = [[47, this.height - 155, 166, 139, 42]];
     this.ignored = null;
     this.place();
-    // 全局坐标判断也覆盖 Linux/X11；不依赖透明区域是否还能接收 mousemove。
-    this.timer = setInterval(() => this.updatePointer(), 32);
-    this.updatePointer();
+    // Windows/X11 由原生区域精确处理穿透；macOS 没有 setShape，按全局光标切换穿透。
+    this.timer = this.shaped ? null : setInterval(() => this.updatePointer(), 32);
+    this.region(this.rects);
     this.displayChanged = () => this.keepOnScreen();
     screen.on('display-removed', this.displayChanged);
     screen.on('display-metrics-changed', this.displayChanged);
@@ -69,10 +88,14 @@ class PetWindowController {
     this.place();
   }
 
-  region(rects) { this.rects = validateRects(rects); this.updatePointer(); }
+  region(rects) {
+    this.rects = validateRects(rects);
+    if (this.shaped) this.window.setShape(shapeRects(this.rects, 260, this.height));
+    else this.updatePointer();
+  }
 
   updatePointer() {
-    if (this.window.isDestroyed()) return;
+    if (this.shaped || this.window.isDestroyed()) return;
     const cursor = this.screen.getCursorScreenPoint(), bounds = this.window.getBounds();
     const ignore = !this.drag && !this.rects.some(rect => contains(rect, { x: cursor.x - bounds.x, y: cursor.y - bounds.y }));
     if (ignore !== this.ignored) {
@@ -143,4 +166,4 @@ class RecordsWindowController {
   end() { clearInterval(this.timer); this.timer = null; }
 }
 
-module.exports = { contains, validateRects, PetWindowController, RecordsWindowController };
+module.exports = { contains, validateRects, shapeRects, PetWindowController, RecordsWindowController };

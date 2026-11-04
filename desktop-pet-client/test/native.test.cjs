@@ -7,7 +7,7 @@ const { PNG } = require('pngjs');
 const { createNativeCapabilities } = require('../src/native.cjs');
 
 function fixture({ width = 320, height = 180, platform = 'win32', permission = 'granted' } = {}) {
-  const state = { width, height, bitmap: Buffer.alloc(width * height * 4), requests: [], copies: [], imageCalls: 0 };
+  const state = { width, height, bitmap: Buffer.alloc(width * height * 4), requests: [], copies: [], itemCalls: 0 };
   for (let offset = 3; offset < state.bitmap.length; offset += 4) state.bitmap[offset] = 255;
   const image = {
     isEmpty: () => false,
@@ -21,11 +21,14 @@ function fixture({ width = 320, height = 180, platform = 'win32', permission = '
       return [{ display_id: 'other', thumbnail: { isEmpty: () => assert.fail('must select primary display') } }, source];
     } },
     screen: { getPrimaryDisplay: () => ({ id: 42, bounds: { width: 3840, height: 2160 }, scaleFactor: 1 }) },
-    nativeImage: { createFromBitmap: (bitmap, options) => {
-      state.imageCalls++;
-      return { bitmap, options, isEmpty: () => false };
-    } },
-    clipboard: { writeText: text => state.copies.push({ text }), writeImage: image => state.copies.push({ image }) },
+    ClipboardItem: class {
+      constructor(items) { state.itemCalls++; this.items = items; this.types = Object.keys(items); }
+      async getType(type) { return this.items[type]; }
+    },
+    clipboard: {
+      writeText: async text => { await new Promise(resolve => setImmediate(resolve)); state.copies.push({ text }); },
+      write: async items => { await new Promise(resolve => setImmediate(resolve)); state.copies.push({ items }); },
+    },
     systemPreferences: { getMediaAccessStatus: kind => {
       assert.equal(kind, 'screen');
       return permission;
@@ -47,11 +50,22 @@ test('screen capture requires both local consent and macOS screen permission', a
   local.options.allowScreenRead = false;
   await assert.rejects(local.capabilities.captureScreen(), /未授权/);
   assert.equal(local.state.requests.length, 0);
-  for (const permission of ['denied', 'restricted', 'not-determined', 'unknown']) {
+  for (const permission of ['denied', 'restricted', 'unknown']) {
     const mac = fixture({ platform: 'darwin', permission });
     await assert.rejects(mac.capabilities.captureScreen(), /macOS.*未授权/);
     assert.equal(mac.state.requests.length, 0);
   }
+});
+
+test('first macOS capture can request consent but never returns an unapproved frame', async () => {
+  const granted = fixture({ platform: 'darwin', permission: 'not-determined' });
+  let permission = 'not-determined';
+  granted.apis.systemPreferences.getMediaAccessStatus = () => permission;
+  granted.apis.desktopCapturer.getSources = async () => { permission = 'granted'; return [granted.source]; };
+  assert.ok((await granted.capabilities.captureScreen()).base64);
+  const notGranted = fixture({ platform: 'darwin', permission: 'not-determined' });
+  await assert.rejects(notGranted.capabilities.captureScreen(), /未授权/);
+  assert.equal(notGranted.state.requests.length, 1);
 });
 
 test('primary capture returns bounded PNG, UTC timestamp, RGB colors and exact SHA256', async () => {
@@ -159,7 +173,7 @@ test('failed application query is surfaced instead of returning an empty result'
   await assert.rejects(capabilities.applications(), /permission denied/);
 });
 
-test('clipboard enforces text/image bounds and writes decoded PNG as premultiplied native bitmap', async () => {
+test('clipboard enforces text/image bounds and awaits Electron 45 ClipboardItem writes', async () => {
   const { state, capabilities } = fixture();
   await capabilities.copyPanelContent('text', '🙂'.repeat(16_000));
   assert.equal(state.copies[0].text.length, 32_000);
@@ -168,9 +182,25 @@ test('clipboard enforces text/image bounds and writes decoded PNG as premultipli
   await assert.rejects(capabilities.copyPanelContent('html', '<script>'), /不支持/);
   const png = PNG.sync.write({ width: 2, height: 1, data: Buffer.from([255, 0, 0, 255, 0, 255, 0, 128]) });
   await capabilities.copyPanelContent('image', png.toString('base64'));
-  assert.equal(state.imageCalls, 1);
-  assert.deepEqual([...state.copies[1].image.bitmap], [0, 0, 255, 255, 0, 128, 0, 128]);
-  assert.deepEqual(state.copies[1].image.options, { width: 2, height: 1, scaleFactor: 1 });
+  assert.equal(state.itemCalls, 1);
+  const [item] = state.copies[1].items;
+  assert.deepEqual(item.types, ['image/png']);
+  const blob = await item.getType('image/png');
+  assert.ok(blob instanceof Blob);
+  assert.equal(blob.type, 'image/png');
+  const decoded = PNG.sync.read(Buffer.from(await blob.arrayBuffer()));
+  assert.deepEqual([...decoded.data], [255, 0, 0, 255, 0, 255, 0, 128]);
+  assert.equal(decoded.width, 2);
+  assert.equal(decoded.height, 1);
+});
+
+test('asynchronous OS clipboard errors are surfaced to the caller', async () => {
+  const { apis, capabilities } = fixture();
+  apis.clipboard.writeText = async () => { throw new Error('clipboard text denied'); };
+  await assert.rejects(capabilities.copyPanelContent('text', 'example'), /clipboard text denied/);
+  apis.clipboard.write = async () => { throw new Error('clipboard image denied'); };
+  const png = PNG.sync.write({ width: 1, height: 1, data: Buffer.from([0, 0, 0, 255]) });
+  await assert.rejects(capabilities.copyPanelContent('image', png.toString('base64')), /clipboard image denied/);
 });
 
 test('clipboard rejects invalid base64, forged dimensions, duplicate headers and CRC corruption before native decode', async () => {
@@ -185,6 +215,6 @@ test('clipboard rejects invalid base64, forged dimensions, duplicate headers and
     Buffer.from('not a png').toString('base64'), oversized.toString('base64'), duplicate.toString('base64'), corrupted.toString('base64')]) {
     await assert.rejects(capabilities.copyPanelContent('image', encoded));
   }
-  assert.equal(state.imageCalls, 0);
+  assert.equal(state.itemCalls, 0);
   assert.equal(state.copies.length, 0);
 });

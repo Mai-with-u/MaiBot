@@ -4,6 +4,7 @@ const { execFile: nodeExecFile } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const { basename } = require('node:path').posix;
 const { Worker, isMainThread, parentPort, workerData } = require('node:worker_threads');
+const { inflateSync } = require('node:zlib');
 
 const MAX_EDGE = 1920;
 const MAX_CAPTURE_PIXELS = 16_000_000;
@@ -127,10 +128,14 @@ function decodeClipboardImage(content) {
   dimensions(width, height, MAX_CLIPBOARD_PIXELS);
   // Reject duplicate headers and truncated chunks before a decoder can allocate from another size.
   let offset = 8, ended = false, hasData = false;
+  const compressed = [];
   while (offset + 12 <= png.length) {
     const length = png.readUInt32BE(offset), type = png.toString('ascii', offset + 4, offset + 8);
     if (offset + length + 12 > png.length || (type === 'IHDR' && offset !== 8)) throw new Error('PNG 数据结构无效');
-    if (type === 'IDAT') hasData = true;
+    if (type === 'IDAT') {
+      hasData = true;
+      compressed.push(png.subarray(offset + 8, offset + 8 + length));
+    }
     offset += length + 12;
     if (type === 'IEND') {
       ended = length === 0 && offset === png.length;
@@ -138,17 +143,13 @@ function decodeClipboardImage(content) {
     }
   }
   if (!ended || !hasData) throw new Error('PNG 图片不完整');
+  // pngjs bounds ordinary scanlines but its interlaced path inflates without a limit.
+  // 64 MiB covers 4M pixels at 16-bit RGBA plus Adam7 filter rows and bounds both paths.
+  inflateSync(Buffer.concat(compressed), { maxOutputLength: 64 * 1024 * 1024 });
   const decoded = PNG.sync.read(png, { checkCRC: true });
   if (decoded.width !== width || decoded.height !== height) throw new Error('PNG 图片尺寸不一致');
-  const bitmap = Buffer.allocUnsafe(width * height * 4);
-  for (let i = 0; i < bitmap.length; i += 4) {
-    const alpha = decoded.data[i + 3];
-    bitmap[i] = Math.round(decoded.data[i + 2] * alpha / 255);
-    bitmap[i + 1] = Math.round(decoded.data[i + 1] * alpha / 255);
-    bitmap[i + 2] = Math.round(decoded.data[i] * alpha / 255);
-    bitmap[i + 3] = alpha;
-  }
-  return { bitmap, width, height };
+  // Give Electron a normalized PNG, with alpha preserved and no arbitrary ancillary payloads.
+  return { png: PNG.sync.write({ width, height, data: decoded.data }), width, height };
 }
 
 /**
@@ -156,24 +157,25 @@ function decodeClipboardImage(content) {
  * options.platform/execFile are test seams. macOS/Linux expose process names only,
  * because obtaining arbitrary window titles requires additional desktop-specific APIs.
  */
-function createNativeCapabilities({ desktopCapturer, screen, nativeImage, clipboard, systemPreferences }, options = {}) {
+function createNativeCapabilities({ desktopCapturer, screen, clipboard, ClipboardItem, systemPreferences }, options = {}) {
   const platform = options.platform === undefined ? process.platform : options.platform;
   const execFile = options.execFile === undefined ? nodeExecFile : options.execFile;
   let previous = null;
   let captureBusy = false;
 
-  function requireScreenPermission() {
+  function requireScreenPermission(allowPrompt = false) {
     if (options.allowScreenRead !== true) throw new Error('客户端未授权读取桌面，请在连接设置中开启');
     if (platform === 'darwin') {
       const permission = systemPreferences.getMediaAccessStatus('screen');
-      if (permission !== 'granted') {
+      if (permission !== 'granted' && !(allowPrompt && permission === 'not-determined')) {
         throw new Error(`macOS 屏幕录制权限未授权（${permission}），请在系统设置的隐私与安全性中允许本应用，然后重新启动`);
       }
     }
   }
 
   async function capture(sampleOptions) {
-    requireScreenPermission();
+    // First use must reach getSources so macOS can register/request screen-recording consent.
+    requireScreenPermission(true);
     if (captureBusy) throw new Error('正在采集桌面，请稍后重试');
     captureBusy = true;
     try {
@@ -244,15 +246,15 @@ function createNativeCapabilities({ desktopCapturer, screen, nativeImage, clipbo
     if (typeof content !== 'string') throw new Error('无效的复制内容');
     if (kind === 'text') {
       if (content.length > 32_000 || Array.from(content).length > 16_000) throw new Error('复制文本不能超过 16000 字');
-      clipboard.writeText(content);
+      await clipboard.writeText(content);
       return;
     }
     if (kind !== 'image' || content.length > 1_000_000) throw new Error('不支持的复制类型或内容过大');
     const decoded = await imageWorker({ operation: 'clipboard', content });
-    // Decode/validate in the worker; only bounded native bitmap and clipboard copies run here.
-    const image = nativeImage.createFromBitmap(Buffer.from(decoded.bitmap), { width: decoded.width, height: decoded.height, scaleFactor: 1 });
-    if (image.isEmpty()) throw new Error('无法创建剪贴板图片');
-    clipboard.writeImage(image);
+    // Electron 45 uses the asynchronous ClipboardItem API; MIME types are fixed here, never supplied by IPC.
+    await clipboard.write([new ClipboardItem({
+      'image/png': new Blob([decoded.png], { type: 'image/png' }),
+    })]);
   }
 
   return { captureScreen: () => capture(null), sampleScreen, applications, copyPanelContent };

@@ -252,9 +252,11 @@ test('ordinary disconnect reconnects without a second login or replaying old ack
   const server = await host(t);
   const gate = deferred();
   const entered = deferred();
-  const connection = server.connection(async () => { entered.resolve(); await gate.promise; return {}; });
+  let executions = 0;
+  const connection = server.connection(async () => { executions += 1; entered.resolve(); await gate.promise; return {}; });
   await connect(connection);
   server.sockets[0].send(JSON.stringify({ type: 'show', id: 'old-command' }));
+  server.sockets[0].send(JSON.stringify({ type: 'hide', id: 'queued-old-command' }));
   await entered.promise;
   const reconnected = event(connection, 'connected');
   server.sockets[0].close(1001);
@@ -263,6 +265,7 @@ test('ordinary disconnect reconnects without a second login or replaying old ack
   await sleep(30);
   assert.equal(server.logins, 1);
   assert.equal(server.upgrades, 2);
+  assert.equal(executions, 1);
   assert.equal(server.messages.filter(item => item.message.id === 'old-command').length, 0);
   await connection.request('POST', '/todos', { action: 'list' });
   assert.equal(server.requests.at(-1).headers['x-desktop-pet-connection'], 'connection-2');
@@ -287,6 +290,20 @@ test('close 4001 after ready reauthenticates and does not silently reuse an expi
   assert.equal(server.logins, 2);
   await connection.request('POST', '/todos', { action: 'list' });
   assert.match(server.requests.at(-1).headers.cookie, /session-2/);
+});
+
+test('HTTP 401 renews the login but does not retry a submitted mutation', async t => {
+  const server = await host(t);
+  const connection = server.connection();
+  await connect(connection);
+  server.sessions.clear();
+  const reconnected = event(connection, 'connected');
+  await assert.rejects(connection.request('POST', '/todos', {
+    action: 'add', text: 'only once', request_id: 'd'.repeat(32),
+  }), /请先登录/);
+  await reconnected;
+  assert.equal(server.logins, 2);
+  assert.equal(server.requests.filter(request => request.path === REMOTE + '/todos').length, 1);
 });
 
 test('invalid credentials stop automatic login attempts', async t => {
@@ -323,6 +340,30 @@ test('stop aborts pending login and never starts a delayed reconnect', async t =
   await sleep(1100);
   assert.equal(server.upgrades, 0);
   assert.equal(server.logins, 1);
+});
+
+test('stop aborts an in-flight HTTP response, emits one disconnect and never reconnects', async t => {
+  const received = deferred();
+  const server = await host(t, {
+    http: async (request, response) => {
+      if (request.url !== REMOTE + '/todos') return false;
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.write('{"items":');
+      received.resolve();
+      return true;
+    },
+  });
+  const connection = server.connection();
+  let disconnects = 0;
+  connection.on('disconnected', () => { disconnects += 1; });
+  await connect(connection);
+  const pending = assert.rejects(connection.request('POST', '/todos', { action: 'list' }), /结果尚未确认|连接已断开/);
+  await received.promise;
+  await connection.stop();
+  await pending;
+  await sleep(1100);
+  assert.equal(disconnects, 1);
+  assert.equal(server.upgrades, 1);
 });
 
 test('HTTP responses reject declared oversize and invalid JSON without replaying the request', async t => {
