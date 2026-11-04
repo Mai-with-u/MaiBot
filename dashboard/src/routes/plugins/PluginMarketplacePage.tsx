@@ -1303,6 +1303,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
       </div>
       {settingsOpen && (
         <PluginSettingsDialog
+          onDependenciesChanged={() => void refreshInstalledPlugins()}
           onClose={() => setSettingsOpen(false)}
           onSaved={() => {
             setSettingsOpen(false)

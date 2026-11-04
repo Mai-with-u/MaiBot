@@ -4,7 +4,7 @@
  * 走 authApi 实例（携带 Cookie 但 401 不跳转）——
  * 在这两个场景里 401 / 未认证是正常业务结果，不应触发整页跳转。
  */
-import { authApi } from '@/lib/http'
+import { ApiError, authApi } from '@/lib/http'
 
 export interface AuthStatus {
   authenticated: boolean
@@ -35,32 +35,46 @@ export async function logout(): Promise<void> {
 /**
  * 检查当前认证状态
  */
-export async function checkAuthStatus(): Promise<boolean> {
-  return (await getAuthStatus()).authenticated
+export async function checkAuthStatus(signal?: AbortSignal): Promise<boolean> {
+  return (await getAuthStatus(signal)).authenticated
 }
 
 /**
  * 获取当前认证状态和 Token 来源
  */
-export async function getAuthStatus(): Promise<AuthStatus> {
+export async function getAuthStatus(signal?: AbortSignal): Promise<AuthStatus> {
   try {
-    const data = await authApi.get<AuthStatus>('/api/webui/auth/check')
+    const timeout = AbortSignal.timeout(10_000)
+    const data = await authApi.get<AuthStatus>('/api/webui/auth/check', {
+      cache: 'no-store',
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    })
+    if (typeof data?.authenticated !== 'boolean') {
+      throw new Error('认证接口返回了无效的登录状态')
+    }
     return {
       authenticated: data.authenticated === true,
       token_source: data.token_source,
       requires_custom_token: data.requires_custom_token === true,
     }
-  } catch {
-    return { authenticated: false }
+  } catch (error) {
+    // 只有明确的未授权响应才视为未登录，连接失败交给页面显示并重试。
+    if (error instanceof ApiError && error.status === 401) {
+      return { authenticated: false }
+    }
+    throw error
   }
 }
 
 /**
  * 获取首次配置状态和 Token 来源
  */
-export async function getSetupStatus(): Promise<SetupStatus | null> {
+export async function getSetupStatus(signal?: AbortSignal): Promise<SetupStatus | null> {
   try {
-    return await authApi.get<SetupStatus>('/api/webui/setup/status')
+    const timeout = AbortSignal.timeout(10_000)
+    return await authApi.get<SetupStatus>('/api/webui/setup/status', {
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    })
   } catch {
     return null
   }

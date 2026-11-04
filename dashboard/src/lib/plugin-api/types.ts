@@ -24,6 +24,7 @@ export interface MaimaiVersion {
  * 已安装插件信息
  */
 export interface InstalledPlugin {
+  builtin?: boolean
   status_badges?: Array<{ id: string; label: string; expires_at?: number | null }>
   release?: { version: string; commit: string } | null
   id: string

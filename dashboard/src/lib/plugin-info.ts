@@ -39,6 +39,7 @@ export function buildLocalPluginInfo(installedPlugin: InstalledPlugin): PluginIn
       default_locale: (installedPlugin.manifest.default_locale as string) || 'zh-CN',
       locales_path: installedPlugin.manifest.locales_path as string | undefined,
     },
+    builtin: installedPlugin.builtin,
     installed: true,
     installed_version: installedPlugin.manifest.version,
     installed_release: installedPlugin.release,
@@ -59,6 +60,7 @@ export function mergeInstalledPluginInfo(
 
     return {
       ...plugin,
+      builtin: installedPlugin?.builtin,
       installed: Boolean(installedPlugin),
       installed_version: installedPlugin?.manifest.version,
       installed_release: installedPlugin?.release,

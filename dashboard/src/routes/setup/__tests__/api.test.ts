@@ -539,17 +539,17 @@ describe('saveModelSetupConfig', () => {
 
 describe('completeSetup', () => {
   it('调用标记设置完成接口', async () => {
-    postMock.mockResolvedValue({ success: true })
+    authPostMock.mockResolvedValue({ success: true })
 
     await completeSetup()
 
-    expect(postMock).toHaveBeenCalledWith('/api/webui/setup/complete', {
+    expect(authPostMock).toHaveBeenCalledWith('/api/webui/setup/complete', {
       errorMessage: '标记设置完成失败',
     })
   })
 
   it('标记完成失败时向上抛出', async () => {
-    postMock.mockRejectedValue(new ApiError('标记设置完成失败', { status: 500 }))
+    authPostMock.mockRejectedValue(new ApiError('标记设置完成失败', { status: 500 }))
     await expect(completeSetup()).rejects.toMatchObject({ status: 500 })
   })
 })

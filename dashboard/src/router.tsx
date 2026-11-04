@@ -7,9 +7,10 @@ import {
   redirect,
 } from '@tanstack/react-router'
 import { NotFoundPage } from './routes/404'
-import { Layout } from './components/layout'
+import { AppShell } from './components/app-shell'
 import { RoutePendingFallback } from './components/route-pending-fallback'
 import { checkAuth } from './hooks/use-auth'
+import { getHostRuntime } from './host/state'
 import { RouteErrorBoundary } from './components/error-boundary'
 import { rememberMarketInstall } from './lib/plugin-market-navigation'
 import { rememberPersonalityImport } from './lib/personality-import'
@@ -28,6 +29,12 @@ const rootRoute = createRootRoute({
       if (!authenticated) {
         throw redirect({ to: '/auth' })
       }
+      if (getHostRuntime().host && !getHostRuntime().selected_bot_running) {
+        throw redirect({ to: '/bots' })
+      }
+    }, () => {
+      // 认证服务未就绪时，由认证页显示等待连接并重试。
+      throw redirect({ to: '/auth' })
     })
   },
 })
@@ -46,14 +53,14 @@ const setupRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/setup/index.tsx'), 'SetupPage'),
 })
 
-// 受保护的路由 Root（带 Layout）
+// 受保护的路由 Root（带外壳：按设置使用经典布局或麦麦观察布局）
 const protectedRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: 'protected',
   component: () => (
-    <Layout>
+    <AppShell>
       <Outlet />
-    </Layout>
+    </AppShell>
   ),
   errorComponent: ({ error }) => <RouteErrorBoundary error={error} />,
 })
@@ -76,7 +83,7 @@ const pluginWebUIManagerRoute = createRoute({
 const indexRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/',
-  component: lazyRouteComponent(() => import('./routes/index'), 'IndexPage'),
+  component: lazyRouteComponent(() => import('./routes/home-entry'), 'HomeEntry'),
 })
 
 // 详细统计路由
@@ -349,6 +356,12 @@ const dataTransferRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/data-transfer'), 'DataTransferPage'),
 })
 
+const hostManagementRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/bots',
+  component: lazyRouteComponent(() => import('./routes/bots'), 'HostEntryPage'),
+})
+
 const settingsRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/settings',
@@ -434,6 +447,7 @@ const routeTree = rootRoute.addChildren([
     chatManagementRoute,
     chatRoute,
     manageRoute,
+    hostManagementRoute,
     settingsRoute,
     packMarketRoute,
     packDetailRoute,

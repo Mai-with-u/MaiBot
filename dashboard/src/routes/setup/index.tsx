@@ -10,6 +10,8 @@ import {
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { HostSetup } from '@/host/HostSetup'
+import { useHostRuntime } from '@/host/state'
 import { Button } from '@/components/ui/button'
 import { SetupWizardLayout } from './SetupWizardLayout'
 import {
@@ -74,7 +76,7 @@ const LANGUAGE_NAMES: Record<(typeof LANGUAGE_CODES)[number], string> = {
 }
 
 export function SetupPage() {
-  return <SetupPageContent />
+  return useHostRuntime().host ? <HostSetup /> : <SetupPageContent />
 }
 
 // 内部实现组件

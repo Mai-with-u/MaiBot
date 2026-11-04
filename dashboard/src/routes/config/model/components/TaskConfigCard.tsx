@@ -14,7 +14,9 @@ import { StreamlineIcon } from '@/components/ui/streamline-icon'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
@@ -32,6 +34,7 @@ interface TaskConfigCardProps {
   description: string
   taskConfig: TaskConfig
   modelNames: string[]
+  modelProviders?: Record<string, string>
   onChange: (field: keyof TaskConfig, value: string[] | number | string) => void
   hideTemperature?: boolean
   hideMaxTokens?: boolean
@@ -72,6 +75,7 @@ export const TaskConfigCard = React.memo(function TaskConfigCard({
   description,
   taskConfig,
   modelNames,
+  modelProviders = {},
   onChange,
   hideTemperature = false,
   hideMaxTokens = false,
@@ -84,6 +88,17 @@ export const TaskConfigCard = React.memo(function TaskConfigCard({
   const timeoutInputId = React.useId()
   const selectedModels = taskConfig.model_list || []
   const selectedModel = selectedModels[0] ?? ''
+  const modelOptions = modelNames.map((name) => ({
+    label: name,
+    value: name,
+    group: modelProviders[name],
+  }))
+  const modelGroups = new Map<string | undefined, typeof modelOptions>()
+  for (const option of modelOptions) {
+    const group = modelGroups.get(option.group)
+    if (group) group.push(option)
+    else modelGroups.set(option.group, [option])
+  }
 
   const handleModelChange = (values: string[]) => {
     onChange('model_list', values)
@@ -146,10 +161,15 @@ export const TaskConfigCard = React.memo(function TaskConfigCard({
                   <SelectValue placeholder="选择模型..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {modelNames.map((name) => (
-                    <SelectItem key={name} value={name}>
-                      {name}
-                    </SelectItem>
+                  {Array.from(modelGroups, ([provider, options]) => (
+                    <SelectGroup key={provider ?? ''}>
+                      {provider && <SelectLabel>{provider}</SelectLabel>}
+                      {options.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   ))}
                 </SelectContent>
               </Select>
@@ -168,7 +188,7 @@ export const TaskConfigCard = React.memo(function TaskConfigCard({
             </div>
           ) : (
             <MultiSelect
-              options={modelNames.map((name) => ({ label: name, value: name }))}
+              options={modelOptions}
               selected={selectedModels}
               onChange={handleModelChange}
               placeholder="选择模型..."

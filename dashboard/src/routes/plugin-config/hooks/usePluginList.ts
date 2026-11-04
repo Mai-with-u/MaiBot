@@ -437,6 +437,7 @@ export function usePluginList() {
     )
   }
   const getPluginUpdateState = (plugin: InstalledPlugin): PluginUpdateState => {
+    if (plugin.builtin) return { canUpdate: false, hasUpdate: false, title: '内置插件随本体更新' }
     if (checkingUpdates) {
       return { canUpdate: false, hasUpdate: false, title: '正在检查更新' }
     }

@@ -2074,7 +2074,7 @@ function PluginConfigPageContent() {
                             </div>
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
-                            {pluginNeedsUpdate && (
+                            {!plugin.builtin && pluginNeedsUpdate && (
                               <Button
                                 type="button"
                                 size="sm"
@@ -2153,44 +2153,48 @@ function PluginConfigPageContent() {
                         onCheckedChange={() => void performTogglePlugin(plugin)}
                       />
                     </div>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      data-plugin-update-button="true"
-                      className={`relative ${checkingUpdates ? 'text-primary disabled:opacity-100' : ''}`}
-                      disabled={pluginActing || !updateState.canUpdate}
-                      aria-busy={checkingUpdates || pluginActing}
-                      title={updateState.title}
-                      aria-label={updateState.title || '更新/升级'}
-                      onClick={(event) => openUpdatePluginDialog(plugin, event)}
-                    >
-                      {updateState.hasUpdate && (
-                        <span
-                          className="ring-background absolute -top-1 -right-1 h-3 w-3 rounded-sm bg-yellow-400 ring-2"
-                          aria-hidden="true"
-                        />
-                      )}
-                      {pluginActing || checkingUpdates ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <ArrowUp className="h-4 w-4" />
-                      )}
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      size="icon"
-                      disabled={pluginActing}
-                      aria-busy={pluginActing}
-                      title="删除"
-                      aria-label="删除"
-                      onClick={(event) => openDeletePluginDialog(plugin, event)}
-                    >
-                      {pluginActing ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-4 w-4" />
-                      )}
-                    </Button>
+                    {!plugin.builtin && (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          data-plugin-update-button="true"
+                          className={`relative ${checkingUpdates ? 'text-primary disabled:opacity-100' : ''}`}
+                          disabled={pluginActing || !updateState.canUpdate}
+                          aria-busy={checkingUpdates || pluginActing}
+                          title={updateState.title}
+                          aria-label={updateState.title || '更新/升级'}
+                          onClick={(event) => openUpdatePluginDialog(plugin, event)}
+                        >
+                          {updateState.hasUpdate && (
+                            <span
+                              className="ring-background absolute -top-1 -right-1 h-3 w-3 rounded-sm bg-yellow-400 ring-2"
+                              aria-hidden="true"
+                            />
+                          )}
+                          {pluginActing || checkingUpdates ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <ArrowUp className="h-4 w-4" />
+                          )}
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="icon"
+                          disabled={pluginActing}
+                          aria-busy={pluginActing}
+                          title="删除"
+                          aria-label="删除"
+                          onClick={(event) => openDeletePluginDialog(plugin, event)}
+                        >
+                          {pluginActing ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </div>
               )

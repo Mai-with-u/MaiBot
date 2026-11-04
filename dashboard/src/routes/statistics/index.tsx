@@ -1,6 +1,7 @@
 import { useMemo, useState, type ComponentProps } from 'react'
 import { AlertCircle, CalendarClock, ExternalLink, RefreshCw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { scopeBotResourcePath } from '@/host/state'
 import { CartesianGrid, Cell, Line, LineChart, Pie, PieChart, XAxis, YAxis } from 'recharts'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -1049,7 +1050,7 @@ export function StatisticsPage() {
                   {t('statisticsPage.actions.refresh')}
                 </Button>
                 <Button asChild variant="outline" size="sm">
-                  <a href="/maibot_statistics.html" target="_blank" rel="noopener noreferrer">
+                  <a href={scopeBotResourcePath('/maibot_statistics.html')} target="_blank" rel="noopener noreferrer">
                     <ExternalLink />
                     {t('statisticsPage.actions.openHtml')}
                   </a>

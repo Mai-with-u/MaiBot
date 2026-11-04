@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import { parse as parseToml } from 'smol-toml'
 
+import { DesktopPetCurrentTaskField } from '@/components/DesktopPetCurrentTaskField'
 import { DesktopPetSkinField } from '@/components/DesktopPetSkinField'
 import { AgentACPField, AgentConnectionSettings, AgentCustomArgs, AgentDesktopField } from '@/components/agent/AgentConnectionSettings'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -92,14 +93,16 @@ import {
 } from './bot/hooks'
 import { collectChatSettings } from '@/lib/chat-settings-schema'
 import { ChatSettings } from './bot/ChatSettings'
-import { VisualSettings } from './bot/VisualSettings'
+import { CapabilitySettings } from './bot/CapabilitySettings'
 import { CommandPermissions } from './bot/CommandPermissions'
+import { PluginUsagePermissions } from './bot/PluginUsagePermissions'
 import { GlobalLearningSettings } from './bot/GlobalLearningSettings'
 import { PersonalityProfiles } from './bot/PersonalityProfiles'
 import { MemorySwitchGuard, MemorySwitchProvider } from './bot/MemorySwitchGuard'
+import { CommonSettings } from './bot/CommonSettings'
 
 type ConfigSectionData = Record<string, unknown>
-type BotSettingsMode = 'groups' | 'detail' | 'commands' | 'source'
+type BotSettingsMode = 'groups' | 'detail' | 'commands' | 'source' | 'common'
 // ==================== 常量定义 ====================
 /** Toast 显示前的延迟时间 (毫秒) */
 const TOAST_DISPLAY_DELAY = 500
@@ -120,6 +123,8 @@ interface SubtabPane {
 
 // 主导出组件：包装 RestartProvider
 export function BotConfigPage() {
+  const search = useRouterState({ select: state => state.location.searchStr })
+  if (new URLSearchParams(search).get('mode') === 'common') return <CommonSettings />
   return (
     <RestartProvider>
       <BotConfigPageContent />
@@ -352,6 +357,7 @@ function BotConfigPageContent() {
   useEffect(() => {
     const hookEntries = [
       ['desktop_pet.skin_id', DesktopPetSkinField],
+      ['desktop_pet.show_current_task', DesktopPetCurrentTaskField],
       ['agent.connection', AgentConnectionSettings, 'wrapper'],
       ['agent.desktop_manifest', AgentDesktopField, 'wrapper'],
       ['agent.acp_args', AgentCustomArgs, 'wrapper'],
@@ -494,6 +500,7 @@ function BotConfigPageContent() {
     const nextSearch = params.size ? `?${params.toString()}` : ''
     lastRouteSearchRef.current = nextSearch
     await navigate({ href: `/config/bot${nextSearch}`, replace: true })
+    if (mode === 'common') return
     if (mode === 'source') {
       await loadSourceCode()
     } else {
@@ -745,9 +752,9 @@ function BotConfigPageContent() {
             <Tabs
               value={editMode}
               onValueChange={(v) => handleModeChange(v as BotSettingsMode)}
-              className="min-w-0 flex-1 sm:w-64 sm:flex-none"
+              className="min-w-0 flex-1 sm:w-80 sm:flex-none"
             >
-              <TabsList data-config-bot-mode-tabs="true" className="grid h-9 w-full grid-cols-2">
+              <TabsList data-config-bot-mode-tabs="true" className="grid h-9 w-full grid-cols-3">
                 <TabsTrigger value="detail" className="min-w-0 gap-1 !px-1 text-sm sm:!px-2">
                   <SlidersHorizontal className="h-4 w-4 shrink-0" />
                   详细设置
@@ -756,6 +763,7 @@ function BotConfigPageContent() {
                   <ShieldCheck className="h-4 w-4 shrink-0" />
                   命令管理
                 </TabsTrigger>
+                <TabsTrigger value="common" className="min-w-0 !px-1 text-sm sm:!px-2">公共设置</TabsTrigger>
               </TabsList>
             </Tabs>
             <Button
@@ -926,13 +934,22 @@ function BotConfigPageContent() {
         )}
 
         {editMode === 'commands' && (
-          <CommandPermissions
-            pluginSection={sectionValues.plugin ?? null}
-            onChange={(value) => {
-              setSectionValue('plugin', value)
-              setHasUnsavedChanges(true)
-            }}
-          />
+          <>
+            <PluginUsagePermissions
+              pluginSection={sectionValues.plugin ?? null}
+              onChange={(value) => {
+                setSectionValue('plugin', value)
+                setHasUnsavedChanges(true)
+              }}
+            />
+            <CommandPermissions
+              pluginSection={sectionValues.plugin ?? null}
+              onChange={(value) => {
+                setSectionValue('plugin', value)
+                setHasUnsavedChanges(true)
+              }}
+            />
+          </>
         )}
 
         {/* 重启遮罩层 */}
@@ -1563,12 +1580,17 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
       return null
     }
 
-    if (tabNestedEntries.length === 1 && tabNestedEntries[0][0] === 'visual') {
+    // 能力页把能力开关、语音和视觉排在同一块面板里；含其他小节时仍走通用表单。
+    const capabilitySections = new Set(['capabilities', 'voice', 'visual'])
+    if (
+      tabNestedEntries.some(([sectionName]) => sectionName === 'visual') &&
+      tabNestedEntries.every(([sectionName]) => capabilitySections.has(sectionName))
+    ) {
       return (
-        <VisualSettings
-          schema={tabNestedEntries[0][1]}
-          values={sectionValues.visual ?? {}}
-          onChange={(path, value) => updateSectionValueByPath('visual', path, value)}
+        <CapabilitySettings
+          schemas={Object.fromEntries(tabNestedEntries)}
+          values={sectionValues}
+          onChange={(sectionName, path, value) => updateSectionValueByPath(sectionName, path, value)}
           advancedVisible={advancedVisible}
         />
       )
