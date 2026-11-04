@@ -16,6 +16,11 @@ class DesktopPetConfig(ConfigBase):
     skin_id: str = Field(default="builtin", json_schema_extra={"label": {"zh_CN": "当前皮肤"}})
     """选择已安装的皮肤 ID；支持热切换，builtin 为内置麦麦。"""
 
+    show_current_task: bool = Field(
+        default=False, json_schema_extra={"label": {"zh_CN": "显示桌宠手中事"}},
+    )
+    """在桌宠底部显示当前动作的像素字幕；需单独配置 fast_model，未配置时不可启用。"""
+
     proactive_wake_enabled: bool = Field(
         default=False, json_schema_extra={"label": {"zh_CN": "定期主动思考"}},
     )

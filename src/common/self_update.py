@@ -1,9 +1,9 @@
 """主程序自更新。
 
-Worker（WebUI）只负责检查更新与登记更新请求；真正改动代码与依赖的步骤由 Runner 在
-两次 Worker 之间执行。此时没有业务进程占用文件，失败时也能在新代码运行前回滚。
+宿主负责检查更新与登记请求，停止所有 Bot 并退出后，由独立更新进程执行。
+此时没有业务进程占用文件，失败时也能在新代码运行前回滚。
 
-本模块会被 Runner 加载，只能依赖标准库。
+本模块会被 宿主更新进程 加载，只能依赖标准库。
 """
 
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -67,6 +67,7 @@ _GIT_STALL_OPTIONS = ("-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=
 _COMMIT_FIELD_SEPARATOR = "\x1f"
 
 BLOCKER_MESSAGES: Dict[str, str] = {
+    "host_managed": "主程序由宿主统一更新，Bot 内不能直接更新",
     "uv_missing": "未找到 uv，请将 uv 加入 MaiBot 启动环境的 PATH",
     "not_uv_tool": "当前不是 PyPI 来源的 uv tool 安装，请使用原安装工具更新",
     "package_runner_missing": "请通过 maibot run 启动，才能自动更新并重启",
@@ -140,7 +141,7 @@ class UpdateCheck:
 
 @dataclass
 class PendingUpdate:
-    """Worker 登记、等待 Runner 执行的更新请求。"""
+    """Worker 登记、等待 宿主更新进程 执行的更新请求。"""
 
     target_commit: str
     base_commit: str
@@ -152,7 +153,7 @@ class PendingUpdate:
 
 @dataclass
 class UpdateResult:
-    """Runner 执行一次更新后的结果，供 WebUI 展示。"""
+    """宿主更新进程 执行一次更新后的结果，供 WebUI 展示。"""
 
     success: bool
     started_at: float
@@ -621,9 +622,9 @@ def check_for_update(
 def request_update(
     expected_commit: str, root: Path = PROJECT_ROOT, source_id: Optional[str] = None, custom_prefix: str = ""
 ) -> PendingUpdate:
-    """登记更新请求，等待 Runner 在下次重启时执行。
+    """登记更新请求，等待 宿主更新进程 在下次重启时执行。
 
-    expected_commit 是用户在界面上确认过的目标提交；Runner 只会更新到这个提交。
+    expected_commit 是用户在界面上确认过的目标提交；宿主更新进程 只会更新到这个提交。
     """
 
     if PACKAGED_INSTALL:
@@ -658,7 +659,7 @@ def request_update(
     if expected_commit == local.commit:
         raise SelfUpdateError("already_up_to_date", "当前已经是这个版本")
 
-    # 用户确认更新后才拉取对象；Runner 重启后仍会重新验证来源与快进条件。
+    # 用户确认更新后才拉取对象；宿主更新进程 重启后仍会重新验证来源与快进条件。
     _fetch_branch_head(root, local.branch, selected, custom_prefix)
     object_check = _run_command(["git", "cat-file", "-e", f"{expected_commit}^{{commit}}"], root, GIT_TIMEOUT_SECONDS)
     if object_check.returncode != 0:
@@ -769,10 +770,10 @@ def _rollback(
 
 
 def apply_pending_update(logger: Any, root: Path = PROJECT_ROOT) -> Optional[UpdateResult]:
-    """由 Runner 在两次 Worker 之间调用：执行已登记的更新并记录结果。
+    """在没有任何进程使用程序时调用：执行已登记的更新并记录结果。
 
     没有待执行的请求时返回 None。无论成功与否，请求都只会被执行一次。
-    更新成功后，调用方应让新代码的 Runner 接手（见 process_runner.run_runner）。
+    更新成功后，调用方应以新代码重新启动进程。
     """
 
     pending_path = _pending_path(root)

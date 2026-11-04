@@ -13,7 +13,7 @@ import shutil
 import time
 import types
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
 import tomlkit
@@ -23,6 +23,8 @@ from src.common.prompt_i18n import clear_prompt_cache, extract_prompt_placeholde
 from src.common.paths import resource_path
 from src.config.config import CONFIG_DIR, MODEL_CONFIG_VERSION, Config, ModelConfig, PROJECT_ROOT, config_manager
 from src.config.config_base import AttributeData, ConfigBase
+from src.config.shared_settings import shared_settings_path, strip_shared_settings
+from src.config.shared_models import catalog_revision, merge_catalog, shared_models_path, validate_catalog
 from src.config.config_upgrade_hooks import apply_config_upgrade_hooks
 from src.config.model_configs import (
     APIProvider,
@@ -54,7 +56,6 @@ from src.config.official_configs import (
     WebUIConfig,
 )
 from src.webui.config_schema import ConfigSchemaGenerator
-from src.webui.dependencies import require_auth
 from src.webui.utils.toml_utils import _update_toml_doc, save_toml_with_format
 
 logger = get_logger("webui")
@@ -65,8 +66,8 @@ SectionBody = Annotated[Any, Body()]
 RawContentBody = Annotated[str, Body(embed=True)]
 PathBody = Annotated[Dict[str, str], Body()]
 
-router = APIRouter(prefix="/config", tags=["config"], dependencies=[Depends(require_auth)])
-compat_router = APIRouter(prefix="/api/config", tags=["config-compat"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/config", tags=["config"])
+compat_router = APIRouter(prefix="/api/config", tags=["config-compat"])
 
 PROMPTS_DIR = resource_path("prompts")
 CUSTOM_PROMPTS_DIR = PROJECT_ROOT / "data" / "custom_prompts"
@@ -507,7 +508,7 @@ def _validate_model_config_file(config_path: Path) -> None:
         plain_config_data = apply_config_upgrade_hooks(
             plain_config_data, "model_config.toml", plain_config_data["inner"]["version"], MODEL_CONFIG_VERSION
         ).data
-        ModelConfig.from_dict(AttributeData(), copy.deepcopy(plain_config_data))
+        ModelConfig.from_dict(AttributeData(), merge_catalog(plain_config_data))
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"模型配置副本无效: {str(exc)}") from exc
 
@@ -1372,21 +1373,41 @@ def get_bot_config():
 
 @router.get("/model")
 def get_model_config():
-    """获取模型配置（包含提供商和模型任务配置）"""
-    try:
-        config_path = os.path.join(CONFIG_DIR, "model_config.toml")
-        if not os.path.exists(config_path):
-            raise HTTPException(status_code=404, detail="配置文件不存在")
+    """模型定义来自公共目录，任务选择来自当前 Bot。"""
+    path = Path(CONFIG_DIR) / "model_config.toml"
+    if not path.exists():
+        raise HTTPException(404, "配置文件不存在")
+    local = tomlkit.parse(path.read_text(encoding="utf-8")).unwrap()
+    effective = merge_catalog(local)
+    effective["_shared_catalog"] = {"revision": catalog_revision()}
+    return {"success": True, "config": effective}
 
-        with open(config_path, "r", encoding="utf-8") as f:
-            config_data = tomlkit.load(f)
 
-        return {"success": True, "config": config_data}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"读取配置文件失败: {e}")
-        raise HTTPException(status_code=500, detail=f"读取配置文件失败: {str(e)}") from e
+def _save_effective_model_config(data: dict, section_name: str | None = None, revision: str | None = None) -> str:
+    if revision is not None and revision != catalog_revision():
+        raise HTTPException(409, "公共模型配置已改变，请重新加载后再保存")
+    path = Path(CONFIG_DIR) / "model_config.toml"
+    previous = tomlkit.parse(path.read_text(encoding="utf-8")).unwrap()
+    submitted = copy.deepcopy(data)
+    if section_name is not None:
+        submitted = merge_catalog(previous)
+        if isinstance(data, dict) and isinstance(submitted.get(section_name), dict) and section_name != "web":
+            _update_toml_doc(submitted[section_name], data)
+        else:
+            submitted[section_name] = data
+    submitted.pop("_shared_catalog", None)
+    submitted = _coerce_config_numeric_values(submitted, ModelConfig)
+    if section_name in {"models", "api_providers"}:
+        validate_catalog(submitted)
+    else:
+        ModelConfig.from_dict(AttributeData(), copy.deepcopy(submitted))
+    catalog_path = shared_models_path()
+    if catalog_path is not None:
+        from src.host.shared_models import save_effective_config
+
+        return save_effective_config(catalog_path, path, submitted, revision)
+    save_toml_with_format(submitted, str(path))
+    return catalog_revision()
 
 
 @router.get("/model/versions", response_model=ModelConfigVersionListResponse)
@@ -1474,7 +1495,15 @@ async def activate_model_config_version(version_id: str, request: ModelConfigVer
 
     temp_path = active_path.with_name(f".{active_path.name}.{normalized_version_id}.tmp")
     try:
-        shutil.copy2(version_path, temp_path)
+        if shared_models_path() is not None:
+            document = tomlkit.parse(version_path.read_text(encoding="utf-8"))
+            document.pop("models", None)
+            document.pop("api_providers", None)
+            if "web" in document:
+                document["web"].pop("services", None)
+            temp_path.write_text(tomlkit.dumps(document), encoding="utf-8")
+        else:
+            shutil.copy2(version_path, temp_path)
         os.replace(temp_path, active_path)
     finally:
         if temp_path.exists():
@@ -1509,6 +1538,8 @@ def update_bot_config(config_data: ConfigBody):
     """更新麦麦主程序配置"""
     try:
         config_data = _coerce_config_numeric_values(config_data, Config)
+        if shared_settings_path() is not None:
+            strip_shared_settings(config_data)
 
         # 验证配置数据
         try:
@@ -1530,29 +1561,17 @@ def update_bot_config(config_data: ConfigBody):
 
 
 @router.post("/model")
-async def update_model_config(config_data: ConfigBody):
-    """更新模型配置"""
+async def update_model_config(config_data: ConfigBody, catalog_revision: str | None = None):
+    """保存公共模型定义与当前 Bot 的任务配置。"""
     try:
-        config_data = _coerce_config_numeric_values(config_data, ModelConfig)
-
-        # 验证配置数据
-        try:
-            ModelConfig.from_dict(AttributeData(), copy.deepcopy(config_data))
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"配置数据验证失败: {str(e)}") from e
-
-        # 保存配置文件（自动保留注释和格式）
-        config_path = os.path.join(CONFIG_DIR, "model_config.toml")
-        save_toml_with_format(config_data, config_path)
-        await _reload_model_config_after_save()
-
-        logger.info("模型配置已更新")
-        return {"success": True, "message": "配置已保存"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"保存配置文件失败: {e}")
-        raise HTTPException(status_code=500, detail=f"保存配置文件失败: {str(e)}") from e
+        revision = await asyncio.to_thread(_save_effective_model_config, config_data, None, catalog_revision)
+    except ValidationError as exc:
+        detail = "; ".join(item["msg"] for item in exc.errors(include_input=False, include_context=False, include_url=False))
+        raise HTTPException(400, f"模型配置无效：{detail}") from exc
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await _reload_model_config_after_save()
+    return {"success": True, "message": "配置已保存", "catalog_revision": revision}
 
 
 # ===== 配置节更新接口 =====
@@ -1594,6 +1613,8 @@ def update_bot_config_section(section_name: str, section_data: SectionBody):
             raise HTTPException(status_code=400, detail=f"配置数据验证失败: {str(e)}") from e
 
         config_data = plain_config_data
+        if shared_settings_path() is not None:
+            strip_shared_settings(config_data)
 
         # 保存配置（格式化数组为多行，保留注释）
         save_toml_with_format(config_data, config_path)
@@ -1648,6 +1669,9 @@ def update_bot_config_raw(raw_content: RawContentBody):
         # 保存配置文件
         config_path = os.path.join(CONFIG_DIR, "bot_config.toml")
         with open(config_path, "w", encoding="utf-8") as f:
+            if shared_settings_path() is not None:
+                strip_shared_settings(config_data)
+                raw_content = tomlkit.dumps(config_data)
             f.write(raw_content)
 
         logger.info("麦麦主程序配置已更新（原始模式）")
@@ -1683,7 +1707,7 @@ def _save_web_config_section(section_data: Any) -> None:
     plain["web"] = section_data
     plain = _coerce_config_numeric_values(plain, ModelConfig)
     try:
-        ModelConfig.from_dict(AttributeData(), copy.deepcopy(plain))
+        ModelConfig.from_dict(AttributeData(), merge_catalog(plain))
     except ValidationError as exc:
         # 不把 Pydantic 的输入快照返回给前端，其中可能包含服务密钥。
         errors = exc.errors(include_input=False, include_context=False, include_url=False)
@@ -1695,9 +1719,16 @@ def _save_web_config_section(section_data: Any) -> None:
 
 
 @router.post("/model/section/{section_name}")
-async def update_model_config_section(section_name: str, section_data: SectionBody):
+async def update_model_config_section(section_name: str, section_data: SectionBody, catalog_revision: str | None = None):
     """更新模型配置的指定节（保留注释和格式）"""
     try:
+        if shared_models_path() is not None:
+            try:
+                revision = await asyncio.to_thread(_save_effective_model_config, section_data, section_name, catalog_revision)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(400, str(exc)) from exc
+            await _reload_model_config_after_save()
+            return {"success": True, "message": "配置已保存", "catalog_revision": revision}
         if section_name == "web":
             await asyncio.to_thread(_save_web_config_section, section_data)
             await _reload_model_config_after_save()
@@ -1731,7 +1762,7 @@ async def update_model_config_section(section_name: str, section_data: SectionBo
         # 验证完整配置
         try:
             plain_config_data = _coerce_config_numeric_values(_toml_to_plain_dict(config_data), ModelConfig)
-            ModelConfig.from_dict(AttributeData(), copy.deepcopy(plain_config_data))
+            ModelConfig.from_dict(AttributeData(), merge_catalog(plain_config_data))
         except Exception as e:
             logger.error(f"配置数据验证失败，详细错误: {str(e)}")
             allow_incomplete_provider_save = False
@@ -1772,6 +1803,8 @@ async def update_model_config_section(section_name: str, section_data: SectionBo
                 raise HTTPException(status_code=400, detail=f"配置数据验证失败: {str(e)}") from e
 
         config_data = plain_config_data
+        if shared_settings_path() is not None:
+            strip_shared_settings(config_data)
 
         # 保存配置（格式化数组为多行，保留注释）
         save_toml_with_format(config_data, config_path)

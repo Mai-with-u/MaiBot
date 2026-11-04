@@ -30,7 +30,7 @@ import tomllib
 from pydantic import TypeAdapter, ValidationError
 import tomlkit
 
-from src.common.paths import get_instance_root
+from src.common.paths import get_instance_root, resolve_plugin_config_path
 from src.plugin_runtime.local_sdk import activate_local_sdk_import_path
 
 activate_local_sdk_import_path()
@@ -1047,7 +1047,7 @@ class PluginRunner:
             enforce_version=True,
         )
         plugin_config = normalization_result.normalized_config
-        config_path = Path(meta.plugin_dir) / "config.toml"
+        config_path = resolve_plugin_config_path(Path(meta.plugin_dir))
         should_initialize_file = not config_path.exists() and bool(default_config)
         if normalization_result.should_persist or should_initialize_file:
             self._save_plugin_config(meta.plugin_dir, plugin_config)
@@ -1253,7 +1253,7 @@ class PluginRunner:
             config_data: 需要写回的配置字典。
         """
 
-        config_path = Path(plugin_dir) / "config.toml"
+        config_path = resolve_plugin_config_path(Path(plugin_dir))
         config_path.parent.mkdir(parents=True, exist_ok=True)
         if config_path.exists():
             try:
@@ -1273,9 +1273,9 @@ class PluginRunner:
 
     @staticmethod
     def _load_plugin_config(plugin_dir: str, plugin_id: str = "") -> Dict[str, Any]:
-        """从插件目录读取 config.toml。"""
+        """读取插件配置；受管内置插件的可写配置归当前实例所有。"""
         _ = plugin_id
-        config_path = Path(plugin_dir) / "config.toml"
+        config_path = resolve_plugin_config_path(Path(plugin_dir))
         if not config_path.exists():
             return {}
 
@@ -2577,6 +2577,9 @@ class PluginRunner:
         if meta is None or meta.config_error:
             return envelope.make_error_response(ErrorCode.E_BAD_PAYLOAD.value, "插件未运行或配置无效")
         button_id = envelope.payload.get("button_id")
+        action_id = envelope.payload.get("action_id")
+        if action_id is not None and (not button_id or not isinstance(action_id, str) or not 1 <= len(action_id) <= 64):
+            return envelope.make_error_response(ErrorCode.E_BAD_PAYLOAD.value, "面板操作 ID 无效")
         if button_id is not None and (not isinstance(button_id, str) or not button_id):
             return envelope.make_error_response(ErrorCode.E_BAD_PAYLOAD.value, "按钮 ID 无效")
         provider = cast(DesktopPetButtonProvider, meta.instance)
@@ -2592,8 +2595,9 @@ class PluginRunner:
                 if self._loader.get_plugin(envelope.plugin_id) is not meta:
                     raise ValueError("插件已卸载或重载")
                 if button_id is not None:
-                    await invoke_button(provider, snapshot, button_id)
+                    panel = await invoke_button(provider, snapshot, button_id, action_id)
                     snapshot = await read_button_snapshot(provider)
+                    snapshot.panel = panel
             return envelope.make_response(payload=snapshot.model_dump())
         except TimeoutError:
             return envelope.make_error_response(ErrorCode.E_BAD_PAYLOAD.value, "桌宠按钮请求超时")

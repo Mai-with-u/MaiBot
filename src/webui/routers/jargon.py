@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional, Set
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, case, cast, func, not_, or_, String as SQLString
 from sqlmodel import Session, col, delete, select
@@ -15,11 +15,10 @@ from src.common.database.database_model import ChatSession, Jargon, JargonCreate
 from src.common.logger import get_logger
 from src.common.utils.utils_config import JargonConfigUtils
 from src.config.config import global_config
-from src.webui.dependencies import require_auth
 
 logger = get_logger("webui.jargon")
 
-router = APIRouter(prefix="/jargon", tags=["Jargon"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/jargon", tags=["Jargon"])
 JARGON_SESSION_IDS_QUERY = Query(None, description="按共享组内任一聊天流ID筛选")
 
 

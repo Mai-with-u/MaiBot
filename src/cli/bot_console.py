@@ -1,7 +1,7 @@
 """Bot 主程序的交互式本地管理终端。"""
 
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 from rich import box
 from rich.markdown import Markdown
@@ -126,11 +126,34 @@ class BotConsole:
         self._driver = BotConsoleDriver()
         self._platform_io: PlatformIOManager = get_platform_io_manager()
         self._session_id: Optional[str] = None
-        self._prompt_session: PromptSession[str] = PromptSession(
-            completer=DynamicCompleter(self._create_completer),
-            complete_while_typing=False,
-            history=InMemoryHistory(),
-        )
+
+    @staticmethod
+    def completions() -> List[str]:
+        """供宿主终端读取本 Bot 的指令与真实聊天名。"""
+        return [*BotConsole._COMMAND_COMPLETIONS, *[
+            f"/clear {name}" for name in chat_manager.get_named_session_options(
+                excluded_platforms={BOT_CONSOLE_PLATFORM},
+            )
+        ]]
+
+    async def start(self) -> None:
+        """仅注册输出驱动；Worker 不创建终端或读取 stdin。"""
+        await self._register_output_driver()
+
+    async def submit(self, text: str) -> None:
+        """处理宿主已选定此 Bot 的终端输入。"""
+        if text == "/help":
+            self._show_help()
+        else:
+            await self._dispatch_input(text)
+
+    async def close(self) -> None:
+        """关闭终端路由与本地操作员会话。"""
+        await self._unregister_output_driver()
+        if self._session_id is not None:
+            runtime = heartflow_manager.heartflow_chat_list.pop(self._session_id, None)
+            if runtime is not None:
+                await runtime.stop()
 
     def _create_completer(self) -> WordCompleter:
         """根据当前真实聊天流动态构造终端补全器。"""
@@ -232,7 +255,7 @@ class BotConsole:
 
 - `Tab`：补全指令或聊天名
 - `↑` / `↓`：浏览本次运行的输入历史
-- `Ctrl+C`：退出 Bot
+- `Ctrl+C`：关闭宿主及其管理的 Bot
 - 其他文本：作为本地操作员消息进入正式聊天处理链
 """
         console.print(
@@ -256,14 +279,19 @@ class BotConsole:
     async def run(self) -> None:
         """运行管理终端，直至任务取消、stdin 关闭或收到 ``exit()``。"""
 
-        await self._register_output_driver()
+        prompt_session: PromptSession[str] = PromptSession(
+            completer=DynamicCompleter(self._create_completer),
+            complete_while_typing=False,
+            history=InMemoryHistory(),
+        )
+        await self.start()
         try:
             self._show_banner()
 
             with patch_stdout(raw=True), redirect_console_logs(sys.stdout):
                 while True:
                     try:
-                        raw_input = await self._prompt_session.prompt_async(
+                        raw_input = await prompt_session.prompt_async(
                             ANSI("\x1b[1;36m> \x1b[0m")
                         )
                     except EOFError:
@@ -282,8 +310,4 @@ class BotConsole:
 
                     await self._dispatch_input(text)
         finally:
-            await self._unregister_output_driver()
-            if self._session_id is not None:
-                runtime = heartflow_manager.heartflow_chat_list.pop(self._session_id, None)
-                if runtime is not None:
-                    await runtime.stop()
+            await self.close()

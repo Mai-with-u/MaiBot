@@ -17,7 +17,7 @@ from src.webui.routers.websocket import plugin_runtime as runtime_ws
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("enabled", [False, True])
-async def test_cold_enable_installs_dependencies_before_config_import(tmp_path, monkeypatch, enabled):
+async def test_cold_enable_requests_host_before_importing_plugin(tmp_path, monkeypatch, enabled):
     plugin_dir = tmp_path / "demo"
     plugin_dir.mkdir()
     (plugin_dir / "config.toml").write_text(f"[plugin]\nenabled = {str(enabled).lower()}\n", encoding="utf-8")
@@ -37,19 +37,14 @@ async def test_cold_enable_installs_dependencies_before_config_import(tmp_path, 
     calls = []
 
     async def install(requirements):
-        assert manager._plugin_file_update_lock.locked()
-        assert [requirement.requirement_text for requirement in requirements] == ["missing-cold-enable-package>=1"]
         calls.append("install")
         return True, ""
 
     async def restart(reason):
-        assert calls == ["install"]
-        assert reason == "config_enabled_dependencies"
         calls.append("restart")
         return True
 
     async def inspect(plugin_id):
-        assert calls == ["install", "restart"]
         calls.append("inspect")
         return InspectPluginConfigResultPayload(
             success=True, enabled=True, normalized_config={"plugin": {"enabled": True}},
@@ -67,11 +62,20 @@ async def test_cold_enable_installs_dependencies_before_config_import(tmp_path, 
     monkeypatch.setattr(manager, "_restart_supervisors", restart)
     monkeypatch.setattr(manager, "load_plugin_globally", load)
     monkeypatch.setattr(manager, "_refresh_plugin_config_watch_subscriptions", AsyncMock())
-    monkeypatch.setattr(manager._plugin_dependency_pipeline, "_install_requirements", install)
+    monkeypatch.setattr(manager._plugin_dependency_pipeline, "install_requirements", install)
     monkeypatch.setattr(ManifestValidator, "get_installed_package_version", lambda self, name: None)
 
-    assert await manager.apply_plugin_config("test.demo") == ("success" if enabled else "inactive")
-    assert calls == (["install", "restart", "inspect", "load"] if enabled else [])
+    request = AsyncMock()
+    monkeypatch.setattr("src.plugin_runtime.dependency_pipeline.request_dependency_preparation", request)
+    assert await manager.apply_plugin_config("test.demo") == ("pending_dependencies" if enabled else "inactive")
+    # 请求已受理时不冷导入插件，也不把正常的依赖准备返回成启用失败。
+    assert request.await_count == int(enabled)
+    assert calls == []
+    if enabled:
+        # 新装插件同样等待宿主准备，不能因为尚未加载而触发安装事务回滚。
+        await manager.activate_installed_plugin("test.demo")
+        assert request.await_count == 2
+        assert calls == []
 
 
 @pytest.mark.asyncio

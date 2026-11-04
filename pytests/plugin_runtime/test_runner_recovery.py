@@ -672,7 +672,7 @@ async def test_manager_starts_watcher_only_after_runner_load_round(runtime, monk
     monkeypatch.setattr(supervisor, "_health_check_loop", AsyncMock())
     monkeypatch.setattr(manager, "_resolve_runtime_plugin_dirs", lambda: ([tmp_path], []))
     monkeypatch.setattr(manager, "_build_supervisors", build_supervisors)
-    monkeypatch.setattr(manager, "_sync_plugin_dependencies", AsyncMock(return_value=DependencySyncState(set(), False)))
+    monkeypatch.setattr(manager, "_sync_plugin_dependencies", AsyncMock(return_value=DependencySyncState(set())))
     monkeypatch.setattr(manager, "ensure_builtin_hook_specs_registered", Mock())
     monkeypatch.setattr(manager, "_start_plugin_usage_tracking", AsyncMock())
     monkeypatch.setattr(manager, "_build_group_start_order", lambda *args, **kwargs: ["builtin"])

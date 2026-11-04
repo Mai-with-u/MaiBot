@@ -14,7 +14,7 @@ import os
 import re
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, col, select
@@ -42,10 +42,9 @@ from src.maisaka.display.reasoning_steps import find_reasoning_steps
 from src.services.llm_service import generate as generate_llm_response
 from src.services.bot_account_service import get_all_bot_account_pairs
 from src.services.service_task_resolver import get_available_models
-from src.webui.dependencies import require_auth
 from src.webui.routers.avatar import build_webui_avatar_url
 
-router = APIRouter(prefix="/reasoning-process", tags=["reasoning-process"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/reasoning-process", tags=["reasoning-process"])
 
 PROJECT_ROOT = get_instance_root()
 PROMPT_LOG_ROOT = (PROJECT_ROOT / "logs" / "maisaka_prompt").resolve()

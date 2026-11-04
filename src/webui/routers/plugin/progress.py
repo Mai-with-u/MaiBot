@@ -4,11 +4,9 @@ from typing import Any, Dict, Optional, Set
 import asyncio
 import json
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from src.common.logger import get_logger
-from src.webui.core import get_token_manager
-from src.webui.routers.websocket.auth import verify_ws_token
 from src.webui.routers.websocket.manager import websocket_manager
 
 logger = get_logger("webui.plugin_progress")
@@ -113,32 +111,13 @@ async def update_progress(
 
 
 @router.websocket("/ws/plugin-progress")
-async def websocket_plugin_progress(websocket: WebSocket, token: Optional[str] = Query(None)) -> None:
+async def websocket_plugin_progress(websocket: WebSocket) -> None:
     """旧版插件进度 WebSocket 入口。
 
     Args:
         websocket: FastAPI WebSocket 对象。
-        token: 可选的一次性握手 Token。
     """
-    is_authenticated = False
-
-    if token and verify_ws_token(token):
-        is_authenticated = True
-        logger.debug("插件进度 WebSocket 使用临时 token 认证成功")
-
-    if not is_authenticated:
-        cookie_token = websocket.cookies.get("maibot_session")
-        if cookie_token:
-            token_manager = get_token_manager()
-            if token_manager.verify_cookie_token(cookie_token):
-                is_authenticated = True
-                logger.debug("插件进度 WebSocket 使用 Cookie 认证成功")
-
-    if not is_authenticated:
-        logger.warning("插件进度 WebSocket 连接被拒绝：认证失败")
-        await websocket.close(code=4001, reason="认证失败，请重新登录")
-        return
-
+    # 登录与会话失效由宿主代理统一处理。
     await websocket.accept()
     active_connections.add(websocket)
     logger.info(f"📡 插件进度 WebSocket 客户端已连接（已认证），当前连接数: {len(active_connections)}")

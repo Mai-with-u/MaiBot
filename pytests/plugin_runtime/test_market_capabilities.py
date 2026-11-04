@@ -166,14 +166,12 @@ def test_statistics_reads_official_service_without_loading_catalog(catalog, monk
 def test_statistics_route_is_separate_from_plugin_detail(catalog, monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from src.webui.dependencies import require_auth
     from src.webui.routers.plugin.marketplace import router
 
     read = AsyncMock(return_value={"success": True, "stats": {"a": catalog["plugins"][0]["stats"]}})
     monkeypatch.setattr(statistics, "get_summary", read)
     app = FastAPI()
     app.include_router(router)
-    app.dependency_overrides[require_auth] = lambda: "ok"
     with TestClient(app) as client:
         response = client.get("/marketplace/stats/summary?force_refresh=true")
     assert response.status_code == 200
@@ -477,12 +475,10 @@ def test_invalidating_inflight_market_request_prevents_old_cache_refill():
 def test_webui_uses_public_catalog_and_removed_read_routes_are_unavailable(catalog):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from src.webui.dependencies import require_auth
     from src.webui.routers.plugin import router
 
     app = FastAPI()
     app.include_router(router)
-    app.dependency_overrides[require_auth] = lambda: "test"
     with TestClient(app) as client:
         response = client.get("/plugins/marketplace")
         assert response.status_code == 200

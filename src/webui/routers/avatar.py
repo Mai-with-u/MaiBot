@@ -9,16 +9,15 @@ import os
 import re
 import time
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 
 from src.common.paths import get_instance_root
 from src.common.runtime_loop import run_on_main_loop
 from src.platform_io.avatar import avatar_service, validate_avatar_target
-from src.webui.dependencies import require_auth
 from src.webui.routers.chat.service import INTERNAL_CHAT_USER_ID
 
-router = APIRouter(prefix="/avatar", tags=["avatar"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/avatar", tags=["avatar"])
 
 # 浏览器直接复用已下载头像的最长时间；超过后带 ETag 校验，头像未变只返回 304。
 AVATAR_BROWSER_MAX_AGE = 3 * 60 * 60

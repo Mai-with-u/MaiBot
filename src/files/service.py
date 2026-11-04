@@ -14,6 +14,8 @@ import secrets
 import threading
 import time
 
+from src.common.runtime_context import runtime_context
+
 from .config import files_enabled
 from .network import download_chunks
 from .models import FileAsset
@@ -118,11 +120,13 @@ class FileService:
         return self.transfer_url(token)
 
     def transfer_url(self, token: str) -> str:
-        base = (self.store.config.transfer_base_url.strip() or self.default_base_url).rstrip("/")
+        # 对外地址由宿主统一下发，实例文件配额与下载白名单仍各自独立。
+        base = self.default_base_url.rstrip("/")
         parsed = urlsplit(base)
         if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
-            raise ValueError("files.transfer_base_url 必须是无凭证、无查询参数的 HTTP(S) 地址")
-        return f"{base}/api/files/transfers/{token}"
+            raise ValueError("宿主 public_base_url 必须是无凭证、无查询参数的 HTTP(S) 地址")
+        # 公开地址属于所有 Bot 共用的宿主，文件凭证必须显式路由到所属 Bot。
+        return f"{base}/api/files/bots/{runtime_context().bot_id}/transfers/{token}"
 
     async def resolve_url(self, source: Dict[str, Any]) -> str:
         from src.platform_io import get_platform_io_manager
@@ -277,12 +281,10 @@ def get_file_service() -> FileService:
     from src.common.paths import get_instance_root
     from src.config.config import global_config
 
-    from src.config.startup_bindings import get_local_http_base_url
-
     initialize_database()
     return FileService(FileStore(get_instance_root() / "data" / "files", engine, global_config.files,
                                  config_provider=lambda: global_config.files),
-                       default_base_url=get_local_http_base_url(), enabled_provider=files_enabled)
+                       default_base_url=runtime_context().public_base_url, enabled_provider=files_enabled)
 
 
 async def periodic_file_cleanup() -> None:

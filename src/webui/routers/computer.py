@@ -1,16 +1,15 @@
 """共享电脑 WebUI；所有沙盒操作投递到 bot 主循环。"""
 
 from typing import Any, Awaitable, Callable, Dict, List, Literal
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 import base64
 
 from src.common.runtime_loop import run_on_main_loop
 from src.computer.service import computer_service
-from src.webui.dependencies import require_auth
 
-router = APIRouter(prefix="/computer", tags=["computer"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/computer", tags=["computer"])
 
 
 class ComputerControl(BaseModel):

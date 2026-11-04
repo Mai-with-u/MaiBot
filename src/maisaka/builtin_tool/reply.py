@@ -148,7 +148,7 @@ def get_tool_spec(context: Optional[ToolAvailabilityContext] = None) -> ToolSpec
             "type": "string",
             "minLength": 1,
             "description": (
-                "提供本次回复的上下文关键信息与回复方向，"
+                "提供本次回复的上下文关键信息，对当前聊天逻辑和内容的梳理，以及你认为此时需要回复的原因，"
                 "包括当前聊天状态、人物关系、事实信息、回忆信息；不是回复正文。"
             ),
         },

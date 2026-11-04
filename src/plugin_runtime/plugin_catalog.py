@@ -9,6 +9,7 @@ import json
 import tomllib
 
 from src.common.logger import get_logger
+from src.common.paths import resolve_plugin_config_path
 from src.config.file_watcher import FileChange, FileWatcher
 from src.plugin_runtime.runner.manifest_validator import is_reserved_plugin_directory
 
@@ -37,6 +38,10 @@ class PluginCatalogEntry:
 
 def _resource_path(plugin_path: Path, filename: str) -> Path:
     """索引刷新时检查文件边界，查询阶段不重复解析已验证的路径。"""
+    if filename == "config.toml":
+        config_path = resolve_plugin_config_path(plugin_path)
+        if config_path != plugin_path / filename:
+            return config_path  # 受管内置配置路径已由 resolver 校验实例边界。
     path = plugin_path / filename
     if path.is_symlink():
         raise ValueError(f"插件元数据文件不能是符号链接: {path}")
