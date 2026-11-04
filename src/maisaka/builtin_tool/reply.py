@@ -9,7 +9,7 @@ import traceback
 
 from src.chat.replyer.replyer_manager import replyer_manager
 from src.chat.message_receive.message import SessionMessage
-from src.chat.utils.utils import is_bot_self
+from src.chat.utils.utils import get_bot_account, is_bot_self
 from src.cli.maisaka_cli_sender import CLI_PLATFORM_NAME, render_cli_message
 from src.common.data_models.message_component_data_model import TextComponent
 from src.common.data_models.reply_generation_data_models import ReplyGenerationResult, build_reply_monitor_detail
@@ -331,15 +331,13 @@ async def _resolve_reply_quote(
     tool_ctx: BuiltinToolRuntimeContext,
     text: str,
     target_message: SessionMessage,
+    bot_user_id: str,
 ) -> Tuple[bool, Optional[float]]:
     """群聊和私聊分别按固定公式及频率决定引用。"""
     stream = tool_ctx.runtime.chat_stream
     frequency = get_scene(stream.is_group_session).quote_frequency
     if frequency == "never" or stream.platform == CLI_PLATFORM_NAME:
         return False, 0.0
-    bot_user_id = str(stream.account_id or "").strip()
-    if not bot_user_id:
-        raise ValueError("固定引用规则需要明确的 bot 发送账号")
     return decide_quote(
         context=tool_ctx.runtime.get_reply_quote_context(target_message), bot_user_id=bot_user_id,
         text=text, frequency=frequency, is_group=stream.is_group_session,
@@ -438,6 +436,11 @@ async def execute_reply(
     supplement_runner: Optional[Callable[[], Awaitable["ReplySupplement"]]] = None,
 ) -> ToolExecutionResult:
     """持有本轮补充任务，失败或取消时回收任务，禁止后台任务越过发送边界。"""
+    stream = tool_ctx.runtime.chat_stream
+    # 与发送链路使用同一身份解析；有歧义时在生成正文及补充内容前暴露错误。
+    bot_user_id = await asyncio.to_thread(get_bot_account, stream.platform, stream.account_id)
+    if not bot_user_id:
+        return tool_ctx.build_failure_result("reply", "无法确定 Bot 发送账号，请为聊天流明确指定 account_id。")
     task = asyncio.create_task(supplement_runner()) if supplement_runner is not None else None
 
     async def resolve_supplement() -> "ReplySupplement":
@@ -445,7 +448,7 @@ async def execute_reply(
 
     try:
         return await _execute_reply(
-            tool_ctx, arguments, call_id=call_id, target_message=target_message,
+            tool_ctx, arguments, call_id=call_id, bot_user_id=bot_user_id, target_message=target_message,
             supplement_runner=resolve_supplement if task is not None else None,
         )
     finally:
@@ -460,6 +463,7 @@ async def _execute_reply(
     arguments: Dict[str, Any],
     *,
     call_id: str,
+    bot_user_id: str,
     target_message: Optional[SessionMessage] = None,
     supplement_runner: Optional[Callable[[], Awaitable["ReplySupplement"]]] = None,
 ) -> ToolExecutionResult:
@@ -757,7 +761,7 @@ async def _execute_reply(
         "".join(c.text for c in reply_sequences[first_reply_index].components if isinstance(c, TextComponent))
         if reply_sequences else ""
     )
-    set_quote, quote_probability = await _resolve_reply_quote(tool_ctx, first_text, target_message)
+    set_quote, quote_probability = await _resolve_reply_quote(tool_ctx, first_text, target_message, bot_user_id)
     if supplement is not None:
         reply_metadata["reply_supplement"] = {**supplement.metadata, "status": "completed"}
     # 补充器选中的引用同样遵守群聊/私聊的三档频率与 CLI 平台限制。

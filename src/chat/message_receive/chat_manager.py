@@ -110,6 +110,86 @@ class ChatManager:
                 return self._get_or_create_session(platform, user_id, group_id, account_id, scope)
         return await asyncio.to_thread(create)
 
+    async def open_session(
+        self,
+        *,
+        platform: str,
+        user_id: str = "",
+        group_id: Optional[str] = None,
+        account_id: Optional[str] = None,
+        scope: Optional[str] = None,
+    ) -> Tuple[BotChatSession, bool]:
+        """按目标打开真实会话；未指定归属时只接受唯一确定的账号与作用域。"""
+        from src.core.local_operator import LOCAL_PLATFORM_BOT_IDS
+
+        platform = platform.strip().lower()
+        account_id = self._normalize_route_value(account_id)
+        scope = self._normalize_route_value(scope)
+        local_platform = platform in {"internal", "webui", *LOCAL_PLATFORM_BOT_IDS}
+
+        def open_target() -> Tuple[BotChatSession, bool]:
+            with self._session_creation_lock:
+                existing = self.resolve_sessions_by_target(
+                    platform=platform, target_id=group_id or user_id,
+                    chat_type="group" if group_id else "private",
+                )
+                # 外部平台的旧无账号流不能代表入站路由；保留原记录，但不再继续向它投递。
+                candidates = [
+                    session for session in existing
+                    if (local_platform or session.account_id)
+                    and (account_id is None or session.account_id == account_id)
+                    and (scope is None or session.scope == scope)
+                ]
+                if len(candidates) > 1:
+                    raise ValueError("目标存在多个聊天流，请明确指定 account_id 和 scope")
+                if candidates:
+                    candidates[0].update_active_time()
+                    return candidates[0], False
+
+                resolved_account, resolved_scope = account_id, scope
+                if not local_platform:
+                    resolved_account, resolved_scope = self._resolve_new_session_route(platform, account_id, scope)
+                session = self._get_or_create_session(platform, user_id, group_id, resolved_account, resolved_scope)
+                return session, session.session_id not in {item.session_id for item in existing}
+
+        return await asyncio.to_thread(open_target)
+
+    @staticmethod
+    def _resolve_new_session_route(
+        platform: str, account_id: Optional[str], scope: Optional[str],
+    ) -> Tuple[str, Optional[str]]:
+        """新目标使用已确认的 Bot 身份，并继承该账号唯一的适配器作用域。"""
+        from src.platform_io import DriverKind, get_platform_io_manager
+        from src.services.bot_account_service import get_bot_accounts
+
+        drivers = get_platform_io_manager().driver_registry.list(platform=platform)
+        plugin_routes = [driver.descriptor.route_key for driver in drivers if driver.descriptor.kind == DriverKind.PLUGIN]
+        plugin_accounts = {route.account_id for route in plugin_routes}
+        # legacy 发送驱动是平台级后备，不代表同账号还存在一条无 scope 的入站路由。
+        routes = plugin_routes + [
+            driver.descriptor.route_key for driver in drivers
+            if driver.descriptor.kind != DriverKind.PLUGIN
+            and driver.descriptor.route_key.account_id not in plugin_accounts
+        ]
+        if account_id is None:
+            accounts = get_bot_accounts(platform)
+            if scope is not None:
+                scoped_accounts = {route.account_id for route in routes if route.scope == scope}
+                if scoped_accounts:
+                    accounts = accounts.intersection(scoped_accounts)
+            if not accounts:
+                raise ValueError(f"平台 {platform} 缺少可确认的 Bot 账号，请指定 account_id")
+            if len(accounts) > 1:
+                raise ValueError(f"平台 {platform} 存在多个 Bot 账号，请指定 account_id")
+            account_id = next(iter(accounts))
+        if scope is None:
+            scopes = {route.scope for route in routes if route.account_id == account_id}
+            if len(scopes) > 1:
+                raise ValueError(f"平台 {platform} 的账号 {account_id} 存在多个作用域，请指定 scope")
+            if scopes:
+                scope = next(iter(scopes))
+        return account_id, scope
+
     def _get_or_create_session(
         self,
         platform: str,
@@ -412,7 +492,10 @@ class ChatManager:
             with get_db_session() as db_session:
                 statement = select(ChatSession).filter_by(platform=normalized_platform)
                 for db_instance in db_session.exec(statement).all():
-                    if str(getattr(db_instance, target_attr) or "").strip() != normalized_target_id:
+                    if (normalized_chat_type == "group") != bool(db_instance.group_id):
+                        continue
+                    target_value = db_instance.group_id if normalized_chat_type == "group" else db_instance.user_id
+                    if str(target_value or "").strip() != normalized_target_id:
                         continue
                     if db_instance.session_id in matched_sessions:
                         continue
@@ -426,6 +509,7 @@ class ChatManager:
                 f"按目标解析聊天流失败: platform={normalized_platform} "
                 f"target_id={normalized_target_id} chat_type={normalized_chat_type} error={e}"
             )
+            raise
 
         return list(matched_sessions.values())
 
@@ -455,9 +539,12 @@ class ChatManager:
         target_attr: str,
         target_id: str,
     ) -> bool:
+        if (target_attr == "group_id") != session.is_group_session:
+            return False
+        target_value = session.group_id if target_attr == "group_id" else session.user_id
         return (
             str(session.platform or "").strip() == platform
-            and str(getattr(session, target_attr) or "").strip() == target_id
+            and str(target_value or "").strip() == target_id
         )
 
     @staticmethod

@@ -696,6 +696,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
             ]
         )
         visible_text = "\n".join(detail_lines)
+        proactive_trigger_message = self._prepare_task_enqueue(task_id)
         self._chat_history.append(
             InternalContextMessage(
                 raw_message=MessageSequence([TextComponent(visible_text)]),
@@ -705,7 +706,6 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
                 source_kind=f"plugin_proactive:{normalized_plugin_id}",
             )
         )
-        proactive_trigger_message = self._build_proactive_trigger_message(task_id)
         self._arm_forced_turn_state(message_id=task_id, reason="插件主动聊天任务")
         self._queue_proactive_turn(proactive_trigger_message)
         logger.info(f"{self.log_prefix} 已接收插件主动聊天任务: plugin_id={normalized_plugin_id} task_id={task_id}")
@@ -719,8 +719,8 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         self, *, source_kind: str, text: str, reason: str, images: Sequence[ImageComponent] = (),
     ) -> Dict[str, Any]:
         """本体后台任务复用真实会话上下文和正常 Planner 调度。"""
-        if not self._running:
-            raise RuntimeError("不能向已停止的聊天运行实例投递任务")
+        task_id = f"{source_kind}:{uuid.uuid4().hex}"
+        proactive_trigger_message = self._prepare_task_enqueue(task_id)
         if source_kind == "desktop_pet_screen":
             # 持续阅读只保留最近两帧用于对照，避免截图二进制随运行时间无限堆积。
             previous_frames = [message for message in self._chat_history
@@ -729,7 +729,6 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
             expired = {id(message) for message in previous_frames[:-1]}
             if expired:
                 self._chat_history[:] = [message for message in self._chat_history if id(message) not in expired]
-        task_id = f"{source_kind}:{uuid.uuid4().hex}"
         if images:
             # 内部传话没有 IM 消息头，显式给出真实附件的引用，不能让模型用传话 ID 猜工具媒体索引。
             references = [{"msg_id": to_display_message_id(task_id), "index": index} for index in range(len(images))]
@@ -738,10 +737,19 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
             raw_message=MessageSequence([TextComponent(text), *images]), visible_text=text,
             timestamp=datetime.now(), message_id=task_id, source_kind=source_kind,
         ))
-        self._ensure_background_tasks_running()
         self._arm_forced_turn_state(message_id=task_id, reason=reason)
-        self._queue_proactive_turn(self._build_proactive_trigger_message(task_id))
+        self._queue_proactive_turn(proactive_trigger_message)
         return {"task_id": task_id, "queued": True}
+
+    def _prepare_task_enqueue(self, task_id: str) -> SessionMessage:
+        """在修改历史前检查运行状态、构建触发消息，并确保普通消费者存活。"""
+        if not self._running:
+            raise RuntimeError("不能向已停止的聊天运行实例投递任务")
+
+        trigger_message = self._build_proactive_trigger_message(task_id)
+        # 与后续历史写入和入队同步完成，不给 stop 或 Focus 归属切换留下中途交接窗口。
+        self._ensure_background_tasks_running()
+        return trigger_message
 
     async def _stop_background_subagents(self) -> None:
         """运行时停止时终止全部后台子代理，并让观察页知道它们已被终止。"""
