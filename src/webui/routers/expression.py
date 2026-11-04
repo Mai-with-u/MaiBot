@@ -9,7 +9,7 @@ import random
 import sqlite3
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import case, func
 from sqlmodel import col, delete, select
@@ -28,7 +28,6 @@ from src.learners.expression_review_store import (
 )
 from src.services.bot_account_service import get_all_bot_account_pairs
 from src.services.expression_vector_service import expression_vector_service
-from src.webui.dependencies import require_auth
 
 logger = get_logger("webui.expression")
 EXCLUDE_IDS_QUERY = Query(None, description="需要排除的表达方式 ID")
@@ -36,7 +35,7 @@ EXPRESSION_CHAT_IDS_QUERY = Query(None, description="multiple chat ids")
 LEGACY_EXPRESSION_IMPORT_FILE = File(...)
 
 # 创建路由器
-router = APIRouter(prefix="/expression", tags=["Expression"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/expression", tags=["Expression"])
 LEGACY_IMPORT_UPLOAD_DIR = Path("data/webui_legacy_expression_imports")
 LOGGED_INVALID_EXPRESSION_SESSION_IDS: set[int] = set()
 

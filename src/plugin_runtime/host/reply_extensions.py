@@ -1,4 +1,4 @@
-"""一次 reply 的插件扩展：准备生成要求、转换整组消息、统一交还主程序发送。"""
+"""一次 reply 的插件扩展：校验扩展参数、转换整组消息、统一交还主程序发送。"""
 
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
@@ -32,6 +32,7 @@ def get_reply_extensions(
     from src.plugin_runtime.integration import get_plugin_runtime_manager
 
     filters = asdict(context) if context is not None else {}
+    filters.pop("is_focus", None)
     filters.pop("stream_id", None)
     filters.pop("user_id", None)
     result: Dict[str, ReplyExtensionTarget] = {}
@@ -45,6 +46,16 @@ def get_reply_extensions(
                 raise ValueError(f"重复回复扩展命名空间：{entry.full_name}")
             result[entry.full_name] = ReplyExtensionTarget(supervisor, entry)
     return result
+
+
+def build_reply_extension_capabilities(context: ToolAvailabilityContext) -> str:
+    """复用组件声明向 Planner 展示能力，不暴露补充器的参数 schema 和生成提示。"""
+    entries = get_reply_extensions(context)
+    capabilities = [
+        {"name": name, "description": entries[name].entry.description}
+        for name in sorted(entries)
+    ]
+    return json.dumps(capabilities, ensure_ascii=False) if capabilities else ""
 
 
 def build_reply_extensions_schema(context: Optional[ToolAvailabilityContext] = None) -> Optional[Dict[str, Any]]:

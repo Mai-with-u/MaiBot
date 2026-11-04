@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { PluginDependenciesSection } from '@/host/PluginDependenciesSection'
 import { useToast } from '@/hooks/use-toast'
 
 interface SourceSettings {
@@ -20,10 +21,12 @@ interface SourceSettings {
 interface PluginSettingsDialogProps {
   onClose: () => void
   onSaved: () => void
+  onDependenciesChanged: () => void
 }
 
-export function PluginSettingsDialog({ onClose, onSaved }: PluginSettingsDialogProps) {
+export function PluginSettingsDialog({ onClose, onSaved, onDependenciesChanged }: PluginSettingsDialogProps) {
   const queryClient = useQueryClient()
+  const [dependenciesBusy, setDependenciesBusy] = useState(false)
   const { toast } = useToast()
   const [draft, setDraft] = useState<SourceSettings | null>(null)
   const sourceQuery = useQuery({
@@ -54,14 +57,14 @@ export function PluginSettingsDialog({ onClose, onSaved }: PluginSettingsDialogP
     },
   })
   const dirty = draft && JSON.stringify(draft) !== JSON.stringify(sourceQuery.data)
-  const disabled = sourceMutation.isPending
+  const disabled = sourceMutation.isPending || dependenciesBusy
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open && !disabled) onClose() }}>
       <DialogContent className="[--dialog-width:40rem]" preventOutsideClose={disabled}>
         <DialogHeader>
           <DialogTitle>插件商店设置</DialogTitle>
-          <DialogDescription>分别选择插件信息和插件下载的来源</DialogDescription>
+          <DialogDescription>管理插件信息源、下载源和插件依赖</DialogDescription>
         </DialogHeader>
         <DialogBody>
           <div className="space-y-4">
@@ -113,6 +116,7 @@ export function PluginSettingsDialog({ onClose, onSaved }: PluginSettingsDialogP
                 </div>}
               </Card>
             </>}
+            <PluginDependenciesSection onChanged={onDependenciesChanged} onBusyChange={setDependenciesBusy} />
           </div>
         </DialogBody>
         <DialogFooter>

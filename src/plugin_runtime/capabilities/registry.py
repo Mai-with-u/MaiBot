@@ -102,6 +102,7 @@ def register_capability_impls(manager: "PluginRuntimeManager", supervisor: "Plug
     _register("tool.get_definitions", manager._cap_tool_get_definitions)
 
     _register("api.call", manager._cap_api_call)
+    _register("runtime.set_status_badges", manager._cap_runtime_set_status_badges)
     _register("api.get", manager._cap_api_get)
     _register("api.list", manager._cap_api_list)
     _register("api.replace_dynamic", manager._cap_api_replace_dynamic)

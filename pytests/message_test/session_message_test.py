@@ -3,7 +3,7 @@ import asyncio
 import pytest
 import importlib
 import importlib.util
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from pathlib import Path
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -59,7 +59,7 @@ class DummyDBSession:
     def __exit__(self, exc_type, exc_val, exc_tb):
         pass
 
-    def exec(self, statement):
+    def exec(self, statement, params=None):
         return self
 
     def first(self):
@@ -72,7 +72,7 @@ class DummyDBSession:
         return []
 
 
-def get_db_session():
+def get_db_session(auto_commit=True):
     return DummyDBSession()
 
 
@@ -140,6 +140,10 @@ def setup_mocks(monkeypatch):
 
     person_utils_mod = _stub_module("src.common.utils.utils_person")
     person_utils_mod.PersonUtils = DummyPersonUtils
+
+    # 是否 @ 机器人自己需要查询账号表；这些用例只验证普通用户的显示。
+    system_utils_mod = _stub_module("src.common.utils.system_utils")
+    system_utils_mod.is_bot_self = lambda platform, user_id: False
 
 
 def load_message_via_file(monkeypatch):
@@ -217,9 +221,14 @@ async def test_image(monkeypatch):
     msg = SessionMessage("msg123", datetime.now(), platform="test_platform")
     msg.session_id = "session123"
     msg.raw_message = MessageSequence(components=[])
+    sys.modules["src.chat.image_system.image_manager"].image_manager = SimpleNamespace(
+        get_image_description=AsyncMock(return_value=None),
+    )
     msg.raw_message.components = [ImageComponent(binary_hash="image_hash"), TextComponent("Hello, world!")]
     await msg.process()
-    assert msg.processed_plain_text == "[一张图片，网卡了加载不出来] Hello, world!"
+    # 描述尚未生成时图片内容保持为空，表示待识别；占位由 Maisaka 渲染层负责。
+    assert msg.raw_message.components[0].content == ""
+    assert msg.processed_plain_text.strip() == "Hello, world!"
 
 
 @pytest.mark.asyncio
@@ -230,7 +239,7 @@ async def test_emoji(monkeypatch):
     msg.raw_message = MessageSequence(components=[])
     msg.raw_message.components = [EmojiComponent(binary_hash="emoji_hash"), TextComponent("Hello, world!")]
     await msg.process()
-    assert msg.processed_plain_text == "[一个表情，网卡了加载不出来] Hello, world!"
+    assert msg.processed_plain_text == "[表情包] Hello, world!"
 
 
 @pytest.mark.asyncio
@@ -273,19 +282,19 @@ async def test_reply_component_success(monkeypatch):
     module_msg = load_message_via_file(monkeypatch)
 
     class DummyDBSessionWithReply(DummyDBSession):
-        def exec(self, s):
+        def exec(self, s, params=None):
             return self
 
-        def first(inner_self):
+        def all(inner_self):
             class DummyRecord:
                 processed_plain_text = "原消息内容"
                 user_cardname = "cardname123"
                 user_nickname = "nickname123"
                 user_id = "userid123"
 
-            return DummyRecord()
+            return [DummyRecord()]
 
-    module_msg.get_db_session = lambda: DummyDBSessionWithReply()
+    module_msg.get_db_session = lambda auto_commit=True: DummyDBSessionWithReply()
     msg = SessionMessage("msg123", datetime.now(), platform="test_platform")
     msg.session_id = "session123"
     msg.platform = "test_platform"
@@ -300,10 +309,10 @@ async def test_reply_component_with_db_fail(monkeypatch):
     module_msg = load_message_via_file(monkeypatch)
 
     class DummyDBSessionWithError(DummyDBSession):
-        def exec(self, s):
+        def exec(self, s, params=None):
             raise Exception("数据库查询失败")
 
-    module_msg.get_db_session = lambda: DummyDBSessionWithError()
+    module_msg.get_db_session = lambda auto_commit=True: DummyDBSessionWithError()
     msg = SessionMessage("msg123", datetime.now(), platform="test_platform")
     msg.session_id = "session123"
     msg.platform = "test_platform"

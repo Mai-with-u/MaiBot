@@ -33,7 +33,7 @@ async function loadPluginStats() {
 }
 
 const invalidateMarket = vi.hoisted(() => vi.fn())
-vi.mock('@/lib/plugin-api/marketplace', () => ({ invalidatePluginMarketCache: invalidateMarket }))
+vi.mock('@/lib/plugin-api/marketplace', () => ({ invalidatePluginMarketStats: invalidateMarket }))
 
 describe('公共市场统计与互动', () => {
   beforeEach(() => {

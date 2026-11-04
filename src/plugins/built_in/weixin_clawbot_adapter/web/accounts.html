@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>微信账号管理</title>
+  <style>
+    /* 外观由 Host 桥接注入的 maibot-* 组件类与变量提供，主题切换时实时更新。 */
+    * { box-sizing: border-box; }
+    body { padding: 24px; line-height: 1.6; }
+    main { max-width: 1040px; margin: auto; }
+    h1 { margin: 0; font-size: 26px; font-family: var(--maibot-font-display); }
+    p { margin: 8px 0 20px; }
+    .toolbar, .controls { display: flex; gap: 10px; flex-wrap: wrap; }
+    input { min-width: 0; flex: 1; }
+    input::placeholder { color: var(--maibot-muted); opacity: 1; }
+    #accounts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); gap: 16px; margin-top: 20px; }
+    h2 { margin: 0 0 8px; font-size: 19px; overflow-wrap: anywhere; font-family: var(--maibot-font-display); }
+    .identity { font-size: 12px; overflow-wrap: anywhere; }
+    .status { margin: 12px 0; }
+    .qr { display: block; width: 220px; max-width: 100%; margin: 16px auto; background: white; padding: 8px; }
+    .controls { margin-top: 12px; }
+    #error { color: var(--maibot-danger); white-space: pre-wrap; }
+    #error:empty { display: none; }
+    [hidden] { display: none !important; }
+    @media (max-width: 480px) { body { padding: 16px; } }
+  </style>
+</head>
+<body class="maibot-page"><main>
+  <h1>微信账号管理</h1>
+  <p class="maibot-muted">每个微信账号分别扫码，连接独立运行。显示名称用于聊天中的用户名；保存后从微信再发一条消息，聊天名称随之更新。</p>
+  <form id="add" class="toolbar maibot-card">
+    <input class="maibot-input" id="remark" aria-label="新账号显示名称" placeholder="显示名称（聊天用户名），例如：Sengoku" maxlength="80" required>
+    <button class="maibot-button maibot-button-primary" id="add-button">添加账号并扫码</button>
+  </form>
+  <p id="summary" class="maibot-muted" role="status">正在读取账号…</p>
+  <div id="error" role="alert"></div>
+  <section id="accounts" aria-label="已添加的微信账号"></section>
+</main>
+<script>
+  const cards = new Map();
+  const error = document.getElementById('error');
+  let inFlight = false;
+  let mutating = false;
+  let state = null;
+  function updateAdd() {
+    document.getElementById('add-button').disabled = mutating || !state || !state.enabled || state.accounts.length >= state.limit;
+  }
+  async function action(name, args) {
+    if (mutating) return;
+    mutating = true;
+    updateAdd();
+    error.textContent = '';
+    try {
+      const result = await maibot.action(name, args);
+      if (name === 'add_account' && result) document.getElementById('remark').value = '';
+      await refresh();
+    } catch (e) { error.textContent = String(e); }
+    finally { mutating = false; updateAdd(); }
+  }
+  function makeCard(account) {
+    const card = document.createElement('article');
+    card.className = 'maibot-card';
+    card.innerHTML = '<h2></h2><div class="identity maibot-muted"></div><div class="status maibot-muted" role="status"></div>' +
+      '<img class="qr" alt="微信登录二维码" hidden><form class="controls rename"><label style="width:100%">显示名称（聊天用户名）</label><input class="maibot-input" maxlength="80" required aria-label="显示名称（聊天用户名）" placeholder="输入聊天中显示的名字"><button class="maibot-button">保存名称</button></form>' +
+      '<div class="controls"><button class="login maibot-button" type="button">重新扫码 / 刷新二维码</button><button class="remove maibot-button maibot-button-danger" type="button">移除账号</button></div>';
+    card.querySelector('input').value = account.remark;
+    card.querySelector('.rename').addEventListener('submit', e => {
+      e.preventDefault(); action('rename_account', { slot: account.slot, remark: card.querySelector('input').value.trim() });
+    });
+    card.querySelector('.login').onclick = () => action('login_account', {slot: account.slot});
+    card.querySelector('.remove').onclick = () => action('remove_account', {slot: account.slot});
+    return card;
+  }
+  async function refresh() {
+    if (inFlight) return;
+    inFlight = true;
+    try {
+      state = await maibot.query('accounts');
+      const current = new Set(state.accounts.map(a => a.slot));
+      for (const [slot, card] of cards) if (!current.has(slot)) { card.remove(); cards.delete(slot); }
+      for (const account of state.accounts) {
+        let card = cards.get(account.slot);
+        if (!card) { card = makeCard(account); cards.set(account.slot, card); document.getElementById('accounts').append(card); }
+        card.querySelector('h2').textContent = account.remark;
+        card.querySelector('.identity').textContent = account.account_id ? '账号 ID（系统标识）：' + account.account_id : '尚未完成绑定';
+        card.querySelector('.status').textContent = account.status;
+        card.querySelector('.status').classList.toggle('maibot-badge', account.ready);
+        card.querySelector('.status').classList.toggle('maibot-muted', !account.ready);
+        const qr = card.querySelector('.qr');
+        qr.hidden = !account.qr;
+        if (account.qr && qr.getAttribute('src') !== account.qr) qr.src = account.qr;
+        if (!account.qr) qr.removeAttribute('src');
+        for (const button of card.querySelectorAll('button')) button.disabled = account.busy;
+        card.querySelector('.login').disabled = account.busy || !state.enabled;
+      }
+      document.getElementById('summary').textContent = state.enabled
+        ? `已连接 ${state.accounts.filter(a => a.ready).length} / ${state.accounts.length} 个账号，最多可添加 ${state.limit} 个。` + (state.accounts.length ? '' : '请先添加账号。')
+        : '微信连接未启用，请先在插件配置中打开启用开关。';
+      updateAdd();
+    } catch (e) { error.textContent = '读取账号失败：' + String(e); }
+    finally { inFlight = false; }
+  }
+  document.getElementById('add').addEventListener('submit', e => {
+    e.preventDefault(); action('add_account', {remark: document.getElementById('remark').value.trim()});
+  });
+  maibot.ready.then(async () => { await refresh(); setInterval(refresh, 3000); });
+</script>
+</body></html>

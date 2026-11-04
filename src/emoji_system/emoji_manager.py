@@ -22,6 +22,7 @@ from src.common.utils.image_path import resolve_stored_image_path, serialize_sto
 from src.common.utils.utils_image import ImageUtils
 from src.config.config import config_manager, global_config
 from src.plugin_runtime.hook_schema_utils import build_object_schema
+from src.plugin_runtime.host.hook_dispatcher import HookAbortedError
 from src.plugin_runtime.host.hook_spec_registry import HookSpec, HookSpecRegistry
 from src.prompt.prompt_manager import prompt_manager
 from src.services.llm_service import LLMServiceClient
@@ -73,7 +74,7 @@ def register_emoji_hook_specs(registry: HookSpecRegistry) -> list[HookSpec]:
                         "sample_size": {"type": "integer", "description": "候选表情采样数量。"},
                         "abort_message": {
                             "type": "string",
-                            "description": "当 Hook 主动中止时可附带的失败提示。",
+                            "description": "旧版中止提示；新插件请使用 custom_result.reason。",
                         },
                     },
                     required=["stream_id", "requested_emotion", "reasoning", "context_texts", "sample_size"],
@@ -100,7 +101,7 @@ def register_emoji_hook_specs(registry: HookSpecRegistry) -> list[HookSpec]:
                         "matched_emotion": {"type": "string", "description": "最终命中的情绪标签。"},
                         "abort_message": {
                             "type": "string",
-                            "description": "当 Hook 主动中止时可附带的失败提示。",
+                            "description": "旧版中止提示；新插件请使用 custom_result.reason。",
                         },
                     },
                     required=[
@@ -403,11 +404,13 @@ class EmojiManager:
 
         logger.info(f"表情包不存在于数据库中，准备缓存新表情包，哈希值: {hash_str}")
         tmp_file_path = EMOJI_DIR / f"{hash_str}.tmp"
-        with tmp_file_path.open("wb") as file:
-            file.write(emoji_bytes)
+        await asyncio.to_thread(tmp_file_path.write_bytes, emoji_bytes)
 
         emoji = MaiEmoji(full_path=tmp_file_path, image_bytes=emoji_bytes)
-        await emoji.calculate_hash_format()
+        if not await emoji.calculate_hash_format():
+            # 格式识别失败的临时文件不能进入数据库，也不能留给维护任务反复注册。
+            await asyncio.to_thread(tmp_file_path.unlink, missing_ok=True)
+            raise ValueError(f"表情包格式识别失败，无法缓存: {tmp_file_path}")
 
         try:
             with get_db_session() as session:
@@ -1056,7 +1059,7 @@ class EmojiManager:
             image_format=image_format,
         )
         if hook_result.aborted:
-            logger.info(f"[构建描述] 表情包描述被 Hook 中止注册: {target_emoji.file_name}")
+            logger.info(f"[构建描述] 表情包中止注册: {target_emoji.file_name} {HookAbortedError(hook_result)}")
             return False, target_emoji
 
         normalized_description = str(hook_result.kwargs.get("description", description) or "").strip()
@@ -1175,6 +1178,9 @@ class EmojiManager:
                             known_paths.add(record_path)
                 logger.info("[emoji_maintenance] Scanning data/emoji for new emojis...")
                 for emoji_file in EMOJI_DIR.iterdir():
+                    # .tmp 由缓存流程管理，可能尚未完成写入或格式识别。
+                    if emoji_file.suffix.lower() == ".tmp":
+                        continue
                     if not emoji_file.is_file():
                         continue
                     resolved_file = emoji_file.absolute().resolve()

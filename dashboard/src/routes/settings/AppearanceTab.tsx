@@ -18,6 +18,8 @@ import { useAnimation } from '@/hooks/use-animation'
 import { useTheme } from '@/components/use-theme'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
+import { getSetting, setSetting } from '@/lib/settings-manager'
+import type { LayoutVersion } from '@/lib/layout-version'
 import { buildFutureRetroTexture } from '@/lib/theme/future-retro'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -268,6 +270,7 @@ export function AppearanceTab() {
   const { enableAnimations, setEnableAnimations } = useAnimation()
   const { toast } = useToast()
   const { t } = useTranslation()
+  const [layoutVersion, setLayoutVersion] = useState<LayoutVersion>(() => getSetting('layoutVersion'))
   const dashboardStyle = themeConfig.dashboardStyle
   const activeCustomCSS = themeConfig.styleCustomCSS?.[dashboardStyle] ?? ''
   const activeBackgroundConfig = useMemo(
@@ -611,6 +614,25 @@ export function AppearanceTab() {
               label: <span className="inline-flex items-center gap-2" title={t(option.descriptionKey)}><Icon />{t(option.labelKey)}</span>,
             }
           })}
+        />
+      </div>
+
+      {/* 布局：经典布局与麦麦观察布局互相独立，切换后立即生效 */}
+      <div>
+        <h3 className="mb-1 text-base font-semibold sm:text-lg">{t('settings.appearance.layoutVersion')}</h3>
+        <p className="text-muted-foreground mb-3 text-sm">{t('settings.appearance.layoutVersionDesc')}</p>
+        <SegmentedControl
+          aria-label={t('settings.appearance.layoutVersion')}
+          value={layoutVersion}
+          onValueChange={(value) => {
+            const next = value === 'observation' ? 'observation' : 'classic'
+            setLayoutVersion(next)
+            setSetting('layoutVersion', next)
+          }}
+          options={[
+            { value: 'classic', label: t('settings.appearance.layoutClassic') },
+            { value: 'observation', label: t('settings.appearance.layoutObservation') },
+          ]}
         />
       </div>
 

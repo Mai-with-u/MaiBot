@@ -3,14 +3,13 @@
 from typing import Literal
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from src.common.runtime_loop import run_on_main_loop
 from src.agent.service import agent_service
-from src.webui.dependencies import require_auth
 
-router = APIRouter(prefix="/agent", tags=["agent"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/agent", tags=["agent"])
 
 
 class AgentControl(BaseModel):

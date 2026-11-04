@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { useReducedMotion } from 'motion/react'
@@ -29,10 +29,12 @@ import {
   type InstalledPlugin,
 } from '@/lib/plugin-api'
 import {
+  getPluginStatsSummary,
   getPluginUserStates,
   likePlugin,
   recordPluginDownload,
   type PluginStatsData,
+  type PluginStatsStatus,
   type PluginVoteState,
 } from '@/lib/plugin-stats'
 import { mergeInstalledPluginInfo } from '@/lib/plugin-info'
@@ -50,8 +52,12 @@ import type {
   PluginLoadProgress,
   PluginProgressById,
 } from './types'
-import { clearPluginProgress, mergePluginProgress, PLUGIN_TYPE_OPTIONS } from './types'
+import { clearPluginProgress, getPluginType, mergePluginProgress, PLUGIN_TYPE_OPTIONS } from './types'
 import { PluginDetailPage } from '../plugin-detail'
+import './marketplace-toolbar.css'
+
+// 返回列表后保留详情，但设置、筛选、点赞等无关状态不能重新渲染其中的文档。
+const MemoizedPluginDetailPage = memo(PluginDetailPage)
 
 const PLUGIN_MARKET_COMPATIBLE_ONLY_KEY = 'plugins-market-compatible-only'
 const PLUGIN_MARKET_SCROLL_TOP_KEY = 'plugins-market-scroll-top'
@@ -76,24 +82,20 @@ interface PluginMarketplacePageProps {
 type PluginVoteOverlay = PluginVoteState & Partial<Pick<PluginStatsData, 'likes' | 'dislikes'>>
 
 const buildPluginStatsMap = (
-  pluginList: PluginInfo[]
+  pluginList: PluginInfo[],
+  summary?: Record<string, PluginStatsData>
 ): Record<string, PluginStatsData> => {
   const statsMap: Record<string, PluginStatsData> = {}
 
   for (const plugin of pluginList) {
-    const stats = plugin.marketplace_stats
-    if (!stats) {
+    const pluginId = plugin.manifest.id
+    if (!pluginId) continue
+    const stats = summary === undefined ? plugin.marketplace_stats : summary[pluginId]
+    if (!stats || stats.plugin_id !== pluginId) {
       continue
     }
 
-    const statsIds = [
-      plugin.manifest?.id,
-      stats.plugin_id,
-    ].filter((id): id is string => Boolean(id))
-
-    for (const statsId of statsIds) {
-      statsMap[statsId] = stats
-    }
+    statsMap[pluginId] = stats
   }
 
   return statsMap
@@ -106,9 +108,10 @@ const readPluginMarketplaceViewState = (): PluginMarketplaceViewState => {
   }
 
   const parsed = JSON.parse(savedState) as Partial<PluginMarketplaceViewState>
-  const pluginTypeFilter = typeof parsed.pluginTypeFilter === 'string'
-    && (parsed.pluginTypeFilter === 'all' || PLUGIN_TYPE_OPTIONS.some(option => option.value === parsed.pluginTypeFilter))
-    ? parsed.pluginTypeFilter
+  const legacyFilters: Record<string, string> = { knowledge: 'data', entertainment: 'game', search: 'integration' }
+  const savedType = parsed.pluginTypeFilter ? (legacyFilters[parsed.pluginTypeFilter] ?? parsed.pluginTypeFilter) : 'all'
+  const pluginTypeFilter = savedType === 'all' || PLUGIN_TYPE_OPTIONS.some(option => option.value === savedType)
+    ? savedType
     : DEFAULT_PLUGIN_MARKET_VIEW_STATE.pluginTypeFilter
   const marketplaceSortBy = parsed.marketplaceSortBy
     && MARKETPLACE_SORT_KEYS.includes(parsed.marketplaceSortBy)
@@ -138,17 +141,21 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const scrollViewportRef = useRef<HTMLDivElement | null>(null)
+  const toolbarAnchorRef = useRef<HTMLDivElement | null>(null)
+  const toolbarRef = useRef<HTMLDivElement | null>(null)
+  const [toolbarPinned, setToolbarPinned] = useState(false)
+  const [toolbarHeight, setToolbarHeight] = useState<number>()
   const scrollRestoredRef = useRef(false)
-  const initialViewStateRef = useRef(readPluginMarketplaceViewState())
+  const [initialViewState] = useState(readPluginMarketplaceViewState)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [sourceRevision, setSourceRevision] = useState(0)
   const [restartNoticeVisible, setRestartNoticeVisible] = useState(
     () => localStorage.getItem('plugins-restart-notice-dismissed') !== 'true'
   )
-  const [searchQuery, setSearchQuery] = useState(initialViewStateRef.current.searchQuery)
-  const [pluginTypeFilter, setPluginTypeFilter] = useState(initialViewStateRef.current.pluginTypeFilter)
+  const [searchQuery, setSearchQuery] = useState(initialViewState.searchQuery)
+  const [pluginTypeFilter, setPluginTypeFilter] = useState(initialViewState.pluginTypeFilter)
   const [marketplaceSortBy, setMarketplaceSortBy] = useState<MarketplaceSortKey>(
-    initialViewStateRef.current.marketplaceSortBy
+    initialViewState.marketplaceSortBy
   )
   const [showCompatibleOnly, setShowCompatibleOnly] = useState(
     () => localStorage.getItem(PLUGIN_MARKET_COMPATIBLE_ONLY_KEY) !== 'false'
@@ -173,6 +180,28 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
     setPlugins(current => mergeInstalledPluginInfo(current, installed))
   }, [syncInstalledPlugins])
   const [pluginStats, setPluginStats] = useState<Record<string, PluginStatsData>>({})
+  const [statsStatus, setStatsStatus] = useState<PluginStatsStatus>('loading')
+  const [statsError, setStatsError] = useState('')
+  const statsRequestRef = useRef(0)
+  const refreshStats = useCallback(async (marketPlugins: PluginInfo[], forceRefresh = false) => {
+    const requestId = ++statsRequestRef.current
+    setStatsStatus('loading')
+    setStatsError('')
+    try {
+      // 官方清单的统计与版本来自同一快照；镜像清单独立读取一次官方统计摘要。
+      const nextStats = marketPlugins.length === 0 || (!forceRefresh && marketPlugins[0].market_data_source === 'official')
+        ? buildPluginStatsMap(marketPlugins)
+        : buildPluginStatsMap(marketPlugins, await getPluginStatsSummary(forceRefresh))
+      if (requestId !== statsRequestRef.current) return
+      setPluginStats(nextStats)
+      setStatsStatus('ready')
+    } catch (error) {
+      if (requestId !== statsRequestRef.current) return
+      setPluginStats({})
+      setStatsError(error instanceof Error ? error.message : '加载插件统计失败')
+      setStatsStatus('error')
+    }
+  }, [])
   const [likingPluginIds, setLikingPluginIds] = useState<Set<string>>(() => new Set())
   // 请求去重使用即时更新的集合，避免连点抢在 React 提交之前发出重复请求。
   const pendingLikesRef = useRef(new Set<string>())
@@ -184,23 +213,17 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
   // pluginStats 同时是排序依据，点赞后保持不变才能避免卡片当场换位。
   const [voteOverlay, setVoteOverlay] = useState<Record<string, PluginVoteOverlay>>({})
   const displayPluginStats = useMemo(() => {
-    const mergedStats: Record<string, PluginStatsData> = {}
+    const mergedStats: Record<string, Partial<PluginStatsData>> = {}
 
     for (const [statsId, stats] of Object.entries(pluginStats)) {
       const overlay = voteOverlay[statsId] ?? voteOverlay[stats.plugin_id]
       mergedStats[statsId] = overlay ? { ...stats, ...overlay } : stats
     }
-    // 统计摘要里没有记录的插件，点赞后也要能显示点赞数
+    // 用户状态和操作结果可以独立显示，但不为缺失的其他统计读数填零。
     for (const [statsId, overlay] of Object.entries(voteOverlay)) {
       if (!mergedStats[statsId]) {
         mergedStats[statsId] = {
           plugin_id: statsId,
-          likes: 0,
-          dislikes: 0,
-          downloads: 0,
-          rating: 0,
-          rating_count: 0,
-          comment_count: 0,
           ...overlay,
         }
       }
@@ -262,6 +285,15 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
   }, [detailPluginId, routeDetailPluginId, reducedMotion, syncDetailAddress])
 
   const handleDetail = useCallback((plugin: PluginInfo) => setDetailPluginId(plugin.id), [setDetailPluginId])
+  const handleCloseDetail = useCallback(() => setDetailPluginId(null), [setDetailPluginId])
+  const handleDetailInstalledPluginsChange = useCallback((installed: InstalledPlugin[]) => {
+    syncInstalledPlugins(installed)
+    setPlugins((currentPlugins) => mergeInstalledPluginInfo(currentPlugins, installed))
+  }, [syncInstalledPlugins])
+  const detailInitialRuntime = useMemo(
+    () => gitStatus && maimaiVersion ? { gitStatus, maimaiVersion, installedPlugins } : undefined,
+    [gitStatus, maimaiVersion, installedPlugins],
+  )
 
   const { toast } = useToast()
   useEffect(() => {
@@ -306,6 +338,15 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
 
   const setPluginProgress = useCallback((progress: PluginLoadProgress) => {
     setPluginProgressById((currentProgress) => mergePluginProgress(currentProgress, progress))
+  }, [])
+
+  const resetCompletedPluginProgress = useCallback((pluginId: string) => {
+    setPluginProgressById((currentProgress) => {
+      const progress = currentProgress[pluginId]
+      return progress && progress.stage !== 'loading'
+        ? clearPluginProgress(currentProgress, pluginId, progress)
+        : currentProgress
+    })
   }, [])
 
   const setCompletedPluginProgress = useCallback((progress: PluginLoadProgress) => {
@@ -401,11 +442,13 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
       if (cachedPluginList?.length && !isUnmounted) {
         setPlugins(cachedPluginList)
         setPluginStats(buildPluginStatsMap(cachedPluginList))
+        setStatsStatus(cachedPluginList[0].market_data_source === 'official' ? 'ready' : 'loading')
         setLoading(false)
         console.info('加载插件市场中：展示缓存')
       } else {
         setPlugins([])
         setPluginStats({})
+        setStatsStatus('loading')
         setLoading(true)
       }
 
@@ -472,8 +515,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
             setLoading(true)
           }
           setError(null)
-          // 所有信息源都读取公共市场列表，统计能力和可用数据随列表返回。
-          // 清单失败时不等待统计请求，保证错误提示及时返回。
+          // 清单与统计分开呈现；统计的读取和失败都不阻塞插件列表。
           const [gitStatus, maimaiVersion, marketPlugins, installed] = await Promise.all([
             checkGitStatus(),
             getMaimaiVersion().then((version) => {
@@ -481,7 +523,10 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
               return version
             }),
             // 市场清单与安装状态查询失败时，统一交给外层错误处理。
-            fetchPluginList({ compatibleOnly: showCompatibleOnly }),
+            fetchPluginList({ compatibleOnly: showCompatibleOnly }).then((marketPlugins) => {
+              if (!isUnmounted) void refreshStats(marketPlugins)
+              return marketPlugins
+            }),
             getInstalledPlugins(),
           ])
           if (isUnmounted) {
@@ -503,7 +548,6 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
           syncInstalledPlugins(installed)
           const mergedData = mergeInstalledPluginInfo(marketPlugins, installed)
 
-          setPluginStats(buildPluginStatsMap(mergedData))
           setPlugins(mergedData)
           setLoading(false)
         } catch (error) {
@@ -526,11 +570,12 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
 
     return () => {
       isUnmounted = true
+      statsRequestRef.current += 1
       if (unsubscribeProgress) {
         void unsubscribeProgress()
       }
     }
-  }, [toast, showCompatibleOnly, sourceRevision, syncInstalledPlugins])
+  }, [toast, showCompatibleOnly, sourceRevision, syncInstalledPlugins, refreshStats])
 
   // 检查插件兼容性
   // 规则：
@@ -743,7 +788,15 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
 
       // 记录下载统计
       if (installingPlugin.manifest.id) {
-        recordPluginDownload(installingPlugin.manifest.id).catch(err => {
+        const pluginId = installingPlugin.manifest.id
+        recordPluginDownload(pluginId).then((result) => {
+          if (result.success && typeof result.downloads === 'number') {
+            const downloads = result.downloads
+            setPluginStats((current) => current[pluginId]
+              ? { ...current, [pluginId]: { ...current[pluginId], downloads } }
+              : current)
+          }
+        }).catch(err => {
           console.warn('Failed to record download:', err)
         })
       }
@@ -892,8 +945,57 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
     checkPluginCompatibility,
   ), [plugins, searchQuery, pluginTypeFilter, showCompatibleOnly, waitingForCompatibility, checkPluginCompatibility])
 
+  // 分类数量沿用搜索与兼容性筛选，但不受当前选中的分类影响。
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    const matchingPlugins = waitingForCompatibility ? [] : filterMarketplacePlugins(
+      plugins,
+      { searchQuery, pluginTypeFilter: 'all', showCompatibleOnly },
+      checkPluginCompatibility,
+    )
+    for (const plugin of matchingPlugins) {
+      const type = getPluginType(plugin)
+      if (type) counts.set(type, (counts.get(type) ?? 0) + 1)
+    }
+    return { counts, total: matchingPlugins.length }
+  }, [plugins, searchQuery, showCompatibleOnly, waitingForCompatibility, checkPluginCompatibility])
+
+  useLayoutEffect(() => {
+    const viewport = scrollViewportRef.current
+    const anchor = toolbarAnchorRef.current
+    const toolbar = toolbarRef.current
+    if (!viewport || !anchor || !toolbar) return
+
+    const desktop = window.matchMedia('(min-width: 1024px)')
+    const updatePinned = () => {
+      setToolbarPinned(desktop.matches && anchor.getBoundingClientRect().top < viewport.getBoundingClientRect().top + 8)
+    }
+    // 用独立锚点判断吸顶，并保留展开高度，避免工具栏缩短引起滚动位置跳动。
+    const updateToolbarLayout = () => {
+      // 展开动画结束后再更新占位，避免将动画中间高度写回列表布局。
+      if (toolbar.dataset.compact !== 'true' && toolbar.getAnimations().length === 0) {
+        setToolbarHeight(toolbar.offsetHeight)
+      }
+      updatePinned()
+    }
+    const observer = new ResizeObserver(updateToolbarLayout)
+    observer.observe(toolbar)
+    observer.observe(viewport)
+    toolbar.addEventListener('transitionend', updateToolbarLayout)
+    viewport.addEventListener('scroll', updatePinned, { passive: true })
+    desktop.addEventListener('change', updatePinned)
+    updatePinned()
+    return () => {
+      observer.disconnect()
+      toolbar.removeEventListener('transitionend', updateToolbarLayout)
+      viewport.removeEventListener('scroll', updatePinned)
+      desktop.removeEventListener('change', updatePinned)
+    }
+  }, [restartNoticeVisible, gitStatus?.installed])
+
   const marketplaceContent = (
     <ScrollArea
+      data-dashboard-page-scroll="true"
       className="h-full max-lg:h-auto max-lg:overflow-visible max-lg:[&>[data-dashboard-scrollbar]]:hidden"
       viewportClassName="max-lg:h-auto max-lg:!overflow-visible max-lg:overscroll-auto"
       scrollbars="vertical"
@@ -945,7 +1047,9 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
         )}
 
         {/* 搜索和筛选栏 */}
-        <Card data-plugin-market-toolbar="true" className="p-4">
+        <div ref={toolbarAnchorRef} className="marketplace-toolbar-anchor" aria-hidden="true" />
+        <div className="marketplace-toolbar-sticky" style={{ minHeight: toolbarHeight }}>
+        <Card ref={toolbarRef} data-plugin-market-toolbar="true" data-compact={toolbarPinned} className="p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             {/* 搜索框 */}
             <div className="relative w-full sm:max-w-md sm:flex-1">
@@ -965,17 +1069,27 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
                 <SelectTrigger
                   aria-label="类型筛选"
                   title="类型筛选"
-                  className="min-w-0 flex-1 gap-2 px-3 sm:w-12 sm:flex-none sm:justify-center sm:gap-1 sm:px-2"
+                  className="min-w-0 flex-1 gap-2 px-3 sm:w-auto sm:flex-none"
                 >
                   <Filter className="h-4 w-4 shrink-0" />
-                  <span className="min-w-0 flex-1 truncate text-left sm:sr-only">
-                    <SelectValue placeholder="选择类型" />
+                  <span className="min-w-0 flex-1 truncate text-left">
+                    <SelectValue placeholder="选择类型">
+                      {pluginTypeFilter === 'all' ? '全部类型' : PLUGIN_TYPE_OPTIONS.find(option => option.value === pluginTypeFilter)?.label}
+                    </SelectValue>
                   </span>
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">全部类型</SelectItem>
+                  <SelectItem value="all" className="[&>span:last-child]:w-full">
+                    <span className="flex w-full items-center justify-between gap-4">
+                      <span>全部类型</span><span className="text-right tabular-nums text-muted-foreground">{categoryCounts.total}</span>
+                    </span>
+                  </SelectItem>
                   {PLUGIN_TYPE_OPTIONS.map(option => (
-                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    <SelectItem key={option.value} value={option.value} className="[&>span:last-child]:w-full">
+                      <span className="flex w-full items-center justify-between gap-4">
+                        <span>{option.label}</span><span className="text-right tabular-nums text-muted-foreground">{categoryCounts.counts.get(option.value) ?? 0}</span>
+                      </span>
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -998,9 +1112,9 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
                 <SelectContent>
                   <SelectItem value="default">推荐排序</SelectItem>
                   <SelectItem value="latest">最新上架</SelectItem>
-                  <SelectItem value="downloads">下载最多</SelectItem>
-                  <SelectItem value="likes">点赞最多</SelectItem>
-                  <SelectItem value="rating">评分最高</SelectItem>
+                  <SelectItem value="downloads" disabled={statsStatus !== 'ready'}>下载最多</SelectItem>
+                  <SelectItem value="likes" disabled={statsStatus !== 'ready'}>点赞最多</SelectItem>
+                  <SelectItem value="rating" disabled={statsStatus !== 'ready'}>评分最高</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1063,6 +1177,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
             </div>
           )}
         </Card>
+        </div>
 
         {/* 加载错误显示 */}
         {marketplaceProgress
@@ -1087,6 +1202,12 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
         )}
 
         {/* 插件卡片网格 */}
+        {statsStatus === 'error' && !error && (
+          <div role="alert" className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 p-3 text-sm text-destructive">
+            <span>统计加载失败：{statsError}</span>
+            <Button variant="outline" size="sm" onClick={() => void refreshStats(plugins, true)}>重试统计</Button>
+          </div>
+        )}
         {loading || (waitingForCompatibility && !error) ? (
           <div className="flex items-center justify-center py-12">
             <ThinkingIllustration size="lg" />
@@ -1109,6 +1230,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
             gitStatus={gitStatus}
             maimaiVersion={maimaiVersion}
             pluginStats={displayPluginStats}
+            statsStatus={statsStatus}
             sortPluginStats={pluginStats}
             pluginProgressById={pluginProgressById}
             likingPluginIds={likingPluginIds}
@@ -1166,17 +1288,14 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
           aria-hidden={detailPluginId === null}
         >
           {displayedDetailPluginId ? (
-            <PluginDetailPage
+            <MemoizedPluginDetailPage
               embedded={embedded}
               mode="panel"
               deferContent={deferDetailContent}
-              onClose={() => setDetailPluginId(null)}
-              onInstalledPluginsChange={(installed) => {
-                syncInstalledPlugins(installed)
-                setPlugins((currentPlugins) => mergeInstalledPluginInfo(currentPlugins, installed))
-              }}
+              onClose={handleCloseDetail}
+              onInstalledPluginsChange={handleDetailInstalledPluginsChange}
               initialPlugin={plugins.find((plugin) => plugin.id === displayedDetailPluginId)}
-              initialRuntime={gitStatus && maimaiVersion ? { gitStatus, maimaiVersion, installedPlugins } : undefined}
+              initialRuntime={detailInitialRuntime}
               pluginId={displayedDetailPluginId}
             />
           ) : null}
@@ -1184,6 +1303,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
       </div>
       {settingsOpen && (
         <PluginSettingsDialog
+          onDependenciesChanged={() => void refreshInstalledPlugins()}
           onClose={() => setSettingsOpen(false)}
           onSaved={() => {
             setSettingsOpen(false)
@@ -1194,7 +1314,9 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
       {/* 安装对话框 */}
       <PluginInstallDialog
         ref={installDialogRef}
+        onDependenciesChanged={() => void refreshInstalledPlugins()}
         progressById={pluginProgressById}
+        onResetProgress={resetCompletedPluginProgress}
         onInstall={handleInstall}
       />
       <RestartOverlay />

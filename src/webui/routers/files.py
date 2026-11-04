@@ -2,19 +2,17 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from src.files.service import disk_call, get_file_service
 from src.files.http import FileRoute, receive_upload
-from src.webui.dependencies import require_auth
 
 
 router = APIRouter(prefix="/files", tags=["Files"], route_class=FileRoute)
-admin = [Depends(require_auth)]
 
 
-@router.get("", dependencies=admin)
+@router.get("")
 def list_files(session_id: Optional[str] = None, offset: int = 0, limit: int = 50):
     from src.chat.message_receive.chat_manager import chat_manager
 
@@ -26,7 +24,7 @@ def list_files(session_id: Optional[str] = None, offset: int = 0, limit: int = 5
     return {"items": items, "usage": service.store.usage()}
 
 
-@router.get("/chats", dependencies=admin)
+@router.get("/chats")
 def file_chats():
     from src.chat.message_receive.chat_manager import chat_manager
 
@@ -34,7 +32,7 @@ def file_chats():
             for session in list(chat_manager.sessions.values())]
 
 
-@router.post("/uploads", dependencies=admin)
+@router.post("/uploads")
 async def upload(request: Request, session_id: str, name: str):
     service = get_file_service()
     service.require_session(session_id)
@@ -42,7 +40,7 @@ async def upload(request: Request, session_id: str, name: str):
     return await receive_upload(request, asset)
 
 
-@router.post("/chat-uploads", dependencies=admin)
+@router.post("/chat-uploads")
 async def chat_upload(request: Request, session_id: str, name: str):
     from src.webui.routers.chat.service import chat_manager, ensure_file_session
 
@@ -53,7 +51,7 @@ async def chat_upload(request: Request, session_id: str, name: str):
     return await upload(request, session.session_id, name)
 
 
-@router.post("/{file_ref}/download", dependencies=admin)
+@router.post("/{file_ref}/download")
 async def prepare_download(file_ref: str):
     service = get_file_service()
     await service.ensure(file_ref, None, admin=True)
@@ -62,7 +60,7 @@ async def prepare_download(file_ref: str):
     return {"url": "/api/files/transfers/" + url.rsplit("/", 1)[-1]}
 
 
-@router.get("/{file_ref}/text", dependencies=admin)
+@router.get("/{file_ref}/text")
 async def read_text(file_ref: str, offset: int = 0, limit: int = 12000, encoding: str = "utf-8-sig"):
     service = get_file_service()
     await service.ensure(file_ref, None, admin=True)
@@ -73,12 +71,12 @@ class SendFileRequest(BaseModel):
     session_id: str
 
 
-@router.post("/{file_ref}/send", dependencies=admin)
+@router.post("/{file_ref}/send")
 async def send_file(file_ref: str, body: SendFileRequest):
     return await get_file_service().send(file_ref, body.session_id, admin=True)
 
 
-@router.delete("/{file_ref}", dependencies=admin)
+@router.delete("/{file_ref}")
 def delete_file(file_ref: str, cache_only: bool = False):
     get_file_service().store.remove(file_ref, cache_only=cache_only)
     return {"success": True}

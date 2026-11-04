@@ -59,7 +59,7 @@ export function DataTransferWorkspace({ viewModel: model, headerActions }: {
       <div className="grid items-stretch gap-5 lg:grid-cols-2">
         <SectionPanel
           title="导出"
-          description="生成带 manifest.json 的 zip 包"
+          description="暂停当前 Bot 后生成完整快照，完成后恢复原运行状态；其他 Bot 不受影响"
           leading={<Badge className="text-xs font-normal">01</Badge>}
           bodyClassName="flex flex-col gap-4 p-4 sm:p-5"
         >
@@ -205,7 +205,7 @@ export function DataTransferWorkspace({ viewModel: model, headerActions }: {
         </SectionPanel>
         <SectionPanel
           title="导入"
-          description="仅支持本功能导出的数据包"
+          description="支持 1.3.19 及之后版本的数据包。暂停当前 Bot 后导入并保留原文件备份，不覆盖其他 Bot 或公共设置"
           leading={
             <Badge variant="success" className="text-xs font-normal">
               02

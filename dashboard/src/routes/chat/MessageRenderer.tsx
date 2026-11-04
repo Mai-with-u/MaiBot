@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { EnsureImageGallery, useImageGallery, type GalleryImage } from '@/components/image-gallery'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
+import { scopeBotResourcePath } from '@/host/state'
 
 import { useChatScroll } from './ChatScrollContext'
 import { FileAttachment } from './FileAttachment'
@@ -35,7 +36,7 @@ function normalizeReplySegment(segment: MessageSegment): ReplySegmentData {
 }
 
 function MediaSegment({ segment, mediaLabel }: MediaSegmentProps) {
-  const source = String(segment.data)
+  const source = scopeBotResourcePath(String(segment.data))
   const galleryImage = useMemo<GalleryImage>(
     () => ({ src: source, alt: mediaLabel }),
     [mediaLabel, source]
@@ -106,7 +107,7 @@ export function RenderMessageSegment({ segment }: { segment: MessageSegment }) {
     case 'voice':
       return (
         <div className="flex items-center gap-2">
-          <audio controls src={String(segment.data)} className="h-8 max-w-[200px]">
+          <audio controls src={scopeBotResourcePath(String(segment.data))} className="h-8 max-w-[200px]">
             <track kind="captions" src="" label={t('chat.media.noCaptions')} default />
             {t('chat.media.audioUnsupported')}
           </audio>
@@ -115,7 +116,7 @@ export function RenderMessageSegment({ segment }: { segment: MessageSegment }) {
 
     case 'video':
       return (
-        <video controls src={String(segment.data)} className="max-h-64 max-w-full rounded-lg">
+        <video controls src={scopeBotResourcePath(String(segment.data))} className="max-h-64 max-w-full rounded-lg">
           <track kind="captions" src="" label={t('chat.media.noCaptions')} default />
           {t('chat.media.videoUnsupported')}
         </video>

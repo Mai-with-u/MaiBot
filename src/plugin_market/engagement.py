@@ -63,19 +63,9 @@ async def _request(method: str, path: str, payload: Optional[Dict[str, Any]] = N
     if not isinstance(data, dict):
         raise ValueError("插件市场互动响应必须为对象")
     if method != "GET" and response.is_success and data.get("success") is not False:
-        market_cache.invalidate(f"{sources.MARKET_BASE_URL}/api/v2/market/")
+        market_cache.invalidate(f"{sources.MARKET_BASE_URL}/stats/")
+        market_cache.invalidate(f"{sources.MARKET_BASE_URL}/api/v2/market/plugins/summary")
     return MarketReply(response.status_code, data)
-
-
-async def get_reviews(plugin_id: str) -> Dict[str, Any]:
-    reply = await _request("GET", f"/stats/{quote(plugin_id, safe='')}")
-    if reply.status_code >= 400 or reply.data.get("success") is False:
-        raise MarketError(reply.status_code if reply.status_code >= 400 else 502,
-                          str(reply.data.get("error", "获取插件评论失败")))
-    stats = reply.data.get("stats", reply.data)
-    if not isinstance(stats, dict):
-        raise ValueError("插件评论响应格式无效")
-    return {"recent_ratings": stats.get("recent_ratings", [])}
 
 
 async def get_user_state(plugin_id: str, user_id: str) -> MarketReply:
@@ -84,7 +74,6 @@ async def get_user_state(plugin_id: str, user_id: str) -> MarketReply:
 
 async def get_user_states(user_id: str) -> MarketReply:
     return await _request("GET", f"/stats/user-states?user_id={quote(user_id, safe='')}")
-
 
 async def vote(request: VoteRequest, dislike: bool = False) -> MarketReply:
     return await _request("POST", "/stats/dislike" if dislike else "/stats/like", request.model_dump())

@@ -4,7 +4,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
-from src.webui.dependencies import require_auth
 from src.webui.routers.plugin import marketplace
 from src.plugin_market import engagement
 
@@ -20,7 +19,6 @@ def client(monkeypatch):
     monkeypatch.setattr(engagement, "_request", request_stats)
     app = FastAPI()
     app.include_router(marketplace.router)
-    app.dependency_overrides[require_auth] = lambda: "test-token"
     with TestClient(app) as test_client:
         yield test_client, forwarded
 

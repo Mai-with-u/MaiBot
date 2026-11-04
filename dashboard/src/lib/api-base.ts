@@ -5,6 +5,7 @@
  */
 
 import type { BackendConnection } from '@/types/electron'
+import { getHostRuntime } from '@/host/state'
 
 import { isElectron } from './runtime'
 
@@ -14,7 +15,7 @@ import { isElectron } from './runtime'
  * - Browser DEV: Empty string (Vite proxy handles /api prefix)
  * - Browser PROD: Empty string (same-origin deployment)
  */
-export async function getApiBaseUrl(): Promise<string> {
+export async function getControlApiBaseUrl(): Promise<string> {
   if (isElectron()) {
     // Electron: Get configured backend URL from IPC
     const backendUrl = await window.electronAPI?.getActiveBackendUrl()
@@ -27,6 +28,15 @@ export async function getApiBaseUrl(): Promise<string> {
   return ''
 }
 
+/** Bot 请求显式固定到当前标签页选中的实例，不能随其他标签页的 Cookie 改变归属。 */
+export async function getApiBaseUrl(): Promise<string> {
+  const origin = await getControlApiBaseUrl()
+  const runtime = getHostRuntime()
+  if (!runtime.host) return origin
+  if (!runtime.selected_bot_id) throw new Error('请先在机器人管理中选择一个 Bot')
+  return `${origin}/api/host/bots/${encodeURIComponent(runtime.selected_bot_id)}/proxy`
+}
+
 /**
  * Get WebSocket base URL
  * - Electron: Convert HTTP/HTTPS URL to WS/WSS
@@ -34,6 +44,12 @@ export async function getApiBaseUrl(): Promise<string> {
  * - Browser PROD: Construct WS URL from window.location
  */
 export async function getWsBaseUrl(): Promise<string> {
+  if (getHostRuntime().host) {
+    const base = await getApiBaseUrl()
+    const url = new URL(base.startsWith('/') ? `${window.location.origin}${base}` : base)
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    return url.toString().replace(/\/$/, '')
+  }
   if (isElectron()) {
     // Electron: Convert API URL protocol to WS protocol
     const apiUrl = await getApiBaseUrl()
@@ -65,7 +81,10 @@ export async function getWsBaseUrl(): Promise<string> {
  * - Browser: Path remains unchanged (proxy/same-origin handling)
  */
 export async function resolveApiPath(path: string): Promise<string> {
-  if (isElectron()) {
+  if (isElectron() || getHostRuntime().host) {
+    // 仅接管本机业务资源；已经带实例前缀的地址和外部资源不能重复改写。
+    if (/^(?:https?:|data:|blob:)/i.test(path)) return path
+    if (path.startsWith('/api/host/')) return `${await getControlApiBaseUrl()}${path}`
     const baseUrl = await getApiBaseUrl()
     return baseUrl ? `${baseUrl}${path}` : path
   }

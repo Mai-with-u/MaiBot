@@ -10,6 +10,7 @@ import json
 
 from src.chat.message_receive.chat_manager import chat_manager
 from src.common.utils.utils_config import ChatConfigUtils
+from src.maisaka.scenes.factory import get_scene
 from src.config.config import config_manager, global_config
 from src.maisaka.context.messages import SessionBackedMessage
 
@@ -54,12 +55,6 @@ class FocusModeManager:
         for runtime in list(heartflow_manager.heartflow_chat_list.values()):
             await self.reconcile(runtime)
 
-    def is_enabled(self) -> bool:
-        return global_config.experimental.focus_mode
-
-    def is_enabled_for_chat(self, *, is_group_chat: Optional[bool] = None) -> bool:
-        return self.is_enabled() and (is_group_chat is not False or global_config.experimental.focus_on_private)
-
     def is_enabled_for_session(self, session_id: str, *, is_group_chat: Optional[bool] = None) -> bool:
         if not session_id:
             return False
@@ -68,24 +63,24 @@ class FocusModeManager:
             if session is None:
                 return False
             is_group_chat = session.is_group_session
-        if not self.is_enabled_for_chat(is_group_chat=is_group_chat):
+        if not global_config.experimental.focus_mode:
             return False
-        if not is_group_chat and ChatConfigUtils.is_private_reply_paused(session_id):
+        if not get_scene(is_group_chat).allows_focus(session_id):
             return False
         targets = global_config.experimental.focus_chat_whitelist
-        return not targets or any(
+        if targets and not any(
             ChatConfigUtils.target_matches_session_with_wildcards(target, session_id, is_group_chat)
             for target in targets
-        )
+        ):
+            return False
+        return self.get_focus_scope_key(session_id) is not None
 
-    def get_focus_scope_key(self, session_id: str) -> str:
-        """组身份基于规则内容，不因配置列表重新排序而改变；不作为业务 session_id。"""
+    def get_focus_scope_key(self, session_id: str) -> Optional[str]:
+        """只解析显式共享组；组身份基于规则内容，不因列表排序而改变，不作为业务 session_id。"""
         session = chat_manager.get_session_by_session_id(session_id)
         if session is None:
             raise ValueError(f"Focus 聊天流不存在：{session_id}")
         groups = global_config.experimental.focus_groups
-        if not groups:
-            return "global"
         for group in groups:
             if any(
                 ChatConfigUtils.target_matches_session_with_wildcards(target, session_id, session.is_group_session)
@@ -94,7 +89,7 @@ class FocusModeManager:
                 rules = [target.model_dump(mode="json") for target in group.targets]
                 canonical = json.dumps(sorted(rules, key=lambda rule: json.dumps(rule, sort_keys=True)), sort_keys=True)
                 return "group:" + sha256(canonical.encode()).hexdigest()[:24]
-        return "session:" + session_id
+        return None
 
     async def attach(self, runtime: MaisakaHeartFlowChatting) -> None:
         from .group_runtime import FocusGroupRuntime
@@ -105,22 +100,25 @@ class FocusModeManager:
         created = False
         async with self._lock:
             scope = self.get_focus_scope_key(runtime.session_id)
+            if scope is None:
+                raise ValueError(f"聊天流未匹配 Focus 共享组：{runtime.session_id}")
             group = self.groups.get(scope)
             if group is None:
                 group = FocusGroupRuntime(scope)
                 group._hydrating = True
-                await group.restore()
+                restored_session_ids = await group.restore()
                 self.groups[scope] = group
                 created = True
             group.add_member(runtime)
             runtime._focus_group = group
+        await group.publish_monitor_session()
         if created:
             try:
                 # 新版检查点里的其他真实会话按需恢复服务，工具可以继续指向它们，
                 # 无须等这些聊天再次发消息；此处不持有组锁，避免递归注册死锁。
                 from src.chat.heart_flow.heartflow_manager import heartflow_manager
 
-                for sid in list(group.restored_session_ids):
+                for sid in restored_session_ids:
                     if sid not in group.members:
                         session = chat_manager.get_session_by_session_id(sid)
                         if session is not None and await heartflow_manager._is_session_allowed(session):
@@ -184,6 +182,8 @@ class FocusModeManager:
             pending = await group.unprocessed_messages(runtime.session_id)
             await runtime._stop_background_subagents()
             await self.detach(runtime, clear_context=True)
+            if not enabled:
+                runtime._enter_stop_state()
         if enabled and runtime._focus_group is None:
             if runtime._internal_loop_task is not None:
                 runtime._internal_loop_task.cancel()
@@ -195,6 +195,8 @@ class FocusModeManager:
             for message in {message.message_id: message for message in pending}.values():
                 history = await runtime._reasoning_engine._build_history_message(message)
                 await runtime._focus_group.register_message(runtime, message, history)
+            runtime._collect_pending_messages()
+            runtime._clear_forced_turn_state()
         elif not enabled:
             if pending:
                 pending_ids = {message.message_id for message in pending}
@@ -205,7 +207,6 @@ class FocusModeManager:
                 ]
                 runtime._last_processed_index = len(runtime.message_cache)
                 runtime.message_cache.extend(pending)
-                runtime._enter_stop_state()
             runtime._ensure_background_tasks_running()
             if pending:
                 runtime._schedule_message_turn()

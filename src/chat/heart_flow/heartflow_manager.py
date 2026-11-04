@@ -6,6 +6,7 @@ import time
 
 from src.chat.message_receive.chat_manager import BotChatSession, chat_manager
 from src.common.logger import get_logger
+from src.core.chat_pause import chat_pause_state
 from src.core.local_operator import LOCAL_PLATFORM_BOT_IDS
 from src.maisaka.runtime import MaisakaHeartFlowChatting
 from src.maisaka.focus import focus_mode_manager
@@ -22,6 +23,10 @@ class HeartflowPolicyDeniedError(PermissionError):
     """适配器名单拒绝创建聊天运行实例。"""
 
 
+class ChatPausedError(PermissionError):
+    """管理命令暂停了聊天回复，仍允许接收消息和执行管理命令。"""
+
+
 class HeartflowManager:
     """管理 session 级别的 Maisaka 心流实例。"""
 
@@ -36,6 +41,7 @@ class HeartflowManager:
         focus_mode_manager.bind_loop()
         self._ensure_running()
         try:
+            self._ensure_chat_online(session_id)
             if chat := self.heartflow_chat_list.get(session_id):
                 self._touch_chat(session_id)
                 return chat
@@ -43,6 +49,7 @@ class HeartflowManager:
             create_lock = self._chat_create_locks.setdefault(session_id, asyncio.Lock())
             async with create_lock:
                 self._ensure_running()
+                self._ensure_chat_online(session_id)
                 if chat := self.heartflow_chat_list.get(session_id):
                     self._touch_chat(session_id)
                     return chat
@@ -53,6 +60,7 @@ class HeartflowManager:
                 if not await self._is_session_allowed(chat_session):
                     raise HeartflowPolicyDeniedError(f"适配器名单禁止创建聊天运行实例: {session_id}")
                 self._ensure_running()
+                self._ensure_chat_online(session_id)
 
                 new_chat = MaisakaHeartFlowChatting(session_id=session_id)
                 await new_chat.start()
@@ -60,12 +68,33 @@ class HeartflowManager:
                 self._touch_chat(session_id)
                 await self._evict_over_limit_chats(protected_session_id=session_id)
                 return new_chat
+        except ChatPausedError:
+            raise
         except HeartflowPolicyDeniedError as exc:
             logger.warning(str(exc))
             raise
         except Exception as exc:
             logger.error(f"创建心流聊天 {session_id} 失败: {exc}", exc_info=True)
             raise
+
+    @staticmethod
+    def _ensure_chat_online(session_id: str) -> None:
+        session = chat_manager.get_session_by_session_id(session_id)
+        if session is not None and chat_pause_state.is_paused(session_id, session.is_group_session):
+            raise ChatPausedError(f"聊天回复已暂停: {session_id}")
+
+    async def stop_paused_chats(self) -> None:
+        """等待在途创建结束，再停止暂停会话的思考、回复和唤醒任务。"""
+        for lock in list(self._chat_create_locks.values()):
+            async with lock:
+                pass
+        for session_id, chat in list(self.heartflow_chat_list.items()):
+            if not chat_pause_state.is_paused(session_id, chat.chat_stream.is_group_session):
+                continue
+            # 不清空聊天历史；停止失败必须暴露，不能报告暂停成功。
+            await chat.stop()
+            self.heartflow_chat_list.pop(session_id, None)
+            self._chat_last_active_at.pop(session_id, None)
 
     def _ensure_running(self) -> None:
         if self._stopping:

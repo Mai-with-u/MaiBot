@@ -463,3 +463,35 @@ def test_adapter_policy_lists_plugin_entries_for_account_switch(tmp_path: Path) 
     assert len(entries) == 1
     assert entries[0]["account_id"] == "2814567326"
     assert entries[0]["platform"] == "qq"
+
+
+@pytest.mark.parametrize("field,default_action", [("allow_ids", "block"), ("deny_ids", "allow")])
+@pytest.mark.parametrize("target", ["100", "*"])
+def test_disabled_entries_survive_group_save_and_resume(
+    tmp_path: Path, field: str, default_action: str, target: str,
+) -> None:
+    manager = AdapterPolicyManager(tmp_path / "adapter_policy.toml")
+    identity = AdapterIdentity(plugin_id="adapter.qq")
+    policy = manager.get_adapter_policy(identity)
+    policy["group"].update({"default_action": default_action, field: [target], "disabled_ids": [target]})
+    manager.set_adapter_policy(
+        identity, policy, policy_groups=[{"id": "default", "name": "默认", **policy}], active_group="default",
+    )
+    restored = manager.get_adapter_policy(identity)
+    assert restored["group"][field] == [target]
+    assert restored["policy_groups"][0]["group"]["disabled_ids"] == [target]
+    assert manager.evaluate(identity, chat_type="group", target_id="100").allowed == (default_action == "allow")
+    restored["group"]["disabled_ids"] = []
+    manager.set_adapter_policy(identity, restored)
+    assert manager.evaluate(identity, chat_type="group", target_id="100").allowed == (field == "allow_ids")
+    assert "disabled_ids" not in manager.get_adapter_policy(identity)["policy_groups"][0]["group"]
+
+
+def test_chat_override_reactivates_disabled_entry(tmp_path: Path) -> None:
+    manager = AdapterPolicyManager(tmp_path / "adapter_policy.toml")
+    identity = AdapterIdentity(plugin_id="adapter.qq")
+    policy = manager.get_adapter_policy(identity)
+    policy["group"].update(default_action="block", allow_ids=["100"], disabled_ids=["100"])
+    manager.set_adapter_policy(identity, policy)
+    manager.set_chat_override(identity, chat_type="group", target_id="100", action="allow")
+    assert manager.evaluate(identity, chat_type="group", target_id="100").allowed

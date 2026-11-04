@@ -1,10 +1,12 @@
-import inspect
 from functools import lru_cache
 from typing import Any, Dict, List, get_args, get_origin
 
 from pydantic_core import PydanticUndefined
 
+import inspect
+
 from src.config.config_base import ConfigBase
+from src.config.shared_settings import RETENTION_DEFAULTS, shared_settings_path
 
 AMEMORIX_BASIC_FIELD_PATHS: set[str] = {
     "a_memorix.filter.chats",
@@ -264,6 +266,10 @@ class ConfigSchemaGenerator:
         resolved_path_prefix = path_prefix or cls._default_path_prefix(config_class)
 
         for field_name, field_info in config_class.model_fields.items():
+            shared_fields = {"Config": {"webui"}, "VisualConfig": {"image_cache_cleanup"},
+                "WebUIConfig": {"webui_style", "enforce_public_outbound_url"}, "EmojiConfig": {"cache_cleanup"}, "LogConfig": set(RETENTION_DEFAULTS["logs"])}
+            if shared_settings_path() is not None and field_name in shared_fields.get(config_class.__name__, set()):
+                continue
             if field_name in {"field_docs", "_validate_any", "suppress_any_warning"}:
                 continue
             if field_info.deprecated:
@@ -317,6 +323,8 @@ class ConfigSchemaGenerator:
             schema["uiParent"] = ui_parent
         if ui_label:
             schema["uiLabel"] = ui_label
+        if config_class.__ui_section_label__:
+            schema["uiSectionLabel"] = config_class.__ui_section_label__
         if ui_use_subtabs:
             schema["uiUseSubTabs"] = ui_use_subtabs
         if ui_sub_label:

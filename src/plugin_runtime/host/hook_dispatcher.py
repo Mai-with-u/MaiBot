@@ -24,8 +24,10 @@ import asyncio
 import contextlib
 
 from src.common.logger import get_logger
+from src.common.exceptions import OperationAbortedError
 from src.common.shutdown import is_shutdown_requested
 from src.config.config import global_config
+from src.core.tooling import ToolExecutionResult
 from src.plugin_runtime.protocol.errors import ErrorCode, RPCError
 
 from .circuit_breaker import get_plugin_circuit_breaker
@@ -70,6 +72,7 @@ class HookDispatchResult:
         kwargs: 经阻塞处理器串行处理后的最终参数字典。
         aborted: 是否被某个处理器中止。
         stopped_by: 若被中止，记录触发中止的完整处理器名称。
+        abort_reason: 中止处理器通过 custom_result.reason 提供的原因。
         custom_results: 阻塞处理器返回的附加结果列表。
         errors: 本次调用中记录到的错误信息列表。
     """
@@ -80,6 +83,46 @@ class HookDispatchResult:
     stopped_by: Optional[str] = None
     custom_results: List[Any] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
+    abort_reason: str = ""
+
+    def raise_if_aborted(self) -> None:
+        """在需要跨调用层传递中止时使用，由业务边界接收并处理。"""
+        if self.aborted:
+            raise HookAbortedError(self)
+
+
+class HookAbortedError(OperationAbortedError):
+    """将 Hook 中止信息跨业务调用层传递；不代表处理器执行异常。"""
+
+    def __init__(self, result: HookDispatchResult) -> None:
+        self.hook_name = result.hook_name
+        self.handler_name = result.stopped_by
+        self.reason = result.abort_reason
+        super().__init__(f"Hook {self.hook_name} 被 {self.handler_name} 中止：{self.reason or '未提供原因'}")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """返回可用于工具回执与监控的中止信息。"""
+        return {"hook_name": self.hook_name, "handler_name": self.handler_name, "reason": self.reason}
+
+
+def build_hook_abort_tool_result(
+    tool_name: str,
+    details: Dict[str, Any],
+    *,
+    structured_content: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> ToolExecutionResult:
+    """将统一中止信息转换成 Planner 可读的工具结果。"""
+    reason = details["reason"]
+    message = f"本次操作被插件主动拦截：{reason or '未提供原因'}。请根据原因调整调用或停止，勿原样重复调用。"
+    return ToolExecutionResult(
+        tool_name=tool_name, success=False, error_message=message,
+        structured_content={
+            **(structured_content or {}), "error_code": "plugin_aborted", "reason": reason,
+            "message": message, "hook_abort": dict(details),
+        },
+        metadata=dict(metadata or {}),
+    )
 
 
 @dataclass(slots=True)
@@ -588,7 +631,19 @@ class HookDispatcher:
             if hook_spec.allow_abort:
                 dispatch_result.aborted = True
                 dispatch_result.stopped_by = target.entry.full_name
-                logger.info(f"HookHandler {target.entry.full_name} 中止了 Hook {dispatch_result.hook_name}")
+                if isinstance(execution_result.custom_result, dict):
+                    reason = execution_result.custom_result.get("reason", "")
+                    if isinstance(reason, str):
+                        dispatch_result.abort_reason = reason.strip()
+                # 旧表情 Hook 的 abort_message 只在此归一化，业务链路统一消费 abort_reason。
+                if not dispatch_result.abort_reason and execution_result.modified_kwargs is not None:
+                    legacy_reason = execution_result.modified_kwargs.get("abort_message", "")
+                    if isinstance(legacy_reason, str):
+                        dispatch_result.abort_reason = legacy_reason.strip()
+                logger.info(
+                    f"HookHandler {target.entry.full_name} 中止了 Hook {dispatch_result.hook_name}: "
+                    f"{dispatch_result.abort_reason}"
+                )
             else:
                 error_message = (
                     f"Hook {dispatch_result.hook_name} 不允许 abort，"
@@ -624,6 +679,7 @@ class HookDispatcher:
 
         dispatch_result.aborted = True
         dispatch_result.stopped_by = target.entry.full_name
+        dispatch_result.abort_reason = error_message
         logger.warning(
             f"HookHandler {target.entry.full_name} 因错误策略 abort "
             f"中止了 Hook {dispatch_result.hook_name}: {error_message}"

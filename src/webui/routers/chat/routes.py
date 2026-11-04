@@ -4,7 +4,7 @@ from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, case, delete, func
 from sqlmodel import col, select
@@ -41,7 +41,6 @@ from src.platform_io import (
     get_adapter_policy_manager,
     get_platform_io_manager,
 )
-from src.webui.dependencies import require_auth
 from src.webui.utils.toml_utils import save_toml_with_format
 
 from .service import (
@@ -53,7 +52,7 @@ from .service import (
 
 logger = get_logger("webui.chat")
 
-router = APIRouter(prefix="/api/chat", tags=["LocalChat"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/api/chat", tags=["LocalChat"])
 
 
 class TalkFrequencyUpdateRequest(BaseModel):
@@ -101,6 +100,7 @@ class AdapterHostPolicySectionRequest(BaseModel):
     """单类聊天的主程序适配器放行规则。"""
 
     default_action: Literal["inherit", "allow", "block"] = Field(default="inherit")
+    disabled_ids: List[str] = Field(default_factory=list)
     allow_ids: List[str] = Field(default_factory=list)
     deny_ids: List[str] = Field(default_factory=list)
 

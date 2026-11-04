@@ -460,7 +460,7 @@ describe('ModelConfigPage 特征化', () => {
     expect(effortSelect).toBeEnabled()
     expect(effortSelect).toHaveTextContent('最高')
 
-    await user.click(within(dialog).getByRole('button', { name: '高级' }))
+    await user.click(within(dialog).getByRole('switch', { name: '高级设置' }))
     expect(within(dialog).queryByRole('switch', { name: '支持缓存' })).not.toBeInTheDocument()
     const sendTemperatureSwitch = within(dialog).getByRole('switch', {
       name: '发送 temperature 参数',
@@ -1483,7 +1483,7 @@ describe('ModelConfigPage 特征化', () => {
     await user.click(within(dialog).getByRole('switch', { name: '自定义最大 Token' }))
     expect(within(dialog).getByDisplayValue('2048')).toBeInTheDocument()
 
-    await user.click(within(dialog).getByRole('button', { name: '高级' }))
+    await user.click(within(dialog).getByRole('switch', { name: '高级设置' }))
     await user.click(within(dialog).getByRole('switch', { name: '强制流式输出模式' }))
     // 缓存价格输入恒显示，不再依赖「支持缓存」开关；上方已将其清空
     expect(within(dialog).queryByRole('switch', { name: '支持缓存' })).not.toBeInTheDocument()

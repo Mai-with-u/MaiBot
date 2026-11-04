@@ -5,6 +5,7 @@ from typing import Any, Callable, Coroutine, Dict, List, Tuple
 import asyncio
 import time
 
+from src.common.async_work import run_sync_work
 from src.common.logger import get_logger
 
 from ...utils import profile_policy
@@ -242,11 +243,13 @@ class MemoryBackgroundTaskService(KernelServiceBase):
             if self._background_stopping:
                 break
             try:
-                self._maintenance_service._reconcile_relation_graph_projection_jobs()
+                # 图通道初始化失败的原因已在启动时记录；清理任务继续运行，投影等待图通道可用。
+                if self.graph_store is not None:
+                    await run_sync_work(self._maintenance_service._reconcile_relation_graph_projection_jobs)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.warning(f"relation graph projection loop 异常，将在下一轮重试: {exc}")
+                logger.exception(f"relation graph projection loop 异常，将在下一轮重试: {exc}")
             try:
                 result = await self._delete_admin_service.process_pending_storage_cleanup_jobs(limit=100)
                 if int(result.get("failed", 0) or 0) > 0:

@@ -110,7 +110,6 @@ def test_marketplace_listing_only_calls_selected_information_source(monkeypatch,
 def test_cnb_icon_proxy_validates_images_and_sets_browser_cache(monkeypatch, media_type, size, status):
     from fastapi import HTTPException
 
-    monkeypatch.setattr(icon_routes, "require_plugin_token", lambda token: None)
     monkeypatch.setattr(icon_routes, "validate_public_url", lambda url, **kw: url)
     monkeypatch.setattr(icon_routes, "get_shared_ssl_context", lambda: None)
     response = BytesIO(b"x" * size)
@@ -122,10 +121,10 @@ def test_cnb_icon_proxy_validates_images_and_sets_browser_cache(monkeypatch, med
     url = "https://cnb.cool/Mai-with-u/plugin-repo/-/git/raw/main/icons/a.webp"
     if status != 200:
         with pytest.raises(HTTPException) as error:
-            icon_routes.get_market_icon(url, "session")
+            icon_routes.get_market_icon(url)
         assert error.value.status_code == status
     else:
-        result = icon_routes.get_market_icon(url, "session")
+        result = icon_routes.get_market_icon(url)
         assert result.body == b"x" * size
         assert result.media_type == "image/webp"
         assert result.headers["cache-control"] == "private, max-age=3600"
@@ -142,7 +141,6 @@ def test_cnb_icon_proxy_validates_images_and_sets_browser_cache(monkeypatch, med
 def test_cnb_icon_proxy_rejects_non_market_paths(monkeypatch, url):
     from fastapi import HTTPException
 
-    monkeypatch.setattr(icon_routes, "require_plugin_token", lambda token: None)
     with pytest.raises(HTTPException) as error:
-        icon_routes.get_market_icon(url, "session")
+        icon_routes.get_market_icon(url)
     assert error.value.status_code == 400

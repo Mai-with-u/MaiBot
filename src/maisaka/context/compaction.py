@@ -9,6 +9,7 @@ import json
 from src.common.data_models.llm_service_data_models import LLMResponseResult
 from src.agent.planner import ACPPlannerSnapshot, generate_planner_response
 from src.common.data_models.message_component_data_model import ReplyComponent
+from src.common.llm_json import validate_llm_json
 from src.common.logger import get_logger
 from src.common.prompt_i18n import load_prompt
 from src.config.config import global_config
@@ -178,7 +179,6 @@ def _build_compaction_request(
     planner_snapshot: PlannerRequestSnapshot,
     previous_summary: ContextSummaryMessage | None,
     recent_messages: Sequence[LLMContextMessage],
-    max_summary_chars: int,
     source_context: str = "",
 ) -> ResponseRequest | ACPPlannerSnapshot:
     """在线程池构造完整请求，序列化大工具结果和复制图片不占事件循环。"""
@@ -199,7 +199,7 @@ def _build_compaction_request(
                 delta.append(text)
     # 共享聊天携带来源资料并使用独立提示词，普通聊天不注入多会话规则。
     prompt_name = "context_compaction_focus" if source_context else "context_compaction"
-    instruction = load_prompt(prompt_name, max_summary_chars=max_summary_chars)
+    instruction = load_prompt(prompt_name)
     tail_parts = [
         "<additional_conversation_data>", *delta, "</additional_conversation_data>",
     ]
@@ -220,14 +220,13 @@ async def build_context_summary(
     previous_summary: ContextSummaryMessage | None,
     recent_messages: Sequence[LLMContextMessage],
     session_id: str,
-    max_summary_chars: int,
     source_context: str = "",
 ) -> ContextSummaryMessage:
     """保留 Planner 的完整请求前缀，仅追加未覆盖资料和压缩指令。"""
     request = await asyncio.to_thread(
         _build_compaction_request, removed_messages, planner_snapshot=planner_snapshot,
         previous_summary=previous_summary, recent_messages=recent_messages,
-        max_summary_chars=max_summary_chars, source_context=source_context,
+        source_context=source_context,
     )
     if isinstance(request, ACPPlannerSnapshot):
         result = await generate_planner_response(
@@ -244,9 +243,9 @@ async def build_context_summary(
         logger.exception("上下文压缩请求记录保存失败")
     if result.tool_calls or result.native_tool_calls:
         raise ValueError("压缩响应包含被禁止的工具调用，拒绝提交摘要")
-    rendered = ConversationState.model_validate_json(result.response).render()
-    if not rendered or len(rendered) > max_summary_chars:
-        raise ValueError(f"状态摘要为空或超过字符预算: {len(rendered)}/{max_summary_chars}")
+    rendered = validate_llm_json(result.response, ConversationState).render()
+    if not rendered:
+        raise ValueError("状态摘要为空")
     logger.info(
         f"上下文压缩缓存: session={session_id} model={result.model_name} "
         f"input={result.prompt_tokens} hit={result.prompt_cache_hit_tokens} "

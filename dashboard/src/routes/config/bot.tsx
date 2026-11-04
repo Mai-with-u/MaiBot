@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useRouterState } from '@tanstack/react-router'
 import {
   Check,
@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import { parse as parseToml } from 'smol-toml'
 
+import { DesktopPetCurrentTaskField } from '@/components/DesktopPetCurrentTaskField'
 import { DesktopPetSkinField } from '@/components/DesktopPetSkinField'
 import { AgentACPField, AgentConnectionSettings, AgentCustomArgs, AgentDesktopField } from '@/components/agent/AgentConnectionSettings'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -32,7 +33,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { DashboardTabBar, DashboardTabTrigger } from '@/components/ui/dashboard-tabs'
+import { DashboardFolderPanel, DashboardFolderTabBar } from '@/components/ui/dashboard-tabs'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -47,6 +48,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { CodeEditor } from '@/components/CodeEditor'
 import { DynamicConfigForm } from '@/components/dynamic-form'
+import { ConfigSectionDialog } from '@/components/dynamic-form/ConfigSectionDialog'
 import { RestartOverlay } from '@/components/restart-overlay'
 import { useToast } from '@/hooks/use-toast'
 import { usePinnedConfigTabs } from '@/hooks/use-pinned-config-tabs'
@@ -89,19 +91,25 @@ import {
   RegexRulesHook,
   useAutoSave,
 } from './bot/hooks'
+import { collectChatSettings } from '@/lib/chat-settings-schema'
+import { ChatSettings } from './bot/ChatSettings'
+import { CapabilitySettings } from './bot/CapabilitySettings'
 import { CommandPermissions } from './bot/CommandPermissions'
+import { PluginUsagePermissions } from './bot/PluginUsagePermissions'
 import { GlobalLearningSettings } from './bot/GlobalLearningSettings'
 import { PersonalityProfiles } from './bot/PersonalityProfiles'
 import { MemorySwitchGuard, MemorySwitchProvider } from './bot/MemorySwitchGuard'
+import { CommonSettings } from './bot/CommonSettings'
 
 type ConfigSectionData = Record<string, unknown>
-type BotSettingsMode = 'groups' | 'detail' | 'commands' | 'source'
+type BotSettingsMode = 'groups' | 'detail' | 'commands' | 'source' | 'common'
 // ==================== 常量定义 ====================
 /** Toast 显示前的延迟时间 (毫秒) */
 const TOAST_DISPLAY_DELAY = 500
 const FILE_MODE_NOTICE_DISMISSED_KEY = 'bot-config-file-mode-notice-dismissed'
 const EXPERIMENTAL_FEATURES_NOTICE_DISMISSED_KEY =
   'bot-config-experimental-features-notice-dismissed'
+const CONFIG_DIALOG_SECTIONS = new Set(['chat.reply_style'])
 
 // ==================== Tab 分组类型与构建 ====================
 
@@ -110,10 +118,13 @@ interface SubtabPane {
   content: ReactNode
   id: string
   label: string
+  presentation?: 'tab' | 'dialog'
 }
 
 // 主导出组件：包装 RestartProvider
 export function BotConfigPage() {
+  const search = useRouterState({ select: state => state.location.searchStr })
+  if (new URLSearchParams(search).get('mode') === 'common') return <CommonSettings />
   return (
     <RestartProvider>
       <BotConfigPageContent />
@@ -346,6 +357,7 @@ function BotConfigPageContent() {
   useEffect(() => {
     const hookEntries = [
       ['desktop_pet.skin_id', DesktopPetSkinField],
+      ['desktop_pet.show_current_task', DesktopPetCurrentTaskField],
       ['agent.connection', AgentConnectionSettings, 'wrapper'],
       ['agent.desktop_manifest', AgentDesktopField, 'wrapper'],
       ['agent.acp_args', AgentCustomArgs, 'wrapper'],
@@ -488,6 +500,7 @@ function BotConfigPageContent() {
     const nextSearch = params.size ? `?${params.toString()}` : ''
     lastRouteSearchRef.current = nextSearch
     await navigate({ href: `/config/bot${nextSearch}`, replace: true })
+    if (mode === 'common') return
     if (mode === 'source') {
       await loadSourceCode()
     } else {
@@ -739,9 +752,9 @@ function BotConfigPageContent() {
             <Tabs
               value={editMode}
               onValueChange={(v) => handleModeChange(v as BotSettingsMode)}
-              className="min-w-0 flex-1 sm:w-64 sm:flex-none"
+              className="min-w-0 flex-1 sm:w-80 sm:flex-none"
             >
-              <TabsList data-config-bot-mode-tabs="true" className="grid h-9 w-full grid-cols-2">
+              <TabsList data-config-bot-mode-tabs="true" className="grid h-9 w-full grid-cols-3">
                 <TabsTrigger value="detail" className="min-w-0 gap-1 !px-1 text-sm sm:!px-2">
                   <SlidersHorizontal className="h-4 w-4 shrink-0" />
                   详细设置
@@ -750,6 +763,7 @@ function BotConfigPageContent() {
                   <ShieldCheck className="h-4 w-4 shrink-0" />
                   命令管理
                 </TabsTrigger>
+                <TabsTrigger value="common" className="min-w-0 !px-1 text-sm sm:!px-2">公共设置</TabsTrigger>
               </TabsList>
             </Tabs>
             <Button
@@ -920,13 +934,22 @@ function BotConfigPageContent() {
         )}
 
         {editMode === 'commands' && (
-          <CommandPermissions
-            pluginSection={sectionValues.plugin ?? null}
-            onChange={(value) => {
-              setSectionValue('plugin', value)
-              setHasUnsavedChanges(true)
-            }}
-          />
+          <>
+            <PluginUsagePermissions
+              pluginSection={sectionValues.plugin ?? null}
+              onChange={(value) => {
+                setSectionValue('plugin', value)
+                setHasUnsavedChanges(true)
+              }}
+            />
+            <CommandPermissions
+              pluginSection={sectionValues.plugin ?? null}
+              onChange={(value) => {
+                setSectionValue('plugin', value)
+                setHasUnsavedChanges(true)
+              }}
+            />
+          </>
         )}
 
         {/* 重启遮罩层 */}
@@ -1017,7 +1040,9 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
   const initialActiveTab = tabGroups[0]?.id ?? ''
   const [expandedSubtabGroups, setExpandedSubtabGroups] = useState<Record<string, boolean>>({})
   const [activeSubtabByGroup, setActiveSubtabByGroup] = useState<Record<string, string>>({})
+  const [openConfigDialog, setOpenConfigDialog] = useState<string | null>(null)
   const [alternateStylesOpen, setAlternateStylesOpen] = useState(false)
+  const [chatScope, setChatScope] = useState<'group' | 'private'>('group')
   const [experimentalNoticeOpen, setExperimentalNoticeOpen] = useState(
     () =>
       initialActiveTab === 'experimental' &&
@@ -1055,13 +1080,21 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
         setAlternateStylesOpen(true)
       }
 
+      const chatField = configSchema?.nested?.chat && collectChatSettings(configSchema.nested.chat).find(
+        ({ path, field }) => ['chat', ...path, field.name].join('.') === searchFieldPath
+      )
+      const chatLayout = chatField?.field['x-chat-settings']
+      if (chatLayout && chatLayout.scope !== 'common') setChatScope(chatLayout.scope)
+      if (chatLayout?.dialog) setOpenConfigDialog(searchFieldPath)
+
       if (subcategoryName) {
-        const isChatQuoteField = searchFieldPath === 'chat.reply_style.private_quote_frequency' ||
-          searchFieldPath === 'chat.reply_style.group_quote_frequency'
-        const subtabId = isChatQuoteField ? 'chat' : `${sectionName}.${subcategoryName}`
+        const subtabId = chatLayout ? 'chat' : `${sectionName}.${subcategoryName}`
+        if (CONFIG_DIALOG_SECTIONS.has(subtabId)) {
+          setOpenConfigDialog(subtabId)
+        }
         setActiveSubtabByGroup((current) => ({
           ...current,
-          [targetTab.id]: subtabId,
+          [targetTab.id]: CONFIG_DIALOG_SECTIONS.has(subtabId) ? sectionName : subtabId,
         }))
         setExpandedSubtabGroups((current) => ({
           ...current,
@@ -1071,7 +1104,7 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
     })
 
     return () => window.cancelAnimationFrame(frameId)
-  }, [searchFieldPath, tabGroups, setAdvancedVisible, setActiveTab])
+  }, [searchFieldPath, tabGroups, setAdvancedVisible, setActiveTab, configSchema])
 
   useEffect(() => {
     if (!searchFieldPath || scrolledSearchFieldRef.current === searchFieldPath) {
@@ -1093,7 +1126,7 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
         window.cancelAnimationFrame(nestedFrameId)
       }
     }
-  }, [activeSubtabByGroup, activeTab, advancedVisible, alternateStylesOpen, searchFieldPath])
+  }, [activeSubtabByGroup, activeTab, advancedVisible, alternateStylesOpen, openConfigDialog, searchFieldPath])
 
   if (tabGroups.length === 0 || !configSchema?.nested) {
     return null
@@ -1115,39 +1148,24 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
     setHasUnsavedChanges(true)
   }
 
+  const renderChatSettings = (quick = false) => configSchema.nested?.chat ? (
+    <ChatSettings
+      schema={configSchema.nested.chat}
+      values={sectionValues.chat ?? {}}
+      onChange={(path, value) => updateSectionValueByPath('chat', path, value)}
+      scope={chatScope}
+      onScopeChange={setChatScope}
+      advancedVisible={advancedVisible}
+      quick={quick}
+      openDialog={openConfigDialog}
+      onDialogChange={setOpenConfigDialog}
+    />
+  ) : null
+
   const identityFieldNames = new Set(['nickname', 'alias_names'])
   const basicChatPromptFieldNames = new Set(['group_chat_prompt', 'private_chat_prompts'])
-  const chatQuoteFieldNames = new Set(['private_quote_frequency', 'group_quote_frequency'])
-  const basicChatContextFieldNames = new Set(['max_context_size', 'max_private_context_size'])
-  const basicChatTimingFieldNames = new Set([
-    'talk_value', 'private_reply_paused', 'mentioned_bot_reply', 'inevitable_at_reply',
-  ])
   const botSchema = configSchema.nested.bot
-  const chatSchema = configSchema.nested.chat
-  const replyTimingSchema = chatSchema?.nested?.reply_timing
-  const basicChatContextSchema: ConfigSchema | null = chatSchema ? {
-    ...chatSchema,
-    fields: chatSchema.fields
-      .filter((field) => basicChatContextFieldNames.has(field.name))
-      .map((field) => ({ ...field, advanced: false })),
-    nested: {},
-  } : null
-  const basicChatTimingSchema: ConfigSchema | null = replyTimingSchema ? {
-    ...replyTimingSchema,
-    fields: replyTimingSchema.fields
-      .filter((field) => basicChatTimingFieldNames.has(field.name))
-      .map((field) => ({ ...field, advanced: false })),
-    nested: {},
-  } : null
   const replyStyleSchema = configSchema.nested.chat?.nested?.reply_style
-  // 群聊与私聊的引用频率展示在聊天设置中，仍通过 reply_style 路径读写。
-  const chatQuoteSchema: ConfigSchema | null = replyStyleSchema ? {
-    ...replyStyleSchema,
-    fields: replyStyleSchema.fields
-      .filter((field) => chatQuoteFieldNames.has(field.name))
-      .map((field) => ({ ...field, advanced: false, 'x-row': 'chat-quote-frequency' })),
-    nested: {},
-  } : null
   const personalitySchema = configSchema.nested.personality
   const hasPersonalitySchema = Boolean(personalitySchema)
   const alternateStyleFieldNames = ['multiple_probability', 'multiple_reply_style']
@@ -1286,9 +1304,10 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
             ...replyStyleSchema,
             uiLabel: '聊天流prompt',
             uiSubLabel: '聊天流prompt',
+            uiPresentation: CONFIG_DIALOG_SECTIONS.has('chat.reply_style') ? 'dialog' : 'tab',
             uiAdvanced: false,
             fields: replyStyleSchema.fields.filter((field) =>
-              !chatQuoteFieldNames.has(field.name) &&
+              !field['x-chat-settings'] &&
               (!hasPersonalitySchema || !basicChatPromptFieldNames.has(field.name))
             ),
           },
@@ -1382,7 +1401,9 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
       const allSubcategoryEntries = sectionSchema.uiUseSubTabs
         ? getObjectSubcategoryEntries(sectionSchema)
         : []
-      const subcategoryEntries = allSubcategoryEntries
+      const subcategoryEntries = allSubcategoryEntries.filter(
+        ([, schema]) => sectionName !== 'chat' || !schema.fields.every((field) => field['x-chat-settings'])
+      )
       const subcategoryNames = new Set(
         allSubcategoryEntries.map(([subcategoryName]) => subcategoryName)
       )
@@ -1401,23 +1422,12 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
           label: sectionSchema.uiRootSubLabel || getSubtabLabel(sectionSchema, sectionName),
           content: (
             <div className="space-y-3">
-              <DynamicConfigForm
-                schema={rootSchema}
-                values={sectionValue}
-                onChange={(fieldPath, value) =>
-                  updateSectionValueByPath(sectionName, fieldPath.split('.'), value)
-                }
-                basePath={sectionName}
-                hooks={fieldHooks}
-                advancedVisible={advancedVisible}
-                sectionColumns={1}
-              />
-              {sectionName === 'chat' && chatQuoteSchema && (
+              {sectionName === 'chat' ? renderChatSettings() : (
                 <DynamicConfigForm
-                  schema={chatQuoteSchema}
-                  values={(sectionValue.reply_style as ConfigSectionData) ?? {}}
-                  onChange={(field, value) => updateSectionValueByPath('chat', ['reply_style', field], value)}
-                  basePath="chat.reply_style"
+                  schema={rootSchema}
+                  values={sectionValue}
+                  onChange={(fieldPath, value) => updateSectionValueByPath(sectionName, fieldPath.split('.'), value)}
+                  basePath={sectionName}
                   hooks={fieldHooks}
                   advancedVisible={advancedVisible}
                   sectionColumns={1}
@@ -1433,6 +1443,7 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
           advanced: Boolean(subcategorySchema.uiAdvanced),
           id: `${sectionName}.${subcategoryName}`,
           label: getSubtabLabel(subcategorySchema, subcategoryName),
+          presentation: subcategorySchema.uiPresentation,
           content: (
             <DynamicConfigForm
               schema={subcategorySchema}
@@ -1474,15 +1485,18 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
     const subtabExpanded = Boolean(expandedSubtabGroups[tabId])
     const defaultSubtabPanes = subtabPanes.filter((pane) => !pane.advanced)
     const expandedSubtabPanes = subtabPanes.filter((pane) => pane.advanced)
-    const visibleSubtabPanes = subtabExpanded
+    const visiblePanes = subtabExpanded
       ? [...defaultSubtabPanes, ...expandedSubtabPanes]
       : defaultSubtabPanes
+    const visibleSubtabPanes = visiblePanes.filter((pane) => pane.presentation !== 'dialog')
+    const visibleDialogPanes = visiblePanes.filter((pane) => pane.presentation === 'dialog')
     const hasCollapsibleSubtabs = subtabPanes.some((pane) => pane.advanced)
+    const hasSubtabBar = visibleSubtabPanes.length > 1 || hasCollapsibleSubtabs
     const visibleSubtabIds = new Set(visibleSubtabPanes.map((pane) => pane.id))
     const activeSubtab = activeSubtabByGroup[tabId]
     const resolvedActiveSubtab = visibleSubtabIds.has(activeSubtab)
       ? activeSubtab
-      : (visibleSubtabPanes[0]?.id ?? subtabPanes[0].id)
+      : (visibleSubtabPanes[0]?.id ?? '')
 
     const toggleSubtabsExpanded = () => {
       if (
@@ -1511,38 +1525,45 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
             [tabId]: value,
           }))
         }
-        className="space-y-3"
       >
-        <DashboardTabBar
-          data-config-bot-subtab-list="true"
-          variant="scroll"
-          className="bg-background/80 h-11 border"
-        >
-          {visibleSubtabPanes.map((pane) => (
-            <Fragment key={pane.id}>
-              <DashboardTabTrigger
+        {hasSubtabBar && (
+          <DashboardFolderTabBar data-config-page-folder-tabs="true" data-config-bot-subtab-list="true">
+            {visibleSubtabPanes.map((pane) => (
+              <TabsTrigger
+                key={pane.id}
                 value={pane.id}
                 data-config-bot-extra-tab={pane.advanced ? 'true' : undefined}
-                className={cn(
-                  'min-h-8 text-base font-semibold',
-                  pane.advanced &&
-                    'overflow-hidden text-muted-foreground/80 hover:bg-background/70 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none motion-safe:animate-[config-tab-enter_300ms_ease-out_both]'
-                )}
+                className={cn(pane.advanced && 'motion-safe:animate-[config-tab-enter_300ms_ease-out_both]')}
               >
                 {pane.label}
-              </DashboardTabTrigger>
-            </Fragment>
-          ))}
-          {hasCollapsibleSubtabs && (
-            <ConfigTabsExpandButton expanded={subtabExpanded} onClick={toggleSubtabsExpanded} />
-          )}
-        </DashboardTabBar>
+              </TabsTrigger>
+            ))}
+            {hasCollapsibleSubtabs && (
+              <ConfigTabsExpandButton expanded={subtabExpanded} onClick={toggleSubtabsExpanded} />
+            )}
+          </DashboardFolderTabBar>
+        )}
 
-        {visibleSubtabPanes.map((pane) => (
-          <TabsContent key={pane.id} value={pane.id} className="mt-0">
-            {pane.content}
-          </TabsContent>
-        ))}
+        {visibleSubtabPanes.map((pane) => {
+          const content = (
+            <>
+              {pane.content}
+              {visibleDialogPanes.filter((dialog) => dialog.id.startsWith(`${pane.id}.`)).map((dialog) => (
+                <div key={dialog.id} className="mt-3">
+                  <ConfigSectionDialog label={dialog.label} open={openConfigDialog === dialog.id}
+                    onOpenChange={(open) => setOpenConfigDialog(open ? dialog.id : null)}>
+                    {dialog.content}
+                  </ConfigSectionDialog>
+                </div>
+              ))}
+            </>
+          )
+          return (
+            <TabsContent key={pane.id} value={pane.id} className="mt-0">
+              {hasSubtabBar ? <DashboardFolderPanel className="p-4">{content}</DashboardFolderPanel> : content}
+            </TabsContent>
+          )
+        })}
       </Tabs>
     )
   }
@@ -1557,6 +1578,22 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
 
     if (tabNestedEntries.length === 0) {
       return null
+    }
+
+    // 能力页把能力开关、语音和视觉排在同一块面板里；含其他小节时仍走通用表单。
+    const capabilitySections = new Set(['capabilities', 'voice', 'visual'])
+    if (
+      tabNestedEntries.some(([sectionName]) => sectionName === 'visual') &&
+      tabNestedEntries.every(([sectionName]) => capabilitySections.has(sectionName))
+    ) {
+      return (
+        <CapabilitySettings
+          schemas={Object.fromEntries(tabNestedEntries)}
+          values={sectionValues}
+          onChange={(sectionName, path, value) => updateSectionValueByPath(sectionName, path, value)}
+          advancedVisible={advancedVisible}
+        />
+      )
     }
 
     if (tabNestedEntries.some(([, sectionSchema]) => sectionSchema.uiUseSubTabs)) {
@@ -1594,33 +1631,7 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
           sectionTrailingContent={sectionTrailingContent}
           fieldTrailingContent={fieldTrailingContent}
         />
-        {tab.id === 'bot' && (basicChatContextSchema || basicChatTimingSchema) && (
-          <Card>
-            <CardHeader className="border-b border-border/50 pb-3">
-              <CardTitle className="text-base text-primary">聊天</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 pt-3">
-              {basicChatContextSchema && (
-                <DynamicConfigForm
-                  schema={basicChatContextSchema}
-                  values={sectionValues.chat ?? {}}
-                  onChange={(field, value) => updateSectionValueByPath('chat', [field], value)}
-                  basePath="chat"
-                  hooks={fieldHooks}
-                />
-              )}
-              {basicChatTimingSchema && (
-                <DynamicConfigForm
-                  schema={basicChatTimingSchema}
-                  values={(sectionValues.chat?.reply_timing as ConfigSectionData) ?? {}}
-                  onChange={(field, value) => updateSectionValueByPath('chat', ['reply_timing', field], value)}
-                  basePath="chat.reply_timing"
-                  hooks={fieldHooks}
-                />
-              )}
-            </CardContent>
-          </Card>
-        )}
+        {tab.id === 'bot' && renderChatSettings(true)}
         {tab.id === 'bot' && basicMemoryFields.length > 0 && (
           <Card>
             <CardHeader className="border-b border-border/50 pb-3">

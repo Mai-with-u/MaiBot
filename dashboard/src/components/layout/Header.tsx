@@ -38,6 +38,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toggleThemeWithTransition } from '@/components/use-theme'
 import { useBackground } from '@/hooks/use-background'
+import { useBotAvailable } from '@/host/state'
 import { isElectron } from '@/lib/runtime'
 import { ThemeProviderContext } from '@/lib/theme-context'
 import { cn } from '@/lib/utils'
@@ -45,7 +46,6 @@ import { extensionIcons, extensionPath, extensionWorkspace } from '@/lib/plugin-
 import type { WebUIExtension } from '@/lib/plugin-webui'
 import { splitWorkspaceTabs } from '@/lib/workspace-tabs'
 
-import { HeaderUpdateButton } from './HeaderUpdateButton'
 import { TopbarMascot } from './TopbarMascot'
 import type { WorkspaceMode } from './types'
 
@@ -89,7 +89,6 @@ interface HeaderProps {
 }
 
 type HeaderActionId =
-  | 'update'
   | 'settings'
   | 'docs'
   | 'theme'
@@ -143,6 +142,7 @@ export function Header({
   ]
   const workspaceTabsKey = workspaceTabs.map((tab) => `${tab.value}:${tab.labelKey}`).join('|')
   const { themeConfig } = useContext(ThemeProviderContext)
+  const botAvailable = useBotAvailable()
   // 千禧风格的顶栏要放得下键帽，比其它风格高一截；高度由动画驱动，所以在这里按风格取值。
   const expandedTopbarHeight = themeConfig.dashboardStyle === 'millennium' ? 52 : 42
   // 原版风格和千禧一样用顶栏里的按钮收起顶栏，不再显示顶栏下沿的滑条。
@@ -657,7 +657,7 @@ export function Header({
               </>
             )}
             {/* 搜索对话框 */}
-            {(searchOpen || searchDialogLoaded || preloadMobileSearch) && (
+            {botAvailable && (searchOpen || searchDialogLoaded || preloadMobileSearch) && (
               <Suspense fallback={null}>
                 <SearchDialog
                   open={searchOpen}
@@ -669,13 +669,7 @@ export function Header({
               </Suspense>
             )}
 
-            <HeaderUpdateButton
-              highlighted={highlightedHeaderAction === 'update'}
-              onPointerEnter={() => handleHeaderActionEnter('update')}
-              onPointerLeave={handleHeaderActionLeave}
-            >
-              {renderHeaderActionPill('update')}
-            </HeaderUpdateButton>
+
 
             {/* WebUI 设置 */}
             <span data-dashboard-header-vent="true" aria-hidden="true" className="hidden" />

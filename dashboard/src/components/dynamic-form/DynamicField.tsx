@@ -399,6 +399,7 @@ export const DynamicField: React.FC<DynamicFieldProps> = ({
           return (
             <DiscreteSlider
               label={fieldLabel}
+              disabled={schema.readOnly}
               value={String(value ?? schema.default ?? '')}
               options={(schema.options ?? []).map(option => ({
                 value: option,

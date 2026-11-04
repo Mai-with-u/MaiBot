@@ -15,9 +15,9 @@ from src.config.config import global_config
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("retro", [False, True], ids=["normal", "retro"])
-async def test_reply_context_skips_expression_selection_only_for_retro(monkeypatch, retro: bool) -> None:
+async def test_reply_context_preserves_expression_selection_in_creative_mode(monkeypatch, retro: bool) -> None:
     generator = object.__new__(BaseMaisakaReplyGenerator)
-    monkeypatch.setattr(generator, "_uses_retro_prompt", lambda: retro)
+    monkeypatch.setattr(global_config.chat, "creative_mode", retro)
     monkeypatch.setattr(generator, "_resolve_session_id", lambda stream_id: stream_id)
     selection = MaisakaExpressionSelectionResult(
         expression_habits="测试表达", selected_expression_ids=[1],
@@ -31,15 +31,10 @@ async def test_reply_context_skips_expression_selection_only_for_retro(monkeypat
         stream_id="test-session", sub_agent_runner=runner,
     )
 
-    if retro:
-        select_for_reply.assert_not_awaited()
-        assert result.expression_habits == ""
-        assert result.selected_expression_ids == []
-    else:
-        select_for_reply.assert_awaited_once()
-        assert select_for_reply.call_args.kwargs["sub_agent_runner"] is runner
-        assert result.expression_habits == "测试表达"
-        assert result.selected_expression_ids == [1]
+    select_for_reply.assert_awaited_once()
+    assert select_for_reply.call_args.kwargs["sub_agent_runner"] is runner
+    assert result.expression_habits == "测试表达"
+    assert result.selected_expression_ids == [1]
 
 
 @pytest.mark.asyncio
@@ -87,7 +82,6 @@ async def test_expression_mode_controls_vector_and_llm_calls(monkeypatch, fine: 
 async def test_fast_reply_context_does_not_require_selector_runner(monkeypatch) -> None:
     generator = object.__new__(BaseMaisakaReplyGenerator)
     monkeypatch.setattr(global_config.expression, "use_vector_expression", False)
-    monkeypatch.setattr(generator, "_uses_retro_prompt", lambda: False)
     monkeypatch.setattr(generator, "_resolve_session_id", lambda stream_id: stream_id)
     select_for_reply = AsyncMock(return_value=MaisakaExpressionSelectionResult(
         expression_habits="快速表达", selected_expression_ids=[1],

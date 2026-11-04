@@ -30,6 +30,7 @@ import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import { useRestart, type RestartStatus, type RestartContextValue } from '@/lib/restart-context'
 import { cn } from '@/lib/utils'
+import { resolveApiPath } from '@/lib/api-base'
 
 // Hook 用于安全获取 restart context
 function useSafeRestart(): RestartContextValue | null {
@@ -325,7 +326,7 @@ function StandaloneRestartOverlay({
       }))
 
       try {
-        const response = await fetch('/api/webui/system/status', {
+        const response = await fetch(await resolveApiPath('/api/webui/system/status'), {
           method: 'GET',
           signal: AbortSignal.timeout(3000),
         })

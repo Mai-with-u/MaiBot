@@ -4,6 +4,7 @@ import { resolveApiPath } from '@/lib/api-base'
 import { backendApi } from '@/lib/http'
 import { isElectron } from '@/lib/runtime'
 import { getSetting } from '@/lib/settings-manager'
+import { scopeBotResourcePath, useHostRuntime } from '@/host/state'
 
 export type AvatarTargetType = 'user' | 'group'
 
@@ -70,11 +71,15 @@ export function useResolvedAvatarUrl(
   route?: AvatarRoute
 ): string | undefined {
   const avatarFetchEnabled = useAvatarFetchEnabled()
+  const { selected_bot_id } = useHostRuntime()
   const accountId = route?.accountId
   const scope = route?.scope
   const avatarPath = useMemo(
-    () => buildWebuiAvatarPath(platform, targetId, targetType, version, { accountId, scope }),
-    [platform, targetId, targetType, version, accountId, scope]
+    () => {
+      const path = buildWebuiAvatarPath(platform, targetId, targetType, version, { accountId, scope })
+      return path ? scopeBotResourcePath(path) : null
+    },
+    [platform, targetId, targetType, version, accountId, scope, selected_bot_id]
   )
   const canResolve = Boolean(avatarFetchEnabled && avatarPath)
   // 浏览器里接口与页面同源，路径本身就是地址，首帧即可给出，已缓存的头像不会先闪一下默认头像；

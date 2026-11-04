@@ -12,6 +12,14 @@ class AgentConfig(ConfigBase):
     enabled: bool = Field(default=False, json_schema_extra={"label": {"zh_CN": "启用 Agent连接"}})
     """启用与普通聊天并行的外接 Agent 接口，通过 ACP 连接 dsh 等外部程序。"""
 
+    allow_users: List[str] = Field(default_factory=list, json_schema_extra={"label": {"zh_CN": "允许指挥 Agent 的私聊用户"}})
+    """私聊白名单，格式为 platform:user_id，例如 qq:123456。群聊无法按成员区分，请使用 allow_groups。
+    两个白名单均为空时不限制；填写任意一项后仅放行命中的聊天。"""
+
+    allow_groups: List[str] = Field(default_factory=list, json_schema_extra={"label": {"zh_CN": "允许指挥 Agent 的群聊"}})
+    """群聊白名单，格式为 platform:group_id，例如 qq:123456。放行群内所有成员。
+    两个白名单均为空时不限制；填写任意一项后仅放行命中的聊天，空白项不会解除限制。"""
+
     planner_enabled: bool = Field(default=False, json_schema_extra={
         "label": {"zh_CN": "启用外接 Planner（实验）"}, "x-widget": "switch",
     })

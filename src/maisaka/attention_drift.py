@@ -1,7 +1,7 @@
 from typing import Mapping, Optional
 
 from src.common.i18n import get_locale
-from src.config.config import global_config
+from src.config.official_configs import AttentionDriftConfig
 
 
 DRIFT_LEVEL_RULES = {
@@ -74,11 +74,13 @@ def build_attention_drift_prompt_block(is_group_chat: Optional[bool]) -> str:
 
     if is_group_chat is None:
         return ""
-    config = (
-        global_config.experimental.group_attention_drift
-        if is_group_chat
-        else global_config.experimental.private_attention_drift
-    )
+    from src.maisaka.scenes.factory import get_scene
+
+    return get_scene(is_group_chat).prompts.attention_drift_block()
+
+
+def render_attention_drift_prompt(config: AttentionDriftConfig) -> str:
+    """渲染指定配置；场景负责选择配置，热重载时不缓存内容。"""
     if not config.enabled:
         return ""
 

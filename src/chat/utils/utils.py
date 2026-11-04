@@ -144,118 +144,11 @@ def _has_at_component_targeting_bot(message: SessionMessage, platform: str) -> b
     return False
 
 
-def is_mentioned_bot_in_message(message: SessionMessage) -> tuple[bool, bool, float]:
-    """检查消息是否提到了机器人（统一多平台实现）"""
-    text = message.processed_plain_text or ""
-    platform = str(message.platform or "").strip().lower()
+def is_mentioned_bot_in_message(message: SessionMessage, *, is_group_chat: bool = True) -> Tuple[bool, bool, float]:
+    """兼容统一多平台入口，识别行为由对应聊天场景负责。"""
+    from src.maisaka.scenes.factory import get_scene
 
-    current_accounts = get_bot_accounts(platform)
-
-    nickname = global_config.bot.nickname
-    alias_names = global_config.bot.alias_names
-    keywords = [nickname] + alias_names
-
-    reply_probability = 0.0
-    is_at = False
-    is_mentioned = False
-
-    # 1) 直接的 additional_config 标记
-    add_cfg = getattr(message.message_info, "additional_config", None) or {}
-    if isinstance(add_cfg, dict):
-        if add_cfg.get("at_bot") or add_cfg.get("is_mentioned"):
-            is_mentioned = True
-            if add_cfg.get("at_bot"):
-                is_at = True
-            # 当提供数值型 is_mentioned 时，当作概率提升；布尔提及标记只负责标记命中。
-            raw_mention_boost = add_cfg.get("is_mentioned")
-            if raw_mention_boost not in (None, "") and not isinstance(raw_mention_boost, bool):
-                reply_probability = float(raw_mention_boost)
-
-    # 2) 已经在上游设置过的 message.is_at / message.is_mentioned
-    if getattr(message, "is_at", False):
-        is_at = True
-        is_mentioned = True
-    if getattr(message, "is_mentioned", False):
-        is_mentioned = True
-
-    # 3) 扫描分段：是否包含 mention_bot（适配器插入）
-    def _has_mention_bot(seg) -> bool:
-        try:
-            if seg is None:
-                return False
-            if getattr(seg, "type", None) == "mention_bot":
-                return True
-            if getattr(seg, "type", None) == "seglist":
-                for s in getattr(seg, "data", []) or []:
-                    if _has_mention_bot(s):
-                        return True
-            return False
-        except Exception:
-            return False
-
-    if _has_mention_bot(getattr(message, "message_segment", None)):
-        is_at = True
-        is_mentioned = True
-
-    # 4) 结构化 @ 组件检测。处理后的文本可能只剩群名片，不能依赖文本里的显示名判断。
-    if not is_at and _has_at_component_targeting_bot(message, platform):
-        is_at = True
-        is_mentioned = True
-
-    # 5) 统一的 @ 检测逻辑
-    if current_accounts and not is_at and not is_mentioned:
-        for current_account in current_accounts:
-            pattern = (
-                rf"@<(.+?):{re.escape(current_account)}>"
-                if platform == "qq"
-                else rf"@{re.escape(current_account)}(\b|$)"
-            )
-            if re.search(pattern, text, flags=re.IGNORECASE):
-                is_at = True
-                is_mentioned = True
-                break
-
-    # 6) 统一的回复检测逻辑
-    if not is_mentioned:
-        # 通用回复格式：包含 "(你)" 或 "（你）"
-        if re.search(r"\[回复 .*?\(你\)：", text) or re.search(r"\[回复 .*?（你）：", text):
-            is_mentioned = True
-        # ID 形式的回复检测
-        elif current_accounts:
-            for current_account in current_accounts:
-                if re.search(rf"\[回复 (.+?)\({re.escape(current_account)}\)：(.+?)\]，说：", text):
-                    is_mentioned = True
-                    break
-                if re.search(
-                    rf"\[回复<(.+?)(?=:{re.escape(current_account)}>)\:{re.escape(current_account)}>：(.+?)\]，说：",
-                    text,
-                ):
-                    is_mentioned = True
-                    break
-
-    # 7) 名称/别名 提及（去除 @/回复标记后再匹配）
-    if not is_mentioned and keywords:
-        msg_content = text
-        # 去除各种 @ 与 回复标记，避免误判
-        msg_content = re.sub(r"@(.+?)（(\d+)）", "", msg_content)
-        msg_content = re.sub(r"@<(.+?)(?=:(\d+))\:(\d+)>", "", msg_content)
-        msg_content = re.sub(r"\[回复 (.+?)\(((\d+)|未知id|你)\)：(.+?)\]，说：", "", msg_content)
-        msg_content = re.sub(r"\[回复<(.+?)(?=:(\d+))\:(\d+)>：(.+?)\]，说：", "", msg_content)
-        for kw in keywords:
-            if kw and kw in msg_content:
-                is_mentioned = True
-                break
-
-    # 8) 概率设置
-    reply_timing_config = global_config.chat.reply_timing
-    if is_at and reply_timing_config.inevitable_at_reply:
-        reply_probability = 1.0
-        logger.debug("被@，回复概率设置为100%")
-    elif is_mentioned and reply_timing_config.mentioned_bot_reply:
-        reply_probability = max(reply_probability, 1.0)
-        logger.debug("被提及，回复概率设置为100%")
-
-    return is_mentioned, is_at, reply_probability
+    return get_scene(is_group_chat).detect_mentions(message)
 
 
 async def get_embedding(text: str, request_type: str = "embedding") -> Optional[List[float]]:
@@ -276,7 +169,6 @@ async def get_embedding(text: str, request_type: str = "embedding") -> Optional[
         logger.error(f"获取embedding失败: {str(e)}")
         embedding = None
     return embedding
-
 
 def _split_into_sentence_segments(text: str) -> list[tuple[str, str]]:
     """将文本分割成 (句子, 尾随分隔符) 元组，并根据概率合并

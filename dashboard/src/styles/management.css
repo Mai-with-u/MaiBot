@@ -93,11 +93,6 @@
 [data-dashboard-selection-card='true'][data-readonly='true']:not([data-disabled='true']) {
   cursor: default;
 }
-/* 鼠标勾选不叠加外框；键盘导航时才显示整卡焦点。 */
-[data-dashboard-selection-card='true']:has(:focus-visible) {
-  outline: 2px solid var(--surface-focus);
-  outline-offset: 2px;
-}
 [data-selection-part='content'] {
   display: grid;
   gap: 0.125rem;
@@ -230,10 +225,6 @@
 [data-dashboard-resource-row='true']:has([data-resource-part='primary-action']:focus-visible) {
   background-color: var(--list-hover-bg);
   transform: translateY(-2px);
-}
-[data-resource-part='primary-action']:focus-visible::after {
-  outline: 2px solid var(--surface-focus);
-  outline-offset: -2px;
 }
 [data-dashboard-resource-row='true']:has([data-resource-part='primary-action']:active) {
   transform: translateY(0);

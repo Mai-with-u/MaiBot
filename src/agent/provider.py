@@ -6,6 +6,7 @@ import asyncio
 import json
 import traceback
 
+from src.core.local_operator import build_scoped_user_id, normalize_operator_permissions
 from src.core.tooling import ToolAvailabilityContext, ToolContentItem, ToolExecutionContext, ToolExecutionResult, ToolInvocation, ToolSpec
 
 from . import messaging
@@ -41,8 +42,25 @@ class AgentToolProvider:
     def __init__(self, service: AgentService = agent_service) -> None:
         self.service = service
 
+    def _allowed_chat(self, context: Optional[ToolAvailabilityContext | ToolExecutionContext]) -> bool:
+        """按聊天类型检查白名单，Agent 自身会话始终放行。"""
+        if context is not None and context.session_id and context.session_id == self.service.agent_id:
+            return True
+        users, groups = self.service.config.allow_users, self.service.config.allow_groups
+        if not users and not groups:
+            return True
+        if context is None:
+            return False
+        if context.is_group_chat or context.group_id:
+            target = build_scoped_user_id(context.platform, context.group_id)
+            return bool(target) and target in normalize_operator_permissions(groups)
+        target = build_scoped_user_id(context.platform, context.user_id)
+        return bool(target) and target in normalize_operator_permissions(users)
+
     async def list_tools(self, context: Optional[ToolAvailabilityContext] = None) -> List[ToolSpec]:
         if not self.service.config.enabled:
+            return []
+        if not self._allowed_chat(context):
             return []
         trusted = context is not None and context.session_id == self.service.agent_id
         tools = []
@@ -58,6 +76,8 @@ class AgentToolProvider:
         try:
             if context is None:
                 raise PermissionError("Agent 工具需要可信执行上下文。")
+            if not self._allowed_chat(context):
+                raise PermissionError("当前聊天没有指挥外接 Agent 的权限。")
             self.service.require_agent()
             name, args = invocation.tool_name, invocation.arguments
             if name not in CHAT_TOOLS:

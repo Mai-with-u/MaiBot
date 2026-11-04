@@ -8,6 +8,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from src.common.llm_json import validate_llm_json
 from src.common.logger import get_logger
 
 logger = get_logger("webui.text_learning")
@@ -102,9 +103,8 @@ def parse_learning_candidates(response: str, source: str, kind: LearningKind) ->
         lines = payload.splitlines()
         if lines[-1].strip() != "```":
             raise ValueError("学习模型返回了不完整的 JSON 代码块")
-        payload = "\n".join(lines[1:-1])
     try:
-        candidates = CandidateExtraction.model_validate_json(payload).candidates
+        candidates = validate_llm_json(payload, CandidateExtraction).candidates
     except ValidationError as exc:
         if any(error["type"] == "json_invalid" for error in exc.errors()):
             raise ValueError("学习模型返回的 JSON 格式错误或未完整输出，请检查输出 token 上限后重试当前段") from exc

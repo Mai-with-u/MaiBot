@@ -16,6 +16,8 @@ from src.common.utils.utils_message import MessageUtils
 from src.common.utils.utils_session import SessionUtils
 from src.config.config import global_config
 from src.core.announcement_manager import global_announcement_manager
+from src.core.chat_pause import chat_pause_state
+from src.core.plugin_usage import can_use_plugin
 from src.core.local_operator import (
     has_command_permission,
     has_plugin_management_permission,
@@ -26,7 +28,7 @@ from src.platform_io.route_key_factory import RouteKeyFactory
 from src.plugin_runtime.component_query import component_query_service
 from src.plugin_runtime.hook_payloads import deserialize_session_message, serialize_session_message
 from src.plugin_runtime.hook_schema_utils import build_object_schema
-from src.plugin_runtime.host.hook_dispatcher import HookDispatchResult
+from src.plugin_runtime.host.hook_dispatcher import HookAbortedError, HookDispatchResult
 from src.plugin_runtime.host.hook_spec_registry import HookSpec, HookSpecRegistry
 from src.maisaka.context.clear_context import (
     CLEAR_CONTEXT_COMMAND,
@@ -302,18 +304,26 @@ class ChatBot:
                     logger.info(f"命令 {plugin_name}.{command_name} 已在命令管理中停用，按普通消息处理")
                     return False, None, True
 
-                if command_info.permission == "operator" and not has_command_permission(
-                    f"{plugin_name}.{command_name}",
-                    message.platform,
-                    message.message_info.user_info.user_id,
-                    message.session_id,
-                    global_config.plugin.permission,
-                    global_config.plugin.command_permissions,
-                    local_operator=is_local_operator(
+                usage_allowed = can_use_plugin(
+                    plugin_name,
+                    platform=message.platform,
+                    user_id=message.message_info.user_info.user_id,
+                    session_id=message.session_id,
+                )
+                if not usage_allowed or (
+                    command_info.permission == "operator" and not has_command_permission(
+                        f"{plugin_name}.{command_name}",
                         message.platform,
-                        message.message_info.additional_config,
-                    ),
-                    relayed_by_plugin=is_plugin_relayed(message.message_info.additional_config),
+                        message.message_info.user_info.user_id,
+                        message.session_id,
+                        global_config.plugin.permission,
+                        global_config.plugin.command_permissions,
+                        local_operator=is_local_operator(
+                            message.platform,
+                            message.message_info.additional_config,
+                        ),
+                        relayed_by_plugin=is_plugin_relayed(message.message_info.additional_config),
+                    )
                 ):
                     self._mark_command_message(message, intercept_message_level=1)
                     # 与其他插件命令共用结果处理入口，在那里统一存储，避免权限拒绝时重复入库。
@@ -332,7 +342,7 @@ class ChatBot:
                     matched_groups=dict(matched_groups),
                 )
                 if before_result.aborted:
-                    logger.info(f"命令 {command_name} 被 Hook 中止，跳过命令执行")
+                    logger.info(f"命令 {command_name} 跳过执行：{HookAbortedError(before_result)}")
                     return True, None, False
 
                 hook_kwargs = before_result.kwargs
@@ -403,7 +413,7 @@ class ChatBot:
         """判断消息是否会进入内置或插件命令链。"""
 
         command_text = (message.processed_plain_text or "").strip()
-        if command_text in {"/offline", "/online"}:
+        if command_text.split()[:1] in [["/offline"], ["/online"]] or command_text.split() == ["/list", "chat"]:
             return True
 
         message_is_local_operator = is_local_operator(
@@ -531,10 +541,11 @@ class ChatBot:
         return True
 
     async def _process_adapter_lifecycle_command(self, message: SessionMessage) -> bool:
-        """处理仅供本地终端使用的适配器上线与离线指令。"""
+        """处理管理员的适配器上下线、聊天暂停与聊天流列表指令。"""
 
         command = (message.processed_plain_text or "").strip()
-        if command not in {"/offline", "/online"}:
+        parts = command.split()
+        if parts[:1] not in [["/offline"], ["/online"]] and parts != ["/list", "chat"]:
             return False
 
         from src.services.send_service import text_to_stream
@@ -555,7 +566,7 @@ class ChatBot:
 
             if not global_config.plugin.silent_permission_denied:
                 await text_to_stream(
-                    "你没有权限使用适配器管理命令。",
+                    "你没有权限使用聊天与适配器管理命令。",
                     message.session_id,
                     storage_message=False,
                 )
@@ -568,6 +579,56 @@ class ChatBot:
         self._mark_command_message(message, intercept_message_level=1)
         await self._store_intercepted_command_message(message)
 
+        if parts == ["/list", "chat"]:
+            # 活跃以当前心流实例为准；暂停会移除实例，因此同时保留本次运行的暂停群聊。
+            sessions = sorted(
+                (
+                    session for session in list(chat_manager.sessions.values())
+                    if session.is_group_session and (
+                        session.session_id in heartflow_manager.heartflow_chat_list
+                        or chat_pause_state.is_paused(session.session_id, True)
+                    )
+                ),
+                key=lambda session: (session.platform, session.session_id),
+            )
+            lines = [f"活跃及本次运行已暂停的群聊共 {len(sessions)} 个："]
+            for session in sessions:
+                name = chat_manager.get_session_name(session.session_id) or session.group_id or session.user_id
+                kind = "群聊" if session.is_group_session else "私聊"
+                status = "已暂停" if chat_pause_state.is_paused(session.session_id, session.is_group_session) else "未暂停"
+                lines.append(f"{name} [{session.platform} / {kind} / {status}]\nID: {session.session_id}")
+            # 分批发送，避免聊天流较多时超出平台单条消息限制。
+            for start in range(0, len(lines), 10):
+                if not await text_to_stream("\n\n".join(lines[start:start + 10]), message.session_id, storage_message=False):
+                    logger.warning(f"聊天流列表发送失败: session_id={message.session_id}")
+                    break
+            return True
+
+        if len(parts) > 1:
+            if len(parts) != 2:
+                response = "用法：/offline group|private|<聊天流ID>；/online group|private|<聊天流ID>；/list chat"
+            else:
+                target = parts[1]
+                paused = parts[0] == "/offline"
+                session = chat_manager.get_session_by_session_id(target) if target not in {"group", "private"} else None
+                if target not in {"group", "private"} and session is None:
+                    response = "未找到该聊天流，请通过 /list chat 获取完整聊天流 ID（不是群号或用户号）。"
+                else:
+                    if session is not None:
+                        chat_pause_state.set_session(session.session_id, session.is_group_session, paused)
+                        name = chat_manager.get_session_name(session.session_id) or session.session_id
+                    else:
+                        chat_pause_state.set_type(target == "group", paused)
+                        name = "全部群聊" if target == "group" else "全部私聊"
+                    if paused:
+                        await heartflow_manager.stop_paused_chats()
+                    response = f"已{'暂停' if paused else '解除暂停'} {name} 的聊天回复。管理命令仍可用；重启后暂停状态解除。"
+                    if not paused:
+                        response += "实际回复仍遵循原有配置。"
+            await text_to_stream(response, message.session_id, storage_message=False)
+            return True
+
+        command = parts[0]
         remote_offline_command = command == "/offline" and not message_is_local_operator
         if remote_offline_command:
             sent = await text_to_stream(
@@ -808,7 +869,7 @@ class ChatBot:
                 message,
             )
             if before_process_result.aborted:
-                logger.info(f"消息 {message.message_id} 在预处理前被 Hook 中止")
+                logger.info(f"消息 {message.message_id} 在预处理前中止：{HookAbortedError(before_process_result)}")
                 return
 
             group_info = message.message_info.group_info
@@ -832,7 +893,7 @@ class ChatBot:
                 message,
             )
             if after_process_result.aborted:
-                logger.info(f"消息 {message.message_id} 在预处理后被 Hook 中止")
+                logger.info(f"消息 {message.message_id} 在预处理后中止：{HookAbortedError(after_process_result)}")
                 return
 
             group_info = message.message_info.group_info

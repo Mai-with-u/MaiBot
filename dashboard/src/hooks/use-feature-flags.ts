@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { useBotAvailable } from '@/host/state'
 
 import { BOT_CONFIG_UPDATED_EVENT, getBotConfigCached } from '@/lib/config-api'
 
@@ -72,7 +73,9 @@ function subscribe(listener: () => void) {
 
 const getSnapshot = () => state
 const getServerSnapshot = () => initialState
+const subscribeDisabled = () => () => {}
 
 export function useFeatureFlags() {
-  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
+  const available = useBotAvailable()
+  return useSyncExternalStore(available ? subscribe : subscribeDisabled, available ? getSnapshot : getServerSnapshot, getServerSnapshot)
 }

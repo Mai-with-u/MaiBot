@@ -11,7 +11,7 @@ from src.plugin_runtime.compat_policy import (
     parse_force_plugin_compatibility_env,
 )
 from src.plugin_runtime.runner.plugin_loader import PluginLoader
-from src.plugin_runtime.runner.manifest_validator import ManifestValidator, VersionComparator
+from src.plugin_runtime.runner.manifest_validator import ManifestValidator
 from src.plugin_runtime.update_compatibility_notice import _is_host_compatible
 
 
@@ -51,32 +51,26 @@ def _build_validator(
     )
 
 
-def test_higher_patch_version_uses_compatibility_mode() -> None:
-    validator = _build_validator("1.0.1")
-
-    assert validator.parse_manifest(_build_manifest()) is not None
-    assert validator.errors == []
-    assert validator.warnings == ["当前版本 1.0.1 以兼容模式加载插件（插件声明的 Host 最高支持版本为 1.0.0）"]
-
-
-def test_higher_minor_version_is_incompatible() -> None:
-    validator = _build_validator("1.1.0")
-
-    assert validator.parse_manifest(_build_manifest()) is None
-    assert validator.warnings == []
-    assert validator.errors == ["Host 版本不兼容: 版本 1.1.0 高于最大支持 1.0.0 (当前 Host: 1.1.0)"]
-
-
-def test_patch_compatibility_requires_same_major_and_minor() -> None:
-    assert VersionComparator.is_same_major_minor_higher_version("1.0.1", "1.0.0") is True
-    assert VersionComparator.is_same_major_minor_higher_version("1.1.0", "1.0.9") is False
-    assert VersionComparator.is_same_major_minor_higher_version("2.0.0", "1.0.9") is False
-    assert VersionComparator.is_same_major_higher_version("1.1.0", "1.0.9") is False
-
-
-def test_update_notice_uses_same_patch_compatibility_rule() -> None:
-    assert _is_host_compatible("1.0.1", "1.0.0", "1.0.0") is True
-    assert _is_host_compatible("1.1.0", "1.0.0", "1.0.9") is False
+@pytest.mark.parametrize("version,allowed", [
+    ("1.0.1", True), ("1.1.0", True), ("1.1.99", True),
+    ("1.2.0", False), ("2.0.0", False), ("0.9.0", False),
+])
+def test_host_upgrade_window_and_update_notice_agree(version: str, allowed: bool, monkeypatch) -> None:
+    warning_log = Mock()
+    monkeypatch.setattr("src.plugin_runtime.runner.manifest_validator.logger.warning", warning_log)
+    monkeypatch.setattr(ManifestValidator, "_LOGGED_WARNING_KEYS", set())
+    validator = ManifestValidator(host_version=version, sdk_version="2.0.0",
+                                  validate_python_package_dependencies=False, log_errors=False)
+    assert (validator.parse_manifest(_build_manifest()) is not None) is allowed
+    assert _is_host_compatible(version, "1.0.0", "1.0.0") is allowed
+    if allowed:
+        assert not validator.errors
+        assert "请及时更新" in validator.warnings[0]
+        assert "开发者尽快迁移" in validator.warnings[0]
+        warning_log.assert_called_once()
+        assert "maibot-team.version-compatibility-test" in warning_log.call_args.args[0]
+    else:
+        assert any("Host 版本不兼容" in error for error in validator.errors)
 
 
 def test_force_compatibility_loads_plugin_out_of_host_and_sdk_range() -> None:

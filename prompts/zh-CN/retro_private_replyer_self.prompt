@@ -4,7 +4,7 @@
 {time_block}
 {dialogue_prompt}
 
-{reply_target_block}。
+{reply_target_block}
 {planner_reasoning}
 请你根据聊天内容，组织一条新回复，请按照你自己的角度来继续进行回复。注意保持上下文的连贯性。
 尽量简短一些。{keywords_reaction_prompt}请注意把握聊天内容，不要回复的太有条理，可以有个性。

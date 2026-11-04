@@ -127,8 +127,8 @@ class RPCClient:
         with diagnostic_stage("runner.send_hello"):
             await connection.send_frame(self._codec.encode_envelope(envelope))
 
-        with diagnostic_stage("runner.wait_hello_response:timeout=10s"):
-            resp_data = await asyncio.wait_for(connection.recv_frame(), timeout=10.0)
+        with diagnostic_stage("runner.wait_hello_response:timeout=30s"):
+            resp_data = await asyncio.wait_for(connection.recv_frame(), timeout=30.0)
         response = self._codec.decode_envelope(resp_data)
         resp_payload = HelloResponsePayload.model_validate(response.payload)
 

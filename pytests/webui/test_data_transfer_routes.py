@@ -4,7 +4,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import zipfile
 
-from src.webui.routers import data_transfer
+from functools import partial
+
+from src.host.registry import Registry
+from src.host.transfer_service import TransferService
+from src.host.transfer_storage import import_archive
+
+data_transfer: TransferService
 
 
 def _build_client(monkeypatch, tmp_path: Path) -> TestClient:
@@ -13,23 +19,15 @@ def _build_client(monkeypatch, tmp_path: Path) -> TestClient:
     for dirname in ("config", "data", "plugins", "logs"):
         (project_root / dirname).mkdir(parents=True)
 
-    monkeypatch.setattr(data_transfer, "_PROJECT_ROOT", project_root)
-    monkeypatch.setattr(
-        data_transfer,
-        "_EXPORT_DIRS",
-        {
-            "config": project_root / "config",
-            "data": project_root / "data",
-            "plugins": project_root / "plugins",
-            "logs": project_root / "logs",
-        },
-    )
-    monkeypatch.setattr(data_transfer, "_TRANSFER_TEMP_DIR", transfer_dir)
-    data_transfer._jobs.clear()
+    global data_transfer
+    registry = Registry(tmp_path)
+    registry.create()
+    bot = registry.add_bot("test", project_root, owned=True, initialization="initialized")
+    data_transfer = TransferService(project_root, transfer_dir, "1.3.20")
+    data_transfer.apply_import = partial(import_archive, bot, tmp_path / "host", data_transfer)
 
     app = FastAPI()
     app.include_router(data_transfer.router)
-    app.dependency_overrides[data_transfer.require_auth] = lambda: "test-token"
     return TestClient(app)
 
 

@@ -8,11 +8,10 @@ import asyncio
 import json
 import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from src.common.logger import get_logger
-from src.webui.dependencies import require_auth
 from src.webui.services.ai_search_agent import resolve_prompt_locale, run_ai_search_agent
 from src.webui.services.ai_search_models import (
     AISearchCandidate,
@@ -25,7 +24,7 @@ from src.webui.services.ai_search_models import (
 
 logger = get_logger("webui.ai_search")
 
-router = APIRouter(prefix="/search", tags=["Search"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/search", tags=["Search"])
 
 AI_SEARCH_CACHE_TTL_SECONDS = 300.0
 AI_SEARCH_CACHE_MAX_ENTRIES = 128

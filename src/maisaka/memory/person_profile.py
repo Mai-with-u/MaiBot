@@ -151,35 +151,10 @@ def collect_person_profile_candidates(
 ) -> list[PersonProfileCandidate]:
     """按当前对象优先顺序收集本轮可注入画像候选。"""
 
-    limit = max(1, int(max_profiles or 1))
-    if anchor_message.message_info.group_info is None:
-        candidate = _sender_candidate(anchor_message, "private_current_user")
-        return [candidate] if candidate is not None else []
+    from src.maisaka.scenes.factory import get_scene
 
-    candidates: list[PersonProfileCandidate] = []
-    seen_person_ids: set[str] = set()
-
-    def add(candidate: PersonProfileCandidate | None) -> bool:
-        if candidate is None or candidate.person_id in seen_person_ids:
-            return len(candidates) >= limit
-        seen_person_ids.add(candidate.person_id)
-        candidates.append(candidate)
-        return len(candidates) >= limit
-
-    for message in _messages_current_first(anchor_message, pending_messages):
-        if add(_sender_candidate(message, "recent_speaker")):
-            break
-        for component in message.raw_message.components:
-            if isinstance(component, AtComponent):
-                if add(_at_candidate(message, component)):
-                    break
-            elif isinstance(component, ReplyComponent) and component.target_message_sender_id:
-                if add(_reply_candidate(message, component)):
-                    break
-        if len(candidates) >= limit:
-            break
-
-    return candidates[:limit]
+    scene = get_scene(anchor_message.message_info.group_info is not None)
+    return scene.collect_person_profiles(anchor_message, pending_messages, max_profiles=max_profiles)
 
 
 def _extract_profile_text(payload: object) -> str:
