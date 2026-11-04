@@ -14,6 +14,7 @@ from src.common.database.database import get_db_session
 from src.common.database.database_model import Images, ImageType
 from src.common.logger import get_logger
 from src.common.utils.image_path import resolve_stored_image_path, serialize_stored_image_path
+from src.common.utils.utils_image import ImageUtils
 from src.config.config import config_manager
 from src.prompt.prompt_manager import prompt_manager
 from src.services.llm_service import LLMServiceClient
@@ -499,6 +500,16 @@ class ImageManager:
 
     async def _generate_image_description(self, image_bytes: bytes, image_format: str) -> str:
         prompt_template = prompt_manager.get_prompt("image_description")
+        image_type = "STATIC"
+        # 多数视觉模型只读 GIF 首帧；与表情包识别一致，先把不同帧横向拼成一张静态图。
+        if image_format == "gif" and await asyncio.to_thread(ImageUtils.is_animated_gif, image_bytes):
+            try:
+                image_bytes = await asyncio.to_thread(ImageUtils.gif_2_static_image, image_bytes)
+                image_format = "jpg"
+                image_type = "GIF"
+            except Exception as e:
+                logger.warning(f"GIF 抽帧失败，按原图识别: {e}")
+        prompt_template.add_context("image_type", image_type)
         prompt = await prompt_manager.render_prompt(prompt_template)
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
 

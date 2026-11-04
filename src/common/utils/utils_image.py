@@ -75,6 +75,15 @@ class ImageUtils:
             return resized_base64, "png", True
 
     @staticmethod
+    def is_animated_gif(image_bytes: bytes) -> bool:
+        """判断图片是否为多帧 GIF；无法识别时返回 False。"""
+        try:
+            with PILImage.open(io.BytesIO(image_bytes)) as image:
+                return (image.format or "").lower() == "gif" and getattr(image, "n_frames", 1) > 1
+        except Exception:
+            return False
+
+    @staticmethod
     def gif_2_static_image(gif_bytes: bytes, similarity_threshold: float = 1000.0, max_frames: int = 15) -> bytes:
         """
         将GIF图片水平拼接为静态图像，跳过相似帧
@@ -102,7 +111,8 @@ class ImageUtils:
             for frame in ImageSequence.Iterator(gif_image):
                 # 确保是RGB格式方便比较
                 frame_rgb = frame.convert("RGB")
-                frame_np = np.array(frame_rgb)
+                # uint8 相减和平方会回绕，MSE 永远不超过 255，需先转为有符号整数
+                frame_np = np.asarray(frame_rgb, dtype=np.int32)
 
                 if frame_index == 0:
                     selected_frames.append(frame_rgb.copy())
