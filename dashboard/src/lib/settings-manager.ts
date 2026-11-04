@@ -65,7 +65,7 @@ export const DEFAULT_SETTINGS = {
   enableAnimations: true,
   enableAvatarFetch: true,
   /** 桌面端外壳：classic 为顶栏 + 侧栏的经典布局，observation 为以麦麦观察为首页的新布局 */
-  layoutVersion: 'classic' as 'classic' | 'observation',
+  layoutVersion: 'observation' as 'classic' | 'observation',
 
   // 调试
   alwaysShowUpdateNotice: false,
