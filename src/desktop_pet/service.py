@@ -2,7 +2,6 @@
 
 from collections import deque
 from contextlib import suppress
-from pathlib import Path
 from typing import Any, Callable, Coroutine, Deque, Dict, List, Optional, Set
 import asyncio
 import json
@@ -21,9 +20,9 @@ from src.core.internal_chat import INTERNAL_CHAT_PLATFORM, INTERNAL_CHAT_USER_ID
 from .app_conditions import matching_application, running_applications
 from .rendering import render_parts
 from .screen import DesktopScreenshot, ScreenTimeline, capture_desktop, compose_screen_timeline
+from .thinking_caption import ThinkingCaption, caption_enabled
 
 logger = get_logger("desktop_pet")
-WINDOW_SCRIPT = Path(__file__).parent / "pet_window.py"
 COMMAND_TIMEOUT = 3
 STOP_TIMEOUT = 5
 
@@ -50,6 +49,13 @@ class DesktopPetService:
         self._screen_busy = False
         self._screen_error = ""
         self._screen_last_capture = ""
+        self._thinking_caption = ThinkingCaption(self._command)
+
+    def observe_stage(self, data: Dict[str, Any]) -> None:
+        from .chat_tools import is_owner_chat
+
+        if self._ready and not self._closing and is_owner_chat(data["session_id"]):
+            self._thinking_caption.update(data if caption_enabled() else {"session_id": data["session_id"]})
 
     def status(self) -> Dict[str, Any]:
         return {
@@ -83,6 +89,8 @@ class DesktopPetService:
     async def _reload(self) -> None:
         async with self._lifecycle_lock:
             if self._ready and global_config.desktop_pet.enabled:
+                if not caption_enabled():
+                    self._thinking_caption.update({"session_id": ""})
                 if self._skin_id != global_config.desktop_pet.skin_id:
                     await self.apply_skin(global_config.desktop_pet.skin_id)
                 self._restart_proactive_wake()
@@ -110,6 +118,7 @@ class DesktopPetService:
 
     async def _stop(self) -> None:
         self._closing = True
+        self._thinking_caption.cancel()
         for task in self._notifications:
             task.cancel()
         await asyncio.gather(*self._notifications, return_exceptions=True)
@@ -137,7 +146,7 @@ class DesktopPetService:
             # 继续使用旧桌宠的数据目录，待办和窗口位置无需复制或迁移。
             root = get_instance_root()
             process = await asyncio.create_subprocess_exec(
-                sys.executable, str(WINDOW_SCRIPT),
+                sys.executable, "-m", "src.desktop_pet.pet_window",
                 "--data-dir", str(root / "data" / "plugins" / "sengokucola.desktop-pet"),
                 "--runtime-dir", str(root / "temp" / "desktop_pet"),
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -161,6 +170,7 @@ class DesktopPetService:
             self._error = str(exc)
             logger.exception("桌宠窗口运行失败")
         finally:
+            self._thinking_caption.cancel()
             was_ready = self._ready
             self._ready = self._visible = False
             self._restart_proactive_wake()
@@ -201,7 +211,7 @@ class DesktopPetService:
         elif kind == "buttons_refresh":
             self._buttons_changed()
         elif kind == "button_click":
-            self._observe(self._click_button(event["plugin_id"], event["button_id"]))
+            self._observe(self._click_button(event["plugin_id"], event["button_id"], event.get("action_id")))
         elif kind == "clicked":
             self._observe(self._dispatch_hook(kind))
         elif kind == "drag_started":
@@ -364,18 +374,22 @@ class DesktopPetService:
         return sessions[0].session_id
 
     async def _publish_exploration_tasks(self, task_id: str, request_id: str) -> None:
-        from .exploration import exploration_tasks
+        from .exploration import experience_ref, exploration_tasks
 
         payload: Dict[str, Any] = {"type": "exploration_tasks", "request_id": request_id,
                                    "items": [], "selected": None, "error": ""}
         try:
             session_id = await self._exploration_session_id()
             records = await asyncio.to_thread(exploration_tasks, session_id)
-            payload["items"] = [{key: item[key] for key in ("id", "goal", "status", "created_at", "updated_at")}
-                                for item in records]
+            payload["items"] = [{**{key: item[key] for key in ("id", "goal", "status", "created_at", "updated_at")},
+                                 "resource_count": len(item.get("resources", [])),
+                                 "experience_count": len(item.get("experiences", []))} for item in records]
             payload["selected"] = next((item for item in records if item["id"] == task_id), None)
             if not task_id and records:
                 payload["selected"] = records[0]
+            if payload["selected"] is not None:
+                payload["selected"]["experience_refs"] = [experience_ref(item)
+                    for item in payload["selected"].get("experiences", [])]
         except Exception as exc:
             payload["error"] = str(exc)
             logger.exception("读取探索任务失败")
@@ -488,7 +502,7 @@ class DesktopPetService:
             return
         await self._enqueue_owner_task(source_kind="desktop_pet_todo",
             text=f"[Bot 待办已触发，事项 ID: {item['id']}，这是内部任务]\n{item['text']}\n"
-                 "请执行此待办；完成后可使用 desktop_pet_todo 删除事项。触发不代表任务已完成。",
+                 "请执行此待办；完成后使用 desktop_pet_todo 的 complete 操作归档事项。触发不代表任务已完成。",
             reason="桌宠待办触发")
 
     async def _enqueue_owner_task(
@@ -562,17 +576,22 @@ class DesktopPetService:
             if revision == self._button_revision:
                 return
 
-    async def _click_button(self, plugin_id: str, button_id: str) -> None:
+    async def _click_button(self, plugin_id: str, button_id: str, action_id: Optional[str] = None) -> None:
         from src.plugin_runtime.integration import get_plugin_runtime_manager
 
         error = ""
+        panel = None
         try:
-            await get_plugin_runtime_manager().desktop_pet_buttons(plugin_id, button_id)
+            runtime = get_plugin_runtime_manager()
+            result = (await runtime.desktop_pet_buttons(plugin_id, button_id) if action_id is None
+                      else await runtime.desktop_pet_buttons(plugin_id, button_id, action_id))
+            panel = result.get("panel")
         except Exception as exc:
             error = str(exc)
             logger.exception("插件 %s 桌宠按钮 %s 执行失败", plugin_id, button_id)
         if self._ready and not self._closing:
-            await self._command({"type": "button_result", "plugin_id": plugin_id, "button_id": button_id, "error": error})
+            await self._command({"type": "button_result", "plugin_id": plugin_id, "button_id": button_id,
+                                 "error": error, "panel": panel})
             self._buttons_changed()
 
     async def _chat(self, request_id: str) -> None:
