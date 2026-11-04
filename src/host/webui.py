@@ -55,7 +55,7 @@ class UpdateRequest(BaseModel):
 
 def create_host_app(
     supervisor: BotSupervisor, maintenance: HostMaintenance, sessions: HostSessions, credentials: HostCredentials,
-    stopping: asyncio.Event, *, config: HostConfig, static_path: Optional[Path] = None, local_only: bool = True,
+    stopping: asyncio.Event, *, config: HostConfig, static_path: Optional[Path] = None,
 ) -> FastAPI:
     """WebUI 关闭时只提供文件传输，不影响适配器下载文件。"""
     proxy = BotProxy(supervisor, sessions)
@@ -82,8 +82,6 @@ def create_host_app(
 
     @app.middleware("http")
     async def protect_requests(request: Request, call_next: Any) -> Response:
-        if local_only and request.url.hostname not in {"127.0.0.1", "localhost", "::1"}:
-            return JSONResponse(status_code=400, content={"detail": "无效的本机 WebUI 地址"})
         if request.url.path.startswith("/api/"):
             if request.method not in {"GET", "HEAD", "OPTIONS"}:
                 origin = request.headers.get("origin")
@@ -317,7 +315,6 @@ class HostWebUI:
         self.static_path = resolve_static_path() if self.management else None
         self.app = create_host_app(
             supervisor, maintenance, self.sessions, self.credentials, stopping, config=config, static_path=self.static_path,
-            local_only=all(host in {"127.0.0.1", "localhost", "::1"} for host in self.hosts),
         )
         self._server: Optional[_HostHTTPServer] = None
         self.ssl_certfile = config.ssl_certfile
