@@ -1,6 +1,5 @@
 """超级创意模式的两阶段生成、最终 Hook 输入和请求语言隔离。"""
 
-from threading import Barrier
 from types import SimpleNamespace
 from typing import Any, Dict, List, Tuple
 from unittest.mock import AsyncMock, Mock
@@ -17,7 +16,7 @@ from src.common.prompt_i18n import load_prompt
 from src.config.config import global_config
 from src.config.model_configs import ModelInfo
 from src.desktop_pet.service import desktop_pet_service
-from src.llm_models.payload_content.context_item import ContextItem, ContextItemBuilder, RoleType, get_item_text
+from src.llm_models.payload_content.context_item import SystemMessageItem, get_item_text
 from src.llm_models.payload_content.tool_option import ToolCall
 from src.plugin_runtime.host.hook_dispatcher import HookDispatchResult
 
@@ -85,15 +84,17 @@ async def test_enabled_translates_with_actual_replyer_and_hooks_receive_chinese(
 
     assert success
     assert len(replyer.calls) == 2
-    assert "今回の返信は必ず日本語で" in get_item_text(replyer.calls[0]["items"][-1])
+    language_instruction = "今回の返信は日本語で"
+    system = next(item for item in replyer.calls[0]["items"] if isinstance(item, SystemMessageItem))
+    assert language_instruction in get_item_text(system)
     assert replyer.calls[0]["options"].model_name is None
     assert replyer.calls[1]["options"].model_name == "actual-replyer"
     assert get_item_text(replyer.calls[1]["items"][-1]) == "月が笑っています。"
-    assert "简体中文" in get_item_text(replyer.calls[1]["items"][0])
+    assert "日语回复翻译成中文" in get_item_text(replyer.calls[1]["items"][0])
     assert replyer.after_responses == ["月亮正在微笑。"]
     assert result.completion.response_text == "月亮正在微笑。"
     assert result.text_fragments == ["月亮正在微笑。"]
-    assert "简体中文" in result.completion.request_prompt
+    assert "日语回复翻译成中文" in result.completion.request_prompt
     assert "月が笑っています。" in result.completion.request_prompt
     assert result.metrics.extra["replyer_translation_count"] == 1
     assert result.metrics.extra["replyer_attempt_count"] == 2
@@ -116,12 +117,18 @@ async def test_disabled_keeps_single_request_and_current_locale(replyer, monkeyp
     monkeypatch.setattr(global_config.chat, "super_creative_mode", False)
     replyer.responses[:] = [_response("直接回复")]
     with use_locale("en-US"):
+        original_items = replyer.generator._build_request_messages(
+            chat_history=[], reply_message=None, reply_reason="",
+        )
         success, result = await replyer.generator.generate_reply_with_context(chat_history=[])
 
     assert success and result.text_fragments == ["直接回复"]
     assert len(replyer.calls) == 1
     prompt = "\n".join(get_item_text(item) for item in replyer.calls[0]["items"])
-    assert "今回の返信は必ず日本語で" not in prompt
+    assert "今回の返信は日本語で" not in prompt
+    original_system = next(item for item in original_items if isinstance(item, SystemMessageItem))
+    actual_system = next(item for item in replyer.calls[0]["items"] if isinstance(item, SystemMessageItem))
+    assert actual_system.parts == original_system.parts
     assert "You are" in prompt
     assert result.metrics.extra["replyer_translation_count"] == 0
 
@@ -174,6 +181,8 @@ async def test_super_creative_does_not_use_planner_snapshot(replyer) -> None:
 
 @pytest.mark.parametrize("profile", ["standard", "retro", "mai_replier", "document"])
 def test_each_prompt_profile_loads_japanese_templates(replyer, monkeypatch, profile: str) -> None:
+    personality = "喜欢观察月亮的中文人设"
+    monkeypatch.setattr(global_config.personality, "personality", personality)
     generator = replyer.generator
     if profile == "document":
         generator = object.__new__(DocumentReplyGenerator)
@@ -192,30 +201,31 @@ def test_each_prompt_profile_loads_japanese_templates(replyer, monkeypatch, prof
         )
         assert get_locale() == "en-US"
 
-    expected = {
-        "standard": "maisaka_replyer", "retro": "retro_replyer",
-        "mai_replier": "retro_replyer", "document": "maisaka_replyer_document",
-    }
+    expected = {"standard": "maisaka_replyer", "retro": "retro_replyer",
+                "mai_replier": "retro_replyer", "document": "maisaka_replyer_document"}
     assert (expected[profile], "ja-JP") in loaded
-    assert all(locale == "ja-JP" for _, locale in loaded)
-    assert "今回の返信は必ず日本語で" in get_item_text(items[-1])
+    system = next(item for item in items if isinstance(item, SystemMessageItem))
+    assert personality in get_item_text(system)
+    assert "今回の返信は日本語で" in get_item_text(system)
+    # 除 system 的一句语言要求外，结构及正文应与对应日文原模板一致。
+    with use_locale("ja-JP"):
+        original = generator._build_request_messages(
+            chat_history=[], reply_message=None, reply_reason="测试材料", reply_requirements="保留段落", prompt_profile=profile,
+        )
+    assert len(items) == len(original)
+    assert [get_item_text(item) for item in items[1:]] == [get_item_text(item) for item in original[1:]]
+    assert get_item_text(system).startswith(get_item_text(original[0]))
 
 
 @pytest.mark.asyncio
 async def test_parallel_prompt_builders_keep_separate_locales(replyer, monkeypatch) -> None:
-    barrier = Barrier(2)
-
-    def build_messages(**kwargs: Any) -> List[ContextItem]:
-        barrier.wait(timeout=5)
-        return [ContextItemBuilder().set_role(RoleType.User).add_text_content(get_locale()).build()]
-
-    monkeypatch.setattr(replyer.generator, "_build_request_messages", build_messages)
+    kwargs = dict(chat_history=[], reply_message=None, reply_reason="中文参考")
     with use_locale("en-US"):
         japanese, normal = await asyncio.gather(
-            asyncio.to_thread(replyer.generator._build_generation_messages, super_creative_mode=True),
-            asyncio.to_thread(replyer.generator._build_generation_messages, super_creative_mode=False),
+            asyncio.to_thread(replyer.generator._build_generation_messages, super_creative_mode=True, **kwargs),
+            asyncio.to_thread(replyer.generator._build_generation_messages, super_creative_mode=False, **kwargs),
         )
         assert get_locale() == "en-US"
-
-    assert get_item_text(japanese[0]) == "ja-JP"
-    assert get_item_text(normal[0]) == "en-US"
+    assert "今回の返信は日本語で" in get_item_text(japanese[0])
+    assert "中文参考" in get_item_text(japanese[-1])
+    assert "今回の返信は日本語で" not in get_item_text(normal[0])

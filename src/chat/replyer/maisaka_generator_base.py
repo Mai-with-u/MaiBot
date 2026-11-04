@@ -38,8 +38,10 @@ from src.llm_models.payload_content.context_item import (
     CONTEXT_ITEM_SCHEMA_VERSION,
     ContextItem,
     ContextItemBuilder,
+    ContextTextPart,
     ReasoningItem,
     RoleType,
+    SystemMessageItem,
     get_response_text,
     replace_output_projection,
 )
@@ -1015,12 +1017,14 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         if not super_creative_mode:
             return self._build_request_messages(**kwargs)
         with use_locale("ja-JP"):
+            # 沿用中文 Replyer 的构建链和占位符，只选择对应日文模板，不重新组织结构。
             items = self._build_request_messages(**kwargs)
-            items.append(
-                ContextItemBuilder().set_role(RoleType.User)
-                .add_text_content(self._load_prompt("replyer_super_creative"))
-                .build()
-            )
+            instruction = self._load_prompt("replyer_super_creative")
+            items = [
+                replace(item, parts=(*item.parts, ContextTextPart("\n" + instruction)))
+                if isinstance(item, SystemMessageItem) else item
+                for item in items
+            ]
             return items
 
     async def _translate_super_creative_reply(
