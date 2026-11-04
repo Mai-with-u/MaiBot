@@ -43,19 +43,6 @@ class _ExtendedLimitInformation(ctypes.Structure):
     ]
 
 
-class _BasicAccountingInformation(ctypes.Structure):
-    _fields_ = [
-        ("TotalUserTime", ctypes.c_longlong),
-        ("TotalKernelTime", ctypes.c_longlong),
-        ("ThisPeriodTotalUserTime", ctypes.c_longlong),
-        ("ThisPeriodTotalKernelTime", ctypes.c_longlong),
-        ("TotalPageFaultCount", wintypes.DWORD),
-        ("TotalProcesses", wintypes.DWORD),
-        ("ActiveProcesses", wintypes.DWORD),
-        ("TotalTerminatedProcesses", wintypes.DWORD),
-    ]
-
-
 class WindowsJob:
     def __init__(self) -> None:
         self._kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -79,6 +66,10 @@ class WindowsJob:
         self._kernel.WaitForSingleObject.restype = wintypes.DWORD
         self._kernel.IsProcessInJob.argtypes = [wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL)]
         self._kernel.IsProcessInJob.restype = wintypes.BOOL
+        self._kernel.QueryFullProcessImageNameW.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD),
+        ]
+        self._kernel.QueryFullProcessImageNameW.restype = wintypes.BOOL
         self._pending_processes: Dict[int, int] = {}
         self._handle: Optional[int] = self._kernel.CreateJobObjectW(None, None)
         if not self._handle:
@@ -101,16 +92,8 @@ class WindowsJob:
         finally:
             self._kernel.CloseHandle(process)
 
-    def active_processes(self) -> int:
-        accounting = _BasicAccountingInformation()
-        if not self._kernel.QueryInformationJobObject(
-            self._handle, 1, ctypes.byref(accounting), ctypes.sizeof(accounting), None,
-        ):
-            raise ctypes.WinError(ctypes.get_last_error())
-        return accounting.ActiveProcesses
-
-    def terminate(self) -> None:
-        # ActiveProcesses 归零可早于进程句柄变为 signaled；保留实际句柄，确保端口与文件已释放。
+    def _retain_processes(self) -> None:
+        # 保留属于本 Job 的实际进程句柄，防止 PID 复用，并等待端口与文件释放。
         for pid in self._process_ids():
             if pid in self._pending_processes:
                 continue
@@ -129,6 +112,29 @@ class WindowsJob:
                 self._pending_processes[pid] = process
             else:
                 self._kernel.CloseHandle(process)
+
+    def live_processes(self) -> Dict[int, str]:
+        """用实际句柄核实存活状态，避免把滞后的 Job 计数当成残留进程。"""
+        self._retain_processes()
+        live: Dict[int, str] = {}
+        for pid, process in self._pending_processes.items():
+            result = self._kernel.WaitForSingleObject(process, 0)
+            if result == 0:
+                continue
+            if result != 258:  # WAIT_TIMEOUT：进程尚未退出。
+                raise ctypes.WinError(ctypes.get_last_error())
+            path = ctypes.create_unicode_buffer(32768)
+            size = wintypes.DWORD(len(path))
+            if not self._kernel.QueryFullProcessImageNameW(process, 0, path, ctypes.byref(size)):
+                error = ctypes.get_last_error()
+                if self._kernel.WaitForSingleObject(process, 0) == 0:
+                    continue  # 核实状态与读取路径之间正常退出。
+                raise ctypes.WinError(error)
+            live[pid] = path.value
+        return live
+
+    def terminate(self) -> None:
+        self._retain_processes()
         if not self._kernel.TerminateJobObject(self._handle, 1):
             raise ctypes.WinError(ctypes.get_last_error())
 

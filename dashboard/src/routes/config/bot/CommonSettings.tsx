@@ -132,7 +132,7 @@ export function CommonSettings() {
       scrollbars="vertical"
     >
       <div className="max-w-full space-y-2 p-4 sm:p-6">
-        <div data-config-section-navigation="true" className="bg-background sticky top-0 z-20 flex flex-wrap items-center gap-3 py-2">
+        <div data-config-section-navigation="true" className="sticky top-0 z-20 flex flex-wrap items-center gap-3 py-2">
           <Button asChild variant="outline" size="sm">
             <Link to="/config/bot" search={{ tab: 'bot' }}><ArrowLeft className="mr-2 h-4 w-4" />麦麦设置</Link>
           </Button>

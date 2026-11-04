@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Deque, Dict, List, Optional, Set
 
 import asyncio
+import logging
 import sys
 import time
 
@@ -34,6 +35,7 @@ RESTART_DELAY_MAX = 300.0
 CRASH_WINDOW = 600.0
 CRASH_LIMIT = 5
 _POLL_INTERVAL = 0.25
+logger = logging.getLogger(__name__)
 
 
 def _now() -> str:
@@ -201,6 +203,7 @@ class BotSupervisor:
             runtime.endpoint = None
         if process.forced or process.stop_error:
             runtime.error = process.stop_error or "进程树已强制终止；未确认优雅关闭"
+            logger.error("Bot %s 关闭异常: PID=%s 退出码=%s; %s", runtime.bot.name, process.pid, code, runtime.error)
         runtime.settled.set()
 
     async def _watch(self, runtime: _Runtime, process: ManagedProcess) -> None:
@@ -230,6 +233,7 @@ class BotSupervisor:
                 if runtime.process is process:
                     # 无法确认进程树已退出：保留句柄，不能把它当成已停止。
                     runtime.status, runtime.error = "failed", f"无法确认进程树已退出: {exc}"
+                    logger.exception("Bot %s 进程树回收失败: PID=%s", runtime.bot.name, process.pid)
                     runtime.settled.set()
             return
         async with runtime.lock:

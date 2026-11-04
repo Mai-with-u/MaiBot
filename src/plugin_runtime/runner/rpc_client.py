@@ -208,13 +208,16 @@ class RPCClient:
             await connection.send_frame(self._codec.encode_envelope(envelope))
             return await asyncio.wait_for(future, timeout=timeout_ms / 1000.0)
         except asyncio.TimeoutError:
-            self._pending_requests.pop(request_id, None)
             raise RPCError(ErrorCode.E_TIMEOUT, f"请求 {method} 超时 ({timeout_ms}ms)") from None
         except Exception as exc:
-            self._pending_requests.pop(request_id, None)
             if isinstance(exc, RPCError):
                 raise
             raise RPCError(ErrorCode.E_UNKNOWN, str(exc)) from exc
+        finally:
+            # 卸载取消业务协程时也必须回收等待表，迟到响应不再持有失效 Future。
+            self._pending_requests.pop(request_id, None)
+            if not future.done():
+                future.cancel()
 
     async def send_event(
         self,

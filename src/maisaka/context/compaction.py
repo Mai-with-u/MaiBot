@@ -199,7 +199,8 @@ def _build_compaction_request(
                 delta.append(text)
     # 共享聊天携带来源资料并使用独立提示词，普通聊天不注入多会话规则。
     prompt_name = "context_compaction_focus" if source_context else "context_compaction"
-    instruction = load_prompt(prompt_name)
+    # 无参数的 load_prompt 保留模板原文，需展开转义花括号，避免 JSON 示例以 {{...}} 发给模型。
+    instruction = load_prompt(prompt_name).format()
     tail_parts = [
         "<additional_conversation_data>", *delta, "</additional_conversation_data>",
     ]

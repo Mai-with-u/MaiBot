@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import '@/styles/form-section.css'
 import {
   Select,
   SelectContent,
@@ -257,7 +258,7 @@ export function WebSearchDialog({
             保存连接后，需在“功能分配 → 联网搜索”中选用才能使用。
           </DialogDescription>
         </DialogHeader>
-        <DialogBody viewportClassName="max-h-[65vh] pr-3">
+        <DialogBody type="auto" data-form-scroll="true" className="max-h-[65vh]" viewportClassName="pr-0">
           <fieldset disabled={saving} className="space-y-4 py-1">
             <div className="grid gap-2">
               <Label htmlFor="web-service-name">服务名称</Label>

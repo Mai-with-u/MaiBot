@@ -62,26 +62,6 @@ export function ProviderSidebar({
       <div data-library-label="true">
         <b>VENDORS</b>
         <h2>模型厂商</h2>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              data-library-link="true"
-              title="添加厂商"
-              aria-label="添加厂商"
-              data-tour="add-provider-button"
-            >
-              <Plus aria-hidden="true" />
-              添加
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={onAdd} data-tour="add-llm-provider-item">
-              添加 LLM 模型提供商
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={onAddWebSearch}>添加联网搜索</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
       </div>
 
       <div className="min-w-0 lg:hidden">
@@ -162,18 +142,37 @@ export function ProviderSidebar({
           )
         })}
       </DataPanel>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            data-library-add="true"
+            title="添加厂商"
+            aria-label="添加厂商"
+            data-tour="add-provider-button"
+          >
+            <Plus aria-hidden="true" />
+            添加厂商
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          <DropdownMenuItem onSelect={onAdd} data-tour="add-llm-provider-item">
+            添加 LLM 模型提供商
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={onAddWebSearch}>添加联网搜索</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       <div data-library-label="true" className="mt-3 max-lg:hidden">
         <b>WEB</b>
         <h2>联网服务</h2>
-        {onAddWebSearch && (
-          <button type="button" data-library-link="true" onClick={onAddWebSearch}>
-            <Plus aria-hidden="true" />
-            添加
-          </button>
-        )}
       </div>
-      <DataPanel padding="none" data-library-list="true" className="hidden flex-none lg:block">
+      {/* 联网服务最多露出两行，多了在框里滚动，不挤占厂商列表 */}
+      <DataPanel
+        padding="none"
+        data-library-list="true"
+        className="hidden max-h-[7.625rem] flex-none overflow-y-auto overscroll-contain lg:block"
+      >
         {webServiceNames.length === 0 && (
           <p className="text-muted-foreground px-3 py-3 text-xs">还没有联网服务</p>
         )}
@@ -195,6 +194,12 @@ export function ProviderSidebar({
           )
         })}
       </DataPanel>
+      {onAddWebSearch && (
+        <button type="button" data-library-add="true" className="max-lg:hidden" onClick={onAddWebSearch}>
+          <Plus aria-hidden="true" />
+          添加联网服务
+        </button>
+      )}
     </aside>
   )
 }

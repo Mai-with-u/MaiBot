@@ -69,9 +69,7 @@ def test_panel_rejects_active_content_and_duplicate_actions():
 async def test_runner_returns_panel_and_dispatches_panel_action():
     from src.plugin_runtime.runner.runner_main import PluginRunner
 
-    runner = PluginRunner.__new__(PluginRunner)
-    runner._desktop_pet_button_locks = {}
-    runner._inflight_rpcs = {}
+    runner = PluginRunner("unused", "test", [])
     provider = PanelProvider()
     meta = SimpleNamespace(instance=provider, config_error="")
     runner._loader = SimpleNamespace(get_plugin=lambda plugin_id: meta)
@@ -129,9 +127,7 @@ def request(plugin_id="test.pet", button_id=None, request_id=1):
 async def test_runner_routes_owner_and_rejects_repeated_action():
     from src.plugin_runtime.runner.runner_main import PluginRunner
 
-    runner = PluginRunner.__new__(PluginRunner)
-    runner._desktop_pet_button_locks = {}
-    runner._inflight_rpcs = {}
+    runner = PluginRunner("unused", "test", [])
     provider = Provider()
     meta = SimpleNamespace(instance=provider, config_error="")
     runner._loader = SimpleNamespace(get_plugin=lambda plugin_id: meta if plugin_id == "test.pet" else None)
@@ -195,9 +191,7 @@ async def test_panel_routes_through_service_manager_supervisor_and_runner(monkey
 
     provider = PanelProvider()
     meta = SimpleNamespace(instance=provider, config_error="")
-    runner = PluginRunner.__new__(PluginRunner)
-    runner._desktop_pet_button_locks = {}
-    runner._inflight_rpcs = {}
+    runner = PluginRunner("unused", "test", [])
     runner._loader = SimpleNamespace(get_plugin=lambda plugin_id: meta)
 
     async def send_request(method, *, plugin_id, payload, timeout_ms):

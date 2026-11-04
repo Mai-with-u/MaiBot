@@ -16,7 +16,7 @@ import {
 import { FormRow, FormSection, FormUnit } from '@/components/ui/form-section'
 import { Input } from '@/components/ui/input'
 import { OrderControls } from '@/components/ui/order-controls'
-import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger } from '@/components/ui/select'
 import { StatusLight } from '@/components/ui/status-light'
 import { DataPanel } from '@/components/ui/surface'
 import { cn } from '@/lib/utils'
@@ -116,11 +116,11 @@ export function TaskAssignmentBoard({
     <div data-task-board="true" className="flex min-h-0 flex-col gap-4">
       {!guideDismissed && (
         <DataPanel data-task-guide="true" padding="none" className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <GuideStep index={1} done={hasProviders}>添加厂商</GuideStep>
+          <GuideStep index={1} done={hasProviders}>在模型库添加厂商</GuideStep>
           <span aria-hidden="true" className="text-muted-foreground">→</span>
-          <GuideStep index={2} done={models.length > 0}>在模型库添加模型</GuideStep>
+          <GuideStep index={2} done={models.length > 0}>添加模型</GuideStep>
           <span aria-hidden="true" className="text-muted-foreground">→</span>
-          <GuideStep index={3} done={false}>把模型安排到下面的工作</GuideStep>
+          <GuideStep index={3} done={false}>把模型安排到对应的工作</GuideStep>
           <span className="ml-auto flex items-center gap-3">
             {/* 逐步引导只在桌面端可用 */}
             {onStartTour && (
@@ -273,6 +273,25 @@ export function TaskAssignmentBoard({
   )
 }
 
+interface TaskCandidate {
+  name: string
+  /** 顺序列表里模型名下方的小字 */
+  tags?: string
+  provider?: string
+  visual?: boolean
+}
+
+/** 下拉菜单按厂商分组，保持模型库里的先后顺序；联网服务没有厂商，不分组。 */
+function groupByProvider(items: TaskCandidate[]) {
+  const groups = new Map<string | undefined, TaskCandidate[]>()
+  for (const item of items) {
+    const group = groups.get(item.provider)
+    if (group) group.push(item)
+    else groups.set(item.provider, [item])
+  }
+  return Array.from(groups)
+}
+
 /** 只列出能胜任这项工作的模型：识图要能看图，嵌入只用嵌入模型。 */
 function candidatesFor(task: string, models: ModelInfo[]) {
   const pick = (model: ModelInfo) => {
@@ -285,6 +304,8 @@ function candidatesFor(task: string, models: ModelInfo[]) {
   return models.filter(pick).map((model) => ({
     name: model.name,
     tags: [model.api_provider, model.visual ? '视觉' : ''].filter(Boolean).join(' · '),
+    provider: model.api_provider,
+    visual: Boolean(model.visual),
   }))
 }
 
@@ -337,7 +358,7 @@ function TaskEditor({
   field: FieldSchema
   meta: TaskMeta
   config: TaskConfig
-  candidates: Array<{ name: string; tags?: string }>
+  candidates: TaskCandidate[]
   onChange: (key: TaskField, value: string[] | number | string) => void
   onAddWebService: () => void
   tourRunning: boolean
@@ -443,6 +464,7 @@ function TaskEditor({
                   : meta.fallback ? `留空时自动${meta.fallback}。` : '留空时这项能力关闭。'}
               </p>
             )}
+            </DataPanel>
             <div data-task-order-add="true" className="flex gap-2">
               {addable.length > 0 ? (
                 <Select
@@ -458,11 +480,17 @@ function TaskEditor({
                     {single && list.length > 0 ? '换成…' : isWeb ? '选择联网服务' : '添加模型'}
                   </SelectTrigger>
                   <SelectContent>
-                    {addable.map((candidate) => (
-                      <SelectItem key={candidate.name} value={candidate.name}>
-                        {candidate.name}
-                        {candidate.tags ? <span className="ml-2 text-xs text-muted-foreground">{candidate.tags}</span> : null}
-                      </SelectItem>
+                    {/* 按厂商分组，同名模型也能分清来自哪家 */}
+                    {groupByProvider(addable).map(([provider, items]) => (
+                      <SelectGroup key={provider ?? ''}>
+                        {provider && <SelectLabel>{provider}</SelectLabel>}
+                        {items.map((candidate) => (
+                          <SelectItem key={candidate.name} value={candidate.name}>
+                            {candidate.name}
+                            {candidate.visual ? <span className="ml-2 text-xs text-muted-foreground">视觉</span> : null}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
                     ))}
                   </SelectContent>
                 </Select>
@@ -477,7 +505,6 @@ function TaskEditor({
                 <Button type="button" variant="outline" onClick={onAddWebService}>添加联网服务</Button>
               )}
             </div>
-            </DataPanel>
           </FormSection>
 
           {!isWeb && !meta.hideStrategy && list.length > 1 && (

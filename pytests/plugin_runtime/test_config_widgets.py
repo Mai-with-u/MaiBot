@@ -69,8 +69,7 @@ async def test_runner_dispatch_rejects_missing_plugin_and_concurrent_action(monk
     from src.plugin_runtime.protocol.envelope import Envelope, MessageType
     from src.plugin_runtime.runner.runner_main import PluginRunner
 
-    runner = PluginRunner.__new__(PluginRunner)
-    runner._config_widget_locks = {}
+    runner = PluginRunner("unused", "test", [])
     provider = Provider()
     meta = SimpleNamespace(instance=provider, config_error="")
     runner._loader = SimpleNamespace(get_plugin=lambda plugin_id: meta if plugin_id == "adapter.test" else None)

@@ -659,8 +659,8 @@ function BotConfigPageContent() {
       scrollbars="vertical"
     >
       <div className={cn('max-w-full p-4 sm:p-6', editMode === 'detail' ? 'space-y-2' : 'space-y-4 sm:space-y-6')}>
-        {/* 顶部操作栏整体吸顶：手机端分两行，PC 端导航与操作按钮同一行。 */}
-        <div data-config-section-navigation="true" className="bg-background sticky top-0 z-20 flex min-w-0 flex-col gap-3 py-2 lg:flex-row lg:items-center">
+        {/* 透明吸顶容器只承载独立控件，避免滚动时把整条页面纹理带到内容上方。 */}
+        <div data-config-section-navigation="true" className="sticky top-0 z-20 flex min-w-0 flex-col gap-3 py-2 lg:flex-row lg:items-center">
           <div className="flex w-full min-w-0 items-center gap-3 max-lg:hidden lg:flex-1">
             {editMode === 'detail' && tabGroups.length > 0 && (
               <DropdownMenu>

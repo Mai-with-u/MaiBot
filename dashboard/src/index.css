@@ -3148,6 +3148,44 @@ button[data-dashboard-logo-spectrum-block='true']:is(:hover, :focus-visible, [da
     0 6px 10px rgb(0 0 0 / 0.26) !important;
 }
 
+/* 设置导航只让控件悬浮，不让主题纹理随吸顶容器覆盖页面。 */
+:root [data-config-section-navigation='true'] {
+  background: transparent !important;
+  border: 0;
+  box-shadow: none;
+  pointer-events: none;
+  filter: drop-shadow(0 3px 4px rgb(0 0 0 / 0.14));
+}
+
+[data-config-section-navigation='true'] :is(button, a, label, [role='tablist'], nav),
+[data-config-section-navigation='true'] > span {
+  pointer-events: auto;
+}
+
+/* 无按钮外壳的文字仍有独立底色，避免与后面的表单文字重叠。 */
+[data-config-section-navigation='true'] label,
+[data-config-section-navigation='true'] > span {
+  background-color: hsl(var(--card));
+  border-radius: var(--radius);
+  padding: 0.5rem;
+}
+
+@keyframes config-navigation-lift {
+  from { filter: drop-shadow(0 0 0 rgb(0 0 0 / 0)); }
+  to { filter: drop-shadow(0 3px 4px rgb(0 0 0 / 0.14)); }
+}
+
+/* 使用最近滚动容器的进度；不支持滚动动画时保留静态阴影。 */
+@supports (animation-timeline: scroll()) {
+  @media (prefers-reduced-motion: no-preference) {
+    [data-config-section-navigation='true'] {
+      animation: config-navigation-lift linear both;
+      animation-timeline: scroll(nearest block);
+      animation-range: 0px 48px;
+    }
+  }
+}
+
 /* 闲置时仅隐藏滑块，保留滚动条空间，避免输入内容重排。 */
 :root textarea[data-scrollbar-idle='true'] {
   scrollbar-color: transparent transparent !important;

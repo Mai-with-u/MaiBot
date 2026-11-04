@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { DraftNumberInput } from '@/components/ui/draft-number-input'
 import { Input } from '@/components/ui/input'
+import { KeyValueEditor } from '@/components/ui/key-value-editor'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -380,6 +381,19 @@ function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
         </div>
       )
 
+    case 'json':
+      return (
+        <fieldset disabled={field.disabled} className="min-w-0 space-y-2">
+          <Label>{label}</Label>
+          <KeyValueEditor
+            value={(value ?? field.default ?? {}) as Record<string, unknown>}
+            onChange={onChange}
+            placeholder={placeholder || undefined}
+          />
+          {hint && <p className="text-muted-foreground text-xs">{hint}</p>}
+        </fieldset>
+      )
+
     case 'text':
     default:
       return (
@@ -409,7 +423,7 @@ interface SectionRendererProps {
 }
 
 function getFieldGridClassName(field: ConfigFieldSchema): string {
-  if (field.ui_type === 'textarea' || field.ui_type === 'list' || field.ui_type === 'slider' || field.ui_type === 'chat-stream') {
+  if (field.ui_type === 'textarea' || field.ui_type === 'list' || field.ui_type === 'slider' || field.ui_type === 'chat-stream' || field.ui_type === 'json') {
     return 'lg:col-span-2'
   }
 

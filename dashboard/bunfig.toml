@@ -1,6 +1,0 @@
-[install]
-registry = "https://mirrors.cloud.tencent.com/npm/"
-linker = "hoisted"
-
-[install.cache]
-disableManifest = true

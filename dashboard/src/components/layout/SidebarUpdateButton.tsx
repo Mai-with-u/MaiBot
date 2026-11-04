@@ -52,8 +52,10 @@ export function SidebarUpdateButton({ collapsed = false }: { collapsed?: boolean
   }, [])
 
   const updateAvailable = Boolean(status?.latest_commit && status?.latest_commit !== status.local.commit)
-  const version = status?.local.version || localVersion
-  const label = `${t('settings.selfUpdate.title')}${version ? ` V${version}` : ''}${updateAvailable && status?.latest_version ? ` → V${status.latest_version}` : ''}`
+  const version = updateAvailable && status?.latest_version
+    ? status.latest_version
+    : status?.local.version || localVersion
+  const label = `${t('settings.selfUpdate.title')}${version ? ` V${version}` : ''}`
   if (!open && !alwaysShow && !updateAvailable) return null
 
   return (
@@ -62,12 +64,12 @@ export function SidebarUpdateButton({ collapsed = false }: { collapsed?: boolean
         <Button
           variant="outline"
           size={collapsed ? "icon" : "default"}
-          className={`relative max-w-full gap-2 ${collapsed ? '' : 'h-auto w-full justify-start whitespace-normal py-2'}`}
+          className={`relative max-w-full gap-2 ${collapsed ? '' : 'w-full justify-start whitespace-nowrap'}`}
           title={label}
           aria-label={label}
         >
           <ArrowUpToLine className="h-4 w-4 shrink-0" />
-          {!collapsed && <span className="min-w-0 text-left text-sm font-bold">{label}</span>}
+          {!collapsed && <span className="min-w-0 truncate text-left text-sm font-bold">{label}</span>}
           {updateAvailable && <span aria-hidden="true" className="absolute -right-1 -top-1 z-20 h-2.5 w-2.5 rounded-full border border-background bg-yellow-400" />}
         </Button>
       </DialogTrigger>

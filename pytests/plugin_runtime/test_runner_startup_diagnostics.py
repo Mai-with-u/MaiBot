@@ -66,11 +66,12 @@ def test_exited_runner_stderr_is_drained_before_cleanup(monkeypatch):
 
 @pytest.mark.parametrize("on_load_succeeded", [True, False])
 def test_plugin_activation_records_separate_stages(monkeypatch, on_load_succeeded):
-    runner = runner_main.PluginRunner.__new__(runner_main.PluginRunner)
+    runner = runner_main.PluginRunner("unused", "test", [])
     runner._loader = SimpleNamespace(set_loaded_plugin=Mock(), purge_plugin_modules=Mock())
     runner._bootstrap_plugin = AsyncMock(return_value=True)
     runner._register_plugin = AsyncMock(return_value=True)
     runner._invoke_plugin_on_load = AsyncMock(return_value=on_load_succeeded)
+    runner._invoke_plugin_on_unload = AsyncMock()
     runner._unregister_plugin = AsyncMock()
     runner._deactivate_plugin = AsyncMock()
     meta = SimpleNamespace(plugin_id="example.slow-plugin", config_error="", plugin_dir="unused")

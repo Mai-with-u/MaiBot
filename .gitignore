@@ -390,3 +390,11 @@ agentlite/
 /MaiMaiFocusPet-Godot/
 start_mac.command
 /.dsh-maibot-manager.lock
+
+# Local package-manager settings and runtime caches
+/dashboard/bunfig.toml
+/.codex-uv-cache/
+/.tmp-uv-cache/
+/.uv-log-cache/
+/.maibot-instance-locks/
+/tmp/

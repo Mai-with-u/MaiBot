@@ -934,16 +934,16 @@ describe('ModelConfigPage 特征化', () => {
   it('关闭使用提示后写入本地标记且不再展示', async () => {
     const user = userEvent.setup()
     await renderModelPage()
-    expect(screen.getByText('把模型安排到下面的工作')).toBeInTheDocument()
+    expect(screen.getByText('把模型安排到对应的工作')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '关闭使用提示' }))
-    expect(screen.queryByText('把模型安排到下面的工作')).not.toBeInTheDocument()
+    expect(screen.queryByText('把模型安排到对应的工作')).not.toBeInTheDocument()
     expect(localStorage.getItem('maibot-model-task-guide-dismissed')).toBe('true')
 
     cleanup()
     render(<ModelConfigPage />)
     await screen.findByRole('tab', { name: /^模型库/ })
-    expect(screen.queryByText('把模型安排到下面的工作')).not.toBeInTheDocument()
+    expect(screen.queryByText('把模型安排到对应的工作')).not.toBeInTheDocument()
   })
 
   it('切换标签会改写地址栏，URL tab 参数会决定初始标签', async () => {

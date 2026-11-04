@@ -191,19 +191,13 @@ class ManagedProcess:
                 return
             try:
                 if self._job is not None:
-                    # Job 记账可稍晚于主进程句柄变为 signaled，先等待正常退出完成。
-                    settle_until = time.monotonic() + 0.1
-                    while self._job.active_processes() and time.monotonic() < settle_until:
-                        time.sleep(0.01)
-                    if self._job.active_processes():
-                        self._record_forced("主进程退出后仍有子进程存活，已强制回收进程树")
+                    # 主进程已经退出；以子进程句柄为准，核实残留并等待回收完成。
+                    remaining = self._job.live_processes()
+                    if remaining:
+                        details = "; ".join(f"PID={pid} 程序={path}" for pid, path in remaining.items())
+                        self._record_forced(f"主进程退出后仍有子进程存活，已强制回收进程树: {details}")
                         self._job.terminate()
-                    deadline = time.monotonic() + 5
-                    while self._job.active_processes():
-                        if time.monotonic() >= deadline:
-                            raise TimeoutError("Bot 进程树强制回收超时")
-                        time.sleep(0.02)
-                    self._job.wait_terminated(max(0, deadline - time.monotonic()))
+                    self._job.wait_terminated(5)
                 else:
                     try:
                         os.killpg(self.pid, 0)

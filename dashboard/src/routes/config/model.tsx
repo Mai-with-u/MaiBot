@@ -673,7 +673,6 @@ function ModelConfigPageContent() {
                 value="tasks"
                 data-tour="tasks-tab-trigger"
                 icon={<ListChecks />}
-                description="麦麦的每项工作由谁来做"
               >
                 分工
               </DashboardFolderTab>
@@ -681,7 +680,6 @@ function ModelConfigPageContent() {
                 value="configuration"
                 data-tour="providers-tab-trigger"
                 icon={<Boxes />}
-                description="厂商、模型和联网服务"
               >
                 模型库
               </DashboardFolderTab>
