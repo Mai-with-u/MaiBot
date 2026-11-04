@@ -1,42 +1,49 @@
-# MaiBot 远端桌宠客户端
+# MaiBot Electron 桌宠客户端
 
-运行在本地 Windows 桌面的轻量客户端，连接远端 MaiBot。只安装桌宠依赖，不安装 MaiBot 的模型、数据库、记忆或其他服务依赖。需要 Windows、WebView2 Runtime 和 Python 3.12+；推荐使用 uv 管理 Python 与依赖。
+独立的 Electron 桌宠，连接本机或远端 MaiBot 宿主，提供 Windows、macOS 和 Linux 客户端构建。分发包自带 Electron 运行时，使用时不需要安装 Python、WebView2 或完整 MaiBot。
 
-## 使用分发包
+## 连接 MaiBot
 
-**免安装版**：解压 `maibot-desktop-pet-client-1.0.0-windows-standalone.zip`，双击 `MaiBotDesktopPet.exe`。完整保留同目录下的 `_internal` 文件夹；该版本包含 Python 与第三方依赖，只需系统已安装 WebView2 Runtime。
+1. 启动 MaiBot 宿主和要使用的机器人。
+2. 在该机器人的 WebUI「桌宠」设置中启用桌宠，将 `desktop_pet.mode` 设为 `remote`。
+3. 启动 Electron 客户端，填写宿主 WebUI 地址和登录密码，读取机器人列表并按名称选择目标。
 
-**轻量启动包**：
+本机连接也使用宿主地址，例如 `http://127.0.0.1:8001`，端口以实际 WebUI 地址为准。`remote` 表示使用独立客户端，并不要求 MaiBot 部署在另一台电脑。公网连接使用 `https://` 地址，客户端使用相应的 HTTPS/WSS 通道。一个 Bot 同时连接一个桌宠客户端。
 
-解压 `maibot-desktop-pet-client-1.0.0-windows.zip` 到任意目录，安装 uv 后双击 `start.cmd`。第一次启动会自动安装客户端依赖，随后显示登录窗口。
+聊天、待办、探索等数据保存在对应 Bot 的服务器端，窗口位置等本地设置保存在客户端。连接中断时显示离线状态并尝试重连，未确认的写入操作不会自动重复提交。客户端密码只用于当前登录，不写入本地配置文件。
 
-填写 MaiBot 宿主 WebUI 地址和登录密码，点击「读取机器人」，按名称选择目标机器人后启动桌宠。服务器须启用桌宠并将运行模式设为 `remote`。公网地址使用 `https://`；客户端据此使用 `wss://` 连接。登录窗口记住服务器地址和上次选择的机器人，密码不写入磁盘。
+主程序原有的 Python 内嵌桌宠仍可通过 `desktop_pet.mode = "local"` 使用；这一模式运行于 Windows 本机，由主程序负责启动和回收窗口。
 
-命令行也可以启动；将示例中的 32 位十六进制 Bot ID 替换为宿主中的真实 ID。没有通过环境变量提供密码时会隐藏输入提示：
+## 从源码运行
 
-```powershell
-uv run --project . maibot-desktop-pet --server https://bot.example.com --bot-id 0123456789abcdef0123456789abcdef
+安装 Node.js 22 或更高版本及 npm，在仓库根目录执行：
+
+```sh
+cd desktop-pet-client
+npm ci
+npm start
 ```
 
-如需本机截图和持续阅读，在本地登录窗口授权或在命令行增加 `--allow-screen-read`，并同时在服务器桌宠设置中允许读取桌面。未授权时服务器无法通过桌宠读取本机画面。桌宠支持 Alt+F4 退出。
+Windows 也可以在完成 `npm ci` 后双击 `start.cmd`。启动器会检查 npm 和 Electron 依赖是否存在；尚未安装时会提示先执行 `npm ci`。
 
-## 安装 wheel
+## 构建分发包
 
-```powershell
-uv tool install --python 3.12 .\maibot_desktop_pet_client-1.0.0-py3-none-any.whl
-maibot-desktop-pet
+在 `desktop-pet-client` 目录执行对应平台的命令：
+
+```sh
+npm run dist:win
+npm run dist:mac
+npm run dist:linux
 ```
 
-无需解压或安装完整 MaiBot 源码。客户端窗口位置、缓存保存在本机，聊天、待办和探索记录由连接的服务器管理。断线时窗口保留并显示状态，恢复网络后自动重连；未确认的操作不会自动重放。
+产物输出到仓库的 `dist/desktop-pet-client/`：Windows ZIP、macOS DMG 和 Linux AppImage。建议在目标操作系统构建并验证对应产物；macOS 签名、公证和 Linux 桌面集成需要在相应环境完成。构建使用共用桌宠网页资源，不打包 Bot 配置、聊天数据库或模型依赖。
 
-## 从 MaiBot 源码构建
+## 桌面权限与平台差异
 
-本目录是分发配置，实际客户端代码复用 `src/desktop_pet`，不维护第二份实现。在 MaiBot 仓库根目录运行：
+截图和持续阅读需要同时开启客户端的本地授权及服务器「允许读取桌面」。实际读取的是客户端电脑，断开连接或关闭读取后停止采集。
 
-```powershell
-uv run --no-project --python 3.12 scripts/build_desktop_pet_client.py
-```
+- **Windows**：Electron 自带浏览器运行时，无需 WebView2；应用条件可匹配进程名和窗口标题。
+- **macOS**：读取屏幕还需要系统的「屏幕录制」权限；拒绝后无法截图，调整权限后可能需要重新启动客户端。应用条件当前只匹配进程名。
+- **Linux**：客户端使用 X11 窗口模式；Wayland 会话需要可用的 XWayland。截图仍受桌面会话及 PipeWire/系统选择器限制，不能保证无人值守地枚举或固定读取所有显示器。应用条件当前只匹配进程名，透明窗口、置顶、位置控制和鼠标穿透需要在目标桌面实测。
 
-脚本生成 `dist/desktop-pet-client/` 下的 wheel、Windows 启动 ZIP 和 SHA256 校验文件。ZIP 包含客户端源码、资源和启动器；Python 与第三方依赖在首次运行时由 uv 安装。构建不读取或打包 Bot 配置、登录密码、聊天数据库或用户数据。
-
-在 Windows 上增加 `--executable` 可生成免安装版。构建脚本在隔离环境中安装 PyInstaller 和客户端依赖，不修改主程序环境。
+目前在 Windows 上进行运行验证；macOS/Linux 提供构建配置，尚未完成实机验证。屏幕来源和系统授权限制参见 [Electron desktopCapturer 文档](https://www.electronjs.org/docs/latest/api/desktop-capturer)。

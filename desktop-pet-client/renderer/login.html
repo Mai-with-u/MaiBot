@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>连接桌宠 · MaiBot</title>
+  <link rel="stylesheet" href="login.css">
+  <script src="login.js" defer></script>
+</head>
+<body>
+  <main>
+    <div class="mark" aria-hidden="true">麦</div>
+    <h1>把麦麦带到桌面</h1>
+    <p class="intro">连接本机或远端的 MaiBot，聊天、安排待办，一起探索。</p>
+    <form id="connection">
+      <label for="server">宿主 WebUI 地址</label>
+      <input id="server" type="url" placeholder="http://127.0.0.1:8001" required spellcheck="false" autocomplete="url">
+      <label for="password">登录密码</label>
+      <div class="row">
+        <input id="password" type="password" required autocomplete="off" placeholder="与宿主 WebUI 相同">
+        <button id="discover" type="button">读取机器人</button>
+      </div>
+      <label for="bot">选择机器人</label>
+      <select id="bot" required disabled><option value="">先读取机器人列表</option></select>
+      <label class="check"><input id="screen" type="checkbox"><span>允许麦麦读取本机屏幕<small>仅本次连接生效；服务器也须启用桌面读取。</small></span></label>
+      <p id="status" role="status" aria-live="polite">本机和局域网支持 HTTP，公网请使用 HTTPS。</p>
+      <button id="connect" class="primary" type="submit" disabled>启动桌宠</button>
+    </form>
+    <footer>记住地址和机器人，密码与屏幕授权不保存。</footer>
+  </main>
+</body>
+</html>

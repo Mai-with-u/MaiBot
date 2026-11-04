@@ -61,7 +61,6 @@ dependencies = [
 
 [project.scripts]
 maibot = "src.cli.tool:main"
-maibot-desktop-pet = "src.desktop_pet.remote_client:main"
 
 [tool.setuptools]
 include-package-data = false

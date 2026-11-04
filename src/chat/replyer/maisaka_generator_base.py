@@ -26,7 +26,7 @@ from src.common.data_models.reply_generation_data_models import (
     ReplyGenerationResult,
     build_reply_monitor_detail,
 )
-from src.common.i18n import get_locale
+from src.common.i18n import get_locale, use_locale
 from src.common.logger import get_logger
 from src.common.utils.utils_config import ChatConfigUtils
 from src.config.config import global_config
@@ -1010,6 +1010,57 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         """构建本次请求选项，供长文等专用 Replyer 明确指定生成模型。"""
         return LLMGenerationOptions(model_name=model_name)
 
+    def _build_generation_messages(self, *, super_creative_mode: bool, **kwargs: Any) -> List[ContextItem]:
+        """只在本次请求构建期间切换语言，避免影响 Planner、其他会话及全局配置。"""
+        if not super_creative_mode:
+            return self._build_request_messages(**kwargs)
+        with use_locale("ja-JP"):
+            items = self._build_request_messages(**kwargs)
+            items.append(
+                ContextItemBuilder().set_role(RoleType.User)
+                .add_text_content(self._load_prompt("replyer_super_creative"))
+                .build()
+            )
+            return items
+
+    async def _translate_super_creative_reply(
+        self,
+        *,
+        active_model: Any,
+        generation_result: LLMResponseResult,
+        generation_options: LLMGenerationOptions,
+    ) -> Tuple[LLMResponseResult, List[ContextItem]]:
+        """用实际生成日语正文的同一模型翻译；翻译失败时不返回日语原文。"""
+        model_name = generation_result.model_name.strip()
+        if not model_name:
+            raise ValueError("超级创意模式缺少实际 Replyer 模型名称，无法锁定翻译模型")
+        if generation_result.tool_calls or generation_result.native_tool_calls:
+            raise ValueError("超级创意模式只允许回复正文，不接受工具调用")
+        source_text = generation_result.response
+        if global_config.debug.gemini_reply_compatibility:
+            # 先剥离有明确边界的分析块，避免翻译改变边界后将其当作正式正文。
+            source_text = normalize_gemini_reply(source_text)
+        instruction = await asyncio.to_thread(self._load_prompt, "replyer_translate", locale="zh-CN")
+        items = [
+            ContextItemBuilder().set_role(RoleType.System).add_text_content(instruction).build(),
+            ContextItemBuilder().set_role(RoleType.User).add_text_content(source_text).build(),
+        ]
+
+        async def translation_context_factory(
+            _client: object, _model_info: Optional[ModelInfo] = None,
+        ) -> List[ContextItem]:
+            return items
+
+        translated = await active_model.generate_response_with_context(
+            context_factory=translation_context_factory,
+            options=replace(generation_options, model_name=model_name, tool_options=None),
+        )
+        if translated.tool_calls or translated.native_tool_calls:
+            raise ValueError("超级创意模式翻译返回了工具调用，无法输出中文正文")
+        if not translated.response.strip():
+            raise ValueError("超级创意模式翻译未生成中文正文")
+        return translated, items
+
     def generation_dependencies(self, model_info: Optional[ModelInfo]) -> Tuple[str, ...]:
         """按实际模型声明生成所需的输入。"""
         return ("reply_target",) if self._resolve_prompt_profile(model_info) == "mai_replier" else ()
@@ -1060,9 +1111,11 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
 
         result = ReplyGenerationResult()
         overall_started_at = time.perf_counter()
+        # 一轮生成（含 Hook 重试）固定模式；超级创意要求 Replyer 模型，不复用 Planner 缓存模型。
+        super_creative_mode = global_config.chat.super_creative_mode
         cache_snapshot = (
             await asyncio.to_thread(planner_snapshot.request.detached_snapshot)
-            if planner_snapshot is not None else None
+            if planner_snapshot is not None and not super_creative_mode else None
         )
         if self.express_model is None and cache_snapshot is None:
             logger.error("回复模型未初始化")
@@ -1106,6 +1159,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         aggregate_completion_tokens = 0
         aggregate_total_tokens = 0
         reasoning_continuation_count = 0
+        translation_count = 0
         reasoning_regeneration_requested = False
         retro_period_regeneration_requested = False
         gemini_regeneration_requested = False
@@ -1225,7 +1279,8 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                     # 指导以 assistant 消息承接 Planner；表达选择和 Hook 仍接收完整参数。
                     prompt_reply_tool_args.pop("reply_reference", None)
                 built_request_messages = await asyncio.to_thread(
-                    self._build_request_messages,
+                    self._build_generation_messages,
+                    super_creative_mode=super_creative_mode,
                     chat_history=attempt_history,
                     reply_message=reply_message,
                     reply_reason="" if cache_snapshot is not None else reply_reason or "",
@@ -1322,6 +1377,38 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                     logger.info(
                         "Maisaka 回复器推理续写完成: "
                         f"session={preview_chat_id} response={self._normalize_content(generation_result.response, limit=300)!r}"
+                    )
+                if super_creative_mode and generation_result.response.strip():
+                    # 在 after_response Hook 和正文校验前完成翻译，插件及发送端只处理中文结果。
+                    result.error_code = "replyer_translation_failed"
+                    translated, translation_messages = await self._translate_super_creative_reply(
+                        active_model=active_model,
+                        generation_result=generation_result,
+                        generation_options=generation_options,
+                    )
+                    result.error_code = ""
+                    translation_count += 1
+                    aggregate_prompt_tokens += translated.prompt_tokens
+                    aggregate_completion_tokens += translated.completion_tokens
+                    aggregate_total_tokens += translated.total_tokens
+                    request_messages = translation_messages
+                    prompt_preview = await asyncio.to_thread(
+                        PromptCLIVisualizer.build_prompt_dump_text, translation_messages,
+                    )
+                    # 两阶段用量已计入 aggregate；最终请求/响应对应翻译，原始日语保留在调用记录中。
+                    generation_result = replace(
+                        translated,
+                        generation_attempts=(
+                            *(
+                                replace(attempt, workflow_purpose="replyer.japanese")
+                                if attempt.workflow_purpose == self.request_type else attempt
+                                for attempt in generation_result.generation_attempts
+                            ),
+                            *(
+                                replace(attempt, workflow_purpose="replyer.translation")
+                                for attempt in translated.generation_attempts
+                            ),
+                        ),
                     )
                 generation_result.generation_attempts = tuple(
                     replace(attempt, workflow_attempt=retry_count + 1)
@@ -1567,7 +1654,9 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         result.metrics.extra["prompt_cache_hit_rate"] = round(prompt_cache_hit_rate, 2)
         result.metrics.extra["replyer_retry_count"] = retry_count
         result.metrics.extra["replyer_reasoning_continuation_count"] = reasoning_continuation_count
-        result.metrics.extra["replyer_attempt_count"] = retry_count + reasoning_continuation_count + 1
+        result.metrics.extra["replyer_super_creative_mode"] = super_creative_mode
+        result.metrics.extra["replyer_translation_count"] = translation_count
+        result.metrics.extra["replyer_attempt_count"] = retry_count + reasoning_continuation_count + translation_count + 1
         result.metrics.extra["replyer_aggregate_prompt_tokens"] = aggregate_prompt_tokens
         result.metrics.extra["replyer_aggregate_completion_tokens"] = aggregate_completion_tokens
         result.metrics.extra["replyer_aggregate_total_tokens"] = aggregate_total_tokens

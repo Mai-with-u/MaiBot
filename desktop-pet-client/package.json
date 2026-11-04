@@ -1,0 +1,48 @@
+{
+  "name": "maibot-desktop-pet",
+  "version": "1.0.0",
+  "description": "MaiBot 桌宠：连接本机或远端机器人",
+  "author": "MaiBot contributors",
+  "license": "GPL-3.0-only",
+  "private": true,
+  "main": "src/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.cjs",
+    "test:smoke": "node scripts/smoke.cjs",
+    "pack": "electron-builder --dir",
+    "dist:win": "electron-builder --win zip --x64",
+    "dist:mac": "electron-builder --mac dmg --arm64 --x64",
+    "dist:linux": "electron-builder --linux AppImage --x64"
+  },
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "pngjs": "7.0.0",
+    "tough-cookie": "6.0.2",
+    "ws": "8.22.1"
+  },
+  "devDependencies": {
+    "electron": "45.2.2",
+    "electron-builder": "26.18.0",
+    "playwright-core": "1.64.1"
+  },
+  "build": {
+    "appId": "org.maibot.desktop-pet",
+    "productName": "MaiBot Desktop Pet",
+    "executableName": "MaiBotDesktopPet",
+    "artifactName": "maibot-desktop-pet-${version}-${os}-${arch}.${ext}",
+    "directories": { "output": "../dist/desktop-pet-client" },
+    "files": ["src/**/*", "renderer/**/*", "package.json"],
+    "extraResources": [
+      { "from": "../src/desktop_pet/web", "to": "web", "filter": ["**/*"] },
+      { "from": "../LICENSE", "to": "LICENSE-maibot.txt" }
+    ],
+    "win": { "target": "zip", "signAndEditExecutable": false },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.entertainment",
+      "extendInfo": { "NSScreenCaptureUsageDescription": "仅在你授权后，将本机画面发送给所连接的 MaiBot。" }
+    },
+    "linux": { "target": "AppImage", "category": "Utility" }
+  }
+}

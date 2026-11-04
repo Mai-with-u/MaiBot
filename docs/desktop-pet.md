@@ -1,54 +1,57 @@
 # 内置桌宠与插件 SDK
 
-桌宠由主程序管理，不再需要安装 `sengokucola.desktop-pet` 插件。支持本机模式与远端模式；桌宠窗口运行在 Windows 桌面，需要 WebView2 Runtime，远端 MaiBot 可以部署在 Linux 或 Windows。Windows 的主程序 Python 依赖已包含 pywebview，源码环境更新依赖可运行 `uv sync --inexact`（保留插件额外依赖）。
+桌宠无需安装 `sengokucola.desktop-pet` 插件。独立 Electron 客户端提供 Windows、macOS 和 Linux 构建，可连接本机或远端 MaiBot 宿主，自带浏览器运行时。原有 Python 内嵌桌宠继续支持 Windows，需要 WebView2 Runtime；其依赖随 Windows 主程序安装，源码环境更新依赖可运行 `uv sync --inexact`（保留插件额外依赖）。
 
-在 WebUI 主程序配置的「桌宠」启用 `desktop_pet.enabled`，默认关闭。`desktop_pet.mode` 默认为 `local`，由主程序启动并回收本机窗口；设置为 `remote` 后等待独立客户端连接。两种模式共用桌宠界面和业务，配置支持热重载。本机图形界面使用独立子进程，远端客户端拥有自己的图形线程与网络循环，以免阻塞聊天和网页事件循环。
+在 WebUI 主程序配置的「桌宠」启用 `desktop_pet.enabled`，默认关闭。`desktop_pet.mode` 默认为 `local`，由主程序启动并回收 Python 内嵌窗口；设置为 `remote` 后等待独立 Electron 客户端连接。Electron 连接本机 MaiBot 时也使用 `remote` 模式。两种模式共用桌宠网页界面和本体业务，配置支持热重载；窗口与网络通信在主程序事件循环之外运行。
 
 旧桌宠插件会被明确阻止加载并显示内置替代提示，避免同时启动两个窗口；插件源码保留。继续读写 `data/plugins/sengokucola.desktop-pet/todos.json` 和 `window.json`，已有待办和窗口位置无需复制。临时 WebView 数据改用 `temp/desktop_pet`。
 
 桌宠聊天继续使用 `internal / owner`，昵称由网页聊天室统一设置。麦麦给主人的回复在桌宠和网页同步展示；旧 `webui` 私聊不迁移。桌宠提交的消息保留界面来源标记，不具备受保护命令权限。主人聊天流有实际发言时会主动显示桌宠；聊天面板未展开时弹出消息气泡，不受菜单、待办或插件面板状态限制，点击气泡可查看聊天记录。
 
-## 远端部署
+## Electron 客户端与部署
 
 ### 服务器
 
 1. 更新 MaiBot 本体，并正常启动宿主和目标 Bot。
 2. 在目标 Bot 的 WebUI「桌宠」设置启用桌宠，将运行模式设为 `remote`。服务器无需安装图形桌面或启动桌宠窗口。
-3. 准备宿主 WebUI 地址和登录密码，客户端登录窗口可读取机器人列表并按名称选择目标。命令行连接另需目标 Bot ID。客户端通过宿主认证与 Bot 代理连接，不直接暴露 Bot 内部端口。
+3. 准备宿主 WebUI 地址和登录密码，客户端登录窗口可读取机器人列表并按名称选择目标。客户端通过宿主认证与 Bot 代理连接，不直接暴露 Bot 内部端口。
 4. 公网部署使用 HTTPS/WSS。已有反向代理需要支持 WebSocket Upgrade，并允许长连接；客户端提供心跳和自动重连。宿主也可使用已有的 TLS 配置直接提供 HTTPS/WSS。
 
-每个 Bot 同时接入一个远端桌宠。运行模式在本机与远端之间显式选择，断线不会自动切换到本机窗口。
+每个 Bot 同时接入一个独立桌宠。连接本机时填写本机宿主 WebUI 地址，例如 `http://127.0.0.1:8001`，端口以实际部署为准。`remote` 表示由独立客户端连接，并不要求宿主在另一台电脑；`local` 则由本体启动 Windows Python 内嵌窗口。模式显式选择，断线不会自动切换。
 
-### Windows 客户端
+### 启动 Electron 客户端
 
-使用独立的 Windows 客户端 ZIP 或 wheel，无需安装完整 MaiBot、模型或数据库依赖。
+使用对应系统的 Electron 分发包时，无需安装 Python、WebView2、Node.js 或完整 MaiBot。启动后填写宿主地址和登录密码，读取机器人列表并选择目标。
 
-- **免安装 ZIP**：解压 `maibot-desktop-pet-client-1.0.0-windows-standalone.zip`，双击 `MaiBotDesktopPet.exe`。保留同目录的 `_internal` 文件夹；只需系统已安装 WebView2 Runtime，无需安装 Python 或 uv。
-- **启动 ZIP**：解压 `maibot-desktop-pet-client-1.0.0-windows.zip`，安装 uv 后双击 `start.cmd`。首次运行自动安装轻量依赖，然后在登录窗口填写宿主地址和登录密码，点击「读取机器人」并按名称选择目标。
-- **wheel 安装**：运行 `uv tool install --python 3.12 .\maibot_desktop_pet_client-1.0.0-py3-none-any.whl`，之后执行 `maibot-desktop-pet`。
-- **已有主程序源码环境**：运行 `uv run --no-sync python -m src.desktop_pet.remote_client`。
+从源码运行时，安装 Node.js 22 或更高版本及 npm，在仓库根目录执行：
 
-命令行可指定目标；将示例中的 32 位十六进制 Bot ID 替换为宿主中的真实 ID。密码未从环境变量提供时通过隐藏输入读取：
-
-```powershell
-maibot-desktop-pet --server https://bot.example.com --bot-id 0123456789abcdef0123456789abcdef
+```sh
+cd desktop-pet-client
+npm ci
+npm start
 ```
 
-截图需同时满足服务器「允许读取桌面」和客户端本地授权。客户端登录窗口可授权读屏，命令行则增加 `--allow-screen-read`。实际读取的是客户端的主屏，应用条件检测也在客户端执行。关闭或断开客户端后不再采集。登录密码不保存到本机配置文件。
+Windows 完成 `npm ci` 后也可以双击 `desktop-pet-client/start.cmd`；依赖未安装时启动器会提示先安装。登录密码不写入本地配置文件。
 
-远端客户端支持聊天图文、回复气泡、思考状态、皮肤、待办及图片附件、探索记录和插件按钮。聊天、待办与探索数据由服务器管理，窗口位置和本地资源缓存留在客户端。断网时窗口继续显示连接状态，重新连接后恢复服务；已经发出但未获确认的操作不会自动重放，避免重复聊天或重复新增待办。远端模式下，客户端离线不停止服务器上的 Bot 定时待办和主动思考；用户提醒等到客户端连接后显示，桌面采集在离线时停止。Alt+F4 可退出远端客户端。
+独立客户端支持聊天图文、回复气泡、思考状态、皮肤、待办及图片附件、探索记录和插件按钮。聊天、待办与探索数据由服务器管理，窗口位置和本地资源缓存留在客户端。断网时显示连接状态并自动重连；已经发出但未获确认的操作不会自动重放，避免重复聊天或重复新增待办。客户端离线不停止服务器上的 Bot 定时待办和主动思考；用户提醒等到客户端连接后显示，桌面采集在离线时停止。
+
+### 截图授权与平台限制
+
+截图和持续阅读需同时满足服务器「允许读取桌面」及客户端本地授权，实际读取的是客户端电脑。macOS 还需要系统「屏幕录制」权限，权限变更后可能需要重启客户端。Linux 使用 X11 窗口模式，Wayland 会话需要 XWayland；截图可能受 PipeWire/系统来源选择器限制，窗口透明、置顶、位置控制和鼠标穿透也需在目标桌面验证。参见 [Electron 屏幕采集文档](https://www.electronjs.org/docs/latest/api/desktop-capturer)。
+
+Windows 的应用条件支持进程名和窗口标题；macOS/Linux 当前按进程名匹配。当前运行验证在 Windows 完成，macOS/Linux 已提供构建配置但尚未进行实机验证。
 
 ### 构建与分发
 
-在源码根目录运行：
+在 `desktop-pet-client` 目录运行对应平台的构建命令：
 
-```powershell
-uv run --no-project --python 3.12 scripts/build_desktop_pet_client.py
+```sh
+npm run dist:win
+npm run dist:mac
+npm run dist:linux
 ```
 
-产物位于 `dist/desktop-pet-client/`：独立 wheel、Windows 启动 ZIP 和 `SHA256SUMS.txt`。构建只复制客户端必需模块与静态资源，逐文件校验字节，不打包配置、密码或用户数据。客户端依赖在 `desktop-pet-client/pyproject.toml` 和同步的 `requirements.txt` 中声明。ZIP 在首次运行时通过 uv 安装 Python 和第三方依赖，安装后仍需连接远端服务器才能使用聊天等服务。
-
-在 Windows 上增加 `--executable`，可在隔离环境中用 PyInstaller 构建包含 Python 和依赖的免安装版 ZIP。
+产物位于仓库的 `dist/desktop-pet-client/`，分别为 Windows ZIP、macOS DMG 和 Linux AppImage。构建使用共用桌宠网页资源，不包含 Bot 配置、密码、聊天数据库或模型依赖。建议在目标操作系统构建和验证对应产物；macOS 签名与公证需要相应环境。客户端依赖由 `desktop-pet-client/package.json` 和 lockfile 管理。
 
 ## 插件控制
 
@@ -213,7 +216,7 @@ async def on_desktop_pet_panel_action(self, button_id, action_id):
 
 ## 查看桌面与持续阅读
 
-在 WebUI「桌宠」开启「允许读取桌面」（`screen_read_enabled`，默认关闭）。这项能力读取运行桌宠的 Windows 本机主屏，和 Windows Sandbox 电脑工具分开，不控制鼠标键盘。截图会发给当前聊天模型，可能包含屏幕上可见的私人信息；模型需要支持图片理解。
+在 WebUI「桌宠」开启「允许读取桌面」（`screen_read_enabled`，默认关闭）。Python 本机模式读取 Windows 主屏；Electron 独立客户端读取客户端电脑上的屏幕来源，并遵守客户端授权与系统权限。此功能和 Windows Sandbox 电脑工具分开，不控制鼠标键盘。截图会发给当前聊天模型，可能包含屏幕上可见的私人信息；模型需要支持图片理解。
 
 - 主人聊天可调用 `desktop_pet_screen`，获得当前截图、捕获时间和尺寸。普通群聊无法使用。
 - 单次查看由 Bot 根据聊天需要调用截图工具，界面不提供「看一眼」按钮；用户也可以直接在聊天中提出查看桌面的需求。

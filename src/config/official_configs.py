@@ -882,6 +882,20 @@ class ChatConfig(ConfigBase):
     )
     """使用单次构建的prompt，激发模型回复表现的创造力，减少AI刻板句式。关闭可能提高缓存率。"""
 
+    super_creative_mode: bool = Field(
+        default=False,
+        json_schema_extra={
+            "x-chat-settings": {"scope": "common", "row": 20},
+            "label": {
+                "zh_CN": "超级创意模式",
+                "en_US": "Super creative mode",
+                "ja_JP": "スーパークリエイティブモード",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """实验性功能：Replyer 统一使用日语 Prompt 生成日语回复，再由同一实际 Replyer 模型翻译为中文输出。优先于回复缓存模式，每次回复增加一次模型请求，会增加耗时和费用。"""
+
     enable_reply_at: bool = Field(
         default=True,
         json_schema_extra={

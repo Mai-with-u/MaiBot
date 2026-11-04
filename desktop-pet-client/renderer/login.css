@@ -1,0 +1,23 @@
+:root { color-scheme: light; font: 14px/1.6 "Microsoft YaHei UI", "PingFang SC", sans-serif; color: #28271f; background: #fff8ec; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { padding: 30px 36px 24px; max-width: 580px; margin: auto; }
+.mark { display: grid; place-items: center; width: 46px; height: 46px; background: #a8cf78; border: 2px solid #28271f; border-radius: 16px; font-weight: 800; font-size: 24px; transform: rotate(-6deg); }
+h1 { margin: 16px 0 4px; font-size: 26px; letter-spacing: -.5px; }
+.intro { color: #746b5f; margin: 0 0 22px; }
+label { display: block; font-weight: 600; margin: 14px 0 6px; }
+input, select, button { font: inherit; color: inherit; border: 1.5px solid #b4a58e; border-radius: 10px; padding: 10px 12px; }
+input, select { background: #fffdf8; width: 100%; }
+button { background: #f1e4cd; cursor: pointer; white-space: nowrap; font-weight: 600; }
+button:hover:enabled { background: #e5d2b3; }
+button:disabled, select:disabled { opacity: .55; cursor: default; }
+.row { display: flex; gap: 8px; } .row input { min-width: 0; }
+.check { display: flex; gap: 10px; align-items: flex-start; margin-top: 20px; cursor: pointer; }
+.check input { width: 17px; height: 17px; margin: 4px 0 0; accent-color: #63823c; }
+small { display: block; color: #746b5f; font-weight: 400; font-size: 12px; }
+#status { min-height: 40px; font-size: 12px; color: #746b5f; margin: 15px 0 6px; overflow-wrap: anywhere; }
+#status.error { color: #ae3525; }
+.primary { width: 100%; background: #f3a653; border: 2px solid #28271f; box-shadow: 0 3px 0 #28271f; }
+.primary:hover:enabled { background: #ffb866; }
+footer { text-align: center; font-size: 11px; color: #8a806f; margin-top: 18px; }
+:focus-visible { outline: 2px solid #63823c; outline-offset: 3px; }
