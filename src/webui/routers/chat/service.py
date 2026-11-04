@@ -22,6 +22,7 @@ from src.common.message_repository import find_messages
 from src.config.config import global_config
 from src.core.internal_chat import INTERNAL_CHAT_BOT_ID, INTERNAL_CHAT_PLATFORM, INTERNAL_CHAT_USER_ID
 from src.core.local_operator import PLUGIN_RELAY_CONFIG_KEY
+from src.services.bot_account_service import get_online_bot_accounts, normalize_account_id
 from src.services.internal_chat_profile import get_internal_chat_user_name, set_internal_chat_user_name
 
 from .serializers import serialize_message_sequence
@@ -31,6 +32,8 @@ logger = get_logger("webui.chat")
 # 虚拟群聊的默认平台；普通聊天室独立使用 internal，不关联旧 webui 私聊。
 WEBUI_CHAT_PLATFORM = "webui"
 VIRTUAL_GROUP_ID_PREFIX = "webui_virtual_group_"
+# 前端加载机器人自身头像时固定使用该平台，后端据此解析适配器上报的账号。
+BOT_AVATAR_PLATFORM = "qq"
 
 AsyncMessageSender = Callable[[Dict[str, Any]], Awaitable[None]]
 
@@ -709,6 +712,23 @@ def resolve_initial_virtual_identity(
         return None
 
 
+def resolve_bot_avatar_account() -> str:
+    """解析 WebUI 机器人头像使用的 QQ 平台账号。
+
+    前端固定按 qq 平台查询该头像，因此这里只解析 qq 平台身份。适配器 ready 时
+    上报的账号优先：QQ 官方机器人只有 OpenID，没有 QQ 号，备用配置的
+    qq_account 对它永远是空的。同平台存在多个在线身份时无法判断头像归属，
+    退回备用配置；都没有则返回空串，由前端显示默认头像。
+    """
+
+    online_accounts = sorted(get_online_bot_accounts(BOT_AVATAR_PLATFORM))
+    if len(online_accounts) == 1:
+        return online_accounts[0]
+    # 多个在线身份时无法判断头像归属，退回备用配置；它同时是“适配器没上报”时的兜底。
+    qq_account = normalize_account_id(global_config.bot.qq_account)
+    return qq_account if qq_account.isdigit() and int(qq_account) > 0 else ""
+
+
 def build_session_info_message(
     session_id: str,
     user_id: str,
@@ -729,8 +749,8 @@ def build_session_info_message(
         Dict[str, Any]: 会话信息消息。
     """
     normalized_client_info = normalize_chat_client_info(client_info)
-    # bot_qq 用于前端通过 WebUI 头像缓存接口加载机器人头像（qq_account == 0 表示未配置，不推送）。
-    bot_qq_account = int(global_config.bot.qq_account or 0)
+    # bot_qq 用于前端通过 WebUI 头像缓存接口加载机器人头像；没有可用身份时不推送。
+    bot_avatar_account = resolve_bot_avatar_account()
     session_info_data: Dict[str, Any] = {
         "type": "session_info",
         "session_id": session_id,
@@ -746,8 +766,8 @@ def build_session_info_message(
         "client": normalized_client_info,
         "capabilities": build_chat_client_capabilities(normalized_client_info),
     }
-    if bot_qq_account > 0:
-        session_info_data["bot_qq"] = str(bot_qq_account)
+    if bot_avatar_account:
+        session_info_data["bot_qq"] = bot_avatar_account
 
     if is_virtual_mode_enabled(virtual_config):
         assert virtual_config is not None

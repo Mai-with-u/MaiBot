@@ -28,7 +28,7 @@ interface MessageListProps {
   messages: ChatMessage[]
   isLoadingHistory: boolean
   botDisplayName: string
-  /** 机器人 QQ 号；存在时通过 WebUI 头像缓存接口加载 bot 头像。 */
+  /** 机器人 QQ 平台账号（QQ 号，或只有 OpenID 的官方机器人）；存在时通过 WebUI 头像缓存接口加载 bot 头像。 */
   botQq?: string
   userName: string
   userAvatarPlatform?: string
