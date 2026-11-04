@@ -715,6 +715,16 @@ function BotConfigPageContent() {
                       </div>
                     )
                   })}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onSelect={() => void handleModeChange('common')}
+                    className={cn(
+                      buttonVariants({ variant: 'outline' }),
+                      'w-full shrink-0 cursor-pointer justify-start text-base font-semibold ![background-image:none]'
+                    )}
+                  >
+                    公共设置
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
@@ -752,9 +762,9 @@ function BotConfigPageContent() {
             <Tabs
               value={editMode}
               onValueChange={(v) => handleModeChange(v as BotSettingsMode)}
-              className="min-w-0 flex-1 sm:w-80 sm:flex-none"
+              className="min-w-0 flex-1 sm:w-60 sm:flex-none"
             >
-              <TabsList data-config-bot-mode-tabs="true" className="grid h-9 w-full grid-cols-3">
+              <TabsList data-config-bot-mode-tabs="true" className="grid h-9 w-full grid-cols-2">
                 <TabsTrigger value="detail" className="min-w-0 gap-1 !px-1 text-sm sm:!px-2">
                   <SlidersHorizontal className="h-4 w-4 shrink-0" />
                   详细设置
@@ -763,7 +773,6 @@ function BotConfigPageContent() {
                   <ShieldCheck className="h-4 w-4 shrink-0" />
                   命令管理
                 </TabsTrigger>
-                <TabsTrigger value="common" className="min-w-0 !px-1 text-sm sm:!px-2">公共设置</TabsTrigger>
               </TabsList>
             </Tabs>
             <Button
@@ -846,6 +855,14 @@ function BotConfigPageContent() {
                   {tab.label}
                 </button>
               ))}
+              <div role="separator" aria-orientation="vertical" className="mx-1 shrink-0 self-stretch border-l" />
+              <button
+                type="button"
+                onClick={() => void handleModeChange('common')}
+                className="bg-card text-foreground h-9 shrink-0 rounded-full px-4 text-[15px]"
+              >
+                公共设置
+              </button>
             </nav>
           )}
         </div>
