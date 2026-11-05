@@ -603,7 +603,7 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                         },
                         "enable_chinese_typo": {
                             "type": "boolean",
-                            "description": "本次回复是否允许按全局配置注入中文错别字。",
+                            "description": "本次回复是否允许内置错别字插件注入错字。",
                         },
                     },
                     required=[
@@ -618,6 +618,33 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                 ),
                 default_timeout_ms=6000,
                 allow_abort=True,
+                allow_kwargs_mutation=True,
+            ),
+            HookSpec(
+                name="maisaka.reply.after_split",
+                description="最终回复完成断句后、限制段数与合并前触发，可修改有序文本分段。",
+                parameters_schema=build_object_schema(
+                    {
+                        "segments": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": build_object_schema(
+                                {
+                                    "text": {"type": "string", "minLength": 1},
+                                    "separator": {"type": "string"},
+                                    "quote_previous": {"type": "boolean"},
+                                    "is_correction": {"type": "boolean"},
+                                },
+                                required=["text", "separator", "quote_previous", "is_correction"],
+                            ),
+                        },
+                        "session_id": {"type": "string"},
+                        "enable_chinese_typo": {"type": "boolean"},
+                    },
+                    required=["segments", "session_id", "enable_chinese_typo"],
+                ),
+                default_timeout_ms=3000,
+                allow_abort=False,
                 allow_kwargs_mutation=True,
             ),
         ]

@@ -63,7 +63,7 @@ from src.plugin_runtime.runner.manifest_validator import ManifestValidator, is_r
 from src.plugin_runtime.runner.plugin_enabled import is_plugin_disabled
 from src.plugin_runtime.usage_tracker import PluginUsageTracker
 
-from .builtin_adapter_migration import migrate_qq_official_adapter
+from .builtin_adapter_migration import migrate_qq_official_adapter, migrate_telegram_adapter
 from .plugin_catalog import PluginCatalog
 
 if TYPE_CHECKING:
@@ -935,6 +935,7 @@ class PluginRuntimeManager(
         plugin_root = third_party_plugin_root()
         await asyncio.to_thread(plugin_root.mkdir, parents=True, exist_ok=True)
         await asyncio.to_thread(migrate_qq_official_adapter)
+        await asyncio.to_thread(migrate_telegram_adapter)
         await self._plugin_catalog.start(self._get_builtin_plugin_dirs(), [plugin_root])
 
         _cfg = config_manager.get_global_config().plugin_runtime

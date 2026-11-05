@@ -20,6 +20,7 @@ from src.files.config import FilesConfig
 from src.web_search.config import WebConfig, resolve_web_search_config
 
 from .config_base import AttributeData, ConfigBase, Field
+from .builtin_typo_migration import migrate_builtin_typo_config
 from .config_upgrade_hooks import apply_config_upgrade_hooks
 from .config_utils import compare_versions, output_config_changes, recursive_parse_item_to_table
 from .default_model_config import create_default_model_config
@@ -38,7 +39,6 @@ from .official_configs import (
     BotConfig,
     CapabilitiesConfig,
     ChatConfig,
-    ChineseTypoConfig,
     DebugConfig,
     EmojiConfig,
     ExperimentalConfig,
@@ -75,7 +75,7 @@ BOT_CONFIG_PATH: Path = (CONFIG_DIR / "bot_config.toml").resolve().absolute()
 MODEL_CONFIG_PATH: Path = (CONFIG_DIR / "model_config.toml").resolve().absolute()
 LEGACY_ENV_PATH: Path = (PROJECT_ROOT / ".env").resolve().absolute()
 MMC_VERSION: str = read_project_version(PROJECT_ROOT)
-CONFIG_VERSION: str = "8.16.7"
+CONFIG_VERSION: str = "8.16.11"
 MODEL_CONFIG_VERSION: str = "1.17.25"
 
 logger = get_logger("config")
@@ -154,9 +154,6 @@ class Config(ConfigBase):
 
     response_post_process: ResponsePostProcessConfig = Field(default_factory=ResponsePostProcessConfig)
     """回复后处理配置类"""
-
-    chinese_typo: ChineseTypoConfig = Field(default_factory=ChineseTypoConfig)
-    """中文错别字生成器配置类"""
 
     response_splitter: ResponseSplitterConfig = Field(default_factory=ResponseSplitterConfig)
     """回复分割器配置类"""
@@ -822,11 +819,17 @@ def load_config_from_file(
                     raise e
             else:
                 raise e
+        legacy_typo = original_data.get("chinese_typo") if config_class is Config else None
+        if legacy_typo is not None:
+            if not isinstance(legacy_typo, Mapping):
+                raise TypeError("旧错字配置 chinese_typo 必须是 TOML 表")
+            migrate_builtin_typo_config(legacy_typo)
         if (
             compare_versions(old_ver, new_ver)
             or env_migration_applied
             or legacy_config_migration_applied
             or upgrade_hook_applied
+            or legacy_typo is not None
         ):
             output_config_changes(attribute_data, logger, old_ver, new_ver, config_path.name)
             output_config = target_config

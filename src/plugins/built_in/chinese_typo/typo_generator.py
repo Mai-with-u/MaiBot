@@ -4,22 +4,18 @@
 
 from collections import defaultdict
 from functools import cache
-from pathlib import Path
 from pypinyin import Style, pinyin
 from threading import Lock
 from typing import Dict, List
 
 import itertools
 import jieba
-import json
+import logging
 import math
 import os
 import random
-import time
 
-from src.common.logger import get_logger
-
-logger = get_logger("typo_gen")
+logger = logging.getLogger("typo_gen")
 _data_lock = Lock()
 
 
@@ -53,15 +49,8 @@ class ChineseTypoGenerator:
     @cache
     def _load_or_create_char_frequency() -> Dict[str, float]:
         """
-        加载或创建汉字频率字典
+        从 jieba 词典生成字频并在 Runner 进程内缓存
         """
-        cache_file = Path("depends-data/char_frequency.json")
-
-        # 如果缓存文件存在，直接加载
-        if cache_file.exists():
-            with open(cache_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-
         # 使用内置的词频文件
         char_freq = defaultdict(int)
         dict_path = os.path.join(os.path.dirname(jieba.__file__), "dict.txt")
@@ -78,11 +67,6 @@ class ChineseTypoGenerator:
         # 归一化频率值
         max_freq = max(char_freq.values())
         normalized_freq = {char: freq / max_freq * 1000 for char, freq in char_freq.items()}
-
-        # 保存到缓存文件
-        cache_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(cache_file, "w", encoding="utf-8") as f:
-            json.dump(normalized_freq, f, ensure_ascii=False, indent=2)
 
         return normalized_freq
 
@@ -463,33 +447,3 @@ class ChineseTypoGenerator:
                 print(f"参数 {key} 已设置为 {value}")
             else:
                 print(f"警告: 参数 {key} 不存在")
-
-
-def main():
-    # 创建错别字生成器实例
-    typo_generator = ChineseTypoGenerator(error_rate=0.03, min_freq=7, tone_error_rate=0.02, word_replace_rate=0.3)
-
-    # 获取用户输入
-    sentence = input("请输入中文句子：")
-
-    # 创建包含错别字的句子
-    start_time = time.time()
-    typo_sentence, correction_suggestion = typo_generator.create_typo_sentence(sentence)
-
-    # 打印结果
-    print("\n原句：", sentence)
-    print("错字版：", typo_sentence)
-
-    # 打印纠正建议
-    if correction_suggestion:
-        print("\n随机纠正建议：")
-        print(f"应该改为：{correction_suggestion}")
-
-    # 计算并打印总耗时
-    end_time = time.time()
-    total_time = end_time - start_time
-    print(f"\n总耗时：{total_time:.2f}秒")
-
-
-if __name__ == "__main__":
-    main()

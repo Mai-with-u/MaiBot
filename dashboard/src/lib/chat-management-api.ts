@@ -57,7 +57,6 @@ export interface ChatTalkFrequencyRule {
 }
 
 export interface ChatTalkFrequencyDetail {
-  enabled: boolean
   base_value: number
   base_value_label: string
   effective_value: number

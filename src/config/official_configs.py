@@ -1,4 +1,4 @@
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import re
 
@@ -441,7 +441,16 @@ class VisualConfig(ConfigBase):
     """定期清理旧图片缓存，减少磁盘占用。"""
 
 
+def is_global_talk_rule_target(platform: str, item_id: str) -> bool:
+    return platform.strip() in {"", "*"} and item_id.strip() in {"", "*"}
+
+
 class TalkRulesItem(ConfigBase):
+    def model_post_init(self, context: Any) -> None:
+        super().model_post_init(context)
+        if self.rule_type == "group" and is_global_talk_rule_target(self.platform, self.item_id):
+            raise ValueError("动态发言频率规则必须指定平台或群聊 ID；所有群的默认频率请使用总体发言频率")
+
     platform: str = Field(
         default="",
         json_schema_extra={
@@ -745,25 +754,8 @@ class ChatReplyTimingConfig(ConfigBase):
     )
     """等待期间新消息达到多少条就立刻重新处理；0 表示不按条数打断等待。"""
 
-    enable_talk_value_rules: bool = Field(
-        default=False,
-        json_schema_extra={
-            "x-chat-settings": {"scope": "group", "row": 70},
-            "label": {
-                "zh_CN": "启用动态发言频率规则",
-                "en_US": "Enable dynamic talk frequency rules",
-                "ja_JP": "動的な発言頻度ルールを有効化",
-            },
-            "x-widget": "switch",
-        },
-    )
-    """开启后，可以按群聊或时间段单独调整发言频率；私聊不使用频率规则。"""
-
     talk_value_rules: list[TalkRulesItem] = Field(
-        default_factory=lambda: [
-            TalkRulesItem(platform="", item_id="", rule_type="group", time="00:00-08:59", value=0.8),
-            TalkRulesItem(platform="", item_id="", rule_type="group", time="09:00-18:59", value=1.0),
-        ],
+        default_factory=list,
         json_schema_extra={
             "x-chat-settings": {"scope": "group", "row": 80, "dialog": "动态发言规则"},
             "label": {
@@ -4626,122 +4618,6 @@ class ResponsePostProcessConfig(ConfigBase):
         },
     )
     """模拟打字等待时间；0 最快，1 默认，2 更慢。"""
-
-
-class ChineseTypoConfig(ConfigBase):
-    """中文错别字配置类"""
-
-    __ui_parent__ = "response_post_process"
-
-    enable: bool = Field(
-        default=True,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "启用错别字",
-                "en_US": "Enable typos",
-                "ja_JP": "誤字生成を有効化",
-            },
-            "x-widget": "switch",
-        },
-    )
-    """让麦麦偶尔打错字，更像真人聊天。"""
-
-    enable_correction_quote: bool = Field(
-        default=True,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "错别字纠正时引用原消息",
-                "en_US": "Quote typo message when correcting",
-                "ja_JP": "誤字訂正時に元メッセージを引用",
-            },
-            "x-widget": "switch",
-            "x-row": "typo-correction-quote",
-        },
-    )
-    """纠正错别字时，是否引用上一条包含错别字的消息。"""
-
-    correction_quote_probability: float = Field(
-        default=1.0,
-        ge=0,
-        le=1,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "错别字纠正引用概率",
-                "en_US": "Typo correction quote chance",
-                "ja_JP": "誤字訂正の引用確率",
-            },
-            "x-widget": "slider",
-            "x-row": "typo-correction-quote",
-            "step": 0.01,
-            "advanced": True,
-        },
-    )
-    """生成纠正消息时，引用上一条错别字消息的概率。"""
-
-    error_rate: float = Field(
-        default=0.01,
-        ge=0,
-        le=1,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "单字错字概率",
-                "en_US": "Single-character typo chance",
-                "ja_JP": "単字誤字確率",
-            },
-            "x-widget": "slider",
-            "step": 0.01,
-            "advanced": True,
-        },
-    )
-    """单个字被替换成错字的概率。"""
-
-    min_freq: int = Field(
-        default=9,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "最小字频",
-                "en_US": "Minimum character frequency",
-                "ja_JP": "最小文字頻度",
-            },
-            "x-widget": "input",
-            "advanced": True,
-        },
-    )
-    """只对常见程度达到该值的字尝试制造错字。"""
-
-    tone_error_rate: float = Field(
-        default=0.1,
-        ge=0,
-        le=1,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "声调错字概率",
-                "en_US": "Tone typo chance",
-                "ja_JP": "声調誤字確率",
-            },
-            "x-widget": "slider",
-            "step": 0.1,
-            "advanced": True,
-        },
-    )
-    """按相近声调制造错字的概率。"""
-
-    word_replace_rate: float = Field(
-        default=0.006,
-        ge=0,
-        le=1,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "整词替换概率",
-                "en_US": "Word replacement chance",
-                "ja_JP": "単語置換確率",
-            },
-            "x-widget": "slider",
-            "step": 0.001,
-            "advanced": True,
-        },
-    )
-    """整词被替换成错词的概率。"""
 
 
 class ResponseSplitterConfig(ConfigBase):

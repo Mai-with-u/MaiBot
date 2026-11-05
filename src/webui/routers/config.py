@@ -21,6 +21,7 @@ import tomlkit
 from src.common.logger import get_logger
 from src.common.prompt_i18n import clear_prompt_cache, extract_prompt_placeholders, list_prompt_templates
 from src.common.paths import resource_path
+from src.host.config_transaction import write_private
 from src.config.config import CONFIG_DIR, MODEL_CONFIG_VERSION, Config, ModelConfig, PROJECT_ROOT, config_manager
 from src.config.config_base import AttributeData, ConfigBase
 from src.config.shared_settings import shared_settings_path, strip_shared_settings
@@ -35,7 +36,6 @@ from src.config.official_configs import (
     AMemorixConfig,
     BotConfig,
     ChatConfig,
-    ChineseTypoConfig,
     DebugConfig,
     EmojiConfig,
     ExpressionConfig,
@@ -1292,7 +1292,6 @@ def get_config_section_schema(section_name: str):
     - expression: ExpressionConfig
     - jargon: JargonConfig
     - keyword_reaction: KeywordReactionConfig
-    - chinese_typo: ChineseTypoConfig
     - response_post_process: ResponsePostProcessConfig
     - response_splitter: ResponseSplitterConfig
     - telemetry: TelemetryConfig
@@ -1319,7 +1318,6 @@ def get_config_section_schema(section_name: str):
         "expression": ExpressionConfig,
         "jargon": JargonConfig,
         "keyword_reaction": KeywordReactionConfig,
-        "chinese_typo": ChineseTypoConfig,
         "response_post_process": ResponsePostProcessConfig,
         "response_splitter": ResponseSplitterConfig,
         "telemetry": TelemetryConfig,
@@ -1883,17 +1881,11 @@ def _to_relative_path(path: str) -> str:
 def get_adapter_config_path():
     """获取保存的适配器配置文件路径"""
     try:
-        # 从 data/webui.json 读取路径偏好
-        webui_data_path = os.path.join("data", "webui.json")
-        if not os.path.exists(webui_data_path):
+        preference = PROJECT_ROOT / "data" / "adapter_config_path.txt"
+        if not preference.is_file():
             return {"success": True, "path": None}
 
-        import json
-
-        with open(webui_data_path, "r", encoding="utf-8") as f:
-            webui_data = json.load(f)
-
-        adapter_config_path = webui_data.get("adapter_config_path")
+        adapter_config_path = preference.read_text(encoding="utf-8")
         if not adapter_config_path:
             return {"success": True, "path": None}
 
@@ -1929,29 +1921,9 @@ def save_adapter_config_path(data: PathBody):
         if not path:
             raise HTTPException(status_code=400, detail="路径不能为空")
 
-        # 保存到 data/webui.json
-        webui_data_path = os.path.join("data", "webui.json")
-        import json
-
-        # 读取现有数据
-        if os.path.exists(webui_data_path):
-            with open(webui_data_path, "r", encoding="utf-8") as f:
-                webui_data = json.load(f)
-        else:
-            webui_data = {}
-
         abs_path = str(_resolve_safe_adapter_config_path(path))
-
-        # 尝试转换为相对路径保存（如果文件在项目目录内）
         save_path = _to_relative_path(abs_path)
-
-        # 更新路径
-        webui_data["adapter_config_path"] = save_path
-
-        # 保存
-        os.makedirs("data", exist_ok=True)
-        with open(webui_data_path, "w", encoding="utf-8") as f:
-            json.dump(webui_data, f, ensure_ascii=False, indent=2)
+        write_private(PROJECT_ROOT / "data" / "adapter_config_path.txt", save_path)
 
         logger.info(f"适配器配置路径已保存: {save_path}（绝对路径: {abs_path}）")
         return {"success": True, "message": "路径已保存"}

@@ -7,6 +7,43 @@ from src.config import config as config_module
 from src.config.config import Config, ConfigManager, ModelConfig, load_config_from_file
 
 
+def test_load_moves_legacy_typos_to_builtin_plugin_without_overwriting(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("MAIBOT_INSTANCE_DIR", str(tmp_path))
+    monkeypatch.setattr(config_module, "should_apply_legacy_migration", lambda _file_name: False)
+    config_path = tmp_path / "config" / "bot_config.toml"
+    config_path.parent.mkdir()
+    config_module.generate_new_config_file(Config, config_path, "8.16.9")
+    old = tomlkit.parse(config_path.read_text(encoding="utf-8"))
+    old["chinese_typo"] = {
+        "enable": False,
+        "mode": "dictionary",
+        "dictionary_probability": 0.24,
+        "error_rate": 0.07,
+        "word_replace_rate": 0.02,
+        "min_freq": 12,
+        "tone_error_rate": 0.2,
+        "enable_correction_quote": False,
+        "correction_quote_probability": 0.4,
+    }
+    legacy_toml = tomlkit.dumps(old)
+    config_path.write_text(legacy_toml, encoding="utf-8")
+    plugin_path = tmp_path / "config" / "builtin_plugins" / "chinese_typo" / "config.toml"
+
+    load_config_from_file(Config, config_path, config_module.CONFIG_VERSION)
+
+    migrated = tomlkit.parse(plugin_path.read_text(encoding="utf-8"))
+    assert migrated["plugin"] == {"enabled": False, "config_version": "1.0.0"}
+    assert migrated["typo"] == {key: value for key, value in old["chinese_typo"].items() if key != "enable"}
+    assert "chinese_typo" not in tomlkit.parse(config_path.read_text(encoding="utf-8"))
+
+    migrated["typo"]["mode"] = "rule"
+    plugin_path.write_text(tomlkit.dumps(migrated), encoding="utf-8")
+    # 模拟主配置重写前中断，或者旧配置从备份重新恢复。
+    config_path.write_text(legacy_toml, encoding="utf-8")
+    load_config_from_file(Config, config_path, config_module.CONFIG_VERSION)
+    assert tomlkit.parse(plugin_path.read_text(encoding="utf-8"))["typo"]["mode"] == "rule"
+
+
 
 
 def test_load_repairs_removed_vector_mode_after_legacy_migration_completed(

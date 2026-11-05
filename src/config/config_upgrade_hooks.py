@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pydantic import TypeAdapter
 from typing import Any, Callable, Dict, List, Optional
 
-from .official_configs import ChatConfig
+from .official_configs import ChatConfig, is_global_talk_rule_target
 
 
 ConfigUpgradeHookCallable = Callable[[dict[str, Any]], list[str]]
@@ -559,6 +560,49 @@ def _migrate_webui_http_bindings(data: Dict[str, Any]) -> List[str]:
     return reasons
 
 
+def _remove_global_talk_value_rules(data: Dict[str, Any]) -> List[str]:
+    chat = _as_dict(data.get("chat"))
+    reply_timing = _as_dict(chat.get("reply_timing")) if chat is not None else None
+    if reply_timing is None:
+        return []
+
+    rules = _as_list(reply_timing.get("talk_value_rules"))
+    if rules is None:
+        return []
+
+    scoped_rules = []
+    for rule in rules:
+        if isinstance(rule, dict) and rule.get("rule_type", "group") == "group":
+            platform = rule.get("platform", "")
+            item_id = rule.get("item_id", "")
+            if isinstance(platform, str) and isinstance(item_id, str) and is_global_talk_rule_target(platform, item_id):
+                continue
+        scoped_rules.append(rule)
+
+    if len(scoped_rules) == len(rules):
+        return []
+    reply_timing["talk_value_rules"] = scoped_rules
+    return ["chat.reply_timing.talk_value_rules"]
+
+
+def _remove_talk_value_rules_switch(data: Dict[str, Any]) -> List[str]:
+    chat = _as_dict(data.get("chat"))
+    reply_timing = _as_dict(chat.get("reply_timing")) if chat is not None else None
+    if reply_timing is None:
+        return []
+
+    switch_key = "enable_talk_value_rules"
+    enabled = TypeAdapter(bool).validate_python(reply_timing.get(switch_key, False))
+    reasons = []
+    if switch_key in reply_timing:
+        del reply_timing[switch_key]
+        reasons.append(f"chat.reply_timing.{switch_key}")
+    if not enabled and reply_timing.get("talk_value_rules"):
+        reply_timing["talk_value_rules"] = []
+        reasons.append("chat.reply_timing.talk_value_rules")
+    return reasons
+
+
 BOT_CONFIG_UPGRADE_HOOKS: tuple[ConfigUpgradeHook, ...] = (
     ConfigUpgradeHook(
         target_version="8.10.11",
@@ -619,6 +663,16 @@ BOT_CONFIG_UPGRADE_HOOKS: tuple[ConfigUpgradeHook, ...] = (
         target_version="8.15.62",
         config_names=("bot_config.toml",),
         migrate=_migrate_webui_http_bindings,
+    ),
+    ConfigUpgradeHook(
+        target_version="8.16.9",
+        config_names=("bot_config.toml",),
+        migrate=_remove_global_talk_value_rules,
+    ),
+    ConfigUpgradeHook(
+        target_version="8.16.11",
+        config_names=("bot_config.toml",),
+        migrate=_remove_talk_value_rules_switch,
     ),
 )
 
