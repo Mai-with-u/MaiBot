@@ -120,8 +120,6 @@ _GRAPH_ACTIONS = {
 _SOURCE_ACTIONS = {"list", "delete", "batch_delete"}
 _EPISODE_ACTIONS = {"query", "list", "get", "status", "rebuild", "process_sources", "discard_migration_backfill"}
 _PROFILE_ACTIONS = {
-    "observe_identity",
-    "resolve_identity",
     "query",
     "evidence",
     "correct_evidence",
@@ -145,6 +143,13 @@ _RUNTIME_ACTIONS = {
     "recover_embedding",
     "rebuild_all_vectors",
     "paragraph_backfill_once",
+    # 向量库列表/删除：实现层 vector_runtime_service.memory_runtime_admin
+    # 与路由 src/webui/routers/memory.py 均已支持，但此前未在契约白名单放行，
+    # 导致 GET /runtime/vectors/spaces 恒返回
+    # "不支持的 memory_runtime_admin action: list_vector_spaces"，
+    # WebUI 长期记忆面板固定显示"读取已保存向量库失败"。
+    "list_vector_spaces",
+    "delete_vector_space",
 }
 _IMPORT_ACTIONS = {
     "settings",
