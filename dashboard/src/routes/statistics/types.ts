@@ -33,6 +33,52 @@ export interface DetailedStatisticsBreakdown {
   avg_calls_per_reply: number | null
   avg_tokens_per_reply: number | null
   avg_tokens_per_call: number | null
+  /** 实际调用尝试数（含失败），只有模型和任务组维度能与调用记录对应，其余为 null */
+  attempt_count: number | null
+  failure_count: number | null
+}
+
+export interface DetailedReliabilityItem {
+  name: string
+  attempt_count: number
+  failure_count: number
+  failure_rate: number | null
+  avg_success_duration: number | null
+}
+
+export interface DetailedReliabilityData {
+  /** 失败统计实际覆盖的起点；调用记录只保留 7 天，更长的时段会被截断 */
+  coverage_start: string
+  truncated: boolean
+  attempt_count: number
+  failure_count: number
+  failure_rate: number | null
+  avg_success_duration: number | null
+  by_model: DetailedReliabilityItem[]
+  by_provider: DetailedReliabilityItem[]
+  by_task: DetailedReliabilityItem[]
+}
+
+export interface DetailedPeriodTrend {
+  start_time: string
+  bucket_minutes: number
+  /** 趋势明细最多覆盖 30 天，更长的时段会被截断 */
+  truncated: boolean
+  time_labels: string[]
+  costs: number[]
+  tokens: number[]
+  requests: number[]
+  messages: number[]
+  attempts: number[]
+  failures: number[]
+  cost_by_model: Record<string, number[]>
+  tokens_by_model: Record<string, number[]>
+  requests_by_model: Record<string, number[]>
+  cost_by_module: Record<string, number[]>
+  message_by_chat: Record<string, number[]>
+  /** 7×24，星期一为第 0 行 */
+  heatmap_messages: number[][]
+  heatmap_costs: number[][]
 }
 
 export interface DetailedChatStatistics {
@@ -64,12 +110,16 @@ export interface DetailedStatisticsPeriod {
   start_time: string
   end_time: string
   summary: DetailedStatisticsSummary
+  /** 上一个等长周期的汇总；自部署以来没有上一周期 */
+  previous_summary: DetailedStatisticsSummary | null
   models: DetailedStatisticsBreakdown[]
   modules: DetailedStatisticsBreakdown[]
   task_groups: DetailedStatisticsBreakdown[]
   request_types: DetailedStatisticsBreakdown[]
   chats: DetailedChatStatistics[]
   distributions: DetailedStatisticsDistributions
+  reliability: DetailedReliabilityData
+  trend: DetailedPeriodTrend
 }
 
 export interface DetailedStatisticsTrendData {
