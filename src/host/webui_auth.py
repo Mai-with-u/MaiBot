@@ -51,7 +51,7 @@ def register_host_auth(
             raise HTTPException(429, str(exc)) from exc
         if not valid:
             return {"valid": False, "message": "Token 无效或已过期"}
-        sessions.set_cookie(response, await asyncio.to_thread(sessions.create_session))
+        sessions.set_cookie(response, await asyncio.to_thread(sessions.create_session, request.headers.get("origin")))
         return {"valid": True, "message": "登录成功", **credentials.setup_status()}
 
     @app.post("/api/webui/auth/logout")
@@ -90,9 +90,9 @@ def register_host_auth(
         return {"success": True, "message": "配置完成"}
 
     @app.post("/api/webui/setup/reset", dependencies=[Depends(require_session)])
-    async def reset(body: ResetRequest, response: Response) -> Dict[str, Any]:
+    async def reset(body: ResetRequest, request: Request, response: Response) -> Dict[str, Any]:
         await asyncio.to_thread(credentials.reset_setup, body.reset_password)
         if body.reset_password:
             await asyncio.to_thread(sessions.clear_all)
-            sessions.set_cookie(response, await asyncio.to_thread(sessions.create_session))
+            sessions.set_cookie(response, await asyncio.to_thread(sessions.create_session, request.headers.get("origin")))
         return {"success": True, "message": "配置状态已重置"}

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from uuid import uuid4
 
+import json
 import os
 import shutil
 import subprocess
@@ -18,8 +19,10 @@ from src.common.runtime_context import RUNTIME_CONTEXT_ENV
 from src.config.shared_models import SHARED_MODELS_ENV
 from src.config.legacy_upgrade_confirmation import LEGACY_UPGRADE_CONFIRM_ENV
 
+from .config_transaction import write_private
 from .config import HostConfig, config_from_bot, load_host_config, save_host_config
 from .registry import BotRecord, Registry
+from .legacy_runner import LEGACY_PACKAGE_INSTANCE_ENV
 
 
 MOVED_MARKER = "MOVED_TO_WORKSPACE.txt"
@@ -65,10 +68,42 @@ def open_workspace(root: Path) -> Workspace:
 
         for bot in registry.list_bots():
             recover_import(bot, root / "host")
+            migrate_legacy_webui_data(
+                bot.directory, root / "host" / "webui.json" if bot.directory == root else None
+            )
         from .workspace_migration import migrate_workspace_config
 
         migrate_workspace_config(root, registry.list_bots())
         return Workspace(root=root, registry=registry, config=load_host_config(root))
+
+
+def migrate_legacy_webui_data(directory: Path, credentials: Optional[Path]) -> None:
+    """Move the Bot preference and, for an in-place upgrade, retain the host login."""
+    legacy = directory / "data" / "webui.json"
+    if not legacy.is_file():
+        return
+    data = json.loads(legacy.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"Invalid legacy WebUI settings: {legacy}")
+
+    preference = legacy.with_name("adapter_config_path.txt")
+    adapter_path = data.get("adapter_config_path")
+    if adapter_path is not None and not isinstance(adapter_path, str):
+        raise ValueError(f"Invalid legacy adapter configuration path: {legacy}")
+    if adapter_path and not preference.exists():
+        write_private(preference, adapter_path)
+
+    credential_keys = {
+        "access_token", "token_source", "first_setup_completed", "created_at", "updated_at", "setup_completed_at",
+    }
+    if credentials is not None and not credentials.exists() and "access_token" in data:
+        if not isinstance(data["access_token"], str) or not data["access_token"]:
+            raise ValueError(f"Invalid legacy WebUI credentials: {legacy}")
+        write_private(credentials, json.dumps({key: data[key] for key in data if key in credential_keys}))
+
+    # Old mirror settings have no readers. Keep the source if it contains any unrecognized keys.
+    if data.keys() <= credential_keys | {"adapter_config_path", "git_mirrors", "git_mirrors_schema_version"}:
+        legacy.unlink()
 
 
 def _adopt_in_place(root: Path, registry: Registry) -> None:
@@ -77,10 +112,6 @@ def _adopt_in_place(root: Path, registry: Registry) -> None:
     bot_config = root / _BOT_CONFIG
     if not (root / "host" / "config.toml").exists():
         save_host_config(root, config_from_bot(bot_config))
-    credentials = root / "data" / "webui.json"
-    if credentials.is_file() and not (root / "host" / "webui.json").exists():
-        # 沿用原 WebUI 密码；原文件保留，不影响旧版本回退。
-        shutil.copyfile(credentials, root / "host" / "webui.json")
     copy_builtin_plugin_configs(root)
     with bot_config.open("rb") as stream:
         nickname = tomllib.load(stream).get("bot", {}).get("nickname", "")
@@ -111,7 +142,10 @@ def copy_builtin_plugin_configs(directory: Path) -> None:
 def bot_environment(directory: Path) -> Dict[str, str]:
     """在某个 Bot 的实例目录中运行程序代码的环境；路径与配置模块在导入时固定实例目录。"""
     env = os.environ.copy()
-    for key in (RUNTIME_CONTEXT_ENV, LEGACY_UPGRADE_CONFIRM_ENV, SHARED_MODELS_ENV, "MAIBOT_PACKAGE_RUNNER"):
+    for key in (
+        RUNTIME_CONTEXT_ENV, LEGACY_UPGRADE_CONFIRM_ENV, SHARED_MODELS_ENV,
+        "MAIBOT_PACKAGE_RUNNER", LEGACY_PACKAGE_INSTANCE_ENV,
+    ):
         env.pop(key, None)
     env[INSTANCE_DIRECTORY_ENV] = str(directory)
     if not PACKAGED_INSTALL:

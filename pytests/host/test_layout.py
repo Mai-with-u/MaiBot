@@ -41,11 +41,35 @@ def test_old_instance_is_registered_in_place_without_moving_data(tmp_path: Path)
     assert bot.name == "麦麦" and bot.directory == tmp_path and not bot.owned
     assert (tmp_path / "data" / "MaiBot.db").read_bytes() == b"large data"
     assert json.loads((tmp_path / "host" / "webui.json").read_text(encoding="utf-8"))["access_token"] == "Old-Pass!word1"
+    assert not (tmp_path / "data" / "webui.json").exists()
     config = load_host_config(tmp_path)
     assert (config.hosts, config.port, config.secure_cookie) == (["0.0.0.0"], 18001, True)
     assert (config.anti_crawler_mode, config.allowed_ips) == ("strict", "10.0.0.1")
     # 再次打开以注册表为准，不会重复登记。
     assert len(open_workspace(tmp_path).registry.list_bots()) == 1
+
+
+def test_registered_instance_migrates_webui_preference_without_replacing_login(tmp_path: Path) -> None:
+    write_instance(tmp_path)
+    open_workspace(tmp_path)
+    credentials = tmp_path / "host" / "webui.json"
+    current_login = json.dumps({"access_token": "Current-Pass!word1"})
+    credentials.write_text(current_login, encoding="utf-8")
+    legacy = tmp_path / "data" / "webui.json"
+    legacy.parent.mkdir(exist_ok=True)
+    legacy.write_text(json.dumps({
+        "access_token": "Old-Pass!word1",
+        "adapter_config_path": "config/adapter.toml",
+        "git_mirrors": [],
+        "git_mirrors_schema_version": 1,
+    }), encoding="utf-8")
+
+    open_workspace(tmp_path)
+    open_workspace(tmp_path)
+
+    assert not legacy.exists()
+    assert credentials.read_text(encoding="utf-8") == current_login
+    assert legacy.with_name("adapter_config_path.txt").read_text(encoding="utf-8") == "config/adapter.toml"
 
 
 def test_registry_rejects_overlapping_directories(tmp_path: Path) -> None:

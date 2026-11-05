@@ -1,6 +1,5 @@
 # raise RuntimeError("System Not Ready")
 from pathlib import Path
-from rich.traceback import install
 from typing import TypeVar
 
 import asyncio
@@ -12,6 +11,22 @@ import signal
 import sys
 import time
 import traceback
+
+from src.common.runtime_context import RUNTIME_CONTEXT_ENV
+
+
+# 1.3.19 在线更新后仍由旧 Runner 执行本入口，须在加载 Bot 组件前交给新宿主。
+if (
+    __name__ == "__main__"
+    and RUNTIME_CONTEXT_ENV not in os.environ
+    and os.environ.get("MAIBOT_RUNNER_SUPERVISED") == "1"
+    and os.environ.get("MAIBOT_WORKER_PROCESS") != "1"
+):
+    from src.host.legacy_runner import main as handoff_legacy_runner
+
+    raise SystemExit(handoff_legacy_runner())
+
+from rich.traceback import install  # noqa: E402
 
 # 在业务导入前接管 Worker 信号；此时只记录停止请求，不调用尚未初始化的组件。
 _active_main_loop: asyncio.AbstractEventLoop | None = None

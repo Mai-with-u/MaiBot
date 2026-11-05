@@ -115,7 +115,10 @@ async def run_host(workspace: Workspace, *, upgrade_confirmed: set[str]) -> bool
             await server.start(control.handle)
             await webui.start()
             await asyncio.to_thread(_publish, descriptor_path, {"version": 1, "endpoint": endpoint})
-            for signum in (signal.SIGINT, signal.SIGTERM):
+            signals = [signal.SIGINT, signal.SIGTERM]
+            if os.name == "nt":
+                signals.append(signal.SIGBREAK)
+            for signum in signals:
                 previous_handlers[signum] = signal.getsignal(signum)
                 signal.signal(signum, lambda _sig, _frame: loop.call_soon_threadsafe(control.stopping.set))
             print(f"MaiBot 宿主已启动：{workspace.root}", flush=True)
