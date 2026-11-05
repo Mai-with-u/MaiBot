@@ -22,9 +22,9 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "icon": ["icons/icon.png", "icons/icon.icns", "../../dashboard/public/maimai.ico"],
+    "icon": ["icons/icon.png", "icons/icon.icns", "../../../dashboard/public/maimai.ico"],
     "copyright": "MaiBot contributors",
-    "licenseFile": "../../LICENSE",
+    "licenseFile": "../../../LICENSE",
     "category": "Entertainment",
     "shortDescription": "连接本机或远端 MaiBot 的轻量桌宠",
     "windows": {

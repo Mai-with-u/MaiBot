@@ -16,7 +16,7 @@ if (built.status !== 0) process.exit(built.status ?? 1);
 const targetIndex = extra.indexOf('--target');
 const target = targetIndex >= 0 ? extra[targetIndex + 1] : extra.find(value => value.startsWith('--target='))?.slice(9) || '';
 if (target && !/^[A-Za-z0-9_-]+$/.test(target)) throw new Error('Invalid Rust target');
-const output = path.resolve(root, '../dist/desktop-pet-client');
+const output = path.resolve(root, '../../dist/desktop-pet-client');
 const bundle = path.join(root, 'src-tauri/target', target, extra.includes('--debug') ? 'debug' : 'release', 'bundle');
 const version = require('../package.json').version;
 const architecture = target ? target.split('-')[0].replace('x86_64', 'x64').replace('aarch64', 'arm64') : process.arch;

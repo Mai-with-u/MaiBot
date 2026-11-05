@@ -34,7 +34,7 @@
 在仓库根目录执行：
 
 ```sh
-cd desktop-pet-client
+cd pet-clients/desktop
 npm ci
 npm start
 ```
@@ -43,7 +43,7 @@ Windows 也可以在准备好上述工具链并完成 `npm ci` 后双击 `start.
 
 ## 构建分发包
 
-在 `desktop-pet-client` 目录执行对应平台的命令：
+在 `pet-clients/desktop` 目录执行对应平台的命令：
 
 ```sh
 npm run dist:win

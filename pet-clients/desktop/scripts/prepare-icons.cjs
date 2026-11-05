@@ -9,7 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
-const source = fs.readFileSync(path.resolve(root, '../dashboard/public/maimai.ico'));
+const source = fs.readFileSync(path.resolve(root, '../../dashboard/public/maimai.ico'));
 const signature = Buffer.from('89504e470d0a1a0a', 'hex');
 assert.ok(source.length >= 6 && source.readUInt16LE(0) === 0 && source.readUInt16LE(2) === 1, 'Expected an ICO file');
 const count = source.readUInt16LE(4);
