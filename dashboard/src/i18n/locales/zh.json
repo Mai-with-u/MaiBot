@@ -1436,6 +1436,8 @@
         }
       },
       "modelSetup": {
+        "identifierPlaceholder": "输入模型标识符",
+        "pickFromList": "选择模型",
         "planner": {
           "identifier": {
             "label": "用于 规划思考 的模型",

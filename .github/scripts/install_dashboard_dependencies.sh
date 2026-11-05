@@ -11,15 +11,13 @@ const replacements = [
   ['https://mirrors.cloud.tencent.com/npm/', 'https://registry.npmjs.org/'],
   ['https://registry.npmmirror.com/', 'https://registry.npmjs.org/'],
 ];
-for (const filename of ['bun.lock', 'bunfig.toml']) {
-  const original = fs.readFileSync(filename, 'utf8');
-  let updated = original;
-  for (const [mirror, registry] of replacements) {
-    updated = updated.replaceAll(mirror, registry);
-  }
-  fs.writeFileSync(filename, updated);
-  console.log(`${filename}: using npm official registry in GitHub Actions`);
+const filename = 'bun.lock';
+let updated = fs.readFileSync(filename, 'utf8');
+for (const [mirror, registry] of replacements) {
+  updated = updated.replaceAll(mirror, registry);
 }
+fs.writeFileSync(filename, updated);
+console.log(`${filename}: using npm official registry in GitHub Actions`);
 NODE
 fi
 

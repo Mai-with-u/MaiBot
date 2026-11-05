@@ -1436,6 +1436,8 @@
         }
       },
       "modelSetup": {
+        "identifierPlaceholder": "Enter model ID",
+        "pickFromList": "Browse",
         "planner": {
           "identifier": {
             "label": "planner Model Identifier *",

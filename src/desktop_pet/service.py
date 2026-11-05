@@ -741,7 +741,7 @@ class DesktopPetService:
                 if current.get(plugin_id) != contribution:
                     continue  # 请求期间已卸载或重载的贡献不能重新出现在窗口里。
                 if isinstance(result, BaseException):
-                    logger.warning("插件 %s 桌宠按钮状态读取失败: %s", plugin_id, result)
+                    logger.warning("插件 {} 桌宠按钮状态读取失败: {}", plugin_id, result)
                     states = {button["id"]: {"visible": True, "disabled": True, "text": str(result)[:200]}
                               for button in contribution["buttons"]}
                 else:

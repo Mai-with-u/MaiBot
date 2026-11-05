@@ -1364,6 +1364,8 @@
         }
       },
       "modelSetup": {
+        "identifierPlaceholder": "모델 ID 입력",
+        "pickFromList": "모델 선택",
         "planner": {
           "identifier": {
             "label": "planner 모델 식별자 *",

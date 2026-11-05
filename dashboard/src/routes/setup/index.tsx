@@ -206,32 +206,13 @@ function SetupPageContent() {
         })
         if (cancelled) return
         setAvailableModels(models)
-        if (findTemplateByBaseUrl(apiProviderSetup.base_url)?.id === 'deepseek') {
-          if (!models.some((model) => model.id === 'deepseek-flash')) {
-            throw new Error('提供商返回的模型列表中没有 deepseek-flash，请检查模型列表或手动选择可用模型')
-          }
-        } else {
-          setModelSetup((previous) => {
-            const planner = models.some((model) => model.id === previous.planner_model_identifier)
-              ? previous.planner_model_identifier : ''
-            const replyer = models.some((model) => model.id === previous.replyer_model_identifier)
-              ? previous.replyer_model_identifier : ''
-            return {
-              ...previous,
-              planner_model_identifier: planner,
-              planner_model_name: planner,
-              replyer_model_identifier: replyer,
-              replyer_model_name: replyer,
-            }
-          })
-        }
         setModelFetchError('')
         setModelFetchStatus('success')
       } catch (error) {
         if (cancelled) return
         setModelFetchError(error instanceof Error ? error.message : '获取模型列表失败')
         setModelFetchStatus('error')
-        // 失败后等待 1 秒再重试，避免请求重叠；重试期间保留错误状态以允许手动填写。
+        // 失败后等待 1 秒再重试，避免请求重叠。
         timer = window.setTimeout(fetchModels, 1000)
       }
     }
@@ -375,12 +356,6 @@ function SetupPageContent() {
   }
 
   function validateModelSetup(config: ModelSetupConfig): string | null {
-    if (modelFetchStatus === 'loading') return '正在获取模型列表，请稍候'
-    if (modelFetchStatus === 'idle') return '请先填写基础 URL 获取模型列表'
-    if (modelFetchStatus === 'success' && (
-      !availableModels.some((model) => model.id === config.planner_model_identifier) ||
-      !availableModels.some((model) => model.id === config.replyer_model_identifier)
-    )) return '请选择用于规划和回复的模型'
     if (!config.planner_model_identifier.trim()) {
       return t('setupPage.validation.enterPlannerModelIdentifier')
     }

@@ -1436,6 +1436,8 @@
         }
       },
       "modelSetup": {
+        "identifierPlaceholder": "モデル ID を入力",
+        "pickFromList": "モデルを選択",
         "planner": {
           "identifier": {
             "label": "planner モデル識別子 *",
