@@ -34,9 +34,9 @@ export const validateProvider = (
   editingIndex: number | null = null
 ): {
   isValid: boolean
-  errors: { name?: string; base_url?: string; api_key?: string }
+  errors: { name?: string; base_url?: string }
 } => {
-  const errors: { name?: string; base_url?: string; api_key?: string } = {}
+  const errors: { name?: string; base_url?: string } = {}
 
   if (!provider) {
     return { isValid: false, errors: { name: '提供商数据为空' } }
@@ -60,9 +60,6 @@ export const validateProvider = (
 
   if (!provider.base_url?.trim()) {
     errors.base_url = '请输入基础 URL'
-  }
-  if (!provider.api_key?.trim()) {
-    errors.api_key = '请输入 API Key'
   }
 
   return {

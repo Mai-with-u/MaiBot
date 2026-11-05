@@ -323,9 +323,7 @@ async def probe_thinking(
     # 预算字段协商只影响本次探测，不能修改调用方传入的模型草稿。
     request = request.model_copy(deep=True)
     client_config = build_openai_compatible_client_config(provider)
-    client_config.base_url = await asyncio.to_thread(
-        validate_public_url, client_config.base_url, allow_configured_private_network=True
-    )
+    client_config.base_url = validate_public_url(client_config.base_url, require_public_network=False)
     attempts: List[ThinkingProbeAttempt] = []
     matches: List[ThinkingProbeMode] = []
     stopped = asyncio.Event()

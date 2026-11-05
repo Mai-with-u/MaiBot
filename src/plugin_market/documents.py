@@ -78,7 +78,8 @@ def _remote_document(
         url = git.raw_url(owner, repo, branch, declared if kind == "changelog" else "README.md")
 
     def load() -> str:
-        validate_public_url(url, allow_fake_ip=True)
+        if declared and declared.startswith(("https://", "http://")):
+            validate_public_url(url, allow_fake_ip=True)
         return GitSource.read_text(url, 8, get_shared_ssl_context())
 
     try:

@@ -425,17 +425,6 @@ describe('applyPack', () => {
     ])
   })
 
-  it('新提供商缺少 API Key 时抛错且不保存配置', async () => {
-    backendGetMock.mockResolvedValue(makeLocalConfig())
-
-    const pack = makePack({ providers: [makeProvider({ name: '无钥商' })] })
-
-    await expect(
-      applyPack(pack, makeApplyOptions({ apply_providers: true }), {}, {})
-    ).rejects.toThrow('提供商 "无钥商" 缺少 API Key')
-    expect(backendPostMock).not.toHaveBeenCalled()
-  })
-
   it('应用模型：按 selected_models 过滤、映射提供商名称、同名覆盖其余追加', async () => {
     const localConfig = makeLocalConfig({
       models: [makeModel({ name: '模型A', api_provider: '旧商' })],

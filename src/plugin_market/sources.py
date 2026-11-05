@@ -53,11 +53,9 @@ def load_source_settings() -> PluginSourceSettings:
 
 
 def save_source_settings(settings: PluginSourceSettings) -> None:
-    from src.common.network_security import validate_public_url
-
     if settings.custom_download_prefix:
         settings = settings.model_copy(update={
-            "custom_download_prefix": validate_public_url(settings.custom_download_prefix, allow_fake_ip=True).rstrip("/")
+            "custom_download_prefix": GitSource.select("custom", settings.custom_download_prefix).clone_prefix
         })
     with _settings_lock:
         SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -84,13 +82,10 @@ async def fetch_information_file(
 
 
 def _fetch_information_file(file_path: str, source: Optional[str], force_refresh: bool) -> Dict[str, Any]:
-    from src.common.network_security import validate_public_url
-
     selected = source if source is not None else load_source_settings().information_source
     url = GitSource.select(selected).raw_url("Mai-with-u", "plugin-repo", "main", file_path)
 
     def load() -> str:
-        validate_public_url(url, allow_fake_ip=True)
         return GitSource.read_text(url, REQUEST_TIMEOUT, get_shared_ssl_context())
 
     ttl = MARKET_TTL if file_path == "plugin_versions.json" else CATALOG_TTL

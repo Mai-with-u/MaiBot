@@ -500,15 +500,13 @@ export function ProviderForm({
                     <FormRow
                       label="API Key"
                       htmlFor="api_key"
-                      required
-                      error={formErrors.api_key}
                       data-tour="provider-apikey-input"
                       labelExtra={(
                         <HelpTooltip
                           content={
                             <div className="space-y-2">
                               <p className="font-medium">API 密钥</p>
-                              <p>从提供商平台获取的身份验证密钥。</p>
+                              <p>从提供商平台获取的身份验证密钥。无鉴权服务可留空。</p>
                               <ul className="list-disc list-inside space-y-1 text-xs">
                                 <li>通常以 <code>sk-</code> 开头</li>
                                 <li>请妥善保管，不要泄露给他人</li>
@@ -531,13 +529,9 @@ export function ProviderForm({
                             setLocalProvider((prev) =>
                               prev ? { ...prev, api_key: e.target.value } : null
                             )
-                            if (formErrors.api_key) {
-                              setFormErrors((prev) => ({ ...prev, api_key: undefined }))
-                            }
                           }}
                           placeholder="sk-..."
-                          aria-invalid={formErrors.api_key ? true : undefined}
-                          className={`min-w-0 flex-1 ${formErrors.api_key ? 'border-destructive focus-visible:ring-destructive' : ''}`}
+                          className="min-w-0 flex-1"
                         />
                         <Button
                           type="button"

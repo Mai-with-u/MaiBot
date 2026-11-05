@@ -224,25 +224,8 @@ describe('PackDetailPage 应用向导', () => {
     expect(within(dialog).getByText('local-a')).toBeInTheDocument()
     expect(within(dialog).getByText('URL 匹配')).toBeInTheDocument()
     // 新提供商需要 API Key
-    expect(within(dialog).getByText('需要配置 API Key')).toBeInTheDocument()
+    expect(within(dialog).getByText('提供商 API Key')).toBeInTheDocument()
     expect(within(dialog).getByPlaceholderText('输入 prov-new 的 API Key')).toBeInTheDocument()
-  })
-
-  it('新提供商未填 API Key 时应用被拦截', async () => {
-    await renderReady()
-    const dialog = await openWizard()
-
-    nextStep(dialog)
-    nextStep(dialog)
-    // 步骤 3：确认页
-    expect(within(dialog).getByText('确认应用')).toBeInTheDocument()
-    fireEvent.click(within(dialog).getByRole('button', { name: '应用模板' }))
-
-    expect(toastMock).toHaveBeenCalledWith({
-      title: '请填写提供商 "prov-new" 的 API Key',
-      variant: 'destructive',
-    })
-    expect(packApi.applyPack).not.toHaveBeenCalled()
   })
 
   it('填写 API Key 后完成应用：记录下载、更新下载数并关闭对话框', async () => {

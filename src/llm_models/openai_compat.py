@@ -94,7 +94,9 @@ def build_openai_compatible_client_config(api_provider: APIProvider) -> OpenAICo
     default_query: dict[str, object] = dict(api_provider.default_query)
     client_api_key = api_provider.api_key
 
-    if api_provider.auth_type == OpenAICompatibleAuthType.BEARER:
+    if not api_provider.api_key.strip():
+        client_api_key = ""
+    elif api_provider.auth_type == OpenAICompatibleAuthType.BEARER:
         if (
             api_provider.auth_header_name != "Authorization"
             or api_provider.auth_header_prefix.strip() != "Bearer"

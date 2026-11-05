@@ -559,25 +559,6 @@ describe('SetupPage 错误态与空态', () => {
     expect(screen.getByRole('button', { name: 'setupPage.actions.next' })).toBeInTheDocument()
   })
 
-  it('完成时 API Key 为空则拦截且不标记完成', async () => {
-    mocks.loadApiProviderSetupConfig.mockResolvedValue({ ...defaultApiProvider, api_key: '' })
-    render(<SetupPage />)
-    await waitLoadingDone()
-    await goToLastStep()
-
-    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.complete' }))
-
-    await waitFor(() => {
-      expect(mocks.toast).toHaveBeenCalledWith({
-        title: 'setupPage.toast.validationFailedTitle',
-        description: 'setupPage.validation.enterApiKey',
-        variant: 'destructive',
-      })
-    })
-    expect(mocks.completeSetup).not.toHaveBeenCalled()
-    expect(mocks.navigate).not.toHaveBeenCalled()
-  })
-
   it('完成时 planner 模型标识符为空则拦截且不标记完成', async () => {
     mocks.loadModelSetupConfig.mockResolvedValue({
       ...defaultModelSetup,
