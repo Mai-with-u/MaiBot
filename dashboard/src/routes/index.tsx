@@ -27,6 +27,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { MobilePageHeader } from '@/components/layout/MobilePageHeader'
+import type { NewsItem } from '@/lib/news-api'
 import { RestartProvider, useRestart } from '@/lib/restart-context'
 import { ThemeProviderContext } from '@/lib/theme-context'
 import { openUpdateNotice } from '@/lib/update-notice-events'
@@ -40,7 +41,10 @@ import { useLocalCacheMetrics } from './home/hooks/useLocalCacheMetrics'
 import { useMaibotVersion } from './home/hooks/useMaibotVersion'
 import { HitokotoEditorDialog } from './home/HitokotoEditorDialog'
 import { HomeCardManager, type HomeCardDefinition } from './home/HomeCardManager'
-import { NewsCard } from './home/NewsCard'
+import { NewsCard, NewsDialog } from './home/NewsCard'
+import { useNews } from './home/hooks/useNews'
+import { useNewsReadState } from './home/hooks/useNewsReadState'
+import { NewsStrip } from './home/NewsStrip'
 import { usePluginHomeCards } from './home/hooks/usePluginHomeCards'
 import { useQuickShortcuts } from './home/hooks/useQuickShortcuts'
 import { useReviewStats } from './home/hooks/useReviewStats'
@@ -382,6 +386,13 @@ const IndexPageContent = memo(function IndexPageContent({ botVersion }: { botVer
     saveHitokotoSettings,
   } = useMaibotVersion()
   const { pluginHomeCards } = usePluginHomeCards()
+  const newsState = useNews()
+  const newsReadState = useNewsReadState()
+  const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null)
+  const openNews = (item: NewsItem) => {
+    newsReadState.markRead(item)
+    setSelectedNews(item)
+  }
 
   const [isReviewerOpen, setIsReviewerOpen] = useState(false)
   const [hitokotoEditorOpen, setHitokotoEditorOpen] = useState(false)
@@ -651,7 +662,7 @@ const IndexPageContent = memo(function IndexPageContent({ botVersion }: { botVer
       preferredHeight: 'low',
       category: 'status',
       source: 'builtin',
-      render: () => <NewsCard />,
+      render: () => <NewsCard newsState={newsState} readState={newsReadState} onOpen={openNews} />,
     },
     {
       id: 'builtin:prompt-cache',
@@ -1001,6 +1012,7 @@ const IndexPageContent = memo(function IndexPageContent({ botVersion }: { botVer
             <span className="text-base">V{APP_VERSION}</span>
           </button>
           {versionsMismatch && <span className="text-sm">{t('home.versionCard.mismatch')}</span>}
+          <NewsStrip news={newsState.news} readState={newsReadState} onOpen={openNews} />
           <span
             aria-hidden="true"
             data-home-version-stripes="true"
@@ -1017,6 +1029,8 @@ const IndexPageContent = memo(function IndexPageContent({ botVersion }: { botVer
             </svg>
           </span>
         </div>
+
+        <NewsDialog selectedNews={selectedNews} onClose={() => setSelectedNews(null)} />
 
         <HomeCardManager
           cards={orderedHomeCards}

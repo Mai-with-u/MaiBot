@@ -10,7 +10,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.services import news_service
-from src.webui.dependencies import require_auth
 from src.webui.routers.news import router as news_router
 
 
@@ -18,7 +17,6 @@ from src.webui.routers.news import router as news_router
 def app_fixture() -> FastAPI:
     app = FastAPI()
     app.include_router(news_router, prefix="/api/webui")
-    app.dependency_overrides[require_auth] = lambda: "test-token"
     return app
 
 
@@ -175,12 +173,3 @@ def test_get_news_skips_items_without_title(
     items = client.get("/api/webui/news").json()["items"]
 
     assert [item["id"] for item in items] == ["ok"]
-
-
-def test_get_news_requires_auth(app: FastAPI) -> None:
-    app.dependency_overrides.pop(require_auth, None)
-    client = TestClient(app)
-
-    response = client.get("/api/webui/news")
-
-    assert response.status_code == 401

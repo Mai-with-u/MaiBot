@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional, Tupl
 
 from src.common.logger import get_logger
 from src.core.local_operator import is_local_operator
+from src.core.plugin_usage import can_use_plugin
 from src.core.tooling import (
     ToolContentItem,
     ToolAvailabilityContext,
@@ -294,7 +295,7 @@ class ComponentQueryService:
         visibility = ComponentQueryService._get_tool_visibility(entry)
         return ToolSpec(
             name=entry.name,
-            description=entry.description or f"工具 {entry.name}",
+            description=entry.description,
             parameters_schema=parameters_schema,
             provider_name=entry.plugin_id,
             provider_type="plugin",
@@ -424,6 +425,9 @@ class ComponentQueryService:
             """
 
             invoke_args: Dict[str, Any] = {}
+            # 旧动作入口没有可信调用者上下文，受限插件必须走统一工具入口。
+            if not can_use_plugin(plugin_id):
+                return False, "插件使用权限不足：请通过带核心会话上下文的工具入口调用。"
             action_data = kwargs.get("action_data")
             if isinstance(action_data, dict):
                 invoke_args.update(action_data)
@@ -504,6 +508,13 @@ class ComponentQueryService:
             """
 
             message = kwargs.get("message")
+            if not can_use_plugin(
+                plugin_id,
+                platform=message.platform if message is not None else "",
+                user_id=message.message_info.user_info.user_id if message is not None else "",
+                session_id=message.session_id if message is not None else "",
+            ):
+                return False, "没有权限使用此插件。", True
             matched_groups = kwargs.get("matched_groups")
             plugin_config = kwargs.get("plugin_config")
             message_info = getattr(message, "message_info", None)
@@ -590,6 +601,9 @@ class ComponentQueryService:
                 Any: 插件工具返回结果；若结果不是字典，则会包装为 ``{"content": ...}``。
             """
 
+            # function_args 可由模型构造，不能用其中的身份或会话字段授权。
+            if not can_use_plugin(plugin_id):
+                return {"success": False, "content": "插件使用权限不足：请通过带核心会话上下文的工具入口调用。"}
             try:
                 response = await supervisor.invoke_plugin(
                     method=invoke_method,
@@ -730,11 +744,26 @@ class ComponentQueryService:
 
         collected_specs: Dict[str, ToolSpec] = {}
         for _supervisor, entry in self._iter_component_entries(ComponentType.TOOL, context=context):
+            if not self._can_use_plugin_tool(entry.plugin_id, context):
+                continue
             if entry.name in collected_specs:
                 self._log_duplicate_component(ComponentType.TOOL, entry.name)
                 continue
             collected_specs[entry.name] = self._build_tool_spec(entry)  # type: ignore[arg-type]
         return collected_specs
+
+    @staticmethod
+    def _can_use_plugin_tool(
+        plugin_id: str, context: Optional[ToolAvailabilityContext | ToolExecutionContext],
+    ) -> bool:
+        """群聊工具无单一触发者，只按会话授权；缺少上下文时拒绝受限插件。"""
+
+        return can_use_plugin(
+            plugin_id,
+            platform=context.platform if context is not None else "",
+            user_id=context.user_id if context is not None and context.is_group_chat is False else "",
+            session_id=context.session_id if context is not None else "",
+        )
 
     @staticmethod
     def _build_tool_context_payload(context: Optional[ToolExecutionContext]) -> Dict[str, Any]:
@@ -957,6 +986,12 @@ class ComponentQueryService:
         supervisor, entry = matched_entry
         tool_entry = cast("ToolEntry", entry)
         # 执行受限工具必须带真实平台上下文，不能通过省略上下文绕过可见性过滤。
+        if not self._can_use_plugin_tool(tool_entry.plugin_id, context):
+            return ToolExecutionResult(
+                tool_name=tool_entry.name,
+                success=False,
+                error_message="没有权限使用此插件。",
+            )
         if tool_entry.platforms and (context is None or context.platform.strip().lower() not in tool_entry.platforms):
             return ToolExecutionResult(
                 tool_name=tool_entry.name,

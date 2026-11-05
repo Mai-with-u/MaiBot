@@ -21,6 +21,7 @@ from src.common.logger import get_logger
 from src.common.operation_timing import log_operation, timed_operation
 
 from .preview_path_utils import REPO_ROOT, build_preview_chat_dir_name, normalize_preview_name
+from .reasoning_steps import reasoning_trace_id, register_reasoning_step, remove_reasoning_step
 
 logger = get_logger("maisaka_prompt_preview")
 _image_assets: ContextVar[Optional[Dict[Path, bytes]]] = ContextVar("prompt_preview_image_assets", default=None)
@@ -35,6 +36,7 @@ class _PreviewWriteTask:
     content: str
     image_assets: Dict[Path, bytes]
     enqueued_at: float = field(default_factory=time.perf_counter)
+    trace_id: Optional[str] = None
 
 
 class PromptPreviewLogger:
@@ -141,6 +143,7 @@ class PromptPreviewLogger:
                 file_path=file_path,
                 content=content,
                 image_assets=dict(_image_assets.get() or {}),
+                trace_id=reasoning_trace_id.get(),
             )
         )
         return file_path
@@ -271,6 +274,7 @@ class PromptPreviewLogger:
     @classmethod
     def _write_task_locked(cls, task: _PreviewWriteTask) -> None:
         cls._write_record_locked(task.file_path, task.content, task.image_assets)
+        register_reasoning_step(cls._BASE_DIR, task.file_path, task.trace_id)
         cls._trim_overflow(task.chat_dir)
         cls._persist_image_index()
 
@@ -280,6 +284,7 @@ class PromptPreviewLogger:
         """同步原子更新记录，与预览写入和图片清理共用存储锁。"""
         with cls._timed_storage_lock(f"record_write:{file_path}"):
             cls._write_record_locked(file_path, content, image_assets)
+            register_reasoning_step(cls._BASE_DIR, file_path, reasoning_trace_id.get())
             cls._persist_image_index()
 
     @classmethod
@@ -344,6 +349,7 @@ class PromptPreviewLogger:
     @classmethod
     def _release_record_index(cls, path: Path) -> None:
         """更新记录前移除旧索引；孤立图片交给巡检回收，避免删除新记录仍需的图片。"""
+        remove_reasoning_step(cls._BASE_DIR, path)
         cls._record_signatures.pop(path, None)
         cls._index_pending.add(path)
         for name in cls._images_by_preview.pop(path, set()):

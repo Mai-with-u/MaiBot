@@ -1,14 +1,14 @@
 """桌宠皮肤管理：读写与校验在工作线程进行，预览不修改当前皮肤。"""
 
 from zipfile import BadZipFile
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 import asyncio
 
 from src.common.paths import get_instance_root
+from src.desktop_pet.thinking_caption import fast_model_configured
 from src.desktop_pet.skins import MAX_BYTES, find_skin, install_zip, list_skins
-from src.webui.dependencies import require_auth
 
-router = APIRouter(prefix="/desktop-pet", tags=["desktop-pet"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/desktop-pet", tags=["desktop-pet"])
 
 
 @router.get("/skins")
@@ -37,3 +37,8 @@ async def install(request: Request):
         return await asyncio.to_thread(install_zip, get_instance_root(), b"".join(chunks))
     except (BadZipFile, ValueError, OSError, KeyError, TypeError) as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/capabilities")
+def capabilities():
+    return {"fast_model_configured": fast_model_configured()}

@@ -8,6 +8,8 @@ import pytest
 
 from src.config.file_watcher import FileChange
 from src.plugin_runtime.integration import PluginRuntimeManager
+from src.plugin_runtime.host.status_badges import RuntimeStatusBadges
+from src.plugin_runtime.plugin_catalog import PluginCatalogEntry
 from src.plugin_runtime.protocol.envelope import InspectPluginConfigResultPayload
 from src.plugin_runtime.runner.manifest_validator import ManifestValidator
 from src.webui.routers.websocket import plugin_runtime as runtime_ws
@@ -15,7 +17,7 @@ from src.webui.routers.websocket import plugin_runtime as runtime_ws
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("enabled", [False, True])
-async def test_cold_enable_installs_dependencies_before_config_import(tmp_path, monkeypatch, enabled):
+async def test_cold_enable_requests_host_before_importing_plugin(tmp_path, monkeypatch, enabled):
     plugin_dir = tmp_path / "demo"
     plugin_dir.mkdir()
     (plugin_dir / "config.toml").write_text(f"[plugin]\nenabled = {str(enabled).lower()}\n", encoding="utf-8")
@@ -35,19 +37,14 @@ async def test_cold_enable_installs_dependencies_before_config_import(tmp_path, 
     calls = []
 
     async def install(requirements):
-        assert manager._plugin_file_update_lock.locked()
-        assert [requirement.requirement_text for requirement in requirements] == ["missing-cold-enable-package>=1"]
         calls.append("install")
         return True, ""
 
     async def restart(reason):
-        assert calls == ["install"]
-        assert reason == "config_enabled_dependencies"
         calls.append("restart")
         return True
 
     async def inspect(plugin_id):
-        assert calls == ["install", "restart"]
         calls.append("inspect")
         return InspectPluginConfigResultPayload(
             success=True, enabled=True, normalized_config={"plugin": {"enabled": True}},
@@ -65,26 +62,38 @@ async def test_cold_enable_installs_dependencies_before_config_import(tmp_path, 
     monkeypatch.setattr(manager, "_restart_supervisors", restart)
     monkeypatch.setattr(manager, "load_plugin_globally", load)
     monkeypatch.setattr(manager, "_refresh_plugin_config_watch_subscriptions", AsyncMock())
-    monkeypatch.setattr(manager._plugin_dependency_pipeline, "_install_requirements", install)
+    monkeypatch.setattr(manager._plugin_dependency_pipeline, "install_requirements", install)
     monkeypatch.setattr(ManifestValidator, "get_installed_package_version", lambda self, name: None)
 
-    assert await manager.apply_plugin_config("test.demo") == ("success" if enabled else "inactive")
-    assert calls == (["install", "restart", "inspect", "load"] if enabled else [])
+    request = AsyncMock()
+    monkeypatch.setattr("src.plugin_runtime.dependency_pipeline.request_dependency_preparation", request)
+    assert await manager.apply_plugin_config("test.demo") == ("pending_dependencies" if enabled else "inactive")
+    # 请求已受理时不冷导入插件，也不把正常的依赖准备返回成启用失败。
+    assert request.await_count == int(enabled)
+    assert calls == []
+    if enabled:
+        # 新装插件同样等待宿主准备，不能因为尚未加载而触发安装事务回滚。
+        await manager.activate_installed_plugin("test.demo")
+        assert request.await_count == 2
+        assert calls == []
 
 
 @pytest.mark.asyncio
 async def test_snapshot_only_marks_plugins_in_their_loading_supervisor(tmp_path, monkeypatch):
     manager = PluginRuntimeManager()
     manager._started = True
-    extension = SimpleNamespace(_plugin_dirs=[tmp_path], is_loading=False)
-    core = SimpleNamespace(_plugin_dirs=[tmp_path], is_loading=True)
+    extension = SimpleNamespace(group_name="third_party", is_loading=False, startup_load_status="not_loaded", startup_load_reason="")
+    core = SimpleNamespace(group_name="builtin", is_loading=True, startup_load_status="loading", startup_load_reason="")
+    extension.runtime_status_badges = RuntimeStatusBadges(lambda: None)
+    core.runtime_status_badges = RuntimeStatusBadges(lambda: None)
     manager._builtin_supervisor = core
     manager._third_party_supervisor = extension
-    monkeypatch.setattr(manager, "_iter_discovered_plugin_paths", lambda dirs: iter([
-        ("demo.extension", tmp_path / "extension"), ("demo.adapter", tmp_path / "adapter"),
-    ]))
-    monkeypatch.setattr(manager, "_supervisor_accepts_plugin_path", lambda sv, path:
-                        (sv is core) == (path.name == "adapter"))
+    manager._plugin_catalog._entries = {
+        tmp_path / name: PluginCatalogEntry(f"demo.{name}", tmp_path / name, {"plugin_type": name}, False, True, "", None)
+        for name in ("extension", "adapter")
+    }
+    manager._plugin_catalog._initialized = True
+    monkeypatch.setattr(manager, "_iter_discovered_plugin_paths", lambda dirs: pytest.fail("snapshot scanned disk"))
     monkeypatch.setattr(manager, "get_plugin_load_statuses", lambda: {})
     monkeypatch.setattr(manager, "get_plugin_load_failure_reasons", lambda: {})
     monkeypatch.setattr(manager, "get_plugin_circuit_statuses", lambda: {})
@@ -236,6 +245,7 @@ async def test_failed_config_notification_does_not_mark_running_plugin_as_failed
     monkeypatch.setattr(manager, "get_plugin_load_statuses", lambda: {"demo": "success"})
     with pytest.raises(RuntimeError, match="插件配置更新通知失败"):
         await manager.apply_plugin_config("demo")
+    await manager._plugin_catalog.refresh()
     snapshot = await manager.get_plugin_state_snapshot()
     assert snapshot["statuses"]["demo"] == "success"
     assert not manager._plugin_transitions

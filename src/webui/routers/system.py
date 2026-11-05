@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Annotated, List, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, inspect, text
@@ -38,9 +38,8 @@ from src.common.utils.image_path import (
 )
 from src.config.config import MMC_VERSION
 from src.plugin_runtime.update_compatibility_notice import collect_update_incompatible_plugins
-from src.webui.dependencies import require_auth
 
-router = APIRouter(prefix="/system", tags=["system"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/system", tags=["system"])
 logger = get_logger("webui_system")
 
 _start_time = time.time()

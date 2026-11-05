@@ -1,11 +1,9 @@
 import { useNavigate } from '@tanstack/react-router'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   AlertTriangle,
   ArrowLeft,
-  ArrowUpLeft,
-  ArrowUpRight,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
@@ -24,6 +22,7 @@ import {
   Search,
   Timer,
   Trash2,
+  Upload,
 } from 'lucide-react'
 
 import {
@@ -51,12 +50,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/u
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import { resolveApiPath } from '@/lib/api-base'
-import { useAvatarFetchEnabled } from '@/lib/avatar-url'
+import { useAvatarFetchEnabled, useResolvedAvatarUrl } from '@/lib/avatar-url'
 import {
-  findReasoningToolCallRecords,
-  findReasoningToolCallSource,
+  listRelatedReasoningRecords,
   getReasoningPromptFile,
   getReasoningPromptHtmlUrl,
+  importReasoningPrompt,
   listReasoningPromptFiles,
   listReasoningPromptStages,
   clearReasoningPromptStage,
@@ -86,6 +85,7 @@ import {
   parseMessageTagAttributes,
   type ReasoningPromptMessageAvatarMap,
 } from './reasoning-process/context-items'
+import { RelatedStepsCard } from './reasoning-process/related-steps-card'
 import { GenerationAttemptTimeline } from './reasoning-process/generation-attempts'
 import {
   ReasoningReplayPanel,
@@ -101,6 +101,29 @@ const ALL_GROUP_SESSIONS = '__all_group_chats__'
 const CORE_STAGE_NAMES = ['planner', 'replyer']
 const LLM_ERROR_STAGE_NAMES = ['llm_error']
 const REMOVED_STAGE_NAMES = ['timing_gate', 'reply_effect_judge']
+
+function SessionAvatar({ sessionInfo }: { sessionInfo?: ReasoningPromptSessionInfo }) {
+  const avatarUrl = useResolvedAvatarUrl(
+    sessionInfo?.platform,
+    sessionInfo?.target_id,
+    sessionInfo?.chat_type === 'group' ? 'group' : 'user',
+    undefined,
+    { accountId: sessionInfo?.account_id }
+  )
+  const [loadedUrl, setLoadedUrl] = useState<string>()
+
+  if (!avatarUrl) return null
+
+  return (
+    <img
+      src={avatarUrl}
+      alt=""
+      className={cn('h-6 w-6 shrink-0 rounded-full object-cover', loadedUrl !== avatarUrl && 'hidden')}
+      onLoad={() => setLoadedUrl(avatarUrl)}
+      onError={() => setLoadedUrl(undefined)}
+    />
+  )
+}
 
 type StageCategoryRow = {
   key: string
@@ -159,11 +182,13 @@ function buildStageCategoryRows(stageCards: ReasoningPromptStageInfo[]): StageCa
   const learnerStages = takeMatchingStages(isLearnerStage)
   const llmErrorStages = takeNamedStages(LLM_ERROR_STAGE_NAMES)
   const removedStages = takeNamedStages(REMOVED_STAGE_NAMES)
+  const importedStages = takeNamedStages(['imported'])
   const otherStages = takeMatchingStages(() => true)
 
   return [
     { key: 'core', label: '主流程', items: coreStages },
     { key: 'learners', label: '学习器', items: learnerStages },
+    { key: 'imported', label: '导入', items: importedStages },
     { key: 'others', label: '其余', items: otherStages },
     { key: 'llm-errors', label: 'LLM 请求', items: llmErrorStages, collapsedByDefault: true },
     { key: 'removed', label: '不再使用', items: removedStages, collapsedByDefault: true },
@@ -530,8 +555,11 @@ export function ReasoningProcessPage({
   const [replayPanelOpen, setReplayPanelOpen] = useState(false)
   const [replayItems, setReplayItems] = useState<EditableReplayItem[]>([])
   const [eraseNicknameOnExport, setEraseNicknameOnExport] = useState(true)
-  const [toolCallRecords, setToolCallRecords] = useState<ReasoningToolCallRecord[]>([])
-  const [toolCallSource, setToolCallSource] = useState<ReasoningToolCallRecord | null>(null)
+  const [relatedRecords, setRelatedRecords] = useState<ReasoningToolCallRecord[]>([])
+  const [relatedLoading, setRelatedLoading] = useState(false)
+  const [relatedError, setRelatedError] = useState<string | null>(null)
+  const importInputRef = useRef<HTMLInputElement>(null)
+  const [importing, setImporting] = useState(false)
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const stageCards = useMemo(() => {
@@ -544,15 +572,6 @@ export function ReasoningProcessPage({
   }, [sessionInfos])
   const structuredPrompt = useMemo(() => parseStructuredPrompt(jsonContent), [jsonContent])
   const avatarFetchEnabled = useAvatarFetchEnabled()
-  const outputToolCallIds = useMemo(
-    () =>
-      (structuredPrompt?.output_items ?? []).flatMap((item) =>
-        item.item_type === 'FunctionCallItem' && isRecord(item.tool_call) && item.tool_call.call_id
-          ? [String(item.tool_call.call_id)]
-          : []
-      ),
-    [structuredPrompt]
-  )
   const hasToolbarContent = browsingStage || Boolean(returnTo)
 
   useEffect(() => {
@@ -568,40 +587,24 @@ export function ReasoningProcessPage({
     setToolbarRoot(toolbarContainerId ? document.getElementById(toolbarContainerId) : null)
   }, [toolbarContainerId])
 
-  // 输出里的工具调用（如 reply）如果留有自己的推理记录，查出它们的位置，供输出卡片上的跳转键使用
+  // 同轮次关联走索引；旧记录仍按已有的精确调用关系定位。
   const selectedSessionId = selected?.session_id
   const selectedStage = selected?.stage
   const selectedStem = selected?.stem
+  const selectedJsonPath = selected?.json_path
   useEffect(() => {
     let ignore = false
-    setToolCallRecords([])
-    if (!selectedSessionId || !selectedStage || !selectedStem || outputToolCallIds.length === 0) {
-      return
-    }
-
-    findReasoningToolCallRecords({
-      session: selectedSessionId,
-      sourceStage: selectedStage,
-      sourceStem: selectedStem,
-      callIds: outputToolCallIds,
-    })
-      .then((data) => {
-        if (ignore) return
-        setToolCallRecords(data.records)
-      })
-      .catch((err) => {
-        if (ignore) return
-        toast({
-          title: '查找工具推理记录失败',
-          description: err instanceof Error ? err.message : '请稍后再试',
-          variant: 'destructive',
-        })
-      })
-
-    return () => {
-      ignore = true
-    }
-  }, [outputToolCallIds, selectedSessionId, selectedStage, selectedStem, toast])
+    setRelatedRecords([])
+    setRelatedError(null)
+    setRelatedLoading(false)
+    if (!selectedSessionId || !selectedStage || !selectedStem || !selectedJsonPath) return
+    setRelatedLoading(true)
+    listRelatedReasoningRecords({ session: selectedSessionId, stage: selectedStage, stem: selectedStem })
+      .then((data) => { if (!ignore) setRelatedRecords(data.records) })
+      .catch((err) => { if (!ignore) setRelatedError(err instanceof Error ? err.message : '加载关联步骤失败') })
+      .finally(() => { if (!ignore) setRelatedLoading(false) })
+    return () => { ignore = true }
+  }, [selectedSessionId, selectedStage, selectedStem, selectedJsonPath, refreshKey])
 
   useEffect(() => {
     const frameId = requestAnimationFrame(() => {
@@ -969,6 +972,38 @@ export function ReasoningProcessPage({
     }
   }
 
+  async function handleImportReasoning(file: File | undefined) {
+    if (!file) return
+    setImporting(true)
+    try {
+      const payload: unknown = JSON.parse(await file.text())
+      if (!isRecord(payload)) throw new Error('文件不是有效的推理记录 JSON')
+      const result = await importReasoningPrompt(payload)
+      setStage(result.stage)
+      setSession(result.session)
+      setActionFilter('')
+      setSearch('')
+      setPage(1)
+      setSelected(null)
+      setTargetStem(result.stem)
+      setBrowsingStage(true)
+      setRefreshKey((current) => current + 1)
+      toast({ title: '已导入推理记录' })
+    } catch (err) {
+      toast({ title: '导入失败', description: err instanceof Error ? err.message : '请检查 JSON 文件', variant: 'destructive' })
+    } finally {
+      setImporting(false)
+      if (importInputRef.current) importInputRef.current.value = ''
+    }
+  }
+
+  const renderImportButton = () => (
+    <Button variant="outline" size="sm" disabled={importing} onClick={() => importInputRef.current?.click()}>
+      {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+      导入推理
+    </Button>
+  )
+
   const updateReplayItem = (id: string, patch: Partial<EditableReplayItem>) => {
     setReplayItems((current) =>
       current.map((item) => (item.id === id ? { ...item, ...patch } : item))
@@ -1000,37 +1035,6 @@ export function ReasoningProcessPage({
     [structuredPrompt]
   )
 
-  // 工具自己的推理记录（如回复器）带有调用 ID：反查发起这次调用的记录，供标题栏的「前往」键使用
-  const selectedCallId = headerMeta.callId
-  useEffect(() => {
-    let ignore = false
-    setToolCallSource(null)
-    if (!selectedSessionId || !selectedStage || !selectedStem || !selectedCallId) {
-      return
-    }
-
-    findReasoningToolCallSource({
-      session: selectedSessionId,
-      stage: selectedStage,
-      stem: selectedStem,
-      callId: selectedCallId,
-    })
-      .then((data) => {
-        if (!ignore) setToolCallSource(data.record)
-      })
-      .catch((err) => {
-        if (ignore) return
-        toast({
-          title: '查找发起调用的推理记录失败',
-          description: err instanceof Error ? err.message : '请稍后再试',
-          variant: 'destructive',
-        })
-      })
-
-    return () => {
-      ignore = true
-    }
-  }, [selectedCallId, selectedSessionId, selectedStage, selectedStem, toast])
   const selectedTokenText = selected
     ? formatTokenUsage(selected.prompt_tokens, selected.completion_tokens, selected.total_tokens)
     : ''
@@ -1098,7 +1102,10 @@ export function ReasoningProcessPage({
             placement === 'sidebarRow' && 'w-full'
           )}
         >
-          <span className="truncate">{selectedSessionLabel || '会话'}</span>
+          <div className="flex min-w-0 items-center gap-2">
+            <SessionAvatar sessionInfo={sessionInfoByName.get(session)} />
+            <span className="truncate">{selectedSessionLabel || '会话'}</span>
+          </div>
         </SelectTrigger>
         <SelectContent>
           {session === AUTO_SESSION && (
@@ -1115,11 +1122,14 @@ export function ReasoningProcessPage({
             const sessionDisplayName = getSessionDisplayName(item, sessionInfo)
             return (
               <SelectItem key={item} value={item} textValue={sessionDisplayName}>
-                <div className="min-w-0">
-                  <div className="truncate">{sessionDisplayName}</div>
-                  {sessionSubtitle && (
-                    <div className="text-muted-foreground truncate text-xs">{sessionSubtitle}</div>
-                  )}
+                <div className="flex min-w-0 items-center gap-2">
+                  <SessionAvatar sessionInfo={sessionInfo} />
+                  <div className="min-w-0">
+                    <div className="truncate">{sessionDisplayName}</div>
+                    {sessionSubtitle && (
+                      <div className="text-muted-foreground truncate text-xs">{sessionSubtitle}</div>
+                    )}
+                  </div>
                 </div>
               </SelectItem>
             )
@@ -1332,8 +1342,10 @@ export function ReasoningProcessPage({
       )}
       {toolbarPortal}
       {topbarActionsPortal}
+      <input ref={importInputRef} type="file" accept=".json,application/json" className="hidden" onChange={(event) => void handleImportReasoning(event.target.files?.[0])} />
       {embedded && !browsingStage && (
-        <div className="flex shrink-0 justify-end px-2 pt-2 sm:px-3">
+        <div className="flex shrink-0 justify-end gap-2 px-2 pt-2 sm:px-3">
+          {renderImportButton()}
           {renderRefreshButton('toolbar')}
         </div>
       )}
@@ -1384,6 +1396,7 @@ export function ReasoningProcessPage({
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {renderReturnButton()}
+            {renderImportButton()}
             {renderRefreshButton()}
           </div>
         </div>
@@ -1549,6 +1562,7 @@ export function ReasoningProcessPage({
               data-reasoning-panel-footer="true"
               className="flex h-10 flex-shrink-0 items-center justify-between border-t px-2"
             >
+              {renderImportButton()}
               <Button
                 variant="outline"
                 size="sm"
@@ -1669,32 +1683,6 @@ export function ReasoningProcessPage({
                                 )}
                               </TabsList>
                             )}
-                            {/* 两个方向的跳转键都放在标题栏：去发起调用的记录，或去工具自己的推理记录 */}
-                            {toolCallRecords.map((record) => (
-                              <Button
-                                key={record.call_id}
-                                variant="outline"
-                                size="sm"
-                                className="h-8 gap-1.5"
-                                onClick={() => openReasoningRecord(record)}
-                                title={`跳转到这次工具调用自己的推理记录（${record.call_id}）`}
-                              >
-                                <ArrowUpRight className="h-3.5 w-3.5" />
-                                前往{formatStageName(record.stage)}
-                              </Button>
-                            ))}
-                            {toolCallSource && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-8 gap-1.5"
-                                onClick={() => openReasoningRecord(toolCallSource)}
-                                title="跳转到发起这次工具调用的推理记录"
-                              >
-                                <ArrowUpLeft className="h-3.5 w-3.5" />
-                                前往{formatStageName(toolCallSource.stage)}
-                              </Button>
-                            )}
                             <Button
                               variant="outline"
                               size="sm"
@@ -1789,6 +1777,10 @@ export function ReasoningProcessPage({
                         )}
                       </div>
 
+                      {selected?.json_path && (
+                        <RelatedStepsCard records={relatedRecords} current={selected} loading={relatedLoading}
+                          error={relatedError} onSelect={openReasoningRecord} />
+                      )}
                       <TabsContent value="structured" className="m-0">
                         {contentLoading ? (
                           <div className="flex min-h-[360px] items-center justify-center p-4">

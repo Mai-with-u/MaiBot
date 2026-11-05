@@ -1405,6 +1405,116 @@
   letter-spacing: 0.14em;
 }
 
+/* 首页资讯：版本号行右侧嵌一块示波器小屏，绿灯 + 荧光绿标签 + 滚动标题 + 下一条/关闭键。 */
+:root[data-dashboard-style='millennium'] [data-home-news-strip='true'] {
+  gap: 0.625rem;
+  flex: 1 1 22rem;
+  max-width: min(100%, 46rem);
+  margin: var(--mil-sunk-outset) var(--mil-sunk-outset) var(--mil-sunk-outset) auto;
+  padding: 5px 6px 5px 10px;
+  background: var(--mil-scope);
+  box-shadow:
+    inset 3px 3px 0 rgb(0 0 0 / 0.35),
+    -2px -2px 0 2px var(--mil-lo),
+    2px 2px 0 2px var(--mil-hi);
+  color: var(--mil-scope-ink);
+  font-family: var(--mil-font-pixel);
+  letter-spacing: 0.04em;
+}
+
+:root[data-dashboard-style='millennium'] [data-home-news-open='true'] {
+  gap: 0.625rem;
+  outline: none;
+}
+
+:root[data-dashboard-style='millennium'] [data-home-news-label='true'] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--mil-on);
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+
+:root[data-dashboard-style='millennium'] [data-home-news-label='true']::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  background: var(--mil-led);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.4);
+  animation: mil-news-blink 1.6s steps(2, jump-none) infinite;
+}
+
+/* 轮播时新标题从下方逐格滚入。 */
+:root[data-dashboard-style='millennium'] [data-home-news-title='true'] {
+  animation: mil-news-roll 240ms steps(4, end);
+}
+
+:root[data-dashboard-style='millennium'] [data-home-news-open='true'] > svg {
+  color: var(--mil-on);
+  transition: transform 120ms steps(2, jump-none);
+}
+
+:root[data-dashboard-style='millennium'] [data-home-news-open='true']:is(:hover, :focus-visible) {
+  color: var(--mil-on);
+}
+
+:root[data-dashboard-style='millennium'] [data-home-news-open='true']:is(:hover, :focus-visible) > svg {
+  transform: translateX(3px);
+}
+
+/* 下一条按钮带计数，用竖线和标题隔开，像屏幕右侧的读数区。 */
+:root[data-dashboard-style='millennium'] [data-home-news-next='true'] {
+  gap: 0.25rem;
+  height: 18px;
+  padding: 0 2px 0 0.625rem;
+  border-left: 2px solid var(--mil-scope-grid);
+  color: var(--mil-scope-ink);
+  opacity: 0.7;
+  outline: none;
+}
+
+:root[data-dashboard-style='millennium'] [data-home-news-close='true'] {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 0;
+  color: var(--mil-scope-ink);
+  opacity: 0.7;
+  outline: none;
+}
+
+:root[data-dashboard-style='millennium'] [data-home-news-strip='true'] > :is([data-home-news-next='true'], [data-home-news-close='true']):is(:hover, :focus-visible) {
+  color: var(--mil-on);
+  opacity: 1;
+}
+
+:root[data-dashboard-style='millennium'] [data-home-news-close='true']:is(:hover, :focus-visible) {
+  background: var(--mil-scope-grid);
+}
+
+@keyframes mil-news-blink {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@keyframes mil-news-roll {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-dashboard-style='millennium'] [data-home-news-label='true']::before,
+  :root[data-dashboard-style='millennium'] [data-home-news-title='true'] {
+    animation: none;
+  }
+}
+
 /* ---------- 长期记忆：记录列表是一整块屏幕 ---------- */
 
 /* 记忆页顶部键帽与筛选控件收紧，不沿用全局加高尺寸。 */

@@ -14,7 +14,7 @@ from src.common.network_security import validate_public_url
 from src.common.paths import get_instance_root
 
 from .cache import market_cache
-from .sources import load_source_settings
+from .sources import download_source, load_source_settings
 
 DocumentKind = Literal["readme", "changelog"]
 PluginResolver = Callable[[str, bool], Awaitable[Tuple[Dict[str, Any], str]]]
@@ -72,8 +72,9 @@ def _remote_document(
         if parsed.scheme != "https" or parsed.netloc != "github.com" or not re.fullmatch(r"/[\w.-]+/[\w.-]+/?", parsed.path):
             raise ValueError("插件仓库必须是 https://github.com/owner/repo 地址")
         owner, repo = parsed.path.strip("/").removesuffix(".git").split("/")
-        # 官方服务没有任意仓库 Raw；附件使用登记的 GitHub 地址，其他源使用所选镜像。
-        git = GitSource.select("github" if source == "official" else source)
+        # README 跟随下载源，并保留所选发布版本的提交，避免展示其他版本的文档。
+        # 更新日志仍按信息源读取，外部声明的 URL 则直接使用原地址。
+        git = download_source() if kind == "readme" else GitSource.select("github" if source == "official" else source)
         url = git.raw_url(owner, repo, branch, declared if kind == "changelog" else "README.md")
 
     def load() -> str:

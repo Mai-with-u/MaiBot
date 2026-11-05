@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Literal, Optional, Set, Tuple, TypedDict
 import contextlib
 import re
 
+from src.core.tooling import normalize_tool_description
 from src.common.logger import get_logger
 from .component_timeout import normalize_component_timeout_ms
 from .hook_spec_registry import HookSpecRegistry
@@ -151,6 +152,9 @@ class ReplyExtensionEntry(ComponentEntry):
         self.platforms: Set[str] = _normalize_platforms(metadata.get("platforms"), "ReplyExtension")
         if not name.strip() or chat_scope.strip().lower() not in {"all", "group", "private"}:
             raise ValueError("回复扩展名称不能为空，chat_scope 必须是 all/group/private")
+        self.generation_prompt = metadata.get("generation_prompt", "")
+        if not isinstance(self.generation_prompt, str):
+            raise ValueError("generation_prompt 必须是字符串")
         self.parameters_schema: Dict[str, Any] = validate_parameter_schema(metadata.get("parameters_schema"))
         self.description: str = metadata.get("description", "")
         self.priority: int = metadata.get("priority", 0)
@@ -213,9 +217,8 @@ class ToolEntry(ComponentEntry):
         allowed_session: Optional[List[str]] = None,
     ) -> None:
         self.platforms: Set[str] = _normalize_platforms(metadata.get("platforms"), "Tool")
-        self.description: str = str(
-            metadata.get("description", "") or metadata.get("brief_description", "") or f"工具 {name}"
-        ).strip()
+        metadata = normalize_tool_description(metadata)
+        self.description: str = metadata["description"]
         self.parameters: List[Dict[str, Any]] = metadata.get("parameters", [])
         self.parameters_raw: Dict[str, Any] | List[Dict[str, Any]] = metadata.get("parameters_raw", {})
         self.invoke_method: str = str(metadata.get("invoke_method", "plugin.invoke_tool") or "plugin.invoke_tool").strip()
@@ -588,10 +591,9 @@ class ComponentRegistry:
                     "properties": properties,
                 }
 
-        description = str(metadata.get("description", "") or metadata.get("brief_description", "") or f"工具 {name}").strip()
+        metadata = normalize_tool_description(metadata)
         return {
             **metadata,
-            "description": description,
             "parameters_raw": parameters_schema or {},
             "invoke_method": "plugin.invoke_action",
             "legacy_action": True,

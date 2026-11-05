@@ -44,7 +44,7 @@ def _is_host_compatible(host_version: str, min_version: str, max_version: str) -
     in_range, _ = VersionComparator.is_in_range(host_version, min_version, max_version)
     if in_range:
         return True
-    return VersionComparator.is_same_major_minor_higher_version(host_version, max_version)
+    return VersionComparator.is_compatible_host_upgrade(host_version, max_version)
 
 
 def _parse_plugin_descriptor(

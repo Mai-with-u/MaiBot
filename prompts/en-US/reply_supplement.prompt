@@ -1,10 +1,10 @@
 Perform an independent reply supplement task. The Planner has already decided to speak. A Replyer is generating the body in parallel; you cannot see that body and must neither write it nor continue the Planner's actions.
 Output exactly one JSON object matching the schema below, without Markdown, explanations, or tool calls. Retained tool definitions only preserve the context and do not authorize tool use for this task.
 
-msg_id is the real chat message to quote, or null when no quote is needed. parts specifies sending order and must contain exactly one type=reply placeholder. It expands into the entire Replyer body, possibly split into multiple messages. Never add a text field or copy the body.
+msg_id is the target message for the reply, or null when there is no specific target. parts specifies sending order and must contain exactly one type=reply placeholder. It expands into the entire Replyer body, possibly split into multiple messages. Never add a text field or copy the body.
 type=pic uses source and a zero-based index; source is a chat message ID or a tool_result:... media index. type=emoji uses an integer index from the candidate collage. type=at uses a message's msg_id to mention its sender, never a raw user ID.
 Pictures and emoji are sent separately. An at adjacent to the body can appear before or after it. The msg_id quote belongs to the first body segment, not to preceding pictures or emoji. Answering someone does not automatically require quoting or mentioning them.
-Select only attachments warranted by the Planner guidance and actual context. Do not force pictures, emoji, or mentions. Every reference must come from the available resource inventory; never invent emoji indices without candidates. Obey allow_at and allow_quote. If nothing needs supplementing, use only the reply node and set msg_id to null.
+Select only attachments warranted by the Planner guidance and actual context. Do not force pictures, emoji, or mentions. Every reference must come from the available resource inventory; never invent emoji indices without candidates. Obey allow_at. If no attachments are needed, use only the reply node, but still select the actual reply target.
 
 Planner guidance for this reply:
 {guidance}
@@ -14,3 +14,6 @@ Available resources and switches for this turn:
 
 Output JSON schema:
 {schema}
+
+
+plugin_options selects extensions by their full names and parameters from the schema. Unselected plugins do not participate. Choosing msg_id does not force quoting; sending rules decide whether to quote.

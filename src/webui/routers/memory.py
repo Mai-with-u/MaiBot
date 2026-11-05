@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple
-from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Body, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func
@@ -28,13 +28,12 @@ from src.common.logger import get_logger
 from src.person_info.person_info import resolve_person_id_for_memory
 from src.services.memory_flow_service import memory_automation_service
 from src.services.memory_service import MemorySearchResult, memory_service
-from src.webui.dependencies import require_auth
 
 
-router = APIRouter(prefix="/memory", tags=["memory"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/memory", tags=["memory"])
 
 logger = get_logger("webui.memory")
-compat_router = APIRouter(prefix="/api", tags=["memory-compat"], dependencies=[Depends(require_auth)])
+compat_router = APIRouter(prefix="/api", tags=["memory-compat"])
 STAGING_ROOT: Optional[Path] = None
 
 

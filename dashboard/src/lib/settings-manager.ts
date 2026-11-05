@@ -14,6 +14,7 @@ export const STORAGE_KEYS = {
   ACCENT_COLOR: 'accent-color',
   ENABLE_ANIMATIONS: 'maibot-animations',
   ENABLE_AVATAR_FETCH: 'maibot-enable-avatar-fetch',
+  LAYOUT_VERSION: 'maibot-layout-version',
 
   // 调试设置
   ALWAYS_SHOW_UPDATE_NOTICE: 'maibot-always-show-update-notice',
@@ -51,6 +52,11 @@ const GUIDE_AND_NOTICE_LOCAL_STORAGE_KEYS = [
 
 const GUIDE_AND_NOTICE_SESSION_STORAGE_KEYS = ['http-warning-dismissed'] as const
 
+/** 资讯的已读记录和首页资讯条的关闭记录。 */
+const NEWS_NOTIFICATION_STORAGE_KEYS = ['maibot:news:read', 'maibot:news:strip-dismissed'] as const
+
+export const NOTIFICATIONS_RESET_EVENT = 'maibot-notifications-reset'
+
 // 默认设置值
 export const DEFAULT_SETTINGS = {
   // 外观
@@ -58,6 +64,8 @@ export const DEFAULT_SETTINGS = {
   accentColor: DEFAULT_ACCENT_COLOR_HSL,
   enableAnimations: true,
   enableAvatarFetch: true,
+  /** 桌面端外壳：classic 为顶栏 + 侧栏的经典布局，observation 为以麦麦观察为首页的新布局 */
+  layoutVersion: 'observation' as 'classic' | 'observation',
 
   // 调试
   alwaysShowUpdateNotice: false,
@@ -135,6 +143,7 @@ export function getAllSettings(): Settings {
     accentColor: getSetting('accentColor'),
     enableAnimations: getSetting('enableAnimations'),
     enableAvatarFetch: getSetting('enableAvatarFetch'),
+    layoutVersion: getSetting('layoutVersion'),
     alwaysShowUpdateNotice: getSetting('alwaysShowUpdateNotice'),
     alwaysShowUpdateButton: getSetting('alwaysShowUpdateButton'),
     logCacheSize: getSetting('logCacheSize'),
@@ -272,6 +281,35 @@ export function resetAllGuidesAndNotices(): number {
 }
 
 /**
+ * 调试用：重置所有通知状态，包括资讯已读、资讯条关闭以及各页面提示的关闭记录。
+ * 已完成的引导教程不在此列，仍由 resetAllGuidesAndNotices 负责。
+ */
+export function resetAllNotificationStates(): number {
+  let clearedCount = 0
+  const localKeys = [
+    ...NEWS_NOTIFICATION_STORAGE_KEYS,
+    ...GUIDE_AND_NOTICE_LOCAL_STORAGE_KEYS.filter((key) => key !== STORAGE_KEYS.COMPLETED_TOURS),
+  ]
+
+  for (const key of localKeys) {
+    if (localStorage.getItem(key) !== null) {
+      localStorage.removeItem(key)
+      clearedCount += 1
+    }
+  }
+
+  for (const key of GUIDE_AND_NOTICE_SESSION_STORAGE_KEYS) {
+    if (sessionStorage.getItem(key) !== null) {
+      sessionStorage.removeItem(key)
+      clearedCount += 1
+    }
+  }
+
+  window.dispatchEvent(new CustomEvent(NOTIFICATIONS_RESET_EVENT))
+  return clearedCount
+}
+
+/**
  * 清除所有本地缓存
  * 注意：认证信息现在存储在 HttpOnly Cookie 中，不受此函数影响
  */
@@ -346,6 +384,7 @@ function getStorageKey(settingKey: keyof Settings): string {
     accentColor: STORAGE_KEYS.ACCENT_COLOR,
     enableAnimations: STORAGE_KEYS.ENABLE_ANIMATIONS,
     enableAvatarFetch: STORAGE_KEYS.ENABLE_AVATAR_FETCH,
+    layoutVersion: STORAGE_KEYS.LAYOUT_VERSION,
     alwaysShowUpdateNotice: STORAGE_KEYS.ALWAYS_SHOW_UPDATE_NOTICE,
     alwaysShowUpdateButton: STORAGE_KEYS.ALWAYS_SHOW_UPDATE_BUTTON,
     logCacheSize: STORAGE_KEYS.LOG_CACHE_SIZE,

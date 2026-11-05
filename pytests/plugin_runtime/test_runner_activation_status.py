@@ -248,6 +248,9 @@ class _HostTransport:
     def register_method(self, method: str, handler: Any) -> None:
         self.handlers[method] = handler
 
+    async def send_event(self, method: str, **kwargs: Any) -> None:
+        assert method == "runner.startup_progress"
+
     async def disconnect(self) -> None:
         self.disconnected = True
 
@@ -265,7 +268,6 @@ class _HostTransport:
             self.registrations.pop(plugin_id, None)
         elif method == "runner.ready":
             self.ready = RunnerReadyPayload.model_validate(request.payload)
-            self.runner._shutting_down = True
         elif method != "plugin.bootstrap":
             raise AssertionError(f"Unexpected RPC method: {method}")
         return request.make_response(payload={"accepted": True})
@@ -290,6 +292,8 @@ def activation_runtime(tmp_path: Path, monkeypatch):
         pass
 
     monkeypatch.setattr(runner, "_uninstall_log_handler", no_process_logging)
+    # 只执行启动阶段，不伪造真实关停状态；后续测试仍会调用重载接口。
+    monkeypatch.setattr(runner, "_wait_for_shutdown", no_process_logging)
     # Loading may install the SDK's legacy import hook. Keep it local to this test.
     monkeypatch.setattr(sys, "meta_path", list(sys.meta_path))
     try:

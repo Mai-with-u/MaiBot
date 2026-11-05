@@ -8,6 +8,7 @@ import httpx
 from pydantic import ValidationError
 
 from src.common.data_models.llm_service_data_models import LLMGenerationOptions, LLMResponseResult
+from src.common.llm_json import validate_llm_json
 from src.common.logger import get_logger
 from src.common.prompt_i18n import load_prompt
 from src.llm_models.payload_content.context_item import (
@@ -464,7 +465,7 @@ def _extract_model_output(raw_response: str) -> AISearchModelOutput:
 
     normalized_response = raw_response.strip()
     try:
-        return AISearchModelOutput.model_validate_json(normalized_response)
+        return validate_llm_json(normalized_response, AISearchModelOutput)
     except ValidationError as first_error:
         start_index = normalized_response.find("{")
         end_index = normalized_response.rfind("}")
@@ -474,7 +475,7 @@ def _extract_model_output(raw_response: str) -> AISearchModelOutput:
             raise AISearchOutputError("模型没有返回可解析的 JSON 对象") from first_error
 
         try:
-            return AISearchModelOutput.model_validate_json(normalized_response[start_index : end_index + 1])
+            return validate_llm_json(normalized_response[start_index : end_index + 1], AISearchModelOutput)
         except ValidationError as second_error:
             raise AISearchOutputError("模型返回的 AI 搜索结果结构无效") from second_error
 

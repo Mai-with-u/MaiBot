@@ -59,6 +59,20 @@ async def test_unavailable_window_is_not_reported_as_success():
 
 
 @pytest.mark.asyncio
+async def test_window_interactions_dispatch_observe_hooks(monkeypatch):
+    service = DesktopPetService()
+    dispatch = AsyncMock()
+    monkeypatch.setattr(service, "_dispatch_hook", dispatch)
+    service._handle_event({"type": "clicked"})
+    service._handle_event({"type": "drag_started", "gesture_id": "one", "offset_x": 2, "offset_y": 30, "scale": 1.5})
+    service._handle_event({"type": "drag_ended", "gesture_id": "one"})
+    await asyncio.gather(*service._notifications)
+    assert [call.args[0] for call in dispatch.await_args_list] == ["clicked", "drag_started", "drag_ended"]
+    assert dispatch.await_args_list[1].kwargs == {"gesture_id": "one", "offset_x": 2, "offset_y": 30, "scale": 1.5}
+    assert dispatch.await_args_list[2].kwargs == {"gesture_id": "one"}
+
+
+@pytest.mark.asyncio
 async def test_control_waits_for_ack_and_preserves_visibility_on_failure():
     service = DesktopPetService()
     service._ready = service._visible = True
@@ -108,6 +122,7 @@ async def test_only_internal_owner_reply_is_displayed(monkeypatch):
     service = DesktopPetService()
     service._ready = True
     service._closing = False
+    service._visible = True
     command = AsyncMock()
     monkeypatch.setattr(service, "_command", command)
     def message(platform, target, group=None):
@@ -121,6 +136,15 @@ async def test_only_internal_owner_reply_is_displayed(monkeypatch):
     await service.notify_reply(message("internal", "owner"))
     await asyncio.gather(*service._notifications)
     command.assert_awaited_once_with({"type": "reply", "parts": [{"kind": "text", "text": "你好"}]})
+
+    # 窗口隐藏时，主人会话的发言先主动显示窗口再出气泡。
+    service._visible = False
+    control = AsyncMock()
+    monkeypatch.setattr(service, "control", control)
+    await service.notify_reply(message("internal", "owner"))
+    await asyncio.gather(*service._notifications)
+    control.assert_awaited_once_with("show")
+    assert command.await_count == 2
 
 
 @pytest.mark.asyncio

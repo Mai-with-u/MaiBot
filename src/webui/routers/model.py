@@ -4,6 +4,7 @@
 提供从各个 AI 厂商 API 获取可用模型列表的代理接口
 """
 
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import asyncio
@@ -12,15 +13,15 @@ import math
 import os
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from PIL import Image
 from pydantic import BaseModel, Field
 
 import httpx
-import tomlkit
 
 from src.common.logger import get_logger
 from src.config.config import CONFIG_DIR
+from src.config.shared_models import read_effective_config
 from src.config.model_configs import APIProvider, TaskConfig
 from src.llm_models.exceptions import RespNotOkException
 from src.llm_models.model_client import ensure_client_type_loaded
@@ -30,14 +31,14 @@ from src.llm_models.payload_content.context_item import ContextItem, ContextItem
 from src.llm_models.payload_content.tool_option import ToolCall
 from src.llm_models.request_snapshot import format_request_snapshot_log_info
 from src.llm_models.utils_model import LLMOrchestrator, LLMResponseResult
-from src.webui.dependencies import require_auth
+from src.webui.services.thinking_probe import ThinkingProbeRequest, ThinkingProbeResponse, probe_thinking
 from src.common.http_client import get_shared_ssl_context_async
 from src.common.network_security import validate_public_url
 from src.common.prompt_i18n import load_prompt
 
 logger = get_logger("webui")
 
-router = APIRouter(prefix="/models", tags=["models"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/models", tags=["models"])
 # 模型获取器配置
 MODEL_FETCHER_CONFIG = {
     # OpenAI 兼容格式的提供商
@@ -157,6 +158,29 @@ def get_registered_client_types():
         "client_types": client_types,
         "count": len(client_types),
     }
+
+
+@router.post("/probe-thinking", response_model=ThinkingProbeResponse)
+async def probe_model_thinking(request: ThinkingProbeRequest, http_request: Request) -> ThinkingProbeResponse:
+    """探测未保存模型的思考开关，凭证仅从已保存的厂商配置读取。"""
+    provider_config = await asyncio.to_thread(_get_provider_config, request.api_provider)
+    if provider_config is None:
+        raise HTTPException(status_code=404, detail="未找到 API 提供商，请先保存厂商配置")
+    if provider_config.get("client_type", "openai") not in {"openai", "openai_responses"}:
+        raise HTTPException(status_code=400, detail="自动测试仅支持 OpenAI Chat Completions 和 Responses 兼容客户端")
+    try:
+        provider = APIProvider(**provider_config)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail="API 提供商配置无效，请检查厂商设置") from error
+    if not provider.base_url:
+        raise HTTPException(status_code=400, detail="API 提供商缺少基础地址")
+    if provider.auth_type != "none" and not provider.api_key:
+        raise HTTPException(status_code=400, detail="API 提供商未配置密钥")
+    try:
+        return await probe_thinking(provider, request, should_stop=http_request.is_disconnected)
+    except ValueError as error:
+        # URL 校验错误可能包含带密钥的查询参数，避免把配置原文返回浏览器。
+        raise HTTPException(status_code=400, detail="无法测试此厂商地址或请求参数，请检查配置") from error
 
 
 @router.post("/test-model", response_model=ModelTestResponse)
@@ -388,8 +412,7 @@ def _get_provider_config(provider_name: str) -> Optional[Dict]:
         return None
 
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            config_data = tomlkit.load(f)
+        config_data = read_effective_config(Path(config_path))
 
         providers = config_data.get("api_providers", [])
         provider = next((provider for provider in providers if provider.get("name") == provider_name), None)
@@ -414,8 +437,7 @@ def _get_model_config(model_name: str) -> Optional[Dict]:
         return None
 
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            config_data = tomlkit.load(f)
+        config_data = read_effective_config(Path(config_path))
 
         models = config_data.get("models", [])
         model = next((model for model in models if model.get("name") == model_name), None)
@@ -939,8 +961,7 @@ async def test_provider_connection_by_name(
         model_config_path = os.path.join(CONFIG_DIR, "model_config.toml")
         if not os.path.exists(model_config_path):
             raise HTTPException(status_code=404, detail="配置文件不存在")
-        with open(model_config_path, "r", encoding="utf-8") as f:
-            return dict(tomlkit.load(f))
+        return read_effective_config(Path(model_config_path))
 
     config = await asyncio.to_thread(read_config)
 

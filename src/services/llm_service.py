@@ -24,6 +24,7 @@ from src.common.data_models.llm_service_data_models import (
     PromptInput,
     PromptMessage,
 )
+from src.common.llm_json import parse_llm_json
 from src.common.logger import get_logger
 from src.common.utils.utils_image import ImageUtils
 from src.llm_models.model_client.base_client import BaseClient, ResponseRequest
@@ -602,7 +603,7 @@ def _normalize_tool_arguments(arguments: Any) -> Dict[str, Any] | None:
         if not stripped_arguments:
             return {}
         try:
-            parsed_arguments = json.loads(stripped_arguments)
+            parsed_arguments = parse_llm_json(stripped_arguments)
         except json.JSONDecodeError:
             return {"raw_arguments": arguments}
         if isinstance(parsed_arguments, dict):

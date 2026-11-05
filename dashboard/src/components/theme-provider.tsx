@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { useHostRuntime } from '@/host/state'
 
 import { ThemeProviderContext } from '@/lib/theme-context'
-import { getBotConfig, updateBotConfigSection } from '@/lib/config-api'
+import { getCommonSettings, saveWebUIStyle } from '@/host/api'
 import { buildFutureRetroTexture } from '@/lib/theme/future-retro'
 import { DEFAULT_DASHBOARD_STYLE, DEFAULT_FUTURE_RETRO_STYLE_CONFIG } from '@/lib/theme/tokens'
 import type { DashboardStyle, UserThemeConfig } from '@/lib/theme/tokens'
@@ -29,7 +30,7 @@ type ThemeProviderProps = {
 
 type WebUIStyleConfigValue = 0 | 1 | 2
 
-// bot_config 的 webui.webui_style 用整数保存界面风格：0 原版、1 未来复古、2 千禧。
+// 宿主公共配置的 webui.webui_style 用整数保存界面风格：0 原版、1 未来复古、2 千禧。
 const DASHBOARD_STYLE_CONFIG_VALUES: Record<DashboardStyle, WebUIStyleConfigValue> = {
   modern: 0,
   'future-retro': 1,
@@ -54,6 +55,9 @@ export function ThemeProvider({
   children,
   defaultTheme = 'system',
 }: ThemeProviderProps) {
+  const { host, authenticated } = useHostRuntime()
+  const settingsAvailable = host && authenticated
+  const styleSaveChainRef = useRef<Promise<unknown>>(Promise.resolve())
   const [themeMode, setThemeMode] = useState<Theme>(() => {
     const saved = localStorage.getItem(THEME_STORAGE_KEYS.MODE) as Theme | null
     return saved || defaultTheme
@@ -130,25 +134,20 @@ export function ThemeProvider({
   }, [])
 
   const loadRemoteWebUIStyle = useCallback(async () => {
-    if (!shouldSyncRemoteWebUIStyle() || pendingWebUIStyleRef.current !== null) {
+    if (!settingsAvailable || !shouldSyncRemoteWebUIStyle() || pendingWebUIStyleRef.current !== null) {
       return
     }
 
     try {
-      const result = await getBotConfig()
-      const webuiConfig = result.webui as Record<string, unknown> | undefined
-      if (!webuiConfig || !('webui_style' in webuiConfig)) {
-        return
-      }
-
-      applyRemoteWebUIStyle(webuiConfig.webui_style)
+      const result = await getCommonSettings()
+      if (pendingWebUIStyleRef.current === null) applyRemoteWebUIStyle(result.webui.webui_style)
     } catch (error) {
       console.debug('同步 WebUI 风格配置失败:', error)
     }
-  }, [applyRemoteWebUIStyle])
+  }, [applyRemoteWebUIStyle, settingsAvailable])
 
   const persistRemoteWebUIStyle = useCallback(async (style: DashboardStyle) => {
-    if (!shouldSyncRemoteWebUIStyle()) {
+    if (!settingsAvailable || !shouldSyncRemoteWebUIStyle()) {
       return
     }
 
@@ -156,13 +155,15 @@ export function ThemeProvider({
     pendingWebUIStyleRef.current = webuiStyle
 
     try {
-      await updateBotConfigSection('webui', { webui_style: webuiStyle })
+      const request = styleSaveChainRef.current.catch(() => undefined).then(() => saveWebUIStyle(webuiStyle))
+      styleSaveChainRef.current = request
+      await request
     } catch (error) {
       console.warn('保存 WebUI 风格配置失败:', error)
     } finally {
-      pendingWebUIStyleRef.current = null
+      if (pendingWebUIStyleRef.current === webuiStyle) pendingWebUIStyleRef.current = null
     }
-  }, [])
+  }, [settingsAvailable])
 
   useEffect(() => {
     void loadRemoteWebUIStyle()

@@ -1,0 +1,20 @@
+[project]
+name = "maibot-weixin-clawbot-adapter"
+version = "0.2.0"
+description = "MaiBot Weixin ClawBot message gateway"
+requires-python = ">=3.11"
+dependencies = ["maibot-plugin-sdk>=2.21,<3", "aiohttp>=3.12,<4", "pycryptodome>=3.20,<4", "qrcode[pil]>=8,<9"]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.8"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

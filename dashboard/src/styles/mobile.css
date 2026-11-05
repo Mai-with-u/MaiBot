@@ -388,9 +388,9 @@
     font-size: 17px;
   }
 
-  /* 吸顶的分区导航与灰底页面融为一体 */
+  /* 吸顶导航保持透明，背景只由各个控件承载。 */
   :root[data-dashboard-style='modern'] [data-config-section-navigation='true'] {
-    background-color: var(--m-page);
+    background-color: transparent;
   }
 
   /* 字段之间用 0.5px 细线分隔，像 iOS 的分组列表 */

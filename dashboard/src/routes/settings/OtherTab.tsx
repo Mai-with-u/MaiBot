@@ -5,13 +5,13 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate } from '@tanstack/react-router'
 
 import { cn } from '@/lib/utils'
-import { ApiError, backendApi } from '@/lib/http'
+import { ApiError, authApi } from '@/lib/http'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
 import { useToast } from '@/hooks/use-toast'
-import { clearLocalCache, DEFAULT_SETTINGS, exportSettings, formatBytes, getSetting, getStorageUsage, importSettings, resetAllGuidesAndNotices, resetAllSettings, setSetting } from '@/lib/settings-manager'
+import { clearLocalCache, DEFAULT_SETTINGS, exportSettings, formatBytes, getSetting, getStorageUsage, importSettings, resetAllGuidesAndNotices, resetAllNotificationStates, resetAllSettings, setSetting } from '@/lib/settings-manager'
 import { logWebSocket } from '@/lib/log-websocket'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
 
@@ -225,12 +225,21 @@ export function OtherTab() {
     })
   }
 
+  const handleResetNotificationStates = () => {
+    const clearedCount = resetAllNotificationStates()
+    refreshStorageUsage()
+    toast({
+      title: t('settings.other.notificationsResetDone'),
+      description: t('settings.other.notificationsResetDoneDesc', { count: clearedCount }),
+    })
+  }
+
   const handleResetSetup = async () => {
     setIsResetting(true)
 
     try {
       // 同一个请求重置向导和可选的密码；后端会续上当前浏览器的登录 Cookie。
-      const data = await backendApi.post<{ success: boolean; message?: string }>(
+      const data = await authApi.post<{ success: boolean; message?: string }>(
         '/api/webui/setup/reset',
         {
           body: { reset_password: resetSetupPassword },
@@ -606,6 +615,18 @@ export function OtherTab() {
               }}
               aria-label={t('settings.other.alwaysShowUpdateButton')}
             />
+          </div>
+          <div className="flex items-start justify-between gap-4 rounded-lg bg-muted/50 p-3 sm:p-4">
+            <div className="min-w-0 space-y-1">
+              <p className="text-sm font-medium">{t('settings.other.resetNotificationStates')}</p>
+              <p className="text-xs text-muted-foreground">
+                {t('settings.other.resetNotificationStatesDesc')}
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={handleResetNotificationStates} className="shrink-0 gap-2">
+              <RotateCcw className="h-4 w-4" />
+              {t('settings.other.resetNotificationStatesAction')}
+            </Button>
           </div>
           <AlertDialog>
             <AlertDialogTrigger asChild>

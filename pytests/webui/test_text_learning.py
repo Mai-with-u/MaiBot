@@ -123,7 +123,6 @@ def test_numbered_sources_are_bounded_and_copied_from_material(text):
 def client():
     app = FastAPI()
     app.include_router(routes.router)
-    app.dependency_overrides[routes.require_auth] = lambda: True
     with TestClient(app) as test_client:
         yield test_client
 

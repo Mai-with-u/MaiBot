@@ -5,7 +5,7 @@
 {time_block}
 {dialogue_prompt}
 
-{reply_target_block}。
+{reply_target_block}
 {planner_reasoning}
 あなたはグループでチャットしています。上の履歴を読み、今の話題を踏まえて、普段どおり簡潔に返信してください。
 一度にひとつの話題へ返信すると、くどくなったり内容が乱れたりしません。

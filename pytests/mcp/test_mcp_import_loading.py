@@ -47,6 +47,7 @@ assert 'src.mcp_module.host_llm_bridge' not in sys.modules
 
 from src.common import startup_diagnostics
 events = []
+startup_diagnostics.logger.debug = events.append
 startup_diagnostics.logger.info = events.append
 startup_diagnostics.logger.warning = events.append
 

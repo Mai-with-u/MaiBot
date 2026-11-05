@@ -89,6 +89,19 @@ class _RuntimeComponentManagerProtocol(Protocol):
 
 
 class RuntimeComponentCapabilityMixin:
+    async def _cap_runtime_set_status_badges(
+        self: _RuntimeComponentManagerProtocol, plugin_id: str, capability: str, args: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """替换调用者的标记列表；空列表清除，expires_at 为可选的 Unix 秒时间戳。
+
+        每项必须包含 id、label；监督器限制数量和长度，负责到期推送和实例清理。
+        """
+        supervisor = self._get_supervisor_for_plugin(plugin_id)
+        if supervisor is None or supervisor.get_plugin_load_statuses().get(plugin_id) != "success":
+            raise ValueError("只有已加载的插件可以上报运行标记")
+        supervisor.runtime_status_badges.update(plugin_id, args.get("badges"))
+        return {"success": True}
+
     def _collect_api_reference_matches(
         self: _RuntimeComponentManagerProtocol,
         caller_plugin_id: str,

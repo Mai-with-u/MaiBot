@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>连接桌宠 · MaiBot</title>
+  <link rel="stylesheet" href="login.css">
+  <script src="login.js" defer></script>
+</head>
+<body>
+  <main>
+    <h1>连接桌宠</h1>
+    <form id="connection">
+      <label for="server">服务器地址</label>
+      <input id="server" type="url" placeholder="http://127.0.0.1:8001" required spellcheck="false" autocomplete="url">
+      <div id="bot-field" hidden>
+        <label for="bot">机器人</label>
+        <select id="bot" required disabled><option value="">请选择机器人</option></select>
+      </div>
+      <label class="check" title="仅本次连接有效；机器人设置也须允许读取桌面。"><input id="screen" type="checkbox"><span>允许读取本机屏幕</span></label>
+      <p id="status" role="status" aria-live="polite" hidden></p>
+      <button id="connect" type="submit">通过 WebUI 连接</button>
+    </form>
+  </main>
+</body>
+</html>

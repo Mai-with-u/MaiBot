@@ -1,27 +1,25 @@
-import { useId } from 'react'
-import { motion, useReducedMotion } from 'motion/react'
-
 import { useTheme } from '@/components/use-theme'
 import { cn } from '@/lib/utils'
+import { BotSwitcher } from '@/host/BotSwitcher'
 
 interface LogoAreaProps {
   sidebarOpen: boolean
 }
 
-const SIDEBAR_SPECTRUM_TRANSITION = {
-  duration: 0.22,
-  ease: [0.22, 1, 0.36, 1] as const,
+function SpectrumBands() {
+  return (
+    <>
+      {Array.from({ length: 6 }, (_, index) => (
+        <span key={index} />
+      ))}
+    </>
+  )
 }
 
 export function LogoArea({ sidebarOpen }: LogoAreaProps) {
-  const spectrumLayoutId = useId()
   const { themeConfig } = useTheme()
   // 原版风格的 Logo 行与顶栏同高：色块在前、字标在后，字标用大小写混排。
   const isModernStyle = themeConfig.dashboardStyle === 'modern'
-  const prefersReducedMotion = useReducedMotion()
-  const spectrumTransition = prefersReducedMotion
-    ? { duration: 0 }
-    : SIDEBAR_SPECTRUM_TRANSITION
 
   return (
     <div
@@ -38,49 +36,38 @@ export function LogoArea({ sidebarOpen }: LogoAreaProps) {
             !sidebarOpen && 'lg:pointer-events-none lg:opacity-0'
           )}
         >
-          <span
-            data-dashboard-logo-title="true"
-            className="w-28 whitespace-nowrap text-xl font-bold text-primary-gradient"
-          >
-            {isModernStyle ? 'MaiBot' : 'MAIBOT'}
-          </span>
+          <BotSwitcher>
+            <button
+              type="button"
+              data-dashboard-logo-title="true"
+              className="w-28 cursor-pointer whitespace-nowrap text-left text-xl font-bold text-primary-gradient"
+            >
+              {isModernStyle ? 'MaiBot' : 'MAIBOT'}
+            </button>
+          </BotSwitcher>
           {sidebarOpen && (
-            <motion.span
-              layoutId={`sidebar-logo-spectrum-${spectrumLayoutId}`}
+            <span
               aria-hidden="true"
               data-dashboard-logo-spectrum="true"
               className="flex h-2 w-28 max-w-full translate-y-1 items-end"
-              transition={spectrumTransition}
             >
-              {Array.from({ length: 6 }, (_, index) => (
-                <motion.span
-                  key={index}
-                  layoutId={`sidebar-logo-spectrum-band-${spectrumLayoutId}-${index}`}
-                  transition={spectrumTransition}
-                />
-              ))}
-            </motion.span>
+              <SpectrumBands />
+            </span>
           )}
         </div>
       </div>
       {/* 折叠彩虹块与导航 Tab 复用相同的左边距和宽度。 */}
       {!sidebarOpen && (
-        <motion.span
-          layoutId={`sidebar-logo-spectrum-${spectrumLayoutId}`}
-          aria-hidden="true"
-          data-dashboard-logo-spectrum="true"
-          data-dashboard-logo-spectrum-block="true"
-          className="pointer-events-none absolute top-[1.625rem] left-[var(--layout-sidebar-nav-padding-collapsed)] flex h-7 w-[var(--layout-sidebar-nav-item-collapsed-width)] items-stretch overflow-hidden max-lg:hidden"
-          transition={spectrumTransition}
-        >
-          {Array.from({ length: 6 }, (_, index) => (
-            <motion.span
-              key={index}
-              layoutId={`sidebar-logo-spectrum-band-${spectrumLayoutId}-${index}`}
-              transition={spectrumTransition}
-            />
-          ))}
-        </motion.span>
+        <BotSwitcher>
+          <button
+            type="button"
+            data-dashboard-logo-spectrum="true"
+            data-dashboard-logo-spectrum-block="true"
+            className="cursor-pointer absolute top-[1.625rem] left-[var(--layout-sidebar-nav-padding-collapsed)] flex h-7 w-[var(--layout-sidebar-nav-item-collapsed-width)] items-stretch overflow-hidden max-lg:hidden"
+          >
+            <SpectrumBands />
+          </button>
+        </BotSwitcher>
       )}
     </div>
   )

@@ -10,7 +10,6 @@ import io
 import json
 import re
 
-from json_repair import repair_json
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, DefaultAsyncHttpxClient
 from openai._types import FileTypes, Omit, omit
 from openai.types.chat import (
@@ -31,6 +30,7 @@ from openai.types.shared_params.function_definition import FunctionDefinition
 from openai.types.chat.chat_completion_chunk import ChoiceDelta
 from PIL import Image as PILImage
 
+from src.common.llm_json import parse_llm_json
 from src.common.logger import get_logger
 from src.common.http_client import get_shared_ssl_context
 from src.config.model_configs import APIProvider, ReasoningParseMode, ToolArgumentParseMode
@@ -688,16 +688,16 @@ def _parse_tool_arguments(
 
     try:
         if parse_mode == ToolArgumentParseMode.STRICT:
-            arguments: Any = json.loads(raw_arguments)
+            arguments: Any = parse_llm_json(raw_arguments, allow_code_fence=False)
         elif parse_mode == ToolArgumentParseMode.REPAIR:
-            arguments = repair_json(raw_arguments, return_objects=True, logging=False)
+            arguments = parse_llm_json(raw_arguments, repair=True)
         else:
-            arguments = repair_json(raw_arguments, return_objects=True, logging=False)
+            arguments = parse_llm_json(raw_arguments, repair=True)
             if isinstance(arguments, str) and parse_mode in {
                 ToolArgumentParseMode.AUTO,
                 ToolArgumentParseMode.DOUBLE_DECODE,
             }:
-                arguments = repair_json(arguments, return_objects=True, logging=False)
+                arguments = parse_llm_json(arguments, repair=True)
     except json.JSONDecodeError as exc:
         raise RespParseException(response, f"响应解析失败，无法解析工具调用参数。原始参数：{raw_arguments}") from exc
 
@@ -763,7 +763,7 @@ def _extract_xml_tool_calls(
             return None
         if normalized_value.startswith(("{", "[")):
             try:
-                return repair_json(normalized_value, return_objects=True, logging=False)
+                return parse_llm_json(normalized_value, repair=True)
             except Exception:
                 return normalized_value
         return normalized_value

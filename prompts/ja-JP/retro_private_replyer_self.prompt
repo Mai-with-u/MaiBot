@@ -4,7 +4,7 @@
 {time_block}
 {dialogue_prompt}
 
-{reply_target_block}。
+{reply_target_block}
 {planner_reasoning}
 チャットの内容をもとに新しい返信を組み立て、自分の立場から話を続けてください。文脈の一貫性を保ってください。
 できるだけ短くしてください。{keywords_reaction_prompt}チャットの内容をよく把握し、整いすぎた返信はせず、個性を出してもかまいません。

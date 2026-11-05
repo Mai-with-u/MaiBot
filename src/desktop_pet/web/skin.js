@@ -32,12 +32,12 @@
     finish('interrupted', 'skin_changed');
     skin = next; images = loaded; flash = null; selected = '';
     const c = skin.canvas;
-    // 落脚点固定在窗口底边中点，气泡随皮肤锚点调整，输入区仍由主页面管理。
+    // 底部预留阶段字幕，落脚点固定在窗口底边中点，气泡随皮肤锚点调整，输入区仍由主页面管理。
     pet.style.width = c.width + 'px'; pet.style.height = c.height + 'px';
     pet.style.left = (130 - c.anchor[0]) + 'px';
-    pet.style.bottom = (4 - (c.height - c.anchor[1])) + 'px';
+    pet.style.bottom = (24 - (c.height - c.anchor[1])) + 'px';
     pet.dataset.skinHitbox = JSON.stringify(c.hitbox);
-    stage.style.setProperty('--pet-top', (4 + c.anchor[1] - c.bubble_anchor[1] + 8) + 'px');
+    stage.style.setProperty('--pet-top', (24 + c.anchor[1] - c.bubble_anchor[1] + 8) + 'px');
     canvas.width = c.width * 2; canvas.height = c.height * 2;
     canvas.style.width = c.width + 'px'; canvas.style.height = c.height + 'px';
     builtin.style.display = skin.id === 'builtin' ? '' : 'none';

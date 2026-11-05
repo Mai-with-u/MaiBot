@@ -146,11 +146,6 @@ function TaskListItem({
       <div className="flex min-w-0 items-center gap-1.5">
         <span className="font-mono text-xs font-medium">{task.taskId}</span>
         <StatusLabel status={task.status} />
-        {task.background && (
-          <Badge variant="outline" className="h-4 px-1 text-[9px]">
-            后台
-          </Badge>
-        )}
         <span className="text-muted-foreground ml-auto shrink-0 text-[10px]">
           <TaskElapsed task={task} />
         </span>
@@ -288,8 +283,8 @@ function TaskDetail({ task }: { task: SubagentTaskInfo }) {
 
 // ─── 右侧栏 ───────────────────────────────────────────────────
 
-/** 子代理右侧栏；宽屏下与时间线并排，窄屏或嵌入模式下浮在时间线上方。 */
-export function SubagentPanel({ embedded = false }: { embedded?: boolean }) {
+/** 聊天工作区的子代理右侧栏，浮在观察时间线上方。 */
+export function SubagentPanel() {
   const { open, selectedTaskKey, focusCallId } = useSubagentPanelState()
   const { subagentTasks } = useMaisakaMonitorSession()
 
@@ -320,10 +315,7 @@ export function SubagentPanel({ embedded = false }: { embedded?: boolean }) {
   return (
     <aside
       data-maisaka-subagent-panel="true"
-      className={cn(
-        'border-border bg-background absolute inset-y-0 right-0 z-30 flex w-[min(30rem,100%)] min-w-0 flex-col overflow-hidden border shadow-lg',
-        !embedded && 'lg:bg-background/45 lg:static lg:z-auto lg:w-[30rem] lg:shrink-0 lg:shadow-none'
-      )}
+      className="border-border bg-background absolute inset-y-0 right-0 z-30 flex w-[min(30rem,100%)] min-w-0 flex-col overflow-hidden border shadow-lg"
     >
       <div className="flex items-center gap-2 px-3 py-2">
         <h2 className="text-sm font-medium">子代理</h2>

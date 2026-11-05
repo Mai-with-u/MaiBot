@@ -144,15 +144,15 @@ class VersionComparator:
         return True, ""
 
     @staticmethod
-    def is_same_major_minor_higher_version(version: str, max_version: str) -> bool:
-        """判断版本是否仅因修订号更高而超过声明上限。
+    def is_compatible_host_upgrade(version: str, max_version: str) -> bool:
+        """判断主程序是否在声明上限之后的兼容窗口内。
 
         Args:
             version: 当前版本号。
             max_version: Manifest 声明的最大支持版本号。
 
         Returns:
-            bool: 当前版本高于上限，且两者主版本号和次版本号相同时返回 ``True``。
+            bool: 主版本相同，且仅修订号更高或次版本号高 1 时返回 ``True``。
         """
 
         if not version or not max_version:
@@ -162,15 +162,9 @@ class VersionComparator:
         max_major, max_minor, _max_patch = VersionComparator.parse_version(max_version)
         return (
             current_major == max_major
-            and current_minor == max_minor
+            and current_minor - max_minor in (0, 1)
             and VersionComparator.compare(version, max_version) > 0
         )
-
-    @staticmethod
-    def is_same_major_higher_version(version: str, max_version: str) -> bool:
-        """兼容旧调用名称，使用仅修订号向后兼容的规则。"""
-
-        return VersionComparator.is_same_major_minor_higher_version(version, max_version)
 
     @staticmethod
     def is_valid_semver(version: str) -> bool:
@@ -1086,14 +1080,15 @@ class ManifestValidator:
                 manifest.host_application.max_version,
             )
             if not host_ok:
-                if VersionComparator.is_same_major_minor_higher_version(
+                if VersionComparator.is_compatible_host_upgrade(
                     self._host_version,
                     manifest.host_application.max_version,
                 ):
                     self.warnings.append(
                         f"当前版本 {self._host_version} 以兼容模式加载插件"
                         f"（插件声明的 Host 最高支持版本为 "
-                        f"{VersionComparator.normalize_version(manifest.host_application.max_version)}）"
+                        f"{VersionComparator.normalize_version(manifest.host_application.max_version)}）；"
+                        "用户如有插件新版本可用，请及时更新；请插件开发者尽快迁移适配当前主程序版本。"
                     )
                 else:
                     self.errors.append(f"Host 版本不兼容: {host_message} (当前 Host: {self._host_version})")
@@ -1249,7 +1244,7 @@ class ManifestValidator:
             self._LOGGED_WARNING_KEYS.add((source_key, warning))
 
         warning_summary = "；".join(pending_warnings)
-        log = logger.warning if any(warning.startswith("SDK 版本") for warning in pending_warnings) else logger.info
+        log = logger.warning if any(warning.startswith(("SDK 版本", "当前版本")) for warning in pending_warnings) else logger.info
         if source:
             if len(pending_warnings) < 2:
                 log(f"插件 [{source}]: {warning_summary}")

@@ -7,10 +7,10 @@ import asyncio
 import contextlib
 import json
 import os
-import sys
 import time
 
 from src.common.paths import get_instance_root
+from src.common.python_process import python_environment, python_executable
 from src.common.logger import get_logger
 from src.common.shutdown import is_shutdown_requested
 from src.config.config import global_config
@@ -44,6 +44,7 @@ from src.plugin_runtime.compat_policy import (
     build_force_plugin_compatibility_env,
     is_force_plugin_compatibility_enabled,
 )
+from src.plugin_runtime.desktop_pet_buttons import DesktopPetButtonSnapshot
 from src.plugin_runtime.local_sdk import build_pythonpath_with_local_sdk
 from src.plugin_runtime.protocol.envelope import (
     BootstrapPluginPayload,
@@ -63,6 +64,7 @@ from src.plugin_runtime.protocol.envelope import (
     ReloadPluginsResultPayload,
     RouteMessagePayload,
     RunnerReadyPayload,
+    RunnerStartupProgressPayload,
     ShutdownPayload,
     UnloadPluginsPayload,
     UnloadPluginsResultPayload,
@@ -90,6 +92,7 @@ from .hook_spec_registry import HookSpecRegistry
 from .logger_bridge import RunnerLogBridge
 from .message_gateway import MessageGateway
 from .rpc_server import RPCServer
+from .status_badges import RuntimeStatusBadges
 
 if TYPE_CHECKING:
     from src.chat.message_receive.message import SessionMessage
@@ -197,10 +200,14 @@ class PluginRunnerSupervisor:
         # 注册早于 on_load 完成；只在 Runner 确认加载成功后才开始累计使用时长。
         self._usage_loaded_plugin_ids: Set[str] = set()
         self._message_gateway_states: Dict[str, Dict[str, _MessageGatewayRuntimeState]] = {}
+        self.runtime_status_badges = RuntimeStatusBadges(self._notify_status_changed)
         self._external_available_plugins: Dict[str, str] = {}
         self._blocked_plugin_reasons: Dict[str, str] = {}
         self._runner_ready_events: asyncio.Event = asyncio.Event()
-        self._runner_ready_payloads: RunnerReadyPayload = RunnerReadyPayload()
+        self._runner_load_result: RunnerReadyPayload = RunnerReadyPayload()
+        self._startup_pending_plugins: Set[str] = set()
+        self._startup_started_at: Optional[float] = None
+        self._startup_failure_reason: str = ""
         # 恢复目标属于整个重试周期，不随单轮 Runner 注册状态清理而丢失。
         self._plugin_recovery_targets: Set[str] = set()
         self._plugin_recovery_attempts: Dict[str, int] = {}
@@ -323,6 +330,7 @@ class PluginRunnerSupervisor:
     def _handle_usage_connection_lost(self) -> None:
         """断连时立即停止累计，避免把等待健康检查和重启的间隔算作使用时长。"""
         self._usage_loaded_plugin_ids.clear()
+        self.runtime_status_badges.clear()
         self._notify_status_changed()
 
     def get_plugin_config_error(self, plugin_id: str) -> str:
@@ -342,15 +350,16 @@ class PluginRunnerSupervisor:
         )
 
     def get_loaded_plugin_versions(self) -> Dict[str, str]:
-        """返回当前 Supervisor 已注册插件的版本映射。
+        """返回当前 Supervisor 已完成初始化的可用插件版本映射。
 
         Returns:
-            Dict[str, str]: 已注册插件版本映射，键为插件 ID，值为插件版本。
+            Dict[str, str]: 可用插件版本映射，键为插件 ID，值为插件版本。
         """
+        loaded_plugins = set(self._runner_load_result.loaded_plugins)
         return {
             plugin_id: registration.plugin_version
             for plugin_id, registration in self._registered_plugins.items()
-            if not registration.config_error
+            if plugin_id in loaded_plugins and not registration.config_error
         }
 
     def _notify_status_changed(self) -> None:
@@ -358,30 +367,64 @@ class PluginRunnerSupervisor:
             self._status_changed_callback()
 
     def get_plugin_load_statuses(self) -> Dict[str, str]:
-        """返回 Runner 最近一次上报的插件加载状态。"""
+        """从 Runner 最近上报的结果派生状态，注册本身不代表加载成功。"""
 
         statuses: Dict[str, str] = {}
-        for plugin_id in self._runner_ready_payloads.loaded_plugins:
+        for plugin_id in self._runner_load_result.loaded_plugins:
             statuses[plugin_id] = "success"
-        for plugin_id in self._runner_ready_payloads.failed_plugins:
+        for plugin_id in self._runner_load_result.failed_plugins:
             statuses[plugin_id] = "failed"
-        for plugin_id in self._runner_ready_payloads.inactive_plugins:
+        for plugin_id in self._runner_load_result.inactive_plugins:
             statuses.setdefault(plugin_id, "inactive")
         for plugin_id in self._registered_plugins:
-            statuses[plugin_id] = "success"
+            statuses.setdefault(plugin_id, "loading")
+        if self.is_loading:
+            for plugin_id in self._startup_pending_plugins:
+                statuses[plugin_id] = "loading"
+            loading_status = self.startup_load_status
+            statuses = {pid: loading_status if status == "loading" else status for pid, status in statuses.items()}
+        for plugin_id, registration in self._registered_plugins.items():
+            if registration.config_error:
+                statuses[plugin_id] = "failed"
         return statuses
 
     def get_plugin_load_failure_reasons(self) -> Dict[str, str]:
         """返回 Runner 最近一次上报的插件加载失败原因。"""
 
-        reasons = {
-            str(plugin_id or "").strip(): str(reason or "").strip()
-            for plugin_id, reason in self._runner_ready_payloads.failed_plugin_reasons.items()
-            if str(plugin_id or "").strip() and str(reason or "").strip()
-        }
-        for plugin_id in self._runner_ready_payloads.failed_plugins:
-            reasons.setdefault(plugin_id, "插件初始化失败")
+        reasons = dict(self._runner_load_result.failed_plugin_reasons)
+        for plugin_id, registration in self._registered_plugins.items():
+            if registration.config_error:
+                reasons[plugin_id] = registration.config_error
+        for plugin_id, status in self.get_plugin_load_statuses().items():
+            if status == "timed_out":
+                reasons[plugin_id] = self.startup_load_reason
         return reasons
+
+    @property
+    def startup_load_status(self) -> str:
+        """为尚未出现在注册表中的插件提供本组的启动状态。"""
+        if self._startup_failure_reason:
+            return "failed"
+        if not self.is_loading:
+            return "not_loaded"
+        started_at = self._startup_started_at
+        if started_at is not None and time.monotonic() - started_at >= self._runner_spawn_timeout:
+            return "timed_out"
+        return "loading"
+
+    @property
+    def startup_load_reason(self) -> str:
+        """返回本组启动失败或持续等待的具体原因。"""
+        if self._startup_failure_reason:
+            return self._startup_failure_reason
+        started_at = self._startup_started_at
+        if started_at is not None and self.startup_load_status == "timed_out":
+            elapsed = time.monotonic() - started_at
+            return (
+                f"本组插件加载已等待 {elapsed:.1f} 秒，超过 {self._runner_spawn_timeout:g} 秒的等待阈值；"
+                "尚未完成的插件仍在后台加载，Runner 未被停止。"
+            )
+        return ""
 
     def _apply_plugin_reload_result(
         self,
@@ -392,11 +435,11 @@ class PluginRunnerSupervisor:
     ) -> None:
         """把插件重载结果合并到最近一次加载状态中。"""
 
-        loaded_set = set(self._runner_ready_payloads.loaded_plugins)
-        failed_set = set(self._runner_ready_payloads.failed_plugins)
-        inactive_set = set(self._runner_ready_payloads.inactive_plugins)
-        disabled_set = set(self._runner_ready_payloads.explicitly_disabled_plugins)
-        failure_reasons = dict(self._runner_ready_payloads.failed_plugin_reasons)
+        loaded_set = set(self._runner_load_result.loaded_plugins)
+        failed_set = set(self._runner_load_result.failed_plugins)
+        inactive_set = set(self._runner_load_result.inactive_plugins)
+        disabled_set = set(self._runner_load_result.explicitly_disabled_plugins)
+        failure_reasons = dict(self._runner_load_result.failed_plugin_reasons)
 
         for plugin_id in reloaded_plugins:
             loaded_set.add(plugin_id)
@@ -417,14 +460,14 @@ class PluginRunnerSupervisor:
             loaded_set.discard(plugin_id)
             inactive_set.discard(plugin_id)
             disabled_set.discard(plugin_id)
-            failure_reasons[plugin_id] = str(reason or "").strip() or "插件重载失败"
+            failure_reasons[plugin_id] = reason
 
         disabled_set.update(explicitly_disabled_plugins)
         self._plugin_recovery_targets.difference_update(explicitly_disabled_plugins)
         self._usage_loaded_plugin_ids.update(reloaded_plugins)
         self._usage_loaded_plugin_ids.difference_update(inactive_plugins, explicitly_disabled_plugins, failed_plugins)
 
-        self._runner_ready_payloads = RunnerReadyPayload(
+        self._runner_load_result = RunnerReadyPayload(
             loaded_plugins=sorted(loaded_set),
             failed_plugins=sorted(failed_set),
             failed_plugin_reasons=failure_reasons,
@@ -438,19 +481,21 @@ class PluginRunnerSupervisor:
         """从最近一次 Runner 加载状态中移除已卸载插件。"""
 
         unloaded_set = set(unloaded_plugins)
+        for plugin_id in unloaded_set:
+            self.runtime_status_badges.remove(plugin_id)
         self._usage_loaded_plugin_ids.difference_update(unloaded_set)
         self._plugin_recovery_targets.difference_update(unloaded_set)
-        self._runner_ready_payloads = RunnerReadyPayload(
-            loaded_plugins=sorted(set(self._runner_ready_payloads.loaded_plugins) - unloaded_set),
-            failed_plugins=sorted(set(self._runner_ready_payloads.failed_plugins) - unloaded_set),
+        self._runner_load_result = RunnerReadyPayload(
+            loaded_plugins=sorted(set(self._runner_load_result.loaded_plugins) - unloaded_set),
+            failed_plugins=sorted(set(self._runner_load_result.failed_plugins) - unloaded_set),
             failed_plugin_reasons={
                 plugin_id: reason
-                for plugin_id, reason in self._runner_ready_payloads.failed_plugin_reasons.items()
+                for plugin_id, reason in self._runner_load_result.failed_plugin_reasons.items()
                 if plugin_id not in unloaded_set
             },
-            inactive_plugins=sorted(set(self._runner_ready_payloads.inactive_plugins) - unloaded_set),
+            inactive_plugins=sorted(set(self._runner_load_result.inactive_plugins) - unloaded_set),
             explicitly_disabled_plugins=sorted(
-                set(self._runner_ready_payloads.explicitly_disabled_plugins) - unloaded_set
+                set(self._runner_load_result.explicitly_disabled_plugins) - unloaded_set
             ),
         )
 
@@ -572,7 +617,7 @@ class PluginRunnerSupervisor:
             visible_text = f"{visible_text} 等 {len(plugin_ids)} 个"
         return f"{len(plugin_ids)}（{visible_text}）"
 
-    def _log_startup_summary(self, startup_warning: Optional[str] = None) -> None:
+    def _log_startup_summary(self) -> None:
         """用一条日志汇总当前插件运行环境的启动结果。"""
 
         if self._runner_process is None:
@@ -580,12 +625,7 @@ class PluginRunnerSupervisor:
 
         pid = self._runner_process.pid
         rpc_address = self._transport.get_address()
-        if startup_warning is not None or not self._runner_ready_events.is_set():
-            warning_detail = startup_warning if startup_warning is not None else "Runner 尚未就绪"
-            self._logger.warning(f"启动未完成：pid={pid}，RPC={rpc_address}，{warning_detail}")
-            return
-
-        payload = self._runner_ready_payloads
+        payload = self._runner_load_result
         self._logger.info(
             "已启动："
             f"pid={pid}，RPC={rpc_address}，"
@@ -605,26 +645,26 @@ class PluginRunnerSupervisor:
         self._plugin_recovery_targets.clear()
         self._plugin_recovery_attempts.clear()
         self._clear_runner_state()
-        startup_warning: Optional[str] = None
-
         try:
             await self._rpc_server.start()
             await self._spawn_runner()
 
-            try:
-                await self._wait_for_runner_connection(timeout_sec=self._runner_spawn_timeout)
-                await self._wait_for_runner_ready(timeout_sec=self._runner_spawn_timeout)
-            except TimeoutError as exc:
-                startup_warning = str(exc)
-        except Exception:
+            # 只有 runner.ready 才表示本轮加载结束；加载超时只更新状态并继续等待，
+            # 不能关闭仍在工作的 Runner，也不能提前启动配置监听。
+            await self._wait_for_runner_connection(timeout_sec=self._runner_spawn_timeout)
+            await self._wait_for_runner_ready()
+        except (Exception, asyncio.CancelledError) as exc:
+            self._running = False
             await self._shutdown_runner(reason="startup_failed")
             await self._rpc_server.stop()
             self._clear_runner_state()
-            self._running = False
+            if not isinstance(exc, asyncio.CancelledError):
+                self._startup_failure_reason = f"{type(exc).__name__}: {exc}"
+                self._notify_status_changed()
             raise
 
         self._health_task = asyncio.create_task(self._health_check_loop(), name="PluginRunnerSupervisor.health")
-        self._log_startup_summary(startup_warning)
+        self._log_startup_summary()
 
     async def stop(self) -> None:
         """停止 Supervisor。"""
@@ -988,6 +1028,36 @@ class PluginRunnerSupervisor:
             raise ValueError(str(response.error.get("message", "配置页运行时请求失败")))
         return response.payload
 
+    def get_desktop_pet_button_plugins(self) -> Dict[str, Any]:
+        """直接使用注册表生命周期；插件卸载或 Runner 退出后贡献立即消失。"""
+        return {
+            plugin_id: {"name": registration.display_name, "buttons": [button.model_dump() for button in registration.desktop_pet_buttons]}
+            for plugin_id, registration in self._registered_plugins.items()
+            if registration.desktop_pet_buttons and not registration.config_error
+        }
+
+    async def desktop_pet_buttons(
+        self, plugin_id: str, button_id: Optional[str] = None, action_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._ensure_accepting_runner_rpc()
+        registration = self._registered_plugins.get(plugin_id)
+        if registration is None or not registration.desktop_pet_buttons:
+            raise ValueError("插件未注册桌宠按钮")
+        if button_id is not None and button_id not in {button.id for button in registration.desktop_pet_buttons}:
+            raise ValueError("未声明的桌宠按钮")
+        response = await self._rpc_server.send_request(
+            "plugin.desktop_pet_buttons", plugin_id=plugin_id,
+            payload={"button_id": button_id, "action_id": action_id}, timeout_ms=10000 if button_id else 4000,
+        )
+        if response.error:
+            raise ValueError(str(response.error.get("message", "桌宠按钮请求失败")))
+        if self._registered_plugins.get(plugin_id) is not registration:
+            raise ValueError("插件已发生卸载或重载，请重试")
+        snapshot = DesktopPetButtonSnapshot.model_validate(response.payload)
+        if snapshot.buttons != registration.desktop_pet_buttons:
+            raise ValueError("桌宠按钮声明发生变化，请重载插件")
+        return snapshot.model_dump()
+
     async def inspect_plugin_config(
         self,
         plugin_id: str,
@@ -1078,42 +1148,29 @@ class PluginRunnerSupervisor:
         except asyncio.TimeoutError as exc:
             raise TimeoutError(f"等待 Runner 连接超时（{timeout_sec}s）") from exc
 
-    async def _wait_for_runner_ready(self, timeout_sec: float = 30.0) -> RunnerReadyPayload:
-        """等待 Runner 完成启动初始化。
-
-        Args:
-            timeout_sec: 超时时间，单位秒。
-
-        Returns:
-            RunnerReadyPayload: Runner 上报的就绪信息。
-
-        Raises:
-            TimeoutError: 在超时时间内 Runner 未完成初始化。
-        """
-
-        async def wait_for_ready() -> RunnerReadyPayload:
-            """轮询等待 Runner 上报就绪。"""
-            while True:
-                if self._runner_ready_events.is_set():
-                    return self._runner_ready_payloads
-
-                if not self._running:
-                    raise RuntimeError("Supervisor 已停止，等待 Runner 就绪已取消")
-
-                if failure_reason := self._get_runner_startup_failure_reason():
-                    raise RuntimeError(f"等待 Runner 就绪失败: {failure_reason}")
-
-                if not self._rpc_server.is_connected:
-                    raise RuntimeError("等待 Runner 就绪失败: Runner RPC 连接已断开")
-
-                await asyncio.sleep(0.1)
-
-        try:
-            payload = await asyncio.wait_for(wait_for_ready(), timeout=timeout_sec)
-            self._logger.debug("Runner 已完成初始化并上报就绪")
-            return payload
-        except asyncio.TimeoutError as exc:
-            raise TimeoutError(f"等待 Runner 就绪超时（{timeout_sec}s）") from exc
+    async def _wait_for_runner_ready(self) -> RunnerReadyPayload:
+        """等待本轮加载结束，按等待阈值报告进度；真实进程/连接故障直接报错。"""
+        if self._runner_spawn_timeout <= 0:
+            raise ValueError("Runner 启动等待阈值必须大于 0")
+        self._startup_started_at = time.monotonic()
+        next_warning_at = self._startup_started_at + self._runner_spawn_timeout
+        while True:
+            if not self._running:
+                raise RuntimeError("Supervisor 已停止，等待 Runner 就绪已取消")
+            if failure_reason := self._get_runner_startup_failure_reason():
+                raise RuntimeError(f"等待 Runner 就绪失败: {failure_reason}")
+            if not self._rpc_server.is_connected:
+                raise RuntimeError("等待 Runner 就绪失败: Runner RPC 连接已断开")
+            if self._runner_ready_events.is_set():
+                self._startup_started_at = None
+                self._logger.debug("Runner 已完成初始化并上报就绪")
+                return self._runner_load_result
+            now = time.monotonic()
+            if now >= next_warning_at:
+                self._logger.warning(self.startup_load_reason)
+                self._notify_status_changed()
+                next_warning_at = now + self._runner_spawn_timeout
+            await asyncio.sleep(min(0.1, self._runner_spawn_timeout))
 
     def _register_internal_methods(self) -> None:
         """注册 Host 侧内部 RPC 方法。"""
@@ -1126,6 +1183,7 @@ class PluginRunnerSupervisor:
         self._rpc_server.register_method("plugin.unregister", self._handle_unregister_plugin)
         self._rpc_server.register_method("runner.log_batch", self._log_bridge.handle_log_batch)
         self._rpc_server.register_method("runner.ready", self._handle_runner_ready)
+        self._rpc_server.register_method("runner.startup_progress", self._handle_startup_progress)
 
     @staticmethod
     def _build_granted_capabilities(payload: BootstrapPluginPayload | RegisterPluginPayload) -> List[str]:
@@ -1298,6 +1356,7 @@ class PluginRunnerSupervisor:
         self._usage_loaded_plugin_ids.discard(payload.plugin_id)
         await self._unregister_all_message_gateway_drivers_for_plugin(payload.plugin_id)
         self._message_gateway_states.pop(payload.plugin_id, None)
+        self.runtime_status_badges.remove(payload.plugin_id)
         self._notify_status_changed()
 
         return envelope.make_response(
@@ -1870,6 +1929,17 @@ class PluginRunnerSupervisor:
         )
         return envelope.make_response(payload=response.model_dump())
 
+    async def _handle_startup_progress(self, envelope: Envelope) -> Envelope:
+        """整轮完成前发布逐插件结果；最终 ready 后不接受迟到的进度覆盖。"""
+        payload = RunnerStartupProgressPayload.model_validate(envelope.payload)
+        if not self._running or self._runner_ready_events.is_set() or self._startup_failure_reason:
+            return envelope.make_response(payload={"accepted": False})
+        self._runner_load_result = payload.completed_result()
+        self._startup_pending_plugins = set(payload.loading_plugins)
+        self._usage_loaded_plugin_ids = set(payload.loaded_plugins)
+        self._notify_status_changed()
+        return envelope.make_response(payload={"accepted": True})
+
     async def _handle_runner_ready(self, envelope: Envelope) -> Envelope:
         """处理 Runner 就绪通知。
 
@@ -1884,7 +1954,9 @@ class PluginRunnerSupervisor:
         except Exception as exc:
             return envelope.make_error_response(ErrorCode.E_BAD_PAYLOAD.value, str(exc))
 
-        self._runner_ready_payloads = payload
+        if not self._running or self._startup_failure_reason:
+            return envelope.make_response(payload={"accepted": False})
+        self._runner_load_result = payload
         self._usage_loaded_plugin_ids = set(payload.loaded_plugins)
         if payload.failed_plugins:
             failed_details = [
@@ -1897,6 +1969,8 @@ class PluginRunnerSupervisor:
             f"loaded={len(payload.loaded_plugins)} failed={len(payload.failed_plugins)} inactive={len(payload.inactive_plugins)}"
         )
         self._runner_ready_events.set()
+        self._startup_started_at = None
+        self._startup_pending_plugins.clear()
         self._notify_status_changed()
         return envelope.make_response(payload={"accepted": True})
 
@@ -1940,10 +2014,10 @@ class PluginRunnerSupervisor:
         spawn_started_at = time.monotonic()
         self._logger.info("开始拉起 Runner 子进程")
         self._runner_process = await asyncio.create_subprocess_exec(
-            sys.executable,
+            python_executable(),
             "-m",
             "src.plugin_runtime.runner.runner_main",
-            env=env,
+            env=python_environment(env),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -2226,7 +2300,7 @@ class PluginRunnerSupervisor:
                 return
             self._logger.error(f"插件自动恢复请求失败: {exc}", exc_info=True)
 
-        remaining = set(self._get_missing_recovery_plugins(self._runner_ready_payloads.loaded_plugins))
+        remaining = set(self._get_missing_recovery_plugins(self._runner_load_result.loaded_plugins))
         self._plugin_recovery_targets.intersection_update(remaining)
         for plugin_id in retry_plugins:
             if not self._running or is_shutdown_requested():
@@ -2259,7 +2333,7 @@ class PluginRunnerSupervisor:
             return False
 
         self._plugin_recovery_targets.update(
-            set(self.get_loaded_plugin_ids()) & set(self._runner_ready_payloads.loaded_plugins)
+            set(self.get_loaded_plugin_ids()) & set(self._runner_load_result.loaded_plugins)
         )
 
         self._restart_count += 1
@@ -2276,13 +2350,15 @@ class PluginRunnerSupervisor:
             if not self._running or is_shutdown_requested():
                 await self._shutdown_runner(reason="restart_cancelled")
                 return False
-            payload = await self._wait_for_runner_ready(timeout_sec=self._runner_spawn_timeout)
+            payload = await self._wait_for_runner_ready()
             if not self._running or is_shutdown_requested():
                 await self._shutdown_runner(reason="restart_cancelled")
                 return False
             recovered = self._validate_plugin_recovery(payload)
         except Exception as exc:
             await self._shutdown_runner(reason="restart_failed")
+            self._startup_failure_reason = f"{type(exc).__name__}: {exc}"
+            self._notify_status_changed()
             self._logger.error(f"Runner 重启失败: {exc}", exc_info=True)
             return False
 
@@ -2307,8 +2383,12 @@ class PluginRunnerSupervisor:
         self._registered_plugins.clear()
         self._usage_loaded_plugin_ids.clear()
         self._message_gateway_states.clear()
+        self.runtime_status_badges.clear()
         self._runner_ready_events = asyncio.Event()
-        self._runner_ready_payloads = RunnerReadyPayload()
+        self._runner_load_result = RunnerReadyPayload()
+        self._startup_pending_plugins.clear()
+        self._startup_started_at = None
+        self._startup_failure_reason = ""
         self._notify_status_changed()
         self._rpc_server.clear_handshake_state()
 

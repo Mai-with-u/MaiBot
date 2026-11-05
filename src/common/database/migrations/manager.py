@@ -5,6 +5,7 @@ from typing import Callable, Optional
 from sqlalchemy.engine import Connection, Engine
 
 from src.common.logger import get_logger
+from src.common.runtime_context import report_phase
 
 from .exceptions import DatabaseMigrationExecutionError
 from .models import DatabaseMigrationState, MigrationExecutionContext, MigrationPlan
@@ -119,6 +120,8 @@ class DatabaseMigrationManager:
             logger.info(
                 f"开始执行数据库迁移步骤: {step.name} ({step.version_from} -> {step.version_to})"
             )
+            # 大数据量迁移可能持续很久，宿主据此显示进度，而不是把它当成启动卡住。
+            report_phase("migrating", f"数据库迁移 {step_index}/{total_steps}：{step.name}")
             try:
                 with self.progress_reporter_factory() as progress_reporter:
                     if step.transactional:
@@ -159,6 +162,7 @@ class DatabaseMigrationManager:
             current_version = step.version_to
             logger.info(f"数据库迁移步骤执行完成: {step.name}，当前版本已更新为 {current_version}")
 
+        report_phase("starting", "数据库迁移完成")
         return migration_plan
 
     def _resolve_target_version(self, target_version: Optional[int]) -> int:

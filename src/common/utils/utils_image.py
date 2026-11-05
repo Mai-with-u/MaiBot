@@ -81,7 +81,7 @@ class ImageUtils:
 
         Args:
             gif_bytes (bytes): 输入的GIF图片字节数据
-            similarity_threshold (float): 判定帧相似的阈值 (MSE)，越小表示要求差异越大才算不同帧，默认1000.0
+            similarity_threshold (float): 判定帧相似的阈值 (MSE)，越大表示要求差异越大才算不同帧，默认1000.0
             max_frames (int): 最大抽取的帧数，默认15
         Returns:
             bytes: 拼接后的静态图像字节数据，格式为JPEG
@@ -102,14 +102,14 @@ class ImageUtils:
             for frame in ImageSequence.Iterator(gif_image):
                 # 确保是RGB格式方便比较
                 frame_rgb = frame.convert("RGB")
-                frame_np = np.array(frame_rgb)
+                frame_np = np.array(frame_rgb, dtype=np.float32)
 
                 if frame_index == 0:
                     selected_frames.append(frame_rgb.copy())
                     last_selected_frame_np = frame_np
                 else:
                     # 计算和上一张选中帧的差异（均方误差 MSE）
-                    mse = np.mean((frame_np - last_selected_frame_np) ** 2)
+                    mse = np.mean((frame_np - last_selected_frame_np) ** 2, dtype=np.float64)
                     # logger.debug(f"帧 {frame_index} 与上一选中帧的 MSE: {mse}")
                     if mse > similarity_threshold:
                         selected_frames.append(frame_rgb.copy())

@@ -127,6 +127,35 @@ async def test_update_api_providers_recovers_from_empty_model_config(
 
 
 @pytest.mark.asyncio
+async def test_model_page_saves_shared_definitions_without_local_copies(tmp_path, monkeypatch, reload_calls):
+    from src.config.shared_models import SHARED_MODELS_ENV
+    from src.host.model_migration import migrate_model_catalog
+    from src.host.registry import Registry
+
+    registry = Registry(tmp_path)
+    registry.create()
+    directory = tmp_path / 'instance'
+    config_directory = directory / 'config'
+    config_directory.mkdir(parents=True)
+    path = config_directory / 'model_config.toml'
+    _write_complete_model_config(path)
+    bot = registry.add_bot('bot', directory, owned=True, initialization='initialized')
+    migrate_model_catalog(tmp_path, [bot])
+    catalog = tmp_path / 'host' / 'model_catalog.toml'
+    monkeypatch.setenv(SHARED_MODELS_ENV, str(catalog))
+    monkeypatch.setattr(config_routes, 'CONFIG_DIR', config_directory)
+    effective = config_routes.get_model_config()['config']
+    old_revision = effective['_shared_catalog']['revision']
+    effective['api_providers'][0]['api_key'] = 'new-public-key'
+    result = await config_routes.update_model_config(effective, old_revision)
+    assert result['catalog_revision'] != old_revision
+    assert 'new-public-key' in catalog.read_text(encoding='utf-8')
+    local = tomlkit.parse(path.read_text(encoding='utf-8'))
+    assert 'models' not in local and 'api_providers' not in local
+    assert reload_calls == [['model']]
+
+
+@pytest.mark.asyncio
 async def test_update_model_config_reloads_runtime_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_calls: list[list[str]]
 ) -> None:
@@ -137,7 +166,8 @@ async def test_update_model_config_reloads_runtime_config(
 
     response = await config_routes.update_model_config(config_data)
 
-    assert response == {"success": True, "message": "配置已保存"}
+    assert response["success"] is True
+    assert response["catalog_revision"] == config_routes.catalog_revision()
     assert reload_calls == [["model"]]
 
 

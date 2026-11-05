@@ -59,7 +59,7 @@ async def control(plugin_id: str, capability: str, args: Dict[str, Any]) -> Dict
         request = SayRequest.model_validate(args)
     elif action == "set_thinking":
         request = ThinkingRequest.model_validate(args)
-    elif action in {"status", "show", "hide"}:
+    elif action in {"status", "show", "hide", "refresh_buttons"}:
         request = EmptyRequest.model_validate(args)
     else:
         raise ValueError(f"未知桌宠能力: {capability}")

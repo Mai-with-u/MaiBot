@@ -222,3 +222,68 @@ description = "外部 Planner 中断復帰。"
 display_name = "外部 Planner 継続実行"
 advanced = true
 description = "外部 Planner 継続実行。"
+
+[planner_reply_capabilities]
+display_name = "Planner reply capabilities"
+advanced = true
+description = "Available plugin reply capabilities for the current chat."
+
+[reply_cache]
+display_name = "返信キャッシュタスク"
+advanced = true
+description = "Planner の文脈末尾でクリエイティブ返信生成へ切り替えます。"
+
+[desktop_pet_proactive_wake]
+display_name = "デスクトップペットの定期的な思考"
+advanced = false
+description = "定期起動時に自主的な探索と必要に応じた交流を促す内部プロンプト。"
+
+[desktop_pet_screen_read]
+display_name = "デスクトップペットの画面読み取り"
+advanced = false
+description = "本機のメイン画面を一度確認、または継続的に変化を読み取ります。"
+
+[desktop_pet_todo_context]
+display_name = "主人のタスク常駐コンテキスト"
+advanced = false
+description = "毎ターン最新タスクを読み込み、条件成立による起動を判断します。"
+
+[desktop_pet_exploration]
+display_name = "デスクトップペットの探索"
+advanced = false
+description = "人が設定した目標に沿ってツールの組み合わせを探索し、実験の証拠がある候補図式を保存します。"
+
+[desktop_pet_exploration_reuse]
+display_name = "探索経験の日常利用"
+advanced = false
+description = "通常の主人チャットで必要に応じて探索の資源と経験を検索・再利用します。"
+
+[desktop_pet_thinking_caption]
+display_name = "デスクトップペットの思考キャプション"
+advanced = false
+description = "現在の実行段階を、短く楽しいデスクトップペットの状態文にまとめます。"
+
+[maisaka_expression_selector]
+display_name = "表現の選択"
+advanced = true
+description = "チャットの文脈に基づき、候補の中から今回の返信に合う表現を選びます。"
+
+[maisaka_replyer_document]
+display_name = "長文の執筆"
+advanced = false
+description = "自分の立場と口調で、完全な記事やコミュニティ投稿を書きます。"
+
+[maisaka_wait_reminder]
+display_name = "連続待機のリマインダー"
+advanced = true
+description = "待機が続いたとき、待機時間の延長か今回の思考の終了を促し、無限ループを防ぎます。"
+
+[reply_supplement]
+display_name = "返信補足の構成"
+advanced = true
+description = "本文の並行生成中に、引用・添付・送信順などの返信補足を構成します。"
+
+[reply_supplement_retry]
+display_name = "返信補足の再生成"
+advanced = true
+description = "返信補足の生成に失敗したとき、エラー内容に基づいて構成をやり直します。"

@@ -133,11 +133,12 @@ export function NavItem({
 
   const menuItemContent = (expanded = false) => (
     <>
-      <div className={cn(
-        'flex min-w-0 items-center',
-        sidebarOpen || expanded ? 'gap-3' : 'gap-3 lg:gap-0',
-        expanded && 'shrink-0'
-      )}>
+      <div
+        className={cn(
+          'flex min-w-0 items-center gap-3',
+          expanded ? 'shrink-0' : 'flex-1 overflow-hidden'
+        )}
+      >
         <span className="relative flex shrink-0">
           <Icon
             data-dashboard-nav-icon="true"
@@ -146,24 +147,31 @@ export function NavItem({
           />
           {promptWarning && <PromptWarningDot className="absolute -top-1 -right-1" />}
         </span>
-        <motion.span
-          data-dashboard-nav-label="true"
-          initial={expanded ? { opacity: 0 } : false}
-          animate={expanded ? { opacity: 1 } : undefined}
-          exit={expanded ? { opacity: 0 } : undefined}
-          transition={flyoutTransition}
-          className={cn(
-            'text-base font-medium whitespace-nowrap transition-opacity duration-150',
-            expanded
-              ? 'opacity-100'
-              : sidebarOpen
+        {expanded ? (
+          <motion.span
+            data-dashboard-nav-label="true"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={flyoutTransition}
+            className="text-base font-medium whitespace-nowrap opacity-100 transition-opacity duration-150"
+          >
+            {label}
+          </motion.span>
+        ) : (
+          <span
+            data-dashboard-nav-label="true"
+            className={cn(
+              'text-base font-medium whitespace-nowrap transition-opacity duration-150',
+              sidebarOpen
                 ? 'max-w-[160px] min-w-0 overflow-hidden text-ellipsis opacity-100'
-                : 'max-w-[200px] opacity-100 lg:max-w-0 lg:overflow-hidden lg:opacity-0'
-          )}
-          title={expanded ? undefined : label}
-        >
-          {label}
-        </motion.span>
+                : 'shrink-0 opacity-100 lg:opacity-0'
+            )}
+            title={label}
+          >
+            {label}
+          </span>
+        )}
       </div>
     </>
   )
@@ -172,10 +180,8 @@ export function NavItem({
     'relative flex h-[var(--layout-sidebar-nav-item-height)] items-center rounded-lg px-[var(--layout-sidebar-nav-item-padding-x)] py-0 transition-colors duration-150',
     'hover:bg-accent hover:text-accent-foreground',
     isActive ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground',
-    sidebarOpen &&
-      'lg:pl-[calc(var(--layout-sidebar-nav-icon-left)-var(--layout-sidebar-nav-padding-collapsed))]',
-    !sidebarOpen &&
-      'lg:w-[var(--layout-sidebar-nav-item-collapsed-width)] lg:justify-center lg:px-0'
+    'lg:pl-[calc(var(--layout-sidebar-nav-icon-left)-var(--layout-sidebar-nav-padding-collapsed))]',
+    !sidebarOpen && 'lg:w-[var(--layout-sidebar-nav-item-collapsed-width)] lg:pr-0'
   )
   const commonLinkProps = {
     'data-tour': item.tourId,

@@ -20,6 +20,7 @@ import { ImageGalleryProvider, type GalleryImage } from '@/components/image-gall
 import { useVirtualizerUnmountGuard } from '@/lib/use-virtualizer-unmount-guard'
 import { cn } from '@/lib/utils'
 
+import { useLocalBotAvatarUrl } from './local-bot-avatar'
 import { ChatScrollContext, type ChatScrollContextValue } from './ChatScrollContext'
 import { RenderMessageContent } from './MessageRenderer'
 import type { ChatMessage, ChatRuntimeStatus } from './types'
@@ -30,6 +31,7 @@ interface MessageListProps {
   botDisplayName: string
   /** 机器人 QQ 号；存在时通过 WebUI 头像缓存接口加载 bot 头像。 */
   botQq?: string
+  localBotAvatar?: boolean
   userName: string
   userAvatarPlatform?: string
   userAvatarId?: string
@@ -164,6 +166,7 @@ export function MessageList({
   isLoadingHistory,
   botDisplayName,
   botQq,
+  localBotAvatar = false,
   userName,
   userAvatarPlatform,
   userAvatarId,
@@ -396,7 +399,7 @@ export function MessageList({
   )
   const formatTime = (timestamp: number) => timeFormatter.format(new Date(timestamp * 1000))
 
-  const botAvatarUrl = useResolvedAvatarUrl('qq', botQq)
+  const botAvatarUrl = useLocalBotAvatarUrl(botQq, localBotAvatar)
   const userAvatarUrl = useResolvedAvatarUrl(
     userAvatarPlatform,
     userAvatarId,

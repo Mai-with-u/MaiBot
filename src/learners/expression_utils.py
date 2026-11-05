@@ -1,10 +1,9 @@
 from typing import Any, Dict, List, Optional, Tuple
 
-from json_repair import repair_json
 
-import json
 import re
 
+from src.common.llm_json import parse_llm_json
 from src.common.logger import get_logger
 from src.prompt.prompt_manager import prompt_manager
 from src.services.llm_service import LLMServiceClient
@@ -14,18 +13,6 @@ from .expression_style_utils import normalize_expression_style_for_learning
 logger = get_logger("expression_utils")
 
 judge_llm = LLMServiceClient(task_name="learner", request_type="expression.check")
-
-
-def _normalize_repair_json_result(repaired_result: Any) -> str:
-    """将 `repair_json` 的返回结果统一转换为字符串。"""
-    if isinstance(repaired_result, str):
-        return repaired_result
-    if isinstance(repaired_result, tuple) and repaired_result:
-        first_item = repaired_result[0]
-        if isinstance(first_item, str):
-            return first_item
-        return json.dumps(first_item, ensure_ascii=False)
-    raise TypeError(f"repair_json 返回了无法处理的结果类型: {type(repaired_result)}")
 
 
 def _strip_markdown_code_fence(text: str) -> str:
@@ -295,10 +282,9 @@ def is_single_char_jargon(content: str) -> bool:
 
 def _try_parse(text: str) -> Any:
     try:
-        return json.loads(text)
+        return parse_llm_json(text)
     except Exception:
         try:
-            repaired = _normalize_repair_json_result(repair_json(text))
-            return json.loads(repaired)
+            return parse_llm_json(text, repair=True)
         except Exception:
             return None

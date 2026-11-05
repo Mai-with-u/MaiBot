@@ -217,3 +217,68 @@ description = "外接 Planner 中断恢复。"
 display_name = "外接 Planner 继续执行"
 advanced = true
 description = "外接 Planner 继续执行。"
+
+[planner_reply_capabilities]
+display_name = "Planner reply capabilities"
+advanced = true
+description = "Available plugin reply capabilities for the current chat."
+
+[reply_cache]
+display_name = "回复缓存任务"
+advanced = true
+description = "在 Planner 上下文末尾切换到创意模式 Replyer 回复任务。"
+
+[desktop_pet_proactive_wake]
+display_name = "桌宠定期主动思考"
+advanced = false
+description = "桌宠周期唤醒时的内部任务提示，引导自主探索并选择是否交流。"
+
+[desktop_pet_screen_read]
+display_name = "桌宠桌面阅读"
+advanced = false
+description = "理解本机主屏截图，支持单次查看和持续关注画面变化。"
+
+[desktop_pet_todo_context]
+display_name = "主人待办常驻上下文"
+advanced = false
+description = "每轮读取最新待办，并指导条件触发判断。"
+
+[desktop_pet_exploration]
+display_name = "桌宠探索任务"
+advanced = false
+description = "人工设定目标后探索工具组合，并保存有实验证据的候选图式。"
+
+[desktop_pet_exploration_reuse]
+display_name = "探索经验日常复用"
+advanced = false
+description = "普通主人聊天按需检索并复用探索资源和经验。"
+
+[desktop_pet_thinking_caption]
+display_name = "桌宠思考状态"
+advanced = false
+description = "把当前运行阶段概括成一句简短风趣的桌宠状态文字。"
+
+[maisaka_expression_selector]
+display_name = "表达方式挑选"
+advanced = true
+description = "根据聊天上下文，从候选表达方式中挑选适合本次回复的若干条。"
+
+[maisaka_replyer_document]
+display_name = "长文写作"
+advanced = false
+description = "以自身身份和口吻撰写完整的文章或社区帖子。"
+
+[maisaka_wait_reminder]
+display_name = "连续等待提醒"
+advanced = true
+description = "连续多次等待后提醒延长等待或结束本轮思考，避免无限循环。"
+
+[reply_supplement]
+display_name = "回复补充编排"
+advanced = true
+description = "在正文并行生成时，编排引用、附件与发送顺序等回复补充内容。"
+
+[reply_supplement_retry]
+display_name = "回复补充重试"
+advanced = true
+description = "回复补充生成失败后，根据错误信息重新生成补充编排。"

@@ -46,6 +46,8 @@ function makeCallbacks() {
     onOpenProvidersTab: vi.fn(),
     onOpenModelsTab: vi.fn(),
     onOpenTasksTab: vi.fn(),
+    onOpenTaskEditor: vi.fn(),
+    onCloseTaskEditor: vi.fn(),
   }
 }
 
@@ -161,8 +163,18 @@ describe('useModelTour', () => {
     // 12 -> 19：切到模型分配标签页
     view.setState({ stepIndex: 19 })
     expect(cb.onOpenTasksTab).toHaveBeenCalledTimes(1)
+    expect(cb.onOpenTaskEditor).toHaveBeenCalledTimes(1)
+    cb.onOpenTaskEditor = vi.fn()
+    view.rerender()
+    expect(cb.onOpenTaskEditor).not.toHaveBeenCalled()
     // 编辑对话框不应被关闭（19 不小于 12）
     expect(cb.onCloseEditDialog).not.toHaveBeenCalled()
+    view.setState({ stepIndex: 18 })
+    expect(cb.onCloseTaskEditor).toHaveBeenCalledTimes(1)
+    view.setState({ stepIndex: 19 })
+    expect(cb.onOpenTaskEditor).toHaveBeenCalledTimes(1)
+    view.setState({ isRunning: false, stepIndex: 0 })
+    expect(cb.onCloseTaskEditor).toHaveBeenCalledTimes(2)
   })
 
   it('步骤回退到编辑对话框区间之前时关闭编辑对话框', () => {
@@ -193,7 +205,7 @@ describe('useModelTour', () => {
     // jsdom 中元素包围盒全为 0，点击坐标 (0,0) 会被判定为命中目标
     vi.useFakeTimers()
     const view = setup(runningState(2))
-    addTourElement('add-provider-button')
+    addTourElement('add-llm-provider-item')
     const outside = document.createElement('div')
     document.body.appendChild(outside)
 

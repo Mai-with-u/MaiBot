@@ -331,7 +331,7 @@ class MemoryIngestService(KernelServiceBase):
                                                    message_ids=source["message_ids"])
         external_id = f"{kwargs['external_id']}:{source['observation_id']}"
         receipt = await asyncio.to_thread(self.metadata_store.get_external_memory_ref, external_id)
-        dedup = FactDeduplicator(self.metadata_store, self.embedding_manager, self.vector_store)
+        dedup = FactDeduplicator(self.metadata_store, self.embedding_manager, self._paragraph_store())
         if receipt:
             saved = receipt["metadata"]
             if saved.get("input_text") != content or saved.get("person_id") != person_id:

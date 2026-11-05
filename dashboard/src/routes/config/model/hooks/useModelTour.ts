@@ -26,11 +26,16 @@ interface UseModelTourOptions {
   onOpenModelsTab?: () => void
   /** 切换到模型分配标签页 */
   onOpenTasksTab?: () => void
+  /** 打开或关闭引导使用的任务编辑抽屉 */
+  onOpenTaskEditor?: () => void
+  onCloseTaskEditor?: () => void
 }
 
 interface UseModelTourReturn {
   /** 开始引导 */
   startTour: () => void
+  /** 结束引导并关闭引导控制的抽屉 */
+  stopTour: () => void
   /** Tour 是否正在运行 */
   isRunning: boolean
   /** 当前步骤索引 */
@@ -46,10 +51,13 @@ export function useModelTour(options: UseModelTourOptions = {}): UseModelTourRet
     onOpenProvidersTab,
     onOpenModelsTab,
     onOpenTasksTab,
+    onOpenTaskEditor,
+    onCloseTaskEditor,
   } = options
   const navigate = useNavigate()
-  const { registerTour, startTour: startTourFn, state: tourState, goToStep } = useTour()
+  const { registerTour, startTour: startTourFn, stopTour, state: tourState, goToStep } = useTour()
   const prevTourStepRef = useRef(tourState.stepIndex)
+  const taskEditorActiveRef = useRef(false)
 
   const didClickTourTarget = useCallback((event: MouseEvent, selector: string) => {
     const target = event.target instanceof Element ? event.target : null
@@ -87,6 +95,13 @@ export function useModelTour(options: UseModelTourOptions = {}): UseModelTourRet
   }, [tourState.stepIndex, tourState.activeTourId, tourState.isRunning, navigate])
 
   useEffect(() => {
+    const taskEditorActive = tourState.activeTourId === MODEL_ASSIGNMENT_TOUR_ID && tourState.isRunning && tourState.stepIndex === 19
+    if (taskEditorActive !== taskEditorActiveRef.current) {
+      taskEditorActiveRef.current = taskEditorActive
+      if (taskEditorActive) onOpenTaskEditor?.()
+      else onCloseTaskEditor?.()
+    }
+
     if (tourState.activeTourId !== MODEL_ASSIGNMENT_TOUR_ID || !tourState.isRunning) {
       return
     }
@@ -135,6 +150,8 @@ export function useModelTour(options: UseModelTourOptions = {}): UseModelTourRet
     onOpenProvidersTab,
     onOpenModelsTab,
     onOpenTasksTab,
+    onOpenTaskEditor,
+    onCloseTaskEditor,
   ])
 
   useEffect(() => {
@@ -207,6 +224,7 @@ export function useModelTour(options: UseModelTourOptions = {}): UseModelTourRet
 
   return {
     startTour: handleStartTour,
+    stopTour,
     isRunning: tourState.isRunning && tourState.activeTourId === MODEL_ASSIGNMENT_TOUR_ID,
     stepIndex: tourState.stepIndex,
   }

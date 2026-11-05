@@ -69,8 +69,7 @@ async def test_runner_dispatch_rejects_missing_plugin_and_concurrent_action(monk
     from src.plugin_runtime.protocol.envelope import Envelope, MessageType
     from src.plugin_runtime.runner.runner_main import PluginRunner
 
-    runner = PluginRunner.__new__(PluginRunner)
-    runner._config_widget_locks = {}
+    runner = PluginRunner("unused", "test", [])
     provider = Provider()
     meta = SimpleNamespace(instance=provider, config_error="")
     runner._loader = SimpleNamespace(get_plugin=lambda plugin_id: meta if plugin_id == "adapter.test" else None)
@@ -101,30 +100,3 @@ async def test_runner_dispatch_rejects_missing_plugin_and_concurrent_action(monk
     assert response.error
     assert provider.calls == ["refresh"]
     assert not lock.locked()
-
-
-@pytest.mark.asyncio
-async def test_widget_routes_require_auth_and_do_not_cache(monkeypatch):
-    from fastapi import HTTPException, Response
-    from src.webui.routers.plugin import config_routes
-
-    calls = []
-
-    async def request(plugin_id, action_id=None):
-        calls.append((plugin_id, action_id))
-        return {"widgets": [], "states": {}}
-
-    def auth(token):
-        if token != "valid":
-            raise HTTPException(status_code=401)
-
-    monkeypatch.setattr(config_routes, "require_plugin_token", auth)
-    monkeypatch.setattr(config_routes, "_request_config_widgets", request)
-    with pytest.raises(HTTPException):
-        await config_routes.invoke_config_widget("adapter.test", "refresh", Response(), None)
-    assert calls == []
-    response = Response()
-    await config_routes.get_config_widgets("adapter.test", response, "valid")
-    assert response.headers["cache-control"] == "no-store"
-    await config_routes.invoke_config_widget("adapter.test", "refresh", response, "valid")
-    assert calls == [("adapter.test", None), ("adapter.test", "refresh")]

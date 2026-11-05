@@ -186,9 +186,10 @@ export async function updateBotConfigRaw(rawContent: string): Promise<Record<str
  * 更新模型配置
  */
 export async function updateModelConfig(
-  config: Record<string, unknown>
+  config: Record<string, unknown>,
+  catalogRevision?: string
 ): Promise<Record<string, unknown>> {
-  const result = await backendApi.post<Record<string, unknown>>(`${API_BASE}/model`, {
+  const result = await backendApi.post<Record<string, unknown>>(`${API_BASE}/model${catalogRevision ? `?catalog_revision=${encodeURIComponent(catalogRevision)}` : ""}`, {
     body: config,
     errorMessage: '更新配置失败',
   })
@@ -309,10 +310,11 @@ export async function updateBotConfigSection(
  */
 export async function updateModelConfigSection(
   sectionName: string,
-  sectionData: unknown
+  sectionData: unknown,
+  catalogRevision?: string
 ): Promise<Record<string, unknown>> {
   const result = await backendApi.post<Record<string, unknown>>(
-    `${API_BASE}/model/section/${sectionName}`,
+    `${API_BASE}/model/section/${sectionName}${catalogRevision ? `?catalog_revision=${encodeURIComponent(catalogRevision)}` : ""}`,
     {
       body: sectionData,
       errorMessage: '更新配置失败',
@@ -464,5 +466,35 @@ export async function testModelCapability(modelName: string): Promise<ModelTestR
   return backendApi.post<ModelTestResult>('/api/webui/models/test-model', {
     body: { model_name: modelName },
     errorMessage: '测试模型能力失败',
+  })
+}
+
+export type ThinkingProbeMode = 'thinking_type' | 'enable_thinking' | 'reasoning_effort_nested' | 'reasoning_effort'
+
+export interface ThinkingProbeResult {
+  status: 'matched' | 'inconclusive'
+  matches: ThinkingProbeMode[]
+  attempts: {
+    mode: ThinkingProbeMode
+    status: 'matched' | 'inconclusive' | 'rejected'
+    message: string
+  }[]
+  message: string
+}
+
+/** 使用当前模型草稿测试，凭据由后端从已保存的服务商配置读取。 */
+export async function probeModelThinking(
+  draft: {
+    api_provider: string
+    model_identifier: string
+    extra_params: Record<string, unknown>
+    force_stream_mode: boolean
+  },
+  signal?: AbortSignal,
+): Promise<ThinkingProbeResult> {
+  return backendApi.post<ThinkingProbeResult>('/api/webui/models/probe-thinking', {
+    body: draft,
+    signal,
+    errorMessage: '测试思考参数失败',
   })
 }

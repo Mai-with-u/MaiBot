@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from src.chat.message_receive.message import SessionMessage
 from src.common.data_models.llm_service_data_models import LLMGenerationOptions
+from src.config.model_configs import ModelInfo
 from src.llm_models.payload_content.context_item import ContextItem, ContextItemBuilder, RoleType
 from src.maisaka.context.messages import LLMContextMessage
 
@@ -18,8 +19,8 @@ class DocumentReplyGenerator(MaisakaReplyGenerator):
     def _build_generation_options(self, model_name: Optional[str]) -> LLMGenerationOptions:
         return super()._build_generation_options(model_name or self.document_model_name or None)
 
-    def _uses_retro_prompt(self) -> bool:
-        return False
+    def _resolve_prompt_profile(self, model_info: Optional[ModelInfo] = None) -> str:
+        return "document"
 
     def _build_request_messages(
         self,
@@ -32,6 +33,7 @@ class DocumentReplyGenerator(MaisakaReplyGenerator):
         enable_visual_message: bool = False,
         reply_tool_args: Optional[Dict[str, Any]] = None,
         think_level: int = 1,
+        prompt_profile: Optional[str] = None,
     ) -> List[ContextItem]:
         """写作不套用聊天/复古短回复模板，材料和最终输出要求独立传入。"""
         del chat_history, reply_message, stream_id, enable_visual_message, think_level

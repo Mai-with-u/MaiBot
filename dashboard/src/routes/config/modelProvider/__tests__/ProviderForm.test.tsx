@@ -347,9 +347,11 @@ describe('ProviderForm 保存流程', () => {
     const user = userEvent.setup()
     const { onSave } = renderForm({ editingProvider: makeProvider(), editingIndex: 0 })
 
-    expect(screen.queryByText('默认请求 Headers')).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '高级配置' }))
-    expect(screen.getByText('默认请求 Headers')).toBeInTheDocument()
+    const advancedToggle = screen.getByRole('button', { name: '高级配置' })
+    expect(advancedToggle).toHaveAttribute('aria-expanded', 'false')
+    await user.click(advancedToggle)
+    expect(advancedToggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('请求头')).toBeInTheDocument()
 
     await user.click(screen.getByRole('tab', { name: 'JSON 编辑' }))
     const editor = screen.getByRole('textbox', { name: '' })
@@ -397,7 +399,7 @@ describe('ProviderForm 保存流程', () => {
     await user.clear(retryInput)
     await user.type(retryInput, '5')
     // 清空超时输入框，应回传 null（由上层 cleanProviderData 填默认值）
-    await user.clear(screen.getByLabelText('超时(秒)'))
+    await user.clear(screen.getByLabelText('超时'))
 
     await user.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() =>
@@ -514,7 +516,7 @@ describe('ProviderForm 字段编辑补全', () => {
     expect(screen.queryByText('请输入 API Key')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '高级配置' }))
-    const intervalInput = screen.getByLabelText('重试间隔(秒)')
+    const intervalInput = screen.getByLabelText('重试间隔')
     await user.clear(intervalInput)
     await user.type(intervalInput, '7')
 
@@ -546,9 +548,9 @@ describe('ProviderForm 字段编辑补全', () => {
     fireEvent.change(screen.getByLabelText('API Key *'), { target: { value: 'sk-nope' } })
     await user.click(screen.getByRole('button', { name: '高级配置' }))
     fireEvent.change(screen.getByLabelText('最大重试'), { target: { value: '3' } })
-    fireEvent.change(screen.getByLabelText('超时(秒)'), { target: { value: '9' } })
-    fireEvent.change(screen.getByLabelText('重试间隔(秒)'), { target: { value: '' } })
-    fireEvent.change(screen.getByLabelText('重试间隔(秒)'), { target: { value: '4' } })
+    fireEvent.change(screen.getByLabelText('超时'), { target: { value: '9' } })
+    fireEvent.change(screen.getByLabelText('重试间隔'), { target: { value: '' } })
+    fireEvent.change(screen.getByLabelText('重试间隔'), { target: { value: '4' } })
 
     await user.click(screen.getByRole('button', { name: '使用自定义提供商' }))
     await user.click(screen.getByRole('combobox', { name: '客户端类型' }))
