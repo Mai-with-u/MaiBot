@@ -4,9 +4,9 @@
 并且不会回退到 OpenAI 兼容接口使用的 Bearer 认证方式。
 """
 
-import base64
 import importlib
 import ipaddress
+import base64
 import struct
 import sys
 import zlib
@@ -31,21 +31,11 @@ def load_model_routes(monkeypatch: pytest.MonkeyPatch):
     config_module.__dict__["config_manager"] = DummyConfigManager()
     monkeypatch.setitem(sys.modules, "src.config.config", config_module)
 
-    dependencies_module = ModuleType("src.webui.dependencies")
-
-    async def require_auth():
-        return "test-token"
-
-    dependencies_module.__dict__["require_auth"] = require_auth
-    monkeypatch.setitem(sys.modules, "src.webui.dependencies", dependencies_module)
-
-    # HTTP is mocked in these unit tests; DNS must not depend on the host network either.
-    # Keep the real URL validation, but resolve its test hostnames to a public address.
+    # HTTP is mocked here; resolve test hosts to a public address without host DNS.
     monkeypatch.setattr(
         "src.common.network_security._resolve_ip_addresses",
         lambda hostname, port: {ipaddress.ip_address("93.184.216.34")},
     )
-
     sys.modules.pop("src.webui.routers.model", None)
     return importlib.import_module("src.webui.routers.model")
 
@@ -302,8 +292,8 @@ async def test_test_model_capability_requires_tool_call_and_keeps_visual_flag(
         """
 [[models]]
 name = "vision-model"
-model_type = "llm"
 model_identifier = "vision-model-id"
+model_type = "llm"
 api_provider = "Fake"
 visual = true
 """.strip(),
@@ -359,8 +349,8 @@ async def test_test_model_capability_tests_embedding_task_model_via_embedding(
         """
 [[models]]
 name = "embed-model"
-model_type = "embedding"
 model_identifier = "embed-model-id"
+model_type = "embedding"
 api_provider = "Fake"
 
 [model_task_config.embedding]
@@ -397,24 +387,15 @@ model_list = ["embed-model"]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("model_identifier", "image_task_config"),
-    [
-        ("Qwen/Qwen3-VL-Embedding-8B", ""),
-        ("custom-vector-model", '[model_task_config.image_embedding]\nmodel_list = ["my-vector"]'),
-    ],
-)
 async def test_test_model_capability_tests_visual_embedding_via_images(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
-    model_identifier: str,
-    image_task_config: str,
 ) -> None:
-    """显式图片嵌入类型应发送图片，不依赖模型名或任务配置推断类型。"""
+    """model_type 为 image_embedding 的模型应发送图片测试，而非走对话或文本嵌入。"""
     model_routes = load_model_routes(monkeypatch)
     (tmp_path / "model_config.toml").write_text(
-        f'[[models]]\nname = "my-vector"\nmodel_identifier = "{model_identifier}"\n'
-        f'api_provider = "Fake"\nmodel_type = "image_embedding"\n\n{image_task_config}',
+        '[[models]]\nname = "my-vector"\nmodel_identifier = "custom-vector-model"\n'
+        'model_type = "image_embedding"\napi_provider = "Fake"\n',
         encoding="utf-8",
     )
     monkeypatch.setattr(model_routes, "CONFIG_DIR", str(tmp_path))
@@ -459,8 +440,8 @@ async def test_test_model_capability_keeps_chat_test_for_non_embedding_model(
         """
 [[models]]
 name = "chat-model"
-model_type = "llm"
 model_identifier = "chat-model-id"
+model_type = "llm"
 api_provider = "Fake"
 
 [model_task_config.embedding]

@@ -108,7 +108,7 @@ async def test_install_falls_back_to_pypi_when_aliyun_fails(tmp_path: Path, monk
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    succeeded, error_message = await PluginDependencyPipeline(project_root=tmp_path)._install_requirements(
+    succeeded, error_message = await PluginDependencyPipeline(project_root=tmp_path).install_requirements(
         [_requirement()]
     )
 
@@ -129,7 +129,7 @@ async def test_install_stops_at_aliyun_when_it_succeeds(tmp_path: Path, monkeypa
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    succeeded, _ = await PluginDependencyPipeline(project_root=tmp_path)._install_requirements([_requirement()])
+    succeeded, _ = await PluginDependencyPipeline(project_root=tmp_path).install_requirements([_requirement()])
 
     assert succeeded is True
     assert attempted_indexes == [ALIYUN]
@@ -144,9 +144,28 @@ async def test_install_reports_every_index_error_when_all_fail(tmp_path: Path, m
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    succeeded, error_message = await PluginDependencyPipeline(project_root=tmp_path)._install_requirements(
+    succeeded, error_message = await PluginDependencyPipeline(project_root=tmp_path).install_requirements(
         [_requirement()]
     )
 
     assert succeeded is False
     assert error_message == f"[{ALIYUN}] failed on {ALIYUN}；[{PYPI}] failed on {PYPI}"
+
+
+@pytest.mark.asyncio
+async def test_resolution_is_dry_run_and_includes_host_requirements(tmp_path, monkeypatch):
+    _write_pyproject(tmp_path)
+    path = tmp_path / 'pyproject.toml'
+    path.write_text(path.read_text(encoding='utf-8').replace('dependencies = []', 'dependencies = ["host-core>=2"]'), encoding='utf-8')
+    monkeypatch.setattr('shutil.which', lambda name: 'uv')
+    calls = []
+    def run(command, **kwargs):
+        assert '--dry-run' in command
+        assert 'host-core>=2' in command
+        constraints = Path(command[command.index('--constraint') + 1]).read_text(encoding='utf-8')
+        assert 'pillow==13.0.0' in constraints
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, '', '')
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert await PluginDependencyPipeline(tmp_path).resolve_requirements([_requirement()]) == (True, '')
+    assert len(calls) == 1

@@ -407,6 +407,14 @@ async def _broadcast(event: str, data: Dict[str, Any]) -> None:
     try:
         from src.webui.routers.websocket.manager import websocket_manager
 
+        if event in {"stage.status", "stage.removed"}:
+            from src.common.runtime_loop import get_main_loop
+            from src.desktop_pet.service import desktop_pet_service
+
+            loop = get_main_loop()
+            if loop is not None and not loop.is_closed():
+                loop.call_soon_threadsafe(desktop_pet_service.observe_stage, dict(data))
+
         data = _enrich_session_identity(data)
         focus_payload = _focus_message_payload(event, data)
         # 写库分配 event_id 与广播须在同一临界区内完成，保证前端按 event_id 递增收到事件；

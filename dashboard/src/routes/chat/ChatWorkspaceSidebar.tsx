@@ -15,6 +15,7 @@ import type { SessionInfo, StageStatusInfo } from '@/routes/monitor/use-maisaka-
 import { StageStatusLabel } from '@/routes/monitor/StageStatusLabel'
 import { getStageStatusLight } from '@/routes/monitor/stage-status-light'
 
+import { useChatTabAvatarUrl } from './local-bot-avatar'
 import { isFocusFlowId } from './observed-sessions'
 import type { ChatMessage, ChatTab, ObservedMessagePreview } from './types'
 import { getChatTabDisplayName } from './utils'
@@ -60,10 +61,7 @@ const ConversationItem = memo(function ConversationItem({
   const lastMessage = tab.messages[tab.messages.length - 1]
   const preview = getMessagePreview(lastMessage, t('chat.sidebar.emptyPreview'))
   const displayName = getChatTabDisplayName(tab, t('chat.botNameFallback'))
-  const avatarUrl = useResolvedAvatarUrl(
-    isVirtual ? tab.virtualConfig?.platform : 'qq',
-    isVirtual ? tab.virtualConfig?.userId : tab.sessionInfo.bot_qq
-  )
+  const avatarUrl = useChatTabAvatarUrl(tab)
   return (
     <ConversationListItem
       title={displayName}

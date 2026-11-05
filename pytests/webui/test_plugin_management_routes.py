@@ -74,8 +74,6 @@ def client(tmp_path, monkeypatch) -> TestClient:
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(management_module, "require_plugin_token", lambda _: "ok")
-    monkeypatch.setattr(icon_routes_module, "require_plugin_token", lambda _: "ok")
     monkeypatch.setattr(support_module, "get_plugins_dir", lambda: plugins_dir)
 
     manager._plugin_catalog._roots = {plugins_dir: False}
@@ -180,7 +178,7 @@ def test_installed_plugins_expose_duplicate_id_failure_reason(client: TestClient
 def test_disabled_plugin_ignores_scan_failures_but_preserves_live_state(
     client: TestClient, monkeypatch, runtime_status: str, expected: str,
 ) -> None:
-    plugin_path = support_module.resolve_installed_plugin_path("test.demo")
+    plugin_path = support_module.resolve_mutable_plugin_path("test.demo")
     (plugin_path / "config.toml").write_text("[plugin]\nenabled = false\n", encoding="utf-8")
 
     async def snapshot():
@@ -212,7 +210,7 @@ def test_installed_plugins_expose_offline_adapter_status(client: TestClient, mon
 
 
 def test_toggle_plugin_applies_enabled_state_before_returning(client: TestClient, monkeypatch) -> None:
-    plugin_path = support_module.resolve_installed_plugin_path("test.demo")
+    plugin_path = support_module.resolve_mutable_plugin_path("test.demo")
     assert plugin_path is not None
     (plugin_path / "config.toml").write_text("[plugin]\nenabled = false\n", encoding="utf-8")
     waited_states: List[Tuple[str, bool]] = []
@@ -228,7 +226,6 @@ def test_toggle_plugin_applies_enabled_state_before_returning(client: TestClient
 
     monkeypatch.setattr(config_routes_module, "_inspect_plugin_config_via_runtime", inspect_config)
     monkeypatch.setattr(integration_module.get_plugin_runtime_manager(), "apply_plugin_config", fake_apply_config)
-    monkeypatch.setattr(config_routes_module, "require_plugin_token", lambda _: "ok")
 
     app = FastAPI()
     app.include_router(config_routes_module.router, prefix="/api/webui/plugins")
@@ -258,7 +255,6 @@ def test_toggle_exposes_runtime_failure_instead_of_reporting_success(client: Tes
         await write_config()
         raise RuntimeError("模拟插件加载失败")
     monkeypatch.setattr(integration_module.get_plugin_runtime_manager(), "apply_plugin_config", fail)
-    monkeypatch.setattr(config_routes_module, "require_plugin_token", lambda _: "ok")
     app = FastAPI()
     app.include_router(config_routes_module.router, prefix="/api/webui/plugins")
     response = TestClient(app).post("/api/webui/plugins/config/test.demo/toggle")
@@ -386,7 +382,6 @@ def config_model_plugin(client: TestClient, monkeypatch) -> Generator[Tuple[Test
 
     monkeypatch.setattr(config_routes_module, "_inspect_plugin_config_via_runtime", inspect_via_runner)
     monkeypatch.setattr(config_routes_module, "_validate_plugin_config_via_runtime", validate_via_runner)
-    monkeypatch.setattr(config_routes_module, "require_plugin_token", lambda _: "ok")
 
     app = FastAPI()
     app.include_router(config_routes_module.router, prefix="/api/webui/plugins")
@@ -443,22 +438,8 @@ def test_saving_config_keeps_config_model_plugin_disabled(config_model_plugin: T
     assert saved_config["greeting"] == {"message": "hello"}
 
 
-def test_resolve_installed_plugin_path_falls_back_to_manifest_id(client: TestClient):
-    plugin_path = support_module.resolve_installed_plugin_path("test.demo")
-
-    assert plugin_path is not None
-    assert plugin_path.name == "demo_plugin"
-
-
-def test_resolve_installed_plugin_path_accepts_manifest_id_case_mismatch(client: TestClient):
-    plugin_path = support_module.resolve_installed_plugin_path("Test.Demo")
-
-    assert plugin_path is not None
-    assert plugin_path.name == "demo_plugin"
-
-
 def test_get_plugin_icon_serves_manifest_declared_local_icon(client: TestClient):
-    plugin_path = support_module.resolve_installed_plugin_path("test.demo")
+    plugin_path = support_module.resolve_mutable_plugin_path("test.demo")
     assert plugin_path is not None
     assets_dir = plugin_path / "assets"
     assets_dir.mkdir()
@@ -483,7 +464,7 @@ def test_get_plugin_icon_serves_manifest_declared_local_icon(client: TestClient)
 
 
 def test_get_plugin_icon_rejects_manifest_declared_parent_path(client: TestClient):
-    plugin_path = support_module.resolve_installed_plugin_path("test.demo")
+    plugin_path = support_module.resolve_mutable_plugin_path("test.demo")
     assert plugin_path is not None
     manifest = json.loads((plugin_path / "_manifest.json").read_text(encoding="utf-8"))
     manifest["display"] = {
@@ -678,7 +659,7 @@ def test_clone_repository_cleans_partial_directory_on_git_failure(tmp_path, monk
 def test_uninstall_plugin_releases_runtime_before_delete(client: TestClient, monkeypatch):
     from src.plugin_runtime import integration as integration_module
 
-    plugin_path = support_module.resolve_installed_plugin_path("test.demo")
+    plugin_path = support_module.resolve_mutable_plugin_path("test.demo")
     assert plugin_path is not None
     reload_calls = []
 
@@ -701,7 +682,7 @@ def test_uninstall_plugin_releases_runtime_before_delete(client: TestClient, mon
 
 
 def test_update_non_git_plugin_reinstalls_and_preserves_known_user_files(client: TestClient, monkeypatch):
-    plugin_path = support_module.resolve_installed_plugin_path("test.demo")
+    plugin_path = support_module.resolve_mutable_plugin_path("test.demo")
     assert plugin_path is not None
     (plugin_path / "plugin.py").write_text("old source", encoding="utf-8")
     (plugin_path / "config.toml").write_text("[plugin]\nenabled = false\n", encoding="utf-8")
@@ -758,7 +739,7 @@ def test_update_non_git_plugin_reinstalls_and_preserves_known_user_files(client:
 
 
 def test_update_non_git_plugin_rolls_back_when_manifest_id_mismatches(client: TestClient, monkeypatch):
-    plugin_path = support_module.resolve_installed_plugin_path("test.demo")
+    plugin_path = support_module.resolve_mutable_plugin_path("test.demo")
     assert plugin_path is not None
     (plugin_path / "plugin.py").write_text("old source", encoding="utf-8")
     (plugin_path / "custom.json").write_text('{"user": true}', encoding="utf-8")
@@ -844,7 +825,7 @@ def test_update_disconnect_cancels_worker_and_waits_for_cleanup(monkeypatch) -> 
         cleaned = asyncio.Event()
         progress = []
 
-        async def worker(request, token):
+        async def worker(request):
             started.set()
             try:
                 await asyncio.Event().wait()
@@ -860,14 +841,13 @@ def test_update_disconnect_cancels_worker_and_waits_for_cleanup(monkeypatch) -> 
         async def record_progress(**kwargs):
             progress.append(kwargs)
 
-        monkeypatch.setattr(management_module, "require_plugin_token", lambda _: "ok")
         monkeypatch.setattr(management_module, "_perform_update_plugin", worker)
         monkeypatch.setattr(management_module, "update_progress", record_progress)
         request = management_module.UpdatePluginRequest(
             plugin_id="test.demo", repository_url="https://github.com/test/demo", branch="main",
         )
         with pytest.raises(management_module.HTTPException) as error:
-            await management_module.update_plugin(request, "ok", DisconnectedRequest())
+            await management_module.update_plugin(request, DisconnectedRequest())
         assert error.value.status_code == 499
         assert cleaned.is_set()
         assert progress[-1]["message"] == "更新已取消"
@@ -932,3 +912,29 @@ def test_cancel_non_git_update_preserves_plugin_and_removes_candidate(tmp_path, 
         assert not candidate_paths[0].exists()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["update", "uninstall", "install"])
+def test_builtin_plugins_are_visible_but_cannot_be_replaced_or_deleted(client, tmp_path, monkeypatch, operation):
+    package_root = tmp_path / "src"
+    builtin_root = package_root / "plugins" / "built_in"
+    plugin_path = builtin_root / "management"
+    plugin_path.mkdir(parents=True)
+    manifest = {"id": "builtin.plugin-management", "name": "Management", "version": "1.0.0"}
+    manifest_path = plugin_path / "_manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr(support_module, "PACKAGE_ROOT", package_root)
+    assert support_module.find_plugin_path_by_id(manifest["id"]) == plugin_path
+    assert support_module.find_plugin_path_by_id("BUILTIN.PLUGIN-MANAGEMENT") == plugin_path
+    manager = integration_module.get_plugin_runtime_manager()
+    manager._plugin_catalog._roots[builtin_root] = True
+    asyncio.run(manager._plugin_catalog.refresh())
+    listing = client.get("/api/webui/plugins/installed").json()["plugins"]
+    assert next(p for p in listing if p["id"] == manifest["id"])["builtin"] is True
+    payload = {"plugin_id": manifest["id"]}
+    if operation == "install":
+        payload["repository_url"] = "https://github.com/example/demo"
+    response = client.post(f"/api/webui/plugins/{operation}", json=payload)
+    assert response.status_code == 403, response.text
+    assert "内置插件" in response.json()["detail"]
+    assert json.loads(manifest_path.read_text(encoding="utf-8")) == manifest

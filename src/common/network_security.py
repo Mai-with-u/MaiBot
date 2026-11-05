@@ -68,6 +68,12 @@ def _should_enforce_public_network(require_public_network: bool | None) -> bool:
     if require_public_network is not None:
         return require_public_network
 
+    from src.config.shared_settings import read_shared_webui
+
+    shared = read_shared_webui()
+    if shared is not None:
+        return shared["enforce_public_outbound_url"]
+
     try:
         from src.config.config import global_config
 

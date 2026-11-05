@@ -12,6 +12,9 @@ const replacements = [
   ['https://registry.npmmirror.com/', 'https://registry.npmjs.org/'],
 ];
 for (const filename of ['bun.lock', 'bunfig.toml']) {
+  if (filename === 'bunfig.toml' && !fs.existsSync(filename)) {
+    continue;
+  }
   const original = fs.readFileSync(filename, 'utf8');
   let updated = original;
   for (const [mirror, registry] of replacements) {

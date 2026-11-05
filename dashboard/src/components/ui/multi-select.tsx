@@ -42,6 +42,7 @@ import { CSS } from '@dnd-kit/utilities'
 export interface MultiSelectOption {
   label: string
   value: string
+  group?: string
 }
 
 interface MultiSelectProps {
@@ -170,6 +171,15 @@ export function MultiSelect({
   singleSelect = false,
 }: MultiSelectProps) {
   const [open, setOpen] = React.useState(false)
+  const optionGroups = React.useMemo(() => {
+    const groups = new Map<string | undefined, MultiSelectOption[]>()
+    for (const option of options) {
+      const group = groups.get(option.group)
+      if (group) group.push(option)
+      else groups.set(option.group, [option])
+    }
+    return Array.from(groups)
+  }, [options])
 
   React.useEffect(() => {
     if (disabled && open) {
@@ -279,32 +289,34 @@ export function MultiSelect({
           <CommandInput placeholder="搜索..." className="h-9" />
           <CommandList>
             <CommandEmpty>{emptyText}</CommandEmpty>
-            <CommandGroup>
-              {options.map((option) => {
-                const isSelected = selected.includes(option.value)
-                return (
-                  <CommandItem
-                    key={option.value}
-                    value={option.value}
-                    keywords={[option.label]}
-                    disabled={disabled}
-                    onSelect={() => handleSelect(option.value)}
-                  >
-                    <div
-                      className={cn(
-                        'mr-2 flex h-4 w-4 items-center justify-center rounded-sm border border-primary',
-                        isSelected
-                          ? 'bg-primary text-primary-foreground'
-                          : 'opacity-50 [&_svg]:invisible'
-                      )}
+            {optionGroups.map(([group, groupOptions]) => (
+              <CommandGroup key={group ?? ''} heading={group}>
+                {groupOptions.map((option) => {
+                  const isSelected = selected.includes(option.value)
+                  return (
+                    <CommandItem
+                      key={option.value}
+                      value={option.value}
+                      keywords={option.group ? [option.label, option.group] : [option.label]}
+                      disabled={disabled}
+                      onSelect={() => handleSelect(option.value)}
                     >
-                      <Check className="h-3 w-3" strokeWidth={2} fill="none" />
-                    </div>
-                    <span>{option.label}</span>
-                  </CommandItem>
-                )
-              })}
-            </CommandGroup>
+                      <div
+                        className={cn(
+                          'mr-2 flex h-4 w-4 items-center justify-center rounded-sm border border-primary',
+                          isSelected
+                            ? 'bg-primary text-primary-foreground'
+                            : 'opacity-50 [&_svg]:invisible'
+                        )}
+                      >
+                        <Check className="h-3 w-3" strokeWidth={2} fill="none" />
+                      </div>
+                      <span>{option.label}</span>
+                    </CommandItem>
+                  )
+                })}
+              </CommandGroup>
+            ))}
           </CommandList>
         </Command>
       </PopoverContent>

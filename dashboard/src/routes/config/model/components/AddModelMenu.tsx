@@ -20,9 +20,9 @@ export function AddModelMenu({ onAdd, className, dataTour }: AddModelMenuProps) 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="secondary" size="sm" className={className} data-tour={dataTour}>
+        <Button size="sm" className={className} data-tour={dataTour}>
           <Plus className="h-4 w-4" strokeWidth={2} fill="none" />
-          添加
+          添加模型
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">

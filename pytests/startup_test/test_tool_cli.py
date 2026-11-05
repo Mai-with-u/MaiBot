@@ -46,8 +46,21 @@ def test_init_preserves_existing_files_and_does_not_create_database(tmp_path: Pa
         assert (instance / name).is_dir()
 
 
-def test_run_requires_initialized_instance(tmp_path: Path) -> None:
+def test_run_refuses_directory_moved_into_workspace(tmp_path: Path) -> None:
+    # adopt --mode move 之后的旧位置不能被当作空目录，初始化出一个空 Bot。
+    (tmp_path / "MOVED_TO_WORKSPACE.txt").write_text("D:/workspace/bots/abc", encoding="utf-8")
     result = invoke(tmp_path, ["run"])
     assert result.returncode == 2
-    assert "maibot init" in result.stderr
+    assert "D:/workspace/bots/abc" in result.stderr
+    assert [path.name for path in tmp_path.iterdir()] == ["MOVED_TO_WORKSPACE.txt"]
+
+
+def test_chatgpt_accounts_preserves_host_cli_without_initializing_bot(tmp_path: Path) -> None:
+    import json
+
+    instance = tmp_path / "saved-bot"
+    result = invoke(tmp_path, ["chatgpt", "accounts", "-d", str(instance), "--account", "work"])
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == []
+    assert not instance.exists()
     assert not list(tmp_path.iterdir())

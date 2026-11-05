@@ -1,6 +1,10 @@
 import { useNavigate, useRouterState } from '@tanstack/react-router'
-import { Info, Palette, Settings, Shield, SlidersHorizontal } from 'lucide-react'
+import { Bot, Info, Palette, Settings, Shield, SlidersHorizontal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+
+import { HostDashboard } from '@/host/HostDashboard'
+import { useHostRuntime } from '@/host/state'
+import { cn } from '@/lib/utils'
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
@@ -10,19 +14,21 @@ import { GeneralTab } from './GeneralTab'
 import { OtherTab } from './OtherTab'
 import { SecurityTab } from './SecurityTab'
 
-type SettingsTab = 'general' | 'appearance' | 'security' | 'other' | 'about'
-const SETTINGS_TABS: SettingsTab[] = ['general', 'appearance', 'security', 'other', 'about']
+type SettingsTab = 'bots' | 'general' | 'appearance' | 'security' | 'other' | 'about'
+const SETTINGS_TABS: SettingsTab[] = ['general', 'bots', 'appearance', 'security', 'other', 'about']
 
 // 独立设置页，滚动由主内容区统一管理。
 export function SettingsPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const runtime = useHostRuntime()
   const search = useRouterState({ select: (state) => state.location.searchStr })
   const hash = useRouterState({ select: (state) => state.location.hash })
   const searchTab = new URLSearchParams(search).get('tab') ?? hash.replace(/^#/, '')
-  const activeTab: SettingsTab = SETTINGS_TABS.includes(searchTab as SettingsTab)
-    ? (searchTab as SettingsTab)
-    : 'general'
+  const activeTab: SettingsTab =
+    SETTINGS_TABS.includes(searchTab as SettingsTab) && (searchTab !== 'bots' || runtime.host)
+      ? (searchTab as SettingsTab)
+      : 'general'
 
   const handleTabChange = (value: string) => {
     const params = new URLSearchParams(search)
@@ -41,15 +47,34 @@ export function SettingsPage() {
       {/* WebUI 设置标签页 */}
       <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full min-w-0">
         <div className="-mx-1 shrink-0 overflow-x-auto px-1 pb-1 sm:mx-0 sm:overflow-visible sm:p-0">
-          <TabsList className="inline-grid h-auto w-max min-w-full grid-cols-5 gap-1 p-1 sm:w-full">
+          <TabsList
+            className={cn(
+              'inline-grid h-auto w-max min-w-full gap-1 p-1 sm:w-full',
+              runtime.host ? 'grid-cols-6' : 'grid-cols-5'
+            )}
+          >
             <TabsTrigger
               data-dashboard-settings-tabs="true"
               value="general"
               className="min-w-[5.5rem] gap-1 px-3 text-sm sm:min-w-0 sm:gap-2 sm:text-base"
             >
-              <SlidersHorizontal className="h-3.5 w-3.5 sm:h-4 sm:w-4" strokeWidth={2} fill="none" />
+              <SlidersHorizontal
+                className="h-3.5 w-3.5 sm:h-4 sm:w-4"
+                strokeWidth={2}
+                fill="none"
+              />
               <span>{t('settings.tabs.general')}</span>
             </TabsTrigger>
+            {runtime.host && (
+              <TabsTrigger
+                data-dashboard-settings-tabs="true"
+                value="bots"
+                className="min-w-[5.5rem] gap-1 px-3 text-sm sm:min-w-0 sm:gap-2 sm:text-base"
+              >
+                <Bot className="h-3.5 w-3.5 sm:h-4 sm:w-4" strokeWidth={2} fill="none" />
+                <span>{t('hostManager.title')}</span>
+              </TabsTrigger>
+            )}
             <TabsTrigger
               data-dashboard-settings-tabs="true"
               value="appearance"
@@ -89,6 +114,12 @@ export function SettingsPage() {
           <TabsContent value="general" className="mt-0">
             <GeneralTab />
           </TabsContent>
+
+          {runtime.host && (
+            <TabsContent value="bots" className="mt-0">
+              <HostDashboard embedded />
+            </TabsContent>
+          )}
 
           <TabsContent value="appearance" className="mt-0">
             <AppearanceTab />

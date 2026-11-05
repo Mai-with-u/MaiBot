@@ -1,8 +1,11 @@
-"""桌宠窗口线程与 Agent 指令共用的待办存储，完成即删除。"""
+"""桌宠窗口线程与 Agent 指令共用的待办存储，完成后归档留存。"""
 
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import base64
+import hashlib
 import json
 import math
 import threading
@@ -11,13 +14,14 @@ import uuid
 
 
 class TodoStore:
-    """待办列表，完成即删除。"""
+    """待办列表，完成后归档留存。"""
 
     def __init__(self, path: Path) -> None:
         self._path = path
         self._lock = threading.Lock()
         self._items: List[Dict[str, Any]] = json.loads(path.read_text("utf-8")) if path.exists() else []
         for item in self._items:
+            item.setdefault("images", [])
             item.setdefault("condition_type", "natural")
             item.setdefault("condition", "")
             item.setdefault("kind", "user")
@@ -27,14 +31,14 @@ class TodoStore:
             if item["status"] == "dispatching":
                 item["status"] = "pending"
 
-    def list(self) -> List[Dict[str, Any]]:
+    def list(self, include_completed: bool = False) -> List[Dict[str, Any]]:
         with self._lock:
-            return [dict(item) for item in self._items]
+            return [dict(item) for item in self._items if include_completed or item["status"] != "completed"]
 
     def add(self, text: str, **options: Any) -> Dict[str, Any]:
         text = self._validate_text(text)
         item = {"id": uuid.uuid4().hex, "text": text, "created_at": time.time(), "kind": "user", "due_at": None,
-                "status": "pending", "condition": "", "condition_type": "natural", "revision": uuid.uuid4().hex}
+                "images": [], "status": "pending", "condition": "", "condition_type": "natural", "revision": uuid.uuid4().hex}
         item = self._apply_options(item, options)
         with self._lock:
             self._save([*self._items, item])
@@ -53,8 +57,10 @@ class TodoStore:
             item = next((item for item in self._items if item["id"] == todo_id), None)
             if item is None:
                 raise ValueError("待办不存在，请重新查询列表")
+            if item["status"] == "completed":
+                raise ValueError("已完成事项不可修改，请新增待办")
             updated = self._apply_options({**item, "text": item["text"] if text is None else text}, options)
-            if any(updated[key] != item[key] for key in ("text", "kind", "due_at", "condition", "condition_type")):
+            if any(updated[key] != item[key] for key in ("text", "kind", "due_at", "condition", "condition_type", "images")):
                 updated["updated_at"] = time.time()
             updated["revision"] = uuid.uuid4().hex
             if updated["status"] == "dispatching":
@@ -62,10 +68,14 @@ class TodoStore:
             self._save([updated if entry["id"] == todo_id else entry for entry in self._items])
             return dict(updated)
 
-    @staticmethod
-    def _apply_options(item: Dict[str, Any], options: Dict[str, Any]) -> Dict[str, Any]:
-        if set(options) - {"kind", "due_at", "delay_seconds", "condition", "condition_type"}:
+    def _apply_options(self, item: Dict[str, Any], options: Dict[str, Any]) -> Dict[str, Any]:
+        if set(options) - {"kind", "due_at", "delay_seconds", "condition", "condition_type", "images"}:
             raise ValueError("未知待办字段")
+        if "images" in options:
+            images = options["images"]
+            if not isinstance(images, list) or len(images) > 4:
+                raise ValueError("每个事项最多保存 4 张图片")
+            item["images"] = [self._store_image(image) for image in images]
         if "condition_type" in options:
             kind = options["condition_type"]
             if kind not in {"natural", "app"}:
@@ -104,12 +114,53 @@ class TodoStore:
             raise ValueError("应用检测需要填写进程名或窗口标题关键字")
         return item
 
-    def claim_due(self) -> List[Dict[str, Any]]:
+    def _store_image(self, source: str) -> str:
+        from PIL import Image
+
+        if not isinstance(source, str):
+            raise ValueError("图片格式无效")
+        if not source.startswith("data:"):
+            self.image(source)  # 已保存附件必须确实存在，禁止任意文件路径。
+            return source
+        if len(source) > 12 * 1024 * 1024:
+            raise ValueError("每张图片不能超过 8 MiB")
+        try:
+            header, encoded = source.split(",", 1)
+            if header not in {"data:image/png;base64", "data:image/jpeg;base64", "data:image/webp;base64", "data:image/gif;base64"}:
+                raise ValueError("仅支持 PNG、JPEG、WebP 或 GIF 图片")
+            raw = base64.b64decode(encoded, validate=True)
+            if len(raw) > 8 * 1024 * 1024:
+                raise ValueError("每张图片不能超过 8 MiB")
+            with Image.open(BytesIO(raw)) as image:
+                if image.format not in {"PNG", "JPEG", "WEBP", "GIF"} or image.width * image.height > 20_000_000:
+                    raise ValueError("图片格式不支持或尺寸超过 2000 万像素")
+                image.verify()
+        except (OSError, Image.DecompressionBombError) as exc:
+            raise ValueError("无法读取图片") from exc
+        image_id = hashlib.sha256(raw).hexdigest()
+        folder = self._path.parent / "todo_images"
+        folder.mkdir(exist_ok=True)
+        path = folder / image_id
+        if not path.exists():
+            path.write_bytes(raw)
+        return image_id
+
+    def image(self, image_id: str) -> str:
+        from PIL import Image
+
+        if len(image_id) != 64 or any(char not in "0123456789abcdef" for char in image_id):
+            raise ValueError("图片标识无效")
+        raw = (self._path.parent / "todo_images" / image_id).read_bytes()
+        with Image.open(BytesIO(raw)) as image:
+            mime = Image.MIME[image.format]
+        return f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")
+
+    def claim_due(self, kind: Optional[str] = None) -> List[Dict[str, Any]]:
         """持锁领取到期事项；重启时重新投递未获得回执的事项。"""
         with self._lock:
             due = [dict(item, status="dispatching") for item in self._items
                    if item["status"] == "pending" and not item["condition"] and item["due_at"] is not None
-                   and item["due_at"] <= time.time()]
+                   and item["due_at"] <= time.time() and (kind is None or item["kind"] == kind)]
             claimed = {item["id"]: item for item in due}
             if due:
                 self._save([claimed.get(item["id"], item) for item in self._items])
@@ -138,6 +189,17 @@ class TodoStore:
                         for item in self._items])
 
     def done(self, todo_id: str) -> None:
+        with self._lock:
+            item = next((entry for entry in self._items if entry["id"] == todo_id), None)
+            if item is None:
+                raise ValueError("待办不存在，请重新查询列表")
+            if item["status"] == "completed":
+                return
+            # 更换版本以阻止迟到的触发回执覆盖完成状态，保留原内容和触发信息。
+            completed = dict(item, status="completed", completed_at=time.time(), revision=uuid.uuid4().hex)
+            self._save([completed if entry["id"] == todo_id else entry for entry in self._items])
+
+    def delete(self, todo_id: str) -> None:
         with self._lock:
             if not any(item["id"] == todo_id for item in self._items):
                 raise ValueError("待办不存在，请重新查询列表")

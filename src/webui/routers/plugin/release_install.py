@@ -23,7 +23,7 @@ from .support import (
     load_manifest_json,
     parse_repository_url,
     remove_tree,
-    resolve_installed_plugin_path,
+    resolve_mutable_plugin_path,
     resolve_plugin_file_path,
 )
 
@@ -181,7 +181,7 @@ async def _install_release(
 
     operation = "update" if updating else "install"
     canonical_id = entry.manifest_id or plugin_id
-    existing = resolve_installed_plugin_path(canonical_id)
+    existing = resolve_mutable_plugin_path(canonical_id)
     if updating and existing is None:
         raise HTTPException(status_code=404, detail="插件未安装")
     if not updating and existing is not None:

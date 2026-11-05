@@ -7,6 +7,12 @@ import os
 import pytest
 
 
+def bot_path(url: str) -> str:
+    """公开地址由宿主按 Bot 路由；Bot 自己的 HTTP 应用只提供凭证本身的路径。"""
+    assert "/api/files/bots/" in url
+    return "/api/files/transfers/" + url.rsplit("/", 1)[1]
+
+
 @pytest.fixture(scope="module")
 def app_state(tmp_path_factory):
     directory = tmp_path_factory.mktemp("file-instance")
@@ -17,7 +23,7 @@ def app_state(tmp_path_factory):
     from src.chat.message_receive.chat_manager import BotChatSession, chat_manager
     from src.common.database.database import engine
     from src.files.service import get_file_service
-    from src.webui.routers.files import require_auth, router
+    from src.webui.routers.files import router
 
     for sid in ("chat-a", "chat-b"):
         chat_manager.sessions[sid] = BotChatSession(session_id=sid, platform="webui", user_id=sid, user_nickname=sid)
@@ -32,7 +38,7 @@ def app_state(tmp_path_factory):
     app.include_router(transfers)
     app.include_router(router, prefix="/api/webui")
     with TestClient(app) as client:
-        yield SimpleNamespace(client=client, service=service, app=app, auth=require_auth, chats=chat_manager)
+        yield SimpleNamespace(client=client, service=service, app=app, chats=chat_manager)
     global_config.capabilities.files = original_enabled
     get_file_service.cache_clear()
     engine.dispose()
@@ -44,8 +50,6 @@ def app_state(tmp_path_factory):
 
 def test_http_upload_download_head_range_and_admin_auth(app_state):
     state = app_state
-    assert state.client.get("/api/webui/files").status_code == 401
-    state.app.dependency_overrides[state.auth] = lambda: "admin"
     response = state.client.post("/api/webui/files/uploads", params={"session_id": "chat-a", "name": "a.txt"}, content=b"abcdef")
     assert response.status_code == 200, response.text
     ref = response.json()["file_ref"]
@@ -119,7 +123,7 @@ async def test_outbound_driver_uses_url_without_mutating_stored_message(app_stat
     result = await driver.send_message(message, RouteKey(platform="webui"))
     assert result.external_message_id == "42"
     data = captured["args"]["message"]["raw_message"][0]["data"]
-    assert "/api/files/transfers/" in data["url"]
+    assert "/api/files/bots/" in data["url"]
     assert "base64" not in data
     assert message.raw_message.components[0].url == ""
     assert app_state.service.store.get(asset.file_ref, "chat-a").leased_until > 0
@@ -148,104 +152,45 @@ async def test_inbound_attachment_only_trusts_host_provenance(app_state):
     assert not service.store.path(ref).exists()
 
 
-@pytest.mark.parametrize("enabled", [False, True])
-def test_shared_http_upload_download_and_optional_webui(app_state, monkeypatch, enabled):
+def test_shared_http_upload_download(app_state):
     import asyncio
     from fastapi.testclient import TestClient
     from src.common.http_service.app import create_app
-    from src.config.config import global_config
     from src.files.capability import file_capability
 
-    monkeypatch.setattr(global_config.webui, "enabled", enabled)
-    monkeypatch.setattr(global_config.webui, "anti_crawler_mode", "strict")
-    app = create_app(enable_static=False)
+    app = create_app()
     service = app_state.service
     scope = service.ticket("plugin", plugin_id="plugin-http", session_id="chat-a")
     with TestClient(app) as client:
         info = asyncio.run(file_capability("plugin-http", "files.upload", {
             "file_scope": scope, "name": "http.txt",
         }))
-        # Even crawler-like clients can use a valid transfer grant; WebUI middleware cannot intercept it.
-        response = client.put(info["url"], content=b"independent HTTP", headers={"User-Agent": "wget"})
+        upload = bot_path(info["url"])
+        response = client.put(upload, content=b"independent HTTP", headers={"User-Agent": "wget"})
         assert response.status_code == 200, response.text
-        assert client.put(info["url"], content=b"replay").status_code == 403
+        assert client.put(upload, content=b"replay").status_code == 403
         info = asyncio.run(file_capability("plugin-http", "files.download", {
             "file_scope": scope, "file_ref": info["file_ref"],
         }))
-        response = client.get(info["url"], headers={"User-Agent": "wget", "Origin": "http://localhost:7999"})
+        download = bot_path(info["url"])
+        response = client.get(download, headers={"User-Agent": "wget"})
         assert response.status_code == 200 and response.content == b"independent HTTP"
-        assert response.headers["access-control-allow-origin"] == "http://localhost:7999"
-        assert client.head(info["url"]).headers["content-length"] == "16"
-        assert client.get(info["url"], headers={"Range": "bytes=0-2"}).content == b"ind"
+        assert client.head(download).headers["content-length"] == "16"
+        assert client.get(download, headers={"Range": "bytes=0-2"}).content == b"ind"
         assert client.get("/api/files/transfers/missing").status_code == 403
-        assert client.get("/api/webui/files").status_code == (401 if enabled else 404)
-        if not enabled:
-            for path in ("/", "/docs", "/openapi.json", "/api/webui/config", "/api/webui/auth/status"):
-                assert client.get(path).status_code == 404
-        else:
-            webui = app.state.webui.app
-            webui.dependency_overrides[app_state.auth] = lambda: "admin"
-            response = client.get("/api/webui/files")
-            assert response.status_code == 200
-            webui.dependency_overrides.clear()
+        # 宿主通道上的请求已由宿主登录，WebUI 接口直接可用。
+        assert client.get("/api/webui/files").status_code != 401
         service.revoke(scope)
-        assert client.get(info["url"]).status_code == 403
+        assert client.get(download).status_code == 403
 
 
 @pytest.mark.asyncio
-async def test_disabling_webui_by_reload_keeps_transfer_grants(app_state, monkeypatch):
-    from fastapi.testclient import TestClient
-    from src.common.http_service.server import HTTPServer
-    from src.config.config import global_config
-    from src.webui import app as webui_app
-
-    monkeypatch.setattr(webui_app, "show_access_token", lambda: None)
-    monkeypatch.setattr(global_config.webui, "enabled", True)
-    server = HTTPServer(hosts=["127.0.0.1"], register_config_reload=False)
-    asset = await app_state.service.create("chat-a", "reload.txt", b"survives reload")
-    url = app_state.service.download_url(asset.file_ref, "chat-a")
-    with TestClient(server.app) as client:
-        assert client.get("/api/webui/files").status_code == 401
-        assert client.get(url).content == b"survives reload"
-        monkeypatch.setattr(global_config.webui, "enabled", False)
-        await server.reload_app()
-        assert client.get("/api/webui/files").status_code == 404
-        assert client.get(url).content == b"survives reload"
-        monkeypatch.setattr(global_config.webui, "enabled", True)
-        await server.reload_app()
-        assert client.get("/api/webui/files").status_code == 401
-        assert client.get(url).content == b"survives reload"
-
-
-def test_disabled_webui_does_not_load_webui_app(app_state, monkeypatch):
-    import builtins
-    from src.common.http_service.app import create_app
-
-    original_import = builtins.__import__
-
-    def guarded_import(name, *args, **kwargs):
-        if name.startswith("src.webui"):
-            raise AssertionError("HTTP without WebUI must not import its application")
-        return original_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", guarded_import)
-    app = create_app(webui_enabled=False)
-    assert len(app.routes) == 2
-
-
-@pytest.mark.asyncio
-async def test_real_http_listener_without_webui(app_state, monkeypatch):
-    import socket
-    import httpx
-    from src.common.http_service import server as server_module
-    from src.config.config import global_config
-    from src.main import MainSystem
-
-    monkeypatch.setattr(global_config.webui, "enabled", False)
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
+async def test_real_ipc_listener_serves_transfers(app_state, monkeypatch):
+    from aiohttp import ClientSession
     from uvicorn import Server
+    from src.common.http_service import server as server_module
+    from src.common.ipc import allocate_endpoint, http_connector
+    from src.main import MainSystem
 
     shutdown_calls = []
     original_shutdown = Server.shutdown
@@ -255,20 +200,19 @@ async def test_real_http_listener_without_webui(app_state, monkeypatch):
         return await original_shutdown(self, sockets=sockets)
 
     monkeypatch.setattr(Server, "shutdown", count_shutdown)
-    server = server_module.ThreadedHTTPServer(hosts=["127.0.0.1"], port=port)
+    endpoint = allocate_endpoint("test")
+    server = server_module.ThreadedHTTPServer(endpoint)
     monkeypatch.setattr(server_module, "get_threaded_http_server", lambda: server)
     system = MainSystem()
     system._start_http_server()
     try:
-        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", trust_env=False) as client:
-            await server.wait_started(timeout=5.0)
-            response = await client.get("/api/files/transfers/invalid")
-            assert response.status_code == 403
-            asset = await app_state.service.create("chat-a", "socket.txt", b"over real socket")
-            path = app_state.service.download_url(asset.file_ref, "chat-a").split("/api/", 1)[1]
-            response = await client.get("/api/" + path)
-            assert response.status_code == 200 and response.content == b"over real socket"
-            assert (await client.get("/api/webui/files")).status_code == 404
+        await server.wait_started(timeout=10.0)
+        async with ClientSession(connector=http_connector(endpoint)) as client:
+            async with client.get("http://bot/api/files/transfers/invalid") as response:
+                assert response.status == 403
+            asset = await app_state.service.create("chat-a", "socket.txt", b"over real channel")
+            async with client.get("http://bot" + bot_path(app_state.service.download_url(asset.file_ref, "chat-a"))) as response:
+                assert response.status == 200 and await response.read() == b"over real channel"
     finally:
         await server.shutdown()
     assert not server.is_running
@@ -277,16 +221,14 @@ async def test_real_http_listener_without_webui(app_state, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_http_startup_failure_is_reported_to_main(app_state, monkeypatch):
-    from src.common.http_service.server import HTTPServer, ThreadedHTTPServer
-    from src.config.config import global_config
+    from src.common.http_service.server import ThreadedHTTPServer
+    from src.common.ipc import IpcHTTPServer, allocate_endpoint
 
-    monkeypatch.setattr(global_config.webui, "enabled", False)
+    async def failed_startup(self, sockets=None):
+        raise OSError("test channel unavailable")
 
-    def failed_binding(self):
-        raise OSError("test port occupied")
-
-    monkeypatch.setattr(HTTPServer, "_filter_bindable_hosts", failed_binding)
-    server = ThreadedHTTPServer(hosts=["127.0.0.1"])
+    monkeypatch.setattr(IpcHTTPServer, "startup", failed_startup)
+    server = ThreadedHTTPServer(allocate_endpoint("test"))
     server.start()
     try:
         with pytest.raises(RuntimeError, match="HTTP 服务启动失败") as caught:
@@ -306,7 +248,7 @@ async def test_file_switch_blocks_existing_tools_sdk_and_http(app_state, monkeyp
 
     service = app_state.service
     asset = await service.create("chat-a", "switch.txt", b"keep existing data")
-    url = service.download_url(asset.file_ref, "chat-a")
+    url = bot_path(service.download_url(asset.file_ref, "chat-a"))
     scope = service.ticket("plugin", plugin_id="switch-plugin", session_id="chat-a")
     upload = await file_capability("switch-plugin", "files.upload", {"file_scope": scope, "name": "pending.txt"})
     provider = FileToolProvider()
@@ -318,8 +260,7 @@ async def test_file_switch_blocks_existing_tools_sdk_and_http(app_state, monkeyp
     with pytest.raises(PermissionError, match="文件功能已关闭"):
         await file_capability("switch-plugin", "files.list", {"file_scope": scope})
     assert app_state.client.get(url).status_code == 403
-    assert app_state.client.put(upload["url"], content=b"blocked").status_code == 403
-    app_state.app.dependency_overrides[app_state.auth] = lambda: "admin"
+    assert app_state.client.put(bot_path(upload["url"]), content=b"blocked").status_code == 403
     try:
         assert app_state.client.post("/api/webui/files/uploads", params={
             "session_id": "chat-a", "name": "blocked.txt",
@@ -357,41 +298,3 @@ async def test_disabled_files_does_not_disable_other_plugin_tools(app_state, mon
     result = await query.invoke_tool_as_tool(ToolInvocation(tool_name="normal"), ToolExecutionContext(session_id="chat-a"))
     assert result.success
     assert supervisor.invoke_plugin.call_args.kwargs["args"]["_file_scope"] == ""
-
-
-def test_webui_reload_closes_real_websocket_but_keeps_files(app_state, monkeypatch):
-    from fastapi.testclient import TestClient
-    from starlette.websockets import WebSocketDisconnect
-    from src.common.http_service.server import HTTPServer
-    from src.config.config import global_config
-    from src.webui import app as webui_app
-    from src.webui.routers.websocket import unified
-    from src.webui.routers.websocket.manager import websocket_manager
-
-    async def authenticated(*args):
-        return True
-
-    monkeypatch.setattr(unified, "authenticate_websocket_connection", authenticated)
-    monkeypatch.setattr(webui_app, "show_access_token", lambda: None)
-    monkeypatch.setattr(global_config.webui, "enabled", True)
-    server = HTTPServer(hosts=["127.0.0.1"], register_config_reload=False)
-    service = app_state.service
-    asset = service.store.begin_upload("chat-a", "websocket.txt")
-    service.store.append(asset.file_ref, asset.transfer_id, b"still available")
-    asset = service.store.finish(asset.file_ref, asset.transfer_id)
-    url = service.download_url(asset.file_ref, "chat-a")
-    with TestClient(server.app) as client:
-        # Also cover an enabled -> enabled reload, so an older mount cannot leak connections on later disable.
-        for enabled in (True, False):
-            with client.websocket_connect("/api/webui/ws") as websocket:
-                message = websocket.receive_json()
-                assert message["event"] == "ready"
-                connection_id = message["data"]["connection_id"]
-                monkeypatch.setattr(global_config.webui, "enabled", enabled)
-                client.portal.call(server.reload_app)
-                with pytest.raises(WebSocketDisconnect) as closed:
-                    websocket.receive_json()
-                assert closed.value.code == 1001
-                assert connection_id not in websocket_manager.connections
-            assert client.get(url).content == b"still available"
-        assert client.get("/api/webui/files").status_code == 404

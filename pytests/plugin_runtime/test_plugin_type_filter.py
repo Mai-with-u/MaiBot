@@ -39,7 +39,7 @@ def _write_plugin_with_type_key(root: Path, name: str, plugin_type: str, type_ke
 def _make_plugin_host_incompatible(plugin_dir: Path, *, omit_plugin_type: bool = False) -> None:
     manifest_path = plugin_dir / "_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["host_application"]["max_version"] = "1.0.0"
+    manifest["host_application"] = {"min_version": "0.0.0", "max_version": "0.9.0"}
     if omit_plugin_type:
         manifest.pop("plugin_type", None)
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")

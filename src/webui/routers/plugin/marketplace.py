@@ -1,6 +1,6 @@
 """公共市场服务的 WebUI HTTP 适配层，不实现选源、合并或版本判断。"""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
@@ -13,7 +13,6 @@ from src.config.config import global_config
 from src.plugin_market import engagement, feedback, service, statistics
 from src.plugin_market.errors import MarketError
 from src.plugin_market.sources import PluginSourceSettings, load_source_settings, save_source_settings
-from src.webui.dependencies import require_auth
 
 
 class MarketRoute(APIRoute):
@@ -35,7 +34,7 @@ class MarketRoute(APIRoute):
         return handle
 
 
-router = APIRouter(prefix="/marketplace", route_class=MarketRoute, dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/marketplace", route_class=MarketRoute)
 
 
 def _reply(reply: engagement.MarketReply) -> JSONResponse:

@@ -18,6 +18,13 @@ from src.common.message_repository import find_messages
 from src.common.utils.utils_config import ChatConfigUtils
 from src.config.config import global_config
 from src.core.tooling import ToolExecutionResult
+from src.llm_models.exceptions import (
+    EmptyResponseException,
+    LLMTaskTimeoutError,
+    NetworkConnectionError,
+    RespNotOkException,
+    RespParseException,
+)
 from src.llm_models.payload_content.context_item import FunctionCallItem
 from src.maisaka.chat_loop_service import ChatResponse, MaisakaChatLoopService
 from src.maisaka.context.messages import (
@@ -79,6 +86,7 @@ class FocusGroupRuntime:
         self._state = "stop"
         self._planner_started_at = 0.0
         self._planner_ended_at = 0.0
+        self._planner_retry_after_sequence: Optional[int] = None
         self._service = FocusChatLoopService(is_group_chat=True)
         self.tools = FocusToolRouter(self)
         self._store = FocusCheckpointStore(scope_id)
@@ -370,9 +378,9 @@ class FocusGroupRuntime:
         if self._worker is None or self._worker.done():
             self._worker = asyncio.create_task(self.run())
 
-    def _set_stage(self, stage: str, detail: str) -> None:
+    def _set_stage(self, stage: str, detail: str, *, agent_state: Literal["running", "stop"] = "running") -> None:
         if self._state != "failed":
-            self._state = "running"
+            self._state = agent_state
         self._publish_monitor_stage(stage, detail)
         for runtime in self.members.values():
             runtime._agent_state = runtime._STATE_STOP if self.state == "failed" else self.state
@@ -447,6 +455,14 @@ class FocusGroupRuntime:
     async def run(self) -> None:
         try:
             while not self._closed and self.members:
+                if self._planner_retry_after_sequence is not None:
+                    # 失败请求没有确认输入进度，不能因旧输入仍未处理而立即重试。
+                    # 请求期间到达的新输入也能触发下一轮，无需再等一条消息。
+                    if self._sequence <= self._planner_retry_after_sequence:
+                        self._event.clear()
+                        await self._event.wait()
+                        continue
+                    self._planner_retry_after_sequence = None
                 if self._wait_until is not None:
                     self._set_stage("等待", "整组暂停，@ 可以提前唤醒")
                     remaining = max(0.0, self._wait_until - time.time())
@@ -502,14 +518,31 @@ class FocusGroupRuntime:
             self._set_stage("Planner", f"汇合 {len(self.members)} 个聊天，等待模型响应")
             started = time.time()
             self._planner_started_at = started
-            response = await self._service.chat_loop_step(
-                history,
-                tool_definitions=self.tools.definitions(),
-                injected_user_messages=[self._roster(), self.tools.deferred_notice(), *references],
-                tail_user_messages=build_consecutive_wait_reminders(self._consecutive_waits),
-                max_context_size=max(self.max_context_size, sum(message.count_in_context for message in history) + 1),
-                logical_turn_id=logical_turn_id,
-            )
+            request_sequence = self._sequence
+            try:
+                response = await self._service.chat_loop_step(
+                    history,
+                    tool_definitions=self.tools.definitions(),
+                    injected_user_messages=[self._roster(), self.tools.deferred_notice(), *references],
+                    tail_user_messages=build_consecutive_wait_reminders(self._consecutive_waits),
+                    max_context_size=max(self.max_context_size, sum(message.count_in_context for message in history) + 1),
+                    logical_turn_id=logical_turn_id,
+                )
+            except (
+                EmptyResponseException,
+                LLMTaskTimeoutError,
+                NetworkConnectionError,
+                RespNotOkException,
+                RespParseException,
+            ) as exc:
+                self._planner_ended_at = time.time()
+                self._service.planner_request_snapshot = None
+                self._planner_retry_after_sequence = request_sequence
+                self._set_stage("请求失败", f"输入已保留，等待新消息后继续；{exc}", agent_state="stop")
+                logger.exception(f"Focus 共享 Planner 请求失败，等待新输入: scope={self.scope_id}")
+                # 只恢复已知模型请求失败；保存或上下文一致性错误仍由外层停止并完整报告。
+                await self.checkpoint()
+                return
             self._planner_ended_at = time.time()
             if generation != self._generation or self._closed:
                 self._service.planner_request_snapshot = None

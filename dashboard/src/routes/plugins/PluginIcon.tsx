@@ -19,6 +19,7 @@ import {
 } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
+import { scopeBotResourcePath, useHostRuntime } from '@/host/state'
 import type { PluginDisplayIcon, PluginType } from '@/types/plugin'
 
 import { getPluginType } from './types'
@@ -116,12 +117,14 @@ export function PluginIcon({
   className,
   iconClassName
 }: PluginIconProps) {
+  useHostRuntime()
   const icon = manifest?.display?.icon
   const [failedImageSource, setFailedImageSource] = useState<string | null>(null)
-  const imageSource = useMemo(
+  const unscopedImageSource = useMemo(
     () => icon ? getImageSource(pluginId, icon, installed, marketplaceIconUrl, installedVersion ?? manifest?.version) : null,
     [icon, installed, installedVersion, manifest?.version, marketplaceIconUrl, pluginId]
   )
+  const imageSource = unscopedImageSource ? scopeBotResourcePath(unscopedImageSource) : null
 
   const style: CSSProperties | undefined = icon?.background ? { backgroundColor: icon.background } : undefined
   const baseClassName = cn(

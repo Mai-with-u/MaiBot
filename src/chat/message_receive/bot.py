@@ -17,6 +17,7 @@ from src.common.utils.utils_session import SessionUtils
 from src.config.config import global_config
 from src.core.announcement_manager import global_announcement_manager
 from src.core.chat_pause import chat_pause_state
+from src.core.plugin_usage import can_use_plugin
 from src.core.local_operator import (
     has_command_permission,
     has_plugin_management_permission,
@@ -303,18 +304,26 @@ class ChatBot:
                     logger.info(f"命令 {plugin_name}.{command_name} 已在命令管理中停用，按普通消息处理")
                     return False, None, True
 
-                if command_info.permission == "operator" and not has_command_permission(
-                    f"{plugin_name}.{command_name}",
-                    message.platform,
-                    message.message_info.user_info.user_id,
-                    message.session_id,
-                    global_config.plugin.permission,
-                    global_config.plugin.command_permissions,
-                    local_operator=is_local_operator(
+                usage_allowed = can_use_plugin(
+                    plugin_name,
+                    platform=message.platform,
+                    user_id=message.message_info.user_info.user_id,
+                    session_id=message.session_id,
+                )
+                if not usage_allowed or (
+                    command_info.permission == "operator" and not has_command_permission(
+                        f"{plugin_name}.{command_name}",
                         message.platform,
-                        message.message_info.additional_config,
-                    ),
-                    relayed_by_plugin=is_plugin_relayed(message.message_info.additional_config),
+                        message.message_info.user_info.user_id,
+                        message.session_id,
+                        global_config.plugin.permission,
+                        global_config.plugin.command_permissions,
+                        local_operator=is_local_operator(
+                            message.platform,
+                            message.message_info.additional_config,
+                        ),
+                        relayed_by_plugin=is_plugin_relayed(message.message_info.additional_config),
+                    )
                 ):
                     self._mark_command_message(message, intercept_message_level=1)
                     # 与其他插件命令共用结果处理入口，在那里统一存储，避免权限拒绝时重复入库。

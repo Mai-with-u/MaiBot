@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { DraftNumberInput } from '@/components/ui/draft-number-input'
 import { Input } from '@/components/ui/input'
+import { KeyValueEditor } from '@/components/ui/key-value-editor'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -380,6 +381,19 @@ function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
         </div>
       )
 
+    case 'json':
+      return (
+        <fieldset disabled={field.disabled} className="min-w-0 space-y-2">
+          <Label>{label}</Label>
+          <KeyValueEditor
+            value={(value ?? field.default ?? {}) as Record<string, unknown>}
+            onChange={onChange}
+            placeholder={placeholder || undefined}
+          />
+          {hint && <p className="text-muted-foreground text-xs">{hint}</p>}
+        </fieldset>
+      )
+
     case 'text':
     default:
       return (
@@ -409,7 +423,7 @@ interface SectionRendererProps {
 }
 
 function getFieldGridClassName(field: ConfigFieldSchema): string {
-  if (field.ui_type === 'textarea' || field.ui_type === 'list' || field.ui_type === 'slider' || field.ui_type === 'chat-stream') {
+  if (field.ui_type === 'textarea' || field.ui_type === 'list' || field.ui_type === 'slider' || field.ui_type === 'chat-stream' || field.ui_type === 'json') {
     return 'lg:col-span-2'
   }
 
@@ -2074,7 +2088,7 @@ function PluginConfigPageContent() {
                             </div>
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
-                            {pluginNeedsUpdate && (
+                            {!plugin.builtin && pluginNeedsUpdate && (
                               <Button
                                 type="button"
                                 size="sm"
@@ -2153,44 +2167,48 @@ function PluginConfigPageContent() {
                         onCheckedChange={() => void performTogglePlugin(plugin)}
                       />
                     </div>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      data-plugin-update-button="true"
-                      className={`relative ${checkingUpdates ? 'text-primary disabled:opacity-100' : ''}`}
-                      disabled={pluginActing || !updateState.canUpdate}
-                      aria-busy={checkingUpdates || pluginActing}
-                      title={updateState.title}
-                      aria-label={updateState.title || '更新/升级'}
-                      onClick={(event) => openUpdatePluginDialog(plugin, event)}
-                    >
-                      {updateState.hasUpdate && (
-                        <span
-                          className="ring-background absolute -top-1 -right-1 h-3 w-3 rounded-sm bg-yellow-400 ring-2"
-                          aria-hidden="true"
-                        />
-                      )}
-                      {pluginActing || checkingUpdates ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <ArrowUp className="h-4 w-4" />
-                      )}
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      size="icon"
-                      disabled={pluginActing}
-                      aria-busy={pluginActing}
-                      title="删除"
-                      aria-label="删除"
-                      onClick={(event) => openDeletePluginDialog(plugin, event)}
-                    >
-                      {pluginActing ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-4 w-4" />
-                      )}
-                    </Button>
+                    {!plugin.builtin && (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          data-plugin-update-button="true"
+                          className={`relative ${checkingUpdates ? 'text-primary disabled:opacity-100' : ''}`}
+                          disabled={pluginActing || !updateState.canUpdate}
+                          aria-busy={checkingUpdates || pluginActing}
+                          title={updateState.title}
+                          aria-label={updateState.title || '更新/升级'}
+                          onClick={(event) => openUpdatePluginDialog(plugin, event)}
+                        >
+                          {updateState.hasUpdate && (
+                            <span
+                              className="ring-background absolute -top-1 -right-1 h-3 w-3 rounded-sm bg-yellow-400 ring-2"
+                              aria-hidden="true"
+                            />
+                          )}
+                          {pluginActing || checkingUpdates ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <ArrowUp className="h-4 w-4" />
+                          )}
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="icon"
+                          disabled={pluginActing}
+                          aria-busy={pluginActing}
+                          title="删除"
+                          aria-label="删除"
+                          onClick={(event) => openDeletePluginDialog(plugin, event)}
+                        >
+                          {pluginActing ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </div>
               )

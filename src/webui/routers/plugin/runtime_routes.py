@@ -1,14 +1,14 @@
 """插件运行时相关 WebUI 路由。"""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from fastapi import APIRouter, Cookie, HTTPException
+from fastapi import APIRouter, HTTPException
 
 from src.plugin_runtime.component_query import component_query_service
 from src.plugin_runtime.host.component_registry import CommandEntry, ComponentEntry, ComponentTypes, HomeCardEntry, ToolEntry
 
 from .schemas import HookSpecListResponse, HookSpecResponse
-from .support import find_plugin_path_by_id, require_plugin_token, validate_plugin_id
+from .support import find_plugin_path_by_id, validate_plugin_id
 
 router = APIRouter()
 
@@ -35,7 +35,7 @@ def _serialize_component_entry(component: ComponentEntry) -> Dict[str, Any]:
     if isinstance(component, ToolEntry) and component.legacy_component_type.upper() == ComponentTypes.ACTION.value:
         component_type = "action"
 
-    description = str(component.metadata.get("description", "") or component.metadata.get("brief_description", "") or "")
+    description = str(component.metadata.get("description", ""))
     if isinstance(component, ToolEntry):
         description = component.description
 
@@ -160,10 +160,9 @@ def _serialize_home_card_entry(component: HomeCardEntry) -> Dict[str, Any]:
 
 
 @router.get("/runtime/plugins/{plugin_id}/components")
-def list_plugin_components(plugin_id: str, maibot_session: Optional[str] = Cookie(None)) -> Dict[str, Any]:
+def list_plugin_components(plugin_id: str) -> Dict[str, Any]:
     """返回指定插件当前注册的全部组件。"""
 
-    require_plugin_token(maibot_session)
     _ensure_installed_plugin(plugin_id)
 
     components = []
@@ -177,10 +176,9 @@ def list_plugin_components(plugin_id: str, maibot_session: Optional[str] = Cooki
 
 
 @router.get("/runtime/commands")
-def list_runtime_commands(maibot_session: Optional[str] = Cookie(None)) -> Dict[str, Any]:
+def list_runtime_commands() -> Dict[str, Any]:
     """返回当前注册的命令及其插件归属，供统一权限管理页面使用。"""
 
-    require_plugin_token(maibot_session)
     commands: List[Dict[str, Any]] = [
         {
             "id": "core.clear",
@@ -209,10 +207,9 @@ def list_runtime_commands(maibot_session: Optional[str] = Cookie(None)) -> Dict[
 
 
 @router.get("/runtime/home-cards")
-def list_runtime_home_cards(maibot_session: Optional[str] = Cookie(None)) -> Dict[str, Any]:
+def list_runtime_home_cards() -> Dict[str, Any]:
     """返回当前已启用插件注册的 WebUI 首页卡片。"""
 
-    require_plugin_token(maibot_session)
 
     cards: List[Dict[str, Any]] = []
     for supervisor in component_query_service._iter_supervisors():
@@ -228,16 +225,12 @@ def list_runtime_home_cards(maibot_session: Optional[str] = Cookie(None)) -> Dic
 
 
 @router.get("/runtime/hooks", response_model=HookSpecListResponse)
-def list_runtime_hook_specs(maibot_session: Optional[str] = Cookie(None)) -> HookSpecListResponse:
+def list_runtime_hook_specs() -> HookSpecListResponse:
     """返回当前插件运行时公开的 Hook 规格清单。
-
-    Args:
-        maibot_session: 当前 WebUI 会话令牌。
 
     Returns:
         HookSpecListResponse: Hook 规格列表响应。
     """
 
-    require_plugin_token(maibot_session)
     hooks = [HookSpecResponse(**hook_data) for hook_data in component_query_service.list_hook_specs()]
     return HookSpecListResponse(success=True, hooks=hooks)

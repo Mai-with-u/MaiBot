@@ -9,13 +9,14 @@ export interface PluginInstallDialogHandle {
 
 interface PluginInstallDialogProps {
   progressById: PluginProgressById
+  onDependenciesChanged: () => void
   onResetProgress: (pluginId: string) => void
   onInstall: (plugin: PluginInfo, target: string) => void
 }
 
 // 弹窗开关只更新此组件，避免打开和关闭时重新渲染整个市场页。
 export const PluginInstallDialog = forwardRef<PluginInstallDialogHandle, PluginInstallDialogProps>(
-  function PluginInstallDialog({ progressById, onResetProgress, onInstall }, ref) {
+  function PluginInstallDialog({ progressById, onResetProgress, onInstall, onDependenciesChanged }, ref) {
     const [plugin, setPlugin] = useState<PluginInfo | null>(null)
     const progress = plugin ? progressById[plugin.id] ?? null : null
 
@@ -35,6 +36,7 @@ export const PluginInstallDialog = forwardRef<PluginInstallDialogHandle, PluginI
         open={plugin !== null}
         plugin={plugin}
         loadProgress={progress}
+        onDependenciesChanged={onDependenciesChanged}
         onOpenChange={(open) => {
           if (open || (progress?.operation === 'install' && progress.stage === 'loading')) return
           setPlugin(null)

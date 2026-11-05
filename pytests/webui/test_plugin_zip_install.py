@@ -20,7 +20,6 @@ def client(tmp_path, monkeypatch):
     root.mkdir()
     monkeypatch.setattr(support, "get_plugins_dir", lambda: root)
     monkeypatch.setattr(zip_install, "get_plugins_dir", lambda: root)
-    monkeypatch.setattr(zip_install, "require_plugin_token", lambda _: "ok")
     manager = PluginRuntimeManager()
     manager._plugin_catalog._roots = {root: False}
     asyncio.run(manager._plugin_catalog.refresh())
@@ -126,11 +125,9 @@ def test_reject_links_corruption_and_size_limit(client, monkeypatch):
     assert list(root.iterdir()) == []
 
 
-def test_authentication_and_file_extension(client, monkeypatch):
+def test_file_extension_rejected_before_install(client, monkeypatch):
     api, root = client
     assert api.post("/install-zip", files={"file": ("plugin.txt", archive())}).status_code == 400
-    monkeypatch.setattr(zip_install, "require_plugin_token", support.require_plugin_token)
-    assert api.post("/install-zip", files={"file": ("plugin.zip", archive())}).status_code == 401
     assert list(root.iterdir()) == []
 
 

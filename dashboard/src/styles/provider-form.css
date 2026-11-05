@@ -1,0 +1,81 @@
+/* 提供商弹窗：模板与自定义之间的切换过渡。 */
+[data-provider-source] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  transition: grid-template-columns 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+[data-provider-source='custom'] {
+  grid-template-columns: minmax(0, 0fr) minmax(0, 1fr) auto;
+}
+
+[data-provider-source-pick],
+[data-provider-source-note] {
+  min-width: 0;
+  overflow: hidden;
+  transition: opacity 180ms ease-out;
+}
+
+[data-provider-source-note] {
+  margin: 0;
+  white-space: nowrap;
+  opacity: 0;
+  font-size: 0.75rem;
+  color: hsl(var(--muted-foreground));
+}
+
+[data-provider-source='custom'] [data-provider-source-pick] {
+  opacity: 0;
+}
+
+[data-provider-source='custom'] [data-provider-source-note] {
+  opacity: 1;
+  transition-delay: 80ms;
+}
+
+/* 跟随模板的字段保持原位，从锁定到可填只过渡底色，不整块跳动。 */
+[data-provider-connection] [data-form-row] input,
+[data-provider-connection] [data-form-row] button[role='combobox'] {
+  transition: background-color 220ms ease-out, color 220ms ease-out;
+}
+
+[data-provider-locked] {
+  background-color: hsl(var(--muted));
+  cursor: not-allowed;
+}
+
+[data-provider-template-tag] {
+  display: inline-block;
+  max-width: 6em;
+  overflow: hidden;
+  transition: max-width 220ms ease-out, opacity 180ms ease-out;
+}
+
+[data-provider-template-tag='hidden'] {
+  max-width: 0;
+  opacity: 0;
+}
+
+/* 连接字段包在显隐动画里，第一行也要接上分组内的虚线。 */
+[data-provider-connection] > [data-form-row] {
+  border-top: 1px dashed hsl(var(--border));
+}
+
+:root[data-dashboard-style='millennium'] [data-provider-connection] > [data-form-row] {
+  border-top-color: var(--mil-lo);
+}
+
+:root[data-dashboard-style='future-retro'] [data-provider-connection] > [data-form-row] {
+  border-top-color: var(--retro-line);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-provider-source],
+  [data-provider-source-pick],
+  [data-provider-source-note],
+  [data-provider-template-tag] {
+    transition: none;
+  }
+}

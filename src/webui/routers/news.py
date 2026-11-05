@@ -1,15 +1,14 @@
 """首页资讯 API 路由"""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from src.common.logger import get_logger
 from src.services.news_service import NewsSourceError, fetch_news
-from src.webui.dependencies import require_auth
 from src.webui.schemas.news import NewsResponse
 
 logger = get_logger("webui.news")
 
-router = APIRouter(prefix="/news", tags=["news"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/news", tags=["news"])
 
 
 @router.get("", response_model=NewsResponse)

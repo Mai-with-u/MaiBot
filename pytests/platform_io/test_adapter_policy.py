@@ -1,6 +1,6 @@
 from copy import deepcopy
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, List
 
 import pytest
 import tomlkit
@@ -9,15 +9,25 @@ from src.platform_io.adapter_policy import AdapterIdentity, AdapterPolicyManager
 
 
 @pytest.mark.parametrize(
-    "list_type,ids",
+    "list_type,ids,overrides",
     [
-        ("whitelist", ["100"]),
-        ("blacklist", ["100"]),
-        ("whitelist", ["*"]),
-        ("blacklist", ["*"]),
+        ("whitelist", ["100"], {}),
+        ("blacklist", ["100"], {}),
+        ("whitelist", ["*"], {}),
+        ("blacklist", ["*"], {}),
+        ("blacklist", ["100"], {"allow_ids": ["*"]}),
+        ("whitelist", ["100"], {"deny_ids": ["*"]}),
+        ("blacklist", ["100"], {"allow_ids": ["100"], "disabled_ids": ["100"]}),
+        ("whitelist", ["100"], {"deny_ids": ["100"], "disabled_ids": ["100"]}),
+        ("blacklist", ["100"], {"deny_ids": ["100"], "disabled_ids": ["100"]}),
+        ("blacklist", ["100"], {"allow_ids": ["*"], "disabled_ids": ["*"]}),
+        ("whitelist", ["100"], {"disabled": True, "disabled_ids": ["*"]}),
     ],
 )
-def test_group_creation_preserves_legacy_policy(tmp_path: Path, list_type: str, ids: List[str]) -> None:
+@pytest.mark.parametrize("create_group", [False, True])
+def test_full_policy_save_preserves_legacy_behavior(
+    tmp_path: Path, list_type: str, ids: List[str], overrides: Dict[str, Any], create_group: bool
+) -> None:
     policy_path = tmp_path / "adapter_policy.toml"
     policy_path.write_text(
         tomlkit.dumps(
@@ -30,6 +40,7 @@ def test_group_creation_preserves_legacy_policy(tmp_path: Path, list_type: str, 
                             "ids": ids,
                             "allow_ids": ["200"],
                             "deny_ids": ["300"],
+                            **overrides,
                         },
                     }
                 ]
@@ -44,14 +55,99 @@ def test_group_creation_preserves_legacy_policy(tmp_path: Path, list_type: str, 
         for target in ("100", "200", "300", "400")
     ]
     policy = manager.get_adapter_policy(identity)
-    manager.set_adapter_policy(
-        identity, policy, policy_groups=[{"id": "default", "name": "默认分组", **policy}], active_group="default"
-    )
+    if create_group:
+        manager.set_adapter_policy(
+            identity, policy, policy_groups=[{"id": "default", "name": "默认分组", **policy}], active_group="default"
+        )
+    else:
+        manager.set_adapter_policy(identity, policy)
     after = [
         manager.evaluate(identity, chat_type="group", target_id=target).allowed
         for target in ("100", "200", "300", "400")
     ]
     assert before == after
+    saved = tomlkit.loads(policy_path.read_text(encoding="utf-8"))["adapters"][0]["group"]
+    assert not {"list_type", "ids", "disabled"}.intersection(saved)
+
+
+@pytest.mark.parametrize("list_type,field", [("blacklist", "deny_ids"), ("whitelist", "allow_ids")])
+def test_legacy_list_deletion_survives_reload_and_repeated_save(tmp_path: Path, list_type: str, field: str) -> None:
+    policy_path = tmp_path / "adapter_policy.toml"
+    policy_path.write_text(
+        tomlkit.dumps(
+            {
+                "adapters": [
+                    {
+                        "plugin_id": "adapter.qq",
+                        "group": {"list_type": list_type, "ids": ["100", "200"]},
+                        "private": {"list_type": list_type, "ids": ["100", "200"]},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    manager = AdapterPolicyManager(policy_path)
+    identity = AdapterIdentity(plugin_id="adapter.qq")
+    edited = manager.get_adapter_policy(identity)
+    for chat_type in ("group", "private"):
+        edited[chat_type][field].remove("100")
+
+    manager.set_adapter_policy(identity, edited)
+    manager = AdapterPolicyManager(policy_path)
+    assert manager.get_adapter_policy(identity) == edited
+    first_save = policy_path.read_bytes()
+    manager.set_adapter_policy(identity, edited)
+    assert policy_path.read_bytes() == first_save
+    for chat_type in ("group", "private"):
+        assert manager.evaluate(identity, chat_type=chat_type, target_id="100").allowed == (list_type == "blacklist")
+        assert manager.evaluate(identity, chat_type=chat_type, target_id="200").allowed == (list_type == "whitelist")
+
+
+def test_full_policy_reset_keeps_editing_identity_and_inherited_rules(tmp_path: Path) -> None:
+    policy_path = tmp_path / "adapter_policy.toml"
+    inherited = {"plugin_id": "adapter.qq", "group": {"list_type": "blacklist", "ids": ["100"]}}
+    other_account = {
+        "plugin_id": "adapter.qq",
+        "account_id": "other",
+        "scope": "main",
+        "group": {"list_type": "whitelist", "ids": ["100"]},
+    }
+    identity_fields = {"plugin_id": "adapter.qq", "account_id": "bot", "scope": "main"}
+    policy_path.write_text(
+        tomlkit.dumps(
+            {
+                "defaults": {"private": {"default_action": "block"}},
+                "adapters": [
+                    inherited,
+                    other_account,
+                    {
+                        **identity_fields,
+                        "group": {"list_type": "whitelist", "ids": ["100"]},
+                        "private": {"disabled": True},
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    manager = AdapterPolicyManager(policy_path)
+    identity = AdapterIdentity(**identity_fields)
+    reset = {
+        chat_type: {"default_action": "inherit", "allow_ids": [], "deny_ids": []} for chat_type in ("group", "private")
+    }
+    manager.set_adapter_policy(identity, reset)
+    assert manager.get_adapter_policy(identity) == reset
+    assert not manager.evaluate(identity, chat_type="group", target_id="100").allowed
+    assert manager.evaluate(identity, chat_type="group", target_id="200").allowed
+    assert manager.evaluate(identity, chat_type="private", target_id="100").source == "defaults"
+    first_save = policy_path.read_bytes()
+    manager.set_adapter_policy(identity, reset)
+    assert policy_path.read_bytes() == first_save
+    saved = tomlkit.loads(policy_path.read_text(encoding="utf-8")).unwrap()
+    assert saved["adapters"] == [inherited, other_account, identity_fields]
+    other_identity = AdapterIdentity(plugin_id="adapter.qq", account_id="other", scope="main")
+    assert manager.evaluate(other_identity, chat_type="group", target_id="100").allowed
 
 
 def test_policy_groups_switch_and_survive_reload_and_chat_edits(tmp_path: Path) -> None:

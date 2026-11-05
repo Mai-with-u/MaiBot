@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <title>desktop-pet</title>
+<script src="host-bridge.js"></script>
+<link rel="stylesheet" href="exploration-products.css">
 <style>
   :root {
     --ink: #1d1d1b;
@@ -26,13 +28,27 @@
     user-select: none;
   }
 
-  #stage { position: relative; width: 100%; height: 100%; }
+  @font-face { font-family: PetPixel; src: url("fonts/ArkPixel12-ZhHans.woff2") format("woff2"); font-display: swap; }
+  #stage { position: relative; width: 100%; height: 100%; --pet-top: 136px; }
+  #thinking-caption {
+    position: absolute; bottom: 5px; left: 12px; right: 12px;
+    text-align: center; white-space: nowrap; pointer-events: none;
+    font: 12px/18px PetPixel, monospace; color: var(--paper);
+    text-shadow: 1px 1px var(--ink), -1px -1px var(--ink), 1px -1px var(--ink), -1px 1px var(--ink);
+  }
+  #thinking-caption span { display: inline-block; animation: caption-hop var(--wave) ease-in-out infinite; animation-delay: calc(var(--i) * 85ms); }
+  #remote-indicator { position: absolute; right: 2px; bottom: 5px; width: 10px; height: 10px; border: 2px solid var(--ink); border-radius: 50%; background: #c75c47; z-index: 4; }
+  #remote-indicator[data-connected="true"] { background: var(--leaf); }
+  #remote-controls { width: 100%; max-height: 72px; overflow-y: auto; padding: 5px 8px; background: var(--paper); border: 2px solid var(--ink); border-radius: 10px; font-size: 11px; overflow-wrap: anywhere; }
+  #remote-controls button { float: right; font-size: 11px; margin-left: 5px; }
+  @keyframes caption-hop { 0%, 25%, 100% { transform: translateY(0); } 12% { transform: translateY(-3px); } }
+  @media (prefers-reduced-motion: reduce) { #thinking-caption span { animation: none; } }
 
   /* ---------- 桌宠 ---------- */
   #pet {
     position: absolute;
     left: 55px;
-    bottom: 4px;
+    bottom: 24px;
     width: 150px;
     height: 107px;
     overflow: visible;
@@ -109,12 +125,11 @@
   .happy .eye-open { display: none; }
   .happy .eye-happy { display: inline; }
 
-  #jaw { transition: transform .1s; }
-  #mouth { opacity: 0; }
-  .talking #jaw { animation: chomp .24s ease-in-out infinite alternate; }
-  .talking #mouth { animation: mouth .24s ease-in-out infinite alternate; }
-  @keyframes chomp { to { transform: translateY(2.6px); } }
-  @keyframes mouth { to { opacity: 1; } }
+  /* 三角形是完整的嘴；说话时整体轻微伸缩，不拆出下颌或露出另一层嘴。 */
+  #mouth { transform-box: fill-box; transform-origin: center top; }
+  .talking #mouth { animation: mouth-talk .28s ease-in-out infinite alternate; }
+  @keyframes mouth-talk { from { transform: scaleY(.82); } to { transform: scaleY(1.08); } }
+  @media (prefers-reduced-motion: reduce) { .talking #mouth { animation: none; } }
 
   /* ---------- 菜单按钮 ---------- */
   .pet-menu {
@@ -193,12 +208,48 @@
   [data-mode="explore"] #explore { display: flex; }
   #explore-form { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
   #explore-goal { width: 100%; resize: none; min-height: 55px; }
+  #explore { max-height: min(650px, calc(100% - var(--pet-top, 116px) - 12px)); }
+  .explore-toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  #explore-open-records { width: 100%; }
+  .explore-toolbar .pet-select { flex: 1; font-size: 11px; }
+  #explore-create { flex-shrink: 0; }
+  #explore-create summary, .explore-progress summary { cursor: pointer; font-size: 12px; }
+  #explore-create[open] summary { margin-bottom: 6px; }
+  #explore-goal { max-height: 100px; }
+  #explore-tasks { display: flex; flex-direction: column; gap: 6px; max-height: 115px; overflow-y: auto; padding: 2px 7px 4px 0; flex-shrink: 0; }
+  #explore-tasks .explore-task { display: block; text-align: left; width: 100%; padding: 5px 8px; }
+  .explore-task[aria-pressed="true"] { border-color: var(--orange); }
+  .explore-task-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .explore-task small { display: block; }
+  .explore-task small, .explore-time { font-size: 10px; color: #786650; }
+  #explore-detail { overflow-y: auto; min-height: 0; max-height: 330px; padding-right: 6px; user-select: text; overflow-wrap: anywhere; }
+  #explore-detail h3 { margin: 4px 0; font-size: 13px; }
+  .explore-progress ol { margin: 5px 0; padding-left: 18px; font-size: 11px; }
+  .explore-progress li { margin-bottom: 6px; white-space: pre-wrap; }
+  .explore-result { font-size: 12px; }
+  .explore-result p { white-space: pre-wrap; margin: 6px 0; }
+  .explore-result h4 { margin: 10px 0 5px; font-size: 13px; }
+  .explore-result ul, .explore-result ol { padding-left: 18px; margin: 6px 0; }
+  .explore-result pre { padding: 7px; background: var(--paper-2); border-radius: 8px; overflow-x: auto; white-space: pre; }
+  .explore-result code { background: var(--paper-2); border-radius: 3px; font-size: 11px; }
+  .explore-result a { color: #826119; text-decoration: underline; }
   #explore-status { font-size: 12px; overflow-y: auto; max-height: 44px; white-space: pre-wrap; }
   #plugin-buttons { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; max-height: 140px; }
   .plugin-button { display: block; text-align: left; padding: 7px 9px; }
   .plugin-button:disabled { opacity: .55; cursor: default; }
   .plugin-button small { display: block; color: #605747; font-size: 11px; }
   #plugin-error { color: #a03022; font-size: 11px; overflow-wrap: anywhere; max-height: 45px; overflow-y: auto; }
+  [data-mode="plugin-panel"] #plugin-panel { display: flex; }
+  #plugin-panel { max-height: min(520px, calc(100vh - 175px)); }
+  .plugin-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  #plugin-panel-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; flex-shrink: 0; }
+  #plugin-panel-actions, #plugin-panel-copy { display: flex; flex-wrap: wrap; gap: 5px; flex-shrink: 0; }
+  #plugin-panel-actions .pet-button, #plugin-panel-copy .pet-button { font-size: 11px; padding: 5px 7px; }
+  #plugin-panel-actions [aria-pressed="true"] { background: var(--cream); border-color: var(--orange); }
+  #plugin-panel-picture { overflow: auto; min-height: 0; max-height: 300px; border-radius: 8px; background: var(--paper-2); }
+  #plugin-panel-image { width: 100%; display: block; cursor: zoom-in; }
+  #plugin-panel-image.zoomed { width: 740px; max-width: none; cursor: zoom-out; }
+  #plugin-panel-status { font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 65px; overflow-y: auto; }
   @keyframes rise {
     from { opacity: 0; translate: 0 10px; }
     to { opacity: 1; translate: 0 0; }
@@ -305,6 +356,13 @@
   .todo-controls { display: flex; align-items: center; gap: 6px; }
   .todo-controls .pet-select { flex: 1; }
   .todo-entry .pet-input { flex: 1; }
+  .todo-images { display: flex; flex-wrap: wrap; gap: 6px; }
+  .todo-images:empty { display: none; }
+  .todo-image { padding: 2px; position: relative; }
+  .todo-image img { display: block; width: 42px; height: 42px; object-fit: cover; border-radius: 8px; }
+  .todo-image.expanded { width: 100%; }
+  .todo-image.expanded img { width: 100%; height: auto; max-height: 240px; object-fit: contain; }
+  .todo-image .remove-image { position: absolute; right: 1px; top: -3px; background: var(--paper); border-radius: 50%; line-height: 14px; }
   #todo-error:empty { display: none; }
   #todo-error { max-height: 30px; overflow-y: auto; }
   .todo-meta { display: flex; align-items: center; gap: 4px; color: #786650; font-size: 10px; margin-top: 3px; }
@@ -323,7 +381,7 @@
     #todos { transition: none; scroll-behavior: auto; }
   }
   #todos { list-style: none; margin: 0; padding: 0 8px 0 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; display: flex; flex-direction: column; gap: 4px; }
-  #todos li[data-edited="true"] { border-bottom-color: var(--orange); }
+  #todos li[data-editing="true"] { border-bottom-color: var(--orange); }
   #todos li {
     border-bottom: 2px solid transparent;
     display: flex;
@@ -392,6 +450,7 @@
 </head>
 <body>
 <div id="stage" data-mode="idle">
+  <div id="thinking-caption" data-hit="0" role="status" hidden></div>
 
   <div id="pet" data-hit="34"><span id="screen-indicator" role="status" aria-label="正在持续阅读桌面" title="正在持续阅读桌面，可在聊天面板停止" hidden></span><canvas id="skin-canvas" style="display:none"></canvas><svg id="builtin-pet" width="150" height="107" viewBox="0 0 210 150" aria-hidden="true">
     <defs>
@@ -432,11 +491,8 @@
             <path d="M128.5 88Q135 79.5 141.5 88"/>
             <path d="M171 88Q177.5 79.5 184 88"/>
           </g>
-          <ellipse id="mouth" cx="157.3" cy="108" rx="4.2" ry="3" fill="#b8473f"/>
-          <g fill="var(--ink)" stroke="var(--ink)" stroke-width="1.4" stroke-linejoin="round">
-            <path d="M148.6 102H166L162.1 107H152.5Z"/>
-            <path id="jaw" d="M152.5 107.4H162.1L157.3 112.4Z"/>
-          </g>
+          <path id="mouth" d="M148.6 102H166L157.3 112.4Z" fill="var(--ink)"
+            stroke="var(--ink)" stroke-width="1.4" stroke-linejoin="round"/>
         </g>
       </g>
     </g>
@@ -445,6 +501,7 @@
   </div>
 
   <div id="pet-menu" class="pet-menu">
+  <div id="remote-controls" data-hit="10" hidden><button id="remote-exit" class="pet-button" type="button">退出</button><span id="remote-status" role="status"></span></div>
   <button id="orb-plugins" class="orb" data-hit="23" data-empty="true" aria-label="插件扩展" title="插件扩展">
     <svg viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round"><path d="M4 4h6v3a2 2 0 1 0 4 0V4h6v6h-3a2 2 0 1 0 0 4h3v6h-6v-3a2 2 0 1 0-4 0v3H4v-6h3a2 2 0 1 0 0-4H4Z"/></svg>
   </button>
@@ -469,12 +526,21 @@
   </div>
 
   <div id="explore" class="bubble" data-hit="18">
+    <div class="explore-toolbar">
+      <select class="pet-select" id="explore-filter" aria-label="筛选探索任务"><option value="all">全部任务</option><option value="active">进行中</option><option value="ended">已结束</option></select>
+      <button class="pet-button pet-icon-button" id="explore-refresh" type="button" title="刷新任务" aria-label="刷新任务">↻</button>
+      <button class="pet-button" id="explore-open-records" type="button" title="在独立窗口浏览完整探索记录">独立窗口 ↗</button>
+    </div>
+    <div id="explore-tasks"></div>
+    <section id="explore-detail" aria-label="探索进度与结果"></section>
+    <details id="explore-create"><summary>＋ 新探索</summary>
     <form id="explore-form">
       <label for="explore-goal">这次想探索什么？</label>
       <textarea class="pet-input" id="explore-goal" rows="3" maxlength="2000" required placeholder="例如：探索现有工具怎样整理讨论成果"></textarea>
       <button class="pet-button pet-button--primary" id="explore-start" type="submit">开始一轮探索</button>
     </form>
-    <div id="explore-status" role="status">使用当前聊天工具；探索结果在聊天中汇报。</div>
+    </details>
+    <div id="explore-status" role="status"></div>
   </div>
 
   <div id="chat" class="bubble" data-hit="18">
@@ -489,10 +555,11 @@
   </div>
 
   <div id="todo" class="bubble" data-hit="18">
+    <div class="todo-controls"><span id="todo-view-label" style="flex:1;font-size:12px">待办</span><button class="pet-button pet-icon-button" id="todo-history" type="button" title="查看已完成" aria-label="查看已完成" aria-pressed="false">✓</button></div>
     <ul id="todos" class="scroll"></ul>
     <form id="todo-form">
       <div class="todo-controls todo-entry">
-        <input class="pet-input" id="todo-input" aria-label="事项内容" placeholder="记一件事…" maxlength="200" autocomplete="off" required>
+        <input class="pet-input" id="todo-input" aria-label="事项内容" placeholder="记一件事… 可粘贴图片" maxlength="200" autocomplete="off">
         <button class="pet-button pet-button--primary pet-icon-button" type="submit" id="todo-save" title="添加" aria-label="添加"></button>
         <button class="pet-button pet-icon-button" type="button" id="todo-cancel" title="取消编辑" aria-label="取消编辑" hidden></button>
       </div>
@@ -500,6 +567,7 @@
         <select class="pet-select" id="todo-kind" aria-label="事项类型"><option value="user">提醒我</option><option value="bot">Bot 待办</option></select>
         <select class="pet-select" id="todo-time-mode" aria-label="时间方式"><option value="none">不定时</option><option value="absolute">指定时间</option><option value="relative">多久以后</option><option value="condition">条件触发</option><option value="app">应用打开</option></select>
       </div>
+      <div id="todo-images" class="todo-images"></div>
       <input class="pet-input" id="todo-date" aria-label="提醒时间" type="datetime-local" hidden>
       <input class="pet-input" id="todo-delay" aria-label="多少分钟后" type="number" min="0.01" step="any" placeholder="分钟后" hidden>
       <input class="pet-input" id="todo-condition" aria-label="触发条件" maxlength="500" placeholder="当桌面出现……时" hidden>
@@ -512,6 +580,14 @@
     <div id="plugin-buttons"></div>
     <div id="plugin-error" role="status"></div>
   </div>
+  <div id="plugin-panel" class="bubble" data-hit="18">
+    <div class="plugin-panel-heading"><strong id="plugin-panel-title"></strong><button id="plugin-panel-back" class="pet-button" title="返回插件扩展" aria-label="返回插件扩展">返回</button></div>
+    <div id="plugin-panel-text"></div>
+    <div id="plugin-panel-actions"></div>
+    <div id="plugin-panel-picture"><img id="plugin-panel-image" alt="插件分布图，点击放大或缩小" tabindex="0"></div>
+    <div id="plugin-panel-copy"></div>
+    <div id="plugin-panel-status" role="status"></div>
+  </div>
   <div id="say-wrap"><div id="say" data-hit="16"></div></div>
 </div>
 
@@ -519,6 +595,7 @@
   <button class="tick"><svg viewBox="0 0 12 12" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 6.2L5 8.5L9.4 3.6"/></svg></button>
 </template>
 
+<script src="exploration-render.js"></script>
 <script src="skin.js"></script>
 <script>
 (() => {
@@ -606,6 +683,7 @@
     modeAnimation = null;
     document.getElementById("chat").style.removeProperty("animation");
     stage.dataset.mode = mode;
+    if (!["plugins", "plugin-panel"].includes(mode)) requestedPluginPanel = null;
     if (mode === "menu") stage.style.setProperty("--menu-height", `${menu.offsetHeight}px`);
     if (mode !== "todo") todoExpandedHeight = 0;
     if (mode === "chat") {
@@ -618,6 +696,8 @@
       todoStickBottom = true;
       sizeTodoList();
       scrollTodosToBottom();
+    } else if (mode === "explore") {
+      refreshExplorations(true);
     } else if (mode === "plugins") {
       api.refresh_buttons().catch((error) => {
         document.getElementById("plugin-error").textContent = String(error);
@@ -729,6 +809,93 @@
   document.getElementById("orb-explore").addEventListener("click", () => setMode("explore"));
   const exploreStart = document.getElementById("explore-start");
   const exploreStatus = document.getElementById("explore-status");
+  const explorationLabels = {queued: "已提交", running: "探索中", completed: "已完成", failed: "失败", interrupted: "已中断"};
+  let explorationItems = [], selectedExploration = "", explorationRequest = 0, explorationPendingAt = 0;
+  let explorationDetailKey = "", explorationListKey = "";
+  const explorationList = document.getElementById("explore-tasks");
+  const explorationDetail = document.getElementById("explore-detail");
+  function renderExplorationList() {
+    const filter = document.getElementById("explore-filter").value;
+    const items = explorationItems.filter(item => filter === "all" ||
+      ((filter === "active") === ["queued", "running"].includes(item.status)));
+    const signature = JSON.stringify([items, selectedExploration]);
+    if (signature === explorationListKey) return;
+    explorationListKey = signature;
+    const nodes = items.map(item => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "pet-button explore-task";
+      button.setAttribute("aria-pressed", String(item.id === selectedExploration));
+      const title = document.createElement("span");
+      title.className = "explore-task-title";
+      title.textContent = item.goal;
+      title.title = item.goal;
+      const status = document.createElement("small");
+      status.textContent = `${explorationLabels[item.status]} · ${new Date(item.updated_at * 1000).toLocaleString()}`;
+      status.textContent += ` · 资源 ${item.resource_count ?? 0} / 经验 ${item.experience_count ?? 0}`;
+      button.append(title, status);
+      button.addEventListener("click", () => { selectedExploration = item.id; refreshExplorations(true); });
+      return button;
+    });
+    if (!nodes.length) {
+      const empty = document.createElement("small");
+      empty.textContent = "暂无任务";
+      nodes.push(empty);
+    }
+    const top = explorationList.scrollTop;
+    explorationList.replaceChildren(...nodes);
+    explorationList.scrollTop = top;
+    updateRegion();
+  }
+  // 结果仅构造文本节点，支持常用 Markdown；不解释 HTML 或不安全的链接协议。
+  function renderExplorationDetail(item) {
+    const signature = JSON.stringify(item);
+    if (signature === explorationDetailKey) return;
+    const sameTask = explorationDetail.dataset.taskId === item?.id;
+    const top = sameTask ? explorationDetail.scrollTop : 0;
+    const progressOpen = sameTask ? explorationDetail.querySelector("details")?.open : null;
+    explorationDetailKey = signature;
+    explorationDetail.replaceChildren();
+    explorationDetail.dataset.taskId = item?.id || "";
+    if (!item) return;
+    const heading = document.createElement("h3"); heading.textContent = item.goal;
+    const time = document.createElement("div"); time.className = "explore-time";
+    time.textContent = `${explorationLabels[item.status]} · 开始于 ${new Date(item.created_at * 1000).toLocaleString()}`;
+    const progress = document.createElement("details"); progress.className = "explore-progress";
+    progress.open = progressOpen ?? ["queued", "running"].includes(item.status);
+    const summary = document.createElement("summary"); summary.textContent = `执行记录 · ${item.events.length}`;
+    const events = document.createElement("ol");
+    for (const event of item.events) {
+      const li = document.createElement("li");
+      li.textContent = `${new Date(event.time * 1000).toLocaleTimeString()} · ${event.text}`;
+      events.append(li);
+    }
+    progress.append(summary, events);
+    explorationDetail.append(heading, time, progress);
+    if (item.status === "interrupted") {
+      const note = document.createElement("p"); note.textContent = "主程序已重启，此任务没有确认完成的结果。"; explorationDetail.append(note);
+    }
+    explorationDetail.append(window.explorationProducts(item));
+    explorationDetail.scrollTop = top;
+    updateRegion();
+  }
+  async function refreshExplorations(force = false) {
+    if (!api || (!force && explorationPendingAt && Date.now() - explorationPendingAt < 10000)) return;
+    const request = String(++explorationRequest);
+    explorationPendingAt = Date.now();
+    try { await api.exploration_tasks(selectedExploration, request); }
+    catch (error) { explorationPendingAt = 0; exploreStatus.textContent = String(error); }
+  }
+  document.getElementById("explore-refresh").addEventListener("click", () => refreshExplorations(true));
+  document.getElementById("explore-open-records").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try { await api.open_exploration_records(); }
+    catch (error) { exploreStatus.textContent = String(error); }
+    finally { button.disabled = false; }
+  });
+  document.getElementById("explore-filter").addEventListener("change", renderExplorationList);
+  setInterval(() => { if (stage.dataset.mode === "explore") refreshExplorations(); }, 3000);
   let explorationTimer = null;
   document.getElementById("explore-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -966,6 +1133,19 @@
     }
   }
   screenToggle.addEventListener("click", () => screenAction(screenReading ? "stop" : "start", screenToggle));
+  let todoShowingCompleted = false;
+  document.getElementById("todo-history").addEventListener("click", async () => {
+    todoShowingCompleted = !todoShowingCompleted;
+    const button = document.getElementById("todo-history");
+    button.setAttribute("aria-pressed", String(todoShowingCompleted));
+    button.title = todoShowingCompleted ? "返回待办" : "查看已完成";
+    button.setAttribute("aria-label", button.title);
+    document.getElementById("todo-view-label").textContent = todoShowingCompleted ? "已完成" : "待办";
+    document.getElementById("todo-form").hidden = todoShowingCompleted;
+    todoExpandedHeight = 0;
+    todoStickBottom = true;
+    await window.pet.refreshTodos();
+  });
   let todoExpandedHeight = 0;
   let todoStickBottom = true;
   function scrollTodosToBottom() {
@@ -983,7 +1163,8 @@
     const contentHeight = rowsHeight(rows);
     const panel = document.getElementById("todo");
     const room = Math.max(40, panel.getBoundingClientRect().bottom - 12
-      - document.getElementById("todo-form").offsetHeight - 32);
+      - document.getElementById("todo-form").offsetHeight
+      - document.getElementById("todo-history").parentElement.offsetHeight - 40);
     // 用实际条目高度封顶，不能用包含空白视口高度的 scrollHeight。
     const height = Math.min(room, contentHeight, Math.max(fiveRows, todoExpandedHeight));
     todoList.style.setProperty("--todo-list-height", `${height}px`);
@@ -1021,6 +1202,67 @@
     updateRegion();
   });
   let editingTodo = null;
+  let todoImages = [];
+  let todoImageRevision = 0;
+  let todoImageReading = false;
+  function todoImageNode(source, remove) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "pet-button todo-image";
+    button.title = remove ? "移除图片" : "展开／收起图片";
+    button.setAttribute("aria-label", button.title);
+    const img = document.createElement("img");
+    img.alt = "事项附件";
+    const loaded = () => { sizeTodoList(); updateRegion(); };
+    img.onload = loaded;
+    if (source.startsWith("data:")) img.src = source;
+    else api.todo_image(source).then(src => { img.src = src; }).catch(error => {
+      button.title = `图片读取失败：${error}`;
+      img.alt = "图片读取失败";
+    });
+    button.append(img);
+    if (remove) {
+      const cross = document.createElement("span");
+      cross.className = "remove-image";
+      cross.textContent = "×";
+      button.append(cross);
+    }
+    button.onclick = remove || (() => { button.classList.toggle("expanded"); loaded(); });
+    return button;
+  }
+  function renderTodoImages() {
+    document.getElementById("todo-images").replaceChildren(...todoImages.map((source, index) =>
+      todoImageNode(source, () => { todoImages.splice(index, 1); renderTodoImages(); })));
+    sizeTodoList();
+    updateRegion();
+  }
+  document.getElementById("todo-form").addEventListener("paste", async event => {
+    const files = [...event.clipboardData.items].filter(item => item.type.startsWith("image/"))
+      .map(item => item.getAsFile()).filter(Boolean);
+    if (!files.length) return;
+    event.preventDefault();
+    if (todoImageReading || document.getElementById("todo-save").disabled) return;
+    const revision = todoImageRevision;
+    todoImageReading = true;
+    todoError.textContent = "";
+    try {
+      if (todoImages.length + files.length > 4) throw new Error("每个事项最多粘贴 4 张图片");
+      const additions = [];
+      for (const file of files) {
+        if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)) throw new Error("不支持此图片格式");
+        if (file.size > 8 * 1024 * 1024) throw new Error("每张图片不能超过 8 MiB");
+        additions.push(await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = () => reject(new Error("读取剪贴板图片失败"));
+          reader.readAsDataURL(file);
+        }));
+      }
+      if (revision === todoImageRevision) todoImages.push(...additions);
+    } catch (error) {
+      if (revision === todoImageRevision) todoError.textContent = String(error.message || error);
+    } finally { todoImageReading = false; renderTodoImages(); }
+  });
   const todoKind = document.getElementById("todo-kind");
   const timeMode = document.getElementById("todo-time-mode");
   const todoDate = document.getElementById("todo-date");
@@ -1037,8 +1279,17 @@
     updateRegion();
   }
   timeMode.addEventListener("change", timeFields);
+  function syncTodoEditing() {
+    for (const row of document.querySelectorAll("#todos li")) {
+      row.dataset.editing = String(row.dataset.todoId === editingTodo?.id);
+    }
+  }
   function resetTodo() {
     editingTodo = null;
+    todoImageRevision++;
+    todoImages = [];
+    renderTodoImages();
+    syncTodoEditing();
     document.getElementById("todo-form").reset();
     setControlIcon(document.getElementById("todo-save"), "plus", "添加");
     document.getElementById("todo-cancel").hidden = true;
@@ -1048,8 +1299,9 @@
   document.getElementById("todo-cancel").addEventListener("click", resetTodo);
   function todoNode(item) {
     const li = document.createElement("li");
+    li.dataset.todoId = item.id;
+    li.dataset.editing = String(editingTodo?.id === item.id);
     if (item.updated_at != null) {
-      li.dataset.edited = "true";
       li.title = `已编辑 · ${new Date(item.updated_at * 1000).toLocaleString()}`;
     }
     const tick = document.getElementById("tick-tpl").content.firstElementChild.cloneNode(true);
@@ -1062,6 +1314,12 @@
     title.textContent = item.text;
     viewport.append(title);
     text.append(viewport);
+    if (item.images?.length) {
+      const images = document.createElement("div");
+      images.className = "todo-images";
+      images.append(...item.images.map(source => todoImageNode(source)));
+      text.append(images);
+    }
     let scrollingTitle = null;
     function browseTitle() {
       const distance = title.scrollHeight - viewport.clientHeight;
@@ -1078,6 +1336,21 @@
     li.addEventListener("mouseleave", resetTitle);
     li.addEventListener("focusin", browseTitle);
     li.addEventListener("focusout", resetTitle);
+    if (item.status === "completed") {
+      tick.disabled = true;
+      tick.title = "已完成";
+      tick.setAttribute("aria-label", "已完成");
+      tick.style.background = "var(--leaf)";
+      tick.querySelector("svg").style.opacity = "1";
+      tick.querySelector("svg").style.transform = "scale(1)";
+      const completed = document.createElement("small");
+      completed.className = "todo-meta";
+      completed.textContent = new Date(item.completed_at * 1000).toLocaleString();
+      completed.title = "完成时间";
+      text.append(completed);
+      li.append(tick, text);
+      return li;
+    }
     const detail = document.createElement("small");
     detail.className = "todo-meta";
     detail.dataset.status = item.status;
@@ -1111,14 +1384,18 @@
       error.textContent = item.error;
       text.append(error);
     }
-    tick.title = "完成并删除";
-    tick.setAttribute("aria-label", `完成并删除：${item.text}`);
+    tick.title = "完成并归档";
+    tick.setAttribute("aria-label", `完成并归档：${item.text}`);
     const edit = document.createElement("button");
     edit.type = "button";
     edit.className = "pet-button pet-icon-button";
     setControlIcon(edit, "edit", "编辑事项");
     edit.addEventListener("click", () => {
       editingTodo = item;
+      todoImageRevision++;
+      todoImages = [...(item.images || [])];
+      renderTodoImages();
+      syncTodoEditing();
       todoInput.value = item.text;
       todoKind.value = item.kind;
       timeMode.value = item.condition ? (item.condition_type === "app" ? "app" : "condition") : item.due_at ? "absolute" : "none";
@@ -1146,12 +1423,13 @@
   }
   document.getElementById("todo-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const text = todoInput.value.trim();
+    const text = todoInput.value.trim() || (todoImages.length ? "图片备忘" : "");
     if (!text || !api) return;
+    if (todoImageReading) { todoError.textContent = "图片正在读取，请稍候保存"; return; }
     const save = document.getElementById("todo-save");
     save.disabled = true;
     try {
-      const options = {kind: todoKind.value, condition: ["condition", "app"].includes(timeMode.value) ? todoCondition.value.trim() : "",
+      const options = {images: [...todoImages], kind: todoKind.value, condition: ["condition", "app"].includes(timeMode.value) ? todoCondition.value.trim() : "",
         condition_type: timeMode.value === "app" ? "app" : "natural"};
       if (["condition", "app"].includes(timeMode.value)) {
         if (!options.condition) throw new Error("请填写触发条件");
@@ -1175,7 +1453,70 @@
   // ---------- 与宿主通信 ----------
   let extensionButtons = [];
   const pendingButtons = new Set();
+  let activePluginPanel = null;
+  let requestedPluginPanel = null;
   const buttonKey = (button) => JSON.stringify([button.plugin_id, button.id]);
+  const panelStatus = document.getElementById("plugin-panel-status");
+  document.getElementById("plugin-panel-back").addEventListener("click", () => {
+    activePluginPanel = null;
+    requestedPluginPanel = null;
+    setMode("plugins");
+  });
+  const panelImage = document.getElementById("plugin-panel-image");
+  function zoomPanelImage() { panelImage.classList.toggle("zoomed"); updateRegion(); }
+  panelImage.addEventListener("click", zoomPanelImage);
+  panelImage.addEventListener("keydown", event => {
+    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); zoomPanelImage(); }
+  });
+  panelImage.addEventListener("load", updateRegion);
+  function renderPluginPanel() {
+    if (!activePluginPanel) return;
+    const owner = activePluginPanel;
+    const panel = owner.panel;
+    const key = JSON.stringify([owner.plugin_id, owner.button_id]);
+    document.getElementById("plugin-panel-title").textContent = panel.title;
+    document.getElementById("plugin-panel-text").textContent = panel.text;
+    document.getElementById("plugin-panel-picture").hidden = !panel.image;
+    if (panel.image) panelImage.src = "data:image/png;base64," + panel.image;
+    else panelImage.removeAttribute("src");
+    document.getElementById("plugin-panel-actions").replaceChildren(...panel.actions.map(action => {
+      const button = document.createElement("button");
+      button.className = "pet-button";
+      button.textContent = action.label;
+      button.setAttribute("aria-pressed", String(action.selected));
+      button.disabled = action.disabled || pendingButtons.has(key);
+      button.addEventListener("click", async () => {
+        if (pendingButtons.has(key)) return;
+        pendingButtons.add(key);
+        requestedPluginPanel = key;
+        panelStatus.textContent = "处理中…";
+        renderPluginPanel();
+        try { await api.click_button(owner.plugin_id, owner.button_id, action.id); }
+        catch (error) {
+          pendingButtons.delete(key);
+          panelStatus.textContent = String(error);
+          renderPluginPanel();
+        }
+      });
+      return button;
+    }));
+    const copies = [];
+    for (const [kind, content, label] of [["image", panel.image, "复制图片"], ["text", panel.copy_text, "复制文本"]]) {
+      if (!content) continue;
+      const button = document.createElement("button");
+      button.className = "pet-button";
+      button.textContent = label;
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        try { await api.copy_panel_content(kind, content); panelStatus.textContent = "已复制"; }
+        catch (error) { panelStatus.textContent = "复制失败：" + String(error); }
+        finally { button.disabled = false; updateRegion(); }
+      });
+      copies.push(button);
+    }
+    document.getElementById("plugin-panel-copy").replaceChildren(...copies);
+    updateRegion();
+  }
   function renderExtensionButtons() {
     const visible = extensionButtons.filter((button) => button.visible);
     document.getElementById("orb-plugins").dataset.empty = String(visible.length === 0);
@@ -1197,6 +1538,7 @@
         const key = buttonKey(item);
         if (pendingButtons.has(key)) return;
         pendingButtons.add(key);
+        requestedPluginPanel = key;
         document.getElementById("plugin-error").textContent = "";
         renderExtensionButtons();
         try {
@@ -1220,9 +1562,13 @@
 
   let todoRefresh = 0;
   window.pet = {
+    todoError(text) {
+      todoError.textContent = text;
+      updateRegion();
+    },
     async refreshTodos() {
       const revision = ++todoRefresh;
-      const items = await api.todos();
+      const items = await api.todos(todoShowingCompleted);
       if (revision !== todoRefresh) return;
       const wasAtBottom = todoList.scrollHeight - todoList.clientHeight - todoList.scrollTop <= 2;
       todoList.replaceChildren(...items.map(todoNode));
@@ -1232,19 +1578,109 @@
       updateRegion();
     },
     receive(message) {
-      if (message.type === "exploration_result") {
+      if (message.type === "connection") {
+        document.getElementById("remote-controls").hidden = false;
+        document.getElementById("remote-status").textContent = message.text;
+        let indicator = document.getElementById("remote-indicator");
+        if (!indicator) {
+          indicator = document.createElement("span");
+          indicator.id = "remote-indicator";
+          indicator.dataset.hit = "5";
+          indicator.setAttribute("role", "status");
+          document.getElementById("pet").append(indicator);
+        }
+        const wasConnected = indicator.dataset.connected === "true";
+        indicator.dataset.connected = String(message.connected);
+        indicator.title = message.text;
+        indicator.setAttribute("aria-label", message.text);
+        if (message.connected) {
+          window.pet.refreshTodos().then(() => { todoError.textContent = ""; }).catch(error => window.pet.todoError(String(error)));
+        } else {
+          stopWaiting();
+          const caption = document.getElementById("thinking-caption");
+          caption.replaceChildren();
+          caption.dataset.revision = "-1";
+          caption.dataset.text = "";
+          caption.hidden = true;
+          screenState({enabled: false, reading: false, busy: false, error: "远端未连接"});
+          if (pendingSend) finishSend({type: "failed", request_id: pendingSend.id, error: "连接已中断，发送结果尚未确认，请先查看聊天记录。"});
+          pendingButtons.clear();
+          extensionButtons = [];
+          activePluginPanel = null;
+          requestedPluginPanel = null;
+          renderExtensionButtons();
+          clearTimeout(explorationTimer);
+          exploreStart.disabled = false;
+          explorationPendingAt = 0;
+          if (wasConnected) showSay([{kind: "text", text: "远端连接已中断，正在重连。"}]);
+        }
+        updateRegion();
+        return;
+      }
+      if (message.type === "thinking_caption") {
+        const caption = document.getElementById("thinking-caption");
+        if (message.revision < Number(caption.dataset.revision || 0)) return;
+        caption.dataset.revision = message.revision;
+        if (caption.dataset.text === message.text) return;
+        caption.dataset.text = message.text;
+        caption.replaceChildren();
+        const chars = Array.from(message.text).slice(0, 18);
+        caption.style.setProperty("--wave", `${Math.max(1500, chars.length * 85 + 600)}ms`);
+        chars.forEach((char, index) => {
+          const span = document.createElement("span");
+          span.textContent = char === " " ? "\u00a0" : char;
+          span.style.setProperty("--i", index);
+          caption.append(span);
+        });
+        caption.hidden = !chars.length;
+        updateRegion();
+        return;
+      }
+      if (message.type === "exploration_tasks") {
+        if (message.request_id !== String(explorationRequest)) return;
+        explorationPendingAt = 0;
+        if (message.error) { exploreStatus.textContent = message.error; return; }
+        explorationItems = message.items;
+        if (message.selected) selectedExploration = message.selected.id;
+        renderExplorationList();
+        renderExplorationDetail(message.selected);
+        if (!message.items.length) document.getElementById("explore-create").open = true;
+        exploreStatus.textContent = "";
+      } else if (message.type === "exploration_result") {
         clearTimeout(explorationTimer);
         exploreStart.disabled = false;
-        exploreStatus.textContent = message.error || "探索任务已提交，尚不代表完成。请在聊天中查看结果；图式可让麦麦查询。";
+        exploreStatus.textContent = message.error || "任务已提交，等待探索进度。";
+        if (message.task_id) selectedExploration = message.task_id;
+        if (!message.error) {
+          document.getElementById("explore-create").open = false;
+          document.getElementById("explore-goal").value = "";
+        }
+        refreshExplorations(true);
         updateRegion();
       } else if (message.type === "screen_state") {
         screenState(message);
       } else if (message.type === "buttons") {
         extensionButtons = message.buttons;
+        if (activePluginPanel && !extensionButtons.some(button => button.plugin_id === activePluginPanel.plugin_id
+            && button.id === activePluginPanel.button_id && button.visible && !button.disabled)) {
+          activePluginPanel = null;
+          requestedPluginPanel = null;
+          if (stage.dataset.mode === "plugin-panel") setMode("plugins");
+        }
         renderExtensionButtons();
       } else if (message.type === "button_result") {
-        pendingButtons.delete(JSON.stringify([message.plugin_id, message.button_id]));
+        const key = JSON.stringify([message.plugin_id, message.button_id]);
+        pendingButtons.delete(key);
         document.getElementById("plugin-error").textContent = message.error;
+        if (requestedPluginPanel === key) {
+          requestedPluginPanel = null;
+          panelStatus.textContent = message.error || "点击图片放大查看，可滚动浏览";
+          if (!message.error && message.panel && ["plugins", "plugin-panel"].includes(stage.dataset.mode)) {
+            activePluginPanel = message;
+            setMode("plugin-panel");
+          }
+          renderPluginPanel();
+        }
         renderExtensionButtons();
       } else if (message.type === "accepted") {
         finishSend(message);
@@ -1284,7 +1720,7 @@
     api = window.pywebview.api;
     await api.fit(devicePixelRatio, petViewportHeight);
     watchScale();
-    await window.pet.refreshTodos();
+    await window.pet.refreshTodos().catch(error => window.pet.todoError(String(error)));
     const observer = new ResizeObserver(() => {
       if (menu.offsetHeight) stage.style.setProperty("--menu-height", `${menu.offsetHeight}px`);
       updateRegion();
@@ -1294,6 +1730,8 @@
     updateRegion();
     api.ready();
   });
+
+  document.getElementById("remote-exit").addEventListener("click", () => api.exit_client());
 
   blinkLoop();
   setTimeout(lookLoop, 2000);

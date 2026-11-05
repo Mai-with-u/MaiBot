@@ -144,6 +144,7 @@ export interface PluginInfo {
   /** 评价数量 */
   review_count?: number
   /** 是否已安装 */
+  builtin?: boolean
   installed: boolean
   /** 安装的版本（如果已安装） */
   installed_version?: string
@@ -153,7 +154,6 @@ export interface PluginInfo {
   /** 最后更新时间 */
   updated_at: string
   /** 详细描述（可能包含 Markdown） */
-  detailed_description?: string
   /** 截图列表 */
   screenshots?: string[]
   /** 更新日志 */
@@ -204,6 +204,7 @@ export interface PluginSearchParams {
  * 已安装插件信息
  */
 export interface InstalledPlugin {
+  builtin?: boolean
   /** 插件 ID */
   id: string
   /** 插件清单 */

@@ -68,9 +68,9 @@ class PromptPreviewRouteTarget:
 def _build_webui_local_base_url() -> str:
     """构建终端可直接打开的本机 WebUI 地址。"""
 
-    from src.config.startup_bindings import get_local_http_base_url
+    from src.common.runtime_context import runtime_context
 
-    return get_local_http_base_url()
+    return runtime_context().public_base_url
 
 
 def _resolve_prompt_preview_route_target(file_path: Path) -> PromptPreviewRouteTarget | None:

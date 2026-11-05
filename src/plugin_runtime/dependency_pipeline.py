@@ -3,7 +3,7 @@
 负责在 Host 侧统一完成以下工作：
 1. 扫描插件 Manifest；
 2. 检测插件与主程序、插件与插件之间的 Python 依赖冲突；
-3. 自动补装缺失的 Python 依赖，沿用已有包并让插件尝试加载；
+3. 由宿主统一解析和安装共享环境中的依赖；
 4. 产出最终的拒绝加载列表，供运行时使用。
 """
 
@@ -24,6 +24,7 @@ from packaging.utils import canonicalize_name
 from src.common.paths import get_instance_root, project_metadata_path
 from src.common.logger import get_logger
 from src.plugin_runtime.compat_policy import is_force_plugin_compatibility_enabled
+from src.plugin_runtime.host_dependencies import request_dependency_preparation
 from src.plugin_runtime.runner.manifest_validator import ManifestValidator, PluginManifest
 
 
@@ -70,8 +71,8 @@ class DependencyPipelineResult:
     """表示一次依赖流水线执行后的结果。"""
 
     blocked_plugin_reasons: Dict[str, str]
-    environment_changed: bool
     install_requirements: Tuple[CombinedPackageRequirement, ...]
+    pending_plugin_ids: Tuple[str, ...] = ()
 
 
 class PluginDependencyPipeline:
@@ -81,7 +82,7 @@ class PluginDependencyPipeline:
     使用 ``uv`` 为可加载插件补齐缺失的 Python 依赖。
     """
 
-    def __init__(self, project_root: Optional[Path] = None) -> None:
+    def __init__(self, project_root: Optional[Path] = None, *, force_plugin_compatibility: Optional[bool] = None) -> None:
         """初始化依赖流水线。
 
         Args:
@@ -94,7 +95,8 @@ class PluginDependencyPipeline:
             validate_python_package_dependencies=False,
             log_errors=False,
             log_compat_warnings=False,
-            force_plugin_compatibility=is_force_plugin_compatibility_enabled(),
+            force_plugin_compatibility=(is_force_plugin_compatibility_enabled()
+                                        if force_plugin_compatibility is None else force_plugin_compatibility),
         )
 
     async def execute(
@@ -102,14 +104,14 @@ class PluginDependencyPipeline:
         plugin_dirs: Iterable[Path],
         initial_blocked_plugin_reasons: Optional[Dict[str, str]] = None,
     ) -> DependencyPipelineResult:
-        """执行完整的依赖分析与自动安装流程。
+        """检查 Worker 的加载条件，缺失依赖交给宿主准备。
 
         Args:
             plugin_dirs: 需要扫描的插件根目录集合。
             initial_blocked_plugin_reasons: 依赖分析前已确定需要隔离的插件及原因。
 
         Returns:
-            DependencyPipelineResult: 最终的阻止加载结果与环境变更状态。
+            DependencyPipelineResult: 阻止加载原因与宿主正在准备的插件列表。
         """
 
         plan = await asyncio.to_thread(
@@ -119,34 +121,27 @@ class PluginDependencyPipeline:
         if not plan.install_requirements:
             return DependencyPipelineResult(
                 blocked_plugin_reasons=dict(plan.blocked_plugin_reasons),
-                environment_changed=False,
                 install_requirements=plan.install_requirements,
             )
 
-        install_succeeded, error_message = await self._install_requirements(plan.install_requirements)
-        if install_succeeded:
-            return DependencyPipelineResult(
-                blocked_plugin_reasons=dict(plan.blocked_plugin_reasons),
-                environment_changed=True,
-                install_requirements=plan.install_requirements,
-            )
-
-        affected_plugin_ids = sorted(
-            {
-                plugin_id
-                for requirement in plan.install_requirements
-                for plugin_id in requirement.plugin_ids
-            }
-        )
-        # 安装失败记录错误，插件仍尝试加载，实际导入或执行异常由运行时报告。
-        logger.error(
-            f"自动安装 Python 依赖失败，插件仍将尝试加载 ({', '.join(affected_plugin_ids)}): {error_message}"
-        )
-
+        # Worker 不修改共享环境，也不导入缺依赖的插件；宿主接受任务后统一停机安装。
+        requirements = ", ".join(item.requirement_text for item in plan.install_requirements)
+        pending = ()
+        try:
+            await request_dependency_preparation()
+            pending = tuple(sorted({plugin for item in plan.install_requirements for plugin in item.plugin_ids}))
+            reason = f"宿主正在准备插件依赖，完成后自动恢复: {requirements}"
+        except Exception as exc:
+            reason = f"无法准备插件依赖: {exc}；依赖: {requirements}"
+            logger.error(reason)
+        blocked = dict(plan.blocked_plugin_reasons)
+        for requirement in plan.install_requirements:
+            for plugin_id in requirement.plugin_ids:
+                self._append_block_reason(blocked, plugin_id, reason)
         return DependencyPipelineResult(
-            blocked_plugin_reasons=dict(plan.blocked_plugin_reasons),
-            environment_changed=False,
+            blocked_plugin_reasons=blocked,
             install_requirements=plan.install_requirements,
+            pending_plugin_ids=pending,
         )
 
     def build_plan(
@@ -176,7 +171,7 @@ class PluginDependencyPipeline:
         for plugin_id, reason in plugin_conflict_reasons.items():
             self._append_block_reason(blocked_plugin_reasons, plugin_id, reason)
 
-        install_requirements = self._build_install_requirements(manifests, blocked_plugin_reasons)
+        install_requirements = self._buildinstall_requirements(manifests, blocked_plugin_reasons)
         return DependencyPipelinePlan(
             blocked_plugin_reasons=blocked_plugin_reasons,
             install_requirements=install_requirements,
@@ -196,6 +191,22 @@ class PluginDependencyPipeline:
         for _plugin_path, manifest in self._manifest_validator.iter_plugin_manifests(plugin_dirs, enabled_only=True):
             manifests[manifest.id] = manifest
         return manifests
+
+    def collect_declared_requirements(self, plugin_dirs: Iterable[Path]) -> List[Dict[str, Any]]:
+        """宿主读取全部已启用插件的声明，包括已安装和互相冲突的依赖，不能按安装计划过滤。"""
+        result: List[Dict[str, Any]] = []
+        for _, manifest in self._manifest_validator.iter_plugin_manifests(plugin_dirs, enabled_only=True):
+            for dependency in manifest.python_package_dependencies:
+                specifier = self._manifest_validator.build_specifier_set(dependency.version_spec)
+                if specifier is None:
+                    raise ValueError(f"{manifest.id}: 无效依赖约束 {dependency.name}{dependency.version_spec}")
+                installed = self._manifest_validator.get_installed_package_version(dependency.name)
+                result.append({
+                    "requirement": f"{dependency.name}{dependency.version_spec}", "package": dependency.name,
+                    "plugin_ids": [manifest.id], "installed_version": installed,
+                    "satisfied": installed is not None and specifier.contains(installed, prereleases=True),
+                })
+        return result
 
     def _detect_host_conflicts(self, manifests: Dict[str, PluginManifest]) -> Dict[str, str]:
         """检测待补装依赖与主程序约束之间的冲突。
@@ -221,8 +232,13 @@ class PluginDependencyPipeline:
                     )
                     continue
 
-                # 已有依赖直接沿用，不因插件声明的版本范围提前阻止加载。
-                if self._manifest_validator.get_installed_package_version(dependency.name) is not None:
+                installed = self._manifest_validator.get_installed_package_version(dependency.name)
+                if installed is not None:
+                    if not package_specifier.contains(installed, prereleases=True):
+                        self._append_block_reason(
+                            blocked_plugin_reasons, manifest.id,
+                            f"插件依赖与共享环境冲突: {dependency.name}{dependency.version_spec}，当前安装 {installed}",
+                        )
                     continue
 
                 normalized_package_name = canonicalize_name(dependency.name)
@@ -325,7 +341,7 @@ class PluginDependencyPipeline:
 
         return dependency_usages
 
-    def _build_install_requirements(
+    def _buildinstall_requirements(
         self,
         manifests: Dict[str, PluginManifest],
         blocked_plugin_reasons: Dict[str, str],
@@ -382,8 +398,8 @@ class PluginDependencyPipeline:
                 merged_parts.append(normalized_part)
         return f"{','.join(merged_parts)}" if merged_parts else ""
 
-    async def _install_requirements(self, requirements: Sequence[CombinedPackageRequirement]) -> Tuple[bool, str]:
-        """安装指定的 Python 包需求列表。
+    async def install_requirements(self, requirements: Sequence[CombinedPackageRequirement]) -> Tuple[bool, str]:
+        """安装指定的 Python 包需求列表；由宿主在全部 Bot 停止后调用，修改所有 Bot 共用的环境。
 
         Args:
             requirements: 需要安装的依赖列表。
@@ -392,14 +408,28 @@ class PluginDependencyPipeline:
             Tuple[bool, str]: 安装是否成功，以及错误摘要。
         """
 
+        return await self._apply_requirements(requirements, dry_run=False)
+
+    async def resolve_requirements(self, requirements: Sequence[CombinedPackageRequirement]) -> Tuple[bool, str]:
+        """安装前只做联合解析；主程序、所有 Bot 与现有环境都必须满足，失败时不停止 Bot。"""
+        return await self._apply_requirements(requirements, dry_run=True)
+
+    async def _apply_requirements(self, requirements: Sequence[CombinedPackageRequirement], *, dry_run: bool) -> Tuple[bool, str]:
         requirement_texts = [requirement.requirement_text for requirement in requirements]
         if not requirement_texts:
             return True, ""
 
-        logger.info(f"开始自动安装插件 Python 依赖: {', '.join(requirement_texts)}")
+        operation = "联合解析" if dry_run else "安装"
+        logger.info(f"开始{operation}插件 Python 依赖: {', '.join(requirement_texts)}")
         try:
             index_settings = await asyncio.to_thread(self._load_package_index_settings)
             installed_constraints = await asyncio.to_thread(self._load_installed_package_constraints)
+            # 完整声明由解析器处理 markers/extras 和间接依赖，不以当前已安装版本代替宿主约束。
+            def host_requirements() -> List[str]:
+                with project_metadata_path(self._project_root).open("rb") as stream:
+                    return tomllib.load(stream)["project"]["dependencies"]
+
+            requirement_texts.extend(await asyncio.to_thread(host_requirements))
         except Exception as exc:
             return False, f"读取依赖安装配置或当前环境版本失败，已取消自动安装: {exc}"
 
@@ -418,6 +448,8 @@ class PluginDependencyPipeline:
             for attempt_index, index_url in enumerate(index_urls):
                 source_name = index_url or "默认源"
                 command = self._build_install_command(requirement_texts, index_url, constraint_path)
+                if dry_run:
+                    command.append("--dry-run")
 
                 try:
                     completed_process = await asyncio.to_thread(
@@ -429,12 +461,13 @@ class PluginDependencyPipeline:
                         encoding="utf-8",
                         errors="replace",
                         text=True,
+                        timeout=1800,
                     )
                 except Exception as exc:
                     return False, str(exc)
 
                 if completed_process.returncode == 0:
-                    logger.info(f"插件 Python 依赖自动安装完成（源: {source_name}）")
+                    logger.info(f"插件 Python 依赖{operation}完成（源: {source_name}）")
                     return True, ""
 
                 output = self._summarize_install_error(completed_process.stdout, completed_process.stderr)

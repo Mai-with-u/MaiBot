@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
+import { getHostRuntime } from '@/host/state'
 
 import {
   AlertCircle,
@@ -94,6 +95,7 @@ export function AuthPage() {
   const [isValidating, setIsValidating] = useState(false)
   const [error, setError] = useState('')
   const [checkingAuth, setCheckingAuth] = useState(true)
+  const [connectionError, setConnectionError] = useState('')
   const navigate = useNavigate()
   const { t } = useTranslation()
   const { theme, setTheme, themeConfig } = useTheme()
@@ -203,6 +205,8 @@ export function AuthPage() {
           // 直接使用验证响应中的 is_first_setup 字段，避免额外请求
           if (data.requires_custom_token || data.is_first_setup) {
             navigate({ to: '/setup' })
+          } else if (getHostRuntime().host) {
+            window.location.assign(resolvePostAuthTarget())
           } else {
             navigate({ to: resolvePostAuthTarget() })
           }
@@ -230,23 +234,30 @@ export function AuthPage() {
 
   // 如果已经认证，直接跳转到首页；否则尝试用 URL 中的 token 自动登录。
   useEffect(() => {
+    const controller = new AbortController()
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
     const verifyAuth = async () => {
       try {
-        const isAuth = await checkAuthStatus()
+        const isAuth = await checkAuthStatus(controller.signal)
+        if (controller.signal.aborted) return
         if (isAuth) {
           // 已登录场景下，URL 中残留的 token 也清掉，避免外泄。
           stripTokenFromUrl()
-          const setupStatus = await getSetupStatus()
+          const setupStatus = await getSetupStatus(controller.signal)
+          if (controller.signal.aborted) return
+          if (!setupStatus) throw new Error(t('auth.connFailed'))
           navigate({
             to:
-              setupStatus?.requires_custom_token || setupStatus?.is_first_setup
+              setupStatus.requires_custom_token || setupStatus.is_first_setup
                 ? '/setup'
                 : resolvePostAuthTarget(),
           })
           return
         }
 
-        // 未登录：检查 URL 是否带 token，带了就自动尝试登录。
+        setConnectionError('')
+        setCheckingAuth(false)
+        // 明确未登录：检查 URL 是否带 token，带了就自动尝试登录。
         const urlToken = extractUrlToken()
         if (urlToken && !urlTokenHandledRef.current) {
           urlTokenHandledRef.current = true
@@ -256,21 +267,29 @@ export function AuthPage() {
           // 异步触发验证；失败时错误信息会显示在表单上，token 也会保留在输入框中以便用户修正。
           void verifyToken(urlToken)
         }
-      } catch {
-        // 忽略错误，保持在登录页
-      } finally {
-        setCheckingAuth(false)
+      } catch (err) {
+        if (controller.signal.aborted) return
+        // 启动期间无法探测认证状态时保留等待界面；串行重试，避免请求堆积。
+        setConnectionError(err instanceof Error ? err.message : String(err))
+        retryTimer = setTimeout(() => { void verifyAuth() }, 2_000)
       }
     }
-    verifyAuth()
-  }, [navigate, extractUrlToken, stripTokenFromUrl, verifyToken])
+    void verifyAuth()
+    return () => {
+      controller.abort()
+      clearTimeout(retryTimer)
+    }
+  }, [navigate, extractUrlToken, stripTokenFromUrl, verifyToken, t])
 
   // 正在检查认证状态时显示加载
   if (checkingAuth) {
     return (
       <div data-auth-page="true" className="relative isolate flex min-h-screen items-center justify-center overflow-hidden bg-background p-4">
         {showRetroGears && <AuthRetroGears />}
-        <div className="text-muted-foreground">{t('auth.checkingAuth')}</div>
+        <div role="status" className="max-w-md space-y-2 text-center text-muted-foreground">
+          <p>{t(connectionError ? 'auth.waitingConnection' : 'auth.checkingAuth')}</p>
+          {connectionError && <p className="break-words text-xs">{connectionError}</p>}
+        </div>
       </div>
     )
   }

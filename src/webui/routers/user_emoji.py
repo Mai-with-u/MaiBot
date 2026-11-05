@@ -6,18 +6,16 @@ import mimetypes
 import re
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
 from src.common.paths import get_instance_root
 from src.core.internal_chat import INTERNAL_CHAT_USER_ID
-from src.webui.dependencies import require_auth
 from src.webui.routers.avatar import WEBUI_USER_ID_PATTERN, detect_supported_image_suffix
 
 router = APIRouter(
     prefix="/user-emojis",
     tags=["user-emojis"],
-    dependencies=[Depends(require_auth)],
 )
 
 PROJECT_ROOT = get_instance_root()

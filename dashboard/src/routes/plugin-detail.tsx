@@ -248,6 +248,7 @@ export function PluginDetailPage({
   const error = pluginError || (installedPluginsQuery.isError ? installedPluginsQuery.error.message : null)
 
   // 由已安装列表派生安装状态与已安装版本（纯函数，不再用本地 state）
+  const isBuiltin = installedPlugins.some(p => p.builtin && (p.id === plugin?.id || p.manifest.id === plugin?.id))
   const isInstalled = plugin ? checkPluginInstalled(plugin.id, installedPlugins) : false
   const installedVersion = plugin ? getInstalledPluginVersion(plugin.id, installedPlugins) : undefined
   const releaseRequest = releaseCatalog?.mode === 'releases'
@@ -672,7 +673,7 @@ export function PluginDetailPage({
                   </select>
                 </label>
               )}
-              {detailActionButtons}
+              {isBuiltin ? <p className="text-sm text-muted-foreground">内置插件随本体更新，可在管理页启用或停用。</p> : detailActionButtons}
               {operationProgress?.plugin_id === plugin.id && (
                 <div className="space-y-2 text-sm" role="status" aria-live="polite">
                   <div className="flex items-center justify-between gap-2">

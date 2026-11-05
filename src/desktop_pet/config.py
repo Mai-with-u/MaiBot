@@ -1,5 +1,7 @@
 """内置桌宠配置。"""
 
+from typing import Literal
+
 from src.config.config_base import ConfigBase, Field
 
 
@@ -8,13 +10,21 @@ class DesktopPetConfig(ConfigBase):
     __ui_order__ = 45
 
     enabled: bool = Field(default=False, json_schema_extra={"label": {"zh_CN": "启用桌宠"}})
-    """在本机 Windows 桌面显示麦麦，和网页聊天室共用聊天与昵称；支持热重载。"""
+    """启用本机桌宠或接受远端桌宠连接，和网页聊天室共用聊天与昵称；支持热重载。"""
+
+    mode: Literal["local", "remote"] = Field(default="local", json_schema_extra={"label": {"zh_CN": "运行模式"}})
+    """local 在本机 Windows 启动窗口；remote 等待独立 Windows 客户端连接，服务器可使用 Linux。一次连接一台桌宠。"""
 
     chat_tools_enabled: bool = Field(default=False, json_schema_extra={"label": {"zh_CN": "聊天流工具"}})
     """允许桌宠与网页共用的主人聊天查询其他聊天流并唤起传话；不影响图片发送。"""
 
     skin_id: str = Field(default="builtin", json_schema_extra={"label": {"zh_CN": "当前皮肤"}})
     """选择已安装的皮肤 ID；支持热切换，builtin 为内置麦麦。"""
+
+    show_current_task: bool = Field(
+        default=False, json_schema_extra={"label": {"zh_CN": "显示桌宠手中事"}},
+    )
+    """在桌宠底部显示当前动作的像素字幕；需单独配置 fast_model，未配置时不可启用。"""
 
     proactive_wake_enabled: bool = Field(
         default=False, json_schema_extra={"label": {"zh_CN": "定期主动思考"}},

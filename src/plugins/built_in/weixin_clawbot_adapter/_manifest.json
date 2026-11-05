@@ -1,0 +1,44 @@
+{
+  "manifest_version": 2,
+  "id": "maibot-team.weixin-clawbot-adapter",
+  "version": "0.2.0",
+  "name": "微信 ClawBot 适配器",
+  "display": {
+    "icon": {
+      "type": "local",
+      "value": "icon-mascot.webp"
+    }
+  },
+  "description": "通过微信 iLink / ClawBot 接入麦麦，支持多账号扫码绑定、账号备注、私聊文字、图片与语音转写。",
+  "author": {
+    "name": "MaiBot Team",
+    "url": "https://github.com/Mai-with-u/MaiBot-Weixin-ClawBot-Adapter"
+  },
+  "urls": {
+    "repository": "https://github.com/Mai-with-u/MaiBot-Weixin-ClawBot-Adapter",
+    "homepage": "https://github.com/Mai-with-u/MaiBot-Weixin-ClawBot-Adapter",
+    "documentation": "https://github.com/Mai-with-u/MaiBot-Weixin-ClawBot-Adapter#readme",
+    "issues": "https://github.com/Mai-with-u/MaiBot-Weixin-ClawBot-Adapter/issues"
+  },
+  "license": "MIT",
+  "plugin_type": "adapter",
+  "host_application": {
+    "min_version": "1.3.20",
+    "max_version": "1.99.99"
+  },
+  "sdk": {
+    "min_version": "2.21.0",
+    "max_version": "2.99.99"
+  },
+  "dependencies": [],
+  "capabilities": [
+    "gateway.route_message",
+    "gateway.update_state"
+  ],
+  "i18n": {
+    "default_locale": "zh-CN",
+    "supported_locales": [
+      "zh-CN"
+    ]
+  }
+}

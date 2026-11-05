@@ -2,12 +2,11 @@
 
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from src.common.logger import get_logger
 from src.common.runtime_loop import run_on_main_loop
-from src.webui.dependencies import require_auth
 from src.webui.services.text_learning import (
     CHUNK_LENGTH,
     MAX_SOURCE_LENGTH,
@@ -17,7 +16,7 @@ from src.webui.services.text_learning import (
     split_learning_text,
 )
 
-router = APIRouter(prefix="/learning/text", tags=["TextLearning"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/learning/text", tags=["TextLearning"])
 logger = get_logger("webui.text_learning")
 
 

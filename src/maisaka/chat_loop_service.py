@@ -1040,10 +1040,14 @@ class MaisakaChatLoopService:
                         "planner_reply_capabilities", capabilities=capabilities,
                     )
         from src.desktop_pet.todo_context import build_todo_context
+        from src.desktop_pet.exploration_search import build_exploration_reuse_context
 
         todo_context = build_todo_context(self._session_id)
         if todo_context:
             resolved_system_prompt += "\n\n" + todo_context
+        exploration_context = build_exploration_reuse_context(self._session_id)
+        if exploration_context:
+            resolved_system_prompt += "\n\n" + exploration_context
         system_item.add_text_content(resolved_system_prompt)
         items.append(system_item.build())
 

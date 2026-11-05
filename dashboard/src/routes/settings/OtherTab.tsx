@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate } from '@tanstack/react-router'
 
 import { cn } from '@/lib/utils'
-import { ApiError, backendApi } from '@/lib/http'
+import { ApiError, authApi } from '@/lib/http'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
@@ -239,7 +239,7 @@ export function OtherTab() {
 
     try {
       // 同一个请求重置向导和可选的密码；后端会续上当前浏览器的登录 Cookie。
-      const data = await backendApi.post<{ success: boolean; message?: string }>(
+      const data = await authApi.post<{ success: boolean; message?: string }>(
         '/api/webui/setup/reset',
         {
           body: { reset_password: resetSetupPassword },

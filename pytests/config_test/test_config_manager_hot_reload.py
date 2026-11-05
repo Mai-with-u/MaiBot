@@ -166,7 +166,7 @@ async def test_reload_config_notifies_section_callback_only_on_match(monkeypatch
     from src.config.config import Config
 
     new_config = Config()
-    new_config.webui.anti_crawler_mode = "strict"
+    new_config.webui.webui_style = 1
     manager = _make_reload_test_manager(monkeypatch, new_config)
 
     notified_all: list[int] = []

@@ -1,4 +1,6 @@
 data/
+/host/
+/bots/
 # Local roleplay benchmark data
 tools/roleplay_benchmark/
 tools/roleplay_benchmark/data/agent_scores.json
@@ -362,6 +364,7 @@ run_pet.bat
 
 /plugins/*
 !/plugins
+!/plugins/maibot_helper
 !/plugins/hello_world_plugin
 !/plugins/emoji_manage_plugin
 !/plugins/__init__.py
@@ -387,3 +390,11 @@ agentlite/
 /MaiMaiFocusPet-Godot/
 start_mac.command
 /.dsh-maibot-manager.lock
+
+# Local package-manager settings and runtime caches
+/dashboard/bunfig.toml
+/.codex-uv-cache/
+/.tmp-uv-cache/
+/.uv-log-cache/
+/.maibot-instance-locks/
+/tmp/

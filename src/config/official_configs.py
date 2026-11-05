@@ -335,6 +335,7 @@ class ImageCacheCleanupConfig(ConfigBase):
 class VisualConfig(ConfigBase):
     """视觉配置类"""
 
+    __ui_parent__ = "capabilities"
     __ui_label__ = "视觉"
     __ui_order__ = 60
 
@@ -1081,6 +1082,28 @@ class ExperimentalConfig(ConfigBase):
     __ui_label__ = "实验性功能"
     __ui_advanced__ = True
     __ui_order__ = 140
+
+    super_creative_mode: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "超级创意模式",
+                "en_US": "Super creative mode",
+                "ja_JP": "スーパークリエイティブモード",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """实验性功能：Replyer 使用所选语言 Prompt 生成回复，再由同一实际 Replyer 模型翻译为中文。优先于回复缓存模式，翻译会增加耗时和费用。"""
+
+    super_creative_language: Literal["ja-JP", "ru-RU", "fr-FR"] = Field(
+        default="ja-JP",
+        json_schema_extra={
+            "label": {"zh_CN": "超级创意生成语言"},
+            "x-option-labels": {"ja-JP": "日语", "ru-RU": "俄语", "fr-FR": "法语"},
+        },
+    )
+    """超级创意模式使用的 Prompt 和生成语言，中文材料原样保留。"""
 
     passive_replyer: bool = Field(
         default=False,
@@ -5243,32 +5266,6 @@ class MaimMessageConfig(ConfigBase):
     )
     """消息服务总开关；关闭后不启动旧版 WS 和新版 API 服务，重启生效，不影响插件式适配器。"""
 
-    ws_server_host: str = Field(
-        default="127.0.0.1",
-        json_schema_extra={
-            "label": {
-                "zh_CN": "旧版 WS 主机",
-                "en_US": "Legacy WS host",
-                "ja_JP": "旧 WS ホスト",
-            },
-            "x-widget": "input",
-        },
-    )
-    """旧版 WebSocket 服务监听地址；不清楚就保持默认。"""
-
-    ws_server_port: int = Field(
-        default=8000,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "旧版 WS 端口",
-                "en_US": "Legacy WS port",
-                "ja_JP": "旧 WS ポート",
-            },
-            "x-widget": "input",
-        },
-    )
-    """旧版 WebSocket 服务端口。"""
-
     auth_token: list[str] = Field(
         default_factory=lambda: [],
         json_schema_extra={
@@ -5280,7 +5277,7 @@ class MaimMessageConfig(ConfigBase):
             "x-widget": "custom",
         },
     )
-    """旧版 API 的认证令牌；为空表示不验证。"""
+    """消息协议的认证令牌；经宿主统一入口访问，为空时拒绝连接。"""
 
     enable_api_server: bool = Field(
         default=False,
@@ -5295,71 +5292,6 @@ class MaimMessageConfig(ConfigBase):
     )
     """是否开启新版 API Server，供外部程序调用麦麦。"""
 
-    api_server_host: str = Field(
-        default="0.0.0.0",
-        json_schema_extra={
-            "label": {
-                "zh_CN": "新版 API 主机",
-                "en_US": "New API host",
-                "ja_JP": "新 API ホスト",
-            },
-            "x-widget": "input",
-        },
-    )
-    """新版 API Server 监听地址；0.0.0.0 表示允许外部访问。"""
-
-    api_server_port: int = Field(
-        default=8090,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "新版 API 端口",
-                "en_US": "New API port",
-                "ja_JP": "新 API ポート",
-            },
-            "x-widget": "input",
-        },
-    )
-    """新版 API Server 监听端口。"""
-
-    api_server_use_wss: bool = Field(
-        default=False,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "新版 API 使用 WSS",
-                "en_US": "Use WSS for new API",
-                "ja_JP": "新 API で WSS を使用",
-            },
-            "x-widget": "switch",
-        },
-    )
-    """新版 API Server 是否使用加密 WebSocket。"""
-
-    api_server_cert_file: str = Field(
-        default="",
-        json_schema_extra={
-            "label": {
-                "zh_CN": "WSS 证书文件",
-                "en_US": "WSS certificate file",
-                "ja_JP": "WSS 証明書ファイル",
-            },
-            "x-widget": "input",
-        },
-    )
-    """WSS 使用的证书文件路径。"""
-
-    api_server_key_file: str = Field(
-        default="",
-        json_schema_extra={
-            "label": {
-                "zh_CN": "WSS 私钥文件",
-                "en_US": "WSS key file",
-                "ja_JP": "WSS 秘密鍵ファイル",
-            },
-            "x-widget": "input",
-        },
-    )
-    """WSS 使用的私钥文件路径。"""
-
     api_server_allowed_api_keys: list[str] = Field(
         default_factory=lambda: [],
         json_schema_extra={
@@ -5371,7 +5303,7 @@ class MaimMessageConfig(ConfigBase):
             "x-widget": "custom",
         },
     )
-    """允许访问新版 API 的 Key 列表；为空表示不限制。"""
+    """允许访问新版 API 的 Key 列表；为空时拒绝连接。"""
 
 
 class WebUIConfig(ConfigBase):
@@ -5381,32 +5313,6 @@ class WebUIConfig(ConfigBase):
     __ui_section_label__ = "WebUI"
     __ui_advanced__ = True
     __ui_order__ = 110
-
-    enabled: bool = Field(
-        default=True,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "启用 WebUI",
-                "en_US": "Enable WebUI",
-                "ja_JP": "WebUI を有効化",
-            },
-            "x-widget": "switch",
-        },
-    )
-    """是否加载 WebUI 管理界面和管理接口；关闭后公共 HTTP 文件传输仍然可用。"""
-
-    mode: Literal["development", "production"] = Field(
-        default="production",
-        json_schema_extra={
-            "label": {
-                "zh_CN": "运行模式",
-                "en_US": "Run mode",
-                "ja_JP": "実行モード",
-            },
-            "x-widget": "select",
-        },
-    )
-    """WebUI 运行模式；普通使用保持 production。"""
 
     webui_style: int = Field(
         default=2,
@@ -5424,73 +5330,6 @@ class WebUIConfig(ConfigBase):
         },
     )
     """界面风格编号；0 为旧风格，1 为未来复古风格，2 为千禧风格。"""
-
-    anti_crawler_mode: Literal["false", "strict", "loose", "basic"] = Field(
-        default="basic",
-        json_schema_extra={
-            "label": {
-                "zh_CN": "防爬虫模式",
-                "en_US": "Anti-crawler mode",
-                "ja_JP": "クローラー対策モード",
-            },
-            "x-widget": "select",
-        },
-    )
-    """防爬虫策略；basic 只记录，strict/loose 会拦截更多请求。"""
-
-    allowed_ips: str = Field(
-        default="127.0.0.1",
-        json_schema_extra={
-            "label": {
-                "zh_CN": "允许访问 IP",
-                "en_US": "Allowed IPs",
-                "ja_JP": "許可 IP",
-            },
-            "x-widget": "comma-list",
-            "x-placeholder": "127.0.0.1",
-        },
-    )
-    """允许访问 WebUI 的 IP，多个用逗号分隔。"""
-
-    trusted_proxies: str = Field(
-        default="",
-        json_schema_extra={
-            "label": {
-                "zh_CN": "可信代理 IP",
-                "en_US": "Trusted proxy IPs",
-                "ja_JP": "信頼プロキシ IP",
-            },
-            "x-widget": "comma-list",
-            "x-placeholder": "127.0.0.1",
-        },
-    )
-    """可信反向代理 IP；只有这些代理传来的真实 IP 会被信任。"""
-
-    trust_xff: bool = Field(
-        default=False,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "信任 XFF",
-                "en_US": "Trust XFF",
-                "ja_JP": "XFF を信頼",
-            },
-            "x-widget": "switch",
-        },
-    )
-    """是否信任 X-Forwarded-For 里的真实访客 IP。"""
-
-    secure_cookie: bool = Field(
-        default=False,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "安全 Cookie",
-                "en_US": "Secure cookie",
-                "ja_JP": "セキュア Cookie",
-            },
-            "x-widget": "switch",
-        },
-    )
-    """只在 HTTPS 下发送登录 Cookie；没有 HTTPS 时不要开启。"""
 
     enforce_public_outbound_url: bool = Field(
         default=True,
@@ -5911,6 +5750,19 @@ class CommandPermissionConfig(ConfigBase):
     """允许执行命令的真实聊天流 ID。"""
 
 
+class PluginUsagePermissionConfig(ConfigBase):
+    """核心侧插件使用范围，与插件声明的命令权限同时生效。"""
+
+    enabled: bool = False
+    """是否限制此插件的命令和工具；关闭时保留现有行为。"""
+
+    allow_users: List[str] = Field(default_factory=list)
+    """放行用户（平台:用户 ID）；适用于命令及私聊工具。"""
+
+    allow_chats: List[str] = Field(default_factory=list)
+    """放行真实聊天流 ID；群聊工具按会话鉴权。"""
+
+
 class PluginConfig(ConfigBase):
     """插件管理配置类"""
 
@@ -5950,6 +5802,12 @@ class PluginConfig(ConfigBase):
         json_schema_extra={"hidden": True},
     )
     """受保护命令按用户和真实聊天流配置的额外放行规则。"""
+
+    usage_permissions: Dict[str, PluginUsagePermissionConfig] = Field(
+        default_factory=dict,
+        json_schema_extra={"hidden": True},
+    )
+    """按插件 ID 设置的使用范围，限制命令与工具，不改变插件生命周期管理权限。"""
 
     disabled_commands: List[str] = Field(
         default_factory=list,

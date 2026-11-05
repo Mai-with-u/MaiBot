@@ -15,6 +15,7 @@ def build_todo_context(session_id: str) -> str:
         return ""
     path = get_instance_root() / "data" / "plugins" / "sengokucola.desktop-pet" / "todos.json"
     items = json.loads(path.read_text("utf-8")) if path.exists() else []
+    items = [item for item in items if item.get("status") != "completed"]
     for item in items:
         if item.get("due_at") is not None:
             item["due_at_local"] = datetime.fromtimestamp(item["due_at"]).astimezone().isoformat()

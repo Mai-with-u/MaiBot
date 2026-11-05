@@ -7,10 +7,10 @@ import asyncio
 import contextlib
 import json
 import os
-import sys
 import time
 
 from src.common.paths import get_instance_root
+from src.common.python_process import python_environment, python_executable
 from src.common.logger import get_logger
 from src.common.shutdown import is_shutdown_requested
 from src.config.config import global_config
@@ -1036,7 +1036,9 @@ class PluginRunnerSupervisor:
             if registration.desktop_pet_buttons and not registration.config_error
         }
 
-    async def desktop_pet_buttons(self, plugin_id: str, button_id: Optional[str] = None) -> Dict[str, Any]:
+    async def desktop_pet_buttons(
+        self, plugin_id: str, button_id: Optional[str] = None, action_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         self._ensure_accepting_runner_rpc()
         registration = self._registered_plugins.get(plugin_id)
         if registration is None or not registration.desktop_pet_buttons:
@@ -1045,7 +1047,7 @@ class PluginRunnerSupervisor:
             raise ValueError("未声明的桌宠按钮")
         response = await self._rpc_server.send_request(
             "plugin.desktop_pet_buttons", plugin_id=plugin_id,
-            payload={"button_id": button_id}, timeout_ms=10000 if button_id else 4000,
+            payload={"button_id": button_id, "action_id": action_id}, timeout_ms=10000 if button_id else 4000,
         )
         if response.error:
             raise ValueError(str(response.error.get("message", "桌宠按钮请求失败")))
@@ -2012,10 +2014,10 @@ class PluginRunnerSupervisor:
         spawn_started_at = time.monotonic()
         self._logger.info("开始拉起 Runner 子进程")
         self._runner_process = await asyncio.create_subprocess_exec(
-            sys.executable,
+            python_executable(),
             "-m",
             "src.plugin_runtime.runner.runner_main",
-            env=env,
+            env=python_environment(env),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )

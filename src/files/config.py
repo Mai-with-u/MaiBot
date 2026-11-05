@@ -18,8 +18,6 @@ class FilesConfig(ConfigBase):
     """同时上传、下载的数量上限，配额不足时拒绝新增。"""
     transfer_timeout: int = Field(default=120, ge=10, le=3600)
     """单次文件传输的超时秒数。"""
-    transfer_base_url: str = Field(default="")
-    """QQ 客户端可访问的 后端 HTTP 地址；留空使用本机 http 配置的监听地址和端口。异机部署必须填写客户端可达的 HTTP(S) 地址。"""
     trusted_download_origins: List[str] = Field(default_factory=list)
     """允许下载的内网适配器来源，填写精确的 http(s)://主机:端口；默认仅允许公网 HTTP(S) 地址。不要填写用户可控制的服务。"""
 

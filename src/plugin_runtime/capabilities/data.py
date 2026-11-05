@@ -332,22 +332,17 @@ class RuntimeDataCapabilityMixin:
         try:
             from src.chat.message_receive.chat_manager import chat_manager
 
-            existing_session_ids = chat_manager.resolve_session_ids_by_target(
+            session, created = await chat_manager.open_session(
                 platform=platform,
-                target_id=group_id if chat_type == "group" else user_id,
-                chat_type=chat_type,
-            )
-            session = await chat_manager.get_or_create_session(
-                platform=platform,
-                user_id=user_id or "",
-                group_id=group_id or None,
+                user_id=user_id if chat_type == "private" else "",
+                group_id=group_id if chat_type == "group" else None,
                 account_id=account_id,
                 scope=scope,
             )
             serialized_stream = self._serialize_stream(session)
             return {
                 "success": True,
-                "created": session.session_id not in existing_session_ids,
+                "created": created,
                 "stream": serialized_stream,
                 **serialized_stream,
             }

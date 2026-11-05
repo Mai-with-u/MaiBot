@@ -6,10 +6,13 @@ from typing import Dict
 
 import hashlib
 import json
+import sys
 
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[2] / ".github/scripts/maibot_release.py"
+# 发布脚本按 CI 的运行方式导入同目录的 release_dependencies。
+sys.path.insert(0, str(SCRIPT.parent))
 SPEC = spec_from_file_location("maibot_release_checks", SCRIPT)
 release = module_from_spec(SPEC)
 SPEC.loader.exec_module(release)

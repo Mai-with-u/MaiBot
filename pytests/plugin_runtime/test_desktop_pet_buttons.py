@@ -27,6 +27,62 @@ class Provider:
         self.calls.append(button_id)
 
 
+class PanelProvider(Provider):
+    async def get_desktop_pet_panel(self, button_id):
+        return {"title": "统计", "actions": [{"id": "refresh", "label": "刷新"},
+                                             {"id": "disabled", "label": "禁用", "disabled": True}]}
+
+    async def on_desktop_pet_button_click(self, button_id):
+        return await self.get_desktop_pet_panel(button_id)
+
+    async def on_desktop_pet_panel_action(self, button_id, action_id):
+        self.calls.append((button_id, action_id))
+        return await self.get_desktop_pet_panel(button_id)
+
+
+@pytest.mark.asyncio
+async def test_panel_actions_require_current_declared_enabled_action_and_button():
+    provider = PanelProvider()
+    snapshot = await read_button_snapshot(provider)
+    assert (await invoke_button(provider, snapshot, "volume")).title == "统计"
+    for action in ("missing", "disabled"):
+        with pytest.raises(ValueError, match="面板操作"):
+            await invoke_button(provider, snapshot, "volume", action)
+    assert provider.calls == []
+    await invoke_button(provider, snapshot, "volume", "refresh")
+    assert provider.calls == [("volume", "refresh")]
+    provider.visible = False
+    with pytest.raises(ValueError, match="不可用"):
+        await invoke_button(provider, await read_button_snapshot(provider), "volume", "refresh")
+
+
+def test_panel_rejects_active_content_and_duplicate_actions():
+    from src.plugin_runtime.desktop_pet_panels import DesktopPetPanel
+
+    for content in ({"html": "<script>alert(1)</script>"}, {"image": "https://example.com/pic.png"},
+                    {"actions": [{"id": "x", "label": "x"}] * 2}):
+        with pytest.raises(ValueError):
+            DesktopPetPanel.model_validate({"title": "test", **content})
+
+
+@pytest.mark.asyncio
+async def test_runner_returns_panel_and_dispatches_panel_action():
+    from src.plugin_runtime.runner.runner_main import PluginRunner
+
+    runner = PluginRunner("unused", "test", [])
+    provider = PanelProvider()
+    meta = SimpleNamespace(instance=provider, config_error="")
+    runner._loader = SimpleNamespace(get_plugin=lambda plugin_id: meta)
+    envelope = request(button_id="volume")
+    response = await runner._handle_desktop_pet_buttons(envelope)
+    assert response.error is None and response.payload["panel"]["title"] == "统计"
+    envelope.payload["action_id"] = "refresh"
+    response = await runner._handle_desktop_pet_buttons(envelope)
+    assert response.error is None and provider.calls == [("volume", "refresh")]
+    envelope.payload["action_id"] = "unregistered"
+    assert (await runner._handle_desktop_pet_buttons(envelope)).error
+
+
 @pytest.mark.asyncio
 async def test_only_declared_visible_enabled_buttons_execute():
     provider = Provider()
@@ -71,9 +127,7 @@ def request(plugin_id="test.pet", button_id=None, request_id=1):
 async def test_runner_routes_owner_and_rejects_repeated_action():
     from src.plugin_runtime.runner.runner_main import PluginRunner
 
-    runner = PluginRunner.__new__(PluginRunner)
-    runner._desktop_pet_button_locks = {}
-    runner._inflight_rpcs = {}
+    runner = PluginRunner("unused", "test", [])
     provider = Provider()
     meta = SimpleNamespace(instance=provider, config_error="")
     runner._loader = SimpleNamespace(get_plugin=lambda plugin_id: meta if plugin_id == "test.pet" else None)
@@ -125,3 +179,47 @@ async def test_window_sync_removes_unloaded_plugin_buttons(monkeypatch):
     plugins.clear()
     await service._sync_buttons()
     assert command.await_args.args[0] == {"type": "buttons", "buttons": []}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action_id", [None, "refresh"])
+async def test_panel_routes_through_service_manager_supervisor_and_runner(monkeypatch, action_id):
+    from src.desktop_pet.service import DesktopPetService
+    from src.plugin_runtime import integration
+    from src.plugin_runtime.host.supervisor import PluginSupervisor
+    from src.plugin_runtime.runner.runner_main import PluginRunner
+
+    provider = PanelProvider()
+    meta = SimpleNamespace(instance=provider, config_error="")
+    runner = PluginRunner("unused", "test", [])
+    runner._loader = SimpleNamespace(get_plugin=lambda plugin_id: meta)
+
+    async def send_request(method, *, plugin_id, payload, timeout_ms):
+        assert method == "plugin.desktop_pet_buttons"
+        assert payload == {"button_id": "volume", "action_id": action_id}
+        envelope = Envelope(request_id=1, message_type=MessageType.REQUEST, plugin_id=plugin_id,
+                            method=method, payload=payload, timeout_ms=timeout_ms)
+        return await runner._handle_desktop_pet_buttons(envelope)
+
+    supervisor = PluginSupervisor.__new__(PluginSupervisor)
+    monkeypatch.setattr(supervisor, "_ensure_accepting_runner_rpc", lambda: None)
+    supervisor._registered_plugins = {
+        "test.pet": RegisterPluginPayload(plugin_id="test.pet", desktop_pet_buttons=provider.desktop_pet_buttons),
+    }
+    supervisor._rpc_server = SimpleNamespace(send_request=send_request)
+    manager = integration.PluginRuntimeManager.__new__(integration.PluginRuntimeManager)
+    manager._started = True
+    monkeypatch.setattr(manager, "_get_supervisor_for_plugin", lambda plugin_id: supervisor)
+    monkeypatch.setattr(integration, "get_plugin_runtime_manager", lambda: manager)
+    service = DesktopPetService()
+    service._ready, service._closing = True, False
+    command = AsyncMock()
+    monkeypatch.setattr(service, "_command", command)
+    monkeypatch.setattr(service, "_buttons_changed", lambda: None)
+
+    await service._click_button("test.pet", "volume", action_id)
+
+    result = command.await_args.args[0]
+    assert result["error"] == ""
+    assert result["panel"]["title"] == "统计"
+    assert provider.calls == ([] if action_id is None else [("volume", "refresh")])

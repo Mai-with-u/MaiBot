@@ -158,6 +158,39 @@ describe('ProviderForm 表单校验', () => {
   })
 })
 
+describe('ProviderForm ChatGPT 独立登录', () => {
+  it('显示账号标签及授权入口，编辑标签后不携带旧 API Key 保存', async () => {
+    const user = userEvent.setup()
+    const { onSave } = renderForm({
+      editingProvider: makeProvider({
+        name: 'ChatGPT',
+        base_url: 'https://api.openai.com/v1',
+        client_type: 'chatgpt',
+        chatgpt_account: 'work',
+        api_key: 'stale-api-key',
+      }),
+      editingIndex: 0,
+    })
+
+    const accountInput = await screen.findByLabelText('ChatGPT 账号标签')
+    expect(accountInput).toHaveValue('work')
+    expect(screen.queryByLabelText('API Key *')).not.toBeInTheDocument()
+    expect(screen.getByText('maibot chatgpt login --account 标签')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Manage usage — 管理 ChatGPT 用量与授权' }))
+      .toHaveAttribute('href', 'https://chatgpt.com/settings/usage')
+
+    await user.clear(accountInput)
+    await user.type(accountInput, 'personal')
+    await user.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ client_type: 'chatgpt', chatgpt_account: 'personal', api_key: '' }),
+      0,
+    ))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+})
+
 describe('ProviderForm API Key 交互', () => {
   it('默认以密码框隐藏 API Key，点击眼睛按钮切换显示/隐藏', async () => {
     const user = userEvent.setup()
@@ -347,9 +380,11 @@ describe('ProviderForm 保存流程', () => {
     const user = userEvent.setup()
     const { onSave } = renderForm({ editingProvider: makeProvider(), editingIndex: 0 })
 
-    expect(screen.queryByText('默认请求 Headers')).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '高级配置' }))
-    expect(screen.getByText('默认请求 Headers')).toBeInTheDocument()
+    const advancedToggle = screen.getByRole('button', { name: '高级配置' })
+    expect(advancedToggle).toHaveAttribute('aria-expanded', 'false')
+    await user.click(advancedToggle)
+    expect(advancedToggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('请求头')).toBeInTheDocument()
 
     await user.click(screen.getByRole('tab', { name: 'JSON 编辑' }))
     const editor = screen.getByRole('textbox', { name: '' })
@@ -397,7 +432,7 @@ describe('ProviderForm 保存流程', () => {
     await user.clear(retryInput)
     await user.type(retryInput, '5')
     // 清空超时输入框，应回传 null（由上层 cleanProviderData 填默认值）
-    await user.clear(screen.getByLabelText('超时(秒)'))
+    await user.clear(screen.getByLabelText('超时'))
 
     await user.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() =>
@@ -514,7 +549,7 @@ describe('ProviderForm 字段编辑补全', () => {
     expect(screen.queryByText('请输入 API Key')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '高级配置' }))
-    const intervalInput = screen.getByLabelText('重试间隔(秒)')
+    const intervalInput = screen.getByLabelText('重试间隔')
     await user.clear(intervalInput)
     await user.type(intervalInput, '7')
 
@@ -546,9 +581,9 @@ describe('ProviderForm 字段编辑补全', () => {
     fireEvent.change(screen.getByLabelText('API Key *'), { target: { value: 'sk-nope' } })
     await user.click(screen.getByRole('button', { name: '高级配置' }))
     fireEvent.change(screen.getByLabelText('最大重试'), { target: { value: '3' } })
-    fireEvent.change(screen.getByLabelText('超时(秒)'), { target: { value: '9' } })
-    fireEvent.change(screen.getByLabelText('重试间隔(秒)'), { target: { value: '' } })
-    fireEvent.change(screen.getByLabelText('重试间隔(秒)'), { target: { value: '4' } })
+    fireEvent.change(screen.getByLabelText('超时'), { target: { value: '9' } })
+    fireEvent.change(screen.getByLabelText('重试间隔'), { target: { value: '' } })
+    fireEvent.change(screen.getByLabelText('重试间隔'), { target: { value: '4' } })
 
     await user.click(screen.getByRole('button', { name: '使用自定义提供商' }))
     await user.click(screen.getByRole('combobox', { name: '客户端类型' }))

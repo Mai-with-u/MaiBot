@@ -411,7 +411,9 @@ def load_log_config():  # sourcery skip: use-contextlib-suppress
         if config_path.exists():
             with open(config_path, "r", encoding="utf-8") as f:
                 config = tomlkit.load(f)
-                return config.get("log", default_config)
+                from src.config.shared_settings import merge_retention
+
+                return merge_retention(config).get("log", default_config)
     except Exception as e:
         print(f"[日志系统] 加载日志配置失败: {e}")
     return default_config
@@ -950,6 +952,15 @@ def initialize_logging(verbose: bool = True):
             f"日志系统已初始化：控制台={console_level}，文件={file_level}，"
             f"轮转={max_log_files}个文件，清理={log_cleanup_days}天前"
         )
+
+
+def apply_log_retention(policy: dict) -> None:
+    """配置热加载时同步日志轮转参数，清理线程下一轮使用新保留天数。"""
+    LOG_CONFIG.update(policy)
+    if _file_handler is not None:
+        with _file_handler._lock:
+            _file_handler.max_bytes = policy["log_file_max_bytes"]
+            _file_handler.backup_count = policy["max_log_files"]
 
 
 def cleanup_old_logs():

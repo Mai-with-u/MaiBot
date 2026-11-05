@@ -159,37 +159,7 @@ class AdapterPolicyManager:
         result: Dict[str, Any] = {}
         for chat_type in sorted(_SUPPORTED_CHAT_TYPES):
             typed_policy = self._resolve_typed_policy(best_policy, chat_type) if best_policy is not None else None
-            default_action = "inherit"
-            allow_ids: List[str] = []
-            deny_ids: List[str] = []
-            if typed_policy is not None:
-                configured_action = str(typed_policy.get("default_action") or "").strip().lower()
-                if configured_action in _SUPPORTED_DEFAULT_ACTIONS:
-                    default_action = configured_action
-                allow_ids = self._normalize_id_list(typed_policy.get("allow_ids"))
-                deny_ids = self._normalize_id_list(typed_policy.get("deny_ids"))
-                # 旧版 list_type/ids 在首次创建分组时转换成等价的默认动作与覆盖名单。
-                # 显式覆盖优先于旧名单，因此合并时必须保留原来的放行/拒绝顺序。
-                if "list_type" in typed_policy or "ids" in typed_policy:
-                    legacy_ids = self._normalize_id_list(typed_policy.get("ids"))
-                    list_type = str(typed_policy.get("list_type") or "whitelist").strip().lower()
-                    if list_type == "blacklist":
-                        default_action = "block" if "*" in legacy_ids else "allow"
-                        deny_ids.extend(item for item in legacy_ids if item != "*" and item not in allow_ids)
-                    else:
-                        default_action = "allow" if "*" in legacy_ids else "block"
-                        allow_ids.extend(item for item in legacy_ids if item != "*" and item not in deny_ids)
-                    deny_ids = list(dict.fromkeys(deny_ids))
-                    allow_ids = list(dict.fromkeys(item for item in allow_ids if item not in deny_ids))
-                if typed_policy.get("disabled", False):
-                    default_action, allow_ids, deny_ids = "block", [], ["*"]
-            result[chat_type] = {
-                "default_action": default_action,
-                "allow_ids": allow_ids,
-                "deny_ids": deny_ids,
-            }
-            if typed_policy is not None and typed_policy.get("disabled_ids"):
-                result[chat_type]["disabled_ids"] = self._normalize_id_list(typed_policy["disabled_ids"])
+            result[chat_type] = self._to_editor_chat_policy(typed_policy)
         if best_policy is not None and "policy_groups" in best_policy:
             groups = best_policy["policy_groups"]
             active_group = best_policy.get("active_group")
@@ -205,6 +175,47 @@ class AdapterPolicyManager:
                 result["policy_groups"].append(group_policy)
             if not any(group["id"] == active_group for group in groups):
                 raise ValueError("当前策略分组不存在")
+        return result
+
+    def _to_editor_chat_policy(self, policy: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+        """将聊天规则转换为完整编辑内容，保留运行时显式覆盖优先于旧名单的语义。"""
+
+        if policy is None:
+            return {"default_action": "inherit", "allow_ids": [], "deny_ids": []}
+        if policy.get("disabled", False):
+            return {"default_action": "block", "allow_ids": [], "deny_ids": ["*"]}
+
+        configured_action = str(policy.get("default_action") or "").strip().lower()
+        default_action = configured_action if configured_action in _SUPPORTED_DEFAULT_ACTIONS else "inherit"
+        allow_ids = self._normalize_id_list(policy.get("allow_ids"))
+        deny_ids = self._normalize_id_list(policy.get("deny_ids"))
+        disabled_ids = self._normalize_id_list(policy.get("disabled_ids"))
+        if "list_type" in policy or "ids" in policy:
+            # 旧版 list_type/ids 转换成等价的默认动作与覆盖名单，供普通保存和分组保存统一写入。
+            legacy_ids = self._normalize_id_list(policy.get("ids"))
+            is_blacklist = str(policy.get("list_type") or "whitelist").strip().lower() == "blacklist"
+            if is_blacklist:
+                default_action = "block" if "*" in legacy_ids else "allow"
+            else:
+                default_action = "allow" if "*" in legacy_ids else "block"
+            active_overrides = (set(allow_ids) | set(deny_ids)) - set(disabled_ids)
+            # 生效的显式通配符已覆盖所有目标；旧名单通配符则已由默认动作表达。
+            if "*" not in active_overrides and "*" not in legacy_ids:
+                legacy_overrides = [item for item in legacy_ids if item not in active_overrides]
+                if is_blacklist:
+                    allow_ids = [item for item in allow_ids if item not in legacy_overrides]
+                    deny_ids = list(dict.fromkeys([*deny_ids, *legacy_overrides]))
+                else:
+                    deny_ids = [item for item in deny_ids if item not in legacy_overrides]
+                    allow_ids = list(dict.fromkeys([*allow_ids, *legacy_overrides]))
+                # 停用只屏蔽旧规则中的显式覆盖，不屏蔽其下仍生效的旧名单。
+                # 新表示只允许一个 ID 有一个状态，因此该 ID 必须采用实际生效的旧名单动作。
+                disabled_ids = [item for item in disabled_ids if item not in legacy_overrides]
+            allow_ids = [item for item in allow_ids if item not in deny_ids]
+
+        result: Dict[str, Any] = {"default_action": default_action, "allow_ids": allow_ids, "deny_ids": deny_ids}
+        if disabled_ids:
+            result["disabled_ids"] = disabled_ids
         return result
 
     def has_adapter_policy_entry(self, identity: AdapterIdentity) -> bool:
@@ -302,11 +313,10 @@ class AdapterPolicyManager:
             adapter_policy["active_group"] = active_group
         for chat_type, normalized_policy in normalized_policies.items():
             chat_policy = self._ensure_chat_policy_table(adapter_policy, chat_type)
-            if normalized_groups is not None:
-                # 分组保存使用完整的新规则，清除旧格式字段，避免旧名单继续影响新组。
-                for key in ("list_type", "ids", "disabled"):
-                    if key in chat_policy:
-                        del chat_policy[key]
+            # 完整保存后只保留新表示，避免读回时重新合入用户已经删除的旧名单。
+            for key in ("list_type", "ids", "disabled"):
+                if key in chat_policy:
+                    del chat_policy[key]
             default_action = normalized_policy["default_action"]
             if default_action == "inherit":
                 if "default_action" in chat_policy:
@@ -318,7 +328,7 @@ class AdapterPolicyManager:
             self._set_or_remove_id_list(chat_policy, "disabled_ids", normalized_policy.get("disabled_ids", []))
             self._prune_empty_ui_policy(adapter_policy, chat_type)
 
-        self._prune_empty_adapter_policy(adapters, adapter_policy)
+        # 完整保存保留编辑归属；全 inherit 时运行时仍逐级解析，读回和再次保存不会切到下层条目。
         self._sync_active_group(adapter_policy)
         self._write_policy_doc(policy_doc)
 

@@ -110,7 +110,7 @@ export function ConversationListItem({
             <strong>{title}</strong>
             {!actions && status}
           </span>
-          <span data-conversation-item-preview="true">{preview}</span>
+          {preview && <span data-conversation-item-preview="true">{preview}</span>}
         </span>
       </button>
       {actions && (

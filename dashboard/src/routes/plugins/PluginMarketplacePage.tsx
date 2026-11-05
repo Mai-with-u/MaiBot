@@ -1303,6 +1303,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
       </div>
       {settingsOpen && (
         <PluginSettingsDialog
+          onDependenciesChanged={() => void refreshInstalledPlugins()}
           onClose={() => setSettingsOpen(false)}
           onSaved={() => {
             setSettingsOpen(false)
@@ -1313,6 +1314,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
       {/* 安装对话框 */}
       <PluginInstallDialog
         ref={installDialogRef}
+        onDependenciesChanged={() => void refreshInstalledPlugins()}
         progressById={pluginProgressById}
         onResetProgress={resetCompletedPluginProgress}
         onInstall={handleInstall}

@@ -189,7 +189,7 @@ export function AdapterManagementView({
                         {plugin.load_status === 'success' && plugin.status_badges && (
                           <RuntimeBadges badges={plugin.status_badges} />
                         )}
-                        {update.hasUpdate && !incompatible && (
+                        {!plugin.builtin && update.hasUpdate && !incompatible && (
                           <Badge variant="outline" className="text-xs">
                             可更新
                           </Badge>
@@ -209,7 +209,7 @@ export function AdapterManagementView({
                           aria-label={`${plugin.enabled === false ? '启动' : '关闭'} ${plugin.manifest.name}`}
                           onCheckedChange={() => onToggle(plugin)}
                         />
-                        <DropdownMenu>
+                        {!plugin.builtin && <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button
                               variant="ghost"
@@ -240,7 +240,7 @@ export function AdapterManagementView({
                               卸载适配器
                             </DropdownMenuItem>
                           </DropdownMenuContent>
-                        </DropdownMenu>
+                        </DropdownMenu>}
                       </>
                     }
                   >
@@ -251,7 +251,7 @@ export function AdapterManagementView({
                         <AlertDescription>
                           <p className="break-words">{failure.description}</p>
                           <div className="mt-2 flex flex-wrap gap-2">
-                            {needsUpdate && (
+                            {!plugin.builtin && needsUpdate && (
                               <Button
                                 size="xs"
                                 disabled={acting || !update.canUpdate}
