@@ -1,13 +1,19 @@
 import { useNavigate, useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Settings } from 'lucide-react'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ChatStreamSettingsDialog, type ChatStreamSettingsTarget } from '@/components/chat-stream-settings-dialog'
+import { Button } from '@/components/ui/button'
 import { ConversationAvatar, ConversationListItem } from '@/components/ui/conversation'
 import { StatusIndicator } from '@/components/ui/data-browser'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useFeatureFlags } from '@/hooks/use-feature-flags'
+import { useHostRuntime } from '@/host/state'
+import { backendApi } from '@/lib/http'
 import { useResolvedAvatarUrl } from '@/lib/avatar-url'
 import { getAllChatStreams } from '@/lib/chat-management-api'
 import { useLocalBotAvatarUrl } from '@/routes/chat/local-bot-avatar'
@@ -34,6 +40,7 @@ const ObservedRow = memo(function ObservedRow({
   active,
   collapsed,
   onSelect,
+  onOpenSettings,
 }: {
   session: SessionInfo
   status?: StageStatusInfo
@@ -41,6 +48,7 @@ const ObservedRow = memo(function ObservedRow({
   active: boolean
   collapsed: boolean
   onSelect: (sessionId: string) => void
+  onOpenSettings: (chat: ChatStreamSettingsTarget) => void
 }) {
   const { t } = useTranslation()
   const targetId = session.isGroupChat ? session.groupId : session.userId
@@ -58,6 +66,24 @@ const ObservedRow = memo(function ObservedRow({
           </span>
         }
         preview={status?.stage ? <StageStatusLabel status={status} /> : preview || t('chat.sidebar.emptyPreview')}
+        actions={!collapsed && !isFocusFlowId(session.sessionId) ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('chat.sidebar.openSettings', { name: session.sessionName })}
+                onClick={() => onOpenSettings({ session_id: session.sessionId, display_name: session.sessionName })}
+              >
+                <Settings />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              {t('chat.sidebar.openSettings', { name: session.sessionName })}
+            </TooltipContent>
+          </Tooltip>
+        ) : undefined}
       />
     </div>
   )
@@ -69,7 +95,13 @@ const ObservedRow = memo(function ObservedRow({
  */
 export function ObservationConversations({ collapsed }: { collapsed: boolean }) {
   const { t } = useTranslation()
-  const localBotAvatarUrl = useLocalBotAvatarUrl()
+  const { selected_bot_id } = useHostRuntime()
+  const { data: chatInfo } = useQuery({
+    queryKey: ['local-chat-info', selected_bot_id],
+    queryFn: () => backendApi.get<{ bot_qq: string | null }>('/api/chat/info'),
+    staleTime: 30_000,
+  })
+  const localBotAvatarUrl = useLocalBotAvatarUrl(chatInfo?.bot_qq ?? undefined)
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
@@ -77,6 +109,7 @@ export function ObservationConversations({ collapsed }: { collapsed: boolean }) 
   const { flags } = useFeatureFlags()
   const { sessions: monitorSessions, stageStatuses, latestMessages } = useMaisakaMonitorOverview()
   const [query, setQuery] = useState('')
+  const [settingsChat, setSettingsChat] = useState<ChatStreamSettingsTarget | null>(null)
   const { data: chatStreams = [], isError } = useQuery({
     queryKey: ['chat-streams', 'all'],
     queryFn: getAllChatStreams,
@@ -201,6 +234,7 @@ export function ObservationConversations({ collapsed }: { collapsed: boolean }) 
                     active={selection.kind === 'observed' && selection.id === session.sessionId}
                     collapsed={collapsed}
                     onSelect={openObserved}
+                    onOpenSettings={setSettingsChat}
                   />
                 ))}
               </div>
@@ -208,6 +242,16 @@ export function ObservationConversations({ collapsed }: { collapsed: boolean }) 
           )}
         </ScrollArea>
       </nav>
+      <ChatStreamSettingsDialog
+        chat={settingsChat}
+        onOpenChange={(open) => !open && setSettingsChat(null)}
+        onDeleted={(sessionId) => {
+          setSettingsChat(null)
+          if (selection.kind === 'observed' && selection.id === sessionId) {
+            void navigate({ to: '/chat', search: {} })
+          }
+        }}
+      />
     </section>
   )
 }

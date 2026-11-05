@@ -38,6 +38,9 @@ export function usePluginReviewPrompts(
   const labels = useRef(new Map<string, string>())
 
   useEffect(() => {
+    const eligiblePlugins = plugins.filter((plugin) => (
+      !plugin.builtin && plugin.load_status === 'success' && plugin.enabled !== false && !plugin.disabled
+    ))
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | undefined
 
@@ -46,9 +49,7 @@ export function usePluginReviewPrompts(
 
       const refresh = (usageSeconds: Record<string, number>) => {
         const next: Record<string, PluginReviewPrompt> = {}
-        for (const plugin of plugins) {
-          if (plugin.load_status !== 'success' || plugin.enabled === false || plugin.disabled) continue
-
+        for (const plugin of eligiblePlugins) {
           // 本地只记录已评价状态；旧版保存的首次看到时间不再参与使用时长判断。
           const storageKey = `maibot-plugin-review-prompt:${JSON.stringify([
             backendUrl, plugin.manifest.id || plugin.id, plugin.path,
@@ -74,7 +75,7 @@ export function usePluginReviewPrompts(
         setPrompts(next)
       }
 
-      refresh(Object.fromEntries(plugins
+      refresh(Object.fromEntries(eligiblePlugins
         .filter((plugin) => plugin.usage_seconds !== undefined)
         .map((plugin) => [plugin.manifest.id || plugin.id, plugin.usage_seconds!])
       ))
@@ -90,7 +91,7 @@ export function usePluginReviewPrompts(
           if (!cancelled) timer = setTimeout(() => void poll(), 60_000)
         }
       }
-      if (plugins.some((plugin) => plugin.load_status === 'success')) {
+      if (eligiblePlugins.length > 0) {
         timer = setTimeout(() => void poll(), 60_000)
       }
     }).catch((error) => console.error('加载插件评价提醒失败:', error))

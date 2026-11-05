@@ -9,18 +9,25 @@ import type { ComponentPropsWithoutRef } from 'react'
 interface MarkdownRendererProps {
   content: string
   className?: string
+  untrusted?: boolean
 }
 
 type MarkdownComponentProps<T extends 'code' | 'pre'> = ComponentPropsWithoutRef<T> & {
   node?: unknown
 }
 
-export function MarkdownRenderer({ content, className = '' }: MarkdownRendererProps) {
+export function MarkdownRenderer({
+  content,
+  className = '',
+  untrusted = false,
+}: MarkdownRendererProps) {
   return (
     <div className={`prose prose-sm dark:prose-invert max-w-none ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeRaw, rehypeKatex]}
+        rehypePlugins={untrusted ? [rehypeKatex] : [rehypeRaw, rehypeKatex]}
+        skipHtml={untrusted}
+        disallowedElements={untrusted ? ['img'] : undefined}
         components={{
           // 自定义代码样式：块级样式交给 pre，避免行内反引号被渲染成独立代码块。
           code({ className, children, node, ...props }: MarkdownComponentProps<'code'>) {

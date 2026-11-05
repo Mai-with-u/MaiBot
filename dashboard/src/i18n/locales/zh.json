@@ -70,7 +70,23 @@
       "installed": "依赖已安装，Bot 正在按原来的运行状态恢复。"
     }
   },
+  "helpHistory": {
+    "newSession": "新建会话",
+    "retryLoad": "重新加载",
+    "draftRestored": "已恢复草稿。确认内容后可以重新提交。",
+    "description": "查看近期 Agent 答疑会话，并接着提问。",
+    "deleteSession": "删除会话「{{title}}」",
+    "deleteTitle": "删除会话",
+    "deleteDescription": "确定删除「{{title}}」及其全部问答记录？",
+    "deleteConfirm": "删除",
+    "loading": "正在加载帮助历史…",
+    "loadError": "读取帮助历史失败。",
+    "empty": "还没有答疑会话。",
+    "select": "选择一个会话查看问答记录。",
+    "noReply": "这条问题尚无回答记录。"
+  },
   "observation": {
+    "helpHistory": "帮助历史",
     "keys": {
       "bot": "麦麦",
       "model": "模型",
@@ -87,6 +103,8 @@
     "expandSidebar": "展开侧栏",
     "collapseSidebar": "折叠侧栏",
     "settingsBlock": "设置",
+    "compactSettings": "将设置显示为一行",
+    "keyNeedsBot": "{{label}} · 需要先启动 Bot",
     "allConversations": "所有对话",
     "filterConversations": "筛选",
     "focusFlows": "Focus 共享流",
@@ -247,7 +265,9 @@
     "empty": "当前统计时段暂无数据",
     "actions": {
       "refresh": "刷新",
-      "openHtml": "打开 HTML 版"
+      "openHtml": "打开 HTML 版",
+      "compare": "环比上一周期",
+      "details": "查看明细"
     },
     "error": {
       "title": "详细统计加载失败",
@@ -268,9 +288,12 @@
       "metrics": "指标趋势"
     },
     "sections": {
-      "breakdowns": "分类统计",
+      "breakdowns": "分类统计明细",
       "embeddings": "嵌入统计",
-      "distributions": "数据分布图表"
+      "distributions": "数据分布图表",
+      "period": "统计时段",
+      "trend": "趋势与自动洞察",
+      "reliability": "可靠性与失败监控"
     },
     "breakdowns": {
       "taskGroups": "按任务组",
@@ -295,7 +318,11 @@
       "costPerReceivedMessages": "花费/接收消息数量",
       "costPerReplies": "花费/回复数量",
       "costPerHour": "花费/时间",
-      "tokensPerHour": "Token/时间"
+      "tokensPerHour": "Token/时间",
+      "callsPerReply": "单回复调用",
+      "failureRate": "任务失败率",
+      "replyRate": "回复率",
+      "sparkLabel": "{{name}}近期走势"
     },
     "units": {
       "per100": "每100条",
@@ -332,7 +359,24 @@
       "moduleCosts": "模块花费分布",
       "requestTypeCosts": "请求类型花费分布",
       "chatMessages": "聊天消息分布",
-      "chatCosts": "聊天流花费分布"
+      "chatCosts": "聊天流花费分布",
+      "hint": "点击图例可筛选下方明细表",
+      "itemCount": "{{count}} 项",
+      "filterTable": "在明细表中筛选 {{name}}",
+      "singleSource": "当前仅有「{{name}}」单一来源",
+      "zeroCount": "另有 {{count}} 项数值为 0",
+      "titles": {
+        "owner": "调用来源{{metric}}分布",
+        "model": "模型{{metric}}分布",
+        "module": "模块{{metric}}分布",
+        "requestType": "请求类型{{metric}}分布",
+        "taskGroup": "任务组{{metric}}分布",
+        "chat": "聊天流{{metric}}分布"
+      },
+      "totals": {
+        "costs": "总花费",
+        "tokens": "总Token"
+      }
     },
     "charts": {
       "timeRange": "时间范围",
@@ -358,6 +402,153 @@
       "costPerHour": "花费/时间趋势",
       "tokensPerHour": "Token/时间趋势",
       "costPerReplies": "花费/回复数量趋势"
+    },
+    "other": "其他（{{count}}项）",
+    "delta": {
+      "vsPrevious": "相比上一等长周期",
+      "noBaseline": "上一周期为 0",
+      "new": "新增"
+    },
+    "modules": {
+      "usage": "统计概览",
+      "cache": "Prompt缓存",
+      "modelCosts": "模型花费分布",
+      "flow": "Token流向拆解",
+      "unit": "单位成本与效率",
+      "insights": "自动洞察",
+      "failureRank": "调用失败率排行",
+      "failureTrend": "失败趋势与耗时",
+      "heatmap": "活跃时段热力图",
+      "chats": "最活跃聊天流"
+    },
+    "cache": {
+      "all": "全部",
+      "uncachedHint": "另有 {{tokens}} 输入 Token 未上报缓存明细"
+    },
+    "models": {
+      "freeHint": "另有 {{count}} 个模型花费为 ¥0.00"
+    },
+    "flow": {
+      "total": "总计 {{tokens}}",
+      "cacheHit": "缓存命中输入",
+      "cacheMiss": "缓存未命中输入",
+      "noCacheInfo": "无缓存信息输入",
+      "output": "输出 Token",
+      "ioRatio": "输入 : 输出 比"
+    },
+    "trend": {
+      "metric": "指标",
+      "group": "拆分维度",
+      "mode": "视图模式",
+      "sum": "合计",
+      "truncated": "明细趋势保留近 30 天，当前从 {{start}} 起统计",
+      "metrics": {
+        "cost": "花费",
+        "tokens": "Token",
+        "requests": "请求数",
+        "messages": "消息数"
+      },
+      "groups": {
+        "total": "总量",
+        "model": "按模型",
+        "module": "按模块",
+        "chat": "按聊天流"
+      },
+      "modes": {
+        "stack": "堆叠柱",
+        "line": "折线",
+        "percent": "100%占比"
+      },
+      "titles": {
+        "cost": "花费趋势",
+        "tokens": "Token消耗趋势",
+        "requests": "请求趋势",
+        "messages": "消息趋势"
+      },
+      "totals": {
+        "cost": "总花费",
+        "tokens": "总Token",
+        "requests": "总请求",
+        "messages": "总消息"
+      }
+    },
+    "insights": {
+      "empty": "当前时段暂无显著异常或集中特征",
+      "alertCount": "{{count}} 项关注",
+      "costUp": "本期花费 {{current}}，较上一周期（{{previous}}）上升 {{change}}。",
+      "costDown": "本期花费 {{current}}，较上一周期（{{previous}}）下降 {{change}}。",
+      "failureRate": "{{name}} 失败率达 {{rate}}（{{failures}} / {{attempts}} 次），高于整体 {{overall}}。",
+      "failureShare": "{{name}} 累计失败 {{failures}} 次，占全部失败的 {{share}}。",
+      "costShare": "{{name}} 花费 {{cost}}，占总花费的 {{share}}。",
+      "cacheLow": "{{name}} 缓存命中率仅 {{rate}}，明显低于整体 {{overall}}。",
+      "unitPrice": "{{name}} 折合 {{unit}} / 1M Token，约为整体均价的 {{ratio}} 倍。",
+      "latencyTail": "{{name}} 耗时标准差 {{std}}（均值 {{avg}}），存在明显长尾抖动。",
+      "topChat": "「{{name}}」最为活跃，共 {{messages}} 条消息（占 {{share}}）。"
+    },
+    "reliability": {
+      "source": "基于任务调用分钟桶统计（含失败重试与成功耗时）",
+      "truncated": "任务调用明细保留近 7 天，当前覆盖自 {{start}}",
+      "dimension": "统计维度",
+      "empty": "当前时段无任务调用记录",
+      "attempts": "尝试次数",
+      "failures": "失败次数",
+      "failureRate": "失败率",
+      "avgSuccessDuration": "成功平均耗时",
+      "chartLegend": "柱：失败次数 · 线：失败率",
+      "hint": "失败率达到 {{threshold}} 时高亮提示",
+      "dimensions": {
+        "model": "按模型",
+        "provider": "按服务商",
+        "task": "按任务"
+      }
+    },
+    "heatmap": {
+      "metric": "热力图指标",
+      "weekdays": "周一,周二,周三,周四,周五,周六,周日",
+      "less": "低",
+      "more": "高",
+      "messagesValue": "{{value}} 条",
+      "cellTitle": "{{day}} {{hour}}:00 · {{value}}",
+      "metrics": {
+        "messages": "消息数",
+        "costs": "花费"
+      }
+    },
+    "chats": {
+      "topHint": "前 {{count}} / 共 {{total}} 个",
+      "costPer100": "{{cost}} / 100条"
+    },
+    "columns": {
+      "name": "名称",
+      "requests": "调用次数",
+      "tokens": "Token（总 / 入·出）",
+      "cacheRate": "缓存命中率",
+      "cost": "累计花费",
+      "failureRate": "失败率",
+      "time": "平均耗时",
+      "unitCost": "单价 / 1M",
+      "costPerCall": "花费 / 千次",
+      "callsPerReply": "单回复调用",
+      "tokensPerReply": "单回复Token"
+    },
+    "detail": {
+      "hideEmbedding": "隐藏嵌入模型",
+      "columnGroups": "显示列组",
+      "dimension": "分类维度",
+      "search": "搜索名称…",
+      "rowCount": "{{shown}} / {{total}} 项",
+      "total": "合计（{{count}} 项）",
+      "embeddingTag": "嵌入",
+      "freeTag": "免费",
+      "failureCount": "失败 {{value}}",
+      "attemptsFailures": "失败 / 尝试次数",
+      "groups": {
+        "token": "Token",
+        "cache": "缓存",
+        "perf": "耗时与错误",
+        "unit": "单价",
+        "reply": "单回复"
+      }
     }
   },
   "workspace": {
@@ -377,10 +568,9 @@
       "dshModel": "打开 dsh 设置模型和 API Key（已配置可跳过）：",
       "dshEnable": "选择 dsh CLI 连接方式，启用并保存，然后在“独立 Agent”页面发送任务。找不到程序时，将 ACP 启动程序填写为 dsh.cmd 的绝对路径。",
       "dshCommand": "预设自动启动：",
-      "disabled": "Agent 未启用",
+      "disabled": "电脑功能未启用",
       "reasoning": "思考记录",
       "connecting": "正在连接",
-      "disabled": "电脑功能未启用",
       "stopped": "沙盒未运行",
       "manual": "人工接管",
       "paused": "已暂停决策",
@@ -1335,6 +1525,43 @@
     "copyError": "复制错误信息"
   },
   "search": {
+    "previewArtifactImage": "预览图片",
+    "invalidArtifactImage": "此文件不是可预览的图片。",
+    "harness": {
+      "title": "答疑工作进度",
+      "plan": "当前计划",
+      "skills": "已加载技能",
+      "status": {
+        "pending": "待处理",
+        "in_progress": "进行中",
+        "completed": "已完成"
+      },
+      "skill": {
+        "setup": "初始设置",
+        "troubleshoot": "故障排查",
+        "plugin": "插件使用",
+        "develop": "插件开发"
+      }
+    },
+    "allowPluginConfigWrite": "允许修改插件配置",
+    "allowPluginConfigWriteHint": "仅对本次提问生效。Agent 可以按问题中的要求保存插件配置。",
+    "progressPrepareInstall": "准备安装确认",
+    "progressListInstalled": "查看已安装插件",
+    "progressReadPluginConfig": "读取插件配置",
+    "progressUpdatePluginConfig": "修改插件配置",
+    "pluginInstallTitle": "插件安装",
+    "pluginInstallPending": "尚未安装。点击确认后将下载并安装以上插件与版本。",
+    "pluginConfirmInstall": "确认安装",
+    "pluginCancelInstall": "取消安装",
+    "pluginOpenConfig": "打开插件配置",
+    "pluginConfigUpdated": "插件配置已保存",
+    "pluginInstallFailed": "插件安装失败",
+    "pluginInstallStatus": {
+      "installing": "正在安装，请稍候…",
+      "success": "安装完成",
+      "error": "安装失败",
+      "cancelled": "已取消，未执行安装"
+    },
     "placeholder": "搜索页面、配置或描述想解决的问题...",
     "title": "搜索",
     "noResults": "未找到匹配的页面或配置项",
@@ -1355,6 +1582,21 @@
     "progressSearchDocs": "搜索官方文档",
     "progressReadDocs": "读取官方文档",
     "progressReadConfig": "读取本地配置",
+    "progressReadLogs": "读取近期日志",
+    "progressListReasoning": "查找近期推理记录",
+    "progressReadReasoning": "读取推理记录",
+    "progressPublishArtifact": "发布展示内容",
+    "progressSearchPlugins": "搜索插件市场",
+    "progressReadPluginDetail": "查询插件详情与兼容性",
+    "progressReadPluginReadme": "读取插件 README",
+    "pluginResults": "相关插件",
+    "pluginOpenStore": "在插件商店查看",
+    "pluginRecommendedVersion": "推荐版本：{{version}}",
+    "pluginCompatibility": {
+      "unknown": "尚未查询兼容性",
+      "compatible": "当前环境兼容",
+      "incompatible": "暂无兼容稳定版或分支"
+    },
     "progressTool": "执行搜索操作",
     "progressCompleted": "{{action}}完成（{{count}} 项）",
     "progressFailed": "{{action}}失败",
@@ -1367,9 +1609,9 @@
     "aiRecommendation": "AI 推荐",
     "aiAnswer": "AI 答复",
     "aiSuggestions": "建议",
-    "aiSources": "官方文档来源",
+    "aiSources": "参考来源",
     "aiUnderstood": "AI 理解为：{{terms}}",
-    "aiNoResults": "AI 没有找到足够相关的页面或配置项",
+    "aiNoResults": "AI 没有找到足够相关的页面、配置项或插件",
     "aiFailed": "AI 搜索失败",
     "indexLoading": "正在加载配置搜索索引…",
     "categories": {
@@ -1383,6 +1625,7 @@
     "items": {
       "home": "首页",
       "homeDesc": "查看仪表板概览",
+      "chatDesc": "聊天会话设置：打开群聊的会话设置检查回复频率。群聊回复频率为 0 时仍接收消息，但不进入 Planner。私聊暂停开关独立。",
       "botConfig": "麦麦设置",
       "botConfigDesc": "配置麦麦的详细设置和共享组",
       "model": "麦麦模型配置",
@@ -2018,5 +2261,4 @@
     "updated": "最近一次程序更新成功",
     "restarting": "宿主正在更新并重启，正在等待重新连接。若更新回滚失败，需查看终端处理后手动启动。"
   }
-
 }

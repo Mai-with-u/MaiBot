@@ -24,6 +24,7 @@ import {
   getMaimaiVersion,
   installPlugin,
   isPluginCompatible,
+  isPluginCompatibilityMode,
   uninstallPlugin,
   updatePlugin,
   type InstalledPlugin,
@@ -582,6 +583,8 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
   // 1. manifest_version === 1 的插件在麦麦 >= 1.0.0 时一律视为不兼容（旧 manifest 已不再被宿主接受）；
   // 2. 否则若声明了 host_application 范围，则按版本范围判定。
   const checkPluginCompatibility = useCallback((plugin: PluginInfo): boolean => {
+    // 内置插件随本体发布，不使用市场中独立发行版本的兼容性限制。
+    if (plugin.builtin) return true
     if (plugin.releases?.sync_error) return false
     if (plugin.releases?.mode === 'releases') return Boolean(plugin.releases.recommended_version)
     if (!maimaiVersion) return true
@@ -603,6 +606,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
 
   // 不兼容原因（用于 UI 提示）
   const getIncompatibleReason = useCallback((plugin: PluginInfo): string | null => {
+    if (plugin.builtin) return null
     if (plugin.releases?.sync_error) return `版本同步失败：${plugin.releases.sync_error}`
     if (plugin.releases?.mode === 'releases' && !plugin.releases.recommended_version) return '没有兼容的稳定版本，请在插件详情查看版本列表'
     if (!maimaiVersion) return null
@@ -655,12 +659,23 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
 
   // 获取插件状态徽章
   const getStatusBadge = useCallback((plugin: PluginInfo) => {
+    if (plugin.builtin) return null
     // 优先显示兼容性状态（已安装但不兼容也需要提示，避免用户误以为可继续更新）
     if (maimaiVersion && !checkPluginCompatibility(plugin)) {
       return (
         <Badge variant="destructive" className="gap-1">
           <AlertCircle className="h-3 w-3" />
           不兼容
+        </Badge>
+      )
+    }
+
+    const host = plugin.manifest?.host_application
+    if (maimaiVersion && host && isPluginCompatibilityMode(host.min_version, host.max_version, maimaiVersion)) {
+      return (
+        <Badge variant="outline" className="gap-1 border-orange-500! bg-orange-500! text-white!">
+          <AlertTriangle className="h-3 w-3" />
+          兼容模式
         </Badge>
       )
     }

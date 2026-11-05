@@ -43,7 +43,7 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8001',  // WebUI 后端服务器
-        changeOrigin: true,
+        changeOrigin: false, // 保留公网转发入口的 Host，供宿主校验浏览器同源。
         ws: true,
         // 确保 Cookie 正确转发
         cookieDomainRewrite: '',  // 移除域名限制

@@ -40,7 +40,12 @@ export const menuSections: MenuSection[] = [
         path: '/',
         searchDescription: 'search.items.homeDesc',
       },
-      { icon: LocalChatIcon, label: 'workspace.chat', path: '/chat' },
+      {
+        icon: LocalChatIcon,
+        label: 'workspace.chat',
+        path: '/chat',
+        searchDescription: 'search.items.chatDesc',
+      },
       { icon: Monitor, label: 'chat.computerDesktop', path: '/computer', featureFlag: 'computer' },
     ],
   },

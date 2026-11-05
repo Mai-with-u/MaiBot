@@ -51,6 +51,7 @@ from .v42_to_v43 import migrate_v42_to_v43
 from .v43_to_v44 import migrate_v43_to_v44
 from .v44_to_v45 import migrate_v44_to_v45
 from .v45_to_v46 import migrate_v45_to_v46
+from .v46_to_v47 import migrate_v46_to_v47
 from .version_store import SQLiteUserVersionStore
 
 EMPTY_SCHEMA_VERSION = 0
@@ -100,7 +101,8 @@ V43_SCHEMA_VERSION = 43
 V44_SCHEMA_VERSION = 44
 V45_SCHEMA_VERSION = 45
 V46_SCHEMA_VERSION = 46
-LATEST_SCHEMA_VERSION = 46
+V47_SCHEMA_VERSION = 47
+LATEST_SCHEMA_VERSION = V47_SCHEMA_VERSION
 
 _LEGACY_V1_EXCLUSIVE_TABLES = (
     "chat_streams",
@@ -1988,6 +1990,13 @@ def build_default_migration_registry() -> MigrationRegistry:
                 name="v45_to_v46",
                 description="新增独立文件服务、附件归属和解析状态表。",
                 handler=migrate_v45_to_v46,
+            ),
+            MigrationStep(
+                version_from=V46_SCHEMA_VERSION,
+                version_to=V47_SCHEMA_VERSION,
+                name="v46_to_v47",
+                description="新增 WebUI 答疑会话和问答记录。",
+                handler=migrate_v46_to_v47,
             ),
         ]
     )

@@ -53,12 +53,12 @@ vi.mock('../reasoning-process', () => ({
     embedded,
     toolbarContainerId,
     toolbarVisible,
-    topbarActionsContainerId,
+    statusContainerId,
   }: {
     embedded?: boolean
     toolbarContainerId?: string
     toolbarVisible?: boolean
-    topbarActionsContainerId?: string
+    statusContainerId?: string
     onToolbarContentVisibleChange?: (visible: boolean) => void
   }) => (
     <div
@@ -66,7 +66,7 @@ vi.mock('../reasoning-process', () => ({
       data-embedded={String(embedded)}
       data-toolbar-container={toolbarContainerId}
       data-toolbar-visible={String(toolbarVisible)}
-      data-topbar-actions={topbarActionsContainerId}
+      data-status-container={statusContainerId}
     />
   ),
 }))
@@ -75,7 +75,6 @@ vi.mock('../statistics', () => ({
   StatisticsPage: () => <div data-testid="statistics-page-stub">详细统计内容</div>,
 }))
 
-const HINT_DISMISSED_KEY = 'log-viewer-switch-hint-dismissed'
 const ACTIVE_TAB_KEY = 'log-viewer-active-tab'
 
 function makeLog(id: string, overrides: Partial<LogEntry> = {}): LogEntry {
@@ -94,8 +93,6 @@ let connectionCallback: ((connected: boolean) => void) | null = null
 
 beforeEach(() => {
   window.localStorage.clear()
-  // 默认关闭切换提示，避免干扰终端面板相关断言；提示用例内会单独清除
-  window.localStorage.setItem(HINT_DISMISSED_KEY, 'true')
   logCallback = null
   connectionCallback = null
   logWsMocks.getAllLogs.mockReturnValue([])
@@ -205,25 +202,33 @@ describe('LogViewerPage 终端面板', () => {
 
     render(<LogViewerPage />)
 
-    const moduleFilters = screen.getByLabelText('模块显示筛选')
-    expect(moduleFilters).toHaveClass('flex-wrap')
-    expect(moduleFilters).toHaveClass('overflow-y-auto', 'border', 'h-10', 'max-h-10')
-    const chatModuleButton = within(moduleFilters).getByRole('button', { name: /隐藏 聊天管理/ })
+    // 来源默认收起，展开后才显示来源键
+    expect(document.getElementById('log-source-panel')).toBeNull()
+    const sourceToggle = screen.getByRole('button', { name: /来源/ })
+    expect(sourceToggle).toHaveTextContent('全部 2')
+    await user.click(sourceToggle)
+    expect(sourceToggle).toHaveAttribute('aria-expanded', 'true')
+    const moduleFilters = document.getElementById('log-source-panel') as HTMLElement
+    expect(moduleFilters).not.toBeNull()
+    const chatModuleButton = within(moduleFilters).getByRole('button', { name: '聊天管理' })
     expect(chatModuleButton).toHaveAttribute('aria-pressed', 'true')
 
     await user.click(chatModuleButton)
     expect(screen.queryAllByText('聊天消息')).toHaveLength(0)
     expect(screen.getAllByText('心跳包').length).toBeGreaterThan(0)
     expect(chatModuleButton).toHaveAttribute('aria-pressed', 'false')
+    expect(sourceToggle).toHaveTextContent('1/2')
     expect(window.localStorage.getItem('maibot-log-module-filter')).toBe('["core.chat"]')
 
     await user.click(chatModuleButton)
     expect(screen.getAllByText('聊天消息').length).toBeGreaterThan(0)
     expect(window.localStorage.getItem('maibot-log-module-filter')).toBe('all')
 
-    await user.click(screen.getByRole('button', { name: '筛选' }))
-    expect(moduleFilters).toHaveClass('max-h-[104px]', 'lg:min-h-full')
-    expect(moduleFilters).not.toHaveClass('h-10', 'max-h-10')
+    // 全不选 / 全选
+    await user.click(within(moduleFilters).getByRole('button', { name: '全不选' }))
+    expect(screen.queryAllByText('心跳包')).toHaveLength(0)
+    await user.click(within(moduleFilters).getByRole('button', { name: '全选' }))
+    expect(window.localStorage.getItem('maibot-log-module-filter')).toBe('all')
   })
 
   it('搜索按消息与模块过滤，Escape 与清空按钮均可清除关键字', async () => {
@@ -289,9 +294,11 @@ describe('LogViewerPage 终端面板', () => {
       behavior: 'auto',
     })
 
-    // 点击“滚动”切换为“暂停”，并持久化 logAutoScroll
-    await user.click(screen.getByRole('button', { name: '滚动' }))
-    expect(screen.getByRole('button', { name: '暂停' })).toBeInTheDocument()
+    // 点击「跟随最新」关闭跟随，并持久化 logAutoScroll
+    const followButton = screen.getByRole('button', { name: '跟随最新' })
+    expect(followButton).toHaveAttribute('aria-pressed', 'true')
+    await user.click(followButton)
+    expect(followButton).toHaveAttribute('aria-pressed', 'false')
     expect(window.localStorage.getItem('maibot-log-auto-scroll')).toBe('false')
 
     act(() => {
@@ -475,7 +482,8 @@ describe('LogViewerPage 终端面板', () => {
 
     const scrollEl = screen.getAllByText('消息-a1')[0].closest('.overflow-auto') as HTMLElement
     expect(scrollEl).not.toBeNull()
-    expect(screen.getByRole('button', { name: '滚动' })).toBeInTheDocument()
+    const followButton = screen.getByRole('button', { name: '跟随最新' })
+    expect(followButton).toHaveAttribute('aria-pressed', 'true')
 
     let scrollTop = 0
     Object.defineProperty(scrollEl, 'scrollHeight', { configurable: true, get: () => 500 })
@@ -491,16 +499,16 @@ describe('LogViewerPage 终端面板', () => {
     act(() => {
       scrollEl.dispatchEvent(new Event('scroll'))
     })
-    expect(screen.getByRole('button', { name: '暂停' })).toBeInTheDocument()
+    expect(followButton).toHaveAttribute('aria-pressed', 'false')
 
     scrollTop = 270
     act(() => {
       scrollEl.dispatchEvent(new Event('scroll'))
     })
-    expect(screen.getByRole('button', { name: '滚动' })).toBeInTheDocument()
+    expect(followButton).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('模块别名：遗留映射、watchfiles 与插件前缀', () => {
+  it('模块别名：遗留映射、watchfiles 与插件前缀', async () => {
     logWsMocks.getAllLogs.mockReturnValue([
       makeLog('chat', { module: 'chat', message: '所见消息' }),
       makeLog('watch', {
@@ -515,29 +523,26 @@ describe('LogViewerPage 终端面板', () => {
 
     render(<LogViewerPage />)
 
-    const moduleFilters = screen.getByLabelText('模块显示筛选')
-    expect(within(moduleFilters).getByRole('button', { name: /隐藏 所见/ })).toBeInTheDocument()
-    expect(within(moduleFilters).getByRole('button', { name: /隐藏 文件变更监控/ })).toBeInTheDocument()
-    expect(within(moduleFilters).getByRole('button', { name: /隐藏 插件运行器/ })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /来源/ }))
+    const moduleFilters = document.getElementById('log-source-panel') as HTMLElement
+    expect(within(moduleFilters).getByRole('button', { name: /所见/ })).toBeInTheDocument()
+    expect(within(moduleFilters).getByRole('button', { name: /文件变更监控/ })).toBeInTheDocument()
+    expect(within(moduleFilters).getByRole('button', { name: /插件运行器/ })).toBeInTheDocument()
   })
 })
 
 describe('LogViewerPage 页签与提示', () => {
-  it('首次访问显示切换提示，关闭后写入 localStorage 并不再显示', async () => {
-    const user = userEvent.setup()
-    window.localStorage.removeItem(HINT_DISMISSED_KEY)
-
+  it('页签是页面内的文件夹标签，连接状态显示在标签行右侧', async () => {
     render(<LogViewerPage />)
-    expect(screen.getByText('小提示')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: '关闭提示' }))
-    expect(screen.queryByText('小提示')).not.toBeInTheDocument()
-    expect(window.localStorage.getItem(HINT_DISMISSED_KEY)).toBe('true')
+    const tabs = screen.getByRole('tablist', { name: '日志视图' })
+    expect(tabs.closest('[data-dashboard-folder-tabs="true"]')).not.toBeNull()
+    expect(within(tabs).getByRole('tab', { name: '终端' })).toHaveAttribute('data-state', 'active')
+    expect(screen.getByText('暂无日志数据').closest('[data-dashboard-folder-panel="true"]')).not.toBeNull()
 
-    // 重新挂载后提示保持关闭
-    cleanup()
-    render(<LogViewerPage />)
-    expect(screen.queryByText('小提示')).not.toBeInTheDocument()
+    const status = document.getElementById('log-viewer-status') as HTMLElement
+    await waitFor(() => expect(within(status).getByText('未连接')).toBeInTheDocument())
+    expect(within(status).getByText('0 / 0')).toBeInTheDocument()
   })
 
   it('切换到推理过程页签挂载推理页并卸载终端面板，可再切回', async () => {
@@ -553,8 +558,8 @@ describe('LogViewerPage 页签与提示', () => {
     expect(reasoningStub).toHaveAttribute('data-embedded', 'true')
     expect(reasoningStub).toHaveAttribute('data-toolbar-visible', 'true')
     expect(reasoningStub).toHaveAttribute('data-toolbar-container', 'log-terminal-toolbar')
-    // 顶栏操作位随页签挂进顶栏；这里没有顶栏容器，所以不会把操作位交给推理页
-    expect(reasoningStub).not.toHaveAttribute('data-topbar-actions')
+    // 标签行右侧的状态位交给推理页
+    expect(reasoningStub).toHaveAttribute('data-status-container', 'log-viewer-status')
     expect(screen.queryByText('暂无日志数据')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('tab', { name: '终端' }))
@@ -587,34 +592,5 @@ describe('LogViewerPage 页签与提示', () => {
     render(<StatisticsLogViewerPage />)
 
     expect(await screen.findByTestId('statistics-page-stub')).toBeInTheDocument()
-  })
-
-  it('顶栏容器存在时通过 Portal 渲染页签切换器与测量节点', async () => {
-    const topbarRoot = document.createElement('div')
-    topbarRoot.id = 'log-viewer-topbar-tabs'
-    document.body.appendChild(topbarRoot)
-
-    try {
-      render(<LogViewerPage />)
-
-      // 顶栏根节点在 requestAnimationFrame 后才被发现
-      await waitFor(() => {
-        expect(topbarRoot.querySelector('[data-log-viewer-switcher="true"]')).not.toBeNull()
-      })
-      expect(within(topbarRoot).getByRole('tab', { name: '终端' })).toBeInTheDocument()
-      expect(within(topbarRoot).getByRole('tab', { name: '推理过程' })).toBeInTheDocument()
-      expect(within(topbarRoot).getByRole('tab', { name: '详细统计' })).toBeInTheDocument()
-      // 用于紧凑模式测量的隐藏节点也随 Portal 渲染
-      expect(topbarRoot.querySelector('[data-log-viewer-switcher-measure="true"]')).not.toBeNull()
-
-      // 页签挂进顶栏之后，才把顶栏操作位交给推理页
-      await userEvent.click(within(topbarRoot).getByRole('tab', { name: '推理过程' }))
-      expect(screen.getByTestId('reasoning-process-stub')).toHaveAttribute(
-        'data-topbar-actions',
-        'reasoning-topbar-actions'
-      )
-    } finally {
-      topbarRoot.remove()
-    }
   })
 })

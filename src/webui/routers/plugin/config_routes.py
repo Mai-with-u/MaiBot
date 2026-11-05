@@ -243,7 +243,7 @@ async def get_plugin_config_bundle(plugin_id: str) -> Dict[str, Any]:
     logger.info(f"获取插件配置初始化数据: {plugin_id}")
 
     try:
-        plugin_path = find_plugin_path_by_id(plugin_id)
+        plugin_path = await asyncio.to_thread(find_plugin_path_by_id, plugin_id)
         if plugin_path is None:
             raise HTTPException(status_code=404, detail=f"未找到插件: {plugin_id}")
 
@@ -262,7 +262,7 @@ async def get_plugin_config_bundle(plugin_id: str) -> Dict[str, Any]:
         schema = dict(runtime_snapshot.config_schema)
         if not schema:
             raise HTTPException(status_code=500, detail="插件未提供配置定义")
-        message = "配置文件不存在，已返回默认配置" if not config_path.exists() else ""
+        message = "配置文件不存在，已返回默认配置" if not await asyncio.to_thread(config_path.exists) else ""
 
         return {
             "success": True,
@@ -447,7 +447,7 @@ async def update_plugin_config(
     logger.info(f"更新插件配置: {plugin_id}")
 
     try:
-        plugin_path = find_plugin_path_by_id(plugin_id)
+        plugin_path = await asyncio.to_thread(find_plugin_path_by_id, plugin_id)
         if plugin_path is None:
             raise HTTPException(status_code=404, detail=f"未找到插件: {plugin_id}")
 
@@ -464,14 +464,17 @@ async def update_plugin_config(
             config_data = await _validate_plugin_config_via_runtime(plugin_id, config_data)
 
         config_path = get_plugin_config_path(plugin_id, plugin_path)
-        backup_path = backup_file(config_path, "backup")
-        if backup_path is not None:
-            logger.info(f"已备份配置文件: {backup_path}")
 
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        save_toml_with_format(config_data, str(config_path))
+        def save() -> None:
+            backup_path = backup_file(config_path, "backup")
+            if backup_path is not None:
+                logger.info(f"已备份配置文件: {backup_path}")
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            save_toml_with_format(config_data, str(config_path))
+
+        await asyncio.to_thread(save)
         logger.info(f"已更新插件配置: {plugin_id}")
-        return {"success": True, "message": "配置已保存", "note": "配置更改将自动热更新到对应插件"}
+        return {"success": True, "message": "配置已保存", "note": "配置更改将自动热更新到对应插件", "config": config_data}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except HTTPException:

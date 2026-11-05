@@ -97,7 +97,7 @@ export function Layout({ children }: LayoutProps) {
   const isSettingsWorkspace = workspaceMode !== 'logs'
   // 聊天自己管理滚动区域，其余设置页按内容撑高、由 main 滚动
   const isScrollablePage =
-    isSettingsWorkspace && pathname !== '/chat'
+    isSettingsWorkspace && pathname !== '/chat' && pathname !== '/help-history'
   const showBackToTop = isScrollablePage
 
   const [sidebarOpen, setSidebarOpen] = useState(() =>
@@ -508,7 +508,7 @@ export function Layout({ children }: LayoutProps) {
                 'max-lg:pt-[env(safe-area-inset-top)]',
                 workspaceTransitionStage !== 'idle'
                   ? 'overflow-hidden'
-                  : isSettingsWorkspace
+                  : isSettingsWorkspace && pathname !== '/help-history'
                     ? 'overflow-x-hidden overflow-y-auto overscroll-contain'
                     : 'overflow-hidden',
                 pageBg.type === 'none' ? 'bg-background' : 'bg-transparent'

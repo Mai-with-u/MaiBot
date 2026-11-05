@@ -86,6 +86,15 @@ const indexRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/home-entry'), 'HomeEntry'),
 })
 
+const helpHistoryRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/help-history',
+  validateSearch: (search: Record<string, unknown>): { session?: string } => ({
+    session: typeof search.session === 'string' ? search.session : undefined,
+  }),
+  component: lazyRouteComponent(() => import('./routes/help-history'), 'HelpHistoryPage'),
+})
+
 // 详细统计路由
 const statisticsRoute = createRoute({
   getParentRoute: () => protectedRoute,
@@ -362,6 +371,15 @@ const hostManagementRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/bots'), 'HostEntryPage'),
 })
 
+const componentLibraryRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/settings/components',
+  component: lazyRouteComponent(
+    () => import('./routes/settings/component-library-page'),
+    'ComponentLibraryPage'
+  ),
+})
+
 const settingsRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/settings',
@@ -421,6 +439,7 @@ const routeTree = rootRoute.addChildren([
     pluginWebUIRoute,
     pluginWebUIManagerRoute,
     indexRoute,
+    helpHistoryRoute,
     statisticsRoute,
     botConfigRoute,
     modelConfigRoute,
@@ -449,6 +468,7 @@ const routeTree = rootRoute.addChildren([
     manageRoute,
     hostManagementRoute,
     settingsRoute,
+    componentLibraryRoute,
     packMarketRoute,
     packDetailRoute,
     webuiFeedbackSurveyRoute,
@@ -487,5 +507,11 @@ export const registeredRoutePaths = new Set(collectRoutePaths(routeTree as Route
 declare module '@tanstack/react-router' {
   interface Register {
     router: typeof router
+  }
+}
+
+declare module '@tanstack/history' {
+  interface HistoryState {
+    helpDraft?: { id: number; question?: string; submitted?: boolean }
   }
 }

@@ -21,6 +21,7 @@ import { AnimationProvider } from './components/animation-provider'
 import { ThemeProvider } from './components/theme-provider'
 import { TourProvider } from './components/tour/tour-provider'
 import { LazyTourRenderer } from './components/tour/lazy-tour-renderer'
+import { BootErrorScreen } from './components/boot-error-screen'
 import { ErrorBoundary } from './components/error-boundary'
 import { installMillenniumIconStyle } from './components/ui/millennium-icon-set'
 import { Toaster } from './components/ui/toaster'
@@ -62,12 +63,6 @@ void bootstrapHostRuntime()
   )
   .catch((error: unknown) => {
     root.render(
-      <div className="mx-auto max-w-xl space-y-4 p-8">
-        <h1 className="text-xl font-semibold">WebUI 暂时无法连接</h1>
-        <p role="alert">{error instanceof Error ? error.message : String(error)}</p>
-        <button className="rounded border px-4 py-2" onClick={() => window.location.reload()}>
-          重新连接
-        </button>
-      </div>
+      <BootErrorScreen message={error instanceof Error ? error.message : String(error)} />
     )
   })

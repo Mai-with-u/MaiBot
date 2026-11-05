@@ -168,6 +168,31 @@ display_name = "WebUI AI 検索"
 advanced = true
 description = "自然言語の意図に基づき、WebUI が提供する実在のページと設定候補から関連結果を選択します。"
 
+[webui_help_skill_setup]
+display_name = "導入と設定の手順"
+advanced = true
+description = "設定箇所と現在値を確認し、結果を検証できる手順を示します。"
+
+[webui_help_skill_troubleshoot]
+display_name = "障害の切り分け手順"
+advanced = true
+description = "エラーと実際の設定から原因を絞り込み、次に確認する項目を示します。"
+
+[webui_help_skill_plugin]
+display_name = "プラグインの選定と操作手順"
+advanced = true
+description = "互換性を確認し、導入や設定に適したツールを使います。"
+
+[webui_help_skill_develop]
+display_name = "プラグイン開発の手順"
+advanced = true
+description = "該当する SDK の文書を使い、最小の実装と検証方法を示します。"
+
+[webui_ai_search_input]
+display_name = "WebUI ヘルプの会話入力"
+advanced = true
+description = "現在の質問と過去の回答を、WebUI ヘルプエージェントが参照する会話データとして整形します。"
+
 [webui_ai_search_final]
 display_name = "WebUI AI 検索の最終化指示"
 advanced = true

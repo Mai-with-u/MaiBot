@@ -8,6 +8,24 @@ from sqlmodel import Field, LargeBinary, SQLModel
 from src.files.models import FileAsset, FileBinding, FileParse  # noqa: F401 -- 注册文件服务模型
 
 
+class WebUIHelpSession(SQLModel, table=True):
+    __tablename__ = "webui_help_sessions"  # type: ignore
+
+    id: str = Field(primary_key=True)
+    title: str
+    updated_at: float = Field(index=True)
+
+
+class WebUIHelpTurn(SQLModel, table=True):
+    __tablename__ = "webui_help_turns"  # type: ignore
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: str = Field(foreign_key="webui_help_sessions.id", index=True)
+    question: str
+    reply_json: Optional[str] = None
+    error: str = ""
+
+
 class ImageType(str, Enum):
     EMOJI = "emoji"
     IMAGE = "image"

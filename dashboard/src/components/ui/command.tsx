@@ -6,19 +6,22 @@ import { Command as CommandPrimitive } from "cmdk"
 import { Search } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Dialog, DialogContent } from "@/components/ui/dialog"
+import { PageFrame } from "./surface"
 
 const Command = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive>
 >(({ className, ...props }, ref) => (
-  <CommandPrimitive
-    ref={ref}
-    className={cn(
-      "flex h-full w-full flex-col overflow-hidden rounded-md bg-popover text-popover-foreground",
-      className
-    )}
-    {...props}
-  />
+  <PageFrame asChild>
+    <CommandPrimitive
+      ref={ref}
+      className={cn(
+        "flex h-full w-full flex-col overflow-hidden bg-transparent text-popover-foreground",
+        className
+      )}
+      {...props}
+    />
+  </PageFrame>
 ))
 Command.displayName = CommandPrimitive.displayName
 

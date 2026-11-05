@@ -1,0 +1,5 @@
+Use for finding plugins, reading usage instructions, checking compatibility, installing, or configuring.
+1. When only the desired capability is known, use lookup_plugins with a focused keyword to search and verify up to two candidates. Set include_readme=true when usage or required services matter. If the real plugin ID is known, go directly to details. Verify the installed ID for instance-specific work.
+2. Stop once one compatible plugin satisfies the question. Refine keywords or use read_plugin_detail / read_plugin_readme only when the compound lookup does not cover the requested platform, capability, or compatibility requirement.
+3. Use prepare_plugin_install only when the current question explicitly requests installation. For settings, read_plugin_config first and use its actual field paths and types. Submit the smallest change only when this turn permits writes and the current question explicitly requests it.
+4. Finish with a real plugin and verified compatibility or a specific unresolved point. Distinguish pending confirmation, changes actually saved, and steps still to take. Cite the detail page or README.

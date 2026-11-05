@@ -248,6 +248,30 @@
 [data-observation-sidebar='true'][data-collapsed='true'] [data-observation-keys='true'] {
   grid-template-columns: minmax(0, 1fr);
 }
+[data-observation-keys='true'][data-single-row='true'] {
+  grid-template-columns: none;
+  grid-auto-flow: column;
+  grid-auto-columns: calc((100% - 2rem) / 4.5);
+}
+[data-observation-settings-row='true'] [data-dashboard-scrollbar='true'] {
+  display: none;
+}
+[data-observation-settings-row='true'][data-clipped-left]::before,
+[data-observation-settings-row='true'][data-clipped-right]::after {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  inset-block: 2px;
+  width: 2px;
+  background: var(--obs-label-ink);
+  pointer-events: none;
+}
+[data-observation-settings-row='true'][data-clipped-left]::before {
+  left: 0;
+}
+[data-observation-settings-row='true'][data-clipped-right]::after {
+  right: 0;
+}
 [data-observation-key='true'] {
   position: relative;
   display: flex;
@@ -288,6 +312,22 @@
   /* 放不下的名字直接截断、末尾淡出，不加省略号；短名字居中，碰不到淡出区 */
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 0.625rem), transparent);
   mask-image: linear-gradient(to right, #000 calc(100% - 0.625rem), transparent);
+}
+[data-observation-keys='true'][data-single-row='true'] [data-observation-key='true'] {
+  height: 2.75rem;
+  gap: 0.125rem;
+  padding: 0.125rem 0.1875rem 0.25rem;
+}
+[data-observation-keys='true'][data-single-row='true'] [data-observation-key='true'] > svg {
+  width: 0.875rem;
+  height: 0.875rem;
+  flex-shrink: 0;
+}
+[data-observation-keys='true'][data-single-row='true'] [data-observation-key-label='true'] {
+  flex-shrink: 0;
+  line-height: 1.25;
+  mask-image: none;
+  text-overflow: ellipsis;
 }
 [data-observation-key='true']:focus-visible,
 [data-observation-icon-key='true']:focus-visible {
@@ -1166,29 +1206,6 @@
 }
 [data-observation-composer-placeholder='true'][data-hidden='true'] { opacity: 0; }
 [data-observation-composer-name='true'] [data-layer] > span { color: var(--obs-label-ink); font-size: 0.6875rem; }
-[data-observation-composer-icon='true'] {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  color: hsl(var(--primary-foreground));
-  background: hsl(var(--primary));
-  border-radius: 999px;
-}
-[data-observation-composer-icon='true'] svg { width: 1.125rem; height: 1.125rem; }
-:root[data-dashboard-style='millennium'] [data-observation-composer-icon='true'] {
-  color: var(--mil-ink);
-  background: var(--mil-on);
-  border-radius: 0;
-  box-shadow: inset 0 0 0 2px var(--mil-line);
-}
-:root[data-dashboard-style='future-retro'] [data-observation-composer-icon='true'] {
-  color: var(--retro-paper);
-  background: var(--retro-rust);
-  border-radius: 0;
-}
 [data-observation-composer-input='true'] {
   position: relative;
   display: flex;
