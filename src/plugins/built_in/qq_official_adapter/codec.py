@@ -15,6 +15,8 @@ GROUP_MESSAGE_EVENT = "GROUP_MESSAGE_CREATE"
 PRIVATE_EVENT = "C2C_MESSAGE_CREATE"
 GROUP_EVENTS = {GROUP_EVENT, GROUP_MESSAGE_EVENT}
 SUPPORTED_EVENTS = GROUP_EVENTS | {PRIVATE_EVENT}
+# 超过语音软限制时官方会降级成文件，适配器应在上传前明确拒绝。
+MAX_OUTBOUND_VOICE_BYTES = 20 * 1024 * 1024
 
 QQ_ATTACHMENT_TAG_PATTERN = re.compile(r"<attachmentType=.*?>", re.IGNORECASE)
 QQ_FACE_TAG_PATTERN = re.compile(r"<faceType=.*?>", re.IGNORECASE)
@@ -373,7 +375,7 @@ def encode_message(
     官方一条消息只能承载一种内容，因此：
     - 连续的文本/@ 段合并为一个 ``{"kind": "body", "body": {...}}``，含 @ 时以 markdown
       （msg_type=2）发送，否则为纯文本（msg_type=0）；
-    - 每个图片/表情段单独成为一个 ``{"kind": "media", "binary": bytes, "file_name": str}``，
+    - 每个图片/表情/语音段单独成为一个带 ``file_type``、二进制和文件名的 media 部分，
       由插件上传后以富媒体（msg_type=7）发送。
 
     返回的第四项为 reply 段指向的被回复消息 ID（平台消息 id，非 REFIDX），
@@ -446,10 +448,14 @@ def encode_message(
             continue
         if segment.get("type") in {"image", "emoji"}:
             _flush_text()
-            outbound.append({"kind": "media", **_decode_image_segment(segment)})
+            outbound.append({"kind": "media", "file_type": 1, **_decode_image_segment(segment)})
+            continue
+        if segment.get("type") == "voice":
+            _flush_text()
+            outbound.append({"kind": "media", "file_type": 3, **_decode_voice_segment(segment)})
             continue
         if segment.get("type") != "text":
-            raise ValueError(f"出站暂不支持 {segment.get('type')} 消息段，仅支持文本、@、图片与表情")
+            raise ValueError(f"出站暂不支持 {segment.get('type')} 消息段，仅支持文本、@、图片、表情与语音")
         data = segment.get("data")
         if not isinstance(data, str):
             raise ValueError("出站文本段的数据必须是字符串")
@@ -458,6 +464,44 @@ def encode_message(
     if not outbound:
         raise ValueError("出站消息为空")
     return scene, target_id, outbound, reply_target_id
+
+
+def _decode_voice_segment(segment: Mapping[str, Any]) -> Dict[str, Any]:
+    """读取标准 voice 段，按文件头确定格式；data 是转写文字，不能作为音频上传。"""
+    raw_base64 = segment.get("binary_data_base64")
+    if not isinstance(raw_base64, str) or not raw_base64.strip():
+        raise ValueError("出站语音段缺少二进制数据")
+    raw_base64 = raw_base64.strip()
+    if len(raw_base64) > ((MAX_OUTBOUND_VOICE_BYTES + 2) // 3) * 4:
+        raise ValueError("出站语音不能超过 20 MB")
+    try:
+        binary = base64.b64decode(raw_base64, validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError("出站语音段的二进制数据不是有效的 Base64") from None
+    if not binary:
+        raise ValueError("出站语音段的二进制数据为空")
+    if len(binary) > MAX_OUTBOUND_VOICE_BYTES:
+        raise ValueError("出站语音不能超过 20 MB")
+
+    if binary.startswith((b"\x02#!SILK_V3", b"#!SILK_V3")):
+        extension = "silk"
+    elif binary[:4] == b"RIFF" and binary[8:12] == b"WAVE":
+        extension = "wav"
+    elif binary.startswith(b"OggS"):
+        extension = "ogg"
+    elif binary.startswith(b"ID3") or (
+        len(binary) >= 4
+        and binary[0] == 0xFF
+        and binary[1] & 0xE0 == 0xE0
+        and binary[1] & 0x18 != 0x08  # MPEG version 不能为保留值。
+        and binary[1] & 0x06 == 0x02  # Layer III，避免把 AAC ADTS 当成 MP3。
+        and binary[2] >> 4 not in (0, 15)
+        and binary[2] & 0x0C != 0x0C
+    ):
+        extension = "mp3"
+    else:
+        raise ValueError("出站语音格式不支持，请提供 SILK、MP3、WAV 或 OGG 音频")
+    return {"binary": binary, "file_name": f"{hashlib.sha256(binary).hexdigest()}.{extension}"}
 
 
 def _decode_image_segment(segment: Mapping[str, Any]) -> Dict[str, Any]:

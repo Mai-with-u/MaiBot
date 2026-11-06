@@ -52,10 +52,11 @@ reconnect_delay_sec = 5.0
 
 ## 出站消息
 
-- 文本、@（含 @ 时以 markdown 发送以渲染真实 @）、图片与表情（jpg/png/gif/webp/bmp）。
+- 文本、@（含 @ 时以 markdown 发送以渲染真实 @）、图片与表情（jpg/png/gif/webp/bmp）、语音（SILK/MP3/WAV/OGG，最大 20 MB）。群聊与单聊均可发送语音。
 - 官方一条消息只能承载一种内容，混合消息按原顺序拆成多条发送；每条各占一个被动回复序号（群聊每条入站消息最多被动回复 5 次）。
-- 图片/表情走官方分片上传（`upload_prepare` → 分片 PUT → `upload_part_finish` → `files` 合并）取得 `file_info`，再以 `msg_type=7` 发送。
-- 语音、文件出站暂不支持，会直接返回发送失败。
+- 图片/表情与语音走官方分片上传（`upload_prepare` → 分片 PUT → `upload_part_finish` → `files` 合并）取得 `file_info`，再以 `msg_type=7` 发送；语音使用 `file_type=3`，显示为语音条。
+- 语音接收标准 `voice` 段的 `binary_data_base64`，按文件头识别格式，可直接发送 TTS 插件生成的 MP3；适配器不负责语音合成或转码。空数据、非法 Base64、未知格式及超限语音会明确返回发送失败，不转成文字或普通文件。
+- 普通文件出站暂不支持，会直接返回发送失败。
 
 ## 扫码登录
 
