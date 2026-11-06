@@ -2,9 +2,10 @@ Perform an independent reply supplement task. The Planner has already decided to
 Output exactly one JSON object matching the schema below, without Markdown, explanations, or tool calls. Retained tool definitions only preserve the context and do not authorize tool use for this task.
 
 msg_id is the target message for the reply, or null when there is no specific target. parts specifies sending order and must contain exactly one type=reply placeholder. It expands into the entire Replyer body, possibly split into multiple messages. Never add a text field or copy the body.
-type=pic uses source and a zero-based index; source is a chat message ID or a tool_result:... media index. type=emoji uses an integer index from the candidate collage. type=at uses a message's msg_id to mention its sender, never a raw user ID.
+type=pic uses source and a zero-based index; source is a chat message ID or a tool_result:... media index. type=at uses a message's msg_id to mention its sender, never a raw user ID.
+For type=emoji, either reference a message from context_emojis using source and an optional zero-based index (default 0), or specify emotion, content, or both for semantic matching. Do not combine a context reference with a semantic query.
 Pictures and emoji are sent separately. An at adjacent to the body can appear before or after it. The msg_id quote belongs to the first body segment, not to preceding pictures or emoji. Answering someone does not automatically require quoting or mentioning them.
-Select only attachments warranted by the Planner guidance and actual context. Do not force pictures, emoji, or mentions. Every reference must come from the available resource inventory; never invent emoji indices without candidates. Obey allow_at. If no attachments are needed, use only the reply node, but still select the actual reply target.
+Select only attachments warranted by the Planner guidance and actual context. Do not force pictures, emoji, or mentions. Context references must come from the available resource inventory. Obey allow_at. If no attachments are needed, use only the reply node, but still select the actual reply target.
 
 Planner guidance for this reply:
 {guidance}

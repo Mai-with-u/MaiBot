@@ -12,7 +12,7 @@ import json
 from src.agent.planner import ACPPlannerSnapshot, generate_planner_response
 from src.chat.message_receive.message import SessionMessage
 from src.common.data_models.message_component_data_model import (
-    AtComponent, BaseMessageComponentModel, ImageComponent, MessageSequence, TextComponent,
+    AtComponent, BaseMessageComponentModel, EmojiComponent, ImageComponent, MessageSequence, TextComponent,
 )
 from src.common.llm_json import validate_llm_json
 from src.common.logger import get_logger
@@ -26,7 +26,6 @@ from src.llm_models.payload_content.context_item import ContextItemBuilder, Role
 from src.llm_models.request_snapshot import serialize_tool_options_snapshot
 from src.maisaka.builtin_tool.context import BuiltinToolRuntimeContext, PostProcessedReplyMessage
 from src.maisaka.context.compaction import PlannerRequestSnapshot
-from src.maisaka.context.emoji_candidates import EmojiCandidateMessage
 from src.maisaka.context.message_id_alias import to_display_message_id
 from src.maisaka.context.messages import ContentContextMessage, SessionBackedMessage
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
@@ -56,7 +55,28 @@ class PictureNode(SupplementNode):
 
 class EmojiNode(SupplementNode):
     type: Literal["emoji"]
-    index: int = Field(ge=1)
+    index: Optional[int] = Field(default=None, ge=0)
+    source: Optional[str] = Field(default=None, min_length=1)
+    description: Optional[str] = Field(default=None, min_length=1)
+    emotion: Optional[str] = Field(default=None, min_length=1)
+    content: Optional[str] = Field(default=None, min_length=1)
+
+    @property
+    def is_semantic(self) -> bool:
+        return any(value is not None for value in (self.description, self.emotion, self.content))
+
+    @model_validator(mode="after")
+    def validate_reference(self) -> "EmojiNode":
+        if self.is_semantic:
+            if self.source is not None or self.index is not None:
+                raise ValueError("情绪描述不能与表情来源或编号同时填写。")
+            if self.description is not None and (self.emotion is not None or self.content is not None):
+                raise ValueError("旧版 description 不能与 emotion 或 content 同时填写。")
+            if any(value is not None and not value.strip() for value in (self.description, self.emotion, self.content)):
+                raise ValueError("表情语义查询文本不能为空。")
+        elif self.source is None or not self.source.strip():
+            raise ValueError("上下文表情需要消息来源。")
+        return self
 
 
 class ReplySupplementPlan(SupplementNode):
@@ -81,16 +101,16 @@ class SupplementResources:
 
     messages: Dict[str, SessionMessage]
     pictures: Dict[str, List[ImageComponent]]
-    emojis: Dict[int, str]
     allow_at: bool
-    allow_emoji: bool
     allow_quote: bool
+    context_emojis: Dict[str, List[EmojiComponent]]
+    session_id: str
 
     @classmethod
     def capture(cls, snapshot: PlannerRequestSnapshot, session_id: str, is_group: bool) -> "SupplementResources":
         messages: Dict[str, SessionMessage] = {}
         pictures: Dict[str, List[ImageComponent]] = {}
-        emojis: Dict[int, str] = {}
+        context_emojis: Dict[str, List[EmojiComponent]] = {}
         for message in snapshot.history:
             if isinstance(message, SessionBackedMessage):
                 original = message.original_message
@@ -101,11 +121,12 @@ class SupplementResources:
                 images = [item for item in message.raw_message.components if isinstance(item, ImageComponent)]
                 if images:
                     pictures[message.message_id] = images
-            if isinstance(message, EmojiCandidateMessage):
-                emojis.update(message.emoji_hashes)
+                stickers = [item for item in message.raw_message.components if isinstance(item, EmojiComponent)]
+                if stickers:
+                    context_emojis[message.message_id] = stickers
         scene = get_scene(is_group)
-        return cls(messages, pictures, emojis, scene.allow_reply_at,
-                   global_config.emoji.use_new_send_logic, scene.quote_frequency != "never")
+        return cls(messages, pictures, scene.allow_reply_at, scene.quote_frequency != "never",
+                   context_emojis, session_id)
 
     @staticmethod
     def resolve_id(value: str, candidates: Dict[str, Any]) -> str:
@@ -119,7 +140,8 @@ class SupplementResources:
             "message_ids": [to_display_message_id(key) for key in self.messages],
             "pictures": [{"source": key if key.startswith("tool_result:") else to_display_message_id(key),
                           "indices": list(range(len(images)))} for key, images in self.pictures.items()],
-            "emoji_indices": list(self.emojis) if self.allow_emoji else [],
+            "context_emojis": [{"source": to_display_message_id(key), "indices": list(range(len(emojis)))}
+                               for key, emojis in self.context_emojis.items()],
             "allow_at": self.allow_at,
         }
 
@@ -128,16 +150,16 @@ class SupplementResources:
 class ReplySupplement:
     plan: ReplySupplementPlan
     target_message: Optional[SessionMessage]
-    components: List[Optional[BaseMessageComponentModel]]
+    attachments: asyncio.Task[List[Optional[BaseMessageComponentModel]]]
     metadata: Dict[str, Any]
 
-    def compose(self, body: List[PostProcessedReplyMessage]) -> List[PostProcessedReplyMessage]:
+    async def compose(self, body: List[PostProcessedReplyMessage]) -> List[PostProcessedReplyMessage]:
         """按顺序展开正文；相邻 @ 拼入正文，图片和表情作为独立消息发送。"""
         if not body:
             raise ValueError("回复补充器不能替代空正文发送消息")
         result: List[PostProcessedReplyMessage] = []
         pending: List[BaseMessageComponentModel] = []
-        for component in self.components:
+        for component in await self.attachments:
             if component is None:
                 body[0].sequence.components = pending + body[0].sequence.components
                 pending = []
@@ -155,39 +177,69 @@ class ReplySupplement:
         return result
 
 
-async def resolve_supplement(
+def resolve_supplement(
     plan: ReplySupplementPlan, resources: SupplementResources, metadata: Dict[str, Any],
 ) -> ReplySupplement:
-    """严格解析快照中的资源，全部成功后才能进入发送链路。"""
+    """先确定正文依赖的回复目标，再启动独立的附件任务。"""
     quote = None
     if plan.msg_id is not None:
         quote = resources.messages[resources.resolve_id(plan.msg_id, resources.messages)]
-    components: List[Optional[BaseMessageComponentModel]] = []
+    parts: List[Union[BaseMessageComponentModel, EmojiNode, None]] = []
     for part in plan.parts:
         if isinstance(part, ReplyNode):
-            components.append(None)
+            parts.append(None)
         elif isinstance(part, AtNode):
             if not resources.allow_at:
                 raise ValueError("回复时 @ 用户已关闭")
             message = resources.messages[resources.resolve_id(part.msg_id, resources.messages)]
             user = message.message_info.user_info
-            components.append(AtComponent(target_user_id=user.user_id, target_user_nickname=user.user_nickname,
-                                          target_user_cardname=user.user_cardname))
+            parts.append(AtComponent(target_user_id=user.user_id, target_user_nickname=user.user_nickname,
+                                     target_user_cardname=user.user_cardname))
         elif isinstance(part, PictureNode):
             images = resources.pictures[resources.resolve_id(part.source, resources.pictures)]
             if part.index >= len(images):
                 raise ValueError(f"回复补充器图片序号超出范围：{part.source}:{part.index}")
-            image = images[part.index]
-            await image.load_image_binary()
-            if not image.binary_data:
-                raise ValueError(f"回复补充器图片无法读取：{part.source}:{part.index}")
-            components.append(ImageComponent(binary_hash=image.binary_hash, content=image.content,
-                                             binary_data=image.binary_data))
+            parts.append(images[part.index])
+        else:
+            parts.append(part)
+    attachments = asyncio.create_task(_resolve_supplement_attachments(parts, resources))
+    return ReplySupplement(plan, quote, attachments, metadata)
+
+
+async def _resolve_supplement_attachments(
+    parts: List[Union[BaseMessageComponentModel, EmojiNode, None]], resources: SupplementResources,
+) -> List[Optional[BaseMessageComponentModel]]:
+    components: List[Optional[BaseMessageComponentModel]] = []
+    for part in parts:
+        if isinstance(part, ImageComponent):
+            await part.load_image_binary()
+            if not part.binary_data:
+                raise ValueError(f"回复补充器图片无法读取：{part.binary_hash}")
+            components.append(ImageComponent(binary_hash=part.binary_hash, content=part.content,
+                                             binary_data=part.binary_data))
         elif isinstance(part, EmojiNode):
-            if not resources.allow_emoji or part.index not in resources.emojis:
-                raise ValueError(f"回复补充器表情编号不可用：{part.index}")
-            components.append(await BuiltinToolRuntimeContext.load_emoji_attachment(resources.emojis[part.index]))
-    return ReplySupplement(plan, quote, components, metadata)
+            source = "semantic" if part.is_semantic else "context"
+            try:
+                if part.is_semantic:
+                    emoji = await BuiltinToolRuntimeContext.load_emoji_by_description(
+                        part.emotion or part.description or "", resources.session_id, content=part.content or "",
+                    )
+                else:
+                    source_id = resources.resolve_id(part.source or "", resources.context_emojis)
+                    emoji = await BuiltinToolRuntimeContext.load_context_emoji(
+                        resources.context_emojis[source_id], part.index if part.index is not None else 0,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    f"attach_emoji resolution=failed source={source} path=supplement error={type(exc).__name__}",
+                    exc_info=True,
+                )
+            else:
+                components.append(emoji)
+                logger.info(f"attach_emoji resolution=resolved source={source} path=supplement")
+        else:
+            components.append(part)
+    return components
 
 
 async def generate_reply_supplement(
@@ -271,4 +323,4 @@ async def _generate_reply_supplement_once(
     plan = validate_llm_json(result.response, ReplySupplementPlan)
     validate(plan.plugin_options, extension_schema)
     metadata["plan"] = plan.model_dump()
-    return await resolve_supplement(plan, resources, metadata)
+    return resolve_supplement(plan, resources, metadata)

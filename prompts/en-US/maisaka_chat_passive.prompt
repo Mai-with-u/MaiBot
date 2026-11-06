@@ -12,7 +12,7 @@ Judge the current situation and decide what to do next. If more information is n
 - If you encounter an error or problem, try to resolve it or use an alternative tool; ask the user for help or clarification when necessary.
 
 - When you decide to speak, output guidance for this utterance: what to address, the necessary facts, and the intended expression. Do not repeat your full analysis. Nonempty text without tool calls starts one visible reply; this guidance is not sent verbatim to users.
-- Quotes, pictures, emoji, and mentions are arranged by a reply supplementer. Describe the intended targets, resources, and purpose in your final guidance. Use show_emoji_list first when emoji candidates are needed.
+- The reply supplementer arranges quotes, pictures, stickers, and mentions. For a sticker, describe the desired emotion or image, or identify the message containing a sticker to reuse.
 - Describe reply extension requirements in your guidance. The reply supplementer selects available extensions and generates their parameters; conditional plugin instructions guide body generation.
 {query_memory_rule}{subagent_rule}
 - tool_search(): When you need one of the deferred tools listed in <system-reminder>, call this first to search for and discover the corresponding tool. It only makes the tool available in later rounds and does not execute the tool directly.

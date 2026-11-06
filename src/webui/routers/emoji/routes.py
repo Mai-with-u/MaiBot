@@ -7,8 +7,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 from PIL import Image
-from sqlalchemy import func
-from sqlmodel import col, select
+from sqlalchemy import event, func
+from sqlmodel import Session, col, select
 
 import asyncio
 import hashlib
@@ -53,6 +53,20 @@ from .support import (
     get_thumbnail_executor,
     logger,
 )
+
+
+def _index_emoji_after_commit(session: Session, emoji: Images) -> None:
+    """只对已提交且可使用的表情计算描述向量。"""
+    if not emoji.is_registered or emoji.is_banned or emoji.no_file_flag:
+        return
+    emoji_hash = emoji.image_hash
+
+    def enqueue_index(_session: Session) -> None:
+        from src.emoji_system.semantic_match import schedule_emoji_index
+
+        schedule_emoji_index(emoji_hash)
+
+    event.listen(session, "after_commit", enqueue_index, once=True)
 
 router = APIRouter(prefix="/emoji", tags=["Emoji"])
 
@@ -324,7 +338,11 @@ def get_emoji_detail(emoji_id: int) -> EmojiDetailResponse:
             if not (emoji := session.exec(statement).first()):
                 raise HTTPException(status_code=404, detail=f"未找到 ID 为 {emoji_id} 的表情包")
 
-            return EmojiDetailResponse(success=True, data=emoji_to_response(emoji))
+            data = emoji_to_response(emoji)
+        from src.emoji_system.semantic_match import get_emoji_tags
+
+        tags = get_emoji_tags(data.emoji_hash)
+        return EmojiDetailResponse(success=True, data=data, **(tags.model_dump() if tags is not None else {}))
     except HTTPException:
         raise
     except Exception as e:
@@ -384,6 +402,9 @@ async def update_emoji(
                 emoji.register_time = update_data["register_time"]
 
             session.add(emoji)
+
+            if {"description", "is_registered", "is_banned"} & update_data.keys():
+                _index_emoji_after_commit(session, emoji)
 
             # 若通过更新接口封禁表情包，同步从内存列表移除
             if update_data.get("is_banned") or update_data.get("is_registered") is False:
@@ -585,6 +606,7 @@ async def register_emoji(emoji_id: int) -> EmojiUpdateResponse:
             emoji.is_banned = False
             emoji.register_time = datetime.now()
             session.add(emoji)
+            _index_emoji_after_commit(session, emoji)
 
             logger.info(f"表情包已注册: ID={emoji_id}")
             return EmojiUpdateResponse(success=True, message="表情包注册成功", data=emoji_to_response(emoji))
@@ -842,6 +864,7 @@ async def upload_emoji(
                 existing_emoji.is_banned = False
                 existing_emoji.register_time = current_time
                 session.add(existing_emoji)
+                _index_emoji_after_commit(session, existing_emoji)
                 session.flush()
                 return EmojiUploadResponse(
                     success=True,
@@ -865,6 +888,7 @@ async def upload_emoji(
                 last_used_time=None,
             )
             session.add(emoji)
+            _index_emoji_after_commit(session, emoji)
             session.flush()
 
             logger.info(
@@ -959,6 +983,7 @@ async def batch_upload_emoji(
                         existing_emoji.is_banned = False
                         existing_emoji.register_time = current_time
                         session.add(existing_emoji)
+                        _index_emoji_after_commit(session, existing_emoji)
                         session.flush()
                         results["uploaded"] += 1
                         results["details"].append(
@@ -982,6 +1007,7 @@ async def batch_upload_emoji(
                         last_used_time=None,
                     )
                     session.add(emoji)
+                    _index_emoji_after_commit(session, emoji)
                     session.flush()
 
                     results["uploaded"] += 1

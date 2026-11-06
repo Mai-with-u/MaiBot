@@ -938,7 +938,8 @@ async def _send_via_platform_io(
     )
 
     if delivery_batch.has_success:
-        _record_sent_emoji_usage(message)
+        if any(isinstance(component, EmojiComponent) for component in message.raw_message.components):
+            await asyncio.to_thread(_record_sent_emoji_usage, message)
         if storage_message:
             await _store_sent_message(message)
         await _notify_memory_automation_on_message_sent(message)

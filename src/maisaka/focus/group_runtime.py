@@ -36,7 +36,6 @@ from src.maisaka.context.messages import (
     ToolResultMessage,
     ToolResultMediaMessage,
 )
-from src.maisaka.context.emoji_candidates import EmojiCandidateMessage
 from src.maisaka.context.compaction import ContextSummaryMessage, build_context_summary
 from src.maisaka.context.post_processor import process_chat_history_after_cycle
 from src.maisaka.mode_policy import build_consecutive_wait_reminders
@@ -212,10 +211,10 @@ class FocusGroupRuntime:
 
     def add_member(self, runtime: MaisakaHeartFlowChatting) -> None:
         self.members[runtime.session_id] = runtime
-        # 恢复只属于目标聊天的工具媒体与表情编号映射，不把共享思考链送给回复器。
+        # 恢复只属于目标聊天的工具媒体，不把共享思考链送给回复器。
         for message in self.history:
             if (
-                isinstance(message, (ToolResultMediaMessage, EmojiCandidateMessage))
+                isinstance(message, ToolResultMediaMessage)
                 and message.session_id == runtime.session_id
             ):
                 runtime._chat_history.append(message)
@@ -683,9 +682,6 @@ class FocusGroupRuntime:
                 media = runtime._chat_history[before_media:]
                 self._post_messages.extend(media)
                 post = [message for message in result.post_history_messages if isinstance(message, LLMContextMessage)]
-                for message in post:
-                    if isinstance(message, EmojiCandidateMessage):
-                        message.session_id = runtime.session_id
                 runtime._chat_history.extend(post)
                 self._post_messages.extend(post)
             item = {

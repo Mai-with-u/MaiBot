@@ -28,7 +28,7 @@ from src.plugin_runtime.host.message_utils import PluginMessageUtils
 from src.plugin_runtime.host.reply_extensions import ReplyExtensionExecution, build_reply_extensions_schema, get_reply_extensions
 from src.services import send_service
 
-from .context import BuiltinToolRuntimeContext, PostProcessedReplyMessage
+from .context import BuiltinToolRuntimeContext, PostProcessedReplyMessage, ResolvedReplyAttachments
 
 if TYPE_CHECKING:
     from src.maisaka.reply_supplement import ReplySupplement
@@ -222,12 +222,31 @@ def get_tool_spec(context: Optional[ToolAvailabilityContext] = None) -> ToolSpec
         },
         "default": [],
     }
-    if config_module.global_config.emoji.use_new_send_logic:
-        properties["attach_emoji"] = {
-            "type": "integer",
-            "minimum": 0,
-            "description": "可选。从 show_emoji_list 的拼图选择一个表情包，填写图片序号，在文字后发送；0 或不填表示不发送表情包。",
-        }
+    properties["attach_emoji"] = {
+        "description": "可选。在文字后发送一张表情包。可引用上下文表情，或按情绪、画面内容匹配。省略表示不发送表情包。",
+        "anyOf": [
+            {
+                "type": "object",
+                "description": "只填一项就按该项匹配，两项都填就合并分数。",
+                "properties": {
+                    "emotion": {"type": "string", "minLength": 1, "description": "想表达的情绪或语气。"},
+                    "content": {"type": "string", "minLength": 1, "description": "期望图中出现的人物、物体、动作或文字。"},
+                },
+                "minProperties": 1,
+                "additionalProperties": False,
+            },
+            {"type": "string", "minLength": 1, "description": "想表达的情绪或意图，例如轻松地自嘲。"},
+            {
+                "type": "object",
+                "properties": {
+                    "msg_id": {"type": "string", "minLength": 1, "description": "含表情包的上下文消息编号。"},
+                    "index": {"type": "integer", "minimum": 0, "description": "该消息中第几张表情包，从 0 开始。"},
+                },
+                "required": ["msg_id"],
+                "additionalProperties": False,
+            },
+        ],
+    }
     if context is not None and context.is_group_chat is not None and get_scene(context.is_group_chat).allow_reply_at:
         properties["attach_at"] = {
             "type": "array",
@@ -435,27 +454,41 @@ async def execute_reply(
     target_message: Optional[SessionMessage] = None,
     supplement_runner: Optional[Callable[[], Awaitable["ReplySupplement"]]] = None,
 ) -> ToolExecutionResult:
-    """持有本轮补充任务，失败或取消时回收任务，禁止后台任务越过发送边界。"""
+    """持有本轮附件任务，失败或取消时回收，禁止任务越过本轮回复。"""
     stream = tool_ctx.runtime.chat_stream
     # 与发送链路使用同一身份解析；有歧义时在生成正文及补充内容前暴露错误。
     bot_user_id = await asyncio.to_thread(get_bot_account, stream.platform, stream.account_id)
     if not bot_user_id:
         return tool_ctx.build_failure_result("reply", "无法确定 Bot 发送账号，请为聊天流明确指定 account_id。")
     task = asyncio.create_task(supplement_runner()) if supplement_runner is not None else None
+    attachment_task: Optional[asyncio.Task[ResolvedReplyAttachments]] = None
 
     async def resolve_supplement() -> "ReplySupplement":
         return await asyncio.shield(task)
+
+    def start_attachment_resolution(attachments: Dict[str, Any]) -> asyncio.Task[ResolvedReplyAttachments]:
+        nonlocal attachment_task
+        attachment_task = asyncio.create_task(tool_ctx.resolve_reply_attachments(attachments))
+        return attachment_task
 
     try:
         return await _execute_reply(
             tool_ctx, arguments, call_id=call_id, bot_user_id=bot_user_id, target_message=target_message,
             supplement_runner=resolve_supplement if task is not None else None,
+            start_attachment_resolution=start_attachment_resolution,
         )
     finally:
-        if task is not None:
-            if not task.done():
-                task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        tasks = [pending for pending in (task, attachment_task) if pending is not None]
+        for pending in tasks:
+            if not pending.done():
+                pending.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        if task is not None and not task.cancelled() and task.exception() is None:
+            supplement_attachments = task.result().attachments
+            if not supplement_attachments.done():
+                supplement_attachments.cancel()
+            await asyncio.gather(supplement_attachments, return_exceptions=True)
 
 
 async def _execute_reply(
@@ -464,6 +497,7 @@ async def _execute_reply(
     *,
     call_id: str,
     bot_user_id: str,
+    start_attachment_resolution: Callable[[Dict[str, Any]], asyncio.Task[ResolvedReplyAttachments]],
     target_message: Optional[SessionMessage] = None,
     supplement_runner: Optional[Callable[[], Awaitable["ReplySupplement"]]] = None,
 ) -> ToolExecutionResult:
@@ -497,10 +531,6 @@ async def _execute_reply(
     target_message_id = str(invocation_arguments.get("msg_id") or "").strip()
     if invocation_arguments.get("attach_at") and not config_module.global_config.chat.enable_reply_at:
         return tool_ctx.build_failure_result("reply", "回复时 @ 用户已关闭，不能使用 attach_at。")
-    if invocation_arguments.get("attach_emoji") is not None and not config_module.global_config.emoji.use_new_send_logic:
-        return tool_ctx.build_failure_result(
-            "reply", "新表情包发送逻辑未开启，请使用 send_emoji 工具。"
-        )
     reply_tool_args = {
         key: value
         for key, value in invocation_arguments.items()
@@ -608,6 +638,11 @@ async def _execute_reply(
             # 原有 reply 工具先准备插件参数及正文要求，实验链路才等待并行编排。
             await prepare_extensions()
             reply_tool_args["_plugin_reply_prompt"] = extension_execution.extra_prompt
+        resolved_attachments = None
+        if supplement_runner is None and any(
+            invocation_arguments.get(key) is not None for key in ("attach_at", "attach_pic", "attach_emoji")
+        ):
+            resolved_attachments = start_attachment_resolution(invocation_arguments)
         generation = replyer.generate_reply_with_context(
             reply_reason="",
             stream_id=tool_ctx.runtime.session_id,
@@ -699,11 +734,11 @@ async def _execute_reply(
     try:
         reply_items = await tool_ctx.post_process_reply_message_items_async(
             reply_text,
-            invocation_arguments if supplement is None else None,
+            resolved_attachments=resolved_attachments,
             **post_process_options,
         )
         if supplement is not None:
-            reply_items = supplement.compose(reply_items)
+            reply_items = await supplement.compose(reply_items)
     except Exception as exc:
         reply_result.completion.response_text = reply_text
         reply_result.monitor_detail = build_reply_monitor_detail(reply_result)

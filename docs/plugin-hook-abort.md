@@ -25,7 +25,6 @@ Host 在第一个有效中止后停止调度后续处理器，并记录该处理
 - `maisaka.replyer.after_response`：模型生成完成后中止本次回复；中止优先于
   `modified_kwargs` 中的正文改写与 `retry`，不再进入 Replyer 内部的重生成。
 - `maisaka.reply.before_post_process`：取消本次回复，不再执行正文后处理和发送。
-- `emoji.maisaka.before_select` / `emoji.maisaka.after_select`：取消本次表情发送。
 - `send_service.after_build_message`：待发送消息构建完成后取消发送。
 - `send_service.before_send`：调用平台发送前取消发送。
 

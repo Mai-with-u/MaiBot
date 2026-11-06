@@ -26,7 +26,6 @@ from src.maisaka.context.messages import (
     ToolResultMediaMessage,
     build_context_items_from_history_entry,
 )
-from src.maisaka.context.emoji_candidates import EmojiCandidateMessage
 from src.maisaka.context.compaction import ContextSummaryMessage
 
 CHECKPOINT_VERSION = 1
@@ -154,10 +153,6 @@ def serialize_message(message: LLMContextMessage) -> Dict[str, Any]:
         record["tool_call_id"] = message.tool_call_id
         record["message_id"] = message.message_id
         record["session_id"] = message.session_id
-    elif isinstance(message, EmojiCandidateMessage):
-        record["kind"] = "emoji"
-        record["emoji_hashes"] = message.emoji_hashes
-        record["session_id"] = message.session_id
     elif isinstance(message, ReferenceMessage):
         record["kind"] = "reference"
         record["content"] = message.content
@@ -194,14 +189,6 @@ def deserialize_message(record: Dict[str, Any]) -> LLMContextMessage:
             remaining_uses_value=None,
             display_prefix=record["prefix"],
             context_item_id=item.meta.item_id,
-        )
-    if record["kind"] == "emoji":
-        return EmojiCandidateMessage(
-            item=item,
-            emoji_hashes={int(key): value for key, value in record["emoji_hashes"].items()},
-            visible_text=record["text"],
-            timestamp=item.meta.timestamp,
-            session_id=record["session_id"],
         )
     if record["kind"] == "media":
         components = []
@@ -241,7 +228,7 @@ class FocusCheckpointStore:
             raise ValueError("Focus 检查点版本或共享组身份不匹配")
         payload["entries"] = [
             FocusContextEntry(
-                [deserialize_message(message) for message in entry["messages"]],
+                [deserialize_message(message) for message in entry["messages"] if message["kind"] != "emoji"],
                 set(entry["session_ids"]),
                 entry["sequence"],
                 entry["watermarks"],

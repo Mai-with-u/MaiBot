@@ -68,6 +68,11 @@ display_name = "表情包内容分析"
 advanced = true
 description = "用于分析表情包图片内容的模板。"
 
+[emoji_grouped_tags]
+display_name = "表情包分组标签"
+advanced = true
+description = "分别识别表情包表达的情绪和画面内容。"
+
 [emoji_content_filtration]
 display_name = "表情包内容过滤"
 advanced = true
@@ -77,11 +82,6 @@ description = "用于判断表情包内容是否符合过滤要求的模板。"
 display_name = "表情包替换"
 advanced = true
 description = "用于根据文本语境选择或替换表情包的模板。"
-
-[emoji_selection]
-display_name = "表情包选择"
-advanced = true
-description = "用于从表情包拼图中按上下文和当前语气选择最合适表情包的模板。"
 
 [expression_evaluation]
 display_name = "表达评价"

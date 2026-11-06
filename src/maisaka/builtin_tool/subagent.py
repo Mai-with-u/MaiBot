@@ -55,8 +55,6 @@ SUBAGENT_FORBIDDEN_TOOL_NAMES = frozenset(
         SUBAGENT_STOP_TOOL_NAME,
         "react_message",
         "reply",
-        "send_emoji",
-        "show_emoji_list",
         "tool_search",
         "wait",
     }

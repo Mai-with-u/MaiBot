@@ -74,13 +74,11 @@ from src.maisaka.context.post_processor import MIN_RETAINED_CHAT_MESSAGES
 from src.maisaka.focus import focus_mode_manager
 from src.maisaka.visual.message_limiter import limit_latest_images_in_messages
 from src.maisaka.visual.deferred_images import defer_context_image_encoding
-from src.maisaka.context.emoji_candidates import EmojiCandidateMessage
 from src.maisaka.visual.mode_utils import resolve_enable_visual_planner
 
 from src.maisaka.scenes.factory import get_prompt_profile
 
 REQUEST_TYPE_BY_REQUEST_KIND = {
-    "emotion": "emoji.selector",
     "expression_selector": "expression.selector",
     "planner": "maisaka.planner",
     "sub_agent": "maisaka.sub_agent",
@@ -91,7 +89,6 @@ MODEL_TASK_NAME_BY_REQUEST_KIND: dict[str, str] = {
 PROMPT_PREVIEW_CATEGORY_BY_REQUEST_KIND = {
     "planner": "planner",
     "expression_selector": "expression_selector",
-    "emotion": "emotion",
     "sub_agent": "sub_agent",
 }
 CONTEXT_SELECTION_CACHE_STABILITY_RATIO = 2.0
@@ -1152,9 +1149,6 @@ class MaisakaChatLoopService:
             items = limit_latest_images_in_messages(
                 items,
                 max_image_num=global_config.visual.max_image_num,
-                preserved_item_ids={
-                    msg.item.meta.item_id for msg in selected_history if isinstance(msg, EmojiCandidateMessage)
-                },
             )
         return items, history_item_count
 
@@ -1195,10 +1189,6 @@ class MaisakaChatLoopService:
         """
 
         enable_visual_message = self._resolve_enable_visual_message(request_kind)
-        # 拼图仅在调用工具时追加；不因后续图片增加而替换历史图片、破坏 KV 缓存前缀。
-        preserved_image_item_ids = {
-            message.item.meta.item_id for message in chat_history if isinstance(message, EmojiCandidateMessage)
-        }
         selected_history, selection_reason = self.select_llm_context_messages(
             chat_history,
             request_kind=request_kind,
@@ -1223,7 +1213,6 @@ class MaisakaChatLoopService:
             built_messages = limit_latest_images_in_messages(
                 built_messages,
                 max_image_num=global_config.visual.max_image_num,
-                preserved_item_ids=preserved_image_item_ids,
             )
 
         def context_factory(_client: BaseClient) -> List[ContextItem]:
@@ -1305,7 +1294,6 @@ class MaisakaChatLoopService:
             built_messages = limit_latest_images_in_messages(
                 built_messages,
                 max_image_num=global_config.visual.max_image_num,
-                preserved_item_ids=preserved_image_item_ids,
             )
         raw_tool_definitions = before_request_kwargs.get("tool_definitions")
         if isinstance(raw_tool_definitions, list):
