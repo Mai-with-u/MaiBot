@@ -11,11 +11,12 @@ from uuid import uuid4
 import asyncio
 import base64
 import json
+import random
 import re
 import time
 
 from aiohttp import ClientError, ClientResponseError, ClientSession, ClientTimeout, ClientWebSocketResponse, WSMsgType
-from maibot_sdk import API, ConfigWidget, ConfigWidgetState, MaiBotPlugin, MessageGateway, PluginConfigBase, Tool
+from maibot_sdk import API, Command, ConfigWidget, ConfigWidgetState, MaiBotPlugin, MessageGateway, PluginConfigBase, Tool
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
 from src.common.paths import resolve_plugin_config_path
@@ -24,17 +25,16 @@ from .codec import (
     GROUP_EVENTS,
     PLATFORM,
     QQ_FACE_TAG_PATTERN,
-    QQ_MENTION_TOKEN_PATTERN,
     SUPPORTED_EVENTS,
     decode_message,
     encode_message,
-    extract_command_text,
-    extract_message_scene_fields,
+    is_bot_author,
     summarize_payload,
 )
 from .settings import AdapterSettings
 from .identity_sync import PROFILE_TTL, IdentityScope, SilentIdentitySync, save_profiles
 from .qr_login import QRLogin, save_credentials
+from .quoted_media import quoted_image_attachments
 
 GATEWAY_NAME = "qq_official_gateway"
 MESSAGE_INTENTS = 1 << 25
@@ -47,15 +47,21 @@ MAX_INBOUND_ATTACHMENTS = 10
 MAX_INBOUND_MEDIA_BYTES = 20 * 1024 * 1024
 # 官方预上传要求的 md5_10m：文件前 10002432 字节的 MD5。
 MD5_10M_BYTES = 10002432
+# 富媒体每个上传请求独立设置超时，避免沿用消息会话的 20 秒总超时。
+MEDIA_UPLOAD_TIMEOUT_SEC = 300.0
 TRUSTED_QQ_MEDIA_HOSTS = frozenset({"grouppro.grouppro.qq.com"})
 TRUSTED_QQ_MEDIA_HOST_SUFFIXES = ("nt.qq.com", "nt.qq.com.cn", "ugcimg.cn")
 ID_MAP_FILE_NAME = "id_map.json"
 ASSIGN_GROUP_COMMAND = "/assign_group_id"
 ASSIGN_USER_COMMAND = "/assign_id"
-MUTE_TOOL_NAME = "mute"
+SET_MUTE_TOOL_NAME = "set_mute"
 RECALL_TOOL_NAME = "recall_message"
-ASSIGN_COMMANDS = frozenset({ASSIGN_GROUP_COMMAND, ASSIGN_USER_COMMAND})
-ASSIGN_VALUE_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+AVATAR_TTL_SEC = 86400
+# 机器人资料随用户修改而变，头像 URL 短时缓存，避免每条消息都请求 /users/@me。
+BOT_PROFILE_TTL_SEC = 3600
+GROUP_NAME_TTL_SEC = 3600.0
+# OpenID 头像路由（实测最多返回 100×100，其他尺寸回落到 40×40）。
+OPENID_AVATAR_URL_TEMPLATE = "https://q.qlogo.cn/qqapp/{app_id}/{openid}/100"
 
 
 class QQOfficialAdapterPlugin(MaiBotPlugin):
@@ -115,22 +121,32 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         self._seq: Optional[int] = None
         self._account_id = ""
         self._bot_name = ""
+        # 机器人自身头像来自 GET /users/@me（READY 载荷里的 user 不含头像），按账号短时缓存。
+        self._bot_avatar_url = ""
+        self._bot_profile_account: Tuple[str, str] = ("", "")
+        self._bot_profile_expires_at = 0.0
+        self._bot_profile_lock = asyncio.Lock()
         self._ready = False
         self._resuming = False
         self._heartbeat_ack = True
         self._replies: Dict[Tuple[str, str, str], Tuple[float, int]] = {}
+        # 主动消息也需要显式序号；随机起点降低重启碰撞，递增避免每次随机抽取的重复。
+        self._proactive_msg_seq = random.randrange(10000)
         # 平台消息 id（ROBOT1.0_...）→ 官方引用索引（REFIDX），入站取 message_scene.ext.msg_idx，
         # 自发消息取发送响应 ext_info.ref_idx；用于出站引用，也供入站按账号、场景、目标反查。
         self._ref_idx: Dict[str, Tuple[float, str, Optional[Tuple[str, str, str]]]] = {}
         self._reply_lock = asyncio.Lock()
         self._dispatch_tasks: Set[asyncio.Task[None]] = set()
-        self._id_map: Dict[str, Any] = {"group": {}, "user": {}}
+        self._id_map: Dict[str, Dict[str, str]] = {"group": {}, "user": {}}
+        self._id_map_lock = asyncio.Lock()
         self._unified_account_id = ""
-        self._assign_admin_ids: List[str] = []
         self._connection_lock = asyncio.Lock()
         self._qr_login = QRLogin(self._apply_qr_credentials)
         self._gateway_state_lock = asyncio.Lock()
         self._inbound_ready = asyncio.Event()
+        # 群基本信息查询按应用和 OpenID 缓存，失败同样缓存，避免耗尽接口配额。
+        self._group_names: Dict[Tuple[str, str], Tuple[str, float]] = {}
+        self._group_name_lock = asyncio.Lock()
         self._identity_sync = SilentIdentitySync()
         self._identity_task: Optional[asyncio.Task[None]] = None
         self._identity_dirty = False
@@ -192,7 +208,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
     async def _sync_tool_states(self) -> None:
         """按 [mute].enabled、[recall].enabled 同步可选 LLM 工具的启停状态。"""
         tool_states = (
-            (MUTE_TOOL_NAME, "禁言", self.config.mute.enabled),
+            (SET_MUTE_TOOL_NAME, "禁言设置", self.config.mute.enabled),
             (RECALL_TOOL_NAME, "撤回", self.config.recall.enabled),
         )
         for tool_name, label, enabled in tool_states:
@@ -216,7 +232,6 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
             self.ctx.logger.error("QQ 官方适配器缺少凭据，请在插件配置 [qq_official] 中填写 app_id 和 app_secret")
             return
         self._unified_account_id = settings.unified_account_id.strip()
-        self._assign_admin_ids = [str(item).strip() for item in settings.assign_admin_ids if str(item).strip()]
         self._worker = asyncio.create_task(self._run(), name="qq-official-adapter")
         if self.config.qq_official.silent_user_sync:
             self._identity_task = asyncio.create_task(self._identity_loop(), name="qq-official-identity-sync")
@@ -256,6 +271,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         await self._disconnect()
         self._replies.clear()
         self._ref_idx.clear()
+        self._group_names.clear()
         self._session_id = ""
         self._seq = None
         self._account_id = ""
@@ -274,7 +290,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         return (*self._identity_namespace(), group_openid, self._id_map["group"].get(group_openid, ""), user_openid)
 
     def _group_user_map(self, group_openid: str) -> Dict[str, str]:
-        """自动推断只用于本群的消息转换，不加入管理员鉴权使用的人工映射。"""
+        """合并本群自动身份与人工映射，人工绑定优先。"""
         users: Dict[str, str] = {}
         if self.config.qq_official.silent_user_sync and group_openid in self._id_map["group"]:
             prefix = self._identity_scope(group_openid, "")[:4]
@@ -444,7 +460,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
             raise ValueError("群或用户映射不存在")
         resource = await self.api_get_avatar(PLATFORM, target_id, kind)
         if resource["status"] != "available":
-            return {"image": "", "message": "绑定 ID 不是数字，无法获取 QQ 头像"}
+            return {"image": "", "message": "该群或用户无法获取 QQ 头像"}
         url = resource["url"].replace("/640", "/100").replace("s=640", "s=100")
         async with ClientSession(timeout=ClientTimeout(total=10)) as session:
             async with session.get(url, allow_redirects=False) as response:
@@ -461,126 +477,122 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         return {"image": f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"}
 
     def _load_id_map(self) -> None:
-        """加载统一 ID 映射；文件缺失或损坏时按空映射启动，绑定命令会重建文件。"""
+        """加载统一 ID 映射；首次运行允许文件不存在，损坏的已有映射明确报错。"""
         path = self._id_map_path()
         if not path.exists():
             return
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            self.ctx.logger.error("QQ 统一 ID 映射文件读取失败，按空映射启动: %s", exc)
-            return
+        raw = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(raw, Mapping):
-            self.ctx.logger.error("QQ 统一 ID 映射文件格式无效，按空映射启动")
-            return
-        id_map: Dict[str, Any] = {"group": {}, "user": {}}
+            raise ValueError("QQ 统一 ID 映射文件必须是对象")
+        id_map: Dict[str, Dict[str, str]] = {}
         for kind in ("group", "user"):
             entries = raw.get(kind)
-            if isinstance(entries, Mapping):
-                id_map[kind] = {
-                    str(key): str(value) for key, value in entries.items() if str(key).strip() and str(value).strip()
-                }
+            if not isinstance(entries, Mapping) or any(
+                not isinstance(key, str) or not key.strip() or not isinstance(value, str) or not value.strip()
+                for key, value in entries.items()
+            ):
+                raise ValueError(f"QQ 统一 ID 映射的 {kind} 必须包含非空字符串键值")
+            id_map[kind] = dict(entries)
         self._id_map = id_map
 
-    def _save_id_map(self) -> None:
-        try:
-            path = self._id_map_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(self._id_map, ensure_ascii=False, indent=2), encoding="utf-8")
-        except OSError as exc:
-            self.ctx.logger.error("QQ 统一 ID 映射保存失败: %s", exc)
+    def _save_id_map(self, id_map: Dict[str, Dict[str, str]]) -> None:
+        """原子替换映射文件，失败向命令调用方传播，不把未持久化的绑定报告为成功。"""
+        path = self._id_map_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(id_map, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(path)
 
-    @staticmethod
-    def _author_openid(event: str, author: Mapping[str, Any]) -> str:
-        """提取发送者的原始 OpenID（群聊 member_openid 优先，单聊 user_openid 优先）。"""
-        keys = (
-            ("member_openid", "openid", "id", "user_openid")
-            if event in GROUP_EVENTS
-            else ("user_openid", "openid", "id")
-        )
-        return next((candidate for key in keys if (candidate := str(author.get(key) or "").strip())), "")
+    @Command(
+        "assign_group_id", description="绑定当前 QQ 官方群的真实群号",
+        pattern=rf"^{ASSIGN_GROUP_COMMAND}(?:\s|$)", permission="operator",
+    )
+    async def command_assign_group_id(self, message: Dict[str, Any], **kwargs: Any) -> Tuple[bool, str, bool]:
+        """由本体完成命令匹配与权限检查，适配器只处理群身份绑定。"""
+        return await self._assign_identity("group", message)
 
-    def _assign_allowed(self, sender_openid: str) -> bool:
-        """配置了管理员名单时，仅允许名单内（统一 ID 或 OpenID）的发送者执行绑定命令。"""
-        if not self._assign_admin_ids:
-            return True
-        sender_ids = {sender_openid, self._id_map["user"].get(sender_openid, "")} - {""}
-        return bool(sender_ids & set(self._assign_admin_ids))
+    @Command(
+        "assign_id", description="绑定 QQ 官方用户的真实 QQ 号，可 @ 指定用户",
+        pattern=rf"^{ASSIGN_USER_COMMAND}(?:\s|$)", permission="operator",
+    )
+    async def command_assign_id(self, message: Dict[str, Any], **kwargs: Any) -> Tuple[bool, str, bool]:
+        """绑定当前发送者或命令中明确提及的用户。"""
+        return await self._assign_identity("user", message)
 
-    async def _handle_assign_command(self, command: str, event: str, data: Mapping[str, Any]) -> None:
-        """处理绑定命令：群/用户 OpenID 绑定到统一 ID；统一账号 ID 只从配置文件读取。
+    async def _assign_identity(self, kind: str, message: Mapping[str, Any]) -> Tuple[bool, str, bool]:
+        """消费本体命令上下文；绑定回执始终发往这条消息的原始 OpenID。"""
+        info = message["message_info"]
+        config = info.get("additional_config", {})
+        sender_openid = str(config.get("qq_official_user_openid") or "")
+        group_openid = str(config.get("qq_official_group_openid") or "")
+        if (message["platform"] != PLATFORM or not sender_openid
+                or message["account_id"] != (self._unified_account_id or self._account_id)):
+            return False, "绑定命令仅支持当前 QQ 官方连接收到的消息", True
 
-        命令消息不进入聊天流，绑定结果以被动回复回执。
-        """
-        author = data.get("author")
-        author = author if isinstance(author, Mapping) else {}
-        sender_openid = self._author_openid(event, author)
-        tokens = QQ_MENTION_TOKEN_PATTERN.sub("", command).split()
-        value = tokens[1] if len(tokens) > 1 else ""
-        if not self._assign_allowed(sender_openid):
-            await self._reply_to_command(event, data, "仅配置的管理员可执行该命令")
-            return
-        if command.split(" ", 1)[0] == ASSIGN_GROUP_COMMAND:
-            kind = "group"
-            openid = str(data.get("group_openid") or "").strip()
-            subject = "当前群"
-            if event not in GROUP_EVENTS:
-                await self._reply_to_command(event, data, f"{ASSIGN_GROUP_COMMAND} 仅支持群聊使用")
-                return
-        else:
-            kind = "user"
-            mention = QQ_MENTION_TOKEN_PATTERN.search(command)
-            if mention is not None and mention.group(1) != self._account_id:
-                openid = mention.group(1)
-                subject = "被 @ 的用户"
-            else:
-                openid = sender_openid
-                subject = "发送者"
-        if not openid or not ASSIGN_VALUE_PATTERN.fullmatch(value):
-            usage = {
-                "group": f"用法：{ASSIGN_GROUP_COMMAND} <群号>",
-                "user": f"用法：{ASSIGN_USER_COMMAND} <QQ号>（可 @ 对方为其绑定）",
-            }
-            await self._reply_to_command(event, data, usage[kind])
-            return
-        self._id_map[kind][openid] = value
-        self._save_id_map()
+        # @ 是独立组件，不把昵称当作参数；命令是否匹配由本体决定，这里只校验绑定值。
+        segments = message["raw_message"]
+        text = " ".join(str(segment["data"]) for segment in segments if segment["type"] == "text")
+        tokens = text.split(maxsplit=1)
+        value = tokens[1].strip() if len(tokens) == 2 else ""
+        error = ""
+        openid = group_openid if kind == "group" else sender_openid
+        if kind == "group" and not group_openid:
+            error = f"{ASSIGN_GROUP_COMMAND} 仅支持群聊使用"
+        elif not value.isascii() or not value.isdecimal():
+            error = (f"用法：{ASSIGN_GROUP_COMMAND} <群号>" if kind == "group"
+                     else f"用法：{ASSIGN_USER_COMMAND} <QQ号>（可 @ 一位用户为其绑定）")
+        elif kind == "user":
+            mentioned = {
+                str(segment["data"]["target_user_id"])
+                for segment in segments if segment["type"] == "at"
+            } - {self._account_id, self._unified_account_id}
+            if len(mentioned) > 1:
+                error = "一次只能绑定一位用户"
+            elif mentioned:
+                target = mentioned.pop()
+                matches = [oid for oid, uid in self._group_user_map(group_openid).items() if uid == target]
+                if len(matches) > 1:
+                    error = "目标用户的身份映射不唯一，无法绑定"
+                elif matches:
+                    openid = matches[0]
+                elif target.isdecimal():
+                    error = "目标用户缺少 QQ 官方 OpenID，无法绑定"
+                else:
+                    openid = target
+
+        if error:
+            await self._send_binding_result(message, error)
+            return False, error, True
+
+        # 串行持久化快照，写入成功后才切换内存映射，避免并发绑定丢写或失败后仅内存生效。
+        async with self._id_map_lock:
+            id_map = {key: dict(mapping) for key, mapping in self._id_map.items()}
+            id_map[kind][openid] = value
+            await asyncio.to_thread(self._save_id_map, id_map)
+            self._id_map = id_map
         self.ctx.logger.info("QQ 统一 ID 绑定更新: %s %s -> %s", kind, openid, value)
-        await self._reply_to_command(event, data, f"已将{subject}的 ID 绑定为 {value}，后续消息按该 ID 归属")
+        result = (
+            f"已将{'当前群' if kind == 'group' else '目标用户'}的 ID 绑定为 {value}。"
+            "后续消息按该 ID 归属；会话身份改变时使用另一聊天流，旧记录不会自动迁移。"
+        )
+        await self._send_binding_result(message, result)
+        return True, result, True
 
-    async def _reply_to_command(self, event: str, data: Mapping[str, Any], text: str) -> None:
-        """以被动回复回执管理命令结果（引用命令消息的 msg_id，不占主动消息额度）。"""
-        if event in GROUP_EVENTS:
-            openid = str(data.get("group_openid") or "").strip()
-            path = f"/v2/groups/{quote(openid, safe='')}/messages"
-        else:
-            author = data.get("author")
-            openid = self._author_openid(event, author if isinstance(author, Mapping) else {})
-            path = f"/v2/users/{quote(openid, safe='')}/messages"
-        if not openid:
-            self.ctx.logger.warning("QQ 管理命令回执缺少目标 OpenID")
-            return
-        command_msg_idx = extract_message_scene_fields(data)[0]
-        try:
-            session = self._require_session()
-            token = await self._authorize()
-            payload: Dict[str, Any] = {
-                "content": text,
-                "msg_type": 0,
-                "msg_id": str(data.get("id") or ""),
-                "msg_seq": 1,
-            }
-            if command_msg_idx:
-                payload["message_reference"] = {"message_id": command_msg_idx}
-            async with session.post(
-                self._api_url(path),
-                headers={"Authorization": f"QQBot {token}"},
-                json=payload,
-            ) as response:
-                if response.status >= 400:
-                    self.ctx.logger.warning("QQ 管理命令回执失败: HTTP %s", response.status)
-        except Exception as exc:
-            self.ctx.logger.warning("QQ 管理命令回执失败: %s", exc)
+    async def _send_binding_result(self, message: Mapping[str, Any], text: str) -> None:
+        """绑定会改变路由目标，回执使用原消息的 OpenID 和原被动凭证，不重新解析新映射。"""
+        info = message["message_info"]
+        config = info["additional_config"]
+        group = info.get("group_info")
+        scene = "group" if group else "private"
+        openid = config["qq_official_group_openid" if group else "qq_official_user_openid"]
+        target = str(group["group_id"] if group else info["user_info"]["user_id"])
+        fields = await self._claim_passive_fields(scene, target, str(message["message_id"]))
+        if not fields:
+            raise RuntimeError("绑定命令的回复凭证已过期或耗尽，无法发送回执")
+        await self._api_post(
+            f"/v2/{'groups' if group else 'users'}/{quote(openid, safe='')}/messages",
+            {"content": text, "msg_type": 0, **fields},
+        )
 
     async def _run(self) -> None:
         async with ClientSession(timeout=ClientTimeout(total=20)) as session:
@@ -785,14 +797,17 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
 
     async def _receive_message(self, event: str, data: Mapping[str, Any], *, account_id: str, bot_name: str) -> None:
         try:
-            # 管理命令（/assign_group_id、/assign_id）在解码前拦截，不进入聊天流。
-            command = extract_command_text(data)
-            if command.split(" ", 1)[0] in ASSIGN_COMMANDS:
-                await self._handle_assign_command(command, event, data)
+            # 群内可能存在其它官方机器人：它们的消息 author.bot=true，默认直接丢弃，
+            # 避免两个机器人互相触发形成对话回环。命令同样不处理，机器人不应能绑定 ID。
+            if self.config.filter.ignore_other_bots and is_bot_author(data):
+                self.ctx.logger.debug("忽略其它机器人消息: %s | payload=%s", data.get("id"), summarize_payload(data))
                 return
             segments, labels, is_picture, is_emoji = await self._build_attachments(data)
             group_openid = str(data.get("group_openid") or "") if event in GROUP_EVENTS else ""
             effective_id_map = {**self._id_map, "user": self._group_user_map(group_openid)}
+            group_name = str(data.get("group_name") or "").strip()
+            if group_openid and not group_name:
+                group_name = await self._get_group_name(group_openid)
             message, scene, target = decode_message(
                 event,
                 data,
@@ -804,6 +819,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
                 bot_name=bot_name,
                 id_map=effective_id_map,
                 unified_account_id=self._unified_account_id,
+                group_name=group_name,
             )
             if group_openid and self.config.qq_official.silent_user_sync:
                 user_openid = message["message_info"]["additional_config"]["qq_official_user_openid"]
@@ -870,12 +886,12 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
                 self._replies.pop(key, None)
 
     async def _build_attachments(
-        self, payload: Mapping[str, Any]
+        self, payload: Mapping[str, Any], *, include_quoted: bool = True
     ) -> Tuple[List[Dict[str, Any]], List[str], bool, bool]:
         """下载并转换 QQ 附件；下载失败降级为文本标签，返回段、标签与图片/表情标志。"""
         attachments = payload.get("attachments")
-        if not isinstance(attachments, list) or not attachments:
-            return [], [], False, False
+        if not isinstance(attachments, list):
+            attachments = []
         if len(attachments) > MAX_INBOUND_ATTACHMENTS:
             self.ctx.logger.warning(
                 "QQ 入站附件超过 %d 个限制，仅处理前 %d 个", MAX_INBOUND_ATTACHMENTS, MAX_INBOUND_ATTACHMENTS
@@ -921,25 +937,51 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
                 continue
 
             if content_type == "voice" or content_type.startswith("audio/") or attachment_type == "voice":
-                voice_text = str(attachment.get("asr_refer_text") or "[语音]").strip()
+                # QQ may already supply a transcript. Preserve it as an actual
+                # text segment: Host rebuilds processed_plain_text from segments,
+                # so an attachment label alone is not a reliable fallback.
+                asr_refer_text = attachment.get("asr_refer_text")
+                voice_text = asr_refer_text.strip() if isinstance(asr_refer_text, str) else ""
+                if voice_text:
+                    transcript = f"[语音: {voice_text}]"
+                    segments.append({"type": "text", "data": transcript})
+                    labels.append(transcript)
+                    continue
                 binary = await self._download_attachment(url) if url else b""
                 if binary:
                     segments.append(
                         {
                             "type": "voice",
-                            "data": voice_text,
+                            # Empty content tells Host that ASR is still needed.
+                            "data": "",
                             "binary_data_base64": base64.b64encode(binary).decode("ascii"),
                             "hash": sha256(binary).hexdigest(),
                         }
                     )
                 else:
                     segments.append({"type": "file", "data": self._file_payload(attachment, content_type, url)})
-                labels.append(voice_text)
+                labels.append("[语音]")
                 continue
 
             if url or filename:
                 segments.append({"type": "file", "data": self._file_payload(attachment, content_type, url)})
                 labels.append("[视频]" if content_type.startswith("video/") else f"[文件：{filename or '未命名'}]")
+        if include_quoted:
+            quoted = quoted_image_attachments(payload, MAX_INBOUND_ATTACHMENTS - len(attachments))
+            if quoted:
+                # Reuse all existing URL, redirect and size checks. Omit current
+                # content hints so a quoted image is not mistaken for a new emoji.
+                quote_segments, _, quote_picture, quote_emoji = await self._build_attachments(
+                    {"attachments": quoted}, include_quoted=False
+                )
+                segments.extend([
+                    {"type": "text", "data": "[以下图片来自引用消息]"},
+                    *quote_segments,
+                    {"type": "text", "data": "[引用图片结束]"},
+                ])
+                labels.append("[引用消息中的图片]")
+                is_picture = is_picture or quote_picture
+                is_emoji = is_emoji or quote_emoji
         return segments, labels, is_picture, is_emoji
 
     @staticmethod
@@ -1070,6 +1112,37 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         # 未绑定的用户 user_id 本身就是 OpenID；纯数字是无法反查的 QQ 号。
         return "" if user_id.isdigit() else user_id
 
+    async def _get_group_name(self, group_openid: str) -> str:
+        """查询可选群名；同一批并发消息只查询一次，失败明确记录且不阻断正文投递。"""
+        if not group_openid:
+            return ""
+        key = (self.config.qq_official.app_id.strip(), group_openid)
+        cached = self._group_names.get(key)
+        if cached is not None and time.time() - cached[1] < GROUP_NAME_TTL_SEC:
+            return cached[0]
+        async with self._group_name_lock:
+            cached = self._group_names.get(key)
+            if cached is not None and time.time() - cached[1] < GROUP_NAME_TTL_SEC:
+                return cached[0]
+            name = ""
+            try:
+                # 群名是附加信息，查询最多等待三秒，不能耗尽整条入站消息的时间。
+                async with asyncio.timeout(3):
+                    info = await self._api_get(f"/v2/groups/{quote(group_openid, safe='')}/info")
+                name = str(info.get("group_name") or "").strip()
+            except Exception as exc:
+                # 接口可能未开通（11253）；失败和空值也缓存，避免每条消息都重试。
+                self.ctx.logger.info("获取 QQ 群名称失败，保留已有群名: group_openid=%s | %s", group_openid, exc)
+            now = time.time()
+            self._group_names = {
+                cached_key: value for cached_key, value in self._group_names.items()
+                if now - value[1] < GROUP_NAME_TTL_SEC
+            }
+            if key not in self._group_names and len(self._group_names) >= 2000:
+                del self._group_names[min(self._group_names, key=lambda item: self._group_names[item][1])]
+            self._group_names[key] = (name, now)
+            return name
+
     @API("adapter.avatar.get", description="获取独立用户或群头像资源", version="1", public=True)
     async def api_get_avatar(
         self,
@@ -1088,74 +1161,118 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         if not normalized_target_id:
             raise ValueError("target_id 必须非空")
 
-        # OpenID 不能用于 QQ 头像 URL；已绑定时使用对应的真实 QQ 号或群号。
-        normalized_target_id = self._id_map[target_type].get(normalized_target_id, normalized_target_id).strip()
-        if re.fullmatch(r"[0-9]+", normalized_target_id) is None:
+        # 统一 ID 已绑定时用真实 QQ 号/群号查询；未绑定时目标值本身就是 OpenID。
+        mapped_id = self._id_map[target_type].get(normalized_target_id, "").strip()
+        effective_id = mapped_id or normalized_target_id
+        # 机器人自身只有 OpenID（可能被统一账号映射成 QQ 号），头像统一走 /users/@me。
+        if target_type == "user" and self._is_bot_target(effective_id):
+            return await self._bot_avatar_resource()
+        if re.fullmatch(r"[0-9]+", effective_id) is not None:
+            normalized_id = int(effective_id)
+            if normalized_id <= 0:
+                raise ValueError("target_id 必须为正整数")
+            url = (
+                f"https://p.qlogo.cn/gh/{normalized_id}/{normalized_id}/640"
+                if target_type == "group"
+                else f"https://q1.qlogo.cn/g?b=qq&nk={normalized_id}&s=640"
+            )
+            return {"status": "available", "url": url, "expires_in": AVATAR_TTL_SEC}
+
+        # OpenID 头像：官方不提供按群 OpenID 取群头像的接口，只有用户维度可用。
+        if target_type == "group":
             return {"status": "unsupported"}
-        normalized_id = int(normalized_target_id)
-        if normalized_id <= 0:
-            raise ValueError("target_id 必须为正整数")
-        url = (
-            f"https://p.qlogo.cn/gh/{normalized_id}/{normalized_id}/640"
-            if target_type == "group"
-            else f"https://q1.qlogo.cn/g?b=qq&nk={normalized_id}&s=640"
-        )
-        return {"status": "available", "url": url, "expires_in": 86400}
+        url = self._openid_avatar_url(effective_id)
+        if not url:
+            return {"status": "unsupported"}
+        return {"status": "available", "url": url, "expires_in": AVATAR_TTL_SEC}
+
+    def _is_bot_target(self, target_id: str) -> bool:
+        """机器人自身的头像由 READY 上报的 ID 或统一账号标识，需与普通用户区分后走 /users/@me。"""
+        candidates = {self._account_id.strip(), self._unified_account_id.strip()} - {""}
+        return target_id.strip() in candidates
+
+    def _openid_avatar_url(self, openid: str) -> str:
+        """OpenID 头像走官方 q.qlogo.cn 路由；未配置 AppID 时拼不出该 URL。"""
+        app_id = self.config.qq_official.app_id.strip()
+        if not app_id or not openid:
+            return ""
+        return OPENID_AVATAR_URL_TEMPLATE.format(app_id=quote(app_id, safe=""), openid=quote(openid, safe=""))
+
+    async def _bot_avatar_resource(self) -> Dict[str, Any]:
+        """机器人头像只出现在 GET /users/@me 的 avatar 字段，READY 载荷里没有。"""
+        url = await self._fetch_bot_avatar_url()
+        if not url:
+            return {"status": "missing"}
+        return {"status": "available", "url": url, "expires_in": max(1, int(self._bot_profile_expires_at - time.time()))}
+
+    async def _fetch_bot_avatar_url(self, *, force: bool = False) -> str:
+        """按短 TTL 缓存机器人头像 URL；查询失败不影响头像以外的功能。"""
+        account = (self.config.qq_official.app_id.strip(), self._account_id)
+        if not force and self._bot_profile_account == account and self._bot_avatar_url and time.time() < self._bot_profile_expires_at:
+            return self._bot_avatar_url
+        async with self._bot_profile_lock:
+            if not force and self._bot_profile_account == account and self._bot_avatar_url and time.time() < self._bot_profile_expires_at:
+                return self._bot_avatar_url
+            try:
+                profile = await self._api_get("/users/@me")
+            except Exception as exc:
+                self.ctx.logger.warning("QQ 机器人详情查询失败，本次不返回机器人头像: %s", exc)
+                return ""
+            avatar = str(profile.get("avatar") or "").strip()
+            if not avatar:
+                self.ctx.logger.warning("QQ 机器人详情缺少 avatar 字段")
+                return ""
+            self._bot_avatar_url = avatar
+            self._bot_profile_account = account
+            self._bot_profile_expires_at = time.time() + BOT_PROFILE_TTL_SEC
+            return avatar
 
     @Tool(
-        MUTE_TOOL_NAME,
+        SET_MUTE_TOOL_NAME,
         platforms=PLATFORM,
         description=(
-            "在 QQ 群聊中根据消息 ID 禁言该消息的发送者。"
-            "适用于刷屏、违规发言等情况。群主与管理员平台不允许禁言；"
-            "目标用户需能解析出 OpenID（其消息经本适配器收到，或已通过 /assign_id 绑定）。"
+            "设置 QQ 群成员的禁言状态：duration 为正整数时禁言对应秒数，0 表示解除禁言。"
+            "msg_id 使用目标成员发过的消息 ID，群和用户均从该消息解析；机器人须有群管理员权限。"
         ),
         parameters=[
             ToolParameterInfo(
-                name="msg_id",
-                param_type=ToolParamType.STRING,
-                description="要禁言的目标所发送的消息 ID。",
-                required=True,
+                name="msg_id", param_type=ToolParamType.STRING,
+                description="目标成员发过的消息 ID。", required=True,
             ),
             ToolParameterInfo(
-                name="duration",
-                param_type=ToolParamType.INTEGER,
-                description="禁言时长，单位秒，正整数。",
-                required=True,
+                name="duration", param_type=ToolParamType.INTEGER,
+                description="禁言秒数；0 解除禁言，正整数施加禁言，不能为负数。", required=True,
             ),
             ToolParameterInfo(
-                name="reason",
-                param_type=ToolParamType.STRING,
-                description="禁言原因，可选。",
-                required=False,
+                name="reason", param_type=ToolParamType.STRING,
+                description="设置禁言状态的原因，可选。", required=False,
             ),
         ],
         enabled=False,
         visibility="visible",
     )
-    async def tool_mute(
-        self,
-        msg_id: Any = "",
-        duration: Any = "",
-        reason: str = "",
-        **kwargs: Any,
+    async def tool_set_mute(
+        self, msg_id: Any = "", duration: Any = "", reason: str = "", **kwargs: Any
     ) -> Dict[str, Any]:
-        """根据消息 ID 禁言发送者（QQ 官方 restrict_chat_setting 接口）；群与用户均从目标消息解析。"""
-        stream_id = str(kwargs.get("stream_id") or "")
+        """统一设置禁言状态，零时长走 del，正时长走 add 并应用时长限制。"""
         if not self._ready:
             return {"success": False, "error": "QQ 官方网关未连接"}
         mute_settings = self.config.mute
-
+        if not mute_settings.enabled:
+            return {"success": False, "error": "禁言设置工具已停用"}
+        try:
+            duration = int(str(duration).strip())
+        except (TypeError, ValueError):
+            return {"success": False, "error": "禁言时长必须为非负整数（秒），0 表示解除禁言"}
+        if duration < 0:
+            return {"success": False, "error": "禁言时长不能为负数"}
+        if duration > 0:
+            duration = max(mute_settings.min_duration, min(duration, mute_settings.max_duration))
         normalized_msg_id = str(msg_id or "").strip()
         if not normalized_msg_id:
             return {"success": False, "error": "缺少目标消息 ID"}
-        try:
-            normalized_duration = int(str(duration).strip())
-        except (TypeError, ValueError):
-            return {"success": False, "error": "禁言时长必须是正整数（秒）"}
-        if normalized_duration <= 0:
-            return {"success": False, "error": "禁言时长必须是正整数（秒）"}
-        normalized_duration = max(mute_settings.min_duration, min(normalized_duration, mute_settings.max_duration))
+        stream_id = str(kwargs.get("stream_id") or "")
+        action = "解除禁言" if duration == 0 else "禁言"
 
         # 通过消息 ID 定位发送者，复用宿主消息查询能力。
         query_result = await self.ctx.message.get_by_id(
@@ -1178,7 +1295,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         group_info = message_info.get("group_info") if isinstance(message_info, Mapping) else None
         normalized_group_id = str(group_info.get("group_id") or "").strip() if isinstance(group_info, Mapping) else ""
         if not normalized_group_id:
-            return {"success": False, "error": "禁言仅支持群聊，目标消息不属于群聊"}
+            return {"success": False, "error": f"{action}仅支持群聊，目标消息不属于群聊"}
         group_openid = (
             str(additional_config.get("qq_official_group_openid") or "").strip()
             if isinstance(additional_config, Mapping)
@@ -1191,7 +1308,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         # 保护名单：配置内用户一律不禁言（统一 QQ 号或 OpenID 均可命中）。
         member_openid = self._resolve_member_openid(target_user_id, additional_config)
         admin_users = [str(item).strip() for item in mute_settings.admin_users if str(item).strip()]
-        if target_user_id in admin_users or (member_openid and member_openid in admin_users):
+        if duration > 0 and (target_user_id in admin_users or (member_openid and member_openid in admin_users)):
             return {"success": False, "error": f"用户 {target_display_name} 在禁言保护名单中，无法被禁言"}
         if not member_openid:
             return {
@@ -1200,42 +1317,41 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
             }
 
         # 官方接口按 RFC3339 到期时间设置禁言，最长 30 天。
-        expire_at = (datetime.now(timezone.utc) + timedelta(seconds=normalized_duration)).isoformat().replace(
-            "+00:00", "Z"
+        # 解除禁言使用 del 和空到期时间，不受 min_duration 的限制。
+        expire_at = (
+            (datetime.now(timezone.utc) + timedelta(seconds=duration)).isoformat().replace("+00:00", "Z")
+            if duration > 0 else ""
         )
         try:
-            session = self._require_session()
-            token = await self._authorize()
-            async with session.post(
-                self._api_url(f"/v2/groups/{quote(group_openid, safe='')}/restrict_chat_setting"),
-                headers={"Authorization": f"QQBot {token}"},
-                json={
+            await self._api_post(
+                f"/v2/groups/{quote(group_openid, safe='')}/restrict_chat_setting",
+                {
                     "members": [
-                        {"op": "add", "member_openid": member_openid, "mute_expire_at": expire_at},
+                        {"op": "del" if duration == 0 else "add", "member_openid": member_openid,
+                         "mute_expire_at": expire_at},
                     ]
                 },
-            ) as response:
-                if response.status >= 400:
-                    body = await response.text()
-                    return {"success": False, "error": f"QQ 禁言失败: HTTP {response.status} {body[:200]}"}
+            )
         except Exception as exc:
             return {"success": False, "error": str(exc)}
 
         normalized_reason = str(reason or "").strip()
         self.ctx.logger.info(
-            "QQ 官方禁言: group=%s user=%s(%s) duration=%ss reason=%s",
+            "QQ 官方%s: group=%s user=%s(%s) duration=%ss reason=%s",
+            action,
             normalized_group_id,
             target_display_name,
             member_openid,
-            normalized_duration,
+            duration,
             normalized_reason or "<none>",
         )
         return {
             "success": True,
-            "content": f"已禁言 {target_display_name}，时长 {normalized_duration} 秒。",
+            "content": f"已解除 {target_display_name} 的禁言。" if duration == 0
+            else f"已禁言 {target_display_name}，时长 {duration} 秒。",
             "group_id": normalized_group_id,
             "user_id": target_user_id,
-            "duration": normalized_duration,
+            "duration": duration,
             "reason": normalized_reason,
         }
 
@@ -1389,6 +1505,8 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
                         "QQ 官方出站缺少引用索引，消息不携带 message_reference: target=%s", quote_target
                     )
                 passive_fields = await self._claim_passive_fields(scene, route_target, reply_to)
+                if not passive_fields:
+                    passive_fields = self._proactive_fields()
                 result = await self._api_post(
                     f"{base_path}/messages", {**body, **reference_fields, **passive_fields}
                 )
@@ -1483,16 +1601,15 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
     async def _claim_passive_fields(self, scene: str, route_target: str, reply_to: str) -> Dict[str, Any]:
         """为一次发送占用被动回复序号；无入站上下文或被动窗口已失效时返回空字典。
 
-        省略 msg_id/msg_seq 时由平台按主动消息额度受理，发送是否成功以平台响应为准。
+        只使用宿主明确传入的回复锚点，不借用同会话最近消息的额度。
+        无被动凭证时返回空字典；调用方为主动消息分配独立 msg_seq，平台拒绝时不自动重发。
         """
+        if not reply_to:
+            return {}
         async with self._reply_lock:
-            if reply_to:
-                key: Optional[Tuple[str, str, str]] = (scene, route_target, reply_to)
-            else:
-                candidates = (key for key in self._replies if key[:2] == (scene, route_target))
-                key = max(candidates, key=lambda candidate: self._replies[candidate][0], default=None)
-            reference = self._replies.get(key) if key is not None else None
-            if key is None or reference is None:
+            key = (scene, route_target, reply_to)
+            reference = self._replies.get(key)
+            if reference is None:
                 return {}
             received_at, used = reference
             ttl, limit = REPLY_LIMITS[scene]
@@ -1503,14 +1620,47 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
             self._replies[key] = (received_at, sequence)
             return {"msg_id": key[2], "msg_seq": sequence}
 
-    async def _api_post(self, path: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    def _proactive_fields(self) -> Dict[str, int]:
+        """主动消息不携带 msg_id，但不能反复使用平台默认的 msg_seq=1。"""
+        self._proactive_msg_seq = self._proactive_msg_seq % 10000 + 1
+        return {"msg_seq": self._proactive_msg_seq}
+
+    async def _api_get(self, path: str) -> Mapping[str, Any]:
+        """调用官方 OpenAPI（GET），HTTP 错误时带上平台错误码与说明抛出。"""
+        session = self._require_session()
+        token = await self._authorize()
+        async with session.get(
+            self._api_url(path),
+            headers={"Authorization": f"QQBot {token}"},
+        ) as response:
+            text = await response.text()
+            try:
+                result = json.loads(text) if text.strip() else {}
+            except ValueError:
+                result = None
+            if response.status >= 400 or not isinstance(result, Mapping):
+                detail = (
+                    f"code={result.get('code')} message={result.get('message')}"
+                    if isinstance(result, Mapping)
+                    else text[:200]
+                )
+                raise RuntimeError(f"QQ 接口 {path.rsplit('/', 1)[-1]} 失败: HTTP {response.status} {detail}")
+        return result
+
+    async def _api_post(
+        self, path: str, payload: Mapping[str, Any], *, timeout: Optional[float] = None,
+    ) -> Mapping[str, Any]:
         """调用官方 OpenAPI（POST），HTTP 错误时带上平台错误码与说明抛出。"""
         session = self._require_session()
         token = await self._authorize()
+        request_options: Dict[str, Any] = {}
+        if timeout is not None:
+            request_options["timeout"] = ClientTimeout(total=timeout)
         async with session.post(
             self._api_url(path),
             headers={"Authorization": f"QQBot {token}"},
             json=dict(payload),
+            **request_options,
         ) as response:
             text = await response.text()
             try:
@@ -1545,6 +1695,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         prepare = await self._api_post(
             f"{base_path}/upload_prepare",
             await asyncio.to_thread(prepare_metadata),
+            timeout=MEDIA_UPLOAD_TIMEOUT_SEC,
         )
         upload_id = str(prepare.get("upload_id") or "")
         block_size = int(prepare.get("block_size") or 0)
@@ -1566,7 +1717,9 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
             if not chunk:
                 raise RuntimeError(f"QQ 媒体分片 {index} 超出文件范围")
             # 预签名 URL 自带鉴权，不能携带 QQBot Authorization 头。
-            async with session.put(presigned_url, data=chunk) as response:
+            async with session.put(
+                presigned_url, data=chunk, timeout=ClientTimeout(total=MEDIA_UPLOAD_TIMEOUT_SEC),
+            ) as response:
                 if response.status >= 400:
                     raise RuntimeError(f"QQ 媒体分片 {index} 上传失败: HTTP {response.status}")
             chunk_md5 = await asyncio.to_thread(md5, chunk)
@@ -1578,10 +1731,12 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
                     "block_size": str(len(chunk)),
                     "md5": chunk_md5.hexdigest(),
                 },
+                timeout=MEDIA_UPLOAD_TIMEOUT_SEC,
             )
         result = await self._api_post(
             f"{base_path}/files",
             {"file_type": file_type, "srv_send_msg": False, "file_name": file_name, "upload_id": upload_id},
+            timeout=MEDIA_UPLOAD_TIMEOUT_SEC,
         )
         file_info = str(result.get("file_info") or "")
         if not file_info:

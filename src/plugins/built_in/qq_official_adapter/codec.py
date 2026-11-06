@@ -34,11 +34,15 @@ def decode_message(
     bot_name: str = "",
     id_map: Optional[Mapping[str, Mapping[str, str]]] = None,
     unified_account_id: str = "",
+    group_name: str = "",
 ) -> Tuple[Dict[str, Any], str, str]:
     """将官方群 @/全量群/单聊事件转换为 MaiBot 网关消息，并返回场景和目标 OpenID。
 
     附件由插件侧下载并转换为标准段后经 ``attachment_segments``/``attachment_labels``
     传入；没有文本但有附件段的消息同样放行。
+
+    ``group_name`` 由插件侧查询群基本信息接口后传入：官方消息事件本身不带群名，
+    取不到时传空串，主程序会保留聊天流里已记录的真实群名。
     """
     if event_type not in SUPPORTED_EVENTS:
         raise ValueError(f"不支持的事件类型: {event_type}")
@@ -93,7 +97,9 @@ def decode_message(
         content = ""
     is_at = _is_bot_mentioned(event_type, payload, content, account_id)
     # <@id> 协议标记对用户不可读：@ 机器人由 is_at 表达，@ 他人转写为标准 at 段。
-    content, body_segments, body_plain_text = _rewrite_mention_tokens(content, account_id, bot_name, payload, user_map)
+    content, body_segments, body_plain_text = _rewrite_mention_tokens(
+        content, account_id, bot_name, payload, user_map, bot_user_id=unified_account_id or account_id
+    )
     if not content and not segments and not body_segments:
         raise ValueError("消息不包含文本或可处理的附件")
 
@@ -112,8 +118,9 @@ def decode_message(
     if is_group:
         message_info["group_info"] = {
             "group_id": group_id,
-            # 官方事件通常不带群名；传空表示未知，聊天流保留已记录的真实群名
-            "group_name": str(payload.get("group_name") or ""),
+            # 官方事件通常不带群名，改由插件查 group_openid 的群基本信息补齐；
+            # 两者都没有时传空表示未知，聊天流保留已记录的真实群名。
+            "group_name": str(group_name or payload.get("group_name") or ""),
         }
 
     raw_message: List[Dict[str, Any]] = [*body_segments, *segments]
@@ -155,6 +162,9 @@ def _extract_content(payload: Mapping[str, Any]) -> str:
     for element in payload.get("msg_elements") or []:
         if not isinstance(element, Mapping):
             continue
+        # type 103 是引用的旧消息，不是当前正文/命令；不展开其图片或子元素。
+        if element.get("message_type") in (103, "103") or element.get("type") in (103, "103"):
+            continue
         for value in (element.get("content"), element.get("text")):
             if isinstance(value, str) and value.strip():
                 parts.append(value.strip())
@@ -168,6 +178,22 @@ def _extract_content(payload: Mapping[str, Any]) -> str:
             if isinstance(nested_content, str) and nested_content.strip():
                 parts.append(nested_content.strip())
     return "".join(parts).strip()
+
+
+def is_bot_author(payload: Mapping[str, Any]) -> bool:
+    """判断消息发送者是否为机器人。
+
+    官方事件体的 ``author`` 是 User 结构，``bot`` 布尔字段表示发送者本身是不是机器人
+    （群里的另一个官方机器人会给 true）。字段缺失或结构异常按普通用户处理。
+    """
+
+    author = payload.get("author")
+    if not isinstance(author, Mapping):
+        return False
+    value = author.get("bot")
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return value is True
 
 
 def extract_message_scene_fields(payload: Mapping[str, Any]) -> Tuple[str, str]:
@@ -212,11 +238,13 @@ def _rewrite_mention_tokens(
     bot_name: str,
     payload: Mapping[str, Any],
     user_map: Mapping[str, str],
+    *,
+    bot_user_id: str,
 ) -> Tuple[str, List[Dict[str, Any]], List[str]]:
-    """将 content 里的 <@id> 协议标记转写为标准 at 段，避免 OpenID 原文进入聊天流。
+    """将 content 里的 <@id> 协议标记转写为标准 at 段，保留提及对象的身份。
 
     @ 机器人由 is_at 字段表达，标记删除并生成机器人的 at 段；
-    @ 其他人时用 mentions 数组的名字生成 at 段并回填可读前缀，取不到名字则仅删除标记。
+    @ 其他人时保留结构化 at 段，mentions 中提供的名字用于展示。
     at 段的目标用户同样应用统一 ID 映射。返回 (转写后文本, at 段列表, plain text 的 @ 前缀)。
     """
 
@@ -250,7 +278,7 @@ def _rewrite_mention_tokens(
                     {
                         "type": "at",
                         "data": {
-                            "target_user_id": account_id,
+                            "target_user_id": bot_user_id,
                             "target_user_nickname": bot_name or None,
                             "target_user_cardname": None,
                         },
@@ -260,8 +288,6 @@ def _rewrite_mention_tokens(
             )
             continue
         name = display_names.get(mention_id)
-        if not name:
-            continue
         pieces.append(
             (
                 {
@@ -272,12 +298,12 @@ def _rewrite_mention_tokens(
                         "target_user_cardname": None,
                     },
                 },
-                f"@{name}",
+                f"@{name or mention_id}",
             )
         )
     pieces.append(content[cursor:])
 
-    # 合并相邻文本（被丢弃的未知 @ 会让文本相邻），并去掉整体首尾空白。
+    # 合并相邻文本，并去掉整体首尾空白；@ 始终保留为独立组件。
     merged: List[Any] = []
     for piece in pieces:
         if isinstance(piece, str) and merged and isinstance(merged[-1], str):
@@ -336,6 +362,8 @@ def _tree_mentions_bot(value: Any, account_id: str) -> bool:
         return any(_tree_mentions_bot(item, account_id) for item in value)
     if not isinstance(value, Mapping):
         return False
+    if value.get("message_type") in (103, "103") or value.get("type") in (103, "103"):
+        return False
     element_type = str(value.get("type") or value.get("element_type") or "").lower()
     looks_like_mention = "at" in element_type or "mention" in element_type
     for key, raw_value in value.items():
@@ -355,12 +383,6 @@ def _tree_mentions_bot(value: Any, account_id: str) -> bool:
         if isinstance(raw_value, (list, Mapping)) and _tree_mentions_bot(raw_value, account_id):
             return True
     return False
-
-
-def extract_command_text(payload: Mapping[str, Any]) -> str:
-    """提取消息文本供管理命令解析，<@id> 标记原样保留。"""
-
-    return _normalize_content(_extract_content(payload))
 
 
 def encode_message(
