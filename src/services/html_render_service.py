@@ -16,7 +16,6 @@ from urllib.parse import urlparse
 import asyncio
 import base64
 import contextlib
-import functools
 import json
 import os
 import shutil
@@ -757,10 +756,14 @@ class HTMLRenderService:
         """
 
         page.set_default_timeout(request.timeout_ms)
-        await page.route(
-            "**/*",
-            functools.partial(self._handle_network_route, allow_network=request.allow_network),
-        )
+        allow_network = request.allow_network
+
+        # Playwright 按处理器的参数个数传入 (route, request)，
+        # 这里只接收 route，避免 request 被当成 allow_network 传入。
+        async def handle_route(route: Any) -> None:
+            await self._handle_network_route(route, allow_network)
+
+        await page.route("**/*", handle_route)
         await page.set_content(
             request.html,
             timeout=request.timeout_ms,
