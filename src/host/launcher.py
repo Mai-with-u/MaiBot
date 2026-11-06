@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import List
 
+import os
 import signal
 import subprocess
 import sys
@@ -33,7 +34,10 @@ def main(root: Path) -> int:
         if signum == signal.SIGTERM and child is not None and child.poll() is None:
             child.terminate()
 
-    previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGINT, signal.SIGTERM)}
+    signals = [signal.SIGINT, signal.SIGTERM]
+    if os.name == "nt":
+        signals.append(signal.SIGBREAK)  # 旧 Runner 在 Windows 下通过 CTRL_BREAK 请求停止。
+    previous = {sig: signal.signal(sig, stop) for sig in signals}
     try:
         while True:
             # 继承终端与标准流；外部管理器只在整个运行周期结束后收到退出。

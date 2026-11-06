@@ -22,7 +22,7 @@ from .config import HostConfig
 from .data_transfer import register_data_transfer
 from .maintenance import HostMaintenance
 from .maim import register_maim_gateway
-from .proxy import BotProxy, register_bot_proxy
+from .proxy import DEVELOPMENT_ORIGINS, BotProxy, register_bot_proxy, same_webui_origin
 from .sessions import HostSessions
 from .settings import register_common_settings
 from .static import report_static_status, resolve_static_path, static_response
@@ -63,9 +63,8 @@ def create_host_app(
     management = config.webui_enabled
 
     app = FastAPI(title="MaiBot WebUI", docs_url=None, redoc_url=None, openapi_url=None)
-    development_origins = {"http://127.0.0.1:7999", "http://localhost:7999"}
     app.add_middleware(
-        CORSMiddleware, allow_origins=list(development_origins), allow_credentials=True,
+        CORSMiddleware, allow_origins=list(DEVELOPMENT_ORIGINS), allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "X-MaiBot-Host", "Range", "Accept"],
         expose_headers=["Content-Disposition", "Content-Range"],
@@ -84,11 +83,9 @@ def create_host_app(
     async def protect_requests(request: Request, call_next: Any) -> Response:
         if request.url.path.startswith("/api/"):
             if request.method not in {"GET", "HEAD", "OPTIONS"}:
-                origin = request.headers.get("origin")
-                if origin is not None and origin not in development_origins:
-                    parsed = urlsplit(origin)
-                    if parsed.scheme not in {"http", "https"} or parsed.netloc != request.headers.get("host"):
-                        return JSONResponse(status_code=403, content={"detail": "请从当前 WebUI 发起操作"})
+                login_origin = sessions.login_origin(request.cookies.get(sessions.cookie_name))
+                if not same_webui_origin(request.headers, login_origin):
+                    return JSONResponse(status_code=403, content={"detail": "请从当前 WebUI 发起操作"})
                 host_operation = request.url.path.startswith("/api/host/") and "/proxy/" not in request.url.path
                 if host_operation and request.headers.get("x-maibot-host") != "1":
                     return JSONResponse(status_code=403, content={"detail": "缺少管理请求标识"})
@@ -150,8 +147,8 @@ def create_host_app(
         return result
 
     @app.post("/api/host/session")
-    async def login(body: SessionRequest, response: Response) -> Dict[str, bool]:
-        session = await asyncio.to_thread(sessions.exchange, body.ticket)
+    async def login(body: SessionRequest, request: Request, response: Response) -> Dict[str, bool]:
+        session = await asyncio.to_thread(sessions.exchange, body.ticket, request.headers.get("origin"))
         sessions.set_cookie(response, session)
         return {"authenticated": True}
 
@@ -164,6 +161,11 @@ def create_host_app(
         # 原生客户端在认证后停留于此，不持续加载完整 WebUI；仅注入的客户端代码负责传输。
         # WebView 对 'self' 与 WS scheme 的匹配不同，显式允许同 Host 的 WS/WSS，兼容 TLS 反代。
         host = request.headers.get("host", "")
+        login_origin = sessions.login_origin(request.cookies.get(sessions.cookie_name))
+        if login_origin and login_origin not in DEVELOPMENT_ORIGINS:
+            authority = urlsplit(login_origin).netloc
+            if authority.lower().rpartition(":")[0] == host.lower():
+                host = authority
         if re.fullmatch(r"(?:[A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?", host) is None:
             raise HTTPException(400, "无效的 WebUI 地址")
         try:

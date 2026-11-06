@@ -189,7 +189,7 @@ function SetupPageContent() {
     if (currentStepId !== 'model-setup') return
     setAvailableModels([])
     setModelFetchError('')
-    if (!apiProviderSetup.base_url.trim() || !apiProviderSetup.api_key.trim()) {
+    if (!apiProviderSetup.base_url.trim()) {
       setModelFetchStatus('idle')
       return
     }
@@ -371,13 +371,12 @@ function SetupPageContent() {
   function validateApiProviderSetup(config: ApiProviderSetupConfig): string | null {
     if (!config.provider_name.trim()) return t('setupPage.validation.enterProviderName')
     if (!config.base_url.trim()) return t('setupPage.validation.enterBaseUrl')
-    if (!config.api_key.trim()) return t('setupPage.validation.enterApiKey')
     return null
   }
 
   function validateModelSetup(config: ModelSetupConfig): string | null {
     if (modelFetchStatus === 'loading') return '正在获取模型列表，请稍候'
-    if (modelFetchStatus === 'idle') return '请先填写 API Key 获取模型列表'
+    if (modelFetchStatus === 'idle') return '请先填写基础 URL 获取模型列表'
     if (modelFetchStatus === 'success' && (
       !availableModels.some((model) => model.id === config.planner_model_identifier) ||
       !availableModels.some((model) => model.id === config.replyer_model_identifier)
@@ -524,7 +523,7 @@ function SetupPageContent() {
               setApiProviderSetup(next)
             }} />
             <AnimatePresence initial={false}>
-              {apiProviderSetup.api_key.trim() && (
+              {apiProviderSetup.base_url.trim() && (
                 <motion.div
                   key="model-setup-fields"
                   initial={{ height: 0, opacity: 0 }}

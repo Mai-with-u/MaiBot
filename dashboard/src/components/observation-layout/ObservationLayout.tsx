@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useRouter, useRouterState } from '@tanstack/react-router'
 import { ScrollText } from 'lucide-react'
@@ -25,7 +25,6 @@ import { cn } from '@/lib/utils'
 import { useMenuSections } from '@/components/layout/use-menu-sections'
 import type { MenuItem } from '@/components/layout/types'
 
-import { ObservationAskContext } from './ask-context'
 import { ObservationSidebar } from './ObservationSidebar'
 import '@/styles/observation.css'
 
@@ -71,19 +70,10 @@ export function ObservationLayout({ children }: { children: ReactNode }) {
   const { config: pageBg } = useBackground('page')
   const [collapsed, setCollapsed] = useState(loadCollapsed)
   const [searchOpen, setSearchOpen] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [aiSearchRequestId, setAISearchRequestId] = useState(0)
-
-  // 首页输入条的答疑模式与侧栏搜索框走同一个 AI 搜索
-  const askMai = useCallback((question: string) => {
-    setSearchQuery(question)
-    if (question.trim()) setAISearchRequestId((current) => current + 1)
-    setSearchOpen(true)
-  }, [])
 
   const isLogsPath = LOG_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))
   // 首页、聊天和日志自己管理滚动区域，其余设置页按内容撑高、由 main 滚动
-  const isScrollablePage = !isLogsPath && !CONVERSATION_PATHS.has(pathname)
+  const isScrollablePage = !isLogsPath && !CONVERSATION_PATHS.has(pathname) && pathname !== '/help-history'
 
   const settingsItems = useMemo<MenuItem[]>(
     () => [
@@ -132,6 +122,7 @@ export function ObservationLayout({ children }: { children: ReactNode }) {
     }
     pathToLabel['/'] = t('sidebar.menu.maisakaMonitor')
     pathToLabel['/chat'] = t('workspace.chat')
+    pathToLabel['/help-history'] = t('observation.helpHistory')
     pathToLabel['/reasoning-process'] = t('sidebar.menu.reasoningProcess')
 
     return router.subscribe('onResolved', () => {
@@ -152,69 +143,55 @@ export function ObservationLayout({ children }: { children: ReactNode }) {
 
   return (
     <LayoutVersionContext.Provider value="observation">
-      <ObservationAskContext.Provider value={askMai}>
-        <TooltipProvider delayDuration={300}>
-          <SkipNav />
-          {isElectron() && <TitleBar />}
-          <div
-            data-dashboard-shell="true"
-            data-observation-shell="true"
-            data-dashboard-page-background={pageBg.type}
-            className={cn(
-              'relative isolate flex h-[100dvh] overflow-hidden',
-              isElectron() && 'pt-8'
-            )}
-          >
-            <BackgroundLayer config={pageBg} layerId="page" />
-            <ObservationSidebar
-              collapsed={collapsed}
-              settingsItems={settingsItems}
-              onOpenSearch={() => setSearchOpen(true)}
-              onToggleCollapsed={() => setCollapsed((current) => !current)}
-            />
-            <div className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-              <HttpWarningBanner />
-              {/* 日志页把终端 / 推理过程 / 详细统计的切换挂到这里，新布局没有顶栏 */}
-              {isLogsPath && (
-                <div data-observation-page-bar="true">
-                  <div id="log-viewer-topbar-tabs" className="flex min-w-0 items-center gap-2" />
-                </div>
-              )}
-              <main
-                id="main-content"
-                data-dashboard-main="true"
-                tabIndex={-1}
-                className={cn(
-                  'relative isolate min-h-0 flex-1 outline-none',
-                  isScrollablePage
-                    ? 'overflow-x-hidden overflow-y-auto overscroll-contain'
-                    : 'overflow-hidden'
-                )}
-              >
-                {/* 与经典布局一致保持 h-full：设置页自带滚动区域，需要定高才能在内部滚动 */}
-                <div
-                  data-dashboard-workspace-content="true"
-                  className="relative z-10 h-full min-h-full min-w-0"
-                >
-                  {children}
-                </div>
-              </main>
-            </div>
-          </div>
-          {botAvailable && (searchOpen || searchDialogLoaded) && (
-            <Suspense fallback={null}>
-              <SearchDialog
-                open={searchOpen}
-                onOpenChange={setSearchOpen}
-                query={searchQuery}
-                onQueryChange={setSearchQuery}
-                aiSearchRequestId={aiSearchRequestId}
-              />
-            </Suspense>
+      <TooltipProvider delayDuration={300}>
+        <SkipNav />
+        {isElectron() && <TitleBar />}
+        <div
+          data-dashboard-shell="true"
+          data-observation-shell="true"
+          data-dashboard-page-background={pageBg.type}
+          className={cn(
+            'relative isolate flex h-[100dvh] overflow-hidden',
+            isElectron() && 'pt-8'
           )}
-          <Suspense fallback={null}>{botAvailable && <UpdateNoticeDialog />}</Suspense>
-        </TooltipProvider>
-      </ObservationAskContext.Provider>
+        >
+          <BackgroundLayer config={pageBg} layerId="page" />
+          <ObservationSidebar
+            collapsed={collapsed}
+            settingsItems={settingsItems}
+            onOpenSearch={() => setSearchOpen(true)}
+            onToggleCollapsed={() => setCollapsed((current) => !current)}
+          />
+          <div className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            <HttpWarningBanner />
+            <main
+              id="main-content"
+              data-dashboard-main="true"
+              tabIndex={-1}
+              className={cn(
+                'relative isolate min-h-0 flex-1 outline-none',
+                isScrollablePage
+                  ? 'overflow-x-hidden overflow-y-auto overscroll-contain'
+                  : 'overflow-hidden'
+              )}
+            >
+              {/* 与经典布局一致保持 h-full：设置页自带滚动区域，需要定高才能在内部滚动 */}
+              <div
+                data-dashboard-workspace-content="true"
+                className="relative z-10 h-full min-h-full min-w-0"
+              >
+                {children}
+              </div>
+            </main>
+          </div>
+        </div>
+        {botAvailable && (searchOpen || searchDialogLoaded) && (
+          <Suspense fallback={null}>
+            <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
+          </Suspense>
+        )}
+        <Suspense fallback={null}>{botAvailable && <UpdateNoticeDialog />}</Suspense>
+      </TooltipProvider>
     </LayoutVersionContext.Provider>
   )
 }

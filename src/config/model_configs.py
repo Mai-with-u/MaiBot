@@ -60,7 +60,7 @@ class APIProvider(ConfigBase):
             "x-widget": "input",
         },
     )
-    """API密钥。对于不需要鉴权的兼容端点，可将 `auth_type` 设为 `none`。"""
+    """API密钥。留空时使用无鉴权模式，也可显式将 `auth_type` 设为 `none`。"""
 
     client_type: str = Field(
         default="openai",
@@ -212,8 +212,6 @@ class APIProvider(ConfigBase):
                 or self.model_list_endpoint != "/models"
             ):
                 raise ValueError("ChatGPT SIWC 使用独立本机授权；不要填写 API Key、自定义鉴权或请求头。")
-        elif self.auth_type != OpenAICompatibleAuthType.NONE and not self.api_key:
-            raise ValueError(t("config.api_key_empty"))
         if not self.base_url and self.client_type != "gemini":  # TODO: 允许gemini使用base_url
             raise ValueError(t("config.api_base_url_empty"))
         if not self.name:

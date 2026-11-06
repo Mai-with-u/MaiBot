@@ -471,10 +471,10 @@ async def test_streamed_refusal_is_not_erased_by_terminal_success(probe, client_
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("auth_type", ["none", "header", "query"])
+@pytest.mark.parametrize("auth_type", ["bearer", "none", "header", "query"])
 async def test_probe_wire_preserves_provider_auth_without_placeholder_bearer(probe, auth_type: str) -> None:
     provider = probe.APIProvider(
-        name="auth-provider", base_url="https://example.com/v1", api_key="test-key", auth_type=auth_type,
+        name="auth-provider", base_url="https://example.com/v1", api_key="" if auth_type == "bearer" else "test-key", auth_type=auth_type,
         auth_header_name="X-API-Key", auth_header_prefix="", auth_query_name="key",
         default_headers={"X-App": "maibot"}, default_query={"api-version": "test"},
     )

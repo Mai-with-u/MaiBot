@@ -53,7 +53,6 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { CardTitle } from '@/components/ui/card'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -85,7 +84,7 @@ import { StageStatusLabel } from './StageStatusLabel'
 import { TimelineScrollPosition } from './TimelineScrollPosition'
 import { getStageStatusLight } from './stage-status-light'
 import { ObservationHeader } from './ObservationHeader'
-import { SubagentPanel, SubagentToggleButton } from './subagent-panel'
+import { InspectorPanel, InspectorToggleButton, type MonitorStats } from './inspector-panel'
 import { openSubagentPanel } from './subagent-panel-state'
 import { useMaisakaMonitorSession } from './use-maisaka-monitor'
 
@@ -198,156 +197,6 @@ function MessageAvatar({
 
 // ─── 单条时间线事件渲染 ──────────────────────────────────────
 
-/** 上下文分段：token 由该轮真实 prompt token 按字符占比换算 */
-interface MonitorContextSection {
-  key: string
-  tokens: number
-  percent: number
-}
-
-interface MonitorStats {
-  messages: number
-  cycles: number
-  toolCalls: number
-  /** 最近一轮 planner 请求的输入 token，即当前上下文占用 */
-  contextTokens: number
-  /** 与最近一轮 planner 请求对应的上下文分段 */
-  contextSections: MonitorContextSection[]
-  /** 会话累计 token 用量 */
-  totalPromptTokens: number
-  totalCompletionTokens: number
-  /** 会话累计缓存命中率，无缓存数据时为 null */
-  cacheHitRate: number | null
-}
-
-/** 上下文分段的展示标签与配色，未知分段直接以 key 展示 */
-const CONTEXT_SECTION_META: Record<string, { label: string; color: string }> = {
-  messages: { label: '消息', color: 'hsl(var(--color-chart-1))' },
-  mcp_tools: { label: 'MCP 工具', color: 'hsl(var(--color-chart-4))' },
-  builtin_tools: { label: '系统工具', color: 'hsl(var(--color-chart-2))' },
-  plugin_tools: { label: '插件工具', color: 'hsl(var(--primary))' },
-  system_prompt: { label: '系统提示词', color: 'hsl(var(--color-chart-5))' },
-  instant_notice: { label: '即时提示', color: 'hsl(var(--color-chart-3))' },
-  other_tools: { label: '其他工具', color: 'hsl(var(--muted-foreground))' },
-}
-
-function resolveContextSectionMeta(key: string) {
-  return CONTEXT_SECTION_META[key] ?? { label: key, color: 'hsl(var(--muted-foreground))' }
-}
-
-const STATS_TOKEN_FORMATTER = new Intl.NumberFormat('zh-CN', {
-  notation: 'compact',
-  maximumFractionDigits: 1,
-})
-
-function formatTokenCount(value: number): string {
-  return STATS_TOKEN_FORMATTER.format(Math.max(Math.round(value), 0))
-}
-
-/** 统计浮层内的单行指标 */
-function StatsRow({
-  children,
-  value,
-  valueClassName,
-}: {
-  children: ReactNode
-  value: ReactNode
-  valueClassName?: string
-}) {
-  return (
-    <div className="flex items-center gap-2 text-[11px] leading-5">
-      {children}
-      <span className={cn('ml-auto font-mono tabular-nums', valueClassName)}>{value}</span>
-    </div>
-  )
-}
-
-/**
- * 统计浮层：展示最近一轮上下文构成、缓存命中率与会话累计计数。
- *
- * 上下文 token 总量取自模型返回的真实 prompt token，分段占比按后端统计的字符数换算。
- */
-function MonitorStatsPanel({ stats }: { stats: MonitorStats }) {
-  const hasContext = stats.contextTokens > 0 && stats.contextSections.length > 0
-
-  return (
-    <div className="w-72 space-y-2">
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="text-xs font-medium">上下文容量</span>
-        <span className="font-mono text-[11px] tabular-nums">
-          {stats.contextTokens > 0 ? `${formatTokenCount(stats.contextTokens)} tokens` : '暂无数据'}
-        </span>
-      </div>
-
-      {hasContext ? (
-        <>
-          <div className="bg-muted flex h-1.5 w-full overflow-hidden rounded-full">
-            {stats.contextSections.map((section) => (
-              <div
-                key={section.key}
-                className="h-full"
-                style={{
-                  width: `${section.percent}%`,
-                  backgroundColor: resolveContextSectionMeta(section.key).color,
-                }}
-              />
-            ))}
-          </div>
-          <div className="space-y-0.5">
-            {stats.contextSections.map((section) => {
-              const sectionMeta = resolveContextSectionMeta(section.key)
-              return (
-                <StatsRow
-                  key={section.key}
-                  value={formatTokenCount(section.tokens)}
-                  valueClassName="text-muted-foreground w-12 text-right"
-                >
-                  <span
-                    className="h-1.5 w-1.5 shrink-0 rounded-full"
-                    style={{ backgroundColor: sectionMeta.color }}
-                  />
-                  <span className="min-w-0 flex-1 truncate">{sectionMeta.label}</span>
-                  <span className="text-muted-foreground w-11 text-right font-mono tabular-nums">
-                    {section.percent.toFixed(1)}%
-                  </span>
-                </StatsRow>
-              )
-            })}
-          </div>
-        </>
-      ) : (
-        <p className="text-muted-foreground text-[11px] leading-5">
-          尚无 planner 请求数据，产生一次推理后展示上下文构成。
-        </p>
-      )}
-
-      <Separator />
-
-      <div className="space-y-0.5">
-        <StatsRow
-          value={stats.cacheHitRate === null ? '—' : `${stats.cacheHitRate.toFixed(0)}%`}
-          valueClassName={stats.cacheHitRate === null ? 'text-muted-foreground' : ''}
-        >
-          <span className="text-muted-foreground">平均缓存命中率</span>
-        </StatsRow>
-        <StatsRow
-          value={`${formatTokenCount(stats.totalPromptTokens)} / ${formatTokenCount(stats.totalCompletionTokens)}`}
-        >
-          <span className="text-muted-foreground">累计输入 / 输出</span>
-        </StatsRow>
-      </div>
-
-      <Separator />
-
-      <div className="space-y-0.5 text-[11px] leading-5">
-        <div>消息：{stats.messages}</div>
-        <div>循环：{stats.cycles}</div>
-        <div>工具调用：{stats.toolCalls}</div>
-      </div>
-    </div>
-  )
-}
-
 interface StageStatusPanelProps {
   sessionName?: string
   allExpanded?: boolean
@@ -363,102 +212,6 @@ interface StageStatusPanelProps {
   hideStatus?: boolean
 }
 
-interface ChatActiveContext {
-  memory: string[]
-  expressions: string[]
-  jargon: { name: string; meaning: string }[]
-  tools: string[]
-  runtime_active: boolean
-  replyer_timestamp: number | null
-}
-
-function ActiveContextPopover({ sessionId }: { sessionId: string | null }) {
-  const [open, setOpen] = useState(false)
-  const [context, setContext] = useState<ChatActiveContext | null>(null)
-  const [error, setError] = useState(false)
-
-  useEffect(() => {
-    if (!open || !sessionId) return
-    const controller = new AbortController()
-    const load = () => {
-      backendApi
-        .get<ChatActiveContext>('/api/webui/reasoning-process/active-context', {
-          query: { session_id: sessionId },
-          signal: controller.signal,
-        })
-        .then((result) => {
-          if (!controller.signal.aborted) {
-            setContext(result)
-            setError(false)
-          }
-        })
-        .catch(() => {
-          if (!controller.signal.aborted) setError(true)
-        })
-    }
-    setContext(null)
-    setError(false)
-    load()
-    const timer = window.setInterval(load, 10000)
-    return () => {
-      controller.abort()
-      window.clearInterval(timer)
-    }
-  }, [open, sessionId])
-
-  const sections = context
-    ? [
-        { title: '上下文状态摘要', items: context.memory, emptyText: '当前上下文尚未进行压缩' },
-        { title: '表达方式', items: context.expressions, emptyText: '最近一次 Replyer 请求中未使用' },
-        { title: '黑话', items: context.jargon.map((entry) => entry.name), emptyText: '当前上下文没有黑话参考' },
-        { title: '激活的工具', items: context.tools, emptyText: '当前尚未激活工具' },
-      ]
-    : []
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className="shrink-0" disabled={!sessionId}>
-          <Brain className="mr-1 h-3 w-3" />
-          当前上下文
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="start" side="bottom" className="max-h-[min(70vh,640px)] w-[min(90vw,480px)] overflow-y-auto p-4">
-        <div className="mb-2 text-sm font-semibold">当前运行的聊天流</div>
-        {error ? <p className="text-muted-foreground text-xs">读取上下文失败</p> : !context ? <p className="text-muted-foreground text-xs">正在读取…</p> : (
-          <div className="space-y-3">
-            {!context.runtime_active && <p className="text-muted-foreground text-xs">当前聊天流未运行</p>}
-            {sections.map((section) => (
-              <section key={section.title}>
-                <h3 className="mb-1 text-xs font-semibold">{section.title} · {section.items.length}</h3>
-                {section.items.length ? section.title === '黑话' ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {section.items.map((item) => (
-                      <Tooltip key={item}>
-                        <TooltipTrigger asChild>
-                          <button type="button" className="bg-muted/50 cursor-help rounded px-2 py-1 text-xs">{item}</button>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" className="z-[70] max-w-sm whitespace-pre-wrap break-words text-xs">
-                          {context.jargon.find((entry) => entry.name === item)?.meaning || '暂无释义'}
-                        </TooltipContent>
-                      </Tooltip>
-                    ))}
-                  </div>
-                ) : section.items.map((item, index) => (
-                  <pre key={`${section.title}-${index}`} className="bg-muted/50 mb-1 whitespace-pre-wrap break-words rounded p-2 font-sans text-xs">{item}</pre>
-                )) : <p className="text-muted-foreground text-xs">{section.emptyText}</p>}
-              </section>
-            ))}
-            <p className="text-muted-foreground text-[11px]">
-              表达方式来自最近一次 Replyer 请求：{context.replyer_timestamp ? new Date(context.replyer_timestamp).toLocaleString() : '无记录'}
-            </p>
-          </div>
-        )}
-      </PopoverContent>
-    </Popover>
-  )
-}
-
 function StageStatusPanel({
   sessionName, status, hideStatus = false, sessionId, stats, ...navigation
 }: StageStatusPanelProps) {
@@ -469,18 +222,9 @@ function StageStatusPanel({
       {...navigation}
       tools={
         <>
-          <TooltipProvider delayDuration={150}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="outline" size="sm"><Activity />统计</Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" align="start" className="p-3">
-                <MonitorStatsPanel stats={stats} />
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-          <ActiveContextPopover sessionId={sessionId} />
-          <SubagentToggleButton />
+          <InspectorToggleButton view="stats" />
+          <InspectorToggleButton view="context" disabled={!sessionId} />
+          <InspectorToggleButton view="subagents" />
         </>
       }
     />
@@ -3024,6 +2768,8 @@ const MonitorTimeline = memo(function MonitorTimeline({
           )}
         </AnimatePresence>
       </DataPanel>
+      {/* 统计、当前上下文与子代理共用的检查器右侧栏 */}
+      <InspectorPanel stats={stats} sessionId={selectedSession} />
     </div>
     </ImageGalleryProvider>
   )
@@ -3045,7 +2791,6 @@ export const MaisakaMonitor = memo(function MaisakaMonitor({
         reasoningReturnTo={reasoningReturnTo}
         floatingToolbarContainer={floatingToolbarContainer}
       />
-      <SubagentPanel />
     </div>
   )
 })

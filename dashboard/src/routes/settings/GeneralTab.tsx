@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/select'
 
 import { HostUpdateSection } from '@/host/HostUpdateSection'
+import { ComponentLibrary } from './component-library'
 
 /**
  * 通用设置：桌面端与手机端统一在此切换界面语言和管理主程序更新。
@@ -39,6 +40,7 @@ export function GeneralTab() {
           </Select>
         </div>
       </Card>
+      <ComponentLibrary />
       {/* 主程序更新 */}
       <HostUpdateSection />
     </div>

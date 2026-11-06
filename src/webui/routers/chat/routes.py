@@ -48,6 +48,7 @@ from .service import (
     INTERNAL_CHAT_PLATFORM,
     chat_history,
     chat_manager,
+    get_chat_bot_qq,
 )
 
 logger = get_logger("webui.chat")
@@ -506,7 +507,6 @@ def _get_talk_rule_details(chat_session: ChatSession) -> Dict[str, Any]:
         value = ChatConfigUtils.get_talk_value(session_id, is_group_chat=False)
         label = "已暂停" if value == 0 else "正常回复"
         return {
-            "enabled": False,
             "base_value": value,
             "base_value_label": label,
             "effective_value": value,
@@ -550,7 +550,6 @@ def _get_talk_rule_details(chat_session: ChatSession) -> Dict[str, Any]:
     )
 
     return {
-        "enabled": bool(reply_timing_config.enable_talk_value_rules),
         "base_value": base_value,
         "base_value_label": _format_frequency(base_value),
         "effective_value": effective_value,
@@ -800,7 +799,6 @@ def _write_chat_talk_frequency_rule(chat_session: ChatSession, request: TalkFreq
     else:
         rules[target_index] = next_rule
 
-    reply_timing_config["enable_talk_value_rules"] = True
     reply_timing_config["talk_value_rules"] = rules
     save_toml_with_format(config_data, str(config_path))
 
@@ -1781,6 +1779,7 @@ def get_chat_info() -> Dict[str, object]:
     """获取聊天室信息。"""
     return {
         "bot_name": global_config.bot.nickname,
+        "bot_qq": get_chat_bot_qq(),
         "platform": INTERNAL_CHAT_PLATFORM,
         "active_sessions": len(chat_manager.active_connections),
     }

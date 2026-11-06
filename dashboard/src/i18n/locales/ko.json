@@ -70,7 +70,23 @@
       "installed": "의존성을 설치했습니다. Bot이 이전 상태로 복구되는 중입니다."
     }
   },
+  "helpHistory": {
+    "newSession": "새 대화",
+    "retryLoad": "다시 불러오기",
+    "draftRestored": "초안을 복원했습니다. 내용을 확인한 뒤 다시 보낼 수 있습니다.",
+    "description": "최근 에이전트 질문 기록을 보고 이어서 질문할 수 있습니다.",
+    "deleteSession": "‘{{title}}’ 세션 삭제",
+    "deleteTitle": "세션 삭제",
+    "deleteDescription": "‘{{title}}’와 모든 질문 및 답변을 삭제할까요?",
+    "deleteConfirm": "삭제",
+    "loading": "도움말 기록을 불러오는 중…",
+    "loadError": "도움말 기록을 불러오지 못했습니다.",
+    "empty": "아직 질문 세션이 없습니다.",
+    "select": "세션을 선택해 질문과 답변을 확인하세요.",
+    "noReply": "이 질문에 기록된 답변이 없습니다."
+  },
   "observation": {
+    "helpHistory": "도움말 기록",
     "keys": {
       "bot": "麦麦",
       "model": "모델",
@@ -87,6 +103,8 @@
     "expandSidebar": "사이드바 펼치기",
     "collapseSidebar": "사이드바 접기",
     "settingsBlock": "설정",
+    "compactSettings": "설정을 한 줄로 표시",
+    "keyNeedsBot": "{{label}} · 먼저 Bot을 시작하세요",
     "allConversations": "모든 대화",
     "filterConversations": "필터",
     "focusFlows": "Focus 공유 흐름",
@@ -229,7 +247,12 @@
     "generatedAt": "통계 기준 시각: {{time}}",
     "periodRange": "통계 기간: {{start}}부터 {{end}}까지",
     "empty": "이 기간에는 데이터가 없습니다",
-    "actions": { "refresh": "새로고침", "openHtml": "HTML 버전 열기" },
+    "actions": {
+      "refresh": "새로고침",
+      "openHtml": "HTML 버전 열기",
+      "compare": "Compare with previous",
+      "details": "Details"
+    },
     "error": {
       "title": "상세 통계를 불러오지 못했습니다",
       "description": "잠시 후 다시 시도해 주세요"
@@ -244,8 +267,18 @@
       "last_hour": "최근 1시간",
       "last_15_minutes": "최근 15분"
     },
-    "tabs": { "trends": "데이터 차트", "metrics": "지표 추이" },
-    "sections": { "breakdowns": "분류 통계", "embeddings": "임베딩 통계", "distributions": "데이터 분포" },
+    "tabs": {
+      "trends": "데이터 차트",
+      "metrics": "지표 추이"
+    },
+    "sections": {
+      "breakdowns": "Detailed Breakdown",
+      "embeddings": "임베딩 통계",
+      "distributions": "Distributions",
+      "period": "Period",
+      "trend": "Trends & Insights",
+      "reliability": "Reliability & Failures"
+    },
     "breakdowns": {
       "taskGroups": "작업 그룹별",
       "models": "모델별",
@@ -269,9 +302,16 @@
       "costPerReceivedMessages": "비용/수신 메시지",
       "costPerReplies": "비용/답변",
       "costPerHour": "비용/시간",
-      "tokensPerHour": "Token/시간"
+      "tokensPerHour": "Token/시간",
+      "callsPerReply": "Calls / Reply",
+      "failureRate": "Failure Rate",
+      "replyRate": "Reply Rate",
+      "sparkLabel": "{{name}} recent trend"
     },
-    "units": { "per100": "100개당", "perHour": "시간당" },
+    "units": {
+      "per100": "100개당",
+      "perHour": "시간당"
+    },
     "table": {
       "name": "이름",
       "requests": "호출 횟수",
@@ -303,7 +343,24 @@
       "moduleCosts": "모듈 비용 분포",
       "requestTypeCosts": "요청 유형 비용 분포",
       "chatMessages": "채팅 메시지 분포",
-      "chatCosts": "채팅 스트림 비용 분포"
+      "chatCosts": "채팅 스트림 비용 분포",
+      "hint": "Click a legend item to filter the table below",
+      "itemCount": "{{count}} items",
+      "filterTable": "Filter {{name}} in detail table",
+      "singleSource": "Only \"{{name}}\" is present in this period",
+      "zeroCount": "{{count}} items with 0 value",
+      "titles": {
+        "owner": "Owner {{metric}} Distribution",
+        "model": "Model {{metric}} Distribution",
+        "module": "Module {{metric}} Distribution",
+        "requestType": "Request Type {{metric}} Distribution",
+        "taskGroup": "Task Group {{metric}} Distribution",
+        "chat": "Chat {{metric}} Distribution"
+      },
+      "totals": {
+        "costs": "Total Cost",
+        "tokens": "Total Tokens"
+      }
     },
     "charts": {
       "timeRange": "시간 범위",
@@ -329,6 +386,153 @@
       "costPerHour": "시간당 비용 추이",
       "tokensPerHour": "시간당 Token 추이",
       "costPerReplies": "답변당 비용 추이"
+    },
+    "other": "Other ({{count}})",
+    "delta": {
+      "vsPrevious": "Compared with previous period",
+      "noBaseline": "Previous period was 0",
+      "new": "NEW"
+    },
+    "modules": {
+      "usage": "Usage Overview",
+      "cache": "Prompt Cache",
+      "modelCosts": "Model Cost Share",
+      "flow": "Token Flow",
+      "unit": "Unit Cost & Efficiency",
+      "insights": "Auto Insights",
+      "failureRank": "Failure Rate Ranking",
+      "failureTrend": "Failure Trend & Latency",
+      "heatmap": "Activity Heatmap",
+      "chats": "Top Active Chats"
+    },
+    "cache": {
+      "all": "Overall",
+      "uncachedHint": "{{tokens}} input tokens without cache breakdown"
+    },
+    "models": {
+      "freeHint": "{{count}} additional models with ¥0.00 cost"
+    },
+    "flow": {
+      "total": "Total {{tokens}}",
+      "cacheHit": "Cache Hit Input",
+      "cacheMiss": "Cache Miss Input",
+      "noCacheInfo": "Uncached Input",
+      "output": "Output Tokens",
+      "ioRatio": "Input : Output Ratio"
+    },
+    "trend": {
+      "metric": "Metric",
+      "group": "Group By",
+      "mode": "Chart Mode",
+      "sum": "Total",
+      "truncated": "Detailed series kept for 30 days (since {{start}})",
+      "metrics": {
+        "cost": "Cost",
+        "tokens": "Tokens",
+        "requests": "Requests",
+        "messages": "Messages"
+      },
+      "groups": {
+        "total": "Total",
+        "model": "By Model",
+        "module": "By Module",
+        "chat": "By Chat"
+      },
+      "modes": {
+        "stack": "Stacked",
+        "line": "Line",
+        "percent": "100% Share"
+      },
+      "titles": {
+        "cost": "Cost Trend",
+        "tokens": "Token Usage Trend",
+        "requests": "Request Trend",
+        "messages": "Message Trend"
+      },
+      "totals": {
+        "cost": "Total Cost",
+        "tokens": "Total Tokens",
+        "requests": "Total Requests",
+        "messages": "Total Messages"
+      }
+    },
+    "insights": {
+      "empty": "No notable anomalies or concentrations in this period",
+      "alertCount": "{{count}} alerts",
+      "costUp": "Cost is {{current}}, up {{change}} from {{previous}}.",
+      "costDown": "Cost is {{current}}, down {{change}} from {{previous}}.",
+      "failureRate": "{{name}} failure rate reached {{rate}} ({{failures}} / {{attempts}}), above overall {{overall}}.",
+      "failureShare": "{{name}} had {{failures}} failures ({{share}} of all failures).",
+      "costShare": "{{name}} cost {{cost}}, accounting for {{share}} of total cost.",
+      "cacheLow": "{{name}} cache hit rate is {{rate}}, well below overall {{overall}}.",
+      "unitPrice": "{{name}} averages {{unit}} / 1M tokens ({{ratio}}x overall average).",
+      "latencyTail": "{{name}} latency std dev is {{std}} (avg {{avg}}), showing long-tail spikes.",
+      "topChat": "\"{{name}}\" is most active with {{messages}} messages ({{share}})."
+    },
+    "reliability": {
+      "source": "Based on 1-minute task usage buckets",
+      "truncated": "Task usage kept for 7 days (covered since {{start}})",
+      "dimension": "Dimension",
+      "empty": "No task usage records in this period",
+      "attempts": "Attempts",
+      "failures": "Failures",
+      "failureRate": "Failure Rate",
+      "avgSuccessDuration": "Avg Success Time",
+      "chartLegend": "Bars: Failures · Line: Failure Rate",
+      "hint": "Highlighted when failure rate reaches {{threshold}}",
+      "dimensions": {
+        "model": "By Model",
+        "provider": "By Provider",
+        "task": "By Task"
+      }
+    },
+    "heatmap": {
+      "metric": "Heatmap Metric",
+      "weekdays": "Mon,Tue,Wed,Thu,Fri,Sat,Sun",
+      "less": "Less",
+      "more": "More",
+      "messagesValue": "{{value}} msgs",
+      "cellTitle": "{{day}} {{hour}}:00 · {{value}}",
+      "metrics": {
+        "messages": "Messages",
+        "costs": "Cost"
+      }
+    },
+    "chats": {
+      "topHint": "Top {{count}} / {{total}}",
+      "costPer100": "{{cost}} / 100 msgs"
+    },
+    "columns": {
+      "name": "Name",
+      "requests": "Requests",
+      "tokens": "Tokens (Total / In·Out)",
+      "cacheRate": "Cache Hit Rate",
+      "cost": "Total Cost",
+      "failureRate": "Failure Rate",
+      "time": "Avg Latency",
+      "unitCost": "Cost / 1M",
+      "costPerCall": "Cost / 1K Calls",
+      "callsPerReply": "Calls / Reply",
+      "tokensPerReply": "Tokens / Reply"
+    },
+    "detail": {
+      "hideEmbedding": "Hide Embeddings",
+      "columnGroups": "Column Groups",
+      "dimension": "Dimension",
+      "search": "Filter by name…",
+      "rowCount": "{{shown}} / {{total}}",
+      "total": "Total ({{count}})",
+      "embeddingTag": "Embed",
+      "freeTag": "Free",
+      "failureCount": "{{value}} failed",
+      "attemptsFailures": "Failures / Attempts",
+      "groups": {
+        "token": "Tokens",
+        "cache": "Cache",
+        "perf": "Latency & Errors",
+        "unit": "Unit Cost",
+        "reply": "Per Reply"
+      }
     }
   },
   "workspace": {
@@ -1250,6 +1454,43 @@
     "copyError": "오류 정보 복사"
   },
   "search": {
+    "previewArtifactImage": "이미지 미리 보기",
+    "invalidArtifactImage": "이 파일은 미리 볼 수 있는 이미지가 아닙니다.",
+    "harness": {
+      "title": "답변 작업 진행 상황",
+      "plan": "현재 계획",
+      "skills": "불러온 스킬",
+      "status": {
+        "pending": "대기 중",
+        "in_progress": "진행 중",
+        "completed": "완료"
+      },
+      "skill": {
+        "setup": "초기 설정",
+        "troubleshoot": "문제 해결",
+        "plugin": "플러그인 사용",
+        "develop": "플러그인 개발"
+      }
+    },
+    "allowPluginConfigWrite": "플러그인 설정 변경 허용",
+    "allowPluginConfigWriteHint": "이번 질문에만 적용됩니다. 에이전트가 요청에 따라 플러그인 설정을 저장할 수 있습니다.",
+    "progressPrepareInstall": "설치 확인 준비",
+    "progressListInstalled": "설치된 플러그인 조회",
+    "progressReadPluginConfig": "플러그인 설정 읽기",
+    "progressUpdatePluginConfig": "플러그인 설정 변경",
+    "pluginInstallTitle": "플러그인 설치",
+    "pluginInstallPending": "아직 설치되지 않았습니다. 확인하면 이 플러그인과 버전을 다운로드하여 설치합니다.",
+    "pluginConfirmInstall": "설치 확인",
+    "pluginCancelInstall": "설치 취소",
+    "pluginOpenConfig": "플러그인 설정 열기",
+    "pluginConfigUpdated": "플러그인 설정 저장됨",
+    "pluginInstallFailed": "플러그인 설치 실패",
+    "pluginInstallStatus": {
+      "installing": "설치 중…",
+      "success": "설치 완료",
+      "error": "설치 실패",
+      "cancelled": "취소됨; 설치하지 않음"
+    },
     "placeholder": "페이지, 설정 또는 해결하려는 문제 검색...",
     "title": "검색",
     "noResults": "일치하는 페이지나 설정 항목을 찾을 수 없습니다",
@@ -1270,6 +1511,21 @@
     "progressSearchDocs": "공식 문서 검색",
     "progressReadDocs": "공식 문서 읽기",
     "progressReadConfig": "로컬 설정 읽기",
+    "progressReadLogs": "최근 로그 읽기",
+    "progressListReasoning": "최근 추론 기록 찾기",
+    "progressReadReasoning": "추론 기록 읽기",
+    "progressPublishArtifact": "표시 콘텐츠 게시",
+    "progressSearchPlugins": "플러그인 마켓 검색",
+    "progressReadPluginDetail": "플러그인 상세 및 호환성 확인",
+    "progressReadPluginReadme": "플러그인 README 읽기",
+    "pluginResults": "관련 플러그인",
+    "pluginOpenStore": "플러그인 스토어에서 보기",
+    "pluginRecommendedVersion": "권장 버전: {{version}}",
+    "pluginCompatibility": {
+      "unknown": "호환성 미확인",
+      "compatible": "현재 환경과 호환",
+      "incompatible": "호환되는 안정 버전 또는 브랜치 없음"
+    },
     "progressTool": "검색 작업 실행",
     "progressCompleted": "{{action}} 완료 ({{count}}개)",
     "progressFailed": "{{action}} 실패",
@@ -1282,9 +1538,9 @@
     "aiRecommendation": "AI 추천",
     "aiAnswer": "AI 답변",
     "aiSuggestions": "제안",
-    "aiSources": "공식 문서",
+    "aiSources": "참고 자료",
     "aiUnderstood": "AI 해석: {{terms}}",
-    "aiNoResults": "충분히 관련된 페이지나 설정 항목을 찾지 못했습니다",
+    "aiNoResults": "관련 페이지, 설정 또는 플러그인을 찾지 못했습니다",
     "aiFailed": "AI 검색에 실패했습니다",
     "indexLoading": "설정 검색 인덱스를 불러오는 중…",
     "categories": {
@@ -1298,6 +1554,7 @@
     "items": {
       "home": "홈",
       "homeDesc": "대시보드 개요 보기",
+      "chatDesc": "대화 설정에서 그룹 채팅의 응답 빈도를 확인할 수 있습니다. 빈도가 0이면 메시지는 받지만 Planner는 호출되지 않습니다. 개인 채팅 일시 정지는 별도 설정입니다.",
       "botConfig": "속 메인 설정",
       "botConfigDesc": "봇 상세 설정과 공유 그룹 구성",
       "model": "모델 설정",
@@ -1935,5 +2192,4 @@
     "updated": "최근 업데이트에 성공했습니다",
     "restarting": "The host is updating and restarting. Waiting to reconnect. If rollback fails, check the terminal and restart manually after repair."
   }
-
 }

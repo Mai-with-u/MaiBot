@@ -104,6 +104,30 @@ async def test_proxy_requires_host_login_and_never_forwards_host_cookie(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_pet_login_behind_proxy_that_strips_port(tmp_path: Path, monkeypatch) -> None:
+    origin = "https://pet.example:8446"
+    headers = {"Host": "pet.example", "Origin": origin}
+    async with running_host(tmp_path, monkeypatch=monkeypatch) as (webui, bot_id, base):
+        async with ClientSession(cookie_jar=CookieJar(unsafe=True)) as client:
+            login_url = base + "/api/webui/auth/verify"
+            body = {"token": webui.credentials.token}
+            for site in ("same-site", "cross-site"):
+                async with client.post(login_url, headers={**headers, "Sec-Fetch-Site": site}, json=body) as response:
+                    assert response.status == 403
+            async with client.post(login_url, headers={**headers, "Sec-Fetch-Site": "same-origin"}, json=body) as response:
+                assert (await response.json())["valid"]
+            async with client.get(base + "/api/host/desktop-pet/session", headers={"Host": "pet.example"}) as response:
+                assert "wss://pet.example:8446" in response.headers["Content-Security-Policy"]
+            proxy = f"{base}/api/host/bots/{bot_id}/proxy/api/webui"
+            for other in ("https://pet.example:8447", "https://other.example:8446", "https://pet.example"):
+                async with client.get(proxy + "/echo", headers={**headers, "Origin": other}) as response:
+                    assert response.status == 403
+            async with client.ws_connect(proxy + "/ws", headers=headers) as ws:
+                await ws.send_str("ping")
+                assert (await ws.receive()).data == "echo:ping"
+
+
+@pytest.mark.asyncio
 async def test_file_transfer_needs_no_login(tmp_path: Path, monkeypatch) -> None:
     async with running_host(tmp_path, monkeypatch=monkeypatch) as (_webui, bot_id, base):
         async with ClientSession() as client:

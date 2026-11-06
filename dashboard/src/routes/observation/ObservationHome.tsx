@@ -26,8 +26,8 @@ import {
 import { useTranslation } from 'react-i18next'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
-import { useAskMai } from '@/components/observation-layout/ask-context'
 import { RestartOverlay } from '@/components/restart-overlay'
+import { SearchSuggestions } from '@/components/search-suggestions'
 import { Board, BoardGrid, BoardModule, BoardRule, BoardScreen } from '@/components/ui/board'
 import { Button } from '@/components/ui/button'
 import { CHART_INITIAL_DIMENSION } from '@/components/ui/chart'
@@ -35,6 +35,7 @@ import { ConversationAvatar } from '@/components/ui/conversation'
 import { SegmentedMeter } from '@/components/ui/segmented-meter'
 import { StatusLight } from '@/components/ui/status-light'
 import { Tooltip as UiTooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { matchSearchItems, useSearchIndex } from '@/hooks/use-search-index'
 import type { NewsItem } from '@/lib/news-api'
 import { stashQuickChatMessage } from '@/lib/quick-chat'
 import { RestartProvider, useRestart } from '@/lib/restart-context'
@@ -139,7 +140,11 @@ function ObservationHomeContent() {
   const [hitokotoEditorOpen, setHitokotoEditorOpen] = useState(false)
   const [draft, setDraft] = useState('')
   const [composerMode, setComposerMode] = useState<ComposerMode>(loadComposerMode)
-  const askMai = useAskMai()
+  const helpQuery = composerMode === 'ask' ? draft.trim().toLowerCase() : ''
+  const { searchItems, configSearchItems } = useSearchIndex(Boolean(helpQuery))
+  const helpMatches = helpQuery
+    ? matchSearchItems([...searchItems, ...configSearchItems], helpQuery, 6)
+    : []
   const [layout, setLayout] = useState<HomeLayout>(loadHomeLayout)
   const [editing, setEditing] = useState(false)
   const [libraryOpen, setLibraryOpen] = useState(true)
@@ -276,9 +281,11 @@ function ObservationHomeContent() {
 
   const submitDraft = (event: FormEvent) => {
     event.preventDefault()
-    // 答疑：交给全局搜索里的 AI 查文档与插件市场；聊天：带着草稿进入本地聊天室
+    // 答疑交给独立帮助页，聊天带着草稿进入本地聊天室。
     if (composerMode === 'ask') {
-      askMai(draft.trim())
+      const question = draft.trim()
+      if (!question) return
+      void navigate({ to: '/help-history', state: { helpDraft: { id: Date.now(), question } } })
       setDraft('')
       return
     }
@@ -815,18 +822,16 @@ function ObservationHomeContent() {
         data-observation-composer="true"
         data-mode={composerMode}
         onSubmit={submitDraft}
-        aria-label={t('observation.quickChat')}
+        aria-label={t(composerMode === 'ask' ? 'observation.askTitle' : 'observation.quickChat')}
       >
-        <ModeStack
-          mode={composerMode}
-          className="shrink-0"
-          chat={<ConversationAvatar name={t('chat.botNameFallback')} bot />}
-          ask={
-            <span data-observation-composer-icon="true" aria-hidden="true">
-              <Sparkles />
-            </span>
-          }
-        />
+        <SearchSuggestions items={helpMatches} />
+        {composerMode === 'ask' ? (
+          <Button asChild variant="outline" size="sm" className="shrink-0 whitespace-nowrap">
+            <Link to="/help-history">{t('observation.helpHistory')}</Link>
+          </Button>
+        ) : (
+          <ConversationAvatar name={t('chat.botNameFallback')} bot />
+        )}
         <label data-observation-composer-input="true">
           <span className="sr-only">
             {composerMode === 'ask' ? t('observation.askTitle') : t('observation.quickChat')}
@@ -839,7 +844,11 @@ function ObservationHomeContent() {
             chat={t('observation.quickChatPlaceholder')}
             ask={t('observation.askPlaceholder')}
           />
-          <input value={draft} onChange={(event) => setDraft(event.target.value)} />
+          <input
+            value={draft}
+            maxLength={composerMode === 'ask' ? 500 : undefined}
+            onChange={(event) => setDraft(event.target.value)}
+          />
         </label>
         {/* 当前档：发送键左边一行小字，亮灯表示正在用的模式 */}
         <span data-observation-mode-label="true">

@@ -150,7 +150,7 @@ describe('useModelFetcher', () => {
     expect(fetchProviderModels).toHaveBeenCalledTimes(1)
   })
 
-  it('未配置 API Key 时提示补全密钥且不请求接口', async () => {
+  it('无鉴权提供商的 API Key 留空时仍请求并显示模型列表', async () => {
     vi.mocked(fetchProviderModels).mockResolvedValue([{ id: 'gpt-4', name: 'gpt-4' }])
 
     const { result } = renderFetcher(() => ({
@@ -162,12 +162,10 @@ describe('useModelFetcher', () => {
       await result.current.fetchModelsForProvider('openai')
     })
 
-    expect(fetchProviderModels).not.toHaveBeenCalled()
-    expect(result.current.availableModels).toEqual([])
-    expect(result.current.matchedTemplate).toBeNull()
-    expect(result.current.modelFetchError).toBe(
-      '该提供商未配置 API Key，请先在"模型厂商设置"中填写'
-    )
+    expect(fetchProviderModels).toHaveBeenCalledWith('openai', 'openai', '/models')
+    expect(result.current.availableModels).toEqual([{ id: 'gpt-4', name: 'gpt-4' }])
+    expect(result.current.matchedTemplate?.modelFetcher).toBeDefined()
+    expect(result.current.modelFetchError).toBeNull()
   })
 
   it('未配置 modelFetcher 的内置模板默认乐观尝试 /models', async () => {

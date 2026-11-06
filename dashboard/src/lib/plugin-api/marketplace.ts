@@ -9,7 +9,7 @@ import type { GitStatus, MaimaiVersion } from './types'
  * 插件市场展示缓存
  */
 const PLUGIN_LIST_CACHE_TTL = 5 * 60 * 1000
-const PLUGIN_LIST_STORAGE_KEY = 'maibot-plugin-market-list-cache-v5'
+const PLUGIN_LIST_STORAGE_KEY = 'maibot-plugin-market-list-cache-v6'
 
 const pluginListCaches = new Map<boolean, { timestamp: number; result: PluginInfo[] }>()
 const pluginListRequests = new Map<boolean, Promise<PluginInfo[]>>()
@@ -397,15 +397,32 @@ export function isPluginCompatible(
     const maxVersion = parseVersionTuple(pluginMaxVersion)
     const isHigherThanMax = compareVersionTuple(currentVersion, maxVersion) > 0
 
-    // 与运行时 manifest 校验保持一致：仅修订号高于声明上限时，以兼容模式允许。
-    const isSameMajorMinor =
-      currentVersion[0] === maxVersion[0] && currentVersion[1] === maxVersion[1]
-    if (isHigherThanMax && !isSameMajorMinor) {
+    // 与运行时 manifest 校验保持一致：同主版本内，修订号超出上限或次版本高 1 时允许兼容模式。
+    const isWithinCompatibilityWindow =
+      currentVersion[0] === maxVersion[0] &&
+      currentVersion[1] - maxVersion[1] >= 0 &&
+      currentVersion[1] - maxVersion[1] <= 1
+    if (isHigherThanMax && !isWithinCompatibilityWindow) {
       return false
     }
   }
 
   return true
+}
+
+/** 已超出声明上限、但仍在运行时允许的兼容窗口内。 */
+export function isPluginCompatibilityMode(
+  pluginMinVersion: string,
+  pluginMaxVersion: string | undefined,
+  maimaiVersion: MaimaiVersion
+): boolean {
+  if (!pluginMaxVersion || !isPluginCompatible(pluginMinVersion, pluginMaxVersion, maimaiVersion)) {
+    return false
+  }
+  return compareVersionTuple(
+    [maimaiVersion.version_major, maimaiVersion.version_minor, maimaiVersion.version_patch],
+    parseVersionTuple(pluginMaxVersion)
+  ) > 0
 }
 
 /**

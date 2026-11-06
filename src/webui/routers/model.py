@@ -175,8 +175,6 @@ async def probe_model_thinking(request: ThinkingProbeRequest, http_request: Requ
         raise HTTPException(status_code=400, detail="API 提供商配置无效，请检查厂商设置") from error
     if not provider.base_url:
         raise HTTPException(status_code=400, detail="API 提供商缺少基础地址")
-    if provider.auth_type != "none" and not provider.api_key:
-        raise HTTPException(status_code=400, detail="API 提供商未配置密钥")
     try:
         return await probe_thinking(provider, request, should_stop=http_request.is_disconnected)
     except ValueError as error:
@@ -304,7 +302,6 @@ async def _fetch_models_from_provider(
     auth_query_name: str = "api_key",
     default_headers: Optional[Dict[str, str]] = None,
     default_query: Optional[Dict[str, str]] = None,
-    allow_configured_private_network: bool = False,
 ) -> List[Dict]:
     """从提供商 API 获取模型列表。
 
@@ -320,16 +317,12 @@ async def _fetch_models_from_provider(
         auth_query_name: Query 鉴权时使用的查询参数名称。
         default_headers: 默认附带的请求头。
         default_query: 默认附带的查询参数。
-        allow_configured_private_network: 是否允许已保存厂商配置指向回环或私网地址。
 
     Returns:
         List[Dict]: 解析后的模型列表。
     """
     try:
-        base_url = validate_public_url(
-            _normalize_url(base_url),
-            allow_configured_private_network=allow_configured_private_network,
-        )
+        base_url = validate_public_url(_normalize_url(base_url), require_public_network=False)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -341,7 +334,8 @@ async def _fetch_models_from_provider(
 
     if client_type == "gemini":
         # Gemini 使用 URL 参数传递 API Key
-        params["key"] = api_key
+        if api_key:
+            params["key"] = api_key
     else:
         provider = APIProvider(
             name="webui-openai-compatible-fetcher",
@@ -762,7 +756,7 @@ async def get_provider_models(
         raise HTTPException(status_code=404, detail=f"未找到提供商: {provider_name}")
 
     base_url = provider_config.get("base_url")
-    api_key = provider_config.get("api_key")
+    api_key = provider_config.get("api_key", "")
     client_type = provider_config.get("client_type", "openai")
 
     if client_type == "chatgpt":
@@ -778,8 +772,6 @@ async def get_provider_models(
 
     if not base_url:
         raise HTTPException(status_code=400, detail="提供商配置缺少 base_url")
-    if not api_key:
-        raise HTTPException(status_code=400, detail="提供商配置缺少 api_key")
 
     resolved_endpoint = provider_config.get("model_list_endpoint", endpoint) if endpoint == "/models" else endpoint
 
@@ -796,7 +788,6 @@ async def get_provider_models(
         auth_query_name=provider_config.get("auth_query_name", "api_key"),
         default_headers=provider_config.get("default_headers", {}),
         default_query=provider_config.get("default_query", {}),
-        allow_configured_private_network=True,
     )
 
     return {
@@ -810,7 +801,7 @@ async def get_provider_models(
 @router.get("/list-by-url")
 async def get_models_by_url(
     base_url: str = Query(..., description="提供商的基础 URL"),
-    api_key: str = Query(..., description="API Key"),
+    api_key: str = Query("", description="API Key（无鉴权服务可留空）"),
     parser: str = Query("openai", description="响应解析器类型 (openai | gemini)"),
     endpoint: str = Query("/models", description="获取模型列表的端点"),
     client_type: str = Query("openai", description="客户端类型 (openai | openai_responses | gemini)"),
@@ -845,7 +836,6 @@ async def _test_provider_connection(
     base_url: str,
     api_key: Optional[str],
     client_type: str,
-    allow_configured_private_network: bool = False,
 ):
     """
     测试提供商连接状态
@@ -867,10 +857,7 @@ async def _test_provider_connection(
         raise HTTPException(status_code=400, detail="base_url 不能为空")
 
     try:
-        base_url = validate_public_url(
-            base_url,
-            allow_configured_private_network=allow_configured_private_network,
-        )
+        base_url = validate_public_url(base_url, require_public_network=False)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -955,7 +942,7 @@ async def test_provider_connection(
     api_key: Optional[str] = Query(None, description="API Key（可选，用于验证 Key 有效性）"),
     client_type: str = Query("openai", description="客户端类型 (openai | openai_responses | gemini)"),
 ):
-    """测试任意厂商地址；该入口只允许访问公网目标。"""
+    """测试指定厂商地址，支持本机与内网服务。"""
     if client_type == "chatgpt":
         raise HTTPException(status_code=400, detail="请先保存 ChatGPT 账号标签，再按提供商名称测试授权。")
     return await _test_provider_connection(
@@ -1031,5 +1018,4 @@ async def test_provider_connection_by_name(
         base_url=base_url,
         api_key=api_key if api_key else None,
         client_type=client_type,
-        allow_configured_private_network=True,
     )

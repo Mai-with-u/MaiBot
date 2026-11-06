@@ -1,0 +1,49 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'org.maibot.androidpet'
+    compileSdk 35
+    buildFeatures { buildConfig true }
+    defaultConfig {
+        applicationId 'org.maibot.androidpet'
+        minSdk 26
+        targetSdk 35
+        versionCode 2
+        versionName '1.0.1'
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    signingConfigs {
+        if (System.getenv('MAIBOT_ANDROID_KEYSTORE')) {
+            release {
+                storeFile file(System.getenv('MAIBOT_ANDROID_KEYSTORE'))
+                storePassword System.getenv('MAIBOT_ANDROID_STORE_PASSWORD')
+                keyAlias System.getenv('MAIBOT_ANDROID_KEY_ALIAS') ?: 'maibot'
+                keyPassword System.getenv('MAIBOT_ANDROID_KEY_PASSWORD') ?: System.getenv('MAIBOT_ANDROID_STORE_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (System.getenv('MAIBOT_ANDROID_KEYSTORE')) signingConfig signingConfigs.release
+        }
+    }
+    sourceSets.main.assets.srcDir layout.buildDirectory.dir('generated/petAssets')
+}
+
+// Every build copies the canonical desktop UI and transport; Android owns only its native adapter.
+tasks.register('preparePetAssets', Copy) {
+    filteringCharset = 'UTF-8'
+    into layout.buildDirectory.dir('generated/petAssets')
+    from('../../../src/desktop_pet/web') {
+        include 'index.html', 'exploration.html', 'host-bridge.js', 'skin.js', 'exploration-render.js', 'exploration-products.css', 'fonts/ArkPixel12-ZhHans.woff2', 'fonts/ArkPixel-OFL.txt'
+        into 'pet'
+        filesMatching('*.html') {
+            filter { line -> line.replace('<head>', '<head><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><script src="/android/channel.js"></script><script src="/android/adapter.js"></script><script src="/android/bridge.js"></script>').replace('</head>', '<link rel="stylesheet" href="/android/mobile.css"></head>') }
+        }
+    }
+    from('../../desktop/renderer') { include 'bridge.js', 'transport.js'; into 'android' }
+    from('src/main/web') { into 'android' }
+    from('../../../LICENSE') { into 'licenses' }
+}
+tasks.named('preBuild').configure { dependsOn 'preparePetAssets' }

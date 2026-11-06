@@ -500,7 +500,7 @@ export function ModelSetupForm({
     return (
       <Input
         id={`${role}_model_identifier`}
-        placeholder={fetchStatus === 'error' ? '手动输入模型标识符' : '填写 API Key 后自动获取'}
+        placeholder={fetchStatus === 'error' ? '手动输入模型标识符' : '填写基础 URL 后自动获取'}
         value={identifier}
         disabled={fetchStatus !== 'error'}
         onChange={(event) => changeModel(event.target.value)}

@@ -60,6 +60,13 @@ export function useHostRuntime(): HostRuntime {
   return useSyncExternalStore(subscribe, getHostRuntime, getHostRuntime)
 }
 
+/** 不依赖任何 Bot 的页面：所有 Bot 都停止或还在加载时仍然可以打开。 */
+export const BOT_INDEPENDENT_PATHS: readonly string[] = ['/bots', '/manage', '/settings']
+
+export function isBotIndependentPath(path: string | undefined): boolean {
+  return BOT_INDEPENDENT_PATHS.includes(path ?? '')
+}
+
 export function useBotAvailable(): boolean {
   const runtime = useHostRuntime()
   return !runtime.host || runtime.selected_bot_running

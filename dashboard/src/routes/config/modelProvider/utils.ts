@@ -61,9 +61,6 @@ export const validateProvider = (
   if (!provider.base_url?.trim()) {
     errors.base_url = '请输入基础 URL'
   }
-  if (provider.client_type !== 'chatgpt' && !provider.api_key?.trim()) {
-    errors.api_key = '请输入 API Key'
-  }
   if (provider.client_type === 'chatgpt' && provider.api_key?.trim()) {
     errors.api_key = 'ChatGPT 使用独立登录，不应填写 API Key 或令牌'
   }

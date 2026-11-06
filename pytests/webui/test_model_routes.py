@@ -203,8 +203,10 @@ async def test_test_provider_connection_uses_query_api_key_for_gemini(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("base_url", ["https://example.com/v1", "http://localhost:11434/v1", "http://192.168.1.10:8000/v1"])
 async def test_test_provider_connection_uses_bearer_auth_for_openai_compatible(
     monkeypatch: pytest.MonkeyPatch,
+    base_url: str,
 ) -> None:
     """非 Gemini 提供商连接测试应继续使用 Bearer 认证。"""
     model_routes = load_model_routes(monkeypatch)
@@ -216,7 +218,7 @@ async def test_test_provider_connection_uses_bearer_auth_for_openai_compatible(
     monkeypatch.setattr(model_routes.httpx, "AsyncClient", fake_client_class)
 
     result = await model_routes.test_provider_connection(
-        base_url="https://example.com/v1",
+        base_url=base_url,
         api_key="valid-openai-key",
         client_type="openai",
     )
@@ -227,10 +229,27 @@ async def test_test_provider_connection_uses_bearer_auth_for_openai_compatible(
 
     validation_call = calls[1]
 
-    assert validation_call["url"] == "https://example.com/v1/models"
+    assert validation_call["url"] == f"{base_url}/models"
     assert validation_call["params"] == {}
     assert validation_call["headers"]["Content-Type"] == "application/json"
     assert validation_call["headers"]["Authorization"] == "Bearer valid-openai-key"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("api_key", ["", " "])
+@pytest.mark.parametrize("auth_type", ["bearer", "header", "query", "none"])
+async def test_empty_provider_key_fetches_models_without_authentication(monkeypatch, api_key, auth_type):
+    model_routes = load_model_routes(monkeypatch)
+    calls = []
+    response = SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"data": [{"id": "local-model"}]})
+    monkeypatch.setattr(model_routes.httpx, "AsyncClient", build_async_client_factory([response], calls))
+    monkeypatch.setattr(model_routes, "_get_provider_config", lambda name: {
+        "name": name, "base_url": "http://localhost:11434/v1", "api_key": api_key, "auth_type": auth_type,
+    })
+    result = await model_routes.get_provider_models(provider_name="local", parser="openai", endpoint="/models")
+    assert result["models"][0]["id"] == "local-model"
+    assert calls[0]["headers"] == {}
+    assert calls[0]["params"] == {}
 
 
 @pytest.mark.asyncio
@@ -276,7 +295,6 @@ client_type = "gemini"
         "base_url": "https://generativelanguage.googleapis.com/v1beta",
         "api_key": "valid-gemini-key",
         "client_type": "gemini",
-        "allow_configured_private_network": True,
     }
 
 
@@ -543,3 +561,32 @@ async def test_chatgpt_url_probe_rejects_api_key_input(monkeypatch):
         )
     assert error.value.status_code == 400
     assert "test-only" not in error.value.detail
+
+
+@pytest.mark.parametrize("auth_type", ["header", "query", "none"])
+def test_chatgpt_rejects_ordinary_provider_auth_overrides(auth_type):
+    """普通端点的空密钥兼容不能改变 SIWC 的独立授权方式。"""
+    from src.config.model_configs import APIProvider
+
+    ordinary = APIProvider(name="Local", base_url="http://localhost:8000/v1", auth_type=auth_type)
+    assert ordinary.api_key == ""
+    with pytest.raises(ValueError, match="ChatGPT SIWC 使用独立本机授权"):
+        APIProvider(
+            name="ChatGPT", base_url="https://api.openai.com/v1", client_type="chatgpt", auth_type=auth_type,
+        )
+
+
+@pytest.mark.asyncio
+async def test_chatgpt_connection_probe_rejects_unauthenticated_url_path(monkeypatch):
+    model_routes = load_model_routes(monkeypatch)
+
+    async def wrong_transport(**kwargs):
+        raise AssertionError("ChatGPT must use its saved-account transport")
+
+    monkeypatch.setattr(model_routes, "_test_provider_connection", wrong_transport)
+    with pytest.raises(model_routes.HTTPException) as error:
+        await model_routes.test_provider_connection(
+            base_url="http://localhost:8000/v1", api_key=None, client_type="chatgpt",
+        )
+    assert error.value.status_code == 400
+    assert "账号标签" in error.value.detail

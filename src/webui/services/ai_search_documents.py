@@ -17,8 +17,8 @@ from .ai_search_models import AISearchCandidate
 
 logger = get_logger("webui.ai_search")
 
-OFFICIAL_DOCS_BUNDLE_URL = "https://docs.mai-mai.org/llms-full.txt"
-OFFICIAL_DOCS_BASE_URL = "https://docs.mai-mai.org"
+OFFICIAL_DOCS_BASE_URL = "https://docs.maibot.chat"
+OFFICIAL_DOCS_BUNDLE_URL = f"{OFFICIAL_DOCS_BASE_URL}/llms-full.txt"
 OFFICIAL_DOCS_CACHE_TTL_SECONDS = 600.0
 OFFICIAL_DOCS_MAX_BUNDLE_SIZE = 2_000_000
 OFFICIAL_DOCS_MAX_READ_SIZE = 8_000
@@ -190,17 +190,15 @@ class AISearchDocumentStore:
             )
         return results
 
-    async def read_official_docs(self, paths: Any, offset: int = 0) -> List[Dict[str, Any]]:
+    async def read_official_docs(self, paths: List[str], offset: int = 0) -> List[Dict[str, Any]]:
         """按路径从指定偏移读取官方文档正文，并限制单次返回长度。"""
 
-        if not isinstance(paths, list):
-            return []
         documents = await self._load_official_docs()
         document_map = {document.path: document for document in documents}
         results: List[Dict[str, Any]] = []
         seen_paths: set[str] = set()
         for raw_path in paths:
-            path = str(raw_path).strip()
+            path = raw_path.strip()
             document = document_map.get(path)
             if document is None or path in seen_paths:
                 continue
@@ -236,12 +234,6 @@ class AISearchDocumentStore:
             for source_id in source_ids
             if source_id in document_map
         ]
-
-    def prewarm_official_docs(self) -> None:
-        """在后台提前下载或刷新官方文档包，不等待结果。"""
-
-        if not self._is_official_docs_cache_fresh():
-            self._ensure_official_docs_refresh()
 
     def _is_official_docs_cache_fresh(self) -> bool:
         """判断官方文档缓存是否仍在有效期内。"""
@@ -287,6 +279,9 @@ class AISearchDocumentStore:
         ) as client:
             response = await client.get(OFFICIAL_DOCS_BUNDLE_URL)
             response.raise_for_status()
+        media_type = response.headers.get("content-type", "").partition(";")[0].strip().lower()
+        if media_type in {"text/html", "application/xhtml+xml"}:
+            raise ValueError("官方文档包端点返回了网页")
         if len(response.content) > OFFICIAL_DOCS_MAX_BUNDLE_SIZE:
             raise ValueError("官方文档包大小超出限制")
         documents = await asyncio.to_thread(self._parse_official_docs_bundle, response.text)

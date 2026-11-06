@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from base64 import b64decode
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
+from functools import partial
 from typing import Any, Dict, List, Optional, Sequence, TYPE_CHECKING
 from uuid import uuid4
 
@@ -154,9 +155,8 @@ class BuiltinToolRuntimeContext:
         *,
         skip_post_process: bool = False,
         enable_splitter: bool = True,
-        enable_chinese_typo: bool = True,
     ) -> List[str]:
-        """沿用旧回复链的文本后处理，执行分段与错别字注入。"""
+        """沿用旧回复链的文本后处理，执行分段。"""
 
         if skip_post_process:
             return [reply_text]
@@ -165,7 +165,6 @@ class BuiltinToolRuntimeContext:
         for segment in process_llm_response(
             reply_text,
             enable_splitter=enable_splitter,
-            enable_chinese_typo=enable_chinese_typo,
         ):
             normalized_segment = segment.strip()
             if normalized_segment:
@@ -181,7 +180,6 @@ class BuiltinToolRuntimeContext:
         *,
         skip_post_process: bool = False,
         enable_splitter: bool = True,
-        enable_chinese_typo: bool = True,
     ) -> List[ProcessedResponseSegment]:
         """执行文本后处理，并保留错别字纠正段的引用提示。"""
 
@@ -192,7 +190,6 @@ class BuiltinToolRuntimeContext:
         for segment in process_llm_response_segments(
             reply_text,
             enable_splitter=enable_splitter,
-            enable_chinese_typo=enable_chinese_typo,
         ):
             normalized_text = segment.text.strip()
             if normalized_text:
@@ -214,7 +211,6 @@ class BuiltinToolRuntimeContext:
         *,
         skip_post_process: bool = False,
         enable_splitter: bool = True,
-        enable_chinese_typo: bool = True,
     ) -> List[PostProcessedReplyMessage]:
         """将纯文本回复处理为带发送提示的组件序列。"""
 
@@ -227,7 +223,6 @@ class BuiltinToolRuntimeContext:
                 reply_text,
                 skip_post_process=skip_post_process,
                 enable_splitter=enable_splitter,
-                enable_chinese_typo=enable_chinese_typo,
             )
         ]
 
@@ -257,7 +252,6 @@ class BuiltinToolRuntimeContext:
         *,
         skip_post_process: bool = False,
         enable_splitter: bool = True,
-        enable_chinese_typo: bool = True,
     ) -> List[MessageSequence]:
         """将纯文本回复处理为可发送组件序列。"""
 
@@ -267,7 +261,6 @@ class BuiltinToolRuntimeContext:
                 reply_text,
                 skip_post_process=skip_post_process,
                 enable_splitter=enable_splitter,
-                enable_chinese_typo=enable_chinese_typo,
             )
         ]
 
@@ -369,6 +362,33 @@ class BuiltinToolRuntimeContext:
             return [raw_value]
         raise ValueError(f"{argument_name} 参数类型无效，应为字符串、对象或列表。")
 
+    async def _transform_reply_segments(
+        self, segments: List[ProcessedResponseSegment], *, enable_chinese_typo: bool
+    ) -> List[ProcessedResponseSegment]:
+        result = await self.get_runtime_manager().invoke_hook(
+            "maisaka.reply.after_split",
+            segments=[asdict(segment) for segment in segments],
+            session_id=self.runtime.session_id,
+            enable_chinese_typo=enable_chinese_typo,
+        )
+        raw_segments = result.kwargs["segments"]
+        if not isinstance(raw_segments, list) or not raw_segments:
+            raise ValueError("回复分段 Hook 必须返回非空 segments 列表")
+        validated: List[ProcessedResponseSegment] = []
+        for raw in raw_segments:
+            if (
+                not isinstance(raw, dict)
+                or set(raw) != {"text", "separator", "quote_previous", "is_correction"}
+                or not isinstance(raw["text"], str)
+                or not raw["text"].strip()
+                or not isinstance(raw["separator"], str)
+                or not isinstance(raw["quote_previous"], bool)
+                or not isinstance(raw["is_correction"], bool)
+            ):
+                raise ValueError("回复分段 Hook 返回了无效的消息段")
+            validated.append(ProcessedResponseSegment(**raw))
+        return validated
+
     async def post_process_reply_message_items_async(
         self,
         reply_text: str,
@@ -386,7 +406,9 @@ class BuiltinToolRuntimeContext:
             segments = await process_llm_response_segments_async(
                 reply_text,
                 enable_splitter=enable_splitter,
-                enable_chinese_typo=enable_chinese_typo,
+                transform_segments=partial(
+                    self._transform_reply_segments, enable_chinese_typo=enable_chinese_typo
+                ),
             )
         items = [
             PostProcessedReplyMessage(

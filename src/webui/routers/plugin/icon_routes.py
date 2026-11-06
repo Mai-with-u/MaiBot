@@ -8,7 +8,6 @@ from fastapi.responses import FileResponse, Response
 import mimetypes
 
 from src.common.http_client import get_shared_ssl_context
-from src.common.network_security import validate_public_url
 
 from .support import find_plugin_path_by_id, load_manifest_json, resolve_plugin_file_path
 
@@ -35,7 +34,6 @@ def get_market_icon(
         raise HTTPException(status_code=400, detail="只能读取 CNB 插件市场仓库图标")
 
     try:
-        validate_public_url(url, allow_fake_ip=True)
         opener = build_opener(_NoIconRedirect(), HTTPSHandler(context=get_shared_ssl_context()))
         request = Request(url, headers={"User-Agent": "MaiBot", "Accept": "image/*"})
         with opener.open(request, timeout=8) as response:

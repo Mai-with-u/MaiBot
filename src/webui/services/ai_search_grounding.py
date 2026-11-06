@@ -6,6 +6,10 @@ import re
 from .ai_search_models import AISearchModelOutput
 
 
+_PACKAGE_REQUIREMENT = re.compile(r"([a-z0-9_.-]+)\s*((?:===|==|~=|!=|<=|>=|<|>)\s*\d[\w.*+,!<>=~\s-]*)")
+_PACKAGE_EVIDENCE = re.compile(r'"name"\s*:\s*"([a-z0-9_.-]+)"\s*,\s*"version_spec"\s*:\s*"([^"]+)"')
+
+
 class AISearchGroundingError(ValueError):
     """AI 回答包含未被检索资料支持的可验证技术项。"""
 
@@ -15,9 +19,7 @@ def normalize_verifiable_claim(claim: str) -> str:
 
     normalized_claim = re.sub(r"""\\(["'])""", r"\1", claim.strip())
     while (
-        len(normalized_claim) >= 2
-        and normalized_claim[0] == normalized_claim[-1]
-        and normalized_claim[0] in {'"', "'"}
+        len(normalized_claim) >= 2 and normalized_claim[0] == normalized_claim[-1] and normalized_claim[0] in {'"', "'"}
     ):
         normalized_claim = normalized_claim[1:-1].strip()
     return normalized_claim
@@ -71,6 +73,16 @@ def _is_claim_supported_by_evidence(claim: str, evidence: str) -> bool:
         return True
     if claim.endswith("*") and claim.count("*") == 1:
         return claim[:-1] in evidence
+
+    requirement = _PACKAGE_REQUIREMENT.fullmatch(claim)
+    if requirement:
+        name, specifier = requirement.groups()
+        compact_specifier = "".join(specifier.split())
+        if any(
+            package == name and "".join(version_spec.split()) == compact_specifier
+            for package, version_spec in _PACKAGE_EVIDENCE.findall(evidence)
+        ):
+            return True
 
     assignment_match = re.fullmatch(r"(.+?)\s*=\s*(.+)", claim)
     if assignment_match:

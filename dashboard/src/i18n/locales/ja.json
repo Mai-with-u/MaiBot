@@ -70,7 +70,23 @@
       "installed": "インストールしました。Bot は元の状態に戻りつつあります。"
     }
   },
+  "helpHistory": {
+    "newSession": "新しい会話",
+    "retryLoad": "再読み込み",
+    "draftRestored": "下書きを復元しました。内容を確認してから送信できます。",
+    "description": "最近のエージェントの質問履歴を確認し、続けて質問できます。",
+    "deleteSession": "「{{title}}」を削除",
+    "deleteTitle": "会話を削除",
+    "deleteDescription": "「{{title}}」とすべての質問・回答を削除しますか？",
+    "deleteConfirm": "削除",
+    "loading": "ヘルプ履歴を読み込み中…",
+    "loadError": "ヘルプ履歴を読み込めませんでした。",
+    "empty": "質問セッションはまだありません。",
+    "select": "セッションを選択して質問と回答を表示します。",
+    "noReply": "この質問の回答はまだ記録されていません。"
+  },
   "observation": {
+    "helpHistory": "ヘルプ履歴",
     "keys": {
       "bot": "麦麦",
       "model": "モデル",
@@ -87,6 +103,8 @@
     "expandSidebar": "サイドバーを展開",
     "collapseSidebar": "サイドバーを折りたたむ",
     "settingsBlock": "設定",
+    "compactSettings": "設定を1行で表示",
+    "keyNeedsBot": "{{label}} · 先に Bot を起動してください",
     "allConversations": "すべての会話",
     "filterConversations": "絞り込み",
     "focusFlows": "Focus 共有フロー",
@@ -245,15 +263,38 @@
     "generatedAt": "統計截止時刻：{{time}}",
     "periodRange": "統計期間：{{start}} から {{end}}",
     "empty": "この期間のデータはありません",
-    "actions": { "refresh": "更新", "openHtml": "HTML版を開く" },
-    "error": { "title": "詳細統計を読み込めませんでした", "description": "しばらくしてから再試行してください" },
-    "periods": {
-      "all_time": "デプロイ以降", "last_30_days": "過去30日", "last_7_days": "過去7日",
-      "last_3_days": "過去3日", "last_24_hours": "過去1日", "last_3_hours": "過去3時間",
-      "last_hour": "過去1時間", "last_15_minutes": "過去15分"
+    "actions": {
+      "refresh": "更新",
+      "openHtml": "HTML版を開く",
+      "compare": "Compare with previous",
+      "details": "Details"
     },
-    "tabs": { "trends": "データグラフ", "metrics": "指標トレンド" },
-    "sections": { "breakdowns": "分類統計", "embeddings": "埋め込み統計", "distributions": "データ分布" },
+    "error": {
+      "title": "詳細統計を読み込めませんでした",
+      "description": "しばらくしてから再試行してください"
+    },
+    "periods": {
+      "all_time": "デプロイ以降",
+      "last_30_days": "過去30日",
+      "last_7_days": "過去7日",
+      "last_3_days": "過去3日",
+      "last_24_hours": "過去1日",
+      "last_3_hours": "過去3時間",
+      "last_hour": "過去1時間",
+      "last_15_minutes": "過去15分"
+    },
+    "tabs": {
+      "trends": "データグラフ",
+      "metrics": "指標トレンド"
+    },
+    "sections": {
+      "breakdowns": "Detailed Breakdown",
+      "embeddings": "埋め込み統計",
+      "distributions": "Distributions",
+      "period": "Period",
+      "trend": "Trends & Insights",
+      "reliability": "Reliability & Failures"
+    },
     "breakdowns": {
       "taskGroups": "タスクグループ別",
       "models": "モデル別",
@@ -262,19 +303,47 @@
       "chats": "チャットメッセージ"
     },
     "summary": {
-      "onlineTime": "総稼働時間", "messages": "総メッセージ数", "replies": "総返信数", "requests": "総リクエスト数",
-      "tokens": "総Token数", "inputTokens": "入力Token", "outputTokens": "出力Token", "cacheHitRate": "Promptキャッシュヒット率",
-      "cacheHitTokens": "キャッシュヒットToken", "cacheMissTokens": "キャッシュミスToken", "totalCost": "総費用",
-      "costPerMessages": "費用/メッセージ", "costPerReceivedMessages": "費用/受信メッセージ", "costPerReplies": "費用/返信",
-      "costPerHour": "費用/時間", "tokensPerHour": "Token/時間"
+      "onlineTime": "総稼働時間",
+      "messages": "総メッセージ数",
+      "replies": "総返信数",
+      "requests": "総リクエスト数",
+      "tokens": "総Token数",
+      "inputTokens": "入力Token",
+      "outputTokens": "出力Token",
+      "cacheHitRate": "Promptキャッシュヒット率",
+      "cacheHitTokens": "キャッシュヒットToken",
+      "cacheMissTokens": "キャッシュミスToken",
+      "totalCost": "総費用",
+      "costPerMessages": "費用/メッセージ",
+      "costPerReceivedMessages": "費用/受信メッセージ",
+      "costPerReplies": "費用/返信",
+      "costPerHour": "費用/時間",
+      "tokensPerHour": "Token/時間",
+      "callsPerReply": "Calls / Reply",
+      "failureRate": "Failure Rate",
+      "replyRate": "Reply Rate",
+      "sparkLabel": "{{name}} recent trend"
     },
-    "units": { "per100": "100件あたり", "perHour": "1時間あたり" },
+    "units": {
+      "per100": "100件あたり",
+      "perHour": "1時間あたり"
+    },
     "table": {
-      "name": "名前", "requests": "呼び出し回数", "inputTokens": "入力Token", "outputTokens": "出力Token",
-      "totalTokens": "総Token", "cacheHitTokens": "キャッシュヒットToken", "cacheMissTokens": "キャッシュミスToken",
-      "cacheHitRate": "キャッシュヒット率", "cost": "累計費用", "time": "所要時間",
-      "callsPerReply": "返信あたりの呼び出し", "tokensPerReply": "返信あたりのToken", "tokensPerCall": "呼び出しあたりのToken",
-      "chat": "連絡先/グループ", "messages": "メッセージ数"
+      "name": "名前",
+      "requests": "呼び出し回数",
+      "inputTokens": "入力Token",
+      "outputTokens": "出力Token",
+      "totalTokens": "総Token",
+      "cacheHitTokens": "キャッシュヒットToken",
+      "cacheMissTokens": "キャッシュミスToken",
+      "cacheHitRate": "キャッシュヒット率",
+      "cost": "累計費用",
+      "time": "所要時間",
+      "callsPerReply": "返信あたりの呼び出し",
+      "tokensPerReply": "返信あたりのToken",
+      "tokensPerCall": "呼び出しあたりのToken",
+      "chat": "連絡先/グループ",
+      "messages": "メッセージ数"
     },
     "distributions": {
       "metric": "統計指標",
@@ -285,13 +354,202 @@
       "moduleTokens": "モジュール別Token分布",
       "requestTypeTokens": "リクエスト種別Token分布",
       "chatTokens": "チャット別Token分布",
-      "ownerCosts": "呼び出し元の費用分布", "modelCosts": "モデル費用分布", "moduleCosts": "モジュール費用分布",
-      "requestTypeCosts": "リクエスト種別の費用分布", "chatMessages": "チャットメッセージ分布", "chatCosts": "チャットストリーム費用分布"
+      "ownerCosts": "呼び出し元の費用分布",
+      "modelCosts": "モデル費用分布",
+      "moduleCosts": "モジュール費用分布",
+      "requestTypeCosts": "リクエスト種別の費用分布",
+      "chatMessages": "チャットメッセージ分布",
+      "chatCosts": "チャットストリーム費用分布",
+      "hint": "Click a legend item to filter the table below",
+      "itemCount": "{{count}} items",
+      "filterTable": "Filter {{name}} in detail table",
+      "singleSource": "Only \"{{name}}\" is present in this period",
+      "zeroCount": "{{count}} items with 0 value",
+      "titles": {
+        "owner": "Owner {{metric}} Distribution",
+        "model": "Model {{metric}} Distribution",
+        "module": "Module {{metric}} Distribution",
+        "requestType": "Request Type {{metric}} Distribution",
+        "taskGroup": "Task Group {{metric}} Distribution",
+        "chat": "Chat {{metric}} Distribution"
+      },
+      "totals": {
+        "costs": "Total Cost",
+        "tokens": "Total Tokens"
+      }
     },
-    "charts": { "timeRange": "時間範囲", "timeScale": "時間尺度", "toggleSeries": "{{name}} の表示を切り替える" },
-    "ranges": { "6h": "6時間", "12h": "12時間", "24h": "24時間", "48h": "48時間", "7d": "7日", "30d": "30日" },
-    "trends": { "totalCost": "総費用トレンド", "moduleCosts": "モジュール別費用トレンド", "modelCosts": "モデル別費用トレンド", "chatMessages": "チャット別メッセージトレンド" },
-    "metrics": { "costPerMessages": "メッセージあたり費用トレンド", "costPerHour": "時間あたり費用トレンド", "tokensPerHour": "時間あたりTokenトレンド", "costPerReplies": "返信あたり費用トレンド" }
+    "charts": {
+      "timeRange": "時間範囲",
+      "timeScale": "時間尺度",
+      "toggleSeries": "{{name}} の表示を切り替える"
+    },
+    "ranges": {
+      "6h": "6時間",
+      "12h": "12時間",
+      "24h": "24時間",
+      "48h": "48時間",
+      "7d": "7日",
+      "30d": "30日"
+    },
+    "trends": {
+      "totalCost": "総費用トレンド",
+      "moduleCosts": "モジュール別費用トレンド",
+      "modelCosts": "モデル別費用トレンド",
+      "chatMessages": "チャット別メッセージトレンド"
+    },
+    "metrics": {
+      "costPerMessages": "メッセージあたり費用トレンド",
+      "costPerHour": "時間あたり費用トレンド",
+      "tokensPerHour": "時間あたりTokenトレンド",
+      "costPerReplies": "返信あたり費用トレンド"
+    },
+    "other": "Other ({{count}})",
+    "delta": {
+      "vsPrevious": "Compared with previous period",
+      "noBaseline": "Previous period was 0",
+      "new": "NEW"
+    },
+    "modules": {
+      "usage": "Usage Overview",
+      "cache": "Prompt Cache",
+      "modelCosts": "Model Cost Share",
+      "flow": "Token Flow",
+      "unit": "Unit Cost & Efficiency",
+      "insights": "Auto Insights",
+      "failureRank": "Failure Rate Ranking",
+      "failureTrend": "Failure Trend & Latency",
+      "heatmap": "Activity Heatmap",
+      "chats": "Top Active Chats"
+    },
+    "cache": {
+      "all": "Overall",
+      "uncachedHint": "{{tokens}} input tokens without cache breakdown"
+    },
+    "models": {
+      "freeHint": "{{count}} additional models with ¥0.00 cost"
+    },
+    "flow": {
+      "total": "Total {{tokens}}",
+      "cacheHit": "Cache Hit Input",
+      "cacheMiss": "Cache Miss Input",
+      "noCacheInfo": "Uncached Input",
+      "output": "Output Tokens",
+      "ioRatio": "Input : Output Ratio"
+    },
+    "trend": {
+      "metric": "Metric",
+      "group": "Group By",
+      "mode": "Chart Mode",
+      "sum": "Total",
+      "truncated": "Detailed series kept for 30 days (since {{start}})",
+      "metrics": {
+        "cost": "Cost",
+        "tokens": "Tokens",
+        "requests": "Requests",
+        "messages": "Messages"
+      },
+      "groups": {
+        "total": "Total",
+        "model": "By Model",
+        "module": "By Module",
+        "chat": "By Chat"
+      },
+      "modes": {
+        "stack": "Stacked",
+        "line": "Line",
+        "percent": "100% Share"
+      },
+      "titles": {
+        "cost": "Cost Trend",
+        "tokens": "Token Usage Trend",
+        "requests": "Request Trend",
+        "messages": "Message Trend"
+      },
+      "totals": {
+        "cost": "Total Cost",
+        "tokens": "Total Tokens",
+        "requests": "Total Requests",
+        "messages": "Total Messages"
+      }
+    },
+    "insights": {
+      "empty": "No notable anomalies or concentrations in this period",
+      "alertCount": "{{count}} alerts",
+      "costUp": "Cost is {{current}}, up {{change}} from {{previous}}.",
+      "costDown": "Cost is {{current}}, down {{change}} from {{previous}}.",
+      "failureRate": "{{name}} failure rate reached {{rate}} ({{failures}} / {{attempts}}), above overall {{overall}}.",
+      "failureShare": "{{name}} had {{failures}} failures ({{share}} of all failures).",
+      "costShare": "{{name}} cost {{cost}}, accounting for {{share}} of total cost.",
+      "cacheLow": "{{name}} cache hit rate is {{rate}}, well below overall {{overall}}.",
+      "unitPrice": "{{name}} averages {{unit}} / 1M tokens ({{ratio}}x overall average).",
+      "latencyTail": "{{name}} latency std dev is {{std}} (avg {{avg}}), showing long-tail spikes.",
+      "topChat": "\"{{name}}\" is most active with {{messages}} messages ({{share}})."
+    },
+    "reliability": {
+      "source": "Based on 1-minute task usage buckets",
+      "truncated": "Task usage kept for 7 days (covered since {{start}})",
+      "dimension": "Dimension",
+      "empty": "No task usage records in this period",
+      "attempts": "Attempts",
+      "failures": "Failures",
+      "failureRate": "Failure Rate",
+      "avgSuccessDuration": "Avg Success Time",
+      "chartLegend": "Bars: Failures · Line: Failure Rate",
+      "hint": "Highlighted when failure rate reaches {{threshold}}",
+      "dimensions": {
+        "model": "By Model",
+        "provider": "By Provider",
+        "task": "By Task"
+      }
+    },
+    "heatmap": {
+      "metric": "Heatmap Metric",
+      "weekdays": "Mon,Tue,Wed,Thu,Fri,Sat,Sun",
+      "less": "Less",
+      "more": "More",
+      "messagesValue": "{{value}} msgs",
+      "cellTitle": "{{day}} {{hour}}:00 · {{value}}",
+      "metrics": {
+        "messages": "Messages",
+        "costs": "Cost"
+      }
+    },
+    "chats": {
+      "topHint": "Top {{count}} / {{total}}",
+      "costPer100": "{{cost}} / 100 msgs"
+    },
+    "columns": {
+      "name": "Name",
+      "requests": "Requests",
+      "tokens": "Tokens (Total / In·Out)",
+      "cacheRate": "Cache Hit Rate",
+      "cost": "Total Cost",
+      "failureRate": "Failure Rate",
+      "time": "Avg Latency",
+      "unitCost": "Cost / 1M",
+      "costPerCall": "Cost / 1K Calls",
+      "callsPerReply": "Calls / Reply",
+      "tokensPerReply": "Tokens / Reply"
+    },
+    "detail": {
+      "hideEmbedding": "Hide Embeddings",
+      "columnGroups": "Column Groups",
+      "dimension": "Dimension",
+      "search": "Filter by name…",
+      "rowCount": "{{shown}} / {{total}}",
+      "total": "Total ({{count}})",
+      "embeddingTag": "Embed",
+      "freeTag": "Free",
+      "failureCount": "{{value}} failed",
+      "attemptsFailures": "Failures / Attempts",
+      "groups": {
+        "token": "Tokens",
+        "cache": "Cache",
+        "perf": "Latency & Errors",
+        "unit": "Unit Cost",
+        "reply": "Per Reply"
+      }
+    }
   },
   "workspace": {
     "switcherLabel": "麦麦ワークスペースを切り替え",
@@ -310,10 +568,9 @@
       "dshModel": "dsh でモデルと API キーを設定（設定済みなら省略）：",
       "dshEnable": "接続方式で dsh CLI を選択して有効にし、保存してから Agent ページでタスクを送信します。プログラムが見つからない場合、Windows では ACP 起動プログラムに dsh.cmd の絶対パスを指定します。",
       "dshCommand": "プリセットの起動コマンド：",
-      "disabled": "Agent は無効です",
+      "disabled": "コンピューター機能は無効です",
       "reasoning": "思考履歴",
       "connecting": "接続中",
-      "disabled": "コンピューター機能は無効です",
       "stopped": "サンドボックス停止中",
       "manual": "手動操作",
       "paused": "判断を一時停止中",
@@ -1269,6 +1526,43 @@
     "copyError": "エラー情報をコピー"
   },
   "search": {
+    "previewArtifactImage": "画像をプレビュー",
+    "invalidArtifactImage": "このファイルはプレビューできる画像ではありません。",
+    "harness": {
+      "title": "質問への対応状況",
+      "plan": "現在の計画",
+      "skills": "読み込んだスキル",
+      "status": {
+        "pending": "未着手",
+        "in_progress": "進行中",
+        "completed": "完了"
+      },
+      "skill": {
+        "setup": "初期設定",
+        "troubleshoot": "トラブル対応",
+        "plugin": "プラグインの利用",
+        "develop": "プラグイン開発"
+      }
+    },
+    "allowPluginConfigWrite": "プラグイン設定の変更を許可",
+    "allowPluginConfigWriteHint": "今回の質問にのみ適用されます。エージェントは依頼内容に従ってプラグイン設定を保存できます。",
+    "progressPrepareInstall": "インストール確認を準備",
+    "progressListInstalled": "導入済みプラグインを確認",
+    "progressReadPluginConfig": "プラグイン設定を読む",
+    "progressUpdatePluginConfig": "プラグイン設定を変更",
+    "pluginInstallTitle": "プラグインのインストール",
+    "pluginInstallPending": "まだインストールしていません。確認すると、このプラグインとバージョンをダウンロードしてインストールします。",
+    "pluginConfirmInstall": "インストールを確認",
+    "pluginCancelInstall": "インストールをキャンセル",
+    "pluginOpenConfig": "プラグイン設定を開く",
+    "pluginConfigUpdated": "プラグイン設定を保存しました",
+    "pluginInstallFailed": "プラグインのインストールに失敗しました",
+    "pluginInstallStatus": {
+      "installing": "インストール中…",
+      "success": "インストール完了",
+      "error": "インストール失敗",
+      "cancelled": "キャンセル済み・未実行"
+    },
     "placeholder": "ページ、設定、または解決したい問題を検索...",
     "title": "検索",
     "noResults": "一致するページまたは設定項目が見つかりません",
@@ -1289,6 +1583,21 @@
     "progressSearchDocs": "公式ドキュメントを検索",
     "progressReadDocs": "公式ドキュメントを読む",
     "progressReadConfig": "ローカル設定を読む",
+    "progressReadLogs": "最近のログを確認",
+    "progressListReasoning": "最近の推論記録を検索",
+    "progressReadReasoning": "推論記録を確認",
+    "progressPublishArtifact": "表示用コンテンツを公開",
+    "progressSearchPlugins": "プラグイン市場を検索",
+    "progressReadPluginDetail": "プラグイン詳細と互換性を確認",
+    "progressReadPluginReadme": "プラグインの README を読む",
+    "pluginResults": "関連プラグイン",
+    "pluginOpenStore": "プラグインストアで見る",
+    "pluginRecommendedVersion": "推奨バージョン：{{version}}",
+    "pluginCompatibility": {
+      "unknown": "互換性は未確認",
+      "compatible": "現在の環境に対応",
+      "incompatible": "対応する安定版またはブランチなし"
+    },
     "progressTool": "検索操作を実行",
     "progressCompleted": "{{action}}完了（{{count}} 件）",
     "progressFailed": "{{action}}失敗",
@@ -1301,9 +1610,9 @@
     "aiRecommendation": "AI のおすすめ",
     "aiAnswer": "AI の回答",
     "aiSuggestions": "提案",
-    "aiSources": "公式ドキュメント",
+    "aiSources": "参考資料",
     "aiUnderstood": "AI の解釈：{{terms}}",
-    "aiNoResults": "十分に関連するページまたは設定項目が見つかりませんでした",
+    "aiNoResults": "関連するページ、設定項目、プラグインが見つかりませんでした",
     "aiFailed": "AI 検索に失敗しました",
     "indexLoading": "設定検索インデックスを読み込み中…",
     "categories": {
@@ -1317,6 +1626,7 @@
     "items": {
       "home": "ホーム",
       "homeDesc": "ダッシュボード概要を表示",
+      "chatDesc": "チャットの会話設定でグループの返信頻度を確認できます。頻度が 0 の場合、メッセージを受信しても Planner は呼び出されません。個別チャットの一時停止は別設定です。",
       "botConfig": "ボットメイン設定",
       "botConfigDesc": "ボットの詳細設定と共有グループを設定",
       "model": "モデル設定",
@@ -1954,5 +2264,4 @@
     "updated": "前回の更新は成功しました",
     "restarting": "The host is updating and restarting. Waiting to reconnect. If rollback fails, check the terminal and restart manually after repair."
   }
-
 }

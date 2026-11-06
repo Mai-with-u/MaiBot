@@ -211,14 +211,21 @@ describe('plugin-api/marketplace', () => {
       expect(marketplace.isPluginCompatible('0.9.0', undefined, currentVersion)).toBe(true)
     })
 
-    it('仅修订号超过声明上限时按兼容模式放行', async () => {
+    it('修订号超出上限或落后一个次版本时按兼容模式放行', async () => {
       const marketplace = await loadMarketplace()
       // 同主次版本、修订号更高：允许
       expect(marketplace.isPluginCompatible('0.10.0', '0.10.2', currentVersion)).toBe(true)
-      // 次版本已超过上限：拒绝
+      // 同主版本内，上限落后一个次版本：允许，并标记兼容模式。
       expect(
         marketplace.isPluginCompatible('0.9.0', '0.9.9', currentVersion)
-      ).toBe(false)
+      ).toBe(true)
+      expect(marketplace.isPluginCompatibilityMode('0.9.0', '0.9.9', currentVersion)).toBe(true)
+      expect(marketplace.isPluginCompatibilityMode('0.9.0', '0.10.5', currentVersion)).toBe(false)
+      // 超过一个次版本或跨主版本仍然拒绝。
+      expect(marketplace.isPluginCompatible('0.8.0', '0.8.9', currentVersion)).toBe(false)
+      expect(marketplace.isPluginCompatible('0.0.0', '0.99.99', {
+        version: '1.0.0', version_major: 1, version_minor: 0, version_patch: 0,
+      })).toBe(false)
     })
 
     it('解析 snapshot 后缀与非法版本号', async () => {

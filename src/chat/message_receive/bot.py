@@ -17,7 +17,8 @@ from src.common.utils.utils_session import SessionUtils
 from src.config.config import global_config
 from src.core.announcement_manager import global_announcement_manager
 from src.core.chat_pause import chat_pause_state
-from src.core.plugin_usage import can_use_plugin
+from src.core.commands.plugin_management import PluginManagementCommand, match_pm_command
+from src.core.commands.pm_aliases import PM_COMMAND_ID
 from src.core.local_operator import (
     has_command_permission,
     has_plugin_management_permission,
@@ -25,6 +26,7 @@ from src.core.local_operator import (
     is_plugin_relayed,
 )
 from src.platform_io.route_key_factory import RouteKeyFactory
+from src.core.plugin_usage import can_use_plugin
 from src.plugin_runtime.component_query import component_query_service
 from src.plugin_runtime.hook_payloads import deserialize_session_message, serialize_session_message
 from src.plugin_runtime.hook_schema_utils import build_object_schema
@@ -274,11 +276,14 @@ class ChatBot:
         mutated_message.file_source = message.file_source
         return hook_result, mutated_message
 
-    async def _process_commands(self, message: SessionMessage) -> tuple[bool, Optional[str], bool]:
-        """使用统一组件注册表处理命令。
+    async def _process_commands(
+        self, message: SessionMessage, pm_command: str | None = None
+    ) -> tuple[bool, Optional[str], bool]:
+        """分发本体管理命令和插件命令。
 
         Args:
             message: 当前待处理的会话消息。
+            pm_command: 已匹配并展开别名的本体管理命令。
 
         Returns:
             tuple[bool, Optional[str], bool]: ``(是否命中命令, 命令响应文本, 是否继续后续处理)``。
@@ -288,31 +293,38 @@ class ChatBot:
         try:
             text = message.processed_plain_text
 
-            # 使用插件运行时统一查询服务查找命令
-            command_result = component_query_service.find_command_by_text(text)
-            if command_result:
-                command_executor, matched_groups, command_info = command_result
-                plugin_name = command_info.plugin_name
-                command_name = command_info.name
+            # 本体命令与插件命令共用权限校验、执行钩子和结果处理。
+            command_result = None if pm_command else component_query_service.find_command_by_text(text)
+            if pm_command or command_result:
+                if pm_command:
+                    plugin_name, command_name = PM_COMMAND_ID.rsplit(".", 1)
+                    matched_groups = {"manage_command": pm_command}
+                    permission = "operator"
+                else:
+                    command_executor, matched_groups, command_info = command_result
+                    plugin_name = command_info.plugin_name
+                    command_name = command_info.name
+                    permission = command_info.permission
+                command_id = f"{plugin_name}.{command_name}"
                 if message.session_id and command_name in global_announcement_manager.get_disabled_chat_commands(
                     message.session_id
                 ):
                     logger.info("用户禁用的命令，跳过处理")
                     return False, None, True
 
-                if is_command_disabled(f"{plugin_name}.{command_name}"):
+                if is_command_disabled(command_id):
                     logger.info(f"命令 {plugin_name}.{command_name} 已在命令管理中停用，按普通消息处理")
                     return False, None, True
 
-                usage_allowed = can_use_plugin(
+                usage_allowed = pm_command is not None or can_use_plugin(
                     plugin_name,
                     platform=message.platform,
                     user_id=message.message_info.user_info.user_id,
                     session_id=message.session_id,
                 )
                 if not usage_allowed or (
-                    command_info.permission == "operator" and not has_command_permission(
-                        f"{plugin_name}.{command_name}",
+                    permission == "operator" and not has_command_permission(
+                        command_id,
                         message.platform,
                         message.message_info.user_info.user_id,
                         message.session_id,
@@ -354,16 +366,19 @@ class ChatBot:
                     else dict(matched_groups)
                 )
 
-                # 获取插件配置
-                plugin_config = component_query_service.get_plugin_config(plugin_name)
-
                 try:
-                    # 调用命令执行器
-                    success, response, intercept_message_level = await command_executor(
-                        message=message,
-                        plugin_config=plugin_config,
-                        matched_groups=matched_groups,
-                    )
+                    if pm_command:
+                        success, response, intercept_message_level = await PluginManagementCommand().execute(
+                            matched_groups.get("manage_command", pm_command), message.session_id
+                        )
+                    else:
+                        # 获取插件配置后调用插件命令执行器。
+                        plugin_config = component_query_service.get_plugin_config(plugin_name)
+                        success, response, intercept_message_level = await command_executor(
+                            message=message,
+                            plugin_config=plugin_config,
+                            matched_groups=matched_groups,
+                        )
                     continue_process = not bool(intercept_message_level)
                 except Exception as exc:
                     logger.error(f"执行命令时出错: {command_name} - {exc}")
@@ -906,7 +921,12 @@ class ChatBot:
 
             # 已注册命令优先进入命令链；普通消息仍需先通过聊天过滤。
             text = message.processed_plain_text or ""
-            if not self._is_command_candidate(message):
+            pm_command = await match_pm_command(text.strip())
+            if pm_command and message.session_id:
+                disabled_commands = global_announcement_manager.get_disabled_chat_commands(message.session_id)
+                if PM_COMMAND_ID.rsplit(".", 1)[1] in disabled_commands:
+                    pm_command = None
+            if not pm_command and not self._is_command_candidate(message):
                 is_banned, word = MessageUtils.check_ban_words(text)
                 if is_banned:
                     chat_name = group_info.group_name if group_info else "私聊"
@@ -947,9 +967,9 @@ class ChatBot:
             if await self._process_clear_context_command(message):
                 return
 
-            # 命令处理 - 使用新插件系统检查并处理命令。
+            # 命令处理 - 分发本体管理命令及插件注册的命令。
             # 命令处理器内部自行决定是否回复消息，这里只负责流程分发与拦截。
-            is_command, cmd_result, continue_process = await self._process_commands(message)
+            is_command, cmd_result, continue_process = await self._process_commands(message, pm_command)
 
             # 如果是命令且不需要继续处理，则直接返回，避免落入 HeartFlow / MaiSaka。
             if is_command and await self._handle_command_processing_result(message, cmd_result, continue_process):

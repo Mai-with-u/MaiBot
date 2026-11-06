@@ -1,5 +1,7 @@
 # 内置桌宠与插件 SDK
 
+Android 用户可安装独立[安卓悬浮桌宠](../pet-clients/android/README.md)，连接局域网或远端宿主，复用形象、皮肤、聊天、待办、探索页面和 WebUI 认证。需要 Android 8.0 及以上、更新的系统 WebView 和悬浮窗权限；首版不支持手机自动读屏或应用监测，服务器端同样使用 `remote` 模式。APK 构建与分发位于 `pet-clients/android/`，不改变桌面客户端的构建方式。
+
 桌宠无需安装 `sengokucola.desktop-pet` 插件。独立 Tauri 2 客户端提供 Windows、macOS 和 Linux 构建，可连接本机或远端 MaiBot 宿主，使用系统 WebView 和 Rust 原生能力。原有 Python 内嵌桌宠继续支持 Windows，需要 WebView2 Runtime；其依赖随 Windows 主程序安装，源码环境更新依赖可运行 `uv sync --inexact`（保留插件额外依赖）。
 
 在 WebUI 主程序配置的「桌宠」启用 `desktop_pet.enabled`，默认关闭。`desktop_pet.mode` 默认为 `local`，由主程序启动并回收 Python 内嵌窗口；设置为 `remote` 后等待独立 Tauri 2 客户端连接。独立客户端连接本机 MaiBot 时也使用 `remote` 模式。两种模式共用桌宠网页界面和本体业务，配置支持热重载；窗口与网络通信在主程序事件循环之外运行。
@@ -29,15 +31,15 @@
 
 若 Nginx 等反向代理启用 HTTP Basic Auth，原生 WebView 的认证对话框可能另行要求代理账号密码。凭据缓存受 WebView 和代理控制，缓存失效或重新启动后可能需要再次认证，不保证永久免输。托盘菜单提供「打开 WebUI 登录」及「更换连接 / 屏幕授权」。
 
-从源码运行时，安装 Node.js 22 或更高版本、npm、Rust stable（当前依赖至少需要 1.90），以及系统编译工具。Windows 需要 Visual Studio Build Tools 的 C++ 桌面开发和 Windows SDK；macOS 需要 Xcode Command Line Tools；Linux 需要 WebKitGTK/GTK、托盘、XCB/XRandR、D-Bus、PipeWire、Clang 等开发依赖。详见 [Tauri 前置依赖](https://v2.tauri.app/start/prerequisites/)、[xcap Linux 依赖](https://github.com/nashaofu/xcap#linux-system-requirements) 和[客户端说明](../desktop-pet-client/README.md)。在仓库根目录执行：
+从源码运行时，安装 Node.js 22 或更高版本、npm、Rust stable（当前依赖至少需要 1.90），以及系统编译工具。Windows 需要 Visual Studio Build Tools 的 C++ 桌面开发和 Windows SDK；macOS 需要 Xcode Command Line Tools；Linux 需要 WebKitGTK/GTK、托盘、XCB/XRandR、D-Bus、PipeWire、Clang 等开发依赖。详见 [Tauri 前置依赖](https://v2.tauri.app/start/prerequisites/)、[xcap Linux 依赖](https://github.com/nashaofu/xcap#linux-system-requirements) 和[客户端说明](../pet-clients/desktop/README.md)。在仓库根目录执行：
 
 ```sh
-cd desktop-pet-client
+cd pet-clients/desktop
 npm ci
 npm start
 ```
 
-Windows 准备好工具链并完成 `npm ci` 后也可以双击 `desktop-pet-client/start.cmd`；首次启动会编译 Rust 原生程序。
+Windows 准备好工具链并完成 `npm ci` 后也可以双击 `pet-clients/desktop/start.cmd`；首次启动会编译 Rust 原生程序。
 
 独立客户端支持聊天图文、回复气泡、思考状态、皮肤、待办及图片附件、探索记录和插件按钮。聊天、待办与探索数据由服务器管理，窗口位置和本地资源缓存留在客户端。断网时显示连接状态并自动重连；已经发出但未获确认的操作不会自动重放，避免重复聊天或重复新增待办。客户端离线不停止服务器上的 Bot 定时待办和主动思考；用户提醒等到客户端连接后显示，桌面采集在离线时停止。
 
@@ -49,7 +51,7 @@ Windows 的应用条件支持进程名和窗口标题；macOS/Linux 当前按进
 
 ### 构建与分发
 
-在 `desktop-pet-client` 目录运行对应平台的构建命令：
+在 `pet-clients/desktop` 目录运行对应平台的构建命令：
 
 ```sh
 npm run dist:win
@@ -57,7 +59,7 @@ npm run dist:mac
 npm run dist:linux
 ```
 
-原始安装包位于 `desktop-pet-client/src-tauri/target/release/bundle/`，构建脚本同时收集到仓库的 `dist/desktop-pet-client/`，分别为 Windows NSIS 安装器、macOS DMG，以及 Linux DEB、RPM、AppImage。默认构建当前工具链的单一架构，请在目标操作系统和架构上构建、验证；macOS 签名与公证需要相应环境。构建使用共用桌宠网页资源，不包含完整浏览器、Bot 配置、密码、聊天数据库或模型依赖。JavaScript 依赖由 `desktop-pet-client/package-lock.json` 管理，Rust 依赖由 `desktop-pet-client/src-tauri/Cargo.lock` 管理。
+原始安装包位于 `pet-clients/desktop/src-tauri/target/release/bundle/`，构建脚本同时收集到仓库的 `dist/desktop-pet-client/`，分别为 Windows NSIS 安装器、macOS DMG，以及 Linux DEB、RPM、AppImage。默认构建当前工具链的单一架构，请在目标操作系统和架构上构建、验证；macOS 签名与公证需要相应环境。构建使用共用桌宠网页资源，不包含完整浏览器、Bot 配置、密码、聊天数据库或模型依赖。JavaScript 依赖由 `pet-clients/desktop/package-lock.json` 管理，Rust 依赖由 `pet-clients/desktop/src-tauri/Cargo.lock` 管理。
 
 ## 插件控制
 

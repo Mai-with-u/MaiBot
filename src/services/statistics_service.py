@@ -10,7 +10,7 @@ from src.common.database.database import get_db_session
 from src.common.database.database_model import Messages, ModelUsage, OnlineTime, ToolRecord
 from src.common.logger import get_logger
 from src.common.message_repository import count_messages, message_time_expression
-from src.manager.local_store_manager import local_storage
+from src.services.statistics_cache_files import dashboard_statistics_cache, detailed_statistics_cache
 from src.webui.schemas.statistics import (
     DashboardData,
     DetailedStatisticsData,
@@ -21,7 +21,6 @@ from src.webui.schemas.statistics import (
 
 logger = get_logger("statistics_service")
 
-DASHBOARD_STATISTICS_CACHE_KEY = "webui_dashboard_statistics_cache"
 DASHBOARD_STATISTICS_CACHE_VERSION = 6
 DEFAULT_DASHBOARD_CACHE_MAX_AGE_SECONDS = 20 * 60
 DEFAULT_DASHBOARD_CACHE_HOURS = (24, 168, 720)
@@ -32,16 +31,61 @@ _detailed_statistics_snapshot: DetailedStatisticsData | None = None
 
 
 def get_detailed_statistics_snapshot() -> DetailedStatisticsData | None:
-    """返回最近一次 HTML 报告生成时同步发布的详细统计快照。"""
+    """返回最近一次统计生成的详细统计快照。
 
+    重启后内存里还没有快照时，读取上一轮落盘的文件，不必等本轮统计跑完。
+    """
+
+    global _detailed_statistics_snapshot
+    if _detailed_statistics_snapshot is None:
+        raw_snapshot = detailed_statistics_cache.load()
+        if raw_snapshot is not None:
+            try:
+                _detailed_statistics_snapshot = DetailedStatisticsData.model_validate(raw_snapshot)
+            except Exception as e:
+                logger.warning(f"上一轮的详细统计快照无法读取，等待本轮统计重新生成: {e}")
     return _detailed_statistics_snapshot
 
 
 def store_detailed_statistics_snapshot(snapshot: DetailedStatisticsData) -> None:
-    """保存详细统计快照，供 WebUI 原生页面读取。"""
+    """保存详细统计快照，供 WebUI 原生页面读取，并落盘给下次启动使用。"""
 
     global _detailed_statistics_snapshot
     _detailed_statistics_snapshot = snapshot
+    detailed_statistics_cache.save(snapshot.model_dump(mode="json"))
+
+
+def _window_usage_items(start_time: datetime, end_time: datetime, end_inclusive: bool, usage_hourly: Any):
+    """小时汇总就绪时返回窗口内的用量条目，否则返回 None（调用方继续用 SQL 直接查明细）。"""
+    if usage_hourly is None or not getattr(usage_hourly, "ready", False):
+        return None
+    from src.services.statistics_usage_hourly import window_usage
+
+    return window_usage(start_time, end_time, end_inclusive=end_inclusive, cursor=usage_hourly.cursor)
+
+
+def _usage_totals(items: list[Any]) -> dict[str, Any]:
+    """与摘要 SQL 同口径：次数、花费、token、缓存、聊天任务的缓存、平均响应时间（AVG(time_cost)）。"""
+    totals = {
+        "total_requests": 0, "total_cost": 0.0, "input_tokens": 0, "output_tokens": 0,
+        "cache_hit_tokens": 0, "cache_miss_tokens": 0, "chat_cache_hit_tokens": 0, "chat_cache_miss_tokens": 0,
+        "response_time_count": 0, "response_time_sum": 0.0,
+    }
+    for _timestamp, key, metrics in items:
+        totals["total_requests"] += metrics[0]
+        totals["input_tokens"] += metrics[1]
+        totals["output_tokens"] += metrics[2]
+        totals["cache_hit_tokens"] += metrics[3]
+        totals["cache_miss_tokens"] += metrics[4]
+        totals["total_cost"] += metrics[5]
+        totals["response_time_count"] += metrics[9]
+        totals["response_time_sum"] += metrics[10]
+        if key.task_name in ("replyer", "planner"):
+            totals["chat_cache_hit_tokens"] += metrics[3]
+            totals["chat_cache_miss_tokens"] += metrics[4]
+    count = totals["response_time_count"]
+    totals["avg_response_time"] = totals["response_time_sum"] / count if count else 0.0
+    return totals
 
 
 async def get_dashboard_statistics(hours: int = 24, *, use_cache: bool = True) -> DashboardData:
@@ -68,18 +112,19 @@ def build_empty_dashboard_statistics() -> DashboardData:
     )
 
 
-async def compute_dashboard_statistics(hours: int = 24) -> DashboardData:
-    """获取 WebUI 仪表盘统计数据。"""
+async def compute_dashboard_statistics(hours: int = 24, *, usage_hourly: Any = None) -> DashboardData:
+    """获取 WebUI 仪表盘统计数据；小时汇总就绪时用量部分读汇总，结果与直接查明细一致。"""
     now = datetime.now()
     start_time = now - timedelta(hours=hours)
+    usage_items = await asyncio.to_thread(_window_usage_items, start_time, now, True, usage_hourly)
 
-    summary = await get_summary_statistics(start_time, now)
-    model_stats = await get_model_statistics(start_time, now)
-    hourly_data = await get_hourly_statistics(start_time, now)
+    summary = await get_summary_statistics(start_time, now, usage_items=usage_items)
+    model_stats = await get_model_statistics(start_time, now, usage_items=usage_items)
+    hourly_data = await get_hourly_statistics(start_time, now, usage_items=usage_items)
     hourly_online_seconds = await get_hourly_online_seconds(start_time, now)
     for item in hourly_data:
         item.online_seconds = hourly_online_seconds.get(item.timestamp, 0.0)
-    daily_data = await get_daily_statistics(start_time, now)
+    daily_data = await get_daily_statistics(start_time, now, usage_items=usage_items)
     recent_activity = await get_recent_activity(start_time=start_time, end_time=now, limit=10)
 
     return DashboardData(
@@ -97,7 +142,7 @@ def get_cached_dashboard_statistics(
     max_age_seconds: int = DEFAULT_DASHBOARD_CACHE_MAX_AGE_SECONDS,
 ) -> DashboardData | None:
     """从本地快照读取 WebUI 仪表盘统计数据。"""
-    raw_cache = local_storage[DASHBOARD_STATISTICS_CACHE_KEY]
+    raw_cache = dashboard_statistics_cache.load()
     if not isinstance(raw_cache, dict):
         return None
     if raw_cache.get("version") != DASHBOARD_STATISTICS_CACHE_VERSION:
@@ -130,11 +175,13 @@ def store_dashboard_statistics_cache(
 ) -> None:
     """保存 WebUI 仪表盘统计数据快照。"""
     snapshot_time = generated_at or datetime.now()
-    local_storage[DASHBOARD_STATISTICS_CACHE_KEY] = {
-        "version": DASHBOARD_STATISTICS_CACHE_VERSION,
-        "generated_at": snapshot_time.timestamp(),
-        "entries": {str(hours): _compact_dashboard_cache_entry(data) for hours, data in entries.items()},
-    }
+    dashboard_statistics_cache.save(
+        {
+            "version": DASHBOARD_STATISTICS_CACHE_VERSION,
+            "generated_at": snapshot_time.timestamp(),
+            "entries": {str(hours): _compact_dashboard_cache_entry(data) for hours, data in entries.items()},
+        }
+    )
 
 
 def update_dashboard_statistics_cache_entry(
@@ -144,25 +191,29 @@ def update_dashboard_statistics_cache_entry(
     generated_at: datetime | None = None,
 ) -> None:
     """更新单个 WebUI 仪表盘统计缓存条目。"""
-    raw_cache = local_storage[DASHBOARD_STATISTICS_CACHE_KEY]
+    raw_cache = dashboard_statistics_cache.load()
     entries: dict[str, Any] = {}
     if isinstance(raw_cache, dict) and isinstance(raw_cache.get("entries"), dict):
         entries.update(raw_cache["entries"])
 
     snapshot_time = generated_at or datetime.now()
     entries[str(hours)] = _compact_dashboard_cache_entry(data)
-    local_storage[DASHBOARD_STATISTICS_CACHE_KEY] = {
-        "version": DASHBOARD_STATISTICS_CACHE_VERSION,
-        "generated_at": snapshot_time.timestamp(),
-        "entries": entries,
-    }
+    dashboard_statistics_cache.save(
+        {
+            "version": DASHBOARD_STATISTICS_CACHE_VERSION,
+            "generated_at": snapshot_time.timestamp(),
+            "entries": entries,
+        }
+    )
 
 
-async def refresh_dashboard_statistics_cache(hours_values: tuple[int, ...] = DEFAULT_DASHBOARD_CACHE_HOURS) -> None:
+async def refresh_dashboard_statistics_cache(
+    hours_values: tuple[int, ...] = DEFAULT_DASHBOARD_CACHE_HOURS, *, usage_hourly: Any = None,
+) -> None:
     """刷新 WebUI 仪表盘统计数据快照。"""
     cache_entries: dict[int, DashboardData] = {}
     for hours in hours_values:
-        cache_entries[hours] = await compute_dashboard_statistics(hours=hours)
+        cache_entries[hours] = await compute_dashboard_statistics(hours=hours, usage_hourly=usage_hourly)
     store_dashboard_statistics_cache(cache_entries)
 
 
@@ -314,12 +365,16 @@ def _normalize_cache_tokens(
     return normalized_hit_tokens, normalized_miss_tokens
 
 
-async def get_summary_statistics(start_time: datetime, end_time: datetime) -> StatisticsSummary:
+async def get_summary_statistics(
+    start_time: datetime, end_time: datetime, *, usage_items: list[Any] | None = None,
+) -> StatisticsSummary:
     """获取指定时间范围内的摘要统计数据。"""
-    return await asyncio.to_thread(_get_summary_statistics_sync, start_time, end_time)
+    return await asyncio.to_thread(_get_summary_statistics_sync, start_time, end_time, usage_items)
 
 
-def _get_summary_statistics_sync(start_time: datetime, end_time: datetime) -> StatisticsSummary:
+def _get_summary_statistics_sync(
+    start_time: datetime, end_time: datetime, usage_items: list[Any] | None = None,
+) -> StatisticsSummary:
     """在线程中同步查询指定时间范围内的摘要统计数据。"""
     summary = StatisticsSummary(
         total_requests=0,
@@ -341,6 +396,21 @@ def _get_summary_statistics_sync(start_time: datetime, end_time: datetime) -> St
         tokens_per_hour=0.0,
     )
 
+    if usage_items is not None:
+        totals = _usage_totals(usage_items)
+        result = (
+            totals["total_requests"], totals["total_cost"], totals["input_tokens"], totals["output_tokens"],
+            totals["cache_hit_tokens"], totals["cache_miss_tokens"], totals["chat_cache_hit_tokens"],
+            totals["chat_cache_miss_tokens"], totals["avg_response_time"],
+        )
+    else:
+        result = _summary_usage_row(start_time, end_time)
+    _apply_summary_usage(summary, result)
+    _apply_summary_activity(summary, start_time, end_time)
+    return summary
+
+
+def _summary_usage_row(start_time: datetime, end_time: datetime) -> Any:
     with get_db_session(auto_commit=False) as session:
         cache_hit_tokens_expr = _cache_hit_tokens_expression()
         cache_miss_tokens_expr = _cache_miss_tokens_expression()
@@ -356,8 +426,10 @@ def _get_summary_statistics_sync(start_time: datetime, end_time: datetime) -> St
             func.sum(case((is_chat_task, cache_miss_tokens_expr), else_=0)).label("chat_cache_miss_tokens"),
             func.avg(col(ModelUsage.time_cost)).label("avg_response_time"),
         ).where(col(ModelUsage.timestamp) >= start_time, col(ModelUsage.timestamp) <= end_time)
-        result = session.exec(statement).first()
+        return session.exec(statement).first()
 
+
+def _apply_summary_usage(summary: StatisticsSummary, result: Any) -> None:
     if result:
         (
             total_requests,
@@ -389,6 +461,8 @@ def _get_summary_statistics_sync(start_time: datetime, end_time: datetime) -> St
         )
         summary.avg_response_time = float(avg_response_time or 0.0)
 
+
+def _apply_summary_activity(summary: StatisticsSummary, start_time: datetime, end_time: datetime) -> None:
     with get_db_session(auto_commit=False) as session:
         statement = select(OnlineTime).where(
             or_(
@@ -419,16 +493,95 @@ def _get_summary_statistics_sync(start_time: datetime, end_time: datetime) -> St
         summary.cost_per_hour = summary.total_cost / online_hours
         summary.tokens_per_hour = summary.total_tokens / online_hours
 
-    return summary
+
+def fetch_window_usage_totals(start_time: datetime, end_time: datetime, *, usage_hourly: Any = None) -> Dict[str, Any]:
+    """汇总 [start_time, end_time) 内的模型调用与在线时长，供详细统计计算上一周期环比。"""
+    usage_items = _window_usage_items(start_time, end_time, False, usage_hourly)
+    with get_db_session(auto_commit=False) as session:
+        row = None if usage_items is not None else session.exec(
+            select(
+                func.count().label("total_requests"),
+                func.sum(col(ModelUsage.cost)).label("total_cost"),
+                func.sum(col(ModelUsage.prompt_tokens)).label("input_tokens"),
+                func.sum(col(ModelUsage.completion_tokens)).label("output_tokens"),
+                func.sum(_cache_hit_tokens_expression()).label("cache_hit_tokens"),
+                func.sum(_cache_miss_tokens_expression()).label("cache_miss_tokens"),
+            ).where(col(ModelUsage.timestamp) >= start_time, col(ModelUsage.timestamp) < end_time)
+        ).one()
+        online_records = session.exec(
+            select(OnlineTime).where(
+                col(OnlineTime.end_timestamp) >= start_time,
+                col(OnlineTime.start_timestamp) < end_time,
+            )
+        ).all()
+
+    online_time = 0.0
+    for record in online_records:
+        overlap_start = max(record.start_timestamp, start_time)
+        overlap_end = min(record.end_timestamp, end_time)
+        if overlap_end > overlap_start:
+            online_time += (overlap_end - overlap_start).total_seconds()
+
+    if usage_items is not None:
+        totals = _usage_totals(usage_items)
+        row = tuple(totals[name] for name in (
+            "total_requests", "total_cost", "input_tokens", "output_tokens", "cache_hit_tokens", "cache_miss_tokens",
+        ))
+    total_requests, total_cost, input_tokens, output_tokens, cache_hit_tokens, cache_miss_tokens = row
+    return {
+        "total_requests": int(total_requests or 0),
+        "total_cost": float(total_cost or 0.0),
+        "input_tokens": int(input_tokens or 0),
+        "output_tokens": int(output_tokens or 0),
+        "cache_hit_tokens": int(cache_hit_tokens or 0),
+        "cache_miss_tokens": int(cache_miss_tokens or 0),
+        "online_time": online_time,
+    }
 
 
-async def get_model_statistics(start_time: datetime, end_time: datetime | None = None) -> List[ModelStatistics]:
+async def get_model_statistics(
+    start_time: datetime, end_time: datetime | None = None, *, usage_items: list[Any] | None = None,
+) -> List[ModelStatistics]:
     """获取指定时间范围内的模型统计数据。"""
-    return await asyncio.to_thread(_get_model_statistics_sync, start_time, end_time)
+    return await asyncio.to_thread(_get_model_statistics_sync, start_time, end_time, usage_items)
 
 
-def _get_model_statistics_sync(start_time: datetime, end_time: datetime | None = None) -> List[ModelStatistics]:
+def _model_statistics_from_items(usage_items: list[Any]) -> List[ModelStatistics]:
+    grouped: dict[str, list[float]] = {}
+    for _timestamp, key, metrics in usage_items:
+        totals = grouped.setdefault(key.model_name, [0, 0.0, 0, 0, 0, 0, 0, 0.0])
+        totals[0] += metrics[0]
+        totals[1] += metrics[5]
+        totals[2] += metrics[1]
+        totals[3] += metrics[2]
+        totals[4] += metrics[3]
+        totals[5] += metrics[4]
+        totals[6] += metrics[9]
+        totals[7] += metrics[10]
+    ranked = sorted(grouped.items(), key=lambda item: (-item[1][0], item[0]))[:10]
+    return [
+        ModelStatistics(
+            model_name=model_name,
+            request_count=int(totals[0]),
+            total_cost=float(totals[1]),
+            total_tokens=int(totals[2]) + int(totals[3]),
+            input_tokens=int(totals[2]),
+            output_tokens=int(totals[3]),
+            cache_hit_tokens=int(totals[4]),
+            cache_miss_tokens=int(totals[5]),
+            cache_hit_rate=_calculate_cache_hit_rate(totals[4], totals[5]),
+            avg_response_time=float(totals[7] / totals[6]) if totals[6] else 0.0,
+        )
+        for model_name, totals in ranked
+    ]
+
+
+def _get_model_statistics_sync(
+    start_time: datetime, end_time: datetime | None = None, usage_items: list[Any] | None = None,
+) -> List[ModelStatistics]:
     """在线程中同步查询指定时间范围内的模型统计数据。"""
+    if usage_items is not None:
+        return _model_statistics_from_items(usage_items)
     model_name_expr = func.coalesce(col(ModelUsage.model_assign_name), col(ModelUsage.model_name), "unknown")
     cache_hit_tokens_expr = _cache_hit_tokens_expression()
     cache_miss_tokens_expr = _cache_miss_tokens_expression()
@@ -445,7 +598,8 @@ def _get_model_statistics_sync(start_time: datetime, end_time: datetime | None =
         )
         .where(col(ModelUsage.timestamp) >= start_time)
         .group_by(model_name_expr)
-        .order_by(desc(func.count()))
+        # 调用次数相同时按模型名排序，结果稳定，也与小时汇总的计算方式一致
+        .order_by(desc(func.count()), model_name_expr)
         .limit(10)
     )
     if end_time is not None:
@@ -517,13 +671,34 @@ def _get_hourly_online_seconds_sync(start_time: datetime, end_time: datetime) ->
     return hourly_seconds
 
 
-async def get_hourly_statistics(start_time: datetime, end_time: datetime) -> List[TimeSeriesData]:
+async def get_hourly_statistics(
+    start_time: datetime, end_time: datetime, *, usage_items: list[Any] | None = None,
+) -> List[TimeSeriesData]:
     """按小时聚合 LLM 请求、费用和 token。"""
-    return await asyncio.to_thread(_get_hourly_statistics_sync, start_time, end_time)
+    return await asyncio.to_thread(_get_hourly_statistics_sync, start_time, end_time, usage_items)
 
 
-def _get_hourly_statistics_sync(start_time: datetime, end_time: datetime) -> List[TimeSeriesData]:
+def _series_rows_from_items(usage_items: list[Any], label_format: str) -> dict[str, tuple]:
+    """按时间标签分组，返回与 SQL 分组同形的行：(标签, 次数, 花费, 输入, 输出, 缓存命中, 缓存未命中)。"""
+    grouped: dict[str, list[float]] = {}
+    for timestamp, _key, metrics in usage_items:
+        label = timestamp.strftime(label_format)
+        totals = grouped.setdefault(label, [0, 0.0, 0, 0, 0, 0])
+        totals[0] += metrics[0]
+        totals[1] += metrics[5]
+        totals[2] += metrics[1]
+        totals[3] += metrics[2]
+        totals[4] += metrics[3]
+        totals[5] += metrics[4]
+    return {label: (label, *totals) for label, totals in grouped.items()}
+
+
+def _get_hourly_statistics_sync(
+    start_time: datetime, end_time: datetime, usage_items: list[Any] | None = None,
+) -> List[TimeSeriesData]:
     """在线程中同步执行按小时聚合。"""
+    if usage_items is not None:
+        return _hourly_series(start_time, end_time, _series_rows_from_items(usage_items, "%Y-%m-%dT%H:00:00"))
     hour_expr = func.strftime("%Y-%m-%dT%H:00:00", col(ModelUsage.timestamp))
     cache_hit_tokens_expr = _cache_hit_tokens_expression()
     cache_miss_tokens_expr = _cache_miss_tokens_expression()
@@ -543,8 +718,10 @@ def _get_hourly_statistics_sync(start_time: datetime, end_time: datetime) -> Lis
 
     with get_db_session(auto_commit=False) as session:
         rows = session.exec(statement).all()
+    return _hourly_series(start_time, end_time, {row[0]: row for row in rows})
 
-    data_dict = {row[0]: row for row in rows}
+
+def _hourly_series(start_time: datetime, end_time: datetime, data_dict: dict) -> List[TimeSeriesData]:
     result = []
     current = start_time.replace(minute=0, second=0, microsecond=0)
     while current <= end_time:
@@ -570,13 +747,19 @@ def _get_hourly_statistics_sync(start_time: datetime, end_time: datetime) -> Lis
     return result
 
 
-async def get_daily_statistics(start_time: datetime, end_time: datetime) -> List[TimeSeriesData]:
+async def get_daily_statistics(
+    start_time: datetime, end_time: datetime, *, usage_items: list[Any] | None = None,
+) -> List[TimeSeriesData]:
     """按天聚合 LLM 请求、费用和 token。"""
-    return await asyncio.to_thread(_get_daily_statistics_sync, start_time, end_time)
+    return await asyncio.to_thread(_get_daily_statistics_sync, start_time, end_time, usage_items)
 
 
-def _get_daily_statistics_sync(start_time: datetime, end_time: datetime) -> List[TimeSeriesData]:
+def _get_daily_statistics_sync(
+    start_time: datetime, end_time: datetime, usage_items: list[Any] | None = None,
+) -> List[TimeSeriesData]:
     """在线程中同步执行按天聚合。"""
+    if usage_items is not None:
+        return _daily_series(start_time, end_time, _series_rows_from_items(usage_items, "%Y-%m-%dT00:00:00"))
     day_expr = func.strftime("%Y-%m-%dT00:00:00", col(ModelUsage.timestamp))
     cache_hit_tokens_expr = _cache_hit_tokens_expression()
     cache_miss_tokens_expr = _cache_miss_tokens_expression()
@@ -596,8 +779,10 @@ def _get_daily_statistics_sync(start_time: datetime, end_time: datetime) -> List
 
     with get_db_session(auto_commit=False) as session:
         rows = session.exec(statement).all()
+    return _daily_series(start_time, end_time, {row[0]: row for row in rows})
 
-    data_dict = {row[0]: row for row in rows}
+
+def _daily_series(start_time: datetime, end_time: datetime, data_dict: dict) -> List[TimeSeriesData]:
     result = []
     current = start_time.replace(hour=0, minute=0, second=0, microsecond=0)
     while current <= end_time:

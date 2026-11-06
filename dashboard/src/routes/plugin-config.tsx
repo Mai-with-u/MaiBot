@@ -270,7 +270,11 @@ function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
         </div>
       )
 
-    case 'select':
+    case 'select': {
+      const choiceLabel = (choice: unknown) => {
+        const optionValue = String(choice)
+        return resolveLocalizedText(undefined, language, optionValue, field.i18n, `choice:${optionValue}`)
+      }
       if (field.multiple) {
         const selectedValues = Array.isArray(value)
           ? value.map(v => String(v))
@@ -283,7 +287,7 @@ function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
             <Label>{label}</Label>
             <MultiSelect
               options={(field.choices ?? []).map((choice) => ({
-                label: String(choice),
+                label: choiceLabel(choice),
                 value: String(choice),
               }))}
               selected={selectedValues}
@@ -312,7 +316,7 @@ function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
             <SelectContent>
               {field.choices?.map((choice) => (
                 <SelectItem key={String(choice)} value={String(choice)}>
-                  {String(choice)}
+                  {choiceLabel(choice)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -320,6 +324,7 @@ function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
           {hint && <p className="text-muted-foreground text-xs">{hint}</p>}
         </div>
       )
+    }
 
     case 'textarea':
       return (

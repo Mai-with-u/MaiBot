@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, HTTPException
 
+from src.core.commands.pm_aliases import PM_COMMAND_ID, PM_PATTERN, load_aliases
 from src.plugin_runtime.component_query import component_query_service
 from src.plugin_runtime.host.component_registry import CommandEntry, ComponentEntry, ComponentTypes, HomeCardEntry, ToolEntry
 
@@ -189,7 +190,17 @@ def list_runtime_commands() -> Dict[str, Any]:
             "aliases": [],
             "permission": "operator",
             "enabled": True,
-        }
+        },
+        {
+            "id": PM_COMMAND_ID,
+            "name": "pm",
+            "description": "管理插件、组件、插件配置和指令别名",
+            "plugin_name": "MaiBot 核心",
+            "pattern": PM_PATTERN,
+            "aliases": list(load_aliases()),
+            "permission": "operator",
+            "enabled": True,
+        },
     ]
     for supervisor in component_query_service._iter_supervisors():
         for component in supervisor.component_registry.get_components_by_type(

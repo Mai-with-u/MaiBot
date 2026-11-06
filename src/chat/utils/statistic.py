@@ -4,7 +4,7 @@ from html import escape
 from os import getenv
 from pathlib import Path
 from time import perf_counter
-from typing import TYPE_CHECKING, DefaultDict, Dict, List, Mapping, Tuple, cast
+from typing import TYPE_CHECKING, Callable, DefaultDict, Dict, List, Mapping, Tuple, cast
 
 import asyncio
 import concurrent.futures
@@ -14,15 +14,39 @@ from typing_extensions import TypedDict
 
 from src.common.logger import get_logger
 from src.manager.async_task_manager import AsyncTask
+from src.services.statistics_cache_files import full_statistics_cache
+from src.services.statistics_usage_rules import (
+    UsageKey,
+    UsageMetrics,
+    ceil_hour,
+    clamp_hour_range,
+    normalize_prompt_cache_tokens,
+    normalize_usage_record,
+)
+from src.services.statistics_usage_rules import bucket_start as usage_bucket_start
 
-from .statistics_timeseries import collect_time_series
+from .statistics_timeseries import (
+    SOURCE_HOURLY,
+    SOURCE_RAW,
+    SOURCE_UNAGGREGATED,
+    PeriodTrendCollector,
+    PeriodTrendWindow,
+    UsageEntry,
+    build_series_windows,
+    collect_time_series,
+    hours_needing_detail,
+    usage_entry_from_record,
+)
 
 if TYPE_CHECKING:
+    from src.services.statistics_usage_hourly import UsageHourlyState
     from src.webui.schemas.statistics import (
         DetailedDistributionItem,
+        DetailedReliabilityData,
         DetailedStatisticsBreakdown,
         DetailedStatisticsData,
         DetailedStatisticsDistributions,
+        DetailedStatisticsSummary,
     )
 
 logger = get_logger("maibot_statistic")
@@ -58,6 +82,36 @@ local_storage = _LocalStorageProxy()
 
 def fetch_model_usage_since(*args, **kwargs):
     from src.services.statistics_service import fetch_model_usage_since as impl
+
+    return impl(*args, **kwargs)
+
+
+def refresh_usage_hourly(*args, **kwargs):
+    from src.services.statistics_usage_hourly import refresh_usage_hourly as impl
+
+    return impl(*args, **kwargs)
+
+
+def fetch_usage_hourly(*args, **kwargs):
+    from src.services.statistics_usage_hourly import fetch_usage_hourly as impl
+
+    return impl(*args, **kwargs)
+
+
+def fetch_usage_records_between(*args, **kwargs):
+    from src.services.statistics_usage_hourly import fetch_usage_records_between as impl
+
+    return impl(*args, **kwargs)
+
+
+def fetch_usage_records_after_id(*args, **kwargs):
+    from src.services.statistics_usage_hourly import fetch_usage_records_after_id as impl
+
+    return impl(*args, **kwargs)
+
+
+def fetch_usage_duration_moments(*args, **kwargs):
+    from src.services.statistics_usage_hourly import fetch_usage_duration_moments as impl
 
     return impl(*args, **kwargs)
 
@@ -102,6 +156,58 @@ def refresh_statistics_aggregates(*args, **kwargs):
     from src.services.statistics_aggregation_service import refresh_statistics_aggregates as impl
 
     return impl(*args, **kwargs)
+
+
+def count_chat_messages_between(*args, **kwargs):
+    from src.services.statistics_aggregation_service import count_chat_messages_between as impl
+
+    return impl(*args, **kwargs)
+
+
+def count_tool_records_between(*args, **kwargs):
+    from src.services.statistics_aggregation_service import count_tool_records_between as impl
+
+    return impl(*args, **kwargs)
+
+
+def fetch_window_usage_totals(*args, **kwargs):
+    from src.services.statistics_service import fetch_window_usage_totals as impl
+
+    return impl(*args, **kwargs)
+
+
+def fetch_model_task_usage_groups(*args, **kwargs):
+    from src.services.model_task_usage_service import fetch_model_task_usage_groups as impl
+
+    return impl(*args, **kwargs)
+
+
+def fetch_model_task_usage_minutes(*args, **kwargs):
+    from src.services.model_task_usage_service import fetch_model_task_usage_minutes as impl
+
+    return impl(*args, **kwargs)
+
+
+def get_model_task_usage_retention() -> timedelta:
+    from src.services.model_task_usage_service import MODEL_TASK_USAGE_RETENTION
+
+    return MODEL_TASK_USAGE_RETENTION
+
+
+# 详细统计各时段趋势的分桶粒度（分钟）；趋势明细最多覆盖 30 天，更早的时段会被标记为截断。
+PERIOD_TREND_BUCKET_MINUTES: Dict[str, int] = {
+    "all_time": 1440,
+    "last_30_days": 1440,
+    "last_7_days": 360,
+    "last_3_days": 180,
+    "last_24_hours": 60,
+    "last_3_hours": 10,
+    "last_hour": 5,
+    "last_15_minutes": 1,
+}
+PERIOD_TREND_MAX_RANGE = timedelta(days=30)
+EMBEDDING_TASK_NAMES = frozenset({"embedding", "image_embedding"})
+_DURATION_CATEGORIES = ("type", "user", "model", "module", "task")
 
 
 def _resolve_statistics_report_path(record_file_path: str | None = None) -> str:
@@ -367,16 +473,7 @@ def _format_large_number(num: float | int, html: bool = False) -> str:
             return str(num)
 
 
-def _normalize_prompt_cache_tokens(prompt_tokens: int, hit_tokens: int, miss_tokens: int) -> tuple[int, int]:
-    """将 provider 返回的 prompt cache token 统计规范化为可聚合值。"""
-
-    normalized_hit_tokens = max(hit_tokens, 0)
-    normalized_miss_tokens = max(miss_tokens, 0)
-    if normalized_miss_tokens == 0 and normalized_hit_tokens > 0:
-        normalized_miss_tokens = max(prompt_tokens - normalized_hit_tokens, 0)
-    if normalized_hit_tokens + normalized_miss_tokens == 0 and prompt_tokens > 0:
-        normalized_miss_tokens = prompt_tokens
-    return normalized_hit_tokens, normalized_miss_tokens
+_normalize_prompt_cache_tokens = normalize_prompt_cache_tokens
 
 
 def _format_cache_hit_rate(hit_tokens: int, miss_tokens: int) -> str:
@@ -423,6 +520,8 @@ class StatisticOutputTask(AsyncTask):
 
     SEP_LINE = "-" * 84
     RUN_INTERVAL_SECONDS = 15 * 60
+    # 报表之后补做回填的时间上限；每 20 秒约 58 万条，足够一次补完百万级的历史
+    BACKFILL_AFTER_REPORT_SECONDS = 120.0
 
     def __init__(self, record_file_path: str | None = None):
         # 启动后立即运行，之后每15分钟输出一次统计数据
@@ -524,7 +623,12 @@ class StatisticOutputTask(AsyncTask):
 
                 stage_started_at = perf_counter()
                 await loop.run_in_executor(executor, refresh_statistics_aggregates)
-                logger.info(f"统计阶段耗时: 增量汇总={perf_counter() - stage_started_at:.2f}s")
+                self._usage_hourly = await loop.run_in_executor(executor, refresh_usage_hourly)
+                StatisticOutputTask._usage_hourly_for_comparison = self._usage_hourly
+                logger.info(
+                    f"统计阶段耗时: 增量汇总={perf_counter() - stage_started_at:.2f}s，"
+                    f"小时汇总{'已就绪' if self._usage_hourly.ready else '未就绪，本轮读明细'}"
+                )
 
                 # 数据收集任务
                 stage_started_at = perf_counter()
@@ -535,7 +639,7 @@ class StatisticOutputTask(AsyncTask):
                 logger.info(f"统计阶段耗时: 多周期统计={perf_counter() - stage_started_at:.2f}s")
                 stage_started_at = perf_counter()
                 try:
-                    await refresh_dashboard_statistics_cache()
+                    await refresh_dashboard_statistics_cache(usage_hourly=self._usage_hourly)
                 except Exception as e:
                     logger.warning(f"刷新 WebUI 统计缓存失败，将继续生成 HTML 报告: {e}")
                 logger.info(f"统计数据收集完成，首页缓存刷新耗时={perf_counter() - stage_started_at:.2f}s")
@@ -552,8 +656,28 @@ class StatisticOutputTask(AsyncTask):
                 f"统计数据输出完成，报表输出耗时={perf_counter() - stage_started_at:.2f}s，"
                 f"总耗时={perf_counter() - started_at:.2f}s"
             )
+            await self._finish_usage_hourly_backfill()
         except Exception as e:
             logger.exception(f"输出统计数据过程中发生异常，错误信息：{e}")
+
+    async def _finish_usage_hourly_backfill(self) -> None:
+        """本轮已用明细出完报表；汇总还没追上时接着回填，让下一轮直接用上汇总。
+
+        单轮开头的回填受时间预算限制，记录多时一轮回填不完；这里在报表之后补做，不影响本轮耗时。
+        失败照常按退避重试，不抛出。
+        """
+        usage_hourly = getattr(self, "_usage_hourly", None)
+        if usage_hourly is None or usage_hourly.ready:
+            return
+        started_at = perf_counter()
+        loop = asyncio.get_running_loop()
+        state = await loop.run_in_executor(
+            None, lambda: refresh_usage_hourly(time_budget_seconds=self.BACKFILL_AFTER_REPORT_SECONDS)
+        )
+        logger.info(
+            f"报表之后继续回填小时汇总：耗时={perf_counter() - started_at:.2f}s，"
+            f"{'已追上，下一轮改读汇总' if state.ready else '仍未追上，下一轮继续'}"
+        )
 
     # -- 以下为统计数据收集方法 --
 
@@ -647,9 +771,17 @@ class StatisticOutputTask(AsyncTask):
         counter[subkey] += amount
 
     @staticmethod
-    def _collect_model_request_for_period(collect_period: List[Tuple[str, datetime]]) -> StatPeriodMapping:
+    def _collect_model_request_for_period(
+        collect_period: List[Tuple[str, datetime]],
+        usage_hourly: "UsageHourlyState | None" = None,
+        now: datetime | None = None,
+    ) -> StatPeriodMapping:
         """
         收集指定时间段的LLM请求统计数据
+
+        小时汇总就绪时（usage_hourly.ready），整点区间读汇总，时间段两端不满一小时的部分、
+        以及汇总刷新之后才写入的记录读明细；否则全部读明细。
+        两种来源先归一化成同一种（维度, 指标）再累加，所以结果一致。
 
         :param collect_period: 统计时间段
         """
@@ -662,20 +794,12 @@ class StatisticOutputTask(AsyncTask):
         stats: StatPeriodMapping = {
             period_key: StatisticOutputTask._build_stat_period_data() for period_key, _ in collect_period
         }
-        duration_stats: dict[str, dict[str, defaultdict[str, dict[str, float]]]] = {
-            period_key: {
-                "type": defaultdict(lambda: {"count": 0.0, "mean": 0.0, "m2": 0.0}),
-                "user": defaultdict(lambda: {"count": 0.0, "mean": 0.0, "m2": 0.0}),
-                "model": defaultdict(lambda: {"count": 0.0, "mean": 0.0, "m2": 0.0}),
-                "module": defaultdict(lambda: {"count": 0.0, "mean": 0.0, "m2": 0.0}),
-                "task": defaultdict(lambda: {"count": 0.0, "mean": 0.0, "m2": 0.0}),
-            }
+        # 每个维度只保存可累加的耗时矩（有效条数、和、平方和），汇总行和明细行都能直接相加
+        duration_moments: dict[str, dict[str, defaultdict[str, list[float]]]] = {
+            period_key: {category: defaultdict(lambda: [0.0, 0.0, 0.0]) for category in _DURATION_CATEGORIES}
             for period_key, _ in collect_period
         }
-
-        # 以最早周期的起点查询模型记录，timestamp 使用 datetime 进行比较。
-        query_start_time = collect_period[-1][1]
-        # 各维度只描述字段映射；同一条请求的字段解析、缓存归一化只做一次。
+        # 各维度只描述字段映射；同一组维度的解析、缓存归一化只做一次。
         dimensions = (
             ("type", REQ_CNT_BY_TYPE, IN_TOK_BY_TYPE, OUT_TOK_BY_TYPE, TOTAL_TOK_BY_TYPE,
              CACHE_HIT_TOK_BY_TYPE, CACHE_MISS_TOK_BY_TYPE, COST_BY_TYPE),
@@ -691,78 +815,74 @@ class StatisticOutputTask(AsyncTask):
         classified: Dict[str, Dict[Tuple[str, str, str], Dict[str, float]]] = {
             period_key: {} for period_key, _ in collect_period
         }
-        for record in fetch_model_usage_since(query_start_time):
-            record_timestamp = cast(datetime, record["timestamp"])
-            request_type = cast(str | None, record["request_type"]) or "unknown"
-            user_id = cast(str | None, record["model_api_provider_name"]) or "unknown"
-            model_name = (
-                cast(str | None, record["model_assign_name"])
-                or cast(str | None, record["model_name"])
-                or "unknown"
-            )
-            session_id = str(record.get("session_id") or "").strip()
-            chat_cost_key = session_id if session_id else GLOBAL_COST_SESSION_KEY
+
+        def add(period_keys: List[str], key: "UsageKey", metrics: "UsageMetrics") -> None:
+            """把一组（维度, 指标）累加进给定的时间段；明细是一条请求，汇总是同一小时里的多条。"""
+            if not period_keys:
+                return
+            (request_count, prompt_tokens, completion_tokens, hit_tokens, miss_tokens, cost,
+             duration_count, duration_sum, duration_sum_sq, *_) = metrics
+            total_tokens = prompt_tokens + completion_tokens
+            request_type = key.request_type
             # 提取模块名：如果请求类型包含"."，取第一个"."之前的部分。
             module_name = request_type.split(".")[0] if "." in request_type else request_type
-            # 历史记录可能没有任务名，单独归为未记录，不根据请求前缀或当前配置推断。
-            task_name = cast(str | None, record.get("task_name")) or "未记录"
-            names = (request_type, user_id, model_name, module_name, task_name)
-            prompt_tokens = cast(int | None, record["prompt_tokens"]) or 0
-            completion_tokens = cast(int | None, record["completion_tokens"]) or 0
-            total_tokens = prompt_tokens + completion_tokens
-            hit_tokens = miss_tokens = 0
-            if record.get("prompt_cache_enabled"):
-                hit_tokens, miss_tokens = _normalize_prompt_cache_tokens(
-                    prompt_tokens,
-                    cast(int | None, record.get("prompt_cache_hit_tokens")) or 0,
-                    cast(int | None, record.get("prompt_cache_miss_tokens")) or 0,
-                )
-            cost = cast(float | None, record["cost"]) or 0.0
-            # 收集 time_cost 数据，只记录有效的耗时。
-            time_cost = cast(float | None, record["time_cost"]) or 0.0
+            names = (request_type, key.provider_name, key.model_name, module_name, key.task_name)
+            chat_cost_key = key.session_id if key.session_id else GLOBAL_COST_SESSION_KEY
             # 在原始请求层面区分嵌入，避免同名模型或模块的两类调用混在一起。
-            request_kind = "embedding" if task_name in {"embedding", "image_embedding"} else "generation"
+            request_kind = "embedding" if key.task_name in EMBEDDING_TASK_NAMES else "generation"
             classification_keys = (
-                ("model", request_kind, model_name), ("module", request_kind, module_name),
-                ("task", request_kind, task_name), ("request_type", request_kind, request_type),
+                ("model", request_kind, key.model_name), ("module", request_kind, module_name),
+                ("task", request_kind, key.task_name), ("request_type", request_kind, request_type),
             )
             # 保存可累加的耗时矩，保证增量缓存合并后仍能正确计算均值和标准差。
-            metrics = (
-                ("request_count", 1), ("input_tokens", prompt_tokens), ("output_tokens", completion_tokens),
-                ("cache_hit_tokens", hit_tokens), ("cache_miss_tokens", miss_tokens), ("total_cost", cost),
-                ("duration_count", int(time_cost > 0)), ("duration_sum", time_cost if time_cost > 0 else 0.0),
-                ("duration_sum_sq", time_cost * time_cost if time_cost > 0 else 0.0),
+            metric_items = (
+                ("request_count", request_count), ("input_tokens", prompt_tokens),
+                ("output_tokens", completion_tokens), ("cache_hit_tokens", hit_tokens),
+                ("cache_miss_tokens", miss_tokens), ("total_cost", cost), ("duration_count", duration_count),
+                ("duration_sum", duration_sum), ("duration_sum_sq", duration_sum_sq),
             )
-            for period_key, period_start in collect_period:
-                if record_timestamp < period_start:
-                    continue
+            for period_key in period_keys:
                 period = stats[period_key]
-                period[TOTAL_REQ_CNT] += 1
+                period[TOTAL_REQ_CNT] += request_count
                 period[TOTAL_COST] += cost
                 period[CACHE_HIT_TOK] += hit_tokens
                 period[CACHE_MISS_TOK] += miss_tokens
                 period[TOTAL_TOK_BY_CHAT][chat_cost_key] += total_tokens
                 period[COST_BY_CHAT][chat_cost_key] += cost
+                period_moments = duration_moments[period_key]
                 for name, (category, requests, inputs, outputs, tokens, hits, misses, costs) in zip(
                     names, dimensions, strict=True,
                 ):
-                    period[requests][name] += 1
+                    period[requests][name] += request_count
                     period[inputs][name] += prompt_tokens
                     period[outputs][name] += completion_tokens
                     period[tokens][name] += total_tokens
                     period[hits][name] += hit_tokens
                     period[misses][name] += miss_tokens
                     period[costs][name] += cost
-                    if time_cost > 0:
-                        item_stats = duration_stats[period_key][category][name]
-                        item_stats["count"] += 1
-                        delta = time_cost - item_stats["mean"]
-                        item_stats["mean"] += delta / item_stats["count"]
-                        item_stats["m2"] += delta * (time_cost - item_stats["mean"])
-                for key in classification_keys:
-                    totals = classified[period_key].setdefault(key, {})
-                    for metric, value in metrics:
+                    if duration_count:
+                        moments = period_moments[category][name]
+                        moments[0] += duration_count
+                        moments[1] += duration_sum
+                        moments[2] += duration_sum_sq
+                period_classified = classified[period_key]
+                for classification_key in classification_keys:
+                    totals = period_classified.setdefault(classification_key, {})
+                    for metric, value in metric_items:
                         totals[metric] = totals.get(metric, 0.0) + value
+
+        if usage_hourly is not None and usage_hourly.ready and now is not None:
+            StatisticOutputTask._collect_usage_with_hourly(collect_period, usage_hourly.cursor, now, add)
+        else:
+            # 以最早周期的起点查询模型记录，timestamp 使用 datetime 进行比较。
+            for record in fetch_model_usage_since(collect_period[-1][1]):
+                record_timestamp = cast(datetime, record["timestamp"])
+                key, metrics = normalize_usage_record(record)
+                add(
+                    [period_key for period_key, period_start in collect_period if record_timestamp >= period_start],
+                    key,
+                    metrics,
+                )
 
         # 输出时才序列化分类键，沿用现有缓存格式，避免每条请求、每个周期重复编码。
         for period_key, totals in classified.items():
@@ -784,12 +904,12 @@ class StatisticOutputTask(AsyncTask):
                 std_cost_data = cast(dict[str, float], stats[period_key].get(std_key, {}))
 
                 for item_name in category_data:
-                    item_stats = duration_stats[period_key][category].get(item_name)
-                    if item_stats and item_stats["count"] > 0:
-                        count = item_stats["count"]
-                        avg_time_cost = item_stats["mean"]
+                    moments = duration_moments[period_key][category].get(item_name)
+                    if moments and moments[0] > 0:
+                        count, total, total_sq = moments
+                        avg_time_cost = total / count
                         avg_cost_data[item_name] = round(avg_time_cost, 3)
-                        variance = max(item_stats["m2"] / count, 0.0)
+                        variance = max(total_sq / count - avg_time_cost * avg_time_cost, 0.0)
                         std_cost_data[item_name] = round(variance**0.5, 3)
                     else:
                         avg_cost_data[item_name] = 0.0
@@ -799,6 +919,55 @@ class StatisticOutputTask(AsyncTask):
                 stats[period_key][std_key] = std_cost_data
 
         return stats
+
+    @staticmethod
+    def _collect_usage_with_hourly(
+        collect_period: List[Tuple[str, datetime]],
+        cursor: int,
+        now: datetime,
+        add: "Callable[[List[str], UsageKey, UsageMetrics], None]",
+    ) -> None:
+        """整点区间读小时汇总，其余读明细；各部分在时间或 id 上互不重叠，不会重复计数。
+
+        - 汇总：每个时间段的 [ceil(起点), floor(now))，只含 id <= cursor 的记录
+        - 明细（头）：[起点, ceil(起点))；时间段不足一个整点区间时为 [起点, 现在之后)
+        - 明细（尾）：[floor(now), 现在之后)，用到汇总的时间段共用一次读取
+        - 明细（新）：id > cursor 且时间落在整点区间里的记录，即汇总刷新之后才写入的
+        """
+        hour_ranges = {period_key: clamp_hour_range(period_start, now) for period_key, period_start in collect_period}
+        hourly_ranges = [hour_range for hour_range in hour_ranges.values() if hour_range]
+
+        def periods_covering(timestamp: datetime) -> List[str]:
+            return [
+                period_key for period_key, hour_range in hour_ranges.items()
+                if hour_range and hour_range[0] <= timestamp < hour_range[1]
+            ]
+
+        if hourly_ranges:
+            earliest = min(hour_range[0] for hour_range in hourly_ranges)
+            latest = max(hour_range[1] for hour_range in hourly_ranges)
+            for bucket, key, metrics in fetch_usage_hourly(earliest, latest):
+                add(periods_covering(bucket), key, metrics)
+
+            tail_periods = [period_key for period_key, hour_range in hour_ranges.items() if hour_range]
+            for record in fetch_usage_records_between(usage_bucket_start(now), None):
+                add(tail_periods, *normalize_usage_record(record))
+
+            for record in fetch_usage_records_after_id(cursor):
+                timestamp = record["timestamp"]
+                if isinstance(timestamp, datetime):
+                    add(periods_covering(timestamp), *normalize_usage_record(record))
+
+        for period_key, period_start in collect_period:
+            hour_range = hour_ranges[period_key]
+            if hour_range is None:
+                records = fetch_usage_records_between(period_start, None)
+            elif period_start < hour_range[0]:
+                records = fetch_usage_records_between(period_start, hour_range[0])
+            else:
+                continue
+            for record in records:
+                add([period_key], *normalize_usage_record(record))
 
     @staticmethod
     def _collect_online_time_for_period(
@@ -904,15 +1073,19 @@ class StatisticOutputTask(AsyncTask):
         last_all_time_stat: dict[str, object] | None = None
 
         try:
+            cached_full_statistics = full_statistics_cache.load()
+            cached_stat_data = (
+                cached_full_statistics.get("stat_data") if isinstance(cached_full_statistics, dict) else None
+            )
             # 新增统计维度后旧缓存缺少历史数据，首次刷新重新收集完整历史。
             if (
-                "last_full_statistics" in local_storage
-                and REQ_CNT_BY_TASK in local_storage["last_full_statistics"]["stat_data"]
-                and TOTAL_TOK_BY_CHAT in local_storage["last_full_statistics"]["stat_data"]
-                and "classified_requests" in local_storage["last_full_statistics"]["stat_data"]
+                isinstance(cached_stat_data, dict)
+                and REQ_CNT_BY_TASK in cached_stat_data
+                and TOTAL_TOK_BY_CHAT in cached_stat_data
+                and "classified_requests" in cached_stat_data
             ):
                 # 如果存在上次完整统计数据，则使用该数据进行增量统计
-                last_stat = cast(dict[str, object], local_storage["last_full_statistics"])
+                last_stat = cast(dict[str, object], cached_full_statistics)
 
                 # 修复 name_mapping 数据类型不匹配问题
                 # JSON 中存储为列表，但代码期望为元组
@@ -942,7 +1115,9 @@ class StatisticOutputTask(AsyncTask):
 
         stat = {item[0]: {} for item in self.stat_period}
 
-        model_req_stat = self._collect_model_request_for_period(stat_start_timestamp)
+        model_req_stat = self._collect_model_request_for_period(
+            stat_start_timestamp, getattr(self, "_usage_hourly", None), now
+        )
         online_time_stat = self._collect_online_time_for_period(stat_start_timestamp, now)
         message_count_stat = self._collect_message_count_for_period(stat_start_timestamp)
 
@@ -994,13 +1169,53 @@ class StatisticOutputTask(AsyncTask):
         for chat_id, (chat_name, timestamp) in self.name_mapping.items():
             json_safe_name_mapping[chat_id] = [chat_name, timestamp]
 
-        local_storage["last_full_statistics"] = {
-            "name_mapping": json_safe_name_mapping,
-            "stat_data": clean_stat_data,
-            "timestamp": now.timestamp(),
-        }
+        full_statistics_cache.save(
+            {
+                "name_mapping": json_safe_name_mapping,
+                "stat_data": clean_stat_data,
+                "timestamp": now.timestamp(),
+            }
+        )
 
         return cast(StatPeriodMapping, stat)
+
+    def _all_time_duration_records(self) -> list[dict[str, object]]:
+        """全量耗时矩：小时汇总就绪时读汇总表（整点之后）加起点所在半小时的明细和尚未汇总的新记录。"""
+        usage_hourly = getattr(self, "_usage_hourly", None)
+        start = self.all_time_start_time
+        if usage_hourly is None or not usage_hourly.ready:
+            return fetch_model_duration_aggregates_since(start)
+
+        first_bucket = ceil_hour(start)
+        moments: defaultdict[tuple[str, str, str, str], list[float]] = defaultdict(lambda: [0.0, 0.0, 0.0])
+        for row in fetch_usage_duration_moments(first_bucket):
+            key = (str(row["request_type"]), str(row["provider_name"]), str(row["model_name"]), str(row["task_name"]))
+            totals = moments[key]
+            totals[0] += cast(int, row["count"])
+            totals[1] += cast(float, row["sum"])
+            totals[2] += cast(float, row["sum_sq"])
+
+        raw_records = list(fetch_usage_records_between(start, first_bucket)) if start < first_bucket else []
+        raw_records += [
+            record for record in fetch_usage_records_after_id(usage_hourly.cursor)
+            if isinstance(record["timestamp"], datetime) and record["timestamp"] >= first_bucket
+        ]
+        for record in raw_records:
+            key, metrics = normalize_usage_record(record)
+            if metrics[6]:
+                totals = moments[(key.request_type, key.provider_name, key.model_name, key.task_name)]
+                totals[0] += metrics[6]
+                totals[1] += metrics[7]
+                totals[2] += metrics[8]
+
+        return [
+            {
+                "request_type": request_type, "model_api_provider_name": provider_name,
+                "model_assign_name": model_name, "model_name": model_name, "task_name": task_name,
+                "count": int(count), "sum": total, "sum_sq": total_sq,
+            }
+            for (request_type, provider_name, model_name, task_name), (count, total, total_sq) in moments.items()
+        ]
 
     def _refresh_all_time_duration_stats(self, stat_data: StatPeriodData) -> None:
         """全量耗时均值/标准差从数据库现算，不依赖 local_store 中的原始耗时列表。"""
@@ -1012,7 +1227,7 @@ class StatisticOutputTask(AsyncTask):
             "task": defaultdict(lambda: {"count": 0.0, "sum": 0.0, "sum_sq": 0.0}),
         }
 
-        records = fetch_model_duration_aggregates_since(self.all_time_start_time)
+        records = self._all_time_duration_records()
         for record in records:
             request_type = cast(str | None, record["request_type"]) or "unknown"
             user_id = cast(str | None, record["model_api_provider_name"]) or "unknown"
@@ -1236,8 +1451,13 @@ class StatisticOutputTask(AsyncTask):
         cls,
         stat_data: StatPeriodData,
         dimension: str,
+        failure_lookup: Mapping[Tuple[str, str], Tuple[int, int]] | None = None,
     ) -> List["DetailedStatisticsBreakdown"]:
-        """将模型、任务组、模块和请求类型的分类统计转换为前端表格行。"""
+        """将模型、任务组、模块和请求类型的分类统计转换为前端表格行。
+
+        failure_lookup 以 (请求类别, 名称) 为键提供 (尝试数, 失败数)；只有模型和任务组维度能与
+        model_task_usage 对应，其余维度不传，对应字段保持 None。
+        """
 
         from src.webui.schemas.statistics import DetailedStatisticsBreakdown
 
@@ -1258,6 +1478,9 @@ class StatisticOutputTask(AsyncTask):
             cache_miss_tokens = int(totals["cache_miss_tokens"])
             duration_count = totals["duration_count"]
             avg_time = totals["duration_sum"] / duration_count if duration_count > 0 else 0.0
+            attempt_count = failure_count = None
+            if failure_lookup is not None and (request_kind, name) in failure_lookup:
+                attempt_count, failure_count = failure_lookup[(request_kind, name)]
             variance = max(totals["duration_sum_sq"] / duration_count - avg_time**2, 0.0) if duration_count > 0 else 0.0
             rows.append(
                 DetailedStatisticsBreakdown(
@@ -1276,6 +1499,8 @@ class StatisticOutputTask(AsyncTask):
                     avg_calls_per_reply=request_count / total_replies if total_replies > 0 else None,
                     avg_tokens_per_reply=total_tokens / total_replies if total_replies > 0 else None,
                     avg_tokens_per_call=total_tokens / request_count if request_count > 0 else None,
+                    attempt_count=attempt_count,
+                    failure_count=failure_count,
                 )
             )
         return sorted(rows, key=lambda row: (row.is_embedding, row.name))
@@ -1332,73 +1557,208 @@ class StatisticOutputTask(AsyncTask):
             chat_costs=self._build_distribution_items(chat_costs),
         )
 
+    @classmethod
+    def _build_detailed_summary(
+        cls,
+        *,
+        total_cost: float,
+        total_requests: int,
+        input_tokens: int,
+        output_tokens: int,
+        cache_hit_tokens: int,
+        cache_miss_tokens: int,
+        online_time: float,
+        total_messages: int,
+        total_replies: int,
+    ) -> "DetailedStatisticsSummary":
+        """当前时段与上一周期共用同一套汇总与派生指标口径。"""
+
+        from src.webui.schemas.statistics import DetailedStatisticsSummary
+
+        total_tokens = input_tokens + output_tokens
+        received_messages = total_messages - total_replies
+        online_hours = online_time / 3600.0
+        return DetailedStatisticsSummary(
+            online_time=online_time,
+            total_messages=total_messages,
+            total_replies=total_replies,
+            total_requests=total_requests,
+            total_tokens=total_tokens,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_hit_tokens=cache_hit_tokens,
+            cache_miss_tokens=cache_miss_tokens,
+            cache_hit_rate=cls._calculate_cache_hit_rate_value(cache_hit_tokens, cache_miss_tokens),
+            total_cost=total_cost,
+            cost_per_100_messages=total_cost / total_messages * 100 if total_messages > 0 else 0.0,
+            cost_per_100_messages_excluding_replies=(
+                total_cost / received_messages * 100 if received_messages > 0 else 0.0
+            ),
+            cost_per_100_replies=total_cost / total_replies * 100 if total_replies > 0 else 0.0,
+            cost_per_hour=total_cost / online_hours if online_hours > 0 else 0.0,
+            tokens_per_hour=total_tokens / online_hours if online_hours > 0 else 0.0,
+        )
+
+    # 上一周期环比在类方法里计算，由 run() 在每轮开头写入本轮的小时汇总状态
+    _usage_hourly_for_comparison: "UsageHourlyState | None" = None
+
+    @classmethod
+    def _build_previous_summary(cls, start_time: datetime, end_time: datetime) -> "DetailedStatisticsSummary":
+        """按 [start_time, end_time) 直接汇总上一周期，口径与时段统计一致。"""
+
+        totals = fetch_window_usage_totals(start_time, end_time, usage_hourly=cls._usage_hourly_for_comparison)
+        return cls._build_detailed_summary(
+            total_cost=totals["total_cost"],
+            total_requests=totals["total_requests"],
+            input_tokens=totals["input_tokens"],
+            output_tokens=totals["output_tokens"],
+            cache_hit_tokens=totals["cache_hit_tokens"],
+            cache_miss_tokens=totals["cache_miss_tokens"],
+            online_time=totals["online_time"],
+            total_messages=count_chat_messages_between(start_time, end_time),
+            total_replies=count_tool_records_between(start_time, end_time, "reply"),
+        )
+
+    @staticmethod
+    def _build_reliability(
+        period_start: datetime,
+        now: datetime,
+    ) -> Tuple["DetailedReliabilityData", Dict[Tuple[str, str], Tuple[int, int]], Dict[Tuple[str, str], Tuple[int, int]]]:
+        """汇总调用可靠性，并返回模型、任务组表格行使用的失败次数查找表。"""
+
+        from src.webui.schemas.statistics import DetailedReliabilityData, DetailedReliabilityItem
+
+        retention_start = now - get_model_task_usage_retention()
+        coverage_start = max(period_start, retention_start)
+        rows = fetch_model_task_usage_groups(coverage_start, now)
+
+        # 每个维度累计 [尝试数, 失败数, 成功耗时总和]。
+        grouped: Dict[str, DefaultDict[str, List[float]]] = {
+            dimension: defaultdict(lambda: [0, 0, 0.0]) for dimension in ("model", "provider", "task")
+        }
+        model_lookup: DefaultDict[Tuple[str, str], List[int]] = defaultdict(lambda: [0, 0])
+        task_lookup: DefaultDict[Tuple[str, str], List[int]] = defaultdict(lambda: [0, 0])
+        for row in rows:
+            attempts = row["attempt_count"]
+            failures = row["failure_count"]
+            for dimension, name in (
+                ("model", row["model_name"]), ("provider", row["provider_name"]), ("task", row["task_name"]),
+            ):
+                totals = grouped[dimension][name]
+                totals[0] += attempts
+                totals[1] += failures
+                totals[2] += row["success_duration"]
+            # 与 llm_usage 的分类口径一致：嵌入任务的调用单独成行。
+            request_kind = "embedding" if row["task_name"] in EMBEDDING_TASK_NAMES else "generation"
+            for lookup, name in ((model_lookup, row["model_name"]), (task_lookup, row["task_name"])):
+                lookup[(request_kind, name)][0] += attempts
+                lookup[(request_kind, name)][1] += failures
+
+        def build_items(dimension: str) -> List[DetailedReliabilityItem]:
+            items = []
+            for name, (attempts, failures, duration) in grouped[dimension].items():
+                successes = attempts - failures
+                items.append(
+                    DetailedReliabilityItem(
+                        name=name,
+                        attempt_count=int(attempts),
+                        failure_count=int(failures),
+                        failure_rate=failures / attempts if attempts > 0 else None,
+                        avg_success_duration=duration / successes if successes > 0 else None,
+                    )
+                )
+            return sorted(items, key=lambda item: (-(item.failure_rate or 0.0), -item.attempt_count, item.name))
+
+        total_attempts = sum(row["attempt_count"] for row in rows)
+        total_failures = sum(row["failure_count"] for row in rows)
+        total_successes = total_attempts - total_failures
+        total_duration = sum(row["success_duration"] for row in rows)
+        reliability = DetailedReliabilityData(
+            coverage_start=coverage_start.isoformat(),
+            truncated=period_start < retention_start,
+            attempt_count=total_attempts,
+            failure_count=total_failures,
+            failure_rate=total_failures / total_attempts if total_attempts > 0 else None,
+            avg_success_duration=total_duration / total_successes if total_successes > 0 else None,
+            by_model=build_items("model"),
+            by_provider=build_items("provider"),
+            by_task=build_items("task"),
+        )
+        return (
+            reliability,
+            {key: (value[0], value[1]) for key, value in model_lookup.items()},
+            {key: (value[0], value[1]) for key, value in task_lookup.items()},
+        )
+
+    def _period_start_time(self, period_key: str, duration: timedelta, now: datetime) -> datetime:
+        return self.all_time_start_time if period_key == "all_time" else now - duration
+
+    def _build_period_trend_collector(self, now: datetime) -> PeriodTrendCollector:
+        """为每个统计时段建立对齐的趋势时间桶；超过 30 天的部分截断并显式标记。"""
+
+        earliest_start = now - PERIOD_TREND_MAX_RANGE
+        windows: Dict[str, PeriodTrendWindow] = {}
+        for period_key, duration, _ in self.stat_period:
+            period_start = self._period_start_time(period_key, duration, now)
+            windows[period_key] = PeriodTrendWindow(
+                start=max(period_start, earliest_start),
+                end=now,
+                bucket_minutes=PERIOD_TREND_BUCKET_MINUTES[period_key],
+                truncated=period_start < earliest_start,
+            )
+        return PeriodTrendCollector(windows)
+
     def _build_detailed_statistics_snapshot(
         self,
         stat: StatPeriodMapping,
         now: datetime,
         chart_data: dict[str, dict[str, object]],
         metrics_data: dict[str, object],
+        period_trends: dict[str, dict[str, object]],
     ) -> "DetailedStatisticsData":
         """构造与当前 HTML 报告完全同源的 WebUI 详细统计快照。"""
 
         from src.webui.schemas.statistics import (
             DetailedChatStatistics,
+            DetailedPeriodTrend,
             DetailedStatisticsData,
             DetailedStatisticsMetricsData,
             DetailedStatisticsPeriod,
-            DetailedStatisticsSummary,
             DetailedStatisticsTrendData,
         )
 
         periods = []
         for period_key, duration, _ in self.stat_period:
             stat_data = stat[period_key]
-            total_tokens = sum(stat_data[TOTAL_TOK_BY_MODEL].values())
-            input_tokens = sum(stat_data[IN_TOK_BY_MODEL].values())
-            output_tokens = sum(stat_data[OUT_TOK_BY_MODEL].values())
-            cache_hit_tokens = int(stat_data.get(CACHE_HIT_TOK, 0))
-            cache_miss_tokens = int(stat_data.get(CACHE_MISS_TOK, 0))
-            total_messages = int(stat_data[TOTAL_MSG_CNT])
-            total_replies = int(stat_data.get(TOTAL_REPLY_CNT, 0))
-            received_messages = total_messages - total_replies
-            online_hours = stat_data[ONLINE_TIME] / 3600.0
-            period_start_time = self.all_time_start_time if period_key == "all_time" else now - duration
+            period_start_time = self._period_start_time(period_key, duration, now)
+            reliability, model_failures, task_failures = self._build_reliability(period_start_time, now)
+            # 自部署以来没有等长的上一周期，不计算环比。
+            previous_summary = (
+                None
+                if period_key == "all_time"
+                else self._build_previous_summary(period_start_time - duration, period_start_time)
+            )
 
             periods.append(
                 DetailedStatisticsPeriod(
                     key=period_key,
                     start_time=period_start_time.isoformat(),
                     end_time=now.isoformat(),
-                    summary=DetailedStatisticsSummary(
-                        online_time=stat_data[ONLINE_TIME],
-                        total_messages=total_messages,
-                        total_replies=total_replies,
-                        total_requests=stat_data[TOTAL_REQ_CNT],
-                        total_tokens=total_tokens,
-                        input_tokens=input_tokens,
-                        output_tokens=output_tokens,
-                        cache_hit_tokens=cache_hit_tokens,
-                        cache_miss_tokens=cache_miss_tokens,
-                        cache_hit_rate=self._calculate_cache_hit_rate_value(
-                            cache_hit_tokens,
-                            cache_miss_tokens,
-                        ),
+                    summary=self._build_detailed_summary(
                         total_cost=stat_data[TOTAL_COST],
-                        cost_per_100_messages=(
-                            stat_data[TOTAL_COST] / total_messages * 100 if total_messages > 0 else 0.0
-                        ),
-                        cost_per_100_messages_excluding_replies=(
-                            stat_data[TOTAL_COST] / received_messages * 100 if received_messages > 0 else 0.0
-                        ),
-                        cost_per_100_replies=(
-                            stat_data[TOTAL_COST] / total_replies * 100 if total_replies > 0 else 0.0
-                        ),
-                        cost_per_hour=stat_data[TOTAL_COST] / online_hours if online_hours > 0 else 0.0,
-                        tokens_per_hour=total_tokens / online_hours if online_hours > 0 else 0.0,
+                        total_requests=stat_data[TOTAL_REQ_CNT],
+                        input_tokens=sum(stat_data[IN_TOK_BY_MODEL].values()),
+                        output_tokens=sum(stat_data[OUT_TOK_BY_MODEL].values()),
+                        cache_hit_tokens=int(stat_data.get(CACHE_HIT_TOK, 0)),
+                        cache_miss_tokens=int(stat_data.get(CACHE_MISS_TOK, 0)),
+                        online_time=stat_data[ONLINE_TIME],
+                        total_messages=int(stat_data[TOTAL_MSG_CNT]),
+                        total_replies=int(stat_data.get(TOTAL_REPLY_CNT, 0)),
                     ),
-                    models=self._build_breakdown_rows(stat_data, "model"),
+                    previous_summary=previous_summary,
+                    models=self._build_breakdown_rows(stat_data, "model", model_failures),
                     modules=self._build_breakdown_rows(stat_data, "module"),
-                    task_groups=self._build_breakdown_rows(stat_data, "task"),
+                    task_groups=self._build_breakdown_rows(stat_data, "task", task_failures),
                     request_types=self._build_breakdown_rows(stat_data, "request_type"),
                     chats=[
                         DetailedChatStatistics(
@@ -1408,6 +1768,8 @@ class StatisticOutputTask(AsyncTask):
                         for chat_id, count in sorted(stat_data[MSG_CNT_BY_CHAT].items())
                     ],
                     distributions=self._build_period_distributions(stat_data),
+                    reliability=reliability,
+                    trend=DetailedPeriodTrend.model_validate(period_trends[period_key]),
                 )
             )
 
@@ -1964,7 +2326,16 @@ class StatisticOutputTask(AsyncTask):
 
         # 图表与指标趋势共用一次明细遍历，随后分别渲染。
         series_started_at = perf_counter()
-        chart_data, metrics_data = self._generate_time_series(now)
+        period_trend_collector = self._build_period_trend_collector(now)
+        chart_data, metrics_data = self._generate_time_series(
+            now, period_trend_collector, getattr(self, "_usage_hourly", None)
+        )
+        task_usage_start = max(now - get_model_task_usage_retention(), now - PERIOD_TREND_MAX_RANGE)
+        for bucket in fetch_model_task_usage_minutes(task_usage_start, now):
+            period_trend_collector.add_task_usage(
+                bucket["bucket_time"], bucket["attempt_count"], bucket["failure_count"],
+            )
+        period_trends = period_trend_collector.result()
         tab_content_list.append(self._generate_chart_tab(chart_data))
         tab_content_list.append(self._generate_metrics_tab(metrics_data))
         logger.info(f"统计阶段耗时: 图表与指标趋势={perf_counter() - series_started_at:.2f}s")
@@ -2281,25 +2652,82 @@ class StatisticOutputTask(AsyncTask):
         from src.services.statistics_service import store_detailed_statistics_snapshot
 
         store_detailed_statistics_snapshot(
-            self._build_detailed_statistics_snapshot(stat, now, chart_data, metrics_data)
+            self._build_detailed_statistics_snapshot(stat, now, chart_data, metrics_data, period_trends)
         )
 
     @staticmethod
-    def _generate_time_series(now: datetime) -> Tuple[Dict[str, Dict[str, object]], Dict[str, Dict[str, object]]]:
-        """分批读取一次最大时间范围，为全部图表和指标填充时间桶。"""
+    def _generate_time_series(
+        now: datetime,
+        period_trends: PeriodTrendCollector | None = None,
+        usage_hourly: "UsageHourlyState | None" = None,
+    ) -> Tuple[Dict[str, Dict[str, object]], Dict[str, Dict[str, object]]]:
+        """为全部图表和指标填充时间桶；小时汇总就绪时，干净的小时读汇总，其余小时读明细。"""
         from src.services.statistics_service import iter_messages_since
 
         from .utils import is_bot_self
 
         chart_now = datetime.now()
         start = min(chart_now - timedelta(hours=48), now - timedelta(days=30))
+        if usage_hourly is not None and usage_hourly.ready:
+            usage: "list[UsageEntry] | object" = StatisticOutputTask._time_series_usage_entries(
+                start, now, chart_now, period_trends, usage_hourly.cursor
+            )
+            aggregate_limit: datetime | None = usage_bucket_start(now)
+        else:
+            usage = fetch_model_usage_since(start)
+            aggregate_limit = None
         return collect_time_series(
             now, chart_now,
-            fetch_model_usage_since(start),
+            cast("list[UsageEntry]", usage),
             iter_messages_since(start),
             fetch_online_time_since(now - timedelta(days=30)),
             is_bot_self,
+            period_trends,
+            aggregate_limit,
         )
+
+    @staticmethod
+    def _time_series_usage_entries(
+        start: datetime,
+        now: datetime,
+        chart_now: datetime,
+        period_trends: PeriodTrendCollector | None,
+        cursor: int,
+    ) -> list[UsageEntry]:
+        """汇总行 + 需要明细的小时里的明细 + 汇总刷新后才写入的明细；明细按 id 去重。"""
+        aggregate_limit = usage_bucket_start(now)
+        first_hour = usage_bucket_start(start)
+        chart_windows, metric_windows = build_series_windows(now, chart_now)
+        windows = [
+            *chart_windows.values(), *metric_windows.values(),
+            *(period_trends.windows() if period_trends is not None else []),
+        ]
+
+        entries: list[UsageEntry] = []
+        for bucket, key, metrics in fetch_usage_hourly(first_hour, aggregate_limit):
+            request_type = key.request_type
+            entries.append(UsageEntry(
+                timestamp=bucket,
+                cost=metrics[5],
+                tokens=metrics[1] + metrics[2],
+                requests=metrics[0],
+                model=key.model_name,
+                module=request_type.split(".")[0] if "." in request_type else request_type,
+                source=SOURCE_HOURLY,
+            ))
+
+        records: dict[int, Mapping[str, object]] = {}
+        for range_start, range_end in hours_needing_detail(windows, first_hour, aggregate_limit):
+            for record in fetch_usage_records_between(range_start, range_end):
+                records[cast(int, record["id"])] = record
+        for record in fetch_usage_records_after_id(cursor):
+            if isinstance(record["timestamp"], datetime):
+                records[cast(int, record["id"])] = record
+        for record_id, record in records.items():
+            entries.append(
+                usage_entry_from_record(record, SOURCE_UNAGGREGATED if record_id > cursor else SOURCE_RAW)
+            )
+        return entries
 
     def _generate_chart_tab(self, chart_data: dict[str, dict[str, object]]) -> str:
         # sourcery skip: extract-duplicate-method, move-assign-in-block

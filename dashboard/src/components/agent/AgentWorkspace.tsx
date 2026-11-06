@@ -2,8 +2,11 @@ import { BrainCircuit, Check, ChevronRight, CircleAlert, Clock3, MessageSquare, 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { StatusLight, type LightStatus } from '@/components/ui/status-light'
 import { PageFrame } from '@/components/ui/surface'
 import { type AgentApi, type AgentEvent } from '@/lib/agent-api'
 import { cn } from '@/lib/utils'
@@ -54,13 +57,28 @@ function HistoryItem({ item }: { item: AgentEvent['items'][number] }) {
   }
   const text = itemText(item)
   if (!text) return null
-  const reasoning = item.item_type === 'ReasoningItem'
-  return <div className={cn('whitespace-pre-wrap break-words text-sm leading-7', reasoning && 'rounded-lg bg-muted/30 px-3 py-2 text-muted-foreground')}>
-    {reasoning && <p className="mb-1 flex items-center gap-1.5 text-xs font-medium"><BrainCircuit className="size-3.5" />{t('chat.computer.thought')}</p>}
-    {text}
-  </div>
+  if (item.item_type === 'ReasoningItem') {
+    // 思考默认折叠，只露出一行预览；展开后完整显示，避免长推理把回复挤到屏幕外。
+    const preview = text.split('\n').find(line => line.trim()) ?? ''
+    return <details data-agent-thought="true" className="group rounded-lg border bg-muted/20 text-sm">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-muted-foreground">
+        <ChevronRight className="size-3.5 shrink-0 transition-transform group-open:rotate-90" />
+        <BrainCircuit className="size-3.5 shrink-0" />
+        <span className="shrink-0 text-xs font-medium">{t('chat.computer.thought')}</span>
+        <span className="min-w-0 flex-1 truncate text-xs group-open:hidden">{preview}</span>
+      </summary>
+      <p className="whitespace-pre-wrap break-words border-t px-3 py-2 font-mono text-xs leading-6 text-muted-foreground">{text}</p>
+    </details>
+  }
+  return <div className="whitespace-pre-wrap break-words text-sm leading-7">{text}</div>
 }
 
+function stateLight(state: string, failed: boolean): LightStatus {
+  if (failed) return 'error'
+  if (state === 'thinking' || state === 'tool') return 'mixed'
+  if (state === 'paused') return 'off'
+  return state === 'idle' ? 'off' : 'on'
+}
 function AgentHistory({ submitted, api, onDesktopEnabled }: { submitted: AgentEvent[]; api: AgentApi; onDesktopEnabled: (enabled: boolean) => void }) {
   const { t } = useTranslation()
   const [events, setEvents] = useState<AgentEvent[]>([])
@@ -101,15 +119,14 @@ function AgentHistory({ submitted, api, onDesktopEnabled }: { submitted: AgentEv
     void tick()
     return () => { abort.abort(); clearTimeout(timer) }
   }, [api, onDesktopEnabled])
-  const working = state === 'thinking' || state === 'tool'
   const committed = new Set(events.map(event => event.id))
   const visible = mergeTextEvents([...new Map([...submitted, ...queued, ...events].map(event => [event.id, event] as const)).values()]
     .sort((a, b) => Date.parse(a.time) - Date.parse(b.time)))
   return <div className="flex min-h-0 flex-1 flex-col">
     <div role="status" className="flex items-center gap-2 border-b bg-muted/10 px-5 py-2.5 text-xs text-muted-foreground">
-      <span className={cn('size-1.5 rounded-full bg-muted-foreground/40', working && 'animate-pulse bg-primary')} />
+      <StatusLight status={stateLight(state, Boolean(error))} decorative />
       {t(`chat.computer.${state}`)}
-      <span className="rounded bg-muted px-2 py-0.5">ACP</span>
+      <Badge variant="outline">ACP</Badge>
       {state === 'paused' && <Button size="sm" variant="outline" disabled={resuming} onClick={async () => {
         setResuming(true)
         try {
@@ -126,7 +143,7 @@ function AgentHistory({ submitted, api, onDesktopEnabled }: { submitted: AgentEv
       follow.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80
     }}>
       <div className="mx-auto max-w-4xl">
-        {error && <p role="alert" className="mb-4 flex items-center gap-2 rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive"><CircleAlert className="size-4 shrink-0" />{error}</p>}
+        {error && <Alert variant="destructive" className="mb-4"><CircleAlert className="size-4" /><AlertDescription className="break-words">{error}</AlertDescription></Alert>}
         {!visible.length && !error && <div className="flex min-h-60 flex-col items-center justify-center gap-3 text-muted-foreground"><BrainCircuit className="size-8 opacity-40" /><p className="text-sm">{t('chat.computer.noEvents')}</p></div>}
         {visible.map(event => {
           const input = event.kind === 'user'
