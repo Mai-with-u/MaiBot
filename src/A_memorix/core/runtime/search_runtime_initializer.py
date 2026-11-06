@@ -1,4 +1,4 @@
-"""Action、Tool 和 Command 检索组件共用的运行时初始化器。"""
+"""Tool 和 Command 检索组件共用的运行时初始化器。"""
 
 from __future__ import annotations
 

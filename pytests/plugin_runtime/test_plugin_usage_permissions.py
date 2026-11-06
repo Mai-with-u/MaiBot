@@ -118,12 +118,3 @@ async def test_public_command_executor_enforces_plugin_scope(runtime, user, sess
         result = await executor(message=message)
     assert result[0] is expected
     assert supervisor.invoke_plugin.await_count == int(expected)
-
-
-@pytest.mark.asyncio
-async def test_legacy_action_without_trusted_context_is_denied(runtime):
-    query, supervisor, _ = runtime
-    executor = query._build_action_executor(supervisor, "test", "action")
-    result = await executor(stream_id="allowed", user_id="Owner")
-    assert result[0] is False
-    supervisor.invoke_plugin.assert_not_awaited()

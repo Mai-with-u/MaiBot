@@ -71,3 +71,21 @@ async def test_query_and_execution_enforce_scope(monkeypatch, platform):
     result = await service.invoke_tool_as_tool(ToolInvocation("restricted"), context)
     assert result.success == (platform == "telegram")
     assert supervisor.invoke_plugin.await_count == (1 if platform == "telegram" else 0)
+
+
+@pytest.mark.parametrize(
+    ("component_type", "metadata"),
+    [
+        ("ACTION", {}),
+        ("TOOL", {"legacy_action": True}),
+        ("TOOL", {"legacy_component_type": "ACTION"}),
+        ("TOOL", {"invoke_method": "plugin.invoke_action"}),
+    ],
+)
+def test_rejects_legacy_action_registration(component_type, metadata):
+    registry = ComponentRegistry()
+
+    with pytest.raises(ComponentRegistrationError):
+        registry.register_component("obsolete", component_type, "test", metadata)
+
+    assert registry.get_stats()["total"] == 0

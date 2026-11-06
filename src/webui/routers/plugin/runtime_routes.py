@@ -33,9 +33,6 @@ def _serialize_component_entry(component: ComponentEntry) -> Dict[str, Any]:
     """将插件原始注册组件条目转换为前端展示结构。"""
 
     component_type = component.component_type.value.lower()
-    if isinstance(component, ToolEntry) and component.legacy_component_type.upper() == ComponentTypes.ACTION.value:
-        component_type = "action"
-
     description = str(component.metadata.get("description", ""))
     if isinstance(component, ToolEntry):
         description = component.description
@@ -48,19 +45,7 @@ def _serialize_component_entry(component: ComponentEntry) -> Dict[str, Any]:
         "component_type": component_type,
     }
 
-    if component_type == "action":
-        data.update(
-            {
-                "action_parameters": dict(component.metadata.get("action_parameters") or {}),
-                "action_require": list(component.metadata.get("action_require") or []),
-                "associated_types": list(component.metadata.get("associated_types") or []),
-                "activation_type": str(component.metadata.get("activation_type", "") or ""),
-                "random_activation_probability": float(component.metadata.get("activation_probability") or 0.0),
-                "activation_keywords": list(component.metadata.get("activation_keywords") or []),
-                "parallel_action": bool(component.metadata.get("parallel_action", False)),
-            }
-        )
-    elif isinstance(component, ToolEntry):
+    if isinstance(component, ToolEntry):
         data["parameters_schema"] = dict(component._get_parameters_schema() or {})
     elif isinstance(component, CommandEntry):
         data["pattern"] = str(component.metadata.get("command_pattern", "") or "")

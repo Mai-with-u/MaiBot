@@ -533,12 +533,11 @@ const COMPONENT_GROUP_LABELS: Record<ComponentDisplayGroup, string> = {
 }
 
 const COMPONENT_GROUP_DESCRIPTIONS: Record<ComponentDisplayGroup, string> = {
-  tool: '包含 Tool 与旧版本兼容的 Action',
+  tool: '可供主程序调用的插件工具',
   command: '通过命令文本触发的组件',
 }
 
 const COMPONENT_TYPE_LABELS: Record<PluginRuntimeComponentType, string> = {
-  action: '旧版动作',
   command: '命令',
   tool: '工具',
 }
@@ -609,7 +608,7 @@ function PluginRuntimeComponentsPanel({ pluginId }: { pluginId: string }) {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <CardTitle>注册组件</CardTitle>
-            <CardDescription>当前插件运行时已注册的 Tool、旧版 Action 和 Command。</CardDescription>
+            <CardDescription>当前插件运行时已注册的 Tool 和 Command。</CardDescription>
           </div>
           <Badge variant="secondary">{componentCount} 个组件</Badge>
         </div>
@@ -674,21 +673,6 @@ function PluginRuntimeComponentsPanel({ pluginId }: { pluginId: string }) {
                             <Badge variant="outline" className="mb-2 text-[0.68rem]">
                               {COMPONENT_TYPE_LABELS[component.component_type]}
                             </Badge>
-
-                            {component.component_type === 'action' && (
-                              <div className="text-muted-foreground space-y-1 text-xs">
-                                {component.activation_type && <div>触发方式：{component.activation_type}</div>}
-                                {component.activation_keywords && component.activation_keywords.length > 0 && (
-                                  <div className="flex flex-wrap gap-1">
-                                    {component.activation_keywords.map((keyword) => (
-                                      <Badge key={keyword} variant="outline" className="text-[0.68rem]">
-                                        {keyword}
-                                      </Badge>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            )}
 
                             {component.component_type === 'tool' && schemaProperties.length > 0 && (
                               <div className="mt-2 flex flex-wrap gap-1">

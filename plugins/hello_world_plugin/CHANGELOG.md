@@ -26,4 +26,4 @@
 
 ### 开发侧
 
-- 演示 Manifest v2、配置模型、Tool、Command、Action 和 EventHandler 的基础写法。
+- 演示 Manifest v2、配置模型、Tool、Command 和 EventHandler 的基础写法。

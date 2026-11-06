@@ -2,7 +2,7 @@
 时间解析工具。
 
 约束：
-1. 查询参数（Action/Command/Tool）仅接受结构化绝对时间：
+1. 查询参数（Command/Tool）仅接受结构化绝对时间：
    - YYYY/MM/DD
    - YYYY/MM/DD HH:mm
 2. 入库时允许更宽松格式（含时间戳、YYYY-MM-DD 等）。

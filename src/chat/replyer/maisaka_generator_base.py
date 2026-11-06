@@ -32,7 +32,6 @@ from src.common.utils.utils_config import ChatConfigUtils
 from src.config.config import global_config
 from src.maisaka.context.message_id_alias import to_display_message_id
 from src.config.model_configs import ModelInfo
-from src.core.types import ActionInfo
 from src.llm_models.payload_content.context_item import (
     AssistantMessageItem,
     CONTEXT_ITEM_SCHEMA_VERSION,
@@ -1079,8 +1078,6 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         self,
         extra_info: str = "",
         reply_reason: str = "",
-        available_actions: Optional[Dict[str, ActionInfo]] = None,
-        chosen_actions: Optional[List[object]] = None,
         from_plugin: bool = True,
         stream_id: Optional[str] = None,
         reply_message: Optional[SessionMessage] = None,
@@ -1111,8 +1108,6 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             result.metrics.overall_ms = round((time.perf_counter() - overall_started_at) * 1000, 2)
             return finalize(False)
 
-        del available_actions
-        del chosen_actions
         del extra_info
         del from_plugin
         del log_reply

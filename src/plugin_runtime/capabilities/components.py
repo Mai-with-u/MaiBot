@@ -181,10 +181,7 @@ class RuntimeComponentCapabilityMixin:
             str: 统一转为大写后的组件类型名。
         """
 
-        normalized_component_type = str(component_type or "").strip().upper()
-        if normalized_component_type == "ACTION":
-            return "TOOL"
-        return normalized_component_type
+        return str(component_type or "").strip().upper()
 
     @classmethod
     def _is_api_component_type(cls, component_type: str) -> bool:

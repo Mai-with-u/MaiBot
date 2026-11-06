@@ -1,7 +1,7 @@
 """统一工具抽象。
 
 该模块定义主程序内部统一使用的工具声明、调用与执行结果模型，
-用于收敛插件 Tool、兼容旧 Action、MaiSaka 内置 Tool 与 MCP Tool。
+用于收敛插件 Tool、MaiSaka 内置 Tool 与 MCP Tool。
 """
 
 from __future__ import annotations

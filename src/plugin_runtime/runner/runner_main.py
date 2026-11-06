@@ -1414,7 +1414,6 @@ class PluginRunner:
     def _register_handlers(self) -> None:
         """注册 Host -> Runner 的方法处理器。"""
         self._rpc_client.register_method("plugin.invoke_command", self._handle_invoke)
-        self._rpc_client.register_method("plugin.invoke_action", self._handle_invoke)
         self._rpc_client.register_method("plugin.invoke_api", self._handle_invoke)
         self._rpc_client.register_method("plugin.invoke_tool", self._handle_invoke)
         self._rpc_client.register_method("plugin.invoke_reply_extension", self._handle_invoke)
