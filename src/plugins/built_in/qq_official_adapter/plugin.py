@@ -33,6 +33,7 @@ from .codec import (
 )
 from .settings import AdapterSettings
 from .identity_sync import PROFILE_TTL, IdentityScope, SilentIdentitySync, save_profiles
+from .nickname_cache import NicknameCache, is_placeholder_nickname, sanitize_nickname
 from .qr_login import QRLogin, save_credentials
 from .quoted_media import quoted_image_attachments
 
@@ -52,6 +53,8 @@ MEDIA_UPLOAD_TIMEOUT_SEC = 300.0
 TRUSTED_QQ_MEDIA_HOSTS = frozenset({"grouppro.grouppro.qq.com"})
 TRUSTED_QQ_MEDIA_HOST_SUFFIXES = ("nt.qq.com", "nt.qq.com.cn", "ugcimg.cn")
 ID_MAP_FILE_NAME = "id_map.json"
+# 单聊事件通常不带昵称：把群消息里学到的 QQ 昵称按「应用 + OpenID」缓存在此文件。
+NICKNAME_CACHE_FILE_NAME = "qq_official_nicknames.json"
 ASSIGN_GROUP_COMMAND = "/assign_group_id"
 ASSIGN_USER_COMMAND = "/assign_id"
 SET_MUTE_TOOL_NAME = "set_mute"
@@ -139,6 +142,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         self._dispatch_tasks: Set[asyncio.Task[None]] = set()
         self._id_map: Dict[str, Dict[str, str]] = {"group": {}, "user": {}}
         self._id_map_lock = asyncio.Lock()
+        self._nickname_cache: Optional[NicknameCache] = None
         self._unified_account_id = ""
         self._connection_lock = asyncio.Lock()
         self._qr_login = QRLogin(self._apply_qr_credentials)
@@ -157,6 +161,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
     async def on_load(self) -> None:
         # 页面在连接关闭或凭据尚未填写时也需要展示已有绑定。
         await asyncio.to_thread(self._load_id_map)
+        await asyncio.to_thread(self._load_nickname_cache)
         try:
             await asyncio.to_thread(self._identity_sync.load, self.ctx.paths.data_dir / "auto_user_profiles.json")
         except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -174,6 +179,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
             return
         async with self._connection_lock:
             self.set_plugin_config(config_data)
+            await asyncio.to_thread(self._load_nickname_cache)
             await self._sync_tool_states()
             await self._stop()
             if self.config.plugin.enabled:
@@ -502,6 +508,15 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         temporary = path.with_suffix(".tmp")
         temporary.write_text(json.dumps(id_map, ensure_ascii=False, indent=2), encoding="utf-8")
         temporary.replace(path)
+
+    def _load_nickname_cache(self) -> None:
+        """按当前配置重建单聊昵称缓存；缓存损坏时按空表启动，不影响连接。"""
+        cache = NicknameCache(
+            self.ctx.paths.data_dir / NICKNAME_CACHE_FILE_NAME,
+            ttl_days=self.config.qq_official.nickname_cache_ttl_days,
+        )
+        cache.load()
+        self._nickname_cache = cache
 
     @Command(
         "assign_group_id", description="绑定当前 QQ 官方群的真实群号",
@@ -833,6 +848,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
                         if profile.nickname:
                             user_info["user_nickname"] = profile.nickname
                         user_info["user_cardname"] = profile.cardname or None
+            await self._apply_nickname_cache(message, scene, group_openid, account_id)
         except ValueError as exc:
             self.ctx.logger.info("忽略 QQ 官方消息: %s | payload=%s", exc, summarize_payload(data))
             return
@@ -884,6 +900,57 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         if not accepted and inserted:
             async with self._reply_lock:
                 self._replies.pop(key, None)
+
+    async def _apply_nickname_cache(
+        self,
+        message: Dict[str, Any],
+        scene: str,
+        group_openid: str,
+        account_id: str,
+    ) -> None:
+        """群消息里学到的 QQ 昵称按 OpenID 缓存，单聊缺昵称时回填。
+
+        官方 ``C2C_MESSAGE_CREATE`` 的 ``author.username`` 一般是空串，解码器只能拿
+        OpenID 当昵称；同一个人在群里发言时 ``author.username`` 是真实昵称，而 OpenID
+        在同一应用内跨场景一致，所以可以按「应用 + OpenID」复用。只缓存全局 QQ 昵称，
+        不缓存群名片，避免把某个群的备注带到别的会话。
+        """
+        qq_official = self.config.qq_official
+        if not qq_official.nickname_cache_enabled:
+            return
+        cache = self._nickname_cache
+        if cache is None:
+            return
+        message_info = message.get("message_info")
+        if not isinstance(message_info, Mapping):
+            return
+        user_info = message_info.get("user_info")
+        additional_config = message_info.get("additional_config")
+        if not isinstance(user_info, dict) or not isinstance(additional_config, Mapping):
+            return
+        openid = str(additional_config.get("qq_official_user_openid") or "").strip()
+        if not openid:
+            return
+        app_id = str(qq_official.app_id or "").strip() or str(account_id or "").strip()
+        # 配置了统一 ID 映射时，解码器会把昵称退化成映射后的 QQ 号，同样算占位。
+        user_id = str(user_info.get("user_id") or "").strip()
+        nickname = sanitize_nickname(user_info.get("user_nickname"))
+        if scene == "group":
+            if is_placeholder_nickname(nickname, openid, user_id):
+                return
+            if not cache.remember(app_id, openid, nickname, group_openid=group_openid):
+                return
+            try:
+                await asyncio.to_thread(cache.save)
+            except OSError as exc:
+                self.ctx.logger.warning("QQ 昵称缓存写入失败: %s", exc)
+            return
+        # 单聊：官方没给昵称（仍是 OpenID / 映射 ID 占位）时用缓存补全；已有真实昵称则不动。
+        if not is_placeholder_nickname(nickname, openid, user_id):
+            return
+        cached = cache.lookup(app_id, openid)
+        if cached:
+            user_info["user_nickname"] = cached
 
     async def _build_attachments(
         self, payload: Mapping[str, Any], *, include_quoted: bool = True
