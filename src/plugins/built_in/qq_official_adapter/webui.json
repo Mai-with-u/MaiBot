@@ -8,7 +8,6 @@
       "id": "group-mappings",
       "title": "QQ 群与用户映射",
       "description": "扫码连接 QQ 官方机器人，查看群和用户 OpenID 对应关系及头像。",
-      "placement": "sidebar",
       "icon": "list",
       "mode": "custom",
       "queries": {

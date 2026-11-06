@@ -30,7 +30,7 @@ const samples: WebUIExtension[] = [
     id: `page-${index}`,
     title,
     description: '',
-    placement: 'workspace',
+    placement: 'sidebar',
     icon: 'puzzle',
     queries: {},
     actions: {},

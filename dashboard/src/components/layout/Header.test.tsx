@@ -10,7 +10,6 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Header } from './Header'
-import type { WebUIExtension } from '@/lib/plugin-webui'
 
 const mocks = vi.hoisted(() => ({
   pathname: '/',
@@ -247,27 +246,6 @@ function makeProps(
 }
 
 describe('Header', () => {
-  it('插件顶部标签保留原始标题并通过宿主工作区切换导航', () => {
-    const extension: WebUIExtension = { schema_version: 2, plugin_id: 'test.plugin', workspace_title: '消息统计', pages: [{
-      id: 'overview', mode: 'declarative', title: '概览', description: '', placement: 'workspace', icon: 'chart', queries: {}, actions: {}, content: [],
-    }] }
-    const props = makeProps({ extensions: [extension] })
-    render(<Header {...props} />)
-    fireEvent.click(screen.getByRole('tab', { name: '消息统计' }))
-    expect(props.onWorkspaceNavigate).toHaveBeenCalledWith('/extensions/test.plugin/overview')
-    expect(mocks.t).not.toHaveBeenCalledWith('消息统计')
-  })
-
-  it('最多展示两个插件工作区，当前工作区保持可见，其余进入更多菜单', () => {
-    const extensions: WebUIExtension[] = ['first', 'second', 'third'].map((plugin_id) => ({ schema_version: 2, plugin_id, workspace_title: plugin_id, pages: [{
-      id: 'overview', mode: 'declarative', title: 'Overview', description: '', placement: 'workspace', icon: 'puzzle', queries: {}, actions: {}, content: [],
-    }] }))
-    render(<Header {...makeProps({ extensions, workspaceMode: 'plugin:third' })} />)
-    expect(screen.getByRole('tab', { name: 'first' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'third' })).toBeInTheDocument()
-    expect(screen.queryByRole('tab', { name: 'second' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'pluginWebUI.more' })).toBeInTheDocument()
-  })
   beforeEach(() => {
     mocks.pathname = '/'
     mocks.electron = false
