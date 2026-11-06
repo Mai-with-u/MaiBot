@@ -720,7 +720,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 continue
             await handle_client_message(connection_id, cast(Dict[str, Any], raw_message))
     except WebSocketDisconnect:
-        logger.info(f"统一 WebSocket 客户端已断开: connection={connection_id}")
+        logger.debug(f"统一 WebSocket 客户端已断开: connection={connection_id}")
     except asyncio.CancelledError:
         logger.warning(f"统一 WebSocket 连接处理被取消: connection={connection_id}")
         raise
@@ -730,6 +730,6 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         stop_plugin_runtime_subscription(connection_id)
         chat_manager.disconnect_connection(connection_id)
         await websocket_manager.disconnect(connection_id)
-        logger.info(
+        logger.debug(
             f"统一 WebSocket 连接清理完成: connection={connection_id}, 剩余连接={len(websocket_manager.connections)}",
         )

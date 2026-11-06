@@ -747,4 +747,4 @@ class MaisakaRuntimeDisplayMixin:
         )
 
     def _log_internal_loop_cancelled(self) -> None:
-        logger.info(f"{self.log_prefix} Maisaka 内部循环已取消")
+        logger.debug(f"{self.log_prefix} Maisaka 内部循环已取消")

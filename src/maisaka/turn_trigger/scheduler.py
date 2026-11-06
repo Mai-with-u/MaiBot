@@ -34,12 +34,11 @@ class MessageTurnScheduler(ABC):
             return
 
         result = self._evaluate(pending_count)
+        logger.debug(f"{runtime.log_prefix} 回复调度 待处理={pending_count} {result.detail}")
         if result.decision == "delay":
-            logger.debug(f"{runtime.log_prefix} 回复调度 待处理={pending_count} {result.detail}")
             runtime._defer_message_turn_check(result.delay_seconds)
             return
 
-        logger.info(f"{runtime.log_prefix} 回复调度 待处理={pending_count} {result.detail}")
         if result.should_trigger:
             if runtime._agent_state == runtime._STATE_WAIT:
                 runtime._cancel_wait_timeout_task()

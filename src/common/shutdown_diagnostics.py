@@ -75,7 +75,7 @@ def shutdown_step(step_name: str, *, warn_after: float = 3.0, interval: float = 
             # 循环正常时补充协程等待位置；阻塞时上面的线程栈已记录现场。
             loop.call_soon_threadsafe(task_stacks)
 
-    logger.info(f"关闭步骤开始: step={step_name}")
+    logger.debug(f"关闭步骤开始: step={step_name}")
     heartbeat()
     thread = threading.Thread(target=sample, name="shutdown-stack-sampler", daemon=True)
     thread.start()
@@ -87,4 +87,5 @@ def shutdown_step(step_name: str, *, warn_after: float = 3.0, interval: float = 
         stopped.set()
         if handle is not None:
             handle.cancel()
-        logger.info(f"关闭步骤结束: step={step_name} 耗时={time.monotonic() - started:.3f}s outcome={outcome}")
+        log_result = logger.debug if outcome == "completed" else logger.warning
+        log_result(f"关闭步骤结束: step={step_name} 耗时={time.monotonic() - started:.3f}s outcome={outcome}")
