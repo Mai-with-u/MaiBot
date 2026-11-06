@@ -69,7 +69,7 @@ from src.maisaka.visual.mode_utils import resolve_enable_visual_planner
 from src.plugin_runtime.hook_payloads import deserialize_prompt_items, serialize_prompt_items
 from src.plugin_runtime.host.hook_dispatcher import HookAbortedError
 
-from .creative_language import OUTPUT_LANGUAGE, TRANSLATION_INSTRUCTION, load_reply_prompt
+from .creative_language import CLASSICAL_TRANSLATION_INSTRUCTION, OUTPUT_LANGUAGE, TRANSLATION_INSTRUCTION, load_reply_prompt
 from .gemini_output import GeminiReplyFormatError, normalize_gemini_reply
 from .maisaka_expression_selector import maisaka_expression_selector
 from .retro_prompt import RetroReplyPromptMixin
@@ -1024,7 +1024,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         if not super_creative_mode or kwargs.get("prompt_profile") == "mai_replier":
             return self._build_request_messages(**kwargs)
         language = language or global_config.experimental.super_creative_language
-        with use_locale(language):
+        with use_locale("zh-CN" if language == "zh-classical" else language):
             # 沿用中文 Replyer 的构建链和占位符，只选择对应语言模板，不重新组织结构。
             items = self._build_request_messages(**kwargs)
             instruction = OUTPUT_LANGUAGE[language]
@@ -1041,6 +1041,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         active_model: Any,
         generation_result: LLMResponseResult,
         generation_options: LLMGenerationOptions,
+        language: str = "ja-JP",
     ) -> Tuple[LLMResponseResult, List[ContextItem]]:
         """用实际生成正文的同一模型翻译；翻译失败时不返回原文。"""
         model_name = generation_result.model_name.strip()
@@ -1052,7 +1053,9 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         if global_config.debug.gemini_reply_compatibility:
             # 先剥离有明确边界的分析块，避免翻译改变边界后将其当作正式正文。
             source_text = normalize_gemini_reply(source_text)
-        prompt = TRANSLATION_INSTRUCTION + source_text
+        # 文言文本身属于中文，需明确译成白话，避免通用指令将其原样返回。
+        instruction = CLASSICAL_TRANSLATION_INSTRUCTION if language == "zh-classical" else TRANSLATION_INSTRUCTION
+        prompt = instruction + source_text
         items = [ContextItemBuilder().set_role(RoleType.User).add_text_content(prompt).build()]
 
         async def translation_context_factory(
@@ -1392,6 +1395,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                         active_model=active_model,
                         generation_result=generation_result,
                         generation_options=generation_options,
+                        language=creative_language,
                     )
                     result.error_code = ""
                     translation_count += 1

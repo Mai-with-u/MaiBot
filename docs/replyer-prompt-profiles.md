@@ -8,7 +8,7 @@
 
 ## 实验性超级创意模式
 
-实验性功能中的 `experimental.super_creative_mode` 默认关闭。生成语言 `experimental.super_creative_language` 可选 `ja-JP`（日语，默认）、`ru-RU`（俄语）、`fr-FR`（法语）。复用现有模板结构、段落及占位符。日语使用已有译本；俄语、法语只在 `src/chat/replyer/creative_language.py` 中保存固定文案差异，先替换模板固定行，再填入中文材料，不另存整套模板。生成语言要求和翻译指令也集中在该文件。
+实验性功能中的 `experimental.super_creative_mode` 默认关闭。生成语言 `experimental.super_creative_language` 可选 `ja-JP`（日语，默认）、`ru-RU`（俄语）、`fr-FR`（法语）、`zh-classical`（中文文言文）。复用现有模板结构、段落及占位符。日语使用已有译本；俄语、法语只在 `src/chat/replyer/creative_language.py` 中保存固定文案差异，先替换模板固定行，再填入中文材料，不另存整套模板。生成语言要求和翻译指令也集中在该文件。
 
 除 Mai Replier 外，翻译统一使用本次实际 Replyer 模型，将所选语言的正文翻译为中文。请求只有一条 user 消息，将翻译说明和“待翻译内容：{text}”合并发送，不设置 system、不拆分消息；已经是中文的内容按提示保留。翻译错误或空译文会明确失败，不发送原文。每次正常回复包含生成与翻译两次模型请求。
 
@@ -43,3 +43,5 @@ Replyer Hook 仍可改写回复要求和创意模板内容，重生成时仍基�
 监控保留回复正文、补充器编排和插件参数，成功发送计数沿用统一执行入口。
 
 开关从下一轮思考生效，一轮内提示词、工具可见性和输出处理保持一致；Focus 始终使用原有工具流程。stop 的直接终止与上下文隔离行为对两种普通聊天模式一致。
+
+文言文模式复用中文原模板并追加文言文输出要求，再由同一 Replyer 模型翻译成现代白话中文；仍使用单条 user 翻译请求，Mai Replier 不受影响。

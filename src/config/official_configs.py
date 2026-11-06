@@ -1088,11 +1088,11 @@ class ExperimentalConfig(ConfigBase):
     )
     """实验性功能：Replyer 使用所选语言 Prompt 生成回复，再由同一实际 Replyer 模型翻译为中文。优先于回复缓存模式，翻译会增加耗时和费用。"""
 
-    super_creative_language: Literal["ja-JP", "ru-RU", "fr-FR"] = Field(
+    super_creative_language: Literal["ja-JP", "ru-RU", "fr-FR", "zh-classical"] = Field(
         default="ja-JP",
         json_schema_extra={
             "label": {"zh_CN": "超级创意生成语言"},
-            "x-option-labels": {"ja-JP": "日语", "ru-RU": "俄语", "fr-FR": "法语"},
+            "x-option-labels": {"ja-JP": "日语", "ru-RU": "俄语", "fr-FR": "法语", "zh-classical": "中文文言文"},
         },
     )
     """超级创意模式使用的 Prompt 和生成语言，中文材料原样保留。"""

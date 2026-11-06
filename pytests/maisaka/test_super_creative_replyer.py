@@ -305,3 +305,22 @@ async def test_mai_replier_ignores_both_creative_modes(replyer, monkeypatch, cre
     assert result.selected_expression_ids == []
     assert result.metrics.extra["replyer_translation_count"] == 0
     assert result.metrics.extra["replyer_super_creative_mode"] is False
+
+
+@pytest.mark.asyncio
+async def test_classical_chinese_generates_then_translates_to_modern_chinese(replyer, monkeypatch):
+    monkeypatch.setattr(global_config.experimental, "super_creative_language", "zh-classical")
+    replyer.responses[:] = [_response("月色甚美，何不共赏？"), _response("月色真美，一起欣赏吧？")]
+    with use_locale("en-US"):
+        success, result = await replyer.generator.generate_reply_with_context(chat_history=[])
+        assert get_locale() == "en-US"
+    assert success and result.text_fragments == ["月色真美，一起欣赏吧？"]
+    assert len(replyer.calls) == 2
+    assert "中文文言文" in get_item_text(replyer.calls[0]["items"][0])
+    assert "你正在qq群里聊天" in get_item_text(replyer.calls[0]["items"][1])
+    translation = replyer.calls[1]["items"]
+    assert len(translation) == 1 and isinstance(translation[0], UserMessageItem)
+    assert "翻译成现代白话中文" in get_item_text(translation[0])
+    assert "如果已经是中文，不用翻译。" not in get_item_text(translation[0])
+    assert get_item_text(translation[0]).endswith("待翻译内容：月色甚美，何不共赏？")
+    assert replyer.calls[1]["options"].model_name == "actual-replyer"
