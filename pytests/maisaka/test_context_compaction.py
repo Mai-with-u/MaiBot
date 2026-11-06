@@ -17,7 +17,13 @@ from src.common.data_models.llm_service_data_models import LLMResponseResult
 from src.common.data_models.message_component_data_model import MessageSequence, TextComponent
 from src.config.model_configs import ModelInfo
 from src.llm_models.model_client.base_client import ResponseRequest
-from src.llm_models.payload_content.context_item import ContextItemBuilder, RoleType, get_item_text
+from src.llm_models.payload_content.context_item import (
+    ContextItemBuilder,
+    ContextItemMeta,
+    ProviderActivityItem,
+    RoleType,
+    get_item_text,
+)
 from src.llm_models.payload_content.tool_option import ToolCall, ToolOption
 from src.llm_models.request_snapshot import serialize_response_request_snapshot
 from src.maisaka import reasoning_engine
@@ -36,6 +42,7 @@ STATE = {
 
 
 def _fixture():
+    """构造旧摘要及十条原文，让关键事实只出现在即将裁切的部分。"""
     timestamp = datetime(2026, 11, 6, 12)
     previous = compaction.ContextSummaryMessage(content="用户打算申请研究生", timestamp=timestamp)
     messages = []
@@ -65,6 +72,7 @@ def _fixture():
 
 
 def _derive(fixture):
+    """从原 Planner 快照派生覆盖前五条原文的摘要请求。"""
     return compaction._build_compaction_request(
         fixture.messages[:5],
         planner_snapshot=fixture.snapshot,
@@ -75,22 +83,24 @@ def _derive(fixture):
 
 @pytest.mark.parametrize("has_tools", [True, False])
 def test_native_summary_disables_tools_without_mutating_planner(has_tools):
+    """摘要统一声明禁用工具，同时保留原快照和完整消息前缀。"""
     fixture = _fixture()
     if not has_tools:
         fixture.request.tool_options = None
     before = deepcopy(fixture.request)
     derived = _derive(fixture)
-    assert derived.tool_choice == ("none" if has_tools else None)
+    assert derived.tool_choice == "none"
     assert derived.tool_options == before.tool_options
     assert derived.context_items[:-1] == before.context_items
     assert "不调用工具" in get_item_text(derived.context_items[-1])
     assert fixture.request == before
     assert derived is not fixture.request
-    assert serialize_response_request_snapshot(derived)["tool_choice"] == ("none" if has_tools else None)
+    assert serialize_response_request_snapshot(derived)["tool_choice"] == "none"
 
 
 @pytest.mark.parametrize("note", ["", " \t\n"])
 def test_blank_note_is_ignored_without_mutating_input(note):
+    """忽略无信息的 note 时，不改变调用方传入的摘要字典。"""
     payload = {**deepcopy(STATE), "note": note}
     before = deepcopy(payload)
     result = compaction.ConversationState.model_validate(payload)
@@ -100,6 +110,7 @@ def test_blank_note_is_ignored_without_mutating_input(note):
 
 @pytest.mark.parametrize("extra", [{"note": "new fact"}, {"note": None}, {"note": []}, {"other": ""}])
 def test_nonblank_or_unknown_extra_fields_remain_rejected(extra):
+    """空 note 的兼容规则不接受其他附加字段或非空内容。"""
     with pytest.raises(ValidationError):
         compaction.ConversationState.model_validate({**STATE, **extra})
 
@@ -112,14 +123,17 @@ def test_nonblank_or_unknown_extra_fields_remain_rejected(extra):
     ],
 )
 def test_blank_note_does_not_relax_required_fields(payload):
+    """即使带空 note，摘要核心字段仍须齐全且类型正确。"""
     with pytest.raises(ValidationError):
         compaction.ConversationState.model_validate({**payload, "note": ""})
 
 
 def _install_response(monkeypatch, result, before_return=None):
+    """记录派生请求并注入固定结果，可在返回前模拟上下文变更。"""
     calls = []
 
     async def generate(_self, request):
+        """观察真实摘要请求，在响应交回之前执行可选的并发操作。"""
         calls.append(request)
         if before_return:
             before_return()
@@ -131,6 +145,7 @@ def _install_response(monkeypatch, result, before_return=None):
 
 
 async def _summarize(fixture):
+    """沿真实摘要入口压缩前半段历史，保留旧摘要和近期原文参数。"""
     return await compaction.build_context_summary(
         fixture.messages[:5],
         planner_snapshot=fixture.snapshot,
@@ -143,6 +158,7 @@ async def _summarize(fixture):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("payload", ["invalid JSON", json.dumps({key: [] for key in STATE})])
 async def test_invalid_or_empty_summary_remains_rejected(monkeypatch, payload):
+    """非法 JSON 或没有任何有效条目的摘要不得作为压缩结果提交。"""
     _install_response(monkeypatch, LLMResponseResult.from_portable_output(response=payload))
     with pytest.raises(ValueError):
         await _summarize(_fixture())
@@ -150,6 +166,7 @@ async def test_invalid_or_empty_summary_remains_rejected(monkeypatch, payload):
 
 @pytest.mark.asyncio
 async def test_backend_ignoring_tool_choice_is_still_rejected(monkeypatch):
+    """后端忽略禁用工具的约束时，函数调用响应仍须拒收。"""
     result = LLMResponseResult.from_portable_output(
         tool_calls=[ToolCall(call_id="stop-1", func_name="stop", args={})],
     )
@@ -159,7 +176,35 @@ async def test_backend_ignoring_tool_choice_is_still_rejected(monkeypatch):
     assert calls[0].tool_choice == "none"
 
 
+@pytest.mark.asyncio
+async def test_native_tool_activity_remains_rejected_even_with_valid_summary(monkeypatch):
+    """有效摘要文本不能掩盖后端同时返回的原生搜索活动。"""
+    fixture = _fixture()
+    fixture.request.tool_options = None
+    fixture.request.extra_params = {"body": {"tools": [{"type": "web_search_preview"}]}}
+    before = deepcopy(fixture.request)
+    text_result = LLMResponseResult.from_portable_output(response=json.dumps(STATE))
+    result = LLMResponseResult(
+        output_items=(
+            *text_result.output_items,
+            ProviderActivityItem(
+                meta=ContextItemMeta.create(logical_turn_id="native-search"),
+                provider_type="web_search",
+                call_id="search-1",
+                status="completed",
+            ),
+        )
+    )
+    calls = _install_response(monkeypatch, result)
+    with pytest.raises(ValueError, match="禁止的工具调用"):
+        await _summarize(fixture)
+    assert calls[0].tool_choice == "none"
+    assert calls[0].extra_params == before.extra_params
+    assert fixture.request == before
+
+
 def _engine(fixture, monkeypatch):
+    """保留真实收尾逻辑，仅替换与摘要提交无关的事件和学习服务。"""
     runtime = SimpleNamespace(
         _chat_history=list(fixture.history),
         _max_context_size=10,
@@ -180,6 +225,7 @@ def _engine(fixture, monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("extra", [{}, {"note": ""}])
 async def test_summary_reaches_downstream_context_after_history_trim(monkeypatch, extra):
+    """裁切前半段原文后，新摘要应保留事实并能转换成下游消息。"""
     fixture = _fixture()
     engine, runtime = _engine(fixture, monkeypatch)
     calls = _install_response(
@@ -204,10 +250,12 @@ async def test_summary_reaches_downstream_context_after_history_trim(monkeypatch
 
 @pytest.mark.asyncio
 async def test_clear_during_summary_still_cancels_commit(monkeypatch):
+    """压缩期间清空历史时，过期摘要不得重新写回已清空的会话。"""
     fixture = _fixture()
     engine, runtime = _engine(fixture, monkeypatch)
 
     def clear():
+        """模拟用户在模型响应返回前清空会话和 Planner 快照。"""
         runtime._chat_history = []
         runtime._chat_loop_service.planner_request_snapshot = None
 
@@ -219,6 +267,7 @@ async def test_clear_during_summary_still_cancels_commit(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_acp_summary_keeps_its_separate_tool_free_path(monkeypatch):
+    """ACP 摘要继续使用无工具入口，并保持其历史标识和原快照。"""
     fixture = _fixture()
     original = ACPPlannerSnapshot(
         config=AgentConfig(), context_items=list(fixture.request.context_items), history_item_ids=["old"]

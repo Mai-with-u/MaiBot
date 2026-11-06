@@ -219,9 +219,9 @@ def _build_compaction_request(
     tail = "\n".join([*tail_parts, instruction])
     request = planner_snapshot.request.detached_snapshot()
     request.context_items.append(ContextItemBuilder().set_role(RoleType.User).add_text_content(tail).build())
-    # 保留原生请求的工具定义与顺序以尽量复用前缀，但摘要任务明确禁止选择声明的工具。
-    # 无工具请求不新增工具选择参数；ACP 摘要不挂载工具，沿用独立路径。
-    if isinstance(request, ResponseRequest) and request.tool_options:
+    # 摘要统一禁止函数工具和服务商原生工具；具体工具配置由客户端处理。
+    # 客户端尽量保留函数定义与消息前缀，无工具时省略选择参数；ACP 沿用独立路径。
+    if isinstance(request, ResponseRequest):
         request.tool_choice = "none"
     # 压缩仅消费摘要文本，不进入宿主工具执行流程；含工具调用的响应会被拒收。
     return request

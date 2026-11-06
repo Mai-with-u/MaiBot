@@ -10,7 +10,7 @@ from typing import Any, Dict, List
 
 import json
 
-from google.genai.types import HttpOptions
+from google.genai.types import GoogleSearch, HttpOptions, Tool
 import httpx
 import pytest
 
@@ -43,7 +43,15 @@ SUMMARY = json.dumps(
 )
 
 
-def _requests(protocol: str, *, stream: bool, tools: bool = True):
+def _requests(
+    protocol: str,
+    *,
+    stream: bool,
+    tools: bool = True,
+    extra_params: Dict[str, Any] | None = None,
+    model_identifier: str = "mock-model",
+):
+    """Derive a summary request from synthetic history and a completed tool turn."""
     source = ReferenceMessage(content="周五前提交 A 学校材料", timestamp=datetime(2026, 11, 6))
     items = [
         ContextItemBuilder().set_role(RoleType.System).add_text_content("Planner 可以使用 stop 工具").build(),
@@ -68,7 +76,7 @@ def _requests(protocol: str, *, stream: bool, tools: bool = True):
     original = ResponseRequest(
         model_info=ModelInfo(
             name="mock-model",
-            model_identifier="mock-model",
+            model_identifier=model_identifier,
             model_type="llm",
             api_provider="mock-provider",
             force_stream_mode=stream,
@@ -77,7 +85,13 @@ def _requests(protocol: str, *, stream: bool, tools: bool = True):
         tool_options=[ToolOption(name="stop", description="结束思考")] if tools else None,
         max_tokens=512,
         # The derived constraint must override a model-level choice as well.
-        extra_params={"tool_choice": "auto"} if protocol != "gemini" and tools else {},
+        extra_params=(
+            deepcopy(extra_params)
+            if extra_params is not None
+            else {"tool_choice": "auto"}
+            if protocol != "gemini" and tools
+            else {}
+        ),
     )
     snapshot = PlannerRequestSnapshot(request=original, history=(source,))
     derived = _build_compaction_request(
@@ -90,6 +104,7 @@ def _requests(protocol: str, *, stream: bool, tools: bool = True):
 
 
 def _response_body(protocol: str) -> Dict[str, Any]:
+    """Represent the same valid summary in each provider's response schema."""
     if protocol == "openai":
         return {
             "id": "chatcmpl-mock",
@@ -126,6 +141,7 @@ def _response_body(protocol: str) -> Dict[str, Any]:
 
 
 def _http_response(protocol: str, stream: bool) -> httpx.Response:
+    """Encode fixed provider responses as JSON or the provider's SSE format."""
     payload = _response_body(protocol)
     if not stream:
         return httpx.Response(200, json=payload)
@@ -151,6 +167,7 @@ def _http_response(protocol: str, stream: bool) -> httpx.Response:
 
 
 def _client(protocol: str, monkeypatch: pytest.MonkeyPatch, transport: httpx.MockTransport):
+    """Construct a real provider SDK client with only its HTTP transport replaced."""
     provider = APIProvider(
         name="mock-provider",
         base_url="https://mock.invalid/v1beta" if protocol == "gemini" else "https://mock.invalid/v1",
@@ -178,6 +195,7 @@ def _client(protocol: str, monkeypatch: pytest.MonkeyPatch, transport: httpx.Moc
 
 
 async def _close(client, http_client, protocol: str) -> None:
+    """Close SDK resources and the test transport without leaking pooled clients."""
     if protocol == "gemini":
         await client.client.aio.aclose()
         client.client.close()
@@ -194,11 +212,13 @@ async def test_compaction_constraint_reaches_real_sdk_wire_without_changing_pref
     protocol: str,
     stream: bool,
 ) -> None:
+    """Keep the Planner prefix intact while the wire request forbids functions."""
     original, derived = _requests(protocol, stream=stream)
     before = deepcopy(original)
     captured: List[Dict[str, Any]] = []
 
     async def respond(request: httpx.Request):
+        """Record serialized requests and return a fixed provider completion."""
         assert request.url.host == "mock.invalid"
         captured.append(json.loads(request.content))
         return _http_response(protocol, stream)
@@ -229,14 +249,19 @@ async def test_compaction_constraint_reaches_real_sdk_wire_without_changing_pref
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("protocol", ["openai", "openai_responses", "gemini"])
+@pytest.mark.parametrize("extra_params", [{}, {"tool_choice": "auto"}, {"body": {"tool_choice": "required"}}])
 async def test_compaction_without_tools_does_not_add_a_tool_selection_parameter(
     monkeypatch: pytest.MonkeyPatch,
     protocol: str,
+    extra_params: Dict[str, Any],
 ) -> None:
-    original, derived = _requests(protocol, stream=False, tools=False)
+    """Omit orphan selection parameters even when Planner configuration supplied one."""
+    original, derived = _requests(protocol, stream=False, tools=False, extra_params=extra_params)
+    before = deepcopy(original)
     captured = []
 
     async def respond(request: httpx.Request):
+        """Capture the tool-free wire payload without contacting a provider."""
         captured.append(json.loads(request.content))
         return _http_response(protocol, False)
 
@@ -251,3 +276,170 @@ async def test_compaction_without_tools_does_not_add_a_tool_selection_parameter(
     assert "toolConfig" not in captured[0]
     assert not captured[0].get("tools")
     assert original.tool_options is None
+    assert original == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_compaction_disables_chat_tools_from_extra_body(
+    monkeypatch: pytest.MonkeyPatch,
+    stream: bool,
+) -> None:
+    """Honor summary constraints when Chat tools bypass the common tool-options field."""
+    configured_tools = [
+        {
+            "type": "function",
+            "function": {"name": "configured_function", "parameters": {"type": "object", "properties": {}}},
+        }
+    ]
+    original, derived = _requests(
+        "openai",
+        stream=stream,
+        tools=False,
+        extra_params={"body": {"tools": configured_tools, "tool_choice": "required"}},
+    )
+    before = deepcopy(original)
+    captured = []
+
+    async def respond(request: httpx.Request):
+        """Observe the effective body after the SDK merges explicit tools and extra_body."""
+        captured.append(json.loads(request.content))
+        return _http_response("openai", stream)
+
+    client, http_client = _client("openai", monkeypatch, httpx.MockTransport(respond))
+    try:
+        await client.get_response(original)
+        result = await client.get_response(derived)
+    finally:
+        await _close(client, http_client, "openai")
+    assert original == before
+    assert derived.extra_params == before.extra_params
+    assert result.content == SUMMARY
+    assert not result.tool_calls and not result.native_tool_calls
+    assert len(captured) == 2
+    assert captured[0]["tool_choice"] == "required"
+    assert captured[1]["tool_choice"] == "none"
+    assert captured[1]["tools"] == captured[0]["tools"] == configured_tools
+    assert captured[1]["messages"][:-1] == captured[0]["messages"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("location,declared_tools", [("body", False), ("top", False), ("body", True)])
+async def test_compaction_disables_responses_native_tools(
+    monkeypatch: pytest.MonkeyPatch,
+    stream: bool,
+    location: str,
+    declared_tools: bool,
+) -> None:
+    """Override native-only and mixed Responses tool modes while retaining tool definitions."""
+    configured_tools = [{"type": "web_search_preview"}]
+    overrides = {"tools": configured_tools, "tool_choice": "required" if location == "body" else "auto"}
+    extra_params = {"body": overrides} if location == "body" else overrides
+    original, derived = _requests(
+        "openai_responses",
+        stream=stream,
+        tools=declared_tools,
+        extra_params=extra_params,
+    )
+    before = deepcopy(original)
+    captured = []
+
+    async def respond(request: httpx.Request):
+        """Record both wire requests to compare native-tool configuration and input."""
+        captured.append(json.loads(request.content))
+        return _http_response("openai_responses", stream)
+
+    client, http_client = _client("openai_responses", monkeypatch, httpx.MockTransport(respond))
+    try:
+        await client.get_response(original)
+        result = await client.get_response(derived)
+    finally:
+        await _close(client, http_client, "openai_responses")
+    assert original == before
+    assert derived.extra_params == before.extra_params
+    assert result.content == SUMMARY
+    assert not result.tool_calls and not result.native_tool_calls
+    assert len(captured) == 2
+    assert captured[0]["tool_choice"] == overrides["tool_choice"]
+    assert captured[1]["tool_choice"] == "none"
+    assert captured[1]["tools"] == captured[0]["tools"]
+    assert captured[1]["tools"][-1] == configured_tools[0]
+    assert captured[1]["input"][:-1] == captured[0]["input"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("declared_tools,stream", [(False, False), (True, True)])
+@pytest.mark.parametrize("search_source", ["flag", "suffix", "dict", "typed", "mixed"])
+async def test_compaction_disables_gemini_search_without_mutating_planner(
+    monkeypatch: pytest.MonkeyPatch,
+    declared_tools: bool,
+    stream: bool,
+    search_source: str,
+) -> None:
+    """Remove every search entry point, preserving only function declarations in summaries."""
+    model_identifier = "mock-model"
+    if search_source == "flag":
+        extra_params = {"enable_google_search": True}
+    elif search_source == "suffix":
+        model_identifier += "-search"
+        # The legacy suffix can override a false config flag before compaction.
+        extra_params = {"enable_google_search": False}
+    elif search_source == "dict":
+        extra_params = {"tools": [{"google_search": {}}]}
+    elif search_source == "typed":
+        extra_params = {"tools": [Tool(google_search=GoogleSearch())]}
+    else:
+        extra_params = {
+            "tools": [
+                {
+                    "google_search": {},
+                    "function_declarations": [{"name": "configured_function", "description": "模型配置内的函数"}],
+                }
+            ]
+        }
+    original, derived = _requests(
+        "gemini",
+        stream=stream,
+        tools=declared_tools,
+        extra_params=extra_params,
+        model_identifier=model_identifier,
+    )
+    before = deepcopy(original)
+    captured = []
+
+    async def respond(request: httpx.Request):
+        """Capture SDK normalization of native search and function declarations."""
+        captured.append({"path": request.url.path, "body": json.loads(request.content)})
+        return _http_response("gemini", stream)
+
+    client, http_client = _client("gemini", monkeypatch, httpx.MockTransport(respond))
+    try:
+        await client.get_response(original)
+        result = await client.get_response(derived)
+    finally:
+        await _close(client, http_client, "gemini")
+    assert original == before
+    assert derived.extra_params == before.extra_params
+    assert derived.model_info.model_identifier == before.model_info.model_identifier
+    assert result.content == SUMMARY
+    assert not result.tool_calls and not result.native_tool_calls
+    assert len(captured) == 2
+    planner = captured[0]["body"]
+    summary = captured[1]["body"]
+    assert any("googleSearch" in tool for tool in planner["tools"])
+    assert all(set(tool) == {"functionDeclarations"} for tool in summary.get("tools", []))
+    planner_functions = [function for tool in planner["tools"] for function in tool.get("functionDeclarations", [])]
+    summary_functions = [
+        function for tool in summary.get("tools", []) for function in tool.get("functionDeclarations", [])
+    ]
+    assert summary_functions == planner_functions
+    if planner_functions:
+        assert summary["toolConfig"]["functionCallingConfig"]["mode"] == "NONE"
+    else:
+        assert "tools" not in summary
+        assert "toolConfig" not in summary
+    assert summary["systemInstruction"] == planner["systemInstruction"]
+    assert summary["contents"][:-1] == planner["contents"]
+    assert captured[1]["path"] == captured[0]["path"]
+    assert "-search" not in captured[1]["path"]
