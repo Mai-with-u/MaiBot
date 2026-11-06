@@ -66,7 +66,7 @@ services:
       - maim_bot
   sqlite-web:
     # 注意：coleifer/sqlite-web 镜像不支持arm64
-    image: coleifer/sqlite-web
+    image: ghcr.io/coleifer/sqlite-web:latest
     container_name: sqlite-web
     restart: always
     ports:
