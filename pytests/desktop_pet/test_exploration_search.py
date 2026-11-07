@@ -48,9 +48,20 @@ def test_filter_matches_content_and_preserves_failed_experience(saved_products):
 
 
 @pytest.mark.asyncio
-async def test_tool_works_in_normal_chat_without_exploration_id(saved_products):
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_tool_works_in_normal_chat_without_exploration_id(saved_products, monkeypatch, enabled):
+    monkeypatch.setattr(exploration_tools.global_config.experimental, "desktop_pet_exploration_enabled", enabled)
     provider = exploration_tools.ExplorationToolProvider()
     owner = SimpleNamespace(session_id="owner")
+    if not enabled:
+        assert await provider.list_tools(owner) == []
+        assert exploration_search.build_exploration_reuse_context("owner") == ""
+        invocation = SimpleNamespace(tool_name="search_exploration_products", arguments={"keywords": ["python"]})
+        before = saved_products.read_bytes()
+        result = await provider.invoke(invocation, owner)
+        assert not result.success
+        assert saved_products.read_bytes() == before
+        return
     assert "search_exploration_products" in {spec.name for spec in await provider.list_tools(owner)}
     assert await provider.list_tools(SimpleNamespace(session_id="group")) == []
     invocation = SimpleNamespace(tool_name="search_exploration_products", arguments={"keywords": ["python"]})

@@ -89,7 +89,7 @@ class DesktopPetService:
                     loop.call_soon_threadsafe(self._buttons_changed)
             self._button_unsubscribe = get_plugin_runtime_manager().subscribe_status_changes(changed)
         if not self._reload_registered:
-            config_manager.register_reload_callback(self.reload, sections=("desktop_pet",))
+            config_manager.register_reload_callback(self.reload, sections=("desktop_pet", "experimental"))
             self._reload_registered = True
         await self.reload()
 
@@ -109,6 +109,7 @@ class DesktopPetService:
                 if not global_config.desktop_pet.screen_read_enabled:
                     await self._stop_screen_reader()
                 await self._publish_screen_state()
+                await self._publish_exploration_state()
                 return
             await self._stop()
             self._error = ""
@@ -333,6 +334,7 @@ class DesktopPetService:
                 self._observe(self._run_todos())
             self._restart_proactive_wake()
             self._observe(self._publish_screen_state())
+            self._observe(self._publish_exploration_state())
         elif kind == "buttons_refresh":
             self._buttons_changed()
         elif kind == "button_click":
@@ -514,6 +516,11 @@ class DesktopPetService:
                 self._error = str(exc)
                 logger.exception("桌宠定期主动思考唤醒失败")
 
+    async def _publish_exploration_state(self) -> None:
+        if self._ready and not self._closing:
+            await self._command({"type": "exploration_state",
+                                 "enabled": global_config.experimental.desktop_pet_exploration_enabled})
+
     async def _exploration_session_id(self) -> str:
         from src.chat.message_receive.chat_manager import chat_manager
 
@@ -552,6 +559,8 @@ class DesktopPetService:
         error = ""
         task = None
         try:
+            if not global_config.experimental.desktop_pet_exploration_enabled:
+                raise PermissionError("请先在实验性功能中开启桌宠自由探索")
             goal = validate_goal(goal)
             session_id = await self._exploration_session_id()
             task = await asyncio.to_thread(exploration_tasks, session_id, "create", goal=goal)

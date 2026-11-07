@@ -5,6 +5,7 @@ import json
 import unicodedata
 
 from src.common.prompt_i18n import load_prompt
+from src.config.config import global_config
 
 from .chat_tools import is_owner_chat
 from .exploration import experience_ref, exploration_tasks, reuse_summary
@@ -12,6 +13,8 @@ from .exploration import experience_ref, exploration_tasks, reuse_summary
 
 def build_exploration_reuse_context(session_id: str) -> str:
     """只加入简短使用规则，不把整个产物库塞进每轮上下文。"""
+    if not global_config.experimental.desktop_pet_exploration_enabled:
+        return ""
     return load_prompt("desktop_pet_exploration_reuse") if is_owner_chat(session_id) else ""
 
 

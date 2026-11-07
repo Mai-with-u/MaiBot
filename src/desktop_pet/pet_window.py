@@ -574,7 +574,7 @@ def execute_command(api: PetApi, window: "webview.Window", command: Dict[str, An
             records_window = api._exploration_window
             if records_window is not None:
                 records_window.evaluate_js(f"window.records.receive({json.dumps(command)})")
-        elif command["type"] in {"reply", "notice", "thinking_caption", "thinking", "idle", "failed", "accepted", "buttons", "button_result", "screen_state", "exploration_result", "exploration_tasks"}:
+        elif command["type"] in {"reply", "notice", "thinking_caption", "thinking", "idle", "failed", "accepted", "buttons", "button_result", "screen_state", "exploration_state", "exploration_result", "exploration_tasks"}:
             window.evaluate_js(f"window.pet.receive({json.dumps(command)})")
         else:
             raise ValueError(f"未知的桌宠指令: {command['type']}")

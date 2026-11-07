@@ -1075,6 +1075,12 @@ class ExperimentalConfig(ConfigBase):
     __ui_advanced__ = True
     __ui_order__ = 140
 
+    desktop_pet_exploration_enabled: bool = Field(
+        default=False,
+        json_schema_extra={"label": {"zh_CN": "桌宠自由探索"}, "x-widget": "switch"},
+    )
+    """实验性功能：允许桌宠发起探索任务，并在主人聊天中检索、记录和复用探索经验。默认关闭，开启后会调用模型和工具。"""
+
     super_creative_mode: bool = Field(
         default=False,
         json_schema_extra={
@@ -5631,12 +5637,6 @@ class PluginConfig(ConfigBase):
     )
     """允许用聊天命令管理插件的用户，格式如 qq:123456789。"""
 
-    silent_permission_denied: bool = Field(
-        default=False,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "不显示无权限提示",
-                "en_US": "Hide permission denied notice",
     command_require_self_mention: bool = Field(
         default=False,
         json_schema_extra={
@@ -5650,6 +5650,12 @@ class PluginConfig(ConfigBase):
     )
     """开启后，命令消息包含结构化 @ 时，必须提及当前接收账号；不含 @ 的命令不受影响。"""
 
+    silent_permission_denied: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "不显示无权限提示",
+                "en_US": "Hide permission denied notice",
                 "ja_JP": "権限なし通知を非表示",
             },
             "x-widget": "switch",
