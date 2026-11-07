@@ -11,6 +11,7 @@ import {
   Dialog,
   DialogBody,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -181,6 +182,7 @@ export function TaskAssignmentBoard({
                   <TaskLamp state="on" />
                   <h3 className="text-base font-semibold">{meta.name}</h3>
                 </div>
+                {meta.desc && <p className="text-xs text-muted-foreground">{meta.desc}</p>}
                 <ol data-task-card-models="true">
                   {list.slice(0, 3).map((name, index) => (
                     <li key={name} title={name}>
@@ -383,7 +385,7 @@ function TaskEditor({
     <DialogContent
       side="right"
       className="bottom-4 flex max-h-none flex-col gap-0 p-0 pb-0 sm:[--dialog-width:30rem]"
-      aria-describedby={undefined}
+      {...(meta.desc ? {} : { 'aria-describedby': undefined })}
       data-task-editor="true"
       preventOutsideClose={tourRunning}
     >
@@ -392,6 +394,7 @@ function TaskEditor({
           <TaskLamp state={list.length > 0 ? 'on' : meta.fallback ? 'fallback' : 'off'} />
           {meta.name}
         </DialogTitle>
+        {meta.desc && <DialogDescription className="text-xs">{meta.desc}</DialogDescription>}
       </DialogHeader>
       <DialogBody type="auto" data-form-scroll="true" viewportClassName="pr-0">
         <div className="flex flex-col gap-5 px-5 py-4" data-config-field-path={`model_task_config.${field.name}`}>
