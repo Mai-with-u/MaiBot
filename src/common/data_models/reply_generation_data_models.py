@@ -150,6 +150,10 @@ class ReplyGenerationResult(BaseDataModel):
         default_factory=list,
         metadata={"description": "本次 replyer 完整的 Provider 调用诊断链。"},
     )
+    prompt_html_uri: str = field(
+        default="",
+        metadata={"description": "已保存的推理记录入口，供工具监控复用。"},
+    )
 
 def _format_selected_expression_line(expression: Dict[str, Any], fallback_id: Optional[int] = None) -> str:
     """格式化单条已选表达方式，供终端与监控详情展示。"""
@@ -233,6 +237,8 @@ def build_reply_monitor_detail(result: ReplyGenerationResult) -> Dict[str, Any]:
         detail["output_items"] = result.output_items
     if result.generation_attempts:
         detail["generation_attempts"] = result.generation_attempts
+    if result.prompt_html_uri:
+        detail["prompt_html_uri"] = result.prompt_html_uri
 
     metrics: Dict[str, Any] = {}
     if result.completion.model_name.strip():

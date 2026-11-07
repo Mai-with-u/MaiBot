@@ -645,6 +645,7 @@ async def _execute_reply(
             resolved_attachments = start_attachment_resolution(invocation_arguments)
         generation = replyer.generate_reply_with_context(
             reply_reason="",
+            tool_call_id=call_id,
             stream_id=tool_ctx.runtime.session_id,
             reply_message=target_message if supplement_runner is None else None,
             resolve_reply_target=resolve_reply_target if supplement_runner is not None else None,

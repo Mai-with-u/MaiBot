@@ -56,6 +56,8 @@ REPLAY_IMAGE_ROOTS = (
 )
 ALLOWED_SUFFIXES = {".txt", ".html", ".json"}
 SESSION_CHAT_TYPES = ("group", "private")
+REPLY_REQUEST_STAGES = {"replyer", "replyer_creative"}
+REPLY_OUTPUT_STAGES = REPLY_REQUEST_STAGES | {"replyer_translation"}
 ALL_GROUP_SESSIONS = "__all_group_chats__"
 PROMPT_METADATA_MARKER = "[请求信息]"
 PROMPT_SEPARATOR = "=" * 80
@@ -371,12 +373,14 @@ def _latest_replyer_expressions(session_id: str) -> tuple[list[str], int | None]
 
     from src.maisaka.display.preview_path_utils import build_preview_chat_dir_name
 
-    replyer_dir = PROMPT_LOG_ROOT / "replyer" / build_preview_chat_dir_name(session_id)
-    if not replyer_dir.is_dir():
-        return [], None
-    for snapshot in sorted(replyer_dir.glob("*.json"), key=lambda path: path.stem, reverse=True):
-        if not snapshot.stem.isdigit():
-            continue
+    chat_dir_name = build_preview_chat_dir_name(session_id)
+    snapshots = (
+        path
+        for stage in REPLY_REQUEST_STAGES
+        for path in (PROMPT_LOG_ROOT / stage / chat_dir_name).glob("*.json")
+        if path.stem.isdigit()
+    )
+    for snapshot in sorted(snapshots, key=lambda path: int(path.stem), reverse=True):
         try:
             payload = json.loads(snapshot.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -1095,6 +1099,8 @@ def _resolve_replay_task_name(stage: str, model_name: str) -> str:
 
     available_tasks = get_available_models()
     normalized_stage = stage.strip()
+    if normalized_stage in REPLY_OUTPUT_STAGES:
+        normalized_stage = "replyer"
     if normalized_stage in available_tasks:
         return normalized_stage
 
@@ -1667,7 +1673,7 @@ def _matches_prompt_file_search(item: ReasoningPromptFile, normalized_search: st
     ):
         return True
 
-    if item.stage != "replyer" or not (item.json_path or item.text_path):
+    if item.stage not in REPLY_OUTPUT_STAGES or not (item.json_path or item.text_path):
         return False
 
     relative_path = item.json_path or item.text_path
@@ -1917,8 +1923,9 @@ def _hydrate_prompt_file_record(
 ) -> ReasoningPromptFile:
     hydrated_record = dict(record)
     stage_name = str(hydrated_record["stage"])
+    is_reply_output = stage_name in REPLY_OUTPUT_STAGES
     should_extract_action_preview = include_action_preview and stage_name in {"jargon_learning_update", "planner"}
-    should_extract_output_preview = include_output_preview and stage_name in {"replyer", "expression_selector"}
+    should_extract_output_preview = include_output_preview and (is_reply_output or stage_name == "expression_selector")
     should_extract_llm_error_preview = stage_name == "llm_error"
     json_payload: dict[str, Any] | None = None
 
@@ -1941,7 +1948,7 @@ def _hydrate_prompt_file_record(
                     "；".join(f"{pair.situation} → {pair.style}" for pair in pairs)
                     if pairs else "未选择表达" if pairs == [] else "无法从记录还原已选表达"
                 )
-            elif stage_name == "replyer" and (include_previews or should_extract_output_preview):
+            elif is_reply_output and (include_previews or should_extract_output_preview):
                 hydrated_record["output_preview"] = _extract_output_preview_from_json_payload(json_payload)
             elif stage_name == "planner" or _is_jargon_learning_update_preview_payload(json_payload):
                 if not hydrated_record.get("display_title"):
@@ -1952,14 +1959,14 @@ def _hydrate_prompt_file_record(
     metadata_missing = not hydrated_record.get("model_name") or hydrated_record.get("duration_ms") is None
     preview_missing = (
         (include_previews or should_extract_output_preview)
-        and stage_name == "replyer"
+        and is_reply_output
         and not hydrated_record.get("output_preview")
     )
 
     text_file_path = _resolve_record_file_path(hydrated_record, "text_path", {".txt"})
     if text_file_path is not None and (metadata_missing or preview_missing):
         _merge_prompt_metadata(hydrated_record, _extract_prompt_metadata(text_file_path))
-        if stage_name == "replyer" and not hydrated_record.get("output_preview"):
+        if is_reply_output and not hydrated_record.get("output_preview"):
             hydrated_record["output_preview"] = _extract_output_preview(text_file_path)
         metadata_missing = not hydrated_record.get("model_name") or hydrated_record.get("duration_ms") is None
 
