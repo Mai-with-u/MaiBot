@@ -1031,6 +1031,9 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
                 model_info.model_identifier,
                 request.extra_params,
             )
+            if request.tool_choice == "none":
+                # 先解析模型别名，再覆盖开关和 -search 后缀隐式启用的搜索。
+                enable_google_search = False
             generation_config = self._build_generation_config(
                 model_identifier=model_identifier,
                 system_instruction=system_instruction,
@@ -1042,7 +1045,17 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
                 enable_google_search=enable_google_search,
             )
             if request.tool_choice == "none":
-                generation_config.tool_config = ToolConfig(function_calling_config=FunctionCallingConfig(mode="NONE"))
+                # NONE 只约束函数调用；原生工具必须从配置移除，也覆盖 extra_params.tools。
+                # 重建混合 Tool，避免修改快照；保留函数定义以复用消息和工具前缀。
+                generation_config.tools = [
+                    Tool(function_declarations=tool.function_declarations)
+                    for tool in generation_config.tools or []
+                    if isinstance(tool, Tool) and tool.function_declarations
+                ] or None
+                generation_config.tool_config = (
+                    ToolConfig(function_calling_config=FunctionCallingConfig(mode="NONE"))
+                    if generation_config.tools else None
+                )
             snapshot_provider_request["request_kwargs"] = {
                 "config": generation_config,
                 "contents": contents,

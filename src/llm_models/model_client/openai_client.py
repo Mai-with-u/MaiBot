@@ -1669,7 +1669,11 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                 # 每次用副本，避免重试两次之间相互污染 extra_body
                 extra_body = dict(request_overrides.extra_body)
                 if request.tool_choice is not None:
-                    extra_body["tool_choice"] = request.tool_choice
+                    # body.tools 可覆盖 SDK 工具；无实际工具时不发送孤立的选择参数。
+                    if extra_body.get("tools", tools_payload):
+                        extra_body["tool_choice"] = request.tool_choice
+                    else:
+                        extra_body.pop("tool_choice", None)
                 if use_max_completion_tokens:
                     # 清除经由 extra_params.body 嵌套传入、未被 reserved_body_keys 过滤的
                     # 遗留 max_tokens，否则重试仍会同时发送 max_tokens 导致再次 400。
