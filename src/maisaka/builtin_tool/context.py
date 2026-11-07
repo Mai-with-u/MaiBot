@@ -294,8 +294,8 @@ class BuiltinToolRuntimeContext:
             target_user_cardname=user_info.user_cardname,
         )
 
-    async def _resolve_image_attachment(self, raw_attachment: Any) -> ImageComponent:
-        """把 attach_pic 参数按消息或工具媒体索引解析为图片组件。"""
+    async def _resolve_image_attachment(self, raw_attachment: Any) -> ImageComponent | EmojiComponent:
+        """把 attach_pic 参数按消息或工具媒体索引解析为图片组件；表情包保留表情包类型。"""
 
         if isinstance(raw_attachment, dict):
             target_message_id = str(
