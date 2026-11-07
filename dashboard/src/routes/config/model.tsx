@@ -2,6 +2,7 @@ import { type UIEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } f
 import { useRouterState } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import { DraftNumberInput } from '@/components/ui/draft-number-input'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent } from '@/components/ui/tabs'
@@ -1853,27 +1854,14 @@ function ModelConfigPageContent() {
                       className="flex-1"
                       aria-label="温度值"
                     />
-                    <Input
-                      type="number"
+                    <DraftNumberInput
                       aria-label="温度数值"
                       value={editingModel.temperature}
-                      onChange={(e) => {
-                        const value = parseFloat(e.target.value)
-                        if (!isNaN(value) && value >= 0 && value <= 2) {
-                          setEditingModel((prev) => prev ? { ...prev, temperature: value } : null)
-                        }
-                      }}
-                      onBlur={(e) => {
-                        const value = parseFloat(e.target.value)
-                        if (isNaN(value) || value < 0) {
-                          setEditingModel((prev) => prev ? { ...prev, temperature: 0 } : null)
-                        } else if (value > 2) {
-                          setEditingModel((prev) => prev ? { ...prev, temperature: 2 } : null)
-                        }
+                      onValueChange={(temperature) => {
+                        setEditingModel((prev) => prev ? { ...prev, temperature } : null)
                       }}
                       step={0.01}
-                      min={0}
-                      max={2}
+                      range={[0, 2]}
                       className="h-8 w-20 text-right text-sm tabular-nums"
                     />
                   </div>

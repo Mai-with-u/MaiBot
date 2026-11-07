@@ -64,6 +64,7 @@ import {
   HOME_CARD_SPANS,
   HOME_CARD_ZONE,
   homeGridRows,
+  insertDesktopPetCard,
   loadHomeLayout,
   missingHomeCards,
   resetHomeLayout,
@@ -73,7 +74,11 @@ import {
   type HomeCardSpan,
   type HomeLayout,
   type HomeZone,
+  visibleStatsSlots,
 } from './home-layout'
+import { DesktopPetCardActions, DesktopPetCardBody } from './DesktopPetCard'
+import { getDesktopPetStatus } from '@/lib/desktop-pet-api'
+import { useQuery } from '@tanstack/react-query'
 
 const ExpressionReviewer = lazy(() =>
   import('@/components/expression-reviewer').then((module) => ({
@@ -83,7 +88,7 @@ const ExpressionReviewer = lazy(() =>
 
 const TIME_RANGES = [24, 168, 720] as const
 const PERIOD_LABELS = ['24H', '7D', '30D'] as const
-const SPAN_LABELS: Record<HomeCardSpan, string> = { 3: 'S', 6: 'M', 12: 'L' }
+const SPAN_LABELS: Record<HomeCardSpan, string> = { 3: 'S', 4: '⅓', 6: 'M', 12: 'L' }
 
 /** 一张卡片的外观与内容；排在哪、占几列由首页排法决定 */
 interface HomeCardDef {
@@ -149,6 +154,16 @@ function ObservationHomeContent() {
   const [editing, setEditing] = useState(false)
   const [libraryOpen, setLibraryOpen] = useState(true)
   const [dragId, setDragId] = useState<HomeCardId | null>(null)
+  // 桌宠状态：开启时 3 秒刷新一次；没开时放慢，只用来发现用户刚刚开启
+  const petStatusQuery = useQuery({
+    queryKey: ['desktop-pet-status'],
+    queryFn: ({ signal }) => getDesktopPetStatus(signal),
+    refetchInterval: (query) => (query.state.data?.enabled ? 3_000 : 30_000),
+    retry: false,
+  })
+  const petStatus = petStatusQuery.data
+  const petEnabled = Boolean(petStatus?.enabled)
+  const statsSlots = visibleStatsSlots(layout, petEnabled)
 
   const handleRestart = useCallback(async () => {
     await triggerRestart()
@@ -235,6 +250,16 @@ function ObservationHomeContent() {
     setLayout(next)
     saveHomeLayout(next)
   }
+
+  // 开启桌宠后把桌宠卡片放进图表行；用户移除过就不再自动放回
+  useEffect(() => {
+    if (!petEnabled) return
+    const next = insertDesktopPetCard(layout)
+    if (next !== layout) {
+      setLayout(next)
+      saveHomeLayout(next)
+    }
+  }, [layout, petEnabled])
   const updateZone = (zone: HomeZone, slots: HomeCardSlot[]) =>
     updateLayout({ ...layout, [zone]: slots })
   const resizeCard = (zone: HomeZone, id: HomeCardId, span: HomeCardSpan) =>
@@ -243,13 +268,20 @@ function ObservationHomeContent() {
       layout[zone].map((slot) => (slot.id === id ? { ...slot, span } : slot))
     )
   const removeCard = (zone: HomeZone, id: HomeCardId) =>
-    updateZone(
-      zone,
-      layout[zone].filter((slot) => slot.id !== id)
-    )
+    updateLayout({
+      ...layout,
+      [zone]: layout[zone].filter((slot) => slot.id !== id),
+      // 记住用户主动关掉了桌宠卡片，之后不再自动放回
+      ...(id === 'pet' ? { petDismissed: true } : {}),
+    })
   const addCard = (id: HomeCardId) => {
     const zone = HOME_CARD_ZONE[id]
-    updateZone(zone, [...layout[zone], { id, span: zone === 'stats' ? 6 : 3 }])
+    const span: HomeCardSpan = id === 'pet' ? 3 : zone === 'stats' ? 6 : 3
+    updateLayout({
+      ...layout,
+      [zone]: [...layout[zone], { id, span }],
+      ...(id === 'pet' ? { petDismissed: false } : {}),
+    })
   }
   // 把 id 挪到 index 位置；位置没变就不写存储，拖动经过同一张卡时不会反复重排
   const moveCard = (zone: HomeZone, id: HomeCardId, index: number) => {
@@ -325,6 +357,12 @@ function ObservationHomeContent() {
               <StatusLight status={featureStatus.memoryEnabled ? 'on' : 'off'} decorative />
               {t('home.botStatus.memoryEnabled')}
             </span>
+            {petEnabled && (
+              <span className="inline-flex items-center gap-2">
+                <StatusLight status={petStatus?.ready ? 'on' : 'mixed'} decorative />
+                {t('observation.pet.enabledLamp')}
+              </span>
+            )}
           </div>
         </BoardScreen>
       ),
@@ -694,10 +732,21 @@ function ObservationHomeContent() {
         </BoardScreen>
       ),
     },
+    pet: {
+      code: 'PET',
+      title: t('observation.pet.title'),
+      tone: 1,
+      actions: <DesktopPetCardActions />,
+      body: petStatus ? (
+        <DesktopPetCardBody status={petStatus} onChanged={() => void petStatusQuery.refetch()} />
+      ) : (
+        <BoardScreen className="flex items-center justify-center text-sm">{t('observation.loading')}</BoardScreen>
+      ),
+    },
   }
 
   const renderZone = (zone: HomeZone) =>
-    layout[zone].map((slot, index) => (
+    (zone === 'stats' ? statsSlots : layout[zone]).map((slot, index) => (
       <HomeCard
         key={slot.id}
         def={cards[slot.id]}
@@ -787,7 +836,7 @@ function ObservationHomeContent() {
               {renderZone('top')}
             </BoardGrid>
           )}
-          {layout.stats.length > 0 && (
+          {statsSlots.length > 0 && (
             <>
               <BoardRule code="STATS">
                 <PeriodSwitch
@@ -798,19 +847,19 @@ function ObservationHomeContent() {
               </BoardRule>
               <BoardGrid
                 grow
-                rows={homeGridRows(layout.stats, 'var(--obs-stat-row)', 'var(--obs-chart-row)')}
+                rows={homeGridRows(statsSlots, 'var(--obs-stat-row)', 'var(--obs-chart-row)')}
               >
                 {renderZone('stats')}
               </BoardGrid>
             </>
           )}
-          {layout.top.length === 0 && layout.stats.length === 0 && (
+          {layout.top.length === 0 && statsSlots.length === 0 && (
             <p data-observation-board-empty="true">{t('observation.emptyBoard')}</p>
           )}
         </Board>
         {editing && libraryOpen && (
           <HomeCardLibrary
-            missing={missingHomeCards(layout)}
+            missing={missingHomeCards(layout, petEnabled)}
             cards={cards}
             onAdd={addCard}
             onClose={() => setLibraryOpen(false)}

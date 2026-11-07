@@ -58,6 +58,9 @@ class DesktopPetService:
         self._screen_error = ""
         self._screen_last_capture = ""
         self._thinking_caption = ThinkingCaption(self._command)
+        # 供 WebUI 首页卡片展示：窗口当前是否在思考、最近一次显示的气泡文字
+        self._thinking = False
+        self._bubble = ""
 
     def observe_stage(self, data: Dict[str, Any]) -> None:
         from .chat_tools import is_owner_chat
@@ -77,6 +80,8 @@ class DesktopPetService:
             "error": self._error,
             "skin_id": self._skin_id,
             "screen_reading": self._screen_reading(),
+            "thinking": self._thinking and self._ready and not self._closing,
+            "bubble": self._bubble,
         }
 
     async def start(self) -> None:
@@ -144,6 +149,7 @@ class DesktopPetService:
 
     async def _stop(self) -> None:
         self._closing = True
+        self._thinking = False
         self._thinking_caption.cancel()
         if self._todo_task is not None:
             self._todo_task.cancel()
@@ -863,8 +869,10 @@ class DesktopPetService:
             command = {"type": action}
         elif action == "say":
             command = {"type": "notice", "parts": [{"kind": "text", "text": text}]}
+            self._bubble = _bubble_text(text)
         elif action == "set_thinking":
             command = {"type": "thinking" if active else "idle"}
+            self._thinking = active
         else:
             raise ValueError(f"未知桌宠操作: {action}")
         await self._command(command)
@@ -877,6 +885,7 @@ class DesktopPetService:
             session = chat_manager.get_session_by_session_id(session_id)
             if (session is not None and session.platform == INTERNAL_CHAT_PLATFORM
                     and not session.group_id and session.user_id == INTERNAL_CHAT_USER_ID):
+                self._thinking = True
                 self._observe(self._command({"type": "thinking"}))
 
     async def notify_reply(self, message: Dict[str, Any]) -> None:
@@ -897,6 +906,15 @@ class DesktopPetService:
             if not self._visible:
                 await self.control("show")
             await self._command({"type": "reply", "parts": parts})
+            self._thinking = False
+            text = "".join(part.get("text", "") for part in parts if part.get("kind") == "text")
+            self._bubble = _bubble_text(text) or "[图片]"
+
+
+def _bubble_text(text: str) -> str:
+    """首页卡片只放一行摘要，完整内容在聊天记录里。"""
+    text = " ".join(text.split())
+    return text if len(text) <= 120 else f"{text[:119]}…"
 
 
 desktop_pet_service = DesktopPetService()
