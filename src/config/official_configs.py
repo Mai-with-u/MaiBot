@@ -1024,7 +1024,7 @@ class CapabilitiesConfig(ConfigBase):
             "x-widget": "switch",
         },
     )
-    """启用聊天附件登记、文件工具、插件 SDK 和 WebUI 文件入口；默认关闭，不依赖 WebUI 或沙盒开关。关闭后拒绝新的文件操作，不删除已有原件。"""
+    """启用聊天附件登记、文件工具、插件 SDK 和 WebUI 文件入口；默认关闭，不依赖 WebUI 开关。关闭后拒绝新的文件操作，不删除已有原件。"""
 
     tool_result_condense: bool = Field(
         default=False,

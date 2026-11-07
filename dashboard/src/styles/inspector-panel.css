@@ -25,6 +25,13 @@
   background: var(--surface-data-bg);
 }
 
+/* 未来复古：浮动检查器用纸面盖住下方的观察时间线。 */
+:root[data-dashboard-style='future-retro'] [data-maisaka-inspector-panel='true'] {
+  background-color: var(--retro-paper);
+  background-image: var(--retro-paper-brightness-overlay), var(--retro-paper-texture);
+  background-size: auto, var(--retro-paper-texture-size);
+}
+
 /* 千禧：标题条是刻线，占比条是下沉小屏，色块带描边 */
 :root[data-dashboard-style='millennium'] [data-inspector-head='true'] {
   border-bottom: 2px solid var(--mil-lo);

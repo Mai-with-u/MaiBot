@@ -45,7 +45,6 @@ const SHORT_LABELS: Record<string, string> = {
   '/config/prompts': 'observation.keys.prompt',
   '/data-transfer': 'observation.keys.data',
   '/logs': 'observation.keys.logs',
-  '/computer': 'observation.keys.computer',
 }
 
 function isItemActive(item: MenuItem, pathname: string): boolean {

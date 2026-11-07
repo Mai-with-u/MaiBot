@@ -1,4 +1,4 @@
-"""外接 Agent 传话与状态工具；电脑工具由独立 Provider 提供。"""
+"""外接 Agent 传话与状态工具。"""
 
 from typing import Any, Dict, List, Optional
 
@@ -7,7 +7,7 @@ import json
 import traceback
 
 from src.core.local_operator import build_scoped_user_id, normalize_operator_permissions
-from src.core.tooling import ToolAvailabilityContext, ToolContentItem, ToolExecutionContext, ToolExecutionResult, ToolInvocation, ToolSpec
+from src.core.tooling import ToolAvailabilityContext, ToolExecutionContext, ToolExecutionResult, ToolInvocation, ToolSpec
 
 from . import messaging
 from .service import AgentService, agent_service
@@ -19,11 +19,9 @@ def tool_specs() -> List[ToolSpec]:
     definitions = [
         ("agent_talk", "与独立 Agent 双向图文传话。普通聊天 target 留空；Agent 回信填写 agent_chats 返回的真实 session_id。回执表示入队并触发 Planner，不代表已经向 IM 发言。", {
             "text": {"type": "string"}, "target": {"type": "string"},
-            "images": {"type": "array", "items": {"type": "string"}, "description": "普通聊天填写当前带图消息 ID 或图片 hash；Agent 填工作目录图片路径。启用桌面时可填 screenshot 或 C:\\MaiWorkspace 内的图片路径。"},
+            "images": {"type": "array", "items": {"type": "string"}, "description": "普通聊天填写当前带图消息 ID 或图片 hash；Agent 填工作目录图片路径。"},
         }, ["text"]),
-        ("agent_status", "查看 Agent 后端及运行状态，include_image=true 可读取已启用桌面的最近截图。", {
-            "include_image": {"type": "boolean", "default": False},
-        }, []),
+        ("agent_status", "查看 Agent 后端及运行状态。", {}, []),
         ("agent_chats", "列出已加载的真实聊天流及其名称和最近活跃时间。", {}, []),
         ("agent_recent", "读取真实聊天流历史，limit 默认 20，0 为全部。", {
             "target": {"type": "string"}, "limit": {"type": "integer", "minimum": 0, "default": 20},
@@ -87,20 +85,15 @@ class AgentToolProvider:
                 result = await messaging.tell(self.service, context.session_id, args["text"], args.get("target", ""), args.get("images", []))
             elif name == "agent_status":
                 result = self.service.status()
-                if args.get("include_image", False) and self.service.computer.config.enabled and self.service.computer.bridge.last_frame is not None:
-                    result = {**result, **self.service.computer.bridge.last_frame}
             elif name == "agent_chats":
                 result = {"chats": messaging.chats()}
             elif name == "agent_recent":
                 result = await messaging.recent(args["target"], args.get("limit", 20))
             else:
                 raise ValueError(f"未知 Agent 工具：{name}")
-            media = [ToolContentItem(content_type="image", data=result["image"], mime_type=result["mime_type"])] if "image" in result else []
-            payload = {key: value for key, value in result.items() if key != "image"}
             return ToolExecutionResult(tool_name=name, success=result.get("success", True),
-                                       content=await asyncio.to_thread(json.dumps, payload, ensure_ascii=False),
-                                       structured_content=payload, content_items=media,
-                                       error_message="\n".join(result[key] for key in ("error", "capture_error") if key in result))
+                                       content=await asyncio.to_thread(json.dumps, result, ensure_ascii=False),
+                                       structured_content=result, error_message=result.get("error", ""))
         except (OSError, RuntimeError, ValueError, KeyError):
             return ToolExecutionResult(tool_name=invocation.tool_name, success=False, error_message=traceback.format_exc())
 

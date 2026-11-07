@@ -1,1 +1,0 @@
-麦麦のコンピューター機能が有効で、computer_* ツールで Windows Sandbox を操作できます。サンドボックスの C:\MaiWorkspace は外部 harness のホスト作業フォルダーとは別です。agent_talk(images=["screenshot"]) で最新画面を送り、C:\MaiWorkspace 内の成果物も送れます。操作前に状態を確認し、一時停止中や手動操作中はツールが返す制限に従ってください。

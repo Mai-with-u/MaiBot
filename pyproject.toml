@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "MaiBot"
-version = "1.4.0"
+version = "1.4.1"
 description = "MaiCore 是一个基于大语言模型的可交互智能体"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -75,7 +75,6 @@ namespaces = true
 
 [tool.setuptools.package-data]
 "src.plugins.built_in.chinese_typo" = ["typo_words.tsv", "typo_words.LICENSE", "typo_words.NOTICE"]
-"src.computer" = ["guest.ps1"]
 "src.desktop_pet" = ["web/*.html", "web/*.js", "web/*.css", "web/fonts/*", "LICENSE"]
 "src.plugins.built_in.weixin_clawbot_adapter" = ["webui.json", "web/*.html", "icon-mascot.webp", "config.toml.example", "README.md", "changelog.md"]
 "src.plugins.built_in.qq_official_adapter" = ["webui.json", "webui/*.html", "assets/*", "README.md", "CHANGELOG.md"]

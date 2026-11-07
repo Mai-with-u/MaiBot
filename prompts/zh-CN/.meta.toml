@@ -213,11 +213,6 @@ display_name = "外接 Agent 接入说明"
 advanced = true
 description = "外接 Agent 接入说明。"
 
-[agent_acp_computer]
-display_name = "外接 Agent 电脑使用"
-advanced = true
-description = "外接 Agent 电脑使用。"
-
 [agent_acp_environment]
 display_name = "外接 Agent 环境说明"
 advanced = true

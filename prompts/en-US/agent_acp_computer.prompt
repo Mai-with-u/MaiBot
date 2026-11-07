@@ -1,1 +1,0 @@
-MaiMai has enabled computer capabilities and provides computer_* tools for Windows Sandbox. Its C:\MaiWorkspace directory is separate from your harness's host workspace. Use agent_talk(images=["screenshot"]) to send a live screenshot, or send work from C:\MaiWorkspace. Check the computer's state before acting and respect tool restrictions when paused or under manual control.
