@@ -10,6 +10,7 @@ type DraftNumberInputProps = Omit<
   defaultValue?: unknown
   integer?: boolean
   onValueChange: (value: number) => void
+  range?: readonly [min: number, max: number]
   value: unknown
 }
 
@@ -55,6 +56,7 @@ export function DraftNumberInput({
   onBlur,
   onFocus,
   onValueChange,
+  range,
   value,
   ...props
 }: DraftNumberInputProps) {
@@ -73,7 +75,7 @@ export function DraftNumberInput({
     setDraftValue(nextDraftValue)
 
     const nextValue = parseDraftValue(nextDraftValue, integer)
-    if (nextValue === undefined) {
+    if (nextValue === undefined || (range && (nextValue < range[0] || nextValue > range[1]))) {
       return
     }
 
@@ -90,10 +92,11 @@ export function DraftNumberInput({
       return
     }
 
-    if (nextValue !== numericValue) {
-      onValueChange(nextValue)
+    const committedValue = range ? Math.min(range[1], Math.max(range[0], nextValue)) : nextValue
+    if (committedValue !== numericValue) {
+      onValueChange(committedValue)
     }
-    setDraftValue(String(nextValue))
+    setDraftValue(String(committedValue))
     onBlur?.(event)
   }
 
@@ -106,6 +109,8 @@ export function DraftNumberInput({
     <Input
       {...props}
       type="number"
+      min={range?.[0] ?? props.min}
+      max={range?.[1] ?? props.max}
       value={draftValue}
       onBlur={canonicalizeDraftValue}
       onChange={(event) => commitDraftValue(event.target.value)}

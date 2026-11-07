@@ -6,7 +6,8 @@ from typing import Any, Dict
 import json
 
 from src.core.tooling import ToolInvocation
-from src.web_search.config import WebRuntimeConfig, resolve_web_search_config
+from src.plugin_runtime.protocol.errors import ErrorCode, RPCError
+from src.web_search.config import WebRuntimeConfig, WebSearchConfigError, resolve_web_search_config
 from src.web_search.models import WebSearchError
 from src.web_search.service import WebSearchService
 
@@ -31,7 +32,10 @@ async def call(plugin_id: str, capability: str, args: Dict[str, Any]) -> Dict[st
     # 固定本次调用的配置，避免热重载在请求中途替换服务或凭据。
     config = get_config().model_copy(deep=True)
     invocation = ToolInvocation(tool_name=tool_name, arguments=args, metadata={"plugin_id": plugin_id})
-    result = await get_service().execute(config, invocation)
+    try:
+        result = await get_service().execute(config, invocation)
+    except WebSearchConfigError as exc:
+        raise RPCError(ErrorCode.E_WEB_SERVICE_CONFIG_INVALID, str(exc)) from exc
     payload = asdict(result)
     # 不静默截断正文；限制序列化结果，给 RPC 帧和协议包装留出空间。
     if len(json.dumps(payload, ensure_ascii=False)) > MAX_RESULT_CHARS:

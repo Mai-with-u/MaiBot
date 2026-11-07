@@ -40,7 +40,6 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import type { ReactNode } from 'react'
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
@@ -51,8 +50,10 @@ import {
   type GalleryImage,
 } from '@/components/image-gallery'
 import { Badge } from '@/components/ui/badge'
+import { StatusLight } from '@/components/ui/status-light'
 import { Button } from '@/components/ui/button'
 import { CardTitle } from '@/components/ui/card'
+import { FoldSection } from '@/components/ui/form-section'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -898,12 +899,29 @@ function ReplyFlowDetails({ tool, messages, onJumpToMessage }: ReplyToolMessageP
   )
 }
 
-/** reply 的 at 和附图参数引用的是消息编号，按真实消息解析发送者与媒体。 */
-function ReplyArgumentRow({ label, children }: { label: string; children: ReactNode }) {
+/** 已发送内容优先取结构化 reply_text，旧记录则从回执摘要里截出引号内正文。 */
+function extractSentReply(tool: DisplayTool): string {
+  if (tool.reply_text?.trim()) return tool.reply_text.trim()
+  const matched = /发送了回复"([\s\S]*)"\s*$/.exec(tool.summary ?? '')
+  return matched?.[1]?.trim() ?? ''
+}
+
+/** reply 结果：发出去的话放在最前，状态只用一盏灯表示，不再重复文字。 */
+function ReplySentLine({ tool }: { tool: DisplayTool }) {
+  const sent = extractSentReply(tool)
+  const failed = !tool.success
+  const reason = tool.error_message || tool.summary || '未返回失败原因'
   return (
-    <div className="flex min-w-0 flex-1 items-baseline gap-2 rounded-md border px-2.5 py-1.5 text-xs leading-5">
-      <span className="text-muted-foreground shrink-0">{label}：</span>
-      <div className="min-w-0 break-words whitespace-pre-wrap">{children}</div>
+    <div className="space-y-1.5 py-1">
+      <div className="flex items-start gap-3">
+        <span className="mt-2 flex shrink-0">
+          <StatusLight status={failed ? 'error' : 'on'} label={failed ? '未送达' : '发送成功'} />
+        </span>
+        <p className={cn('min-w-0 text-[15px] leading-7 font-medium break-words whitespace-pre-wrap', failed && 'text-destructive')}>
+          {failed ? sent || '回复未发出' : sent || tool.summary || '未返回结果摘要。'}
+        </p>
+      </div>
+      {failed && <p className="text-destructive pl-5 text-xs break-words">未送达 · {reason}</p>}
     </div>
   )
 }
@@ -928,6 +946,7 @@ function ReplyToolArguments({
     prefer: '偏好',
     avoid: '避免',
   }
+  const referenceText = typeof args.reply_reference === 'string' ? args.reply_reference.trim() : ''
   const handledArguments = new Set([
     'msg_id',
     'attach_at',
@@ -937,72 +956,78 @@ function ReplyToolArguments({
     'reply_style',
     'set_quote',
   ])
+  const sentText = extractSentReply(tool)
+  // 被回复的原话和发出的话相同时只显示一次。
+  const quoteText = message?.content && message.content.trim() !== sentText ? message.content : ''
+  const extraArgs = Object.entries(args).filter(([name]) => !handledArguments.has(name))
+  const [basisOpen, setBasisOpen] = useState(false)
 
   return (
-    <div className="space-y-2 text-xs">
+    // 内边距交给 DataPanel 的主题默认值，避免内容贴到粗描边上。
+    <DataPanel className="space-y-5 text-xs">
       <div className="flex flex-wrap items-center gap-2">
         {messageId && (
-          <ReplyArgumentRow label="回复对象">
-            <button
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            className="min-w-0 max-w-full flex-1 basis-60 justify-start gap-1.5 font-normal"
+            title={`跳转到消息 #${messageId}`}
+            onClick={() => onJumpToMessage?.(messageId)}
+          >
+            <span className="text-muted-foreground shrink-0">↳ 回复</span>
+            {message?.speaker_name && <span className="shrink-0 font-medium">{message.speaker_name}</span>}
+            <span className="text-muted-foreground shrink-0 font-mono text-[10px]">#{messageId}</span>
+            {quoteText && <span className="text-muted-foreground min-w-0 truncate">· {quoteText}</span>}
+          </Button>
+        )}
+        {atTargets.map((target, index) => {
+          const targetId = String(target)
+          return (
+            <Button
+              key={`${targetId}-${index}`}
               type="button"
-              className="text-left hover:underline"
-              title={`跳转到消息 #${messageId}`}
-              onClick={() => onJumpToMessage?.(messageId)}
+              variant="link"
+              size="xs"
+              title={`跳转到目标消息 #${targetId}`}
+              onClick={() => onJumpToMessage?.(targetId)}
             >
-              {message?.speaker_name && `${message.speaker_name} `}
-              <span className="text-muted-foreground">#{messageId}</span>
-              {message?.content && ` · ${message.content}`}
-            </button>
-          </ReplyArgumentRow>
-        )}
-        {atTargets.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-muted-foreground">at 对象：</span>
-            {atTargets.map((target, index) => {
-            const targetId = String(target)
-            return (
-              <button
-                key={`${targetId}-${index}`}
-                type="button"
-                className="text-primary bg-primary/10 hover:bg-primary/20 rounded-md px-2 py-0.5"
-                title={`跳转到目标消息 #${targetId}`}
-                onClick={() => onJumpToMessage?.(targetId)}
-              >
-                @{messages?.get(targetId)?.speaker_name || `消息 #${targetId} 的发送者`}
-              </button>
-            )
-            })}
-          </div>
-        )}
-        {args.set_quote === true && (
-          <span className="shrink-0 rounded-md bg-muted/70 px-2.5 py-1.5 text-xs text-muted-foreground">
-            引用
-          </span>
-        )}
+              @{messages?.get(targetId)?.speaker_name || `消息 #${targetId} 的发送者`}
+            </Button>
+          )
+        })}
+        {args.set_quote === true && <Badge variant="outline">引用</Badge>}
         {!tool.status && <ToolFullJsonBlock tool={tool} />}
       </div>
-      {args.expression_intent != null && (
-        <details className="group rounded-md border px-2.5 py-1.5">
-          <summary className="text-muted-foreground flex cursor-pointer list-none items-center gap-1">
-            <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90" />
-            表达倾向
-          </summary>
-          <div className="mt-2 space-y-1 break-words whitespace-pre-wrap">
-            {typeof args.expression_intent === 'object' && !Array.isArray(args.expression_intent)
-              ? Object.entries(args.expression_intent).map(([name, value]) => (
-                  <div key={name}>
-                    <span className="text-muted-foreground">{intentLabels[name] ?? name}：</span>
-                    {Array.isArray(value)
-                      ? value.map(formatToolValue).join('、')
-                      : formatToolValue(value)}
-                  </div>
-                ))
-              : formatToolValue(args.expression_intent)}
+      {!tool.status && <ReplySentLine tool={tool} />}
+      {(args.expression_intent != null || referenceText) && (
+        <FoldSection title="回复依据" open={basisOpen} onOpenChange={setBasisOpen}>
+          <div className="space-y-4 pt-3 leading-6">
+            {referenceText && (
+              <div className="space-y-1">
+                <div className="text-muted-foreground">参考信息</div>
+                <p className="leading-6 break-words whitespace-pre-wrap">{referenceText}</p>
+              </div>
+            )}
+            {args.expression_intent != null && (
+              <div className="space-y-1">
+                <div className="text-muted-foreground">表达倾向</div>
+                <div className="space-y-0.5 leading-6 break-words whitespace-pre-wrap">
+                  {typeof args.expression_intent === 'object' && !Array.isArray(args.expression_intent)
+                    ? Object.entries(args.expression_intent).map(([name, value]) => (
+                        <div key={name}>
+                          <span className="text-muted-foreground">{intentLabels[name] ?? name}：</span>
+                          {Array.isArray(value)
+                            ? value.map(formatToolValue).join('、')
+                            : formatToolValue(value)}
+                        </div>
+                      ))
+                    : formatToolValue(args.expression_intent)}
+                </div>
+              </div>
+            )}
           </div>
-        </details>
-      )}
-      {typeof args.reply_reference === 'string' && args.reply_reference.trim() && (
-        <ReplyArgumentRow label="回复参考信息">{args.reply_reference}</ReplyArgumentRow>
+        </FoldSection>
       )}
       {pictures.length > 0 && (
         <div className="space-y-1.5">
@@ -1045,14 +1070,13 @@ function ReplyToolArguments({
           </div>
         </div>
       )}
-      {Object.entries(args)
-        .filter(([name]) => !handledArguments.has(name))
-        .map(([name, value]) => (
-          <ReplyArgumentRow key={name} label={name}>
-            {formatToolValue(value)}
-          </ReplyArgumentRow>
-        ))}
-    </div>
+      {extraArgs.map(([name, value]) => (
+        <div key={name} className="flex items-baseline gap-2 leading-5">
+          <span className="text-muted-foreground shrink-0">{name}：</span>
+          <span className="min-w-0 break-words whitespace-pre-wrap">{formatToolValue(value)}</span>
+        </div>
+      ))}
+    </DataPanel>
   )
 }
 
@@ -1366,7 +1390,7 @@ function PlannerToolResultCard({
           </div>
         )}
 
-        {!tool.status && !isReplyFlow(tool) && (!isToolSearch || !tool.success) && (
+        {!tool.status && !isReplyFlow(tool) && tool.tool_name !== 'reply' && (!isToolSearch || !tool.success) && (
             <div className="flex flex-wrap items-baseline gap-x-1.5 font-normal opacity-65">
               <span className="text-muted-foreground shrink-0 text-[10px] leading-4">
                 执行结果
