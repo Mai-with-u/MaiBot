@@ -80,6 +80,7 @@ async def test_task_tool_reports_only_in_owner_chat(tmp_path, monkeypatch):
     from src.desktop_pet import exploration_tools
 
     monkeypatch.setattr(exploration, "get_instance_root", lambda: tmp_path)
+    monkeypatch.setattr(exploration_tools.global_config.experimental, "desktop_pet_exploration_enabled", True)
     monkeypatch.setattr(exploration_tools, "is_owner_chat", lambda session: session == "owner")
     task = exploration.exploration_tasks("owner", "create", goal="探索")
     provider = exploration_tools.ExplorationToolProvider()
@@ -91,11 +92,13 @@ async def test_task_tool_reports_only_in_owner_chat(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_submission_failure_is_stored_and_returned(tmp_path, monkeypatch):
-    from src.desktop_pet.service import DesktopPetService
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_submission_failure_is_stored_and_returned(tmp_path, monkeypatch, enabled):
+    from src.desktop_pet.service import DesktopPetService, global_config
     from src.prompt import prompt_manager as prompt_module
 
     monkeypatch.setattr(exploration, "get_instance_root", lambda: tmp_path)
+    monkeypatch.setattr(global_config.experimental, "desktop_pet_exploration_enabled", enabled)
     monkeypatch.setattr(prompt_module.prompt_manager, "get_prompt", lambda name: object())
     monkeypatch.setattr(prompt_module.prompt_manager, "render_prompt", AsyncMock(return_value="探索说明"))
     service = DesktopPetService()
@@ -103,6 +106,12 @@ async def test_submission_failure_is_stored_and_returned(tmp_path, monkeypatch):
     service._enqueue_owner_task = AsyncMock(side_effect=RuntimeError("会话不可用"))
     service._command = AsyncMock()
     await service._explore("研究工具")
+    if not enabled:
+        assert exploration.exploration_tasks("owner") == []
+        service._enqueue_owner_task.assert_not_awaited()
+        service._exploration_session_id.assert_not_awaited()
+        assert "实验性功能" in service._command.await_args.args[0]["error"]
+        return
     record = exploration.exploration_tasks("owner")[0]
     assert record["status"] == "failed"
     assert "会话不可用" in record["result"]

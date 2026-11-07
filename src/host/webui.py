@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
 
 import asyncio
+import os
 import re
 import socket
 import uvicorn
@@ -331,6 +332,10 @@ class HostWebUI:
             for host in self.hosts:
                 sock = socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET, socket.SOCK_STREAM)
                 self._sockets.append(sock)
+                # POSIX 允许重用旧连接尚未收尾的监听地址，避免快速重启时 bind 失败。
+                # Windows 的 SO_REUSEADDR 会允许抢占仍在监听的端口，沿用默认绑定行为。
+                if os.name == "posix":
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 if sock.family == socket.AF_INET6:
                     sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
                 sock.bind((host, self.port))

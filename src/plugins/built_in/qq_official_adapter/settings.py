@@ -10,7 +10,7 @@ class PluginSettings(PluginConfigBase):
     __ui_order__: ClassVar[int] = 0
 
     enabled: bool = Field(default=False, description="启用 QQ 官方机器人连接")
-    config_version: str = Field(default="0.4.9", description="配置版本")
+    config_version: str = Field(default="0.4.15", description="配置版本")
 
 
 class QQOfficialSettings(PluginConfigBase):
@@ -30,11 +30,6 @@ class QQOfficialSettings(PluginConfigBase):
         description="统一账号 ID（如 NapCat 机器人 QQ 号）；非空时聊天流按此 ID 归属，与其它 qq 适配器共享上下文",
         json_schema_extra={"label": "关联QQ号"},
     )
-    assign_admin_ids: List[str] = Field(
-        default_factory=list,
-        description="允许执行 /assign_group_id 与 /assign_id 的用户 ID（统一 ID 或 OpenID）；留空不限制",
-        json_schema_extra={"label": "QQ Bot管理员账号"},
-    )
     silent_user_sync: bool = Field(
         default=True,
         description="在已绑定群中与 SnowLuma 静默匹配 QQ 号、昵称和群名片；需填写关联QQ号，三条不同正文一致后生效",
@@ -51,10 +46,10 @@ class MuteSettings(PluginConfigBase):
     __ui_label__: ClassVar[str] = "禁言工具"
     __ui_order__: ClassVar[int] = 2
 
-    enabled: bool = Field(default=True, description="启用 mute 禁言工具，默认开启，关闭时不向模型提供该工具")
+    enabled: bool = Field(default=True, description="启用 set_mute 禁言设置工具；时长为 0 解除禁言，正整数施加禁言")
     allowed_groups: List[str] = Field(
         default_factory=list,
-        description="允许使用禁言的群（统一群号或 group_openid）；留空不限制",
+        description="允许使用禁言与解除禁言的群（统一群号或 group_openid）；留空不限制",
     )
     admin_users: List[str] = Field(
         default_factory=list,
@@ -75,9 +70,26 @@ class RecallSettings(PluginConfigBase):
     )
 
 
+class FilterSettings(PluginConfigBase):
+    __ui_label__: ClassVar[str] = "消息过滤"
+    __ui_order__: ClassVar[int] = 4
+
+    ignore_other_bots: bool = Field(
+        default=True,
+        description="忽略其它机器人发送的消息（官方事件的 author.bot=true，例如群里另一个官方机器人）",
+        json_schema_extra={"label": "屏蔽其他机器人消息"},
+    )
+
+
 class AdvancedSettings(PluginConfigBase):
     __ui_label__: ClassVar[str] = "高级设置"
-    __ui_order__: ClassVar[int] = 4
+    __ui_order__: ClassVar[int] = 5
+
+    show_debug_info: bool = Field(
+        default=False,
+        description="在日志中逐条显示消息按主动还是被动方式发送；被动发送同时显示目标消息 ID 和回复序号",
+        json_schema_extra={"label": "显示调试信息"},
+    )
 
     reconnect_delay_sec: float = Field(
         default=5.0,
@@ -93,4 +105,5 @@ class AdapterSettings(PluginConfigBase):
     qq_official: QQOfficialSettings = Field(default_factory=QQOfficialSettings)
     mute: MuteSettings = Field(default_factory=MuteSettings)
     recall: RecallSettings = Field(default_factory=RecallSettings)
+    filter: FilterSettings = Field(default_factory=FilterSettings)
     advanced: AdvancedSettings = Field(default_factory=AdvancedSettings)

@@ -4,6 +4,7 @@ from typing import List, Optional
 import asyncio
 import json
 
+from src.config.config import global_config
 from src.core.tooling import ToolAvailabilityContext, ToolExecutionContext, ToolExecutionResult, ToolInvocation, ToolSpec
 
 from .chat_tools import is_owner_chat
@@ -17,7 +18,8 @@ class ExplorationToolProvider:
     provider_type = "builtin"
 
     async def list_tools(self, context: Optional[ToolAvailabilityContext] = None) -> List[ToolSpec]:
-        if context is None or not is_owner_chat(context.session_id):
+        if (not global_config.experimental.desktop_pet_exploration_enabled
+                or context is None or not is_owner_chat(context.session_id)):
             return []
         products_schema = ExplorationProducts.model_json_schema()
         definitions = products_schema.pop("$defs")
@@ -87,6 +89,8 @@ class ExplorationToolProvider:
     async def invoke(self, invocation: ToolInvocation,
                      context: Optional[ToolExecutionContext] = None) -> ToolExecutionResult:
         try:
+            if not global_config.experimental.desktop_pet_exploration_enabled:
+                raise PermissionError("请先在实验性功能中开启桌宠自由探索")
             if context is None or not is_owner_chat(context.session_id):
                 raise PermissionError("只有主人内部聊天可以访问探索图式")
             if invocation.tool_name == "record_experience_reuse":

@@ -436,7 +436,7 @@ class ChatConnectionManager:
             if not user_session_ids:
                 del self.user_sessions[session_connection.user_id]
 
-        logger.info(f"WebUI 聊天会话已断开: session={session_id}")
+        logger.debug(f"WebUI 聊天会话已断开: session={session_id}")
 
     def disconnect_connection(self, connection_id: str) -> None:
         """断开物理连接下的全部逻辑聊天会话。

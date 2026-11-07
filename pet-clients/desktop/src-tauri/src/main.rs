@@ -951,7 +951,7 @@ async fn execute(app: &tauri::AppHandle, session: Session, nonce: &str, command:
         }
         "skin" | "animation" | "reply" | "notice" | "thinking_caption" | "thinking" | "idle"
         | "failed" | "accepted" | "buttons" | "button_result" | "screen_state"
-        | "exploration_result" | "exploration_tasks" | "todo_refresh" => {
+        | "exploration_state" | "exploration_result" | "exploration_tasks" | "todo_refresh" => {
             page(app, "pet", command).await
         }
         _ => Err("不支持的服务器指令".into()),

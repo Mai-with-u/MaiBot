@@ -14,7 +14,6 @@ import {
   ExternalLink,
   CheckCircle2,
   AlertCircle,
-  AlertTriangle,
   Loader2,
   Trash2,
   RefreshCw,
@@ -633,7 +632,6 @@ export function PluginDetailPage({
                         )}
                         {isCompatibilityMode && (
                           <Badge variant="outline" className="text-sm border-orange-500! bg-orange-500! text-white!">
-                            <AlertTriangle className="h-3 w-3 mr-1" />
                             兼容模式
                           </Badge>
                         )}

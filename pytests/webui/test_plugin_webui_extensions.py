@@ -21,12 +21,10 @@ from src.webui.routers.plugin import webui_extensions as routes
 def declaration():
     return {
         "schema_version": 2,
-        "workspace_title": "统计",
         "pages": [
             {
                 "id": "overview",
                 "title": "概览",
-                "placement": "workspace",
                 "queries": {"summary": {"api": "summary"}},
                 "actions": {
                     "reset": {
@@ -44,6 +42,17 @@ def declaration():
             }
         ],
     }
+
+
+def test_legacy_workspace_page_is_registered_in_sidebar():
+    raw = declaration()
+    raw["pages"][0]["placement"] = "workspace"
+
+    with pytest.warns(UserWarning, match="页面已转入侧栏"):
+        page = WebUIExtension.model_validate(raw).pages[0]
+
+    assert page.id == "overview"
+    assert page.model_dump()["placement"] == "sidebar"
 
 
 def test_pagination_requires_bound_query_and_page_parameter():

@@ -143,7 +143,7 @@ def _url_origin(match: re.Match[str]) -> str:
     return f"{url.scheme}://{host}:{port}" if port is not None else f"{url.scheme}://{host}"
 
 
-def _redact_log_message(message: str) -> str:
+def redact_diagnostic_message(message: str) -> str:
     message = _URL.sub(_url_origin, message)
     # 日志自由文本不能按 JSON 字段逐个清洗，含凭据或正文标记的整条省略。
     if _PRIVATE_LOG_TEXT.search(message):
@@ -167,7 +167,7 @@ def _read_recent_logs(request: RecentLogsRequest) -> Dict[str, Any]:
                 if not isinstance(level, str) or level.upper() not in levels or not isinstance(message, str):
                     continue
                 # 只投影已知字段，避免请求、聊天内容、异常堆栈等结构化附加数据进入模型。
-                entry: Dict[str, Any] = {"level": level.upper(), "message": _redact_log_message(message)}
+                entry: Dict[str, Any] = {"level": level.upper(), "message": redact_diagnostic_message(message)}
                 timestamp = item.get("timestamp")
                 if isinstance(timestamp, str) and _TIMESTAMP.fullmatch(timestamp):
                     entry["timestamp"] = timestamp

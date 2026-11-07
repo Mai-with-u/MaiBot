@@ -158,15 +158,12 @@
     "customStopTimeout": "10초 안에 연결되지 않아 중지되었습니다.",
     "customStopManual": "페이지를 수동으로 중지했습니다.",
     "customStopNavigation": "페이지가 다시 로드되거나 이동하여 연결이 중지되었습니다.",
-    "workspaceOrder": "상단 탭 순서",
-    "workspaceOrderHint": "숨기지 않은 플러그인은 이 순서로 표시됩니다. 상단에는 최대 두 개의 탭이 표시되며 나머지는 옆의 더 보기 메뉴에서 열 수 있습니다. 현재 플러그인은 항상 표시됩니다. 변경 사항은 즉시 적용되며 이 브라우저에 저장됩니다.",
     "galleryLayout": "갤러리 배치",
     "paginationSummary": "{{page}} / {{pages}}페이지 · {{total}}장",
     "galleryAuto": "자동 배치",
     "galleryColumns": "{{count}}열",
     "extensions": "플러그인 확장",
     "manage": "플러그인 페이지 관리",
-    "more": "다른 플러그인 작업 공간",
     "refresh": "새로 고침",
     "loading": "로딩 중…",
     "empty": "데이터 없음",
@@ -249,7 +246,6 @@
     "empty": "이 기간에는 데이터가 없습니다",
     "actions": {
       "refresh": "새로고침",
-      "openHtml": "HTML 버전 열기",
       "compare": "Compare with previous",
       "details": "Details"
     },
@@ -1364,6 +1360,8 @@
         }
       },
       "modelSetup": {
+        "identifierPlaceholder": "모델 ID 입력",
+        "pickFromList": "모델 선택",
         "planner": {
           "identifier": {
             "label": "planner 모델 식별자 *",
@@ -1929,8 +1927,7 @@
         "modelTasks": "모델 관리 / 기능 할당 열기",
         "botConfig": "MaiBot 코어 설정 열기",
         "emojiManagement": "이모지 리소스 관리 열기",
-        "expressionManagement": "표현 관리 열기",
-        "statistics": "maibot_statistics.html 열기"
+        "expressionManagement": "표현 관리 열기"
       },
       "categories": {
         "system": "시스템",

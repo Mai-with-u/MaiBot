@@ -82,6 +82,22 @@ interface PluginMarketplacePageProps {
 
 type PluginVoteOverlay = PluginVoteState & Partial<Pick<PluginStatsData, 'likes' | 'dislikes'>>
 
+function isMarketHostInCompatibilityMode(plugin: PluginInfo, version: MaimaiVersion | null): boolean {
+  const host = plugin.manifest.host_application
+  return !!version && !!host && isPluginCompatibilityMode(host.min_version, host.max_version, version)
+}
+
+function needsCompatibilityModeReleaseDetail(plugin: PluginInfo, version: MaimaiVersion | null): boolean {
+  // 官方摘要按声明的 Host 上限筛选发行版，兼容窗口内的版本需在详情中确认。
+  const releases = plugin.releases
+  return plugin.market_data_source === 'official'
+    && releases?.mode === 'releases'
+    && !releases.sync_error
+    && releases.versions.length === 0
+    && plugin.manifest.manifest_version === 2
+    && isMarketHostInCompatibilityMode(plugin, version)
+}
+
 const buildPluginStatsMap = (
   pluginList: PluginInfo[],
   summary?: Record<string, PluginStatsData>
@@ -306,7 +322,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
     const target = plugins.find(plugin => plugin.id === intent.pluginId || plugin.manifest?.id === intent.pluginId)
     void navigate({ to: '/plugins', search: { pluginId: target?.id }, replace: true })
     if (!target) {
-      toast({ title: '未找到插件', description: '当前市场目录中没有该插件，请关闭兼容筛选后查看或刷新目录。', variant: 'destructive' })
+      toast({ title: '未找到插件', description: '当前市场目录中没有该插件，请刷新目录后重试。', variant: 'destructive' })
       return
     }
     if (target.installed) {
@@ -323,6 +339,10 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
       (target.manifest.host_application && !isPluginCompatible(target.manifest.host_application.min_version, target.manifest.host_application.max_version, maimaiVersion))
     )) {
       toast({ title: '插件不兼容', description: '该插件清单与当前 MaiBot 版本不兼容。', variant: 'destructive' })
+      return
+    }
+    if (!intent.version && needsCompatibilityModeReleaseDetail(target, maimaiVersion)) {
+      setDetailPluginId(target.id)
       return
     }
     const release = target.releases?.versions.find(version => version.version === intent.version && version.compatible && !version.yanked)
@@ -433,7 +453,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
     let isUnmounted = false
 
     const init = async () => {
-      const cachedPluginList = getCachedPluginList(showCompatibleOnly)
+      const cachedPluginList = getCachedPluginList()
       // 已点赞状态只影响按钮样式，不阻塞清单加载；本次会话内已产生的点赞结果优先
       void getPluginUserStates().then((userStates) => {
         if (!isUnmounted) {
@@ -523,8 +543,8 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
               if (!isUnmounted) setMaimaiVersion(version)
               return version
             }),
-            // 市场清单与安装状态查询失败时，统一交给外层错误处理。
-            fetchPluginList({ compatibleOnly: showCompatibleOnly }).then((marketPlugins) => {
+            // 获取完整清单，由列表按本机兼容窗口筛选。查询失败时统一交给外层错误处理。
+            fetchPluginList().then((marketPlugins) => {
               if (!isUnmounted) void refreshStats(marketPlugins)
               return marketPlugins
             }),
@@ -576,17 +596,20 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
         void unsubscribeProgress()
       }
     }
-  }, [toast, showCompatibleOnly, sourceRevision, syncInstalledPlugins, refreshStats])
+  }, [toast, sourceRevision, syncInstalledPlugins, refreshStats])
 
   // 检查插件兼容性
   // 规则：
-  // 1. manifest_version === 1 的插件在麦麦 >= 1.0.0 时一律视为不兼容（旧 manifest 已不再被宿主接受）；
-  // 2. 否则若声明了 host_application 范围，则按版本范围判定。
+  // 发行版使用市场服务的校验结果，并识别官方摘要中需要查看详情的兼容模式插件。
+  // 分支优先使用服务端校验。没有服务端结果时，按 manifest 版本和 Host 范围判定。
   const checkPluginCompatibility = useCallback((plugin: PluginInfo): boolean => {
     // 内置插件随本体发布，不使用市场中独立发行版本的兼容性限制。
     if (plugin.builtin) return true
     if (plugin.releases?.sync_error) return false
-    if (plugin.releases?.mode === 'releases') return Boolean(plugin.releases.recommended_version)
+    if (plugin.releases?.mode === 'releases') {
+      return Boolean(plugin.releases.recommended_version) || needsCompatibilityModeReleaseDetail(plugin, maimaiVersion)
+    }
+    if (plugin.releases?.branch_compatible !== undefined) return plugin.releases.branch_compatible
     if (!maimaiVersion) return true
 
     // manifest v1 在 1.0.0+ 麦麦上不再兼容
@@ -608,7 +631,10 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
   const getIncompatibleReason = useCallback((plugin: PluginInfo): string | null => {
     if (plugin.builtin) return null
     if (plugin.releases?.sync_error) return `版本同步失败：${plugin.releases.sync_error}`
-    if (plugin.releases?.mode === 'releases' && !plugin.releases.recommended_version) return '没有兼容的稳定版本，请在插件详情查看版本列表'
+    if (plugin.releases?.mode === 'releases' && !plugin.releases.recommended_version) {
+      return needsCompatibilityModeReleaseDetail(plugin, maimaiVersion) ? null : '没有兼容的稳定版本，请在插件详情查看版本列表'
+    }
+    if (plugin.releases?.branch_compatible === false) return plugin.releases.branch_reasons?.join('；') || null
     if (!maimaiVersion) return null
     const manifestVersion = plugin.manifest?.manifest_version ?? 1
     if (manifestVersion <= 1 && maimaiVersion.version_major >= 1) {
@@ -670,11 +696,9 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
       )
     }
 
-    const host = plugin.manifest?.host_application
-    if (maimaiVersion && host && isPluginCompatibilityMode(host.min_version, host.max_version, maimaiVersion)) {
+    if (isMarketHostInCompatibilityMode(plugin, maimaiVersion)) {
       return (
-        <Badge variant="outline" className="gap-1 border-orange-500! bg-orange-500! text-white!">
-          <AlertTriangle className="h-3 w-3" />
+        <Badge variant="outline" className="border-orange-500! bg-orange-500! text-white!">
           兼容模式
         </Badge>
       )
@@ -704,8 +728,13 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
       return
     }
 
+    if (needsCompatibilityModeReleaseDetail(plugin, maimaiVersion)) {
+      handleDetail(plugin)
+      return
+    }
+
     installDialogRef.current?.open(plugin)
-  }, [gitStatus, maimaiVersion, checkPluginCompatibility, getIncompatibleReason, toast])
+  }, [gitStatus, maimaiVersion, checkPluginCompatibility, getIncompatibleReason, handleDetail, toast])
 
   const handleLike = useCallback(async (plugin: PluginInfo) => {
     const pluginId = plugin.manifest?.id || plugin.id
@@ -900,6 +929,11 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
       return
     }
 
+    if (needsCompatibilityModeReleaseDetail(plugin, maimaiVersion)) {
+      handleDetail(plugin)
+      return
+    }
+
     try {
       setPluginProgress({
         operation: 'update',
@@ -949,7 +983,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
         variant: 'destructive',
       })
     }
-  }, [gitStatus, maimaiVersion, checkPluginCompatibility, getIncompatibleReason, toast, setPluginProgress, setCompletedPluginProgress, refreshInstalledPlugins])
+  }, [gitStatus, maimaiVersion, checkPluginCompatibility, getIncompatibleReason, handleDetail, toast, setPluginProgress, setCompletedPluginProgress, refreshInstalledPlugins])
 
   // 筛选只做一次，计数与列表使用同一数组；点赞和进度更新不触发重新筛选。
   // 兼容性依赖宿主版本；缓存也必须通过同一筛选，不能先展示全部再删掉不兼容项。

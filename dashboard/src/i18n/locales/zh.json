@@ -150,18 +150,11 @@
   },
   "pluginWebUI": {
     "settingsTitle": "插件页面",
-    "settingsHint": "决定哪些插件页面出现在顶栏、按什么顺序。只保存在当前浏览器，不影响插件权限。",
-    "topbarPreview": "顶栏预览",
-    "moreShort": "更多",
-    "topbarLimit": "顶栏最多放 {{count}} 个，其余进入「更多」",
+    "settingsHint": "选择侧栏中显示的插件页面及其顺序。设置保存在当前浏览器。",
     "orderAndVisibility": "排序与显示",
     "pluginCount": "{{count}} 个插件",
     "hiddenLabel": "已隐藏",
-    "topbarLabel": "顶栏",
-    "overflowLabel": "更多菜单",
     "sidebarLabel": "侧栏",
-    "overflowGroup": "以下进入「更多」菜单",
-    "sidebarGroup": "以下插件仅提供侧栏页面",
     "visibleLabel": "显示",
     "customReload": "重载页面",
     "customStop": "停止页面",
@@ -173,15 +166,12 @@
     "customStopTimeout": "页面连接超过 10 秒未就绪，页面已停止。",
     "customStopManual": "你已停止页面。",
     "customStopNavigation": "页面发生了重新加载或跳转，连接已停止。",
-    "workspaceOrder": "顶部 Tab 排序",
-    "workspaceOrderHint": "未隐藏的插件按此顺序排列，顶部最多显示两个，其余从旁边的“更多”菜单进入；当前打开的插件保持可见。排序立即生效，并保存在当前浏览器。",
     "galleryLayout": "布局选择",
     "paginationSummary": "第{{page}} / {{pages}}页 · 共{{total}}张",
     "galleryAuto": "自动排布",
     "galleryColumns": "{{count}}列",
     "extensions": "插件扩展",
     "manage": "管理插件页面",
-    "more": "更多插件工作区",
     "refresh": "刷新",
     "loading": "加载中…",
     "empty": "暂无数据",
@@ -265,7 +255,6 @@
     "empty": "当前统计时段暂无数据",
     "actions": {
       "refresh": "刷新",
-      "openHtml": "打开 HTML 版",
       "compare": "环比上一周期",
       "details": "查看明细"
     },
@@ -1436,6 +1425,8 @@
         }
       },
       "modelSetup": {
+        "identifierPlaceholder": "输入模型标识符",
+        "pickFromList": "选择模型",
         "planner": {
           "identifier": {
             "label": "用于 规划思考 的模型",
@@ -1998,8 +1989,7 @@
         "modelTasks": "打开模型管理 / 为模型分配功能",
         "botConfig": "打开麦麦主程序配置",
         "emojiManagement": "打开表情包资源管理",
-        "expressionManagement": "打开表达方式管理",
-        "statistics": "打开 maibot_statistics.html"
+        "expressionManagement": "打开表达方式管理"
       },
       "categories": {
         "system": "系统",

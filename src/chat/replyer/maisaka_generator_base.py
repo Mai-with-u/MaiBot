@@ -32,7 +32,6 @@ from src.common.utils.utils_config import ChatConfigUtils
 from src.config.config import global_config
 from src.maisaka.context.message_id_alias import to_display_message_id
 from src.config.model_configs import ModelInfo
-from src.core.types import ActionInfo
 from src.llm_models.payload_content.context_item import (
     AssistantMessageItem,
     CONTEXT_ITEM_SCHEMA_VERSION,
@@ -70,7 +69,7 @@ from src.maisaka.visual.mode_utils import resolve_enable_visual_planner
 from src.plugin_runtime.hook_payloads import deserialize_prompt_items, serialize_prompt_items
 from src.plugin_runtime.host.hook_dispatcher import HookAbortedError
 
-from .creative_language import OUTPUT_LANGUAGE, TRANSLATION_INSTRUCTION, load_reply_prompt
+from .creative_language import CLASSICAL_TRANSLATION_INSTRUCTION, OUTPUT_LANGUAGE, TRANSLATION_INSTRUCTION, load_reply_prompt
 from .gemini_output import GeminiReplyFormatError, normalize_gemini_reply
 from .maisaka_expression_selector import maisaka_expression_selector
 from .retro_prompt import RetroReplyPromptMixin
@@ -1016,6 +1015,40 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             result.request_messages = preview.payload["request_items"]
             result.output_items = preview.payload["output_items"]
 
+    @staticmethod
+    async def _persist_super_creative_stage(
+        result: ReplyGenerationResult,
+        *,
+        stage: str,
+        chat_id: str,
+        selection_reason: str,
+        request_messages: List[ContextItem],
+        response: LLMResponseResult,
+        duration_ms: float,
+    ) -> None:
+        """独立保存每个阶段的模型输入与输出，保留翻译失败或 Hook 重试前的记录。"""
+        if not global_config.debug.save_maisaka_reasoning:
+            return
+        preview = await asyncio.to_thread(
+            PromptCLIVisualizer.build_prompt_preview_access,
+            request_messages,
+            category=stage,
+            chat_id=chat_id,
+            request_kind=stage,
+            selection_reason=selection_reason,
+            output_items=response.output_items,
+            generation_attempts=response.generation_attempts,
+            metadata={
+                "model_name": response.model_name,
+                "duration_ms": duration_ms,
+                "prompt_tokens": response.prompt_tokens,
+                "completion_tokens": response.completion_tokens,
+                "total_tokens": response.total_tokens,
+            },
+            keep_base64=False,
+        )
+        result.prompt_html_uri = preview.preview_web_uri
+
     def _build_generation_options(self, model_name: Optional[str]) -> LLMGenerationOptions:
         """构建本次请求选项，供长文等专用 Replyer 明确指定生成模型。"""
         return LLMGenerationOptions(model_name=model_name)
@@ -1025,7 +1058,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         if not super_creative_mode or kwargs.get("prompt_profile") == "mai_replier":
             return self._build_request_messages(**kwargs)
         language = language or global_config.experimental.super_creative_language
-        with use_locale(language):
+        with use_locale("zh-CN" if language == "zh-classical" else language):
             # 沿用中文 Replyer 的构建链和占位符，只选择对应语言模板，不重新组织结构。
             items = self._build_request_messages(**kwargs)
             instruction = OUTPUT_LANGUAGE[language]
@@ -1042,6 +1075,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         active_model: Any,
         generation_result: LLMResponseResult,
         generation_options: LLMGenerationOptions,
+        language: str = "ja-JP",
     ) -> Tuple[LLMResponseResult, List[ContextItem]]:
         """用实际生成正文的同一模型翻译；翻译失败时不返回原文。"""
         model_name = generation_result.model_name.strip()
@@ -1053,7 +1087,9 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         if global_config.debug.gemini_reply_compatibility:
             # 先剥离有明确边界的分析块，避免翻译改变边界后将其当作正式正文。
             source_text = normalize_gemini_reply(source_text)
-        prompt = TRANSLATION_INSTRUCTION + source_text
+        # 文言文本身属于中文，需明确译成白话，避免通用指令将其原样返回。
+        instruction = CLASSICAL_TRANSLATION_INSTRUCTION if language == "zh-classical" else TRANSLATION_INSTRUCTION
+        prompt = instruction + source_text
         items = [ContextItemBuilder().set_role(RoleType.User).add_text_content(prompt).build()]
 
         async def translation_context_factory(
@@ -1065,10 +1101,6 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             context_factory=translation_context_factory,
             options=replace(generation_options, model_name=model_name, tool_options=None),
         )
-        if translated.tool_calls or translated.native_tool_calls:
-            raise ValueError("超级创意模式翻译返回了工具调用，无法输出中文正文")
-        if not translated.response.strip():
-            raise ValueError("超级创意模式翻译未生成中文正文")
         return translated, items
 
     def generation_dependencies(self, model_info: Optional[ModelInfo]) -> Tuple[str, ...]:
@@ -1079,8 +1111,6 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         self,
         extra_info: str = "",
         reply_reason: str = "",
-        available_actions: Optional[Dict[str, ActionInfo]] = None,
-        chosen_actions: Optional[List[object]] = None,
         from_plugin: bool = True,
         stream_id: Optional[str] = None,
         reply_message: Optional[SessionMessage] = None,
@@ -1098,21 +1128,21 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         image_recognition_refresher: Optional[Callable[[List[LLMContextMessage]], Awaitable[int]]] = None,
         retro_history_builder: Optional[Callable[[], Awaitable[List[LLMContextMessage]]]] = None,
         planner_snapshot: Optional[PlannerRequestSnapshot] = None,
+        tool_call_id: str = "",
     ) -> Tuple[bool, ReplyGenerationResult]:
-        def finalize(success_value: bool) -> Tuple[bool, ReplyGenerationResult]:
-            self._persist_reply_preview(result, stream_id=stream_id, reply_reason=reply_reason)
+        async def finalize(success_value: bool) -> Tuple[bool, ReplyGenerationResult]:
+            if not result.prompt_html_uri and global_config.debug.save_maisaka_reasoning:
+                await asyncio.to_thread(self._persist_reply_preview, result, stream_id=stream_id, reply_reason=reply_reason)
             result.monitor_detail = build_reply_monitor_detail(result)
             return success_value, result
 
-        def finalize_abort(exc: HookAbortedError) -> Tuple[bool, ReplyGenerationResult]:
+        async def finalize_abort(exc: HookAbortedError) -> Tuple[bool, ReplyGenerationResult]:
             result.error_code = "plugin_aborted"
             result.error_message = str(exc)
             result.error_details["hook_abort"] = exc.to_dict()
             result.metrics.overall_ms = round((time.perf_counter() - overall_started_at) * 1000, 2)
-            return finalize(False)
+            return await finalize(False)
 
-        del available_actions
-        del chosen_actions
         del extra_info
         del from_plugin
         del log_reply
@@ -1131,13 +1161,13 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         if self.express_model is None and cache_snapshot is None:
             logger.error("回复模型未初始化")
             result.error_message = "回复模型尚未初始化"
-            return finalize(False)
+            return await finalize(False)
 
         active_reply_tool_args = self._normalize_reply_tool_args(reply_tool_args)
         plugin_reply_prompt = str(active_reply_tool_args.get("_plugin_reply_prompt", ""))
         if chat_history is None:
             result.error_message = "聊天历史为空"
-            return finalize(False)
+            return await finalize(False)
 
         # logger.info(
         #     f"Maisaka 回复器开始生成: 流={stream_id} 原因={reply_reason!r} "
@@ -1160,6 +1190,9 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         # )
 
         preview_chat_id = self._resolve_session_id(stream_id)
+        preview_reason = reply_reason
+        if tool_call_id:
+            preview_reason = f"{reply_reason}\n调用ID: {tool_call_id}".strip()
         retry_constraints: List[str] = []
         retry_reasons: List[str] = []
         retry_events: List[Dict[str, Any]] = []
@@ -1206,7 +1239,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                 if isinstance(before_request_kwargs.get("reply_tool_args"), dict):
                     active_reply_tool_args = dict(before_request_kwargs["reply_tool_args"])
             except HookAbortedError as exc:
-                return finalize_abort(exc)
+                return await finalize_abort(exc)
             except Exception as exc:
                 logger.warning(f"Maisaka 回复器 before_request Hook 调用失败，将继续使用当前请求参数: {exc}")
                 before_request_kwargs = {"extra_prompt": plugin_reply_prompt}
@@ -1390,14 +1423,49 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                         "Maisaka 回复器推理续写完成: "
                         f"session={preview_chat_id} response={self._normalize_content(generation_result.response, limit=300)!r}"
                     )
-                if super_creative_mode and active_prompt_profile != "mai_replier" and generation_result.response.strip():
+                is_super_creative_reply = super_creative_mode and active_prompt_profile != "mai_replier"
+                generation_result.generation_attempts = tuple(
+                    replace(
+                        attempt,
+                        workflow_attempt=retry_count + 1,
+                        workflow_purpose=(
+                            f"replyer.{creative_language}"
+                            if is_super_creative_reply and attempt.workflow_purpose == self.request_type
+                            else attempt.workflow_purpose
+                        ),
+                    )
+                    for attempt in generation_result.generation_attempts
+                )
+                if is_super_creative_reply:
+                    await self._persist_super_creative_stage(
+                        result, stage="replyer_creative", chat_id=preview_chat_id, selection_reason=preview_reason,
+                        request_messages=request_messages, response=generation_result,
+                        duration_ms=round((time.perf_counter() - llm_started_at) * 1000, 2),
+                    )
+                all_generation_attempts.extend(generation_result.generation_attempts)
+                if is_super_creative_reply and generation_result.response.strip():
                     # 在 after_response Hook 和正文校验前完成翻译，插件及发送端只处理中文结果。
                     result.error_code = "replyer_translation_failed"
+                    translation_started_at = time.perf_counter()
                     translated, translation_messages = await self._translate_super_creative_reply(
                         active_model=active_model,
                         generation_result=generation_result,
                         generation_options=generation_options,
+                        language=creative_language,
                     )
+                    translated.generation_attempts = tuple(
+                        replace(attempt, workflow_purpose="replyer.translation", workflow_attempt=retry_count + 1)
+                        for attempt in translated.generation_attempts
+                    )
+                    await self._persist_super_creative_stage(
+                        result, stage="replyer_translation", chat_id=preview_chat_id, selection_reason=preview_reason,
+                        request_messages=translation_messages, response=translated,
+                        duration_ms=round((time.perf_counter() - translation_started_at) * 1000, 2),
+                    )
+                    if translated.tool_calls or translated.native_tool_calls:
+                        raise ValueError("超级创意模式翻译返回了工具调用，无法输出中文正文")
+                    if not translated.response.strip():
+                        raise ValueError("超级创意模式翻译未生成中文正文")
                     result.error_code = ""
                     translation_count += 1
                     aggregate_prompt_tokens += translated.prompt_tokens
@@ -1407,28 +1475,10 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                     prompt_preview = await asyncio.to_thread(
                         PromptCLIVisualizer.build_prompt_dump_text, translation_messages,
                     )
-                    # 两阶段用量已计入 aggregate；最终请求/响应对应翻译，原始日语保留在调用记录中。
-                    generation_result = replace(
-                        translated,
-                        generation_attempts=(
-                            *(
-                                replace(attempt, workflow_purpose=f"replyer.{creative_language}")
-                                if attempt.workflow_purpose == self.request_type else attempt
-                                for attempt in generation_result.generation_attempts
-                            ),
-                            *(
-                                replace(attempt, workflow_purpose="replyer.translation")
-                                for attempt in translated.generation_attempts
-                            ),
-                        ),
-                    )
-                generation_result.generation_attempts = tuple(
-                    replace(attempt, workflow_attempt=retry_count + 1)
-                    for attempt in generation_result.generation_attempts
-                )
-                all_generation_attempts.extend(generation_result.generation_attempts)
+                    all_generation_attempts.extend(translated.generation_attempts)
+                    generation_result = translated
             except HookAbortedError as exc:
-                return finalize_abort(exc)
+                return await finalize_abort(exc)
             except Exception as exc:
                 logger.exception("Maisaka 回复器调用失败")
                 result.error_message = str(exc)
@@ -1437,7 +1487,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                     llm_ms=round((time.perf_counter() - llm_started_at) * 1000, 2),
                     overall_ms=round((time.perf_counter() - overall_started_at) * 1000, 2),
                 )
-                return finalize(False)
+                return await finalize(False)
 
             result.completion.request_prompt = prompt_preview
             result.request_message_count = len(request_messages)
@@ -1699,7 +1749,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                     else "模型未生成回复正文。"
                 )
             logger.warning(result.error_message)
-            return finalize(False)
+            return await finalize(False)
 
         logger.info(
             f"回复生成完成 耗时={result.metrics.overall_ms / 1000:.2f}s "
@@ -1713,4 +1763,4 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                 f"retry_count={retry_count} final={self._normalize_content(response_text, limit=300)!r}"
             )
         result.text_fragments = [response_text]
-        return finalize(True)
+        return await finalize(True)

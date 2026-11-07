@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, Tuple
 from src.common.i18n import get_locale
 
 OUTPUT_LANGUAGE = {
+    "zh-classical": "本次回复请使用中文文言文，保留角色语气，只输出回复正文，不附白话译文。",
     "ja-JP": "今回の返信は日本語で、返信本文だけを出力してください。",
     "ru-RU": "Напишите этот ответ по-русски, выводя только текст ответа.",
     "fr-FR": "Rédigez cette réponse en français et produisez uniquement le texte de la réponse.",
@@ -12,6 +13,12 @@ OUTPUT_LANGUAGE = {
 TRANSLATION_INSTRUCTION = (
     "请将以下内容翻译成中文，保留原文的含义、创意、角色语气、情绪和分段，不增删内容。\n"
     "只输出中文译文，保持原文格式，不要添加内容。如果已经是中文，不用翻译。\n"
+    "待翻译内容："
+)
+
+CLASSICAL_TRANSLATION_INSTRUCTION = (
+    "请将以下文言文翻译成现代白话中文，保留原文的含义、创意、角色语气、情绪和分段，不增删内容。\n"
+    "只输出现代白话中文译文，保持原文格式，不要添加内容。如果已经是现代白话中文，不用翻译。\n"
     "待翻译内容："
 )
 

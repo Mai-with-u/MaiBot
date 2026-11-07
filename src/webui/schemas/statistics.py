@@ -222,7 +222,7 @@ class DetailedStatisticsMetricsData(BaseModel):
 
 
 class DetailedStatisticsData(BaseModel):
-    """原生 WebUI 与 HTML 报告共享的详细统计快照。"""
+    """WebUI 详细统计快照。"""
 
     generated_at: str
     periods: List[DetailedStatisticsPeriod]

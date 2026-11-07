@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Tuple
 from unittest.mock import AsyncMock, Mock
 
 import asyncio
+import json
+
 import pytest
 
 from src.chat.replyer import maisaka_generator_base
@@ -19,7 +21,11 @@ from src.config.model_configs import ModelInfo
 from src.desktop_pet.service import desktop_pet_service
 from src.llm_models.payload_content.context_item import SystemMessageItem, UserMessageItem, get_item_text
 from src.llm_models.payload_content.tool_option import ToolCall
+from src.maisaka.display.prompt_preview_logger import PromptPreviewLogger
+from src.maisaka.display.reasoning_steps import reasoning_trace_id
+from src.maisaka.display.runtime_mixin import MaisakaRuntimeDisplayMixin
 from src.plugin_runtime.host.hook_dispatcher import HookDispatchResult
+from src.webui.routers import reasoning_process
 
 
 def _response(text: str, **kwargs: Any) -> LLMResponseResult:
@@ -30,6 +36,7 @@ def _response(text: str, **kwargs: Any) -> LLMResponseResult:
 
 @pytest.fixture
 def replyer(monkeypatch):
+    monkeypatch.setattr(global_config.debug, "save_maisaka_reasoning", False)
     monkeypatch.setattr(global_config.experimental, "super_creative_mode", True)
     monkeypatch.setattr(global_config.experimental, "super_creative_language", "ja-JP")
     monkeypatch.setattr(global_config.chat, "creative_mode", True)
@@ -105,6 +112,60 @@ async def test_enabled_translates_with_actual_replyer_and_hooks_receive_chinese(
     assert result.metrics.extra["replyer_translation_count"] == 1
     assert result.metrics.extra["replyer_attempt_count"] == 2
     assert result.metrics.extra["replyer_aggregate_total_tokens"] == 30
+
+
+@pytest.mark.asyncio
+async def test_creative_reply_and_translation_are_separate_reasoning_records(replyer, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(global_config.debug, "save_maisaka_reasoning", True)
+    monkeypatch.setattr(PromptPreviewLogger, "_BASE_DIR", tmp_path)
+    monkeypatch.setattr(PromptPreviewLogger, "_submit", PromptPreviewLogger._write_task)
+    monkeypatch.setattr(reasoning_process, "PROMPT_LOG_ROOT", tmp_path)
+    monkeypatch.setattr(
+        "src.maisaka.display.prompt_cli_renderer._build_webui_local_base_url", lambda: "http://127.0.0.1:7999",
+    )
+    monkeypatch.setattr(
+        "src.maisaka.display.runtime_mixin.runtime_context",
+        lambda: SimpleNamespace(public_base_url="http://127.0.0.1:7999"),
+    )
+    replyer.responses[:] = [
+        _response("月が笑っています。", reasoning="构思月亮的比喻"),
+        _response("月亮正在微笑。", reasoning="保留拟人语气"),
+    ]
+
+    trace_token = reasoning_trace_id.set("c" * 32)
+    try:
+        success, result = await replyer.generator.generate_reply_with_context(chat_history=[], tool_call_id="reply-1")
+    finally:
+        reasoning_trace_id.reset(trace_token)
+
+    assert success
+    assert "replyer_translation" in result.monitor_detail["prompt_html_uri"]
+    replyer.generator._persist_reply_preview.assert_not_called()
+    MaisakaRuntimeDisplayMixin()._save_tool_prompt_panels(
+        tool_name="reply", tool_call_id="reply-1", detail=result.monitor_detail,
+    )
+    expected = [
+        ("replyer_creative", "月が笑っています。", "构思月亮的比喻"),
+        ("replyer_translation", "月亮正在微笑。", "保留拟人语气"),
+    ]
+    expected_stages = {stage for stage, _, _ in expected}
+    for stage, response, reasoning in expected:
+        history = reasoning_process.list_reasoning_prompt_files(
+            stage=stage, session="test-session", action="", search="", target_stem="", page=1, page_size=50,
+        )
+        assert set(history.stages) == expected_stages
+        assert len(history.items) == 1
+        record = history.items[0]
+        assert record.output_preview == response
+        payload = json.loads((tmp_path / record.json_path).read_text(encoding="utf-8"))
+        assert payload["request"]["kind"] == stage
+        assert payload["request"]["selection_reason"] == "调用ID: reply-1"
+        reasoning_parts = [
+            item["text_parts"] for item in payload["output_items"] if item["item_type"] == "ReasoningItem"
+        ]
+        assert reasoning_parts == [[reasoning]]
+        related = reasoning_process.list_related_reasoning_records("test-session", stage, record.stem).records
+        assert {item.stage for item in related} == expected_stages
 
 
 @pytest.mark.asyncio
@@ -305,3 +366,22 @@ async def test_mai_replier_ignores_both_creative_modes(replyer, monkeypatch, cre
     assert result.selected_expression_ids == []
     assert result.metrics.extra["replyer_translation_count"] == 0
     assert result.metrics.extra["replyer_super_creative_mode"] is False
+
+
+@pytest.mark.asyncio
+async def test_classical_chinese_generates_then_translates_to_modern_chinese(replyer, monkeypatch):
+    monkeypatch.setattr(global_config.experimental, "super_creative_language", "zh-classical")
+    replyer.responses[:] = [_response("月色甚美，何不共赏？"), _response("月色真美，一起欣赏吧？")]
+    with use_locale("en-US"):
+        success, result = await replyer.generator.generate_reply_with_context(chat_history=[])
+        assert get_locale() == "en-US"
+    assert success and result.text_fragments == ["月色真美，一起欣赏吧？"]
+    assert len(replyer.calls) == 2
+    assert "中文文言文" in get_item_text(replyer.calls[0]["items"][0])
+    assert "你正在qq群里聊天" in get_item_text(replyer.calls[0]["items"][1])
+    translation = replyer.calls[1]["items"]
+    assert len(translation) == 1 and isinstance(translation[0], UserMessageItem)
+    assert "翻译成现代白话中文" in get_item_text(translation[0])
+    assert "如果已经是中文，不用翻译。" not in get_item_text(translation[0])
+    assert get_item_text(translation[0]).endswith("待翻译内容：月色甚美，何不共赏？")
+    assert replyer.calls[1]["options"].model_name == "actual-replyer"

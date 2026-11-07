@@ -554,7 +554,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         await self._tool_registry.close()
         remove_stage_status(self.session_id)
 
-        logger.info(f"{self.log_prefix} Maisaka 运行时已停止")
+        logger.debug(f"{self.log_prefix} Maisaka 运行时已停止")
 
     def adjust_talk_frequency(self, frequency: float) -> None:
         """调整当前会话的回复频率倍率。"""
@@ -1668,7 +1668,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         deadline = self._fixed_message_debouncer.deadline
         if deadline is not None:
             mode_label = {"fast": "快速", "natural": "自然", "steady": "沉稳"}[mode]
-            logger.info(
+            logger.debug(
                 f"{self.log_prefix} 消息防抖：档位={mode_label}，规则={reason}，"
                 f"剩余等待={max(0.0, deadline - time.monotonic()):.3f} 秒，"
                 f"待处理={self._get_pending_message_count() + 1} 条，消息编号={message.message_id}"

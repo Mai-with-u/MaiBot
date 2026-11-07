@@ -520,7 +520,7 @@
     </svg>
   </button>
 
-  <button id="orb-explore" class="orb" data-hit="23" aria-label="探索" title="探索能力与组合工作流">
+  <button id="orb-explore" class="orb" hidden data-hit="23" aria-label="探索" title="探索能力与组合工作流">
     <svg viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m16 8-2 6-6 2 2-6Z"/></svg>
   </button>
   </div>
@@ -806,6 +806,12 @@
   document.getElementById("orb-chat").addEventListener("click", () => setMode("chat"));
   document.getElementById("orb-todo").addEventListener("click", () => setMode("todo"));
   document.getElementById("orb-plugins").addEventListener("click", () => setMode("plugins"));
+  function explorationState(enabled) {
+    document.getElementById("orb-explore").hidden = !enabled;
+    if (!enabled && stage.dataset.mode === "explore") setMode("menu");
+    if (stage.dataset.mode === "menu") stage.style.setProperty("--menu-height", `${menu.offsetHeight}px`);
+    updateRegion();
+  }
   document.getElementById("orb-explore").addEventListener("click", () => setMode("explore"));
   const exploreStart = document.getElementById("explore-start");
   const exploreStatus = document.getElementById("explore-status");
@@ -1609,6 +1615,7 @@
           activePluginPanel = null;
           requestedPluginPanel = null;
           renderExtensionButtons();
+          explorationState(false);
           clearTimeout(explorationTimer);
           exploreStart.disabled = false;
           explorationPendingAt = 0;
@@ -1634,6 +1641,10 @@
         });
         caption.hidden = !chars.length;
         updateRegion();
+        return;
+      }
+      if (message.type === "exploration_state") {
+        explorationState(message.enabled === true);
         return;
       }
       if (message.type === "exploration_tasks") {

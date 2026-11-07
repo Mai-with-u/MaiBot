@@ -150,18 +150,11 @@
   },
   "pluginWebUI": {
     "settingsTitle": "プラグインページ",
-    "settingsHint": "上部に表示するプラグインページと順序を設定します。このブラウザーにのみ保存され、プラグインの権限には影響しません。",
-    "topbarPreview": "上部バーのプレビュー",
-    "moreShort": "その他",
-    "topbarLimit": "上部には最大 {{count}} 件、残りは「その他」に表示",
+    "settingsHint": "サイドバーに表示するプラグインページとその順序を設定します。設定はこのブラウザーに保存されます。",
     "orderAndVisibility": "順序と表示",
     "pluginCount": "{{count}} 件のプラグイン",
     "hiddenLabel": "非表示",
-    "topbarLabel": "上部バー",
-    "overflowLabel": "その他メニュー",
     "sidebarLabel": "サイドバー",
-    "overflowGroup": "以下は「その他」メニューに表示",
-    "sidebarGroup": "以下はサイドバーのページのみを提供",
     "visibleLabel": "表示",
     "customReload": "ページを再読み込み",
     "customStop": "ページを停止",
@@ -173,15 +166,12 @@
     "customStopTimeout": "10秒以内に接続できなかったため停止しました。",
     "customStopManual": "ページを手動で停止しました。",
     "customStopNavigation": "ページの再読み込みまたは移動により接続を停止しました。",
-    "workspaceOrder": "上部タブの順序",
-    "workspaceOrderHint": "非表示でないプラグインはこの順序で並びます。上部には最大2つのタブを表示し、残りは隣の「その他」メニューから開けます。現在のプラグインは常に表示されます。変更は即座に反映され、このブラウザーに保存されます。",
     "galleryLayout": "配置選択",
     "paginationSummary": "{{page}} / {{pages}}ページ · {{total}}枚",
     "galleryAuto": "自動配置",
     "galleryColumns": "{{count}}列",
     "extensions": "プラグイン拡張",
     "manage": "プラグインページの管理",
-    "more": "その他のプラグインワークスペース",
     "refresh": "更新",
     "loading": "読み込み中…",
     "empty": "データがありません",
@@ -265,7 +255,6 @@
     "empty": "この期間のデータはありません",
     "actions": {
       "refresh": "更新",
-      "openHtml": "HTML版を開く",
       "compare": "Compare with previous",
       "details": "Details"
     },
@@ -1436,6 +1425,8 @@
         }
       },
       "modelSetup": {
+        "identifierPlaceholder": "モデル ID を入力",
+        "pickFromList": "モデルを選択",
         "planner": {
           "identifier": {
             "label": "planner モデル識別子 *",
@@ -2001,8 +1992,7 @@
         "modelTasks": "モデル管理 / 機能割り当てを開く",
         "botConfig": "MaiBot 本体設定を開く",
         "emojiManagement": "絵文字リソース管理を開く",
-        "expressionManagement": "表現管理を開く",
-        "statistics": "maibot_statistics.html を開く"
+        "expressionManagement": "表現管理を開く"
       },
       "categories": {
         "system": "システム",

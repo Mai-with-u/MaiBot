@@ -150,18 +150,11 @@
   },
   "pluginWebUI": {
     "settingsTitle": "Plugin pages",
-    "settingsHint": "Choose which plugin pages appear in the top bar and in what order. Saved only in this browser; plugin permissions are unchanged.",
-    "topbarPreview": "Top bar preview",
-    "moreShort": "More",
-    "topbarLimit": "Up to {{count}} plugins in the top bar; the rest appear under More",
+    "settingsHint": "Choose which plugin pages appear in the sidebar and in what order. Settings are saved in this browser.",
     "orderAndVisibility": "Order and visibility",
     "pluginCount": "{{count}} plugins",
     "hiddenLabel": "Hidden",
-    "topbarLabel": "Top bar",
-    "overflowLabel": "More menu",
     "sidebarLabel": "Sidebar",
-    "overflowGroup": "The following appear in the More menu",
-    "sidebarGroup": "These plugins provide sidebar pages only",
     "visibleLabel": "Show",
     "customReload": "Reload page",
     "customStop": "Stop page",
@@ -173,15 +166,12 @@
     "customStopTimeout": "The page connection was not ready within 10 seconds. Page stopped.",
     "customStopManual": "You stopped the page.",
     "customStopNavigation": "The page reloaded or navigated. Connection stopped.",
-    "workspaceOrder": "Top tab order",
-    "workspaceOrderHint": "Visible plugins follow this order. Up to two tabs appear in the header; the rest are in the adjacent More menu. The active plugin stays visible. Changes apply immediately and are saved in this browser.",
     "galleryLayout": "Gallery layout",
     "paginationSummary": "Page {{page}} / {{pages}} · {{total}} images",
     "galleryAuto": "Auto layout",
     "galleryColumns": "{{count}} columns",
     "extensions": "Plugin extensions",
     "manage": "Manage plugin pages",
-    "more": "More plugin workspaces",
     "refresh": "Refresh",
     "loading": "Loading…",
     "empty": "No data",
@@ -265,7 +255,6 @@
     "empty": "No data for this period",
     "actions": {
       "refresh": "Refresh",
-      "openHtml": "Open HTML report",
       "compare": "Compare with previous",
       "details": "Details"
     },
@@ -1436,6 +1425,8 @@
         }
       },
       "modelSetup": {
+        "identifierPlaceholder": "Enter model ID",
+        "pickFromList": "Browse",
         "planner": {
           "identifier": {
             "label": "planner Model Identifier *",
@@ -2001,8 +1992,7 @@
         "modelTasks": "Open Model Management / Task assignments",
         "botConfig": "Open MaiBot core configuration",
         "emojiManagement": "Open emoji resource management",
-        "expressionManagement": "Open expression management",
-        "statistics": "Open maibot_statistics.html"
+        "expressionManagement": "Open expression management"
       },
       "categories": {
         "system": "System",

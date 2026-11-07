@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { AlertCircle, ExternalLink, RefreshCw } from 'lucide-react'
+import { AlertCircle, RefreshCw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Board, BoardRule } from '@/components/ui/board'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import { scopeBotResourcePath } from '@/host/state'
 import '@/styles/statistics.css'
 
 import { ActivitySection } from './sections/ActivitySection'
@@ -39,7 +38,7 @@ function StatisticsPageSkeleton() {
 interface StatisticsPageProps {
   /** 嵌在日志页的文件夹面板里：不再画自己的外框和大标题，面板就是唯一一层框 */
   embedded?: boolean
-  /** 嵌入时把截止时间、刷新和打开 HTML 版放进日志页的工具行 */
+  /** 嵌入时把截止时间和刷新按钮放进日志页的工具行 */
   toolbarContainerId?: string
   toolbarVisible?: boolean
 }
@@ -71,26 +70,18 @@ export function StatisticsPage({ embedded = false, toolbarContainerId, toolbarVi
       {t('statisticsPage.generatedAt', { time: formatDateTime(data.generated_at, locale) })}
     </span>
   )
-  const actions = (
-    <>
-      <Button type="button" variant="outline" size="sm" onClick={() => void refresh()} disabled={loading}>
-        <RefreshCw className={loading ? 'animate-spin' : undefined} />
-        {t('statisticsPage.actions.refresh')}
-      </Button>
-      <Button asChild variant="outline" size="sm">
-        <a href={scopeBotResourcePath('/maibot_statistics.html')} target="_blank" rel="noopener noreferrer">
-          <ExternalLink />
-          {t('statisticsPage.actions.openHtml')}
-        </a>
-      </Button>
-    </>
+  const refreshButton = (
+    <Button type="button" variant="outline" size="sm" onClick={() => void refresh()} disabled={loading}>
+      <RefreshCw className={loading ? 'animate-spin' : undefined} />
+      {t('statisticsPage.actions.refresh')}
+    </Button>
   )
   // 嵌入时和终端、推理过程一样：状态在左，操作在右，占用日志页的工具行
   const embeddedToolbar = (
     <div data-stats-ticker="true" className="w-full">
       {generatedAt}
       <span className="flex-1" />
-      {actions}
+      {refreshButton}
     </div>
   )
 
@@ -112,7 +103,7 @@ export function StatisticsPage({ embedded = false, toolbarContainerId, toolbarVi
             </div>
             <span className="flex-1" />
             {generatedAt}
-            {actions}
+            {refreshButton}
           </header>
         )}
         {embedded && !toolbarRoot && embeddedToolbar}

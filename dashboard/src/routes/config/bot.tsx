@@ -1377,6 +1377,29 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
     }
 
     const renderSectionGroupContent = (sectionEntries: Array<readonly [string, ConfigSchema]>) => {
+      const [firstEntry] = sectionEntries
+      if (sectionEntries.length === 1 && firstEntry && ['jargon', 'emoji'].includes(firstEntry[0])) {
+        const [sectionName, schema] = firstEntry
+        return (
+          <div className="space-y-3">
+            <DynamicConfigForm
+              schema={schema}
+              values={sectionValues[sectionName] ?? {}}
+              onChange={(fieldPath, value) =>
+                updateSectionValueByPath(sectionName, fieldPath.split('.'), value)
+              }
+              basePath={sectionName}
+              hooks={fieldHooks}
+              advancedVisible={advancedVisible}
+              sectionColumns={1}
+              sectionLeadingContent={sectionLeadingContent}
+              sectionTrailingContent={sectionTrailingContent}
+              fieldTrailingContent={fieldTrailingContent}
+            />
+          </div>
+        )
+      }
+
       const values = Object.fromEntries(
         sectionEntries.map(([sectionName]) => [sectionName, sectionValues[sectionName] ?? {}])
       )

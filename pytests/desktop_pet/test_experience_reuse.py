@@ -80,9 +80,10 @@ def test_feedback_requires_learning_or_failure_reason(experience, outcome, field
 
 
 @pytest.mark.asyncio
-async def test_tool_records_owner_feedback_only(experience):
+async def test_tool_records_owner_feedback_only(experience, monkeypatch):
     from jsonschema import validate
 
+    monkeypatch.setattr(exploration_tools.global_config.experimental, "desktop_pet_exploration_enabled", True)
     task, reference, _ = experience
     provider = exploration_tools.ExplorationToolProvider()
     context = SimpleNamespace(session_id="owner")

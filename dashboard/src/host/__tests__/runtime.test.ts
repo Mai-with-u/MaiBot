@@ -79,7 +79,6 @@ describe('统一 WebUI 的 Bot 归属', () => {
     expect(await getControlApiBaseUrl()).toBe('')
     expect(await resolveApiPath('/api/webui/avatar')).toBe(`${prefix}/api/webui/avatar`)
     expect(await resolveApiPath(`${prefix}/api/webui/avatar`)).toBe(`${prefix}/api/webui/avatar`)
-    expect(scopeBotResourcePath('/maibot_statistics.html')).toBe(`${prefix}/maibot_statistics.html`)
     expect(scopeBotResourcePath('https://example.com/photo.png')).toBe(
       'https://example.com/photo.png'
     )

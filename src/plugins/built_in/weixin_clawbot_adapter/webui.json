@@ -8,7 +8,6 @@
     {
       "id": "accounts",
       "title": "微信账号管理",
-      "placement": "sidebar",
       "icon": "settings",
       "mode": "custom",
       "entry": "web/accounts.html",

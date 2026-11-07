@@ -1075,6 +1075,12 @@ class ExperimentalConfig(ConfigBase):
     __ui_advanced__ = True
     __ui_order__ = 140
 
+    desktop_pet_exploration_enabled: bool = Field(
+        default=False,
+        json_schema_extra={"label": {"zh_CN": "桌宠自由探索"}, "x-widget": "switch"},
+    )
+    """实验性功能：允许桌宠发起探索任务，并在主人聊天中检索、记录和复用探索经验。默认关闭，开启后会调用模型和工具。"""
+
     super_creative_mode: bool = Field(
         default=False,
         json_schema_extra={
@@ -1088,11 +1094,11 @@ class ExperimentalConfig(ConfigBase):
     )
     """实验性功能：Replyer 使用所选语言 Prompt 生成回复，再由同一实际 Replyer 模型翻译为中文。优先于回复缓存模式，翻译会增加耗时和费用。"""
 
-    super_creative_language: Literal["ja-JP", "ru-RU", "fr-FR"] = Field(
+    super_creative_language: Literal["ja-JP", "ru-RU", "fr-FR", "zh-classical"] = Field(
         default="ja-JP",
         json_schema_extra={
             "label": {"zh_CN": "超级创意生成语言"},
-            "x-option-labels": {"ja-JP": "日语", "ru-RU": "俄语", "fr-FR": "法语"},
+            "x-option-labels": {"ja-JP": "日语", "ru-RU": "俄语", "fr-FR": "法语", "zh-classical": "中文文言文"},
         },
     )
     """超级创意模式使用的 Prompt 和生成语言，中文材料原样保留。"""
@@ -4368,35 +4374,6 @@ class EmojiConfig(ConfigBase):
     __ui_label__ = "表情包"
     __ui_sub_label__ = "表情包"
 
-    use_new_send_logic: bool = Field(
-        default=False,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "采用新表情包发送逻辑",
-                "en_US": "Use new emoji sending logic",
-                "ja_JP": "新しい絵文字送信方式を使用",
-            },
-            "x-widget": "switch",
-        },
-    )
-    """开启后由思考模型直接查看并挑选表情包，在文字回复后发送，需要思考模型支持视觉；关闭时沿用独立选择并发送表情包的旧方式。"""
-
-    emoji_send_num: int = Field(
-        default=25,
-        ge=1,
-        le=64,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "单次发送候选数",
-                "en_US": "Emoji send candidate count",
-                "ja_JP": "送信候補の絵文字数",
-            },
-            "x-widget": "input",
-            "advanced": True,
-        },
-    )
-    """每次从多少个候选表情里挑一个发送；不是一次发送这么多。"""
-
     max_reg_num: int = Field(
         default=64,
         json_schema_extra={
@@ -5659,6 +5636,19 @@ class PluginConfig(ConfigBase):
         },
     )
     """允许用聊天命令管理插件的用户，格式如 qq:123456789。"""
+
+    command_require_self_mention: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "命令含 @ 时须提及自己",
+                "en_US": "Commands with mentions must mention this bot",
+                "ja_JP": "メンション付きコマンドは自分へのメンションが必要",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """开启后，命令消息包含结构化 @ 时，必须提及当前接收账号；不含 @ 的命令不受影响。"""
 
     silent_permission_denied: bool = Field(
         default=False,

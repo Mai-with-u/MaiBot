@@ -21,8 +21,6 @@ import { cn } from '@/lib/utils'
 import {
   extensionIcons,
   extensionPath,
-  extensionWorkspace,
-  orderedWorkspaceExtensions,
   usePluginWebUI,
   visibleExtensions,
 } from '@/lib/plugin-webui'
@@ -70,30 +68,10 @@ export function Layout({ children }: LayoutProps) {
   const announce = useAnnounce()
   const extensionRegistry = usePluginWebUI(!checking && botAvailable)
   const extensions = useMemo(() => visibleExtensions(extensionRegistry), [extensionRegistry])
-  const workspaceExtensions = useMemo(
-    () =>
-      orderedWorkspaceExtensions(
-        extensions,
-        extensionRegistry.preferences.workspaceOrder ?? extensionRegistry.preferences.order
-      ),
-    [extensions, extensionRegistry.preferences]
-  )
-  const workspaceForPath = useCallback(
-    (path: string): WorkspaceMode => {
-      const extension = extensions.find((extension) =>
-        extension.pages.some(
-          (page) =>
-            page.placement === 'workspace' && extensionPath(extension.plugin_id, page.id) === path
-        )
-      )
-      return extension ? extensionWorkspace(extension.plugin_id) : 'settings'
-    },
-    [extensions]
-  )
   const isLogsPath =
     pathname === '/logs' || pathname === '/statistics' || pathname.startsWith('/reasoning-process')
   // 麦麦聊天已并入麦麦设置侧边栏，/chat 属于设置工作区
-  const workspaceMode: WorkspaceMode = isLogsPath ? 'logs' : workspaceForPath(pathname)
+  const workspaceMode: WorkspaceMode = isLogsPath ? 'logs' : 'settings'
   const isSettingsWorkspace = workspaceMode !== 'logs'
   // 聊天自己管理滚动区域，其余设置页按内容撑高、由 main 滚动
   const isScrollablePage =
@@ -125,44 +103,19 @@ export function Layout({ children }: LayoutProps) {
   const { theme, setTheme, themeConfig } = useTheme()
   const effectiveSidebarOpen = themeConfig.dashboardStyle !== 'millennium' && sidebarOpen
   const builtInMenuSections = useMenuSections()
-  // 日志工作区在移动端保留麦麦导航，顶栏菜单按钮与其它页面保持一致。
-  const sidebarWorkspaceMode = workspaceMode === 'logs' ? 'settings' : workspaceMode
   const menuSections = useMemo(() => {
-    const pluginMenuSections: MenuSection[] = extensions.flatMap((extension) => {
-      const pages = extension.pages.filter((page) =>
-        page.placement === 'sidebar'
-          ? sidebarWorkspaceMode === 'settings'
-          : sidebarWorkspaceMode === extensionWorkspace(extension.plugin_id)
-      )
-      return pages.length
-        ? [
-            {
-              title: extension.workspace_title ?? extension.plugin_id,
-              literalTitle: true,
-              items: pages.map((page) => ({
-                icon: extensionIcons[page.icon],
-                label: page.title,
-                literalLabel: true,
-                path: extensionPath(extension.plugin_id, page.id),
-              })),
-            },
-          ]
-        : []
-    })
-    return sidebarWorkspaceMode === 'settings'
-      ? [
-          ...builtInMenuSections,
-          ...(pluginMenuSections.length
-            ? [
-                {
-                  title: 'pluginWebUI.extensions',
-                  items: pluginMenuSections.flatMap((section) => section.items),
-                },
-              ]
-            : []),
-        ]
-      : pluginMenuSections
-  }, [builtInMenuSections, extensions, sidebarWorkspaceMode])
+    const items = extensions.flatMap((extension) =>
+      extension.pages.map((page) => ({
+        icon: extensionIcons[page.icon],
+        label: page.title,
+        literalLabel: true,
+        path: extensionPath(extension.plugin_id, page.id),
+      }))
+    )
+    return items.length
+      ? [...builtInMenuSections, { title: 'pluginWebUI.extensions', items }]
+      : builtInMenuSections
+  }, [builtInMenuSections, extensions])
 
   useEffect(() => {
     shellStateRef.current = { sidebarOpen, topbarCollapsed }
@@ -313,7 +266,7 @@ export function Layout({ children }: LayoutProps) {
         return
       }
 
-      setWorkspaceTransitionTarget(to === '/logs' ? 'logs' : workspaceForPath(to))
+      setWorkspaceTransitionTarget(to === '/logs' ? 'logs' : 'settings')
 
       const enterWorkspace = () => {
         void router.navigate({ to }).catch(() => {
@@ -333,7 +286,7 @@ export function Layout({ children }: LayoutProps) {
         enterWorkspace()
       }, PAGE_TRANSITION_DURATION_MS)
     },
-    [router, scheduleWorkspaceTransition, workspaceMode, workspaceForPath, workspaceTransitionStage]
+    [router, scheduleWorkspaceTransition, workspaceMode, workspaceTransitionStage]
   )
 
   const pageHidden =
@@ -480,7 +433,6 @@ export function Layout({ children }: LayoutProps) {
 
             {/* Topbar */}
             <Header
-              extensions={workspaceExtensions}
               logSwitcherHidden={logSwitcherHidden}
               sidebarUnderlay={sidebarUnderlay}
               sidebarOpen={effectiveSidebarOpen}

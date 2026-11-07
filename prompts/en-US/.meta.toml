@@ -68,6 +68,11 @@ display_name = "Emoji Content Analysis"
 advanced = true
 description = "Template for analyzing the visual content of emoji or sticker images."
 
+[emoji_grouped_tags]
+display_name = "Grouped Sticker Tags"
+advanced = true
+description = "Identifies the sticker's emotion and visible content separately."
+
 [emoji_content_filtration]
 display_name = "Emoji Content Filtration"
 advanced = true
@@ -77,11 +82,6 @@ description = "Template for judging whether emoji or sticker content meets filtr
 display_name = "Emoji Replacement"
 advanced = true
 description = "Template for selecting or replacing emojis or stickers based on text context."
-
-[emoji_selection]
-display_name = "Emoji Selection"
-advanced = true
-description = "Template for choosing the most suitable emoji or sticker from a grid according to context and tone."
 
 [expression_evaluation]
 display_name = "Expression Evaluation"

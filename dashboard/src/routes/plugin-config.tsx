@@ -435,12 +435,19 @@ function getFieldGridClassName(field: ConfigFieldSchema): string {
   return 'min-w-0'
 }
 
+function getVisibleSectionFields(sectionName: string, section: ConfigSectionSchema) {
+  const isPluginSection = (section.name || sectionName) === 'plugin'
+  return Object.entries(section.fields).filter(([name, field]) => (
+    !field.hidden && !(isPluginSection && (name === 'enabled' || name === 'config_version'))
+  ))
+}
+
 function SectionRenderer({ sectionName, section, config, onChange, initiallyExpanded = false }: SectionRendererProps) {
   const resolvedSectionName = section.name || sectionName
   // SDK 把顶层标量配置归入 general 展示，实际值仍保存在配置根部。
   const configPath = resolvedSectionName === 'general' && !getNestedRecord(config, 'general') ? '' : resolvedSectionName
   const [isOpen, setIsOpen] = useState(
-    resolvedSectionName !== 'plugin' && (initiallyExpanded || !section.collapsed)
+    resolvedSectionName === 'plugin' || initiallyExpanded || !section.collapsed
   )
   const { i18n } = useTranslation()
   const language = i18n.resolvedLanguage || i18n.language || 'zh'
@@ -455,8 +462,7 @@ function SectionRenderer({ sectionName, section, config, onChange, initiallyExpa
   )
 
   // 按 order 排序字段
-  const sortedFields = Object.entries(section.fields)
-    .filter(([, field]) => !field.hidden)
+  const sortedFields = getVisibleSectionFields(sectionName, section)
     .sort(([, a], [, b]) => (a.order ?? 0) - (b.order ?? 0))
   const fieldGroups = new Map<string, typeof sortedFields>()
   for (const entry of sortedFields) {
@@ -533,12 +539,11 @@ const COMPONENT_GROUP_LABELS: Record<ComponentDisplayGroup, string> = {
 }
 
 const COMPONENT_GROUP_DESCRIPTIONS: Record<ComponentDisplayGroup, string> = {
-  tool: '包含 Tool 与旧版本兼容的 Action',
+  tool: '可供主程序调用的插件工具',
   command: '通过命令文本触发的组件',
 }
 
 const COMPONENT_TYPE_LABELS: Record<PluginRuntimeComponentType, string> = {
-  action: '旧版动作',
   command: '命令',
   tool: '工具',
 }
@@ -609,7 +614,7 @@ function PluginRuntimeComponentsPanel({ pluginId }: { pluginId: string }) {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <CardTitle>注册组件</CardTitle>
-            <CardDescription>当前插件运行时已注册的 Tool、旧版 Action 和 Command。</CardDescription>
+            <CardDescription>当前插件运行时已注册的 Tool 和 Command。</CardDescription>
           </div>
           <Badge variant="secondary">{componentCount} 个组件</Badge>
         </div>
@@ -674,21 +679,6 @@ function PluginRuntimeComponentsPanel({ pluginId }: { pluginId: string }) {
                             <Badge variant="outline" className="mb-2 text-[0.68rem]">
                               {COMPONENT_TYPE_LABELS[component.component_type]}
                             </Badge>
-
-                            {component.component_type === 'action' && (
-                              <div className="text-muted-foreground space-y-1 text-xs">
-                                {component.activation_type && <div>触发方式：{component.activation_type}</div>}
-                                {component.activation_keywords && component.activation_keywords.length > 0 && (
-                                  <div className="flex flex-wrap gap-1">
-                                    {component.activation_keywords.map((keyword) => (
-                                      <Badge key={keyword} variant="outline" className="text-[0.68rem]">
-                                        {keyword}
-                                      </Badge>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            )}
 
                             {component.component_type === 'tool' && schemaProperties.length > 0 && (
                               <div className="mt-2 flex flex-wrap gap-1">
@@ -1295,10 +1285,18 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
   }
 
   // 按 order 排序 sections
-  const sortedSections = Object.entries(schema?.sections ?? {}).sort(
-    ([, a], [, b]) => (a.order ?? 0) - (b.order ?? 0)
-  )
-  const schemaTabs = schema?.layout.type === 'tabs' ? schema.layout.tabs : []
+  const sortedSections = Object.entries(schema?.sections ?? {})
+    .filter(([name, section]) => (
+      (section.name || name) !== 'plugin' || getVisibleSectionFields(name, section).length > 0
+    ))
+    .sort(([, a], [, b]) => (a.order ?? 0) - (b.order ?? 0))
+  const visibleSectionNames = new Set(sortedSections.map(([name]) => name))
+  // 同时移除已隐藏的节及空标签页，避免手机端或自定义布局留下空白入口。
+  const schemaTabs = schema?.layout.type === 'tabs'
+    ? schema.layout.tabs
+        .map((tab) => ({ ...tab, sections: tab.sections.filter((name) => visibleSectionNames.has(name)) }))
+        .filter((tab) => tab.sections.length > 0)
+    : []
   // 保留插件声明的布局；仅移动端为未分组的多节配置生成横向切换标签。
   const configTabs: ConfigTabSchema[] = schemaTabs.length > 0
     ? schemaTabs

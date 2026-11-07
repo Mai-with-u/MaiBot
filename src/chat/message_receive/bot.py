@@ -12,6 +12,7 @@ from src.common.paths import get_instance_root
 from src.chat.heart_flow.heartflow_message_processor import HeartFCMessageReceiver
 from src.chat.heart_flow.heartflow_manager import heartflow_manager
 from src.common.logger import get_logger
+from src.common.data_models.message_component_data_model import AtComponent
 from src.common.utils.utils_message import MessageUtils
 from src.common.utils.utils_session import SessionUtils
 from src.config.config import global_config
@@ -40,7 +41,7 @@ from src.maisaka.context.clear_context import (
 
 from .chat_manager import chat_manager
 from .image_receive_compressor import process_received_images_in_message
-from .message import SessionMessage
+from .message import SessionMessage, get_command_text
 
 # 定义日志配置
 
@@ -65,6 +66,15 @@ def is_command_disabled(command_id: str) -> bool:
     """
 
     return command_id in global_config.plugin.disabled_commands
+
+
+def is_command_target_allowed(message: SessionMessage) -> bool:
+    """含 @ 的命令须指向当前接收账号；无 @ 或未开启限制时正常匹配。"""
+    if not global_config.plugin.command_require_self_mention:
+        return True
+    mentions = [component for component in message.raw_message.components if isinstance(component, AtComponent)]
+    # 只检查本条消息的结构化提及，不将文本 @、引用或转发内容视为命令接收对象。
+    return not mentions or any(component.target_user_id == message.account_id for component in mentions)
 
 
 def register_chat_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
@@ -288,10 +298,12 @@ class ChatBot:
         Returns:
             tuple[bool, Optional[str], bool]: ``(是否命中命令, 命令响应文本, 是否继续后续处理)``。
         """
+        if not is_command_target_allowed(message):
+            return False, None, True
         if not message.processed_plain_text:
             return False, None, True  # 没有文本内容，继续处理消息
         try:
-            text = message.processed_plain_text
+            text = get_command_text(message)
 
             # 本体命令与插件命令共用权限校验、执行钩子和结果处理。
             command_result = None if pm_command else component_query_service.find_command_by_text(text)
@@ -427,7 +439,9 @@ class ChatBot:
     def _is_command_candidate(message: SessionMessage) -> bool:
         """判断消息是否会进入内置或插件命令链。"""
 
-        command_text = (message.processed_plain_text or "").strip()
+        if not is_command_target_allowed(message):
+            return False
+        command_text = get_command_text(message)
         if command_text.split()[:1] in [["/offline"], ["/online"]] or command_text.split() == ["/list", "chat"]:
             return True
 
@@ -455,6 +469,8 @@ class ChatBot:
     async def _process_clear_context_command(self, message: SessionMessage) -> bool:
         """处理内置 ``/clear`` 指令并清空当前聊天流的 Maisaka 上下文。"""
 
+        if not is_command_target_allowed(message):
+            return False
         message_is_local_operator = is_local_operator(
             message.platform,
             message.message_info.additional_config,
@@ -463,7 +479,7 @@ class ChatBot:
         if not message_is_local_operator and is_command_disabled(CLEAR_COMMAND_ID):
             return False
 
-        command_text = (message.processed_plain_text or "").strip()
+        command_text = get_command_text(message)
         if message_is_local_operator:
             if command_text != CLEAR_CONTEXT_COMMAND and not command_text.startswith(f"{CLEAR_CONTEXT_COMMAND} "):
                 return False
@@ -558,7 +574,9 @@ class ChatBot:
     async def _process_adapter_lifecycle_command(self, message: SessionMessage) -> bool:
         """处理管理员的适配器上下线、聊天暂停与聊天流列表指令。"""
 
-        command = (message.processed_plain_text or "").strip()
+        if not is_command_target_allowed(message):
+            return False
+        command = get_command_text(message)
         parts = command.split()
         if parts[:1] not in [["/offline"], ["/online"]] and parts != ["/list", "chat"]:
             return False
@@ -921,7 +939,9 @@ class ChatBot:
 
             # 已注册命令优先进入命令链；普通消息仍需先通过聊天过滤。
             text = message.processed_plain_text or ""
-            pm_command = await match_pm_command(text.strip())
+            pm_command = (
+                await match_pm_command(get_command_text(message)) if is_command_target_allowed(message) else None
+            )
             if pm_command and message.session_id:
                 disabled_commands = global_announcement_manager.get_disabled_chat_commands(message.session_id)
                 if PM_COMMAND_ID.rsplit(".", 1)[1] in disabled_commands:

@@ -46,6 +46,7 @@ async def test_pm_dispatch_checks_permission_without_registered_plugin(monkeypat
             permission=[],
             command_permissions={},
             silent_permission_denied=True,
+            command_require_self_mention=False,
         )
     )
     monkeypatch.setattr(bot, "global_config", config)

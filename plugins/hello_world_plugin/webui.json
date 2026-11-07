@@ -1,12 +1,10 @@
 {
   "schema_version": 1,
-  "workspace_title": "Hello World",
   "pages": [
     {
       "id": "overview",
       "title": "Hello World 概览",
-      "description": "演示顶部工作区、统计卡片、数据绑定、图表与表格。数据来自问候体验页的实际操作。",
-      "placement": "workspace",
+      "description": "演示侧栏页面、统计卡片、数据绑定、图表与表格。数据来自问候体验页的实际操作。",
       "icon": "chart",
       "queries": {
         "summary": {
@@ -134,7 +132,6 @@
       "id": "greeting",
       "title": "Hello World 问候体验",
       "description": "演示侧边页面、表单参数绑定和操作后的自动刷新；只生成页面预览。",
-      "placement": "sidebar",
       "icon": "puzzle",
       "queries": {
         "summary": {
@@ -261,7 +258,6 @@
       "id": "details",
       "title": "Hello World 详情与循环示例",
       "description": "生成问候后点击表格行查看详情；演示行上下文、字段参数、动态卡片和空数据条件显示。",
-      "placement": "sidebar",
       "icon": "list",
       "queries": {
         "summary": {

@@ -155,13 +155,13 @@ describe('NavItem', () => {
       item: {
         external: true,
         icon: TestIcon,
-        label: 'sidebar.menu.statistics',
-        path: '/maibot_statistics.html',
+        label: 'sidebar.menu.docs',
+        path: 'https://example.com/docs',
       },
     })
 
-    const link = screen.getByRole('link', { name: 'sidebar.menu.statistics' })
-    expect(link).toHaveAttribute('href', '/maibot_statistics.html')
+    const link = screen.getByRole('link', { name: 'sidebar.menu.docs' })
+    expect(link).toHaveAttribute('href', 'https://example.com/docs')
     expect(link).toHaveAttribute('target', '_blank')
     expect(link).toHaveAttribute('rel', 'noopener noreferrer')
     expect(link).toHaveAttribute('data-active', 'false')

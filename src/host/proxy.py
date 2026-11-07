@@ -40,8 +40,6 @@ def _allowed_path(path: str) -> bool:
     # 只转发应用业务路径；登录与初始化由宿主自己处理，不能被转发到 Bot。
     if "\\" in path or any(part in {".", ".."} for part in path.split("/")):
         return False
-    if path == "maibot_statistics.html":
-        return True
     if not path.startswith("api/"):
         return False
     return not any(path == prefix or path.startswith(prefix + "/") for prefix in (

@@ -86,7 +86,7 @@ def test_incremental_cache_preserves_split_duration_statistics(monkeypatch):
         record for record in records if record["timestamp"] >= since
     ))
     task = object.__new__(statistic.StatisticOutputTask)
-    task.stat_period = [("all_time", now - start, "all")]
+    task.stat_period = [("all_time", now - start)]
     task.all_time_start_time = start
     task.name_mapping = {}
     monkeypatch.setattr(task, "_collect_online_time_for_period", lambda periods, now: {key: {} for key, _ in periods})
@@ -108,7 +108,7 @@ def test_incremental_cache_preserves_split_duration_statistics(monkeypatch):
 
     # 旧缓存没有分类明细时必须重收历史，不能只统计升级后的新请求。
     del cache.value["stat_data"]["classified_requests"]
-    task.stat_period = [("all_time", now + timedelta(minutes=2) - start, "all")]
+    task.stat_period = [("all_time", now + timedelta(minutes=2) - start)]
     rebuilt = task._collect_all_statistics(now + timedelta(minutes=2))
     assert task._build_breakdown_rows(rebuilt["all_time"], "module") == [normal, embedding]
 

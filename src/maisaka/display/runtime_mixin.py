@@ -13,6 +13,7 @@ from rich.text import Text
 from src.chat.heart_flow.heartFC_utils import CycleDetail
 from src.cli.console import console
 from src.common.logger import get_logger
+from src.common.runtime_context import runtime_context
 from src.config.config import global_config
 from src.llm_models.payload_content.context_item import AssistantMessageItem, ContextItemMeta, ContextTextPart
 
@@ -488,7 +489,17 @@ class MaisakaRuntimeDisplayMixin:
         )
         prompt_text = str(detail.get("prompt_text") or "").strip()
         request_messages = detail.get("request_messages") if isinstance(detail.get("request_messages"), list) else None
-        if prompt_text or request_messages:
+        saved_preview_uri = detail.get("prompt_html_uri")
+        if isinstance(saved_preview_uri, str) and saved_preview_uri:
+            if saved_preview_uri.startswith("/"):
+                saved_preview_uri = runtime_context().public_base_url + saved_preview_uri
+            parts.append(Panel(
+                Text("查看已保存的推理记录", style=f"link {saved_preview_uri}"),
+                title=self._get_tool_detail_labels(tool_name)["prompt_title"],
+                border_style=prompt_border_style,
+                padding=(0, 1),
+            ))
+        elif prompt_text or request_messages:
             prompt_access_panel = self._build_tool_prompt_access_panel(
                 tool_name=tool_name,
                 prompt_text=prompt_text,
@@ -747,4 +758,4 @@ class MaisakaRuntimeDisplayMixin:
         )
 
     def _log_internal_loop_cancelled(self) -> None:
-        logger.info(f"{self.log_prefix} Maisaka 内部循环已取消")
+        logger.debug(f"{self.log_prefix} Maisaka 内部循环已取消")

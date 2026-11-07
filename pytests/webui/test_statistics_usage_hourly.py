@@ -350,7 +350,7 @@ def test_hourly_and_raw_produce_identical_charts_and_trends(monkeypatch, cursor)
     chart_now = NOW + timedelta(minutes=3, seconds=7)
     task = object.__new__(StatisticOutputTask)
     task.all_time_start_time = PERIODS[0][1]
-    task.stat_period = [(key, NOW - start, key) for key, start in PERIODS]
+    task.stat_period = [(key, NOW - start) for key, start in PERIODS]
     start = min(chart_now - timedelta(hours=48), NOW - timedelta(days=30))
 
     def run(usage, aggregate_limit):
@@ -429,7 +429,7 @@ def _summary(service, items, start=None):
     return {key: (value or 0) for key, value in zip(keys, row, strict=True)}
 
 
-def test_backfill_continues_after_report_when_not_caught_up(monkeypatch):
+def test_backfill_continues_after_output_when_not_caught_up(monkeypatch):
     import asyncio
 
     calls = []
@@ -447,4 +447,4 @@ def test_backfill_continues_after_report_when_not_caught_up(monkeypatch):
 
     task._usage_hourly = UsageHourlyState(ready=False, cursor=5)
     asyncio.run(task._finish_usage_hourly_backfill())
-    assert calls == [{"time_budget_seconds": StatisticOutputTask.BACKFILL_AFTER_REPORT_SECONDS}]
+    assert calls == [{"time_budget_seconds": StatisticOutputTask.BACKFILL_AFTER_OUTPUT_SECONDS}]

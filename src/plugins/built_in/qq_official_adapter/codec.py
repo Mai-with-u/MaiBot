@@ -15,6 +15,9 @@ GROUP_MESSAGE_EVENT = "GROUP_MESSAGE_CREATE"
 PRIVATE_EVENT = "C2C_MESSAGE_CREATE"
 GROUP_EVENTS = {GROUP_EVENT, GROUP_MESSAGE_EVENT}
 SUPPORTED_EVENTS = GROUP_EVENTS | {PRIVATE_EVENT}
+# 超过语音软限制时官方会降级成文件，适配器应在上传前明确拒绝。
+MAX_OUTBOUND_VOICE_BYTES = 20 * 1024 * 1024
+MAX_OUTBOUND_FILE_BYTES = 100 * 1024 * 1024
 
 QQ_ATTACHMENT_TAG_PATTERN = re.compile(r"<attachmentType=.*?>", re.IGNORECASE)
 QQ_FACE_TAG_PATTERN = re.compile(r"<faceType=.*?>", re.IGNORECASE)
@@ -32,11 +35,15 @@ def decode_message(
     bot_name: str = "",
     id_map: Optional[Mapping[str, Mapping[str, str]]] = None,
     unified_account_id: str = "",
+    group_name: str = "",
 ) -> Tuple[Dict[str, Any], str, str]:
     """将官方群 @/全量群/单聊事件转换为 MaiBot 网关消息，并返回场景和目标 OpenID。
 
     附件由插件侧下载并转换为标准段后经 ``attachment_segments``/``attachment_labels``
     传入；没有文本但有附件段的消息同样放行。
+
+    ``group_name`` 由插件侧查询群基本信息接口后传入：官方消息事件本身不带群名，
+    取不到时传空串，主程序会保留聊天流里已记录的真实群名。
     """
     if event_type not in SUPPORTED_EVENTS:
         raise ValueError(f"不支持的事件类型: {event_type}")
@@ -91,7 +98,9 @@ def decode_message(
         content = ""
     is_at = _is_bot_mentioned(event_type, payload, content, account_id)
     # <@id> 协议标记对用户不可读：@ 机器人由 is_at 表达，@ 他人转写为标准 at 段。
-    content, body_segments, body_plain_text = _rewrite_mention_tokens(content, account_id, bot_name, payload, user_map)
+    content, body_segments, body_plain_text = _rewrite_mention_tokens(
+        content, account_id, bot_name, payload, user_map, bot_user_id=unified_account_id or account_id
+    )
     if not content and not segments and not body_segments:
         raise ValueError("消息不包含文本或可处理的附件")
 
@@ -110,8 +119,9 @@ def decode_message(
     if is_group:
         message_info["group_info"] = {
             "group_id": group_id,
-            # 官方事件通常不带群名；传空表示未知，聊天流保留已记录的真实群名
-            "group_name": str(payload.get("group_name") or ""),
+            # 官方事件通常不带群名，改由插件查 group_openid 的群基本信息补齐；
+            # 两者都没有时传空表示未知，聊天流保留已记录的真实群名。
+            "group_name": str(group_name or payload.get("group_name") or ""),
         }
 
     raw_message: List[Dict[str, Any]] = [*body_segments, *segments]
@@ -153,6 +163,9 @@ def _extract_content(payload: Mapping[str, Any]) -> str:
     for element in payload.get("msg_elements") or []:
         if not isinstance(element, Mapping):
             continue
+        # type 103 是引用的旧消息，不是当前正文/命令；不展开其图片或子元素。
+        if element.get("message_type") in (103, "103") or element.get("type") in (103, "103"):
+            continue
         for value in (element.get("content"), element.get("text")):
             if isinstance(value, str) and value.strip():
                 parts.append(value.strip())
@@ -166,6 +179,22 @@ def _extract_content(payload: Mapping[str, Any]) -> str:
             if isinstance(nested_content, str) and nested_content.strip():
                 parts.append(nested_content.strip())
     return "".join(parts).strip()
+
+
+def is_bot_author(payload: Mapping[str, Any]) -> bool:
+    """判断消息发送者是否为机器人。
+
+    官方事件体的 ``author`` 是 User 结构，``bot`` 布尔字段表示发送者本身是不是机器人
+    （群里的另一个官方机器人会给 true）。字段缺失或结构异常按普通用户处理。
+    """
+
+    author = payload.get("author")
+    if not isinstance(author, Mapping):
+        return False
+    value = author.get("bot")
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return value is True
 
 
 def extract_message_scene_fields(payload: Mapping[str, Any]) -> Tuple[str, str]:
@@ -210,11 +239,13 @@ def _rewrite_mention_tokens(
     bot_name: str,
     payload: Mapping[str, Any],
     user_map: Mapping[str, str],
+    *,
+    bot_user_id: str,
 ) -> Tuple[str, List[Dict[str, Any]], List[str]]:
-    """将 content 里的 <@id> 协议标记转写为标准 at 段，避免 OpenID 原文进入聊天流。
+    """将 content 里的 <@id> 协议标记转写为标准 at 段，保留提及对象的身份。
 
     @ 机器人由 is_at 字段表达，标记删除并生成机器人的 at 段；
-    @ 其他人时用 mentions 数组的名字生成 at 段并回填可读前缀，取不到名字则仅删除标记。
+    @ 其他人时保留结构化 at 段，mentions 中提供的名字用于展示。
     at 段的目标用户同样应用统一 ID 映射。返回 (转写后文本, at 段列表, plain text 的 @ 前缀)。
     """
 
@@ -248,7 +279,7 @@ def _rewrite_mention_tokens(
                     {
                         "type": "at",
                         "data": {
-                            "target_user_id": account_id,
+                            "target_user_id": bot_user_id,
                             "target_user_nickname": bot_name or None,
                             "target_user_cardname": None,
                         },
@@ -258,8 +289,6 @@ def _rewrite_mention_tokens(
             )
             continue
         name = display_names.get(mention_id)
-        if not name:
-            continue
         pieces.append(
             (
                 {
@@ -270,12 +299,12 @@ def _rewrite_mention_tokens(
                         "target_user_cardname": None,
                     },
                 },
-                f"@{name}",
+                f"@{name or mention_id}",
             )
         )
     pieces.append(content[cursor:])
 
-    # 合并相邻文本（被丢弃的未知 @ 会让文本相邻），并去掉整体首尾空白。
+    # 合并相邻文本，并去掉整体首尾空白；@ 始终保留为独立组件。
     merged: List[Any] = []
     for piece in pieces:
         if isinstance(piece, str) and merged and isinstance(merged[-1], str):
@@ -334,6 +363,8 @@ def _tree_mentions_bot(value: Any, account_id: str) -> bool:
         return any(_tree_mentions_bot(item, account_id) for item in value)
     if not isinstance(value, Mapping):
         return False
+    if value.get("message_type") in (103, "103") or value.get("type") in (103, "103"):
+        return False
     element_type = str(value.get("type") or value.get("element_type") or "").lower()
     looks_like_mention = "at" in element_type or "mention" in element_type
     for key, raw_value in value.items():
@@ -355,12 +386,6 @@ def _tree_mentions_bot(value: Any, account_id: str) -> bool:
     return False
 
 
-def extract_command_text(payload: Mapping[str, Any]) -> str:
-    """提取消息文本供管理命令解析，<@id> 标记原样保留。"""
-
-    return _normalize_content(_extract_content(payload))
-
-
 def encode_message(
     message: Mapping[str, Any],
     reverse_map: Optional[Mapping[str, Mapping[str, str]]] = None,
@@ -373,7 +398,7 @@ def encode_message(
     官方一条消息只能承载一种内容，因此：
     - 连续的文本/@ 段合并为一个 ``{"kind": "body", "body": {...}}``，含 @ 时以 markdown
       （msg_type=2）发送，否则为纯文本（msg_type=0）；
-    - 每个图片/表情段单独成为一个 ``{"kind": "media", "binary": bytes, "file_name": str}``，
+    - 每个图片/表情/语音段单独成为一个带 ``file_type``、二进制和文件名的 media 部分，
       由插件上传后以富媒体（msg_type=7）发送。
 
     返回的第四项为 reply 段指向的被回复消息 ID（平台消息 id，非 REFIDX），
@@ -415,6 +440,11 @@ def encode_message(
     for segment in segments:
         if not isinstance(segment, Mapping):
             raise ValueError("出站消息段格式无效")
+        # SDK send.custom("video", ...) 经宿主序列化为 dict 包装，保留明确的视频类型。
+        if segment.get("type") == "dict" and isinstance(segment.get("data"), Mapping):
+            custom = segment["data"]
+            if custom.get("type") == "video":
+                segment = custom
         if segment.get("type") == "reply":
             # reply 段不进入正文，但需把被回复消息 id 交给调用方，由其映射为
             # 官方 message_reference（REFIDX），否则 QQ 客户端不显示引用样式。
@@ -446,10 +476,19 @@ def encode_message(
             continue
         if segment.get("type") in {"image", "emoji"}:
             _flush_text()
-            outbound.append({"kind": "media", **_decode_image_segment(segment)})
+            outbound.append({"kind": "media", "file_type": 1, **_decode_image_segment(segment)})
+            continue
+        if segment.get("type") == "voice":
+            _flush_text()
+            outbound.append({"kind": "media", "file_type": 3, **_decode_voice_segment(segment)})
+            continue
+        if segment.get("type") in {"file", "video"}:
+            _flush_text()
+            file_type = 2 if segment["type"] == "video" else 4
+            outbound.append({"kind": "media", "file_type": file_type, **_decode_file_segment(segment)})
             continue
         if segment.get("type") != "text":
-            raise ValueError(f"出站暂不支持 {segment.get('type')} 消息段，仅支持文本、@、图片与表情")
+            raise ValueError(f"出站暂不支持 {segment.get('type')} 消息段，仅支持文本、@、图片、表情、语音、视频与文件")
         data = segment.get("data")
         if not isinstance(data, str):
             raise ValueError("出站文本段的数据必须是字符串")
@@ -458,6 +497,81 @@ def encode_message(
     if not outbound:
         raise ValueError("出站消息为空")
     return scene, target_id, outbound, reply_target_id
+
+
+def _decode_file_segment(segment: Mapping[str, Any]) -> Dict[str, Any]:
+    """文件保持原文件名；宿主附件使用已校验归属的下载票据，不经 RPC 搬运大文件。"""
+    data = segment.get("data")
+    if not isinstance(data, Mapping):
+        raise ValueError("出站文件/视频段的数据必须是对象")
+    name = data.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("出站文件/视频缺少文件名")
+    name = name.strip()
+    if name in {".", ".."} or any(c in name for c in ("/", "\\")) or any(ord(c) < 32 for c in name):
+        raise ValueError("出站文件名不能包含路径或控制字符")
+    if segment["type"] == "file" and data.get("file_ref"):
+        # 此 URL 由 Host 的 PluginDriver 根据 file_ref 重新签发，不能使用插件提供的任意 URL。
+        url = data.get("url")
+        if not isinstance(url, str) or not url:
+            raise ValueError("出站附件缺少宿主下载票据")
+        size = int(data.get("size") or 0)
+        if not 0 < size <= MAX_OUTBOUND_FILE_BYTES:
+            raise ValueError("出站文件大小必须在 1 字节至 100 MiB 之间")
+        return {"file_name": name, "file_url": url, "file_size": size}
+    raw_base64 = data.get("base64")
+    if not isinstance(raw_base64, str) or not raw_base64.strip():
+        raise ValueError("出站文件/视频需要 base64 内容；普通文件也可使用宿主 file_ref")
+    raw_base64 = raw_base64.strip()
+    if len(raw_base64) > ((MAX_OUTBOUND_FILE_BYTES + 2) // 3) * 4:
+        raise ValueError("出站文件/视频不能超过 100 MiB")
+    try:
+        binary = base64.b64decode(raw_base64, validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError("出站文件/视频内容不是有效的 Base64") from None
+    if not binary or len(binary) > MAX_OUTBOUND_FILE_BYTES:
+        raise ValueError("出站文件/视频大小必须在 1 字节至 100 MiB 之间")
+    if segment["type"] == "video" and binary[4:8] != b"ftyp":
+        raise ValueError("出站视频需为 MP4 格式")
+    return {"file_name": name, "binary": binary}
+
+
+def _decode_voice_segment(segment: Mapping[str, Any]) -> Dict[str, Any]:
+    """读取标准 voice 段，按文件头确定格式；data 是转写文字，不能作为音频上传。"""
+    raw_base64 = segment.get("binary_data_base64")
+    if not isinstance(raw_base64, str) or not raw_base64.strip():
+        raise ValueError("出站语音段缺少二进制数据")
+    raw_base64 = raw_base64.strip()
+    if len(raw_base64) > ((MAX_OUTBOUND_VOICE_BYTES + 2) // 3) * 4:
+        raise ValueError("出站语音不能超过 20 MB")
+    try:
+        binary = base64.b64decode(raw_base64, validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError("出站语音段的二进制数据不是有效的 Base64") from None
+    if not binary:
+        raise ValueError("出站语音段的二进制数据为空")
+    if len(binary) > MAX_OUTBOUND_VOICE_BYTES:
+        raise ValueError("出站语音不能超过 20 MB")
+
+    if binary.startswith((b"\x02#!SILK_V3", b"#!SILK_V3")):
+        extension = "silk"
+    elif binary[:4] == b"RIFF" and binary[8:12] == b"WAVE":
+        extension = "wav"
+    elif binary.startswith(b"OggS"):
+        extension = "ogg"
+    elif binary.startswith(b"ID3") or (
+        len(binary) >= 4
+        and binary[0] == 0xFF
+        and binary[1] & 0xE0 == 0xE0
+        and binary[1] & 0x18 != 0x08  # MPEG version 不能为保留值。
+        and binary[1] & 0x06 == 0x02  # Layer III，避免把 AAC ADTS 当成 MP3。
+        and binary[2] >> 4 not in (0, 15)
+        and binary[2] & 0x0C != 0x0C
+    ):
+        extension = "mp3"
+    else:
+        raise ValueError("出站语音格式不支持，请提供 SILK、MP3、WAV 或 OGG 音频")
+    return {"binary": binary, "file_name": f"{hashlib.sha256(binary).hexdigest()}.{extension}"}
 
 
 def _decode_image_segment(segment: Mapping[str, Any]) -> Dict[str, Any]:

@@ -6,7 +6,7 @@
   window.pywebview = { api: bridge.api };
   const received = new Set([
     'reply', 'notice', 'thinking_caption', 'thinking', 'idle', 'failed', 'accepted',
-    'buttons', 'button_result', 'screen_state', 'exploration_result', 'exploration_tasks', 'connection',
+    'buttons', 'button_result', 'screen_state', 'exploration_state', 'exploration_result', 'exploration_tasks', 'connection',
   ]);
   bridge.onCommand(async ({ id, command }) => {
     try {

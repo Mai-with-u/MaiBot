@@ -9,6 +9,7 @@ import re
 
 from src.llm_models.payload_content.tool_option import ToolDefinitionInput
 
+from .ai_help_diagnostics import redact_diagnostic_message
 from .ai_search_local_config import LOCAL_CONFIG_REDACTED_VALUE, redact_config_value
 from .ai_search_models import AISearchConfigChange, AISearchConfigUpdate, PluginReference
 
@@ -49,6 +50,7 @@ async def list_installed_plugins() -> Dict[str, Any]:
                 "version": plugin["manifest"].get("version", ""),
                 "enabled": plugin["enabled"],
                 "load_status": plugin["load_status"],
+                "load_error": redact_diagnostic_message(plugin["load_error"]) if plugin["load_error"] else "",
             }
             for plugin in result["plugins"]
         ]
@@ -59,12 +61,12 @@ def build_plugin_config_tools() -> List[ToolDefinitionInput]:
     return [
         {
             "name": "list_installed_plugins",
-            "description": "列出本机已安装插件的真实 ID、名称、版本和启用状态。",
+            "description": "列出本机已安装插件的真实 ID、版本、启用和加载状态，以及脱敏后的加载失败或超时原因。排查本机插件加载问题时优先调用。",
             "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
         },
         {
             "name": "read_plugin_config",
-            "description": "读取已安装插件的配置字段定义和当前值，敏感值隐藏。修改前必须调用。",
+            "description": "读取已安装插件的配置字段定义和当前值，敏感值隐藏。配置读取失败时可返回插件加载诊断。修改前必须成功读取字段。",
             "parameters": PluginReference.model_json_schema(),
         },
         {

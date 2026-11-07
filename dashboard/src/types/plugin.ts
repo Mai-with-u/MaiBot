@@ -111,6 +111,8 @@ export interface PluginReleaseCatalog {
   mode: 'releases' | 'branch'
   versions: PluginRelease[]
   recommended_version: string | null
+  branch_compatible?: boolean
+  branch_reasons?: string[]
   sync_error?: string
   rejected_releases?: Array<{ tag: string; version: string; error: string }>
 }

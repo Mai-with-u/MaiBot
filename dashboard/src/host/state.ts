@@ -31,7 +31,7 @@ export function scopeBotResourcePath(path: string): string {
   if (
     !state.host ||
     path.startsWith('/api/host/') ||
-    (!path.startsWith('/api/') && path !== '/maibot_statistics.html')
+    !path.startsWith('/api/')
   )
     return path
   if (!state.selected_bot_id) throw new Error('请先选择 Bot')

@@ -1,4 +1,4 @@
-"""一次遍历生成报表图表和指标趋势，不持有历史明细。"""
+"""一次遍历生成统计图表和指标趋势，不持有历史明细。"""
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -66,7 +66,7 @@ class _Window:
     start_timestamp: float = field(init=False)
 
     def __post_init__(self) -> None:
-        # 保留旧报表的末尾时间桶，包括恰好落在报告时间上的记录。
+        # 保留末尾时间桶，包括恰好落在统计结束时间上的记录。
         self.size = self.hours * 60 // self.interval_minutes + 1
         self.seconds = self.interval_minutes * 60
         self.start_timestamp = self.start.timestamp()

@@ -371,7 +371,7 @@ describe('StatisticsPage', () => {
     cleanup()
   })
 
-  it('加载同源详细统计并保留 HTML 报告入口与核心模块', async () => {
+  it('加载详细统计并显示核心模块', async () => {
     render(<StatisticsPage />)
 
     await waitFor(() => {
@@ -382,10 +382,6 @@ describe('StatisticsPage', () => {
     expect(screen.getByText('statisticsPage.modules.usage')).toBeInTheDocument()
     expect(screen.getByText('statisticsPage.modules.failureRank')).toBeInTheDocument()
     expect(screen.getByText('statisticsPage.modules.heatmap')).toBeInTheDocument()
-
-    const htmlLink = screen.getByRole('link', { name: 'statisticsPage.actions.openHtml' })
-    expect(htmlLink).toHaveAttribute('href', '/maibot_statistics.html')
-    expect(htmlLink).toHaveAttribute('target', '_blank')
   })
 
   it('接口失败时展示错误提示', async () => {

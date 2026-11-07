@@ -68,6 +68,11 @@ display_name = "絵文字内容分析"
 advanced = true
 description = "絵文字やスタンプ画像の内容を分析するためのテンプレート。"
 
+[emoji_grouped_tags]
+display_name = "スタンプの分類タグ"
+advanced = true
+description = "スタンプの感情と画像内の内容を分けて識別します。"
+
 [emoji_content_filtration]
 display_name = "絵文字内容フィルタ"
 advanced = true
@@ -77,11 +82,6 @@ description = "絵文字やスタンプの内容がフィルタ条件を満た�
 display_name = "絵文字置換"
 advanced = true
 description = "テキスト文脈に応じて絵文字やスタンプを選択・置換するためのテンプレート。"
-
-[emoji_selection]
-display_name = "絵文字選択"
-advanced = true
-description = "文脈と現在の語調に合わせて、絵文字やスタンプのグリッドから最適なものを選ぶためのテンプレート。"
 
 [expression_evaluation]
 display_name = "表現評価"

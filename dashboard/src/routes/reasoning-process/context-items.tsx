@@ -41,6 +41,8 @@ const STAGE_LABELS: Record<string, string> = {
   imported: '导入',
   planner: '规划器',
   replyer: '回复器',
+  replyer_creative: '超级创意回复',
+  replyer_translation: '超级创意翻译',
   reply_supplement: '回复补充',
   memory_retrieval: '记忆检索',
   memory_heuristic: '记忆拉取',

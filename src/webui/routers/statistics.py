@@ -28,7 +28,7 @@ def get_task_usage(
 
 @router.get("/detailed", response_model=DetailedStatisticsData)
 def get_detailed_statistics() -> DetailedStatisticsData:
-    """获取与 HTML 报告同源的详细统计快照。"""
+    """获取详细统计快照。"""
 
     snapshot = get_detailed_statistics_snapshot()
     if snapshot is None:

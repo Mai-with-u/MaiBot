@@ -938,7 +938,8 @@ async def _send_via_platform_io(
     )
 
     if delivery_batch.has_success:
-        _record_sent_emoji_usage(message)
+        if any(isinstance(component, EmojiComponent) for component in message.raw_message.components):
+            await asyncio.to_thread(_record_sent_emoji_usage, message)
         if storage_message:
             await _store_sent_message(message)
         await _notify_memory_automation_on_message_sent(message)
@@ -1107,6 +1108,8 @@ async def _send_to_target_with_message(
     sync_to_maisaka_history: bool = False,
     maisaka_source_kind: str = "outbound_send",
     raise_on_hook_abort: bool = False,
+    *,
+    quote_message: Optional[MaiMessage] = None,
 ) -> Optional[SessionMessage]:
     """向指定目标构建并发送消息。
 
@@ -1121,12 +1124,14 @@ async def _send_to_target_with_message(
         show_log: 是否输出发送日志。
         selected_expressions: 可选的表情候选索引列表。
         raise_on_hook_abort: 为 True 时向调用方传递带原因的 Hook 中止。
+        quote_message: 独立的显示引用目标；未指定时引用 reply_message，不改变被动回复锚点。
 
     Returns:
         bool: 发送成功返回 ``True``，否则返回 ``False``。
     """
     try:
-        if set_reply and reply_message is None:
+        reference_message = quote_message if quote_message is not None else reply_message
+        if set_reply and reference_message is None:
             logger.warning("[SendService] 使用引用回复，但未提供回复消息")
             return None
 
@@ -1169,8 +1174,8 @@ async def _send_to_target_with_message(
             outbound_message,
             typing=typing,
             set_reply=set_reply,
-            reply_message_id=reply_message.message_id if reply_message is not None else None,
-            reply_message=reply_message,
+            reply_message_id=reference_message.message_id if reference_message is not None else None,
+            reply_message=reference_message,
             storage_message=storage_message,
             show_log=show_log,
             sync_to_maisaka_history=sync_to_maisaka_history,

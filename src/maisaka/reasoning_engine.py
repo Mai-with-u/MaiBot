@@ -2,7 +2,6 @@
 
 from base64 import b64decode
 from binascii import Error as BinasciiError
-from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from html import escape
@@ -242,12 +241,6 @@ class MaisakaReasoningEngine:
             if tool_spec.provider_name == "maisaka_builtin":
                 if not is_builtin_tool_in_action_stage(tool_spec, passive_replyer=passive_replyer):
                     continue
-                if passive_replyer and tool_spec.name == "show_emoji_list":
-                    tool_spec = deepcopy(tool_spec)
-                    tool_spec.description = (
-                        "查看表情包选择拼图。图片进入上下文而不发送；决定发言时在最终指导里说明表情意图，"
-                        "由并行回复补充器选择序号和发送位置。"
-                    )
                 visibility = get_builtin_tool_visibility(tool_spec)
                 if visibility == "visible":
                     visible_builtin_tool_specs.append(tool_spec)
@@ -2062,7 +2055,7 @@ class MaisakaReasoningEngine:
 
     @staticmethod
     def _build_tool_monitor_images(result: ToolExecutionResult) -> List[Dict[str, str]]:
-        """同时提取统一内容项和工具追加上下文中的图片（如表情候选拼图）。"""
+        """同时提取统一内容项和工具追加上下文中的图片。"""
 
         items = list(result.content_items)
         for message in result.post_history_messages:

@@ -4,7 +4,7 @@ export interface LayoutProps {
   children: ReactNode
 }
 
-export type WorkspaceMode = 'settings' | 'chat' | 'logs' | `plugin:${string}`
+export type WorkspaceMode = 'settings' | 'chat' | 'logs'
 
 export type MenuIcon = ComponentType<{
   className?: string

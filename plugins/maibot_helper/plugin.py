@@ -169,7 +169,7 @@ DOC_PAGES: List[Dict[str, str]] = [
         "path": "plugin/tools.md",
         "url": f"{DOCS_BASE_URL}/plugin/tools",
         "keywords": "@Tool ToolParameterInfo ToolParamType description LLM 工具",
-        "summary": "@Tool 向 LLM 暴露可调用工具；新插件应优先使用 Tool，而不是旧版 Action。",
+        "summary": "@Tool 向 LLM 暴露可调用工具。",
     },
     {
         "key": "plugin_commands",

@@ -1531,8 +1531,12 @@ class PluginRunner:
                     continue
 
                 component_name = str(comp_info.get("name", "") or "").strip()
+                component_type = str(comp_info.get("type", "") or "").strip()
                 raw_metadata = comp_info.get("metadata", {})
                 component_metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+                if component_type.upper() == "ACTION" and isinstance(comp_info.get("description"), str):
+                    # LegacyPluginAdapter 把 Action 的描述放在声明顶层。
+                    component_metadata = {"description": comp_info["description"], **component_metadata}
 
                 if component_name:
                     handler_name = str(component_metadata.get("handler_name", component_name) or component_name).strip()
@@ -1541,7 +1545,7 @@ class PluginRunner:
                 components.append(
                     ComponentDeclaration(
                         name=component_name,
-                        component_type=str(comp_info.get("type", "") or "").strip(),
+                        component_type=component_type,
                         plugin_id=meta.plugin_id,
                         chat_scope=str(comp_info.get("chat_scope", "all") or "all").strip(),
                         allowed_session=[

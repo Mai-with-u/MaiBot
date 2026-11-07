@@ -208,6 +208,7 @@ async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
 
         from src.common.logger import stop_ws_broadcasts
         from src.chat.heart_flow.heartflow_manager import heartflow_manager
+        from src.desktop_pet.service import desktop_pet_service
 
         # 先关闭广播入口，后续关停日志只写文件/终端，不再派生 WebSocket 任务。
         success = (
@@ -218,6 +219,10 @@ async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
             success = (
                 await _await_shutdown_step(main_system.app.stop(), timeout=5.0, step_name="停止消息入口") and success
             )
+        # 先停止桌宠轮询和主动唤醒，窗口退出时仍可调用插件关闭钩子。
+        success = (
+            await _await_shutdown_step(desktop_pet_service.stop(), timeout=6.0, step_name="停止桌宠") and success
+        )
         # 消息生产者先于插件、电脑及存储关闭，避免在依赖销毁后继续调用工具。
         success = (
             await _await_shutdown_step(heartflow_manager.shutdown(), timeout=5.0, step_name="停止聊天循环")

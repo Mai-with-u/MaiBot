@@ -100,7 +100,7 @@ import {
 const PAGE_SIZE = 50
 const AUTO_SESSION = 'auto'
 const ALL_GROUP_SESSIONS = '__all_group_chats__'
-const CORE_STAGE_NAMES = ['planner', 'replyer']
+const CORE_STAGE_NAMES = ['planner', 'replyer', 'replyer_creative', 'replyer_translation']
 const LLM_ERROR_STAGE_NAMES = ['llm_error']
 const REMOVED_STAGE_NAMES = ['timing_gate', 'reply_effect_judge']
 
@@ -1505,8 +1505,8 @@ export function ReasoningProcessPage({
                   const metadataText = getReasoningMetadataText(item)
                   const rawPreviewText =
                     item.display_title ||
-                    (item.stage === 'replyer' || item.stage === 'expression_selector'
-                      ? item.output_preview : item.action_preview)
+                    item.output_preview ||
+                    item.action_preview
                   // 规划器没有调用任何工具时，这一轮就是不回复；用次要颜色标出，不和有动作的记录抢视线
                   const noReply = !rawPreviewText && item.stage === 'planner'
                   const previewText = rawPreviewText

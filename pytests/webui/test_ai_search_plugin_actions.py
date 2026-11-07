@@ -1,4 +1,5 @@
 from copy import deepcopy
+from fastapi import HTTPException
 from unittest.mock import AsyncMock
 
 import json
@@ -7,6 +8,62 @@ import pytest
 
 from src.webui.services import ai_search_market as market
 from src.webui.services import ai_search_plugin_config as config
+
+
+@pytest.mark.asyncio
+async def test_installed_plugin_tool_reports_redacted_runtime_load_errors(monkeypatch):
+    from src.webui.routers.plugin import management
+
+    plugins = [
+        {
+            "id": plugin_id,
+            "manifest": {"name": plugin_id, "version": "1.0.0"},
+            "enabled": True,
+            "load_status": status,
+            "load_error": error,
+        }
+        for plugin_id, status, error in (
+            ("test.voice", "failed", "on_load 失败: FileNotFoundError: ffmpeg"),
+            ("test.slow", "timed_out", "超过 30 秒的等待阈值"),
+            ("test.private", "failed", "on_load 失败: api_key=do-not-leak"),
+            ("test.ready", "success", ""),
+        )
+    ]
+    monkeypatch.setattr(management, "get_installed_plugins", AsyncMock(return_value={"plugins": plugins}))
+
+    result = await market.AISearchMarketStore().execute("list_installed_plugins", {})
+    installed = {plugin["id"]: plugin for plugin in result["plugins"]}
+
+    assert installed["test.voice"]["load_error"] == plugins[0]["load_error"]
+    assert installed["test.slow"]["load_error"] == plugins[1]["load_error"]
+    assert "已隐藏" in installed["test.private"]["load_error"]
+    assert "do-not-leak" not in json.dumps(result)
+    assert installed["test.ready"]["load_error"] == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("load_status", ["failed", "timed_out", "success"])
+async def test_config_http_error_reports_only_recorded_load_failures(monkeypatch, load_status):
+    error = HTTPException(status_code=400, detail="private config value")
+    monkeypatch.setattr(config, "load_plugin_config", AsyncMock(side_effect=error))
+    plugin = {
+        "id": "test.voice",
+        "name": "Voice",
+        "load_status": load_status,
+        "load_error": "cannot import name 'ActivationType'" if load_status != "success" else "",
+    }
+    monkeypatch.setattr(market, "list_installed_plugins", AsyncMock(return_value={"plugins": [plugin]}))
+    store = market.AISearchMarketStore()
+
+    if load_status == "success":
+        with pytest.raises(HTTPException) as exc_info:
+            await store.execute("read_plugin_config", {"plugin_id": "test.voice"})
+        assert exc_info.value is error
+    else:
+        result = await store.execute("read_plugin_config", {"plugin_id": "test.voice"})
+        assert result["plugin"] == plugin
+        assert "error" not in result  # 结构化加载诊断要进入最终回答的证据。
+        assert "private config value" not in json.dumps(result)
 
 
 @pytest.fixture

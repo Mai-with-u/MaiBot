@@ -29,7 +29,7 @@ const MIME_TYPES: Record<string, string> = {
 }
 
 function shouldProxyToBackend(pathname: string): boolean {
-  return pathname.startsWith('/api/') || pathname === '/maibot_statistics.html'
+  return pathname.startsWith('/api/')
 }
 
 export function registerAppProtocol(): void {
