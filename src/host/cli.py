@@ -6,7 +6,10 @@ from typing import Any
 import argparse
 import asyncio
 import json
+import os
 import sqlite3
+
+from src.common.paths import INSTANCE_DIRECTORY_ENV
 
 from .adopt import adopt, undo
 from .layout import create_bot, open_workspace
@@ -54,6 +57,7 @@ def _record_payload(bot: BotRecord) -> dict:
 
 def run_host_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     root = args.directory.expanduser().resolve()
+    os.environ[INSTANCE_DIRECTORY_ENV] = str(root)
     try:
         if args.host_command in {"status", "start", "stop", "restart", "shutdown", "open-webui", "plugin-deps"}:
             from .control import control_request
