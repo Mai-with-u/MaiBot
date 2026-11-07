@@ -40,6 +40,18 @@ class QQOfficialSettings(PluginConfigBase):
         description="官方连接就绪时持续续期，让关联 SL/NapCat 账号仅采集身份，暂停其消息和通知入站投递并撤销出站路由，避免双重发送；15 秒未续期自动恢复收发",
         json_schema_extra={"label": "SL 仅作身份查询（默认关闭）"},
     )
+    nickname_cache_enabled: bool = Field(
+        default=True,
+        description="官方单聊事件通常不带昵称；开启后把群消息里学到的 QQ 昵称按 OpenID 缓存，在单聊里补全",
+        json_schema_extra={"label": "单聊昵称补全"},
+    )
+    nickname_cache_ttl_days: int = Field(
+        default=30,
+        ge=1,
+        le=365,
+        description="昵称缓存的有效天数；期间该用户没再在群里发言会被清理",
+        json_schema_extra={"label": "昵称缓存有效期（天）"},
+    )
 
 
 class MuteSettings(PluginConfigBase):
