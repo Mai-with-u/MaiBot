@@ -16,7 +16,7 @@ from src.common.version import read_project_version
 from src.agent.config import AgentConfig
 from src.desktop_pet.config import DesktopPetConfig
 from src.files.config import FilesConfig
-from src.web_search.config import WebConfig, resolve_web_search_config
+from src.web_search.config import WebConfig, WebSearchConfigError, require_web_service
 
 from .config_base import AttributeData, ConfigBase, Field
 from .builtin_typo_migration import migrate_builtin_typo_config
@@ -195,7 +195,6 @@ class ModelConfig(ConfigBase):
     """API提供商列表"""
 
     def model_post_init(self, context: Any = None):
-        resolve_web_search_config(self.web, self.model_task_config.web_search)
         if not self.models:
             raise ValueError(t("config.models_empty"))
         if not self.api_providers:
@@ -228,6 +227,12 @@ class ModelConfig(ConfigBase):
                         model_name=model.name,
                     )
                 )
+        web_services = self.model_task_config.web_search.model_list
+        if web_services and web_services[0]:
+            try:
+                require_web_service(self.web, web_services[0])
+            except WebSearchConfigError as exc:
+                logger.warning(f"联网工具配置有误，调用时将返回 {exc.code}：{exc}")
         return super().model_post_init(context)
 
 
