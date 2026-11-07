@@ -668,10 +668,7 @@ function PrivateReplyPauseSection({ detail }: { detail: ChatStreamDetail }) {
 function TalkFrequencySection({ detail }: { detail: ChatStreamDetail }) {
   return (
     <section className="space-y-3 rounded-md border p-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="font-medium">发言频率规则</div>
-        <StatusBadge enabled={detail.talk_frequency.enabled} />
-      </div>
+      <div className="font-medium">发言频率规则</div>
       <div className="grid gap-2 text-sm sm:grid-cols-3">
         <FrequencySummaryItem label="默认频率" value={detail.talk_frequency.base_value_label} />
         <FrequencySummaryItem

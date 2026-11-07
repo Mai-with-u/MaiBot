@@ -45,6 +45,8 @@ interface LearningCreateDialogProps {
   initialTargetIds?: string[]
   onManual: () => void
   onSuccess: (isGlobal: boolean) => void
+  /** 'auto' 时直接进入自动学习（方式已在外部入口选过），不显示「返回选择」 */
+  initialMode?: 'choose' | 'auto'
 }
 
 type ChunkState = { status: 'pending' | 'succeeded' | 'failed'; error?: string }
@@ -57,8 +59,9 @@ export function LearningCreateDialog({
   initialTargetIds = [],
   onManual,
   onSuccess,
+  initialMode = 'choose',
 }: LearningCreateDialogProps) {
-  const [mode, setMode] = useState<'choose' | 'auto'>('choose')
+  const [mode, setMode] = useState<'choose' | 'auto'>(initialMode)
   const [text, setText] = useState('')
   const [targetIds, setTargetIds] = useState<string[]>(initialTargetIds)
   const [isGlobal, setIsGlobal] = useState(false)
@@ -231,7 +234,7 @@ export function LearningCreateDialog({
 
   const changeOpen = (next: boolean) => {
     if (learningBusy.current || importBusy.current) return
-    if (!next) setMode('choose')
+    if (!next) setMode(initialMode)
     onOpenChange(next)
   }
 
@@ -519,7 +522,7 @@ export function LearningCreateDialog({
           )}
         </DialogBody>
         <DialogFooter>
-          {mode === 'auto' && (
+          {mode === 'auto' && initialMode === 'choose' && (
             <Button
               variant="ghost"
               className="mr-auto"

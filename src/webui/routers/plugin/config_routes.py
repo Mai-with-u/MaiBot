@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, cast
 
 import asyncio
 
-from fastapi import APIRouter, Cookie, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import TypeAdapter
 import tomlkit
 
@@ -21,7 +21,6 @@ from .support import (
     find_plugin_path_by_id,
     get_plugin_config_path,
     normalize_dotted_keys,
-    require_plugin_token,
 )
 
 logger = get_logger("webui.plugin_routes")
@@ -238,14 +237,13 @@ async def _validate_plugin_config_via_runtime(plugin_id: str, config_data: Dict[
 
 
 @router.get("/config/{plugin_id}/bundle")
-async def get_plugin_config_bundle(plugin_id: str, maibot_session: Optional[str] = Cookie(None)) -> Dict[str, Any]:
+async def get_plugin_config_bundle(plugin_id: str) -> Dict[str, Any]:
     """一次性返回插件配置页初始化所需的数据，避免重复运行时解析。"""
 
-    require_plugin_token(maibot_session)
     logger.info(f"获取插件配置初始化数据: {plugin_id}")
 
     try:
-        plugin_path = find_plugin_path_by_id(plugin_id)
+        plugin_path = await asyncio.to_thread(find_plugin_path_by_id, plugin_id)
         if plugin_path is None:
             raise HTTPException(status_code=404, detail=f"未找到插件: {plugin_id}")
 
@@ -264,7 +262,7 @@ async def get_plugin_config_bundle(plugin_id: str, maibot_session: Optional[str]
         schema = dict(runtime_snapshot.config_schema)
         if not schema:
             raise HTTPException(status_code=500, detail="插件未提供配置定义")
-        message = "配置文件不存在，已返回默认配置" if not config_path.exists() else ""
+        message = "配置文件不存在，已返回默认配置" if not await asyncio.to_thread(config_path.exists) else ""
 
         return {
             "success": True,
@@ -281,18 +279,16 @@ async def get_plugin_config_bundle(plugin_id: str, maibot_session: Optional[str]
 
 
 @router.get("/config/{plugin_id}/schema")
-async def get_plugin_config_schema(plugin_id: str, maibot_session: Optional[str] = Cookie(None)) -> Dict[str, Any]:
+async def get_plugin_config_schema(plugin_id: str) -> Dict[str, Any]:
     """按插件 ID 返回配置 Schema。
 
     Args:
         plugin_id: 插件 ID。
-        maibot_session: 当前会话令牌。
 
     Returns:
         Dict[str, Any]: 包含 Schema 的响应字典。
     """
 
-    require_plugin_token(maibot_session)
     logger.info(f"获取插件配置 Schema: {plugin_id}")
 
     try:
@@ -314,18 +310,16 @@ async def get_plugin_config_schema(plugin_id: str, maibot_session: Optional[str]
 
 
 @router.get("/config/{plugin_id}/raw")
-def get_plugin_config_raw(plugin_id: str, maibot_session: Optional[str] = Cookie(None)) -> Dict[str, Any]:
+def get_plugin_config_raw(plugin_id: str) -> Dict[str, Any]:
     """获取插件原始 TOML 配置内容。
 
     Args:
         plugin_id: 插件 ID。
-        maibot_session: 当前会话令牌。
 
     Returns:
         Dict[str, Any]: 包含原始配置文本的响应字典。
     """
 
-    require_plugin_token(maibot_session)
     logger.info(f"获取插件原始配置: {plugin_id}")
 
     try:
@@ -350,20 +344,17 @@ def get_plugin_config_raw(plugin_id: str, maibot_session: Optional[str] = Cookie
 async def update_plugin_config_raw(
     plugin_id: str,
     request: UpdatePluginRawConfigRequest,
-    maibot_session: Optional[str] = Cookie(None),
 ) -> Dict[str, Any]:
     """更新插件原始 TOML 配置内容。
 
     Args:
         plugin_id: 插件 ID。
         request: 原始配置更新请求。
-        maibot_session: 当前会话令牌。
 
     Returns:
         Dict[str, Any]: 更新结果。
     """
 
-    require_plugin_token(maibot_session)
     logger.info(f"更新插件原始配置: {plugin_id}")
 
     try:
@@ -397,6 +388,7 @@ async def update_plugin_config_raw(
         return {
             "success": True, "message": "配置已保存", "runtime_status": runtime_status,
             "note": (
+                "宿主正在准备插件依赖，完成后自动恢复" if runtime_status == "pending_dependencies" else
                 "配置仍有错误，插件业务暂停" if runtime_status == "config_error" else
                 "运行时尚未启动" if runtime_status == "stopped" else "配置已同步到插件运行时"
             ),
@@ -409,18 +401,16 @@ async def update_plugin_config_raw(
 
 
 @router.get("/config/{plugin_id}")
-async def get_plugin_config(plugin_id: str, maibot_session: Optional[str] = Cookie(None)) -> Dict[str, Any]:
+async def get_plugin_config(plugin_id: str) -> Dict[str, Any]:
     """获取插件配置字典。
 
     Args:
         plugin_id: 插件 ID。
-        maibot_session: 当前会话令牌。
 
     Returns:
         Dict[str, Any]: 当前配置响应。
     """
 
-    require_plugin_token(maibot_session)
     logger.info(f"获取插件配置: {plugin_id}")
 
     try:
@@ -443,24 +433,21 @@ async def get_plugin_config(plugin_id: str, maibot_session: Optional[str] = Cook
 async def update_plugin_config(
     plugin_id: str,
     request: UpdatePluginConfigRequest,
-    maibot_session: Optional[str] = Cookie(None),
 ) -> Dict[str, Any]:
     """更新插件结构化配置。
 
     Args:
         plugin_id: 插件 ID。
         request: 结构化配置更新请求。
-        maibot_session: 当前会话令牌。
 
     Returns:
         Dict[str, Any]: 更新结果。
     """
 
-    require_plugin_token(maibot_session)
     logger.info(f"更新插件配置: {plugin_id}")
 
     try:
-        plugin_path = find_plugin_path_by_id(plugin_id)
+        plugin_path = await asyncio.to_thread(find_plugin_path_by_id, plugin_id)
         if plugin_path is None:
             raise HTTPException(status_code=404, detail=f"未找到插件: {plugin_id}")
 
@@ -477,14 +464,17 @@ async def update_plugin_config(
             config_data = await _validate_plugin_config_via_runtime(plugin_id, config_data)
 
         config_path = get_plugin_config_path(plugin_id, plugin_path)
-        backup_path = backup_file(config_path, "backup")
-        if backup_path is not None:
-            logger.info(f"已备份配置文件: {backup_path}")
 
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        save_toml_with_format(config_data, str(config_path))
+        def save() -> None:
+            backup_path = backup_file(config_path, "backup")
+            if backup_path is not None:
+                logger.info(f"已备份配置文件: {backup_path}")
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            save_toml_with_format(config_data, str(config_path))
+
+        await asyncio.to_thread(save)
         logger.info(f"已更新插件配置: {plugin_id}")
-        return {"success": True, "message": "配置已保存", "note": "配置更改将自动热更新到对应插件"}
+        return {"success": True, "message": "配置已保存", "note": "配置更改将自动热更新到对应插件", "config": config_data}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except HTTPException:
@@ -495,18 +485,16 @@ async def update_plugin_config(
 
 
 @router.post("/config/{plugin_id}/reset")
-def reset_plugin_config(plugin_id: str, maibot_session: Optional[str] = Cookie(None)) -> Dict[str, Any]:
+def reset_plugin_config(plugin_id: str) -> Dict[str, Any]:
     """重置插件配置文件。
 
     Args:
         plugin_id: 插件 ID。
-        maibot_session: 当前会话令牌。
 
     Returns:
         Dict[str, Any]: 重置结果。
     """
 
-    require_plugin_token(maibot_session)
     logger.info(f"重置插件配置: {plugin_id}")
 
     try:
@@ -529,18 +517,16 @@ def reset_plugin_config(plugin_id: str, maibot_session: Optional[str] = Cookie(N
 
 
 @router.post("/config/{plugin_id}/toggle")
-async def toggle_plugin(plugin_id: str, maibot_session: Optional[str] = Cookie(None)) -> Dict[str, Any]:
+async def toggle_plugin(plugin_id: str) -> Dict[str, Any]:
     """切换插件启用状态。
 
     Args:
         plugin_id: 插件 ID。
-        maibot_session: 当前会话令牌。
 
     Returns:
         Dict[str, Any]: 切换结果。
     """
 
-    require_plugin_token(maibot_session)
     logger.info(f"切换插件状态: {plugin_id}")
 
     from src.plugin_runtime.integration import get_plugin_runtime_manager
@@ -580,8 +566,10 @@ async def toggle_plugin(plugin_id: str, maibot_session: Optional[str] = Cookie(N
         logger.info(f"插件 {plugin_id} 配置已{status}，运行时状态：{runtime_status}")
         return {
             "success": True, "enabled": new_enabled, "runtime_status": runtime_status,
-            "message": f"插件已{status}" if runtime_status != "stopped" else f"插件{status}配置已保存",
-            "note": "运行时尚未启动" if runtime_status == "stopped" else "状态更改已同步到插件运行时",
+            "message": ("已启用，正在准备依赖" if runtime_status == "pending_dependencies" else
+                        f"插件已{status}" if runtime_status != "stopped" else f"插件{status}配置已保存"),
+            "note": ("宿主正在准备插件依赖，完成后自动恢复" if runtime_status == "pending_dependencies" else
+                     "运行时尚未启动" if runtime_status == "stopped" else "状态更改已同步到插件运行时"),
         }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -609,19 +597,15 @@ async def _request_config_widgets(plugin_id: str, action_id: Optional[str] = Non
 
 @router.get("/config/{plugin_id}/widgets")
 async def get_config_widgets(
-    plugin_id: str, response: Response, maibot_session: Optional[str] = Cookie(None)
-) -> Dict[str, Any]:
+    plugin_id: str, response: Response) -> Dict[str, Any]:
     """获取运行时快照；二维码不允许 HTTP 缓存。"""
-    require_plugin_token(maibot_session)
     response.headers["Cache-Control"] = "no-store"
     return await _request_config_widgets(plugin_id)
 
 
 @router.post("/config/{plugin_id}/widgets/{action_id}")
 async def invoke_config_widget(
-    plugin_id: str, action_id: str, response: Response, maibot_session: Optional[str] = Cookie(None)
-) -> Dict[str, Any]:
+    plugin_id: str, action_id: str, response: Response) -> Dict[str, Any]:
     """执行当前插件声明的按钮，不接受配置补丁或任意方法名。"""
-    require_plugin_token(maibot_session)
     response.headers["Cache-Control"] = "no-store"
     return await _request_config_widgets(plugin_id, action_id)

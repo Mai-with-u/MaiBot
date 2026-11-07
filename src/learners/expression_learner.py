@@ -20,6 +20,7 @@ from src.config.config import global_config
 from src.llm_models.payload_content.context_item import ContextItem, ContextItemBuilder, RoleType
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
 from src.plugin_runtime.hook_schema_utils import build_object_schema
+from src.plugin_runtime.host.hook_dispatcher import HookAbortedError
 from src.plugin_runtime.host.hook_spec_registry import HookSpec, HookSpecRegistry
 from src.prompt.prompt_manager import prompt_manager
 from src.services.llm_service import LLMServiceClient
@@ -449,8 +450,8 @@ class ExpressionLearner:
             jargon_entries=[],
         )
         if after_extract_result.aborted:
-            logger.info(f"{self.session_id} 表达方式选择 Hook 中止")
-            self.learning_status, self.learning_detail = "skipped", "表达候选被 expression.learn.after_extract Hook 中止"
+            self.learning_status, self.learning_detail = "skipped", str(HookAbortedError(after_extract_result))
+            logger.info(f"{self.session_id} 表达学习跳过：{self.learning_detail}")
             return False
 
         after_extract_kwargs = after_extract_result.kwargs
@@ -480,6 +481,7 @@ class ExpressionLearner:
         logger.debug(f"[{session_display_name}] {expression_log_title}：\n{learnt_expressions_str}")
 
         written_expressions: List[MaiExpression] = []
+        aborted_upserts: List[str] = []
         for situation, style in learnt_expressions:
             before_upsert_result = await self._get_runtime_manager().invoke_hook(
                 "expression.learn.before_upsert",
@@ -488,7 +490,9 @@ class ExpressionLearner:
                 style=style,
             )
             if before_upsert_result.aborted:
-                logger.info(f"{self.session_id} 表达方式写入 Hook 中止: situation={situation!r}")
+                interruption = str(HookAbortedError(before_upsert_result))
+                aborted_upserts.append(interruption)
+                logger.info(f"{self.session_id} 表达方式写入中止: situation={situation!r} {interruption}")
                 continue
 
             upsert_kwargs = before_upsert_result.kwargs
@@ -529,6 +533,10 @@ class ExpressionLearner:
             f"写入 {len(written_expressions)} 条表达" if written_expressions
             else f"{len(learnt_expressions)} 条有效候选均被写入 Hook、审核或写入校验阻止"
         )
+        if aborted_upserts:
+            self.learning_detail += "；" + "；".join(dict.fromkeys(aborted_upserts))
+            if len(aborted_upserts) == len(learnt_expressions):
+                self.learning_status = "skipped"
         return bool(written_expressions)
 
     def _resolve_learning_session_id(self, messages: List["SessionMessage"]) -> Optional[str]:

@@ -1,0 +1,12 @@
+/* The pet stays 260 CSS pixels wide; only the separate records page needs a phone layout. */
+.screen-controls, #screen-error, #screen-indicator { display: none !important; }
+body:has(#titlebar) { border: 0; }
+#titlebar .resize-edge, #window-minimize, #window-maximize, .resize-edge { display: none; }
+@media (max-width: 600px) {
+  body:has(#titlebar) main { display: flex; flex-direction: column; }
+  body:has(#titlebar) nav { max-height: 25vh; border-right: 0; border-bottom: 1px solid var(--line); padding: 8px; }
+  body:has(#titlebar) #detail { flex: 1; min-height: 0; padding: 16px; }
+  body:has(#titlebar) header { padding: 10px 12px; }
+  body:has(#titlebar) .toolbar { flex-wrap: wrap; }
+  body:has(#titlebar) .toolbar input { width: 100%; }
+}

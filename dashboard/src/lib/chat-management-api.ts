@@ -57,7 +57,6 @@ export interface ChatTalkFrequencyRule {
 }
 
 export interface ChatTalkFrequencyDetail {
-  enabled: boolean
   base_value: number
   base_value_label: string
   effective_value: number
@@ -121,6 +120,7 @@ export interface AdapterPolicyDefaults {
 export type AdapterHostDefaultAction = 'inherit' | 'allow' | 'block'
 
 export interface AdapterHostPolicySection {
+  disabled_ids?: string[]
   default_action: AdapterHostDefaultAction
   allow_ids: string[]
   deny_ids: string[]

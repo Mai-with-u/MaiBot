@@ -1,0 +1,23 @@
+{
+  "name": "maibot-desktop-pet",
+  "version": "1.0.0",
+  "description": "MaiBot 轻量桌宠：连接本机或远端机器人",
+  "author": "MaiBot contributors",
+  "license": "GPL-3.0-only",
+  "private": true,
+  "scripts": {
+    "prepare:web": "node scripts/prepare.cjs",
+    "start": "tauri dev",
+    "test:smoke": "node scripts/smoke.cjs",
+    "pack": "tauri build --no-bundle",
+    "dist:win": "node scripts/dist.cjs nsis",
+    "dist:mac": "node scripts/dist.cjs dmg",
+    "dist:linux": "node scripts/dist.cjs deb,rpm,appimage"
+  },
+  "engines": { "node": ">=22" },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.10.0",
+    "playwright-core": "1.64.1",
+    "ws": "8.22.1"
+  }
+}

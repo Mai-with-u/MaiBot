@@ -29,6 +29,31 @@ install(extra_lines=3)
 logger = get_logger("chat_message")
 
 
+def get_command_text(message: "SessionMessage") -> str:
+    """仅为命令匹配移除指向当前机器人的前导结构化 @，保留原始展示正文。"""
+    text = (message.processed_plain_text or "").strip()
+    if not text.startswith("@"):
+        return text
+
+    for component in message.raw_message.components:
+        if isinstance(component, TextComponent) and not component.text.strip():
+            continue
+        if not isinstance(component, AtComponent):
+            break
+        if component.target_user_id != message.account_id:
+            break
+        name = component.target_user_cardname or component.target_user_nickname or component.target_user_id
+        prefix = f"@{name}"
+        # 只删掉与实际组件一致的渲染前缀；Hook 改写后的不匹配正文保持原样。
+        if not text.startswith(prefix):
+            break
+        remainder = text[len(prefix):]
+        if remainder and not remainder[0].isspace():
+            break
+        text = remainder.lstrip()
+    return text
+
+
 class MsgIDMapping:
     """回复消息内容缓存。"""
 

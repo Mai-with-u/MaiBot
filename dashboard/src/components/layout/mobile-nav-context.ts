@@ -50,8 +50,8 @@ export type MobileTab = 'home' | 'chat' | 'manage' | 'me'
 /** 根据当前路径判断底部标签栏的选中项；不属于其它标签的页面都归到「管理」 */
 export function resolveMobileTab(pathname: string): MobileTab {
   if (pathname === '/') return 'home'
-  // 观察聊天流就在聊天里，单独的麦麦观察页也归到「聊天」
-  if (pathname === '/chat' || pathname.startsWith('/planner-monitor')) return 'chat'
+  // 观察聊天流统一在聊天工作区。
+  if (pathname === '/chat') return 'chat'
   if (pathname === '/settings') return 'me'
   return 'manage'
 }

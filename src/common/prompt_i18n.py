@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Callable, Dict
 from tomlkit import parse as parse_toml
 
 import json
@@ -402,6 +402,7 @@ def load_prompt(
     category: str | None = None,
     prompts_root: Path | None = None,
     custom_prompts_root: Path | None = None,
+    transform_template: Callable[[str], str] | None = None,
     **kwargs: object,
 ) -> str:
     normalized_name = normalize_prompt_name(name)
@@ -412,9 +413,13 @@ def load_prompt(
         prompts_root=prompts_root,
         custom_prompts_root=custom_prompts_root,
     )
+    # 固定文案转换先于材料填充；自定义模板与过期后的内置模板共用此阶段。
+    template = resolved_template.template
+    if transform_template is not None:
+        template = transform_template(template)
     if resolved_template.customized and kwargs:
         try:
-            return resolved_template.template.format(**kwargs)
+            return template.format(**kwargs)
         except (KeyError, IndexError, ValueError, AttributeError):
             # 旧自定义模板可能仍引用已移除的参数；保留原文件，改用当前内置模板。
             default_template = load_prompt_template(
@@ -425,10 +430,13 @@ def load_prompt(
                 custom_prompts_root=custom_prompts_root,
                 include_custom=False,
             )
-            rendered = _format_prompt_template(normalized_name, default_template.template, **kwargs)
+            template = default_template.template
+            if transform_template is not None:
+                template = transform_template(template)
+            rendered = _format_prompt_template(normalized_name, template, **kwargs)
             logger.warning(t("prompt.template_outdated", name=normalized_name))
             return rendered
-    return _format_prompt_template(normalized_name, resolved_template.template, **kwargs)
+    return _format_prompt_template(normalized_name, template, **kwargs)
 
 
 def clear_prompt_cache() -> None:

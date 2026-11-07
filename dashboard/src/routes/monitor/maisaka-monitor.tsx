@@ -17,7 +17,6 @@ import {
   Brain,
   CheckCircle2,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
   Clock,
   Database,
@@ -51,15 +50,13 @@ import {
   useImageGallery,
   type GalleryImage,
 } from '@/components/image-gallery'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { CardTitle } from '@/components/ui/card'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { useResolvedAvatarUrl, type AvatarTargetType } from '@/lib/avatar-url'
+import { useResolvedAvatarUrl } from '@/lib/avatar-url'
 import { useVirtualizerUnmountGuard } from '@/lib/use-virtualizer-unmount-guard'
 import { useToast } from '@/hooks/use-toast'
 import { backendApi } from '@/lib/http'
@@ -82,14 +79,14 @@ import type {
   TimingGateResultEvent,
   ToolExecutionEvent,
 } from '@/lib/maisaka-monitor-client'
-import type { SessionInfo, StageStatusInfo, TimelineEntry } from './use-maisaka-monitor'
+import type { StageStatusInfo, TimelineEntry } from './use-maisaka-monitor'
 import { StageStatusLabel } from './StageStatusLabel'
 import { TimelineScrollPosition } from './TimelineScrollPosition'
 import { getStageStatusLight } from './stage-status-light'
 import { ObservationHeader } from './ObservationHeader'
-import { SubagentPanel, SubagentToggleButton } from './subagent-panel'
+import { InspectorPanel, InspectorToggleButton, type MonitorStats } from './inspector-panel'
 import { openSubagentPanel } from './subagent-panel-state'
-import { useMaisakaMonitorOverview, useMaisakaMonitorSession } from './use-maisaka-monitor'
+import { useMaisakaMonitorSession } from './use-maisaka-monitor'
 
 // ─── 工具函数 ──────────────────────────────────────────────────
 
@@ -175,84 +172,12 @@ function getToolIcon(toolName?: string): LucideIcon {
   return BUILTIN_TOOL_ICONS[(toolName ?? '').trim().toLowerCase()] ?? Wrench
 }
 
-function getFallbackInitial(label: string, fallback: string) {
-  const normalizedLabel = label.trim()
-  if (normalizedLabel) return normalizedLabel.slice(0, 1)
-  return fallback
-}
-
-function getSessionInitial(session: SessionInfo) {
-  return getFallbackInitial(session.sessionName, session.isGroupChat ? '群' : '私')
-}
-
 function getAgentStateLabel(agentState: string): string | null {
   const normalizedState = agentState.trim().toLowerCase()
   if (!normalizedState || normalizedState === 'stop') return null
   if (normalizedState === 'running') return '运行中'
   if (normalizedState === 'wait') return '等待中'
   return agentState
-}
-
-function MonitorAvatar({
-  className,
-  fallback,
-  fallbackClassName,
-  label,
-  platform,
-  targetId,
-  targetType,
-}: {
-  className?: string
-  fallback: ReactNode
-  fallbackClassName?: string
-  label: string
-  platform?: string | null
-  targetId?: string | null
-  targetType: AvatarTargetType
-}) {
-  const avatarUrl = useResolvedAvatarUrl(platform, targetId, targetType)
-
-  return (
-    <Avatar className={cn('ring-border/60 shrink-0 ring-1', className)}>
-      {avatarUrl && (
-        <AvatarImage src={avatarUrl} alt={`${label} 的头像`} className="object-cover" />
-      )}
-      <AvatarFallback className={fallbackClassName}>{fallback}</AvatarFallback>
-    </Avatar>
-  )
-}
-
-function SessionAvatar({ session, status }: { session: SessionInfo; status?: StageStatusInfo }) {
-  const targetType: AvatarTargetType = session.isGroupChat ? 'group' : 'user'
-  const targetId = session.isGroupChat ? session.groupId : session.userId
-  const statusDotClassName = {
-    on: 'bg-emerald-500',
-    mixed: 'bg-amber-500',
-    off: 'bg-muted-foreground',
-    error: 'bg-red-500',
-  }[getStageStatusLight(status)]
-
-  return (
-    <span className="relative flex h-7 w-7 shrink-0">
-      <MonitorAvatar
-        className="h-7 w-7 rounded-md"
-        fallback={getSessionInitial(session)}
-        fallbackClassName="rounded-md bg-primary/10 text-xs font-semibold text-primary"
-        label={session.sessionName}
-        platform={session.platform}
-        targetId={targetId}
-        targetType={targetType}
-      />
-      {status && (
-        <span
-          className={cn(
-            'ring-background absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2',
-            statusDotClassName
-          )}
-        />
-      )}
-    </span>
-  )
 }
 
 function MessageAvatar({
@@ -270,257 +195,7 @@ function MessageAvatar({
   )
 }
 
-// ─── 会话侧边栏 ──────────────────────────────────────────────
-
-function SessionSidebar({
-  sessions,
-  stageStatuses,
-  selectedSession,
-  onSelect,
-  collapsed,
-}: {
-  sessions: Map<string, SessionInfo>
-  stageStatuses: Map<string, StageStatusInfo>
-  selectedSession: string | null
-  onSelect: (id: string) => void
-  collapsed: boolean
-}) {
-  const sortedSessions = Array.from(sessions.values()).sort(
-    (a, b) => b.lastActivity - a.lastActivity
-  )
-
-  if (sortedSessions.length === 0) {
-    if (collapsed) {
-      return <div className="h-full p-2" />
-    }
-
-    return (
-      <div
-        className={cn(
-          'text-muted-foreground flex h-full flex-col items-center justify-center gap-2',
-          'p-4'
-        )}
-      >
-        <Bot className="h-8 w-8 opacity-40" />
-        <p className="text-center text-sm">等待 MaiSaka 会话…</p>
-      </div>
-    )
-  }
-
-  return (
-    <div className={cn('flex flex-col gap-1', collapsed ? 'items-center p-2' : 'p-2')}>
-      {sortedSessions.map((session) => {
-        const status = stageStatuses.get(session.sessionId)
-        return (
-          <button
-            key={session.sessionId}
-            onClick={() => onSelect(session.sessionId)}
-            title={session.sessionName}
-            className={cn(
-              'max-w-full overflow-hidden rounded-lg text-left text-sm transition-colors',
-              'hover:bg-accent/50',
-              collapsed
-                ? 'flex h-10 w-10 items-center justify-center p-0'
-                : 'flex w-full min-w-0 flex-col items-start gap-0.5 px-2.5 py-2',
-              selectedSession === session.sessionId && 'bg-accent text-accent-foreground'
-            )}
-          >
-            <div
-              className={cn(
-                'flex w-full min-w-0 items-center',
-                collapsed ? 'justify-center' : 'justify-between gap-2'
-              )}
-            >
-              <div
-                className={cn(
-                  'flex min-w-0 items-center gap-2 overflow-hidden',
-                  !collapsed && 'flex-1'
-                )}
-              >
-                <SessionAvatar session={session} status={status} />
-                {!collapsed && (
-                  <span
-                    className="block min-w-0 flex-1 overflow-hidden font-medium text-ellipsis whitespace-nowrap"
-                    title={session.sessionName}
-                  >
-                    {session.sessionName}
-                  </span>
-                )}
-              </div>
-              {!collapsed && (
-                <Badge variant="secondary" className="h-4 shrink-0 px-1 text-[10px]">
-                  {session.eventCount}
-                </Badge>
-              )}
-            </div>
-            {!collapsed && (
-              <div className="text-muted-foreground flex w-full min-w-0 items-center justify-between gap-2 overflow-hidden text-xs">
-                <span className="shrink-0">{formatRelativeTime(session.lastActivity)}</span>
-                {status && (
-                  <span className="text-primary min-w-0 truncate">
-                    <StageStatusLabel status={status} />
-                  </span>
-                )}
-              </div>
-            )}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
 // ─── 单条时间线事件渲染 ──────────────────────────────────────
-
-/** 上下文分段：token 由该轮真实 prompt token 按字符占比换算 */
-interface MonitorContextSection {
-  key: string
-  tokens: number
-  percent: number
-}
-
-interface MonitorStats {
-  messages: number
-  cycles: number
-  toolCalls: number
-  /** 最近一轮 planner 请求的输入 token，即当前上下文占用 */
-  contextTokens: number
-  /** 与最近一轮 planner 请求对应的上下文分段 */
-  contextSections: MonitorContextSection[]
-  /** 会话累计 token 用量 */
-  totalPromptTokens: number
-  totalCompletionTokens: number
-  /** 会话累计缓存命中率，无缓存数据时为 null */
-  cacheHitRate: number | null
-}
-
-/** 上下文分段的展示标签与配色，未知分段直接以 key 展示 */
-const CONTEXT_SECTION_META: Record<string, { label: string; color: string }> = {
-  messages: { label: '消息', color: 'hsl(var(--color-chart-1))' },
-  mcp_tools: { label: 'MCP 工具', color: 'hsl(var(--color-chart-4))' },
-  builtin_tools: { label: '系统工具', color: 'hsl(var(--color-chart-2))' },
-  plugin_tools: { label: '插件工具', color: 'hsl(var(--primary))' },
-  system_prompt: { label: '系统提示词', color: 'hsl(var(--color-chart-5))' },
-  instant_notice: { label: '即时提示', color: 'hsl(var(--color-chart-3))' },
-  other_tools: { label: '其他工具', color: 'hsl(var(--muted-foreground))' },
-}
-
-function resolveContextSectionMeta(key: string) {
-  return CONTEXT_SECTION_META[key] ?? { label: key, color: 'hsl(var(--muted-foreground))' }
-}
-
-const STATS_TOKEN_FORMATTER = new Intl.NumberFormat('zh-CN', {
-  notation: 'compact',
-  maximumFractionDigits: 1,
-})
-
-function formatTokenCount(value: number): string {
-  return STATS_TOKEN_FORMATTER.format(Math.max(Math.round(value), 0))
-}
-
-/** 统计浮层内的单行指标 */
-function StatsRow({
-  children,
-  value,
-  valueClassName,
-}: {
-  children: ReactNode
-  value: ReactNode
-  valueClassName?: string
-}) {
-  return (
-    <div className="flex items-center gap-2 text-[11px] leading-5">
-      {children}
-      <span className={cn('ml-auto font-mono tabular-nums', valueClassName)}>{value}</span>
-    </div>
-  )
-}
-
-/**
- * 统计浮层：展示最近一轮上下文构成、缓存命中率与会话累计计数。
- *
- * 上下文 token 总量取自模型返回的真实 prompt token，分段占比按后端统计的字符数换算。
- */
-function MonitorStatsPanel({ stats }: { stats: MonitorStats }) {
-  const hasContext = stats.contextTokens > 0 && stats.contextSections.length > 0
-
-  return (
-    <div className="w-72 space-y-2">
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="text-xs font-medium">上下文容量</span>
-        <span className="font-mono text-[11px] tabular-nums">
-          {stats.contextTokens > 0 ? `${formatTokenCount(stats.contextTokens)} tokens` : '暂无数据'}
-        </span>
-      </div>
-
-      {hasContext ? (
-        <>
-          <div className="bg-muted flex h-1.5 w-full overflow-hidden rounded-full">
-            {stats.contextSections.map((section) => (
-              <div
-                key={section.key}
-                className="h-full"
-                style={{
-                  width: `${section.percent}%`,
-                  backgroundColor: resolveContextSectionMeta(section.key).color,
-                }}
-              />
-            ))}
-          </div>
-          <div className="space-y-0.5">
-            {stats.contextSections.map((section) => {
-              const sectionMeta = resolveContextSectionMeta(section.key)
-              return (
-                <StatsRow
-                  key={section.key}
-                  value={formatTokenCount(section.tokens)}
-                  valueClassName="text-muted-foreground w-12 text-right"
-                >
-                  <span
-                    className="h-1.5 w-1.5 shrink-0 rounded-full"
-                    style={{ backgroundColor: sectionMeta.color }}
-                  />
-                  <span className="min-w-0 flex-1 truncate">{sectionMeta.label}</span>
-                  <span className="text-muted-foreground w-11 text-right font-mono tabular-nums">
-                    {section.percent.toFixed(1)}%
-                  </span>
-                </StatsRow>
-              )
-            })}
-          </div>
-        </>
-      ) : (
-        <p className="text-muted-foreground text-[11px] leading-5">
-          尚无 planner 请求数据，产生一次推理后展示上下文构成。
-        </p>
-      )}
-
-      <Separator />
-
-      <div className="space-y-0.5">
-        <StatsRow
-          value={stats.cacheHitRate === null ? '—' : `${stats.cacheHitRate.toFixed(0)}%`}
-          valueClassName={stats.cacheHitRate === null ? 'text-muted-foreground' : ''}
-        >
-          <span className="text-muted-foreground">平均缓存命中率</span>
-        </StatsRow>
-        <StatsRow
-          value={`${formatTokenCount(stats.totalPromptTokens)} / ${formatTokenCount(stats.totalCompletionTokens)}`}
-        >
-          <span className="text-muted-foreground">累计输入 / 输出</span>
-        </StatsRow>
-      </div>
-
-      <Separator />
-
-      <div className="space-y-0.5 text-[11px] leading-5">
-        <div>消息：{stats.messages}</div>
-        <div>循环：{stats.cycles}</div>
-        <div>工具调用：{stats.toolCalls}</div>
-      </div>
-    </div>
-  )
-}
 
 interface StageStatusPanelProps {
   sessionName?: string
@@ -537,102 +212,6 @@ interface StageStatusPanelProps {
   hideStatus?: boolean
 }
 
-interface ChatActiveContext {
-  memory: string[]
-  expressions: string[]
-  jargon: { name: string; meaning: string }[]
-  tools: string[]
-  runtime_active: boolean
-  replyer_timestamp: number | null
-}
-
-function ActiveContextPopover({ sessionId }: { sessionId: string | null }) {
-  const [open, setOpen] = useState(false)
-  const [context, setContext] = useState<ChatActiveContext | null>(null)
-  const [error, setError] = useState(false)
-
-  useEffect(() => {
-    if (!open || !sessionId) return
-    const controller = new AbortController()
-    const load = () => {
-      backendApi
-        .get<ChatActiveContext>('/api/webui/reasoning-process/active-context', {
-          query: { session_id: sessionId },
-          signal: controller.signal,
-        })
-        .then((result) => {
-          if (!controller.signal.aborted) {
-            setContext(result)
-            setError(false)
-          }
-        })
-        .catch(() => {
-          if (!controller.signal.aborted) setError(true)
-        })
-    }
-    setContext(null)
-    setError(false)
-    load()
-    const timer = window.setInterval(load, 10000)
-    return () => {
-      controller.abort()
-      window.clearInterval(timer)
-    }
-  }, [open, sessionId])
-
-  const sections = context
-    ? [
-        { title: '上下文状态摘要', items: context.memory, emptyText: '当前上下文尚未进行压缩' },
-        { title: '表达方式', items: context.expressions, emptyText: '最近一次 Replyer 请求中未使用' },
-        { title: '黑话', items: context.jargon.map((entry) => entry.name), emptyText: '当前上下文没有黑话参考' },
-        { title: '激活的工具', items: context.tools, emptyText: '当前尚未激活工具' },
-      ]
-    : []
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className="shrink-0" disabled={!sessionId}>
-          <Brain className="mr-1 h-3 w-3" />
-          当前上下文
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="start" side="bottom" className="max-h-[min(70vh,640px)] w-[min(90vw,480px)] overflow-y-auto p-4">
-        <div className="mb-2 text-sm font-semibold">当前运行的聊天流</div>
-        {error ? <p className="text-muted-foreground text-xs">读取上下文失败</p> : !context ? <p className="text-muted-foreground text-xs">正在读取…</p> : (
-          <div className="space-y-3">
-            {!context.runtime_active && <p className="text-muted-foreground text-xs">当前聊天流未运行</p>}
-            {sections.map((section) => (
-              <section key={section.title}>
-                <h3 className="mb-1 text-xs font-semibold">{section.title} · {section.items.length}</h3>
-                {section.items.length ? section.title === '黑话' ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {section.items.map((item) => (
-                      <Tooltip key={item}>
-                        <TooltipTrigger asChild>
-                          <button type="button" className="bg-muted/50 cursor-help rounded px-2 py-1 text-xs">{item}</button>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" className="z-[70] max-w-sm whitespace-pre-wrap break-words text-xs">
-                          {context.jargon.find((entry) => entry.name === item)?.meaning || '暂无释义'}
-                        </TooltipContent>
-                      </Tooltip>
-                    ))}
-                  </div>
-                ) : section.items.map((item, index) => (
-                  <pre key={`${section.title}-${index}`} className="bg-muted/50 mb-1 whitespace-pre-wrap break-words rounded p-2 font-sans text-xs">{item}</pre>
-                )) : <p className="text-muted-foreground text-xs">{section.emptyText}</p>}
-              </section>
-            ))}
-            <p className="text-muted-foreground text-[11px]">
-              表达方式来自最近一次 Replyer 请求：{context.replyer_timestamp ? new Date(context.replyer_timestamp).toLocaleString() : '无记录'}
-            </p>
-          </div>
-        )}
-      </PopoverContent>
-    </Popover>
-  )
-}
-
 function StageStatusPanel({
   sessionName, status, hideStatus = false, sessionId, stats, ...navigation
 }: StageStatusPanelProps) {
@@ -643,18 +222,9 @@ function StageStatusPanel({
       {...navigation}
       tools={
         <>
-          <TooltipProvider delayDuration={150}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="outline" size="sm"><Activity />统计</Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" align="start" className="p-3">
-                <MonitorStatsPanel stats={stats} />
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-          <ActiveContextPopover sessionId={sessionId} />
-          <SubagentToggleButton />
+          <InspectorToggleButton view="stats" />
+          <InspectorToggleButton view="context" disabled={!sessionId} />
+          <InspectorToggleButton view="subagents" />
         </>
       }
     />
@@ -1235,7 +805,6 @@ function PlannerFinalizedCard({
         )}
         {planner?.content && (
           <div className="space-y-1">
-            {planner.reasoning?.trim() && <div className="text-xs font-medium">正文</div>}
             <CollapsibleText text={planner.content} maxLines={6} className="text-foreground/90" />
           </div>
         )}
@@ -1262,6 +831,71 @@ type MonitorMessage = MessageIngestedEvent | MessageSentEvent
 type ReplyToolMessageProps = {
   messages?: Map<string, MonitorMessage>
   onJumpToMessage?: (messageId: string) => void
+}
+
+function isReplyFlow(tool: DisplayTool) {
+  return tool.tool_name === 'reply' && tool.tool_call_source === 'planner_text'
+}
+
+function toolDisplayName(tool: DisplayTool) {
+  return isReplyFlow(tool) ? '回复流程' : tool.tool_name || 'unknown'
+}
+
+function ReplyFlowDetails({ tool, messages, onJumpToMessage }: ReplyToolMessageProps & { tool: DisplayTool }) {
+  const supplement = tool.reply_supplement
+  const plan = supplement?.plan && typeof supplement.plan === 'object'
+    ? supplement.plan as Record<string, unknown> : null
+  const parts = Array.isArray(plan?.parts) ? plan.parts as Record<string, unknown>[] : []
+  const quoteId = typeof plan?.msg_id === 'string' ? plan.msg_id : ''
+  const messageLink = (id: string) => (
+    <button type="button" className="text-primary text-left hover:underline" onClick={() => onJumpToMessage?.(id)}>
+      {messages?.get(id)?.speaker_name || `消息 #${id}`}
+      {messages?.get(id)?.content && ` · ${messages.get(id)?.content}`}
+    </button>
+  )
+  return (
+    <div className="space-y-3">
+      <div className="border-muted-foreground/30 bg-muted/40 space-y-1.5 rounded-r-md border-l-2 px-3 py-2">
+        <div className="text-muted-foreground flex flex-wrap items-center gap-2 text-xs font-medium">
+          <span>回复补充器</span>
+          <ModelNameBadge modelName={typeof supplement?.model_name === 'string' ? supplement.model_name : undefined} />
+          <ToolFullJsonBlock tool={tool} />
+        </div>
+        {plan ? <>
+          <div className="text-xs leading-5"><span className="text-muted-foreground">回复目标：</span>{quoteId ? messageLink(quoteId) : '未指定特定消息'}</div>
+          <ol className="space-y-2 text-xs">
+            {parts.map((part, index) => {
+              const source = String(part.source ?? '')
+              const pictureIndex = Number(part.index ?? 0)
+              const media = part.type === 'pic' ? messages?.get(source)?.media?.filter((item) => item.kind === 'image')[pictureIndex] : undefined
+              return <li key={index} className="flex items-start gap-2">
+                <span className="text-muted-foreground w-4 shrink-0 leading-5 tabular-nums">{index + 1}</span>
+                <div className="min-w-0 space-y-1 leading-5 break-words">
+                  {part.type === 'reply' ? '回复正文' : part.type === 'at' ? <>@ {messageLink(String(part.msg_id))}</>
+                    : part.type === 'emoji' ? `表情包 · 候选 #${part.index}` : part.type === 'pic' ? <>
+                      <div>图片 · 第 {pictureIndex + 1} 张 · {source.startsWith('tool_result:') ? `工具返回图片（${source}）` : messageLink(source)}</div>
+                      {media && <MessageMediaItem item={{ ...media, default_original: true }} />}
+                    </> : `未知编排项：${String(part.type)}`}
+                </div>
+              </li>
+            })}
+          </ol>
+        </> : <p className="text-muted-foreground text-xs">{supplement?.status === 'failed' ? `编排失败：${String(supplement.error)}` : '本条记录未保存补充编排详情。'}</p>}
+        {plan?.plugin_options && typeof plan.plugin_options === 'object' && Object.keys(plan.plugin_options).length > 0 ? (
+          <div className="space-y-1 text-xs">
+            <div className="text-muted-foreground">选用的插件回复扩展</div>
+            {Object.entries(plan.plugin_options).map(([name, parameters]) => (
+              <div key={name} className="flex items-baseline gap-2">
+                <span className="text-muted-foreground shrink-0">{name}：</span>
+                <span className="min-w-0 whitespace-pre-wrap break-words">{formatToolValue(parameters)}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      <p className="text-sm leading-6 whitespace-pre-wrap break-words">{tool.reply_text || tool.error_message || '尚未记录回复内容。'}</p>
+    </div>
+  )
 }
 
 /** reply 的 at 和附图参数引用的是消息编号，按真实消息解析发送者与媒体。 */
@@ -1664,8 +1298,8 @@ function PlannerToolResultCard({
           data-maisaka-trace-meta="true"
           className="flex flex-wrap items-center gap-1.5"
         >
-          <span className="text-foreground font-mono text-sm font-semibold">
-            {tool.tool_name || 'unknown'}
+          <span className={cn("text-foreground text-sm font-semibold", !isReplyFlow(tool) && "font-mono")}>
+            {toolDisplayName(tool)}
           </span>
           <EventTimestamp startedAt={tool.started_at} endedAt={tool.ended_at} />
           <ModelNameBadge modelName={tool.model_name} />
@@ -1716,7 +1350,10 @@ function PlannerToolResultCard({
             查看子代理运行过程
           </button>
         )}
-        {tool.tool_name === 'reply' && (
+        {isReplyFlow(tool) && (
+          <ReplyFlowDetails tool={tool} messages={messages} onJumpToMessage={onJumpToMessage} />
+        )}
+        {tool.tool_name === 'reply' && !isReplyFlow(tool) && (
           <ReplyToolArguments tool={tool} messages={messages} onJumpToMessage={onJumpToMessage} />
         )}
         {isToolSearch && !tool.status && tool.success && <ToolDiscoveryBlock tools={[tool]} />}
@@ -1729,7 +1366,7 @@ function PlannerToolResultCard({
           </div>
         )}
 
-        {!tool.status && (!isToolSearch || !tool.success) && (
+        {!tool.status && !isReplyFlow(tool) && (!isToolSearch || !tool.success) && (
             <div className="flex flex-wrap items-baseline gap-x-1.5 font-normal opacity-65">
               <span className="text-muted-foreground shrink-0 text-[10px] leading-4">
                 执行结果
@@ -1831,11 +1468,11 @@ function PlannerToolCallsBlock({
         >
           {!singleToolIsWait && <ToolIcon className="h-4 w-4 text-teal-500" />}
           <CardTitle
-            className={cn('text-sm font-semibold', !singleToolIsWait && 'font-mono')}
+            className={cn('text-sm font-semibold', !singleToolIsWait && !regularTools.some(isReplyFlow) && 'font-mono')}
           >
             {singleToolIsWait
               ? <WaitToolLabel key={waitUntil} args={singleTool?.tool_args} waitUntil={waitUntil} pending={Boolean(singleTool?.status)} />
-              : regularTools.map((tool) => tool.tool_name || 'unknown').join('、')}
+              : regularTools.map(toolDisplayName).join('、')}
           </CardTitle>
           <ModelNameBadge modelName={singleTool?.model_name} />
           {singleTool && !singleTool.status && (
@@ -2389,8 +2026,6 @@ export function TimelineEventRenderer({
 
 interface MaisakaMonitorProps {
   sessionName?: string
-  /** 嵌入聊天工作区时隐藏重复的会话侧边栏，并使用父容器提供的完整高度。 */
-  embedded?: boolean
   /** 打开推理详情后返回的地址；未提供时返回当前页面。 */
   reasoningReturnTo?: string
   /**
@@ -2452,7 +2087,6 @@ const HISTORY_LOAD_THRESHOLD_PX = 200
 
 const MonitorTimeline = memo(function MonitorTimeline({
   sessionName,
-  embedded = false,
   reasoningReturnTo,
   floatingToolbarContainer,
 }: MaisakaMonitorProps) {
@@ -2726,6 +2360,15 @@ const MonitorTimeline = memo(function MonitorTimeline({
   // 行高与结构变化全部交给 TimelineScrollPosition 在 DOM 提交后一次性保位。
   timelineVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false
 
+  useLayoutEffect(() => {
+    // 推理更新会改变已挂载行的高度，但稳定的 ref 不会重新测量这些行。
+    // 在绘制前更新尺寸，让保位组件在同一帧完成补偿，避免先显示旧高度再被 ResizeObserver 修正。
+    // 只测量当前挂载的虚拟行；尺寸不变时虚拟列表不会触发更新。
+    for (const element of timelineVirtualizer.elementsCache.values()) {
+      if (element.isConnected) timelineVirtualizer.measureElement(element)
+    }
+  })
+
   const messageEntryIndexes = useMemo(() => {
     const indexes = new Map<string, number>()
     visibleTimelineEntries.forEach((entry, index) => {
@@ -2892,8 +2535,8 @@ const MonitorTimeline = memo(function MonitorTimeline({
         revealScrollLockRef.current = false
       }
 
-      // 拖动及惯性阶段不因进入底部附近就抢回滚动控制权。
-      if (!userScrollingRef.current) setAutoScroll(distanceToBottom <= 2)
+      // 布局补偿也会派发 scroll，不能据此切换跟随模式。
+      // 是否恢复跟随由用户滚动结束时的 finishScroll 统一决定。
 
       // 滚到顶部附近时拉取更早的一页；插入后由下方的锚点补偿保持阅读位置。
       if (!userScrollingRef.current && scrollTop < HISTORY_LOAD_THRESHOLD_PX && hasMoreHistory && !historyLoading) {
@@ -3013,7 +2656,7 @@ const MonitorTimeline = memo(function MonitorTimeline({
         data-maisaka-floating-header={floatingToolbarContainer ? 'true' : undefined}
         className={cn(
           'relative min-w-0 flex-1 overflow-hidden',
-          embedded ? 'min-h-0' : 'min-h-[420px] lg:min-h-0',
+          'min-h-0',
           floatingToolbarContainer && 'rounded-none border-0 shadow-none'
         )}
       >
@@ -3125,99 +2768,29 @@ const MonitorTimeline = memo(function MonitorTimeline({
           )}
         </AnimatePresence>
       </DataPanel>
+      {/* 统计、当前上下文与子代理共用的检查器右侧栏 */}
+      <InspectorPanel stats={stats} sessionId={selectedSession} />
     </div>
     </ImageGalleryProvider>
   )
 })
 
-// 会话摘要与详情分别订阅，其他群的状态更新不会穿透到虚拟时间线。
-function MonitorSidebar() {
-  const { sessions, stageStatuses, selectedSession, setSelectedSession, connected } =
-    useMaisakaMonitorOverview()
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    const saved = localStorage.getItem('maisaka-monitor-sidebar-collapsed')
-    return saved !== 'false'
-  })
-
-  useEffect(() => {
-    localStorage.setItem('maisaka-monitor-sidebar-collapsed', String(sidebarCollapsed))
-  }, [sidebarCollapsed])
-
-  // 会话侧边栏
-  return (
-    <aside
-      className={cn(
-        'border-border bg-background/45 flex min-w-0 shrink-0 flex-col overflow-hidden border transition-[width] duration-200',
-        sidebarCollapsed ? 'w-full lg:w-16' : 'w-full lg:w-52'
-      )}
-    >
-      <div className={cn('py-2', sidebarCollapsed ? 'px-2' : 'px-3')}>
-        <h2
-          className={cn(
-            'flex items-center gap-2 text-sm font-medium',
-            sidebarCollapsed && 'justify-center text-[0px]'
-          )}
-        >
-          {!sidebarCollapsed && <Activity className="h-4 w-4" />}
-          聊天流
-          {connected && (
-            <span
-              className={cn(
-                'flex h-2 w-2 rounded-full bg-emerald-500',
-                !sidebarCollapsed && 'ml-auto'
-              )}
-            />
-          )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6 shrink-0"
-            onClick={() => setSidebarCollapsed((value) => !value)}
-            title={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'}
-          >
-            {sidebarCollapsed ? (
-              <ChevronRight className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronLeft className="h-3.5 w-3.5" />
-            )}
-          </Button>
-        </h2>
-      </div>
-      <Separator />
-      <ScrollArea className="max-h-40 flex-1 lg:max-h-none">
-        <SessionSidebar
-          sessions={sessions}
-          stageStatuses={stageStatuses}
-          selectedSession={selectedSession}
-          onSelect={setSelectedSession}
-          collapsed={sidebarCollapsed}
-        />
-      </ScrollArea>
-    </aside>
-  )
-}
-
 export const MaisakaMonitor = memo(function MaisakaMonitor({
   sessionName,
-  embedded = false,
   reasoningReturnTo,
   floatingToolbarContainer,
 }: MaisakaMonitorProps = {}) {
   return (
     <div
       className={cn(
-        'relative flex min-w-0 flex-col',
-        embedded ? 'h-full min-h-0' : 'gap-4 lg:h-[calc(100vh-116px)] lg:flex-row',
+        'relative flex h-full min-h-0 min-w-0 flex-col',
         floatingToolbarContainer && 'p-0 sm:p-0'
       )}
     >
-      {!embedded && <MonitorSidebar />}
       <MonitorTimeline sessionName={sessionName}
-        embedded={embedded}
         reasoningReturnTo={reasoningReturnTo}
         floatingToolbarContainer={floatingToolbarContainer}
       />
-      <SubagentPanel embedded={embedded} />
     </div>
   )
 })

@@ -36,6 +36,7 @@ vi.mock('@tanstack/react-router', () => ({
 
 vi.mock('@/lib/avatar-url', () => ({
   useAvatarFetchEnabled: () => useAvatarFetchEnabledMock(),
+  useResolvedAvatarUrl: () => undefined,
 }))
 
 vi.mock('@/lib/api-base', () => ({
@@ -47,6 +48,7 @@ vi.mock('@/lib/config-api', () => ({
 }))
 
 vi.mock('@/lib/reasoning-process-api', () => ({
+  listRelatedReasoningRecords: vi.fn(),
   findReasoningToolCallRecords: vi.fn(),
   findReasoningToolCallSource: vi.fn(),
   listReasoningPromptFiles: vi.fn(),
@@ -428,6 +430,7 @@ function lastFilesQuery() {
 
 function installDefaultApiMocks() {
   vi.mocked(reasoningApi.findReasoningToolCallRecords).mockResolvedValue({ records: [] })
+  vi.mocked(reasoningApi.listRelatedReasoningRecords).mockResolvedValue({ records: [] })
   vi.mocked(reasoningApi.findReasoningToolCallSource).mockResolvedValue({ record: null })
   vi.mocked(reasoningApi.listReasoningPromptStages).mockResolvedValue({
     stages: defaultStages,
@@ -534,12 +537,12 @@ function renderPage(
   return render(
     <>
       <div id="rp-toolbar" />
-      <div id="rp-topbar" />
+      <div id="rp-status" />
       <ReasoningProcessPage
         embedded
         toolbarContainerId="rp-toolbar"
         toolbarVisible
-        topbarActionsContainerId="rp-topbar"
+        statusContainerId="rp-status"
         {...props}
       />
     </>
@@ -587,11 +590,12 @@ describe('ReasoningProcessPage 类型列表', () => {
     expect(screen.getByText('表达学习')).toBeInTheDocument()
     expect(screen.getByText('表情包发送')).toBeInTheDocument()
 
-    // 折叠组默认不展示卡片正文
+    // LLM 请求与不再使用两组默认不勾选，在「分组」筛选面板里打开
     expect(screen.queryByRole('button', { name: /^llm_error\b/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^timing_gate\b/ })).not.toBeInTheDocument()
 
     const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /分组/ }))
     await user.click(screen.getByRole('button', { name: /LLM 请求/ }))
     expect(await screen.findByRole('button', { name: /^llm_error\b/ })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /不再使用/ }))
@@ -606,7 +610,7 @@ describe('ReasoningProcessPage 类型列表', () => {
     renderPage()
 
     expect(await screen.findByRole('button', { name: /^custom_stage\b/ })).toBeInTheDocument()
-    expect(screen.getByText('0 个会话')).toBeInTheDocument()
+    expect(screen.getByText(/0 个会话/)).toBeInTheDocument()
   })
 
   it('没有类型时显示空态，加载失败与非 Error 失败分别展示文案', async () => {
@@ -641,6 +645,27 @@ describe('ReasoningProcessPage 类型列表', () => {
 })
 
 describe('ReasoningProcessPage 浏览筛选与分页', () => {
+  it('关联步骤标记当前记录，并能跳到同轮次回复器', async () => {
+    vi.mocked(reasoningApi.listRelatedReasoningRecords).mockResolvedValue({ records: [
+      { call_id: '', stage: 'planner', session: plannerItem.session_id, stem: plannerItem.stem },
+      { call_id: '', stage: 'replyer', session: replyerItem.session_id, stem: replyerItem.stem },
+      { call_id: '', stage: 'memory_heuristic', session: plannerItem.session_id, stem: '100' },
+    ] })
+    const user = userEvent.setup()
+    renderPage()
+    await enterStage(user, 'planner')
+    await selectRecord('晚饭计划')
+    const card = await screen.findByRole('region', { name: '关联步骤' })
+    expect(await within(card).findByRole('button', { name: /规划器 · 当前/ })).toBeDisabled()
+    expect(within(card).getByRole('button', { name: /记忆拉取/ })).toBeInTheDocument()
+    await user.click(within(card).getByRole('button', { name: /回复器/ }))
+    await waitFor(() => {
+      expect(reasoningApi.listReasoningPromptFiles).toHaveBeenCalledWith(expect.objectContaining({
+        stage: 'replyer', session: replyerItem.session_id, targetStem: replyerItem.stem,
+      }))
+    })
+  })
+
   it('进入阶段后渲染记录元数据、行为点与回复器预览', async () => {
     const user = userEvent.setup()
     renderPage()
@@ -1156,6 +1181,7 @@ describe('ReasoningProcessPage 重放 Items 与特殊预览', () => {
   it('LLM 异常记录展示状态、摘要与无效时间原文', async () => {
     const user = userEvent.setup()
     renderPage()
+    await user.click(await screen.findByRole('button', { name: /分组/ }))
     await user.click(await screen.findByRole('button', { name: /LLM 请求/ }))
     await enterStage(user, 'llm_error')
     await selectRecord('LLM 重试成功')
@@ -1238,16 +1264,19 @@ describe('ReasoningProcessPage 深链与嵌入', () => {
     expect(screen.queryByRole('button', { name: '返回观察' })).not.toBeInTheDocument()
   })
 
-  it('嵌入模式把刷新放入顶栏，浏览时在侧栏提供会话筛选', async () => {
+  it('嵌入模式把搜索、分组、导入和刷新放进日志页工具行，浏览时在侧栏提供会话筛选', async () => {
     const onToolbarContentVisibleChange = vi.fn()
     const user = userEvent.setup()
     renderPage({ onToolbarContentVisibleChange }, { toolbar: true })
 
-    const topbar = document.getElementById('rp-topbar')
+    const toolbar = document.getElementById('rp-toolbar') as HTMLElement
     await waitFor(() => {
-      expect(topbar && within(topbar).getByRole('button', { name: '刷新' })).toBeTruthy()
+      expect(within(toolbar).getByRole('button', { name: '刷新' })).toBeTruthy()
     })
-    expect(onToolbarContentVisibleChange).toHaveBeenCalledWith(false)
+    expect(within(toolbar).getByRole('button', { name: /导入推理/ })).toBeInTheDocument()
+    expect(within(toolbar).getByLabelText('筛选模块名')).toBeInTheDocument()
+    const status = document.getElementById('rp-status') as HTMLElement
+    await waitFor(() => expect(within(status).getByText(/一小时内有请求/)).toBeInTheDocument())
 
     await enterStage(user, 'planner')
     await screen.findByText('晚饭计划')

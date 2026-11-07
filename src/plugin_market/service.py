@@ -25,6 +25,7 @@ from .releases import (
     release_compatibility,
 )
 from .sources import download_source, fetch_information_file, load_source_settings, request_market, request_market_detail
+from . import statistics
 
 MarketSort = Literal[
     "name", "downloads", "likes", "rating", "downloads_growth_7d", "likes_growth_7d",
@@ -118,7 +119,7 @@ def _catalog(
         stats = item.get("stats") if source == "official" else None
         if stats is not None and not isinstance(stats, dict):
             raise ValueError(f"插件 {plugin['id']} 的统计数据格式无效")
-        plugin["stats"] = {**stats, "plugin_id": plugin["id"]} if stats is not None else None
+        plugin["stats"] = statistics.normalize_statistics(stats) if stats is not None else None
         if entry is None:
             entry = PluginReleaseEntry(
                 id=plugin["marketplace_id"], manifest_id=plugin["id"], repositoryUrl=plugin["repository_url"],
@@ -158,7 +159,7 @@ async def _snapshot(force_refresh: bool) -> Tuple[List[Dict[str, Any]], Dict[str
 
     return await asyncio.to_thread(parse), {
         "source": source, "source_url": details["url"], "cache": details["cache"],
-        "features": {"stats": False, "releases": True},
+        "features": {"stats": True, "releases": True},
     }
 
 
@@ -198,8 +199,10 @@ async def _git_releases(source: str, force_refresh: bool) -> PluginReleaseIndex:
 
 async def search(request: MarketSearch) -> Dict[str, Any]:
     plugins, metadata = await _snapshot(request.force_refresh)
-    if (request.include_stats or request.sort_by != "name") and not metadata["features"]["stats"]:
-        raise ValueError(f"当前信息源 {metadata['source']} 不支持插件统计或排行榜，请在市场设置中选择官方源")
+    if (request.include_stats or request.sort_by != "name") and metadata["source"] != "official":
+        summary = await statistics.get_summary(request.force_refresh)
+        # 统计只按规范化后的 manifest.id 对应；没有记录时保留空值。
+        plugins = [{**plugin, "stats": summary["stats"].get(plugin["id"])} for plugin in plugins]
 
     def select() -> Dict[str, Any]:
         candidates = plugins
@@ -247,7 +250,8 @@ async def get_detail(plugin_id: str, force_refresh: bool = False) -> Dict[str, A
         )
         if detail is None:
             raise ValueError("插件中心返回了无效的插件清单")
-        plugin = {**detail, "stats": data.get("stats", plugin["stats"])}
+        # 详情的版本资料可继续缓存，统计沿用本轮官方摘要，避免互动后读回旧数值。
+        plugin = {**detail, "stats": plugin["stats"]}
     else:
         index = await _git_releases(metadata["source"], force_refresh)
         entry = next((item for item in index.plugins if item.id == plugin["marketplace_id"]), None)
@@ -278,14 +282,7 @@ async def get_changelog(
 
 
 async def get_stats(plugin_id: str, force_refresh: bool = False) -> Dict[str, Any]:
-    from .engagement import get_reviews
-
-    plugins, metadata = await _snapshot(force_refresh)
-    plugin = await asyncio.to_thread(_resolve, plugin_id, plugins)
-    if not metadata["features"]["stats"] or plugin["stats"] is None:
-        return {"success": True, "stats": None, **metadata}
-    reviews = await get_reviews(plugin["id"])
-    return {"success": True, **metadata, "stats": {**plugin["stats"], **reviews, "plugin_id": plugin["id"]}}
+    return await statistics.get_plugin(plugin_id, force_refresh)
 
 
 async def load_release_index(force_refresh: bool = False) -> PluginReleaseIndex:

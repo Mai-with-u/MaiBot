@@ -62,17 +62,31 @@ def test_shared_names_are_split_without_changing_totals(monkeypatch):
     assert all_embeddings.std_time_cost == 1
 
 
+class _MemoryCache:
+    """替代统计缓存文件，只在内存里保存。"""
+
+    def __init__(self):
+        self.value = None
+
+    def load(self):
+        return self.value
+
+    def save(self, value):
+        self.value = value
+        return True
+
+
 def test_incremental_cache_preserves_split_duration_statistics(monkeypatch):
     now = datetime(2026, 10, 27, 12)
     start = now - timedelta(days=1)
     records = [usage(now - timedelta(minutes=1), "embedding", 20, 0.1, 1)]
-    storage = {}
-    monkeypatch.setattr(statistic, "local_storage", storage)
+    cache = _MemoryCache()
+    monkeypatch.setattr(statistic, "full_statistics_cache", cache)
     monkeypatch.setattr(statistic, "fetch_model_usage_since", lambda since: (
         record for record in records if record["timestamp"] >= since
     ))
     task = object.__new__(statistic.StatisticOutputTask)
-    task.stat_period = [("all_time", now - start, "all")]
+    task.stat_period = [("all_time", now - start)]
     task.all_time_start_time = start
     task.name_mapping = {}
     monkeypatch.setattr(task, "_collect_online_time_for_period", lambda periods, now: {key: {} for key, _ in periods})
@@ -93,8 +107,8 @@ def test_incremental_cache_preserves_split_duration_statistics(monkeypatch):
     assert embedding.std_time_cost == 1
 
     # 旧缓存没有分类明细时必须重收历史，不能只统计升级后的新请求。
-    del storage["last_full_statistics"]["stat_data"]["classified_requests"]
-    task.stat_period = [("all_time", now + timedelta(minutes=2) - start, "all")]
+    del cache.value["stat_data"]["classified_requests"]
+    task.stat_period = [("all_time", now + timedelta(minutes=2) - start)]
     rebuilt = task._collect_all_statistics(now + timedelta(minutes=2))
     assert task._build_breakdown_rows(rebuilt["all_time"], "module") == [normal, embedding]
 

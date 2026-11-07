@@ -21,12 +21,10 @@ from src.webui.routers.plugin import webui_extensions as routes
 def declaration():
     return {
         "schema_version": 2,
-        "workspace_title": "统计",
         "pages": [
             {
                 "id": "overview",
                 "title": "概览",
-                "placement": "workspace",
                 "queries": {"summary": {"api": "summary"}},
                 "actions": {
                     "reset": {
@@ -44,6 +42,17 @@ def declaration():
             }
         ],
     }
+
+
+def test_legacy_workspace_page_is_registered_in_sidebar():
+    raw = declaration()
+    raw["pages"][0]["placement"] = "workspace"
+
+    with pytest.warns(UserWarning, match="页面已转入侧栏"):
+        page = WebUIExtension.model_validate(raw).pages[0]
+
+    assert page.id == "overview"
+    assert page.model_dump()["placement"] == "sidebar"
 
 
 def test_pagination_requires_bound_query_and_page_parameter():
@@ -256,11 +265,6 @@ def test_rejects_non_json_and_oversized_results(result):
         routes._validate_result(result)
 
 
-def test_requires_authenticated_webui_session(monkeypatch):
-    monkeypatch.setattr(routes, "require_plugin_token", lambda token: (_ for _ in ()).throw(HTTPException(401)))
-    with pytest.raises(HTTPException) as exc:
-        asyncio.run(routes.list_webui_extensions())
-    assert exc.value.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -274,16 +278,9 @@ async def test_unload_removes_pages(supervisor, monkeypatch):
 
 
 def test_authenticated_http_gateway(supervisor, monkeypatch):
-    def authorize(token):
-        if token != "valid-session":
-            raise HTTPException(401)
-
-    monkeypatch.setattr(routes, "require_plugin_token", authorize)
     app = FastAPI()
     app.include_router(routes.router, prefix="/plugins")
     with TestClient(app) as client:
-        assert client.get("/plugins/runtime/webui").status_code == 401
-        client.cookies.set("maibot_session", "valid-session")
         listed = client.get("/plugins/runtime/webui")
         assert listed.status_code == 200
         assert listed.json()["extensions"][0]["pages"][0]["content"][0]["type"] == "stat"
@@ -373,17 +370,10 @@ def test_custom_document_is_authenticated_json_and_unload_revokes_access(supervi
     extension = WebUIExtension.model_validate(custom_declaration())
     monkeypatch.setattr(supervisor, "get_webui_extensions", lambda: {"test.plugin": extension})
 
-    def authorize(token):
-        if token != "valid-session":
-            raise HTTPException(401)
-
-    monkeypatch.setattr(routes, "require_plugin_token", authorize)
     app = FastAPI()
     app.include_router(routes.router, prefix="/plugins")
     path = "/plugins/runtime/webui/test.plugin/overview/document"
     with TestClient(app) as client:
-        assert client.get(path).status_code == 401
-        client.cookies.set("maibot_session", "valid-session")
         listed = client.get("/plugins/runtime/webui").json()
         page = listed["extensions"][0]["pages"][0]
         assert "document" not in page

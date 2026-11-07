@@ -1,3 +1,4 @@
+import { useHostRuntime } from '@/host/state'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
@@ -11,6 +12,11 @@ import { FilesPage } from '@/routes/files'
 import { LocalCacheTab } from '@/routes/settings/LocalCacheTab'
 
 export function DataTransferPage() {
+  const runtime = useHostRuntime()
+  return <BotDataTransferPage key={runtime.selected_bot_id} />
+}
+
+function BotDataTransferPage() {
   const { t } = useTranslation()
   const { tab = 'transfer' } = useSearch({ from: '/protected/data-transfer' })
   const navigate = useNavigate()

@@ -1,193 +1,114 @@
-from importlib import metadata
-import traceback
+"""maim_message 协议仅挂载到宿主 IPC；不创建任何 TCP 监听器。"""
 
-from maim_message import MessageServer
+from typing import Any, Dict, List, Optional
+
+from fastapi import FastAPI, WebSocket
+from maim_message import MessageConverter, MessageServer
+from maim_message.server import ServerConfig, WebSocketServer
+from maim_message.server_ws_connection import ServerNetworkDriver
+
+import asyncio
 
 from src.common.logger import adopt_library_logger, get_logger
-from src.common.utils.port_checker import assert_port_available
-from .server import get_global_server
 
-global_api = None
 adopt_library_logger("maim_message", handler_names={"maim_message_default_handler"})
+message_app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
 
-def get_global_api() -> MessageServer:  # sourcery skip: extract-method
-    """获取全局MessageServer实例"""
+class MountedNetworkDriver(ServerNetworkDriver):
+    """复用 0.6.8 的协议处理和回执，网络生命周期由宿主 IPC 接管。"""
+
+    def __init__(self, allowed_keys: List[str], **kwargs: Any) -> None:
+        self.allowed_keys = allowed_keys
+        super().__init__(**kwargs)
+
+    def _setup_routes(self) -> None:
+        # 不使用库中打印 API Key 的调试路由，协议处理仍交给原驱动。
+        @self.app.websocket(self.path)
+        async def connect(websocket: WebSocket, api_key: Optional[str] = None, platform: Optional[str] = None):
+            key = api_key or websocket.headers.get("x-apikey", "")
+            if not key or key not in self.allowed_keys:
+                await websocket.close(code=1008, reason="API Key 无效")
+                return
+            await self._handle_connection(websocket, query_api_key=api_key, query_platform=platform)
+
+    async def start(self, event_queue: asyncio.Queue) -> None:
+        self.event_queue = event_queue
+        self.main_loop = asyncio.get_running_loop()
+        self.running = True
+
+    async def stop(self) -> None:
+        self.running = False
+        for connection_id in list(self.active_connections):
+            await self._cleanup_connection(connection_id)
+        if self.message_cache is not None:
+            await self.message_cache.stop()
+        self.event_queue = None
+        self.main_loop = None
+
+
+class HostedMessageServer(MessageServer):
+    def __init__(self) -> None:
+        from src.config.config import global_config
+
+        config = global_config.maim_message
+        super().__init__(app=message_app, path="/ws", enable_token=True, custom_logger=get_logger("maim_message"))
+        for token in config.auth_token:
+            if token.strip():
+                self.add_valid_token(token)
+        self.platform_map: Dict[str, str] = {}
+        self.extra_server: Optional[WebSocketServer] = None
+        if config.enable_api_server:
+            # 新协议仍使用独立 Key 白名单；空名单不能开放到宿主公开端口。
+            async def authenticate(metadata: Dict[str, Any]) -> bool:
+                key = metadata.get("api_key")
+                return bool(key and key in config.api_server_allowed_api_keys)
+
+            async def receive(message, metadata: Dict[str, Any]) -> None:
+                # 保留新协议到正式消息处理链的转换，并按认证身份登记回复路由。
+                legacy = MessageConverter.from_api_receive(message).to_dict()
+                platform = legacy["message_info"]["platform"]
+                self.platform_map[platform] = metadata["api_key"]
+                legacy.setdefault("raw_message", None)
+                await self.process_message(legacy)
+
+            async def echo(payload: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None) -> None:
+                # message_id_echo 回到 main 注册的自定义消息处理器。
+                for handler in self.custom_message_handlers.get("message_id_echo", []):
+                    await handler(payload)
+
+            server_config = ServerConfig(path="/api", custom_logger=get_logger("maim_message_api_server"))
+            server_config.on_auth = authenticate
+            server_config.on_message = receive
+            server_config.register_custom_handler("message_id_echo", echo)
+            self.extra_server = WebSocketServer(config=server_config)
+            self.extra_server.network_driver = MountedNetworkDriver(
+                allowed_keys=config.api_server_allowed_api_keys,
+                host="127.0.0.1", port=1, path="/api", custom_logger=server_config.custom_logger,
+            )
+            message_app.include_router(self.extra_server.network_driver.app.router)
+
+    async def run(self) -> None:
+        if self.extra_server is not None:
+            await self.extra_server.start()
+        # 传入外部 app 后库仅激活协议，不调用 Uvicorn TCP 监听。
+        await super().run()
+
+    async def stop(self) -> None:
+        if self.extra_server is not None:
+            await self.extra_server.stop()
+        await super().stop()
+
+
+global_api: Optional[HostedMessageServer] = None
+
+
+def get_global_api() -> HostedMessageServer:
     from src.config.config import global_config
 
     if not global_config.maim_message.enabled:
-        raise RuntimeError("maim_message 服务已关闭；旧版适配器与新版 API 均不可用，修改配置后需重启")
-
+        raise RuntimeError("maim_message 服务已关闭，修改配置后需重启")
     global global_api
     if global_api is None:
-        # 检查maim_message版本
-        maim_message_version = metadata.version("maim_message")
-        version_int = [int(x) for x in maim_message_version.split(".")]
-        if version_int < [0, 6, 2]:
-            raise RuntimeError("maim_message 版本过低，请升级到 0.6.2 或更高版本。")
-        # 读取配置项
-        maim_message_config = global_config.maim_message
-
-        # 设置基本参数 (Legacy Server Mode)
-        kwargs = {
-            "host": maim_message_config.ws_server_host,
-            "port": maim_message_config.ws_server_port,
-            "app": get_global_server().get_app(),
-            "custom_logger": get_logger("maim_message"),
-            "enable_custom_uvicorn_logger": False,
-        }
-
-        # 添加token认证
-        if maim_message_config.auth_token and len(maim_message_config.auth_token) > 0:
-            kwargs["enable_token"] = True
-
-        global_api = MessageServer(**kwargs)
-        if maim_message_config.auth_token:
-            for token in maim_message_config.auth_token:
-                global_api.add_valid_token(token)
-
-        # ---------------------------------------------------------------------
-        # Additional API Server Configuration
-        # ---------------------------------------------------------------------
-        enable_api_server = maim_message_config.enable_api_server
-
-        # 如果启用了API Server，则初始化额外服务器
-        if enable_api_server:
-            api_logger = get_logger("maim_message_api_server")
-            api_server_host = maim_message_config.api_server_host
-            api_server_port = maim_message_config.api_server_port
-            use_wss = maim_message_config.api_server_use_wss
-
-            assert_port_available(
-                host=api_server_host,
-                port=api_server_port,
-                service_name="Additional API Server",
-                logger=api_logger,
-                config_hint="maim_message.api_server_port (config/bot_config.toml)",
-            )
-
-            try:
-                from maim_message.server import WebSocketServer, ServerConfig
-                from maim_message.message import APIMessageBase
-
-                server_config = ServerConfig(
-                    host=api_server_host,
-                    port=api_server_port,
-                    ssl_enabled=use_wss,
-                    ssl_certfile=maim_message_config.api_server_cert_file if use_wss else None,
-                    ssl_keyfile=maim_message_config.api_server_key_file if use_wss else None,
-                    custom_logger=api_logger,  # 传入自定义logger
-                )
-
-                # 2. Setup Auth Handler
-                async def auth_handler(metadata: dict) -> bool:
-                    allowed_keys = maim_message_config.api_server_allowed_api_keys
-                    # If list is empty/None, allow all (default behavior of returning True)
-                    if not allowed_keys:
-                        return True
-
-                    api_key = metadata.get("api_key")
-                    if api_key in allowed_keys:
-                        return True
-
-                    api_logger.warning(f"Rejected connection with invalid API Key: {api_key}")
-                    return False
-
-                server_config.on_auth = auth_handler  # type: ignore # maim_message库写错类型了
-
-                # 3. Setup Message Bridge
-                # Initialize refined route map if not exists
-                if not hasattr(global_api, "platform_map"):
-                    global_api.platform_map = {}  # type: ignore # 不知道这是什么神奇写法
-
-                async def bridge_message_handler(message: APIMessageBase, metadata: dict):
-                    # 使用 MessageConverter 转换 APIMessageBase 到 Legacy MessageBase
-                    # 接收场景：收到从 Adapter 转发的外部消息
-                    # sender_info 包含消息发送者信息，需要提取到 group_info/user_info
-                    from maim_message import MessageConverter
-
-                    legacy_message = MessageConverter.from_api_receive(message)
-                    msg_dict = legacy_message.to_dict()
-
-                    # Compatibility Layer: Ensure format_info exists with defaults
-                    if "message_info" in msg_dict:
-                        msg_info = msg_dict["message_info"]
-                        # Route Caching Logic: Map platform to API Key (or connection uuid as fallback)
-                        # This allows us to send messages back to the correct API client for this platform
-                        try:
-                            # Get api_key from metadata, use uuid as fallback if api_key is empty
-                            api_key = metadata.get("api_key") or metadata.get("uuid") or "unknown"
-                            platform = msg_info.get("platform")
-                            api_logger.debug(f"Bridge received: api_key='{api_key}', platform='{platform}'")
-
-                            if platform:
-                                global_api.platform_map[platform] = api_key  # type: ignore
-                                api_logger.info(f"Updated platform_map: {platform} -> {api_key}")
-                        except Exception as e:
-                            api_logger.warning(f"Failed to update platform map: {e}")
-
-                    # Compatibility Layer: Ensure raw_message exists (even if None) as it's part of MessageBase
-                    if "raw_message" not in msg_dict:
-                        msg_dict["raw_message"] = None
-
-                    await global_api.process_message(msg_dict)  # type: ignore
-
-                server_config.on_message = bridge_message_handler  # type: ignore # maim_message库写错类型了
-
-                # 3.5. Register custom message handlers (bridge to Legacy handlers)
-                # message_id_echo: handles message ID echo from adapters
-                # 兼容新旧两个版本的 maim_message:
-                # - 旧版: handler(payload)
-                # - 新版: handler(payload, metadata)
-                async def custom_message_id_echo_handler(payload: dict, metadata: dict = None):  # type: ignore
-                    # Bridge to the Legacy custom handler registered in main.py
-                    try:
-                        # The Legacy handler expects the payload format directly
-                        if hasattr(global_api, "_custom_message_handlers"):
-                            handler = global_api._custom_message_handlers.get("message_id_echo")  # type: ignore # 已经不知道这是什么了
-                            if handler:
-                                await handler(payload)
-                                api_logger.debug(f"Processed message_id_echo: {payload}")
-                            else:
-                                api_logger.debug(f"No handler for message_id_echo, payload: {payload}")
-                    except Exception as e:
-                        api_logger.warning(f"Failed to process message_id_echo: {e}")
-
-                server_config.register_custom_handler("message_id_echo", custom_message_id_echo_handler)  # type: ignore # maim_message库写错类型了
-
-                # 4. Initialize Server
-                extra_server = WebSocketServer(config=server_config)
-
-                # 5. Patch global_api lifecycle methods to manage both servers
-                original_run = global_api.run
-                original_stop = global_api.stop
-
-                async def patched_run():
-                    api_logger.info(
-                        f"Starting Additional API Server on {api_server_host}:{api_server_port} (WSS: {use_wss})"
-                    )
-                    # Start the extra server (non-blocking start)
-                    await extra_server.start()
-                    # Run the original legacy server (this usually keeps running)
-                    await original_run()
-
-                async def patched_stop():
-                    api_logger.info("Stopping Additional API Server...")
-                    await extra_server.stop()
-                    await original_stop()
-
-                global_api.run = patched_run
-                global_api.stop = patched_stop
-
-                # Attach for reference
-                global_api.extra_server = extra_server  # type: ignore # 这是什么
-
-            except ImportError:
-                get_logger("maim_message").error(
-                    "Cannot import maim_message.server components. Is maim_message >= 0.6.0 installed?"
-                )
-            except Exception as e:
-                get_logger("maim_message").error(f"Failed to initialize Additional API Server: {e}")
-                get_logger("maim_message").debug(traceback.format_exc())
-
+        global_api = HostedMessageServer()
     return global_api

@@ -103,6 +103,12 @@ class MessageDebouncer:
         self.changed.set()
         return reason
 
+    def finish(self, *, now: float) -> None:
+        """立即结束当前批次等待，保留已到期状态，避免后续消息重新延长本批。"""
+        if self._deadline is not None:
+            self._deadline = min(self._deadline, now)
+        self.changed.set()
+
     def consume(self) -> None:
         """本批消息已收走；只保留上一条的时间和发言人，用于下一批判断。"""
         self._first = self._deadline = self._urgent = None

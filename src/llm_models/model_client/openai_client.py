@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Coroutine, Dict, List, Set, Tuple, cast
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -10,7 +10,6 @@ import io
 import json
 import re
 
-from json_repair import repair_json
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, DefaultAsyncHttpxClient
 from openai._types import FileTypes, Omit, omit
 from openai.types.chat import (
@@ -31,6 +30,7 @@ from openai.types.shared_params.function_definition import FunctionDefinition
 from openai.types.chat.chat_completion_chunk import ChoiceDelta
 from PIL import Image as PILImage
 
+from src.common.llm_json import parse_llm_json
 from src.common.logger import get_logger
 from src.common.http_client import get_shared_ssl_context
 from src.config.model_configs import APIProvider, ReasoningParseMode, ToolArgumentParseMode
@@ -48,9 +48,11 @@ from src.llm_models.openai_compat import (
     validate_image_embedding_transport,
 )
 from src.llm_models.payload_content.context_item import (
+    PROVIDER_REPLAY_SCHEMA_VERSION,
     AssistantMessageItem,
     ContextImagePart,
     ContextItem,
+    ContextItemMeta,
     ContextRefusalPart,
     ContextTextPart,
     ContextToolCall,
@@ -58,10 +60,13 @@ from src.llm_models.payload_content.context_item import (
     FunctionCallOutputItem,
     ProviderActivityItem,
     ProviderOpaqueItem,
+    ProviderReplayFragment,
+    ProviderScope,
     ReasoningItem,
     SystemMessageItem,
     UserMessageItem,
     build_portable_output_items,
+    build_provider_endpoint_fingerprint,
 )
 from src.llm_models.payload_content.resp_format import RespFormat, RespFormatType
 from src.llm_models.payload_content.tool_option import (
@@ -505,10 +510,14 @@ def _sanitize_messages_for_toolless_request(items: List[ContextItem]) -> List[Co
     return [item for item in items if not isinstance(item, (FunctionCallItem, FunctionCallOutputItem))]
 
 
-def _convert_assistant_item_group(items: List[ContextItem]) -> ChatCompletionAssistantMessageParam | None:
+def _convert_assistant_item_group(
+    items: List[ContextItem],
+    reasoning_scope: ProviderScope | None,
+) -> ChatCompletionAssistantMessageParam | None:
     """把相邻的模型输出 Items 折叠为 Chat assistant message。"""
 
     text_parts: List[str] = []
+    reasoning_parts: List[str] = []
     tool_calls: List[ContextToolCall] = []
     for item in items:
         if isinstance(item, AssistantMessageItem):
@@ -519,6 +528,9 @@ def _convert_assistant_item_group(items: List[ContextItem]) -> ChatCompletionAss
                 text_parts.append(part_text)
         elif isinstance(item, FunctionCallItem):
             tool_calls.append(item.tool_call)
+        elif isinstance(item, ReasoningItem) and reasoning_scope is not None:
+            if item.replay is not None and item.replay.scope == reasoning_scope:
+                reasoning_parts.append(item.replay.materialize()["reasoning_content"])
 
     content = "".join(text_parts)
     if not content and not tool_calls:
@@ -529,14 +541,20 @@ def _convert_assistant_item_group(items: List[ContextItem]) -> ChatCompletionAss
     }
     if tool_calls:
         payload["tool_calls"] = _convert_assistant_tool_calls(tool_calls)
+    if reasoning_parts:
+        # DeepSeek 在带工具的请求中要求回传先前 assistant 消息的原生推理字段。
+        return cast(ChatCompletionAssistantMessageParam, {**payload, "reasoning_content": "".join(reasoning_parts)})
     return payload
 
 
-def _convert_messages(items: List[ContextItem]) -> List[ChatCompletionMessageParam]:
+def _convert_messages(
+    items: List[ContextItem], reasoning_scope: ProviderScope | None = None
+) -> List[ChatCompletionMessageParam]:
     """将内部消息列表转换为 OpenAI 兼容消息列表。
 
     Args:
         items: 内部 Context Items。
+        reasoning_scope: 允许回放原生推理的 Provider 范围。
 
     Returns:
         List[ChatCompletionMessageParam]: OpenAI SDK 所需的消息结构列表。
@@ -586,9 +604,11 @@ def _convert_messages(items: List[ContextItem]) -> List[ChatCompletionMessagePar
                     (ReasoningItem, AssistantMessageItem, FunctionCallItem, ProviderActivityItem, ProviderOpaqueItem),
                 ):
                     break
+                if reasoning_scope is not None and next_item.meta.logical_turn_id != item.meta.logical_turn_id:
+                    break
                 group_items.append(next_item)
                 index += 1
-            assistant_payload = _convert_assistant_item_group(group_items)
+            assistant_payload = _convert_assistant_item_group(group_items, reasoning_scope)
             if assistant_payload is not None:
                 converted_messages.append(assistant_payload)
             continue
@@ -688,16 +708,16 @@ def _parse_tool_arguments(
 
     try:
         if parse_mode == ToolArgumentParseMode.STRICT:
-            arguments: Any = json.loads(raw_arguments)
+            arguments: Any = parse_llm_json(raw_arguments, allow_code_fence=False)
         elif parse_mode == ToolArgumentParseMode.REPAIR:
-            arguments = repair_json(raw_arguments, return_objects=True, logging=False)
+            arguments = parse_llm_json(raw_arguments, repair=True)
         else:
-            arguments = repair_json(raw_arguments, return_objects=True, logging=False)
+            arguments = parse_llm_json(raw_arguments, repair=True)
             if isinstance(arguments, str) and parse_mode in {
                 ToolArgumentParseMode.AUTO,
                 ToolArgumentParseMode.DOUBLE_DECODE,
             }:
-                arguments = repair_json(arguments, return_objects=True, logging=False)
+                arguments = parse_llm_json(arguments, repair=True)
     except json.JSONDecodeError as exc:
         raise RespParseException(response, f"响应解析失败，无法解析工具调用参数。原始参数：{raw_arguments}") from exc
 
@@ -763,7 +783,7 @@ def _extract_xml_tool_calls(
             return None
         if normalized_value.startswith(("{", "[")):
             try:
-                return repair_json(normalized_value, return_objects=True, logging=False)
+                return parse_llm_json(normalized_value, repair=True)
             except Exception:
                 return normalized_value
         return normalized_value
@@ -987,6 +1007,7 @@ def _build_portable_api_response(
     tool_calls: List[ToolCall] | None,
     logical_turn_id: str,
     raw_data: Any,
+    reasoning_replay: ProviderReplayFragment | None = None,
 ) -> APIResponse:
     """将 Chat Completions 的复合输出冻结为通用 Context Items。"""
 
@@ -999,15 +1020,31 @@ def _build_portable_api_response(
         )
         for tool_call in (tool_calls or [])
     ]
-    return APIResponse(
-        output_items=build_portable_output_items(
-            content=content,
-            reasoning=reasoning_content,
-            tool_calls=context_tool_calls,
-            logical_turn_id=logical_turn_id,
-        ),
-        raw_data=raw_data,
+    output_items = build_portable_output_items(
+        content=content,
+        reasoning=reasoning_content,
+        tool_calls=context_tool_calls,
+        logical_turn_id=logical_turn_id,
     )
+    if reasoning_replay is not None:
+        if output_items and isinstance(output_items[0], ReasoningItem):
+            output_items = (replace(output_items[0], replay=reasoning_replay), *output_items[1:])
+        else:
+            # 禁止展示推理时，仍为同一 Provider 保留仅用于协议回放的内容。
+            opaque_reasoning = ReasoningItem(
+                meta=ContextItemMeta.create(logical_turn_id=logical_turn_id),
+                replay=reasoning_replay,
+            )
+            output_items = (opaque_reasoning, *output_items)
+    return APIResponse(output_items=output_items, raw_data=raw_data)
+
+
+def _build_reasoning_replay(scope: ProviderScope | None, native_reasoning: str | None) -> ProviderReplayFragment | None:
+    """记录原样的 Provider 推理字段，供同一范围内后续请求回放。"""
+
+    if scope is None or native_reasoning is None:
+        return None
+    return ProviderReplayFragment.from_payload(scope, {"reasoning_content": native_reasoning})
 
 
 def _coerce_openai_argument(value: Any) -> Any | Omit:
@@ -1101,6 +1138,7 @@ class _OpenAIStreamAccumulator:
         tool_argument_parse_mode: ToolArgumentParseMode,
         reasoning_key: str,
         logical_turn_id: str,
+        reasoning_scope: ProviderScope | None = None,
     ) -> None:
         """初始化累积器。
 
@@ -1108,11 +1146,13 @@ class _OpenAIStreamAccumulator:
             reasoning_parse_mode: 推理内容解析模式。
             tool_argument_parse_mode: 工具参数解析模式。
             reasoning_key: 允许读取的原生推理字段名。
+            reasoning_scope: 允许回放原生推理的 Provider 范围。
         """
         self.reasoning_parse_mode = reasoning_parse_mode
         self.tool_argument_parse_mode = tool_argument_parse_mode
         self.reasoning_key = reasoning_key
         self.logical_turn_id = logical_turn_id
+        self.reasoning_scope = reasoning_scope
         self.reasoning_buffer = io.StringIO()
         self.content_buffer = io.StringIO()
         self.tool_call_states: Dict[int, _StreamedToolCallState] = {}
@@ -1151,7 +1191,7 @@ class _OpenAIStreamAccumulator:
         native_reasoning = _extract_reasoning_content(delta, self.reasoning_key)
         if native_reasoning is not None:
             self._using_native_reasoning = True
-            if self.reasoning_parse_mode != ReasoningParseMode.NONE:
+            if self.reasoning_parse_mode != ReasoningParseMode.NONE or self.reasoning_scope is not None:
                 self.reasoning_buffer.write(native_reasoning)
             return
 
@@ -1199,7 +1239,8 @@ class _OpenAIStreamAccumulator:
             RespParseException: 当工具调用结构不完整时抛出。
         """
         content = self.content_buffer.getvalue().strip()
-        reasoning_content = self.reasoning_buffer.getvalue().strip()
+        native_reasoning = self.reasoning_buffer.getvalue()
+        reasoning_content = native_reasoning.strip() if self.reasoning_parse_mode != ReasoningParseMode.NONE else ""
         if not self._using_native_reasoning and self.reasoning_parse_mode != ReasoningParseMode.NONE and content:
             parsed_reasoning_content, parsed_content = _extract_reasoning_and_content(
                 content=content,
@@ -1245,6 +1286,9 @@ class _OpenAIStreamAccumulator:
             tool_calls=resolved_tool_calls,
             logical_turn_id=self.logical_turn_id,
             raw_data=raw_data,
+            reasoning_replay=_build_reasoning_replay(
+                self.reasoning_scope, native_reasoning if self._using_native_reasoning else None
+            ),
         )
 
     def close(self) -> None:
@@ -1260,7 +1304,7 @@ class _OpenAIStreamAccumulator:
         """提取原始片段，避免用完整响应解析器解析半截工具参数。"""
 
         return InterruptedStreamOutput(
-            reasoning=self.reasoning_buffer.getvalue(),
+            reasoning=self.reasoning_buffer.getvalue() if self.reasoning_parse_mode != ReasoningParseMode.NONE else "",
             content=self.content_buffer.getvalue(),
             tool_calls=[
                 {"name": state.function_name or "尚未收到名称", "arguments": state.arguments_buffer.getvalue()}
@@ -1280,6 +1324,7 @@ async def _default_stream_response_handler(
     logical_turn_id: str,
     max_tokens: int | None,
     trace_context: RequestTraceContext | None,
+    reasoning_scope: ProviderScope | None = None,
 ) -> Tuple[APIResponse, UsageTuple | None]:
     """处理 OpenAI 兼容流式响应。
 
@@ -1289,6 +1334,7 @@ async def _default_stream_response_handler(
         reasoning_parse_mode: 推理内容解析模式。
         tool_argument_parse_mode: 工具参数解析模式。
         reasoning_key: 允许读取的原生推理字段名。
+        reasoning_scope: 允许回放原生推理的 Provider 范围。
 
     Returns:
         Tuple[APIResponse, UsageTuple | None]: 解析后的响应与 usage 统计。
@@ -1298,6 +1344,7 @@ async def _default_stream_response_handler(
         tool_argument_parse_mode=tool_argument_parse_mode,
         reasoning_key=reasoning_key,
         logical_turn_id=logical_turn_id,
+        reasoning_scope=reasoning_scope,
     )
     usage_record: UsageTuple | None = None
 
@@ -1341,6 +1388,7 @@ def _default_normal_response_parser(
     logical_turn_id: str,
     max_tokens: int | None,
     trace_context: RequestTraceContext | None,
+    reasoning_scope: ProviderScope | None = None,
 ) -> Tuple[APIResponse, UsageTuple | None]:
     """解析 OpenAI 兼容的非流式响应。
 
@@ -1349,6 +1397,7 @@ def _default_normal_response_parser(
         reasoning_parse_mode: 推理内容解析模式。
         tool_argument_parse_mode: 工具参数解析模式。
         reasoning_key: 允许读取的原生推理字段名。
+        reasoning_scope: 允许回放原生推理的 Provider 范围。
 
     Returns:
         Tuple[APIResponse, UsageTuple | None]: 解析后的响应与 usage 统计。
@@ -1423,6 +1472,7 @@ def _default_normal_response_parser(
             tool_calls=resolved_tool_calls,
             logical_turn_id=logical_turn_id,
             raw_data=resp,
+            reasoning_replay=_build_reasoning_replay(reasoning_scope, native_reasoning),
         ),
         usage_record,
     )
@@ -1486,6 +1536,19 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
             request_headers.setdefault(_AUTHORIZATION_HEADER, omit)
         return request_headers or None
 
+    def _build_reasoning_scope(self, request: ResponseRequest) -> ProviderScope | None:
+        """只在 DeepSeek 官方端点启用 Chat Completions 原生推理回放。"""
+
+        if self.client.base_url.host != "api.deepseek.com":
+            return None
+        return ProviderScope(
+            schema_version=PROVIDER_REPLAY_SCHEMA_VERSION,
+            client_type="openai",
+            provider_name=self.api_provider.name,
+            endpoint_fingerprint=build_provider_endpoint_fingerprint("openai", str(self.client.base_url)),
+            model_identifier=request.model_info.model_identifier,
+        )
+
     def _build_default_stream_response_handler(
         self,
         request: ResponseRequest,
@@ -1512,6 +1575,7 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                 logical_turn_id=request.logical_turn_id,
                 max_tokens=request.max_tokens,
                 trace_context=request.trace_context,
+                reasoning_scope=self._build_reasoning_scope(request),
             )
 
         return default_stream_handler
@@ -1540,6 +1604,7 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                 logical_turn_id=request.logical_turn_id,
                 max_tokens=request.max_tokens,
                 trace_context=request.trace_context,
+                reasoning_scope=self._build_reasoning_scope(request),
             )
 
         return default_response_parser
@@ -1577,7 +1642,10 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                 if request.tool_options
                 else _sanitize_messages_for_toolless_request(request.context_items)
             )
-            messages_payload: List[ChatCompletionMessageParam] = _convert_messages(request_messages)
+            messages_payload = _convert_messages(
+                request_messages,
+                reasoning_scope=self._build_reasoning_scope(request) if request.tool_options else None,
+            )
             tools_payload: List[ChatCompletionToolParam] | None = (
                 _convert_tool_options(request.tool_options) if request.tool_options else None
             )

@@ -23,6 +23,8 @@ import { StageStatusLabel } from '@/routes/monitor/StageStatusLabel'
 
 import { ConversationAvatar } from '@/components/ui/conversation'
 
+import { useChatTabAvatarUrl } from './local-bot-avatar'
+import { isFocusFlowId } from './observed-sessions'
 import type { ChatTab, ObservedMessagePreview } from './types'
 import { getChatTabDisplayName } from './utils'
 
@@ -291,10 +293,7 @@ function TabAvatar({ tab }: { tab: ChatTab }) {
   const { t } = useTranslation()
   const isVirtual = tab.type === 'virtual'
   const displayName = getChatTabDisplayName(tab, t('chat.botNameFallback'))
-  const avatarUrl = useResolvedAvatarUrl(
-    isVirtual ? tab.virtualConfig?.platform : 'qq',
-    isVirtual ? tab.virtualConfig?.userId : tab.sessionInfo.bot_qq
-  )
+  const avatarUrl = useChatTabAvatarUrl(tab)
   const Icon = isVirtual ? UserCircle2 : Bot
   return (
     <span className="relative shrink-0">
@@ -454,7 +453,7 @@ export function MobileChatList({
           return (
             <SwipeRow
               key={session.sessionId}
-              actions={[
+              actions={isFocusFlowId(session.sessionId) ? [] : [
                 {
                   label: t('chat.mobile.settings'),
                   onClick: () => onOpenObservedSettings(session.sessionId),
@@ -464,7 +463,7 @@ export function MobileChatList({
               <ChatRow
                 avatar={<ObservedAvatar session={session} />}
                 title={session.sessionName}
-                badge={t('chat.sidebar.observedBadge')}
+                badge={isFocusFlowId(session.sessionId) ? 'Focus 共享流' : t('chat.sidebar.observedBadge')}
                 preview={preview}
                 time={formatRowTime(session.lastActivity, language)}
                 onOpen={() => onOpenObserved(session.sessionId)}
@@ -667,10 +666,7 @@ export function MobileChatRoomBar({
 export function MobileChatRoomTabAvatar({ tab }: { tab: ChatTab }) {
   const { t } = useTranslation()
   const isVirtual = tab.type === 'virtual'
-  const avatarUrl = useResolvedAvatarUrl(
-    isVirtual ? tab.virtualConfig?.platform : 'qq',
-    isVirtual ? tab.virtualConfig?.userId : tab.sessionInfo.bot_qq
-  )
+  const avatarUrl = useChatTabAvatarUrl(tab)
   const Icon = isVirtual ? UserCircle2 : Bot
   return (
     <Avatar className="h-[34px] w-[34px] shrink-0">

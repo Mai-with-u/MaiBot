@@ -419,7 +419,7 @@ export function ModelSetupForm({
   const reduceMotion = useReducedMotion()
   const providerTemplate = findTemplateByBaseUrl(providerBaseUrl)
   const supportsThinkingSwitch = (identifier: string): boolean => {
-    if (!identifier.trim() || (fetchStatus !== 'success' && fetchStatus !== 'error')) return false
+    if (!identifier.trim()) return false
     if (providerTemplate?.id === 'deepseek') return true
     const format = resolveThinkingFormatForModel(providerTemplate, identifier)
     return format?.kind === 'enable_thinking' ||
@@ -483,29 +483,30 @@ export function ModelSetupForm({
           ? role === 'replyer' : inferThinkingEnabled(value),
         [`${role}_reasoning_effort`]: 'high',
       })
-    if (fetchStatus === 'success') {
-      return (
+    return (
+      <div className="flex min-w-0 items-center gap-2">
+        <Input
+          id={`${role}_model_identifier`}
+          placeholder={t('setupPage.forms.modelSetup.identifierPlaceholder')}
+          value={identifier}
+          onChange={(event) => changeModel(event.target.value)}
+          className="min-w-0 flex-1 font-mono"
+        />
         <Select value={identifier} onValueChange={changeModel}>
-          <SelectTrigger id={`${role}_model_identifier`} className="min-w-0 font-mono">
-            <SelectValue placeholder="请选择模型">{identifier || undefined}</SelectValue>
+          <SelectTrigger
+            disabled={models.length === 0}
+            aria-label={`${t(`setupPage.forms.modelSetup.${role}.identifier.label`)} · ${t('setupPage.forms.modelSetup.pickFromList')}`}
+            className="w-auto shrink-0 gap-2"
+          >
+            {t('setupPage.forms.modelSetup.pickFromList')}
           </SelectTrigger>
-          <SelectContent position="popper" collisionPadding={12}>
+          <SelectContent position="popper" align="end" collisionPadding={12} className="max-w-[calc(100vw-24px)] font-mono">
             {models.map((model) => (
               <SelectItem key={model.id} value={model.id}>{model.id}</SelectItem>
             ))}
           </SelectContent>
         </Select>
-      )
-    }
-    return (
-      <Input
-        id={`${role}_model_identifier`}
-        placeholder={fetchStatus === 'error' ? '手动输入模型标识符' : '填写 API Key 后自动获取'}
-        value={identifier}
-        disabled={fetchStatus !== 'error'}
-        onChange={(event) => changeModel(event.target.value)}
-        className="font-mono"
-      />
+      </div>
     )
   }
 

@@ -1,0 +1,124 @@
+/* 模型 · 模型库：厂商列表、联网服务、模型列表工具栏和表格操作。 */
+[data-library-label] {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-height: 1.75rem;
+  padding: 0 0.25rem;
+  flex: none;
+}
+
+[data-library-label] > b {
+  font: 400 0.75rem var(--font-mono, ui-monospace, monospace);
+  letter-spacing: 0.16em;
+}
+
+[data-library-label] > h2 {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: hsl(var(--muted-foreground));
+  white-space: nowrap;
+}
+
+/* 一行一个厂商：灯、名称、模型数，下面一行是地址 */
+[data-library-row] {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.1875rem 0.625rem;
+  width: 100%;
+  padding: 0.5625rem 0.75rem;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+[data-library-row] + [data-library-row] {
+  border-top: 1px dashed hsl(var(--border));
+}
+
+[data-library-row]:hover {
+  background: hsl(var(--primary) / 0.08);
+}
+
+[data-library-row][data-selected] {
+  background: hsl(var(--primary) / 0.18);
+}
+
+[data-library-row-name] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.875rem;
+}
+
+[data-library-row-count] {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.75rem;
+  color: hsl(var(--muted-foreground));
+}
+
+[data-library-row-sub] {
+  grid-column: 2 / -1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.6875rem;
+  color: hsl(var(--muted-foreground));
+}
+
+/* 筛选键：选中项压下去 */
+[data-library-filters] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
+/* 表格操作：平时淡一些，悬停行时才完全显出来 */
+[data-model-row-actions] {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.125rem;
+  opacity: 0.55;
+  transition: opacity 120ms ease-out;
+}
+
+tr:hover [data-model-row-actions],
+[data-model-row-actions]:focus-within {
+  opacity: 1;
+}
+
+[data-model-row-actions] [data-action='delete']:hover {
+  background: hsl(var(--destructive));
+  color: hsl(var(--destructive-foreground));
+}
+
+@media (hover: none) {
+  [data-model-row-actions] {
+    opacity: 1;
+  }
+}
+
+/* ---------- 千禧风格 ---------- */
+:root[data-dashboard-style='millennium'] [data-library-label] > b {
+  font-family: var(--mil-font-mono, 'Departure Mono', monospace);
+  color: var(--mil-ink);
+}
+
+:root[data-dashboard-style='millennium'] [data-library-row] + [data-library-row] {
+  border-top-color: var(--mil-lo);
+}
+
+:root[data-dashboard-style='millennium'] [data-library-row][data-selected] {
+  background: color-mix(in srgb, var(--mil-on) 28%, transparent);
+}
+
+/* ---------- 未来复古 ---------- */
+:root[data-dashboard-style='future-retro'] [data-library-row] + [data-library-row] {
+  border-top-color: var(--retro-line);
+}

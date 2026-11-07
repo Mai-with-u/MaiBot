@@ -7,7 +7,6 @@ import {
   type VersionCompatibilityResult,
 } from '@/lib/version-compatibility-api'
 
-import { checkSelfUpdateOnStartup, SELF_UPDATE_STATUS_EVENT, type SelfUpdateStatus } from '@/lib/system-api'
 
 const HITOKOTO_SETTINGS_STORAGE_KEY = 'maibot-home-hitokoto-settings-v1'
 const HITOKOTO_INDEX_STORAGE_KEY = 'maibot-home-hitokoto-index-v1'
@@ -79,7 +78,6 @@ export function useMaibotVersion() {
   const [hitokoto, setHitokoto] = useState<{ hitokoto: string; from: string } | null>(null)
   const [hitokotoLoading, setHitokotoLoading] = useState(true)
   const [hitokotoSettings, setHitokotoSettings] = useState(loadHitokotoSettings)
-  const [selfUpdateStatus, setSelfUpdateStatus] = useState<SelfUpdateStatus | null>(null)
   const [versionCompatibility, setVersionCompatibility] =
     useState<VersionCompatibilityResult | null>(null)
   const hitokotoIndexRef = useRef(loadHitokotoIndex())
@@ -114,24 +112,6 @@ export function useMaibotVersion() {
 
     void loadVersionCompatibility()
     return () => controller.abort()
-  }, [])
-
-  // 与顶栏复用同一个启动请求，手动检查也通过事件同步结果。
-  useEffect(() => {
-    let mounted = true
-    let receivedCheck = false
-    const handleStatus = (event: Event) => {
-      receivedCheck = true
-      setSelfUpdateStatus((event as CustomEvent<SelfUpdateStatus>).detail)
-    }
-    window.addEventListener(SELF_UPDATE_STATUS_EVENT, handleStatus)
-    void checkSelfUpdateOnStartup().then((status) => {
-      if (mounted && !receivedCheck) setSelfUpdateStatus(status)
-    }).catch((error: unknown) => console.debug('检查 MaiBot 更新失败:', error))
-    return () => {
-      mounted = false
-      window.removeEventListener(SELF_UPDATE_STATUS_EVENT, handleStatus)
-    }
   }, [])
 
   const loadHitokoto = useCallback(
@@ -226,7 +206,6 @@ export function useMaibotVersion() {
     hitokoto,
     hitokotoLoading,
     hitokotoSettings,
-    selfUpdateStatus,
     versionCompatibility,
     fetchHitokoto,
     saveHitokotoSettings,

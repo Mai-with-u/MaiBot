@@ -7,16 +7,6 @@ import ipaddress
 import socket
 
 
-class NonPublicAddressError(ValueError):
-    """保留被拦截目标与完整解析结果，供调用方提供具体诊断。"""
-
-    def __init__(self, hostname: str, address: str, resolved_addresses: Set[str]) -> None:
-        self.hostname = hostname
-        self.address = address
-        self.resolved_addresses = resolved_addresses
-        super().__init__(f"禁止访问非公网地址: {address}")
-
-
 def _resolve_ip_addresses(hostname: str, port: int) -> Set[ipaddress.IPv4Address | ipaddress.IPv6Address]:
     try:
         address_infos = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
@@ -68,6 +58,12 @@ def _should_enforce_public_network(require_public_network: bool | None) -> bool:
     if require_public_network is not None:
         return require_public_network
 
+    from src.config.shared_settings import read_shared_webui
+
+    shared = read_shared_webui()
+    if shared is not None:
+        return shared["enforce_public_outbound_url"]
+
     try:
         from src.config.config import global_config
 
@@ -80,13 +76,11 @@ def validate_public_url(
     url: str,
     allowed_schemes: Iterable[str] = ("http", "https"),
     require_public_network: bool | None = None,
-    allow_configured_private_network: bool = False,
     allow_fake_ip: bool = False,
 ) -> str:
     """校验 WebUI 出站 URL。
 
-    已保存的模型厂商配置可显式允许回环或私网目标，但链路本地、组播、
-    保留地址和未指定地址始终禁止。默认只允许公网目标。
+    默认只允许公网目标；管理员配置的服务地址可关闭公网检查，仅校验 URL 格式。
     allow_fake_ip 供插件市场的 HTTPS 域名使用，允许解析为 198.18.0.0/15。
     此选项不检测 TUN，不允许直接填写 Fake-IP；其他调用者默认保持原检查。
     """
@@ -113,11 +107,7 @@ def validate_public_url(
 
     enforce_public_network = _should_enforce_public_network(require_public_network)
 
-    if (
-        enforce_public_network
-        and not allow_configured_private_network
-        and parsed.hostname.lower() in {"localhost", "localhost.localdomain"}
-    ):
+    if enforce_public_network and parsed.hostname.lower() in {"localhost", "localhost.localdomain"}:
         raise ValueError("不允许访问本地主机")
 
     try:
@@ -126,8 +116,7 @@ def validate_public_url(
         raise ValueError("URL 端口非法") from exc
 
     if enforce_public_network:
-        resolved_addresses = _resolve_ip_addresses(parsed.hostname, port)
-        for address in resolved_addresses:
+        for address in _resolve_ip_addresses(parsed.hostname, port):
             if (
                 allow_fake_ip
                 and parsed.scheme.lower() == "https"
@@ -135,14 +124,7 @@ def validate_public_url(
                 and address in ipaddress.ip_network("198.18.0.0/15")
             ):
                 continue
-            is_forbidden = (
-                _is_unsafe_ip_address(address)
-                if allow_configured_private_network
-                else _is_non_public_ip_address(address)
-            )
-            if is_forbidden:
-                raise NonPublicAddressError(
-                    parsed.hostname, str(address), {str(item) for item in resolved_addresses},
-                )
+            if _is_non_public_ip_address(address):
+                raise ValueError(f"禁止访问非公网地址: {address}")
 
     return normalized_url

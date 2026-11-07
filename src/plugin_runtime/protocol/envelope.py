@@ -191,7 +191,7 @@ class ComponentDeclaration(BaseModel):
     name: str = Field(description="组件名称")
     """组件名称"""
     component_type: str = Field(
-        description="组件类型：ACTION/COMMAND/TOOL/EVENT_HANDLER/HOOK_HANDLER/MESSAGE_GATEWAY/HOME_CARD/REPLY_EXTENSION"
+        description="组件类型：COMMAND/TOOL/EVENT_HANDLER/HOOK_HANDLER/MESSAGE_GATEWAY/HOME_CARD/REPLY_EXTENSION"
     )
     """组件协议类型，包括随 reply 注册参数与消息处理器的 REPLY_EXTENSION。"""
     plugin_id: str = Field(description="所属插件 ID")
@@ -260,6 +260,13 @@ class RegisterPluginPayload(BaseModel):
         if self.config_error and self.desktop_pet_buttons:
             raise ValueError("配置错误的插件不能注册桌宠按钮")
         return self
+
+
+class RegisterPluginResultPayload(BaseModel):
+    """plugin.register_components 响应，accepted 必须由 Host 明确给出。"""
+
+    accepted: bool = Field(strict=True, description="Host 是否接受本次插件注册")
+    reason: Optional[str] = Field(default=None, description="拒绝注册时的具体原因")
 
 
 class BootstrapPluginPayload(BaseModel):
@@ -351,6 +358,22 @@ class RunnerReadyPayload(BaseModel):
         default_factory=list, description="仅因插件自身配置禁用而未激活的插件列表"
     )
     """仅因插件自身配置禁用而未激活的插件列表，不包含依赖阻塞"""
+
+
+class RunnerStartupProgressPayload(RunnerReadyPayload):
+    """runner.startup_progress 广播：本轮已完成结果和仍在等待的插件。"""
+
+    loading_plugins: List[str] = Field(default_factory=list, description="尚未完成初始化的插件列表")
+
+    def completed_result(self) -> RunnerReadyPayload:
+        """提取已完成的插件结果，进度和最终就绪使用同一份结果结构。"""
+        return RunnerReadyPayload(
+            loaded_plugins=self.loaded_plugins,
+            failed_plugins=self.failed_plugins,
+            failed_plugin_reasons=self.failed_plugin_reasons,
+            inactive_plugins=self.inactive_plugins,
+            explicitly_disabled_plugins=self.explicitly_disabled_plugins,
+        )
 
 
 # ====== 配置更新 ======

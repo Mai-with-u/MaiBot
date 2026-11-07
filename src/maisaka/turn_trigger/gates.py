@@ -2,14 +2,13 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Literal, Optional, Sequence, Set, TYPE_CHECKING
+from typing import Literal, Optional, Sequence, Set, TYPE_CHECKING
 import time
 
 from src.chat.message_receive.message import SessionMessage
-from src.common.logger import get_logger
-from src.services.bot_account_service import get_online_bot_accounts
 
 from .dynamic_gate import DynamicReplyGate
+from .messages import filter_external_messages
 from .reply_likelihood import (
     DEFAULT_SECONDS_SINCE_BOT_MESSAGE,
     ReplyLikelihoodInput,
@@ -22,7 +21,6 @@ if TYPE_CHECKING:
 
 
 TurnGateDecision = Literal["trigger", "wait", "delay"]
-logger = get_logger("maisaka_turn_scheduler")
 RECENT_PRESENCE_WINDOW_SECONDS = 300.0
 """统计近期消息量与麦麦发言占比的时间窗口。"""
 
@@ -57,7 +55,7 @@ class DynamicReplyTurnGate:
     def record_forced_turn(self, pending_messages: Sequence[SessionMessage]) -> None:
         """@ 强制触发时，把这批消息计入预计回复数；同一批消息只计一次。"""
 
-        external_messages = self._filter_external_messages(pending_messages)
+        external_messages = filter_external_messages(pending_messages, log_prefix=self._runtime.log_prefix)
         if self._gate.take_uncounted_message_ids([message.message_id for message in external_messages]):
             self._gate.record_forced_turn(time.time())
 
@@ -69,13 +67,9 @@ class DynamicReplyTurnGate:
     ) -> TurnGateResult:
         """返回动态门控的触发判定。"""
 
-        external_messages = self._filter_external_messages(pending_messages)
+        external_messages = filter_external_messages(pending_messages, log_prefix=self._runtime.log_prefix)
         if not external_messages:
             return TurnGateResult(decision="wait", detail="没有新的外部消息 判定=等待更多消息")
-        if not self._runtime.chat_stream.is_group_session:
-            # 拟合数据只覆盖群聊；私聊里每条消息都是对麦麦说的，不设门控
-            return TurnGateResult(decision="trigger", detail="私聊不设动态门控 判定=进入Planner")
-
         now = time.time()
         new_message_ids = set(
             self._gate.take_uncounted_message_ids([message.message_id for message in external_messages])
@@ -104,20 +98,6 @@ class DynamicReplyTurnGate:
             decision="trigger" if gate_decision.should_trigger else "wait",
             detail=f"动态门控: {gate_decision.detail} 判定={decision_label}",
         )
-
-    def _filter_external_messages(self, pending_messages: Sequence[SessionMessage]) -> List[SessionMessage]:
-        online_accounts = {platform: get_online_bot_accounts(platform) for platform in {m.platform for m in pending_messages}}
-        external_messages: List[SessionMessage] = []
-        filtered_accounts: Set[str] = set()
-        for message in pending_messages:
-            user_id = str(message.message_info.user_info.user_id).strip()
-            if user_id in online_accounts[message.platform]:
-                filtered_accounts.add(f"platform={message.platform} 过滤bot_id = {user_id}（自身消息）")
-            else:
-                external_messages.append(message)
-        for detail in sorted(filtered_accounts):
-            logger.info(f"{self._runtime.log_prefix} {detail}")
-        return external_messages
 
     def _build_likelihood_input(
         self,

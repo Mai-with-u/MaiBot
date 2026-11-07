@@ -20,10 +20,6 @@ from .read_tool_result import get_tool_spec as get_read_tool_result_tool_spec
 from .read_tool_result import handle_tool as handle_read_tool_result_tool
 from .reply import get_tool_spec as get_reply_tool_spec
 from .reply import handle_tool as handle_reply_tool
-from .send_emoji import get_tool_spec as get_send_emoji_tool_spec
-from .send_emoji import handle_tool as handle_send_emoji_tool
-from .show_emoji_list import get_tool_spec as get_show_emoji_list_tool_spec
-from .show_emoji_list import handle_tool as handle_show_emoji_list_tool
 from .stop import get_tool_spec as get_stop_tool_spec
 from .stop import handle_tool as handle_stop_tool
 from .subagent import get_status_tool_spec as get_subagent_status_tool_spec
@@ -111,8 +107,6 @@ BUILTIN_TOOL_ENTRIES: List[BuiltinToolEntry] = [
         handle_query_person_profile_tool,
         stage="action",
     ),
-    BuiltinToolEntry("send_emoji", get_send_emoji_tool_spec, handle_send_emoji_tool, stage="action"),
-    BuiltinToolEntry("show_emoji_list", get_show_emoji_list_tool_spec, handle_show_emoji_list_tool, stage="action"),
     BuiltinToolEntry("tool_search", get_tool_search_tool_spec, handle_tool_search_tool, stage="action"),
     BuiltinToolEntry("subagent", get_subagent_tool_spec, handle_subagent_tool, stage="action"),
     BuiltinToolEntry("subagent_status", get_subagent_status_tool_spec, handle_subagent_status_tool, stage="action"),
@@ -148,15 +142,8 @@ def _get_builtin_tool_entries(
 def _is_builtin_tool_enabled_by_config(entry: BuiltinToolEntry) -> bool:
     """根据全局配置判断内置工具是否应暴露。"""
 
-    if entry.name == "show_emoji_list":
-        return global_config.emoji.use_new_send_logic
-    if entry.name == "send_emoji":
-        return not global_config.emoji.use_new_send_logic
-    if entry.name == "subagent":
+    if entry.name in {"subagent", "subagent_status", "subagent_stop"}:
         return global_config.capabilities.planner_subagent
-    if entry.name in {"subagent_status", "subagent_stop"}:
-        # 只有后台子代理才有需要查看和终止的任务
-        return global_config.capabilities.planner_subagent and global_config.capabilities.advanced_sub_agent
     if entry.name == "read_tool_result":
         # 长结果整理和统一联网工具均会暂存原文，任一开启都需要回查入口。
         return global_config.capabilities.tool_result_condense or bool(model_config.model_task_config.web_search.model_list)
@@ -186,8 +173,13 @@ def get_builtin_tool_visibility(tool_spec: ToolSpec) -> BuiltinToolVisibility:
     return "visible"
 
 
-def is_builtin_tool_in_action_stage(tool_spec: ToolSpec) -> bool:
-    """判断内置工具是否属于 Action Loop 阶段。"""
+def is_builtin_tool_in_action_stage(tool_spec: ToolSpec, *, passive_replyer: bool = False) -> bool:
+    """统一 Planner 工具集：被动式使用独立控制，其余模式使用 reply.after_reply。"""
+
+    if tool_spec.name == "stop" and not passive_replyer:
+        return False
+    if tool_spec.name == "reply" and passive_replyer:
+        return False
 
     return str(tool_spec.metadata.get("builtin_stage") or "").strip() in {"action", "both"}
 
@@ -198,14 +190,19 @@ def get_all_builtin_tool_specs(context: Optional[ToolAvailabilityContext] = None
     return [entry.build_spec(context) for entry in _get_builtin_tool_entries(context=context)]
 
 
-def get_builtin_tools(context: Optional[ToolAvailabilityContext] = None) -> List[ToolDefinitionInput]:
+def get_builtin_tools(
+    context: Optional[ToolAvailabilityContext] = None, *, passive_replyer: bool = False,
+) -> List[ToolDefinitionInput]:
     """获取默认暴露给模型层的内置工具定义。"""
 
     tool_specs = [
         entry.build_spec(context)
         for entry in _get_builtin_tool_entries(stage="action", visibility="visible", context=context)
     ]
-    return [tool_spec.to_llm_definition() for tool_spec in tool_specs if tool_spec.enabled]
+    return [
+        tool_spec.to_llm_definition() for tool_spec in tool_specs
+        if tool_spec.enabled and is_builtin_tool_in_action_stage(tool_spec, passive_replyer=passive_replyer)
+    ]
 
 
 def build_builtin_tool_handlers(tool_ctx: BuiltinToolRuntimeContext) -> Dict[str, BuiltinToolHandler]:

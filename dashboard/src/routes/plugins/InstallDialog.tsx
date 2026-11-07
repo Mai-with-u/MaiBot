@@ -16,10 +16,11 @@ interface InstallDialogProps {
   plugin: PluginInfo | null
   loadProgress: PluginLoadProgress | null
   onOpenChange: (open: boolean) => void
+  onDependenciesChanged: () => void
   onInstall: (target: string) => void
 }
 
-export function InstallDialog({ open, plugin, loadProgress, onOpenChange, onInstall }: InstallDialogProps) {
+export function InstallDialog({ open, plugin, loadProgress, onOpenChange, onInstall, onDependenciesChanged }: InstallDialogProps) {
   const [sourceSettingsOpen, setSourceSettingsOpen] = useState(false)
   const [selectedBranch, setSelectedBranch] = useState('main')
   const [customBranch, setCustomBranch] = useState('')
@@ -309,6 +310,7 @@ export function InstallDialog({ open, plugin, loadProgress, onOpenChange, onInst
         </DialogFooter>
         {sourceSettingsOpen && (
           <PluginSettingsDialog
+            onDependenciesChanged={onDependenciesChanged}
             onClose={() => setSourceSettingsOpen(false)}
             onSaved={() => setSourceSettingsOpen(false)}
           />

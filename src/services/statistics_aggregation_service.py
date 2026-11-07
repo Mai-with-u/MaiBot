@@ -146,6 +146,47 @@ def fetch_message_count_by_chat_since(start_time: datetime) -> list[dict[str, An
     ]
 
 
+def count_chat_messages_between(start_time: datetime, end_time: datetime) -> int:
+    """按 fetch_message_count_by_chat_since 的口径统计 [start_time, end_time) 内的消息数。"""
+
+    with get_db_session(auto_commit=False) as session:
+        row = session.exec(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM mai_messages
+                WHERE COALESCE(received_at, timestamp) >= :start_time
+                  AND COALESCE(received_at, timestamp) < :end_time
+                  AND (
+                      (group_id IS NOT NULL AND group_id != '')
+                      OR (user_id IS NOT NULL AND user_id != '')
+                  )
+                """
+            ),
+            params={"start_time": start_time, "end_time": end_time},
+        ).one()
+    return int(row[0])
+
+
+def count_tool_records_between(start_time: datetime, end_time: datetime, tool_name: str) -> int:
+    """统计 [start_time, end_time) 内的工具调用次数。"""
+
+    with get_db_session(auto_commit=False) as session:
+        row = session.exec(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM tool_records
+                WHERE timestamp >= :start_time
+                  AND timestamp < :end_time
+                  AND tool_name = :tool_name
+                """
+            ),
+            params={"start_time": start_time, "end_time": end_time, "tool_name": tool_name},
+        ).one()
+    return int(row[0])
+
+
 def count_tool_records_since(start_time: datetime, tool_name: str) -> int:
     """统计指定时间之后的工具调用次数，不加载工具调用明细。"""
 

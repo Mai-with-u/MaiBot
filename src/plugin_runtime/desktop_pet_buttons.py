@@ -1,10 +1,12 @@
 """桌宠按钮的跨进程协议与插件回调校验。"""
 
-from typing import Any, Dict, List, Literal, Protocol, cast
+from typing import Any, Dict, List, Literal, Optional, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 import inspect
+
+from .desktop_pet_panels import DesktopPetPanel
 
 
 class DesktopPetButton(BaseModel):
@@ -26,6 +28,7 @@ class DesktopPetButtonSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
     buttons: List[DesktopPetButton] = Field(default_factory=list, max_length=10)
     states: Dict[str, DesktopPetButtonState] = Field(default_factory=dict)
+    panel: Optional[DesktopPetPanel] = None
 
     @model_validator(mode="after")
     def validate_ids(self) -> "DesktopPetButtonSnapshot":
@@ -41,7 +44,12 @@ class DesktopPetButtonProvider(Protocol):
     desktop_pet_buttons: List[Any]
 
     async def get_desktop_pet_button_states(self) -> Dict[str, Any]: ...
-    async def on_desktop_pet_button_click(self, button_id: str) -> None: ...
+    async def on_desktop_pet_button_click(self, button_id: str) -> Any: ...
+
+
+class DesktopPetPanelProvider(DesktopPetButtonProvider, Protocol):
+    async def get_desktop_pet_panel(self, button_id: str) -> Dict[str, Any]: ...
+    async def on_desktop_pet_panel_action(self, button_id: str, action_id: str) -> Any: ...
 
 
 def read_button_declarations(instance: object) -> List[DesktopPetButton]:
@@ -76,7 +84,10 @@ async def read_button_snapshot(provider: DesktopPetButtonProvider) -> DesktopPet
     })
 
 
-async def invoke_button(provider: DesktopPetButtonProvider, snapshot: DesktopPetButtonSnapshot, button_id: str) -> None:
+async def invoke_button(
+    provider: DesktopPetButtonProvider, snapshot: DesktopPetButtonSnapshot, button_id: str,
+    action_id: Optional[str] = None,
+) -> Optional[DesktopPetPanel]:
     if button_id not in snapshot.states:
         raise ValueError("未声明的桌宠按钮")
     state = snapshot.states[button_id]
@@ -84,4 +95,16 @@ async def invoke_button(provider: DesktopPetButtonProvider, snapshot: DesktopPet
         raise ValueError("当前桌宠按钮不可用")
     if not inspect.iscoroutinefunction(provider.on_desktop_pet_button_click):
         raise ValueError("on_desktop_pet_button_click 必须为 async 方法")
-    await provider.on_desktop_pet_button_click(button_id)
+    if action_id is None:
+        result = await provider.on_desktop_pet_button_click(button_id)
+    else:
+        panel_provider = cast(DesktopPetPanelProvider, provider)
+        if not inspect.iscoroutinefunction(panel_provider.get_desktop_pet_panel):
+            raise ValueError("get_desktop_pet_panel 必须为 async 方法")
+        panel = DesktopPetPanel.model_validate(await panel_provider.get_desktop_pet_panel(button_id))
+        if not any(action.id == action_id and not action.disabled for action in panel.actions):
+            raise ValueError("未声明或不可用的面板操作")
+        if not inspect.iscoroutinefunction(panel_provider.on_desktop_pet_panel_action):
+            raise ValueError("on_desktop_pet_panel_action 必须为 async 方法")
+        result = await panel_provider.on_desktop_pet_panel_action(button_id, action_id)
+    return None if result is None else DesktopPetPanel.model_validate(result)

@@ -1,16 +1,19 @@
 from email.message import Message
 from io import BytesIO
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
 import asyncio
+import ipaddress
 import json
+import subprocess
 
 import pytest
 
 from src.webui.services import git_mirror_service as git
 from src.webui.routers.plugin import icon_routes
-from src.plugin_market import sources as market
+from src.common import network_security
+from src.plugin_market import documents, sources as market
 from src.plugin_market.cache import MarketCache
 
 
@@ -18,8 +21,8 @@ from src.plugin_market.cache import MarketCache
 def isolated_sources(tmp_path, monkeypatch):
     monkeypatch.setattr(market, "market_cache", MarketCache())
     monkeypatch.setattr(market, "SETTINGS_FILE", tmp_path / "sources.json")
-    monkeypatch.setattr(git, "_validate_custom_outbound_url", lambda value, label: value)
-    monkeypatch.setattr("src.common.network_security.validate_public_url", lambda value, **kw: value)
+    monkeypatch.setattr(network_security, "_should_enforce_public_network", lambda value: True if value is None else value)
+    monkeypatch.setattr(network_security, "_resolve_ip_addresses", lambda *args: {ipaddress.ip_address("127.0.0.1")})
 
 
 def configure(**values):
@@ -48,9 +51,11 @@ def test_information_source_is_fixed_and_never_uses_download_source(monkeypatch,
 
 
 @pytest.mark.parametrize("information", ["official", "cnb", "github"])
-@pytest.mark.parametrize("download,host", [("cnb", "cnb.cool"), ("github", "github.com"), ("custom", "download.example")])
+@pytest.mark.parametrize("download,host", [("cnb", "cnb.cool"), ("github", "github.com"), ("custom", "127.0.0.1")])
 def test_download_uses_only_selected_source_even_on_failure(monkeypatch, tmp_path, information, download, host):
-    configure(information_source=information, download_source=download, custom_download_prefix="https://download.example")
+    market.save_source_settings(market.PluginSourceSettings(
+        information_source=information, download_source=download, custom_download_prefix="https://127.0.0.1",
+    ))
     service = git.GitMirrorService()
     calls = []
 
@@ -62,6 +67,39 @@ def test_download_uses_only_selected_source_even_on_failure(monkeypatch, tmp_pat
     result = asyncio.run(service.clone_repository("Owner", "Plugin", tmp_path, branch="v1.2.3", mirror_id="obsolete"))
     assert not result["success"] and result["error"] == "selected source failed"
     assert len(calls) == 1 and urlsplit(calls[0]).hostname == host
+
+
+@pytest.mark.parametrize("url", ["http://localhost:3000/owner/repo.git", "https://192.168.1.10/owner/repo.git"])
+@pytest.mark.parametrize("operation", ["clone", "pull"])
+def test_direct_git_url_allows_private_network(monkeypatch, tmp_path, url, operation):
+    run = AsyncMock(return_value=subprocess.CompletedProcess([], 0, "", ""))
+    monkeypatch.setattr(git, "_run_git_process", run)
+    service = git.GitMirrorService()
+    if operation == "clone":
+        result = asyncio.run(service.clone_repository("owner", "repo", tmp_path / "repo", custom_url=url))
+        assert url in run.call_args.args[0]
+    else:
+        (tmp_path / ".git").mkdir()
+        result = asyncio.run(service.pull_repository(tmp_path, remote_url=url))
+        assert run.call_args_list[0].args[0] == ["git", "remote", "set-url", "origin", url]
+    assert result["success"]
+
+
+@pytest.mark.parametrize("kind,declared", [("readme", None), ("changelog", "changes.md"), ("changelog", "https://127.0.0.1/changes.md")])
+def test_source_documents_allow_private_network_but_declared_urls_do_not(monkeypatch, kind, declared):
+    configure(download_source="custom", custom_download_prefix="https://127.0.0.1")
+    monkeypatch.setattr(documents, "market_cache", MarketCache())
+    read = Mock(return_value="document")
+    monkeypatch.setattr(documents.GitSource, "read_text", read)
+    plugin = {"repository_url": "https://github.com/test/plugin", "manifest": {"changelog": declared}}
+    if declared and declared.startswith("https://"):
+        with pytest.raises(ValueError, match="禁止访问非公网地址"):
+            documents._remote_document(plugin, kind, "cnb", "main", False)
+        read.assert_not_called()
+    else:
+        result = documents._remote_document(plugin, kind, "cnb", "main", False)
+        assert result["content"] == "document"
+        assert read.call_args.args[0].startswith("https://127.0.0.1/" if kind == "readme" else "https://cnb.cool/")
 
 
 def test_release_index_cache_does_not_cross_information_sources(monkeypatch):
@@ -110,8 +148,6 @@ def test_marketplace_listing_only_calls_selected_information_source(monkeypatch,
 def test_cnb_icon_proxy_validates_images_and_sets_browser_cache(monkeypatch, media_type, size, status):
     from fastapi import HTTPException
 
-    monkeypatch.setattr(icon_routes, "require_plugin_token", lambda token: None)
-    monkeypatch.setattr(icon_routes, "validate_public_url", lambda url, **kw: url)
     monkeypatch.setattr(icon_routes, "get_shared_ssl_context", lambda: None)
     response = BytesIO(b"x" * size)
     response.headers = Message()
@@ -122,10 +158,10 @@ def test_cnb_icon_proxy_validates_images_and_sets_browser_cache(monkeypatch, med
     url = "https://cnb.cool/Mai-with-u/plugin-repo/-/git/raw/main/icons/a.webp"
     if status != 200:
         with pytest.raises(HTTPException) as error:
-            icon_routes.get_market_icon(url, "session")
+            icon_routes.get_market_icon(url)
         assert error.value.status_code == status
     else:
-        result = icon_routes.get_market_icon(url, "session")
+        result = icon_routes.get_market_icon(url)
         assert result.body == b"x" * size
         assert result.media_type == "image/webp"
         assert result.headers["cache-control"] == "private, max-age=3600"
@@ -142,7 +178,6 @@ def test_cnb_icon_proxy_validates_images_and_sets_browser_cache(monkeypatch, med
 def test_cnb_icon_proxy_rejects_non_market_paths(monkeypatch, url):
     from fastapi import HTTPException
 
-    monkeypatch.setattr(icon_routes, "require_plugin_token", lambda token: None)
     with pytest.raises(HTTPException) as error:
-        icon_routes.get_market_icon(url, "session")
+        icon_routes.get_market_icon(url)
     assert error.value.status_code == 400

@@ -3,7 +3,7 @@
  * 统计读取与评分、点赞、下载记录统一调用公共市场接口。
  */
 import { ApiError, backendApi } from '@/lib/http'
-import { invalidatePluginMarketCache } from '@/lib/plugin-api/marketplace'
+import { invalidatePluginMarketStats } from '@/lib/plugin-api/marketplace'
 
 const MARKET_API_BASE_URL = '/api/webui/plugins/marketplace'
 
@@ -30,6 +30,17 @@ export interface PluginStatsData {
     comment?: string
     created_at: string
   }>
+}
+
+export type PluginStatsStatus = 'loading' | 'ready' | 'error'
+
+/** 批量读取官方统计；信息源和下载源不参与这个请求。 */
+export async function getPluginStatsSummary(forceRefresh = false): Promise<Record<string, PluginStatsData>> {
+  const result = await backendApi.get<{ stats: Record<string, PluginStatsData> }>(
+    `${MARKET_API_BASE_URL}/stats/summary`,
+    { query: { force_refresh: forceRefresh }, errorMessage: '加载插件统计失败' }
+  )
+  return result.stats
 }
 
 export interface StatsResponse {
@@ -183,7 +194,7 @@ export async function likePlugin(pluginId: string, userId?: string): Promise<Vot
     )
 
     const result: VoteStatsResponse = { success: true, ...data }
-    invalidatePluginMarketCache()
+    invalidatePluginMarketStats()
     return result
   } catch (error) {
     if (error instanceof ApiError) {
@@ -214,7 +225,7 @@ export async function dislikePlugin(pluginId: string, userId?: string): Promise<
     )
 
     const result: VoteStatsResponse = { success: true, ...data }
-    invalidatePluginMarketCache()
+    invalidatePluginMarketStats()
     return result
   } catch (error) {
     if (error instanceof ApiError) {
@@ -287,7 +298,7 @@ export async function ratePlugin(
     )
 
     const result: RatingStatsResponse = { success: true, ...data }
-    invalidatePluginMarketCache()
+    invalidatePluginMarketStats()
     return result
   } catch (error) {
     if (error instanceof ApiError) {
@@ -319,7 +330,7 @@ export async function recordPluginDownload(pluginId: string): Promise<DownloadSt
 
     const result: DownloadStatsResponse = { success: true, ...data }
     if (typeof result.downloads === 'number') {
-      invalidatePluginMarketCache()
+      invalidatePluginMarketStats()
     }
     return result
   } catch (error) {

@@ -21,36 +21,48 @@ import { AnimationProvider } from './components/animation-provider'
 import { ThemeProvider } from './components/theme-provider'
 import { TourProvider } from './components/tour/tour-provider'
 import { LazyTourRenderer } from './components/tour/lazy-tour-renderer'
+import { BootErrorScreen } from './components/boot-error-screen'
 import { ErrorBoundary } from './components/error-boundary'
 import { installMillenniumIconStyle } from './components/ui/millennium-icon-set'
 import { Toaster } from './components/ui/toaster'
-import { VersionCompatibilityDialog } from './components/version-compatibility-dialog'
 import { isElectron } from './lib/runtime'
 import { queryClient } from './lib/query'
 import { router } from './router'
+import { bootstrapHostRuntime } from './host/api'
+import { HostRuntimeObserver, HostVersionCompatibility } from './host/HostRuntimeObserver'
 
 installMillenniumIconStyle()
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
-        <AnnouncerProvider>
-          <AssetStoreProvider>
-            <ThemeProvider defaultTheme="system">
-              <VersionCompatibilityDialog />
-              <AnimationProvider>
-                <TourProvider>
-                  {isElectron() && <ElectronShell />}
-                  <RouterProvider router={router} />
-                  <LazyTourRenderer />
-                  <Toaster />
-                </TourProvider>
-              </AnimationProvider>
-            </ThemeProvider>
-          </AssetStoreProvider>
-        </AnnouncerProvider>
-      </QueryClientProvider>
-    </ErrorBoundary>
-  </StrictMode>
-)
+const root = createRoot(document.getElementById('root')!)
+void bootstrapHostRuntime()
+  .then(() =>
+    root.render(
+      <StrictMode>
+        <ErrorBoundary>
+          <QueryClientProvider client={queryClient}>
+            <AnnouncerProvider>
+              <AssetStoreProvider>
+                <ThemeProvider defaultTheme="system">
+                  <HostRuntimeObserver />
+                  <HostVersionCompatibility />
+                  <AnimationProvider>
+                    <TourProvider>
+                      {isElectron() && <ElectronShell />}
+                      <RouterProvider router={router} />
+                      <LazyTourRenderer />
+                      <Toaster />
+                    </TourProvider>
+                  </AnimationProvider>
+                </ThemeProvider>
+              </AssetStoreProvider>
+            </AnnouncerProvider>
+          </QueryClientProvider>
+        </ErrorBoundary>
+      </StrictMode>
+    )
+  )
+  .catch((error: unknown) => {
+    root.render(
+      <BootErrorScreen message={error instanceof Error ? error.message : String(error)} />
+    )
+  })

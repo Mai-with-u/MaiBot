@@ -9,10 +9,11 @@ fastapi>=0.116.0
 google-genai>=1.39.1
 httpx[socks]
 idna>=3.15
+imageio-ffmpeg>=0.6,<1
 jieba>=0.42.1
 json-repair>=0.60.1,<0.61
 jsonschema>=4.26.0,<5
-maibot-dashboard==1.9.13
+maibot-dashboard==1.10.0
 maibot-plugin-sdk>=2.20.0
 maim-message==0.6.8
 mcp>=1.28.1,<2
@@ -26,14 +27,17 @@ playwright==1.58.0
 prompt-toolkit>=3.0.52
 pyarrow>=20.0.0
 pyasn1>=0.6.4
+pycryptodome>=3.20,<4
 pydantic-settings>=2.14.2
 pydantic>=2.11.7
 pyjwt>=2.13.0
 pypinyin>=0.54.0
 pywebview>=6.2,<7; sys_platform == 'win32'
 python-multipart>=0.0.31
+qrcode>=8,<9
 rapidfuzz
 rich>=14.0.0
+rlottie-python>=1.3.7,<2
 scipy>=1.7.0
 sqlalchemy>=2.0.40
 sqlmodel>=0.0.24

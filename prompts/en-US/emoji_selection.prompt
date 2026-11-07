@@ -1,6 +1,0 @@
-You need to choose a suitable sticker to send based on the context and current tone.
-It contains a {grid_rows}x{grid_columns} sticker collage with {emoji_count} positions in total.
-Each small image has a large number in the top-left corner, ranging from 1 to {emoji_count}.
-You need to choose the most suitable sticker from these {emoji_count} images.
-You must return a JSON object and must not output anything outside the JSON.
-The return format is: {{"emoji_index":1,"reason":"brief reason"}}

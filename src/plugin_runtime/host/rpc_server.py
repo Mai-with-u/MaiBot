@@ -311,7 +311,7 @@ class RPCServer:
     async def _handle_handshake(self, conn: Connection) -> bool:
         """处理 runner.hello 握手"""
         # 接收握手请求
-        data = await asyncio.wait_for(conn.recv_frame(), timeout=10.0)
+        data = await asyncio.wait_for(conn.recv_frame(), timeout=30.0)
         envelope = self._codec.decode_envelope(data)
         if envelope.method != "runner.hello":
             self._logger.error(f"期望 runner.hello，收到 {envelope.method}")

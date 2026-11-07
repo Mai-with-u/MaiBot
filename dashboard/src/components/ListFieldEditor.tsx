@@ -144,7 +144,8 @@ function SortableItem({
       ref={setNodeRef}
       style={style}
       className={cn(
-        'flex items-start gap-2 group',
+        'flex items-start group',
+        renderItemSuffix && itemType === 'string' ? 'gap-1' : 'gap-2',
         isDragging && 'opacity-50 z-50'
       )}
     >
@@ -152,7 +153,8 @@ function SortableItem({
       <button
         type="button"
         className={cn(
-          'flex-shrink-0 p-2 cursor-grab active:cursor-grabbing',
+          'flex-shrink-0 cursor-grab active:cursor-grabbing',
+          renderItemSuffix && itemType === 'string' ? 'px-0.5 py-2' : 'p-2',
           'text-muted-foreground hover:text-foreground transition-colors',
           'opacity-0 group-hover:opacity-100 focus:opacity-100',
           disabled && 'cursor-not-allowed opacity-30'
@@ -188,7 +190,7 @@ function SortableItem({
             onChange={(e) => onChange(e.target.value)}
             placeholder={placeholder ?? `第 ${index + 1} 项`}
             disabled={disabled}
-            className={renderItemSuffix ? 'w-32 min-w-0 shrink-0 sm:w-40' : undefined}
+            className={renderItemSuffix ? 'w-24 min-w-0 flex-1 sm:max-w-40' : undefined}
           />
         )}
         {itemType === 'string' && renderItemSuffix?.(value, index)}

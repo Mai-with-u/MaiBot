@@ -1003,7 +1003,8 @@
   --color-muted-foreground: 44 30% 82%;
 }
 
-:root[data-dashboard-style='millennium'] [data-chart] {
+/* HTML 图例渲染在 [data-chart] 之外，需要使用同一套图表配色 */
+:root[data-dashboard-style='millennium'] :is([data-chart], [data-chart-legend]) {
   --color-primary: 134.4 62% 72%;
   --color-chart-1: 134.4 62% 72%;
   --color-chart-2: 18.4 83.1% 65.3%;

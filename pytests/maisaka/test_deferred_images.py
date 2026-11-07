@@ -123,7 +123,7 @@ def test_replyer_matches_eager_output(monkeypatch):
     from src.chat.replyer.maisaka_generator_base import BaseMaisakaReplyGenerator
     from src.config.config import global_config
     monkeypatch.setattr(global_config.visual, "max_image_num", 2)
-    monkeypatch.setattr(global_config.debug, "replyer_retro_prompt", False)
+    monkeypatch.setattr(global_config.chat, "creative_mode", False)
     service = BaseMaisakaReplyGenerator(llm_client_cls=lambda **kwargs: None, load_prompt_func=lambda *args, **kwargs: "prompt")
     # 使用通用图文夹具隔离 IM 来源检查，仍走真实历史构建、筛选和编码链路。
     monkeypatch.setattr(service, "_is_replyer_filtered_history_message", lambda message: False)
@@ -149,7 +149,7 @@ def test_retro_replyer_resizes_only_retained_images(monkeypatch, limit, mode, qu
 
     monkeypatch.setattr(global_config.visual, "max_image_num", limit)
     monkeypatch.setattr(global_config.visual, "image_quality", quality)
-    monkeypatch.setattr(global_config.debug, "replyer_retro_prompt", True)
+    monkeypatch.setattr(global_config.chat, "creative_mode", True)
     service = object.__new__(BaseMaisakaReplyGenerator)
     # 仅隔离模板和 IM 来源依赖，保留实际入口、图片筛选、缩放及延迟编码链路。
     monkeypatch.setattr(service, "_is_replyer_filtered_history_message", lambda message: False)
@@ -168,7 +168,7 @@ def test_retro_replyer_resizes_only_retained_images(monkeypatch, limit, mode, qu
         ]),
         visible_text="message", timestamp=datetime(2026, 1, 1),
     ) for _ in range(3)]
-    kwargs = dict(reply_message=None, reply_reason="reason", enable_visual_message=True)
+    kwargs = dict(reply_message=None, reply_reason="reason", enable_visual_message=True, prompt_profile="mai_replier")
     expected = service._build_request_messages.__wrapped__(service, entries, **kwargs)
     with patch.object(context, "_encode_image_for_context", wraps=context._encode_image_for_context) as encode:
         actual = service._build_request_messages(entries, **kwargs)

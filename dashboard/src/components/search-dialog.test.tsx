@@ -1,11 +1,12 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Search } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ConfigSchema } from '@/types/config-schema'
 
-import { SearchDialog } from './search-dialog'
+import { SearchDialog, SearchWorkspace } from './search-dialog'
 
 const navigateMock = vi.fn()
 const getBotConfigSchemaMock = vi.fn()
@@ -15,6 +16,9 @@ const onOpenChangeMock = vi.fn()
 
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
+  Link: ({ to, search, children }: { to: string; search?: Record<string, string>; children: ReactNode }) => (
+    <a href={search ? `${to}?${new URLSearchParams(search)}` : to}>{children}</a>
+  ),
 }))
 
 // t 必须是稳定引用，不能在每次 render 时新建函数
@@ -154,6 +158,123 @@ describe('SearchDialog', () => {
     cleanup()
   })
 
+  it('独立答疑区自动提交首问，提供配置直达链接，追问沿用返回的会话', async () => {
+    const onHelpSession = vi.fn()
+    const onHelpSettled = vi.fn()
+    searchWithAIStreamMock.mockImplementation(async (_request, onProgress) => {
+      onProgress({ type: 'session', id: 'help-1' })
+      return {
+        answer: '已找到相关说明',
+        results: [],
+        suggestions: [],
+        sources: [],
+        plugins: [],
+        install_requests: [],
+        config_updates: [],
+        expanded_terms: [],
+      }
+    })
+    render(
+      <SearchWorkspace
+        open
+        helpSessionId="new"
+        initialQuestion="怎么调整回复？"
+        aiSearchRequestId={1}
+        onHelpSession={onHelpSession}
+        onHelpSettled={onHelpSettled}
+      />
+    )
+
+    await waitFor(() => expect(onHelpSettled).toHaveBeenCalledTimes(1))
+    expect(onHelpSession).toHaveBeenCalledWith('help-1')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(searchWithAIStreamMock.mock.calls[0][0]).toMatchObject({
+      query: '怎么调整回复？',
+      help_session_id: 'new',
+    })
+
+    const input = screen.getByPlaceholderText('observation.askPlaceholder')
+    fireEvent.change(input, { target: { value: '人格设定' } })
+    expect(await screen.findByRole('link', { name: /人格设定/ })).toHaveAttribute(
+      'href',
+      '/config/bot?field=personality.personality'
+    )
+    expect(searchWithAIStreamMock).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('checkbox', { name: 'search.allowPluginConfigWrite' }))
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(onHelpSettled).toHaveBeenCalledTimes(2))
+    expect(searchWithAIStreamMock.mock.calls[1][0]).toMatchObject({
+      query: '人格设定',
+      help_session_id: 'help-1',
+      allow_plugin_config_write: true,
+    })
+    expect(screen.getByRole('checkbox', { name: 'search.allowPluginConfigWrite' })).not.toBeChecked()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(onHelpSettled).toHaveBeenCalledTimes(3))
+    expect(searchWithAIStreamMock.mock.calls[2][0]).not.toHaveProperty('allow_plugin_config_write')
+  })
+
+  it('配置已经保存时，即使后续答案生成失败仍展示实际改动', async () => {
+    searchWithAIStreamMock.mockImplementation(async (_request, onProgress) => {
+      onProgress({
+        type: 'progress', stage: 'tool', tool: 'update_plugin_config', status: 'completed',
+        config_update: {
+          id: 'change-1', plugin_id: 'test.voice', name: 'Voice', message: '配置已保存',
+          changes: [{ path: ['general', 'frequency'], before: 5, after: 8 }],
+        },
+      })
+      throw new Error('答案生成失败')
+    })
+    render(<SearchDialog open query="将语音插件间隔改成 8" onOpenChange={vi.fn()} />)
+    await settleSearchDialog()
+    fireEvent.click(screen.getByRole('button', { name: 'search.aiSearch' }))
+    expect(await screen.findByText('5 → 8')).toBeInTheDocument()
+    expect(screen.getByText('配置已保存')).toBeInTheDocument()
+    expect(screen.getAllByText('答案生成失败').length).toBeGreaterThan(0)
+  })
+
+  it('独立答疑区只保留最新计划，并合并重复加载的技能', async () => {
+    searchWithAIStreamMock.mockImplementation(async (_request, onProgress) => {
+      onProgress({
+        type: 'progress', stage: 'plan',
+        plan: [{ title: '核对旧计划', status: 'pending' }],
+      })
+      onProgress({ type: 'progress', stage: 'skill', skill: 'plugin', status: 'started' })
+      onProgress({ type: 'progress', stage: 'skill', skill: 'setup', status: 'completed' })
+      onProgress({ type: 'progress', stage: 'skill', skill: 'setup', status: 'completed' })
+      onProgress({
+        type: 'progress', stage: 'plan',
+        plan: [{ title: '检查插件说明', status: 'completed' }],
+      })
+      return {
+        answer: '已检查插件说明',
+        results: [],
+        suggestions: [],
+        sources: [],
+        plugins: [],
+        install_requests: [],
+        config_updates: [],
+        expanded_terms: [],
+      }
+    })
+
+    render(
+      <SearchWorkspace
+        open
+        helpSessionId="new"
+        initialQuestion="插件怎么设置？"
+        aiSearchRequestId={1}
+      />
+    )
+
+    expect(await screen.findByRole('region', { name: 'search.harness.title' })).toBeInTheDocument()
+    expect(screen.getByText('检查插件说明')).toBeInTheDocument()
+    expect(screen.getByText('search.harness.status.completed')).toBeInTheDocument()
+    expect(screen.getAllByText('search.harness.skill.setup')).toHaveLength(1)
+    expect(screen.queryByText('search.harness.skill.plugin')).not.toBeInTheDocument()
+    expect(screen.queryByText('核对旧计划')).not.toBeInTheDocument()
+  })
+
   it('保留与页面共用同一路径的配置项搜索结果', async () => {
     const user = userEvent.setup()
     render(<SearchDialog open onOpenChange={vi.fn()} />)
@@ -195,6 +316,9 @@ describe('SearchDialog', () => {
           model_name: 'test-utils-model',
           answer: '可以在 **人格设置** 中调整麦麦的性格描述。',
           suggestions: ['修改后先在 `测试群` 观察回复效果'],
+          plugins: [],
+          install_requests: [],
+          config_updates: [],
           sources: [
             {
               title: 'Bot 配置',
@@ -370,6 +494,9 @@ describe('SearchDialog', () => {
       model_name: 'test-utils-model',
       answer: '',
       suggestions: [],
+      plugins: [],
+      install_requests: [],
+      config_updates: [],
       sources: [],
       expanded_terms: [],
       results: [],
@@ -450,6 +577,9 @@ describe('SearchDialog', () => {
       model_name: 'test-utils-model',
       answer: '',
       suggestions: [],
+      plugins: [],
+      install_requests: [],
+      config_updates: [],
       sources: [],
       expanded_terms: [],
       results: [],
@@ -727,6 +857,9 @@ describe('SearchDialog', () => {
           model_name: 'test-utils-model',
           answer: '',
           suggestions: [],
+          plugins: [],
+          install_requests: [],
+          config_updates: [],
           sources: [],
           expanded_terms: ['性格'],
           results: [
@@ -748,7 +881,8 @@ describe('SearchDialog', () => {
     expect(await screen.findByText('search.progressStart')).toBeInTheDocument()
     expect(screen.getByText('search.progressPlanning')).toBeInTheDocument()
     expect(screen.getByText('search.progressCacheHit')).toBeInTheDocument()
-    expect(screen.getByText('search.progressSearchWebui')).toBeInTheDocument()
+    // 同一工具的「开始」紧跟「完成」时合成一步，只保留结果标题
+    expect(screen.queryByText('search.progressSearchWebui')).not.toBeInTheDocument()
     expect(screen.getByText('search.progressCompleted')).toBeInTheDocument()
     expect(screen.getByText('search.progressFailed')).toBeInTheDocument()
     expect(screen.getByText('search.progressReadDocs')).toBeInTheDocument()
@@ -816,6 +950,9 @@ describe('SearchDialog', () => {
           model_name: 'test-utils-model',
           answer: '不该出现的回答',
           suggestions: ['不该出现的建议'],
+          plugins: [],
+          install_requests: [],
+          config_updates: [],
           sources: [],
           expanded_terms: [],
           results: [{ id: 'c0', reason: '迟到推荐' }],

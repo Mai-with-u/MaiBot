@@ -116,7 +116,7 @@ def test_request_history_excludes_internal_messages(monkeypatch, retro: bool, vi
         # 图片预处理会读取真实消息媒体；此测试不涉及图片缩放。
         monkeypatch.setattr(generator, "_prepare_retro_visual_history", lambda messages: (messages, {}))
         items = generator._build_retro_request_messages(
-            chat_history=history, reply_message=None, reply_reason="", enable_visual_message=visual,
+            chat_history=history, reply_message=None, reply_reason="", enable_visual_message=visual, mai_replier=True,
         )
     else:
         items = generator._build_history_messages(history, enable_visual_message=visual)

@@ -381,7 +381,7 @@ export async function saveModelSetupConfig(config: ModelSetupConfig, providerNam
 
 // 标记设置完成
 export async function completeSetup() {
-  return backendApi.post('/api/webui/setup/complete', {
+  return authApi.post('/api/webui/setup/complete', {
     errorMessage: '标记设置完成失败',
   })
 }

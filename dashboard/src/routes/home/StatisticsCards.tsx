@@ -183,7 +183,7 @@ function StatisticsCardFrame({
   )
 }
 
-function formatNumber(value: number, locale: string): string {
+export function formatNumber(value: number, locale: string): string {
   const absoluteValue = Math.abs(value)
   if (absoluteValue >= 1_000_000) {
     return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(value / 1_000_000)}M`
@@ -203,7 +203,7 @@ function formatDateTime(value: string, locale: string): string {
   })
 }
 
-function formatCacheRate(value: number | null): string {
+export function formatCacheRate(value: number | null): string {
   return value === null ? 'N/A' : `${(value * 100).toFixed(2)}%`
 }
 
@@ -389,6 +389,7 @@ function StatisticsChartLegend({ config }: { config: ChartConfig }) {
   return (
     <div
       data-home-chart-guide="true"
+      data-chart-legend="true"
       className="flex h-7 shrink-0 items-center gap-4 px-2 text-[11px]"
     >
       {Object.entries(config).map(([key, item]) => (

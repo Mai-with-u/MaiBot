@@ -43,6 +43,7 @@ from .display_utils import (
 )
 from .preview_path_utils import build_display_path, build_file_uri, REPO_ROOT
 from .prompt_preview_logger import PromptPreviewLogger
+from .reasoning_steps import reasoning_trace_id
 
 logger = get_logger("maisaka_prompt_preview")
 
@@ -67,9 +68,9 @@ class PromptPreviewRouteTarget:
 def _build_webui_local_base_url() -> str:
     """构建终端可直接打开的本机 WebUI 地址。"""
 
-    from src.config.startup_bindings import get_local_http_base_url
+    from src.common.runtime_context import runtime_context
 
-    return get_local_http_base_url()
+    return runtime_context().public_base_url
 
 
 def _resolve_prompt_preview_route_target(file_path: Path) -> PromptPreviewRouteTarget | None:
@@ -143,17 +144,19 @@ class PromptCLIVisualizer:
     def _normalize_preview_metadata(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
         """规范化 Prompt 预览元数据，只保留 WebUI 需要稳定展示的字段。"""
 
-        if not metadata:
-            return {}
-
         normalized: dict[str, Any] = {}
+        trace_id = reasoning_trace_id.get()
+        if trace_id:
+            normalized["reasoning_trace_id"] = trace_id
+        if not metadata:
+            return normalized
         model_name = str(metadata.get("model_name") or metadata.get("model") or "").strip()
         if model_name:
             normalized["model_name"] = model_name
 
         if isinstance(metadata.get("prompt_cache_reported"), bool):
             normalized["prompt_cache_reported"] = metadata["prompt_cache_reported"]
-        for key in ("tool_choice", "request_source"):
+        for key in ("tool_choice", "request_source", "source_planner_uri", "reasoning_trace_id"):
             if isinstance(metadata.get(key), str):
                 normalized[key] = metadata[key]
 

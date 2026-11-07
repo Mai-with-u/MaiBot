@@ -14,6 +14,7 @@ def _runtime(monkeypatch, *, steering: bool) -> MaisakaHeartFlowChatting:
         SimpleNamespace(chat=SimpleNamespace(reply_timing=SimpleNamespace(planner_message_steering=steering))),
     )
     instance = object.__new__(MaisakaHeartFlowChatting)
+    instance.chat_stream = SimpleNamespace(is_group_session=True)
     instance._agent_state = MaisakaHeartFlowChatting._STATE_RUNNING
     instance._planner_interrupt = PlannerInterruptController()
     instance.log_prefix = "[test]"

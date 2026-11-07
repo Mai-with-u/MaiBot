@@ -1,0 +1,62 @@
+{
+  "schema_version": 2,
+  "required_capabilities": [
+    "custom_pages"
+  ],
+  "pages": [
+    {
+      "id": "group-mappings",
+      "title": "QQ 群与用户映射",
+      "description": "扫码连接 QQ 官方机器人，查看群和用户 OpenID 对应关系及头像。",
+      "icon": "list",
+      "mode": "custom",
+      "queries": {
+        "mappings": {
+          "api": "webui_mappings",
+          "version": "1"
+        },
+        "avatar": {
+          "api": "webui_mapping_avatar",
+          "version": "1",
+          "parameters": {
+            "kind": {
+              "type": "string",
+              "required": true,
+              "choices": [
+                "group",
+                "user"
+              ]
+            },
+            "openid": {
+              "type": "string",
+              "required": true
+            },
+            "source": {
+              "type": "string",
+              "choices": ["manual", "auto"]
+            },
+            "group_openid": {
+              "type": "string"
+            }
+          }
+        },
+        "login_status": {
+          "api": "webui_login_status",
+          "version": "1"
+        }
+      },
+      "entry": "webui/mappings.html",
+      "actions": {
+        "login_start": {
+          "api": "webui_login_start",
+          "version": "1",
+          "confirmation": "扫码授权成功后将替换当前机器人的 AppID / AppSecret 并自动启用连接，是否继续？"
+        },
+        "login_cancel": {
+          "api": "webui_login_cancel",
+          "version": "1"
+        }
+      }
+    }
+  ]
+}

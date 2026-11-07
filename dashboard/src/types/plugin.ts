@@ -19,18 +19,18 @@ export interface HostApplication {
 
 export type PluginType =
   | 'adapter'
-  | 'chat'
-  | 'creative'
+  | 'tool'
   | 'provider'
   | 'management'
-  | 'search'
-  | 'knowledge'
+  | 'data'
   | 'media'
   | 'game'
-  | 'security'
-  | 'automation'
-  | 'extension'
+  | 'integration'
   | 'other'
+  | 'chat'
+  | 'creative'
+  | 'automation'
+  | 'deskpet'
 
 export interface PluginDisplayIcon {
   type: 'lucide' | 'emoji' | 'local'
@@ -111,6 +111,8 @@ export interface PluginReleaseCatalog {
   mode: 'releases' | 'branch'
   versions: PluginRelease[]
   recommended_version: string | null
+  branch_compatible?: boolean
+  branch_reasons?: string[]
   sync_error?: string
   rejected_releases?: Array<{ tag: string; version: string; error: string }>
 }
@@ -137,13 +139,14 @@ export interface PluginInfo {
   manifest: PluginManifest
   /** 插件市场生成的派生资源 */
   assets?: PluginAssets
-  /** 下载量 */
-  downloads: number
+  /** 官方统计尚未获取或不存在时没有读数。 */
+  downloads?: number
   /** 评分 (0-5) */
-  rating: number
+  rating?: number
   /** 评价数量 */
-  review_count: number
+  review_count?: number
   /** 是否已安装 */
+  builtin?: boolean
   installed: boolean
   /** 安装的版本（如果已安装） */
   installed_version?: string
@@ -153,7 +156,6 @@ export interface PluginInfo {
   /** 最后更新时间 */
   updated_at: string
   /** 详细描述（可能包含 Markdown） */
-  detailed_description?: string
   /** 截图列表 */
   screenshots?: string[]
   /** 更新日志 */
@@ -204,6 +206,7 @@ export interface PluginSearchParams {
  * 已安装插件信息
  */
 export interface InstalledPlugin {
+  builtin?: boolean
   /** 插件 ID */
   id: string
   /** 插件清单 */

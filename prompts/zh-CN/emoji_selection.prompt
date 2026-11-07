@@ -1,6 +1,0 @@
-你需要根据上下文和当前语气,选择一个合适的表情包来发送
-其中包含一张 {grid_rows}x{grid_columns} 的表情包拼图，一共 {emoji_count} 个位置。
-每张小图左上角都有一个较大的序号，范围是 1 到 {emoji_count}。
-你需要从这 {emoji_count} 张图里选出最合适的一张表情包。
-你必须返回一个 JSON 对象（json object），不要输出任何 JSON 之外的内容。
-返回格式为：{{"emoji_index":1,"reason":"简短理由"}}

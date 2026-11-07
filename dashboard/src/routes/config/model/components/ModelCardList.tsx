@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { StreamlineIcon } from '@/components/ui/streamline-icon'
 
 import type { ModelInfo } from '../types'
+import { ModelTaskSummary } from './TaskAssignmentBoard'
 
 interface ModelCardListProps {
   /** 当前页显示的模型 (分页后的) */
@@ -24,6 +25,8 @@ interface ModelCardListProps {
   onTest: (modelName: string) => void
   /** 检查模型是否被使用 */
   isModelUsed: (modelName: string) => boolean
+  /** 模型负责的工作名称，和「分工」页对应 */
+  getModelTasks?: (modelName: string) => string[]
   /** 正在测试的模型名称集合 */
   testingModels: Set<string>
   /** 模型测试结果 */
@@ -75,6 +78,7 @@ export const ModelCardList = React.memo(function ModelCardList({
   onDelete,
   onTest,
   isModelUsed,
+  getModelTasks,
   testingModels,
   modelTestResults,
   searchQuery,
@@ -107,16 +111,8 @@ export const ModelCardList = React.memo(function ModelCardList({
                   >
                     {model.name}
                   </h3>
-                  <span
-                    className={`block h-3 w-3 shrink-0 rounded-full border ${
-                      used
-                        ? 'border-green-500 bg-green-500 shadow-[0_0_0_3px_rgba(34,197,94,0.18)]'
-                        : 'border-green-700/40 bg-green-950/20'
-                    }`}
-                    title={used ? '已使用' : '未使用'}
-                    aria-label={used ? '已使用' : '未使用'}
-                  />
                 </div>
+                <ModelTaskSummary used={used} tasks={getModelTasks?.(model.name) ?? []} className="mb-1" />
                 <p
                   className="text-muted-foreground line-clamp-2 text-[11px] leading-snug break-all"
                   title={model.model_identifier}

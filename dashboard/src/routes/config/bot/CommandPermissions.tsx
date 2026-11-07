@@ -94,6 +94,21 @@ export function CommandPermissions({ pluginSection, onChange }: Props) {
 
   return (
     <Card className="grid min-h-[34rem] overflow-hidden lg:grid-cols-[20rem_minmax(0,1fr)]">
+      <div className="flex items-center justify-between gap-3 border-b p-4 lg:col-span-2">
+        <div className="min-w-0">
+          <div className="text-sm font-medium">命令含 @ 时须提及自己</div>
+          <p className="text-muted-foreground mt-1 text-xs">
+            对所有命令生效。开启后，带 @ 的命令必须提及当前机器人；多个 @ 中包含自己即可。不带 @ 的命令照常执行。
+          </p>
+        </div>
+        <Switch
+          checked={pluginSection?.command_require_self_mention === true}
+          onCheckedChange={(checked) =>
+            onChange({ ...(pluginSection ?? {}), command_require_self_mention: checked })
+          }
+          aria-label="命令含 @ 时须提及自己"
+        />
+      </div>
       <aside className="border-b lg:border-r lg:border-b-0">
         <div className="border-b p-4">
           <div className="relative">

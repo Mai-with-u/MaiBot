@@ -131,7 +131,6 @@ MODULE_ALIASES = {
     "chat": "所见",
     "maisaka_turn_scheduler": "读空气",
     "chat_image": "识图",
-    "action_manager": "动作",
     "memory_activator": "记忆",
     "tool_use": "工具",
     "async_task_manager": "异步任务管理",

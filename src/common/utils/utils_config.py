@@ -495,7 +495,7 @@ class ChatConfigUtils:
             return 0.0 if ChatConfigUtils.is_private_reply_paused(session_id) else 1.0
 
         result = global_config.chat.reply_timing.talk_value
-        if not global_config.chat.reply_timing.enable_talk_value_rules or not global_config.chat.reply_timing.talk_value_rules:
+        if not global_config.chat.reply_timing.talk_value_rules:
             return result
         local_time = time.localtime()
         now_min = local_time.tm_hour * 60 + local_time.tm_min

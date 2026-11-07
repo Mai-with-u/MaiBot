@@ -12,6 +12,7 @@ import shutil
 import subprocess
 
 from src.plugin_market.releases import PluginRelease, PluginReleaseEntry
+from src.plugin_runtime.plugin_catalog import RECEIPT_NAME
 from src.plugin_runtime.runner.manifest_validator import ManifestValidator, PluginDependencyDefinition
 from src.webui.services.git_mirror_service import get_git_mirror_service
 
@@ -22,12 +23,9 @@ from .support import (
     load_manifest_json,
     parse_repository_url,
     remove_tree,
-    resolve_installed_plugin_path,
+    resolve_mutable_plugin_path,
     resolve_plugin_file_path,
 )
-
-RECEIPT_NAME = ".maibot-release.json"
-
 
 def _work_directory(plugin_root: Path, name: str) -> Path:
     directory = plugin_root / name
@@ -183,7 +181,7 @@ async def _install_release(
 
     operation = "update" if updating else "install"
     canonical_id = entry.manifest_id or plugin_id
-    existing = resolve_installed_plugin_path(canonical_id)
+    existing = resolve_mutable_plugin_path(canonical_id)
     if updating and existing is None:
         raise HTTPException(status_code=404, detail="插件未安装")
     if not updating and existing is not None:
@@ -278,7 +276,9 @@ async def _install_release(
         async def validate_and_replace() -> List[str]:
             warnings = await asyncio.to_thread(_validate_candidate, candidate, entry, release)
             await report_step(85, "文件校验通过，等待其他插件操作或运行环境重启完成...")
-            await run_on_main_loop(get_plugin_runtime_manager().run_plugin_file_update(replace_and_reload))
+            await run_on_main_loop(
+                get_plugin_runtime_manager().run_plugin_file_update(replace_and_reload, plugin_paths=[target])
+            )
             return warnings
 
         # 文件替换及运行时重载一旦开始就收尾完成，避免取消后删除仍被使用的候选目录。

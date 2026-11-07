@@ -2,6 +2,20 @@
 @source './**/*.{js,ts,jsx,tsx}';
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* 全主题统一关闭焦点框；重要声明放入独立层，覆盖主题中的重要样式。
+   只清除轮廓和 Tailwind 光圈，保留控件原有的立体阴影与选中状态。 */
+@layer dashboard-focus {
+  :focus,
+  :focus-visible,
+  :focus::before,
+  :focus::after {
+    outline: none !important;
+    --tw-ring-shadow: 0 0 #0000 !important;
+    --tw-ring-offset-shadow: 0 0 #0000 !important;
+    --tw-inset-ring-shadow: 0 0 #0000 !important;
+  }
+}
+
 @theme inline {
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
@@ -966,6 +980,18 @@
   line-height: 1.05;
   letter-spacing: 0;
   text-transform: uppercase;
+}
+
+/* Bot 切换入口复用铭牌与折叠色块，悬停和展开时保持可见反馈。 */
+[data-dashboard-logo-title='true'],
+button[data-dashboard-logo-spectrum-block='true'] {
+  transition: filter 150ms ease;
+}
+[data-dashboard-logo-title='true']:is(:hover, :focus-visible, [data-state='open']),
+button[data-dashboard-logo-spectrum-block='true']:is(:hover, :focus-visible, [data-state='open']) {
+  filter: brightness(1.2);
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 2px;
 }
 
 [data-dashboard-logo-spectrum='true'] {
@@ -2099,9 +2125,8 @@
   background-color: transparent;
 }
 
-/* 模型表格操作列固定右缘、统计表名称列固定左缘：retro 主题下 .bg-background 为透明，需用纸面实色遮盖滚动内容。
+/* 统计表名称列固定左缘：retro 主题下 .bg-background 为透明，需用纸面实色遮盖滚动内容。
    放在 .bg-background 透明规则之后，避免被其覆盖。 */
-:root[data-dashboard-style='future-retro'] [data-model-config-action-cell='true'],
 :root[data-dashboard-style='future-retro'] [data-statistics-sticky-cell='true'] {
   background-color: var(--retro-paper) !important;
   background-image: var(--retro-paper-brightness-overlay), var(--retro-paper-texture) !important;
@@ -3121,6 +3146,44 @@
   box-shadow:
     0 3px 0 rgb(0 0 0 / 0.42),
     0 6px 10px rgb(0 0 0 / 0.26) !important;
+}
+
+/* 设置导航只让控件悬浮，不让主题纹理随吸顶容器覆盖页面。 */
+:root [data-config-section-navigation='true'] {
+  background: transparent !important;
+  border: 0;
+  box-shadow: none;
+  pointer-events: none;
+  filter: drop-shadow(0 3px 4px rgb(0 0 0 / 0.14));
+}
+
+[data-config-section-navigation='true'] :is(button, a, label, [role='tablist'], nav),
+[data-config-section-navigation='true'] > span {
+  pointer-events: auto;
+}
+
+/* 无按钮外壳的文字仍有独立底色，避免与后面的表单文字重叠。 */
+[data-config-section-navigation='true'] label,
+[data-config-section-navigation='true'] > span {
+  background-color: hsl(var(--card));
+  border-radius: var(--radius);
+  padding: 0.5rem;
+}
+
+@keyframes config-navigation-lift {
+  from { filter: drop-shadow(0 0 0 rgb(0 0 0 / 0)); }
+  to { filter: drop-shadow(0 3px 4px rgb(0 0 0 / 0.14)); }
+}
+
+/* 使用最近滚动容器的进度；不支持滚动动画时保留静态阴影。 */
+@supports (animation-timeline: scroll()) {
+  @media (prefers-reduced-motion: no-preference) {
+    [data-config-section-navigation='true'] {
+      animation: config-navigation-lift linear both;
+      animation-timeline: scroll(nearest block);
+      animation-range: 0px 48px;
+    }
+  }
 }
 
 /* 闲置时仅隐藏滑块，保留滚动条空间，避免输入内容重排。 */

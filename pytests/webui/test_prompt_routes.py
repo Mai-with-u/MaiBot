@@ -5,7 +5,6 @@ from fastapi.testclient import TestClient
 import pytest
 
 from src.common.prompt_i18n import clear_prompt_cache
-from src.webui.dependencies import require_auth
 from src.webui.routers import config as config_router_module
 
 
@@ -23,7 +22,6 @@ def client_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClien
 
     app = FastAPI()
     app.include_router(config_router_module.router, prefix="/api/webui")
-    app.dependency_overrides[require_auth] = lambda: "test-token"
     return TestClient(app)
 
 

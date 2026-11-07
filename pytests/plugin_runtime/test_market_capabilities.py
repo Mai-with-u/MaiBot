@@ -1,13 +1,14 @@
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from threading import Event
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 import asyncio
 import json
 
 import pytest
 
-from src.plugin_market import documents, service, sources
+from src.plugin_market import documents, engagement, service, sources, statistics
 from src.plugin_market.cache import MarketCache
 from src.plugin_runtime.capabilities import market
 from src.plugin_runtime.host.authorization import AuthorizationManager
@@ -24,7 +25,8 @@ def item(plugin_id, downloads, rank):
             "version": "1.0.0", "description": "voice 语音", "categories": ["Audio"],
             "urls": {"repository": f"https://github.com/test/{plugin_id}"},
         },
-        "stats": {"downloads": downloads, "downloads_growth_rank_7d": rank},
+        "stats": {"plugin_id": plugin_id, "downloads": downloads, "likes": 3, "dislikes": 0,
+                  "rating": 4.0, "rating_count": 1, "comment_count": 2, "downloads_growth_rank_7d": rank},
     }
 
 
@@ -32,6 +34,7 @@ def item(plugin_id, downloads, rank):
 def catalog(tmp_path, monkeypatch):
     monkeypatch.setattr(sources, "SETTINGS_FILE", tmp_path / "source.json")
     monkeypatch.setattr(sources, "market_cache", MarketCache())
+    monkeypatch.setattr(engagement, "market_cache", sources.market_cache)
     monkeypatch.setattr(documents, "market_cache", MarketCache())
     monkeypatch.setattr(sources, "get_shared_ssl_context", lambda: None)
     monkeypatch.setattr(documents, "get_shared_ssl_context", lambda: None)
@@ -122,18 +125,138 @@ def test_download_source_change_rewrites_icons_from_cached_catalog(catalog, monk
     assert second["plugins"][2]["assets"] is None
 
 
-def test_source_change_uses_selected_source_and_exposes_unavailable_stats(catalog, monkeypatch):
+def test_source_change_keeps_catalog_and_statistics_independent(catalog, monkeypatch):
     asyncio.run(service.search(service.MarketSearch()))
     sources.SETTINGS_FILE.write_text('{"information_source":"cnb"}', encoding="utf-8")
     calls = []
     raw_items = [{"id": item["marketplace_id"], "manifest": item["manifest"]} for item in catalog["plugins"]]
     monkeypatch.setattr(sources.GitSource, "read_text", lambda url, *args: calls.append(url) or json.dumps({"schema_version": 1, "plugins": []} if "plugin_versions" in url else raw_items))
     result = asyncio.run(service.search(service.MarketSearch()))
-    assert result["source"] == "cnb" and not result["features"]["stats"]
+    assert result["source"] == "cnb" and result["features"]["stats"]
     assert not result["cache"]["hit"] and len(calls) == 2
     assert calls[0].startswith("https://cnb.cool/")
-    with pytest.raises(ValueError, match="不支持"):
-        asyncio.run(service.search(service.MarketSearch(include_stats=True)))
+    monkeypatch.setattr(sources.GitSource, "read_json", lambda *args: deepcopy(catalog))
+    with_stats = asyncio.run(service.search(service.MarketSearch(include_stats=True, sort_by="downloads")))
+    assert [plugin["id"] for plugin in with_stats["plugins"]] == ["b", "a", "c"]
+    assert with_stats["plugins"][0]["stats"]["downloads"] == 200
+
+
+@pytest.mark.parametrize("source", ["cnb", "github"])
+def test_statistics_reads_official_service_without_loading_catalog(catalog, monkeypatch, source):
+    sources.SETTINGS_FILE.write_text(json.dumps({"information_source": source}), encoding="utf-8")
+    monkeypatch.setattr(service, "_snapshot", AsyncMock(side_effect=AssertionError("statistics loaded catalog")))
+    calls = []
+    record = {**catalog["plugins"][0]["stats"], "recent_ratings": [{"comment": "review"}]}
+
+    def read(url, *args):
+        calls.append(url)
+        return deepcopy(catalog) if "/api/v2/" in url else {"success": True, "stats": record}
+
+    monkeypatch.setattr(sources.GitSource, "read_json", read)
+    summary = asyncio.run(statistics.get_summary())
+    detail = asyncio.run(service.get_stats("a"))
+    assert summary["source"] == detail["source"] == "official"
+    assert summary["stats"]["a"]["downloads"] == 100
+    assert detail["stats"]["recent_ratings"] == [{"comment": "review"}]
+    assert len(calls) == 2
+    assert calls[0].startswith(f"{sources.MARKET_BASE_URL}/api/v2/market/plugins/summary?")
+    assert calls[1] == f"{sources.MARKET_BASE_URL}/stats/a"
+
+
+def test_statistics_route_is_separate_from_plugin_detail(catalog, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from src.webui.routers.plugin.marketplace import router
+
+    read = AsyncMock(return_value={"success": True, "stats": {"a": catalog["plugins"][0]["stats"]}})
+    monkeypatch.setattr(statistics, "get_summary", read)
+    app = FastAPI()
+    app.include_router(router)
+    with TestClient(app) as client:
+        response = client.get("/marketplace/stats/summary?force_refresh=true")
+    assert response.status_code == 200
+    assert response.json()["stats"]["a"]["downloads"] == 100
+    read.assert_awaited_once_with(True)
+
+
+def test_statistics_preserve_official_ids_without_compatibility_mapping(catalog, monkeypatch):
+    catalog["plugins"][0]["stats"]["plugin_id"] = "legacy.repo.a"
+    summary = asyncio.run(statistics.get_summary())
+    assert "a" not in summary["stats"]
+    assert summary["stats"]["legacy.repo.a"]["plugin_id"] == "legacy.repo.a"
+    request = AsyncMock(return_value=engagement.MarketReply(200, {"success": True}))
+    monkeypatch.setattr(engagement, "_request", request)
+    asyncio.run(engagement.vote(engagement.VoteRequest(plugin_id="a", user_id="test")))
+    assert request.call_args.args[2]["plugin_id"] == "a"
+
+
+@pytest.mark.parametrize("invalid", [
+    {"downloads": True}, {"downloads": -1}, {"rating": None},
+])
+def test_invalid_statistics_are_exposed_and_not_cached(catalog, monkeypatch, invalid):
+    record = deepcopy(catalog["plugins"][0]["stats"])
+    record.update(invalid)
+    calls = []
+    monkeypatch.setattr(sources.GitSource, "read_json", lambda *args: calls.append(args[0]) or {
+        "plugins": [{**catalog["plugins"][0], "stats": record}],
+    })
+    with pytest.raises(ValueError):
+        asyncio.run(statistics.get_summary())
+    record.update(catalog["plugins"][0]["stats"])
+    assert asyncio.run(statistics.get_summary())["stats"]["a"]["downloads"] == 100
+    assert len(calls) == 2
+
+
+def test_mirror_catalog_does_not_wait_for_or_hide_statistics_failure(catalog, monkeypatch):
+    sources.SETTINGS_FILE.write_text('{"information_source":"cnb"}', encoding="utf-8")
+    raw_items = [{"id": item["marketplace_id"], "manifest": item["manifest"]} for item in catalog["plugins"]]
+    monkeypatch.setattr(sources.GitSource, "read_text", lambda url, *args: json.dumps(
+        {"schema_version": 1, "plugins": []} if "plugin_versions" in url else raw_items
+    ))
+    monkeypatch.setattr(sources.GitSource, "read_json", lambda *args: (_ for _ in ()).throw(OSError("stats offline")))
+    result = asyncio.run(service.get_catalog())
+    assert result["source"] == "cnb" and len(result["plugins"]) == 3
+    assert all(plugin["stats"] is None for plugin in result["plugins"])
+    with pytest.raises(OSError, match="stats offline"):
+        asyncio.run(statistics.get_summary())
+
+
+def test_interaction_invalidates_statistics_but_keeps_catalog_resources(catalog, monkeypatch):
+    urls = []
+    record = deepcopy(catalog["plugins"][0]["stats"])
+    monkeypatch.setattr(sources.GitSource, "read_json", lambda url, *args: urls.append(url) or {
+        "plugins": [{**catalog["plugins"][0], "stats": record}],
+    })
+    cache = sources.market_cache
+    mirror_key = "https://cnb.cool/plugin_details.json"
+    official_summary = f"{sources.MARKET_BASE_URL}/api/v2/market/plugins/summary?version=1"
+    official_detail = f"{sources.MARKET_BASE_URL}/api/v2/market/plugins/a?version=1"
+    for key in (mirror_key, official_summary, official_detail):
+        cache.get(key, lambda: {"cached": True}, 60)
+    asyncio.run(statistics.get_summary())
+    assert asyncio.run(statistics.get_summary())["cache"]["hit"]
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def request(self, *args, **kwargs):
+            return SimpleNamespace(status_code=200, is_success=True, json=lambda: {"success": True, "likes": 4})
+
+    monkeypatch.setattr(engagement.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(engagement, "get_shared_ssl_context_async", AsyncMock(return_value=None))
+    asyncio.run(engagement.vote(engagement.VoteRequest(plugin_id="a", user_id="test")))
+    assert not asyncio.run(statistics.get_summary())["cache"]["hit"]
+    assert len(urls) == 2
+    for key in (mirror_key, official_detail):
+        assert cache.get(key, lambda: pytest.fail("unrelated resource was invalidated"), 60)[1]["hit"]
+    assert not cache.get(official_summary, lambda: {"new": True}, 60)[1]["hit"]
 
 
 def test_failed_source_does_not_fallback_or_hide_error(catalog, monkeypatch):
@@ -352,12 +475,10 @@ def test_invalidating_inflight_market_request_prevents_old_cache_refill():
 def test_webui_uses_public_catalog_and_removed_read_routes_are_unavailable(catalog):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from src.webui.dependencies import require_auth
     from src.webui.routers.plugin import router
 
     app = FastAPI()
     app.include_router(router)
-    app.dependency_overrides[require_auth] = lambda: "test"
     with TestClient(app) as client:
         response = client.get("/plugins/marketplace")
         assert response.status_code == 200

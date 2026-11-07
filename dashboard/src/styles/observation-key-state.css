@@ -1,0 +1,14 @@
+/* 侧栏键位不可用：Bot 还在加载或没有运行时，依赖 Bot 的键变灰、不响应悬停和按下。 */
+[data-observation-key='true'][data-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.45;
+  box-shadow: none;
+  transform: none;
+}
+[data-observation-key='true'][data-disabled='true']:hover {
+  background: var(--obs-key-bg);
+}
+:root[data-dashboard-style='millennium'] [data-observation-key='true'][data-disabled='true'] {
+  padding-bottom: 0.25rem;
+  border-style: dashed;
+}

@@ -17,7 +17,12 @@ def project_planner_snapshot(payload: Dict[str, Any]) -> Dict[str, Any]:
     if request is not None:
         projected["request"] = {key: value for key, value in request.items() if key != "messages"}
     projected["tools"] = [
-        {key: value for key, value in tool.items() if key != "detail"}
+        {
+            **{key: value for key, value in tool.items() if key != "detail"},
+            # 回复正文属于展示内容，裁掉完整详情时仍需保留。
+            **({"reply_text": tool["detail"].get("output_text", "")}
+               if tool.get("tool_name") == "reply" and isinstance(tool.get("detail"), dict) else {}),
+        }
         for tool in payload["tools"]
     ]
     return projected

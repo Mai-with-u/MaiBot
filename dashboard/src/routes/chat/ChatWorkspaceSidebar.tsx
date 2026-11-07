@@ -15,6 +15,8 @@ import type { SessionInfo, StageStatusInfo } from '@/routes/monitor/use-maisaka-
 import { StageStatusLabel } from '@/routes/monitor/StageStatusLabel'
 import { getStageStatusLight } from '@/routes/monitor/stage-status-light'
 
+import { useChatTabAvatarUrl } from './local-bot-avatar'
+import { isFocusFlowId } from './observed-sessions'
 import type { ChatMessage, ChatTab, ObservedMessagePreview } from './types'
 import { getChatTabDisplayName } from './utils'
 import { ObservedConversationHoverCard } from './ObservedConversationHoverCard'
@@ -59,10 +61,7 @@ const ConversationItem = memo(function ConversationItem({
   const lastMessage = tab.messages[tab.messages.length - 1]
   const preview = getMessagePreview(lastMessage, t('chat.sidebar.emptyPreview'))
   const displayName = getChatTabDisplayName(tab, t('chat.botNameFallback'))
-  const avatarUrl = useResolvedAvatarUrl(
-    isVirtual ? tab.virtualConfig?.platform : 'qq',
-    isVirtual ? tab.virtualConfig?.userId : tab.sessionInfo.bot_qq
-  )
+  const avatarUrl = useChatTabAvatarUrl(tab)
   return (
     <ConversationListItem
       title={displayName}
@@ -151,7 +150,7 @@ const ObservedConversationItem = memo(function ObservedConversationItem({
             {status?.stage && <span className="truncate"><StageStatusLabel status={status} /></span>}
           </span>
         }
-        actions={
+        actions={isFocusFlowId(session.sessionId) ? undefined : (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -168,7 +167,7 @@ const ObservedConversationItem = memo(function ObservedConversationItem({
               {t('chat.sidebar.openSettings', { name: session.sessionName })}
             </TooltipContent>
           </Tooltip>
-        }
+        )}
       />
       </ObservedConversationHoverCard>
   )
@@ -233,6 +232,10 @@ export function ChatWorkspaceSidebar({
       : sortedObservedSessions,
     [normalizedQuery, sortedObservedSessions]
   )
+  const observedSections = [
+    { title: 'Focus 共享流', sessions: filteredObservedSessions.filter((session) => isFocusFlowId(session.sessionId)) },
+    { title: '聊天会话', sessions: filteredObservedSessions.filter((session) => !isFocusFlowId(session.sessionId)) },
+  ].filter((section) => section.sessions.length > 0)
   const showAgent = agentEnabled && (!normalizedQuery || t('sidebar.menu.agent').toLowerCase().includes(normalizedQuery))
   const showLocalSection = !normalizedQuery || filteredTabs.length > 0
   const showObservedSection = !normalizedQuery || filteredObservedSessions.length > 0
@@ -336,16 +339,21 @@ export function ChatWorkspaceSidebar({
                         {t('chat.sidebar.waitingObservedChats')}
                       </p>
                     ) : (
-                      filteredObservedSessions.map((session) => (
-                        <ObservedConversationItem
-                          key={session.sessionId}
-                          session={session}
-                          status={observedStageStatuses.get(session.sessionId)}
-                          latestMessage={observedLatestMessages.get(session.sessionId)}
-                          active={!agentActive && activeObservedSessionId === session.sessionId}
-                          onSelect={onSelectObserved}
-                          onOpenSettings={onOpenObservedSettings}
-                        />
+                      observedSections.map((section) => (
+                        <div key={section.title}>
+                          <h3 className="text-muted-foreground px-2.5 pt-2 pb-1 text-xs">{section.title}</h3>
+                          {section.sessions.map((session) => (
+                            <ObservedConversationItem
+                              key={session.sessionId}
+                              session={session}
+                              status={observedStageStatuses.get(session.sessionId)}
+                              latestMessage={observedLatestMessages.get(session.sessionId)}
+                              active={!agentActive && activeObservedSessionId === session.sessionId}
+                              onSelect={onSelectObserved}
+                              onOpenSettings={onOpenObservedSettings}
+                            />
+                          ))}
+                        </div>
                       ))
                     )}
                   </div>
