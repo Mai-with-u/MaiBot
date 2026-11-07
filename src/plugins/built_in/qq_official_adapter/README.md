@@ -19,12 +19,13 @@
 ```toml
 [plugin]
 enabled = true
-config_version = "0.4.13"
+config_version = "0.4.15"
 
 [qq_official]
 app_id = "你的 AppID"
 app_secret = "你的 AppSecret"
 api_base_url = "https://api.bot.qq.com"
+# 以下三项在 WebUI 的“其他来源信息同步”节显示，配置文件仍保存在 [qq_official] 下。
 # 可选：统一账号 ID（如 NapCat 机器人 QQ 号）。填写后聊天流按该 ID 归属，
 # 与同一 platform 下的其它适配器（如 SnowLuma/NapCat）共享上下文。
 unified_account_id = ""
@@ -44,6 +45,8 @@ enabled = true
 allowed_groups = []
 
 [advanced]
+# 在日志中逐条显示主动／被动发送方式，被动发送同时标出目标消息 ID 和回复序号。
+show_debug_info = false
 # 断线重连间隔（秒）。
 reconnect_delay_sec = 5.0
 
@@ -54,11 +57,12 @@ ignore_other_bots = true
 
 ## 出站消息
 
-- 文本、@（含 @ 时以 markdown 发送以渲染真实 @）、图片与表情（jpg/png/gif/webp/bmp）、语音（SILK/MP3/WAV/OGG，最大 20 MB）。群聊与单聊均可发送语音。
+- 文本、@（含 @ 时以 markdown 发送以渲染真实 @）、图片与表情（jpg/png/gif/webp/bmp）、语音（SILK/MP3/WAV/OGG，最大 20 MB）、MP4 视频与普通文件（最大 100 MiB）。群聊与单聊均可使用。
 - 官方一条消息只能承载一种内容，混合消息按原顺序拆成多条发送；每条各占一个被动回复序号（群聊每条入站消息最多被动回复 5 次）。
-- 图片/表情与语音走官方分片上传（`upload_prepare` → 分片 PUT → `upload_part_finish` → `files` 合并）取得 `file_info`，再以 `msg_type=7` 发送；语音使用 `file_type=3`，显示为语音条。
+- 图片/表情、语音、视频与文件走官方分片上传（`upload_prepare` → 分片 PUT → `upload_part_finish` → `files` 合并）取得 `file_info`，再以 `msg_type=7` 发送；视频使用 `file_type=2`，语音使用 `file_type=3`，普通文件使用 `file_type=4`。
 - 语音接收标准 `voice` 段的 `binary_data_base64`，按文件头识别格式，可直接发送 TTS 插件生成的 MP3；适配器不负责语音合成或转码。空数据、非法 Base64、未知格式及超限语音会明确返回发送失败，不转成文字或普通文件。
-- 普通文件出站暂不支持，会直接返回发送失败。
+- 普通文件接收标准 `file` 段，保留 `data.name` 文件名。支持宿主签发的 `file_ref` 下载票据或小文件的 `data.base64`；不读取任意本机路径，也不直接下载插件自填 URL。宿主附件在主程序检查聊天归属后下载，大小不符、超限、下载或上传失败直接报告失败。
+- 视频可用 SDK `send.custom("video", {"name": "sample.mp4", "base64": "..."}, stream_id)` 发送；宿主的 `dict` 包装由适配器识别。普通 `file` 段即使包含 MP4 也仍按文件发送，不自动改变媒体类型。Base64 传输还受宿主 RPC 消息大小限制，大文件应使用文件服务。
 - 被动回复只使用宿主明确传入的 `reply_to` 锚点；无锚点的定时推送按主动消息发送，不占用最近入站消息的回复额度。`reply_to` 不决定客户端引用样式，显示引用须提供标准 `reply` 段。
 
 ## 扫码登录

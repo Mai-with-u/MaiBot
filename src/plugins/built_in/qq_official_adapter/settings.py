@@ -10,7 +10,7 @@ class PluginSettings(PluginConfigBase):
     __ui_order__: ClassVar[int] = 0
 
     enabled: bool = Field(default=False, description="启用 QQ 官方机器人连接")
-    config_version: str = Field(default="0.4.13", description="配置版本")
+    config_version: str = Field(default="0.4.15", description="配置版本")
 
 
 class QQOfficialSettings(PluginConfigBase):
@@ -84,6 +84,12 @@ class FilterSettings(PluginConfigBase):
 class AdvancedSettings(PluginConfigBase):
     __ui_label__: ClassVar[str] = "高级设置"
     __ui_order__: ClassVar[int] = 5
+
+    show_debug_info: bool = Field(
+        default=False,
+        description="在日志中逐条显示消息按主动还是被动方式发送；被动发送同时显示目标消息 ID 和回复序号",
+        json_schema_extra={"label": "显示调试信息"},
+    )
 
     reconnect_delay_sec: float = Field(
         default=5.0,

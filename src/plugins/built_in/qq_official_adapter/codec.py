@@ -17,6 +17,7 @@ GROUP_EVENTS = {GROUP_EVENT, GROUP_MESSAGE_EVENT}
 SUPPORTED_EVENTS = GROUP_EVENTS | {PRIVATE_EVENT}
 # 超过语音软限制时官方会降级成文件，适配器应在上传前明确拒绝。
 MAX_OUTBOUND_VOICE_BYTES = 20 * 1024 * 1024
+MAX_OUTBOUND_FILE_BYTES = 100 * 1024 * 1024
 
 QQ_ATTACHMENT_TAG_PATTERN = re.compile(r"<attachmentType=.*?>", re.IGNORECASE)
 QQ_FACE_TAG_PATTERN = re.compile(r"<faceType=.*?>", re.IGNORECASE)
@@ -439,6 +440,11 @@ def encode_message(
     for segment in segments:
         if not isinstance(segment, Mapping):
             raise ValueError("出站消息段格式无效")
+        # SDK send.custom("video", ...) 经宿主序列化为 dict 包装，保留明确的视频类型。
+        if segment.get("type") == "dict" and isinstance(segment.get("data"), Mapping):
+            custom = segment["data"]
+            if custom.get("type") == "video":
+                segment = custom
         if segment.get("type") == "reply":
             # reply 段不进入正文，但需把被回复消息 id 交给调用方，由其映射为
             # 官方 message_reference（REFIDX），否则 QQ 客户端不显示引用样式。
@@ -476,8 +482,13 @@ def encode_message(
             _flush_text()
             outbound.append({"kind": "media", "file_type": 3, **_decode_voice_segment(segment)})
             continue
+        if segment.get("type") in {"file", "video"}:
+            _flush_text()
+            file_type = 2 if segment["type"] == "video" else 4
+            outbound.append({"kind": "media", "file_type": file_type, **_decode_file_segment(segment)})
+            continue
         if segment.get("type") != "text":
-            raise ValueError(f"出站暂不支持 {segment.get('type')} 消息段，仅支持文本、@、图片、表情与语音")
+            raise ValueError(f"出站暂不支持 {segment.get('type')} 消息段，仅支持文本、@、图片、表情、语音、视频与文件")
         data = segment.get("data")
         if not isinstance(data, str):
             raise ValueError("出站文本段的数据必须是字符串")
@@ -486,6 +497,43 @@ def encode_message(
     if not outbound:
         raise ValueError("出站消息为空")
     return scene, target_id, outbound, reply_target_id
+
+
+def _decode_file_segment(segment: Mapping[str, Any]) -> Dict[str, Any]:
+    """文件保持原文件名；宿主附件使用已校验归属的下载票据，不经 RPC 搬运大文件。"""
+    data = segment.get("data")
+    if not isinstance(data, Mapping):
+        raise ValueError("出站文件/视频段的数据必须是对象")
+    name = data.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("出站文件/视频缺少文件名")
+    name = name.strip()
+    if name in {".", ".."} or any(c in name for c in ("/", "\\")) or any(ord(c) < 32 for c in name):
+        raise ValueError("出站文件名不能包含路径或控制字符")
+    if segment["type"] == "file" and data.get("file_ref"):
+        # 此 URL 由 Host 的 PluginDriver 根据 file_ref 重新签发，不能使用插件提供的任意 URL。
+        url = data.get("url")
+        if not isinstance(url, str) or not url:
+            raise ValueError("出站附件缺少宿主下载票据")
+        size = int(data.get("size") or 0)
+        if not 0 < size <= MAX_OUTBOUND_FILE_BYTES:
+            raise ValueError("出站文件大小必须在 1 字节至 100 MiB 之间")
+        return {"file_name": name, "file_url": url, "file_size": size}
+    raw_base64 = data.get("base64")
+    if not isinstance(raw_base64, str) or not raw_base64.strip():
+        raise ValueError("出站文件/视频需要 base64 内容；普通文件也可使用宿主 file_ref")
+    raw_base64 = raw_base64.strip()
+    if len(raw_base64) > ((MAX_OUTBOUND_FILE_BYTES + 2) // 3) * 4:
+        raise ValueError("出站文件/视频不能超过 100 MiB")
+    try:
+        binary = base64.b64decode(raw_base64, validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError("出站文件/视频内容不是有效的 Base64") from None
+    if not binary or len(binary) > MAX_OUTBOUND_FILE_BYTES:
+        raise ValueError("出站文件/视频大小必须在 1 字节至 100 MiB 之间")
+    if segment["type"] == "video" and binary[4:8] != b"ftyp":
+        raise ValueError("出站视频需为 MP4 格式")
+    return {"file_name": name, "binary": binary}
 
 
 def _decode_voice_segment(segment: Mapping[str, Any]) -> Dict[str, Any]:

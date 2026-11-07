@@ -842,7 +842,9 @@ async def _execute_reply(
                     stream_id=tool_ctx.runtime.session_id,
                     processed_plain_text=segment,
                     set_reply=segment_set_quote,
-                    reply_message=segment_reply_message,
+                    # 引用上一段只改变显示目标；所有分段仍回复原始入站消息，沿用其被动额度。
+                    reply_message=target_message,
+                    quote_message=segment_reply_message,
                     selected_expressions=reply_result.selected_expression_ids or None,
                     typing=index > 0,
                     sync_to_maisaka_history=True,

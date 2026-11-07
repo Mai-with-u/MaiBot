@@ -23,6 +23,7 @@ from src.common.paths import resolve_plugin_config_path
 
 from .codec import (
     GROUP_EVENTS,
+    MAX_OUTBOUND_FILE_BYTES,
     PLATFORM,
     QQ_FACE_TAG_PATTERN,
     SUPPORTED_EVENTS,
@@ -68,6 +69,31 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
     """使用 QQ 开放平台的 WebSocket 事件和 OpenAPI 接入 MaiBot。"""
 
     config_model: ClassVar[Optional[Type[PluginConfigBase]]] = AdapterSettings
+
+    @classmethod
+    def build_config_schema(cls, **kwargs: str) -> Dict[str, Any]:
+        """将跨适配器同步选项单独展示，保持已有配置的读写路径。"""
+        schema = super().build_config_schema(**kwargs)
+        sections = schema["sections"]
+        official_fields = sections["qq_official"]["fields"]
+        sync_fields = {
+            name: official_fields.pop(name)
+            for name in ("unified_account_id", "silent_user_sync", "snowluma_identity_only")
+        }
+        for section in sections.values():
+            if section["order"] >= 2:
+                section["order"] += 1
+        sections["other_source_sync"] = {
+            # WebUI 按 name 读取和保存值；展示节独立，仍写回原 qq_official 配置。
+            "name": "qq_official",
+            "title": "其他来源信息同步",
+            "description": "",
+            "icon": None,
+            "collapsed": False,
+            "order": 2,
+            "fields": sync_fields,
+        }
+        return schema
 
     config_widgets: ClassVar[List[ConfigWidget]] = [
         ConfigWidget(id="connection", kind="status", label="连接状态"),
@@ -1446,7 +1472,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         route_type="duplex",
         platform=PLATFORM,
         protocol="qq_official",
-        description="QQ 官方机器人群聊与单聊消息网关（文本、@、图片、表情、语音）",
+        description="QQ 官方机器人群聊与单聊消息网关（文本、@、图片、表情、语音、视频、文件）",
     )
     async def handle_qq_official_gateway(
         self,
@@ -1479,11 +1505,15 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
             # 未选中引用时也可能存在，不能据此绕过主程序的引用频率控制。
             quote_target = reply_target_id
             base_path = f"/v2/{'groups' if scene == 'group' else 'users'}/{quote(target, safe='')}"
-            # 官方一条消息只承载一种内容，文本、图片与语音按原顺序逐条发送。
+            # 官方一条消息只承载一种内容，文本与各类媒体按原顺序逐条发送。
             for index, part in enumerate(parts):
                 if part["kind"] == "media":
+                    binary = (
+                        await self._download_outbound_file(part["file_url"], part["file_size"])
+                        if "file_url" in part else part["binary"]
+                    )
                     file_info = await self._upload_media(
-                        base_path, part["binary"], part["file_name"], file_type=part["file_type"]
+                        base_path, binary, part["file_name"], file_type=part["file_type"]
                     )
                     body: Dict[str, Any] = {"msg_type": 7, "media": {"file_info": file_info}}
                 else:
@@ -1656,6 +1686,17 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         request_options: Dict[str, Any] = {}
         if timeout is not None:
             request_options["timeout"] = ClientTimeout(total=timeout)
+        # 在实际消息请求前记录最终凭证，覆盖每个分片及绑定回执；上传请求不计为发言。
+        if self.config.advanced.show_debug_info and path.endswith("/messages"):
+            passive_target = payload.get("msg_id")
+            self.ctx.logger.info(
+                "QQ 官方发送调试: 准备发送 方式=%s 接口=%s 被动目标消息=%s msg_seq=%s msg_type=%s",
+                "被动" if passive_target else "主动",
+                path,
+                passive_target if passive_target else "无",
+                payload.get("msg_seq"),
+                payload.get("msg_type"),
+            )
         async with session.post(
             self._api_url(path),
             headers={"Authorization": f"QQBot {token}"},
@@ -1676,8 +1717,33 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
                 raise RuntimeError(f"QQ 接口 {path.rsplit('/', 1)[-1]} 失败: HTTP {response.status} {detail}")
         return result
 
+    async def _download_outbound_file(self, url: str, expected_size: int) -> bytes:
+        """读取 Host 签发的附件；允许本机 HTTP 文件服务，拒绝重定向及大小不符。"""
+        parsed = urlsplit(url)
+        if (parsed.scheme not in {"http", "https"} or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None):
+            raise ValueError("宿主附件下载地址无效")
+        if not 0 < expected_size <= MAX_OUTBOUND_FILE_BYTES:
+            raise ValueError("出站文件大小必须在 1 字节至 100 MiB 之间")
+        session = self._require_session()
+        async with session.get(
+            url, allow_redirects=False, timeout=ClientTimeout(total=MEDIA_UPLOAD_TIMEOUT_SEC),
+        ) as response:
+            if response.status != 200:
+                raise RuntimeError(f"宿主附件下载失败: HTTP {response.status}")
+            if response.content_length is not None and response.content_length != expected_size:
+                raise ValueError("宿主附件下载大小与声明不一致")
+            binary = bytearray()
+            async for chunk in response.content.iter_chunked(256 * 1024):
+                if len(binary) + len(chunk) > expected_size:
+                    raise ValueError("宿主附件下载超过声明大小")
+                binary.extend(chunk)
+        if len(binary) != expected_size:
+            raise ValueError("宿主附件下载不完整")
+        return await asyncio.to_thread(bytes, binary)
+
     async def _upload_media(self, base_path: str, binary: bytes, file_name: str, *, file_type: int) -> str:
-        """按官方分片上传流程上传图片或语音，返回用于 msg_type=7 的 file_info。
+        """按官方分片上传流程上传图片、语音、视频或文件，返回用于 msg_type=7 的 file_info。
 
         流程：upload_prepare 取预签名分片 URL → 逐片 PUT 并 upload_part_finish → 携带 upload_id 调用 files 合并。
         """
