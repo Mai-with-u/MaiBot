@@ -435,12 +435,19 @@ function getFieldGridClassName(field: ConfigFieldSchema): string {
   return 'min-w-0'
 }
 
+function getVisibleSectionFields(sectionName: string, section: ConfigSectionSchema) {
+  const isPluginSection = (section.name || sectionName) === 'plugin'
+  return Object.entries(section.fields).filter(([name, field]) => (
+    !field.hidden && !(isPluginSection && (name === 'enabled' || name === 'config_version'))
+  ))
+}
+
 function SectionRenderer({ sectionName, section, config, onChange, initiallyExpanded = false }: SectionRendererProps) {
   const resolvedSectionName = section.name || sectionName
   // SDK 把顶层标量配置归入 general 展示，实际值仍保存在配置根部。
   const configPath = resolvedSectionName === 'general' && !getNestedRecord(config, 'general') ? '' : resolvedSectionName
   const [isOpen, setIsOpen] = useState(
-    resolvedSectionName !== 'plugin' && (initiallyExpanded || !section.collapsed)
+    resolvedSectionName === 'plugin' || initiallyExpanded || !section.collapsed
   )
   const { i18n } = useTranslation()
   const language = i18n.resolvedLanguage || i18n.language || 'zh'
@@ -455,8 +462,7 @@ function SectionRenderer({ sectionName, section, config, onChange, initiallyExpa
   )
 
   // 按 order 排序字段
-  const sortedFields = Object.entries(section.fields)
-    .filter(([, field]) => !field.hidden)
+  const sortedFields = getVisibleSectionFields(sectionName, section)
     .sort(([, a], [, b]) => (a.order ?? 0) - (b.order ?? 0))
   const fieldGroups = new Map<string, typeof sortedFields>()
   for (const entry of sortedFields) {
@@ -1279,10 +1285,18 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
   }
 
   // 按 order 排序 sections
-  const sortedSections = Object.entries(schema?.sections ?? {}).sort(
-    ([, a], [, b]) => (a.order ?? 0) - (b.order ?? 0)
-  )
-  const schemaTabs = schema?.layout.type === 'tabs' ? schema.layout.tabs : []
+  const sortedSections = Object.entries(schema?.sections ?? {})
+    .filter(([name, section]) => (
+      (section.name || name) !== 'plugin' || getVisibleSectionFields(name, section).length > 0
+    ))
+    .sort(([, a], [, b]) => (a.order ?? 0) - (b.order ?? 0))
+  const visibleSectionNames = new Set(sortedSections.map(([name]) => name))
+  // 同时移除已隐藏的节及空标签页，避免手机端或自定义布局留下空白入口。
+  const schemaTabs = schema?.layout.type === 'tabs'
+    ? schema.layout.tabs
+        .map((tab) => ({ ...tab, sections: tab.sections.filter((name) => visibleSectionNames.has(name)) }))
+        .filter((tab) => tab.sections.length > 0)
+    : []
   // 保留插件声明的布局；仅移动端为未分组的多节配置生成横向切换标签。
   const configTabs: ConfigTabSchema[] = schemaTabs.length > 0
     ? schemaTabs

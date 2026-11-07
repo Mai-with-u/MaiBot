@@ -1,10 +1,10 @@
 """答疑 Agent 的插件检索、安装准备和配置工具，以及本次请求内的操作记录。"""
 
+from fastapi import HTTPException
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Any, Dict, List
 from urllib.parse import quote
 from uuid import uuid4
-
-from pydantic import BaseModel, ConfigDict, Field
 import asyncio
 import httpx
 
@@ -208,7 +208,7 @@ class AISearchMarketStore:
                 raise ValueError("list_installed_plugins 不接受参数")
             return await list_installed_plugins()
         if name == "read_plugin_config":
-            return await self.config.read(PluginReference.model_validate(arguments).plugin_id)
+            return await self._read_plugin_config(PluginReference.model_validate(arguments).plugin_id)
         if name == "update_plugin_config":
             return await self.config.update(PluginConfigPatch.model_validate(arguments))
         if name == "prepare_plugin_install":
@@ -220,6 +220,17 @@ class AISearchMarketStore:
         if name == "read_plugin_readme":
             return await self._read_plugin_readme(PluginReadme.model_validate(arguments))
         raise ValueError(f"未知插件工具: {name}")
+
+    async def _read_plugin_config(self, plugin_id: str) -> Dict[str, Any]:
+        try:
+            return await self.config.read(plugin_id)
+        except HTTPException:
+            # 配置解析可以在未加载时成功；仅在解析被拒绝时补充已记录的加载诊断。
+            installed = await list_installed_plugins()
+            plugin = next((item for item in installed["plugins"] if item["id"] == plugin_id), None)
+            if plugin is None or plugin["load_status"] not in {"failed", "timed_out"}:
+                raise
+            return {"plugin": plugin, "message": "当前无法读取插件配置，请根据 load_status 和 load_error 说明加载情况"}
 
     async def _prepare_install(self, request: PluginInstall) -> Dict[str, Any]:
         result = await service.get_detail(request.plugin_id)

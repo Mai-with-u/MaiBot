@@ -416,6 +416,10 @@ class ComponentQueryService:
             # function_args 可由模型构造，不能用其中的身份或会话字段授权。
             if not can_use_plugin(plugin_id):
                 return {"success": False, "content": "插件使用权限不足：请通过带核心会话上下文的工具入口调用。"}
+            if invoke_method == "plugin.invoke_action":
+                function_args = ComponentQueryService._build_tool_invocation_payload(
+                    ToolInvocation(component_name, arguments=function_args), None, legacy_action=True
+                )
             try:
                 response = await supervisor.invoke_plugin(
                     method=invoke_method,
@@ -592,12 +596,15 @@ class ComponentQueryService:
     def _build_tool_invocation_payload(
         invocation: ToolInvocation,
         context: Optional[ToolExecutionContext],
+        *,
+        legacy_action: bool = False,
     ) -> Dict[str, Any]:
         """构造插件工具执行时发送给 Runner 的参数。
 
         Args:
             invocation: 统一工具调用请求。
             context: 统一工具执行上下文。
+            legacy_action: 是否补齐旧 Action 所需的参数。
 
         Returns:
             Dict[str, Any]: 发往 Runner 的参数字典。
@@ -608,6 +615,15 @@ class ComponentQueryService:
         for key, value in context_payload.items():
             if key not in payload or not payload.get(key):
                 payload[key] = value
+        if legacy_action:
+            # 旧插件通过 action_data 接收业务参数，通过 chat_id 定位聊天流。
+            stream_id = str(context_payload.get("stream_id") or invocation.stream_id).strip()
+            payload.update(
+                stream_id=stream_id,
+                chat_id=stream_id,
+                reasoning=context.reasoning if context is not None else invocation.reasoning,
+                action_data=dict(invocation.arguments),
+            )
         return payload
 
     @staticmethod
@@ -749,7 +765,9 @@ class ComponentQueryService:
                 success=False,
                 error_message="当前平台不在插件工具的 platforms 作用域内。",
             )
-        invoke_payload = self._build_tool_invocation_payload(invocation, context)
+        invoke_payload = self._build_tool_invocation_payload(
+            invocation, context, legacy_action=tool_entry.is_legacy_action
+        )
 
         from src.files.service import get_file_service
 

@@ -5637,6 +5637,19 @@ class PluginConfig(ConfigBase):
             "label": {
                 "zh_CN": "不显示无权限提示",
                 "en_US": "Hide permission denied notice",
+    command_require_self_mention: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "命令含 @ 时须提及自己",
+                "en_US": "Commands with mentions must mention this bot",
+                "ja_JP": "メンション付きコマンドは自分へのメンションが必要",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """开启后，命令消息包含结构化 @ 时，必须提及当前接收账号；不含 @ 的命令不受影响。"""
+
                 "ja_JP": "権限なし通知を非表示",
             },
             "x-widget": "switch",

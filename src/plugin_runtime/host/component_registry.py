@@ -10,7 +10,7 @@
 """
 
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Set, Tuple, TypedDict
+from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Tuple, TypedDict
 
 import contextlib
 import re
@@ -51,6 +51,7 @@ class ComponentRegistrationError(ValueError):
 
 
 class ComponentTypes(str, Enum):
+    ACTION = "ACTION"
     COMMAND = "COMMAND"
     TOOL = "TOOL"
     EVENT_HANDLER = "EVENT_HANDLER"
@@ -200,19 +201,26 @@ class ToolEntry(ComponentEntry):
         allowed_session: Optional[List[str]] = None,
     ) -> None:
         self.platforms: Set[str] = _normalize_platforms(metadata.get("platforms"), "Tool")
-        if (
+        invoke_method = metadata.get("invoke_method", "plugin.invoke_tool")
+        if invoke_method not in ("plugin.invoke_tool", "plugin.invoke_action"):
+            raise ValueError("工具组件必须通过 plugin.invoke_tool 或 plugin.invoke_action 调用")
+        if invoke_method == "plugin.invoke_tool" and (
             metadata.get("legacy_action")
             or str(metadata.get("legacy_component_type", "")).strip().upper() == "ACTION"
-            or metadata.get("invoke_method", "plugin.invoke_tool") != "plugin.invoke_tool"
         ):
-            raise ValueError("工具组件必须通过 plugin.invoke_tool 调用")
+            raise ValueError("旧 Action 工具组件必须通过 plugin.invoke_action 调用")
 
         metadata = normalize_tool_description(metadata)
         self.description: str = metadata["description"]
         self.parameters: List[Dict[str, Any]] = metadata.get("parameters", [])
         self.parameters_raw: Dict[str, Any] | List[Dict[str, Any]] = metadata.get("parameters_raw", {})
-        self.invoke_method: str = str(metadata.get("invoke_method", "plugin.invoke_tool") or "plugin.invoke_tool").strip()
+        self.invoke_method: str = invoke_method
         super().__init__(name, component_type, plugin_id, metadata, chat_scope, allowed_session)
+
+    @property
+    def is_legacy_action(self) -> bool:
+        """判断该工具是否承载旧 Action。"""
+        return self.invoke_method == "plugin.invoke_action"
 
     def _get_parameters_schema(self) -> Dict[str, Any] | None:
         """获取当前工具条目的对象级参数 Schema。
@@ -548,6 +556,23 @@ class ComponentRegistry:
         self._hook_spec_registry = hook_spec_registry
 
     @staticmethod
+    def _normalize_action_metadata(metadata: Dict[str, Any]) -> None:
+        """为旧 ACTION 声明补齐统一工具参数 Schema 和调用方式。"""
+        action_parameters = metadata.get("action_parameters")
+        if "parameters_raw" not in metadata and isinstance(action_parameters, dict):
+            properties: Dict[str, Dict[str, str]] = {}
+            for raw_name, description in action_parameters.items():
+                name = str(raw_name or "").strip()
+                if name:
+                    properties[name] = {
+                        "type": "string",
+                        "description": str(description or "").strip() or "兼容旧 Action 参数",
+                    }
+            if properties:
+                metadata["parameters_raw"] = {"type": "object", "properties": properties}
+        metadata.update(invoke_method="plugin.invoke_action", legacy_action=True, legacy_component_type="ACTION")
+
+    @staticmethod
     def _normalize_component_type(component_type: str) -> ComponentTypes:
         """规范化组件类型输入。
 
@@ -649,6 +674,9 @@ class ComponentRegistry:
             ):
                 raise ValueError(f"回复扩展命名空间与另一插件冲突：{existing.full_name}")
             normalized_metadata = dict(metadata)
+            if normalized_type == ComponentTypes.ACTION:
+                self._normalize_action_metadata(normalized_metadata)
+                normalized_type = ComponentTypes.TOOL
             if normalized_type == ComponentTypes.COMMAND:
                 component = CommandEntry(
                     name,
@@ -757,6 +785,8 @@ class ComponentRegistry:
         self._components[component.full_name] = component
         self._by_type[component.component_type][component.full_name] = component
         self._by_plugin.setdefault(component.plugin_id, []).append(component)
+        if isinstance(component, ToolEntry) and component.is_legacy_action:
+            logger.warning(f"插件 {component.plugin_id} 的组件 {component.name} 仍在使用已弃用的 Action，请迁移到 Tool")
 
     # ====== 注册 / 注销 ======
     def register_component(
@@ -985,14 +1015,22 @@ class ComponentRegistry:
             logger.error(f"组件类型 {component_type} 不存在")
             raise
 
-        type_dict = self._by_type.get(comp_type, {})
+        components: Iterable[ComponentEntry]
+        if comp_type == ComponentTypes.ACTION:
+            components = (
+                component
+                for component in self._by_type[ComponentTypes.TOOL].values()
+                if isinstance(component, ToolEntry) and component.is_legacy_action
+            )
+        else:
+            components = self._by_type[comp_type].values()
         if enabled_only:
             return [
                 c
-                for c in type_dict.values()
+                for c in components
                 if self.check_component_enabled(c, session_id, is_group_chat, group_id, platform)
             ]
-        return list(type_dict.values())
+        return list(components)
 
     def get_components_by_plugin(
         self, plugin_id: str, *, enabled_only: bool = True, session_id: Optional[str] = None
