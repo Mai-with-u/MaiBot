@@ -580,7 +580,9 @@ function ModelConfigPageContent() {
   const { startTour: handleStartTour, stopTour: handleStopTour, isRunning: tourIsRunning } = useModelTour({
     onOpenEditDialog: () => openEditDialog(null, null),
     onCloseEditDialog: () => setEditDialogOpen(false),
-    onOpenProviderDialog: () => openProviderDialog(null, null),
+    onOpenProviderDialog: () => {
+      if (!providerDialogOpen) openProviderDialog(null, null)
+    },
     onCloseProviderDialog: () => setProviderDialogOpen(false),
     onOpenProvidersTab: () => handleActiveTabChange('configuration'),
     onOpenModelsTab: () => handleActiveTabChange('configuration'),

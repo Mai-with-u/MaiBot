@@ -6,6 +6,7 @@ import { type ReactNode, useState } from 'react'
 import { ChevronDown, Plus, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { DashedButton } from '@/components/ui/dashed-button'
 import {
   Dialog,
   DialogBody,
@@ -163,9 +164,9 @@ export function TaskAssignmentBoard({
                     <h3 className="text-base font-semibold">{meta.name}</h3>
                   </div>
                   <p className="text-xs text-muted-foreground">{meta.desc}</p>
-                  <button type="button" data-task-card-add="true" onClick={() => onOpenTaskChange(field.name)}>
+                  <DashedButton className="mt-auto h-11" onClick={() => onOpenTaskChange(field.name)}>
                     + 安排模型
-                  </button>
+                  </DashedButton>
                 </div>
               )
             }
@@ -205,8 +206,8 @@ export function TaskAssignmentBoard({
 
       {advancedFields.length > 0 && (
         <section>
-          <button
-            type="button"
+          <DashedButton
+            className="h-auto justify-start"
             data-task-board-more="true"
             aria-expanded={advancedVisible}
             aria-controls="task-board-advanced"
@@ -215,7 +216,7 @@ export function TaskAssignmentBoard({
             <b>MORE</b>
             <span>进阶 · {advancedOn} / {advancedFields.length} 已开启</span>
             <ChevronDown className="ml-auto h-4 w-4" aria-hidden="true" data-task-board-chevron="true" />
-          </button>
+          </DashedButton>
           {advancedVisible && (
             <DataPanel id="task-board-advanced" padding="none" data-task-board-list="true">
               {advancedFields.map((field) => {
@@ -234,9 +235,9 @@ export function TaskAssignmentBoard({
                       {empty ? meta.fallback ?? '未开启' : list.length > 1 ? `${list[0]} +${list.length - 1}` : list[0]}
                     </span>
                     {empty ? (
-                      <button type="button" data-task-row-add="true" onClick={() => onOpenTaskChange(field.name)}>
+                      <DashedButton className="h-7" data-task-row-add="true" onClick={() => onOpenTaskChange(field.name)}>
                         + 开启
-                      </button>
+                      </DashedButton>
                     ) : (
                       <Button type="button" size="sm" variant="outline" onClick={() => onOpenTaskChange(field.name)}>
                         编辑

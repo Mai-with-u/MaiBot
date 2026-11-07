@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import { Plus } from 'lucide-react'
 import { useTheme } from '@/components/use-theme'
 
 import {
@@ -14,6 +15,7 @@ import { Board, BoardModule, BoardScreen } from '@/components/ui/board'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
+import { DashedButton } from '@/components/ui/dashed-button'
 import {
   Dialog,
   DialogContent,
@@ -22,6 +24,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Progress } from '@/components/ui/progress'
@@ -75,6 +83,26 @@ const examples: ComponentExample[] = [
         )}
         <Button disabled>禁用</Button>
       </div>
+    ),
+  },
+  {
+    name: 'DashedButton',
+    file: 'dashed-button',
+    category: '基础',
+    description: '虚线按钮：用于添加厂商、安排模型等操作。千禧风格下，悬停时像键帽一样凸起，按下或展开菜单时呈现压入效果。',
+    preview: (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <DashedButton className="w-full">
+            <Plus className="size-3.5" aria-hidden="true" />
+            添加条目
+          </DashedButton>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          <DropdownMenuItem>手动添加</DropdownMenuItem>
+          <DropdownMenuItem>从模板添加</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     ),
   },
   {

@@ -205,12 +205,12 @@ describe('useModelTour', () => {
     // jsdom 中元素包围盒全为 0，点击坐标 (0,0) 会被判定为命中目标
     vi.useFakeTimers()
     const view = setup(runningState(2))
-    addTourElement('add-llm-provider-item')
+    addTourElement('add-provider-button')
     const outside = document.createElement('div')
     document.body.appendChild(outside)
 
     outside.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 0, clientY: 0 }))
-    expect(view.callbacks.onOpenProviderDialog).toHaveBeenCalledTimes(1)
+    expect(view.callbacks.onOpenProviderDialog).not.toHaveBeenCalled()
 
     vi.advanceTimersByTime(300)
     expect(view.fns.goToStep).toHaveBeenCalledWith(3)

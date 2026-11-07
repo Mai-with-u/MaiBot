@@ -163,11 +163,7 @@ export function useModelTour(options: UseModelTourOptions = {}): UseModelTourRet
       if (currentStep === 1 && didClickTourTarget(event, '[data-tour="providers-tab-trigger"]')) {
         onOpenProvidersTab?.()
         setTimeout(() => goToStep(2), 300)
-      } else if (
-        currentStep === 2 &&
-        didClickTourTarget(event, '[data-tour="add-llm-provider-item"]')
-      ) {
-        onOpenProviderDialog?.()
+      } else if (currentStep === 2 && didClickTourTarget(event, '[data-tour="add-provider-button"]')) {
         setTimeout(() => goToStep(3), 300)
       } else if (
         currentStep === 9 &&
@@ -209,7 +205,6 @@ export function useModelTour(options: UseModelTourOptions = {}): UseModelTourRet
     goToStep,
     onOpenEditDialog,
     onCloseEditDialog,
-    onOpenProviderDialog,
     onCloseProviderDialog,
     onOpenProvidersTab,
     onOpenModelsTab,
