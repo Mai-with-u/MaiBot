@@ -218,11 +218,6 @@ display_name = "外部 Agent 接続ガイド"
 advanced = true
 description = "外部 Agent 接続ガイド。"
 
-[agent_acp_computer]
-display_name = "外部 Agent のコンピューター操作"
-advanced = true
-description = "外部 Agent のコンピューター操作。"
-
 [agent_acp_environment]
 display_name = "外部 Agent 環境説明"
 advanced = true

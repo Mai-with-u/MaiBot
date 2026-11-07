@@ -218,11 +218,6 @@ display_name = "External agent policy"
 advanced = true
 description = "External agent policy。"
 
-[agent_acp_computer]
-display_name = "External agent computer usage"
-advanced = true
-description = "External agent computer usage。"
-
 [agent_acp_environment]
 display_name = "External agent environment"
 advanced = true

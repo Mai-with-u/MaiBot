@@ -91,11 +91,10 @@ def resource_files(source: Path) -> Dict[str, str]:
             if path.is_file() and path.suffix in {".prompt", ".toml", ".json"}:
                 relative = path.relative_to(source).as_posix()
                 resources[relative] = f"src/_resources/{relative}"
-    for directory in ("src/desktop_pet", "src/computer"):
-        for path in (source / directory).rglob("*"):
-            if path.is_file() and path.suffix != ".py" and not any(part.startswith(".") or part == "__pycache__" for part in path.relative_to(source).parts):
-                relative = path.relative_to(source).as_posix()
-                resources[relative] = relative
+    for path in (source / "src/desktop_pet").rglob("*"):
+        if path.is_file() and path.suffix != ".py" and not any(part.startswith(".") or part == "__pycache__" for part in path.relative_to(source).parts):
+            relative = path.relative_to(source).as_posix()
+            resources[relative] = relative
     return resources
 
 

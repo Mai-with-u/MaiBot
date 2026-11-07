@@ -16,7 +16,6 @@ import os
 from src.common.async_work import run_sync_work
 from src.common.data_models.message_component_data_model import ImageComponent
 from src.common.json_storage import read_json, write_json
-from src.computer.provider import ComputerToolProvider
 from src.files.provider import FileToolProvider
 
 from src.llm_models.payload_content.context_item import (
@@ -130,7 +129,7 @@ class AcpAgent:
         from .provider import AgentToolProvider
 
         self.mcp = ToolMCPServer(
-            [AgentToolProvider(self.service), ComputerToolProvider(self.service.computer, visible=True), FileToolProvider()],
+            [AgentToolProvider(self.service), FileToolProvider()],
             self.service.agent_id, self.config.acp_timeout, port=self.config.mcp_port,
         )
         self.connection = ACPConnection(self._update)

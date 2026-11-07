@@ -97,8 +97,7 @@
       "market": "마켓",
       "prompt": "Prompt",
       "data": "데이터",
-      "logs": "로그",
-      "computer": "PC"
+      "logs": "로그"
     },
     "expandSidebar": "사이드바 펼치기",
     "collapseSidebar": "사이드바 접기",

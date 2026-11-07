@@ -214,12 +214,6 @@ const reasoningProcessRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/logs'), 'ReasoningLogViewerPage'),
 })
 
-const computerRoute = createRoute({
-  getParentRoute: () => protectedRoute,
-  path: '/computer',
-  component: lazyRouteComponent(() => import('./routes/computer'), 'ComputerPage'),
-})
-
 const filesRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/files',
@@ -461,7 +455,6 @@ const routeTree = rootRoute.addChildren([
     logsRoute,
     reasoningProcessRoute,
     agentRoute,
-    computerRoute,
     filesRoute,
     chatManagementRoute,
     chatRoute,
