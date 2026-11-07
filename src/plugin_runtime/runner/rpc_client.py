@@ -248,6 +248,19 @@ class RPCClient:
 
     async def _recv_loop(self) -> None:
         """持续接收 Host 发来的消息并分发。"""
+        try:
+            await self._recv_frames()
+        finally:
+            # 接收循环结束意味着连接已不可用：关闭连接并让等待中的请求立即失败，而不是等到超时
+            if self._connection is not None:
+                await asyncio.shield(self._connection.close())
+            for future in self._pending_requests.values():
+                if not future.done():
+                    future.set_exception(RPCError(ErrorCode.E_UNKNOWN, "与 Host 的连接已断开"))
+            self._pending_requests.clear()
+
+    async def _recv_frames(self) -> None:
+        """循环读取并分发帧，直到连接断开或任务被取消。"""
         while self._running and self._connection is not None and not self._connection.is_closed:
             try:
                 data = await self._connection.recv_frame()
