@@ -491,7 +491,7 @@ function ObservationHomeContent() {
           <span data-board-badge="true">{t('observation.unread', { count: unreadCount })}</span>
         ) : undefined,
       body: (
-        <BoardScreen className="flex flex-col">
+        <BoardScreen className="flex flex-col overflow-y-auto">
           {news.length === 0 ? (
             <p data-board-label="true" className="m-auto">
               {newsState.isNewsLoading ? t('observation.loading') : t('observation.noNews')}

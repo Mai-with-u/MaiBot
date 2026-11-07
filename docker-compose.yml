@@ -11,7 +11,6 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - MAIBOT_LEGACY_0X_UPGRADE_CONFIRMED=1 # Docker 无法交互确认旧版升级迁移，默认跳过确认提示
-      - MAIBOT_STATISTICS_REPORT_PATH=/MaiMBot/data/maibot_statistics.html # 统计数据输出到共享目录，首次运行可自动创建文件
       - HTTP_HOST=0.0.0.0 # Docker 中需要监听全部容器网卡，宿主机才能通过端口映射访问 WebUI
     ports:
       - "18001:8001" # webui端口

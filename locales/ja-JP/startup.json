@@ -12,7 +12,7 @@
   "startup.env_template_missing": ".env ファイルが見つからず、テンプレート template/template.env も見つかりませんでした",
   "startup.event_loop_closed": "[メインプロセス] イベントループが閉じました",
   "startup.graceful_shutdown_error": "グレースフルシャットダウン中にエラーが発生しました: {error}",
-  "startup.initialization_completed_banner": "\n--------------------------------\n全システムの初期化が完了しました。{nickname} の起動に成功しました\n--------------------------------\n{nickname} の機能をカスタマイズしたい場合はこちら: https://docs.mai-mai.org/manual/usage/\n問題が発生した場合はドキュメントをご参照ください: https://docs.mai-mai.org/\n--------------------------------\nプラグインの開発や詳細については開発ドキュメントをご覧ください: https://docs.mai-mai.org/develop/\n--------------------------------\nモデルの使用量やMaiBotの統計データは、ルートディレクトリの maibot_statistics.html からご確認いただけます\n",
+  "startup.initialization_completed_banner": "\n--------------------------------\n全システムの初期化が完了しました。{nickname} の起動に成功しました\n--------------------------------\n{nickname} の機能をカスタマイズしたい場合はこちら: https://docs.mai-mai.org/manual/usage/\n問題が発生した場合はドキュメントをご参照ください: https://docs.mai-mai.org/\n--------------------------------\nプラグインの開発や詳細については開発ドキュメントをご覧ください: https://docs.mai-mai.org/develop/\n",
   "startup.initialization_completed_cycles": "初期化完了、ニューロンが {init_time} 回発火しました",
   "startup.interrupt_received": "割り込みシグナルを受信しました。グレースフルシャットダウンを開始します...",
   "startup.launching_script": "{script_file} を起動中...",

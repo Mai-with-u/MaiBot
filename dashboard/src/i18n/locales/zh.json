@@ -255,7 +255,6 @@
     "empty": "当前统计时段暂无数据",
     "actions": {
       "refresh": "刷新",
-      "openHtml": "打开 HTML 版",
       "compare": "环比上一周期",
       "details": "查看明细"
     },
@@ -1990,8 +1989,7 @@
         "modelTasks": "打开模型管理 / 为模型分配功能",
         "botConfig": "打开麦麦主程序配置",
         "emojiManagement": "打开表情包资源管理",
-        "expressionManagement": "打开表达方式管理",
-        "statistics": "打开 maibot_statistics.html"
+        "expressionManagement": "打开表达方式管理"
       },
       "categories": {
         "system": "系统",

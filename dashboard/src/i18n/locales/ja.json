@@ -255,7 +255,6 @@
     "empty": "この期間のデータはありません",
     "actions": {
       "refresh": "更新",
-      "openHtml": "HTML版を開く",
       "compare": "Compare with previous",
       "details": "Details"
     },
@@ -1993,8 +1992,7 @@
         "modelTasks": "モデル管理 / 機能割り当てを開く",
         "botConfig": "MaiBot 本体設定を開く",
         "emojiManagement": "絵文字リソース管理を開く",
-        "expressionManagement": "表現管理を開く",
-        "statistics": "maibot_statistics.html を開く"
+        "expressionManagement": "表現管理を開く"
       },
       "categories": {
         "system": "システム",

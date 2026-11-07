@@ -49,10 +49,6 @@ export default defineConfig({
         cookieDomainRewrite: '',  // 移除域名限制
         cookiePathRewrite: '/',   // 确保路径一致
       },
-      '/maibot_statistics.html': {
-        target: 'http://127.0.0.1:8001',
-        changeOrigin: true,
-      },
     },
   },
   resolve: {

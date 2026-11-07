@@ -246,7 +246,6 @@
     "empty": "이 기간에는 데이터가 없습니다",
     "actions": {
       "refresh": "새로고침",
-      "openHtml": "HTML 버전 열기",
       "compare": "Compare with previous",
       "details": "Details"
     },
@@ -1928,8 +1927,7 @@
         "modelTasks": "모델 관리 / 기능 할당 열기",
         "botConfig": "MaiBot 코어 설정 열기",
         "emojiManagement": "이모지 리소스 관리 열기",
-        "expressionManagement": "표현 관리 열기",
-        "statistics": "maibot_statistics.html 열기"
+        "expressionManagement": "표현 관리 열기"
       },
       "categories": {
         "system": "시스템",

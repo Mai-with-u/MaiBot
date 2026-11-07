@@ -657,7 +657,7 @@
 [data-observation-news-row='true'] {
   display: flex;
   flex: 1;
-  min-height: 0;
+  min-height: 2.5rem;
   align-items: center;
   gap: 0.625rem;
   font-size: 0.8125rem;
@@ -980,7 +980,7 @@
 }
 
 /* ---------- 中尺寸（面板 56–81.25rem，约 1366–1600 宽的窗口）----------
-   排法与宽屏相同，只收紧字号与间距；统计、资讯、模型各少显示一项，注脚类文字不显示。 */
+   排法与宽屏相同，收紧字号与间距；统计和模型减少展示项，注脚类文字不显示。 */
 @container observation-home (max-width: 84rem) {
   [data-observation-home='true'] { gap: 0.875rem; }
   [data-observation-home-head='true'] { gap: 1.25rem; min-height: 3.25rem; }
@@ -1009,8 +1009,6 @@
   [data-observation-disk-total='true'] { font-size: 1.25rem; }
   [data-observation-disk-row='true'] { grid-template-columns: 2.5rem minmax(0, 1fr) 3.25rem; gap: 0.5rem; font-size: 0.6875rem; }
   [data-observation-news-row='true'] { gap: 0.5rem; font-size: 0.75rem; }
-  [data-observation-news-row='true']:nth-of-type(n + 3) { display: none; }
-  [data-observation-news-row='true']:nth-of-type(2) { border-bottom: 0; }
   [data-observation-news-row='true'] > [data-board-label='true'] { display: none; }
 
   /* 统计概览：两个主读数上排并列，Token 与平均响应在下排，其余去掉 */

@@ -255,7 +255,6 @@
     "empty": "No data for this period",
     "actions": {
       "refresh": "Refresh",
-      "openHtml": "Open HTML report",
       "compare": "Compare with previous",
       "details": "Details"
     },
@@ -1993,8 +1992,7 @@
         "modelTasks": "Open Model Management / Task assignments",
         "botConfig": "Open MaiBot core configuration",
         "emojiManagement": "Open emoji resource management",
-        "expressionManagement": "Open expression management",
-        "statistics": "Open maibot_statistics.html"
+        "expressionManagement": "Open expression management"
       },
       "categories": {
         "system": "System",

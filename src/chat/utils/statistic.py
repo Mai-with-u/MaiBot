@@ -1,8 +1,5 @@
 from collections import defaultdict
 from datetime import datetime, timedelta
-from html import escape
-from os import getenv
-from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Callable, DefaultDict, Dict, List, Mapping, Tuple, cast
 
@@ -50,10 +47,6 @@ if TYPE_CHECKING:
     )
 
 logger = get_logger("maibot_statistic")
-
-STATISTICS_REPORT_PATH_ENV = "MAIBOT_STATISTICS_REPORT_PATH"
-DEFAULT_STATISTICS_REPORT_PATH = "maibot_statistics.html"
-
 
 class _LocalStorageProxy:
     """延迟访问本地存储，避免导入统计任务时读取完整本地记事本。"""
@@ -208,14 +201,6 @@ PERIOD_TREND_BUCKET_MINUTES: Dict[str, int] = {
 PERIOD_TREND_MAX_RANGE = timedelta(days=30)
 EMBEDDING_TASK_NAMES = frozenset({"embedding", "image_embedding"})
 _DURATION_CATEGORIES = ("type", "user", "model", "module", "task")
-
-
-def _resolve_statistics_report_path(record_file_path: str | None = None) -> str:
-    if record_file_path:
-        return record_file_path
-
-    configured_path = getenv(STATISTICS_REPORT_PATH_ENV, "").strip()
-    return configured_path or DEFAULT_STATISTICS_REPORT_PATH
 
 
 class StatPeriodData(TypedDict):
@@ -442,35 +427,13 @@ def _format_online_time(online_seconds: int) -> str:
         return f"{minutes}分钟{seconds}秒"
 
 
-def _format_large_number(num: float | int, html: bool = False) -> str:
-    """
-    格式化大数字，使用K后缀节省空间（大于9999时）
-    :param num: 要格式化的数字
-    :param html: 是否用于HTML输出（如果是，K会着色）
-    :return: 格式化后的字符串，如 12K, 1.3K, 120K
-    """
+def _format_large_number(num: float | int) -> str:
+    """格式化大数字，使用 K 后缀节省空间。"""
     if num >= 10000:
-        # 大于等于10000，使用K后缀
-        value = num / 1000.0
-        if value >= 10:
-            number_part = str(int(value))
-            k_suffix = "K"
-        else:
-            number_part = f"{value:.1f}"
-            k_suffix = "K"
-
-        if html:
-            # HTML输出：K着色为主题色并加粗大写
-            return f"{number_part}<span style='color: var(--statistics-primary); font-weight: bold;'>K</span>"
-        else:
-            # 控制台输出：纯文本，K大写
-            return f"{number_part}{k_suffix}"
-    else:
-        # 小于10000，直接显示
-        if isinstance(num, float):
-            return f"{num:.1f}" if num != int(num) else str(int(num))
-        else:
-            return str(num)
+        return f"{int(num / 1000.0)}K"
+    if isinstance(num, float):
+        return f"{num:.1f}" if num != int(num) else str(int(num))
+    return str(num)
 
 
 _normalize_prompt_cache_tokens = normalize_prompt_cache_tokens
@@ -481,17 +444,6 @@ def _format_cache_hit_rate(hit_tokens: int, miss_tokens: int) -> str:
     if total_cache_tokens <= 0:
         return "N/A"
     return f"{hit_tokens / total_cache_tokens * 100:.2f}%"
-
-
-def _json_for_html_script(value: object) -> str:
-    json_text = json.dumps(value, ensure_ascii=False)
-    return (
-        json_text.replace("&", "\\u0026")
-        .replace("<", "\\u003c")
-        .replace(">", "\\u003e")
-        .replace("\u2028", "\\u2028")
-        .replace("\u2029", "\\u2029")
-    )
 
 
 def _build_llm_owner_distribution(values_by_type: Mapping[str, float]) -> Dict[str, float]:
@@ -520,10 +472,10 @@ class StatisticOutputTask(AsyncTask):
 
     SEP_LINE = "-" * 84
     RUN_INTERVAL_SECONDS = 15 * 60
-    # 报表之后补做回填的时间上限；每 20 秒约 58 万条，足够一次补完百万级的历史
-    BACKFILL_AFTER_REPORT_SECONDS = 120.0
+    # 统计输出之后补做回填的时间上限；每 20 秒约 58 万条，足够一次补完百万级的历史
+    BACKFILL_AFTER_OUTPUT_SECONDS = 120.0
 
-    def __init__(self, record_file_path: str | None = None):
+    def __init__(self):
         # 启动后立即运行，之后每15分钟输出一次统计数据
         super().__init__(
             task_name="Statistics Data Output Task",
@@ -535,11 +487,6 @@ class StatisticOutputTask(AsyncTask):
         """
             联系人/群聊名称映射 {聊天ID: (联系人/群聊名称, 记录时间（timestamp）)}
             注：设计记录时间的目的是方便更新名称，使联系人/群聊名称保持最新
-        """
-
-        self.record_file_path: str = _resolve_statistics_report_path(record_file_path)
-        """
-        记录文件路径
         """
 
         now = datetime.now()
@@ -555,18 +502,18 @@ class StatisticOutputTask(AsyncTask):
         self._all_time_start_resolved = False
         self.all_time_start_time = deploy_time
 
-        self.stat_period: list[tuple[str, timedelta, str]] = [
-            ("all_time", now - self.all_time_start_time, "自部署以来"),  # 必须保留"all_time"
-            ("last_30_days", timedelta(days=30), "近30天"),
-            ("last_7_days", timedelta(days=7), "近7天"),
-            ("last_3_days", timedelta(days=3), "近3天"),
-            ("last_24_hours", timedelta(days=1), "近1天"),
-            ("last_3_hours", timedelta(hours=3), "近3小时"),
-            ("last_hour", timedelta(hours=1), "近1小时"),
-            ("last_15_minutes", timedelta(minutes=15), "近15分钟"),
+        self.stat_period: List[Tuple[str, timedelta]] = [
+            ("all_time", now - self.all_time_start_time),  # 必须保留"all_time"
+            ("last_30_days", timedelta(days=30)),
+            ("last_7_days", timedelta(days=7)),
+            ("last_3_days", timedelta(days=3)),
+            ("last_24_hours", timedelta(days=1)),
+            ("last_3_hours", timedelta(hours=3)),
+            ("last_hour", timedelta(hours=1)),
+            ("last_15_minutes", timedelta(minutes=15)),
         ]
         """
-        统计时间段 [(统计名称, 统计时间段, 统计描述), ...]
+        统计时间段 [(统计名称, 统计时间段), ...]
         """
 
 
@@ -578,7 +525,7 @@ class StatisticOutputTask(AsyncTask):
 
         self.all_time_start_time = get_earliest_statistics_time(self._deploy_time)
         self.stat_period = [item for item in self.stat_period if item[0] != "all_time"]
-        self.stat_period.insert(0, ("all_time", now - self.all_time_start_time, "自部署以来"))
+        self.stat_period.insert(0, ("all_time", now - self.all_time_start_time))
         self._all_time_start_resolved = True
 
 
@@ -617,7 +564,7 @@ class StatisticOutputTask(AsyncTask):
             # 使用线程池并行执行耗时操作
             loop = asyncio.get_event_loop()
 
-            # 在线程池中收集数据，再并行生成控制台输出和 HTML 报告。
+            # 在线程池中收集数据，再并行输出控制台统计和刷新详细统计快照。
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 logger.info("正在收集统计数据...")
 
@@ -641,19 +588,17 @@ class StatisticOutputTask(AsyncTask):
                 try:
                     await refresh_dashboard_statistics_cache(usage_hourly=self._usage_hourly)
                 except Exception as e:
-                    logger.warning(f"刷新 WebUI 统计缓存失败，将继续生成 HTML 报告: {e}")
+                    logger.warning(f"刷新 WebUI 首页统计缓存失败，将继续刷新详细统计快照: {e}")
                 logger.info(f"统计数据收集完成，首页缓存刷新耗时={perf_counter() - stage_started_at:.2f}s")
 
-                # 并行执行控制台输出和HTML报告生成
                 stage_started_at = perf_counter()
                 console_task = loop.run_in_executor(executor, self._statistic_console_output, stats, now)
-                html_task = loop.run_in_executor(executor, self._generate_html_report, stats, now)
+                snapshot_task = loop.run_in_executor(executor, self._refresh_detailed_statistics_snapshot, stats, now)
 
-                # 等待两个输出任务完成
-                await asyncio.gather(console_task, html_task)
+                await asyncio.gather(console_task, snapshot_task)
 
             logger.info(
-                f"统计数据输出完成，报表输出耗时={perf_counter() - stage_started_at:.2f}s，"
+                f"统计数据输出完成，统计输出耗时={perf_counter() - stage_started_at:.2f}s，"
                 f"总耗时={perf_counter() - started_at:.2f}s"
             )
             await self._finish_usage_hourly_backfill()
@@ -661,9 +606,9 @@ class StatisticOutputTask(AsyncTask):
             logger.exception(f"输出统计数据过程中发生异常，错误信息：{e}")
 
     async def _finish_usage_hourly_backfill(self) -> None:
-        """本轮已用明细出完报表；汇总还没追上时接着回填，让下一轮直接用上汇总。
+        """本轮已用明细完成统计输出；汇总还没追上时接着回填，让下一轮直接用上汇总。
 
-        单轮开头的回填受时间预算限制，记录多时一轮回填不完；这里在报表之后补做，不影响本轮耗时。
+        单轮开头的回填受时间预算限制，记录多时一轮回填不完；这里在统计输出之后补做，不影响本轮耗时。
         失败照常按退避重试，不抛出。
         """
         usage_hourly = getattr(self, "_usage_hourly", None)
@@ -672,10 +617,10 @@ class StatisticOutputTask(AsyncTask):
         started_at = perf_counter()
         loop = asyncio.get_running_loop()
         state = await loop.run_in_executor(
-            None, lambda: refresh_usage_hourly(time_budget_seconds=self.BACKFILL_AFTER_REPORT_SECONDS)
+            None, lambda: refresh_usage_hourly(time_budget_seconds=self.BACKFILL_AFTER_OUTPUT_SECONDS)
         )
         logger.info(
-            f"报表之后继续回填小时汇总：耗时={perf_counter() - started_at:.2f}s，"
+            f"统计输出之后继续回填小时汇总：耗时={perf_counter() - started_at:.2f}s，"
             f"{'已追上，下一轮改读汇总' if state.ready else '仍未追上，下一轮继续'}"
         )
 
@@ -1107,7 +1052,7 @@ class StatisticOutputTask(AsyncTask):
                 self.stat_period = [
                     item for item in self.stat_period if item[0] != "all_time"
                 ]  # 删除"所有时间"的统计时段
-                self.stat_period.append(("all_time", now - last_stat_timestamp, "自部署以来的"))
+                self.stat_period.append(("all_time", now - last_stat_timestamp))
         except Exception as e:
             logger.warning(f"加载上次完整统计数据失败，进行全量统计，错误信息：{e}")
 
@@ -1698,7 +1643,7 @@ class StatisticOutputTask(AsyncTask):
 
         earliest_start = now - PERIOD_TREND_MAX_RANGE
         windows: Dict[str, PeriodTrendWindow] = {}
-        for period_key, duration, _ in self.stat_period:
+        for period_key, duration in self.stat_period:
             period_start = self._period_start_time(period_key, duration, now)
             windows[period_key] = PeriodTrendWindow(
                 start=max(period_start, earliest_start),
@@ -1716,7 +1661,7 @@ class StatisticOutputTask(AsyncTask):
         metrics_data: dict[str, object],
         period_trends: dict[str, dict[str, object]],
     ) -> "DetailedStatisticsData":
-        """构造与当前 HTML 报告完全同源的 WebUI 详细统计快照。"""
+        """构造 WebUI 详细统计快照。"""
 
         from src.webui.schemas.statistics import (
             DetailedChatStatistics,
@@ -1728,7 +1673,7 @@ class StatisticOutputTask(AsyncTask):
         )
 
         periods = []
-        for period_key, duration, _ in self.stat_period:
+        for period_key, duration in self.stat_period:
             stat_data = stat[period_key]
             period_start_time = self._period_start_time(period_key, duration, now)
             reliability, model_failures, task_failures = self._build_reliability(period_start_time, now)
@@ -1786,549 +1731,14 @@ class StatisticOutputTask(AsyncTask):
             },
         )
 
-    def _generate_html_report(self, stat: StatPeriodMapping, now: datetime):
-        """
-        生成HTML格式的统计报告
-        :param stat: 统计数据
-        :param now: 基准当前时间
-        :return: HTML格式的统计报告
-        """
+    def _refresh_detailed_statistics_snapshot(self, stat: StatPeriodMapping, now: datetime) -> None:
+        from src.services.statistics_service import store_detailed_statistics_snapshot
 
-        # 移除版本对比内容相关tab和内容
-        tab_list = [
-            f'<button class="tab-link" onclick="showTab(event, \'{period[0]}\')">{period[2]}</button>'
-            for period in self.stat_period
-        ]
-        tab_list.append('<button class="tab-link" onclick="showTab(event, \'charts\')">数据图表</button>')
-        tab_list.append('<button class="tab-link" onclick="showTab(event, \'metrics\')">指标趋势</button>')
-
-        def _format_stat_data(stat_data: StatPeriodData, div_id: str, start_time: datetime) -> str:
-            """
-            格式化一个时间段的统计数据到html div块
-            :param stat_data: 统计数据
-            :param div_id: div的ID
-            :param start_time: 统计时间段开始时间
-            """
-            # format总在线时间
-
-            # 按模型分类统计
-            total_replies = stat_data.get(TOTAL_REPLY_CNT, 0)
-            total_input_tokens = sum(stat_data[IN_TOK_BY_MODEL].values()) if stat_data[IN_TOK_BY_MODEL] else 0
-            total_output_tokens = sum(stat_data[OUT_TOK_BY_MODEL].values()) if stat_data[OUT_TOK_BY_MODEL] else 0
-            total_cache_hit_tokens = cast(int, stat_data.get(CACHE_HIT_TOK, 0))
-            total_cache_miss_tokens = cast(int, stat_data.get(CACHE_MISS_TOK, 0))
-            model_rows = "\n".join(
-                [
-                    f"<tr>"
-                    f"<td>{model_name}</td>"
-                    f"<td>{_format_large_number(count, html=True)}</td>"
-                    f"<td>{_format_large_number(stat_data[IN_TOK_BY_MODEL][model_name], html=True)}</td>"
-                    f"<td>{_format_large_number(stat_data[OUT_TOK_BY_MODEL][model_name], html=True)}</td>"
-                    f"<td>{_format_large_number(stat_data[TOTAL_TOK_BY_MODEL][model_name], html=True)}</td>"
-                    f"<td>{_format_large_number(stat_data[CACHE_HIT_TOK_BY_MODEL][model_name], html=True)}</td>"
-                    f"<td>{_format_large_number(stat_data[CACHE_MISS_TOK_BY_MODEL][model_name], html=True)}</td>"
-                    f"<td>{_format_cache_hit_rate(stat_data[CACHE_HIT_TOK_BY_MODEL][model_name], stat_data[CACHE_MISS_TOK_BY_MODEL][model_name])}</td>"
-                    f"<td>{stat_data[COST_BY_MODEL][model_name]:.2f} ¥</td>"
-                    f"<td>{stat_data[AVG_TIME_COST_BY_MODEL][model_name]:.1f} 秒</td>"
-                    f"<td>{stat_data[STD_TIME_COST_BY_MODEL][model_name]:.1f} 秒</td>"
-                    f"<td>{_format_large_number(count / total_replies, html=True) if total_replies > 0 else 'N/A'}</td>"
-                    f"<td>{_format_large_number(stat_data[TOTAL_TOK_BY_MODEL][model_name] / total_replies, html=True) if total_replies > 0 else 'N/A'}</td>"
-                    f"<td>{_format_large_number(stat_data[TOTAL_TOK_BY_MODEL][model_name] / count, html=True) if count > 0 else 'N/A'}</td>"
-                    f"</tr>"
-                    for model_name, count in sorted(stat_data[REQ_CNT_BY_MODEL].items())
-                ]
-                if stat_data[REQ_CNT_BY_MODEL]
-                else ["<tr><td colspan='14' style='text-align: center; color: #999;'>暂无数据</td></tr>"]
-            )
-            # 按请求类型分类统计
-            type_rows = "\n".join(
-                [
-                    f"<tr>"
-                    f"<td>{req_type}</td>"
-                    f"<td>{_format_large_number(count, html=True)}</td>"
-                    f"<td>{_format_large_number(stat_data[IN_TOK_BY_TYPE][req_type], html=True)}</td>"
-                    f"<td>{_format_large_number(stat_data[OUT_TOK_BY_TYPE][req_type], html=True)}</td>"
-                    f"<td>{_format_large_number(stat_data[TOTAL_TOK_BY_TYPE][req_type], html=True)}</td>"
-                    f"<td>{_format_large_number(stat_data[CACHE_HIT_TOK_BY_TYPE][req_type], html=True)}</td>"
-                    f"<td>{_format_large_number(stat_data[CACHE_MISS_TOK_BY_TYPE][req_type], html=True)}</td>"
-                    f"<td>{_format_cache_hit_rate(stat_data[CACHE_HIT_TOK_BY_TYPE][req_type], stat_data[CACHE_MISS_TOK_BY_TYPE][req_type])}</td>"
-                    f"<td>{stat_data[COST_BY_TYPE][req_type]:.2f} ¥</td>"
-                    f"<td>{stat_data[AVG_TIME_COST_BY_TYPE][req_type]:.1f} 秒</td>"
-                    f"<td>{stat_data[STD_TIME_COST_BY_TYPE][req_type]:.1f} 秒</td>"
-                    f"<td>{_format_large_number(count / total_replies, html=True) if total_replies > 0 else 'N/A'}</td>"
-                    f"<td>{_format_large_number(stat_data[TOTAL_TOK_BY_TYPE][req_type] / total_replies, html=True) if total_replies > 0 else 'N/A'}</td>"
-                    f"<td>{_format_large_number(stat_data[TOTAL_TOK_BY_TYPE][req_type] / count, html=True) if count > 0 else 'N/A'}</td>"
-                    f"</tr>"
-                    for req_type, count in sorted(stat_data[REQ_CNT_BY_TYPE].items())
-                ]
-                if stat_data[REQ_CNT_BY_TYPE]
-                else ["<tr><td colspan='14' style='text-align: center; color: #999;'>暂无数据</td></tr>"]
-            )
-            # 按模块分类统计
-            module_rows = "\n".join(
-                [
-                    f"<tr>"
-                    f"<td>{module_name}</td>"
-                    f"<td>{_format_large_number(count, html=True)}</td>"
-                    f"<td>{_format_large_number(stat_data[IN_TOK_BY_MODULE][module_name], html=True)}</td>"
-                    f"<td>{_format_large_number(stat_data[OUT_TOK_BY_MODULE][module_name], html=True)}</td>"
-                    f"<td>{_format_large_number(stat_data[TOTAL_TOK_BY_MODULE][module_name], html=True)}</td>"
-                    f"<td>{_format_large_number(stat_data[CACHE_HIT_TOK_BY_MODULE][module_name], html=True)}</td>"
-                    f"<td>{_format_large_number(stat_data[CACHE_MISS_TOK_BY_MODULE][module_name], html=True)}</td>"
-                    f"<td>{_format_cache_hit_rate(stat_data[CACHE_HIT_TOK_BY_MODULE][module_name], stat_data[CACHE_MISS_TOK_BY_MODULE][module_name])}</td>"
-                    f"<td>{stat_data[COST_BY_MODULE][module_name]:.2f} ¥</td>"
-                    f"<td>{stat_data[AVG_TIME_COST_BY_MODULE][module_name]:.1f} 秒</td>"
-                    f"<td>{stat_data[STD_TIME_COST_BY_MODULE][module_name]:.1f} 秒</td>"
-                    f"<td>{_format_large_number(count / total_replies, html=True) if total_replies > 0 else 'N/A'}</td>"
-                    f"<td>{_format_large_number(stat_data[TOTAL_TOK_BY_MODULE][module_name] / total_replies, html=True) if total_replies > 0 else 'N/A'}</td>"
-                    f"<td>{_format_large_number(stat_data[TOTAL_TOK_BY_MODULE][module_name] / count, html=True) if count > 0 else 'N/A'}</td>"
-                    f"</tr>"
-                    for module_name, count in sorted(stat_data[REQ_CNT_BY_MODULE].items())
-                ]
-                if stat_data[REQ_CNT_BY_MODULE]
-                else ["<tr><td colspan='14' style='text-align: center; color: #999;'>暂无数据</td></tr>"]
-            )
-
-            # 聊天消息统计
-            chat_rows = []
-            sorted_chat_ids = sorted(stat_data[MSG_CNT_BY_CHAT].keys())
-            for chat_id, count in sorted(stat_data[MSG_CNT_BY_CHAT].items()):
-                try:
-                    chat_name = self.name_mapping.get(chat_id, ("未知聊天", 0))[0]
-                    escaped_chat_name = escape(str(chat_name), quote=True)
-                    chat_rows.append(
-                        f"<tr><td>{escaped_chat_name}</td><td>{_format_large_number(count, html=True)}</td></tr>"
-                    )
-                except (IndexError, TypeError) as e:
-                    logger.warning(f"生成HTML聊天统计时发生错误，chat_id: {chat_id}, 错误: {e}")
-                    chat_rows.append(f"<tr><td>未知聊天</td><td>{_format_large_number(count, html=True)}</td></tr>")
-
-            chat_rows_html = (
-                "\n".join(chat_rows)
-                if chat_rows
-                else "<tr><td colspan='2' style='text-align: center; color: #999;'>暂无数据</td></tr>"
-            )
-            chat_labels = [str(self.name_mapping.get(chat_id, ("未知聊天", 0))[0]) for chat_id in sorted_chat_ids]
-            chat_counts = [stat_data[MSG_CNT_BY_CHAT][chat_id] for chat_id in sorted_chat_ids]
-            chat_labels_json = _json_for_html_script(chat_labels)
-            chat_counts_json = _json_for_html_script(chat_counts)
-
-            sorted_chat_cost_ids = sorted(stat_data[COST_BY_CHAT].keys())
-            chat_cost_labels = [
-                "全局"
-                if chat_id == GLOBAL_COST_SESSION_KEY
-                else str(self.name_mapping.get(chat_id, (self._get_chat_display_name_from_id(chat_id), 0))[0])
-                for chat_id in sorted_chat_cost_ids
-            ]
-            chat_costs = [stat_data[COST_BY_CHAT][chat_id] for chat_id in sorted_chat_cost_ids]
-            chat_cost_labels_json = _json_for_html_script(chat_cost_labels)
-            chat_costs_json = _json_for_html_script(chat_costs)
-
-            owner_costs_by_label = _build_llm_owner_distribution(stat_data[COST_BY_TYPE])
-            owner_cost_labels = list(owner_costs_by_label.keys())
-            owner_costs = [owner_costs_by_label[label] for label in owner_cost_labels]
-            owner_cost_labels_json = _json_for_html_script(owner_cost_labels)
-            owner_costs_json = _json_for_html_script(owner_costs)
-            # 生成HTML
-            return f"""
-            <div id=\"{div_id}\" class=\"tab-content\">
-                <p class=\"info-item\">
-                    <strong>统计时段: </strong>
-                    {start_time.strftime("%Y-%m-%d %H:%M:%S")} ~ {now.strftime("%Y-%m-%d %H:%M:%S")}
-                </p>
-                <div class=\"kpi-cards\">
-                    <div class=\"kpi-card\">
-                        <div class=\"kpi-title\">总在线时间</div>
-                        <div class=\"kpi-value\">{_format_online_time(int(stat_data[ONLINE_TIME]))}</div>
-                    </div>
-                    <div class=\"kpi-card\">
-                        <div class=\"kpi-title\">总消息数</div>
-                        <div class=\"kpi-value\">{_format_large_number(stat_data[TOTAL_MSG_CNT], html=True)}</div>
-                    </div>
-                    <div class=\"kpi-card\">
-                        <div class=\"kpi-title\">总回复数</div>
-                        <div class=\"kpi-value\">{_format_large_number(stat_data.get(TOTAL_REPLY_CNT, 0), html=True)}</div>
-                    </div>
-                    <div class=\"kpi-card\">
-                        <div class=\"kpi-title\">总请求数</div>
-                        <div class=\"kpi-value\">{_format_large_number(stat_data[TOTAL_REQ_CNT], html=True)}</div>
-                    </div>
-                    <div class=\"kpi-card\">
-                        <div class=\"kpi-title\">总Token数</div>
-                        <div class=\"kpi-value\">{_format_large_number(sum(stat_data[TOTAL_TOK_BY_MODEL].values()) if stat_data[TOTAL_TOK_BY_MODEL] else 0, html=True)}</div>
-                    </div>
-                    <div class=\"kpi-card\">
-                        <div class=\"kpi-title\">总输入Token</div>
-                        <div class=\"kpi-value\">{_format_large_number(total_input_tokens, html=True)}</div>
-                    </div>
-                    <div class=\"kpi-card\">
-                        <div class=\"kpi-title\">总输出Token</div>
-                        <div class=\"kpi-value\">{_format_large_number(total_output_tokens, html=True)}</div>
-                    </div>
-                    <div class=\"kpi-card\">
-                        <div class=\"kpi-title\">Prompt缓存命中率</div>
-                        <div class=\"kpi-value\">{_format_cache_hit_rate(total_cache_hit_tokens, total_cache_miss_tokens)}</div>
-                    </div>
-                    <div class=\"kpi-card\">
-                        <div class=\"kpi-title\">Prompt缓存命中Token</div>
-                        <div class=\"kpi-value\">{_format_large_number(total_cache_hit_tokens, html=True)}</div>
-                    </div>
-                    <div class=\"kpi-card\">
-                        <div class=\"kpi-title\">Prompt缓存未命中Token</div>
-                        <div class=\"kpi-value\">{_format_large_number(total_cache_miss_tokens, html=True)}</div>
-                    </div>
-                    <div class=\"kpi-card\">
-                        <div class=\"kpi-title\">总花费</div>
-                        <div class=\"kpi-value\">{stat_data[TOTAL_COST]:.2f} ¥</div>
-                    </div>
-                    <div class=\"kpi-card\">
-                        <div class=\"kpi-title\">花费/消息数量</div>
-                        <div class=\"kpi-value\">{(stat_data[TOTAL_COST] / stat_data[TOTAL_MSG_CNT] * 100 if stat_data[TOTAL_MSG_CNT] > 0 else 0.0):.4f} ¥/100条</div>
-                    </div>
-                    <div class=\"kpi-card\">
-                        <div class=\"kpi-title\">花费/消息数量(排除回复)</div>
-                        <div class=\"kpi-value\">{(stat_data[TOTAL_COST] / (stat_data[TOTAL_MSG_CNT] - stat_data.get(TOTAL_REPLY_CNT, 0)) * 100 if (stat_data[TOTAL_MSG_CNT] - stat_data.get(TOTAL_REPLY_CNT, 0)) > 0 else 0.0):.4f} ¥/100条</div>
-                    </div>
-                    <div class=\"kpi-card\">
-                        <div class=\"kpi-title\">花费/回复数量</div>
-                        <div class=\"kpi-value\">{(stat_data[TOTAL_COST] / stat_data.get(TOTAL_REPLY_CNT, 0) * 100 if stat_data.get(TOTAL_REPLY_CNT, 0) > 0 else 0.0):.4f} ¥/100条</div>
-                    </div>
-                    <div class=\"kpi-card\">
-                        <div class=\"kpi-title\">花费/时间</div>
-                        <div class=\"kpi-value\">{(stat_data[TOTAL_COST] / (stat_data[ONLINE_TIME] / 3600.0) if stat_data[ONLINE_TIME] > 0 else 0.0):.2f} ¥/小时</div>
-                    </div>
-                    <div class=\"kpi-card\">
-                        <div class=\"kpi-title\">Token/时间</div>
-                        <div class=\"kpi-value\">{_format_large_number(sum(stat_data[TOTAL_TOK_BY_MODEL].values()) / (stat_data[ONLINE_TIME] / 3600.0) if stat_data[ONLINE_TIME] > 0 and stat_data[TOTAL_TOK_BY_MODEL] else 0.0, html=True)}/小时</div>
-                    </div>
-                </div>
-                
-                <h2>按模型分类统计</h2>
-                <div class=\"table-wrap\">
-                    <table>
-                        <thead><tr><th>模型名称</th><th>调用次数</th><th>输入Token</th><th>输出Token</th><th>Token总量</th><th>缓存命中Token</th><th>缓存未命中Token</th><th>缓存命中率</th><th>累计花费</th><th>平均耗时(秒)</th><th>标准差(秒)</th><th>每次回复平均调用次数</th><th>每次回复平均Token数</th><th>每次调用平均Token</th></tr></thead>
-                        <tbody>
-                            {model_rows}
-                        </tbody>
-                    </table>
-                </div>
-                
-                <h2>按模块分类统计</h2>
-                <div class=\"table-wrap\">
-                    <table>
-                        <thead>
-                            <tr><th>模块名称</th><th>调用次数</th><th>输入Token</th><th>输出Token</th><th>Token总量</th><th>缓存命中Token</th><th>缓存未命中Token</th><th>缓存命中率</th><th>累计花费</th><th>平均耗时(秒)</th><th>标准差(秒)</th><th>每次回复平均调用次数</th><th>每次回复平均Token数</th><th>每次调用平均Token</th></tr>
-                        </thead>
-                        <tbody>
-                        {module_rows}
-                        </tbody>
-                    </table>
-                </div>
-    
-                <h2>按请求类型分类统计</h2>
-                <div class=\"table-wrap\">
-                    <table>
-                        <thead>
-                            <tr><th>请求类型</th><th>调用次数</th><th>输入Token</th><th>输出Token</th><th>Token总量</th><th>缓存命中Token</th><th>缓存未命中Token</th><th>缓存命中率</th><th>累计花费</th><th>平均耗时(秒)</th><th>标准差(秒)</th><th>每次回复平均调用次数</th><th>每次回复平均Token数</th><th>每次调用平均Token</th></tr>
-                        </thead>
-                        <tbody>
-                        {type_rows}
-                        </tbody>
-                    </table>
-                </div>
-    
-                <h2>聊天消息统计</h2>
-                <div class=\"table-wrap\">
-                    <table>
-                        <thead>
-                            <tr><th>联系人/群组名称</th><th>消息数量</th></tr>
-                        </thead>
-                        <tbody>
-                        {chat_rows_html}
-                        </tbody>
-                    </table>
-                </div>
-                
-                <h2>数据分布图表</h2>
-                <div class="pie-chart-grid">
-                    <div class="pie-chart-card">
-                        <h3>调用来源花费分布</h3>
-                        <div class="pie-chart-canvas-wrap">
-                            <canvas id="ownerPieChart_{div_id}"></canvas>
-                        </div>
-                        <div id="ownerPieLegend_{div_id}" class="pie-chart-legend"></div>
-                    </div>
-                    <div class="pie-chart-card">
-                        <h3>模型花费分布</h3>
-                        <div class="pie-chart-canvas-wrap">
-                            <canvas id="modelPieChart_{div_id}"></canvas>
-                        </div>
-                        <div id="modelPieLegend_{div_id}" class="pie-chart-legend"></div>
-                    </div>
-                    <div class="pie-chart-card">
-                        <h3>模块花费分布</h3>
-                        <div class="pie-chart-canvas-wrap">
-                            <canvas id="modulePieChart_{div_id}"></canvas>
-                        </div>
-                        <div id="modulePieLegend_{div_id}" class="pie-chart-legend"></div>
-                    </div>
-                    <div class="pie-chart-card">
-                        <h3>请求类型花费分布</h3>
-                        <div class="pie-chart-canvas-wrap">
-                            <canvas id="typePieChart_{div_id}"></canvas>
-                        </div>
-                        <div id="typePieLegend_{div_id}" class="pie-chart-legend"></div>
-                    </div>
-                    <div class="pie-chart-card">
-                        <h3>聊天消息分布</h3>
-                        <div class="pie-chart-canvas-wrap">
-                            <canvas id="chatPieChart_{div_id}"></canvas>
-                        </div>
-                        <div id="chatPieLegend_{div_id}" class="pie-chart-legend"></div>
-                    </div>
-                    <div class="pie-chart-card">
-                        <h3>聊天流花费分布</h3>
-                        <div class="pie-chart-canvas-wrap">
-                            <canvas id="chatCostPieChart_{div_id}"></canvas>
-                        </div>
-                        <div id="chatCostPieLegend_{div_id}" class="pie-chart-legend"></div>
-                    </div>
-                </div>
-                
-                <script>
-                    // 为当前统计卡片创建饼图
-                    document.addEventListener('DOMContentLoaded', function() {{
-                        createPieCharts_{div_id}();
-                    }});
-                    
-                    function createPieCharts_{div_id}() {{
-                        const colors = ['#b35b34', '#0d4b50', '#cfa54b', '#6f665b', '#dfc79a', '#8f4b38', '#74825a', '#854f46', '#2f5f62', '#b98556'];
-
-                        function getPieColors(labelCount) {{
-                            return Array.from({{ length: labelCount }}, (_, index) => colors[index % colors.length]);
-                        }}
-
-                        function renderPieLegend_{div_id}(chart, legendId) {{
-                            const legendContainer = document.getElementById(legendId);
-                            if (!legendContainer) return;
-
-                            legendContainer.innerHTML = '';
-                            const items = chart.options.plugins.legend.labels.generateLabels(chart);
-                            items.forEach((item) => {{
-                                const legendItem = document.createElement('button');
-                                legendItem.type = 'button';
-                                legendItem.className = 'pie-chart-legend-item' + (item.hidden ? ' is-hidden' : '');
-                                legendItem.onclick = () => {{
-                                    chart.toggleDataVisibility(item.index);
-                                    chart.update();
-                                    renderPieLegend_{div_id}(chart, legendId);
-                                }};
-
-                                const colorBox = document.createElement('span');
-                                colorBox.className = 'pie-chart-legend-color';
-                                colorBox.style.backgroundColor = item.fillStyle;
-
-                                const labelText = document.createElement('span');
-                                labelText.className = 'pie-chart-legend-label';
-                                labelText.textContent = item.text;
-
-                                legendItem.appendChild(colorBox);
-                                legendItem.appendChild(labelText);
-                                legendContainer.appendChild(legendItem);
-                            }});
-                        }}
-
-                        function createPieChart_{div_id}(canvasId, legendId, chartData, labelFormatter) {{
-                            const chart = new Chart(document.getElementById(canvasId), {{
-                                type: 'pie',
-                                data: chartData,
-                                options: {{
-                                    responsive: true,
-                                    maintainAspectRatio: false,
-                                    plugins: {{
-                                        legend: {{
-                                            display: false
-                                        }},
-                                        tooltip: {{
-                                            callbacks: {{
-                                                label: labelFormatter
-                                            }}
-                                        }}
-                                    }}
-                                }}
-                            }});
-                            renderPieLegend_{div_id}(chart, legendId);
-                            return chart;
-                        }}
-
-                        // 调用来源花费分布饼图
-                        const ownerLabels = {owner_cost_labels_json};
-                        if (ownerLabels.length > 0) {{
-                            const ownerData = {{
-                                labels: ownerLabels,
-                                datasets: [{{
-                                    data: {owner_costs_json},
-                                    backgroundColor: getPieColors(ownerLabels.length),
-                                    borderColor: getPieColors(ownerLabels.length),
-                                    borderWidth: 2
-                                }}]
-                            }};
-
-                            createPieChart_{div_id}('ownerPieChart_{div_id}', 'ownerPieLegend_{div_id}', ownerData, function(context) {{
-                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                                const percentage = ((context.parsed / total) * 100).toFixed(1);
-                                return context.label + ': ¥' + context.parsed.toFixed(2) + ' (' + percentage + '%)';
-                            }});
-                        }} else {{
-                            document.getElementById('ownerPieChart_{div_id}').style.display = 'none';
-                            document.getElementById('ownerPieLegend_{div_id}').style.display = 'none';
-                            document.querySelector('#ownerPieChart_{div_id}').closest('.pie-chart-card').querySelector('h3').textContent = '调用来源花费分布 (无数据)';
-                        }}
-
-                        // 模型花费分布饼图
-                        const modelLabels = {list(sorted(stat_data[COST_BY_MODEL].keys())) if stat_data[COST_BY_MODEL] else []};
-                        if (modelLabels.length > 0) {{
-                            const modelData = {{
-                                labels: modelLabels,
-                                datasets: [{{
-                                    data: {[stat_data[COST_BY_MODEL][model_name] for model_name in sorted(stat_data[COST_BY_MODEL].keys())] if stat_data[COST_BY_MODEL] else []},
-                                    backgroundColor: getPieColors(modelLabels.length),
-                                    borderColor: getPieColors(modelLabels.length),
-                                    borderWidth: 2
-                                }}]
-                            }};
-
-                            createPieChart_{div_id}('modelPieChart_{div_id}', 'modelPieLegend_{div_id}', modelData, function(context) {{
-                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                                const percentage = ((context.parsed / total) * 100).toFixed(1);
-                                return context.label + ': ¥' + context.parsed.toFixed(2) + ' (' + percentage + '%)';
-                            }});
-                        }} else {{
-                            document.getElementById('modelPieChart_{div_id}').style.display = 'none';
-                            document.getElementById('modelPieLegend_{div_id}').style.display = 'none';
-                            document.querySelector('#modelPieChart_{div_id}').closest('.pie-chart-card').querySelector('h3').textContent = '模型花费分布 (无数据)';
-                        }}
-                        
-                        // 模块花费分布饼图
-                        const moduleLabels = {list(sorted(stat_data[COST_BY_MODULE].keys())) if stat_data[COST_BY_MODULE] else []};
-                        if (moduleLabels.length > 0) {{
-                            const moduleData = {{
-                                labels: moduleLabels,
-                                datasets: [{{
-                                    data: {[stat_data[COST_BY_MODULE][module_name] for module_name in sorted(stat_data[COST_BY_MODULE].keys())] if stat_data[COST_BY_MODULE] else []},
-                                    backgroundColor: getPieColors(moduleLabels.length),
-                                    borderColor: getPieColors(moduleLabels.length),
-                                    borderWidth: 2
-                                }}]
-                            }};
-                            
-                            createPieChart_{div_id}('modulePieChart_{div_id}', 'modulePieLegend_{div_id}', moduleData, function(context) {{
-                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                                const percentage = ((context.parsed / total) * 100).toFixed(1);
-                                return context.label + ': ¥' + context.parsed.toFixed(2) + ' (' + percentage + '%)';
-                            }});
-                        }} else {{
-                            document.getElementById('modulePieChart_{div_id}').style.display = 'none';
-                            document.getElementById('modulePieLegend_{div_id}').style.display = 'none';
-                            document.querySelector('#modulePieChart_{div_id}').closest('.pie-chart-card').querySelector('h3').textContent = '模块花费分布 (无数据)';
-                        }}
-                        
-                        // 请求类型花费分布饼图
-                        const typeLabels = {list(sorted(stat_data[COST_BY_TYPE].keys())) if stat_data[COST_BY_TYPE] else []};
-                        if (typeLabels.length > 0) {{
-                            const typeData = {{
-                                labels: typeLabels,
-                                datasets: [{{
-                                    data: {[stat_data[COST_BY_TYPE][req_type] for req_type in sorted(stat_data[COST_BY_TYPE].keys())] if stat_data[COST_BY_TYPE] else []},
-                                    backgroundColor: getPieColors(typeLabels.length),
-                                    borderColor: getPieColors(typeLabels.length),
-                                    borderWidth: 2
-                                }}]
-                            }};
-                            
-                            createPieChart_{div_id}('typePieChart_{div_id}', 'typePieLegend_{div_id}', typeData, function(context) {{
-                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                                const percentage = ((context.parsed / total) * 100).toFixed(1);
-                                return context.label + ': ¥' + context.parsed.toFixed(2) + ' (' + percentage + '%)';
-                            }});
-                        }} else {{
-                            document.getElementById('typePieChart_{div_id}').style.display = 'none';
-                            document.getElementById('typePieLegend_{div_id}').style.display = 'none';
-                            document.querySelector('#typePieChart_{div_id}').closest('.pie-chart-card').querySelector('h3').textContent = '请求类型花费分布 (无数据)';
-                        }}
-                        
-                        // 聊天消息分布饼图
-                        const chatLabels = {chat_labels_json};
-                        if (chatLabels.length > 0) {{
-                            const chatData = {{
-                                labels: chatLabels,
-                                datasets: [{{
-                                    data: {chat_counts_json},
-                                    backgroundColor: getPieColors(chatLabels.length),
-                                    borderColor: getPieColors(chatLabels.length),
-                                    borderWidth: 2
-                                }}]
-                            }};
-                            
-                            createPieChart_{div_id}('chatPieChart_{div_id}', 'chatPieLegend_{div_id}', chatData, function(context) {{
-                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                                const percentage = ((context.parsed / total) * 100).toFixed(1);
-                                return context.label + ': ' + context.parsed + ' (' + percentage + '%)';
-                            }});
-                        }} else {{
-                            document.getElementById('chatPieChart_{div_id}').style.display = 'none';
-                            document.getElementById('chatPieLegend_{div_id}').style.display = 'none';
-                            document.querySelector('#chatPieChart_{div_id}').closest('.pie-chart-card').querySelector('h3').textContent = '聊天消息分布 (无数据)';
-                        }}
-
-                        // 聊天流花费分布饼图
-                        const chatCostLabels = {chat_cost_labels_json};
-                        if (chatCostLabels.length > 0) {{
-                            const chatCostData = {{
-                                labels: chatCostLabels,
-                                datasets: [{{
-                                    data: {chat_costs_json},
-                                    backgroundColor: getPieColors(chatCostLabels.length),
-                                    borderColor: getPieColors(chatCostLabels.length),
-                                    borderWidth: 2
-                                }}]
-                            }};
-
-                            createPieChart_{div_id}('chatCostPieChart_{div_id}', 'chatCostPieLegend_{div_id}', chatCostData, function(context) {{
-                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                                const percentage = ((context.parsed / total) * 100).toFixed(1);
-                                return context.label + ': ¥' + context.parsed.toFixed(2) + ' (' + percentage + '%)';
-                            }});
-                        }} else {{
-                            document.getElementById('chatCostPieChart_{div_id}').style.display = 'none';
-                            document.getElementById('chatCostPieLegend_{div_id}').style.display = 'none';
-                            document.querySelector('#chatCostPieChart_{div_id}').closest('.pie-chart-card').querySelector('h3').textContent = '聊天流花费分布 (无数据)';
-                        }}
-                    }}
-                </script>
-
-            </div>
-            """
-
-        tab_content_list = [
-            _format_stat_data(stat[period[0]], period[0], now - period[1])
-            for period in self.stat_period
-            if period[0] != "all_time"
-        ]
-
-        tab_content_list.append(
-            _format_stat_data(
-                stat["all_time"],
-                "all_time",
-                self.all_time_start_time,
-            )
-        )
-
-        # 图表与指标趋势共用一次明细遍历，随后分别渲染。
+        # 图表与指标趋势共用一次明细遍历。
         series_started_at = perf_counter()
         period_trend_collector = self._build_period_trend_collector(now)
         chart_data, metrics_data = self._generate_time_series(
-            now, period_trend_collector, getattr(self, "_usage_hourly", None)
+            now, period_trend_collector, self._usage_hourly
         )
         task_usage_start = max(now - get_model_task_usage_retention(), now - PERIOD_TREND_MAX_RANGE)
         for bucket in fetch_model_task_usage_minutes(task_usage_start, now):
@@ -2336,320 +1746,7 @@ class StatisticOutputTask(AsyncTask):
                 bucket["bucket_time"], bucket["attempt_count"], bucket["failure_count"],
             )
         period_trends = period_trend_collector.result()
-        tab_content_list.append(self._generate_chart_tab(chart_data))
-        tab_content_list.append(self._generate_metrics_tab(metrics_data))
         logger.info(f"统计阶段耗时: 图表与指标趋势={perf_counter() - series_started_at:.2f}s")
-
-        joined_tab_list = "\n".join(tab_list)
-        joined_tab_content = "\n".join(tab_content_list)
-
-        html_template = (
-            """
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MaiBot运行统计报告</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        :root {
-            --statistics-background: hsl(35.4 61.9% 87.6%);
-            --statistics-foreground: hsl(189 72% 18.2%);
-            --statistics-card: hsl(36 66% 89.6%);
-            --statistics-card-strong: hsl(34.1 54.8% 81.8%);
-            --statistics-muted: hsl(34.9 48.3% 82.5%);
-            --statistics-muted-foreground: hsl(39.1 11.6% 39%);
-            --statistics-primary: hsl(15.6 68.7% 45.1%);
-            --statistics-primary-foreground: hsl(39.5 100% 92%);
-            --statistics-accent: hsl(34.7 45.6% 75.5%);
-            --statistics-border: hsl(188.1 74% 19.6%);
-            --statistics-ring: hsl(15.6 68.7% 45.1%);
-            --statistics-row-alt: hsl(34.1 54.8% 81.8% / 0.42);
-        }
-
-        html {
-            box-sizing: border-box;
-        }
-
-        *, *::before, *::after {
-            box-sizing: inherit;
-        }
-
-        body {
-            font-family: "Bahnschrift Condensed", "Agency FB", "Arial Narrow", "Microsoft YaHei UI", system-ui, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background:
-                linear-gradient(90deg, hsl(188.1 74% 19.6% / 0.05) 1px, transparent 1px),
-                linear-gradient(0deg, hsl(188.1 74% 19.6% / 0.04) 1px, transparent 1px),
-                var(--statistics-background);
-            background-size: 28px 28px;
-            color: var(--statistics-foreground);
-            line-height: 1.6;
-        }
-        .container {
-            width: 100%;
-            max-width: none;
-            margin: 20px auto;
-            background-color: hsl(36 66% 89.6% / 0.94);
-            padding: 25px;
-            border-radius: 4px;
-            box-shadow: none;
-            border: 2px solid var(--statistics-border);
-        }
-        h1, h2 {
-            color: var(--statistics-foreground);
-            border-bottom: 2px solid var(--statistics-border);
-            padding-bottom: 10px;
-            margin-top: 0;
-            letter-spacing: 0;
-        }
-        h1 {
-            text-align: center;
-            font-size: 2em;
-        }
-        h2 {
-            font-size: 1.5em;
-            margin-top: 30px;
-        }
-        p {
-            margin-bottom: 10px;
-        }
-        .info-item {
-            background-color: var(--statistics-muted);
-            padding: 8px 12px;
-            border: 1px solid var(--statistics-border);
-            border-radius: 3px;
-            margin-bottom: 8px;
-            font-size: 0.95em;
-        }
-        .info-item strong {
-            color: var(--statistics-primary);
-        }
-        /* 新增：顶部工具条与按钮 */
-        .toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
-        .toolbar .right { display: flex; gap: 8px; align-items: center; }
-        .btn {
-            border: 1px solid var(--statistics-border);
-            background-color: var(--statistics-card);
-            color: var(--statistics-foreground);
-            padding: 8px 12px;
-            border-radius: 3px;
-            cursor: pointer;
-            transition: all .2s ease;
-        }
-        .btn:hover { border-color: var(--statistics-ring); color: var(--statistics-primary); background-color: var(--statistics-accent); }
-        /* 新增：KPI 卡片 */
-        .kpi-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 12px 0 6px; }
-        .kpi-card {
-            background: var(--statistics-card);
-            border: 2px solid var(--statistics-border);
-            border-radius: 4px;
-            padding: 14px 16px;
-            box-shadow: none;
-        }
-        .kpi-title { font-size: 12px; color: var(--statistics-muted-foreground); letter-spacing: 0; margin-bottom: 6px; }
-        .kpi-value { font-size: 20px; font-weight: 800; letter-spacing: 0; color: var(--statistics-primary); }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 15px;
-            font-size: 0.9em;
-        }
-        /* 新增：表格包裹容器，支持横向滚动 */
-        .table-wrap { width: 100%; overflow-x: auto; border-radius: 3px; border: 1px solid var(--statistics-border); }
-        th, td {
-            border: 1px solid hsl(188.1 74% 19.6% / 0.35);
-            padding: 10px;
-            text-align: left;
-        }
-        th {
-            background-color: var(--statistics-border);
-            color: var(--statistics-primary-foreground);
-            font-weight: bold;
-            position: sticky;
-            top: 0;
-            z-index: 1;
-        }
-        tr:nth-child(even) {
-            background-color: var(--statistics-row-alt);
-        }
-        .footer {
-            text-align: center;
-            margin-top: 30px;
-            font-size: 0.8em;
-            color: var(--statistics-muted-foreground);
-        }
-        .tabs {
-            overflow: hidden;
-            background: var(--statistics-card-strong);
-            display: flex;
-            flex-wrap: wrap;
-            border: 2px solid var(--statistics-border);
-            border-radius: 4px;
-            box-shadow: none;
-        }
-        .tabs button {
-            background: inherit; border: none; outline: none;
-            padding: 12px 14px; cursor: pointer;
-            transition: 0.2s; font-size: 15px;
-            color: var(--statistics-foreground);
-        }
-        .tabs button:hover {
-            background-color: var(--statistics-accent);
-        }
-        .tabs button.active {
-            background-color: var(--statistics-primary);
-            color: var(--statistics-primary-foreground);
-        }
-        .tab-content {
-            display: none;
-            padding: 20px;
-            background-color: hsl(36 66% 89.6% / 0.76);
-            border: 2px solid var(--statistics-border);
-            border-top: none;
-            border-radius: 0 0 4px 4px;
-        }
-        .tab-content.active {
-            display: block;
-        }
-        canvas {
-            max-width: 100%;
-        }
-        .pie-chart-grid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 20px;
-            margin-top: 20px;
-            align-items: stretch;
-        }
-        .pie-chart-card {
-            display: flex;
-            min-width: 0;
-            flex-direction: column;
-            gap: 12px;
-            padding: 14px;
-            border: 1px solid var(--statistics-border);
-            border-radius: 4px;
-            background: hsl(36 66% 89.6% / 0.55);
-        }
-        .pie-chart-card h3 {
-            margin: 0;
-            min-height: 1.6em;
-            color: var(--statistics-foreground);
-            font-size: 1.1em;
-        }
-        .pie-chart-canvas-wrap {
-            width: 100%;
-            height: 450px;
-            min-height: 450px;
-        }
-        .pie-chart-canvas-wrap canvas {
-            width: 100% !important;
-            height: 100% !important;
-        }
-        .pie-chart-legend {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 6px 10px;
-            max-height: 128px;
-            min-height: 44px;
-            overflow-y: auto;
-            padding: 8px;
-            border: 1px solid hsl(188.1 74% 19.6% / 0.35);
-            border-radius: 3px;
-            background: hsl(34.9 48.3% 82.5% / 0.5);
-        }
-        .pie-chart-legend-item {
-            display: grid;
-            grid-template-columns: 12px minmax(0, 1fr);
-            align-items: center;
-            gap: 6px;
-            min-width: 0;
-            padding: 3px 4px;
-            border: 0;
-            background: transparent;
-            color: var(--statistics-foreground);
-            cursor: pointer;
-            font: inherit;
-            line-height: 1.25;
-            text-align: left;
-        }
-        .pie-chart-legend-item.is-hidden {
-            opacity: 0.45;
-            text-decoration: line-through;
-        }
-        .pie-chart-legend-color {
-            width: 10px;
-            height: 10px;
-            border-radius: 2px;
-            border: 1px solid hsl(188.1 74% 19.6% / 0.25);
-        }
-        .pie-chart-legend-label {
-            min-width: 0;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        @media (max-width: 760px) {
-            .pie-chart-grid {
-                grid-template-columns: 1fr;
-            }
-            .pie-chart-legend {
-                grid-template-columns: 1fr;
-            }
-        }
-    </style>
-</head>
-<body>
-"""
-            + f"""
-    <div class="container">
-        <div class="toolbar">
-            <h1 style="margin: 0;">MaiBot运行统计报告</h1>
-            <div class="right">
-                <span class="info-item" style="margin: 0;"><strong>统计截止时间:</strong> {now.strftime("%Y-%m-%d %H:%M:%S")}</span>
-            </div>
-        </div>
-
-        <div class="tabs">
-            {joined_tab_list}
-        </div>
-
-        {joined_tab_content}
-        <div class="footer">Made with ❤️ by MaiBot • 本页会定期自动覆盖生成</div>
-    </div>
-"""
-            + """
-<script>
-    let i, tab_content, tab_links;
-    tab_content = document.getElementsByClassName("tab-content");
-    tab_links = document.getElementsByClassName("tab-link");
-    
-    tab_content[0].classList.add("active");
-    tab_links[0].classList.add("active");
-
-    function showTab(evt, tabName) {{
-        for (i = 0; i < tab_content.length; i++) tab_content[i].classList.remove("active");
-        for (i = 0; i < tab_links.length; i++) tab_links[i].classList.remove("active");
-        document.getElementById(tabName).classList.add("active");
-        evt.currentTarget.classList.add("active");
-    }}
-</script>
-</body>
-</html>
-        """
-        )
-
-        record_file = Path(self.record_file_path)
-        if record_file.parent != Path("."):
-            record_file.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(record_file, "w", encoding="utf-8") as f:
-            f.write(html_template)
-
-        from src.services.statistics_service import store_detailed_statistics_snapshot
 
         store_detailed_statistics_snapshot(
             self._build_detailed_statistics_snapshot(stat, now, chart_data, metrics_data, period_trends)
@@ -2728,468 +1825,3 @@ class StatisticOutputTask(AsyncTask):
                 usage_entry_from_record(record, SOURCE_UNAGGREGATED if record_id > cursor else SOURCE_RAW)
             )
         return entries
-
-    def _generate_chart_tab(self, chart_data: dict[str, dict[str, object]]) -> str:
-        # sourcery skip: extract-duplicate-method, move-assign-in-block
-        """生成图表选项卡HTML内容"""
-
-        # 生成不同颜色的调色板
-        colors = [
-            "#b35b34",
-            "#0d4b50",
-            "#cfa54b",
-            "#6f665b",
-            "#dfc79a",
-            "#8f4b38",
-            "#74825a",
-            "#854f46",
-            "#2f5f62",
-            "#b98556",
-        ]
-
-        # 默认使用24小时数据生成数据集
-        default_data = cast(dict[str, object], chart_data["24h"])
-        cost_by_model = cast(dict[str, list[float]], default_data.get("cost_by_model", {}))
-        cost_by_module = cast(dict[str, list[float]], default_data.get("cost_by_module", {}))
-        message_by_chat = cast(dict[str, list[int]], default_data.get("message_by_chat", {}))
-
-        # 为每个模型生成数据集
-        model_datasets = []
-        for i, (model_name, cost_data) in enumerate(cost_by_model.items()):
-            color = colors[i % len(colors)]
-            model_datasets.append(f"""{{
-                label: {_json_for_html_script(str(model_name))},
-                data: {_json_for_html_script(cost_data)},
-                borderColor: '{color}',
-                backgroundColor: '{color}20',
-                tension: 0.4,
-                fill: false
-            }}""")
-
-        ",\n                    ".join(model_datasets)
-
-        # 为每个模块生成数据集
-        module_datasets = []
-        for i, (module_name, cost_data) in enumerate(cost_by_module.items()):
-            color = colors[i % len(colors)]
-            module_datasets.append(f"""{{
-                label: {_json_for_html_script(str(module_name))},
-                data: {_json_for_html_script(cost_data)},
-                borderColor: '{color}',
-                backgroundColor: '{color}20',
-                tension: 0.4,
-                fill: false
-            }}""")
-
-        ",\n                    ".join(module_datasets)
-
-        # 为每个聊天流生成消息数据集
-        message_datasets = []
-        for i, (chat_name, message_data) in enumerate(message_by_chat.items()):
-            color = colors[i % len(colors)]
-            message_datasets.append(f"""{{
-                label: {_json_for_html_script(str(chat_name))},
-                data: {_json_for_html_script(message_data)},
-                borderColor: '{color}',
-                backgroundColor: '{color}20',
-                tension: 0.4,
-                fill: false
-            }}""")
-
-        ",\n                    ".join(message_datasets)
-
-        return f"""
-        <div id="charts" class="tab-content">
-            <h2>数据图表</h2>
-            
-            <!-- 时间范围选择按钮 -->
-            <div style="margin: 20px 0; text-align: center;">
-                <label style="margin-right: 10px; font-weight: bold;">时间范围:</label>
-                <button class="time-range-btn" onclick="switchTimeRange('6h')">6小时</button>
-                <button class="time-range-btn" onclick="switchTimeRange('12h')">12小时</button>
-                <button class="time-range-btn active" onclick="switchTimeRange('24h')">24小时</button>
-                <button class="time-range-btn" onclick="switchTimeRange('48h')">48小时</button>
-            </div>
-            
-            <div style="margin-top: 20px;">
-                <div style="margin-bottom: 40px;">
-                    <canvas id="totalCostChart" width="800" height="400"></canvas>
-                </div>
-                <div style="margin-bottom: 40px;">
-                    <canvas id="costByModuleChart" width="800" height="400"></canvas>
-                </div>
-                <div style="margin-bottom: 40px;">
-                    <canvas id="costByModelChart" width="800" height="400"></canvas>
-                </div>
-                <div>
-                    <canvas id="messageByChatChart" width="800" height="400"></canvas>
-                </div>
-            </div>
-            
-            <style>
-                .time-range-btn {{
-                    background-color: var(--statistics-card);
-                    border: 1px solid var(--statistics-border);
-                    color: var(--statistics-foreground);
-                    padding: 8px 16px;
-                    margin: 0 5px;
-                    border-radius: 3px;
-                    cursor: pointer;
-                    font-size: 14px;
-                    transition: all 0.3s ease;
-                }}
-                
-                .time-range-btn:hover {{
-                    background-color: var(--statistics-accent);
-                }}
-                
-                .time-range-btn.active {{
-                    background-color: var(--statistics-primary);
-                    color: var(--statistics-primary-foreground);
-                    border-color: var(--statistics-ring);
-                }}
-            </style>
-            
-            <script>
-                const allChartData = {chart_data};
-                let currentCharts = {{}};
-                
-                // 图表配置模板
-                const chartConfigs = {{
-                    totalCost: {{
-                        id: 'totalCostChart',
-                        title: '总花费',
-                        yAxisLabel: '花费 (¥)',
-                        dataKey: 'total_cost_data',
-                        fill: true
-                    }},
-                    costByModule: {{
-                        id: 'costByModuleChart', 
-                        title: '各模块花费',
-                        yAxisLabel: '花费 (¥)',
-                        dataKey: 'cost_by_module',
-                        fill: false
-                    }},
-                    costByModel: {{
-                        id: 'costByModelChart',
-                        title: '各模型花费', 
-                        yAxisLabel: '花费 (¥)',
-                        dataKey: 'cost_by_model',
-                        fill: false
-                    }},
-                    messageByChat: {{
-                        id: 'messageByChatChart',
-                        title: '各聊天流消息数',
-                        yAxisLabel: '消息数',
-                        dataKey: 'message_by_chat',
-                        fill: false
-                    }},
-                    focusCyclesByAction: {{
-                        id: 'focusCyclesByActionChart',
-                        title: 'Focus循环按Action类型',
-                        yAxisLabel: '循环数',
-                        dataKey: 'focus_cycles_by_action',
-                        fill: false
-                    }},
-                    focusTimeByStage: {{
-                        id: 'focusTimeByStageChart',
-                        title: 'Focus各阶段累计时间',
-                        yAxisLabel: '时间 (秒)',
-                        dataKey: 'focus_time_by_stage',
-                        fill: false
-                    }}
-                }};
-                
-                function switchTimeRange(timeRange) {{
-                    // 更新按钮状态
-                    document.querySelectorAll('.time-range-btn').forEach(btn => {{
-                        btn.classList.remove('active');
-                    }});
-                    event.target.classList.add('active');
-                    
-                    // 更新图表数据
-                    const data = allChartData[timeRange];
-                    updateAllCharts(data, timeRange);
-                }}
-                
-                function updateAllCharts(data, timeRange) {{
-                    // 销毁现有图表
-                    Object.values(currentCharts).forEach(chart => {{
-                        if (chart) chart.destroy();
-                    }});
-                    
-                    currentCharts = {{}};
-                    
-                    // 重新创建图表
-                    createChart('totalCost', data, timeRange);
-                    createChart('costByModule', data, timeRange);
-                    createChart('costByModel', data, timeRange);
-                    createChart('messageByChat', data, timeRange);
-                }}
-                
-                function createChart(chartType, data, timeRange) {{
-                    const config = chartConfigs[chartType];
-                    const colors = ['#b35b34', '#0d4b50', '#cfa54b', '#6f665b', '#dfc79a', '#8f4b38', '#74825a', '#854f46', '#2f5f62', '#b98556'];
-                    
-                    let datasets = [];
-                    
-                    if (chartType === 'totalCost') {{
-                        datasets = [{{
-                            label: config.title,
-                            data: data[config.dataKey],
-                            borderColor: colors[0],
-                            backgroundColor: 'rgba(179, 91, 52, 0.12)',
-                            tension: 0.4,
-                            fill: config.fill
-                        }}];
-                    }} else {{
-                        let i = 0;
-                        Object.entries(data[config.dataKey]).forEach(([name, chartData]) => {{
-                            datasets.push({{
-                                label: name,
-                                data: chartData,
-                                borderColor: colors[i % colors.length],
-                                backgroundColor: colors[i % colors.length] + '20',
-                                tension: 0.4,
-                                fill: config.fill
-                            }});
-                            i++;
-                        }});
-                    }}
-                    
-                    currentCharts[chartType] = new Chart(document.getElementById(config.id), {{
-                        type: 'line',
-                        data: {{
-                            labels: data.time_labels,
-                            datasets: datasets
-                        }},
-                        options: {{
-                            responsive: true,
-                            plugins: {{
-                                title: {{
-                                    display: true,
-                                    text: timeRange + '内' + config.title + '趋势',
-                                    font: {{ size: 16 }}
-                                }},
-                                legend: {{
-                                    display: chartType !== 'totalCost',
-                                    position: 'top'
-                                }}
-                            }},
-                            scales: {{
-                                x: {{
-                                    title: {{
-                                        display: true,
-                                        text: '时间'
-                                    }},
-                                    ticks: {{
-                                        maxTicksLimit: 12
-                                    }}
-                                }},
-                                y: {{
-                                    title: {{
-                                        display: true,
-                                        text: config.yAxisLabel
-                                    }},
-                                    beginAtZero: true
-                                }}
-                            }},
-                            interaction: {{
-                                intersect: false,
-                                mode: 'index'
-                            }}
-                        }}
-                    }});
-                }}
-                
-                // 初始化图表（默认24小时）
-                document.addEventListener('DOMContentLoaded', function() {{
-                    updateAllCharts(allChartData['24h'], '24h');
-                }});
-            </script>
-        </div>
-        """
-
-    def _generate_metrics_tab(self, metrics_data: dict[str, object]) -> str:
-        """生成指标趋势图表选项卡HTML内容"""
-        colors = {
-            "cost_per_100_messages": "#b35b34",
-            "cost_per_hour": "#0d4b50",
-            "tokens_per_hour": "#cfa54b",
-            "cost_per_100_replies": "#74825a",
-        }
-
-        return f"""
-        <div id="metrics" class="tab-content">
-            <h2>指标趋势图表</h2>
-            
-            <!-- 时间尺度选择按钮 -->
-            <div style="margin: 20px 0; text-align: center;">
-                <label style="margin-right: 10px; font-weight: bold;">时间尺度:</label>
-                <button class="time-scale-btn" onclick="switchMetricsTimeScale('24h')">24小时</button>
-                <button class="time-scale-btn active" onclick="switchMetricsTimeScale('7d')">7天</button>
-                <button class="time-scale-btn" onclick="switchMetricsTimeScale('30d')">30天</button>
-            </div>
-            
-            <div style="margin-top: 20px;">
-                <div style="margin-bottom: 40px;">
-                    <canvas id="costPer100MessagesChart" width="800" height="400"></canvas>
-                </div>
-                <div style="margin-bottom: 40px;">
-                    <canvas id="costPerHourChart" width="800" height="400"></canvas>
-                </div>
-                <div style="margin-bottom: 40px;">
-                    <canvas id="tokensPerHourChart" width="800" height="400"></canvas>
-                </div>
-                <div>
-                    <canvas id="costPer100RepliesChart" width="800" height="400"></canvas>
-                </div>
-            </div>
-            
-            <style>
-                .time-scale-btn {{
-                    background-color: var(--statistics-card);
-                    border: 1px solid var(--statistics-border);
-                    color: var(--statistics-foreground);
-                    padding: 8px 16px;
-                    margin: 0 5px;
-                    border-radius: 3px;
-                    cursor: pointer;
-                    font-size: 14px;
-                    transition: all 0.3s ease;
-                }}
-                
-                .time-scale-btn:hover {{
-                    background-color: var(--statistics-accent);
-                }}
-                
-                .time-scale-btn.active {{
-                    background-color: var(--statistics-primary);
-                    color: var(--statistics-primary-foreground);
-                    border-color: var(--statistics-ring);
-                }}
-            </style>
-            
-            <script>
-                const allMetricsData = {json.dumps(metrics_data)};
-                let currentMetricsCharts = {{}};
-                
-                const metricsConfigs = {{
-                    costPer100Messages: {{
-                        id: 'costPer100MessagesChart',
-                        title: '花费/消息数量',
-                        yAxisLabel: '花费 (¥/100条)',
-                        dataKey: 'cost_per_100_messages',
-                        color: '{colors["cost_per_100_messages"]}'
-                    }},
-                    costPerHour: {{
-                        id: 'costPerHourChart',
-                        title: '花费/时间',
-                        yAxisLabel: '花费 (¥/小时)',
-                        dataKey: 'cost_per_hour',
-                        color: '{colors["cost_per_hour"]}'
-                    }},
-                    tokensPerHour: {{
-                        id: 'tokensPerHourChart',
-                        title: 'Token/时间',
-                        yAxisLabel: 'Token (/小时)',
-                        dataKey: 'tokens_per_hour',
-                        color: '{colors["tokens_per_hour"]}'
-                    }},
-                    costPer100Replies: {{
-                        id: 'costPer100RepliesChart',
-                        title: '花费/回复数量',
-                        yAxisLabel: '花费 (¥/100条)',
-                        dataKey: 'cost_per_100_replies',
-                        color: '{colors["cost_per_100_replies"]}'
-                    }}
-                }};
-                
-                function switchMetricsTimeScale(timeScale) {{
-                    // 更新按钮状态
-                    document.querySelectorAll('.time-scale-btn').forEach(btn => {{
-                        btn.classList.remove('active');
-                    }});
-                    event.target.classList.add('active');
-                    
-                    // 更新图表数据
-                    const data = allMetricsData[timeScale];
-                    updateAllMetricsCharts(data, timeScale);
-                }}
-                
-                function updateAllMetricsCharts(data, timeScale) {{
-                    // 销毁现有图表
-                    Object.values(currentMetricsCharts).forEach(chart => {{
-                        if (chart) chart.destroy();
-                    }});
-                    
-                    currentMetricsCharts = {{}};
-                    
-                    // 重新创建图表
-                    createMetricsChart('costPer100Messages', data, timeScale);
-                    createMetricsChart('costPerHour', data, timeScale);
-                    createMetricsChart('tokensPerHour', data, timeScale);
-                    createMetricsChart('costPer100Replies', data, timeScale);
-                }}
-                
-                function createMetricsChart(chartType, data, timeScale) {{
-                    const config = metricsConfigs[chartType];
-                    
-                    currentMetricsCharts[chartType] = new Chart(document.getElementById(config.id), {{
-                        type: 'line',
-                        data: {{
-                            labels: data.time_labels,
-                            datasets: [{{
-                                label: config.title,
-                                data: data[config.dataKey],
-                                borderColor: config.color,
-                                backgroundColor: config.color + '20',
-                                tension: 0.4,
-                                fill: false
-                            }}]
-                        }},
-                        options: {{
-                            responsive: true,
-                            plugins: {{
-                                title: {{
-                                    display: true,
-                                    text: timeScale + '内' + config.title + '趋势',
-                                    font: {{ size: 16 }}
-                                }},
-                                legend: {{
-                                    display: false
-                                }}
-                            }},
-                            scales: {{
-                                x: {{
-                                    title: {{
-                                        display: true,
-                                        text: '时间'
-                                    }},
-                                    ticks: {{
-                                        maxTicksLimit: 12
-                                    }}
-                                }},
-                                y: {{
-                                    title: {{
-                                        display: true,
-                                        text: config.yAxisLabel
-                                    }},
-                                    beginAtZero: true
-                                }}
-                            }},
-                            interaction: {{
-                                intersect: false,
-                                mode: 'index'
-                            }}
-                        }}
-                    }});
-                }}
-                
-                // 初始化图表（默认7天）
-                document.addEventListener('DOMContentLoaded', function() {{
-                    updateAllMetricsCharts(allMetricsData['7d'], '7d');
-                }});
-            </script>
-        </div>
-        """
