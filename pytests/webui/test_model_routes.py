@@ -5,6 +5,7 @@
 """
 
 import importlib
+import ipaddress
 import base64
 import struct
 import sys
@@ -30,6 +31,11 @@ def load_model_routes(monkeypatch: pytest.MonkeyPatch):
     config_module.__dict__["config_manager"] = DummyConfigManager()
     monkeypatch.setitem(sys.modules, "src.config.config", config_module)
 
+    # HTTP is mocked here; resolve test hosts to a public address without host DNS.
+    monkeypatch.setattr(
+        "src.common.network_security._resolve_ip_addresses",
+        lambda hostname, port: {ipaddress.ip_address("93.184.216.34")},
+    )
     sys.modules.pop("src.webui.routers.model", None)
     return importlib.import_module("src.webui.routers.model")
 
@@ -518,3 +524,69 @@ def test_model_test_image_base64_is_valid_png(monkeypatch: pytest.MonkeyPatch) -
     assert chunk_types[0] == b"IHDR"
     assert b"IDAT" in chunk_types
     assert chunk_types[-1] == b"IEND"
+
+
+@pytest.mark.asyncio
+async def test_chatgpt_catalog_uses_saved_label_and_ignores_endpoint_overrides(monkeypatch):
+    from src.common.chatgpt_auth import ChatGPTAccountStore
+
+    model_routes = load_model_routes(monkeypatch)
+    monkeypatch.setattr(model_routes, "_get_provider_config", lambda name: {
+        "client_type": "chatgpt", "chatgpt_account": "work", "api_key": "",
+    })
+    labels = []
+
+    def catalog(self, label):
+        labels.append(label)
+        return [{"id": "test-model", "name": "Test"}]
+
+    async def wrong_transport(**kwargs):
+        raise AssertionError("ChatGPT must not use the API-key transport")
+
+    monkeypatch.setattr(ChatGPTAccountStore, "models", catalog)
+    monkeypatch.setattr(model_routes, "_fetch_models_from_provider", wrong_transport)
+    result = await model_routes.get_provider_models(
+        provider_name="ChatGPT", parser="gemini", endpoint="https://example.invalid/override",
+    )
+    assert labels == ["work"]
+    assert result["models"] == [{"id": "test-model", "name": "Test"}]
+
+
+@pytest.mark.asyncio
+async def test_chatgpt_url_probe_rejects_api_key_input(monkeypatch):
+    model_routes = load_model_routes(monkeypatch)
+    with pytest.raises(model_routes.HTTPException) as error:
+        await model_routes.get_models_by_url(
+            base_url="https://example.invalid", api_key="test-only", client_type="chatgpt",
+        )
+    assert error.value.status_code == 400
+    assert "test-only" not in error.value.detail
+
+
+@pytest.mark.parametrize("auth_type", ["header", "query", "none"])
+def test_chatgpt_rejects_ordinary_provider_auth_overrides(auth_type):
+    """普通端点的空密钥兼容不能改变 SIWC 的独立授权方式。"""
+    from src.config.model_configs import APIProvider
+
+    ordinary = APIProvider(name="Local", base_url="http://localhost:8000/v1", auth_type=auth_type)
+    assert ordinary.api_key == ""
+    with pytest.raises(ValueError, match="ChatGPT SIWC 使用独立本机授权"):
+        APIProvider(
+            name="ChatGPT", base_url="https://api.openai.com/v1", client_type="chatgpt", auth_type=auth_type,
+        )
+
+
+@pytest.mark.asyncio
+async def test_chatgpt_connection_probe_rejects_unauthenticated_url_path(monkeypatch):
+    model_routes = load_model_routes(monkeypatch)
+
+    async def wrong_transport(**kwargs):
+        raise AssertionError("ChatGPT must use its saved-account transport")
+
+    monkeypatch.setattr(model_routes, "_test_provider_connection", wrong_transport)
+    with pytest.raises(model_routes.HTTPException) as error:
+        await model_routes.test_provider_connection(
+            base_url="http://localhost:8000/v1", api_key=None, client_type="chatgpt",
+        )
+    assert error.value.status_code == 400
+    assert "账号标签" in error.value.detail

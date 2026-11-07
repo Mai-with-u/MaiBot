@@ -53,3 +53,14 @@ def test_run_refuses_directory_moved_into_workspace(tmp_path: Path) -> None:
     assert result.returncode == 2
     assert "D:/workspace/bots/abc" in result.stderr
     assert [path.name for path in tmp_path.iterdir()] == ["MOVED_TO_WORKSPACE.txt"]
+
+
+def test_chatgpt_accounts_preserves_host_cli_without_initializing_bot(tmp_path: Path) -> None:
+    import json
+
+    instance = tmp_path / "saved-bot"
+    result = invoke(tmp_path, ["chatgpt", "accounts", "-d", str(instance), "--account", "work"])
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == []
+    assert not instance.exists()
+    assert not list(tmp_path.iterdir())

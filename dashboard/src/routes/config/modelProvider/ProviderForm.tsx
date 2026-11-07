@@ -151,14 +151,14 @@ export function ProviderForm({
     const options = [...clientTypes]
     const knownTypes = new Set(options.map((item) => item.client_type))
 
-    for (const clientType of ['openai', 'openai_responses', 'gemini', localProvider?.client_type].filter(Boolean) as string[]) {
+    for (const clientType of ['openai', 'openai_responses', 'chatgpt', 'gemini', localProvider?.client_type].filter(Boolean) as string[]) {
       if (!knownTypes.has(clientType)) {
         options.push({
           client_type: clientType,
           owner_plugin_id: null,
           version: '',
           description: '',
-          builtin: clientType === 'openai' || clientType === 'openai_responses' || clientType === 'gemini',
+          builtin: ['openai', 'openai_responses', 'chatgpt', 'gemini'].includes(clientType),
         })
         knownTypes.add(clientType)
       }
@@ -497,66 +497,92 @@ export function ProviderForm({
                       </Select>
                     </FormRow>
 
-                    <FormRow
-                      label="API Key"
-                      htmlFor="api_key"
-                      data-tour="provider-apikey-input"
-                      labelExtra={(
-                        <HelpTooltip
-                          content={
-                            <div className="space-y-2">
-                              <p className="font-medium">API 密钥</p>
-                              <p>从提供商平台获取的身份验证密钥。无鉴权服务可留空。</p>
-                              <ul className="list-disc list-inside space-y-1 text-xs">
-                                <li>通常以 <code>sk-</code> 开头</li>
-                                <li>请妥善保管，不要泄露给他人</li>
-                                <li>可以点击眼睛图标切换显示/隐藏</li>
-                                <li>点击复制图标可快速复制密钥</li>
-                              </ul>
-                            </div>
-                          }
-                          side="right"
-                          maxWidth="350px"
-                        />
-                      )}
-                    >
-                      <div className="flex min-w-0 gap-2">
-                        <Input
-                          id="api_key"
-                          type={showApiKey ? 'text' : 'password'}
-                          value={localProvider?.api_key || ''}
-                          onChange={(e) => {
-                            setLocalProvider((prev) =>
-                              prev ? { ...prev, api_key: e.target.value } : null
-                            )
-                          }}
-                          placeholder="sk-..."
-                          className="min-w-0 flex-1"
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          className="shrink-0"
-                          onClick={() => setShowApiKey(!showApiKey)}
-                          title={showApiKey ? '隐藏密钥' : '显示密钥'}
-                          aria-label={showApiKey ? '隐藏密钥' : '显示密钥'}
-                        >
-                          {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          className="shrink-0"
-                          onClick={copyApiKey}
-                          title="复制密钥"
-                          aria-label="复制密钥"
-                        >
-                          <Copy className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </FormRow>
+                    {localProvider?.client_type === 'chatgpt' ? (
+                      <FormRow
+                        label="ChatGPT 账号标签"
+                        htmlFor="chatgpt_account"
+                        error={formErrors.chatgpt_account}
+                        alignTop
+                      >
+                        <div className="grid gap-2">
+                          <Input
+                            id="chatgpt_account"
+                            value={localProvider.chatgpt_account ?? 'default'}
+                            onChange={(event) => setLocalProvider((previous) => previous
+                              ? { ...previous, chatgpt_account: event.target.value, api_key: '' } : null)}
+                            aria-invalid={formErrors.chatgpt_account ? true : undefined}
+                          />
+                          {formErrors.api_key && <p role="alert" className="text-xs text-destructive">{formErrors.api_key}</p>}
+                          <p className="text-xs text-muted-foreground">
+                            在实例目录运行 <code>maibot chatgpt login --account 标签</code>，通过系统浏览器继续登录。
+                            此处只填写注册标签，请勿粘贴令牌。保存后获取该账号的模型列表；初次接入支持 macOS/Linux。
+                          </p>
+                          <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noreferrer"
+                            className="text-sm underline">Manage usage — 管理 ChatGPT 用量与授权</a>
+                        </div>
+                      </FormRow>
+                    ) : (
+                      <FormRow
+                        label="API Key"
+                        htmlFor="api_key"
+                        data-tour="provider-apikey-input"
+                        labelExtra={(
+                          <HelpTooltip
+                            content={
+                              <div className="space-y-2">
+                                <p className="font-medium">API 密钥</p>
+                                <p>从提供商平台获取的身份验证密钥。无鉴权服务可留空。</p>
+                                <ul className="list-disc list-inside space-y-1 text-xs">
+                                  <li>通常以 <code>sk-</code> 开头</li>
+                                  <li>请妥善保管，不要泄露给他人</li>
+                                  <li>可以点击眼睛图标切换显示/隐藏</li>
+                                  <li>点击复制图标可快速复制密钥</li>
+                                </ul>
+                              </div>
+                            }
+                            side="right"
+                            maxWidth="350px"
+                          />
+                        )}
+                      >
+                        <div className="flex min-w-0 gap-2">
+                          <Input
+                            id="api_key"
+                            type={showApiKey ? 'text' : 'password'}
+                            value={localProvider?.api_key || ''}
+                            onChange={(e) => {
+                              setLocalProvider((prev) =>
+                                prev ? { ...prev, api_key: e.target.value } : null
+                              )
+                            }}
+                            placeholder="sk-..."
+                            className="min-w-0 flex-1"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="shrink-0"
+                            onClick={() => setShowApiKey(!showApiKey)}
+                            title={showApiKey ? '隐藏密钥' : '显示密钥'}
+                            aria-label={showApiKey ? '隐藏密钥' : '显示密钥'}
+                          >
+                            {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="shrink-0"
+                            onClick={copyApiKey}
+                            title="复制密钥"
+                            aria-label="复制密钥"
+                          >
+                            <Copy className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </FormRow>
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -650,9 +676,9 @@ function TemplateInfo({ description }: { description: string }) {
     <TooltipProvider delayDuration={200}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <span tabIndex={0} className="ml-1 inline-flex cursor-help text-muted-foreground" aria-label={description}>
+          <button type="button" className="ml-1 inline-flex cursor-help text-muted-foreground" aria-label={description}>
             <Info className="h-4 w-4" />
-          </span>
+          </button>
         </TooltipTrigger>
         <TooltipContent className="z-[70] max-w-xs whitespace-pre-line">{description}</TooltipContent>
       </Tooltip>

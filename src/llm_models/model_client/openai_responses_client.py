@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Sequence, Tuple, cast
 import asyncio
 
 from openai import APIConnectionError, APIStatusError, AsyncStream
-from openai._types import omit
+from openai._types import Omit, omit
 from openai.types.responses import Response, ResponseStreamEvent
 
 from src.common.logger import get_logger
@@ -667,6 +667,10 @@ async def _consume_response_stream(
 class OpenAIResponsesClient(OpenaiClient):
     """使用 OpenAI Responses API 的客户端。"""
 
+    def _prepare_response_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """允许受约束的 Responses 客户端在快照和 SDK 序列化之前应用协议限制。"""
+        return kwargs
+
     async def get_response(self, request: ResponseRequest) -> APIResponse:
         """执行 Responses API 请求并返回统一响应。"""
 
@@ -688,7 +692,7 @@ class OpenAIResponsesClient(OpenaiClient):
             input_items = _convert_context_items(
                 request.context_items,
                 request,
-                self.api_provider.name,
+                self._replay_provider_name(),
                 self.api_provider.base_url,
             )
             request_overrides = split_openai_request_overrides(request.extra_params)
@@ -712,37 +716,28 @@ class OpenAIResponsesClient(OpenaiClient):
             if store is not False:
                 raise ValueError("openai_responses 当前固定使用 store=false")
 
+            request_kwargs = self._prepare_response_kwargs(
+                {
+                    "extra_body": extra_body or None,
+                    "extra_headers": self._build_request_headers(request_overrides.extra_headers),
+                    "extra_query": request_overrides.extra_query or None,
+                    "input": input_items,
+                    "max_output_tokens": max_output_tokens if max_output_tokens is not None else omit,
+                    "model": model_info.model_identifier,
+                    "store": store,
+                    "stream": bool(model_info.force_stream_mode),
+                    "temperature": temperature if temperature is not None else omit,
+                    "text": text_config if text_config else omit,
+                    "tools": tools if tools else omit,
+                }
+            )
             snapshot_provider_request["request_kwargs"] = {
-                "extra_body": extra_body or None,
-                "extra_headers": request_overrides.extra_headers or None,
-                "extra_query": request_overrides.extra_query or None,
-                "input": input_items,
-                "max_output_tokens": max_output_tokens,
-                "model": model_info.model_identifier,
-                "store": store,
-                "stream": bool(model_info.force_stream_mode),
-                "temperature": temperature,
-                "text": text_config,
-                "tools": tools,
+                key: value for key, value in request_kwargs.items() if not isinstance(value, Omit)
             }
 
-            request_task = asyncio.create_task(
-                self.client.responses.create(
-                    model=model_info.model_identifier,
-                    input=cast(Any, input_items),
-                    tools=cast(Any, tools) if tools else omit,
-                    text=cast(Any, text_config) if text_config else omit,
-                    max_output_tokens=max_output_tokens if max_output_tokens is not None else omit,
-                    temperature=temperature if temperature is not None else omit,
-                    store=store,
-                    stream=bool(model_info.force_stream_mode),
-                    extra_headers=self._build_request_headers(request_overrides.extra_headers),
-                    extra_query=request_overrides.extra_query or None,
-                    extra_body=extra_body or None,
-                )
-            )
+            request_task = asyncio.create_task(self.client.responses.create(**request_kwargs))
             raw_response = await await_task_with_interrupt(request_task, request.interrupt_flag)
-            if model_info.force_stream_mode:
+            if request_kwargs["stream"]:
                 completed_response = await _consume_response_stream(
                     cast(AsyncStream[ResponseStreamEvent], raw_response),
                     request.interrupt_flag,
@@ -753,7 +748,7 @@ class OpenAIResponsesClient(OpenaiClient):
             response, usage_record = _parse_completed_response(
                 completed_response,
                 request,
-                self.api_provider.name,
+                self._replay_provider_name(),
                 self.api_provider.base_url,
                 self.tool_argument_parse_mode,
             )
@@ -768,10 +763,8 @@ class OpenAIResponsesClient(OpenaiClient):
                 response.usage = self._build_usage_record(model_info, usage_record)
             response.wire_protocol = "responses"
             response.request_wire_payload = {
-                "extra_body": extra_body or None,
-                "input": input_items,
-                "text": text_config,
-                "tools": tools,
+                key: snapshot_provider_request["request_kwargs"].get(key)
+                for key in ("extra_body", "input", "text", "tools")
             }
             return response
         except (EmptyResponseException, RespParseException) as exc:
@@ -817,3 +810,7 @@ class OpenAIResponsesClient(OpenaiClient):
             trace_context=request.trace_context,
         )
         attach_request_snapshot(error, snapshot_path)
+
+    def _replay_provider_name(self) -> str:
+        """Responses 原生片段的回放边界；授权型客户端可进一步限定账号。"""
+        return self.api_provider.name

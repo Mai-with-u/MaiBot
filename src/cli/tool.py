@@ -19,6 +19,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     for command, description in (("run", "运行宿主及工作区内的全部 Bot"), ("init", "在目录中生成 Bot 配置（保留已有配置）")):
         subparser = commands.add_parser(command, help=description)
         subparser.add_argument("--directory", "-d", type=Path, default=Path.cwd(), help="工作区或 Bot 目录，默认当前目录")
+    chatgpt = commands.add_parser("chatgpt", help="管理 MaiBot 独立的 Sign in with ChatGPT 授权")
+    chatgpt.add_argument("action", choices=("login", "accounts", "models", "logout"))
+    chatgpt.add_argument("--directory", "-d", type=Path, default=Path.cwd())
+    chatgpt.add_argument("--account", default="default", help="独立账号/工作区注册标签")
     # run 的父进程只加载标准库，避免更新期间持有被替换的扩展模块。
     if argv and argv[0] == "host":
         from src.host.cli import add_host_command, run_host_command
@@ -31,6 +35,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         # 宿主不能改变进程级实例路径，也不能在自身进程内加载单 Bot 的配置模块。
         return run_host_command(args, parser)
     directory = args.directory.expanduser().resolve()
+    if args.command == "chatgpt":
+        from src.cli.chatgpt import run_chatgpt_command
+
+        return run_chatgpt_command(args.action, directory, args.account)
     directory.mkdir(parents=True, exist_ok=True)
     if args.command == "run":
         # 宿主按目录内容决定布局：已有配置原地运行，空目录创建新工作区。
