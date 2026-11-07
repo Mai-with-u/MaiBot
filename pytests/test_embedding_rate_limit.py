@@ -12,7 +12,7 @@ import pytest
 
 @pytest.fixture
 def rate_module(monkeypatch):
-    # Load the limiter without starting configured model clients or file logging.
+    """Load the limiter without starting configured model clients or file logging."""
     logger = ModuleType("src.common.logger")
     logger.get_logger = logging.getLogger
     monkeypatch.setitem(sys.modules, "src.common.logger", logger)
@@ -25,9 +25,11 @@ def rate_module(monkeypatch):
 
 @pytest.fixture
 def clock(rate_module, monkeypatch):
+    """Replace elapsed time and sleep with an adjustable, deterministic clock."""
     now = [3600.0]
 
     async def sleep(delay):
+        """Advance simulated time without waiting in real time."""
         now[0] += delay
 
     monkeypatch.setattr(rate_module, "time", SimpleNamespace(monotonic=lambda: now[0]))
@@ -38,6 +40,7 @@ def clock(rate_module, monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("history, expected", [([], 1.0), ([0.0, 1.0], 1.0), ([3540.0, 3550.0], 5.0)])
 async def test_sparse_history_has_bounded_wait(rate_module, clock, history, expected):
+    """Sparse or insufficient samples must not produce excessive retry intervals."""
     limiter = rate_module.EmbeddingRateLimit()
     limiter._times.extend(history)
     generation, waited = await limiter.wait()
@@ -49,6 +52,7 @@ async def test_sparse_history_has_bounded_wait(rate_module, clock, history, expe
 
 @pytest.mark.asyncio
 async def test_concurrent_errors_reduce_only_twice_and_waiters_recheck(rate_module, clock, monkeypatch):
+    """Deduplicate concurrent errors and make sleepers observe later interval changes."""
     limiter = rate_module.EmbeddingRateLimit()
     limiter._times.extend([3597.0, 3598.0])
     generation, _ = await limiter.wait()
@@ -59,6 +63,7 @@ async def test_concurrent_errors_reduce_only_twice_and_waiters_recheck(rate_modu
     assert waited == 2.0
 
     async def concurrent_sleep(delay):
+        """Deliver another request's 429 while a caller is waiting."""
         clock[0] += delay
         limiter.reduce(second_generation)
 
@@ -71,6 +76,7 @@ async def test_concurrent_errors_reduce_only_twice_and_waiters_recheck(rate_modu
 
 @pytest.mark.asyncio
 async def test_cooldown_recovers_and_rejects_old_generations(rate_module, clock):
+    """Recovery clears backoff without letting pre-recovery errors slow new requests."""
     limiter = rate_module.EmbeddingRateLimit()
     first_generation, _ = await limiter.wait()
     limiter.reduce(first_generation)
@@ -92,6 +98,7 @@ async def test_cooldown_recovers_and_rejects_old_generations(rate_module, clock)
 
 @pytest.mark.asyncio
 async def test_ongoing_429_at_cap_extends_cooldown(rate_module, clock):
+    """Current-generation errors postpone recovery even after both reductions."""
     limiter = rate_module.EmbeddingRateLimit()
     for _ in range(2):
         generation, _ = await limiter.wait()
@@ -109,12 +116,14 @@ async def test_ongoing_429_at_cap_extends_cooldown(rate_module, clock):
 
 
 def test_limiter_is_shared_and_spaces_requests_across_event_loops(rate_module):
+    """Both event loops share send spacing while different models remain independent."""
     limiter = rate_module.get_embedding_rate_limit("provider", "https://example.test/v1", "model")
     assert limiter is rate_module.get_embedding_rate_limit("provider", "https://example.test/v1/", "model")
     assert limiter is not rate_module.get_embedding_rate_limit("provider", "https://example.test/v1", "other")
     limiter.interval = 0.01
 
     async def send():
+        """Send three requests through the same limiter from one event loop."""
         for _ in range(3):
             await limiter.wait()
 

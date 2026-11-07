@@ -18,6 +18,7 @@ class EmbeddingRateLimit:
     """同一供应商和模型共享发送节奏，允许主循环与 WebUI 循环同时使用。"""
 
     def __init__(self) -> None:
+        """Initialize an unthrottled limiter with state shared across event loops."""
         self._lock = Lock()
         self._times: Deque[float] = deque(maxlen=32)
         self.interval = 0.0
@@ -26,6 +27,10 @@ class EmbeddingRateLimit:
         self._last_429 = 0.0
 
     async def wait(self) -> Tuple[int, float]:
+        """Wait for a send slot, returning its generation and total wait in seconds.
+
+        Recover after the cooldown and recheck the shared interval after each sleep.
+        """
         started = time.monotonic()
         while True:
             # 不预订未来时隙：醒来后重新检查，避免排队请求沿用减速前的间隔。
@@ -44,6 +49,10 @@ class EmbeddingRateLimit:
             await asyncio.sleep(delay)
 
     def reduce(self, generation: int) -> None:
+        """Apply a 429 using the generation returned by ``wait()``.
+
+        Ignore stale generations; current errors refresh cooldown even at the backoff cap.
+        """
         with self._lock:
             # 同一代并发请求只减速一次；持续收到 429 时延后恢复。
             if generation != self._generation:
@@ -66,6 +75,7 @@ _limits_lock = Lock()
 
 
 def get_embedding_rate_limit(provider: str, base_url: str, model: str) -> EmbeddingRateLimit:
+    """Return the shared limiter for a provider, normalized endpoint, and model."""
     key = (provider, base_url.rstrip("/"), model)
     with _limits_lock:
         if key not in _limits:
