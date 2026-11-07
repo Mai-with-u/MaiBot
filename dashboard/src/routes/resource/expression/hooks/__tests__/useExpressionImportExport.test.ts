@@ -1,18 +1,15 @@
 /**
- * useExpressionImportExport 行为测试：
- * 覆盖导入（未选聊天 / 非法 JSON / 空载荷 / 裸数组 / 包装对象 / 接口失败）、
- * 清除（成功回调链 / 失败不触发回调）两条链路。
+ * useExpressionImportExport 行为测试：清除（成功回调链 / 失败不触发回调 / 未选聊天）。
  */
 import { renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ChangeEvent } from 'react'
 
-import { clearExpressions, importExpressions } from '@/lib/expression-api'
+import { clearExpressions } from '@/lib/expression-api'
 
 import { useExpressionImportExport } from '../useExpressionImportExport'
 import type { UseExpressionImportExportOptions } from '../useExpressionImportExport'
 
-import type { ChatInfo, ExpressionExportItem } from '@/types/expression'
+import type { ChatInfo } from '@/types/expression'
 
 const toastMock = vi.hoisted(() => vi.fn())
 
@@ -20,7 +17,6 @@ vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: toastMock }) }))
 
 vi.mock('@/lib/expression-api', () => ({
   clearExpressions: vi.fn(),
-  importExpressions: vi.fn(),
 }))
 
 /** 构造一个具体聊天 */
@@ -33,31 +29,6 @@ function makeChat(): ChatInfo {
     is_group: false,
     use_expression: true,
     enable_learning: true,
-  }
-}
-
-function makeExportItem(): ExpressionExportItem {
-  return {
-    situation: '打招呼',
-    style: '轻松',
-    content_list: '[]',
-    count: 1,
-    last_active_time: null,
-    create_time: null,
-    checked: false,
-    modified_by: null,
-  }
-}
-
-/** 构造 <input type="file"> 的 onChange 事件桩（target.value 可被 hook 清空） */
-function makeFileChangeEvent(file: File | null): {
-  event: ChangeEvent<HTMLInputElement>
-  target: { files: File[]; value: string }
-} {
-  const target = { files: file ? [file] : [], value: 'C:\\fakepath\\import.json' }
-  return {
-    event: { target } as unknown as ChangeEvent<HTMLInputElement>,
-    target,
   }
 }
 
@@ -75,131 +46,6 @@ function setupHook(overrides: Partial<UseExpressionImportExportOptions> = {}) {
 
 beforeEach(() => {
   toastMock.mockClear()
-})
-
-describe('useExpressionImportExport 导入', () => {
-  it('未选择聊天时拦截并清空 input 值', async () => {
-    const { result } = setupHook({ currentChat: null })
-    const file = new File(['[]'], 'import.json', { type: 'application/json' })
-    const { event, target } = makeFileChangeEvent(file)
-
-    await result.current.handleImportFileChange(event)
-
-    expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '请选择聊天' }))
-    expect(target.value).toBe('')
-    expect(importExpressions).not.toHaveBeenCalled()
-  })
-
-  it('非法 JSON 时弹导入失败提示', async () => {
-    const { result } = setupHook()
-    const file = new File(['not-json'], 'import.json', { type: 'application/json' })
-    const { event } = makeFileChangeEvent(file)
-
-    await result.current.handleImportFileChange(event)
-
-    expect(toastMock).toHaveBeenCalledWith(
-      expect.objectContaining({ title: '导入失败', variant: 'destructive' })
-    )
-    expect(importExpressions).not.toHaveBeenCalled()
-  })
-
-  it('JSON 中没有可导入条目时弹提示且不调用接口', async () => {
-    const { result, options } = setupHook()
-    const file = new File([JSON.stringify({ foo: 1 })], 'import.json', {
-      type: 'application/json',
-    })
-    const { event } = makeFileChangeEvent(file)
-
-    await result.current.handleImportFileChange(event)
-
-    expect(toastMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: '导入失败',
-        description: 'JSON 中没有可导入的表达方式',
-        variant: 'destructive',
-      })
-    )
-    expect(importExpressions).not.toHaveBeenCalled()
-    expect(options.onChanged).not.toHaveBeenCalled()
-  })
-
-  it('裸数组载荷导入成功并刷新列表', async () => {
-    vi.mocked(importExpressions).mockResolvedValue({
-      success: true,
-      message: 'ok',
-      imported_count: 1,
-      skipped_count: 0,
-      failed_count: 0,
-    })
-    const { result, options } = setupHook()
-    const items = [makeExportItem()]
-    const file = new File([JSON.stringify(items)], 'import.json', { type: 'application/json' })
-    const { event } = makeFileChangeEvent(file)
-
-    await result.current.handleImportFileChange(event)
-
-    expect(importExpressions).toHaveBeenCalledWith({ chat_id: 'chat-1', expressions: items })
-    expect(toastMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: '导入成功',
-        description: '成功 1 个，跳过 0 个，失败 0 个',
-      })
-    )
-    expect(options.onChanged).toHaveBeenCalledTimes(1)
-  })
-
-  it('包装对象 { expressions: [...] } 载荷也能规范化导入', async () => {
-    vi.mocked(importExpressions).mockResolvedValue({
-      success: true,
-      message: 'ok',
-      imported_count: 2,
-      skipped_count: 1,
-      failed_count: 3,
-    })
-    const { result } = setupHook()
-    const items = [makeExportItem(), makeExportItem()]
-    const file = new File([JSON.stringify({ expressions: items })], 'import.json', {
-      type: 'application/json',
-    })
-    const { event } = makeFileChangeEvent(file)
-
-    await result.current.handleImportFileChange(event)
-
-    expect(importExpressions).toHaveBeenCalledWith({ chat_id: 'chat-1', expressions: items })
-    expect(toastMock).toHaveBeenCalledWith(
-      expect.objectContaining({ description: '成功 2 个，跳过 1 个，失败 3 个' })
-    )
-  })
-
-  it('导入接口失败时弹错误提示且不刷新', async () => {
-    vi.mocked(importExpressions).mockRejectedValue(new Error('导入接口失败'))
-    const { result, options } = setupHook()
-    const file = new File([JSON.stringify([makeExportItem()])], 'import.json', {
-      type: 'application/json',
-    })
-    const { event } = makeFileChangeEvent(file)
-
-    await result.current.handleImportFileChange(event)
-
-    expect(toastMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: '导入失败',
-        description: '导入接口失败',
-        variant: 'destructive',
-      })
-    )
-    expect(options.onChanged).not.toHaveBeenCalled()
-  })
-
-  it('未选择文件时静默返回', async () => {
-    const { result } = setupHook()
-    const { event } = makeFileChangeEvent(null)
-
-    await result.current.handleImportFileChange(event)
-
-    expect(toastMock).not.toHaveBeenCalled()
-    expect(importExpressions).not.toHaveBeenCalled()
-  })
 })
 
 describe('useExpressionImportExport 清除', () => {

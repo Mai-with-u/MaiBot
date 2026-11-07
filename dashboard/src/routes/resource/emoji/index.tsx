@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import type { LearningBrowserTabs } from '../learning'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import { skipToken, useMutation, useQuery } from '@tanstack/react-query'
@@ -70,7 +71,7 @@ function alignEmojiPageSize(preferredSize: number, columns: number): number {
   return rows * columns
 }
 
-export function EmojiManagementPage({ browserHeader }: { browserHeader?: ReactNode }) {
+export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBrowserTabs }) {
   const [selectedEmoji, setSelectedEmoji] = useState<Emoji | null>(null)
   const [detailDialogOpen, setDetailDialogOpen] = useState(false)
   const detailEmojiId = selectedEmoji?.id
@@ -303,7 +304,7 @@ export function EmojiManagementPage({ browserHeader }: { browserHeader?: ReactNo
     <div className="flex h-full min-h-0 min-w-0 flex-col p-3 pb-4 max-lg:h-auto sm:p-4">
       {!isMobile && (
         <EmojiBrowser
-          browserHeader={browserHeader}
+          browserTabs={browserTabs}
           stats={stats}
           filters={list.filters}
           onFilterChange={list.setFilter}
