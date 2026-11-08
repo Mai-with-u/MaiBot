@@ -365,6 +365,11 @@ class SessionMessage(MaiMessage):
         """
         normalized_content = component.content.strip()
         if normalized_content:  # 先检查是否处理过
+            if component.binary_data:
+                from src.emoji_system.emoji_manager import emoji_manager
+
+                await emoji_manager.ensure_emoji_saved(component.binary_data)
+                component.binary_data = b""
             component.content = normalized_content
             return normalized_content
         from src.emoji_system.emoji_manager import emoji_manager
