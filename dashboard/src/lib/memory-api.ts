@@ -79,7 +79,7 @@ export interface MemoryGraphRelationDetailPayload {
   predicate: string
   object: string
   text: string
-  confidence: number
+  confidence: number | null
   paragraph_count: number
   paragraph_hashes: string[]
   source_paragraph: string

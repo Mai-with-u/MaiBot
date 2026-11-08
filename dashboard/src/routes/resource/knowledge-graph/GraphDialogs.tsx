@@ -53,7 +53,7 @@ function RelationList({
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="outline">{relation.predicate || '未命名谓词'}</Badge>
               <span className="text-xs text-muted-foreground">证据段落 {relation.paragraph_count}</span>
-              <span className="text-xs text-muted-foreground">置信度 {relation.confidence.toFixed(3)}</span>
+              <span className="text-xs text-muted-foreground">置信度 {formatRelationConfidence(relation.confidence)}</span>
             </div>
             {onDeleteRelation ? (
               <Button size="sm" variant="outline" onClick={() => onDeleteRelation(relation)}>
@@ -124,6 +124,14 @@ interface NodeDetailDialogProps {
   onDeleteEntity?: (options: { includeParagraphs: boolean }) => void
   onDeleteRelation?: (relation: MemoryGraphRelationDetailPayload) => void
   onDeleteParagraph?: (paragraph: MemoryGraphParagraphDetailPayload) => void
+}
+
+function formatRelationConfidence(confidence: number | null | undefined): string {
+  if (confidence == null) {
+    return '—'
+  }
+  const value = Number(confidence)
+  return Number.isFinite(value) ? value.toFixed(3) : '—'
 }
 
 export function NodeDetailDialog({
@@ -366,7 +374,7 @@ export function RelationDetailDialog({
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="outline">{relation.predicate || metadata?.predicate || '未命名谓词'}</Badge>
               <Badge variant="secondary">证据段落 {relation.paragraph_count}</Badge>
-              <Badge variant="secondary">置信度 {relation.confidence.toFixed(3)}</Badge>
+              <Badge variant="secondary">置信度 {formatRelationConfidence(relation.confidence)}</Badge>
             </div>
             <p className="mt-3 text-base font-semibold break-words">{relation.text}</p>
             <code className="mt-3 block break-all text-xs text-muted-foreground">{relation.hash}</code>

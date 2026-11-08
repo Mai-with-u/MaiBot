@@ -186,7 +186,7 @@ function buildRelationFromMetadata(
     predicate,
     object,
     text,
-    confidence: Number(metadata?.confidence ?? 0),
+    confidence: metadata?.confidence == null ? null : Number(metadata.confidence),
     paragraph_count: Number(metadata?.paragraph_count ?? 0),
     paragraph_hashes: Array.isArray(metadata?.paragraph_hashes) ? metadata.paragraph_hashes.map(String) : [],
     source_paragraph: '',
@@ -997,7 +997,7 @@ export function KnowledgeGraphPage({ embedded = false, initialParagraphHash = ''
                         命中字段：{item.matched_field} = {item.matched_value}
                         {item.type === 'entity'
                           ? ` · 有效证据=${item.active_evidence_count ?? 0} · 累计出现=${item.appearance_count ?? 0}`
-                          : ` · confidence=${Number(item.confidence ?? 0).toFixed(2)}`}
+                          : ` · confidence=${item.confidence == null ? '—' : Number(item.confidence).toFixed(2)}`}
                       </p>
                     </button>
                   ))}
