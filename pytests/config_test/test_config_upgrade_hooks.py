@@ -1,6 +1,41 @@
+import pytest
+
 from src.config.config_base import AttributeData
 from src.config.config_upgrade_hooks import apply_config_upgrade_hooks
-from src.config.official_configs import PersonalityConfig
+from src.config.official_configs import ChatReplyTimingConfig, PersonalityConfig
+
+
+@pytest.mark.parametrize(
+    ("old_version", "old_switch", "expected_enabled"),
+    [("8.16.17", {}, True), ("8.16.10", {"enable_talk_value_rules": False}, False)],
+)
+def test_migrate_talk_rules_to_default_group(old_version, old_switch, expected_enabled):
+    timing = {
+        **old_switch,
+        "talk_value": 0.6,
+        "talk_value_rules": [
+            {"platform": "qq", "item_id": "123", "time": "23:00-01:00", "value": 0.2},
+            {"platform": "qq", "item_id": "123", "time": "", "value": 0.4},
+            {"platform": "qq", "item_id": "456", "rule_type": "private", "time": "*", "value": 0.3},
+        ],
+    }
+    data = {"chat": {"reply_timing": timing}}
+
+    result = apply_config_upgrade_hooks(data, "bot_config.toml", old_version, "8.16.18")
+
+    assert result.migrated
+    assert set(timing) == {"talk_value", "talk_rule_groups"}
+    config = ChatReplyTimingConfig.model_validate(timing)
+    assert config.talk_value == 0.6
+    assert config.talk_rule_groups.active_group == "默认"
+    assert [group.name for group in config.talk_rule_groups.groups] == ["默认"]
+    rules = config.talk_rule_groups.groups[0].rules
+    assert [(rule.item_id, rule.rule_type, rule.time, rule.value, rule.enabled) for rule in rules] == [
+        ("123", "group", "23:00-01:00", 0.2, expected_enabled),
+        ("123", "group", "", 0.4, expected_enabled),
+        ("456", "private", "*", 0.3, expected_enabled),
+    ]
+    assert not apply_config_upgrade_hooks(data, "bot_config.toml", "8.16.18", "8.16.18").migrated
 
 
 def test_removed_expression_selection_mode_upgrade_hook():

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { BotConfigPage } from '../bot'
+import { ChatTalkRuleGroupsHook } from '../bot/hooks/complexFieldHooks'
 import { scrollToConfigSearchField } from '@/lib/config-search-navigation'
 import { fieldHooks } from '@/lib/field-hooks'
 import * as configApi from '@/lib/config-api'
@@ -11,6 +12,45 @@ import type { ConfigSchema, FieldSchema } from '@/types/config-schema'
 import type { ReactNode } from 'react'
 
 const toastMock = vi.fn()
+
+it('复制规则组后只修改当前组的规则开关', async () => {
+  const user = userEvent.setup()
+  const rule = { platform: 'qq', item_id: '*', rule_type: 'group', time: '*', value: 0.4, enabled: true }
+  const value = { active_group: '默认', groups: [{ name: '默认', rules: [rule] }] }
+  const onChange = vi.fn()
+  const props = {
+    fieldPath: 'chat.reply_timing.talk_rule_groups',
+    onChange,
+    nestedSchema: {
+      className: 'TalkRuleGroups',
+      classDoc: '',
+      fields: [],
+      nested: {
+        groups: {
+          className: 'TalkRuleGroup',
+          classDoc: '',
+          fields: [],
+          nested: { rules: { className: 'TalkRulesItem', classDoc: '', fields: [] } },
+        },
+      },
+    },
+  }
+  const { rerender } = render(<ChatTalkRuleGroupsHook {...props} value={value} />)
+
+  await user.click(screen.getByRole('button', { name: '新建组' }))
+  await user.type(screen.getByLabelText('新规则组名称'), '夜间')
+  await user.click(screen.getByRole('button', { name: '保存' }))
+
+  const copied = { active_group: '夜间', groups: [...value.groups, { name: '夜间', rules: [rule] }] }
+  expect(onChange).toHaveBeenLastCalledWith(copied)
+  rerender(<ChatTalkRuleGroupsHook {...props} value={copied} />)
+
+  await user.click(screen.getByRole('switch', { name: /启用.*轨道 1/ }))
+  expect(onChange).toHaveBeenLastCalledWith({
+    active_group: '夜间',
+    groups: [...value.groups, { name: '夜间', rules: [{ ...rule, enabled: false }] }],
+  })
+})
 
 // 路由 search 字符串（供 useRouterState mock 读取，可按用例改写）
 let routerSearchStr = ''
@@ -234,7 +274,7 @@ const EXPECTED_FIELD_HOOKS: Array<[string, 'replace' | 'wrapper' | 'hidden']> = 
   ['bot.platforms', 'hidden'],
   ['personality.multiple_reply_style', 'replace'],
   ['chat.reply_style.chat_prompts', 'replace'],
-  ['chat.reply_timing.talk_value_rules', 'replace'],
+  ['chat.reply_timing.talk_rule_groups', 'replace'],
   ['experimental.focus_chat_whitelist', 'replace'],
   ['experimental.focus_groups', 'replace'],
   ['expression.expression_groups', 'replace'],

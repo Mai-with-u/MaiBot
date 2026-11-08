@@ -451,6 +451,15 @@ class TalkRulesItem(ConfigBase):
         if self.rule_type == "group" and is_global_talk_rule_target(self.platform, self.item_id):
             raise ValueError("动态发言频率规则必须指定平台或群聊 ID；所有群的默认频率请使用总体发言频率")
 
+    enabled: bool = Field(
+        default=True,
+        json_schema_extra={
+            "label": {"zh_CN": "启用规则", "en_US": "Enable rule", "ja_JP": "ルールを有効にする"},
+            "x-widget": "switch",
+        },
+    )
+    """关闭时保留该规则，但不参与发言频率匹配。"""
+
     platform: str = Field(
         default="",
         json_schema_extra={
@@ -538,6 +547,37 @@ class PrivateReplyPauseRule(ConfigBase):
         },
     )
     """开启后暂停这个私聊的回复；关闭则允许回复，覆盖全局私聊暂停设置。"""
+
+
+DEFAULT_TALK_RULE_GROUP_NAME = "默认"
+
+
+class TalkRuleGroup(ConfigBase):
+    name: str = Field(default=DEFAULT_TALK_RULE_GROUP_NAME)
+    """发言频率规则组名称。"""
+
+    rules: List[TalkRulesItem] = Field(default_factory=list)
+    """组内的发言频率规则，顺序用于相同优先级下的匹配。"""
+
+
+class TalkRuleGroups(ConfigBase):
+    def model_post_init(self, context: Any) -> None:
+        super().model_post_init(context)
+        names = [group.name for group in self.groups]
+        if any(not name.strip() or name != name.strip() for name in names) or len(names) != len(set(names)):
+            raise ValueError("动态发言规则组名称须非空、无首尾空白且唯一")
+        if self.active_group not in names:
+            raise ValueError(f"找不到启用的动态发言规则组：{self.active_group}")
+
+    active_group: str = Field(default=DEFAULT_TALK_RULE_GROUP_NAME)
+    """当前生效的规则组名称。"""
+
+    groups: List[TalkRuleGroup] = Field(default_factory=lambda: [TalkRuleGroup()])
+    """已保存的规则组。"""
+
+
+def get_active_talk_rule_group(config: TalkRuleGroups) -> TalkRuleGroup:
+    return next(group for group in config.groups if group.name == config.active_group)
 
 
 class ChatReplyTimingConfig(ConfigBase):
@@ -754,20 +794,20 @@ class ChatReplyTimingConfig(ConfigBase):
     )
     """等待期间新消息达到多少条就立刻重新处理；0 表示不按条数打断等待。"""
 
-    talk_value_rules: list[TalkRulesItem] = Field(
-        default_factory=list,
+    talk_rule_groups: TalkRuleGroups = Field(
+        default_factory=TalkRuleGroups,
         json_schema_extra={
             "x-chat-settings": {"scope": "group", "row": 80, "dialog": "动态发言规则"},
             "label": {
-                "zh_CN": "动态发言频率规则",
-                "en_US": "Dynamic talk frequency rules",
-                "ja_JP": "動的な発言頻度ルール",
+                "zh_CN": "动态发言规则组",
+                "en_US": "Dynamic talk frequency rule groups",
+                "ja_JP": "動的な発言頻度ルールグループ",
             },
             "x-widget": "custom",
         },
     )
     """
-    _wrap_动态发言频率规则；可让麦麦在某些群或时段更活跃或更安静。旧的私聊频率规则不再生效。
+    _wrap_为不同场景保存发言频率规则，仅当前规则组内已启用的群聊规则参与匹配。
     """
 
 
