@@ -4418,14 +4418,14 @@ class EmojiConfig(ConfigBase):
         default=True,
         json_schema_extra={
             "label": {
-                "zh_CN": "收集聊天表情",
-                "en_US": "Collect chat emojis",
-                "ja_JP": "チャット絵文字を収集",
+                "zh_CN": "自动注册表情包",
+                "en_US": "Automatically register emojis",
+                "ja_JP": "絵文字を自動登録",
             },
             "x-widget": "switch",
         },
     )
-    """是否从聊天中自动收集别人发的表情。"""
+    """定期扫描表情包目录并尝试将候选表情注册为可发送的表情。关闭后，聊天表情仍会为识别而缓存。"""
 
     max_emoji_size_mb: float = Field(
         default=5.0,

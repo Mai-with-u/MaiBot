@@ -56,8 +56,37 @@ def register_emoji_hook_specs(registry: HookSpecRegistry) -> list[HookSpec]:
     return registry.register_hook_specs(
         [
             HookSpec(
+                name="emoji.receive.before_cache",
+                description="聊天表情未命中缓存且即将写入时触发，可跳过该表情的缓存和内置识别。",
+                parameters_schema=build_object_schema(
+                    {
+                        "emoji_hash": {"type": "string", "description": "表情包的 SHA-256 哈希。"},
+                        "binary_data_base64": {"type": "string", "description": "原始表情包的 Base64 数据。"},
+                        "session_id": {"type": "string", "description": "来源聊天会话 ID。"},
+                    },
+                    required=["emoji_hash", "binary_data_base64", "session_id"],
+                ),
+                default_timeout_ms=5000,
+                allow_abort=True,
+                allow_kwargs_mutation=False,
+            ),
+            HookSpec(
+                name="emoji.maintenance.before_register",
+                description="定时维护尝试注册候选表情前触发，可跳过当前候选并继续扫描。",
+                parameters_schema=build_object_schema(
+                    {
+                        "file_name": {"type": "string", "description": "候选表情包文件名。"},
+                        "file_size": {"type": "integer", "description": "候选文件的字节数。"},
+                    },
+                    required=["file_name", "file_size"],
+                ),
+                default_timeout_ms=5000,
+                allow_abort=True,
+                allow_kwargs_mutation=False,
+            ),
+            HookSpec(
                 name="emoji.register.after_build_description",
-                description="表情包描述生成并通过内容审查后触发，可改写描述文本或拒绝本次注册。",
+                description="视觉模型生成表情包描述后触发，可改写描述或中止本次描述生成。",
                 parameters_schema=build_object_schema(
                     {
                         "emoji": emoji_schema,
@@ -298,6 +327,16 @@ class EmojiManager:
         # 如果提供了字节数据但数据库中没有找到，尝试构建
         if not emoji_bytes:
             return None
+        if _is_collected_emoji_size_allowed(len(emoji_bytes)):
+            hook_result = await _get_runtime_manager().invoke_hook(
+                "emoji.receive.before_cache",
+                emoji_hash=emoji_hash,
+                binary_data_base64=await asyncio.to_thread(ImageUtils.image_bytes_to_base64, emoji_bytes),
+                session_id=session_id,
+            )
+            if hook_result.aborted:
+                logger.info(f"插件跳过聊天表情缓存: {emoji_hash} {HookAbortedError(hook_result)}")
+                return None
         if not _is_vlm_task_configured():
             await self.ensure_emoji_saved(emoji_bytes, emoji_hash=emoji_hash)
             logger.info("未配置 VLM 模型，跳过表情包识别、打标签和审核")
@@ -1122,11 +1161,20 @@ class EmojiManager:
                     resolved_file = emoji_file.absolute().resolve()
                     if resolved_file in known_paths:
                         continue
-                    if not _is_collected_emoji_size_allowed(emoji_file.stat().st_size):
+                    file_size = emoji_file.stat().st_size
+                    if not _is_collected_emoji_size_allowed(file_size):
                         logger.info(
                             f"[emoji_maintenance] Emoji file exceeds size limit "
                             f"{global_config.emoji.max_emoji_size_mb:g} MB, skipping: {emoji_file.name}"
                         )
+                        continue
+                    hook_result = await _get_runtime_manager().invoke_hook(
+                        "emoji.maintenance.before_register",
+                        file_name=emoji_file.name,
+                        file_size=file_size,
+                    )
+                    if hook_result.aborted:
+                        logger.info(f"插件跳过自动注册表情: {emoji_file.name} {HookAbortedError(hook_result)}")
                         continue
                     try:
                         register_status = await self.register_emoji_by_filename(emoji_file)

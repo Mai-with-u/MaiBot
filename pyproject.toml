@@ -31,7 +31,7 @@ dependencies = [
     "jsonschema>=4.26.0,<5",
     "maim-message==0.6.8",
     "maibot-dashboard==1.10.2.dev20261107583",
-    "maibot-plugin-sdk>=2.20.0",
+    "maibot-plugin-sdk>=2.22.1",
     "mcp>=1.28.1,<2",
     "msgpack>=1.2.1",
     "numpy>=2.2.6",
