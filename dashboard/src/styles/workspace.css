@@ -53,6 +53,31 @@
 [data-browser-layout='true']:has(> [data-collapsed='true']) {
   grid-template-columns: 3.25rem minmax(0, 1fr);
 }
+/* 带文件夹标签时：侧栏占满两行，标签在右上，主窗口在标签正下方并与之相接。 */
+[data-browser-layout='true'][data-has-tabs='true'] {
+  grid-template-rows: auto minmax(0, 1fr);
+  row-gap: 0;
+}
+[data-browser-layout='true'][data-has-tabs='true'] > :first-child {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+[data-browser-layout='true'][data-has-tabs='true'] > [data-browser-tabs='true'] {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+}
+[data-browser-layout='true'][data-has-tabs='true'] > :last-child {
+  grid-column: 2;
+  grid-row: 2;
+  min-height: 0;
+}
+[data-browser-tabs='true'] [data-dashboard-folder-tabs-trailing] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+}
 [data-browser-toolbar='true'] {
   flex-shrink: 0;
   padding: 12px;
@@ -76,5 +101,9 @@
   [data-browser-layout='true'],
   [data-browser-layout='true']:has(> [data-collapsed='true']) {
     grid-template-columns: minmax(0, 1fr);
+  }
+  [data-browser-layout='true'][data-has-tabs='true'] > * {
+    grid-column: auto !important;
+    grid-row: auto !important;
   }
 }

@@ -294,6 +294,10 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
     ) {
       field = { ...field, readOnly: true }
     }
+    const dependsOn = field['x-depends-on']
+    if (dependsOn && values[dependsOn] !== true) {
+      field = { ...field, readOnly: true }
+    }
     const nestedSchema = schema.nested?.[field.name]
 
     if (hooks.has(fieldPath)) {
@@ -465,17 +469,23 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
         const rowKey = row[0]['x-row']
         const isBotIdentityRow = rowKey === 'bot-identity'
         const isVisualImageCompressionRow = rowKey === 'visual-image-compression'
+        // 字段元数据声明的列数：x-row-columns
+        const declaredColumns = row[0]['x-row-columns']
+        const hasDeclaredColumns = !isBotIdentityRow && !isVisualImageCompressionRow && Boolean(declaredColumns)
 
         return row.length > 1 ? (
             <div
               key={row.map((field) => field.name).join('|')}
               data-config-row={rowKey}
+              style={hasDeclaredColumns ? ({ '--row-cols': declaredColumns } as React.CSSProperties) : undefined}
               className={cn(
                 "grid min-w-0 items-stretch gap-3 py-0.5",
                 isBotIdentityRow
                   ? "grid-cols-[minmax(0,1fr)_auto]"
                   : isVisualImageCompressionRow
                   ? "grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1.1fr)] items-center"
+                  : hasDeclaredColumns
+                  ? "items-center md:grid-cols-[repeat(var(--row-cols),minmax(0,1fr))]"
                   : "md:grid-cols-2 xl:grid-cols-3",
               )}
             >
@@ -486,7 +496,7 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
                     "flex min-w-0 items-stretch",
                     isBotIdentityRow
                       ? ""
-                      : isVisualImageCompressionRow
+                      : isVisualImageCompressionRow || hasDeclaredColumns
                       ? fieldIndex > 0 && "md:border-l md:border-border/50 md:pl-3"
                       : horizontalSeparatorClassName,
                   )}
@@ -510,7 +520,61 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
       ['string', 'number', 'integer', 'select', 'textarea'].includes(field.type)
   }
 
+  /** 相邻且 x-column-group 相同的字段，按 x-column 分成并排的几列，每列带标题。 */
+  const splitColumnBlocks = (fields: FieldSchema[]) => {
+    const blocks: { key?: string; fields: FieldSchema[]; columns?: { title: string; fields: FieldSchema[] }[] }[] = []
+    for (const field of fields) {
+      const groupKey = field['x-column-group']
+      const last = blocks[blocks.length - 1]
+      if (!groupKey) {
+        if (last && !last.key) last.fields.push(field)
+        else blocks.push({ fields: [field] })
+        continue
+      }
+      const title = field['x-column'] ?? ''
+      const block = last?.key === groupKey ? last : { key: groupKey, fields: [], columns: [] }
+      if (block !== last) blocks.push(block)
+      const column = block.columns?.find((item) => item.title === title)
+      if (column) column.fields.push(field)
+      else block.columns?.push({ title, fields: [field] })
+    }
+    return blocks
+  }
+
   const renderFieldList = (fields: FieldSchema[]) => (
+    <>
+      {splitColumnBlocks(fields).map((block, blockIndex) => (
+        <React.Fragment key={block.key ?? block.fields.map((field) => field.name).join('|')}>
+          {blockIndex > 0 && <Separator className="my-1.5 bg-border/50" />}
+          {block.columns ? (
+            <div
+              data-config-columns={block.key}
+              style={{ '--cols': block.columns.length } as React.CSSProperties}
+              className="grid min-w-0 gap-x-6 gap-y-4 py-2 lg:grid-cols-[repeat(var(--cols),minmax(0,1fr))]"
+            >
+              {block.columns.map((column, columnIndex) => (
+                <section
+                  key={column.title}
+                  className={cn("min-w-0", columnIndex > 0 && "lg:border-l lg:border-border/50 lg:pl-6")}
+                >
+                  {column.title && (
+                    <h3 className="mb-1 border-b border-border/50 pb-2 text-sm font-semibold tracking-wide">
+                      {column.title}
+                    </h3>
+                  )}
+                  {renderPlainFieldList(column.fields)}
+                </section>
+              ))}
+            </div>
+          ) : (
+            renderPlainFieldList(block.fields)
+          )}
+        </React.Fragment>
+      ))}
+    </>
+  )
+
+  const renderPlainFieldList = (fields: FieldSchema[]) => (
     <>
       {groupFieldsByRow(fields).map((row, index, rows) => (
         <React.Fragment key={row.map((field) => field.name).join('|')}>

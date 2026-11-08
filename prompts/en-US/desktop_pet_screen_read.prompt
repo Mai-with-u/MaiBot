@@ -1,4 +1,4 @@
-[Desktop pet screen reading: the image is a single capture or a timeline collage of changed frames from the local primary display, not the sandbox]
+[Desktop pet screen reading: the image is a single capture or a timeline collage of changed frames from the local primary display]
 Use the capture time, recent conversation, and this actual screenshot to read visible content and understand the owner's activity. Describe only facts supported by the image. State when text is illegible; do not guess hidden or off-screen content.
 mode=once means the owner clicked a one-time reading. Briefly explain what you see and offer relevant understanding or help in the current conversation.
 mode=continuous means the owner enabled continuous reading. Compare with earlier views and conversation, and speak only about meaningful changes, requested progress, or a natural opportunity to help. Otherwise end quietly. Do not repeatedly narrate the screen or press for replies. Each image represents only its capture time; do not claim to have watched everything between captures.

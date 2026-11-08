@@ -53,6 +53,13 @@ export interface FieldSchema {
   'x-option-descriptions'?: Record<string, string>
   'x-placeholder'?: string
   'x-row'?: string
+  /** 同一 x-row 的字段在宽屏下排成几列；缺省按 2/3 列自适应 */
+  'x-row-columns'?: number
+  /** 相邻且同名的字段分成并排的几列，列标题由 x-column 给出 */
+  'x-column-group'?: string
+  'x-column'?: string
+  /** 依赖同级布尔字段，该字段为 false 时本字段只读 */
+  'x-depends-on'?: string
   'x-chat-settings'?: {
     scope: 'common' | 'group' | 'private'
     row: number

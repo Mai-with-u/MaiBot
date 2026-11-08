@@ -30,7 +30,7 @@ import '@/styles/observation.css'
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'maibot-observation-sidebar-collapsed'
 const LOG_PATHS = ['/logs', '/statistics', '/reasoning-process']
-// 首页和聊天由侧栏下半区的对话列表承担，不占设置键位。
+// 首页由品牌链接打开，聊天由侧栏下半区的对话列表打开。
 const CONVERSATION_PATHS = new Set(['/', '/chat'])
 const UpdateNoticeDialog = lazy(() =>
   import('@/components/update-notice-dialog').then((module) => ({

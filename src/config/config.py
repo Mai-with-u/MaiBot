@@ -14,10 +14,9 @@ from src.common.i18n import t
 from src.common.logger import get_logger
 from src.common.version import read_project_version
 from src.agent.config import AgentConfig
-from src.computer.config import ComputerConfig
 from src.desktop_pet.config import DesktopPetConfig
 from src.files.config import FilesConfig
-from src.web_search.config import WebConfig, resolve_web_search_config
+from src.web_search.config import WebConfig, WebSearchConfigError, require_web_service
 
 from .config_base import AttributeData, ConfigBase, Field
 from .builtin_typo_migration import migrate_builtin_typo_config
@@ -75,7 +74,7 @@ BOT_CONFIG_PATH: Path = (CONFIG_DIR / "bot_config.toml").resolve().absolute()
 MODEL_CONFIG_PATH: Path = (CONFIG_DIR / "model_config.toml").resolve().absolute()
 LEGACY_ENV_PATH: Path = (PROJECT_ROOT / ".env").resolve().absolute()
 MMC_VERSION: str = read_project_version(PROJECT_ROOT)
-CONFIG_VERSION: str = "8.16.15"
+CONFIG_VERSION: str = "8.16.16"
 MODEL_CONFIG_VERSION: str = "1.17.26"
 
 logger = get_logger("config")
@@ -103,9 +102,6 @@ class Config(ConfigBase):
 
     agent: AgentConfig = Field(default_factory=AgentConfig)
     """统一独立 Agent 配置"""
-
-    computer: ComputerConfig = Field(default_factory=ComputerConfig)
-    """共享沙盒电脑配置"""
 
     desktop_pet: DesktopPetConfig = Field(default_factory=DesktopPetConfig)
     """内置桌宠配置"""
@@ -199,7 +195,6 @@ class ModelConfig(ConfigBase):
     """API提供商列表"""
 
     def model_post_init(self, context: Any = None):
-        resolve_web_search_config(self.web, self.model_task_config.web_search)
         if not self.models:
             raise ValueError(t("config.models_empty"))
         if not self.api_providers:
@@ -232,6 +227,12 @@ class ModelConfig(ConfigBase):
                         model_name=model.name,
                     )
                 )
+        web_services = self.model_task_config.web_search.model_list
+        if web_services and web_services[0]:
+            try:
+                require_web_service(self.web, web_services[0])
+            except WebSearchConfigError as exc:
+                logger.warning(f"联网工具配置有误，调用时将返回 {exc.code}：{exc}")
         return super().model_post_init(context)
 
 

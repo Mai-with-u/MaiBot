@@ -6,10 +6,12 @@ import { type ReactNode, useState } from 'react'
 import { ChevronDown, Plus, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { DashedButton } from '@/components/ui/dashed-button'
 import {
   Dialog,
   DialogBody,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -163,9 +165,9 @@ export function TaskAssignmentBoard({
                     <h3 className="text-base font-semibold">{meta.name}</h3>
                   </div>
                   <p className="text-xs text-muted-foreground">{meta.desc}</p>
-                  <button type="button" data-task-card-add="true" onClick={() => onOpenTaskChange(field.name)}>
+                  <DashedButton className="mt-auto h-11" onClick={() => onOpenTaskChange(field.name)}>
                     + 安排模型
-                  </button>
+                  </DashedButton>
                 </div>
               )
             }
@@ -180,6 +182,7 @@ export function TaskAssignmentBoard({
                   <TaskLamp state="on" />
                   <h3 className="text-base font-semibold">{meta.name}</h3>
                 </div>
+                {meta.desc && <p className="text-xs text-muted-foreground">{meta.desc}</p>}
                 <ol data-task-card-models="true">
                   {list.slice(0, 3).map((name, index) => (
                     <li key={name} title={name}>
@@ -205,8 +208,8 @@ export function TaskAssignmentBoard({
 
       {advancedFields.length > 0 && (
         <section>
-          <button
-            type="button"
+          <DashedButton
+            className="h-auto justify-start"
             data-task-board-more="true"
             aria-expanded={advancedVisible}
             aria-controls="task-board-advanced"
@@ -215,7 +218,7 @@ export function TaskAssignmentBoard({
             <b>MORE</b>
             <span>进阶 · {advancedOn} / {advancedFields.length} 已开启</span>
             <ChevronDown className="ml-auto h-4 w-4" aria-hidden="true" data-task-board-chevron="true" />
-          </button>
+          </DashedButton>
           {advancedVisible && (
             <DataPanel id="task-board-advanced" padding="none" data-task-board-list="true">
               {advancedFields.map((field) => {
@@ -234,9 +237,9 @@ export function TaskAssignmentBoard({
                       {empty ? meta.fallback ?? '未开启' : list.length > 1 ? `${list[0]} +${list.length - 1}` : list[0]}
                     </span>
                     {empty ? (
-                      <button type="button" data-task-row-add="true" onClick={() => onOpenTaskChange(field.name)}>
+                      <DashedButton className="h-7" data-task-row-add="true" onClick={() => onOpenTaskChange(field.name)}>
                         + 开启
-                      </button>
+                      </DashedButton>
                     ) : (
                       <Button type="button" size="sm" variant="outline" onClick={() => onOpenTaskChange(field.name)}>
                         编辑
@@ -382,7 +385,7 @@ function TaskEditor({
     <DialogContent
       side="right"
       className="bottom-4 flex max-h-none flex-col gap-0 p-0 pb-0 sm:[--dialog-width:30rem]"
-      aria-describedby={undefined}
+      {...(meta.desc ? {} : { 'aria-describedby': undefined })}
       data-task-editor="true"
       preventOutsideClose={tourRunning}
     >
@@ -391,6 +394,7 @@ function TaskEditor({
           <TaskLamp state={list.length > 0 ? 'on' : meta.fallback ? 'fallback' : 'off'} />
           {meta.name}
         </DialogTitle>
+        {meta.desc && <DialogDescription className="text-xs">{meta.desc}</DialogDescription>}
       </DialogHeader>
       <DialogBody type="auto" data-form-scroll="true" viewportClassName="pr-0">
         <div className="flex flex-col gap-5 px-5 py-4" data-config-field-path={`model_task_config.${field.name}`}>

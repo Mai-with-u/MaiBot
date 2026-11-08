@@ -1,9 +1,12 @@
+import { Link } from '@tanstack/react-router'
+import { useTranslation } from 'react-i18next'
+
 import { useTheme } from '@/components/use-theme'
 import { cn } from '@/lib/utils'
-import { BotSwitcher } from '@/host/BotSwitcher'
 
 interface LogoAreaProps {
   sidebarOpen: boolean
+  onMobileMenuClose?: () => void
 }
 
 function SpectrumBands() {
@@ -16,8 +19,10 @@ function SpectrumBands() {
   )
 }
 
-export function LogoArea({ sidebarOpen }: LogoAreaProps) {
+export function LogoArea({ sidebarOpen, onMobileMenuClose }: LogoAreaProps) {
+  const { t } = useTranslation()
   const { themeConfig } = useTheme()
+  const homeLabel = t('sidebar.menu.home')
   // 原版风格的 Logo 行与顶栏同高：色块在前、字标在后，字标用大小写混排。
   const isModernStyle = themeConfig.dashboardStyle === 'modern'
 
@@ -33,18 +38,20 @@ export function LogoArea({ sidebarOpen }: LogoAreaProps) {
         <div
           className={cn(
             'flex h-10 w-28 shrink-0 flex-col items-start justify-start gap-2 transition-opacity duration-[220ms] motion-reduce:transition-none',
-            !sidebarOpen && 'lg:pointer-events-none lg:opacity-0'
+            !sidebarOpen && 'lg:invisible lg:opacity-0'
           )}
         >
-          <BotSwitcher>
-            <button
-              type="button"
-              data-dashboard-logo-title="true"
-              className="w-28 cursor-pointer whitespace-nowrap text-left text-xl font-bold text-primary-gradient"
-            >
-              {isModernStyle ? 'MaiBot' : 'MAIBOT'}
-            </button>
-          </BotSwitcher>
+          <Link
+            to="/"
+            activeOptions={{ exact: true }}
+            aria-label={homeLabel}
+            title={homeLabel}
+            onClick={onMobileMenuClose}
+            data-dashboard-logo-title="true"
+            className="w-28 whitespace-nowrap text-left text-xl font-bold text-primary-gradient"
+          >
+            {isModernStyle ? 'MaiBot' : 'MAIBOT'}
+          </Link>
           {sidebarOpen && (
             <span
               aria-hidden="true"
@@ -58,16 +65,18 @@ export function LogoArea({ sidebarOpen }: LogoAreaProps) {
       </div>
       {/* 折叠彩虹块与导航 Tab 复用相同的左边距和宽度。 */}
       {!sidebarOpen && (
-        <BotSwitcher>
-          <button
-            type="button"
-            data-dashboard-logo-spectrum="true"
-            data-dashboard-logo-spectrum-block="true"
-            className="cursor-pointer absolute top-[1.625rem] left-[var(--layout-sidebar-nav-padding-collapsed)] flex h-7 w-[var(--layout-sidebar-nav-item-collapsed-width)] items-stretch overflow-hidden max-lg:hidden"
-          >
-            <SpectrumBands />
-          </button>
-        </BotSwitcher>
+        <Link
+          to="/"
+          activeOptions={{ exact: true }}
+          aria-label={homeLabel}
+          title={homeLabel}
+          onClick={onMobileMenuClose}
+          data-dashboard-logo-spectrum="true"
+          data-dashboard-logo-spectrum-block="true"
+          className="absolute top-[1.625rem] left-[var(--layout-sidebar-nav-padding-collapsed)] flex h-7 w-[var(--layout-sidebar-nav-item-collapsed-width)] items-stretch overflow-hidden max-lg:hidden"
+        >
+          <SpectrumBands />
+        </Link>
       )}
     </div>
   )

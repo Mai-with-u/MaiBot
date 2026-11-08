@@ -32,7 +32,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         commands.add_parser("host", help="管理工作区内的 Bot")
     args = parser.parse_args(argv)
     if args.command == "host":
-        # 宿主不能改变进程级实例路径，也不能在自身进程内加载单 Bot 的配置模块。
+        # host 子命令使用工作区路径，单 Bot 的配置在独立进程中加载。
         return run_host_command(args, parser)
     directory = args.directory.expanduser().resolve()
     if args.command == "chatgpt":

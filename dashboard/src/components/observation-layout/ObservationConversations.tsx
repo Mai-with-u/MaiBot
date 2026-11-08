@@ -22,9 +22,8 @@ import { StageStatusLabel } from '@/routes/monitor/StageStatusLabel'
 import { getStageStatusLight } from '@/routes/monitor/stage-status-light'
 import { useMaisakaMonitorOverview } from '@/routes/monitor/use-maisaka-monitor'
 import type { SessionInfo, StageStatusInfo } from '@/routes/monitor/use-maisaka-monitor'
-import { P2FishIcon } from './P2FishIcon'
 
-type Selection = { kind: 'overview' } | { kind: 'chat' } | { kind: 'agent' } | { kind: 'observed'; id: string } | { kind: 'none' }
+type Selection = { kind: 'chat' } | { kind: 'agent' } | { kind: 'observed'; id: string } | { kind: 'none' }
 
 function previewText(data: unknown): string {
   if (!data || typeof data !== 'object') return ''
@@ -144,15 +143,13 @@ export function ObservationConversations({ collapsed }: { collapsed: boolean }) 
 
   const params = new URLSearchParams(searchStr)
   const selection: Selection =
-    pathname === '/'
-      ? { kind: 'overview' }
-      : pathname === '/chat'
-        ? params.get('observe')
-          ? { kind: 'observed', id: params.get('observe')! }
-          : params.get('agent') === 'true'
-            ? { kind: 'agent' }
-            : { kind: 'chat' }
-        : { kind: 'none' }
+    pathname === '/chat'
+      ? params.get('observe')
+        ? { kind: 'observed', id: params.get('observe')! }
+        : params.get('agent') === 'true'
+          ? { kind: 'agent' }
+          : { kind: 'chat' }
+      : { kind: 'none' }
 
   const openObserved = (sessionId: string) => {
     void navigate({ to: '/chat', search: { observe: sessionId } })
@@ -184,15 +181,6 @@ export function ObservationConversations({ collapsed }: { collapsed: boolean }) 
         >
           {!normalizedQuery && (
             <>
-              <div title={collapsed ? t('sidebar.menu.home') : undefined}>
-                <ConversationListItem
-                  title={t('sidebar.menu.home')}
-                  preview=""
-                  selected={selection.kind === 'overview'}
-                  onSelect={() => void navigate({ to: '/' })}
-                  avatar={<span data-observation-overview-avatar="true"><P2FishIcon /></span>}
-                />
-              </div>
               <div title={collapsed ? t('chat.botNameFallback') : undefined}>
                 <ConversationListItem
                   title={t('chat.botNameFallback')}

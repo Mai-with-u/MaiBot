@@ -69,7 +69,13 @@ from src.maisaka.visual.mode_utils import resolve_enable_visual_planner
 from src.plugin_runtime.hook_payloads import deserialize_prompt_items, serialize_prompt_items
 from src.plugin_runtime.host.hook_dispatcher import HookAbortedError
 
-from .creative_language import CLASSICAL_TRANSLATION_INSTRUCTION, OUTPUT_LANGUAGE, TRANSLATION_INSTRUCTION, load_reply_prompt
+from .creative_language import (
+    CLASSICAL_TRANSLATION_INSTRUCTION,
+    OUTPUT_LANGUAGE,
+    REPLY_LENGTH_INSTRUCTIONS,
+    TRANSLATION_INSTRUCTION,
+    load_reply_prompt,
+)
 from .gemini_output import GeminiReplyFormatError, normalize_gemini_reply
 from .maisaka_expression_selector import maisaka_expression_selector
 from .retro_prompt import RetroReplyPromptMixin
@@ -623,14 +629,8 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
     def _build_requested_reply_style_message(reply_style: str) -> str:
         """根据 reply 工具参数构建本次回复的篇幅要求。"""
 
-        style_messages = {
-            "简短表达": "请简短的回复，符合口语习惯，1-2句短句即可。不要长篇大论，无复杂修辞和比喻。",
-            "正常回复": "",
-            "长回复": "可以针对问题做出较为详细的评论和说明，不限制回复长度",
-        }
-        normalized_reply_style = reply_style.strip()
-        if not normalized_reply_style:
-            return ""
+        style_messages = REPLY_LENGTH_INSTRUCTIONS.get(get_locale(), REPLY_LENGTH_INSTRUCTIONS["zh-CN"])
+        normalized_reply_style = reply_style.strip() or "正常回复"
         if normalized_reply_style not in style_messages:
             logger.warning(f"reply 工具返回了未知的回复风格 {normalized_reply_style!r}，按默认「正常回复」处理")
             return style_messages["正常回复"]

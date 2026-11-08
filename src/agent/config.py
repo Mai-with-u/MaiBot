@@ -52,7 +52,7 @@ class AgentConfig(ConfigBase):
     """仅自定义 ACP 使用，逐项填写参数；{mcp_port} 替换为本次工具服务端口，可用于 SSH -R 反向转发。dsh 预设忽略此项并自动生成 --profile acp。"""
 
     acp_cwd: str = Field(default="", json_schema_extra={"label": {"zh_CN": "ACP 主机工作目录"}})
-    """麦麦所在主机上启动 ACP 程序（或 ssh）的工作目录，留空使用 data/agent/workspace；不是沙盒 C:\\MaiWorkspace。同一会话恢复时保持不变。"""
+    """麦麦所在主机上启动 ACP 程序（或 ssh）的工作目录，留空使用 data/agent/workspace。同一会话恢复时保持不变。"""
 
     acp_remote_cwd: str = Field(default="", json_schema_extra={
         "label": {"zh_CN": "ACP 远程会话工作目录"}, "advanced": True,

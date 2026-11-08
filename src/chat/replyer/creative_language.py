@@ -22,6 +22,34 @@ CLASSICAL_TRANSLATION_INSTRUCTION = (
     "待翻译内容："
 )
 
+REPLY_LENGTH_INSTRUCTIONS = {
+    "zh-CN": {
+        "简短表达": "用一到两句口语短句回复，像平时接话一样自然。",
+        "正常回复": "篇幅与当前话题相称，保持简洁。",
+        "长回复": "本次篇幅以说清问题为准，可以展开解释关键细节。",
+    },
+    "en-US": {
+        "简短表达": "Reply in one or two short sentences, as you would in a casual conversation.",
+        "正常回复": "Keep the reply concise and give the topic as much space as it needs.",
+        "长回复": "Use as much space as needed to make the point clear, and expand on key details.",
+    },
+    "ja-JP": {
+        "简短表达": "普段の会話のように、短い一文か二文で自然に返信してください。",
+        "正常回复": "話題に合った長さで、簡潔に返信してください。",
+        "长回复": "要点が伝わる長さを目安に、重要な点は掘り下げて説明してください。",
+    },
+    "ru-RU": {
+        "简短表达": "Ответьте одной или двумя короткими фразами, как в обычном разговоре.",
+        "正常回复": "Отвечайте кратко и соразмерно теме.",
+        "长回复": "Пишите столько, сколько нужно для ясности, и поясните важные детали.",
+    },
+    "fr-FR": {
+        "简短表达": "Répondez en une ou deux phrases courtes, comme dans une conversation ordinaire.",
+        "正常回复": "Restez concis et adaptez la longueur de la réponse au sujet.",
+        "长回复": "Prenez la place nécessaire pour être clair et développez les points importants.",
+    },
+}
+
 # 日语沿用现有译本；俄语/法语只保存中文固定行的翻译，不复制模板结构和占位符行。
 TEXT_TRANSLATIONS: Dict[str, Tuple[str, str]] = {
     "你正在qq群里聊天，下面是群里正在聊的内容，其中包含聊天记录和聊天中的图片": (
@@ -35,6 +63,10 @@ TEXT_TRANSLATIONS: Dict[str, Tuple[str, str]] = {
     "你正在群里聊天,现在请你读读之前的聊天记录，把握当前的话题，然后给出日常且简短的回复。": (
         "Вы общаетесь в группе. Прочитайте предыдущие сообщения, уловите текущую тему и ответьте непринуждённо и кратко.",
         "Vous discutez dans un groupe. Lisez les échanges précédents, saisissez le sujet actuel et répondez de façon quotidienne et brève.",
+    ),
+    "你正在群里聊天,现在请你读读之前的聊天记录，把握当前的话题，然后用日常口语回复。": (
+        "Вы общаетесь в группе. Прочитайте предыдущие сообщения, уловите текущую тему и ответьте разговорным языком.",
+        "Vous discutez dans un groupe. Lisez les échanges précédents, saisissez le sujet actuel et répondez dans un style conversationnel.",
     ),
     "最好一次对一个话题进行回复，免得啰嗦或者回复内容太乱。": (
         "Лучше отвечать на одну тему за раз, чтобы ответ не был многословным или путаным.",
@@ -56,18 +88,6 @@ TEXT_TRANSLATIONS: Dict[str, Tuple[str, str]] = {
         "Теперь вы говорите:",
         "Maintenant, vous dites :",
     ),
-    "你正在群里聊天,现在请你读读之前的聊天记录，然后给出日常且口语化的回复，": (
-        "Вы общаетесь в группе. Прочитайте предыдущие сообщения и ответьте в повседневной разговорной манере,",
-        "Vous discutez dans un groupe. Lisez les échanges précédents, puis répondez de manière quotidienne et familière,",
-    ),
-    "尽量简短一些。{keywords_reaction_prompt}": (
-        "постарайтесь быть краткими.{keywords_reaction_prompt}",
-        "essayez de rester bref.{keywords_reaction_prompt}",
-    ),
-    "请注意把握聊天内容，不要回复的太有条理。": (
-        "Учитывайте содержание разговора и не делайте ответ слишком упорядоченным.",
-        "Tenez compte du contenu de la conversation sans donner une réponse trop structurée.",
-    ),
     "你正在和{sender_name}聊天，这是你们之前聊的内容:": (
         "Вы общаетесь с {sender_name}. Вот ваш предыдущий разговор:",
         "Vous discutez avec {sender_name}. Voici vos échanges précédents :",
@@ -75,6 +95,14 @@ TEXT_TRANSLATIONS: Dict[str, Tuple[str, str]] = {
     "你正在和{sender_name}聊天,现在请你读读之前的聊天记录，然后给出日常且口语化的回复，平淡一些，": (
         "Вы общаетесь с {sender_name}. Прочитайте предыдущие сообщения и ответьте просто, непринуждённо и разговорно,",
         "Vous discutez avec {sender_name}. Lisez les échanges précédents, puis répondez de façon quotidienne, familière et simple,",
+    ),
+    "你正在和{sender_name}聊天,现在请你读读之前的聊天记录，然后给出日常且口语化的回复，平淡一些。": (
+        "Вы общаетесь с {sender_name}. Прочитайте предыдущие сообщения и ответьте просто, непринуждённо и разговорно.",
+        "Vous discutez avec {sender_name}. Lisez les échanges précédents et répondez sur un ton simple et familier.",
+    ),
+    "{keywords_reaction_prompt}请注意把握聊天内容，不要回复的太有条理。": (
+        "{keywords_reaction_prompt}Учитывайте содержание разговора и не делайте ответ слишком упорядоченным.",
+        "{keywords_reaction_prompt}Tenez compte du contenu de la conversation sans donner une réponse trop structurée.",
     ),
     "尽量简短一些。{keywords_reaction_prompt}请注意把握聊天内容，不要回复的太有条理。": (
         "постарайтесь быть краткими.{keywords_reaction_prompt}Учитывайте содержание разговора и не делайте ответ слишком упорядоченным.",
@@ -91,6 +119,10 @@ TEXT_TRANSLATIONS: Dict[str, Tuple[str, str]] = {
     "尽量简短一些。{keywords_reaction_prompt}请注意把握聊天内容，不要回复的太有条理，可以有个性。": (
         "Постарайтесь быть краткими.{keywords_reaction_prompt}Учитывайте содержание разговора, не делайте ответ слишком упорядоченным; можно проявить индивидуальность.",
         "Essayez de rester bref.{keywords_reaction_prompt}Tenez compte de la conversation sans trop structurer votre réponse ; vous pouvez montrer votre personnalité.",
+    ),
+    "{keywords_reaction_prompt}请注意把握聊天内容，不要回复的太有条理，可以有个性。": (
+        "{keywords_reaction_prompt}Учитывайте содержание разговора, не делайте ответ слишком упорядоченным; можно проявить индивидуальность.",
+        "{keywords_reaction_prompt}Tenez compte du contenu de la conversation sans trop structurer votre réponse ; vous pouvez montrer votre personnalité.",
     ),
     "请注意不要输出多余内容(包括冒号和引号，括号，表情包，at或 @等 )。": (
         "Не добавляйте лишнего (двоеточий и кавычек, скобок, стикеров, at или @ и т. п.).",

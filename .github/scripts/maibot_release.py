@@ -2,7 +2,7 @@
 
 from email.parser import BytesParser
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Set
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -68,17 +68,45 @@ def prepare(source: Path, destination: Path, version: str) -> None:
     (destination / "notes.md").write_text(notes, encoding="utf-8")
 
 
-def audit_names(names: List[str], prefix: str = "") -> None:
-    required = {"src/runtime.py", "src/cli/tool.py", "src/_resources/pyproject.toml", "src/_resources/EULA.md",
-                "src/_resources/PRIVACY.md", "src/A_memorix/config_schema.json", "src/plugins/built_in/plugin_management/_manifest.json"}
+def built_in_plugin_files(source: Path) -> Set[str]:
+    root = source / "src/plugins/built_in"
+    plugin_dirs = {path.parent for pattern in ("*/plugin.py", "*/_manifest.json") for path in root.glob(pattern)}
+    if not plugin_dirs:
+        raise ValueError(f"源码中没有内置插件: {root}")
+    required: Set[str] = set()
+    for plugin_dir in plugin_dirs:
+        required.add((plugin_dir / "_manifest.json").relative_to(source).as_posix())
+        for path in plugin_dir.rglob("*"):
+            if (not path.is_file() or any(part.startswith(".") or part in {"tests", "__pycache__"} for part in path.relative_to(plugin_dir).parts)
+                    or path.name in {"config.toml", "pyproject.toml", "requirements.txt"}):
+                continue
+            required.add(path.relative_to(source).as_posix())
+    return required
+
+
+def resource_files(source: Path) -> Dict[str, str]:
+    resources: Dict[str, str] = {}
+    for directory in ("prompts", "locales"):
+        for path in (source / directory).rglob("*"):
+            if path.is_file() and path.suffix in {".prompt", ".toml", ".json"}:
+                relative = path.relative_to(source).as_posix()
+                resources[relative] = f"src/_resources/{relative}"
+    for path in (source / "src/desktop_pet").rglob("*"):
+        if path.is_file() and path.suffix != ".py" and not any(part.startswith(".") or part == "__pycache__" for part in path.relative_to(source).parts):
+            relative = path.relative_to(source).as_posix()
+            resources[relative] = relative
+    return resources
+
+
+def audit_names(names: List[str], required: Set[str], prefix: str = "") -> None:
     paths = {name.removeprefix(prefix) for name in names}
     for name in paths:
         parts = Path(name).parts
         if "__pycache__" in parts or ".." in parts or name.startswith(("config/", "data/", "logs/", "temp/", "plugins/", "src/data/")):
             raise ValueError(f"构建产物包含非发布文件: {name}")
+    if not required.issubset(paths):
+        raise ValueError(f"构建产物缺少运行资源: {sorted(required - paths)}")
     if not prefix:
-        if not required.issubset(paths):
-            raise ValueError(f"wheel 缺少运行资源: {sorted(required - paths)}")
         for directory in ("prompts/zh-CN", "prompts/en-US", "prompts/ja-JP", "locales/zh-CN"):
             if not any(name.startswith(f"src/_resources/{directory}/") for name in paths):
                 raise ValueError(f"wheel 缺少资源目录: {directory}")
@@ -102,21 +130,27 @@ def distribution_files(directory: Path) -> List[Path]:
     return sorted(path for path in files if path.name != ".gitignore" and path.name not in attestations)
 
 
-def audit(directory: Path) -> None:
+def audit(directory: Path, source: Path) -> None:
     manifest = read_manifest(directory)
+    plugin_files = built_in_plugin_files(source)
+    resources = resource_files(source)
+    required = {"src/runtime.py", "src/cli/tool.py", "src/_resources/pyproject.toml", "src/_resources/EULA.md",
+                "src/_resources/PRIVACY.md", "src/A_memorix/config_schema.json"} | plugin_files | set(resources.values())
+    sdist_required = {"src/runtime.py", "src/cli/tool.py", "pyproject.toml", "EULA.md", "PRIVACY.md",
+                      "src/A_memorix/config_schema.json"} | plugin_files | set(resources)
     distributions = distribution_files(directory)
     if len(distributions) != 2:
         raise ValueError("必须恰好包含一个 wheel 和一个源码包")
     wheel = next(path for path in distributions if path.suffix == ".whl")
     sdist = next(path for path in distributions if path.name.endswith(".tar.gz"))
     with zipfile.ZipFile(wheel) as archive:
-        audit_names(archive.namelist())
+        audit_names(archive.namelist(), required)
         metadata_path = next(name for name in archive.namelist() if name.endswith(".dist-info/METADATA"))
         metadata = BytesParser().parsebytes(archive.read(metadata_path))
         if metadata["Name"].lower() != "maibot" or metadata["Version"] != manifest["version"]:
             raise ValueError("wheel 版本与发布清单不一致")
     with tarfile.open(sdist) as archive:
-        audit_names(archive.getnames(), prefix=archive.getnames()[0].split("/")[0] + "/")
+        audit_names(archive.getnames(), sdist_required, prefix=archive.getnames()[0].split("/")[0] + "/")
     manifest["files"] = {path.name: digest(path) for path in distributions}
     (directory / "release.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
@@ -204,7 +238,7 @@ def main() -> None:
             parser.error("prepare 需要 --version")
         prepare(args.source, args.directory, args.version)
     elif args.command == "audit":
-        audit(args.directory)
+        audit(args.directory, args.source)
     elif args.command == "smoke":
         smoke(args.directory)
     elif args.command.startswith("pypi-"):

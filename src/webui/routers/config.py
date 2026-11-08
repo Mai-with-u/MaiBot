@@ -19,7 +19,13 @@ from pydantic import BaseModel, Field, ValidationError
 import tomlkit
 
 from src.common.logger import get_logger
-from src.common.prompt_i18n import clear_prompt_cache, extract_prompt_placeholders, list_prompt_templates
+from src.common.prompt_i18n import (
+    clear_prompt_cache,
+    extract_prompt_placeholders,
+    get_builtin_prompt_name,
+    get_custom_prompt_storage_name,
+    list_prompt_templates,
+)
 from src.common.paths import resource_path
 from src.host.config_transaction import write_private
 from src.config.config import CONFIG_DIR, MODEL_CONFIG_VERSION, Config, ModelConfig, PROJECT_ROOT, config_manager
@@ -234,7 +240,8 @@ def _safe_prompt_path(language: str, filename: str) -> Path:
     if not normalized_filename.endswith(".prompt") or any(part in normalized_filename for part in ("..", "/", "\\")):
         raise HTTPException(status_code=400, detail="无效的 Prompt 文件名")
 
-    prompt_path = (PROMPTS_DIR / normalized_language / normalized_filename).resolve()
+    prompt_name = get_builtin_prompt_name(normalized_filename.removesuffix(".prompt"))
+    prompt_path = (PROMPTS_DIR / normalized_language / f"{prompt_name}.prompt").resolve()
     prompts_root = PROMPTS_DIR.resolve()
     try:
         prompt_path.relative_to(prompts_root)
@@ -254,7 +261,8 @@ def _safe_custom_prompt_path(language: str, filename: str) -> Path:
     if not normalized_filename.endswith(".prompt") or any(part in normalized_filename for part in ("..", "/", "\\")):
         raise HTTPException(status_code=400, detail="无效的 Prompt 文件名")
 
-    prompt_path = (CUSTOM_PROMPTS_DIR / normalized_language / normalized_filename).resolve()
+    storage_name = get_custom_prompt_storage_name(normalized_filename.removesuffix(".prompt"))
+    prompt_path = (CUSTOM_PROMPTS_DIR / normalized_language / f"{storage_name}.prompt").resolve()
     custom_prompts_root = CUSTOM_PROMPTS_DIR.resolve()
     try:
         prompt_path.relative_to(custom_prompts_root)

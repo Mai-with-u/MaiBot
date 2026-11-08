@@ -1,4 +1,4 @@
-"""不依赖沙盒的文件工具。"""
+"""聊天附件与文件工具。"""
 
 from typing import List, Optional
 

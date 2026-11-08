@@ -1437,13 +1437,11 @@ def _delete_database_records(
 
 
 async def _stop_runtime_before_restart() -> None:
-    """WebUI 重启前保存电脑状态、断开执行器，停止插件 runner。"""
+    """WebUI 重启前停止外接 Agent 和插件 runner。"""
     from src.agent.service import agent_service
-    from src.computer.service import computer_service
 
-    # 后续 os._exit 不执行 finally，先持久保存电脑，保留原沙盒供新进程恢复。
+    # 后续 os._exit 不执行 finally，先保存 Agent 状态并断开连接。
     await agent_service.stop()
-    await computer_service.stop()
     try:
         from src.core.event_bus import event_bus
         from src.core.types import EventType

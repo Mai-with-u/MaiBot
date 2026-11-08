@@ -1,12 +1,7 @@
 import { Globe, Plus } from 'lucide-react'
 
 import type { TestConnectionResult } from '@/lib/config-api'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+import { DashedButton } from '@/components/ui/dashed-button'
 import { StatusLight } from '@/components/ui/status-light'
 import { DataPanel } from '@/components/ui/surface'
 import { cn } from '@/lib/utils'
@@ -142,26 +137,10 @@ export function ProviderSidebar({
           )
         })}
       </DataPanel>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            data-library-add="true"
-            title="添加厂商"
-            aria-label="添加厂商"
-            data-tour="add-provider-button"
-          >
-            <Plus aria-hidden="true" />
-            添加厂商
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start">
-          <DropdownMenuItem onSelect={onAdd} data-tour="add-llm-provider-item">
-            添加 LLM 模型提供商
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={onAddWebSearch}>添加联网搜索</DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <DashedButton className="w-full flex-none" data-tour="add-provider-button" onClick={onAdd}>
+        <Plus className="size-3.5" aria-hidden="true" />
+        添加厂商
+      </DashedButton>
 
       <div data-library-label="true" className="mt-3 max-lg:hidden">
         <b>WEB</b>
@@ -195,10 +174,10 @@ export function ProviderSidebar({
         })}
       </DataPanel>
       {onAddWebSearch && (
-        <button type="button" data-library-add="true" className="max-lg:hidden" onClick={onAddWebSearch}>
-          <Plus aria-hidden="true" />
+        <DashedButton className="w-full flex-none max-lg:hidden" onClick={onAddWebSearch}>
+          <Plus className="size-3.5" aria-hidden="true" />
           添加联网服务
-        </button>
+        </DashedButton>
       )}
     </aside>
   )

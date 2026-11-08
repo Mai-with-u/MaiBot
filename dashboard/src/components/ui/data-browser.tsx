@@ -116,13 +116,24 @@ export function DataToolbar({
 
 export function DataBrowserLayout({
   sidebar,
+  tabs,
   className,
   children,
   ...props
-}: HTMLAttributes<HTMLDivElement> & { sidebar: ReactNode }) {
+}: HTMLAttributes<HTMLDivElement> & {
+  sidebar: ReactNode
+  /** 文件夹标签，接在主窗口上沿；侧栏与标签顶端对齐。 */
+  tabs?: ReactNode
+}) {
   return (
-    <div data-browser-layout="true" className={cn('min-h-0 min-w-0 flex-1', className)} {...props}>
+    <div
+      data-browser-layout="true"
+      data-has-tabs={tabs ? 'true' : undefined}
+      className={cn('min-h-0 min-w-0 flex-1', className)}
+      {...props}
+    >
       {sidebar}
+      {tabs && <div data-browser-tabs="true">{tabs}</div>}
       {children}
     </div>
   )

@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Check, ChevronDown, Download, MoreHorizontal, Plus, Trash2, Upload, X } from 'lucide-react'
-import { type ReactNode, useState } from 'react'
+import { Check, ChevronDown, Trash2, Upload, X } from 'lucide-react'
+import { useImperativeHandle, useState } from 'react'
+import type { Ref } from 'react'
 
 import { ChatScopeFilterPanel } from '@/components/chat-scope-filter-panel'
 import { LearningExportDialog } from '@/components/learning-export-dialog'
@@ -12,12 +13,17 @@ import {
   DataToolbar,
   MetricStrip,
 } from '@/components/ui/data-browser'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { PageFrame } from '@/components/ui/surface'
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
@@ -44,12 +50,12 @@ import {
   DeleteConfirmDialog,
   JargonCreateDialog,
   JargonDetailDialog,
-  JargonImportDialog,
 } from './JargonDialogs'
 import { JargonList } from './JargonList'
 
 import type { Jargon, JargonChatInfo } from '@/types/jargon'
 import type { StatsData } from './types'
+import type { LearningBrowserTabs, LearningCreateHandle } from '../learning'
 
 interface JargonFilters {
   sortBy: 'time' | 'time_asc' | 'created' | 'created_asc'
@@ -65,12 +71,26 @@ type JargonSummaryTab = 'total' | JargonStatusFilter | 'global_count' | 'complet
 /**
  * 黑话管理主页面
  */
-export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactNode }) {
+export function JargonManagementPage({
+  browserTabs,
+  createHandle,
+}: {
+  browserTabs?: LearningBrowserTabs
+  createHandle?: Ref<LearningCreateHandle>
+}) {
   const [selectedJargon, setSelectedJargon] = useState<Jargon | null>(null)
   const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false)
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [isCreateChoiceOpen, setIsCreateChoiceOpen] = useState(false)
-  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
+  // 新增入口在学习页的「添加学习内容」里，对话框仍在这里打开。
+  useImperativeHandle(
+    createHandle,
+    () => ({
+      open: (mode) =>
+        mode === 'manual' ? setIsCreateDialogOpen(true) : setIsCreateChoiceOpen(true),
+    }),
+    []
+  )
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false)
   const [deleteConfirmJargon, setDeleteConfirmJargon] = useState<Jargon | null>(null)
   const [isBatchDeleteDialogOpen, setIsBatchDeleteDialogOpen] = useState(false)
@@ -89,7 +109,13 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
   const list = useDataList<Jargon, JargonFilters, number>({
     domain: 'jargon',
     getId: (jargon) => jargon.id,
-    initialFilters: { summary: 'total', chatId: 'all', browseMode: 'all', groupIndex: null, sortBy: 'time' },
+    initialFilters: {
+      summary: 'total',
+      chatId: 'all',
+      browseMode: 'all',
+      groupIndex: null,
+      sortBy: 'time',
+    },
     preserveSelectionOnParamsChange: true,
     searchDebounceMs: 300,
     queryFn: async ({ page, pageSize, search, filters }) => {
@@ -395,23 +421,6 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
           >
             <Upload className="h-4 w-4" />
           </Button>
-          <Button size="sm" onClick={() => setIsCreateChoiceOpen(true)} aria-label="新增黑话">
-            <Plus className="h-4 w-4" />
-            新增
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon-sm" aria-label="更多操作" title="更多操作">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={() => setIsImportDialogOpen(true)}>
-                <Download className="mr-2 h-4 w-4" />
-                导入黑话
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
         </>
       }
     >
@@ -441,6 +450,16 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
     </DataToolbar>
   )
 
+  const summary = (
+    <MetricStrip
+      items={[
+        { label: '总数量', value: stats.total.toLocaleString() },
+        { label: '已确认黑话', value: stats.confirmed_jargon.toLocaleString(), positive: true },
+        { label: '推断完成', value: stats.complete_count.toLocaleString() },
+      ]}
+    />
+  )
+
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden p-3 pb-4 sm:p-4">
       {isExportDialogOpen && (
@@ -461,8 +480,12 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
               group.name,
               group.is_global ? '全局共享组：包含全部聊天' : `包含 ${group.members.length} 个聊天`,
               ...group.members.map((member) =>
-                [formatChatDisplayName(member.chat_name, member.account_id), formatChatTargetLabel(member)]
-                  .filter(Boolean).join(' · ')
+                [
+                  formatChatDisplayName(member.chat_name, member.account_id),
+                  formatChatTargetLabel(member),
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
               ),
             ].join('\n'),
           }))}
@@ -479,24 +502,9 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
         />
       )}
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto lg:overflow-hidden">
-        <DataBrowserHeader
-          title="学习"
-          navigation={browserHeader}
-          summary={
-            <MetricStrip
-              items={[
-                { label: '总数量', value: stats.total.toLocaleString() },
-                {
-                  label: '已确认黑话',
-                  value: stats.confirmed_jargon.toLocaleString(),
-                  positive: true,
-                },
-                { label: '推断完成', value: stats.complete_count.toLocaleString() },
-              ]}
-            />
-          }
-        />
+        {!browserTabs && <DataBrowserHeader title="学习" summary={summary} />}
         <DataBrowserLayout
+          tabs={browserTabs?.(summary)}
           sidebar={
             <ChatScopeFilterPanel
               density="compact"
@@ -623,9 +631,15 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
         onOpenChange={setIsCreateChoiceOpen}
         kind="jargon"
         initialTargetIds={browseMode === 'chat' && filterChatId !== 'all' ? [filterChatId] : []}
+        initialMode="auto"
         onManual={() => setIsCreateDialogOpen(true)}
         onSuccess={(isGlobal) => {
-          if (isGlobal) list.updateFilters((filters) => ({ ...filters, browseMode: 'all', summary: 'global_count' }))
+          if (isGlobal)
+            list.updateFilters((filters) => ({
+              ...filters,
+              browseMode: 'all',
+              summary: 'global_count',
+            }))
           invalidateJargon()
         }}
       />
@@ -634,20 +648,14 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
         onOpenChange={setIsCreateDialogOpen}
         chatList={formChatList}
         onSuccess={(isGlobal) => {
-          if (isGlobal) list.updateFilters((filters) => ({ ...filters, browseMode: 'all', summary: 'global_count' }))
+          if (isGlobal)
+            list.updateFilters((filters) => ({
+              ...filters,
+              browseMode: 'all',
+              summary: 'global_count',
+            }))
           invalidateJargon()
           setIsCreateDialogOpen(false)
-        }}
-      />
-
-      {/* 导入对话框 */}
-      <JargonImportDialog
-        open={isImportDialogOpen}
-        onOpenChange={setIsImportDialogOpen}
-        chatList={formChatList}
-        onSuccess={() => {
-          list.clearSelection()
-          invalidateJargon()
         }}
       />
 

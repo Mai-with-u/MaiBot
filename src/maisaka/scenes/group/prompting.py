@@ -35,7 +35,6 @@ class GroupPromptProfile(ChatPromptProfile):
             }
         )
 
-    def select_retro_template(self, *, short_reply: bool, self_reply: bool, mai_replier: bool) -> str:
-        # Mai Replier 对齐训练分布：训练数据 100% 使用标准模板（retro_replyer），
-        # light 模板（口语化/尽量简短/不要太有条理）属训练外成分。Mai Replier 群聊恒用标准模板。
-        return "retro_replyer_light" if short_reply and not mai_replier else "retro_replyer"
+    def select_chat_reply_template(self, *, self_reply: bool, mai_replier: bool) -> str:
+        # 专用模板沿用 Mai Replier 的训练文案。
+        return "reply_group_mai_replier" if mai_replier else "reply_group"

@@ -36,7 +36,7 @@ class ChatPromptProfile:
             lines.append(f"当前聊天额外注意事项：\n{extra_prompt}")
         return "在该聊天中的注意事项：\n" + "\n\n".join(lines) + "\n" if lines else ""
 
-    def select_retro_template(self, *, short_reply: bool, self_reply: bool, mai_replier: bool) -> str:
+    def select_chat_reply_template(self, *, self_reply: bool, mai_replier: bool) -> str:
         raise ValueError("回复模板选择需要已绑定的聊天场景")
 
     def query_memory_rule(self) -> str:

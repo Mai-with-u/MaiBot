@@ -5,7 +5,6 @@ from pydantic import BaseModel
 
 from src.common.logger import get_logger
 from src.webui.routers.agent import router as agent_router
-from src.webui.routers.computer import router as computer_router
 from src.webui.routers.desktop_pet import router as desktop_pet_router
 from src.webui.routers.desktop_pet_remote import router as desktop_pet_remote_router
 from src.webui.routers.files import router as files_router
@@ -60,7 +59,6 @@ router.include_router(plugin_router)
 # 注册系统控制路由
 router.include_router(system_router)
 router.include_router(agent_router)
-router.include_router(computer_router)
 router.include_router(desktop_pet_router)
 router.include_router(desktop_pet_remote_router)
 router.include_router(files_router)

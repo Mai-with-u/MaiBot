@@ -224,7 +224,7 @@ async def on_desktop_pet_panel_action(self, button_id, action_id):
 
 ## 查看桌面与持续阅读
 
-在 WebUI「桌宠」开启「允许读取桌面」（`screen_read_enabled`，默认关闭）。Python 本机模式读取 Windows 主屏；Tauri 2 独立客户端读取客户端电脑的主屏，并遵守客户端授权与系统权限。此功能和 Windows Sandbox 电脑工具分开，不控制鼠标键盘。截图会发给当前聊天模型，可能包含屏幕上可见的私人信息；模型需要支持图片理解。
+在 WebUI「桌宠」开启「允许读取桌面」（`screen_read_enabled`，默认关闭）。Python 本机模式读取 Windows 主屏；Tauri 2 独立客户端读取客户端电脑的主屏，并遵守客户端授权与系统权限。桌面读取不控制鼠标键盘。截图会发给当前聊天模型，可能包含屏幕上可见的私人信息；模型需要支持图片理解。
 
 - 主人聊天可调用 `desktop_pet_screen`，获得当前截图、捕获时间和尺寸。普通群聊无法使用。
 - 单次查看由 Bot 根据聊天需要调用截图工具，界面不提供「看一眼」按钮；用户也可以直接在聊天中提出查看桌面的需求。

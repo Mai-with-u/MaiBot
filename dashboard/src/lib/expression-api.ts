@@ -31,8 +31,6 @@ import type {
   ExpressionStatsResponse,
   ExpressionUpdateRequest,
   ExpressionUpdateResponse,
-  LegacyExpressionImportPreviewResponse,
-  LegacyExpressionImportResponse,
   ReviewListResponse,
   ReviewStats,
 } from '@/types/expression'
@@ -170,55 +168,6 @@ export async function clearExpressions(params: {
   return backendApi.post<ExpressionClearResponse>(`${API_BASE}/clear`, {
     body: params,
     errorMessage: '清除表达方式失败',
-  })
-}
-
-/**
- * 预览旧版数据库表达方式导入。
- */
-export async function previewLegacyExpressionImport(params: {
-  db_path: string
-}): Promise<LegacyExpressionImportPreviewResponse> {
-  return backendApi.post<LegacyExpressionImportPreviewResponse>(
-    `${API_BASE}/legacy-import/preview`,
-    {
-      body: params,
-      errorMessage: '预览旧版导入失败',
-    }
-  )
-}
-
-/**
- * 上传旧版数据库并预览表达方式导入。
- */
-export async function previewLegacyExpressionImportFile(
-  file: File
-): Promise<LegacyExpressionImportPreviewResponse> {
-  const formData = new FormData()
-  formData.append('file', file)
-  return backendApi.post<LegacyExpressionImportPreviewResponse>(
-    `${API_BASE}/legacy-import/preview-file`,
-    {
-      body: formData,
-      errorMessage: '预览旧版导入失败',
-    }
-  )
-}
-
-/**
- * 按映射从旧版数据库导入表达方式。
- */
-export async function importLegacyExpressions(params: {
-  db_path: string
-  mappings: Array<{
-    old_chat_id: string
-    target_chat_id?: string | null
-    target_chat_ids?: string[]
-  }>
-}): Promise<LegacyExpressionImportResponse> {
-  return backendApi.post<LegacyExpressionImportResponse>(`${API_BASE}/legacy-import/import`, {
-    body: params,
-    errorMessage: '旧版导入失败',
   })
 }
 

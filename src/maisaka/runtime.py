@@ -27,7 +27,6 @@ from src.common.message_repository import find_messages
 from src.common.utils.utils_config import ExpressionConfigUtils, JargonConfigUtils
 from src.config.config import global_config, model_config
 from src.agent.provider import AgentToolProvider
-from src.computer.provider import ComputerToolProvider
 from src.files.provider import FileToolProvider
 from src.desktop_pet.chat_tools import ChatSessionToolProvider
 from src.desktop_pet.todo_tools import TodoToolProvider
@@ -1318,7 +1317,6 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         self._tool_registry.register_provider(TodoToolProvider())
         self._tool_registry.register_provider(ExplorationToolProvider())
         self._tool_registry.register_provider(DesktopScreenToolProvider())
-        self._tool_registry.register_provider(ComputerToolProvider())
         self._tool_registry.register_provider(FileToolProvider())
         self._tool_registry.register_provider(MCPToolProvider(get_mcp_service()))
         self._chat_loop_service.set_tool_registry(self._tool_registry)

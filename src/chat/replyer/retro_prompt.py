@@ -3,7 +3,7 @@
 开启 `chat.creative_mode` 或实际选中 Mai Replier 后，replyer 按旧版（0.12.x）的组织方式生成提示词：
 
 - 通用模式的人设和聊天注意事项合并为首条 system 消息，Mai Replier 仅保留人设；
-- 群聊、群聊简短回复、私聊、私聊补充自己发言各用一套模板；
+- 群聊、私聊和私聊补充自己发言按场景选模板，篇幅由本次回复要求控制；
 - 回复风格保留在模板原位置，整段模板作为一条 user 消息发送。
 
 历史 Planner 模型输出直接丢弃，用户消息与麦麦实际发送的消息一起填入 `{dialogue_prompt}`。
@@ -55,21 +55,6 @@ from src.maisaka.context.messages import (
     build_context_items_from_history_entry,
 )
 from src.maisaka.visual.deferred_images import transform_context_image
-
-RETRO_GROUP_PROMPT = "retro_replyer"
-"""群聊复古模板名。"""
-
-RETRO_GROUP_LIGHT_PROMPT = "retro_replyer_light"
-"""群聊简短回复复古模板名，对应旧版 think_level=0 的轻量回复模板。"""
-
-RETRO_PRIVATE_PROMPT = "retro_private_replyer"
-"""私聊复古模板名。"""
-
-RETRO_PRIVATE_SELF_PROMPT = "retro_private_replyer_self"
-"""私聊补充自己发言的复古模板名。"""
-
-SHORT_REPLY_STYLE = "简短表达"
-"""reply 工具请求简短表达时的风格取值，用于挑选群聊轻量模板。"""
 
 RETRO_REPLY_TARGET_CONTENT_LIMIT = 300
 """复古模板里目标消息内容的截断长度，与旧版保持一致。"""
@@ -146,8 +131,6 @@ class RetroReplyPromptMixin:
         prompt_name = self._select_retro_prompt_name(
             reply_message=reply_message,
             stream_id=stream_id,
-            think_level=think_level,
-            reply_tool_args=reply_tool_args,
             mai_replier=mai_replier,
         )
         # Mai Replier 对齐训练分布：system 消息仅保留人设（训练数据 persona-only，
@@ -159,6 +142,7 @@ class RetroReplyPromptMixin:
             )
             if block.strip()
         )
+        length_instruction = ""
         if not mai_replier:
             session_id = self._resolve_session_id(stream_id)
             system_prompt = "\n\n".join(filter(None, (
@@ -166,7 +150,7 @@ class RetroReplyPromptMixin:
                 self._build_chat_attention_block(session_id),
                 self._get_reply_scene(session_id).prompts.attention_drift_block() if session_id else "",
             )))
-            # 通用复古保留普通回复中的附件参考、重复回复提醒及篇幅要求。
+            # 通用复古保留附件参考、重复回复提醒和本次篇幅要求。
             extra_blocks = [reply_requirements]
             args = reply_tool_args or {}
             extra_blocks.append(str(args.get("_duplicate_target_reply_reminder", "")).strip())
@@ -175,8 +159,12 @@ class RetroReplyPromptMixin:
             )
             if attachment_prompt.strip():
                 extra_blocks.append("【额外发送内容参考】\n" + attachment_prompt.strip())
-            extra_blocks.append(self._build_requested_reply_style_message(str(args.get("reply_style", ""))))
             reply_requirements = "\n\n".join(block for block in extra_blocks if block.strip())
+            requested_style = str(args.get("reply_style") or "").strip()
+            # 旧调用者只传 think_level=0 时，仍按简短回复处理。
+            if not requested_style and think_level == 0:
+                requested_style = "简短表达"
+            length_instruction = self._build_requested_reply_style_message(requested_style)
         template_context = self._build_retro_template_context(
             chat_history=chat_history,
             reply_message=reply_message,
@@ -184,6 +172,7 @@ class RetroReplyPromptMixin:
             reply_reference=str((reply_tool_args or {}).get("reply_reference") or ""),
             expression_habits=expression_habits,
             reply_requirements=reply_requirements,
+            length_instruction=length_instruction,
             mai_replier=mai_replier,
         )
         user_builder = ContextItemBuilder().set_role(RoleType.User)
@@ -305,30 +294,19 @@ class RetroReplyPromptMixin:
         *,
         reply_message: Optional[SessionMessage],
         stream_id: Optional[str],
-        think_level: int,
-        reply_tool_args: Optional[Dict[str, Any]],
         mai_replier: bool = False,
     ) -> str:
-        """按群聊/私聊、是否简短回复、是否补充自己发言挑选模板。"""
+        """按会话类型、模型和是否补充自己发言挑选模板。"""
 
         session_id = self._resolve_session_id(stream_id)
         scene = self._get_reply_scene(session_id)
         self_reply = reply_message is not None and is_bot_self(
             reply_message.platform, reply_message.message_info.user_info.user_id,
         )
-        return scene.prompts.select_retro_template(
-            short_reply=self._is_retro_short_reply(think_level, reply_tool_args),
+        return scene.prompts.select_chat_reply_template(
             self_reply=self_reply,
             mai_replier=mai_replier,
         )
-
-    def _is_retro_short_reply(self, think_level: int, reply_tool_args: Optional[Dict[str, Any]]) -> bool:
-        """判断本次回复是否属于简短回复，对应旧版 think_level=0 的轻量模板。"""
-
-        if think_level == 0:
-            return True
-        requested_style = str((reply_tool_args or {}).get("reply_style") or "").strip()
-        return requested_style == SHORT_REPLY_STYLE
 
     def _build_retro_template_context(
         self,
@@ -339,6 +317,7 @@ class RetroReplyPromptMixin:
         reply_reference: str,
         expression_habits: str,
         reply_requirements: str,
+        length_instruction: str = "",
         mai_replier: bool = False,
     ) -> Dict[str, str]:
         """按旧版的块顺序准备模板占位符内容。"""
@@ -352,7 +331,7 @@ class RetroReplyPromptMixin:
         return {
             "bot_name": global_config.bot.nickname,
             "sender_name": self._build_retro_sender_name(chat_history, reply_message),
-            "reply_style": reply_style,
+            "reply_style": "\n".join(filter(None, (reply_style, length_instruction))),
             # Mai Replier 对齐训练分布：表达习惯参考块在训练数据中仅 bdpan 源少量出现，
             # 线上动态注入会把回复带向套用句式模板、变书面。Mai Replier 路径跳过该块。
             "expression_habits_block": "" if mai_replier else expression_habits.strip(),

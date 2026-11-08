@@ -13,13 +13,12 @@ import { useToast } from '@/hooks/use-toast'
 import { selectHostBot } from './api'
 import { useHostRuntime } from './state'
 
-/** 铭牌本身作为切换入口，不占用额外布局空间。 */
 export function BotSwitcher({ children }: { children: ReactElement }) {
   const { t } = useTranslation()
   const { toast } = useToast()
   const runtime = useHostRuntime()
   const [switching, setSwitching] = useState(false)
-  if (!runtime.host) return children
+  if (!runtime.host) return null
 
   const current = runtime.bots.find((bot) => bot.bot_id === runtime.selected_bot_id)
   const label = `${t('hostManager.currentBot')}: ${current?.name ?? t('hostManager.noSelection')}`

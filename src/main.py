@@ -204,10 +204,8 @@ class MainSystem:
         await memory_automation_service.start()
 
         from src.agent.service import agent_service
-        from src.computer.service import computer_service
         from src.desktop_pet.service import desktop_pet_service
 
-        await computer_service.start()
         await agent_service.start()
 
         await desktop_pet_service.start()
@@ -289,7 +287,6 @@ async def main() -> None:
         from src.common.logger import stop_ws_broadcasts
         from src.common.shutdown import request_shutdown
         from src.agent.service import agent_service
-        from src.computer.service import computer_service
         from src.desktop_pet.service import desktop_pet_service
 
         request_shutdown("main_finally")
@@ -302,7 +299,6 @@ async def main() -> None:
             await system.app.stop()
         await heartflow_manager.shutdown()
         await agent_service.stop()
-        await computer_service.stop()
         if system.http_server:
             await system.http_server.shutdown()
         if system.watchdog_task is not None:

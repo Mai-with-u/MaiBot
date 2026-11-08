@@ -38,25 +38,35 @@ display_name = "返信の添付案内"
 advanced = true
 description = "返信に添付する画像、メンション、絵文字はシステムが送信することを示し、本文での添付情報の重複を防ぎます。"
 
-[retro_replyer]
-display_name = "レトロ返信"
+[reply_group]
+display_name = "グループチャット返信"
 advanced = true
-description = "レトロモード（experimental.replyer_retro_prompt）のグループチャット返信テンプレート。ペルソナとチャットの注意事項を先頭の system メッセージにまとめ、残りのテンプレートを user メッセージとして送信する。"
+description = "クリエイティブモードの既定のグループチャット返信テンプレート。"
 
-[retro_replyer_light]
-display_name = "レトロ返信（短め）"
+[reply_group_mai_replier]
+display_name = "Mai Replier のグループチャット返信"
 advanced = true
-description = "レトロモードのグループチャット短め返信テンプレート。旧版の think_level=0 の軽量返信に対応する。"
+description = "Mai Replier 専用のグループチャット返信テンプレート。学習時の文面を使用する。"
 
-[retro_private_replyer]
-display_name = "レトロ個人チャット返信"
+[reply_private]
+display_name = "個人チャット返信"
 advanced = true
-description = "レトロモードの個人チャット返信テンプレート。旧版の方式で返信指示をまとめる。"
+description = "クリエイティブモードの既定の個人チャット返信テンプレート。"
 
-[retro_private_replyer_self]
-display_name = "レトロ個人チャット補足返信"
+[reply_private_mai_replier]
+display_name = "Mai Replier の個人チャット返信"
 advanced = true
-description = "レトロモードの個人チャット補足返信テンプレート。直前に自分が送った発言に続けて補足するときに使う。"
+description = "Mai Replier 専用の個人チャット返信テンプレート。"
+
+[reply_private_followup]
+display_name = "個人チャットでの補足発言"
+advanced = true
+description = "クリエイティブモードの個人チャットで、直前の自分の発言に補足するときに使う。"
+
+[reply_private_followup_mai_replier]
+display_name = "Mai Replier の個人チャットでの補足発言"
+advanced = true
+description = "Mai Replier が個人チャットで直前の自分の発言に補足するときに使う。"
 
 [default_expressor]
 display_name = "既定表現器"
@@ -217,11 +227,6 @@ description = "新しい事実と既存の記憶の重複を判定し、別の�
 display_name = "外部 Agent 接続ガイド"
 advanced = true
 description = "外部 Agent 接続ガイド。"
-
-[agent_acp_computer]
-display_name = "外部 Agent のコンピューター操作"
-advanced = true
-description = "外部 Agent のコンピューター操作。"
 
 [agent_acp_environment]
 display_name = "外部 Agent 環境説明"
