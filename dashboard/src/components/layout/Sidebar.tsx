@@ -1,14 +1,16 @@
 import { SidebarUpdateButton } from './SidebarUpdateButton'
-import { ChevronRight, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { ChevronRight, ChevronsUpDown, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
 import { BackgroundLayer } from '@/components/background-layer'
+import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useTheme } from '@/components/use-theme'
 import { useBackground } from '@/hooks/use-background'
+import { BotSwitcher } from '@/host/BotSwitcher'
 import { useBotAvailable } from '@/host/state'
 import { cn } from '@/lib/utils'
 import { promptCatalogQueryOptions } from '@/lib/prompt-query'
@@ -50,7 +52,12 @@ export function Sidebar({
   const { config: sidebarBg, inheritedFrom } = useBackground('sidebar')
   const inheritsPageBackground = inheritedFrom === 'page'
   const builtInMenuSections = useMenuSections()
-  const menuSections = suppliedMenuSections ?? builtInMenuSections
+  const menuSections = useMemo(
+    () => (suppliedMenuSections ?? builtInMenuSections)
+      .map((section) => ({ ...section, items: section.items.filter((item) => item.path !== '/') }))
+      .filter((section) => section.items.length > 0),
+    [suppliedMenuSections, builtInMenuSections]
+  )
   const { data: promptCatalog } = useQuery({
     ...promptCatalogQueryOptions,
     enabled: botAvailable && menuSections.some((section) => section.items.some((item) => item.path === '/config/prompts')),
@@ -222,7 +229,7 @@ export function Sidebar({
 
       {/* Logo 区域 */}
       <div className="relative z-10">
-        <LogoArea sidebarOpen={sidebarRevealed} />
+        <LogoArea sidebarOpen={sidebarRevealed} onMobileMenuClose={onMobileMenuClose} />
         {!isMillennium && !sidebarOpen && effectiveHoverExpanded && (
           <button
             type="button"
@@ -376,7 +383,12 @@ export function Sidebar({
           </ul>
         </nav>
       </ScrollArea>
-      <div className="shrink-0 border-t p-3">
+      <div className="flex shrink-0 flex-col items-start gap-2 border-t p-3">
+        <BotSwitcher>
+          <Button type="button" variant="outline" size="icon-sm">
+            <ChevronsUpDown aria-hidden="true" />
+          </Button>
+        </BotSwitcher>
         <SidebarUpdateButton collapsed={!sidebarRevealed} />
       </div>
     </aside>
