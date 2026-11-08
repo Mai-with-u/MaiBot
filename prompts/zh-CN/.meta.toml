@@ -38,25 +38,35 @@ display_name = "回复附件提示"
 advanced = true
 description = "说明回复附带的图片、@ 和表情包由系统发送，避免正文重复输出附件信息。"
 
-[retro_replyer]
-display_name = "复古回复"
+[reply_group]
+display_name = "群聊回复"
 advanced = true
-description = "复古模式（experimental.replyer_retro_prompt）下的群聊回复模板，人设与聊天注意事项作为首条 system 消息，其余模板作为 user 消息发送。"
+description = "创意模式下的默认群聊回复模板。"
 
-[retro_replyer_light]
-display_name = "复古回复（简短）"
+[reply_group_mai_replier]
+display_name = "Mai Replier 群聊回复"
 advanced = true
-description = "复古模式下的群聊简短回复模板，对应旧版 think_level=0 的轻量回复。"
+description = "Mai Replier 专用的群聊回复模板，沿用训练时的提示词。"
 
-[retro_private_replyer]
-display_name = "复古私聊回复"
+[reply_private]
+display_name = "私聊回复"
 advanced = true
-description = "复古模式下的私聊回复模板，按旧版方式集中回复指令。"
+description = "创意模式下的默认私聊回复模板。"
 
-[retro_private_replyer_self]
-display_name = "复古私聊补充回复"
+[reply_private_mai_replier]
+display_name = "Mai Replier 私聊回复"
 advanced = true
-description = "复古模式下的私聊补充回复模板，用于在麦麦自己刚刚的发言基础上继续补充。"
+description = "Mai Replier 专用的私聊回复模板。"
+
+[reply_private_followup]
+display_name = "私聊补充发言"
+advanced = true
+description = "创意模式下，麦麦在私聊中继续补充自己上一条发言时使用。"
+
+[reply_private_followup_mai_replier]
+display_name = "Mai Replier 私聊补充发言"
+advanced = true
+description = "Mai Replier 在私聊中继续补充自己上一条发言时使用。"
 
 [default_expressor]
 display_name = "改写器"

@@ -21,5 +21,7 @@ class PrivatePromptProfile(ChatPromptProfile):
             }
         )
 
-    def select_retro_template(self, *, short_reply: bool, self_reply: bool, mai_replier: bool) -> str:
-        return "retro_private_replyer_self" if self_reply else "retro_private_replyer"
+    def select_chat_reply_template(self, *, self_reply: bool, mai_replier: bool) -> str:
+        if mai_replier:
+            return "reply_private_followup_mai_replier" if self_reply else "reply_private_mai_replier"
+        return "reply_private_followup" if self_reply else "reply_private"
