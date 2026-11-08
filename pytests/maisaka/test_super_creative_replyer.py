@@ -15,7 +15,7 @@ from src.chat.replyer.document_generator import DocumentReplyGenerator
 from src.chat.replyer.maisaka_generator_base import BaseMaisakaReplyGenerator, MaisakaReplyContext
 from src.common.data_models.llm_service_data_models import LLMResponseResult
 from src.common.i18n import get_locale, use_locale
-from src.common.prompt_i18n import PROMPTS_ROOT, clear_prompt_cache, extract_prompt_placeholders, load_prompt
+from src.common.prompt_i18n import PROMPTS_ROOT, clear_prompt_cache, extract_prompt_placeholders, load_prompt, load_prompt_template
 from src.config.config import global_config
 from src.config.model_configs import ModelInfo
 from src.desktop_pet.service import desktop_pet_service
@@ -24,6 +24,7 @@ from src.llm_models.payload_content.tool_option import ToolCall
 from src.maisaka.display.prompt_preview_logger import PromptPreviewLogger
 from src.maisaka.display.reasoning_steps import reasoning_trace_id
 from src.maisaka.display.runtime_mixin import MaisakaRuntimeDisplayMixin
+from src.maisaka.scenes.private.prompting import PrivatePromptProfile
 from src.plugin_runtime.host.hook_dispatcher import HookDispatchResult
 from src.webui.routers import reasoning_process
 
@@ -270,8 +271,7 @@ def test_each_prompt_profile_loads_japanese_templates(replyer, monkeypatch, prof
         )
         assert get_locale() == "en-US"
 
-    expected = {"standard": "maisaka_replyer", "retro": "retro_replyer",
-                "mai_replier": "retro_replyer", "document": "maisaka_replyer_document"}
+    expected = {"standard": "maisaka_replyer", "retro": "reply_group", "document": "maisaka_replyer_document"}
     assert (expected[profile], "ja-JP") in loaded
     system = next(item for item in items if isinstance(item, SystemMessageItem))
     assert personality in get_item_text(system)
@@ -316,7 +316,7 @@ async def test_language_uses_same_replyer_for_translation(replyer, monkeypatch, 
 
 @pytest.mark.parametrize("locale", ["ru-RU", "fr-FR"])
 def test_translated_templates_keep_chinese_structure(locale, tmp_path):
-    names = ("retro_replyer", "retro_replyer_light", "retro_private_replyer", "retro_private_replyer_self",
+    names = ("reply_group", "reply_group_mai_replier", "reply_private", "reply_private_followup",
              "maisaka_replyer", "maisaka_replyer_document", "reply_attachments")
     with use_locale(locale):
         for name in names:
@@ -347,6 +347,49 @@ def test_translated_templates_keep_chinese_structure(locale, tmp_path):
         assert custom_path.read_text(encoding="utf-8") == outdated_template
 
 
+@pytest.mark.parametrize("self_reply, shared_name, dedicated_name", [
+    (False, "reply_private", "reply_private_mai_replier"),
+    (True, "reply_private_followup", "reply_private_followup_mai_replier"),
+])
+def test_mai_replier_uses_dedicated_private_template(self_reply: bool, shared_name: str, dedicated_name: str) -> None:
+    profile = PrivatePromptProfile()
+    assert profile.select_chat_reply_template(self_reply=self_reply, mai_replier=False) == shared_name
+    assert profile.select_chat_reply_template(self_reply=self_reply, mai_replier=True) == dedicated_name
+    for locale in ("zh-CN", "en-US", "ja-JP"):
+        shared = load_prompt_template(shared_name, locale=locale, include_custom=False)
+        dedicated = load_prompt_template(dedicated_name, locale=locale, include_custom=False)
+        assert dedicated.locale == locale
+        assert extract_prompt_placeholders(dedicated.template) == extract_prompt_placeholders(shared.template)
+
+
+@pytest.mark.parametrize("is_group, template", [(True, "reply_group"), (False, "reply_private")])
+@pytest.mark.parametrize("style, think_level, instruction", [
+    ("简短表达", 1, "用一到两句口语短句回复"),
+    ("正常回复", 1, "篇幅与当前话题相称"),
+    ("长回复", 1, "本次篇幅以说清问题为准"),
+    ("", 0, "用一到两句口语短句回复"),
+])
+def test_creative_chat_uses_one_template_for_all_lengths(
+    replyer, monkeypatch: pytest.MonkeyPatch, is_group: bool, template: str,
+    style: str, think_level: int, instruction: str,
+) -> None:
+    generator = replyer.generator
+    generator.chat_stream.is_group_session = is_group
+    load = Mock(wraps=generator._load_prompt)
+    monkeypatch.setattr(generator, "_load_prompt", load)
+
+    with use_locale("zh-CN"):
+        items = generator._build_request_messages(
+            chat_history=[], reply_message=None, reply_reason="", prompt_profile="retro",
+            reply_tool_args={"reply_style": style}, think_level=think_level,
+        )
+
+    assert [call.args[0] for call in load.call_args_list if call.args[0].startswith(("reply_group", "reply_private"))] == [
+        template,
+    ]
+    assert get_item_text(items[-1]).count(instruction) == 1
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("creative", [False, True])
 @pytest.mark.parametrize("super_creative", [False, True])
@@ -356,13 +399,20 @@ async def test_mai_replier_ignores_both_creative_modes(replyer, monkeypatch, cre
     replyer.state.model_info = ModelInfo(
         model_type="llm", name="mai-replier", model_identifier="mai_replier", api_provider="test-provider",
     )
+    load = Mock(wraps=replyer.generator._load_prompt)
+    monkeypatch.setattr(replyer.generator, "_load_prompt", load)
     replyer.responses[:] = [_response("直接输出中文")]
     with use_locale("zh-CN"):
-        success, result = await replyer.generator.generate_reply_with_context(chat_history=[])
+        success, result = await replyer.generator.generate_reply_with_context(
+            chat_history=[], reply_tool_args={"reply_style": "简短表达"},
+        )
     assert success and result.text_fragments == ["直接输出中文"]
+    assert [call.args[0] for call in load.call_args_list if call.args[0].startswith("reply_group")] == [
+        "reply_group_mai_replier",
+    ]
     assert len(replyer.calls) == 1
     assert "今回の返信" not in get_item_text(replyer.calls[0]["items"][0])
-    assert "你正在qq群里聊天" in get_item_text(replyer.calls[0]["items"][1])
+    assert "你正在群里聊天" in get_item_text(replyer.calls[0]["items"][1])
     assert result.selected_expression_ids == []
     assert result.metrics.extra["replyer_translation_count"] == 0
     assert result.metrics.extra["replyer_super_creative_mode"] is False
@@ -378,7 +428,7 @@ async def test_classical_chinese_generates_then_translates_to_modern_chinese(rep
     assert success and result.text_fragments == ["月色真美，一起欣赏吧？"]
     assert len(replyer.calls) == 2
     assert "中文文言文" in get_item_text(replyer.calls[0]["items"][0])
-    assert "你正在qq群里聊天" in get_item_text(replyer.calls[0]["items"][1])
+    assert "你正在群里聊天" in get_item_text(replyer.calls[0]["items"][1])
     translation = replyer.calls[1]["items"]
     assert len(translation) == 1 and isinstance(translation[0], UserMessageItem)
     assert "翻译成现代白话中文" in get_item_text(translation[0])

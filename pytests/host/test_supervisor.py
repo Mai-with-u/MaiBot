@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import List
 
 import asyncio
-import os
 import sys
 import textwrap
 
@@ -132,10 +131,16 @@ async def test_bot_becomes_running_only_after_ready_and_is_reachable(workspace: 
 @pytest.mark.asyncio
 async def test_crash_after_ready_restarts_with_backoff(workspace: Workspace) -> None:
     bot = add_bot(workspace, "crashy")
+    log_dir = bot.directory / "logs"
+    log_dir.mkdir()
+    (log_dir / "app_test.log.jsonl").write_text("{}\n", encoding="utf-8")
     supervisor = make_supervisor(workspace)
     try:
         await supervisor.start(bot.bot_id)
-        await wait_status(supervisor, bot.bot_id, "running")
+        snapshot = await wait_status(supervisor, bot.bot_id, "running")
+        for log_file in log_dir.iterdir():
+            log_file.unlink()
+        assert Path(snapshot["log_path"]).is_file()
         (bot.directory / "mode").write_text("crash", encoding="utf-8")
         await wait_status(supervisor, bot.bot_id, "failed")
         await wait_status(supervisor, bot.bot_id, "running")
@@ -211,7 +216,7 @@ async def test_desired_bots_start_one_after_another(workspace: Workspace) -> Non
         await supervisor.shutdown()
     # 关闭宿主不改变期望状态，下次启动时恢复。
     assert workspace.registry.get_bot(first.bot_id).desired_state == "running"
-    assert os.path.exists(first.directory / "logs" / "worker-console.log")
+    assert (first.directory / "temp" / "worker-console.log").is_file()
 
 
 @pytest.mark.asyncio

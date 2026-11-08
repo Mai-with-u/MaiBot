@@ -982,13 +982,13 @@
   text-transform: uppercase;
 }
 
-/* Bot 切换入口复用铭牌与折叠色块，悬停和展开时保持可见反馈。 */
+/* 首页入口在悬停和键盘聚焦时提供反馈。 */
 [data-dashboard-logo-title='true'],
-button[data-dashboard-logo-spectrum-block='true'] {
+[data-dashboard-logo-spectrum-block='true'] {
   transition: filter 150ms ease;
 }
-[data-dashboard-logo-title='true']:is(:hover, :focus-visible, [data-state='open']),
-button[data-dashboard-logo-spectrum-block='true']:is(:hover, :focus-visible, [data-state='open']) {
+[data-dashboard-logo-title='true']:is(:hover, :focus-visible),
+[data-dashboard-logo-spectrum-block='true']:is(:hover, :focus-visible) {
   filter: brightness(1.2);
   outline: 2px solid hsl(var(--primary));
   outline-offset: 2px;

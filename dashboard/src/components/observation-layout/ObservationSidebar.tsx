@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import {
   BookOpen,
   ChevronDown,
+  ChevronsUpDown,
   Minus,
   Moon,
   PanelLeftClose,
@@ -241,16 +242,20 @@ export function ObservationSidebar({
       aria-label={t('a11y.sidebarNav')}
     >
       <div data-observation-brand="true">
-        <BotSwitcher>
-          <button type="button" data-observation-logo="true" className="cursor-pointer">
-            <span data-observation-logo-mark="true" aria-hidden="true">
-              <span />
-              <span />
-              <span />
-            </span>
-            {!collapsed && <span data-observation-logo-plate="true">MAIBOT</span>}
-          </button>
-        </BotSwitcher>
+        <Link
+          to="/"
+          activeOptions={{ exact: true }}
+          data-observation-logo="true"
+          aria-label={t('sidebar.menu.home')}
+          title={t('sidebar.menu.home')}
+        >
+          <span data-observation-logo-mark="true" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+          {!collapsed && <span data-observation-logo-plate="true">MAIBOT</span>}
+        </Link>
         {!collapsed && <span data-observation-brand-vent="true" aria-hidden="true" />}
         <button
           type="button"
@@ -366,6 +371,11 @@ export function ObservationSidebar({
         <SidebarUpdateButton collapsed={collapsed} />
       </div>
       <footer data-observation-tools="true">
+        <BotSwitcher>
+          <button type="button" data-observation-icon-key="true">
+            <ChevronsUpDown aria-hidden="true" />
+          </button>
+        </BotSwitcher>
         <Link
           to="/settings"
           data-observation-icon-key="true"

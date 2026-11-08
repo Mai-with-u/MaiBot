@@ -600,9 +600,9 @@ def _is_replyer_test_model(model_config: Dict[str, Any]) -> bool:
 
 
 def _build_replyer_test_context_factory() -> Callable[[BaseClient], List[ContextItem]]:
-    """用真实复古回复模板模拟一轮群聊，不测试工具调用或视觉能力。"""
+    """用 Mai Replier 专用模板模拟一轮群聊，只验证文本回复。"""
     prompt = load_prompt(
-        "retro_replyer",
+        "reply_group_mai_replier",
         extra_info_block="",
         expression_habits_block="",
         bot_name="麦麦",

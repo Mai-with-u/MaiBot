@@ -4,7 +4,7 @@ import time
 
 from src.common.logger import get_logger
 from src.config.config import global_config
-from src.config.official_configs import PrivateReplyPauseRule
+from src.config.official_configs import PrivateReplyPauseRule, get_active_talk_rule_group
 
 logger = get_logger("config_utils")
 
@@ -494,15 +494,17 @@ class ChatConfigUtils:
         if is_group_chat is False:
             return 0.0 if ChatConfigUtils.is_private_reply_paused(session_id) else 1.0
 
-        result = global_config.chat.reply_timing.talk_value
-        if not global_config.chat.reply_timing.talk_value_rules:
+        reply_timing = global_config.chat.reply_timing
+        result = reply_timing.talk_value
+        rules = get_active_talk_rule_group(reply_timing.talk_rule_groups).rules
+        if not rules:
             return result
         local_time = time.localtime()
         now_min = local_time.tm_hour * 60 + local_time.tm_min
 
         matched_rules = []
-        for rule in global_config.chat.reply_timing.talk_value_rules:
-            if rule.rule_type != "group":
+        for rule in rules:
+            if not rule.enabled or rule.rule_type != "group":
                 continue
             target_priority = ChatConfigUtils._talk_rule_target_priority(rule, session_id, is_group_chat)
             if target_priority is None:

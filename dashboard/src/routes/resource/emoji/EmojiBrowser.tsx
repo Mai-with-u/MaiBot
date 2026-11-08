@@ -120,9 +120,9 @@ export function EmojiBrowser({
       {stats?.collecting_enabled != null && (
         <StatusIndicator
           status={stats.collecting_enabled ? 'on' : 'off'}
-          title="是否自动收集聊天中的表情包"
+          title="是否自动将候选表情注册为可发送的表情。关闭后，聊天表情仍会为识别而缓存。"
         >
-          {stats.collecting_enabled ? '收集中' : '收集已关闭'}
+          {stats.collecting_enabled ? '自动注册已开启' : '自动注册已关闭'}
         </StatusIndicator>
       )}
       {stats && (

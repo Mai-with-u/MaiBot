@@ -1,7 +1,7 @@
 """宿主共享供应商、模型与联网服务定义；任务配置由 Bot 独立保存。"""
 
 from pathlib import Path
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 import copy
 import hashlib
@@ -56,6 +56,7 @@ def extract_bot_model_settings(submitted: Dict[str, Any]) -> Dict[str, Any]:
     """实例文件只保存任务等独立设置，公共模型定义由统一写入服务保存。"""
     result = copy.deepcopy(submitted)
     result.pop("_shared_catalog", None)
+    result.pop("_warnings", None)
     for section in CATALOG_SECTIONS:
         result.pop(section, None)
     if "web" in result:
@@ -85,25 +86,22 @@ def validate_catalog(data: Dict[str, Any]) -> None:
             raise ValueError(f"{section} 必须是列表")
         names = set()
         for item in items:
-            model_type.model_validate(item)
-            name = item["name"]
-            if not name.strip() or name in names:
-                raise ValueError(f"{section} 存在空名称或重复名称")
+            name = model_type.model_validate(item).name
+            if name in names:
+                raise ValueError(f"{section} 存在重复名称")
             names.add(name)
-    providers = {item["name"] for item in data.get("api_providers", [])}
-    if any(item["api_provider"] not in providers for item in data.get("models", [])):
-        raise ValueError("共享模型引用了不存在的共享供应商")
     WebConfig.model_validate(data.get("web", {}))
 
 
 def missing_references(data: Dict[str, Any]) -> Set[str]:
     """收集具体失效引用，目录修改不能扩大已有配置错误。"""
     errors: Set[str] = set()
-    providers = {item["name"] for item in data.get("api_providers", [])}
+    providers = {item.get("name", "") for item in data.get("api_providers", []) if item.get("name", "").strip()}
     models = {item["name"] for item in data.get("models", [])}
     for model in data.get("models", []):
-        if model["api_provider"] not in providers:
-            errors.add(f"模型 {model['name']} 引用的供应商 {model['api_provider']} 不存在")
+        provider = model.get("api_provider", "")
+        if provider not in providers:
+            errors.add(f"模型 {model['name']} 引用的供应商 {provider!r} 不存在")
 
     def check(node: Any, path: str) -> None:
         if isinstance(node, dict):
@@ -124,3 +122,27 @@ def missing_references(data: Dict[str, Any]) -> Set[str]:
         else:
             check(task, f"model_task_config.{task_name}")
     return errors
+
+
+def model_config_warnings(data: Dict[str, Any]) -> List[str]:
+    """统一诊断模型目录和全部任务引用，不改写用户配置。"""
+    from src.web_search.config import WebConfig, WebSearchConfigError, require_web_service
+
+    from .model_configs import APIProvider, provider_configuration_errors
+
+    warnings = sorted(missing_references(data))
+    if not data.get("models"):
+        warnings.append("模型列表为空，请在 WebUI 添加模型")
+    if not data.get("api_providers"):
+        warnings.append("供应商列表为空，请在 WebUI 添加供应商")
+    for item in data.get("api_providers", []):
+        provider = APIProvider.model_validate(item)
+        warnings.extend(f"供应商 {provider.name!r}：{error}" for error in provider_configuration_errors(provider))
+    web = WebConfig.model_validate(data.get("web", {}))
+    for name in data.get("model_task_config", {}).get("web_search", {}).get("model_list", []):
+        if name in web.services:
+            try:
+                require_web_service(web, name)
+            except WebSearchConfigError as exc:
+                warnings.append(str(exc))
+    return warnings

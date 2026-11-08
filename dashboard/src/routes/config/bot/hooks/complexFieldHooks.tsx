@@ -198,6 +198,7 @@ interface TalkRuleTimelineItem {
   title: string
   timeLabel: string
   value: number
+  enabled: boolean
   invalidTime: boolean
   range: TimelineRange | null
   segments: TimelineSegment[]
@@ -334,28 +335,6 @@ const withCurrentPlatformOption = (
     },
   ]
 }
-
-const TALK_RULE_SCOPE_OPTIONS: Array<{
-  description: string
-  kind: LearningScopeKind
-  title: string
-}> = [
-  {
-    kind: 'platform',
-    title: '平台通配',
-    description: '某个平台下的全部聊天流都会命中',
-  },
-  {
-    kind: 'platformDefault',
-    title: '平台兜底',
-    description: '该平台没有更具体规则时使用',
-  },
-  {
-    kind: 'chat',
-    title: '指定聊天流',
-    description: '指定平台里的一个具体聊天',
-  },
-]
 
 const LEARNING_RULE_SCOPE_OPTIONS: Array<{
   description: string
@@ -1103,7 +1082,6 @@ function ChatTargetFields({
 function AddTargetScopeDialog<TScopeKind extends string>({
   description,
   defaultScope,
-  fixedRuleType,
   open,
   onAdd,
   onOpenChange,
@@ -1112,7 +1090,6 @@ function AddTargetScopeDialog<TScopeKind extends string>({
 }: {
   description: string
   defaultScope: TScopeKind
-  fixedRuleType?: ExpressionRuleType
   open: boolean
   onAdd: (scopeKind: TScopeKind, ruleType: ExpressionRuleType) => void
   onOpenChange: (open: boolean) => void
@@ -1156,26 +1133,24 @@ function AddTargetScopeDialog<TScopeKind extends string>({
               </button>
             ))}
           </div>
-          {!fixedRuleType && (
-            <div className="max-w-40 space-y-1">
-              <Label className="text-[11px] leading-none text-muted-foreground">聊天类型</Label>
-              <Select value={ruleType} onValueChange={(nextRuleType) => setRuleType(normalizeExpressionRuleType(nextRuleType))}>
-                <SelectTrigger className="h-8">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="group">群聊</SelectItem>
-                  <SelectItem value="private">私聊</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+          <div className="max-w-40 space-y-1">
+            <Label className="text-[11px] leading-none text-muted-foreground">聊天类型</Label>
+            <Select value={ruleType} onValueChange={(nextRuleType) => setRuleType(normalizeExpressionRuleType(nextRuleType))}>
+              <SelectTrigger className="h-8">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="group">群聊</SelectItem>
+                <SelectItem value="private">私聊</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             取消
           </Button>
-          <Button type="button" onClick={() => onAdd(activeScope, fixedRuleType ?? ruleType)}>
+          <Button type="button" onClick={() => onAdd(activeScope, ruleType)}>
             添加
           </Button>
         </DialogFooter>
@@ -1672,6 +1647,7 @@ const buildTalkTimelineItems = (items: Record<string, unknown>[]): TalkRuleTimel
       title: `轨道 ${index + 1}`,
       timeLabel: parsedTime.label,
       value,
+      enabled: item.enabled !== false,
       invalidTime: parsedTime.invalid,
       range,
       segments: parsedTime.segments,
@@ -1737,8 +1713,9 @@ const createTalkRuleForGroup = (
 
 const normalizeTalkRuleItems = (
   items: Record<string, unknown>[],
-  context?: { addedIndex?: number; changedIndex?: number },
+  context?: { addedIndex?: number; changedIndex?: number; changedField?: string },
 ) => {
+  if (context?.changedField === 'enabled') return items
   const preferredIndex = context?.changedIndex ?? context?.addedIndex
   const specialTimeOwner = new Map<string, number>()
   const duplicateIndexes = new Set<number>()
@@ -1793,10 +1770,17 @@ const moveTalkRuleItem = (items: Record<string, unknown>[], fromIndex: number, t
   return nextItems
 }
 
-const TALK_TRACK_GRID_CLASS = 'grid grid-cols-[7.5rem_minmax(14rem,1fr)_8.5rem_1.75rem] items-center gap-3'
+const TALK_TRACK_GRID_CLASS = 'grid grid-cols-[7.5rem_minmax(14rem,1fr)_8.5rem_auto] items-center gap-3'
 
-const talkGroupTargetLabel = (group: Pick<TalkRuleTimelineGroup, 'itemId' | 'platform'>) =>
-  platformLabel({ platform: group.platform, item_id: group.itemId })
+function TalkGroupTargetLabel({ group }: { group: TalkRuleTimelineGroup }) {
+  const target = platformLabel({ platform: group.platform, item_id: group.itemId })
+  const { session } = useExactChatTargetResolution(group.platform, group.itemId, 'group', group.scopeLabel === '精确')
+  return (
+    <span className="min-w-0 truncate font-mono text-sm font-semibold" title={target}>
+      {session ? formatChatDisplayName(session.display_name, session.account_id) : target}
+    </span>
+  )
+}
 
 function TalkEmptyState({ text }: { text: string }) {
   return (
@@ -1846,7 +1830,7 @@ function TalkValueTimelineOverview({
   // 只保留一层分组：聊天之间用分隔线隔开，轨道行直接排在聊天标题下面。
   return (
     <div className="overflow-x-auto">
-      <div className="min-w-[560px]">
+      <div className="min-w-[600px]">
         <div className={`${TALK_TRACK_GRID_CLASS} pb-1.5 text-[11px] text-muted-foreground`}>
           <div>时段</div>
           <TimeRangeTicks />
@@ -1857,7 +1841,7 @@ function TalkValueTimelineOverview({
           {timelineGroups.map((group) => (
             <section key={group.key} className="py-2.5" aria-label={group.label}>
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pb-1">
-                <span className="min-w-0 truncate font-mono text-sm font-semibold">{talkGroupTargetLabel(group)}</span>
+                <TalkGroupTargetLabel group={group} />
                 <span className="text-xs text-muted-foreground">{group.scopeLabel}</span>
                 <div className="ml-auto flex gap-1">
                   <Button
@@ -1940,7 +1924,7 @@ function TalkValueTimelineOverview({
                   </div>
                   <TimeRangeTrack range={item.range} segments={item.segments}
                     disabled={item.invalidTime} label={`${group.label}轨道 ${trackIndex + 1} `}
-                    colorClassName={`${talkValueColor(item.value)} ${item.invalidTime ? 'opacity-35' : 'opacity-85'}`}
+                    colorClassName={`${talkValueColor(item.value)} ${item.invalidTime || !item.enabled ? 'opacity-35' : 'opacity-85'}`}
                     onChange={(next) => onItemFieldChange(item.index, 'time', formatTalkTimeRange(next))} />
                   <Slider
                     value={[item.value]}
@@ -1951,16 +1935,23 @@ function TalkValueTimelineOverview({
                     variant="value"
                     valueFormat="fixed-2"
                   />
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="ghost"
-                    className="h-7 w-7 text-destructive hover:text-destructive"
-                    aria-label={`删除${group.label} 轨道 ${trackIndex + 1}`}
-                    onClick={() => onRemoveItem(item.index)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={item.enabled}
+                      aria-label={`启用${group.label}轨道 ${trackIndex + 1}`}
+                      onCheckedChange={(enabled) => onItemFieldChange(item.index, 'enabled', enabled)}
+                    />
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 text-destructive hover:text-destructive"
+                      aria-label={`删除${group.label} 轨道 ${trackIndex + 1}`}
+                      onClick={() => onRemoveItem(item.index)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                 </div>
               ))}
             </section>
@@ -2015,7 +2006,7 @@ function TalkValueGroupedRuleEditor({
       {timelineGroups.map((group) => (
         <section key={group.items[0]?.index} className="space-y-3 py-4" aria-label={group.label}>
           <div className="flex flex-wrap items-baseline gap-x-2">
-            <span className="min-w-0 truncate font-mono text-sm font-semibold">{talkGroupTargetLabel(group)}</span>
+            <TalkGroupTargetLabel group={group} />
             <span className="text-xs text-muted-foreground">
               {group.scopeLabel} · {group.items.length} 条轨道
             </span>
@@ -2063,8 +2054,13 @@ function TalkValueGroupedRuleEditor({
                   key={item.index}
                   className="grid gap-3 py-3 lg:grid-cols-[4rem_minmax(16rem,1fr)_14rem_2.5rem]"
                 >
-                  <div className="flex items-center">
+                  <div className="flex items-center gap-2 lg:flex-col lg:items-start">
                     <span className="text-xs text-muted-foreground">轨道 {trackIndex + 1}</span>
+                    <Switch
+                      checked={item.enabled}
+                      aria-label={`启用${group.label}轨道 ${trackIndex + 1}`}
+                      onCheckedChange={(enabled) => onItemFieldChange(item.index, 'enabled', enabled)}
+                    />
                   </div>
                   <div className="space-y-2">
                     <div className="grid grid-cols-3 gap-2">
@@ -2161,12 +2157,6 @@ function TalkValueGroupedRuleEditor({
 
 type TalkValueEditorMode = 'grouped' | 'timeline'
 
-const createEmptyTalkRuleDraft = () => ({
-  itemId: '',
-  platform: '',
-  ruleType: 'group',
-})
-
 function TalkValueRuleEditor({
   emptyText,
   items,
@@ -2187,11 +2177,16 @@ function TalkValueRuleEditor({
 }) {
   const [mode, setMode] = useState<TalkValueEditorMode>('timeline')
   const [addDialogOpen, setAddDialogOpen] = useState(false)
-  const handleAddRule = (scopeKind: LearningScopeKind, ruleType: ExpressionRuleType) => {
-    const target = buildLearningRulePatch(scopeKind, createEmptyTalkRuleDraft(), [])
+  const [draftPlatform, setDraftPlatform] = useState('')
+  const [draftItemId, setDraftItemId] = useState('')
+  const platform = draftPlatform.trim()
+  const itemId = draftItemId.trim()
+  const validTarget = Boolean((platform && platform !== '*') || (itemId && itemId !== '*'))
+  const handleAddRule = () => {
     onAddItem({
-      ...target,
-      rule_type: ruleType,
+      platform,
+      item_id: itemId,
+      rule_type: 'group',
       time: '00:00-23:59',
       value: 0.5,
     })
@@ -2208,7 +2203,11 @@ function TalkValueRuleEditor({
           type="button"
           size="sm"
           variant="outline"
-          onClick={() => setAddDialogOpen(true)}
+          onClick={() => {
+            setDraftPlatform('')
+            setDraftItemId('')
+            setAddDialogOpen(true)
+          }}
         >
           <Plus className="mr-1 h-4 w-4" />
           添加规则
@@ -2229,16 +2228,28 @@ function TalkValueRuleEditor({
           ]}
         />
       </div>
-      <AddTargetScopeDialog
-        defaultScope="chat"
-        fixedRuleType="group"
-        description="选择群聊规则的作用范围。添加后可继续填写平台、群聊 ID、时间段和发言频率。"
-        open={addDialogOpen}
-        onAdd={handleAddRule}
-        onOpenChange={setAddDialogOpen}
-        scopeOptions={TALK_RULE_SCOPE_OPTIONS}
-        title="添加发言频率规则"
-      />
+      <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>添加发言频率规则</DialogTitle>
+            <DialogDescription>至少指定平台或群聊 ID。留空表示默认范围，* 表示通配。</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="talk-rule-platform">平台</Label>
+              <Input id="talk-rule-platform" placeholder="qq" value={draftPlatform} onChange={(event) => setDraftPlatform(event.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="talk-rule-item-id">群聊 ID</Label>
+              <Input id="talk-rule-item-id" value={draftItemId} onChange={(event) => setDraftItemId(event.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setAddDialogOpen(false)}>取消</Button>
+            <Button type="button" disabled={!validTarget} onClick={handleAddRule}>添加</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {mode === 'timeline' ? (
         <TalkValueTimelineOverview
           emptyText={emptyText}
@@ -2567,18 +2578,98 @@ const GroupTalkValueRulesHook = createListItemEditorHook({
   },
 })
 
-export const ChatTalkValueRulesHook: FieldHookComponent = (props) => {
-  const rules = Array.isArray(props.value) ? props.value as Record<string, unknown>[] : []
+interface TalkRuleGroup {
+  name: string
+  rules: Record<string, unknown>[]
+}
+
+interface TalkRuleGroupsConfig {
+  active_group: string
+  groups: TalkRuleGroup[]
+}
+
+export const ChatTalkRuleGroupsHook: FieldHookComponent = (props) => {
+  const [nameEditor, setNameEditor] = useState<'create' | 'rename' | null>(null)
+  const [name, setName] = useState('')
+  const config = props.value as Partial<TalkRuleGroupsConfig> | undefined
+  const defaultName = props.nestedSchema?.fields.find((field) => field.name === 'active_group')?.default as string
+  const activeName = config?.active_group ?? defaultName
+  const groups = config?.groups ?? [{ name: defaultName, rules: [] }]
+  const activeGroup = groups.find((group) => group.name === activeName)
+  if (!activeGroup) return <p role="alert" className="text-sm text-destructive">找不到启用的发言频率规则组。</p>
+
+  const rules = activeGroup.rules ?? []
   const privateRules = rules.filter((rule) => rule.rule_type === 'private')
+  const nextName = name.trim()
+  const duplicateName = groups.some((group) => group.name === nextName && (nameEditor === 'create' || group !== activeGroup))
+  const saveName = () => {
+    if (!nextName || duplicateName) return
+    const nextGroup = { name: nextName, rules }
+    props.onChange?.({
+      active_group: nextName,
+      groups: nameEditor === 'create'
+        ? [...groups, nextGroup]
+        : groups.map((group) => group === activeGroup ? nextGroup : group),
+    })
+    setNameEditor(null)
+  }
+
   return (
-    <GroupTalkValueRulesHook
-      {...props}
-      value={rules.filter((rule) => rule.rule_type !== 'private')}
-      onChange={(value) => {
-        // 旧私聊频率规则不再展示或生效，编辑群聊时仍保留原配置。
-        props.onChange?.([...privateRules, ...(value as Record<string, unknown>[])])
-      }}
-    />
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Label htmlFor="talk-rule-group">当前规则组</Label>
+        <Select value={activeName} onValueChange={(active_group) => {
+          setNameEditor(null)
+          props.onChange?.({ active_group, groups })
+        }}>
+          <SelectTrigger id="talk-rule-group" className="min-w-32 max-w-64 flex-1">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {groups.map((group) => <SelectItem key={group.name} value={group.name}>{group.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Button type="button" size="sm" variant="outline" onClick={() => { setName(''); setNameEditor('create') }}>
+          <Plus className="mr-1 h-4 w-4" /> 新建组
+        </Button>
+        <Button type="button" size="sm" variant="outline" onClick={() => { setName(activeName); setNameEditor('rename') }}>
+          <Pencil className="mr-1 h-4 w-4" /> 重命名
+        </Button>
+      </div>
+      {nameEditor && (
+        <div className="space-y-2 rounded-md border p-3">
+          <Label htmlFor="talk-rule-group-name">{nameEditor === 'create' ? '新规则组名称' : '规则组名称'}</Label>
+          <div className="flex flex-wrap gap-2">
+            <Input id="talk-rule-group-name" className="min-w-32 flex-1" value={name}
+              onChange={(event) => setName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  saveName()
+                }
+              }} />
+            <Button type="button" size="sm" disabled={!nextName || duplicateName} onClick={saveName}>保存</Button>
+            <Button type="button" size="sm" variant="ghost" onClick={() => setNameEditor(null)}>取消</Button>
+          </div>
+          {duplicateName && <p role="alert" className="text-sm text-destructive">该规则组名称已存在。</p>}
+          {nameEditor === 'create' && <p className="text-xs text-muted-foreground">新组复制当前规则，保存后切换到新组。</p>}
+        </div>
+      )}
+      <GroupTalkValueRulesHook
+        key={activeName}
+        {...props}
+        nestedSchema={props.nestedSchema?.nested?.groups?.nested?.rules}
+        value={rules.filter((rule) => rule.rule_type !== 'private')}
+        onChange={(value) => {
+          // 旧私聊频率规则不再展示或生效，编辑群聊时仍保留原配置。
+          const nextRules = [...privateRules, ...(value as Record<string, unknown>[])]
+          props.onChange?.({
+            active_group: activeName,
+            groups: groups.map((group) => group === activeGroup ? { ...group, rules: nextRules } : group),
+          })
+        }}
+      />
+    </div>
   )
 }
 

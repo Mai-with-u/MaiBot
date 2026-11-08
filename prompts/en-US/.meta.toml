@@ -38,25 +38,35 @@ display_name = "Reply attachments"
 advanced = true
 description = "Explains that the system sends reply images, mentions and emojis, preventing attachment information from being repeated in the reply text."
 
-[retro_replyer]
-display_name = "Retro reply"
+[reply_group]
+display_name = "Group chat reply"
 advanced = true
-description = "Group chat reply template for retro mode (experimental.replyer_retro_prompt). Persona and chat guidelines are sent in the first system message; the remaining template is sent as a user message."
+description = "Default group chat reply template in Creative mode."
 
-[retro_replyer_light]
-display_name = "Retro reply (short)"
+[reply_group_mai_replier]
+display_name = "Mai Replier group chat reply"
 advanced = true
-description = "Short group chat reply template for retro mode, matching the legacy light reply used when think_level=0."
+description = "Group chat reply template for Mai Replier, using the wording from training."
 
-[retro_private_replyer]
-display_name = "Retro private reply"
+[reply_private]
+display_name = "Private chat reply"
 advanced = true
-description = "Private chat reply template for retro mode, organizing all reply instructions the legacy way."
+description = "Default private chat reply template in Creative mode."
 
-[retro_private_replyer_self]
-display_name = "Retro private follow-up reply"
+[reply_private_mai_replier]
+display_name = "Mai Replier private chat reply"
 advanced = true
-description = "Private chat follow-up template for retro mode, used to keep adding to a message Mai just sent."
+description = "Private chat reply template for Mai Replier."
+
+[reply_private_followup]
+display_name = "Private chat follow-up"
+advanced = true
+description = "Used in Creative mode when Mai adds to a message it just sent in a private chat."
+
+[reply_private_followup_mai_replier]
+display_name = "Mai Replier private chat follow-up"
+advanced = true
+description = "Used when Mai Replier adds to a message it just sent in a private chat."
 
 [default_expressor]
 display_name = "Default Expressor"
