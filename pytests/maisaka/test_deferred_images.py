@@ -219,6 +219,25 @@ def test_image_quality_keeps_small_supported_images_unchanged():
     assert base64.b64decode(encoded) == data
 
 
+def test_visual_image_message_keeps_text_anchor():
+    """视觉模式下图片消息必须保留文本锚点，避免模型按内容检索 msg_id 时错抄相邻消息编号。"""
+    described = ImageComponent(
+        binary_hash="anchor-described", binary_data=image_bytes(), content="[图片：TheShy 专访截图]"
+    )
+    pending = ImageComponent(binary_hash="anchor-pending", binary_data=image_bytes())
+    entry = context.ContentContextMessage(
+        raw_message=MessageSequence([TextComponent('<message msg_id="1401120016">\n'), described, pending]),
+        visible_text="image", timestamp=datetime(2026, 1, 1),
+    )
+    item = context.build_context_items_from_history_entry(entry, max_image_side=512)[0]
+    # 图片本体仍然通过视觉通道发送。
+    assert sum(1 for p in item.parts if isinstance(p, ContextImagePart)) == 2
+    anchor_text = context.get_item_text(item)
+    assert '<message msg_id="1401120016">' in anchor_text
+    assert "[图片：TheShy 专访截图]" in anchor_text
+    assert "[图片]" in anchor_text
+
+
 @pytest.mark.parametrize("limit", [0, 3])
 def test_deferred_image_variants_keep_source_and_skip_discarded_work(limit):
     from src.chat.replyer.retro_prompt import _resize_retro_image
