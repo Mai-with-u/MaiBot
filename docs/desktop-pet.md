@@ -240,7 +240,9 @@ async def on_desktop_pet_panel_action(self, button_id, action_id):
 
 「桌宠 → 当前皮肤」可选择皮肤、试播预览、导入 ZIP；保存配置后热切换。`desktop_pet.skin_id` 默认 `builtin`。预览不会打断桌宠；切换先校验并解码所有资源，失败保留原形象并报告错误。原有聊天、待办和默认 SVG 形象仍可使用。
 
-皮肤从 `data/desktop_pet/skins/<目录>/skin.json` 和 `plugins/<插件目录>/skins/<目录>/skin.json` 发现。插件可以携带静态皮肤，是否执行插件代码与皮肤选择独立；插件不能自动切换用户的皮肤。ID 重复会明确报错，导入不覆盖已有皮肤。
+皮肤从程序自带的 `src/desktop_pet/presets/<目录>/skin.json`、实例的 `data/desktop_pet/skins/<目录>/skin.json` 和 `plugins/<插件目录>/skins/<目录>/skin.json` 发现。程序预设随源码和安装包分发，各 Bot 实例均可选择，无需复制到实例目录。插件可以携带静态皮肤，是否执行插件代码与皮肤选择独立；插件不能自动切换用户的皮肤。以上来源之间 ID 重复会明确报错，导入不覆盖已有皮肤。
+
+「橙芽与小鱼」（`orange-sprout`）是新增的程序预设，使用橙芽角色和小鱼互动动画。待机时小鱼绕飞，点击时抱住小鱼，也可在预览中试播递鱼、欢呼和舞蹈等动作。更新后重启对应的麦麦 Bot，再刷新「桌宠 → 当前皮肤」列表，选择、试播并保存配置后切换；更新不会自动选择新皮肤。预设通过图片帧播放，使用时不需要启动 EmoteLab，也无需安装模型编辑器。
 
 包内只使用 JSON、静态 PNG/WebP，不执行脚本。ZIP 可以直接包含 skin.json 或套一层目录。每包最多 32 MiB、512 个文件，单张图最多 1600 万像素，单动画最多 240 帧、30 秒。
 

@@ -75,7 +75,7 @@ namespaces = true
 
 [tool.setuptools.package-data]
 "src.plugins.built_in.chinese_typo" = ["typo_words.tsv", "typo_words.LICENSE", "typo_words.NOTICE"]
-"src.desktop_pet" = ["web/*.html", "web/*.js", "web/*.css", "web/fonts/*", "LICENSE"]
+"src.desktop_pet" = ["web/*.html", "web/*.js", "web/*.css", "web/fonts/*", "presets/*/skin.json", "presets/*/*.png", "presets/*/*.webp", "LICENSE"]
 "src.plugins.built_in.weixin_clawbot_adapter" = ["webui.json", "web/*.html", "icon-mascot.webp", "config.toml.example", "README.md", "changelog.md"]
 "src.plugins.built_in.qq_official_adapter" = ["webui.json", "webui/*.html", "assets/*", "README.md", "CHANGELOG.md"]
 "src.plugins.built_in.telegram_adapter" = ["assets/*", "config.example.toml", "README.md", "CHANGELOG.md"]
