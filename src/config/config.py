@@ -1,22 +1,22 @@
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable, Mapping, Sequence, TypeVar, cast
+
 import asyncio
 import copy
 import hashlib
 import inspect
 import os
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence, TypeVar, cast
-
 import tomlkit
 
-from src.common.paths import get_instance_root
+from src.agent.config import AgentConfig
 from src.common.i18n import t
 from src.common.logger import get_logger
+from src.common.paths import get_instance_root
 from src.common.version import read_project_version
-from src.agent.config import AgentConfig
 from src.desktop_pet.config import DesktopPetConfig
 from src.files.config import FilesConfig
-from src.web_search.config import WebConfig, WebSearchConfigError, require_web_service
+from src.web_search.config import WebConfig
 
 from .config_base import AttributeData, ConfigBase, Field
 from .builtin_typo_migration import migrate_builtin_typo_config
@@ -32,7 +32,7 @@ from .legacy_migration import (
 )
 from .model_configs import APIProvider, ModelInfo, ModelTaskConfig
 from .shared_settings import merge_shared_settings, shared_settings_path, strip_shared_settings
-from .shared_models import CATALOG_FILENAME, merge_catalog, shared_models_path
+from .shared_models import CATALOG_FILENAME, merge_catalog, model_config_warnings, shared_models_path
 from .official_configs import (
     AMemorixConfig,
     BotConfig,
@@ -194,12 +194,7 @@ class ModelConfig(ConfigBase):
     api_providers: list[APIProvider] = Field(default_factory=list)
     """API提供商列表"""
 
-    def model_post_init(self, context: Any = None):
-        if not self.models:
-            raise ValueError(t("config.models_empty"))
-        if not self.api_providers:
-            raise ValueError(t("config.api_providers_empty"))
-
+    def model_post_init(self, context: Any = None) -> None:
         # 检查API提供商名称是否重复
         provider_names = [provider.name for provider in self.api_providers]
         if len(provider_names) != len(set(provider_names)):
@@ -210,29 +205,6 @@ class ModelConfig(ConfigBase):
         if len(model_names) != len(set(model_names)):
             raise ValueError(t("config.model_name_duplicate"))
 
-        for model_name in self.model_task_config.embedding.model_list:
-            if model_name not in model_names:
-                raise ValueError(f"embedding.model_list references an undefined model: {model_name}")
-
-        api_providers_dict = {provider.name: provider for provider in self.api_providers}
-
-        for model in self.models:
-            if not model.model_identifier:
-                raise ValueError(t("config.model_identifier_empty", model_name=model.name))
-            if not model.api_provider or model.api_provider not in api_providers_dict:
-                raise ValueError(
-                    t(
-                        "config.model_api_provider_missing",
-                        api_provider=model.api_provider,
-                        model_name=model.name,
-                    )
-                )
-        web_services = self.model_task_config.web_search.model_list
-        if web_services and web_services[0]:
-            try:
-                require_web_service(self.web, web_services[0])
-            except WebSearchConfigError as exc:
-                logger.warning(f"联网工具配置有误，调用时将返回 {exc.code}：{exc}")
         return super().model_post_init(context)
 
 
@@ -280,6 +252,8 @@ class ConfigManager:
             logger.info("配置已自动升级，将继续使用更新后的配置启动")
         self._update_config_file_fingerprints(("bot", "model"))
         self._warn_if_vlm_not_configured(self.model_config)
+        for warning in model_config_warnings(self.model_config.model_dump()):
+            logger.warning(f"模型配置：{warning}")
         logger.info(t("config.loaded"))
 
     @classmethod

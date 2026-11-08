@@ -64,12 +64,13 @@ def plan_model_catalog(catalog: dict, bots: List[BotRecord], documents: Dict[Pat
                 local["inner"]["version"] = hook_version
             renames: Dict[str, Dict[str, str]] = {section: {} for section in CATALOG_SECTIONS}
             for section, schema in (("api_providers", APIProvider), ("models", ModelInfo)):
-                known = {entry["name"]: entry for entry in catalog[section]}
+                known = {entry.get("name", ""): entry for entry in catalog[section]}
                 for original in local.get(section, []):
                     cleaned = schema.from_dict(AttributeData(), copy.deepcopy(dict(original)))
                     entry = _config_values(cleaned)
+                    entry["name"] = cleaned.name
                     if section == "models":
-                        entry["api_provider"] = renames["api_providers"].get(entry["api_provider"], entry["api_provider"])
+                        entry["api_provider"] = renames["api_providers"].get(cleaned.api_provider, cleaned.api_provider)
                     name = entry["name"]
                     if name in known and schema.model_validate(known[name]) != schema.model_validate(entry):
                         # 副本可能与当前配置同名却有不同定义；先复用已经迁入的同一配置。
