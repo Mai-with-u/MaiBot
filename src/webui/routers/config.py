@@ -53,7 +53,6 @@ from src.config.official_configs import (
     EmojiConfig,
     ExpressionConfig,
     JargonConfig,
-    KeywordReactionConfig,
     LogConfig,
     MaimMessageConfig,
     MCPConfig,
@@ -1263,7 +1262,6 @@ def get_config_section_schema(section_name: str):
     - emoji: EmojiConfig
     - expression: ExpressionConfig
     - jargon: JargonConfig
-    - keyword_reaction: KeywordReactionConfig
     - response_post_process: ResponsePostProcessConfig
     - response_splitter: ResponseSplitterConfig
     - telemetry: TelemetryConfig
@@ -1289,7 +1287,6 @@ def get_config_section_schema(section_name: str):
         "emoji": EmojiConfig,
         "expression": ExpressionConfig,
         "jargon": JargonConfig,
-        "keyword_reaction": KeywordReactionConfig,
         "response_post_process": ResponsePostProcessConfig,
         "response_splitter": ResponseSplitterConfig,
         "telemetry": TelemetryConfig,

@@ -320,6 +320,10 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                             "type": "string",
                             "description": "Hook 可追加到本次 replyer 提示词中的额外回复要求。",
                         },
+                        "match_text": {
+                            "type": "string",
+                            "description": "本次回复所针对的最新用户消息文本，供插件做关键词等匹配；无可用文本时为空字符串。",
+                        },
                         "attempt": {
                             "type": "integer",
                             "description": "当前生成尝试序号，从 1 开始。",
@@ -355,6 +359,7 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                         "task_name",
                         "model_name",
                         "extra_prompt",
+                        "match_text",
                         "attempt",
                         "retry_count",
                         "max_retries",

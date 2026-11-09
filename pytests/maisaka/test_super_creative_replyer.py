@@ -72,7 +72,6 @@ def replyer(monkeypatch):
     )
     monkeypatch.setattr(generator, "_persist_reply_preview", Mock())
     monkeypatch.setattr(generator, "_build_chat_attention_block", lambda session_id: "")
-    monkeypatch.setattr(generator, "_build_keyword_reaction_prompt", lambda **kwargs: "")
     monkeypatch.setattr(generator, "_build_reply_context", AsyncMock(return_value=MaisakaReplyContext()))
 
     async def invoke_hook(name: str, **kwargs: Any) -> HookDispatchResult:

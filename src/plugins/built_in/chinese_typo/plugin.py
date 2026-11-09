@@ -1,4 +1,4 @@
-"""在主程序完成断句后注入错字，纠正消息仍由主程序编排。"""
+"""麦麦小工具：断句后注入错字，以及按关键词追加反应提示。纠正消息仍由主程序编排。"""
 
 from maibot_sdk import HookHandler, MaiBotPlugin
 from typing import Any, ClassVar, Dict, List, TypedDict, cast
@@ -7,6 +7,7 @@ import asyncio
 import random
 
 from .dictionary_typo import create_dictionary_typo
+from .keyword_reaction import build_reaction_prompt
 from .settings import ChineseTypoPluginConfig, TypoSettings
 from .typo_generator import ChineseTypoGenerator
 
@@ -74,12 +75,34 @@ class ChineseTypoPlugin(MaiBotPlugin):
         self, segments: List[ReplySegment], enable_chinese_typo: bool, **kwargs: Any
     ) -> Dict[str, Any]:
         config = cast(ChineseTypoPluginConfig, self.config)
-        if not config.plugin.enabled or not enable_chinese_typo:
+        if not config.plugin.enabled or not config.typo.enabled or not enable_chinese_typo:
             return {"action": "continue"}
         edited = await asyncio.to_thread(apply_typos, segments, config.typo)
         return {
             "action": "continue",
             "modified_kwargs": {**kwargs, "segments": edited, "enable_chinese_typo": enable_chinese_typo},
+        }
+
+    @HookHandler(
+        "maisaka.replyer.before_request",
+        name="inject_keyword_reactions",
+        description="最新消息命中关键词或正则规则时，把预设反应提示追加到回复要求",
+        timeout_ms=3000,
+    )
+    async def inject_keyword_reactions(
+        self, match_text: str = "", extra_prompt: str = "", **kwargs: Any
+    ) -> Dict[str, Any]:
+        config = cast(ChineseTypoPluginConfig, self.config)
+        settings = config.keyword_reaction
+        if not config.plugin.enabled or not settings.enabled or not match_text.strip():
+            return {"action": "continue"}
+        prompt = build_reaction_prompt(match_text, settings.rules)
+        if not prompt:
+            return {"action": "continue"}
+        merged = f"{extra_prompt}\n{prompt}" if extra_prompt.strip() else prompt
+        return {
+            "action": "continue",
+            "modified_kwargs": {**kwargs, "match_text": match_text, "extra_prompt": merged},
         }
 
 

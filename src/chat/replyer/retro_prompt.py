@@ -340,11 +340,8 @@ class RetroReplyPromptMixin:
             "time_block": f"当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             "reply_target_block": reply_target_block,
             "planner_reasoning": combined_reference,
-            # Mai Replier 对齐训练分布：关键词反应提示（"人机"否定/定型文模板等）
-            # 在训练数据中不存在，线上注入属训练外成分。Mai Replier 路径跳过。
-            "keywords_reaction_prompt": "" if mai_replier else self._build_keyword_reaction_prompt(
-                chat_history=chat_history, reply_message=reply_message,
-            ),
+            # 关键词反应由内置插件通过回复要求注入，这里只保留模板占位。
+            "keywords_reaction_prompt": "",
         }
 
     @staticmethod
