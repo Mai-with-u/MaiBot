@@ -183,24 +183,12 @@ class SessionMessage(MaiMessage):
             enable_voice_transcription: 是否同步执行语音转写。
         """
         self._remove_voice_placeholder_text_components()
-        id_content_map = MsgIDMapping()
-        tasks = [
-            self.process_single_component(
-                component,
-                id_content_map,
-                enable_heavy_media_analysis=enable_heavy_media_analysis,
-                enable_voice_transcription=enable_voice_transcription,
-            )
-            for component in self.raw_message.components
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        processed_texts: List[str] = []
-        for result in results:
-            if isinstance(result, BaseException):
-                logger.error(f"处理消息组件时发生错误: {result}")
-            else:
-                processed_texts.append(result)
-        self.processed_plain_text = " ".join(processed_texts)
+        self.processed_plain_text = await self._process_multiple_components(
+            self.raw_message.components,
+            MsgIDMapping(),
+            enable_heavy_media_analysis=enable_heavy_media_analysis,
+            enable_voice_transcription=enable_voice_transcription,
+        )
 
     def _remove_voice_placeholder_text_components(self) -> None:
         """移除适配器随语音片段附带的文本占位，避免污染处理后的文本。"""
@@ -578,6 +566,7 @@ class SessionMessage(MaiMessage):
         Returns:
             str: 多个组件拼接后的文本表示。
         """
+        components = tuple(components)
         tasks = [
             self.process_single_component(
                 component,
@@ -590,9 +579,13 @@ class SessionMessage(MaiMessage):
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)  # 并行处理多个组件
         processed_texts: List[str] = []
-        for result in results:
+        for component, result in zip(components, results, strict=True):
             if isinstance(result, BaseException):
                 logger.error(f"处理消息组件时发生错误: {result}")
+                if isinstance(result, Exception) and isinstance(component, EmojiComponent):
+                    description = component.content.strip()
+                    if description:
+                        processed_texts.append(description)
             else:
                 processed_texts.append(result)
         return " ".join(processed_texts)

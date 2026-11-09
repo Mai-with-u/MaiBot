@@ -1,161 +1,154 @@
-"""Test the media-processing method without starting the application services."""
+"""Regression coverage for messages that already carry an emoji description."""
 
-from pathlib import Path
-from types import ModuleType, SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from contextlib import contextmanager
+from datetime import datetime
+from io import BytesIO
+from unittest.mock import AsyncMock, Mock
 
-import ast
-import asyncio
-import sys
-import unittest
+from PIL import Image
+from sqlmodel import Session, SQLModel, create_engine, select
 
+import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
-
-
-class Emoji:
-    def __init__(self, content, binary_data):
-        self.content = content
-        self.binary_data = binary_data
-
-
-def load_size_policy(max_size_mb):
-    source = ROOT / "src/emoji_system/emoji_manager.py"
-    tree = ast.parse(source.read_text(encoding="utf-8"))
-    nodes = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name in {"_get_max_collected_emoji_bytes", "_is_collected_emoji_size_allowed"}
-    ]
-    constant = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.Assign)
-        and any(isinstance(target, ast.Name) and target.id == "BYTES_PER_MIB" for target in node.targets)
-    )
-    namespace = {"global_config": SimpleNamespace(emoji=SimpleNamespace(max_emoji_size_mb=max_size_mb))}
-    exec(compile(ast.Module(body=[constant, *nodes], type_ignores=[]), str(source), "exec"), namespace)
-    return namespace["_is_collected_emoji_size_allowed"]
+from src.chat.message_receive import message as message_module
+from src.chat.message_receive.message import SessionMessage
+from src.common.database import database
+from src.common.database.database_model import Images, ImageType
+from src.common.data_models.message_component_data_model import (
+    EmojiComponent,
+    ForwardComponent,
+    ForwardNodeComponent,
+    MessageSequence,
+    StandardMessageComponents,
+    TextComponent,
+)
+from src.common.utils import image_path
+from src.emoji_system import emoji_manager as emoji_module
 
 
-def load_process_methods():
-    source = ROOT / "src/chat/message_receive/message.py"
-    tree = ast.parse(source.read_text(encoding="utf-8"))
-    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "SessionMessage")
-    names = {
-        "process",
-        "process_single_component",
-        "process_emoji_component",
-        "_remove_voice_placeholder_text_components",
-    }
-    methods = [
-        node for node in cls.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names
-    ]
-    namespace = {
-        "EmojiComponent": Emoji,
-        "MsgIDMapping": SimpleNamespace,
-        "StandardMessageComponents": object,
-        "List": list,
-        "asyncio": asyncio,
-        "logger": SimpleNamespace(error=lambda message: None),
-    }
-    namespace.update({name: type(name, (), {}) for name in ["TextComponent", "ImageComponent", "VoiceComponent"]})
-    exec(compile(ast.Module(body=methods, type_ignores=[]), str(source), "exec"), namespace)
-    return {name: namespace[name] for name in names}
+DESCRIPTION = "[表情包: 开心]"
+MIB = 1024 * 1024
 
 
-class PreannotatedEmojiTests(unittest.IsolatedAsyncioTestCase):
-    async def process(self, component, save, *, max_size_mb=1, whole_message=False):
-        manager = SimpleNamespace(ensure_emoji_saved=save, get_emoji_description=AsyncMock())
-        module = ModuleType("src.emoji_system.emoji_manager")
-        module.emoji_manager = manager
-        module._is_collected_emoji_size_allowed = load_size_policy(max_size_mb)
-        methods = load_process_methods()
-        with patch.dict(sys.modules, {module.__name__: module}):
-            if whole_message:
-                message = type("MessageUnderTest", (), methods)()
-                message.session_id = "fixture-session"
-                message.raw_message = SimpleNamespace(components=[component])
-                await message.process()
-                result = message.processed_plain_text
-            else:
-                result = await methods["process_emoji_component"](
-                    SimpleNamespace(session_id="fixture-session"), component
-                )
-        manager.get_emoji_description.assert_not_awaited()
-        return result
+def make_message(*components: StandardMessageComponents) -> SessionMessage:
+    """Build a real session message without starting a bot."""
+    message = SessionMessage(message_id="fixture-message", timestamp=datetime.now(), platform="qq")
+    message.session_id = "fixture-session"
+    message.raw_message = MessageSequence(list(components))
+    return message
 
-    async def test_description_does_not_skip_binary_persistence(self):
-        component = SimpleNamespace(content="  [表情包: 开心]  ", binary_data=b"fixture-emoji")
-        save = AsyncMock()
-        result = await self.process(component, save)
-        self.assertEqual(result, "[表情包: 开心]")
-        save.assert_awaited_once_with(b"fixture-emoji")
-        self.assertEqual(component.binary_data, b"")
 
-    async def test_no_binary_does_not_repeat_persistence(self):
-        component = SimpleNamespace(content="[表情包: 开心]", binary_data=b"")
-        save = AsyncMock()
-        await self.process(component, save)
+@pytest.fixture(autouse=True)
+def emoji_settings(monkeypatch):
+    """Set a known collection limit and prevent any real recognition call."""
+    monkeypatch.setattr(emoji_module.global_config.emoji, "max_emoji_size_mb", 1.0)
+    describe = AsyncMock()
+    monkeypatch.setattr(emoji_module.emoji_manager, "get_emoji_description", describe)
+    yield
+    describe.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_preannotated_emoji_can_be_reloaded_by_hash(tmp_path, monkeypatch):
+    """Exercise the real message, cache write, database lookup and file read."""
+    emoji_dir = tmp_path / "emoji"
+    emoji_dir.mkdir()
+    engine = create_engine(f"sqlite:///{(tmp_path / 'emoji.db').as_posix()}")
+    SQLModel.metadata.create_all(engine, tables=[Images.__table__])
+
+    @contextmanager
+    def get_test_session():
+        """Use a fresh SQLite session for each cache operation."""
+        with Session(engine, expire_on_commit=False) as session:
+            yield session
+            session.commit()
+
+    monkeypatch.setattr(database, "get_db_session", get_test_session)
+    monkeypatch.setattr(emoji_module, "get_db_session", get_test_session)
+    monkeypatch.setattr(emoji_module, "EMOJI_DIR", emoji_dir)
+    monkeypatch.setattr(image_path, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(emoji_module.global_config.emoji, "steal_emoji", False)
+    with BytesIO() as buffer:
+        Image.new("RGB", (2, 2), (25, 50, 75)).save(buffer, format="PNG")
+        original = buffer.getvalue()
+    emoji = EmojiComponent(binary_hash="", content=f"  {DESCRIPTION}  ", binary_data=original)
+    message = make_message(emoji)
+
+    try:
+        await message.process(enable_heavy_media_analysis=False)
+        assert message.processed_plain_text == DESCRIPTION
+        assert emoji.content == DESCRIPTION
+        assert emoji.binary_data == b""
+
+        with get_test_session() as session:
+            record = session.exec(
+                select(Images).filter_by(image_hash=emoji.binary_hash, image_type=ImageType.EMOJI)
+            ).one()
+            assert not record.is_registered
+        restored = EmojiComponent(binary_hash=emoji.binary_hash)
+        await restored.load_emoji_binary()
+        assert restored.binary_data == original
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("forwarded", [False, True])
+async def test_cache_failure_preserves_description_and_logs_error(monkeypatch, forwarded):
+    """Cover both top-level messages and the actual merged-forward path."""
+    original = b"fixture-emoji"
+    emoji = EmojiComponent(binary_hash="", content=f"  {DESCRIPTION}  ", binary_data=original)
+    error = OSError("fixture disk write failure")
+    save = AsyncMock(side_effect=error)
+    logger = Mock()
+    monkeypatch.setattr(emoji_module.emoji_manager, "ensure_emoji_saved", save)
+    monkeypatch.setattr(message_module, "logger", logger)
+    component = ForwardNodeComponent([ForwardComponent("测试用户", "forward-node", [emoji])]) if forwarded else emoji
+    message = make_message(TextComponent("前文"), component, TextComponent("后文"))
+
+    await message.process(enable_heavy_media_analysis=False)
+
+    expected = f"【合并转发消息: \n-- 【测试用户】: {DESCRIPTION}\n】" if forwarded else DESCRIPTION
+    assert message.processed_plain_text == f"前文 {expected} 后文"
+    assert emoji.binary_data == original
+    save.assert_awaited_once_with(original)
+    logger.error.assert_called_once_with(f"处理消息组件时发生错误: {error}")
+
+
+@pytest.mark.asyncio
+async def test_direct_emoji_processing_surfaces_save_error(monkeypatch):
+    """Direct callers still receive the actual cache error and original bytes."""
+    original = b"fixture-emoji"
+    emoji = EmojiComponent(binary_hash="", content=DESCRIPTION, binary_data=original)
+    error = ValueError("fixture invalid emoji format")
+    monkeypatch.setattr(emoji_module.emoji_manager, "ensure_emoji_saved", AsyncMock(side_effect=error))
+
+    with pytest.raises(ValueError) as raised:
+        await make_message(emoji).process_emoji_component(emoji)
+
+    assert raised.value is error
+    assert emoji.binary_data == original
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("size", "limit", "saved"),
+    [(0, 1.0, False), (MIB, 1.0, True), (MIB + 1, 1.0, False), (6, 5.5 / MIB, False), (MIB + 1, 0.0, True)],
+)
+async def test_preannotated_emoji_size_policy(monkeypatch, size, limit, saved):
+    """Respect the existing byte limit, including exact and unlimited bounds."""
+    monkeypatch.setattr(emoji_module.global_config.emoji, "max_emoji_size_mb", limit)
+    save = AsyncMock()
+    monkeypatch.setattr(emoji_module.emoji_manager, "ensure_emoji_saved", save)
+    original = b"x" * size
+    emoji = EmojiComponent(binary_hash="", content=f"  {DESCRIPTION}  ", binary_data=original)
+    message = make_message(emoji)
+
+    await message.process(enable_heavy_media_analysis=False)
+
+    assert message.processed_plain_text == DESCRIPTION
+    assert emoji.binary_data == (b"" if saved else original)
+    if saved:
+        save.assert_awaited_once_with(original)
+    else:
         save.assert_not_awaited()
-
-    async def test_save_failure_keeps_binary_and_surfaces_error(self):
-        for error in [
-            OSError("fixture storage failure"),
-            ValueError("fixture invalid format"),
-            RuntimeError("fixture database failure"),
-        ]:
-            with self.subTest(error=type(error).__name__):
-                component = Emoji(content="[表情包: 开心]", binary_data=b"fixture-emoji")
-                save = AsyncMock(side_effect=error)
-                with self.assertRaises(type(error)) as raised:
-                    await self.process(component, save)
-                self.assertIs(raised.exception, error)
-                save.assert_awaited_once_with(b"fixture-emoji")
-                self.assertEqual(component.binary_data, b"fixture-emoji")
-
-    async def test_oversized_emoji_keeps_description_and_binary_without_saving(self):
-        component = Emoji(content="  [表情包: 开心]  ", binary_data=b"x" * (1024 * 1024 + 1))
-        original = component.binary_data
-        save = AsyncMock(side_effect=ValueError("fixture collection size exceeded"))
-        result = await self.process(component, save)
-        self.assertEqual(result, "[表情包: 开心]")
-        self.assertEqual(component.content, result)
-        self.assertIs(component.binary_data, original)
-        save.assert_not_awaited()
-
-    async def test_oversized_description_reaches_processed_plain_text(self):
-        component = Emoji(content="  [表情包: 开心]  ", binary_data=b"x" * (1024 * 1024 + 1))
-        original = component.binary_data
-        save = AsyncMock(side_effect=ValueError("fixture collection size exceeded"))
-        result = await self.process(component, save, whole_message=True)
-        self.assertEqual(result, "[表情包: 开心]")
-        self.assertIs(component.binary_data, original)
-        save.assert_not_awaited()
-
-    async def test_exact_size_limit_is_saved(self):
-        component = Emoji(content="[表情包: 开心]", binary_data=b"x" * (1024 * 1024))
-        save = AsyncMock()
-        await self.process(component, save)
-        save.assert_awaited_once()
-        self.assertEqual(component.binary_data, b"")
-
-    async def test_fractional_size_limit_uses_existing_byte_conversion(self):
-        component = Emoji(content="[表情包: 开心]", binary_data=b"x" * 6)
-        save = AsyncMock(side_effect=ValueError("fixture collection size exceeded"))
-        result = await self.process(component, save, max_size_mb=5.5 / (1024 * 1024))
-        self.assertEqual(result, "[表情包: 开心]")
-        self.assertEqual(component.binary_data, b"x" * 6)
-        save.assert_not_awaited()
-
-    async def test_zero_limit_remains_unlimited(self):
-        component = Emoji(content="[表情包: 开心]", binary_data=b"x" * (1024 * 1024 + 1))
-        save = AsyncMock()
-        await self.process(component, save, max_size_mb=0)
-        save.assert_awaited_once()
-        self.assertEqual(component.binary_data, b"")
-
-
-if __name__ == "__main__":
-    unittest.main()
