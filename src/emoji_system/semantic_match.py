@@ -5,7 +5,7 @@ from hashlib import sha256
 from math import isfinite
 from typing import Dict, List, Optional, Tuple
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 import asyncio
 import json
@@ -14,7 +14,7 @@ import sqlite3
 
 from src.common.data_models.embedding_service_data_models import EmbeddingResult
 from src.common.data_models.image_data_model import MaiEmoji
-from src.common.llm_json import validate_llm_json
+from src.common.llm_json import normalize_llm_json
 from src.common.logger import get_logger
 from src.common.paths import get_instance_root
 from src.common.runtime_loop import get_main_loop
@@ -30,17 +30,21 @@ _tag_lock = asyncio.Lock()
 _pending: Dict[str, asyncio.Task[None]] = {}
 _backfill_cursor = 0
 _BACKFILL_BATCH_SIZE = 4
+_MAX_TAGS_PER_AXIS = 5
 
 
 class EmojiTags(BaseModel):
-    emotion_tags: List[str] = Field(max_length=5)
-    content_tags: List[str] = Field(min_length=1, max_length=5)
+    emotion_tags: List[str] = Field(max_length=_MAX_TAGS_PER_AXIS)
+    content_tags: List[str] = Field(min_length=1, max_length=_MAX_TAGS_PER_AXIS)
 
     @field_validator("emotion_tags", "content_tags", mode="before")
     @classmethod
-    def normalize_tags(cls, value: object) -> object:
+    def normalize_tags(cls, value: object, info: ValidationInfo) -> object:
         if isinstance(value, list) and all(isinstance(tag, str) for tag in value):
-            return list(dict.fromkeys(tag.strip() for tag in value if tag.strip()))
+            tags = list(dict.fromkeys(tag.strip() for tag in value if tag.strip()))
+            if info.context and info.context.get("truncate_model_tags"):
+                return tags[:_MAX_TAGS_PER_AXIS]
+            return tags
         return value
 
     def embedding_texts(self) -> Dict[str, str]:
@@ -154,7 +158,9 @@ async def _index_emoji(emoji: MaiEmoji, config_key: Optional[str]) -> None:
             tags = await asyncio.to_thread(get_emoji_tags, emoji.file_hash)
             if tags is None:
                 raw = await emoji_manager.analyze_emoji_image(emoji, "emoji_grouped_tags")
-                tags = validate_llm_json(raw, EmojiTags)
+                tags = EmojiTags.model_validate_json(
+                    normalize_llm_json(raw), context={"truncate_model_tags": True},
+                )
                 await asyncio.to_thread(_save_tags, emoji.file_hash, tags)
     if config_key and tags is not None:
         for axis, label in tags.embedding_texts().items():
