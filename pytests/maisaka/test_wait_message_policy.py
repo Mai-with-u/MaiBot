@@ -83,8 +83,9 @@ async def test_stale_wait_decision_is_not_executed(tool):
     engine._runtime = runtime
     response = SimpleNamespace(tool_calls=[] if tool is None else [SimpleNamespace(func_name=tool)])
     state = SimpleNamespace()
-    assert not await engine._handle_planner_response_actions(response=response, cycle_detail=None,
-                                                            state=state, planner_extra_lines=[])
+    assert not await engine._handle_planner_response_actions(
+        response=response, cycle_detail=None, state=state, planner_extra_lines=[], round_index=0,
+    )
     runtime._wait_for_message_quiet_period.assert_awaited_once()
     assert state.cycle_end.reason == "tool_continue"
     assert runtime._chat_history
@@ -113,7 +114,7 @@ async def test_explicit_stop_ends_ordinary_planner_turn() -> None:
     state = SimpleNamespace()
 
     assert await engine._handle_planner_response_actions(
-        response=response, cycle_detail=None, state=state, planner_extra_lines=[]
+        response=response, cycle_detail=None, state=state, planner_extra_lines=[], round_index=0,
     )
     runtime._enter_stop_state.assert_called_once_with()
     assert state.cycle_end == engine._cycle_end_for_pause_tool("stop")

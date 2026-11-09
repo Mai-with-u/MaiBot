@@ -227,3 +227,24 @@ def test_append_stale_reply_replan_reminder_mentions_suggested_id() -> None:
     engine._append_stale_reply_replan_reminder("1003")
     assert len(engine._runtime._chat_history) == 1
     assert "1003" in get_item_text(engine._runtime._chat_history[0].output_item)
+
+
+def test_grant_stale_reply_extra_round_only_once_at_limit() -> None:
+    engine = object.__new__(MaisakaReasoningEngine)
+    engine._runtime = SimpleNamespace(_max_internal_rounds=16)
+    engine._stale_reply_extra_round_granted = 0
+
+    assert engine._grant_stale_reply_extra_round(14, 1) is False
+    assert engine._stale_reply_extra_round_granted == 0
+    assert engine._grant_stale_reply_extra_round(15, 1) is True
+    assert engine._stale_reply_extra_round_granted == 1
+    assert engine._grant_stale_reply_extra_round(16, 1) is False
+
+
+def test_grant_stale_reply_extra_round_respects_failure_limit() -> None:
+    engine = object.__new__(MaisakaReasoningEngine)
+    engine._runtime = SimpleNamespace(_max_internal_rounds=16)
+    engine._stale_reply_extra_round_granted = 0
+
+    assert engine._grant_stale_reply_extra_round(15, 2) is False
+    assert engine._stale_reply_extra_round_granted == 0

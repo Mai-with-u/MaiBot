@@ -161,6 +161,7 @@ class MaisakaReasoningEngine:
         self._last_reasoning_content: str = ""
         self._active_logical_turn_id: str | None = None
         self._reply_failure_counts: dict[tuple[str, str], int] = {}
+        self._stale_reply_extra_round_granted = 0
 
         self._turn_passive_replyer: Optional[bool] = None
 
@@ -404,6 +405,7 @@ class MaisakaReasoningEngine:
         cycle_detail: CycleDetail,
         state: CycleRuntimeState,
         planner_extra_lines: list[str],
+        round_index: int,
     ) -> bool:
         """处理 Planner 响应中的工具调用，或无工具输出策略。"""
 
@@ -475,7 +477,9 @@ class MaisakaReasoningEngine:
             return False
 
         if self.passive_replyer_enabled and planner_content:
-            should_continue = await self._reply_from_planner_content(planner_content, cycle_detail, state)
+            should_continue = await self._reply_from_planner_content(
+                planner_content, cycle_detail, state, round_index,
+            )
             if should_continue:
                 return False
             self._end_planner_no_tool_cycle(
@@ -501,6 +505,7 @@ class MaisakaReasoningEngine:
         content: str,
         cycle_detail: CycleDetail,
         state: CycleRuntimeState,
+        round_index: int,
     ) -> bool:
         """把最终正文作为指导执行一次回复，返回是否继续重新规划。"""
 
@@ -577,10 +582,12 @@ class MaisakaReasoningEngine:
             if failure_count < 2:
                 suggested_msg_id = str(structured.get("suggested_msg_id") or "").strip()
                 self._append_stale_reply_replan_reminder(suggested_msg_id)
+                extra_round = self._grant_stale_reply_extra_round(round_index, failure_count)
                 logger.warning(
                     f"{self._runtime.log_prefix} 回复目标已过期，已反馈给 Planner 重新规划: "
                     f"target={structured.get('msg_id') or 'unknown'} "
-                    f"suggested_msg_id={suggested_msg_id or 'unknown'}"
+                    f"suggested_msg_id={suggested_msg_id or 'unknown'} "
+                    f"extra_round={int(extra_round)}"
                 )
                 state.cycle_end = CycleEnd("tool_continue", "回复目标已过期，改用最新用户消息重新规划。")
                 return True
@@ -590,6 +597,16 @@ class MaisakaReasoningEngine:
         logger.error(f"{self._runtime.log_prefix} Planner 正文触发回复失败：{summary}")
         state.cycle_end = CycleEnd("planner_reply_failed", f"回复失败，已结束本轮思考：{summary}")
         return False
+
+    def _grant_stale_reply_extra_round(self, round_index: int, failure_count: int) -> bool:
+        """轮次上限处为首次过期回复授权一次额外规划。"""
+
+        if failure_count >= 2 or self._stale_reply_extra_round_granted:
+            return False
+        if round_index + 1 < self._runtime._max_internal_rounds:
+            return False
+        self._stale_reply_extra_round_granted = 1
+        return True
 
     def _append_stale_reply_replan_reminder(self, suggested_msg_id: str) -> None:
         """把过期目标失败写入聊天历史，让 Planner 改用最新用户消息。"""
@@ -877,7 +894,8 @@ class MaisakaReasoningEngine:
         """启动一轮内部循环。"""
 
         cycle_detail = self._start_cycle()
-        round_text = f"第 {round_index + 1}/{self._runtime._max_internal_rounds} 轮"
+        total_rounds = self._runtime._max_internal_rounds + self._stale_reply_extra_round_granted
+        round_text = f"第 {round_index + 1}/{total_rounds} 轮"
         self._runtime._log_cycle_started(cycle_detail, round_index)
         self._runtime._update_stage_status("启动循环", f"循环 {cycle_detail.cycle_id}", round_text=round_text)
         await self._emit_flow_step(
@@ -988,11 +1006,12 @@ class MaisakaReasoningEngine:
 
         completed_cycle = await self._end_cycle(cycle_detail)
         cycle_end = state.cycle_end
-        if round_index + 1 >= self._runtime._max_internal_rounds and cycle_end.reason in {
+        total_rounds = self._runtime._max_internal_rounds + self._stale_reply_extra_round_granted
+        if round_index + 1 >= total_rounds and cycle_end.reason in {
             "continue",
             "tool_continue",
         }:
-            cycle_end = self._cycle_end_for_max_rounds(self._runtime._max_internal_rounds)
+            cycle_end = self._cycle_end_for_max_rounds(total_rounds)
 
         response = state.response
         # 记录先在线程中保存并回填监控数据，终端开关仅影响后续打印。
@@ -1072,10 +1091,11 @@ class MaisakaReasoningEngine:
                     self._runtime._chat_loop_service.passive_replyer_override = self._turn_passive_replyer
                     self._active_logical_turn_id = turn_start_context.logical_turn_id or uuid.uuid4().hex
                     self._reply_failure_counts.clear()
+                    self._stale_reply_extra_round_granted = 0
                     if force_continue_reason := self._runtime._consume_forced_turn_reason():
                         logger.info(f"{self._runtime.log_prefix} {force_continue_reason}")
                     round_index = 0
-                    while round_index < self._runtime._max_internal_rounds:
+                    while round_index < self._runtime._max_internal_rounds + self._stale_reply_extra_round_granted:
                         # 工具执行或整理上下文期间收到的消息，在下一次模型请求前补齐。
                         pending_round_messages = await self._ingest_pending_messages() if round_index > 0 else []
                         if pending_round_messages:
@@ -1107,6 +1127,7 @@ class MaisakaReasoningEngine:
                                 cycle_detail=cycle_detail,
                                 state=state,
                                 planner_extra_lines=state.planner_extra_lines,
+                                round_index=round_index,
                             )
                             if should_break_after_action:
                                 break
@@ -1149,6 +1170,7 @@ class MaisakaReasoningEngine:
                     self._runtime._chat_loop_service.passive_replyer_override = None
                     self._active_logical_turn_id = None
                     self._reply_failure_counts.clear()
+                    self._stale_reply_extra_round_granted = 0
                     if self._runtime._agent_state == self._runtime._STATE_RUNNING:
                         self._runtime._enter_stop_state()
                     if self._runtime._running:
