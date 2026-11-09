@@ -615,7 +615,11 @@
       "repliedTitle": "The bot has replied",
       "repliedDescription": "If the reply and personality look right, continue to message platform setup.",
       "keepChatting": "Keep chatting",
-      "continue": "Continue to message platforms"
+      "continue": "Continue to message platforms",
+      "failedTitle": "No reply from the bot yet",
+      "failedDescription": "The model URL, API key or model name may be wrong. Try sending another message, or check the model settings.",
+      "checkModelConfig": "Check model settings",
+      "learnBasics": "Show me the basics"
     },
     "botNameFallback": "Mai",
     "userFallback": "User",
@@ -1432,11 +1436,14 @@
           "description": "Enter an OpenAI-compatible endpoint, for example https://api.example.com/v1"
         },
         "apiKey": {
-          "label": "API Key *",
+          "label": "API Key",
           "description": "Enter the API key for this provider",
           "show": "Show API key",
           "hide": "Hide API key"
-        }
+        },
+        "presetSelect": "Choose a preset provider",
+        "usePreset": "Preset",
+        "useCustom": "Custom"
       },
       "modelSetup": {
         "identifierPlaceholder": "Enter model ID",
@@ -1459,7 +1466,44 @@
             "label": "Enable vision"
           }
         },
-        "saveHint": "You can configure more detailed task assignment later."
+        "saveHint": "You can configure more detailed task assignment later.",
+        "fetching": "Fetching model list…",
+        "fetchFailed": "{{error}}. Please enter the model ID manually.",
+        "enableThinking": "Enable thinking",
+        "effort": {
+          "label": "Thinking effort",
+          "low": "Low",
+          "high": "High",
+          "max": "Max"
+        }
+      }
+    },
+    "errors": {
+      "loadStatus": "Failed to read setup status",
+      "loadBot": "Failed to read bot config",
+      "loadPersonality": "Failed to read personality config",
+      "loadModel": "Failed to read model config",
+      "fetchModels": "Failed to fetch model list",
+      "emptyModelList": "The provider returned an empty model list",
+      "saveBot": "Failed to save bot config",
+      "savePersonality": "Failed to save personality config",
+      "saveProvider": "Failed to save API provider config",
+      "saveModel": "Failed to save model config",
+      "complete": "Failed to mark setup as complete",
+      "updateToken": "Failed to update token"
+    },
+    "connectionTest": {
+      "hint": "Check that the models can be called. The result is for reference only.",
+      "button": "Test connection",
+      "testing": "Testing…",
+      "passed": "Passed",
+      "failed": "Failed",
+      "passedWithLatency": "Passed ({{latency}})",
+      "saveFailed": "Could not save the config, so the test did not run: {{error}}",
+      "canContinue": "You can still finish setup if the test fails and adjust it later on the model settings page.",
+      "roles": {
+        "planner": "Planner model",
+        "replyer": "Replyer model"
       }
     }
   },
@@ -2267,5 +2311,42 @@
     "current": "No applicable update",
     "updated": "The last program update succeeded",
     "restarting": "The host is updating and restarting. Waiting to reconnect. If rollback fails, check the terminal and restart manually after repair."
+  },
+  "tour": {
+    "controls": {
+      "back": "Back",
+      "close": "Close",
+      "last": "Done",
+      "next": "Next",
+      "nextWithProgress": "Next ({step}/{steps})",
+      "open": "Open guide",
+      "skip": "Skip"
+    },
+    "basicFeatures": {
+      "personality": {
+        "title": "Personality",
+        "content": "Describe who the bot is here. Its character, identity and point of view all come from this field. Try editing it right in the highlight."
+      },
+      "replyStyle": {
+        "title": "Reply style",
+        "content": "Controls the tone and length of replies, such as shorter, livelier or more formal. Remember to save after editing."
+      },
+      "talkValue": {
+        "title": "Group talk frequency",
+        "content": "How often the bot speaks up in group chats. Lower values make it quieter. Adjust this if it talks too much or too little."
+      },
+      "plugins": {
+        "title": "Plugin market",
+        "content": "Search for and install plugins here to give the bot new abilities. Installed plugins can be tuned under Plugin Config."
+      },
+      "knowledgeBase": {
+        "title": "Knowledge base",
+        "content": "Import material under Import / Export. The bot refers to it while chatting and also builds up memories from conversations."
+      },
+      "done": {
+        "title": "That's the basics",
+        "content": "Everything you changed lives in the sidebar menu, so you can come back and adjust it anytime. Now go chat with the bot!"
+      }
+    }
   }
 }

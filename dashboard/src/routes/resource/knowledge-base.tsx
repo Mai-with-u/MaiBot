@@ -1202,6 +1202,7 @@ export function KnowledgeBasePage() {
                     key={item.value}
                     value={item.value}
                     title={item.description}
+                    data-tour={`memory-tab-${item.value}`}
                     className="h-8 px-3 py-1 text-xs sm:py-1"
                   >
                     {item.label}
@@ -1225,6 +1226,7 @@ export function KnowledgeBasePage() {
                     key={item.value}
                     value={item.value}
                     title={item.description}
+                    data-tour={`memory-tab-${item.value}`}
                     className="h-8 px-3 py-1 text-xs sm:py-1"
                   >
                     {item.label}

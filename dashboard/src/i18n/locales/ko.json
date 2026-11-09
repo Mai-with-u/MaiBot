@@ -576,7 +576,11 @@
       "repliedTitle": "봇이 응답했습니다",
       "repliedDescription": "응답과 말투가 괜찮다면 메시지 플랫폼 설정을 계속하세요.",
       "keepChatting": "계속 대화하기",
-      "continue": "메시지 플랫폼 설정"
+      "continue": "메시지 플랫폼 설정",
+      "failedTitle": "봇이 아직 응답하지 않았습니다",
+      "failedDescription": "모델 주소, API 키 또는 모델 이름이 잘못되었을 수 있습니다. 다시 보내 보거나 모델 설정을 확인하세요.",
+      "checkModelConfig": "모델 설정 확인",
+      "learnBasics": "기본 설정 안내 받기"
     },
     "botNameFallback": "麦麦",
     "userFallback": "사용자",
@@ -1385,11 +1389,14 @@
           "description": "OpenAI 호환 엔드포인트를 입력해 주세요. 예: https://api.example.com/v1"
         },
         "apiKey": {
-          "label": "API Key *",
+          "label": "API 키",
           "description": "이 제공자의 API Key를 입력해 주세요",
           "show": "API Key 표시",
           "hide": "API Key 숨기기"
-        }
+        },
+        "presetSelect": "사전 설정 제공자 선택",
+        "usePreset": "사전 설정",
+        "useCustom": "사용자 지정"
       },
       "modelSetup": {
         "identifierPlaceholder": "모델 ID 입력",
@@ -1412,7 +1419,44 @@
             "label": "비전 사용"
           }
         },
-        "saveHint": "더 자세한 작업 할당은 나중에 설정할 수 있습니다."
+        "saveHint": "더 자세한 작업 할당은 나중에 설정할 수 있습니다.",
+        "fetching": "모델 목록을 가져오는 중…",
+        "fetchFailed": "{{error}}. 모델 ID를 직접 입력하세요.",
+        "enableThinking": "생각 활성화",
+        "effort": {
+          "label": "생각 강도",
+          "low": "낮음",
+          "high": "높음",
+          "max": "최대"
+        }
+      }
+    },
+    "errors": {
+      "loadStatus": "설정 상태를 읽지 못했습니다",
+      "loadBot": "봇 설정을 읽지 못했습니다",
+      "loadPersonality": "인격 설정을 읽지 못했습니다",
+      "loadModel": "모델 설정을 읽지 못했습니다",
+      "fetchModels": "모델 목록을 가져오지 못했습니다",
+      "emptyModelList": "제공자가 빈 모델 목록을 반환했습니다",
+      "saveBot": "봇 설정을 저장하지 못했습니다",
+      "savePersonality": "인격 설정을 저장하지 못했습니다",
+      "saveProvider": "API 제공자 설정을 저장하지 못했습니다",
+      "saveModel": "모델 설정을 저장하지 못했습니다",
+      "complete": "설정 완료를 기록하지 못했습니다",
+      "updateToken": "토큰을 업데이트하지 못했습니다"
+    },
+    "connectionTest": {
+      "hint": "모델을 호출할 수 있는지 미리 확인해 보세요. 결과는 참고용입니다.",
+      "button": "연결 테스트",
+      "testing": "테스트 중…",
+      "passed": "통과",
+      "failed": "실패",
+      "passedWithLatency": "통과 ({{latency}})",
+      "saveFailed": "설정을 저장하지 못해 테스트하지 못했습니다: {{error}}",
+      "canContinue": "테스트에 실패해도 설정을 완료할 수 있으며, 나중에 모델 설정 페이지에서 조정할 수 있습니다.",
+      "roles": {
+        "planner": "계획 모델",
+        "replyer": "응답 모델"
       }
     }
   },
@@ -2220,5 +2264,42 @@
     "current": "적용 가능한 업데이트가 없습니다",
     "updated": "최근 업데이트에 성공했습니다",
     "restarting": "The host is updating and restarting. Waiting to reconnect. If rollback fails, check the terminal and restart manually after repair."
+  },
+  "tour": {
+    "controls": {
+      "back": "이전",
+      "close": "닫기",
+      "last": "완료",
+      "next": "다음",
+      "nextWithProgress": "다음 ({step}/{steps})",
+      "open": "가이드 열기",
+      "skip": "건너뛰기"
+    },
+    "basicFeatures": {
+      "personality": {
+        "title": "인격",
+        "content": "봇이 어떤 사람인지 여기에 적습니다. 성격, 신분, 말하는 시점이 모두 여기서 정해집니다. 강조된 칸에서 바로 수정해 보세요."
+      },
+      "replyStyle": {
+        "title": "말투",
+        "content": "답장의 어조와 길이를 조절합니다. 더 짧게, 더 활발하게, 더 정중하게 바꿀 수 있습니다. 수정 후 저장을 잊지 마세요."
+      },
+      "talkValue": {
+        "title": "그룹 발언 빈도",
+        "content": "그룹 채팅에서 봇이 먼저 말하는 정도를 정합니다. 값이 작을수록 조용해집니다."
+      },
+      "plugins": {
+        "title": "플러그인 마켓",
+        "content": "여기서 플러그인을 검색하고 설치해 봇에 새 기능을 추가할 수 있습니다. 설치한 플러그인은 「플러그인 설정」에서 조정합니다."
+      },
+      "knowledgeBase": {
+        "title": "지식 베이스",
+        "content": "「가져오기/내보내기」에서 자료를 가져오면 봇이 대화할 때 참고합니다. 대화 속 기억도 자동으로 쌓입니다."
+      },
+      "done": {
+        "title": "기본 설정은 여기까지입니다",
+        "content": "변경한 설정은 모두 왼쪽 메뉴에서 언제든 다시 조정할 수 있습니다. 이제 봇과 이야기해 보세요!"
+      }
+    }
   }
 }

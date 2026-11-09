@@ -32,6 +32,8 @@ const mocks = vi.hoisted(() => {
     saveModelSetupConfig: vi.fn(),
     completeSetup: vi.fn(),
     updateAccessToken: vi.fn(),
+    fetchSetupModels: vi.fn(),
+    testSetupModel: vi.fn(),
   }
 })
 
@@ -66,6 +68,12 @@ vi.mock('../api', () => ({
   saveModelSetupConfig: mocks.saveModelSetupConfig,
   completeSetup: mocks.completeSetup,
   updateAccessToken: mocks.updateAccessToken,
+  fetchSetupModels: mocks.fetchSetupModels,
+  testSetupModel: mocks.testSetupModel,
+  resolveSetupModelNames: (config: ModelSetupConfig) => ({
+    planner: config.planner_model_identifier,
+    replyer: config.replyer_model_identifier,
+  }),
 }))
 
 // Radix DropdownMenu 在 jsdom 有 pointer-capture 限制，桩成始终展开的普通元素
@@ -170,10 +178,14 @@ beforeEach(() => {
   mocks.saveModelSetupConfig.mockResolvedValue({ success: true })
   mocks.completeSetup.mockResolvedValue({ success: true })
   mocks.updateAccessToken.mockResolvedValue({ success: true, message: 'ok' })
+  mocks.fetchSetupModels.mockReset()
+  mocks.fetchSetupModels.mockResolvedValue([{ id: 'deepseek-v4' }])
+  mocks.testSetupModel.mockReset()
 })
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
 })
 
 describe('SetupPage 加载', () => {
@@ -632,4 +644,72 @@ it('完成模型配置后进入带试聊引导的聊天页', async () => {
     expect(mocks.navigate).toHaveBeenCalledWith({ to: '/chat', search: { setupTrial: true } })
   })
   expect(mocks.completeSetup).toHaveBeenCalledTimes(1)
+})
+
+describe('SetupPage 模型列表拉取', () => {
+  it('拉取失败时最多重试到上限，不再持续请求服务商', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    mocks.fetchSetupModels.mockRejectedValue(new Error('401 Unauthorized'))
+    render(<SetupPage />)
+    await waitLoadingDone()
+    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.next' }))
+    await screen.findByRole('button', { name: 'setupPage.actions.complete' })
+
+    await vi.advanceTimersByTimeAsync(600 + 1000 + 2000)
+    await waitFor(() => expect(mocks.fetchSetupModels).toHaveBeenCalledTimes(3))
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(mocks.fetchSetupModels).toHaveBeenCalledTimes(3)
+    expect(screen.getByRole('alert')).toHaveTextContent('401 Unauthorized')
+  })
+})
+
+describe('SetupPage 连通性测试', () => {
+  // 选 DeepSeek 时向导会自动填入默认模型，这里用自定义提供商保留测试数据里的模型。
+  const customProvider: ApiProviderSetupConfig = {
+    provider_name: 'MyProvider',
+    base_url: 'https://api.example.com/v1',
+    api_key: 'sk-test',
+  }
+
+  async function goToModelStep() {
+    mocks.loadApiProviderSetupConfig.mockResolvedValue({ ...customProvider })
+    render(<SetupPage />)
+    await waitLoadingDone()
+    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.next' }))
+    await screen.findByRole('button', { name: 'setupPage.connectionTest.button' })
+  }
+
+  it('先保存当前配置，再分别测试规划与回复模型并显示结果', async () => {
+    mocks.testSetupModel.mockImplementation(async (name: string) => ({
+      success: name === 'deepseek-v4',
+      latency_ms: 1234,
+      error: name === 'deepseek-v4' ? null : '401 invalid key',
+    }))
+    await goToModelStep()
+    mocks.saveApiProviderSetupConfig.mockClear()
+    mocks.saveModelSetupConfig.mockClear()
+
+    fireEvent.click(screen.getByRole('button', { name: 'setupPage.connectionTest.button' }))
+
+    expect(await screen.findByText('401 invalid key')).toBeInTheDocument()
+    expect(mocks.saveApiProviderSetupConfig).toHaveBeenCalledWith(customProvider)
+    expect(mocks.saveModelSetupConfig).toHaveBeenCalledWith(defaultModelSetup, 'MyProvider')
+    expect(mocks.testSetupModel).toHaveBeenCalledWith('deepseek-v4')
+    expect(mocks.testSetupModel).toHaveBeenCalledWith('glm-5')
+    expect(screen.getByText('setupPage.connectionTest.canContinue')).toBeInTheDocument()
+    // 测试失败只作参考，完成按钮仍可用
+    expect(screen.getByRole('button', { name: 'setupPage.actions.complete' })).toBeEnabled()
+  })
+
+  it('保存配置失败时提示错误且不调用模型测试', async () => {
+    await goToModelStep()
+    mocks.saveApiProviderSetupConfig.mockRejectedValueOnce(new Error('磁盘只读'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'setupPage.connectionTest.button' }))
+
+    expect(
+      await screen.findByText('setupPage.connectionTest.saveFailed:{"error":"磁盘只读"}')
+    ).toBeInTheDocument()
+    expect(mocks.testSetupModel).not.toHaveBeenCalled()
+  })
 })

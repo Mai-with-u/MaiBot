@@ -313,7 +313,7 @@ export function ApiProviderSetupForm({ config, onChange }: ApiProviderSetupFormP
               >
                 {!customMode ? (
                   <Select value={selectedPreset} onValueChange={selectPreset}>
-                    <SelectTrigger aria-label="选择预置提供商" className="h-11 min-w-0 flex-1">
+                    <SelectTrigger aria-label={t('setupPage.forms.apiProvider.presetSelect')} className="h-11 min-w-0 flex-1">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent position="popper" collisionPadding={12}>
@@ -358,7 +358,7 @@ export function ApiProviderSetupForm({ config, onChange }: ApiProviderSetupFormP
               className="h-11 w-full"
               onClick={customMode ? switchToPreset : switchToCustom}
             >
-              {customMode ? '预置' : '自定义'}
+              {customMode ? t('setupPage.forms.apiProvider.usePreset') : t('setupPage.forms.apiProvider.useCustom')}
             </Button>
           </motion.div>
         </div>
@@ -433,7 +433,7 @@ export function ModelSetupForm({
 
   const renderThinkingEffort = (role: 'planner' | 'replyer') => {
     const efforts = ['low', 'high', 'max'] as const
-    const labels = ['低', '高', '最高']
+    const labels = efforts.map((effort) => t(`setupPage.forms.modelSetup.effort.${effort}`))
     const selected = efforts.indexOf(config[`${role}_reasoning_effort`] ?? 'high')
     return (
       <AnimatePresence initial={false}>
@@ -448,11 +448,11 @@ export function ModelSetupForm({
           >
             <div className="space-y-3 px-2 pt-1 pb-2">
               <Label htmlFor={`${role}_reasoning_effort`} className="flex justify-between text-sm">
-                <span>思考强度</span><span>{labels[selected]}</span>
+                <span>{t('setupPage.forms.modelSetup.effort.label')}</span><span>{labels[selected]}</span>
               </Label>
               <Slider
                 id={`${role}_reasoning_effort`}
-                aria-label="思考强度"
+                aria-label={t('setupPage.forms.modelSetup.effort.label')}
                 min={0}
                 max={2}
                 step={1}
@@ -513,11 +513,11 @@ export function ModelSetupForm({
   return (
     <div className="space-y-4">
       {fetchStatus === 'loading' && (
-        <p role="status" className="text-muted-foreground text-sm">正在获取模型列表…</p>
+        <p role="status" className="text-muted-foreground text-sm">{t('setupPage.forms.modelSetup.fetching')}</p>
       )}
       {fetchStatus === 'error' && (
         <p role="alert" className="text-destructive text-sm">
-          {fetchError}，请手动填写模型标识符。
+          {t('setupPage.forms.modelSetup.fetchFailed', { error: fetchError })}
         </p>
       )}
       <div className="grid min-w-0 md:grid-cols-2">
@@ -537,7 +537,7 @@ export function ModelSetupForm({
             <div>
               <div className="flex items-center justify-between gap-4 rounded-md bg-muted/40 p-2">
                 <Label htmlFor="planner_thinking" className="text-sm font-medium">
-                  启用思考
+                  {t('setupPage.forms.modelSetup.enableThinking')}
                 </Label>
                 <Switch
                   id="planner_thinking"
@@ -568,7 +568,7 @@ export function ModelSetupForm({
             <div>
               <div className="flex items-center justify-between gap-4 rounded-md bg-muted/40 p-2">
                 <Label htmlFor="replyer_thinking" className="text-sm font-medium">
-                  启用思考
+                  {t('setupPage.forms.modelSetup.enableThinking')}
                 </Label>
                 <Switch
                   id="replyer_thinking"

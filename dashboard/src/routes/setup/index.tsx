@@ -64,9 +64,14 @@ import {
   saveModelSetupConfig,
   completeSetup,
   fetchSetupModels,
+  resolveSetupModelNames,
+  testSetupModel,
   updateAccessToken,
 } from './api'
+import { ConnectionTestPanel } from './ConnectionTestPanel'
+import type { ConnectionTestRoleResult, ConnectionTestState } from './ConnectionTestPanel'
 
+const MODEL_FETCH_MAX_ATTEMPTS = 3
 const LANGUAGE_CODES = ['zh', 'en', 'ja', 'ko'] as const
 const LANGUAGE_NAMES: Record<(typeof LANGUAGE_CODES)[number], string> = {
   zh: '中文',
@@ -197,7 +202,9 @@ function SetupPageContent() {
     setModelFetchStatus('loading')
     let cancelled = false
     let timer: ReturnType<typeof window.setTimeout>
+    let attempt = 0
     const fetchModels = async () => {
+      attempt += 1
       try {
         const models = await fetchSetupModels({
           provider_name: '',
@@ -210,10 +217,13 @@ function SetupPageContent() {
         setModelFetchStatus('success')
       } catch (error) {
         if (cancelled) return
-        setModelFetchError(error instanceof Error ? error.message : '获取模型列表失败')
+        setModelFetchError(error instanceof Error ? error.message : t('setupPage.errors.fetchModels'))
         setModelFetchStatus('error')
-        // 失败后等待 1 秒再重试，避免请求重叠。
-        timer = window.setTimeout(fetchModels, 1000)
+        // 失败后按 1s、2s 退避重试，最多请求 MODEL_FETCH_MAX_ATTEMPTS 次；
+        // Key 或地址错误时不再持续请求服务商，修改输入后会重新开始。
+        if (attempt < MODEL_FETCH_MAX_ATTEMPTS) {
+          timer = window.setTimeout(fetchModels, 1000 * 2 ** (attempt - 1))
+        }
       }
     }
     // 等待用户停止输入；切换地址或 Key 后忽略旧请求，避免串用提供商的列表。
@@ -222,7 +232,53 @@ function SetupPageContent() {
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [currentStepId, apiProviderSetup.base_url, apiProviderSetup.api_key])
+  }, [currentStepId, apiProviderSetup.base_url, apiProviderSetup.api_key, t])
+
+  // 连通性测试只作参考：失败不拦截完成。配置改动后旧结果作废。
+  const [connectionTest, setConnectionTest] = useState<ConnectionTestState>({ status: 'idle' })
+  useEffect(() => {
+    setConnectionTest({ status: 'idle' })
+  }, [apiProviderSetup, modelSetup])
+
+  const handleTestConnection = async () => {
+    const error = validateApiProviderSetup(apiProviderSetup) ?? validateModelSetup(modelSetup)
+    if (error) {
+      toast({ title: t('setupPage.toast.validationFailedTitle'), description: error, variant: 'destructive' })
+      return
+    }
+    setConnectionTest({ status: 'testing' })
+    try {
+      // 测试接口读取配置文件中的模型，先写入当前填写的提供商与模型。
+      await saveApiProviderSetupConfig(apiProviderSetup)
+      await saveModelSetupConfig(modelSetup, apiProviderSetup.provider_name)
+      const names = resolveSetupModelNames(modelSetup)
+      const roles = [
+        { role: 'planner' as const, name: names.planner },
+        { role: 'replyer' as const, name: names.replyer },
+      ]
+      const results = await Promise.all(
+        roles.map(async ({ role, name }): Promise<ConnectionTestRoleResult> => {
+          try {
+            const result = await testSetupModel(name)
+            return { role, success: result.success, latencyMs: result.latency_ms, error: result.error }
+          } catch (testError) {
+            return {
+              role,
+              success: false,
+              latencyMs: null,
+              error: testError instanceof Error ? testError.message : t('setupPage.toast.unknownError'),
+            }
+          }
+        })
+      )
+      setConnectionTest({ status: 'done', results })
+    } catch (saveError) {
+      setConnectionTest({
+        status: 'error',
+        error: saveError instanceof Error ? saveError.message : t('setupPage.toast.unknownError'),
+      })
+    }
+  }
 
   // 加载现有配置
   useEffect(() => {
@@ -515,6 +571,11 @@ function SetupPageContent() {
                       fetchStatus={modelFetchStatus}
                       fetchError={modelFetchError}
                       providerBaseUrl={apiProviderSetup.base_url}
+                    />
+                    <ConnectionTestPanel
+                      state={connectionTest}
+                      onTest={handleTestConnection}
+                      disabled={isSaving || isCompleting}
                     />
                   </div>
                 </motion.div>

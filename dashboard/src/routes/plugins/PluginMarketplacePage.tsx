@@ -1101,7 +1101,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
         <Card ref={toolbarRef} data-plugin-market-toolbar="true" data-compact={toolbarPinned} className="p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             {/* 搜索框 */}
-            <div className="relative w-full sm:max-w-md sm:flex-1">
+            <div data-tour="plugin-market-search" className="relative w-full sm:max-w-md sm:flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="搜索插件..."

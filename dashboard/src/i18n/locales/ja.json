@@ -615,7 +615,11 @@
       "repliedTitle": "麦麦から返信が届きました",
       "repliedDescription": "返信や話し方に問題がなければ、メッセージプラットフォームの設定に進めます。",
       "keepChatting": "チャットを続ける",
-      "continue": "プラットフォームを設定"
+      "continue": "プラットフォームを設定",
+      "failedTitle": "麦麦からまだ返信がありません",
+      "failedDescription": "モデルの URL、API キー、またはモデル名が間違っている可能性があります。もう一度送るか、モデル設定を確認してください。",
+      "checkModelConfig": "モデル設定を確認",
+      "learnBasics": "基本設定を案内して"
     },
     "botNameFallback": "麦麦",
     "userFallback": "ユーザー",
@@ -1432,11 +1436,14 @@
           "description": "OpenAI互換エンドポイントを入力してください。例: https://api.example.com/v1"
         },
         "apiKey": {
-          "label": "API Key *",
+          "label": "API キー",
           "description": "このプロバイダーの API Key を入力してください",
           "show": "API Key を表示",
           "hide": "API Key を非表示"
-        }
+        },
+        "presetSelect": "プリセットのプロバイダーを選択",
+        "usePreset": "プリセット",
+        "useCustom": "カスタム"
       },
       "modelSetup": {
         "identifierPlaceholder": "モデル ID を入力",
@@ -1459,7 +1466,44 @@
             "label": "ビジョンを有効化"
           }
         },
-        "saveHint": "より詳細なタスク割り当ては後で設定できます。"
+        "saveHint": "より詳細なタスク割り当ては後で設定できます。",
+        "fetching": "モデル一覧を取得中…",
+        "fetchFailed": "{{error}}。モデル ID を手動で入力してください。",
+        "enableThinking": "思考を有効化",
+        "effort": {
+          "label": "思考の強さ",
+          "low": "低",
+          "high": "高",
+          "max": "最大"
+        }
+      }
+    },
+    "errors": {
+      "loadStatus": "セットアップ状態の読み込みに失敗しました",
+      "loadBot": "Bot 設定の読み込みに失敗しました",
+      "loadPersonality": "人格設定の読み込みに失敗しました",
+      "loadModel": "モデル設定の読み込みに失敗しました",
+      "fetchModels": "モデル一覧の取得に失敗しました",
+      "emptyModelList": "プロバイダーから返されたモデル一覧が空です",
+      "saveBot": "Bot 設定の保存に失敗しました",
+      "savePersonality": "人格設定の保存に失敗しました",
+      "saveProvider": "API プロバイダー設定の保存に失敗しました",
+      "saveModel": "モデル設定の保存に失敗しました",
+      "complete": "セットアップ完了の記録に失敗しました",
+      "updateToken": "トークンの更新に失敗しました"
+    },
+    "connectionTest": {
+      "hint": "モデルを呼び出せるか事前に確認できます。結果は参考情報です。",
+      "button": "接続テスト",
+      "testing": "テスト中…",
+      "passed": "成功",
+      "failed": "失敗",
+      "passedWithLatency": "成功（{{latency}}）",
+      "saveFailed": "設定を保存できなかったため、テストできませんでした：{{error}}",
+      "canContinue": "テストに失敗してもセットアップは完了できます。後からモデル設定ページで調整できます。",
+      "roles": {
+        "planner": "計画用モデル",
+        "replyer": "返信用モデル"
       }
     }
   },
@@ -2267,5 +2311,42 @@
     "current": "適用できる更新はありません",
     "updated": "前回の更新は成功しました",
     "restarting": "The host is updating and restarting. Waiting to reconnect. If rollback fails, check the terminal and restart manually after repair."
+  },
+  "tour": {
+    "controls": {
+      "back": "戻る",
+      "close": "閉じる",
+      "last": "完了",
+      "next": "次へ",
+      "nextWithProgress": "次へ ({step}/{steps})",
+      "open": "ガイドを開く",
+      "skip": "スキップ"
+    },
+    "basicFeatures": {
+      "personality": {
+        "title": "人格",
+        "content": "麦麦がどんな人物かをここに書きます。性格・立場・話す視点はすべてここから決まります。ハイライト内で直接編集してみてください。"
+      },
+      "replyStyle": {
+        "title": "話し方",
+        "content": "返信の口調や長さを調整します。短め・元気・丁寧などに変えられます。編集後は保存を忘れずに。"
+      },
+      "talkValue": {
+        "title": "グループ発言頻度",
+        "content": "グループで麦麦が自分から話す量を決めます。値が小さいほど静かになります。"
+      },
+      "plugins": {
+        "title": "プラグインマーケット",
+        "content": "ここでプラグインを検索・インストールして、麦麦に新しい機能を追加できます。設定は「プラグイン設定」で調整できます。"
+      },
+      "knowledgeBase": {
+        "title": "ナレッジベース",
+        "content": "「インポート/エクスポート」で資料を取り込むと、麦麦が会話で参考にします。会話から記憶も自動で蓄積されます。"
+      },
+      "done": {
+        "title": "基本設定は以上です",
+        "content": "変更した設定はすべて左のメニューからいつでも調整できます。さっそく麦麦と話してみましょう！"
+      }
+    }
   }
 }
