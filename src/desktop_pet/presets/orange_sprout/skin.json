@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "orange-sprout",
   "name": "橙芽与小鱼",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Sengoku",
   "canvas": {
     "width": 220,
@@ -23,7 +23,7 @@
     ]
   },
   "states": {
-    "idle": "fish-orbit",
+    "idle": "idle",
     "thinking": "thinking",
     "talking": "talking",
     "dragging": "dragging"
@@ -45,7 +45,7 @@
             330,
             360
           ],
-          "duration_ms": 50
+          "duration_ms": 100
         },
         {
           "file": "idle-1.webp",
@@ -55,7 +55,7 @@
             330,
             360
           ],
-          "duration_ms": 50
+          "duration_ms": 100
         },
         {
           "file": "idle-1.webp",
@@ -65,7 +65,7 @@
             330,
             360
           ],
-          "duration_ms": 50
+          "duration_ms": 100
         },
         {
           "file": "idle-1.webp",
@@ -75,7 +75,7 @@
             330,
             360
           ],
-          "duration_ms": 50
+          "duration_ms": 100
         },
         {
           "file": "idle-1.webp",
@@ -85,7 +85,7 @@
             330,
             360
           ],
-          "duration_ms": 50
+          "duration_ms": 100
         },
         {
           "file": "idle-1.webp",
@@ -95,7 +95,7 @@
             330,
             360
           ],
-          "duration_ms": 50
+          "duration_ms": 100
         },
         {
           "file": "idle-1.webp",
@@ -105,7 +105,7 @@
             330,
             360
           ],
-          "duration_ms": 50
+          "duration_ms": 100
         },
         {
           "file": "idle-1.webp",
@@ -115,7 +115,7 @@
             330,
             360
           ],
-          "duration_ms": 50
+          "duration_ms": 100
         },
         {
           "file": "idle-1.webp",
@@ -125,7 +125,7 @@
             330,
             360
           ],
-          "duration_ms": 50
+          "duration_ms": 100
         },
         {
           "file": "idle-1.webp",
@@ -135,7 +135,7 @@
             330,
             360
           ],
-          "duration_ms": 50
+          "duration_ms": 100
         },
         {
           "file": "idle-1.webp",
@@ -145,7 +145,7 @@
             330,
             360
           ],
-          "duration_ms": 50
+          "duration_ms": 100
         },
         {
           "file": "idle-1.webp",
@@ -155,7 +155,7 @@
             330,
             360
           ],
-          "duration_ms": 50
+          "duration_ms": 100
         },
         {
           "file": "idle-1.webp",
@@ -165,7 +165,7 @@
             330,
             360
           ],
-          "duration_ms": 50
+          "duration_ms": 100
         },
         {
           "file": "idle-1.webp",
@@ -175,7 +175,7 @@
             330,
             360
           ],
-          "duration_ms": 50
+          "duration_ms": 100
         },
         {
           "file": "idle-1.webp",
@@ -185,7 +185,7 @@
             330,
             360
           ],
-          "duration_ms": 50
+          "duration_ms": 100
         },
         {
           "file": "idle-1.webp",
@@ -195,7 +195,7 @@
             330,
             360
           ],
-          "duration_ms": 50
+          "duration_ms": 100
         },
         {
           "file": "idle-1.webp",
@@ -205,7 +205,7 @@
             330,
             360
           ],
-          "duration_ms": 50
+          "duration_ms": 100
         },
         {
           "file": "idle-1.webp",
@@ -215,7 +215,7 @@
             330,
             360
           ],
-          "duration_ms": 50
+          "duration_ms": 100
         },
         {
           "file": "idle-1.webp",
@@ -225,7 +225,7 @@
             330,
             360
           ],
-          "duration_ms": 50
+          "duration_ms": 100
         },
         {
           "file": "idle-1.webp",
@@ -235,7 +235,7 @@
             330,
             360
           ],
-          "duration_ms": 50
+          "duration_ms": 100
         }
       ],
       "motion": "none"
@@ -1062,6 +1062,136 @@
           "rect": [
             660,
             1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            990,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            1320,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            1650,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            1980,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            2310,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            0,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            330,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            660,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            990,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            1320,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            1650,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            1980,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            2310,
+            1440,
             330,
             360
           ],
