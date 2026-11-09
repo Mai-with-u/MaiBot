@@ -23,10 +23,12 @@ const mocks = vi.hoisted(() => {
     changeLanguage: vi.fn(),
     loadSetupStatus: vi.fn(),
     loadBotBasicConfig: vi.fn(),
+    loadBasicSetupConfig: vi.fn(),
     loadPersonalityConfig: vi.fn(),
     loadApiProviderSetupConfig: vi.fn(),
     loadModelSetupConfig: vi.fn(),
     saveBotBasicConfig: vi.fn(),
+    saveBasicSetupConfig: vi.fn(),
     savePersonalityConfig: vi.fn(),
     saveApiProviderSetupConfig: vi.fn(),
     saveModelSetupConfig: vi.fn(),
@@ -59,10 +61,12 @@ vi.mock('@/hooks/use-toast', () => ({
 vi.mock('../api', () => ({
   loadSetupStatus: mocks.loadSetupStatus,
   loadBotBasicConfig: mocks.loadBotBasicConfig,
+  loadBasicSetupConfig: mocks.loadBasicSetupConfig,
   loadPersonalityConfig: mocks.loadPersonalityConfig,
   loadApiProviderSetupConfig: mocks.loadApiProviderSetupConfig,
   loadModelSetupConfig: mocks.loadModelSetupConfig,
   saveBotBasicConfig: mocks.saveBotBasicConfig,
+  saveBasicSetupConfig: mocks.saveBasicSetupConfig,
   savePersonalityConfig: mocks.savePersonalityConfig,
   saveApiProviderSetupConfig: mocks.saveApiProviderSetupConfig,
   saveModelSetupConfig: mocks.saveModelSetupConfig,
@@ -169,10 +173,12 @@ async function clickNextAndWaitStep(current: number, total = 3) {
 beforeEach(() => {
   mocks.loadSetupStatus.mockResolvedValue({ ...defaultStatus })
   mocks.loadBotBasicConfig.mockResolvedValue({ ...defaultBotBasic })
+  mocks.loadBasicSetupConfig.mockResolvedValue({ inevitable_at_reply: true, private_reply_paused: false })
   mocks.loadPersonalityConfig.mockResolvedValue({ ...defaultPersonality })
   mocks.loadApiProviderSetupConfig.mockResolvedValue({ ...defaultApiProvider })
   mocks.loadModelSetupConfig.mockResolvedValue({ ...defaultModelSetup })
   mocks.saveBotBasicConfig.mockResolvedValue({ success: true })
+  mocks.saveBasicSetupConfig.mockResolvedValue({ success: true })
   mocks.savePersonalityConfig.mockResolvedValue({ success: true })
   mocks.saveApiProviderSetupConfig.mockResolvedValue({ success: true })
   mocks.saveModelSetupConfig.mockResolvedValue({ success: true })
@@ -505,10 +511,6 @@ describe('SetupPage 语言切换', () => {
 })
 
 describe('SetupPage 错误态与空态', () => {
-  async function goToLastStep() {
-    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.next' }))
-    await screen.findByRole('button', { name: 'setupPage.actions.complete' })
-  }
 
   it('配置未返回前显示加载态，不渲染表单', () => {
     mocks.loadSetupStatus.mockImplementation(() => new Promise(() => {}))
@@ -580,16 +582,15 @@ describe('SetupPage 错误态与空态', () => {
     expect(screen.getByRole('button', { name: 'setupPage.actions.next' })).toBeInTheDocument()
   })
 
-  it('完成时 planner 模型标识符为空则拦截且不标记完成', async () => {
-    mocks.loadModelSetupConfig.mockResolvedValue({
-      ...defaultModelSetup,
-      planner_model_identifier: '   ',
-    })
+  it('planner 模型标识符为空则停留在模型配置阶段', async () => {
     render(<SetupPage />)
     await waitLoadingDone()
-    await goToLastStep()
+    await advanceTo('personality', 'defineModel', 'replyer', 'planner')
+    fireEvent.change(screen.getByRole('textbox', { name: /setupPage\.forms\.modelSetup\.planner\.identifier\.label/ }), {
+      target: { value: '   ' },
+    })
 
-    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.complete' }))
+    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.next' }))
 
     await waitFor(() => {
       expect(mocks.toast).toHaveBeenCalledWith({
@@ -605,7 +606,7 @@ describe('SetupPage 错误态与空态', () => {
     mocks.completeSetup.mockRejectedValue(new Error('写入失败'))
     render(<SetupPage />)
     await waitLoadingDone()
-    await goToLastStep()
+    await advanceTo('personality', 'defineModel', 'replyer', 'planner', 'groupReplies', 'privateReplies')
 
     fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.complete' }))
 
@@ -646,16 +647,32 @@ describe('SetupPage 错误态与空态', () => {
 
 
 
-it('完成模型配置后进入带试聊引导的聊天页', async () => {
+async function advanceTo(...steps: string[]) {
+  for (const step of steps) {
+    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.next' }))
+    await screen.findByRole('heading', { name: `setupPage.steps.${step}.title` })
+  }
+}
+
+it('展开当前阶段，保存基础设置后进入带试聊引导的聊天页', async () => {
   render(<SetupPage />)
   await waitLoadingDone()
-  fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.next' }))
-  await screen.findByRole('button', { name: 'setupPage.actions.complete' })
+  expect(screen.getByRole('list', { name: 'setupPage.steps.botProfile.title' })).toBeInTheDocument()
+  await advanceTo('personality', 'defineModel')
+  expect(screen.queryByRole('list', { name: 'setupPage.steps.botProfile.title' })).not.toBeInTheDocument()
+  expect(screen.getByRole('list', { name: 'setupPage.steps.modelSetup.title' })).toBeInTheDocument()
+  await advanceTo('replyer', 'planner', 'groupReplies')
+  expect(screen.queryByRole('list', { name: 'setupPage.steps.modelSetup.title' })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('switch', { name: 'setupPage.steps.groupReplies.label' }))
+  await advanceTo('privateReplies')
+  fireEvent.click(screen.getByRole('switch', { name: 'setupPage.steps.privateReplies.label' }))
   fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.complete' }))
   await waitFor(() => {
     expect(mocks.navigate).toHaveBeenCalledWith({ to: '/chat', search: { setupTrial: true } })
   })
   expect(mocks.completeSetup).toHaveBeenCalledTimes(1)
+  expect(mocks.saveBasicSetupConfig).toHaveBeenNthCalledWith(1, { inevitable_at_reply: false })
+  expect(mocks.saveBasicSetupConfig).toHaveBeenNthCalledWith(2, { private_reply_paused: true })
 })
 
 describe('SetupPage 模型列表拉取', () => {
@@ -664,8 +681,7 @@ describe('SetupPage 模型列表拉取', () => {
     mocks.fetchSetupModels.mockRejectedValue(new Error('401 Unauthorized'))
     render(<SetupPage />)
     await waitLoadingDone()
-    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.next' }))
-    await screen.findByRole('button', { name: 'setupPage.actions.complete' })
+    await advanceTo('personality', 'defineModel')
 
     await vi.advanceTimersByTimeAsync(600 + 1000 + 2000)
     await waitFor(() => expect(mocks.fetchSetupModels).toHaveBeenCalledTimes(3))
@@ -687,7 +703,7 @@ describe('SetupPage 连通性测试', () => {
     mocks.loadApiProviderSetupConfig.mockResolvedValue({ ...customProvider })
     render(<SetupPage />)
     await waitLoadingDone()
-    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.next' }))
+    await advanceTo('personality', 'defineModel', 'replyer', 'planner')
     await screen.findByRole('button', { name: 'setupPage.connectionTest.button' })
   }
 
@@ -709,8 +725,8 @@ describe('SetupPage 连通性测试', () => {
     expect(mocks.testSetupModel).toHaveBeenCalledWith('deepseek-v4')
     expect(mocks.testSetupModel).toHaveBeenCalledWith('glm-5')
     expect(screen.getByText('setupPage.connectionTest.canContinue')).toBeInTheDocument()
-    // 测试失败只作参考，完成按钮仍可用
-    expect(screen.getByRole('button', { name: 'setupPage.actions.complete' })).toBeEnabled()
+    // 测试失败只作参考，仍可继续。
+    expect(screen.getByRole('button', { name: 'setupPage.actions.next' })).toBeEnabled()
   })
 
   it('保存配置失败时提示错误且不调用模型测试', async () => {

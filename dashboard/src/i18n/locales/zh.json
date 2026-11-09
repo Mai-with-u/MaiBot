@@ -1206,6 +1206,38 @@
   },
   "setupPage": {
     "steps": {
+      "nickname": {
+        "title": "昵称",
+        "description": "给麦麦起一个聊天时使用的名字。"
+      },
+      "defineModel": {
+        "title": "定义模型",
+        "description": "选择服务商和起始模型。后续可以为两个角色分别选模型。",
+        "modelLabel": "起始模型",
+        "required": "请输入或选择一个起始模型"
+      },
+      "replyer": {
+        "title": "设置 Replyer",
+        "description": "Replyer 负责组织措辞，生成用户看到的回复。"
+      },
+      "planner": {
+        "title": "设置 Planner",
+        "description": "Planner 负责判断何时回复、如何行动。这里也可以测试两个模型是否连通。"
+      },
+      "basicSettings": {
+        "title": "基础设置",
+        "description": ""
+      },
+      "groupReplies": {
+        "title": "群聊回复",
+        "description": "开启后，麦麦在群聊被 @ 时会尽量回复。",
+        "label": "被 @ 时优先回复"
+      },
+      "privateReplies": {
+        "title": "私聊回复",
+        "description": "关闭后，麦麦仍会接收和记录私聊消息，但会暂停回复。",
+        "label": "允许私聊回复"
+      },
       "botProfile": {
         "title": "基础与人格",
         "description": ""

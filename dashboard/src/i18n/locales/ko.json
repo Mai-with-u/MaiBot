@@ -1159,6 +1159,38 @@
   },
   "setupPage": {
     "steps": {
+      "nickname": {
+        "title": "닉네임",
+        "description": "채팅에 사용할 이름을 정하세요."
+      },
+      "defineModel": {
+        "title": "모델 정의",
+        "description": "제공자와 초기 모델을 선택하세요. 다음 단계에서 역할마다 다른 모델을 고를 수 있습니다.",
+        "modelLabel": "초기 모델",
+        "required": "초기 모델을 입력하거나 선택하세요"
+      },
+      "replyer": {
+        "title": "Replyer 설정",
+        "description": "Replyer는 상대에게 표시되는 답장을 작성합니다."
+      },
+      "planner": {
+        "title": "Planner 설정",
+        "description": "Planner는 언제 답장하고 어떻게 행동할지 판단합니다. 두 모델의 연결을 여기서 확인할 수 있습니다."
+      },
+      "basicSettings": {
+        "title": "기본 설정",
+        "description": ""
+      },
+      "groupReplies": {
+        "title": "그룹 채팅 답장",
+        "description": "켜면 그룹 채팅에서 @멘션을 받았을 때 가능한 한 답장합니다.",
+        "label": "@멘션에 우선 답장"
+      },
+      "privateReplies": {
+        "title": "개인 채팅 답장",
+        "description": "끄면 개인 메시지는 계속 받고 기록하지만 답장은 일시 중지합니다.",
+        "label": "개인 채팅 답장 허용"
+      },
       "botProfile": {
         "title": "기본 정보와 성격",
         "description": "닉네임, 성격, 답변 스타일을 설정합니다"

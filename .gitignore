@@ -398,3 +398,4 @@ start_mac.command
 /.uv-log-cache/
 /.maibot-instance-locks/
 /tmp/
+resource.lock

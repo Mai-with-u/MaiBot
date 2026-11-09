@@ -1206,6 +1206,38 @@
   },
   "setupPage": {
     "steps": {
+      "nickname": {
+        "title": "ニックネーム",
+        "description": "チャットで使う名前を決めます。"
+      },
+      "defineModel": {
+        "title": "モデルを定義",
+        "description": "プロバイダーと初期モデルを選びます。次の手順で役割ごとに別のモデルを選べます。",
+        "modelLabel": "初期モデル",
+        "required": "初期モデルを入力または選択してください"
+      },
+      "replyer": {
+        "title": "Replyer を設定",
+        "description": "Replyer は相手に表示される返信を書きます。"
+      },
+      "planner": {
+        "title": "Planner を設定",
+        "description": "Planner は返信するタイミングや行動を判断します。ここで両方のモデルの接続を確認できます。"
+      },
+      "basicSettings": {
+        "title": "基本設定",
+        "description": ""
+      },
+      "groupReplies": {
+        "title": "グループ返信",
+        "description": "有効にすると、グループで @メンションされたときにできるだけ返信します。",
+        "label": "@メンションへの返信を優先"
+      },
+      "privateReplies": {
+        "title": "個別チャットの返信",
+        "description": "無効にしても個別メッセージの受信と記録は続きます。返信は一時停止します。",
+        "label": "個別チャットで返信する"
+      },
       "botProfile": {
         "title": "基本情報と人格",
         "description": "ニックネーム、人格、返信スタイルを設定します"

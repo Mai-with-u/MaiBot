@@ -1,18 +1,16 @@
 import { useNavigate } from '@tanstack/react-router'
 import {
   ArrowRight,
-  Brain,
-  Bot,
   CheckCircle2,
   Globe,
-  ShieldCheck,
 } from 'lucide-react'
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { HostSetup } from '@/host/HostSetup'
 import { useHostRuntime } from '@/host/state'
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { SetupWizardLayout } from './SetupWizardLayout'
 import {
   AlertDialog,
@@ -39,6 +37,7 @@ import { validateToken } from '@/lib/token-validator'
 import type { ModelListItem } from '@/lib/config-api'
 import type {
   ApiProviderSetupConfig,
+  BasicSetupConfig,
   SetupStep,
   BotBasicConfig,
   ModelSetupConfig,
@@ -54,11 +53,13 @@ import {
 } from './StepForms'
 import {
   loadBotBasicConfig,
+  loadBasicSetupConfig,
   loadSetupStatus,
   loadPersonalityConfig,
   loadApiProviderSetupConfig,
   loadModelSetupConfig,
   saveBotBasicConfig,
+  saveBasicSetupConfig,
   savePersonalityConfig,
   saveApiProviderSetupConfig,
   saveModelSetupConfig,
@@ -81,13 +82,14 @@ const LANGUAGE_NAMES: Record<(typeof LANGUAGE_CODES)[number], string> = {
 }
 
 export function SetupPage() {
-  return useHostRuntime().host ? <HostSetup /> : <SetupPageContent />
+  return useHostRuntime().host
+    ? <HostSetup><SetupPageContent /></HostSetup>
+    : <SetupPageContent />
 }
 
 // 内部实现组件
 function SetupPageContent() {
   const navigate = useNavigate()
-  const reduceMotion = useReducedMotion()
   const { t, i18n: i18nInstance } = useTranslation()
   const { toast } = useToast()
   const currentLang = i18nInstance.resolvedLanguage || i18nInstance.language || 'zh'
@@ -110,6 +112,8 @@ function SetupPageContent() {
   const [requiresCustomToken, setRequiresCustomToken] = useState(false)
   const [customToken, setCustomToken] = useState('')
   const [customTokenConfirmation, setCustomTokenConfirmation] = useState('')
+  const [basicSettings, setBasicSettings] = useState<BasicSetupConfig | null>(null)
+  const [definedModel, setDefinedModel] = useState('')
 
   // 步骤1：Bot基础信息
   const [botBasic, setBotBasic] = useState<BotBasicConfig>({
@@ -144,33 +148,27 @@ function SetupPageContent() {
     replyer_thinking: false,
   })
 
-  const setupSteps: SetupStep[] = [
-    {
-      id: 'bot-profile',
-      title: t('setupPage.steps.botProfile.title'),
-      description: t('setupPage.steps.botProfile.description'),
-      icon: Bot,
-    },
-    {
-      id: 'model-setup',
-      title: t('setupPage.steps.modelSetup.title'),
-      description: t('setupPage.steps.modelSetup.description'),
-      icon: Brain,
-    },
+  const profile = { id: 'profile', label: t('setupPage.steps.botProfile.title') }
+  const models = { id: 'models', label: t('setupPage.steps.modelSetup.title') }
+  const basics = { id: 'basics', label: t('setupPage.steps.basicSettings.title') }
+  const step = (id: string, key: string, group?: SetupStep['group']): SetupStep => ({
+    id, group,
+    title: t(`setupPage.steps.${key}.title`),
+    description: t(`setupPage.steps.${key}.description`),
+  })
+  const steps = [
+    ...(requiresCustomToken ? [step('custom-token', 'customToken')] : []),
+    step('nickname', 'nickname', profile),
+    step('personality', 'personality', profile),
+    step('define-model', 'defineModel', models),
+    step('replyer', 'replyer', models),
+    step('planner', 'planner', models),
+    step('group-replies', 'groupReplies', basics),
+    step('private-replies', 'privateReplies', basics),
   ]
-  const steps: SetupStep[] = requiresCustomToken
-    ? [
-        {
-          id: 'custom-token',
-          title: t('setupPage.steps.customToken.title'),
-          description: t('setupPage.steps.customToken.description'),
-          icon: ShieldCheck,
-        },
-        ...setupSteps,
-      ]
-    : setupSteps
 
   const currentStepId = steps[currentStep]?.id
+  const configuringModels = steps[currentStep]?.group?.id === models.id
   const [availableModels, setAvailableModels] = useState<ModelListItem[]>([])
   const [modelFetchStatus, setModelFetchStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
   const [modelFetchError, setModelFetchError] = useState('')
@@ -178,6 +176,7 @@ function SetupPageContent() {
   // DeepSeek 的角色默认值在选择提供商后立即生效，不依赖 Key 或模型列表请求。
   useEffect(() => {
     if (findTemplateByBaseUrl(apiProviderSetup.base_url)?.id !== 'deepseek') return
+    setDefinedModel('deepseek-flash')
     setModelSetup((previous) => ({
       ...previous,
       planner_model_identifier: 'deepseek-flash',
@@ -192,7 +191,7 @@ function SetupPageContent() {
   }, [apiProviderSetup.base_url])
 
   useEffect(() => {
-    if (currentStepId !== 'model-setup') return
+    if (!configuringModels) return
     setAvailableModels([])
     setModelFetchError('')
     if (!apiProviderSetup.base_url.trim()) {
@@ -233,7 +232,7 @@ function SetupPageContent() {
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [currentStepId, apiProviderSetup.base_url, apiProviderSetup.api_key, t])
+  }, [configuringModels, apiProviderSetup.base_url, apiProviderSetup.api_key, t])
 
   // 连通性测试只作参考：失败不拦截完成。配置改动后旧结果作废。
   const [connectionTest, setConnectionTest] = useState<ConnectionTestState>({ status: 'idle' })
@@ -288,12 +287,13 @@ function SetupPageContent() {
         setIsLoading(true)
 
         // 并行加载所有配置
-        const [setupStatus, bot, personality, apiProvider, model] = await Promise.all([
+        const [setupStatus, bot, personality, apiProvider, model, basic] = await Promise.all([
           loadSetupStatus(),
           loadBotBasicConfig(),
           loadPersonalityConfig(),
           loadApiProviderSetupConfig(),
           loadModelSetupConfig(),
+          loadBasicSetupConfig(),
         ])
 
         setRequiresCustomToken(setupStatus.requires_custom_token)
@@ -301,6 +301,8 @@ function SetupPageContent() {
         setPersonality(personality)
         setApiProviderSetup(apiProvider)
         setModelSetup(model)
+        setDefinedModel(model.replyer_model_identifier || model.planner_model_identifier)
+        setBasicSettings(basic)
       } catch (error) {
         toast({
           title: t('setupPage.toast.loadFailedTitle'),
@@ -321,14 +323,26 @@ function SetupPageContent() {
     setIsSaving(true)
     try {
       switch (currentStepId) {
-        case 'bot-profile': // Bot基础与人格
+        case 'nickname':
           await saveBotBasicConfig(botBasic)
+          break
+        case 'personality':
           await savePersonalityConfig(personality)
           break
-        case 'model-setup': // API 提供商与基础模型
+        case 'define-model':
+        case 'replyer':
+          return true
+        case 'planner':
           await saveApiProviderSetupConfig(apiProviderSetup)
           await saveModelSetupConfig(modelSetup, apiProviderSetup.provider_name)
           break
+        case 'group-replies':
+        case 'private-replies': {
+          if (!basicSettings) throw new Error(t('setupPage.errors.loadBot'))
+          const key = currentStepId === 'group-replies' ? 'inevitable_at_reply' : 'private_reply_paused'
+          await saveBasicSetupConfig({ [key]: basicSettings[key] })
+          break
+        }
       }
 
       toast({
@@ -436,28 +450,23 @@ function SetupPageContent() {
       return
     }
 
-    // Step 1 验证
-    if (currentStepId === 'bot-profile') {
-      const error = validateBotBasic(botBasic)
-      if (error) {
-        toast({
-          title: t('setupPage.toast.validationFailedTitle'),
-          description: error,
-          variant: 'destructive',
-        })
-        return
-      }
+    let error: string | null = null
+    if (currentStepId === 'nickname') error = validateBotBasic(botBasic)
+    if (currentStepId === 'define-model') {
+      error = validateApiProviderSetup(apiProviderSetup)
+        ?? (definedModel.trim() ? null : t('setupPage.steps.defineModel.required'))
     }
-    if (currentStepId === 'model-setup') {
-      const error = validateApiProviderSetup(apiProviderSetup) ?? validateModelSetup(modelSetup)
-      if (error) {
-        toast({
-          title: t('setupPage.toast.validationFailedTitle'),
-          description: error,
-          variant: 'destructive',
-        })
-        return
-      }
+    if (currentStepId === 'replyer' && !modelSetup.replyer_model_identifier.trim()) {
+      error = t('setupPage.validation.enterReplyerModelIdentifier')
+    }
+    if (currentStepId === 'planner') error = validateModelSetup(modelSetup)
+    if (error) {
+      toast({
+        title: t('setupPage.toast.validationFailedTitle'),
+        description: error,
+        variant: 'destructive',
+      })
+      return
     }
 
     // 保存当前步骤
@@ -480,21 +489,9 @@ function SetupPageContent() {
     setIsCompleting(true)
 
     try {
-      const error = validateApiProviderSetup(apiProviderSetup) ?? validateModelSetup(modelSetup)
-      if (error) {
-        toast({
-          title: t('setupPage.toast.validationFailedTitle'),
-          description: error,
-          variant: 'destructive',
-        })
-        setIsCompleting(false)
-        return
-      }
-
-      // 1. 保存最后一步的基础模型配置
+      // 保存最后一项基础设置，再进入试聊。
       const saved = await saveCurrentStep()
       if (!saved) {
-        setIsCompleting(false)
         return
       }
 
@@ -546,18 +543,16 @@ function SetupPageContent() {
             onConfirmationChange={setCustomTokenConfirmation}
           />
         )
-      case 'bot-profile':
-        return (
-          <div className="space-y-8">
-            <BotBasicForm config={botBasic} onChange={setBotBasic} />
-            <PersonalityForm config={personality} onChange={setPersonality} />
-          </div>
-        )
-      case 'model-setup':
+      case 'nickname':
+        return <BotBasicForm config={botBasic} onChange={setBotBasic} />
+      case 'personality':
+        return <PersonalityForm config={personality} onChange={setPersonality} />
+      case 'define-model':
         return (
           <div className="space-y-5">
             <ApiProviderSetupForm config={apiProviderSetup} onChange={(next) => {
               if (next.base_url !== apiProviderSetup.base_url) {
+                setDefinedModel('')
                 setModelSetup((previous) => ({
                   ...previous,
                   planner_model_identifier: '',
@@ -568,36 +563,64 @@ function SetupPageContent() {
               }
               setApiProviderSetup(next)
             }} />
-            <AnimatePresence initial={false}>
-              {apiProviderSetup.base_url.trim() && (
-                <motion.div
-                  key="model-setup-fields"
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: reduceMotion ? 0 : 0.2, ease: 'easeInOut' }}
-                  className="overflow-hidden"
-                >
-                  <div className="border-border border-t-2 pt-4">
-                    <ModelSetupForm
-                      config={modelSetup}
-                      onChange={setModelSetup}
-                      models={availableModels}
-                      fetchStatus={modelFetchStatus}
-                      fetchError={modelFetchError}
-                      providerBaseUrl={apiProviderSetup.base_url}
-                    />
-                    <ConnectionTestPanel
-                      state={connectionTest}
-                      onTest={handleTestConnection}
-                      disabled={isSaving || isCompleting}
-                    />
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+            {apiProviderSetup.base_url.trim() && (
+              <ModelSetupForm
+                config={modelSetup}
+                onChange={setModelSetup}
+                models={availableModels}
+                fetchStatus={modelFetchStatus}
+                fetchError={modelFetchError}
+                definition={{ value: definedModel, onChange: (value) => {
+                  setDefinedModel(value)
+                  setModelSetup((previous) => ({
+                    ...previous,
+                    planner_model_identifier: value,
+                    planner_model_name: value,
+                    replyer_model_identifier: value,
+                    replyer_model_name: value,
+                  }))
+                } }}
+              />
+            )}
           </div>
         )
+      case 'replyer':
+      case 'planner':
+        return (
+          <div className="space-y-5">
+            <ModelSetupForm
+              role={currentStepId}
+              config={modelSetup}
+              onChange={setModelSetup}
+              models={availableModels}
+              fetchStatus={modelFetchStatus}
+              fetchError={modelFetchError}
+              providerBaseUrl={apiProviderSetup.base_url}
+            />
+            {currentStepId === 'planner' && (
+              <ConnectionTestPanel
+                state={connectionTest}
+                onTest={handleTestConnection}
+                disabled={isSaving || isCompleting}
+              />
+            )}
+          </div>
+        )
+      case 'group-replies':
+      case 'private-replies': {
+        const group = currentStepId === 'group-replies'
+        const key = group ? 'inevitable_at_reply' : 'private_reply_paused'
+        if (!basicSettings) return <p role="alert">{t('setupPage.errors.loadBot')}</p>
+        return (
+          <div className="border-border flex items-center justify-between gap-4 border p-4">
+            <Label htmlFor={key}>{t(`setupPage.steps.${group ? 'groupReplies' : 'privateReplies'}.label`)}</Label>
+            <Switch id={key} checked={group ? basicSettings[key] : !basicSettings[key]}
+              onCheckedChange={(checked) => setBasicSettings({ ...basicSettings, [key]: group ? checked : !checked })}
+              disabled={isSaving || isCompleting}
+            />
+          </div>
+        )
+      }
       default:
         return null
     }
@@ -648,7 +671,7 @@ function SetupPageContent() {
         <SetupWizardLayout
           steps={steps}
           currentStep={currentStep}
-          headerActions={currentStepId === 'bot-profile' ? (
+          headerActions={currentStepId === 'personality' ? (
             <PersonalityPresetSelect config={personality} onChange={setPersonality} />
           ) : undefined}
           actions={
@@ -681,7 +704,7 @@ function SetupPageContent() {
 
               <div className="ml-auto flex items-center gap-3">
                 {currentStep > 0 && (
-                  <Button variant="outline" onClick={handlePrevious} disabled={isSaving}>
+                  <Button variant="outline" onClick={handlePrevious} disabled={isSaving || isCompleting}>
                     {t('setupPage.actions.previous')}
                   </Button>
                 )}

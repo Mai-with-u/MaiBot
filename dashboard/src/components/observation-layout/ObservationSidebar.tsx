@@ -13,7 +13,7 @@ import {
   Settings,
   Sun,
 } from 'lucide-react'
-import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { useContext, useEffect, useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SidebarUpdateButton } from '@/components/layout/SidebarUpdateButton'
@@ -23,6 +23,8 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { toggleThemeWithTransition, useTheme } from '@/components/use-theme'
 import { promptCatalogQueryOptions } from '@/lib/prompt-query'
+import { TourContext } from '@/components/tour/tour-context'
+import { isDesktopEmbedded, reportDesktopLayout } from '@/lib/desktop-host'
 import { queryClient } from '@/lib/query'
 import { isBotIndependentPath, useBotAvailable } from '@/host/state'
 import '@/styles/observation-key-state.css'
@@ -224,6 +226,33 @@ export function ObservationSidebar({
     }
   }, [settingsSingleRow, settingsVisible, settingsItems.length])
 
+  // 嵌入一键包时把侧栏宽度告诉外壳，顶栏品牌列跟着对齐；
+  // 教程或首次试聊进行中时锁住外壳的「回首页」，免得把引导打断
+  const sidebarRef = useRef<HTMLElement>(null)
+  const tourRunning = useContext(TourContext)?.state.isRunning === true
+  const setupTrial = useRouterState({
+    select: (state) => new URLSearchParams(state.location.searchStr).get('setupTrial') === 'true',
+  })
+  const homeLocked = tourRunning || setupTrial
+  useEffect(() => {
+    const sidebar = sidebarRef.current
+    if (!sidebar || !isDesktopEmbedded()) return
+    const report = () =>
+      reportDesktopLayout({
+        sidebarWidth: Math.round(sidebar.getBoundingClientRect().width),
+        collapsed,
+        homeLocked,
+      })
+    report()
+    const observer = new ResizeObserver(report)
+    observer.observe(sidebar)
+    return () => {
+      observer.disconnect()
+      // 宽度 0 表示侧栏已卸载（例如回到登录页），外壳退回默认宽度
+      reportDesktopLayout({ sidebarWidth: 0, collapsed, homeLocked: true })
+    }
+  }, [collapsed, homeLocked])
+
   const toggleSettings = () => {
     setSettingsOpen((current) => {
       try {
@@ -237,6 +266,7 @@ export function ObservationSidebar({
 
   return (
     <aside
+      ref={sidebarRef}
       data-observation-sidebar="true"
       data-collapsed={collapsed ? 'true' : 'false'}
       aria-label={t('a11y.sidebarNav')}
@@ -367,7 +397,7 @@ export function ObservationSidebar({
 
       {botAvailable && <ObservationConversations collapsed={collapsed} />}
 
-      <div className={collapsed ? 'flex shrink-0 justify-center' : 'shrink-0'}>
+      <div data-observation-update="true" className={collapsed ? 'flex shrink-0 justify-center' : 'shrink-0'}>
         <SidebarUpdateButton collapsed={collapsed} />
       </div>
       <footer data-observation-tools="true">

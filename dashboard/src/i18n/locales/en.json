@@ -1206,6 +1206,38 @@
   },
   "setupPage": {
     "steps": {
+      "nickname": {
+        "title": "Nickname",
+        "description": "Choose the name MaiBot uses in chats."
+      },
+      "defineModel": {
+        "title": "Define a model",
+        "description": "Choose a provider and a starting model. You can choose a different model for each role in the next steps.",
+        "modelLabel": "Starting model",
+        "required": "Enter or select a starting model"
+      },
+      "replyer": {
+        "title": "Set up Replyer",
+        "description": "Replyer writes the messages people see."
+      },
+      "planner": {
+        "title": "Set up Planner",
+        "description": "Planner decides when to respond and what to do. You can also test both model connections here."
+      },
+      "basicSettings": {
+        "title": "Basic settings",
+        "description": ""
+      },
+      "groupReplies": {
+        "title": "Group replies",
+        "description": "When enabled, MaiBot will try to reply when it is @mentioned in a group.",
+        "label": "Prioritize replies to @mentions"
+      },
+      "privateReplies": {
+        "title": "Private replies",
+        "description": "When disabled, MaiBot still receives and records private messages but pauses its replies.",
+        "label": "Allow private replies"
+      },
       "botProfile": {
         "title": "Basics & Personality",
         "description": "Configure nickname, personality, and reply style"

@@ -427,6 +427,8 @@ export function ApiProviderSetupForm({ config, onChange }: ApiProviderSetupFormP
 
 // ====== 步骤4：基础模型配置 ======
 interface ModelSetupFormProps {
+  role?: 'planner' | 'replyer'
+  definition?: { value: string; onChange: (value: string) => void }
   config: ModelSetupConfig
   onChange: (config: ModelSetupConfig) => void
   models?: ModelListItem[]
@@ -436,6 +438,8 @@ interface ModelSetupFormProps {
 }
 
 export function ModelSetupForm({
+  role,
+  definition,
   config,
   onChange,
   models = [],
@@ -502,8 +506,8 @@ export function ModelSetupForm({
   }
 
   const renderModelInput = (role: 'planner' | 'replyer') => {
-    const identifier = config[`${role}_model_identifier`]
-    const changeModel = (value: string) =>
+    const identifier = definition?.value ?? config[`${role}_model_identifier`]
+    const changeModel = definition?.onChange ?? ((value: string) =>
       onChange({
         ...config,
         [`${role}_model_identifier`]: value,
@@ -511,7 +515,8 @@ export function ModelSetupForm({
         [`${role}_thinking`]: providerTemplate?.id === 'deepseek'
           ? role === 'replyer' : inferThinkingEnabled(value),
         [`${role}_reasoning_effort`]: 'high',
-      })
+      }))
+    const label = t(definition ? 'setupPage.steps.defineModel.modelLabel' : `setupPage.forms.modelSetup.${role}.identifier.label`)
     return (
       <div className="flex min-w-0 items-center gap-2">
         <Input
@@ -524,7 +529,7 @@ export function ModelSetupForm({
         <Select value={identifier} onValueChange={changeModel}>
           <SelectTrigger
             disabled={models.length === 0}
-            aria-label={`${t(`setupPage.forms.modelSetup.${role}.identifier.label`)} · ${t('setupPage.forms.modelSetup.pickFromList')}`}
+            aria-label={`${label} · ${t('setupPage.forms.modelSetup.pickFromList')}`}
             className="w-auto shrink-0 gap-2"
           >
             {t('setupPage.forms.modelSetup.pickFromList')}
@@ -549,70 +554,48 @@ export function ModelSetupForm({
           {t('setupPage.forms.modelSetup.fetchFailed', { error: fetchError })}
         </p>
       )}
-      <div className="grid min-w-0 md:grid-cols-2">
-        <div className="min-w-0 space-y-3 pb-4 md:pr-4 md:pb-0">
+      {definition ? (
+        <div className="space-y-2">
+          <Label htmlFor="replyer_model_identifier">{t('setupPage.steps.defineModel.modelLabel')}</Label>
+          {renderModelInput('replyer')}
+        </div>
+      ) : (
+      <div className={cn('grid min-w-0 gap-4', !role && 'md:grid-cols-2')}>
+        {(role ? [role] : ['planner', 'replyer'] as const).map((item) => (
+        <div key={item} className="min-w-0 space-y-3">
           <div className="space-y-2">
-            <Label htmlFor="planner_model_identifier" className="flex items-center gap-1">
-              {t('setupPage.forms.modelSetup.planner.identifier.label')}
+            <Label htmlFor={`${item}_model_identifier`} className="flex items-center gap-1">
+              {t(`setupPage.forms.modelSetup.${item}.identifier.label`)}
               <HelpTooltip
-                content={t('setupPage.forms.modelSetup.planner.identifier.description')}
+                content={t(`setupPage.forms.modelSetup.${item}.identifier.description`)}
                 side="right"
               />
             </Label>
-            {renderModelInput('planner')}
+            {renderModelInput(item)}
           </div>
 
-          {supportsThinkingSwitch(config.planner_model_identifier) && (
+          {supportsThinkingSwitch(config[`${item}_model_identifier`]) && (
             <div>
               <div className="flex items-center justify-between gap-4 rounded-md bg-muted/40 p-2">
-                <Label htmlFor="planner_thinking" className="text-sm font-medium">
+                <Label htmlFor={`${item}_thinking`} className="text-sm font-medium">
                   {t('setupPage.forms.modelSetup.enableThinking')}
                 </Label>
                 <Switch
-                  id="planner_thinking"
-                  checked={config.planner_thinking}
+                  id={`${item}_thinking`}
+                  checked={config[`${item}_thinking`]}
                   onCheckedChange={(checked) =>
-                    onChange({ ...config, planner_thinking: checked })
+                    onChange({ ...config, [`${item}_thinking`]: checked })
                   }
                 />
               </div>
-              {renderThinkingEffort('planner')}
+              {renderThinkingEffort(item)}
             </div>
           )}
         </div>
 
-        <div className="border-border min-w-0 space-y-3 border-t-2 pt-4 md:border-t-0 md:border-l-2 md:pt-0 md:pl-4">
-          <div className="space-y-2">
-            <Label htmlFor="replyer_model_identifier" className="flex items-center gap-1">
-              {t('setupPage.forms.modelSetup.replyer.identifier.label')}
-              <HelpTooltip
-                content={t('setupPage.forms.modelSetup.replyer.identifier.description')}
-                side="right"
-              />
-            </Label>
-            {renderModelInput('replyer')}
-          </div>
-
-          {supportsThinkingSwitch(config.replyer_model_identifier) && (
-            <div>
-              <div className="flex items-center justify-between gap-4 rounded-md bg-muted/40 p-2">
-                <Label htmlFor="replyer_thinking" className="text-sm font-medium">
-                  {t('setupPage.forms.modelSetup.enableThinking')}
-                </Label>
-                <Switch
-                  id="replyer_thinking"
-                  checked={config.replyer_thinking}
-                  onCheckedChange={(checked) =>
-                    onChange({ ...config, replyer_thinking: checked })
-                  }
-                />
-              </div>
-              {renderThinkingEffort('replyer')}
-            </div>
-          )}
-        </div>
+        ))}
       </div>
-
+      )}
     </div>
   )
 }

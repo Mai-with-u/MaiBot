@@ -17,6 +17,7 @@ import type { ModelPricePeriod } from '@/routes/config/model/types'
 
 import type {
   ApiProviderSetupConfig,
+  BasicSetupConfig,
   BotBasicConfig,
   ModelSetupConfig,
   PersonalityConfig,
@@ -121,6 +122,22 @@ function buildThinkingExtraParams(
 export async function loadSetupStatus(): Promise<SetupStatus> {
   return authApi.get<SetupStatus>('/api/webui/setup/status', {
     errorMessage: i18n.t('setupPage.errors.loadStatus'),
+  })
+}
+
+export async function loadBasicSetupConfig(): Promise<BasicSetupConfig> {
+  const { config } = await backendApi.get<{ config: { chat: { reply_timing: BasicSetupConfig } } }>(
+    '/api/webui/config/bot',
+    { errorMessage: i18n.t('setupPage.errors.loadBot') }
+  )
+  const { inevitable_at_reply, private_reply_paused } = config.chat.reply_timing
+  return { inevitable_at_reply, private_reply_paused }
+}
+
+export async function saveBasicSetupConfig(config: Partial<BasicSetupConfig>) {
+  return backendApi.post('/api/webui/config/bot/section/chat', {
+    body: { reply_timing: config },
+    errorMessage: i18n.t('setupPage.toast.saveFailedTitle'),
   })
 }
 

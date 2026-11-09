@@ -1,16 +1,20 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Loader2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { BotUnavailable } from '@/components/bot-unavailable'
 import { Button } from '@/components/ui/button'
 import { validateToken } from '@/lib/token-validator'
-import { completeSetup, loadSetupStatus, updateAccessToken } from '@/routes/setup/api'
+import { loadSetupStatus, updateAccessToken } from '@/routes/setup/api'
 import { SetupWizardLayout } from '@/routes/setup/SetupWizardLayout'
 import { CustomTokenForm } from '@/routes/setup/StepForms'
+import { bootstrapHostRuntime } from './api'
+import { useHostRuntime } from './state'
 
-/** Host 首次设置只处理 WebUI 密码；没有 Bot 或 Bot 停止都不影响登录。 */
-export function HostSetup() {
+/** 先设置宿主密码，再为当前运行中的 Bot 打开配置向导。 */
+export function HostSetup({ children }: { children: ReactNode }) {
   const { t } = useTranslation()
+  const { selected_bot_running: botRunning } = useHostRuntime()
   const [loading, setLoading] = useState(true)
   const [requiresToken, setRequiresToken] = useState(false)
   const [token, setToken] = useState('')
@@ -27,13 +31,9 @@ export function HostSetup() {
     void loadSetupStatus()
       .then(async (status) => {
         if (!active) return
-        if (status.requires_custom_token) {
-          setRequiresToken(true)
-          setLoading(false)
-        } else {
-          await completeSetup()
-          if (active) window.location.assign('/bots')
-        }
+        setRequiresToken(status.requires_custom_token)
+        if (!status.requires_custom_token) await bootstrapHostRuntime()
+        if (active) setLoading(false)
       })
       .catch((reason: unknown) => {
         if (active) {
@@ -56,21 +56,25 @@ export function HostSetup() {
       setToken('')
       setConfirmation('')
       setRequiresToken(false)
-      await completeSetup()
-      window.location.assign('/bots')
+      await bootstrapHostRuntime()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
       setSaving(false)
     }
   }
 
-  if (loading)
+  if (loading || (saving && !requiresToken))
     return (
       <div role="status" className="flex min-h-screen items-center justify-center gap-3">
         <Loader2 className="animate-spin" />
         {t('setupPage.loading.title')}
       </div>
     )
+
+  if (!requiresToken && !error) {
+    return botRunning ? children : <div className="h-screen"><BotUnavailable /></div>
+  }
 
   return (
     <div className="bg-background text-foreground min-h-screen px-4 py-8">
