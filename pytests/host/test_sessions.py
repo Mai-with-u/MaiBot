@@ -109,3 +109,22 @@ def test_password_change_invalidates_cookie_even_before_session_cleanup(tmp_path
     credentials.update("Changed!Password2")
     assert not sessions.valid(cookie)
     assert not HostSessions(tmp_path, credentials=credentials_at(tmp_path)).valid(cookie)
+
+
+def test_initial_password_renews_only_the_current_session(tmp_path: Path) -> None:
+    credentials = credentials_at(tmp_path)
+    sessions = HostSessions(tmp_path, credentials=credentials)
+    origin = "http://127.0.0.1:8001"
+    other_cookie = sessions.create_session()
+    with client_for(sessions, credentials) as client:
+        assert client.post(
+            "/api/webui/auth/verify", json={"token": credentials.token}, headers={"origin": origin},
+        ).json()["valid"]
+        old_cookie = client.cookies.get(sessions.cookie_name)
+        response = client.post("/api/webui/auth/update", json={"new_token": PASSWORD})
+        assert response.json()["success"]
+        assert client.cookies.get(sessions.cookie_name) != old_cookie
+        assert sessions.login_origin(client.cookies.get(sessions.cookie_name)) == origin
+        assert client.post("/api/webui/setup/complete").json()["success"]
+    assert not sessions.valid(old_cookie)
+    assert not sessions.valid(other_cookie)

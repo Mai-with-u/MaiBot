@@ -1267,7 +1267,7 @@
       "completeFailedTitle": "設定の完了に失敗しました",
       "skipFailedTitle": "セットアップのスキップに失敗しました",
       "customTokenSuccessTitle": "Token を更新しました",
-      "customTokenSuccessDescription": "新しいカスタム Token で再度ログインしてから、設定を続けてください。",
+      "customTokenSuccessDescription": "新しいパスワードでログインしました。設定を続けられます。",
       "unknownError": "不明なエラー"
     },
     "actions": {
@@ -1307,6 +1307,8 @@
         "noticeDescription": "ランダム Token は次回起動時に変わります。固定のカスタム Token を設定し、今後の WebUI ログインに使用してください。",
         "label": "カスタム Token *",
         "placeholder": "新しいパスワードを入力",
+        "confirmation": "新しいパスワードを再入力",
+        "mismatch": "パスワードが一致しません。",
         "description": "保存後、現在のログインは無効になります。新しい Token で再度ログインしてください。",
         "requirements": "Token の要件",
         "show": "表示",

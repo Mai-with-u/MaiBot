@@ -120,6 +120,18 @@ class HostSessions:
             self._sessions.clear()
             self._tickets.clear()
 
+    def update_password(self, session: Optional[str], new_token: str) -> Optional[str]:
+        with self._lock:
+            record = self._active_session(session)
+            if record is None:
+                raise HTTPException(401, "登录已失效，请重新登录")
+            setting_initial_password = self._credentials.token_source == "temporary"
+            self._credentials.update(new_token)
+            self.clear_all()
+            if setting_initial_password:
+                return self.create_session(record.origin)
+            return None
+
     def valid(self, session: Optional[str]) -> bool:
         # 仅读取已提交的内存快照，不等待持有写锁的数据库操作。
         return self._active_session(session) is not None

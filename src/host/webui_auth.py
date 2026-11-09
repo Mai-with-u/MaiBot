@@ -61,12 +61,16 @@ def register_host_auth(
         return {"success": True, "message": "已登出"}
 
     @app.post("/api/webui/auth/update", dependencies=[Depends(require_session)])
-    async def update(body: UpdateRequest, response: Response) -> Dict[str, Any]:
+    async def update(body: UpdateRequest, request: Request, response: Response) -> Dict[str, Any]:
         try:
-            await asyncio.to_thread(credentials.update, body.new_token)
+            session = await asyncio.to_thread(
+                sessions.update_password, request.cookies.get(sessions.cookie_name), body.new_token,
+            )
         except ValueError as exc:
             return {"success": False, "message": str(exc)}
-        await asyncio.to_thread(sessions.clear_all)
+        if session is not None:
+            sessions.set_cookie(response, session)
+            return {"success": True, "message": "密码已设置"}
         response.delete_cookie(sessions.cookie_name, path="/")
         return {"success": True, "message": "密码已更新，请重新登录"}
 

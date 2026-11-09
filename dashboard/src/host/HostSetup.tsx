@@ -14,9 +14,11 @@ export function HostSetup() {
   const [loading, setLoading] = useState(true)
   const [requiresToken, setRequiresToken] = useState(false)
   const [token, setToken] = useState('')
+  const [confirmation, setConfirmation] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [retry, setRetry] = useState(0)
+  const canSave = requiresToken && !saving && token === confirmation && validateToken(token.trim()).isValid
 
   useEffect(() => {
     let active = true
@@ -45,16 +47,17 @@ export function HostSetup() {
   }, [retry])
 
   async function saveToken() {
-    const validation = validateToken(token.trim())
-    if (!validation.isValid || saving) return
+    if (!canSave) return
     setSaving(true)
     setError('')
     try {
       const result = await updateAccessToken(token.trim())
       if (!result.success) throw new Error(result.message)
       setToken('')
-      // 修改密码会撤销旧会话；重新登录后此页自动完成 Host 设置并进入机器人管理。
-      window.location.assign('/auth')
+      setConfirmation('')
+      setRequiresToken(false)
+      await completeSetup()
+      window.location.assign('/bots')
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
       setSaving(false)
@@ -82,7 +85,7 @@ export function HostSetup() {
         currentStep={0}
         actions={
           <Button
-            disabled={!requiresToken || saving || !validateToken(token.trim()).isValid}
+            disabled={!canSave}
             onClick={() => void saveToken()}
           >
             {saving && <Loader2 className="animate-spin" />}
@@ -90,7 +93,14 @@ export function HostSetup() {
           </Button>
         }
       >
-        {requiresToken && <CustomTokenForm token={token} onChange={setToken} />}
+        {requiresToken && (
+          <CustomTokenForm
+            token={token}
+            onChange={setToken}
+            confirmation={confirmation}
+            onConfirmationChange={setConfirmation}
+          />
+        )}
         {error && (
           <div className="mt-4 space-y-3">
             <p role="alert" className="text-destructive text-sm">

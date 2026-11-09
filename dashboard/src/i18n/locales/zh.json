@@ -1267,7 +1267,7 @@
       "completeFailedTitle": "配置失败",
       "skipFailedTitle": "跳过失败",
       "customTokenSuccessTitle": "密码已更新",
-      "customTokenSuccessDescription": "请使用新的自定义密码重新登录，然后继续配置。",
+      "customTokenSuccessDescription": "已使用新密码登录，可以继续配置。",
       "unknownError": "未知错误"
     },
     "actions": {
@@ -1307,6 +1307,8 @@
         "noticeDescription": "需要修改登录密码，如果不修改，每次会随机生成密码",
         "label": "自定义密码 *",
         "placeholder": "输入新密码",
+        "confirmation": "再次输入新密码",
+        "mismatch": "两次输入的密码不一致。",
         "description": "",
         "requirements": "密码要求",
         "show": "显示",

@@ -420,6 +420,9 @@ describe('SetupPage 自定义 Token 步骤', () => {
     fireEvent.change(screen.getByLabelText('setupPage.forms.customToken.label'), {
       target: { value: 'short' },
     })
+    fireEvent.change(screen.getByLabelText('setupPage.forms.customToken.confirmation'), {
+      target: { value: 'short' },
+    })
     fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.saveToken' }))
 
     await waitFor(() => {
@@ -434,11 +437,20 @@ describe('SetupPage 自定义 Token 步骤', () => {
     expect(mocks.updateAccessToken).not.toHaveBeenCalled()
   })
 
-  it('合法 Token 去除空白后提交，成功后延时跳转登录页', async () => {
+  it('两次密码一致后才提交，保存成功后直接进入下一步', async () => {
     render(<SetupPage />)
     await waitLoadingDone()
 
     fireEvent.change(screen.getByLabelText('setupPage.forms.customToken.label'), {
+      target: { value: ' Abcdefghij!123 ' },
+    })
+    fireEvent.change(screen.getByLabelText('setupPage.forms.customToken.confirmation'), {
+      target: { value: 'Different!Password' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.saveToken' }))
+    expect(mocks.updateAccessToken).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('setupPage.forms.customToken.confirmation'), {
       target: { value: ' Abcdefghij!123 ' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.saveToken' }))
@@ -450,14 +462,8 @@ describe('SetupPage 自定义 Token 步骤', () => {
       title: 'setupPage.toast.customTokenSuccessTitle',
       description: 'setupPage.toast.customTokenSuccessDescription',
     })
-    // 跳转在 1200ms 延时后发生
+    expect(await screen.findByRole('button', { name: 'setupPage.actions.next' })).toBeInTheDocument()
     expect(mocks.navigate).not.toHaveBeenCalled()
-    await waitFor(
-      () => {
-        expect(mocks.navigate).toHaveBeenCalledWith({ to: '/auth' })
-      },
-      { timeout: 2500 }
-    )
   })
 
   it('后端拒绝新 Token 时提示后端返回的消息且不跳转', async () => {
@@ -467,6 +473,9 @@ describe('SetupPage 自定义 Token 步骤', () => {
     await waitLoadingDone()
 
     fireEvent.change(screen.getByLabelText('setupPage.forms.customToken.label'), {
+      target: { value: 'Abcdefghij!123' },
+    })
+    fireEvent.change(screen.getByLabelText('setupPage.forms.customToken.confirmation'), {
       target: { value: 'Abcdefghij!123' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.saveToken' }))
@@ -617,6 +626,9 @@ describe('SetupPage 错误态与空态', () => {
     await waitLoadingDone()
 
     fireEvent.change(screen.getByLabelText('setupPage.forms.customToken.label'), {
+      target: { value: 'Abcdefghij!123' },
+    })
+    fireEvent.change(screen.getByLabelText('setupPage.forms.customToken.confirmation'), {
       target: { value: 'Abcdefghij!123' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.saveToken' }))

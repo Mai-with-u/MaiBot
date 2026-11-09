@@ -1267,7 +1267,7 @@
       "completeFailedTitle": "Setup failed",
       "skipFailedTitle": "Failed to skip the setup wizard",
       "customTokenSuccessTitle": "Token updated",
-      "customTokenSuccessDescription": "Please sign in again with the new custom token, then continue setup.",
+      "customTokenSuccessDescription": "You are signed in with the new password and can continue setup.",
       "unknownError": "Unknown error"
     },
     "actions": {
@@ -1307,6 +1307,8 @@
         "noticeDescription": "The random token changes on the next startup. Set a fixed custom token and use it for future WebUI sign-ins.",
         "label": "Custom Token *",
         "placeholder": "Enter a new password",
+        "confirmation": "Re-enter the new password",
+        "mismatch": "The passwords do not match.",
         "description": "After saving, your current session will expire and you will need to sign in with the new token.",
         "requirements": "Token requirements",
         "show": "Show",

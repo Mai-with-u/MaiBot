@@ -109,6 +109,7 @@ function SetupPageContent() {
   const [isLoading, setIsLoading] = useState(true)
   const [requiresCustomToken, setRequiresCustomToken] = useState(false)
   const [customToken, setCustomToken] = useState('')
+  const [customTokenConfirmation, setCustomTokenConfirmation] = useState('')
 
   // 步骤1：Bot基础信息
   const [botBasic, setBotBasic] = useState<BotBasicConfig>({
@@ -351,6 +352,14 @@ function SetupPageContent() {
   }
 
   const saveCustomToken = async () => {
+    if (!customTokenConfirmation || customTokenConfirmation !== customToken) {
+      toast({
+        title: t('setupPage.toast.validationFailedTitle'),
+        description: t('setupPage.forms.customToken.mismatch'),
+        variant: 'destructive',
+      })
+      return false
+    }
     const trimmedToken = customToken.trim()
     const tokenValidation = validateToken(trimmedToken)
     if (!tokenValidation.isValid) {
@@ -383,9 +392,8 @@ function SetupPageContent() {
         description: t('setupPage.toast.customTokenSuccessDescription'),
       })
       setCustomToken('')
-      setTimeout(() => {
-        navigate({ to: '/auth' })
-      }, 1200)
+      setCustomTokenConfirmation('')
+      setRequiresCustomToken(false)
       return true
     } catch (error) {
       toast({
@@ -530,7 +538,14 @@ function SetupPageContent() {
   const renderStepForm = () => {
     switch (currentStepId) {
       case 'custom-token':
-        return <CustomTokenForm token={customToken} onChange={setCustomToken} />
+        return (
+          <CustomTokenForm
+            token={customToken}
+            onChange={setCustomToken}
+            confirmation={customTokenConfirmation}
+            onConfirmationChange={setCustomTokenConfirmation}
+          />
+        )
       case 'bot-profile':
         return (
           <div className="space-y-8">

@@ -19,7 +19,9 @@ void i18n.init({
 function PasswordSetupPreview() {
   const { t } = useTranslation()
   const [token, setToken] = useState('')
+  const [confirmation, setConfirmation] = useState('')
   const [submitted, setSubmitted] = useState(false)
+  const canSubmit = token === confirmation && validateToken(token).isValid
   const steps = [
     { id: 'custom-token', ...zh.setupPage.steps.customToken },
     { id: 'bot-profile', ...zh.setupPage.steps.botProfile },
@@ -37,9 +39,9 @@ function PasswordSetupPreview() {
             </Button>
             <Button
               size="lg"
-              variant={validateToken(token).isValid ? 'default' : 'outline'}
+              variant={canSubmit ? 'default' : 'outline'}
               className="min-w-44"
-              disabled={!validateToken(token).isValid}
+              disabled={!canSubmit}
               onClick={() => setSubmitted(true)}
             >
               {t('setupPage.actions.saveToken')}
@@ -57,6 +59,11 @@ function PasswordSetupPreview() {
           token={token}
           onChange={(value) => {
             setToken(value)
+            setSubmitted(false)
+          }}
+          confirmation={confirmation}
+          onConfirmationChange={(value) => {
+            setConfirmation(value)
             setSubmitted(false)
           }}
         />

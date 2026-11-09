@@ -41,11 +41,19 @@ import type {
 interface CustomTokenFormProps {
   token: string
   onChange: (token: string) => void
+  confirmation: string
+  onConfirmationChange: (confirmation: string) => void
 }
 
-export function CustomTokenForm({ token, onChange }: CustomTokenFormProps) {
+export function CustomTokenForm({
+  token,
+  onChange,
+  confirmation,
+  onConfirmationChange,
+}: CustomTokenFormProps) {
   const { t } = useTranslation()
   const tokenValidation = useMemo(() => validateToken(token), [token])
+  const mismatch = confirmation.length > 0 && confirmation !== token
 
   return (
     <div className="space-y-6">
@@ -90,6 +98,27 @@ export function CustomTokenForm({ token, onChange }: CustomTokenFormProps) {
           </li>
         ))}
       </ul>
+      <Label htmlFor="confirm-custom-token" className="sr-only">
+        {t('setupPage.forms.customToken.confirmation')}
+      </Label>
+      <PasswordInput
+        id="confirm-custom-token"
+        controlSize="lg"
+        placeholder={t('setupPage.forms.customToken.confirmation')}
+        value={confirmation}
+        onChange={(event) => onConfirmationChange(event.target.value)}
+        showLabel={t('setupPage.forms.customToken.show')}
+        hideLabel={t('setupPage.forms.customToken.hide')}
+        autoComplete="new-password"
+        aria-invalid={mismatch}
+        aria-describedby={mismatch ? 'custom-token-mismatch' : undefined}
+        className="text-base sm:text-lg md:text-xl"
+      />
+      {mismatch && (
+        <p id="custom-token-mismatch" className="text-destructive text-sm" role="alert">
+          {t('setupPage.forms.customToken.mismatch')}
+        </p>
+      )}
     </div>
   )
 }
