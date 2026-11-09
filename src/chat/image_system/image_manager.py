@@ -14,7 +14,7 @@ from src.common.database.database import get_db_session
 from src.common.database.database_model import Images, ImageType
 from src.common.logger import get_logger
 from src.common.utils.image_path import resolve_stored_image_path, serialize_stored_image_path
-from src.config.config import config_manager
+from src.config.config import config_manager, global_config
 from src.prompt.prompt_manager import prompt_manager
 from src.services.llm_service import LLMServiceClient
 
@@ -236,11 +236,12 @@ class ImageManager:
             except Exception as exc:
                 logger.warning(f"同步图片描述到记忆失败，哈希值: {image_hash}，错误: {exc}")
 
-        sync_task = asyncio.create_task(
-            sync_description_to_memory(), name=f"A_Memorix.image_description.{image_hash[:12]}"
-        )
-        self._description_sync_tasks.add(sync_task)
-        sync_task.add_done_callback(self._description_sync_tasks.discard)
+        if global_config.a_memorix.plugin.enabled and global_config.a_memorix.image_memory.enabled:
+            sync_task = asyncio.create_task(
+                sync_description_to_memory(), name=f"A_Memorix.image_description.{image_hash[:12]}"
+            )
+            self._description_sync_tasks.add(sync_task)
+            sync_task.add_done_callback(self._description_sync_tasks.discard)
 
         try:
             from src.maisaka.visual.chat_history_refresher import log_tracked_image_recognition_completed
