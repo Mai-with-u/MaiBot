@@ -1,6 +1,9 @@
 from datetime import datetime
 from types import SimpleNamespace
 from typing import List, Optional
+from unittest.mock import AsyncMock, Mock
+
+import pytest
 
 from src.chat.message_receive.message import SessionMessage
 from src.common.data_models.message_component_data_model import MessageSequence, ReplyComponent, TextComponent
@@ -239,6 +242,27 @@ def test_grant_stale_reply_extra_round_only_once_at_limit() -> None:
     assert engine._grant_stale_reply_extra_round(15, 1) is True
     assert engine._stale_reply_extra_round_granted == 1
     assert engine._grant_stale_reply_extra_round(16, 1) is False
+
+
+@pytest.mark.asyncio
+async def test_start_cycle_round_logs_effective_total_rounds() -> None:
+    engine = object.__new__(MaisakaReasoningEngine)
+    engine._stale_reply_extra_round_granted = 1
+    cycle_detail = SimpleNamespace(cycle_id=7)
+    engine._start_cycle = Mock(return_value=cycle_detail)
+    engine._emit_flow_step = AsyncMock()
+    runtime = SimpleNamespace(
+        _max_internal_rounds=16,
+        _log_cycle_started=Mock(),
+        _update_stage_status=Mock(),
+    )
+    engine._runtime = runtime
+
+    returned_detail, round_text = await engine._start_cycle_round(16)
+
+    assert returned_detail is cycle_detail
+    assert round_text == "第 17/17 轮"
+    runtime._log_cycle_started.assert_called_once_with(cycle_detail, 16, 17)
 
 
 def test_grant_stale_reply_extra_round_respects_failure_limit() -> None:
