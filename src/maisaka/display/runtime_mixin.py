@@ -736,10 +736,15 @@ class MaisakaRuntimeDisplayMixin:
 
         return panels
 
-    def _log_cycle_started(self, cycle_detail: CycleDetail, round_index: int) -> None:
+    def _log_cycle_started(
+        self, cycle_detail: CycleDetail, round_index: int, total_rounds: Optional[int] = None,
+    ) -> None:
+        """记录一轮思考开始及当前轮次进度。"""
+
+        effective_total_rounds = total_rounds or self._max_internal_rounds
         logger.debug(
             f"{self.log_prefix} MaiSaka 轮次开始: 循环编号={cycle_detail.cycle_id} "
-            f"回合={round_index + 1}/{self._max_internal_rounds} "
+            f"回合={round_index + 1}/{effective_total_rounds} "
             f"上下文消息数={len(self._chat_history)}"
         )
 

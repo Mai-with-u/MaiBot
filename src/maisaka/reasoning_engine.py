@@ -896,7 +896,7 @@ class MaisakaReasoningEngine:
         cycle_detail = self._start_cycle()
         total_rounds = self._runtime._max_internal_rounds + self._stale_reply_extra_round_granted
         round_text = f"第 {round_index + 1}/{total_rounds} 轮"
-        self._runtime._log_cycle_started(cycle_detail, round_index)
+        self._runtime._log_cycle_started(cycle_detail, round_index, total_rounds)
         self._runtime._update_stage_status("启动循环", f"循环 {cycle_detail.cycle_id}", round_text=round_text)
         await self._emit_flow_step(
             "cycle.started", f"开始{round_text}思考", "准备参考信息并整理本轮上下文。",
