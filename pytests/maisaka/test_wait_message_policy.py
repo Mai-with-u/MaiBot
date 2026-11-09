@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from src.chat.debounce import MessageDebouncer
+from src.core.tooling import ToolAvailabilityContext
+from src.maisaka.builtin_tool import get_builtin_tools
 from src.maisaka.builtin_tool.wait import handle_tool
 from src.maisaka.reasoning_engine import MaisakaReasoningEngine
 from src.maisaka.scenes.group.scheduling import GroupTurnScheduler
@@ -86,6 +88,36 @@ async def test_stale_wait_decision_is_not_executed(tool):
     runtime._wait_for_message_quiet_period.assert_awaited_once()
     assert state.cycle_end.reason == "tool_continue"
     assert runtime._chat_history
+
+
+@pytest.mark.parametrize("is_group_chat", [False, True])
+def test_stop_is_available_in_ordinary_chat(is_group_chat: bool) -> None:
+    context = ToolAvailabilityContext(is_group_chat=is_group_chat)
+    assert {"reply", "stop", "wait"} <= {tool["name"] for tool in get_builtin_tools(context)}
+
+
+@pytest.mark.asyncio
+async def test_explicit_stop_ends_ordinary_planner_turn() -> None:
+    engine = object.__new__(MaisakaReasoningEngine)
+    engine._turn_passive_replyer = False
+    runtime = SimpleNamespace(
+        _has_pending_messages=lambda: False,
+        _end_planner_continuation=Mock(),
+        _reset_consecutive_wait_count=Mock(),
+        _enter_stop_state=Mock(),
+        _chat_history=[],
+    )
+    engine._runtime = runtime
+    engine._emit_planner_progress = AsyncMock()
+    response = SimpleNamespace(tool_calls=[SimpleNamespace(func_name="stop")])
+    state = SimpleNamespace()
+
+    assert await engine._handle_planner_response_actions(
+        response=response, cycle_detail=None, state=state, planner_extra_lines=[]
+    )
+    runtime._enter_stop_state.assert_called_once_with()
+    assert state.cycle_end == engine._cycle_end_for_pause_tool("stop")
+    assert runtime._chat_history == []
 
 
 @pytest.mark.asyncio

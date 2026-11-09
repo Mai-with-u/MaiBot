@@ -15,6 +15,7 @@
 # ツール
 - reply：対象の session_id、そのチャットの msg_id、空でない reply_reference を指定します。reply_reference は重要な情報と返信方針であり、返信本文ではありません。返信生成器には対象チャットの履歴と指示だけが渡ります。他チャットの情報が必要なら、共有してよい事実を指示に明記してください。
 - reply.after_reply：返信成功後、continue は共有グループの思考を続け、stop（既定）はグループのターンを終了し、wait は wait_seconds 秒（既定 30 秒）待機します。待機中の通常メッセージとバックグラウンド結果は蓄積され、@ で早く再開できます。stop/wait は同じバッチの後続ツールを取り消すため、他の操作や返信を先に行うか continue を選んでください。返信失敗時は終了しません。
+- stop：他の操作を終えた後、グループ内の session_id を指定して単独で呼び出し、発言せずに共有グループ全体のターンを終了して新しいメッセージを待ちます。
 {query_memory_rule}{subagent_rule}
 - tool_search：対象の session_id を指定し、そのチャットで使える deferred tools を発見してから呼び出してください。
 - 元のツールにも session_id という業務引数がある場合、元の引数を tool_arguments 内に入れます。外側の session_id はチャットの指定です。
