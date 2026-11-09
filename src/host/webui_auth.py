@@ -31,6 +31,7 @@ def authenticate(request: Request, sessions: "HostSessions") -> bool:
 
 def register_host_auth(
     app: FastAPI, sessions: "HostSessions", credentials: HostCredentials, require_session: Callable,
+    get_client_ip: Callable[[Request], str],
 ) -> None:
     attempts = LoginAttempts()
 
@@ -41,7 +42,7 @@ def register_host_auth(
 
     @app.post("/api/webui/auth/verify")
     async def verify(body: VerifyRequest, request: Request, response: Response) -> Dict[str, Any]:
-        address = request.client.host if request.client else "unknown"
+        address = get_client_ip(request)
         if attempts.blocked(address):
             raise HTTPException(429, "认证失败次数过多，请稍后再试")
         valid = credentials.verify(body.token)

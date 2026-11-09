@@ -183,7 +183,7 @@
     "customReload": "페이지 새로고침",
     "customStop": "페이지 중지",
     "customStopped": "페이지가 중지되었습니다. 다시 불러오면 실행됩니다.",
-    "customStopRequestRate": "요청이 너무 많아 중지되었습니다(초당 20회, 순간 최대 200회).",
+    "customStopRequestRate": "요청이 너무 많아 중지되었습니다(초당 {{rate}}회, 순간 최대 {{burst}}회).",
     "customStopLayoutRate": "페이지 크기 업데이트가 너무 많아 중지되었습니다.",
     "customStopHeight": "페이지 높이가 잘못되었거나 30000픽셀을 초과하여 중지되었습니다.",
     "customStopDuplicateId": "요청 ID가 중복되어 중지되었습니다.",

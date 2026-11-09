@@ -191,7 +191,7 @@
     "customReload": "重载页面",
     "customStop": "停止页面",
     "customStopped": "页面已停止。点击重载页面可再次运行。",
-    "customStopRequestRate": "请求过于频繁，页面已停止（允许每秒 20 次请求，最多突发 200 次）。",
+    "customStopRequestRate": "请求过于频繁，页面已停止（允许每秒 {{rate}} 次请求，最多突发 {{burst}} 次）。",
     "customStopLayoutRate": "页面尺寸更新过于频繁，页面已停止。",
     "customStopHeight": "页面高度无效或超过 30000 像素，页面已停止。",
     "customStopDuplicateId": "插件发送了重复的请求编号，页面已停止。",

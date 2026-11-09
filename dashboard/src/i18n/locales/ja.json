@@ -191,7 +191,7 @@
     "customReload": "ページを再読み込み",
     "customStop": "ページを停止",
     "customStopped": "ページを停止しました。再読み込みで再開できます。",
-    "customStopRequestRate": "リクエストが多すぎるため停止しました（毎秒20回、瞬間最大200回）。",
+    "customStopRequestRate": "リクエストが多すぎるため停止しました（毎秒{{rate}}回、瞬間最大{{burst}}回）。",
     "customStopLayoutRate": "ページサイズの更新が多すぎるため停止しました。",
     "customStopHeight": "ページの高さが無効、または30000ピクセルを超えたため停止しました。",
     "customStopDuplicateId": "リクエストIDが重複したため停止しました。",

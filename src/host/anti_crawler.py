@@ -105,7 +105,7 @@ ASSET_SCANNER_HEADERS = {
     "x-remote-addr": set(),
     # 注意：移除了以下反向代理标准头以避免误报：
     # - "x-forwarded-proto" (反向代理标准头)
-    # - "x-real-ip" (反向代理标准头，已在_get_client_ip中使用)
+    # - "x-real-ip" (反向代理标准头，已在 get_client_ip 中使用)
 }
 
 # 仅检查特定HTTP头中的可疑模式（收紧匹配范围）
@@ -293,11 +293,122 @@ def _get_mode_config(mode: str) -> Dict:
         }
 
 
+class ClientIPResolver:
+    """按可信代理配置解析客户端 IP。"""
+
+    def __init__(self, trusted_proxies: str, trust_xff: bool) -> None:
+        self.trusted_proxies = _parse_allowed_ips(trusted_proxies)
+        self.trust_xff = trust_xff
+
+    def _is_trusted_proxy(self, ip: str) -> bool:
+        """
+        检查IP是否在信任的代理列表中
+
+        Args:
+            ip: IP地址字符串
+
+        Returns:
+            如果是信任的代理则返回 True
+        """
+        if not self.trusted_proxies or ip == "unknown":
+            return False
+
+        # 检查代理列表中的每个条目
+        for trusted_entry in self.trusted_proxies:
+            # 通配符模式（字符串，正则表达式）
+            if isinstance(trusted_entry, str):
+                try:
+                    if re.match(trusted_entry, ip):
+                        return True
+                except re.error:
+                    continue
+            # CIDR格式（网络对象）
+            elif isinstance(trusted_entry, (ipaddress.IPv4Network, ipaddress.IPv6Network)):
+                try:
+                    client_ip_obj = ipaddress.ip_address(ip)
+                    if client_ip_obj in trusted_entry:
+                        return True
+                except (ValueError, AttributeError):
+                    continue
+            # 精确IP（地址对象）
+            elif isinstance(trusted_entry, (ipaddress.IPv4Address, ipaddress.IPv6Address)):
+                try:
+                    client_ip_obj = ipaddress.ip_address(ip)
+                    if client_ip_obj == trusted_entry:
+                        return True
+                except (ValueError, AttributeError):
+                    continue
+
+        return False
+
+    def get_client_ip(self, request: Request) -> str:
+        """
+        获取客户端真实IP地址（带基本验证和代理信任检查）
+
+        Args:
+            request: 请求对象
+
+        Returns:
+            客户端IP地址
+        """
+        # 获取直接连接的客户端IP（用于验证代理）
+        direct_client_ip = None
+        if request.client:
+            direct_client_ip = request.client.host
+
+        # 检查是否信任X-Forwarded-For头
+        # trust_xff 只表示"启用代理解析能力"，但仍要求直连 IP 在 trusted_proxies 中
+        use_xff = False
+        if self.trust_xff and self.trusted_proxies and direct_client_ip:
+            # 只有在启用 trust_xff 且直连 IP 在信任列表中时，才信任 XFF
+            use_xff = self._is_trusted_proxy(direct_client_ip)
+
+        # 如果信任代理，优先从 X-Forwarded-For 获取
+        if use_xff:
+            forwarded_for = request.headers.get("X-Forwarded-For")
+            if forwarded_for:
+                # X-Forwarded-For 可能包含多个IP，取第一个
+                ip = forwarded_for.split(",")[0].strip()
+                # 基本验证IP格式
+                if self._validate_ip(ip):
+                    return ip
+
+        # 从 X-Real-IP 获取（如果信任代理）
+        if use_xff:
+            real_ip = request.headers.get("X-Real-IP")
+            if real_ip:
+                ip = real_ip.strip()
+                if self._validate_ip(ip):
+                    return ip
+
+        # 使用直接连接的客户端IP
+        if direct_client_ip and self._validate_ip(direct_client_ip):
+            return direct_client_ip
+
+        return "unknown"
+
+    def _validate_ip(self, ip: str) -> bool:
+        """
+        验证IP地址格式
+
+        Args:
+            ip: IP地址字符串
+
+        Returns:
+            如果格式有效则返回 True
+        """
+        try:
+            ipaddress.ip_address(ip)
+            return True
+        except (ValueError, AttributeError):
+            return False
+
+
 class AntiCrawlerMiddleware(BaseHTTPMiddleware):
     """防爬虫中间件"""
 
     def __init__(
-        self, app, *, mode: str, allowed_ips: str, trusted_proxies: str, trust_xff: bool,
+        self, app, *, mode: str, allowed_ips: str, get_client_ip: Callable[[Request], str],
         is_authenticated: Callable[[Request], bool],
     ):
         """
@@ -307,15 +418,13 @@ class AntiCrawlerMiddleware(BaseHTTPMiddleware):
             app: FastAPI 应用实例
             mode: 防爬虫模式 (false/strict/loose/basic)
             allowed_ips: IP 白名单，逗号分隔
-            trusted_proxies: 信任的反向代理，逗号分隔
-            trust_xff: 是否在直连地址属于信任代理时采用 X-Forwarded-For
+            get_client_ip: 按可信代理配置获取客户端 IP
             is_authenticated: 判断请求是否来自已登录用户
         """
         super().__init__(app)
         self.mode = mode.lower()
         self.allowed_ips = _parse_allowed_ips(allowed_ips)
-        self.trusted_proxies = _parse_allowed_ips(trusted_proxies)
-        self.trust_xff = trust_xff
+        self._get_client_ip = get_client_ip
         self._is_authenticated = is_authenticated
         # 根据模式获取配置
         config = _get_mode_config(self.mode)
@@ -525,109 +634,6 @@ class AntiCrawlerMiddleware(BaseHTTPMiddleware):
         # 如果没有空deque可删除，且仍需要清理，删除最旧的一个IP
         if not empty_ips and oldest_ip:
             del self.request_times[oldest_ip]
-
-    def _is_trusted_proxy(self, ip: str) -> bool:
-        """
-        检查IP是否在信任的代理列表中
-
-        Args:
-            ip: IP地址字符串
-
-        Returns:
-            如果是信任的代理则返回 True
-        """
-        if not self.trusted_proxies or ip == "unknown":
-            return False
-
-        # 检查代理列表中的每个条目
-        for trusted_entry in self.trusted_proxies:
-            # 通配符模式（字符串，正则表达式）
-            if isinstance(trusted_entry, str):
-                try:
-                    if re.match(trusted_entry, ip):
-                        return True
-                except re.error:
-                    continue
-            # CIDR格式（网络对象）
-            elif isinstance(trusted_entry, (ipaddress.IPv4Network, ipaddress.IPv6Network)):
-                try:
-                    client_ip_obj = ipaddress.ip_address(ip)
-                    if client_ip_obj in trusted_entry:
-                        return True
-                except (ValueError, AttributeError):
-                    continue
-            # 精确IP（地址对象）
-            elif isinstance(trusted_entry, (ipaddress.IPv4Address, ipaddress.IPv6Address)):
-                try:
-                    client_ip_obj = ipaddress.ip_address(ip)
-                    if client_ip_obj == trusted_entry:
-                        return True
-                except (ValueError, AttributeError):
-                    continue
-
-        return False
-
-    def _get_client_ip(self, request: Request) -> str:
-        """
-        获取客户端真实IP地址（带基本验证和代理信任检查）
-
-        Args:
-            request: 请求对象
-
-        Returns:
-            客户端IP地址
-        """
-        # 获取直接连接的客户端IP（用于验证代理）
-        direct_client_ip = None
-        if request.client:
-            direct_client_ip = request.client.host
-
-        # 检查是否信任X-Forwarded-For头
-        # trust_xff 只表示"启用代理解析能力"，但仍要求直连 IP 在 trusted_proxies 中
-        use_xff = False
-        if self.trust_xff and self.trusted_proxies and direct_client_ip:
-            # 只有在启用 trust_xff 且直连 IP 在信任列表中时，才信任 XFF
-            use_xff = self._is_trusted_proxy(direct_client_ip)
-
-        # 如果信任代理，优先从 X-Forwarded-For 获取
-        if use_xff:
-            forwarded_for = request.headers.get("X-Forwarded-For")
-            if forwarded_for:
-                # X-Forwarded-For 可能包含多个IP，取第一个
-                ip = forwarded_for.split(",")[0].strip()
-                # 基本验证IP格式
-                if self._validate_ip(ip):
-                    return ip
-
-        # 从 X-Real-IP 获取（如果信任代理）
-        if use_xff:
-            real_ip = request.headers.get("X-Real-IP")
-            if real_ip:
-                ip = real_ip.strip()
-                if self._validate_ip(ip):
-                    return ip
-
-        # 使用直接连接的客户端IP
-        if direct_client_ip and self._validate_ip(direct_client_ip):
-            return direct_client_ip
-
-        return "unknown"
-
-    def _validate_ip(self, ip: str) -> bool:
-        """
-        验证IP地址格式
-
-        Args:
-            ip: IP地址字符串
-
-        Returns:
-            如果格式有效则返回 True
-        """
-        try:
-            ipaddress.ip_address(ip)
-            return True
-        except (ValueError, AttributeError):
-            return False
 
     def _is_ip_allowed(self, ip: str) -> bool:
         """

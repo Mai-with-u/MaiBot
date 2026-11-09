@@ -191,7 +191,7 @@
     "customReload": "Reload page",
     "customStop": "Stop page",
     "customStopped": "Page stopped. Reload the page to run again.",
-    "customStopRequestRate": "Too many requests. Page stopped (20 requests per second, with bursts of up to 200).",
+    "customStopRequestRate": "Too many requests. Page stopped ({{rate}} requests per second, with bursts of up to {{burst}}).",
     "customStopLayoutRate": "Too many page size updates. Page stopped.",
     "customStopHeight": "Page height is invalid or exceeds 30000 pixels. Page stopped.",
     "customStopDuplicateId": "The plugin sent a duplicate request ID. Page stopped.",
