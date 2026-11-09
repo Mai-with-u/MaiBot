@@ -441,6 +441,34 @@ def _find_stale_reply_target(
     return latest_user_message
 
 
+def _build_stale_reply_target_failure(
+    tool_ctx: BuiltinToolRuntimeContext,
+    chat_history: list[LLMContextMessage],
+    target_message_id: str,
+    previous_target_reply: str,
+    metadata: Dict[str, Any],
+) -> Optional[ToolExecutionResult]:
+    """目标已过期时构造可操作的失败结果，供 Planner 改用最新消息。"""
+
+    stale_reply_target = _find_stale_reply_target(chat_history, target_message_id, previous_target_reply)
+    if stale_reply_target is None:
+        return None
+    reason = (
+        f"目标消息 {to_display_message_id(target_message_id)} 已回复过，"
+        f"且存在更新的用户消息 {to_display_message_id(stale_reply_target.message_id)}。"
+        "请改用最新用户消息的 msg_id 重新调用 reply，不要重复回复旧目标。"
+    )
+    logger.warning(f"{tool_ctx.runtime.log_prefix} 拒绝重复回复旧目标: {reason}")
+    return _build_reply_failure(
+        tool_ctx,
+        target_message_id,
+        "stale_reply_target",
+        reason,
+        metadata,
+        extra_content={"suggested_msg_id": stale_reply_target.message_id},
+    )
+
+
 def _with_duplicate_target_reply_reminder(
     reply_tool_args: dict[str, Any],
     previous_reply: str,
@@ -651,24 +679,15 @@ async def _execute_reply(
         _find_recent_reply_to_target(replyer_chat_history, target_message_id) if supplement_runner is None else ""
     )
     if previous_target_reply:
-        stale_reply_target = _find_stale_reply_target(
-            replyer_chat_history, target_message_id, previous_target_reply,
+        stale_failure = _build_stale_reply_target_failure(
+            tool_ctx,
+            replyer_chat_history,
+            target_message_id,
+            previous_target_reply,
+            preparation_metadata,
         )
-        if stale_reply_target is not None:
-            reason = (
-                f"目标消息 {to_display_message_id(target_message_id)} 已回复过，"
-                f"且存在更新的用户消息 {to_display_message_id(stale_reply_target.message_id)}。"
-                "请改用最新用户消息的 msg_id 重新调用 reply，不要重复回复旧目标。"
-            )
-            logger.warning(f"{tool_ctx.runtime.log_prefix} 拒绝重复回复旧目标: {reason}")
-            return _build_reply_failure(
-                tool_ctx,
-                target_message_id,
-                "stale_reply_target",
-                reason,
-                preparation_metadata,
-                extra_content={"suggested_msg_id": stale_reply_target.message_id},
-            )
+        if stale_failure is not None:
+            return stale_failure
         reply_tool_args = _with_duplicate_target_reply_reminder(reply_tool_args, previous_target_reply)
 
     try:
@@ -730,6 +749,17 @@ async def _execute_reply(
         success, reply_result = await generation
         if supplement_runner is not None:
             await collect_supplement()
+            supplement_chat_history = list(tool_ctx.runtime._chat_history)
+            supplement_target_reply = _find_recent_reply_to_target(supplement_chat_history, target_message_id)
+            stale_failure = _build_stale_reply_target_failure(
+                tool_ctx,
+                supplement_chat_history,
+                target_message_id,
+                supplement_target_reply,
+                preparation_metadata,
+            )
+            if stale_failure is not None:
+                return stale_failure
             await prepare_extensions()
             if extension_execution.extra_prompt:
                 raise ValueError("平行补充器模式下请通过 generation_prompt 声明正文要求，prepare 不能在正文生成后追加要求")

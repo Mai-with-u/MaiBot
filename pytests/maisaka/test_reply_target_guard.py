@@ -6,6 +6,7 @@ from src.common.data_models.message_component_data_model import MessageSequence,
 from src.core.tooling import ToolExecutionResult
 from src.maisaka.builtin_tool.reply import (
     _build_reply_failure,
+    _build_stale_reply_target_failure,
     _find_latest_user_message,
     _find_recent_reply_to_target,
     _find_stale_reply_target,
@@ -25,6 +26,8 @@ def _build_message(
     quote_target_id: str = "",
     timestamp: datetime = _TIMESTAMP,
 ) -> SessionBackedMessage:
+    """构造带可选引用组件的真实 IM 上下文消息。"""
+
     components = [TextComponent(text)]
     if quote_target_id:
         components.append(ReplyComponent(quote_target_id))
@@ -41,6 +44,8 @@ def _build_message(
 
 
 def _build_history() -> List[LLMContextMessage]:
+    """构造“已回复旧消息后又出现新用户消息”的聊天记录。"""
+
     return [
         _build_message("1001", "第一条用户消息", timestamp=datetime(2026, 11, 9, 18, 27, 8)),
         _build_message(
@@ -109,7 +114,22 @@ def test_find_stale_reply_target_keeps_supplement_after_newer_message() -> None:
     assert _find_stale_reply_target(history, "1001", "补充回复第一条") is None
 
 
+def test_build_stale_reply_target_failure_suggests_latest_message() -> None:
+    result = _build_stale_reply_target_failure(
+        _StubToolContext(), _build_history(), "1001", "已回复第一条", {},
+    )
+    assert result is not None
+    assert result.structured_content["error_code"] == "stale_reply_target"
+    assert result.structured_content["suggested_msg_id"] == "1003"
+
+
+class _StubRuntime:
+    log_prefix = ""
+
+
 class _StubToolContext:
+    runtime = _StubRuntime()
+
     def build_failure_result(
         self,
         tool_name: str,
@@ -118,6 +138,8 @@ class _StubToolContext:
         structured_content: Optional[dict] = None,
         metadata: Optional[dict] = None,
     ) -> ToolExecutionResult:
+        """返回与真实工具上下文一致的最小失败结果。"""
+
         return ToolExecutionResult(
             tool_name=tool_name,
             success=False,
@@ -165,6 +187,29 @@ def test_record_reply_failure_counts_same_target_and_error() -> None:
         structured_content={"msg_id": "1003", "error_code": "plugin_empty_response"},
     )
     assert engine._record_reply_failure(other_target) == (1, "1003", "plugin_empty_response")
+
+
+def test_record_reply_failure_ignores_parameter_errors() -> None:
+    engine = object.__new__(MaisakaReasoningEngine)
+    engine._reply_failure_counts = {}
+    result = ToolExecutionResult(
+        tool_name="reply",
+        success=False,
+        error_message="after_reply 必须为 continue、stop 或 wait。",
+    )
+    assert engine._record_reply_failure(result) == (0, "", "")
+    assert engine._reply_failure_counts == {}
+
+
+def test_clear_reply_failure_counts_removes_all_errors_for_target() -> None:
+    engine = object.__new__(MaisakaReasoningEngine)
+    engine._reply_failure_counts = {
+        ("1001", "plugin_empty_response"): 1,
+        ("1001", "stale_reply_target"): 1,
+        ("1003", "plugin_empty_response"): 1,
+    }
+    engine._clear_reply_failure_counts("1001")
+    assert engine._reply_failure_counts == {("1003", "plugin_empty_response"): 1}
 
 
 def test_cycle_end_for_reply_failure_limit() -> None:

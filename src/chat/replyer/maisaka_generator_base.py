@@ -1081,6 +1081,8 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         planner_snapshot: Optional[PlannerRequestSnapshot] = None,
         tool_call_id: str = "",
     ) -> Tuple[bool, ReplyGenerationResult]:
+        """生成一轮可见回复，执行 Replyer Hook、重试和补充内容编排。"""
+
         async def finalize(success_value: bool) -> Tuple[bool, ReplyGenerationResult]:
             if not result.prompt_html_uri and global_config.debug.save_maisaka_reasoning:
                 await asyncio.to_thread(self._persist_reply_preview, result, stream_id=stream_id, reply_reason=reply_reason)

@@ -2116,15 +2116,26 @@ class MaisakaReasoningEngine:
         tool_monitor_results.append(monitor_result)
 
     def _record_reply_failure(self, result: ToolExecutionResult) -> tuple[int, str, str]:
-        """记录同一回复目标的失败次数，返回次数、目标和错误码。"""
+        """记录同一回复目标的失败次数，参数错误不计入目标失败。"""
 
         structured = result.structured_content if isinstance(result.structured_content, dict) else {}
         failure_target = str(structured.get("msg_id") or "").strip()
+        if not failure_target:
+            return 0, "", ""
         failure_code = str(structured.get("error_code") or result.error_message or "unknown").strip()
         failure_key = (failure_target, failure_code)
         failure_count = self._reply_failure_counts.get(failure_key, 0) + 1
         self._reply_failure_counts[failure_key] = failure_count
         return failure_count, failure_target, failure_code
+
+    def _clear_reply_failure_counts(self, target_message_id: str) -> None:
+        """清除指定目标在所有错误码下的回复失败计数。"""
+
+        normalized_target = target_message_id.strip()
+        if not normalized_target:
+            return
+        for key in [key for key in self._reply_failure_counts if key[0] == normalized_target]:
+            self._reply_failure_counts.pop(key, None)
 
     async def _handle_tool_calls(
         self,
@@ -2293,8 +2304,15 @@ class MaisakaReasoningEngine:
                         f"结束本轮思考以避免无效重试: target={failure_target or 'unknown'} "
                         f"reason={failure_code}"
                     )
-                else:
+                elif failure_count:
                     logger.warning(f"{self._runtime.log_prefix} 回复工具未生成可见消息，将继续下一轮循环")
+
+            if result.success and tool_call.func_name == "reply":
+                success_structured = result.structured_content if isinstance(result.structured_content, dict) else {}
+                success_target = str(
+                    success_structured.get("msg_id") or invocation.arguments.get("msg_id") or ""
+                ).strip()
+                self._clear_reply_failure_counts(success_target)
 
             if result.success and result.stop_after_execution:
                 should_stop_after_execution = True
