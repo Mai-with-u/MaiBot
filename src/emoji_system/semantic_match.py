@@ -40,6 +40,7 @@ class EmojiTags(BaseModel):
     @field_validator("emotion_tags", "content_tags", mode="before")
     @classmethod
     def normalize_tags(cls, value: object, info: ValidationInfo) -> object:
+        """Clean tag lists and trim excess tags only for fresh VLM responses."""
         if isinstance(value, list) and all(isinstance(tag, str) for tag in value):
             tags = list(dict.fromkeys(tag.strip() for tag in value if tag.strip()))
             if info.context and info.context.get("truncate_model_tags"):
@@ -152,6 +153,7 @@ def _save_tags(emoji_hash: str, tags: EmojiTags) -> None:
 
 
 async def _index_emoji(emoji: MaiEmoji, config_key: Optional[str]) -> None:
+    """Cache validated VLM tags and embed each available axis when configured."""
     tags = await asyncio.to_thread(get_emoji_tags, emoji.file_hash)
     if tags is None and _is_vlm_task_configured():
         async with _tag_lock:
