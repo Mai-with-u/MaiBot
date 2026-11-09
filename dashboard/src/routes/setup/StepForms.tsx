@@ -152,7 +152,11 @@ interface PersonalityFormProps {
   onChange: (config: PersonalityConfig) => void
 }
 
-export function PersonalityPresetSelect({ config, onChange }: PersonalityFormProps) {
+export function PersonalityPresetSelect({ config, onChange, presetId }: {
+  config: PersonalityConfig
+  presetId: string
+  onChange: (config: PersonalityConfig, presetId: string) => void
+}) {
   const { t } = useTranslation()
   const presets = [
     {
@@ -165,19 +169,13 @@ export function PersonalityPresetSelect({ config, onChange }: PersonalityFormPro
     ...PERSONALITY_PRESETS,
   ]
 
-  const selectedPreset = presets.find((preset) =>
-    config.personality === preset.personality
-    && config.behavior_style === preset.behavior_style
-    && config.reply_style === preset.reply_style
-  )
-
   return (
     <div className="flex items-center justify-end gap-3">
       <Label htmlFor="personality-preset" className="shrink-0">
         {t('setupPage.forms.personality.presets.label')}
       </Label>
       <Select
-        value={selectedPreset?.id ?? ''}
+        value={presetId}
         onValueChange={(id) => {
           const preset = presets.find((item) => item.id === id)
           if (!preset) return
@@ -186,7 +184,7 @@ export function PersonalityPresetSelect({ config, onChange }: PersonalityFormPro
             personality: preset.personality,
             behavior_style: preset.behavior_style,
             reply_style: preset.reply_style,
-          })
+          }, id)
         }}
       >
         <SelectTrigger id="personality-preset" className="w-48">

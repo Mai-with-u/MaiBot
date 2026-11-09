@@ -50,3 +50,5 @@ export interface ModelSetupConfig {
   replyer_reasoning_effort?: 'low' | 'high' | 'max'
   replyer_thinking: boolean
 }
+
+export type SetupModelRole = 'replyer' | 'planner'

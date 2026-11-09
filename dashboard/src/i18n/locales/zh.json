@@ -1222,7 +1222,7 @@
       },
       "planner": {
         "title": "设置 Planner",
-        "description": "Planner 负责判断何时回复、如何行动。这里也可以测试两个模型是否连通。"
+        "description": "Planner 负责判断何时回复、如何行动。"
       },
       "basicSettings": {
         "title": "基础设置",
@@ -1253,7 +1253,10 @@
       },
       "personality": {
         "title": "人格配置",
-        "description": "定义机器人的性格和说话风格"
+        "description": "定义机器人的性格和说话风格",
+        "choose": "你希望：",
+        "template": "使用可修改的人设模板",
+        "manual": "自己编写人设"
       },
       "apiProvider": {
         "title": "API配置",

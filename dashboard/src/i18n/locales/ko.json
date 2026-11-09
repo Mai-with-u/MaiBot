@@ -1175,7 +1175,7 @@
       },
       "planner": {
         "title": "Planner 설정",
-        "description": "Planner는 언제 답장하고 어떻게 행동할지 판단합니다. 두 모델의 연결을 여기서 확인할 수 있습니다."
+        "description": "Planner는 언제 답장하고 어떻게 행동할지 판단합니다."
       },
       "basicSettings": {
         "title": "기본 설정",
@@ -1206,7 +1206,10 @@
       },
       "personality": {
         "title": "성격 설정",
-        "description": "봇의 성격과 말투를 정의합니다"
+        "description": "봇의 성격과 말투를 정의합니다",
+        "choose": "어떤 방식으로 시작할까요?",
+        "template": "수정할 수 있는 캐릭터 템플릿 사용",
+        "manual": "캐릭터 설정 직접 작성"
       },
       "apiProvider": {
         "title": "API 설정",

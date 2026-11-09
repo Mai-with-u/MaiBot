@@ -434,6 +434,20 @@ describe('saveModelSetupConfig', () => {
     replyer_thinking: false,
   }
 
+  it('测试 Replyer 时只保存当前模型并保留 Planner 的配置与任务分配', async () => {
+    const planner = { name: 'glm-5', model_identifier: 'old-planner', api_provider: 'Existing' }
+    const tasks = { planner: { model_list: ['glm-5'] }, replyer: { model_list: ['old-replyer'] } }
+    getMock.mockResolvedValue({ config: { models: [planner], model_task_config: tasks } })
+    postMock.mockResolvedValue({ success: true })
+
+    const names = await saveModelSetupConfig(setupConfig, 'DeepSeek', 'replyer')
+    expect(names.replyer).toBe('glm-5-replyer')
+    expect(postMock.mock.calls[0][1]?.body).toMatchObject({
+      models: [planner, { name: 'glm-5-replyer', model_identifier: 'glm-5' }],
+      model_task_config: tasks,
+    })
+  })
+
   it('空配置下新建 planner/replyer 模型并同步任务模型列表', async () => {
     getMock.mockResolvedValue({ config: {} })
     postMock.mockResolvedValue({ success: true })

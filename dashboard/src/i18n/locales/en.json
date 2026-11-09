@@ -1222,7 +1222,7 @@
       },
       "planner": {
         "title": "Set up Planner",
-        "description": "Planner decides when to respond and what to do. You can also test both model connections here."
+        "description": "Planner decides when to respond and what to do."
       },
       "basicSettings": {
         "title": "Basic settings",
@@ -1253,7 +1253,10 @@
       },
       "personality": {
         "title": "Personality",
-        "description": "Define the bot's personality and speaking style"
+        "description": "Define the bot's personality and speaking style",
+        "choose": "How would you like to get started?",
+        "template": "Use an editable persona template",
+        "manual": "Write your own persona"
       },
       "apiProvider": {
         "title": "API Setup",

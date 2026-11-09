@@ -74,10 +74,6 @@ vi.mock('../api', () => ({
   updateAccessToken: mocks.updateAccessToken,
   fetchSetupModels: mocks.fetchSetupModels,
   testSetupModel: mocks.testSetupModel,
-  resolveSetupModelNames: (config: ModelSetupConfig) => ({
-    planner: config.planner_model_identifier,
-    replyer: config.replyer_model_identifier,
-  }),
 }))
 
 // Radix DropdownMenu 在 jsdom 有 pointer-capture 限制，桩成始终展开的普通元素
@@ -181,7 +177,10 @@ beforeEach(() => {
   mocks.saveBasicSetupConfig.mockResolvedValue({ success: true })
   mocks.savePersonalityConfig.mockResolvedValue({ success: true })
   mocks.saveApiProviderSetupConfig.mockResolvedValue({ success: true })
-  mocks.saveModelSetupConfig.mockResolvedValue({ success: true })
+  mocks.saveModelSetupConfig.mockImplementation(async (config: ModelSetupConfig) => ({
+    planner: config.planner_model_identifier,
+    replyer: config.replyer_model_identifier,
+  }))
   mocks.completeSetup.mockResolvedValue({ success: true })
   mocks.updateAccessToken.mockResolvedValue({ success: true, message: 'ok' })
   mocks.fetchSetupModels.mockReset()
@@ -649,10 +648,42 @@ describe('SetupPage 错误态与空态', () => {
 
 async function advanceTo(...steps: string[]) {
   for (const step of steps) {
+    const template = screen.queryByRole('button', { name: 'setupPage.steps.personality.template' })
+    if (template) fireEvent.click(template)
     fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.next' }))
     await screen.findByRole('heading', { name: `setupPage.steps.${step}.title` })
   }
 }
+
+it('先选择人设路径，返回切换时保留各自的草稿', async () => {
+  render(<SetupPage />)
+  await waitLoadingDone()
+  await advanceTo('personality')
+  const choose = (mode: 'manual' | 'template') => fireEvent.click(
+    screen.getByRole('button', { name: `setupPage.steps.personality.${mode}` })
+  )
+  const field = () => screen.getByRole('textbox', { name: 'setupPage.forms.personality.personality.label' })
+  const back = () => fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.previous' }))
+
+  expect(screen.queryAllByRole('textbox')).toHaveLength(0)
+  choose('manual')
+  expect(field()).toHaveValue('')
+  expect(screen.queryByRole('combobox', { name: 'setupPage.forms.personality.presets.label' })).not.toBeInTheDocument()
+  fireEvent.change(field(), { target: { value: '手写草稿' } })
+  back()
+  choose('template')
+  expect(field()).toHaveValue('setupPage.defaults.personality.personality')
+  expect(screen.getByRole('combobox', { name: 'setupPage.forms.personality.presets.label' })).toBeInTheDocument()
+  fireEvent.change(field(), { target: { value: '模板草稿' } })
+  back()
+  choose('manual')
+  expect(field()).toHaveValue('手写草稿')
+  back()
+  choose('template')
+  expect(field()).toHaveValue('模板草稿')
+  await advanceTo('defineModel')
+  expect(mocks.savePersonalityConfig).toHaveBeenCalledWith(expect.objectContaining({ personality: '模板草稿' }))
+})
 
 it('展开当前阶段，保存基础设置后进入带试聊引导的聊天页', async () => {
   render(<SetupPage />)
@@ -699,21 +730,22 @@ describe('SetupPage 连通性测试', () => {
     api_key: 'sk-test',
   }
 
-  async function goToModelStep() {
+  async function goToModelStep(role: 'replyer' | 'planner' = 'planner') {
     mocks.loadApiProviderSetupConfig.mockResolvedValue({ ...customProvider })
     render(<SetupPage />)
     await waitLoadingDone()
-    await advanceTo('personality', 'defineModel', 'replyer', 'planner')
+    await advanceTo('personality', 'defineModel', 'replyer')
+    if (role === 'planner') await advanceTo('planner')
     await screen.findByRole('button', { name: 'setupPage.connectionTest.button' })
   }
 
-  it('先保存当前配置，再分别测试规划与回复模型并显示结果', async () => {
+  it('只测试当前角色，返回上一步仍保留该角色的结果', async () => {
     mocks.testSetupModel.mockImplementation(async (name: string) => ({
       success: name === 'deepseek-v4',
       latency_ms: 1234,
       error: name === 'deepseek-v4' ? null : '401 invalid key',
     }))
-    await goToModelStep()
+    await goToModelStep('replyer')
     mocks.saveApiProviderSetupConfig.mockClear()
     mocks.saveModelSetupConfig.mockClear()
 
@@ -721,12 +753,19 @@ describe('SetupPage 连通性测试', () => {
 
     expect(await screen.findByText('401 invalid key')).toBeInTheDocument()
     expect(mocks.saveApiProviderSetupConfig).toHaveBeenCalledWith(customProvider)
-    expect(mocks.saveModelSetupConfig).toHaveBeenCalledWith(defaultModelSetup, 'MyProvider')
-    expect(mocks.testSetupModel).toHaveBeenCalledWith('deepseek-v4')
-    expect(mocks.testSetupModel).toHaveBeenCalledWith('glm-5')
+    expect(mocks.saveModelSetupConfig).toHaveBeenCalledWith(defaultModelSetup, 'MyProvider', 'replyer')
+    expect(mocks.testSetupModel).toHaveBeenCalledExactlyOnceWith('glm-5')
     expect(screen.getByText('setupPage.connectionTest.canContinue')).toBeInTheDocument()
     // 测试失败只作参考，仍可继续。
     expect(screen.getByRole('button', { name: 'setupPage.actions.next' })).toBeEnabled()
+    await advanceTo('planner')
+    expect(screen.queryByText('401 invalid key')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'setupPage.connectionTest.button' }))
+    expect(await screen.findByText('setupPage.connectionTest.roles.planner')).toBeInTheDocument()
+    expect(mocks.saveModelSetupConfig).toHaveBeenLastCalledWith(defaultModelSetup, 'MyProvider', 'planner')
+    expect(mocks.testSetupModel).toHaveBeenNthCalledWith(2, 'deepseek-v4')
+    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.previous' }))
+    expect(screen.getByText('401 invalid key')).toBeInTheDocument()
   })
 
   it('保存配置失败时提示错误且不调用模型测试', async () => {

@@ -21,6 +21,7 @@ import type {
   BotBasicConfig,
   ModelSetupConfig,
   PersonalityConfig,
+  SetupModelRole,
 } from './types'
 
 interface ModelInfo {
@@ -338,63 +339,53 @@ export async function testSetupModel(modelName: string): Promise<ModelTestResult
 }
 
 // 保存基础模型配置
-export async function saveModelSetupConfig(config: ModelSetupConfig, providerName: string) {
+export async function saveModelSetupConfig(config: ModelSetupConfig, providerName: string, testRole?: SetupModelRole) {
   const modelConfig = await loadModelConfig()
   const trimmedProviderName = providerName.trim()
   const provider = modelConfig.api_providers?.find((item) => item.name === trimmedProviderName)
   const template = findTemplateByBaseUrl(provider?.base_url ?? '')
   const clientType = provider?.client_type ?? 'openai'
-  const plannerModelIdentifier = config.planner_model_identifier.trim()
-  const replyerModelIdentifier = config.replyer_model_identifier.trim()
-  const { planner: plannerModelName, replyer: replyerModelName } = resolveSetupModelNames(config)
-
-  // 新增或更新 planner/replyer 模型，并仅同步 utils 到 planner。
-  let models = modelConfig.models || []
-  const existingPlannerModel = models.find((model) => model.name === plannerModelName)
-  const existingReplyerModel = models.find((model) => model.name === replyerModelName)
-  models = upsertModel(
-    models,
-    createBasicModel(
-      plannerModelName,
-      plannerModelIdentifier,
-      trimmedProviderName,
-      config.planner_visual,
-      config.planner_thinking,
-      template,
-      clientType,
-      existingPlannerModel,
-      config.planner_reasoning_effort
-    )
-  )
-  models = upsertModel(
-    models,
-    createBasicModel(
-      replyerModelName,
-      replyerModelIdentifier,
-      trimmedProviderName,
-      config.replyer_visual,
-      config.replyer_thinking,
-      template,
-      clientType,
-      existingReplyerModel,
-      config.replyer_reasoning_effort
-    )
-  )
-
+  const names = resolveSetupModelNames(config)
   const modelTaskConfig = modelConfig.model_task_config || {}
-  const updatedTaskConfig = {
+  const otherRoles = testRole === 'replyer' ? ['planner', 'utils'] : ['replyer']
+  if (testRole) {
+    const reserved = new Set(otherRoles.flatMap((role) => modelTaskConfig[role]?.model_list ?? []))
+    const name = names[testRole]
+    for (let suffix = 1; reserved.has(names[testRole]); suffix += 1) {
+      names[testRole] = `${name}-${testRole}${suffix > 1 ? `-${suffix}` : ''}`
+    }
+  }
+
+  // 测试只写入当前模型，正式保存时才更新任务分配。
+  let models = modelConfig.models || []
+  for (const role of testRole ? [testRole] : (['planner', 'replyer'] as const)) {
+    const name = names[role]
+    models = upsertModel(models, createBasicModel(
+      name,
+      config[`${role}_model_identifier`].trim(),
+      trimmedProviderName,
+      config[`${role}_visual`],
+      config[`${role}_thinking`],
+      template,
+      clientType,
+      models.find((model) => model.name === name),
+      config[`${role}_reasoning_effort`]
+    ))
+  }
+
+  const updatedTaskConfig = testRole ? modelConfig.model_task_config : {
     ...modelTaskConfig,
     planner: {
       ...(modelTaskConfig.planner || {}),
-      model_list: [plannerModelName],
+      model_list: [names.planner],
     },
     replyer: {
       ...(modelTaskConfig.replyer || {}),
-      model_list: [replyerModelName],
+      model_list: [names.replyer],
     },
     utils: {
       ...(modelTaskConfig.utils || {}),
-      model_list: [plannerModelName],
+      model_list: [names.planner],
     },
   }
 
@@ -405,10 +396,11 @@ export async function saveModelSetupConfig(config: ModelSetupConfig, providerNam
     model_task_config: updatedTaskConfig,
   }
 
-  return backendApi.post('/api/webui/config/model', {
+  await backendApi.post('/api/webui/config/model', {
     body: updatedConfig,
     errorMessage: i18n.t('setupPage.errors.saveModel'),
   })
+  return names
 }
 
 // 标记设置完成

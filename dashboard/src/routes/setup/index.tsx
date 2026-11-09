@@ -42,6 +42,7 @@ import type {
   BotBasicConfig,
   ModelSetupConfig,
   PersonalityConfig,
+  SetupModelRole,
 } from './types'
 import {
   ApiProviderSetupForm,
@@ -65,14 +66,15 @@ import {
   saveModelSetupConfig,
   completeSetup,
   fetchSetupModels,
-  resolveSetupModelNames,
   testSetupModel,
   updateAccessToken,
 } from './api'
 import { ConnectionTestPanel } from './ConnectionTestPanel'
-import type { ConnectionTestRoleResult, ConnectionTestState } from './ConnectionTestPanel'
+import type { ConnectionTestState } from './ConnectionTestPanel'
 
 const MODEL_FETCH_MAX_ATTEMPTS = 3
+const PERSONALITY_MODES = ['template', 'manual'] as const
+type PersonalityMode = (typeof PERSONALITY_MODES)[number]
 const LANGUAGE_CODES = ['zh', 'en', 'ja', 'ko'] as const
 const LANGUAGE_NAMES: Record<(typeof LANGUAGE_CODES)[number], string> = {
   zh: '中文',
@@ -128,6 +130,27 @@ function SetupPageContent() {
   const [personality, setPersonality] = useState<PersonalityConfig>(() =>
     createDefaultPersonalityConfig()
   )
+  const [personalityMode, setPersonalityMode] = useState<PersonalityMode | null>(null)
+  const [personalityDrafts, setPersonalityDrafts] = useState<Partial<Record<PersonalityMode, PersonalityConfig>>>({})
+  const [personalityPresetId, setPersonalityPresetId] = useState('default')
+  const personalityDraft = personalityMode ? personalityDrafts[personalityMode] : undefined
+
+  const choosePersonalityMode = (mode: PersonalityMode) => {
+    setPersonalityDrafts((drafts) => {
+      if (drafts[mode]) return drafts
+      const defaults = createDefaultPersonalityConfig()
+      return {
+        ...drafts,
+        [mode]: {
+          ...personality,
+          personality: mode === 'template' ? defaults.personality : '',
+          behavior_style: mode === 'template' ? defaults.behavior_style : '',
+          reply_style: mode === 'template' ? defaults.reply_style : '',
+        },
+      }
+    })
+    setPersonalityMode(mode)
+  }
 
   // 步骤3：API 提供商配置
   const [apiProviderSetup, setApiProviderSetup] = useState<ApiProviderSetupConfig>({
@@ -159,7 +182,10 @@ function SetupPageContent() {
   const steps = [
     ...(requiresCustomToken ? [step('custom-token', 'customToken')] : []),
     step('nickname', 'nickname', profile),
-    step('personality', 'personality', profile),
+    {
+      ...step('personality', 'personality', profile),
+      description: t(personalityMode ? 'setupPage.steps.personality.description' : 'setupPage.steps.personality.choose'),
+    },
     step('define-model', 'defineModel', models),
     step('replyer', 'replyer', models),
     step('planner', 'planner', models),
@@ -234,48 +260,64 @@ function SetupPageContent() {
     }
   }, [configuringModels, apiProviderSetup.base_url, apiProviderSetup.api_key, t])
 
-  // 连通性测试只作参考：失败不拦截完成。配置改动后旧结果作废。
-  const [connectionTest, setConnectionTest] = useState<ConnectionTestState>({ status: 'idle' })
-  useEffect(() => {
-    setConnectionTest({ status: 'idle' })
-  }, [apiProviderSetup, modelSetup])
+  // 分别保留两种角色的测试结果，输入改动后不显示旧结果。
+  const [connectionTests, setConnectionTests] = useState<Partial<Record<SetupModelRole, {
+    key: string
+    provider: ApiProviderSetupConfig
+    state: ConnectionTestState
+  }>>>({})
+  const testingConnection = Object.values(connectionTests).some((entry) => entry.state.status === 'testing')
+  const connectionTestKey = (role: SetupModelRole) => JSON.stringify([
+    modelSetup[`${role}_model_identifier`],
+    modelSetup[`${role}_visual`],
+    modelSetup[`${role}_thinking`],
+    modelSetup[`${role}_reasoning_effort`],
+  ])
+  const connectionTestState = (role: SetupModelRole): ConnectionTestState => {
+    const entry = connectionTests[role]
+    return entry?.provider === apiProviderSetup && entry.key === connectionTestKey(role)
+      ? entry.state
+      : { status: 'idle' }
+  }
 
-  const handleTestConnection = async () => {
-    const error = validateApiProviderSetup(apiProviderSetup) ?? validateModelSetup(modelSetup)
+  const handleTestConnection = async (role: SetupModelRole) => {
+    const error = validateApiProviderSetup(apiProviderSetup) ?? validateRoleModel(role)
     if (error) {
       toast({ title: t('setupPage.toast.validationFailedTitle'), description: error, variant: 'destructive' })
       return
     }
-    setConnectionTest({ status: 'testing' })
+    const key = connectionTestKey(role)
+    const updateTest = (state: ConnectionTestState) => {
+      setConnectionTests((tests) => ({ ...tests, [role]: { key, provider: apiProviderSetup, state } }))
+    }
+    updateTest({ status: 'testing' })
+    let name: string
     try {
-      // 测试接口读取配置文件中的模型，先写入当前填写的提供商与模型。
       await saveApiProviderSetupConfig(apiProviderSetup)
-      await saveModelSetupConfig(modelSetup, apiProviderSetup.provider_name)
-      const names = resolveSetupModelNames(modelSetup)
-      const roles = [
-        { role: 'planner' as const, name: names.planner },
-        { role: 'replyer' as const, name: names.replyer },
-      ]
-      const results = await Promise.all(
-        roles.map(async ({ role, name }): Promise<ConnectionTestRoleResult> => {
-          try {
-            const result = await testSetupModel(name)
-            return { role, success: result.success, latencyMs: result.latency_ms, error: result.error }
-          } catch (testError) {
-            return {
-              role,
-              success: false,
-              latencyMs: null,
-              error: testError instanceof Error ? testError.message : t('setupPage.toast.unknownError'),
-            }
-          }
-        })
-      )
-      setConnectionTest({ status: 'done', results })
+      const names = await saveModelSetupConfig(modelSetup, apiProviderSetup.provider_name, role)
+      name = names[role]
     } catch (saveError) {
-      setConnectionTest({
+      updateTest({
         status: 'error',
         error: saveError instanceof Error ? saveError.message : t('setupPage.toast.unknownError'),
+      })
+      return
+    }
+    try {
+      const result = await testSetupModel(name)
+      updateTest({
+        status: 'done',
+        results: [{ role, success: result.success, latencyMs: result.latency_ms, error: result.error }],
+      })
+    } catch (testError) {
+      updateTest({
+        status: 'done',
+        results: [{
+          role,
+          success: false,
+          latencyMs: null,
+          error: testError instanceof Error ? testError.message : t('setupPage.toast.unknownError'),
+        }],
       })
     }
   }
@@ -327,7 +369,8 @@ function SetupPageContent() {
           await saveBotBasicConfig(botBasic)
           break
         case 'personality':
-          await savePersonalityConfig(personality)
+          if (!personalityDraft) return false
+          await savePersonalityConfig(personalityDraft)
           break
         case 'define-model':
         case 'replyer':
@@ -433,6 +476,13 @@ function SetupPageContent() {
     return null
   }
 
+  function validateRoleModel(role: SetupModelRole): string | null {
+    if (modelSetup[`${role}_model_identifier`].trim()) return null
+    return t(role === 'planner'
+      ? 'setupPage.validation.enterPlannerModelIdentifier'
+      : 'setupPage.validation.enterReplyerModelIdentifier')
+  }
+
   function validateModelSetup(config: ModelSetupConfig): string | null {
     if (!config.planner_model_identifier.trim()) {
       return t('setupPage.validation.enterPlannerModelIdentifier')
@@ -480,6 +530,10 @@ function SetupPageContent() {
   }
 
   const handlePrevious = () => {
+    if (currentStepId === 'personality' && personalityMode) {
+      setPersonalityMode(null)
+      return
+    }
     if (currentStep > 0) {
       setCurrentStep(currentStep - 1)
     }
@@ -546,7 +600,29 @@ function SetupPageContent() {
       case 'nickname':
         return <BotBasicForm config={botBasic} onChange={setBotBasic} />
       case 'personality':
-        return <PersonalityForm config={personality} onChange={setPersonality} />
+        if (personalityMode && personalityDraft) {
+          return (
+            <PersonalityForm
+              config={personalityDraft}
+              onChange={(config) => setPersonalityDrafts((drafts) => ({ ...drafts, [personalityMode]: config }))}
+            />
+          )
+        }
+        return (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {PERSONALITY_MODES.map((mode) => (
+              <Button
+                key={mode}
+                type="button"
+                variant="outline"
+                className="h-auto min-h-16 justify-start whitespace-normal px-4 py-3 text-left"
+                onClick={() => choosePersonalityMode(mode)}
+              >
+                {t(`setupPage.steps.personality.${mode}`)}
+              </Button>
+            ))}
+          </div>
+        )
       case 'define-model':
         return (
           <div className="space-y-5">
@@ -597,13 +673,11 @@ function SetupPageContent() {
               fetchError={modelFetchError}
               providerBaseUrl={apiProviderSetup.base_url}
             />
-            {currentStepId === 'planner' && (
-              <ConnectionTestPanel
-                state={connectionTest}
-                onTest={handleTestConnection}
-                disabled={isSaving || isCompleting}
-              />
-            )}
+            <ConnectionTestPanel
+              state={connectionTestState(currentStepId)}
+              onTest={() => void handleTestConnection(currentStepId)}
+              disabled={isSaving || isCompleting || testingConnection}
+            />
           </div>
         )
       case 'group-replies':
@@ -671,8 +745,15 @@ function SetupPageContent() {
         <SetupWizardLayout
           steps={steps}
           currentStep={currentStep}
-          headerActions={currentStepId === 'personality' ? (
-            <PersonalityPresetSelect config={personality} onChange={setPersonality} />
+          headerActions={currentStepId === 'personality' && personalityMode === 'template' && personalityDraft ? (
+            <PersonalityPresetSelect
+              config={personalityDraft}
+              presetId={personalityPresetId}
+              onChange={(config, presetId) => {
+                setPersonalityPresetId(presetId)
+                setPersonalityDrafts((drafts) => ({ ...drafts, template: config }))
+              }}
+            />
           ) : undefined}
           actions={
             <>
@@ -681,7 +762,7 @@ function SetupPageContent() {
                   <Button
                     variant="ghost"
                     className="px-1"
-                    disabled={isSaving || isCompleting || currentStepId === 'custom-token'}
+                    disabled={isSaving || isCompleting || testingConnection || currentStepId === 'custom-token'}
                   >
                     {t('setupPage.actions.skip')}
                   </Button>
@@ -704,7 +785,7 @@ function SetupPageContent() {
 
               <div className="ml-auto flex items-center gap-3">
                 {currentStep > 0 && (
-                  <Button variant="outline" onClick={handlePrevious} disabled={isSaving || isCompleting}>
+                  <Button variant="outline" onClick={handlePrevious} disabled={isSaving || isCompleting || testingConnection}>
                     {t('setupPage.actions.previous')}
                   </Button>
                 )}
@@ -728,13 +809,13 @@ function SetupPageContent() {
                       </>
                     )}
                   </Button>
-                ) : (
+                ) : (currentStepId !== 'personality' || personalityMode) && (
                   <Button
                     onClick={handleNext}
                     variant={currentStepId === 'custom-token' && !validateToken(customToken).isValid ? 'outline' : 'default'}
                     size="lg"
                     disabled={
-                      isSaving ||
+                      isSaving || testingConnection ||
                       (currentStepId === 'custom-token' && !validateToken(customToken).isValid)
                     }
                     className="min-w-44"

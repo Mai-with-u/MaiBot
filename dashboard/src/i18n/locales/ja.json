@@ -1222,7 +1222,7 @@
       },
       "planner": {
         "title": "Planner を設定",
-        "description": "Planner は返信するタイミングや行動を判断します。ここで両方のモデルの接続を確認できます。"
+        "description": "Planner は返信するタイミングや行動を判断します。"
       },
       "basicSettings": {
         "title": "基本設定",
@@ -1253,7 +1253,10 @@
       },
       "personality": {
         "title": "人格設定",
-        "description": "ボットの性格や話し方を定義します"
+        "description": "ボットの性格や話し方を定義します",
+        "choose": "どちらの方法で始めますか？",
+        "template": "編集できる人物設定のテンプレートを使う",
+        "manual": "人物設定を自分で書く"
       },
       "apiProvider": {
         "title": "API設定",
