@@ -160,6 +160,7 @@ class MaisakaReasoningEngine:
         self._runtime = runtime
         self._last_reasoning_content: str = ""
         self._active_logical_turn_id: str | None = None
+        self._reply_failure_counts: dict[tuple[str, str], int] = {}
 
         self._turn_passive_replyer: Optional[bool] = None
 
@@ -791,6 +792,11 @@ class MaisakaReasoningEngine:
             return CycleEnd("planner_no_tool_end", "回复已发送，after_reply=stop 结束本轮思考。")
         if pause_tool_name == "reply:wait":
             return CycleEnd("tool_pause:wait", "回复已发送，after_reply=wait 等待后继续判断。")
+        if pause_tool_name == "reply_failure_limit":
+            return CycleEnd(
+                "reply_failure_limit",
+                "同一回复目标连续失败，已结束本轮思考以避免无效重试。",
+            )
         if pause_tool_name:
             return CycleEnd(f"tool_pause:{pause_tool_name}", f"工具 {pause_tool_name} 要求暂停当前思考循环。")
         return CycleEnd("tool_pause", "工具要求暂停当前思考循环。")
@@ -1017,6 +1023,7 @@ class MaisakaReasoningEngine:
                     self._turn_passive_replyer = global_config.experimental.passive_replyer
                     self._runtime._chat_loop_service.passive_replyer_override = self._turn_passive_replyer
                     self._active_logical_turn_id = turn_start_context.logical_turn_id or uuid.uuid4().hex
+                    self._reply_failure_counts.clear()
                     if force_continue_reason := self._runtime._consume_forced_turn_reason():
                         logger.info(f"{self._runtime.log_prefix} {force_continue_reason}")
                     round_index = 0
@@ -1093,6 +1100,7 @@ class MaisakaReasoningEngine:
                     self._turn_passive_replyer = None
                     self._runtime._chat_loop_service.passive_replyer_override = None
                     self._active_logical_turn_id = None
+                    self._reply_failure_counts.clear()
                     if self._runtime._agent_state == self._runtime._STATE_RUNNING:
                         self._runtime._enter_stop_state()
                     if self._runtime._running:
@@ -2107,6 +2115,17 @@ class MaisakaReasoningEngine:
                 monitor_result["images"] = images
         tool_monitor_results.append(monitor_result)
 
+    def _record_reply_failure(self, result: ToolExecutionResult) -> tuple[int, str, str]:
+        """记录同一回复目标的失败次数，返回次数、目标和错误码。"""
+
+        structured = result.structured_content if isinstance(result.structured_content, dict) else {}
+        failure_target = str(structured.get("msg_id") or "").strip()
+        failure_code = str(structured.get("error_code") or result.error_message or "unknown").strip()
+        failure_key = (failure_target, failure_code)
+        failure_count = self._reply_failure_counts.get(failure_key, 0) + 1
+        self._reply_failure_counts[failure_key] = failure_count
+        return failure_count, failure_target, failure_code
+
     async def _handle_tool_calls(
         self,
         tool_calls: list[ToolCall],
@@ -2132,6 +2151,7 @@ class MaisakaReasoningEngine:
         reply_pause = ""
         reply_wait_seconds = 30
         reply_pause_call_id = ""
+        reply_failure_limit_reached = False
 
         if self._runtime._tool_registry is None:
             total_tool_count = len(tool_calls)
@@ -2182,6 +2202,11 @@ class MaisakaReasoningEngine:
                 result = ToolExecutionResult(
                     tool_name=invocation.tool_name, success=False,
                     error_message=f"未执行：前面的 reply 已选择 after_reply={reply_pause}。",
+                )
+            elif reply_failure_limit_reached:
+                result = ToolExecutionResult(
+                    tool_name=invocation.tool_name, success=False,
+                    error_message="未执行：同一回复目标连续失败，本轮思考已结束。",
                 )
             elif self.passive_replyer_enabled and invocation.tool_name == "reply":
                 result = ToolExecutionResult(
@@ -2247,11 +2272,29 @@ class MaisakaReasoningEngine:
                 condensed_content=condensed_content,
             )
             tool_monitor_results[-1].update(started_at=tool_started_at, ended_at=tool_ended_at)
-            next_call_id = tool_calls[tool_index].call_id if tool_index < total_tool_count and not reply_pause else ""
+            next_call_id = (
+                tool_calls[tool_index].call_id
+                if tool_index < total_tool_count and not reply_pause and not reply_failure_limit_reached
+                else ""
+            )
             await self._emit_planner_progress(cycle_detail, state, tool_monitor_results, next_call_id)
 
-            if not result.success and tool_call.func_name == "reply":
-                logger.warning(f"{self._runtime.log_prefix} 回复工具未生成可见消息，将继续下一轮循环")
+            if (
+                not result.success
+                and tool_call.func_name == "reply"
+                and not reply_pause
+                and not reply_failure_limit_reached
+            ):
+                failure_count, failure_target, failure_code = self._record_reply_failure(result)
+                if failure_count >= 2:
+                    reply_failure_limit_reached = True
+                    logger.warning(
+                        f"{self._runtime.log_prefix} 同一回复目标连续失败 {failure_count} 次，"
+                        f"结束本轮思考以避免无效重试: target={failure_target or 'unknown'} "
+                        f"reason={failure_code}"
+                    )
+                else:
+                    logger.warning(f"{self._runtime.log_prefix} 回复工具未生成可见消息，将继续下一轮循环")
 
             if result.success and result.stop_after_execution:
                 should_stop_after_execution = True
@@ -2261,6 +2304,10 @@ class MaisakaReasoningEngine:
                 return True, invocation.tool_name, tool_result_summaries, tool_monitor_results
 
         self._append_tool_post_history_messages(deferred_post_history_messages)
+        if reply_failure_limit_reached:
+            self._runtime._end_planner_continuation()
+            self._runtime._enter_stop_state()
+            return True, "reply_failure_limit", tool_result_summaries, tool_monitor_results
         if reply_pause:
             if reply_pause == "stop":
                 self._runtime._end_planner_continuation()

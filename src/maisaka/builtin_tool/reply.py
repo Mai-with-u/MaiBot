@@ -295,9 +295,12 @@ def _build_reply_failure(
     reason: str,
     metadata: Dict[str, Any],
     hook_abort: Optional[Dict[str, Any]] = None,
+    extra_content: Optional[Dict[str, Any]] = None,
 ) -> ToolExecutionResult:
     """统一向 Planner 反馈回复失败类型；主动拦截同时携带来源和原因。"""
     content: Dict[str, Any] = {"msg_id": target_message_id, "error_code": error_code, "reason": reason}
+    if extra_content:
+        content.update(extra_content)
     if hook_abort is not None:
         content["hook_abort"] = hook_abort
     if "send_results" in metadata:
@@ -374,15 +377,26 @@ def _extract_guided_reply_text(message: SessionBackedMessage) -> str:
     return " ".join(normalized_text.split())
 
 
-def _find_recent_reply_to_target(
+def _find_latest_user_message(chat_history: list[LLMContextMessage]) -> Optional[SessionBackedMessage]:
+    """返回聊天记录中最新的一条真实用户消息。"""
+
+    for message in reversed(chat_history):
+        if not isinstance(message, SessionBackedMessage) or message.original_message.is_notify:
+            continue
+        if message.source_kind == "user":
+            return message
+    return None
+
+
+def _find_recent_reply_message_to_target(
     chat_history: list[LLMContextMessage],
     target_message_id: str,
-) -> str:
-    """查找最近一次已经引用回复过目标消息的 bot 发言。"""
+) -> Optional[SessionBackedMessage]:
+    """查找最近一次已经引用回复过目标消息的 bot 发言消息。"""
 
     normalized_target_message_id = target_message_id.strip()
     if not normalized_target_message_id:
-        return ""
+        return None
 
     for message in reversed(chat_history):
         if not isinstance(message, SessionBackedMessage):
@@ -392,10 +406,39 @@ def _find_recent_reply_to_target(
         quote_ids = extract_quote_ids_from_message_sequence(message.raw_message)
         if normalized_target_message_id not in quote_ids:
             continue
-        reply_text = _extract_guided_reply_text(message)
-        if reply_text:
-            return reply_text
-    return ""
+        if _extract_guided_reply_text(message):
+            return message
+    return None
+
+
+def _find_recent_reply_to_target(
+    chat_history: list[LLMContextMessage],
+    target_message_id: str,
+) -> str:
+    """查找最近一次已经引用回复过目标消息的 bot 发言。"""
+
+    message = _find_recent_reply_message_to_target(chat_history, target_message_id)
+    return _extract_guided_reply_text(message) if message is not None else ""
+
+
+def _find_stale_reply_target(
+    chat_history: list[LLMContextMessage],
+    target_message_id: str,
+    previous_target_reply: str,
+) -> Optional[SessionBackedMessage]:
+    """目标已回复过且之后又出现用户消息时，返回该更新消息。"""
+
+    if not previous_target_reply:
+        return None
+    previous_reply_message = _find_recent_reply_message_to_target(chat_history, target_message_id)
+    if previous_reply_message is None:
+        return None
+    latest_user_message = _find_latest_user_message(chat_history)
+    if latest_user_message is None or latest_user_message.message_id == target_message_id:
+        return None
+    if previous_reply_message.timestamp >= latest_user_message.timestamp:
+        return None
+    return latest_user_message
 
 
 def _with_duplicate_target_reply_reminder(
@@ -602,6 +645,32 @@ async def _execute_reply(
             reply_tool_args["plugin_options"] = deepcopy(extension_execution.parameters)
             reply_tool_args["_reply_id"] = extension_execution.reply_id
 
+    replyer_chat_history = list(tool_ctx.runtime._chat_history)
+    # 并行编排的引用目标尚未确定，不能把请求快照的最后一条消息强制指定为正文回复对象。
+    previous_target_reply = (
+        _find_recent_reply_to_target(replyer_chat_history, target_message_id) if supplement_runner is None else ""
+    )
+    if previous_target_reply:
+        stale_reply_target = _find_stale_reply_target(
+            replyer_chat_history, target_message_id, previous_target_reply,
+        )
+        if stale_reply_target is not None:
+            reason = (
+                f"目标消息 {to_display_message_id(target_message_id)} 已回复过，"
+                f"且存在更新的用户消息 {to_display_message_id(stale_reply_target.message_id)}。"
+                "请改用最新用户消息的 msg_id 重新调用 reply，不要重复回复旧目标。"
+            )
+            logger.warning(f"{tool_ctx.runtime.log_prefix} 拒绝重复回复旧目标: {reason}")
+            return _build_reply_failure(
+                tool_ctx,
+                target_message_id,
+                "stale_reply_target",
+                reason,
+                preparation_metadata,
+                extra_content={"suggested_msg_id": stale_reply_target.message_id},
+            )
+        reply_tool_args = _with_duplicate_target_reply_reminder(reply_tool_args, previous_target_reply)
+
     try:
         replyer = replyer_manager.get_replyer(
             chat_stream=tool_ctx.runtime.chat_stream,
@@ -625,13 +694,6 @@ async def _execute_reply(
             metadata=preparation_metadata,
         )
 
-    replyer_chat_history = list(tool_ctx.runtime._chat_history)
-    # 并行编排的引用目标尚未确定，不能把请求快照的最后一条消息强制指定为正文回复对象。
-    previous_target_reply = (
-        _find_recent_reply_to_target(replyer_chat_history, target_message_id) if supplement_runner is None else ""
-    )
-    if previous_target_reply:
-        reply_tool_args = _with_duplicate_target_reply_reminder(reply_tool_args, previous_target_reply)
     try:
         tool_ctx.runtime._update_stage_status("Replyer", "生成可见回复")
         if supplement_runner is None:
@@ -694,10 +756,22 @@ async def _execute_reply(
             f"目标消息编号={target_message_id} 错误信息={reply_result.error_message!r}"
         )
         hook_abort = reply_result.error_details.get("hook_abort")
+        plugin_suppress_reason = str(reply_result.error_details.get("plugin_suppress_reason") or "").strip()
+        failure_extra: Dict[str, Any] = {}
+        if plugin_suppress_reason:
+            failure_extra["suppress_reason"] = plugin_suppress_reason
+        latest_user_message = _find_latest_user_message(replyer_chat_history)
+        if latest_user_message is not None and latest_user_message.message_id != target_message_id:
+            failure_extra["suggested_msg_id"] = latest_user_message.message_id
+        reason = hook_abort["reason"] if hook_abort is not None else reply_result.error_message
+        if plugin_suppress_reason and hook_abort is None:
+            reason = (
+                f"插件 Hook 抑制了回复（原因：{plugin_suppress_reason}）。"
+                "请调整回复目标或停止本次回复，勿原样重复调用。"
+            )
         return _build_reply_failure(
             tool_ctx, target_message_id, reply_result.error_code or "generation_failed",
-            hook_abort["reason"] if hook_abort is not None else reply_result.error_message,
-            reply_metadata, hook_abort,
+            reason, reply_metadata, hook_abort, extra_content=failure_extra,
         )
 
     if supplement is not None:

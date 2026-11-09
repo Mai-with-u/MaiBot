@@ -1158,6 +1158,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         reasoning_regeneration_requested = False
         retro_period_regeneration_requested = False
         gemini_regeneration_requested = False
+        last_plugin_suppress_reason = ""
         default_task_name = (
             "planner" if cache_snapshot is not None
             else str(getattr(self.express_model, "task_name", "") or "replyer").strip() or "replyer"
@@ -1471,9 +1472,15 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                     total_tokens=generation_result.total_tokens,
                 )
                 after_response_kwargs = after_response_result.kwargs
+                last_plugin_suppress_reason = str(
+                    after_response_kwargs.get("suppress_reason")
+                    or after_response_kwargs.get("mai_life_suppress_reason")
+                    or ""
+                ).strip()
             except Exception as exc:
                 logger.warning(f"Maisaka 回复器 after_response Hook 调用失败，将继续使用当前回复: {exc}")
                 after_response_kwargs = {}
+                last_plugin_suppress_reason = ""
             else:
                 # 主动中止优先于正文改写和重生成，保留原因供 reply 工具反馈给 Planner。
                 if after_response_result.aborted:
@@ -1694,12 +1701,18 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         )
 
         if not result.success:
+            if last_plugin_suppress_reason:
+                result.error_details["plugin_suppress_reason"] = last_plugin_suppress_reason
             if result.error_code not in {"plugin_aborted", "gemini_reply_format_error"}:
-                result.error_message = (
-                    "插件 Hook 将回复正文修改为空。请调整回复目标或停止本次回复，勿原样重复调用。"
-                    if result.error_code == "plugin_empty_response"
-                    else "模型未生成回复正文。"
-                )
+                if last_plugin_suppress_reason:
+                    result.error_message = (
+                        f"插件 Hook 抑制了回复（原因：{last_plugin_suppress_reason}）。"
+                        "请调整回复目标或停止本次回复，勿原样重复调用。"
+                    )
+                elif result.error_code == "plugin_empty_response":
+                    result.error_message = "插件 Hook 将回复正文修改为空。请调整回复目标或停止本次回复，勿原样重复调用。"
+                else:
+                    result.error_message = "模型未生成回复正文。"
             logger.warning(result.error_message)
             return await finalize(False)
 
