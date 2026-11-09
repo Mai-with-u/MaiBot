@@ -39,6 +39,7 @@ import { formatChatDisplayName } from '@/lib/chat-display'
 import { cn } from '@/lib/utils'
 
 import { createJargon, updateJargon } from '@/lib/jargon-api'
+import { JargonInferenceHistory } from './JargonInferenceHistory'
 
 import type {
   Jargon,
@@ -341,6 +342,23 @@ export function JargonDetailDialog({
               />
               <Label htmlFor="detail_is_global">全局黑话</Label>
             </div>
+            <JargonInferenceHistory
+              key={jargon.id}
+              jargon={jargon}
+              dirty={
+                formData.content !== jargon.content ||
+                (formData.meaning ?? '') !== (jargon.meaning ?? '') ||
+                formData.is_jargon !== jargon.is_jargon ||
+                formData.is_global !== jargon.is_global ||
+                JSON.stringify(formData.session_ids ?? []) !==
+                  JSON.stringify(
+                    jargon.session_ids?.length
+                      ? jargon.session_ids
+                      : [jargon.session_id].filter(Boolean)
+                  )
+              }
+              onChanged={onChanged}
+            />
           </div>
         </DialogBody>
 

@@ -203,6 +203,10 @@ class MainSystem:
         logger.info(t("startup.chat_manager_initialized"))
         await memory_automation_service.start()
 
+        from src.learners.jargon_inference_service import get_jargon_inference_service
+
+        await get_jargon_inference_service().start()
+
         from src.agent.service import agent_service
         from src.desktop_pet.service import desktop_pet_service
 
@@ -290,6 +294,9 @@ async def main() -> None:
         from src.desktop_pet.service import desktop_pet_service
 
         request_shutdown("main_finally")
+        from src.learners.jargon_inference_service import get_jargon_inference_service
+
+        await get_jargon_inference_service().stop()
         from src.common.http_service.console import close_console
 
         await close_console()

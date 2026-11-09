@@ -1,7 +1,8 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Check, ChevronDown, Trash2, Upload, X } from 'lucide-react'
+import { Check, ChevronDown, Sparkles, Trash2, Upload, X } from 'lucide-react'
 import { useImperativeHandle, useState } from 'react'
 import type { Ref } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { ChatScopeFilterPanel } from '@/components/chat-scope-filter-panel'
 import { LearningExportDialog } from '@/components/learning-export-dialog'
@@ -52,6 +53,8 @@ import {
   JargonDetailDialog,
 } from './JargonDialogs'
 import { JargonList } from './JargonList'
+import { JargonInferenceDialog } from './JargonInferenceDialog'
+import type { JargonInferenceFilters } from '@/types/jargon-inference'
 
 import type { Jargon, JargonChatInfo } from '@/types/jargon'
 import type { StatsData } from './types'
@@ -78,6 +81,8 @@ export function JargonManagementPage({
   browserTabs?: LearningBrowserTabs
   createHandle?: Ref<LearningCreateHandle>
 }) {
+  const { t } = useTranslation()
+  const [isInferenceOpen, setIsInferenceOpen] = useState(false)
   const [selectedJargon, setSelectedJargon] = useState<Jargon | null>(null)
   const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false)
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
@@ -360,6 +365,28 @@ export function JargonManagementPage({
   const activeSummary =
     summaryOptions.find((option) => option.value === summaryFilter) ?? summaryOptions[0]
 
+  const inferenceGroup =
+    browseMode === 'group' ? groups.find((group) => group.index === groupIndex) : undefined
+  const inferenceScopeValid =
+    browseMode !== 'group' ||
+    Boolean(inferenceGroup && (inferenceGroup.is_global || inferenceGroup.session_ids.length))
+  const inferenceFilters: JargonInferenceFilters = {
+    search: list.searchInput || undefined,
+    session_id:
+      browseMode === 'chat' && summaryFilter !== 'global_count' && filterChatId !== 'all'
+        ? filterChatId
+        : undefined,
+    session_ids:
+      inferenceGroup && !inferenceGroup.is_global ? inferenceGroup.session_ids : undefined,
+    jargon_status: ['confirmed_jargon', 'confirmed_not_jargon', 'manual_jargon'].includes(
+      summaryFilter
+    )
+      ? (summaryFilter as JargonStatusFilter)
+      : undefined,
+    is_complete: summaryFilter === 'complete_count' ? true : undefined,
+    is_global: summaryFilter === 'global_count' ? true : undefined,
+  }
+
   const toolbar = (
     <DataToolbar
       search={list.searchInput}
@@ -367,6 +394,10 @@ export function JargonManagementPage({
       placeholder="搜索黑话内容..."
       actions={
         <>
+          <Button variant="outline" size="sm" onClick={() => setIsInferenceOpen(true)}>
+            <Sparkles className="h-4 w-4" />
+            {t('jargonInference.title', '黑话 AI 推断')}
+          </Button>
           <Select
             value={list.filters.sortBy}
             onValueChange={(value: JargonFilters['sortBy']) => list.setFilter('sortBy', value)}
@@ -613,6 +644,20 @@ export function JargonManagementPage({
         </DataBrowserLayout>
       </div>
 
+      {isInferenceOpen && (
+        <JargonInferenceDialog
+          open={isInferenceOpen}
+          onOpenChange={setIsInferenceOpen}
+          selectedIds={Array.from(selectedIds)}
+          pageIds={list.isFetching ? [] : jargons.map((jargon) => jargon.id)}
+          filters={inferenceFilters}
+          scopeValid={inferenceScopeValid}
+          total={total}
+          chats={formChatList}
+          onChanged={invalidateJargon}
+        />
+      )}
+
       {/* 详情对话框 */}
       <JargonDetailDialog
         jargon={selectedJargon}
@@ -620,7 +665,7 @@ export function JargonManagementPage({
         onOpenChange={setIsDetailDialogOpen}
         chatList={formChatList}
         onChanged={(jargon) => {
-          setSelectedJargon(jargon)
+          setSelectedJargon((current) => (current?.id === jargon.id ? jargon : current))
           invalidateJargon()
         }}
       />

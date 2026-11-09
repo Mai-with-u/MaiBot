@@ -11,14 +11,17 @@ from sqlmodel import Session, col, delete, select
 
 from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
 from src.common.database.database import get_db_session
-from src.common.database.database_model import ChatSession, Jargon, JargonCreatedBy, Messages
+from src.common.database.database_model import ChatSession, Jargon, JargonCreatedBy, JargonInferenceState, JargonMeaningHistory, Messages
 from src.common.logger import get_logger
 from src.common.utils.utils_config import JargonConfigUtils
 from src.config.config import global_config
 
+from .jargon_inference import router as inference_router
+
 logger = get_logger("webui.jargon")
 
 router = APIRouter(prefix="/jargon", tags=["Jargon"])
+router.include_router(inference_router)
 JARGON_SESSION_IDS_QUERY = Query(None, description="按共享组内任一聊天流ID筛选")
 
 
@@ -172,6 +175,11 @@ class JargonResponse(BaseModel):
     created_by: JargonCreatedBy = JargonCreatedBy.AI
     created_timestamp: Any
     updated_timestamp: Any
+    inference_status: str = "unattempted"
+    inference_reason: str = ""
+    last_attempt_at: Optional[float] = None
+    last_success_at: Optional[float] = None
+    inference_locked: bool = False
 
 
 class JargonListResponse(BaseModel):
@@ -651,6 +659,24 @@ def jargon_to_export_item(
     )
 
 
+def inference_state_fields(state: Optional[JargonInferenceState]) -> Dict[str, Any]:
+    """将推断状态附加到列表和详情；空状态不代表黑话分类。"""
+    return {
+        "inference_status": state.status if state else "unattempted",
+        "inference_reason": state.reason if state else "",
+        "last_attempt_at": state.last_attempt_at if state else None,
+        "last_success_at": state.last_success_at if state else None,
+        "inference_locked": state.locked if state else False,
+    }
+
+
+def delete_inference_metadata(session: Session, jargon_ids: List[int]) -> None:
+    """词条删除时清理关联状态，避免 SQLite 重用 ID 后串用旧历史。"""
+    if jargon_ids:
+        session.exec(delete(JargonInferenceState).where(col(JargonInferenceState.jargon_id).in_(jargon_ids)))
+        session.exec(delete(JargonMeaningHistory).where(col(JargonMeaningHistory.jargon_id).in_(jargon_ids)))
+
+
 def jargon_to_dict(
     jargon: Jargon,
     session: Session,
@@ -853,7 +879,15 @@ def get_jargon_list(
             for row in page_rows:
                 page_session_ids.extend(get_session_ids(str(row["session_id_dict"] or "{}")))
             chat_name_cache = build_session_display_name_cache(page_session_ids, session, include_message_fallback=True)
-            data = [jargon_list_row_to_dict(row, session, chat_name_cache) for row in page_rows]
+            state_by_id = {
+                state.jargon_id: state for state in session.exec(
+                    select(JargonInferenceState).where(col(JargonInferenceState.jargon_id).in_([row["id"] for row in page_rows]))
+                ).all()
+            } if page_rows else {}
+            data = [
+                {**jargon_list_row_to_dict(row, session, chat_name_cache), **inference_state_fields(state_by_id.get(row["id"]))}
+                for row in page_rows
+            ]
 
         return JargonListResponse(
             success=True,
@@ -1120,6 +1154,7 @@ def import_jargons(request: JargonImportRequest) -> JargonImportResponse:
                     continue
 
                 if request.conflict_strategy == "overwrite":
+                    delete_inference_metadata(session, [item.id for item in overlapping_jargons if item.id is not None])
                     for existing_jargon in overlapping_jargons:
                         session.delete(existing_jargon)
                     if overlapping_jargons:
@@ -1178,7 +1213,10 @@ def get_jargon_detail(jargon_id: int) -> JargonDetailResponse:
             ).mappings().first()
             if row is None:
                 raise HTTPException(status_code=404, detail="黑话不存在")
-            data = JargonResponse(**jargon_list_row_to_dict(row, session))
+            data = JargonResponse(
+                **jargon_list_row_to_dict(row, session),
+                **inference_state_fields(session.get(JargonInferenceState, jargon_id)),
+            )
 
         return JargonDetailResponse(success=True, data=data)
 
@@ -1234,6 +1272,8 @@ def create_jargon(request: JargonCreateRequest) -> JargonCreateResponse:
                     else scopes_overlap(existing_jargon, target_session_ids, False)
                 ):
                     continue
+                if existing_jargon.id is not None:
+                    delete_inference_metadata(session, [existing_jargon.id])
                 session.delete(existing_jargon)
                 replaced_ai_count += 1
 
@@ -1298,7 +1338,10 @@ def update_jargon(jargon_id: int, request: JargonUpdateRequest) -> JargonUpdateR
                 if "is_jargon" in update_data:
                     jargon.is_jargon = update_data["is_jargon"]
                 if "created_by" in update_data and update_data["created_by"] is not None:
+                    # 显式切回 AI 维护时保留用户选择；其余人工编辑默认受到保护。
                     jargon.created_by = update_data["created_by"]
+                elif {"meaning", "content", "is_jargon", "session_id", "session_ids", "is_global"}.intersection(update_data):
+                    jargon.created_by = JargonCreatedBy.MANUAL
                 jargon.updated_timestamp = datetime.now()
                 session.add(jargon)
 
@@ -1331,6 +1374,7 @@ def delete_jargon(jargon_id: int) -> JargonDeleteResponse:
                 raise HTTPException(status_code=404, detail="黑话不存在")
 
             content = jargon.content
+            delete_inference_metadata(session, [jargon_id])
             session.delete(jargon)
 
             logger.info(f"删除黑话成功: id={jargon_id}, content={content}")
@@ -1359,6 +1403,7 @@ def batch_delete_jargons(request: BatchDeleteRequest) -> JargonDeleteResponse:
             raise HTTPException(status_code=400, detail="ID列表不能为空")
 
         with get_db_session() as session:
+            delete_inference_metadata(session, request.ids)
             result = session.exec(delete(Jargon).where(col(Jargon.id).in_(request.ids)))
             deleted_count = result.rowcount or 0
 
@@ -1399,6 +1444,7 @@ def batch_set_jargon_status(
             jargons = session.exec(select(Jargon).where(col(Jargon.id).in_(ids))).all()
             for jargon in jargons:
                 jargon.is_jargon = is_jargon
+                jargon.created_by = JargonCreatedBy.MANUAL
                 jargon.updated_timestamp = datetime.now()
                 session.add(jargon)
             updated_count = len(jargons)

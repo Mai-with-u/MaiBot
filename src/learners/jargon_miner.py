@@ -1,16 +1,25 @@
 from collections import OrderedDict
+from dataclasses import replace
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple, TypedDict
 
-from sqlmodel import col, select
+from sqlalchemy import text
+from sqlmodel import col, delete, select
 
 import asyncio
 import json
+import time
 
 from src.common.data_models.jargon_data_model import MaiJargon
 from src.common.data_models.llm_service_data_models import LLMResponseResult
 from src.common.database.database import get_db_session
-from src.common.database.database_model import Jargon, JargonCreatedBy, Messages
+from src.common.database.database_model import (
+    Jargon,
+    JargonCreatedBy,
+    JargonInferenceState,
+    JargonMeaningHistory,
+    Messages,
+)
 from src.common.llm_json import parse_llm_json
 from src.common.logger import get_logger
 from src.common.utils.utils_config import JargonConfigUtils
@@ -26,11 +35,11 @@ from src.services.llm_service import LLMServiceClient
 
 from .expression_utils import is_single_char_jargon
 from .learning_text import extract_learning_text
+from .jargon_inference_result import InferenceResult, evidence_hash
 
 logger = get_logger("jargon")
 
 llm_inference = LLMServiceClient(task_name="learner", request_type="jargon.inference")
-JARGON_INFERENCE_THRESHOLDS = [4, 8, 25, 100]
 
 
 class JargonEvidenceMessageRef(TypedDict):
@@ -273,61 +282,101 @@ class JargonMiner:
             f"【对话片段 {index}】\n{context_text}" for index, context_text in enumerate(context_texts, start=1)
         )
 
-    def _load_evidence_contexts(self, jargon_obj: MaiJargon) -> Tuple[List[str], Optional[str], bool]:
-        """从证据消息还原本次文字正文，剔除无文字消息和包含缺失消息的证据组。"""
+    def _evidence_session_ids(self, jargon_obj: MaiJargon) -> Set[str]:
+        """只使用词条已记录的来源会话及这些会话配置的共享组。"""
+        session_ids = set(jargon_obj.session_id_list)
+        for session_id in tuple(session_ids):
+            related_ids, _ = JargonConfigUtils.resolve_jargon_group_scope(session_id)
+            session_ids.update(related_ids)
+        return session_ids
 
+    def _recover_evidence_groups(
+        self, jargon_obj: MaiJargon, session_ids: Set[str]
+    ) -> List[JargonEvidenceMessageGroup]:
+        """引用已丢失时，在原有会话范围内寻找带该词条的文字及相邻消息。"""
+        if not session_ids or not jargon_obj.content.strip():
+            return []
+        limit = global_config.jargon.inference.evidence_limit
+        groups: List[JargonEvidenceMessageGroup] = []
+        with get_db_session() as session:
+            matches = session.exec(
+                select(Messages)
+                .where(col(Messages.session_id).in_(session_ids))
+                .where(col(Messages.processed_plain_text).contains(jargon_obj.content, autoescape=True))
+                .order_by(col(Messages.timestamp).desc(), col(Messages.id).desc())
+                .limit(limit)
+            ).all()
+            for message in reversed(matches):
+                # 搜索列可能包含媒体描述，只有原始消息的文字正文真正包含词条才作为证据。
+                sequence = MessageUtils.from_db_record_msg_to_MaiSeq(message.raw_content)
+                if jargon_obj.content not in extract_learning_text(sequence):
+                    continue
+                before = session.exec(
+                    select(Messages)
+                    .where(col(Messages.session_id) == message.session_id)
+                    .where(col(Messages.timestamp) <= message.timestamp)
+                    .order_by(col(Messages.timestamp).desc(), col(Messages.id).desc())
+                    .limit(3)
+                ).all()
+                after = session.exec(
+                    select(Messages)
+                    .where(col(Messages.session_id) == message.session_id)
+                    .where(col(Messages.timestamp) > message.timestamp)
+                    .order_by(col(Messages.timestamp), col(Messages.id))
+                    .limit(2)
+                ).all()
+                refs = [
+                    {"platform": item.platform, "message_id": item.message_id}
+                    for item in [*reversed(before), message, *after]
+                ]
+                groups.extend(self._normalize_evidence_message_groups([refs]))
+        return self._normalize_evidence_message_groups(groups)[-limit:]
+
+    def _load_evidence_contexts(self, jargon_obj: MaiJargon) -> Tuple[List[str], Optional[str], bool]:
+        """还原有效文字上下文，限定来源范围，缺失时重建并保留有界引用。"""
+        limit = global_config.jargon.inference.evidence_limit
         evidence_groups = self._normalize_evidence_message_groups(
             self._load_json_list(jargon_obj.evidence_messages, "evidence_messages")
-        )
-        if not evidence_groups:
-            return [], jargon_obj.evidence_messages, False
-
+        )[-limit:]
+        session_ids = self._evidence_session_ids(jargon_obj)
         context_texts: List[str] = []
         valid_groups: List[JargonEvidenceMessageGroup] = []
-        removed_count = 0
 
-        with get_db_session() as session:
-            for group in evidence_groups:
-                messages: List[Messages] = []
-                group_missing = False
-                for ref in group:
-                    message = session.exec(
-                        select(Messages)
-                        .where(col(Messages.platform) == ref["platform"])
-                        .where(col(Messages.message_id) == ref["message_id"])
-                        .limit(1)
-                    ).first()
-                    if message is None:
-                        group_missing = True
-                        break
-                    messages.append(message)
+        def load(groups: List[JargonEvidenceMessageGroup]) -> None:
+            with get_db_session() as session:
+                for group in groups:
+                    messages: List[Messages] = []
+                    for ref in group:
+                        message = session.exec(
+                            select(Messages)
+                            .where(col(Messages.platform) == ref["platform"])
+                            .where(col(Messages.message_id) == ref["message_id"])
+                            .where(col(Messages.session_id).in_(session_ids))
+                            .limit(1)
+                        ).first()
+                        if message is None:
+                            break
+                        messages.append(message)
+                    if len(messages) != len(group):
+                        continue
+                    context_lines: List[str] = []
+                    valid_group: JargonEvidenceMessageGroup = []
+                    for ref, message in zip(group, messages, strict=True):
+                        # 与候选提取共用文字白名单，避免完整渲染文本重新带入引用或媒体描述。
+                        sequence = MessageUtils.from_db_record_msg_to_MaiSeq(message.raw_content)
+                        message_text = extract_learning_text(sequence)
+                        if message_text:
+                            context_lines.append(f"[{len(context_lines) + 1}] {message_text}")
+                            valid_group.append(ref)
+                    if context_lines:
+                        context_texts.append("\n".join(context_lines))
+                        valid_groups.append(valid_group)
 
-                if group_missing:
-                    removed_count += 1
-                    continue
-
-                context_lines: List[str] = []
-                valid_group: JargonEvidenceMessageGroup = []
-                for ref, message in zip(group, messages, strict=True):
-                    # 与候选提取共用文字白名单，避免完整渲染文本重新带入引用或媒体描述。
-                    sequence = MessageUtils.from_db_record_msg_to_MaiSeq(message.raw_content)
-                    message_text = extract_learning_text(sequence)
-                    if message_text:
-                        context_lines.append(f"[{len(context_lines) + 1}] {message_text}")
-                        valid_group.append(ref)
-
-                context_text = "\n".join(context_lines)
-                if context_text:
-                    context_texts.append(context_text)
-                    valid_groups.append(valid_group)
-                else:
-                    removed_count += 1
-
+        load(evidence_groups)
+        if not context_texts:
+            load(self._recover_evidence_groups(jargon_obj, session_ids))
         cleaned_evidence_messages = json.dumps(valid_groups, ensure_ascii=False) if valid_groups else None
-        changed = removed_count > 0 or cleaned_evidence_messages != jargon_obj.evidence_messages
-        if removed_count:
-            logger.info(f"jargon {jargon_obj.content} 移除了 {removed_count} 组缺失或无有效文本的证据消息引用")
-        return context_texts, cleaned_evidence_messages, changed
+        return context_texts, cleaned_evidence_messages, cleaned_evidence_messages != jargon_obj.evidence_messages
 
     @staticmethod
     def _load_json_list(value: Optional[str], field_name: str) -> List[Any]:
@@ -345,18 +394,43 @@ class JargonMiner:
     def _cleanup_jargon_evidence_messages(
         self, jargon_obj: MaiJargon, cleaned_evidence_messages: Optional[str]
     ) -> None:
-        """写回清理后的证据消息引用。"""
-
-        if not jargon_obj.item_id:
+        """替换已检查的引用快照，同时保留推断期间新增的证据引用。"""
+        if jargon_obj.item_id is None:
             return
-
+        original_groups = self._normalize_evidence_message_groups(
+            self._load_json_list(jargon_obj.evidence_messages, "evidence_messages")
+        )
+        original_keys = {tuple((ref["platform"], ref["message_id"]) for ref in group) for group in original_groups}
+        cleaned_groups = self._normalize_evidence_message_groups(
+            self._load_json_list(cleaned_evidence_messages, "evidence_messages")
+        )
         with get_db_session() as session:
-            statement = select(Jargon).filter_by(id=jargon_obj.item_id).limit(1)
-            if db_record := session.exec(statement).first():
-                db_record.evidence_messages = cleaned_evidence_messages
-                db_record.updated_timestamp = datetime.now()
-                session.add(db_record)
-                jargon_obj.evidence_messages = cleaned_evidence_messages
+            session.connection().execute(text("BEGIN IMMEDIATE"))
+            db_record = session.get(Jargon, jargon_obj.item_id)
+            state = session.get(JargonInferenceState, jargon_obj.item_id)
+            if (
+                db_record is None
+                or db_record.created_by == JargonCreatedBy.MANUAL
+                or db_record.created_timestamp != jargon_obj.created_timestamp
+                or db_record.content != jargon_obj.content
+                or db_record.is_global != jargon_obj.is_global
+                or set(json.loads(db_record.session_id_dict)) != set(jargon_obj.session_id_list)
+                or (state is not None and state.locked)
+            ):
+                return
+            current_groups = self._normalize_evidence_message_groups(
+                self._load_json_list(db_record.evidence_messages, "evidence_messages")
+            )
+            new_groups = [
+                group
+                for group in current_groups
+                if tuple((ref["platform"], ref["message_id"]) for ref in group) not in original_keys
+            ]
+            merged = self._merge_evidence_message_groups(cleaned_groups, new_groups)
+            db_record.evidence_messages = json.dumps(merged, ensure_ascii=False) if merged else None
+            db_record.updated_timestamp = datetime.now()
+            session.add(db_record)
+            jargon_obj.evidence_messages = db_record.evidence_messages
 
     def _log_inference_prompt_preview(
         self,
@@ -397,137 +471,135 @@ class JargonMiner:
             f"JSON={preview_access.record_path}"
         )
 
-    async def infer_meaning(self, jargon_obj: MaiJargon) -> None:
-        """对黑话条目执行含义推断。
+    async def infer_meaning(
+        self,
+        jargon_obj: MaiJargon,
+        *,
+        before_request: Optional[Callable[[], Awaitable[None]]] = None,
+        source: str = "automatic",
+        job_id: str = "",
+    ) -> InferenceResult:
+        """对已有词条推断含义，保留证据并返回可用于后台任务统计的结果。"""
+        requests = [0]
+        input_evidence_hash = [""]
+        try:
+            result = await self._run_inference(
+                jargon_obj, requests, input_evidence_hash, before_request=before_request, source=source, job_id=job_id
+            )
+            return replace(result, evidence_hash=input_evidence_hash[0])
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception(f"jargon {jargon_obj.content} 推断失败: {exc}")
+            return InferenceResult("failed", str(exc), requests=requests[0], evidence_hash=input_evidence_hash[0])
 
-        Args:
-            jargon_obj: 待推断的黑话数据对象。
-        """
+    async def _run_inference(
+        self,
+        jargon_obj: MaiJargon,
+        requests: List[int],
+        input_evidence_hash: List[str],
+        *,
+        before_request: Optional[Callable[[], Awaitable[None]]],
+        source: str,
+        job_id: str,
+    ) -> InferenceResult:
         content = jargon_obj.content
-        if jargon_obj.created_by == JargonCreatedBy.MANUAL:
-            logger.debug(f"jargon {content} 是手动记录，跳过含义推断")
-            return
+        if jargon_obj.created_by == JargonCreatedBy.MANUAL or await asyncio.to_thread(
+            self._is_locked, jargon_obj.item_id
+        ):
+            logger.debug(f"jargon {content} 是手动维护或锁定记录，跳过含义推断")
+            return InferenceResult("protected", "人工维护或已锁定")
 
+        # 保存开始时的业务值，写回时重新核对，保护期间发生的人工编辑或较新推断。
+        expected = {
+            "content": content,
+            "meaning": jargon_obj.meaning,
+            "is_jargon": jargon_obj.is_jargon,
+            "last_inference_count": jargon_obj.last_inference_count,
+            "is_global": jargon_obj.is_global,
+            "session_id_list": dict(jargon_obj.session_id_list),
+            "created_timestamp": jargon_obj.created_timestamp,
+        }
         raw_content_list, cleaned_evidence_messages, evidence_changed = await asyncio.to_thread(
             self._load_evidence_contexts, jargon_obj
         )
-        used_evidence_messages = bool(raw_content_list)
-        if used_evidence_messages:
-            await asyncio.to_thread(self._cleanup_jargon_evidence_messages, jargon_obj, None)
-        elif evidence_changed:
+        # 记录真正参与本轮推断的引用；并发新增的引用仍是下一轮的新证据。
+        input_evidence_hash[0] = evidence_hash(cleaned_evidence_messages)
+        if evidence_changed:
             await asyncio.to_thread(self._cleanup_jargon_evidence_messages, jargon_obj, cleaned_evidence_messages)
-
         if not raw_content_list:
             logger.warning(f"jargon {content} 没有可用证据上下文，跳过推断")
-            return
+            return InferenceResult("missing_evidence", "所属会话内没有可用的文字证据")
+
+        async def generate(prompt: str, stage_name: str) -> Optional[Dict[str, Any]]:
+            if before_request is not None:
+                await before_request()
+            requests[0] += 1
+            generation_result = await llm_inference.generate_response(prompt, session_id=self.session_id)
+            await asyncio.to_thread(
+                self._log_inference_prompt_preview,
+                jargon_content=content,
+                stage_name=stage_name,
+                prompt=prompt,
+                generation_result=generation_result,
+            )
+            if not generation_result.response:
+                return None
+            return self._parse_result(generation_result.response)
 
         # 获取当前count和上一次的meaning
         current_count = jargon_obj.count
-        previous_meaning = jargon_obj.meaning
-
+        previous_meaning = jargon_obj.meaning.strip()
         # 步骤1: 基于raw_content和content推断
         raw_content_text = self._format_evidence_context_segments(raw_content_list)
-
         # 只要已有上一次推断含义，就放入 prompt 作为参考。
         previous_meaning_section = ""
         previous_meaning_instruction = ""
-        previous_meaning = previous_meaning.strip()
         if previous_meaning:
             previous_meaning_section = f"\n**上一次推断的含义（仅供参考）**\n{previous_meaning}"
             previous_meaning_instruction = "- 请参考上一次推断的含义，结合新的上下文信息，给出更准确或更新的推断结果"
-
         prompt1_template = prompt_manager.get_prompt("jargon_inference_with_context")
         prompt1_template.add_context("bot_name", global_config.bot.nickname)
-        prompt1_template.add_context("content", str(content))
+        prompt1_template.add_context("content", content)
         prompt1_template.add_context("raw_content_list", raw_content_text)
         prompt1_template.add_context("previous_meaning_section", previous_meaning_section)
         prompt1_template.add_context("previous_meaning_instruction", previous_meaning_instruction)
-        prompt1 = await prompt_manager.render_prompt(prompt1_template)
-
-        generation_result_1 = await llm_inference.generate_response(prompt1, session_id=self.session_id)
-        llm_response_1 = generation_result_1.response
-        self._log_inference_prompt_preview(
-            jargon_content=content,
-            stage_name="with_context",
-            prompt=prompt1,
-            generation_result=generation_result_1,
-        )
-        if not llm_response_1:
-            logger.warning(f"jargon {content} 推断1失败：无响应")
-            return
-
-        # 解析推断1结果
-        inference1 = self._parse_result(llm_response_1)
-        if not inference1:
-            logger.warning(f"jargon {content} 推断1解析失败")
-            return
-
+        inference1 = await generate(await prompt_manager.render_prompt(prompt1_template), "with_context")
+        if inference1 is None:
+            return InferenceResult("failed", "上下文推断无响应或解析失败", requests=requests[0])
         no_info = inference1.get("no_info", False)
-        meaning1: str = inference1.get("meaning", "").strip()
-        if no_info or not meaning1:
-            logger.info(f"jargon {content} 推断1表示信息不足无法推断，放弃本次推断，待下次更新")
-            # 更新最后一次判定的count值，避免在同一阈值重复尝试
-            jargon_obj.last_inference_count = jargon_obj.count or 0
-
-            try:
-                self._modify_jargon_entry(jargon_obj)
-            except Exception as e:
-                logger.error(f"jargon {content} 推断1更新last_inference_count失败: {e}")
-            return
+        if not isinstance(no_info, bool):
+            return InferenceResult("failed", "上下文推断 no_info 必须是布尔值", requests=requests[0])
+        if no_info:
+            # 更新最后一次判定的count值，避免在同一阈值重复尝试；证据仍保留供新证据到来后复用。
+            jargon_obj.last_inference_count = current_count
+            outcome = await asyncio.to_thread(self._modify_jargon_entry, jargon_obj, expected, source, job_id, False)
+            if outcome != "succeeded":
+                return InferenceResult(outcome, "词条已删除、被保护或已更新", requests=requests[0])
+            return InferenceResult("insufficient_info", "模型认为现有上下文不足", requests=requests[0])
+        meaning1 = inference1.get("meaning")
+        if not isinstance(meaning1, str) or not meaning1.strip():
+            return InferenceResult("failed", "上下文推断缺少有效 meaning", requests=requests[0])
 
         # 步骤2: 基于content-only进行推断
         prompt2_template = prompt_manager.get_prompt("jargon_inference_content_only")
         prompt2_template.add_context("content", content)
-        prompt2 = await prompt_manager.render_prompt(prompt2_template)
-
-        generation_result_2 = await llm_inference.generate_response(prompt2, session_id=self.session_id)
-        llm_response_2 = generation_result_2.response
-        self._log_inference_prompt_preview(
-            jargon_content=content,
-            stage_name="content_only",
-            prompt=prompt2,
-            generation_result=generation_result_2,
-        )
-        if not llm_response_2:
-            logger.warning(f"jargon {content} 推断2失败：无响应")
-            return
-
-        # 解析推断2结果
-        inference2 = self._parse_result(llm_response_2)
-        if not inference2:
-            logger.warning(f"jargon {content} 推断2解析失败")
-            return
+        inference2 = await generate(await prompt_manager.render_prompt(prompt2_template), "content_only")
+        if inference2 is None or not isinstance(inference2.get("meaning"), str) or not inference2["meaning"].strip():
+            return InferenceResult("failed", "词条推断无响应或缺少有效 meaning", requests=requests[0])
 
         # 步骤3: 比较两个推断结果
         prompt3_template = prompt_manager.get_prompt("jargon_compare_inference")
         prompt3_template.add_context("inference1", json.dumps(inference1, ensure_ascii=False))
         prompt3_template.add_context("inference2", json.dumps(inference2, ensure_ascii=False))
-        prompt3 = await prompt_manager.render_prompt(prompt3_template)
-
-        generation_result_3 = await llm_inference.generate_response(prompt3, session_id=self.session_id)
-        llm_response_3 = generation_result_3.response
-        self._log_inference_prompt_preview(
-            jargon_content=content,
-            stage_name="compare",
-            prompt=prompt3,
-            generation_result=generation_result_3,
-        )
-        if not llm_response_3:
-            logger.warning(f"jargon {content} 比较失败：无响应")
-            return
-
-        comparison_result = self._parse_result(llm_response_3)
-        if not comparison_result:
-            logger.warning(f"jargon {content} 比较解析失败")
-            return
-
-        is_similar = comparison_result.get("is_similar", False)
-        is_jargon = not is_similar  # 如果相似，说明不是黑话；如果有差异，说明是黑话
-
-        inferred_meaning = str(inference1.get("meaning", "") or "").strip()
-        finalized_meaning = inferred_meaning if is_jargon else previous_meaning
-        is_complete = (jargon_obj.count or 0) >= 100
-        last_inference_count = jargon_obj.count or 0
+        comparison_result = await generate(await prompt_manager.render_prompt(prompt3_template), "compare")
+        if comparison_result is None or not isinstance(comparison_result.get("is_similar"), bool):
+            return InferenceResult("failed", "比较结果缺少有效 is_similar", requests=requests[0])
+        is_jargon = not comparison_result["is_similar"]  # 如果相似，说明不是黑话；如果有差异，说明是黑话
+        finalized_meaning = meaning1.strip() if is_jargon else previous_meaning
+        config = global_config.jargon.inference
+        is_complete = config.stop_after_last_threshold and current_count >= config.thresholds[-1]
+        last_inference_count = current_count
         finalize_result = await self._get_runtime_manager().invoke_hook(
             "jargon.inference.before_finalize",
             session_id=self.session_id,
@@ -543,46 +615,37 @@ class JargonMiner:
         )
         if finalize_result.aborted:
             logger.info(f"jargon {content} 的推断结果中止写回：{HookAbortedError(finalize_result)}")
-            return
-
+            return InferenceResult("protected", "插件中止推断写回", requests=requests[0])
         finalize_kwargs = finalize_result.kwargs
         is_jargon = bool(finalize_kwargs.get("is_jargon", is_jargon))
         finalized_meaning = str(finalize_kwargs.get("meaning", finalized_meaning) or "").strip()
         is_complete = bool(finalize_kwargs.get("is_complete", is_complete))
-        last_inference_count = self._coerce_int(
-            finalize_kwargs.get("last_inference_count"),
-            last_inference_count,
-        )
-
-        # 更新数据库记录
+        last_inference_count = self._coerce_int(finalize_kwargs.get("last_inference_count"), last_inference_count)
+        # 更新数据库记录，最后一次判定计数供重启后的阈值判断使用。
         jargon_obj.is_jargon = is_jargon
         jargon_obj.meaning = finalized_meaning
-        # 更新最后一次判定的count值，避免重启后重复判定
         jargon_obj.last_inference_count = last_inference_count
-
-        # 如果count>=100，标记为完成，不再进行推断
+        # 达到配置的最后阶段时标记完成；手动和定期任务仍可显式重新推断。
         jargon_obj.is_complete = is_complete
-
-        try:
-            self._modify_jargon_entry(jargon_obj)
-        except Exception as e:
-            logger.error(f"jargon {content} 推断结果更新失败: {e}")
+        outcome = await asyncio.to_thread(self._modify_jargon_entry, jargon_obj, expected, source, job_id, True)
+        if outcome != "succeeded":
+            return InferenceResult(outcome, "词条已删除、被保护或已更新", requests=requests[0])
         logger.debug(
-            f"jargon {content} 推断完成: is_jargon={is_jargon}, meaning={jargon_obj.meaning}, last_inference_count={jargon_obj.last_inference_count}, is_complete={jargon_obj.is_complete}"
+            f"jargon {content} 推断完成: is_jargon={is_jargon}, meaning={jargon_obj.meaning}, "
+            f"last_inference_count={jargon_obj.last_inference_count}, is_complete={jargon_obj.is_complete}"
         )
-
         # 固定输出推断结果，格式化为可读形式
         if is_jargon:
             # 是黑话，输出格式：[聊天名]xxx的含义是 xxxxxxxxxxx
             meaning = jargon_obj.meaning or "无详细说明"
-            is_global = jargon_obj.is_global  # 是否为全局的
-            if is_global:
+            if jargon_obj.is_global:
                 logger.info(f"[黑话]{content}的含义是 {meaning}")
             else:
                 logger.info(f"[{self.session_name}]{content}的含义是 {meaning}")
         else:
             # 不是黑话，输出格式：[聊天名]xxx 不是黑话
             logger.info(f"[{self.session_name}]{content} 不是黑话")
+        return InferenceResult("succeeded", meaning=finalized_meaning, is_jargon=is_jargon, requests=requests[0])
 
     async def process_extracted_entries(
         self, entries: List[JargonEntry], person_name_filter: Optional[Callable[[str], bool]] = None
@@ -638,74 +701,22 @@ class JargonMiner:
 
         saved = 0
         updated = 0
+        from .jargon_inference_service import get_jargon_inference_service
+
         for entry in uniq_entries:
             content = entry["content"]
-            evidence_messages = entry["evidence_messages"]
             try:
-                with get_db_session(auto_commit=False) as session:
-                    jargon_items = session.exec(select(Jargon).filter_by(content=content)).all()
-            except Exception as e:
-                logger.error(f"查询黑话 '{content}' 失败: {e}")
+                outcome, jargon = await asyncio.to_thread(self._persist_extracted_entry, entry)
+            except Exception as exc:
+                logger.exception(f"保存黑话 '{content}' 失败: {exc}")
                 continue
-            related_session_ids, _ = JargonConfigUtils.resolve_jargon_group_scope(self.session_id)
-            # 找匹配项
-            matched_jargon: Optional[Jargon] = None
-            matched_ai_jargon: Optional[Jargon] = None
-            for item in jargon_items:
-                item_matches_scope = False
-                if item.is_global:
-                    item_matches_scope = True
-                elif item.session_id_dict:
-                    try:
-                        session_id_dict = json.loads(item.session_id_dict)
-                        item_matches_scope = bool(related_session_ids.intersection(session_id_dict))
-                    except Exception as e:
-                        logger.error(f"解析Jargon id={item.id} session_id_list失败: {e}")
-                        continue
-
-                if not item_matches_scope:
-                    continue
-                if item.created_by == JargonCreatedBy.MANUAL:
-                    matched_jargon = item
-                    break
-                if matched_ai_jargon is None:
-                    matched_ai_jargon = item
-            matched_jargon = matched_jargon or matched_ai_jargon
-            if matched_jargon:
-                if matched_jargon.created_by == JargonCreatedBy.MANUAL:
-                    logger.debug(f"黑话 '{content}' 已存在手动记录，跳过 AI 更新与推断")
-                    self._add_to_cache(content)
-                    continue
-                # 已存在记录，更新 count 和证据消息引用
-                self._update_jargon(matched_jargon, evidence_messages)
-                if self._should_infer_meaning(matched_jargon):
-                    asyncio.create_task(self._infer_meaning_by_id(matched_jargon.id))  # type: ignore
+            self._add_to_cache(content)
+            if outcome == "created":
+                saved += 1
+            elif outcome == "updated":
                 updated += 1
-            else:
-                # 没找到匹配记录，创建新记录
-                session_dict_str = json.dumps({self.session_id: 1})
-                now = datetime.now()
-                new_jargon = Jargon(
-                    content=content,
-                    evidence_messages=json.dumps(evidence_messages, ensure_ascii=False) if evidence_messages else None,
-                    session_id_dict=session_dict_str,
-                    is_global=False,
-                    count=1,
-                    is_jargon=False,
-                    meaning="",
-                    created_by=JargonCreatedBy.AI,
-                    created_timestamp=now,
-                    updated_timestamp=now,
-                )
-                try:
-                    with get_db_session() as session:
-                        session.add(new_jargon)
-                        session.flush()
-                    saved += 1
-                    self._add_to_cache(content)
-                except Exception as e:
-                    logger.error(f"保存新黑话 '{content}' 失败: {e}")
-                    continue
+            if jargon is not None and self._should_infer_meaning(jargon):
+                await get_jargon_inference_service().enqueue_auto(jargon.id, self.session_id, self.session_name)
         # 固定输出提取的jargon结果，格式化为可读形式（只要有提取结果就输出）
         if uniq_entries:
             # 收集所有提取的jargon内容
@@ -717,6 +728,42 @@ class JargonMiner:
             logger.debug(f"jargon写入: 新增 {saved} 条，更新 {updated} 条，session_id={self.session_id}")
 
         return saved, updated
+
+    def _persist_extracted_entry(self, entry: JargonEntry) -> Tuple[str, Optional[Jargon]]:
+        """串行化候选匹配与证据合并，避免不同学习任务丢失新增次数和引用。"""
+        related_session_ids, _ = JargonConfigUtils.resolve_jargon_group_scope(self.session_id)
+        with get_db_session() as session:
+            session.connection().execute(text("BEGIN IMMEDIATE"))
+            jargon_items = session.exec(select(Jargon).filter_by(content=entry["content"])).all()
+            matched: Optional[Jargon] = None
+            for item in jargon_items:
+                if not item.is_global and not related_session_ids.intersection(json.loads(item.session_id_dict)):
+                    continue
+                if item.created_by == JargonCreatedBy.MANUAL:
+                    return "protected", None
+                if matched is None:
+                    matched = item
+            if matched is not None:
+                # 已存在记录，更新 count 和证据消息引用，不覆盖推断刚写回的判定字段。
+                self._merge_jargon_update(matched, entry["evidence_messages"])
+                session.add(matched)
+                session.flush()
+                return "updated", matched
+            # 没找到匹配记录，创建新记录；阈值为 1 时由调用者立即排队。
+            evidence = self._merge_evidence_message_groups([], entry["evidence_messages"])
+            new_jargon = Jargon(
+                content=entry["content"],
+                evidence_messages=json.dumps(evidence, ensure_ascii=False) if evidence else None,
+                session_id_dict=json.dumps({self.session_id: 1}),
+                is_global=False,
+                count=1,
+                is_jargon=False,
+                meaning="",
+                created_by=JargonCreatedBy.AI,
+            )
+            session.add(new_jargon)
+            session.flush()
+            return "created", new_jargon
 
     def _add_to_cache(self, content: str):
         """将黑话内容添加到缓存，并维护缓存大小"""
@@ -750,56 +797,42 @@ class JargonMiner:
                 continue
             seen_groups.add(group_key)
             merged_groups.append(group)
-        return merged_groups
+        return merged_groups[-global_config.jargon.inference.evidence_limit :]
 
-    def _update_jargon(
-        self,
-        db_jargon: Jargon,
-        evidence_message_groups: List[JargonEvidenceMessageGroup],
+    def _merge_jargon_update(
+        self, db_jargon: Jargon, evidence_message_groups: List[JargonEvidenceMessageGroup]
     ) -> None:
-        """更新已有黑话记录并写回数据库。
-
-        Args:
-            db_jargon: 已命中的黑话 ORM 对象。
-            evidence_message_groups: 本次新增的证据消息引用组。
-        """
-        if db_jargon.created_by == JargonCreatedBy.MANUAL:
-            logger.debug(f"黑话 '{db_jargon.content}' 是手动记录，跳过 AI 更新")
-            return
-
+        """在调用者持有的写事务内累加一次候选命中，并保留最新有限证据。"""
         db_jargon.count += 1
         db_jargon.updated_timestamp = datetime.now()
-        existing_evidence_groups = self._normalize_evidence_message_groups(
+        existing = self._normalize_evidence_message_groups(
             self._load_json_list(db_jargon.evidence_messages, "evidence_messages")
         )
-        merged_evidence_groups = self._merge_evidence_message_groups(existing_evidence_groups, evidence_message_groups)
-        db_jargon.evidence_messages = (
-            json.dumps(merged_evidence_groups, ensure_ascii=False)
-            if merged_evidence_groups
-            else db_jargon.evidence_messages
-        )
-        session_id_dict: Dict[str, int] = json.loads(db_jargon.session_id_dict)
-        session_id_dict[self.session_id] = session_id_dict.get(self.session_id, 0) + 1
-        db_jargon.session_id_dict = json.dumps(session_id_dict)
+        merged = self._merge_evidence_message_groups(existing, evidence_message_groups)
+        db_jargon.evidence_messages = json.dumps(merged, ensure_ascii=False) if merged else None
+        session_counts: Dict[str, int] = json.loads(db_jargon.session_id_dict)
+        session_counts[self.session_id] = session_counts.get(self.session_id, 0) + 1
+        db_jargon.session_id_dict = json.dumps(session_counts)
 
-        try:
-            with get_db_session() as session:
-                if db_jargon.id is None:
-                    raise ValueError("黑话记录缺少 id，无法更新数据库")
-                statement = select(Jargon).filter_by(id=db_jargon.id).limit(1)
-                if persisted_jargon := session.exec(statement).first():
-                    persisted_jargon.count = db_jargon.count
-                    persisted_jargon.evidence_messages = db_jargon.evidence_messages
-                    persisted_jargon.session_id_dict = db_jargon.session_id_dict
-                    persisted_jargon.is_global = db_jargon.is_global
-                    persisted_jargon.updated_timestamp = db_jargon.updated_timestamp
-                    session.add(persisted_jargon)
-                else:
-                    logger.warning(f"黑话 ID {db_jargon.id} 在数据库中未找到，无法更新")
-        except Exception as e:
-            logger.error(f"更新黑话 '{db_jargon.content}' 失败: {e}")
+    def _update_jargon(self, db_jargon: Jargon, evidence_message_groups: List[JargonEvidenceMessageGroup]) -> None:
+        """读取最新的已有黑话记录，再合并写回，避免旧对象覆盖并发更新。"""
+        if db_jargon.id is None:
+            raise ValueError("黑话记录缺少 id，无法更新数据库")
+        with get_db_session() as session:
+            session.connection().execute(text("BEGIN IMMEDIATE"))
+            persisted = session.get(Jargon, db_jargon.id)
+            if persisted is None or persisted.created_by == JargonCreatedBy.MANUAL:
+                return
+            self._merge_jargon_update(persisted, evidence_message_groups)
+            session.add(persisted)
+            db_jargon.count = persisted.count
+            db_jargon.evidence_messages = persisted.evidence_messages
+            db_jargon.session_id_dict = persisted.session_id_dict
+            db_jargon.updated_timestamp = persisted.updated_timestamp
+            db_jargon.last_inference_count = persisted.last_inference_count
+            db_jargon.is_complete = persisted.is_complete
 
-    def _parse_result(self, response: str) -> Optional[Dict[str, str]]:
+    def _parse_result(self, response: str) -> Optional[Dict[str, Any]]:
         try:
             result = parse_llm_json(response)
         except Exception:
@@ -813,65 +846,111 @@ class JargonMiner:
             return None
         return result
 
-    def _modify_jargon_entry(self, jargon_obj: MaiJargon) -> None:
-        if jargon_obj.created_by == JargonCreatedBy.MANUAL:
-            logger.debug(f"黑话 '{jargon_obj.content}' 是手动记录，跳过推断结果写回")
-            return
-
+    @staticmethod
+    def _is_locked(jargon_id: Optional[int]) -> bool:
+        if jargon_id is None:
+            return False
         with get_db_session() as session:
-            if not jargon_obj.item_id:
-                raise ValueError("jargon_obj must have item_id to update")
-            statement = select(Jargon).filter_by(id=jargon_obj.item_id).limit(1)
-            if db_record := session.exec(statement).first():
-                if db_record.created_by == JargonCreatedBy.MANUAL:
-                    logger.debug(f"黑话 '{db_record.content}' 是手动记录，跳过推断结果写回")
-                    return
-                db_record.is_jargon = jargon_obj.is_jargon
-                db_record.meaning = jargon_obj.meaning
-                db_record.last_inference_count = jargon_obj.last_inference_count
-                db_record.is_complete = jargon_obj.is_complete
-                db_record.updated_timestamp = datetime.now()
-                session.add(db_record)
+            state = session.get(JargonInferenceState, jargon_id)
+            return state is not None and state.locked
+
+    def _modify_jargon_entry(
+        self,
+        jargon_obj: MaiJargon,
+        expected: Dict[str, Any],
+        source: str,
+        job_id: str,
+        record_history: bool,
+    ) -> str:
+        """在同一写事务中校验人工保护、保存推断及有限的含义变更历史。"""
+        if jargon_obj.item_id is None:
+            return "missing"
+        with get_db_session() as session:
+            # SQLite 写锁覆盖读取和写回，避免 SELECT 后的人工编辑被旧结果覆盖。
+            session.connection().execute(text("BEGIN IMMEDIATE"))
+            db_record = session.get(Jargon, jargon_obj.item_id)
+            if db_record is None:
+                return "missing"
+            state = session.get(JargonInferenceState, jargon_obj.item_id)
+            if db_record.created_by == JargonCreatedBy.MANUAL or (state is not None and state.locked):
+                return "protected"
+            if (
+                db_record.content != expected["content"]
+                or db_record.meaning != expected["meaning"]
+                or db_record.is_jargon != expected["is_jargon"]
+                or db_record.last_inference_count != expected["last_inference_count"]
+                or db_record.is_global != expected["is_global"]
+                or set(json.loads(db_record.session_id_dict)) != set(expected["session_id_list"])
+                or db_record.created_timestamp != expected["created_timestamp"]
+            ):
+                return "stale"
+            if record_history:
+                session.add(
+                    JargonMeaningHistory(
+                        jargon_id=jargon_obj.item_id,
+                        job_id=job_id,
+                        source=source,
+                        previous_meaning=db_record.meaning,
+                        meaning=jargon_obj.meaning,
+                        previous_is_jargon=db_record.is_jargon,
+                        is_jargon=jargon_obj.is_jargon,
+                        created_at=time.time(),
+                    )
+                )
+                session.flush()
+                old_ids = session.exec(
+                    select(JargonMeaningHistory.id)
+                    .where(col(JargonMeaningHistory.jargon_id) == jargon_obj.item_id)
+                    .order_by(col(JargonMeaningHistory.id).desc())
+                    .offset(global_config.jargon.inference.history_limit)
+                ).all()
+                if old_ids:
+                    session.exec(delete(JargonMeaningHistory).where(col(JargonMeaningHistory.id).in_(old_ids)))
+            db_record.is_jargon = jargon_obj.is_jargon
+            db_record.meaning = jargon_obj.meaning
+            db_record.last_inference_count = jargon_obj.last_inference_count
+            db_record.is_complete = jargon_obj.is_complete
+            db_record.updated_timestamp = datetime.now()
+            session.add(db_record)
+        return "succeeded"
 
     def _should_infer_meaning(self, jargon_obj: Jargon) -> bool:
-        """
-        判断是否需要进行含义推断
-        在 count 达到 4, 8, 25, 100 时进行推断
-        并且count必须大于last_inference_count，避免重启后重复判定
-        如果is_complete为True，不再进行推断
-        """
-        # 如果已完成所有推断，不再推断
+        """在跨过尚未处理的累计阈值时推断；末阶段后可按末阈值的增量继续。"""
         if jargon_obj.created_by == JargonCreatedBy.MANUAL:
             return False
-
-        if jargon_obj.is_complete:
-            return False
-
+        config = global_config.jargon.inference
+        thresholds = config.thresholds
         count = jargon_obj.count or 0
         last_inference = jargon_obj.last_inference_count or 0
-
-        if count < JARGON_INFERENCE_THRESHOLDS[0]:
+        # 完成标记只是按次数推断的优化；提高阈值或关闭停止后重新按当前配置判断。
+        if count < thresholds[0] or count <= last_inference:
             return False
-        # 如果count没有超过上次判定值，不需要判定
-        if count <= last_inference:
-            return False
+        next_threshold = next((threshold for threshold in thresholds if threshold > last_inference), None)
+        if next_threshold is None:
+            return not config.stop_after_last_threshold and count >= last_inference + thresholds[-1]
+        return count >= next_threshold
 
-        next_threshold = next(
-            (threshold for threshold in JARGON_INFERENCE_THRESHOLDS if threshold > last_inference),
-            None,
-        )
-        # 如果没有找到下一个阈值，说明已经超过100，不应该再推断
-        return False if next_threshold is None else count >= next_threshold
+    @staticmethod
+    def _load_jargon_by_id(jargon_id: int) -> Optional[MaiJargon]:
+        with get_db_session() as session:
+            db_record = session.get(Jargon, jargon_id)
+            return MaiJargon.from_db_instance(db_record) if db_record is not None else None
 
-    async def _infer_meaning_by_id(self, jargon_id: int):
-        jargon_obj: Optional[MaiJargon] = None
+    async def _infer_meaning_by_id(
+        self,
+        jargon_id: int,
+        *,
+        before_request: Optional[Callable[[], Awaitable[None]]] = None,
+        source: str = "automatic",
+        job_id: str = "",
+    ) -> InferenceResult:
         try:
-            with get_db_session() as session:
-                statement = select(Jargon).filter_by(id=jargon_id).limit(1)
-                if db_record := session.exec(statement).first():
-                    jargon_obj = MaiJargon.from_db_instance(db_record)
-        except Exception as e:
-            logger.error(f"查询Jargon id={jargon_id}失败: {e}")
-            return
-        if jargon_obj:
-            await self.infer_meaning(jargon_obj)
+            jargon_obj = await asyncio.to_thread(self._load_jargon_by_id, jargon_id)
+            if jargon_obj is None:
+                return InferenceResult("missing", "词条已删除")
+            return await self.infer_meaning(jargon_obj, before_request=before_request, source=source, job_id=job_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception(f"查询Jargon id={jargon_id}失败: {exc}")
+            return InferenceResult("failed", str(exc))

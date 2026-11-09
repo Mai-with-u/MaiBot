@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import Enum
+from time import time
 from typing import Optional
 
 from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, Float, Index, Integer, String, Text, UniqueConstraint
@@ -429,6 +430,53 @@ class Jargon(SQLModel, table=True):
     )  # 创建来源，AI 表示自动学习，MANUAL 表示手动创建
     created_timestamp: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, index=True))
     updated_timestamp: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, index=True))
+
+
+class JargonInferenceState(SQLModel, table=True):
+    """每个黑话词条的推断状态；与原有词条结构独立保存。"""
+
+    __tablename__ = "jargon_inference_states"  # type: ignore
+
+    jargon_id: int = Field(primary_key=True)
+    locked: bool = Field(default=False)
+    status: str = Field(default="unattempted", index=True)
+    reason: str = Field(default="", sa_column=Column(Text, nullable=False))
+    last_attempt_at: Optional[float] = Field(default=None, index=True)
+    last_success_at: Optional[float] = Field(default=None, index=True)
+    last_source: str = Field(default="")
+    last_count: int = Field(default=0)
+    last_evidence_hash: str = Field(default="")
+    last_attempt_evidence_hash: str = Field(default="")
+
+
+class JargonInferenceJob(SQLModel, table=True):
+    """批量推断任务及其逐项执行快照，关闭管理页面后仍可查询。"""
+
+    __tablename__ = "jargon_inference_jobs"  # type: ignore
+
+    id: str = Field(primary_key=True)
+    source: str = Field(default="manual")
+    status: str = Field(default="queued", index=True)
+    created_at: float = Field(default_factory=time, index=True)
+    updated_at: float = Field(default_factory=time)
+    options_json: str = Field(default="{}", sa_column=Column(Text, nullable=False))
+    items_json: str = Field(default="[]", sa_column=Column(Text, nullable=False))
+
+
+class JargonMeaningHistory(SQLModel, table=True):
+    """与推断结果一同提交的含义变更记录。"""
+
+    __tablename__ = "jargon_meaning_history"  # type: ignore
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    jargon_id: int = Field(index=True)
+    job_id: str = Field(default="")
+    source: str = Field(default="manual")
+    previous_meaning: str = Field(sa_column=Column(Text, nullable=False))
+    meaning: str = Field(sa_column=Column(Text, nullable=False))
+    previous_is_jargon: Optional[bool] = Field(default=None)
+    is_jargon: Optional[bool] = Field(default=None)
+    created_at: float = Field(default_factory=time, index=True)
 
 
 class BinaryData(SQLModel, table=True):
