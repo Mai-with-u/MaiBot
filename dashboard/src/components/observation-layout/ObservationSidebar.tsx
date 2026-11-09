@@ -234,23 +234,35 @@ export function ObservationSidebar({
     select: (state) => new URLSearchParams(state.location.searchStr).get('setupTrial') === 'true',
   })
   const homeLocked = tourRunning || setupTrial
+  const layoutRef = useRef({ collapsed, homeLocked })
+  const reportLayoutRef = useRef<() => void>(() => {})
   useEffect(() => {
     const sidebar = sidebarRef.current
     if (!sidebar || !isDesktopEmbedded()) return
     const report = () =>
-      reportDesktopLayout({
-        sidebarWidth: Math.round(sidebar.getBoundingClientRect().width),
-        collapsed,
-        homeLocked,
-      })
+      reportDesktopLayout({ sidebarWidth: Math.round(sidebar.getBoundingClientRect().width), ...layoutRef.current })
+    reportLayoutRef.current = report
     report()
-    const observer = new ResizeObserver(report)
+    // 折叠动画期间宽度每帧都在变，只在停稳后报一次；外壳那边自己按同一条缓动跟着走
+    let timer = 0
+    const observer = new ResizeObserver(() => {
+      window.clearTimeout(timer)
+      timer = window.setTimeout(report, 120)
+    })
     observer.observe(sidebar)
     return () => {
+      window.clearTimeout(timer)
       observer.disconnect()
-      // 宽度 0 表示侧栏已卸载（例如回到登录页），外壳退回默认宽度
-      reportDesktopLayout({ sidebarWidth: 0, collapsed, homeLocked: true })
+      reportLayoutRef.current = () => {}
+      // 只有侧栏真正卸载（例如回到登录页）才报宽度 0，外壳退回默认宽度
+      reportDesktopLayout({ sidebarWidth: 0, collapsed: layoutRef.current.collapsed, homeLocked: true })
     }
+  }, [])
+  // 教程开关立即告诉外壳；折叠状态等宽度停稳后由上面的观察器报
+  useEffect(() => {
+    const lockChanged = layoutRef.current.homeLocked !== homeLocked
+    layoutRef.current = { collapsed, homeLocked }
+    if (lockChanged) reportLayoutRef.current()
   }, [collapsed, homeLocked])
 
   const toggleSettings = () => {
