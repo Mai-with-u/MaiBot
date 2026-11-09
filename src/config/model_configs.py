@@ -191,36 +191,48 @@ class APIProvider(ConfigBase):
     """重试间隔 (如果API调用失败, 重试的间隔时间, 单位: 秒)"""
 
     def model_post_init(self, context: Any = None) -> None:
-        """执行 API 提供商配置的后置校验。
-
-        Args:
-            context: Pydantic 传入的上下文对象。
-
-        Raises:
-            ValueError: 当配置项缺失或组合不合法时抛出。
-        """
+        """在加载时保持 ChatGPT 独立授权边界，普通供应商由请求入口校验。"""
         if self.client_type == "chatgpt":
-            if self.base_url.rstrip("/") != "https://api.openai.com/v1":
-                raise ValueError("ChatGPT SIWC 仅允许 https://api.openai.com/v1")
-            if (
-                self.api_key
-                or self.auth_type != "bearer"
-                or self.default_headers
-                or self.default_query
-                or self.organization
-                or self.project
-                or self.model_list_endpoint != "/models"
-            ):
-                raise ValueError("ChatGPT SIWC 使用独立本机授权；不要填写 API Key、自定义鉴权或请求头。")
-        if not self.base_url and self.client_type != "gemini":  # TODO: 允许gemini使用base_url
-            raise ValueError(t("config.api_base_url_empty"))
-        if not self.name:
-            raise ValueError(t("config.api_provider_name_empty"))
-        if self.auth_type == OpenAICompatibleAuthType.HEADER and not self.auth_header_name.strip():
-            raise ValueError("当 auth_type=header 时，auth_header_name 不能为空")
-        if self.auth_type == OpenAICompatibleAuthType.QUERY and not self.auth_query_name.strip():
-            raise ValueError("当 auth_type=query 时，auth_query_name 不能为空")
+            validate_provider_for_request(self)
         super().model_post_init(context)
+
+
+def provider_configuration_errors(provider: APIProvider) -> List[str]:
+    """收集调用所需的供应商配置问题，供启动诊断、WebUI 和请求入口共用。"""
+    errors: List[str] = []
+    if provider.client_type == "chatgpt":
+        if provider.base_url.rstrip("/") != "https://api.openai.com/v1":
+            errors.append("ChatGPT SIWC 仅允许 https://api.openai.com/v1")
+        if (
+            provider.api_key
+            or provider.auth_type != "bearer"
+            or provider.default_headers
+            or provider.default_query
+            or provider.organization
+            or provider.project
+            or provider.model_list_endpoint != "/models"
+        ):
+            errors.append("ChatGPT SIWC 使用独立本机授权；不要填写 API Key、自定义鉴权或请求头。")
+    if not provider.base_url.strip() and provider.client_type != "gemini":
+        errors.append(t("config.api_base_url_empty"))
+    if not provider.name.strip():
+        errors.append(t("config.api_provider_name_empty"))
+    if not provider.client_type.strip():
+        errors.append("client_type 不能为空")
+    if provider.auth_type == OpenAICompatibleAuthType.HEADER and not provider.auth_header_name.strip():
+        errors.append("当 auth_type=header 时，auth_header_name 不能为空")
+    if provider.auth_type == OpenAICompatibleAuthType.QUERY and not provider.auth_query_name.strip():
+        errors.append("当 auth_type=query 时，auth_query_name 不能为空")
+    if provider.auth_type not in {auth.value for auth in OpenAICompatibleAuthType}:
+        errors.append(f"不支持的 auth_type：{provider.auth_type}")
+    return errors
+
+
+def validate_provider_for_request(provider: APIProvider) -> None:
+    """创建客户端前拒绝不完整的配置。"""
+    errors = provider_configuration_errors(provider)
+    if errors:
+        raise ValueError(f"供应商 {provider.name} 配置无效：" + "；".join(errors))
 
 
 class ModelPricePeriod(ConfigBase):
@@ -379,9 +391,6 @@ class ModelInfo(ConfigBase):
             raise ValueError(t("config.model_identifier_empty_generic"))
         if not self.name:
             raise ValueError(t("config.model_name_empty"))
-        if not self.api_provider:
-            raise ValueError(t("config.model_api_provider_empty"))
-
         # 将跨午夜的时段拆开，统一检查半开区间是否重叠。
         intervals: List[Tuple[str, str, int]] = []
         for index, period in enumerate(self.price_periods, start=1):

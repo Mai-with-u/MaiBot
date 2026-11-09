@@ -12,6 +12,7 @@ import tempfile
 import zipfile
 
 MAX_BYTES = 32 * 1024 * 1024
+BUNDLED_SKIN_ROOT = Path(__file__).with_name("presets")
 STATES = ("idle", "thinking", "talking", "dragging")
 EVENTS = ("click", "happy", "error", "greeting")
 MOTIONS = {"none", "bob", "sway", "hop", "shake", "pulse"}
@@ -28,7 +29,8 @@ BUILTIN = {
 
 
 def skin_directories(root: Path) -> List[Path]:
-    return [*(root / "data" / "desktop_pet" / "skins").glob("*/skin.json"),
+    return [*sorted(BUNDLED_SKIN_ROOT.glob("*/skin.json")),
+            *(root / "data" / "desktop_pet" / "skins").glob("*/skin.json"),
             *(root / "plugins").glob("*/skins/*/skin.json")]
 
 

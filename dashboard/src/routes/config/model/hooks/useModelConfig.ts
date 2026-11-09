@@ -142,15 +142,18 @@ interface ConfigDraftPersistResult {
 
 export function useModelConfig() {
   const { toast } = useToast()
+  const [configWarnings, setConfigWarnings] = useState<string[]>([])
   const sharedRevision = useRef<string | undefined>(undefined)
   const updateModelConfig = useCallback(async (data: Record<string, unknown>) => {
     const result = await (sharedRevision.current === undefined ? saveModelConfig(data) : saveModelConfig(data, sharedRevision.current))
     if (typeof result.catalog_revision === 'string') sharedRevision.current = result.catalog_revision
+    setConfigWarnings((result.warnings as string[] | undefined) ?? [])
     return result
   }, [])
   const updateModelConfigSection = useCallback(async (section: string, data: unknown) => {
     const result = await (sharedRevision.current === undefined ? saveModelSection(section, data) : saveModelSection(section, data, sharedRevision.current))
     if (typeof result.catalog_revision === 'string') sharedRevision.current = result.catalog_revision
+    setConfigWarnings((result.warnings as string[] | undefined) ?? [])
     return result
   }, [])
 
@@ -287,6 +290,7 @@ export function useModelConfig() {
     models,
     taskConfig,
     enqueueWrite: enqueueConfigWrite,
+    saveSection: updateModelConfigSection,
     onSavingChange: setModelAutoSaving,
     onUnsavedChange: setModelHasUnsavedChanges,
     onSaveError: handleAutoSaveError,
@@ -431,6 +435,7 @@ export function useModelConfig() {
       const config = unwrapModelConfig(result.value)
       const shared = config._shared_catalog as { revision: string } | undefined
       sharedRevision.current = shared?.revision
+      setConfigWarnings((config._warnings as string[] | undefined) ?? [])
       setWebConfig(readWebSearchConfig(config.web))
       const modelList = (config.models as ModelInfo[]) || []
       for (const model of modelList) {
@@ -1568,6 +1573,7 @@ export function useModelConfig() {
     handleSwitchConfigVersion,
     handleDeleteConfigVersion,
     // 任务配置问题
+    configWarnings,
     invalidModelRefs,
     emptyTasks,
     handleRemoveInvalidRefs,

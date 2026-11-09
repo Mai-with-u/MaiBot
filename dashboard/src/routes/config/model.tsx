@@ -171,6 +171,7 @@ function ModelConfigPageContent() {
     handleSwitchConfigVersion,
     handleDeleteConfigVersion,
     // 任务配置问题
+    configWarnings,
     invalidModelRefs,
     emptyTasks,
     handleRemoveInvalidRefs,
@@ -618,29 +619,31 @@ function ModelConfigPageContent() {
         data-model-config-page="true"
         className="flex min-h-full flex-col gap-4 p-4 sm:gap-6 sm:p-6 lg:h-full lg:overflow-hidden"
       >
-        {/* 无效模型引用警告 */}
-        {invalidModelRefs.length > 0 && (
+        {/* 已保存配置的诊断 */}
+        {configWarnings.length > 0 && (
           <Alert variant="destructive">
             <AlertTriangle className="h-4 w-4" />
             <AlertDescription className="flex items-start justify-between gap-4">
               <div className="flex-1">
-                <strong>检测到无效的模型引用</strong>
+                <strong>模型配置需要修正</strong>
                 <div className="mt-2 space-y-1">
-                  {invalidModelRefs.map(({ taskName, invalidModels }) => (
-                    <div key={taskName} className="text-sm">
-                      <strong>{taskName}</strong> 引用了不存在的模型: {invalidModels.join(', ')}
+                  {configWarnings.map((warning) => (
+                    <div key={warning} className="text-sm">
+                      {warning}
                     </div>
                   ))}
                 </div>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="shrink-0 bg-background hover:bg-accent"
-                onClick={handleRemoveInvalidRefs}
-              >
-                一键清理
-              </Button>
+              {invalidModelRefs.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 bg-background hover:bg-accent"
+                  onClick={handleRemoveInvalidRefs}
+                >
+                  一键清理
+                </Button>
+              )}
             </AlertDescription>
           </Alert>
         )}
@@ -808,7 +811,12 @@ function ModelConfigPageContent() {
                 </Button>
               )}
               {/* 手机上由页头右上角的「+」添加 */}
-              <AddModelMenu onAdd={openAddModelDialog} className="hidden md:inline-flex" dataTour="add-model-button" />
+              <AddModelMenu
+                onAdd={openAddModelDialog}
+                disabled={apiProviders.length === 0}
+                className="hidden md:inline-flex"
+                dataTour="add-model-button"
+              />
             </div>
           </div>
 
@@ -2155,8 +2163,8 @@ function ModelConfigPageContent() {
         <MobileAddMenu
           label="添加"
           items={[
-            { label: '添加 LLM 模型', onSelect: () => openAddModelDialog('llm') },
-            { label: '添加嵌入模型', onSelect: () => openAddModelDialog('embedding') },
+            { label: '添加 LLM 模型', onSelect: () => openAddModelDialog('llm'), disabled: apiProviders.length === 0 },
+            { label: '添加嵌入模型', onSelect: () => openAddModelDialog('embedding'), disabled: apiProviders.length === 0 },
             { label: '添加 LLM 模型提供商', onSelect: () => openProviderDialog(null, null) },
             { label: '添加联网搜索', onSelect: () => setWebSearchEditor({ name: null }) },
           ]}

@@ -57,7 +57,7 @@ export interface ListItemEditorOptions {
   collapseButtonDisplay?: 'text' | 'icon'
   normalizeItems?: (
     items: Record<string, unknown>[],
-    context?: { addedIndex?: number; changedIndex?: number },
+    context?: { addedIndex?: number; changedIndex?: number; changedField?: string },
   ) => Record<string, unknown>[]
   renderOverview?: (context: {
     items: Record<string, unknown>[]
@@ -197,7 +197,7 @@ export function createListItemEditorHook(
     }, [value])
 
     const emitItems = useCallback(
-      (nextItems: Record<string, unknown>[], context?: { addedIndex?: number; changedIndex?: number }) => {
+      (nextItems: Record<string, unknown>[], context?: { addedIndex?: number; changedIndex?: number; changedField?: string }) => {
         onChange?.(options.normalizeItems?.(nextItems, context) ?? nextItems)
       },
       [onChange],
@@ -232,7 +232,7 @@ export function createListItemEditorHook(
           setNested(cloned, fieldName, fieldValue)
           return cloned
         })
-        emitItems(next, { changedIndex: index })
+        emitItems(next, { changedIndex: index, changedField: fieldName })
       },
       [emitItems, items],
     )

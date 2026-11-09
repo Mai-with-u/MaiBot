@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pydantic import TypeAdapter
 from typing import Any, Callable, Dict, List, Optional
 
-from .official_configs import ChatConfig, is_global_talk_rule_target
+from pydantic import TypeAdapter
+
+from .official_configs import ChatConfig, DEFAULT_TALK_RULE_GROUP_NAME, is_global_talk_rule_target
 
 
 ConfigUpgradeHookCallable = Callable[[dict[str, Any]], list[str]]
@@ -597,10 +598,28 @@ def _remove_talk_value_rules_switch(data: Dict[str, Any]) -> List[str]:
     if switch_key in reply_timing:
         del reply_timing[switch_key]
         reasons.append(f"chat.reply_timing.{switch_key}")
-    if not enabled and reply_timing.get("talk_value_rules"):
-        reply_timing["talk_value_rules"] = []
+    rules = _as_list(reply_timing.get("talk_value_rules"))
+    if not enabled and rules:
+        # 保留关闭状态下存着的旧规则，迁入规则组后仍可逐条开启。
+        for rule in rules:
+            rule["enabled"] = False
         reasons.append("chat.reply_timing.talk_value_rules")
     return reasons
+
+
+def _group_talk_value_rules(data: Dict[str, Any]) -> List[str]:
+    chat = _as_dict(data.get("chat"))
+    reply_timing = _as_dict(chat.get("reply_timing")) if chat is not None else None
+    if reply_timing is None or "talk_value_rules" not in reply_timing:
+        return []
+    if "talk_rule_groups" in reply_timing:
+        raise ValueError("动态发言配置同时包含旧规则和规则组，请合并后移除 talk_value_rules")
+
+    reply_timing["talk_rule_groups"] = {
+        "active_group": DEFAULT_TALK_RULE_GROUP_NAME,
+        "groups": [{"name": DEFAULT_TALK_RULE_GROUP_NAME, "rules": reply_timing.pop("talk_value_rules")}],
+    }
+    return ["chat.reply_timing.talk_rule_groups"]
 
 
 BOT_CONFIG_UPGRADE_HOOKS: tuple[ConfigUpgradeHook, ...] = (
@@ -726,6 +745,9 @@ def apply_config_upgrade_hooks(
         hook_reasons = hook.migrate(data)
         for reason in hook_reasons:
             migrated_reasons.append(f"{hook.target_version}:{reason}")
+
+    if config_name == "bot_config.toml" and _version_in_upgrade_range(old_ver, "8.16.18", new_ver):
+        migrated_reasons.extend(f"8.16.18:{reason}" for reason in _group_talk_value_rules(data))
 
     reason = ",".join(migrated_reasons)
     return ConfigUpgradeHookResult(data=data, migrated=bool(migrated_reasons), reason=reason)

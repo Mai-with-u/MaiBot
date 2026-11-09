@@ -590,3 +590,64 @@ async def test_chatgpt_connection_probe_rejects_unauthenticated_url_path(monkeyp
         )
     assert error.value.status_code == 400
     assert "账号标签" in error.value.detail
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"name": ""},
+        {"base_url": ""},
+        {"client_type": ""},
+        {"auth_type": "header", "auth_header_name": ""},
+        {"auth_type": "query", "auth_query_name": ""},
+        {"auth_type": "unsupported"},
+    ],
+)
+def test_provider_configuration_draft_loads_but_request_reports_errors(overrides):
+    from src.config.model_configs import APIProvider, provider_configuration_errors, validate_provider_for_request
+
+    values = {"name": "Local", "base_url": "http://127.0.0.1:8000/v1", **overrides}
+    draft = APIProvider(**values)
+    assert provider_configuration_errors(draft)
+    with pytest.raises(ValueError, match="配置无效"):
+        validate_provider_for_request(draft)
+
+
+@pytest.mark.parametrize("auth_type", ["bearer", "header", "query", "none"])
+def test_provider_configuration_local_unkeyed_endpoint_remains_requestable(auth_type):
+    from src.config.model_configs import APIProvider, provider_configuration_errors, validate_provider_for_request
+
+    local = APIProvider(name="Local", base_url="http://192.168.1.20:8000/v1", auth_type=auth_type)
+    assert local.api_key == ""
+    assert provider_configuration_errors(local) == []
+    validate_provider_for_request(local)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"base_url": "https://example.invalid/v1"},
+        {"api_key": "test-only"},
+        {"auth_type": "header"},
+        {"auth_type": "query"},
+        {"auth_type": "none"},
+        {"default_headers": {"Authorization": "test-only"}},
+        {"default_query": {"api_key": "test-only"}},
+        {"organization": "test-org"},
+        {"project": "test-project"},
+        {"model_list_endpoint": "/other"},
+    ],
+)
+def test_provider_configuration_chatgpt_guards_both_loading_and_request_entry(overrides):
+    from src.config.model_configs import APIProvider, provider_configuration_errors, validate_provider_for_request
+
+    values = {"name": "ChatGPT", "base_url": "https://api.openai.com/v1", "client_type": "chatgpt", **overrides}
+    # A previously parsed provider can be edited in memory before the registry reuses it.
+    restored = APIProvider(name="ChatGPT", base_url="https://api.openai.com/v1", client_type="chatgpt")
+    for field, value in overrides.items():
+        object.__setattr__(restored, field, value)
+    assert any("ChatGPT SIWC" in error for error in provider_configuration_errors(restored))
+    with pytest.raises(ValueError, match="ChatGPT SIWC"):
+        validate_provider_for_request(restored)
+    with pytest.raises(ValueError, match="ChatGPT SIWC"):
+        APIProvider(**values)

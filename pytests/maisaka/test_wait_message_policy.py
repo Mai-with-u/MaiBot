@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from src.chat.debounce import MessageDebouncer
 from src.maisaka.builtin_tool.wait import handle_tool
 from src.maisaka.reasoning_engine import MaisakaReasoningEngine
 from src.maisaka.scenes.group.scheduling import GroupTurnScheduler
@@ -17,6 +18,56 @@ def test_group_wait_probability(monkeypatch, elapsed, draw, accepted):
     monkeypatch.setattr("src.maisaka.scenes.group.scheduling.random.random", lambda: draw)
     assert scheduler._resume_wait_on_message() is accepted
     assert scheduler._resume_wait_on_message() is False
+
+
+def test_group_wait_restarts_debounce_after_failed_wakeup(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = 1001.0
+    debouncer = MessageDebouncer()
+    messages = []
+    runtime = SimpleNamespace(
+        _agent_state="wait",
+        _STATE_WAIT="wait",
+        _pending_wait_started_at=1000.0,
+        _pending_wait_seconds=30.0,
+        _fixed_message_debouncer=debouncer,
+        _get_message_quiet_period_remaining_seconds=lambda: max(0.0, (debouncer.deadline or now) - now),
+        _is_reply_frequency_silent=lambda: False,
+        message_cache=messages,
+    )
+    scheduler = GroupTurnScheduler(runtime)
+    draw = Mock(side_effect=[0.99, 0.0])
+    monkeypatch.setattr("src.maisaka.scenes.group.scheduling.time.time", lambda: now)
+    monkeypatch.setattr("src.maisaka.scenes.group.scheduling.random.random", draw)
+
+    def receive(message: str) -> None:
+        messages.append(message)
+        debouncer.observe(
+            author="user",
+            is_bare_image=False,
+            is_pure_emoji=False,
+            at_bot=False,
+            received_at=now,
+            wall_time=now,
+            now=now,
+        )
+
+    receive("第一条")
+    assert scheduler._evaluate(len(messages)).decision == "delay"
+    draw.assert_not_called()
+
+    now = 1003.0
+    assert scheduler._evaluate(len(messages)).decision == "wait"
+    draw.assert_called_once()
+
+    now = 1004.0
+    receive("第二条")
+    assert scheduler._evaluate(len(messages)).decision == "delay"
+    draw.assert_called_once()
+
+    now = 1009.0
+    assert scheduler._evaluate(len(messages)).decision == "trigger"
+    assert draw.call_count == 2
+    assert runtime.message_cache == ["第一条", "第二条"]
 
 
 @pytest.mark.asyncio

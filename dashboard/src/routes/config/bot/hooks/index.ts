@@ -8,7 +8,7 @@ export {
   AMemorixSharedMemoryGroupsHook,
   BotPlatformAccountsHook,
   ChatPromptsHook,
-  ChatTalkValueRulesHook,
+  ChatTalkRuleGroupsHook,
   ExpressionGroupsHook,
   ExpressionLearningListHook,
   FocusGroupsHook,

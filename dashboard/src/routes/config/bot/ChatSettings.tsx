@@ -33,7 +33,7 @@ const CHAT_PANELS: Record<ChatScope, ChatGroup[][]> = {
     }],
     [
       { title: '触发回复', fields: ['mentioned_bot_reply', 'inevitable_at_reply', 'enable_reply_at', 'planner_message_steering'] },
-      { title: '动态发言规则', fields: ['talk_value_rules'] },
+      { title: '动态发言规则', fields: ['talk_rule_groups'] },
     ],
   ],
   private: [

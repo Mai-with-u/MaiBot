@@ -110,6 +110,6 @@ class MessageDebouncer:
         self.changed.set()
 
     def consume(self) -> None:
-        """本批消息已收走；只保留上一条的时间和发言人，用于下一批判断。"""
+        """结束当前防抖批次，只保留上一条消息的时间和发言人供下一批使用。"""
         self._first = self._deadline = self._urgent = None
         self.changed.set()

@@ -11,7 +11,7 @@ import uuid
 from src.common.logger import get_logger
 from src.common.startup_diagnostics import diagnostic_stage
 from src.config.config import config_manager
-from src.config.model_configs import APIProvider, ModelInfo
+from src.config.model_configs import APIProvider, ModelInfo, validate_provider_for_request
 from src.llm_models.payload_content.context_item import (
     ContextItem,
     ModelOutputItem,
@@ -679,6 +679,7 @@ class ClientRegistry:
         """
         from . import ensure_client_type_loaded
 
+        validate_provider_for_request(api_provider)
         ensure_client_type_loaded(api_provider.client_type)
 
         # 如果强制创建新实例，直接创建不使用缓存
@@ -715,6 +716,7 @@ class ClientRegistry:
         """异步获取客户端：重初始化在线程中执行，缓存仍按调用方事件循环隔离。"""
         from . import ensure_client_type_loaded
 
+        validate_provider_for_request(api_provider)
         loop = asyncio.get_running_loop()
         cache_key = (loop, api_provider.name)
         if cached := self.client_instance_cache.get(cache_key):

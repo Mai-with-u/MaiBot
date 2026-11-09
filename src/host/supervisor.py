@@ -67,7 +67,7 @@ class _Runtime:
 
     @property
     def log_path(self) -> Path:
-        return self.bot.directory / "logs" / "worker-console.log"
+        return self.bot.directory / "temp" / "worker-console.log"
 
     @property
     def status_path(self) -> Path:
