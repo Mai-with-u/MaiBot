@@ -475,7 +475,9 @@ class MaisakaReasoningEngine:
             return False
 
         if self.passive_replyer_enabled and planner_content:
-            await self._reply_from_planner_content(planner_content, cycle_detail, state)
+            should_continue = await self._reply_from_planner_content(planner_content, cycle_detail, state)
+            if should_continue:
+                return False
             self._end_planner_no_tool_cycle(
                 planner_extra_lines,
                 status_line=f"状态：{state.cycle_end.detail}",
@@ -499,8 +501,8 @@ class MaisakaReasoningEngine:
         content: str,
         cycle_detail: CycleDetail,
         state: CycleRuntimeState,
-    ) -> None:
-        """把最终正文作为指导执行一次回复，不追加虚构的工具调用或工具结果。"""
+    ) -> bool:
+        """把最终正文作为指导执行一次回复，返回是否继续重新规划。"""
 
         started_at = time.time()
         execution_id = uuid.uuid4().hex
@@ -568,9 +570,55 @@ class MaisakaReasoningEngine:
         ]
         if result.success:
             state.cycle_end = CycleEnd("planner_reply_end", "回复完成，已结束本轮思考。")
-        else:
-            logger.error(f"{self._runtime.log_prefix} Planner 正文触发回复失败：{summary}")
-            state.cycle_end = CycleEnd("planner_reply_failed", f"回复失败，已结束本轮思考：{summary}")
+            return False
+        structured = result.structured_content if isinstance(result.structured_content, dict) else {}
+        if structured.get("error_code") == "stale_reply_target":
+            failure_count, _, _ = self._record_reply_failure(result)
+            if failure_count < 2:
+                suggested_msg_id = str(structured.get("suggested_msg_id") or "").strip()
+                self._append_stale_reply_replan_reminder(suggested_msg_id)
+                logger.warning(
+                    f"{self._runtime.log_prefix} 回复目标已过期，已反馈给 Planner 重新规划: "
+                    f"target={structured.get('msg_id') or 'unknown'} "
+                    f"suggested_msg_id={suggested_msg_id or 'unknown'}"
+                )
+                state.cycle_end = CycleEnd("tool_continue", "回复目标已过期，改用最新用户消息重新规划。")
+                return True
+            state.cycle_end = self._cycle_end_for_pause_tool("reply_failure_limit")
+            logger.error(f"{self._runtime.log_prefix} 回复目标连续过期，已结束本轮思考：{summary}")
+            return False
+        logger.error(f"{self._runtime.log_prefix} Planner 正文触发回复失败：{summary}")
+        state.cycle_end = CycleEnd("planner_reply_failed", f"回复失败，已结束本轮思考：{summary}")
+        return False
+
+    def _append_stale_reply_replan_reminder(self, suggested_msg_id: str) -> None:
+        """把过期目标失败写入聊天历史，让 Planner 改用最新用户消息。"""
+
+        suggested_hint = (
+            f"最新用户消息的 msg_id 是 {suggested_msg_id}，"
+            if suggested_msg_id else "请先查看聊天记录中的最新用户消息，"
+        )
+        reminder_text = (
+            "上一次回复没有发送：目标消息已经回复过，而且之后出现了新的用户消息。"
+            f"{suggested_hint}请改用最新用户消息重新组织回复，不要继续回复旧目标。"
+        )
+        reminder = ChatResponse(
+            output_items=(
+                ContextItemBuilder()
+                .set_role(RoleType.User)
+                .set_meta(ContextItemMeta.create(logical_turn_id=self._active_logical_turn_id))
+                .add_text_content(reminder_text)
+                .build(),
+            ),
+            request_messages=[],
+            selected_history_count=0,
+            tool_count=0,
+            prompt_tokens=0,
+            built_message_count=0,
+            completion_tokens=0,
+            total_tokens=0,
+        )
+        self._runtime._chat_history.extend(reminder.raw_messages)
 
     async def _emit_planner_progress(
         self,

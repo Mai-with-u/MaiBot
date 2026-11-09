@@ -12,7 +12,11 @@ from src.chat.message_receive.message import SessionMessage
 from src.chat.utils.utils import get_bot_account, is_bot_self
 from src.cli.maisaka_cli_sender import CLI_PLATFORM_NAME, render_cli_message
 from src.common.data_models.message_component_data_model import TextComponent
-from src.common.data_models.reply_generation_data_models import ReplyGenerationResult, build_reply_monitor_detail
+from src.common.data_models.reply_generation_data_models import (
+    ReplyGenerationResult,
+    ReplyTargetStaleError,
+    build_reply_monitor_detail,
+)
 from src.common.llm_json import parse_llm_json
 from src.common.logger import get_logger
 from src.config import config as config_module
@@ -441,6 +445,16 @@ def _find_stale_reply_target(
     return latest_user_message
 
 
+def _format_stale_reply_target_reason(target_message_id: str, suggested_msg_id: str) -> str:
+    """构造旧锚点拒绝原因，明确给出建议的新目标。"""
+
+    return (
+        f"目标消息 {to_display_message_id(target_message_id)} 已回复过，"
+        f"且存在更新的用户消息 {to_display_message_id(suggested_msg_id)}。"
+        "请改用最新用户消息的 msg_id 重新调用 reply，不要重复回复旧目标。"
+    )
+
+
 def _build_stale_reply_target_failure(
     tool_ctx: BuiltinToolRuntimeContext,
     chat_history: list[LLMContextMessage],
@@ -453,11 +467,7 @@ def _build_stale_reply_target_failure(
     stale_reply_target = _find_stale_reply_target(chat_history, target_message_id, previous_target_reply)
     if stale_reply_target is None:
         return None
-    reason = (
-        f"目标消息 {to_display_message_id(target_message_id)} 已回复过，"
-        f"且存在更新的用户消息 {to_display_message_id(stale_reply_target.message_id)}。"
-        "请改用最新用户消息的 msg_id 重新调用 reply，不要重复回复旧目标。"
-    )
+    reason = _format_stale_reply_target_reason(target_message_id, stale_reply_target.message_id)
     logger.warning(f"{tool_ctx.runtime.log_prefix} 拒绝重复回复旧目标: {reason}")
     return _build_reply_failure(
         tool_ctx,
@@ -665,7 +675,25 @@ async def _execute_reply(
         if "replyer:reply_target" not in dependencies:
             dependencies.append("replyer:reply_target")
         schedule["mode"] = "serial"
-        return await collect_supplement()
+        resolved_target = await collect_supplement()
+        if resolved_target is not None:
+            current_history = list(tool_ctx.runtime._chat_history)
+            previous_reply = _find_recent_reply_to_target(current_history, resolved_target.message_id)
+            stale_failure = _build_stale_reply_target_failure(
+                tool_ctx,
+                current_history,
+                resolved_target.message_id,
+                previous_reply,
+                preparation_metadata,
+            )
+            if stale_failure is not None:
+                structured = stale_failure.structured_content if isinstance(stale_failure.structured_content, dict) else {}
+                raise ReplyTargetStaleError(
+                    resolved_target.message_id,
+                    str(structured.get("reason") or ""),
+                    str(structured.get("suggested_msg_id") or ""),
+                )
+        return resolved_target
 
     async def prepare_extensions() -> None:
         await extension_execution.prepare(invocation_arguments.get("plugin_options", {}))
@@ -790,9 +818,13 @@ async def _execute_reply(
         failure_extra: Dict[str, Any] = {}
         if plugin_suppress_reason:
             failure_extra["suppress_reason"] = plugin_suppress_reason
-        latest_user_message = _find_latest_user_message(replyer_chat_history)
-        if latest_user_message is not None and latest_user_message.message_id != target_message_id:
-            failure_extra["suggested_msg_id"] = latest_user_message.message_id
+        suggested_msg_id = str(reply_result.error_details.get("suggested_msg_id") or "").strip()
+        if suggested_msg_id:
+            failure_extra["suggested_msg_id"] = suggested_msg_id
+        else:
+            latest_user_message = _find_latest_user_message(replyer_chat_history)
+            if latest_user_message is not None and latest_user_message.message_id != target_message_id:
+                failure_extra["suggested_msg_id"] = latest_user_message.message_id
         reason = hook_abort["reason"] if hook_abort is not None else reply_result.error_message
         if plugin_suppress_reason and hook_abort is None:
             reason = (

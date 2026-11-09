@@ -1,4 +1,5 @@
 from datetime import datetime
+from types import SimpleNamespace
 from typing import List, Optional
 
 from src.chat.message_receive.message import SessionMessage
@@ -11,6 +12,7 @@ from src.maisaka.builtin_tool.reply import (
     _find_recent_reply_to_target,
     _find_stale_reply_target,
 )
+from src.llm_models.payload_content.context_item import get_item_text
 from src.maisaka.context.messages import LLMContextMessage, SessionBackedMessage
 from src.maisaka.reasoning_engine import MaisakaReasoningEngine
 
@@ -216,3 +218,12 @@ def test_cycle_end_for_reply_failure_limit() -> None:
     cycle_end = MaisakaReasoningEngine._cycle_end_for_pause_tool("reply_failure_limit")
     assert cycle_end.reason == "reply_failure_limit"
     assert "连续失败" in cycle_end.detail
+
+
+def test_append_stale_reply_replan_reminder_mentions_suggested_id() -> None:
+    engine = object.__new__(MaisakaReasoningEngine)
+    engine._active_logical_turn_id = "turn-1"
+    engine._runtime = SimpleNamespace(_chat_history=[])
+    engine._append_stale_reply_replan_reminder("1003")
+    assert len(engine._runtime._chat_history) == 1
+    assert "1003" in get_item_text(engine._runtime._chat_history[0].output_item)

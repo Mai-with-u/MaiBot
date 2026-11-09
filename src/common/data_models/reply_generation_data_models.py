@@ -18,6 +18,16 @@ if TYPE_CHECKING:
     from src.llm_models.payload_content.tool_option import ToolCall
 
 
+class ReplyTargetStaleError(Exception):
+    """回复目标已过期，需要 Planner 改用最新用户消息。"""
+
+    def __init__(self, target_message_id: str, reason: str, suggested_msg_id: str) -> None:
+        super().__init__(reason)
+        self.target_message_id = target_message_id
+        self.reason = reason
+        self.suggested_msg_id = suggested_msg_id
+
+
 @dataclass
 class LLMCompletionResult(BaseDataModel):
     """一次 LLM 调用的原始完成结果。

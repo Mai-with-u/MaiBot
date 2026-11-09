@@ -23,6 +23,7 @@ from src.common.data_models.reply_generation_data_models import (
     GenerationMetrics,
     LLMCompletionResult,
     ReplyGenerationResult,
+    ReplyTargetStaleError,
     build_reply_monitor_detail,
 )
 from src.common.i18n import get_locale, use_locale
@@ -1432,6 +1433,16 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                     )
                     all_generation_attempts.extend(translated.generation_attempts)
                     generation_result = translated
+            except ReplyTargetStaleError as exc:
+                result.error_code = "stale_reply_target"
+                result.error_message = exc.reason
+                result.error_details["suggested_msg_id"] = exc.suggested_msg_id
+                result.metrics = GenerationMetrics(
+                    prompt_ms=prompt_ms,
+                    llm_ms=0,
+                    overall_ms=round((time.perf_counter() - overall_started_at) * 1000, 2),
+                )
+                return await finalize(False)
             except HookAbortedError as exc:
                 return await finalize_abort(exc)
             except Exception as exc:
