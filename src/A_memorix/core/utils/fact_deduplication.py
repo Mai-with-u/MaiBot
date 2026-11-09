@@ -14,7 +14,6 @@ import time
 import unicodedata
 
 from src.common.prompt_i18n import load_prompt
-from src.llm_models.payload_content.resp_format import RespFormat, RespFormatType
 from src.services import llm_service
 
 from .hash import compute_hash
@@ -56,54 +55,6 @@ def observation_id(*, platform: str, chat_id: str, message_ids: Sequence[str], w
     if not chat_id or not (message_ids or window_id):
         raise ValueError("去重写入缺少真实会话或来源标识")
     return compute_hash(json.dumps([platform, chat_id, sorted(set(message_ids)), window_id], ensure_ascii=False))
-
-
-def _dedup_response_format(
-    batch: Sequence[Dict[str, Any]],
-    candidates: Dict[str, List[Dict[str, Any]]],
-    relations: Sequence[Dict[str, str]],
-) -> RespFormat:
-    """候选枚举与每条事实绑定，避免模型混用 fact_id 和其他事实的候选引用。"""
-    decision_schemas: List[Dict[str, Any]] = []
-    for fact in batch:
-        targets = [row["id"] for row in candidates[fact["fact_id"]]]
-        candidate_ids: Dict[str, Any] = {"type": "array", "items": {"type": "string"}}
-        if targets:
-            candidate_ids["items"]["enum"] = targets
-        decision_schemas.append({
-            "type": "object",
-            "properties": {
-                "fact_id": {"type": "string", "enum": [fact["fact_id"]]},
-                "action": {"type": "string", "enum": ["keep", "reuse", "possible_duplicate"] if targets else ["keep"]},
-                "target_id": {"type": ["string", "null"], "enum": [*targets, None]},
-                "candidate_ids": candidate_ids,
-            },
-            "required": ["fact_id", "action", "target_id", "candidate_ids"],
-            "additionalProperties": False,
-        })
-    # strict 模式要求对象的属性全部声明并列为必填，无支持事实的关系返回空数组。
-    relation_properties = {
-        str(index): {"type": "array", "items": {"type": "string", "enum": [fact["fact_id"] for fact in batch]}}
-        for index in range(len(relations))
-    }
-    return RespFormat(format_type=RespFormatType.JSON_SCHEMA, schema={
-        "name": "fact_deduplication",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "decisions": {
-                    "type": "array", "items": {"anyOf": decision_schemas},
-                },
-                "relation_support": {
-                    "type": "object", "properties": relation_properties,
-                    "required": list(relation_properties), "additionalProperties": False,
-                },
-            },
-            "required": ["decisions", "relation_support"],
-            "additionalProperties": False,
-        },
-    })
 
 
 class FactDeduplicator:
@@ -382,7 +333,6 @@ class FactDeduplicator:
                         ),
                     ),
                     temperature=0.0,
-                    response_format=_dedup_response_format(batch, model_candidates, relations),
                 )
             )
             if not response.success:
