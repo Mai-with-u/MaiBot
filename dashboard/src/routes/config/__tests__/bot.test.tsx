@@ -205,6 +205,7 @@ vi.mock('@/components/dynamic-form', () => ({
 }))
 
 vi.mock('@/lib/config-api', () => ({
+  getModelConfig: vi.fn(),
   getBotConfig: vi.fn(),
   getBotConfigCached: vi.fn(),
   getBotConfigRaw: vi.fn(),
@@ -268,6 +269,19 @@ function createDeferred<T>() {
 
 /** 页面挂载时应注册的字段 hook 路径与类型（replace 为缺省） */
 const EXPECTED_FIELD_HOOKS: Array<[string, 'replace' | 'wrapper' | 'hidden']> = [
+  ['desktop_pet.skin_id', 'replace'],
+  ['desktop_pet.show_current_task', 'replace'],
+  ['agent.connection', 'wrapper'],
+  ['agent.desktop_manifest', 'wrapper'],
+  ['agent.acp_args', 'wrapper'],
+  ['agent.acp_command', 'wrapper'],
+  ['agent.acp_cwd', 'wrapper'],
+  ['agent.acp_env', 'wrapper'],
+  ['agent.acp_model', 'wrapper'],
+  ['agent.acp_timeout', 'wrapper'],
+  ['chat.reply_timing.private_reply_pause_rules', 'replace'],
+  ['expression.learning_blacklist', 'replace'],
+  ['jargon.learning_blacklist', 'replace'],
   ['bot.platform', 'hidden'],
   ['bot.alias_names', 'replace'],
   ['bot.qq_account', 'hidden'],
@@ -307,7 +321,7 @@ function chatSubtabSchema(): { schema: ConfigSchema } {
           className: 'ChatSection',
           classDoc: '聊天配置',
           fields: [
-            field('enabled', 'boolean'),
+            field('enabled', 'boolean', { 'x-chat-settings': { scope: 'group', row: 0 } }),
             field('reply_timing', 'object'),
             field('reply_style', 'object'),
             field('advanced_box', 'object'),
@@ -316,7 +330,7 @@ function chatSubtabSchema(): { schema: ConfigSchema } {
             reply_timing: {
               className: 'ReplyTiming',
               classDoc: '回复时机文档',
-              fields: [],
+              fields: [field('talk_value', 'number')],
               nested: {},
               uiLabel: '回复时机',
               uiSubLabel: '时机子页',
@@ -324,14 +338,14 @@ function chatSubtabSchema(): { schema: ConfigSchema } {
             reply_style: {
               className: 'ReplyStyle',
               classDoc: '',
-              fields: [],
+              fields: [field('style', 'string')],
               nested: {},
               uiLabel: '回复风格',
             },
             advanced_box: {
               className: 'AdvancedBox',
               classDoc: '高级文档',
-              fields: [],
+              fields: [field('debug', 'boolean')],
               nested: {},
               uiAdvanced: true,
             },
@@ -392,6 +406,7 @@ beforeEach(() => {
   routerSearchStr = ''
   fieldHooks.clear()
   vi.mocked(scrollToConfigSearchField).mockImplementation(() => document.createElement('div'))
+  vi.mocked(configApi.getModelConfig).mockResolvedValue({ models: [], api_providers: [], model_task_config: { embedding: { model_list: [] } } })
   vi.mocked(configApi.getBotConfigCached).mockResolvedValue(baseConfig())
   vi.mocked(configApi.getBotConfig).mockResolvedValue(baseConfig())
   vi.mocked(configApi.getBotConfigSchema).mockResolvedValue(baseSchema() as never)
@@ -633,6 +648,7 @@ describe('BotConfigPage 特征化', () => {
         '人格',
         '机器人',
         '实验性',
+        '公共设置',
       ])
       await user.click(within(menu).getByRole('menuitem', { name: '机器人' }))
       expect(await screen.findByTestId('form-bot-sections')).toHaveTextContent('bot,sub_feature')
@@ -697,7 +713,7 @@ describe('BotConfigPage 特征化', () => {
       await renderBotPage()
       expect(screen.queryByText(/展开隐藏配置栏目/)).not.toBeInTheDocument()
       const menu = await openConfigMenu(user)
-      expect(getConfigPageMenuItems(menu)).toHaveLength(3)
+      expect(getConfigPageMenuItems(menu)).toHaveLength(4)
     })
   })
 
@@ -1209,7 +1225,7 @@ describe('BotConfigPage 特征化', () => {
       expect(screen.getByTestId('form-experimental')).toBeInTheDocument()
     })
 
-    it('uiUseSubTabs 按根字段/子类/高级子页拆分，回复风格以聊天流prompt子页默认显示', async () => {
+    it('uiUseSubTabs 按根字段/子类/高级子页拆分，聊天流prompt通过独立弹窗编辑', async () => {
       const config = {
         ...baseConfig(),
         chat: { enabled: true, reply_timing: { talk_value: 1 }, reply_style: { style: 'a' } },
@@ -1220,7 +1236,7 @@ describe('BotConfigPage 特征化', () => {
       localStorage.setItem('bot-config-tabs-guide-dismissed', 'true')
       const user = userEvent.setup()
       await renderBotPage()
-      await enterDetailMode(user, 'form-ChatSectionRoot')
+      await enterDetailMode(user, 'form-ChatSection')
 
       const tabList = await openConfigMenu(user)
       expect(within(tabList).getByRole('menuitem', { name: '聊天' })).toBeInTheDocument()
@@ -1234,8 +1250,12 @@ describe('BotConfigPage 特征化', () => {
       const defaultSubtabNames = within(subtabList)
         .getAllByRole('tab')
         .map((tab) => tab.textContent)
-      // 回复风格的基础提示词已迁至人格配置，其余字段以「聊天流prompt」子页默认显示，不再折叠在高级子页中。
-      expect(defaultSubtabNames).toEqual(['总览', '时机子页', '聊天流prompt'])
+      // 基础提示词归人格配置；聊天流 prompt 通过总览中的独立弹窗编辑。
+      expect(defaultSubtabNames).toEqual(['总览', '时机子页'])
+      await user.click(screen.getByRole('button', { name: '聊天流prompt' }))
+      const promptDialog = await screen.findByRole('dialog', { name: '聊天流prompt' })
+      expect(within(promptDialog).getByTestId('form-ReplyStyle-values')).toHaveTextContent('style')
+      await user.keyboard('{Escape}')
       // 不再以「回复风格」原名列为聊天子页。
       expect(within(subtabList).queryByRole('tab', { name: '回复风格' })).not.toBeInTheDocument()
 
@@ -1254,7 +1274,7 @@ describe('BotConfigPage 特征化', () => {
 
       await user.click(within(subtabList).getByRole('button', { name: '收起设置栏目' }))
       expect(within(subtabList).queryByRole('tab', { name: '内部组' })).not.toBeInTheDocument()
-      expect(await screen.findByTestId('form-ChatSectionRoot')).toBeInTheDocument()
+      expect(await screen.findByTestId('form-ChatSection')).toBeInTheDocument()
     })
 
     it('子页表单修改会写入嵌套路径，空 fieldPath 被忽略', async () => {
@@ -1268,17 +1288,17 @@ describe('BotConfigPage 特征化', () => {
       localStorage.setItem('bot-config-tabs-guide-dismissed', 'true')
       const user = userEvent.setup()
       await renderBotPage()
-      await enterDetailMode(user, 'form-ChatSectionRoot')
+      await enterDetailMode(user, 'form-ChatSection')
 
-      await user.click(screen.getByText('change-root-ChatSectionRoot'))
-      expect(screen.getByTestId('form-ChatSectionRoot-values')).toHaveTextContent('root-新值')
+      await user.click(screen.getByText('change-root-ChatSection'))
+      expect(screen.getByTestId('form-ChatSection-values')).toHaveTextContent('root-新值')
 
-      await user.click(screen.getByText('change-deep-root-ChatSectionRoot'))
-      expect(screen.getByTestId('form-ChatSectionRoot-values')).toHaveTextContent('deep-新值')
+      await user.click(screen.getByText('change-deep-root-ChatSection'))
+      expect(screen.getByTestId('form-ChatSection-values')).toHaveTextContent('deep-新值')
 
-      const beforeEmpty = screen.getByTestId('form-ChatSectionRoot-values').textContent
-      await user.click(screen.getByText('change-empty-ChatSectionRoot'))
-      expect(screen.getByTestId('form-ChatSectionRoot-values').textContent).toBe(beforeEmpty)
+      const beforeEmpty = screen.getByTestId('form-ChatSection-values').textContent
+      await user.click(screen.getByText('change-empty-ChatSection'))
+      expect(screen.getByTestId('form-ChatSection-values').textContent).toBe(beforeEmpty)
     })
 
     it('普通 tab 的深层/整节/穿越数组更新会写回分节值', async () => {
@@ -1361,7 +1381,7 @@ describe('BotConfigPage 特征化', () => {
 
       const tabList = await openConfigMenu(user)
       const tabNames = getConfigPageMenuItems(tabList).map((tab) => tab.textContent)
-      expect(tabNames).toEqual(['单独'])
+      expect(tabNames).toEqual(['单独', '公共设置'])
     })
 
     it('相同 uiOrder 的 tab 按中文 locale 标签排序', async () => {
@@ -1383,7 +1403,7 @@ describe('BotConfigPage 特征化', () => {
 
       const tabList = await openConfigMenu(user)
       const tabNames = getConfigPageMenuItems(tabList).map((tab) => tab.textContent)
-      expect(tabNames).toEqual(['alpha配置', 'zeta配置'])
+      expect(tabNames).toEqual(['alpha配置', 'zeta配置', '公共设置'])
     })
   })
 })
@@ -1419,7 +1439,7 @@ describe('BotConfigPage 补充覆盖', () => {
     await user.click(screen.getByRole('tab', { name: '详细设置' }))
     const tabList = await openConfigMenu(user)
     const tabNames = getConfigPageMenuItems(tabList).map((tab) => tab.textContent)
-    expect(tabNames).toEqual(['有序', '无序'])
+    expect(tabNames).toEqual(['有序', '无序', '公共设置'])
   })
 
   it('配置数据无法解析时走加载失败兜底', async () => {
@@ -1618,7 +1638,7 @@ describe('BotConfigPage 补充覆盖', () => {
     localStorage.setItem('bot-config-tabs-guide-dismissed', 'true')
     const user = userEvent.setup()
     await renderBotPage()
-    await enterDetailMode(user, 'form-ChatSectionRoot')
+    await enterDetailMode(user, 'form-ChatSection')
 
     const subtabList = document.querySelector('[data-config-bot-subtab-list="true"]') as HTMLElement
     await user.click(within(subtabList).getByRole('tab', { name: '时机子页' }))
@@ -1652,7 +1672,7 @@ describe('BotConfigPage 补充覆盖', () => {
             className: 'ChatSection',
             classDoc: '',
             fields: [
-              field('enabled', 'boolean'),
+              field('enabled', 'boolean', { 'x-chat-settings': { scope: 'group', row: 0 } }),
               field('mystery', 'object'),
               field('notes', 'string'),
             ],
@@ -1660,7 +1680,7 @@ describe('BotConfigPage 补充覆盖', () => {
               mystery: {
                 className: 'Mystery',
                 classDoc: '',
-                fields: [],
+                fields: [field('example', 'string')],
                 nested: {},
               },
               notes: {
@@ -1694,7 +1714,7 @@ describe('BotConfigPage 补充覆盖', () => {
     localStorage.setItem('bot-config-tabs-guide-dismissed', 'true')
     const user = userEvent.setup()
     await renderBotPage()
-    await enterDetailMode(user, 'form-ChatSectionRoot')
+    await enterDetailMode(user, 'form-ChatSection')
 
     const subtabList = document.querySelector('[data-config-bot-subtab-list="true"]') as HTMLElement
     expect(within(subtabList).getByRole('tab', { name: 'mystery' })).toBeInTheDocument()

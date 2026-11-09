@@ -1,3 +1,4 @@
+import { useContext } from 'react'
 import type {
   AnchorHTMLAttributes,
   HTMLAttributes,
@@ -9,17 +10,17 @@ import type {
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { Header } from './Header'
+import { ThemeProviderContext } from '@/lib/theme-context'
+
+import { Header as ActualHeader } from './Header'
 
 const mocks = vi.hoisted(() => ({
   pathname: '/',
   electron: false,
   inheritedFrom: 'header',
-  language: 'zh-CN',
+  dashboardStyle: 'future-retro' as 'future-retro' | 'millennium',
   t: vi.fn((key: string) => key),
-  changeLanguage: vi.fn(),
   getActiveBackend: vi.fn(),
-  logout: vi.fn(),
   toggleTheme: vi.fn(),
 }))
 
@@ -51,10 +52,6 @@ vi.mock('@tanstack/react-router', () => ({
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: mocks.t,
-    i18n: {
-      language: mocks.language,
-      changeLanguage: mocks.changeLanguage,
-    },
   }),
 }))
 
@@ -219,13 +216,21 @@ vi.mock('@/hooks/use-background', () => ({
   }),
 }))
 
-vi.mock('@/lib/auth', () => ({
-  logout: mocks.logout,
-}))
-
 vi.mock('@/lib/runtime', () => ({
   isElectron: () => mocks.electron,
 }))
+
+// 显式指定这组悬浮/紧凑布局测试的主题，避免受产品默认主题变更影响。
+function Header(props: Parameters<typeof ActualHeader>[0]) {
+  const theme = useContext(ThemeProviderContext)
+  return (
+    <ThemeProviderContext.Provider
+      value={{ ...theme, themeConfig: { ...theme.themeConfig, dashboardStyle: mocks.dashboardStyle } }}
+    >
+      <ActualHeader {...props} />
+    </ThemeProviderContext.Provider>
+  )
+}
 
 function makeProps(
   overrides: Partial<Parameters<typeof Header>[0]> = {}
@@ -250,9 +255,8 @@ describe('Header', () => {
     mocks.pathname = '/'
     mocks.electron = false
     mocks.inheritedFrom = 'header'
-    mocks.language = 'zh-CN'
+    mocks.dashboardStyle = 'future-retro'
     mocks.getActiveBackend.mockResolvedValue({ name: '本地后端' })
-    mocks.logout.mockResolvedValue(undefined)
     vi.spyOn(window, 'open').mockImplementation(() => null)
     Object.defineProperty(window, 'electronAPI', {
       configurable: true,
@@ -268,7 +272,7 @@ describe('Header', () => {
     vi.useRealTimers()
   })
 
-  it('触发顶栏主要操作、工作区切换、语言和主题变更', async () => {
+  it('触发顶栏主要操作、工作区切换和主题变更', async () => {
     const props = makeProps()
     render(<Header {...props} />)
 
@@ -276,7 +280,7 @@ describe('Header', () => {
     expect(document.querySelector('[data-dashboard-header="true"]')).toHaveClass('bg-background')
     expect(document.querySelector('[data-dashboard-header="true"]')).not.toHaveClass('bg-card/80')
 
-    fireEvent.click(screen.getByRole('button', { name: 'a11y.closeMenu' }))
+    expect(screen.queryByRole('button', { name: 'a11y.closeMenu' })).not.toBeInTheDocument()
     const sidebarModeButton = screen.getByRole('button', {
       name: 'header.switchSidebarToHover',
     })
@@ -286,8 +290,6 @@ describe('Header', () => {
     fireEvent.click(screen.getByRole('button', { name: 'header.searchPlaceholder' }))
     fireEvent.click(screen.getByRole('button', { name: 'header.viewDocs' }))
     fireEvent.click(screen.getAllByRole('button', { name: 'header.switchToLight' })[0])
-    fireEvent.click(screen.getAllByRole('button', { name: 'English' })[0])
-    fireEvent.click(screen.getByRole('button', { name: 'header.logout' }))
     fireEvent.click(screen.getByRole('tab', { name: 'workspace.logs' }))
 
     expect(props.onSidebarToggle).toHaveBeenCalledOnce()
@@ -295,8 +297,6 @@ describe('Header', () => {
     expect(props.onSearchOpenChange).toHaveBeenCalledWith(true)
     expect(window.open).toHaveBeenCalledWith('https://docs.mai-mai.org', '_blank')
     expect(mocks.toggleTheme).toHaveBeenCalledWith('light', props.onThemeChange, expect.anything())
-    expect(mocks.changeLanguage).toHaveBeenCalledWith('en')
-    expect(mocks.logout).toHaveBeenCalledOnce()
     expect(props.onWorkspaceNavigate).toHaveBeenCalledWith('/logs')
   })
 
@@ -350,32 +350,26 @@ describe('Header', () => {
     expect(document.querySelectorAll('[data-layout-id="topbar-selection-pill"]')).toHaveLength(1)
   })
 
-  it('语言菜单打开时高亮语言按钮，并支持日韩切换', () => {
+  it('语言与账户操作移至设置页后，顶栏提供统一设置入口', () => {
     render(<Header {...makeProps()} />)
 
-    fireEvent.click(screen.getByRole('button', { name: '打开语言菜单' }))
-    expect(document.querySelector('[data-header-action-highlighted="true"]')).toHaveAttribute(
-      'aria-label',
-      'header.switchLanguage'
-    )
-
-    fireEvent.click(screen.getAllByRole('button', { name: '日本語' })[0])
-    fireEvent.click(screen.getAllByRole('button', { name: '한국어' })[0])
-    expect(mocks.changeLanguage).toHaveBeenCalledWith('ja')
-    expect(mocks.changeLanguage).toHaveBeenCalledWith('ko')
+    for (const link of screen.getAllByRole('link', { name: 'sidebar.menu.settings' })) {
+      expect(link).toHaveAttribute('href', '/settings')
+    }
+    expect(screen.queryByRole('button', { name: 'header.switchLanguage' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'header.logout' })).not.toBeInTheDocument()
   })
 
-  it('亮色主题走夜间切换，移动端更多菜单也能改主题并登出', () => {
+  it('亮色主题走夜间切换，更多菜单也能改主题并打开设置', () => {
     const props = makeProps({ actualTheme: 'light' })
     render(<Header {...props} />)
 
     fireEvent.click(screen.getAllByRole('button', { name: 'header.switchToDark' })[0])
     fireEvent.click(screen.getAllByRole('button', { name: 'header.switchToDark' })[1])
-    fireEvent.click(screen.getByRole('button', { name: 'header.logoutLabel' }))
+    expect(screen.getAllByRole('link', { name: 'sidebar.menu.settings' })).toHaveLength(2)
 
     expect(mocks.toggleTheme).toHaveBeenCalledTimes(2)
     expect(mocks.toggleTheme).toHaveBeenNthCalledWith(1, 'dark', props.onThemeChange, expect.anything())
-    expect(mocks.logout).toHaveBeenCalledOnce()
     expect(screen.getByRole('button', { name: 'header.moreActions' })).toBeInTheDocument()
   })
 
@@ -640,16 +634,14 @@ describe('Header', () => {
     })
   })
 
-  it('顶栏按钮悬停定时器可被再次进入打断，并触发工作区/语言/文档等剩余回调', () => {
+  it('顶栏按钮悬停定时器可被再次进入打断，并触发工作区和文档回调', () => {
     vi.useFakeTimers()
     const props = makeProps()
     render(<Header {...props} />)
 
     const settingsAction = screen.getByTitle('sidebar.menu.settings')
     const docsButton = screen.getByRole('button', { name: 'header.viewDocs' })
-    const languageButton = screen.getByRole('button', { name: 'header.switchLanguage' })
     const themeButton = screen.getAllByRole('button', { name: 'header.switchToLight' })[0]
-    const logoutButton = screen.getByRole('button', { name: 'header.logout' })
     const settingsLink = screen.getByRole('tab', { name: 'workspace.settings' })
 
     fireEvent.pointerEnter(settingsAction)
@@ -664,17 +656,15 @@ describe('Header', () => {
 
     fireEvent.pointerEnter(docsButton)
     fireEvent.pointerLeave(docsButton)
-    fireEvent.pointerEnter(languageButton)
-    fireEvent.click(languageButton)
+    fireEvent.click(docsButton)
     fireEvent.pointerEnter(themeButton)
     fireEvent.pointerLeave(themeButton)
-    fireEvent.pointerEnter(logoutButton)
-    fireEvent.pointerLeave(logoutButton)
+    fireEvent.pointerEnter(settingsAction)
+    fireEvent.pointerLeave(settingsAction)
     fireEvent.click(settingsLink)
-    fireEvent.click(screen.getAllByRole('button', { name: 'English' })[1])
+    expect(window.open).toHaveBeenCalledWith('https://docs.mai-mai.org', '_blank')
 
     expect(settingsLink).toHaveAttribute('href', '/')
-    expect(mocks.changeLanguage).toHaveBeenCalledWith('en')
 
     act(() => {
       vi.advanceTimersByTime(600)
@@ -727,11 +717,15 @@ describe('Header', () => {
     )
   })
 
-  it('语言代码为空时回退中文并勾选中文项', () => {
-    mocks.language = ''
-    render(<Header {...makeProps()} />)
-    const zhItem = screen.getAllByRole('button', { name: /中文/ })[0]
-    expect(zhItem.querySelector('svg')).toBeTruthy()
+  it('千禧主题提供顶栏收起键并保留工作区切换', () => {
+    mocks.dashboardStyle = 'millennium'
+    const props = makeProps()
+    render(<Header {...props} />)
+    const collapseKey = document.querySelector('[data-dashboard-topbar-collapse-key="true"]')
+    expect(collapseKey).toHaveAttribute('aria-label', 'header.collapseTopbar')
+    fireEvent.click(collapseKey as HTMLButtonElement)
+    expect(props.onTopbarToggle).toHaveBeenCalledOnce()
+    expect(screen.getByRole('tab', { name: 'workspace.settings' })).toHaveAttribute('href', '/')
   })
 })
 

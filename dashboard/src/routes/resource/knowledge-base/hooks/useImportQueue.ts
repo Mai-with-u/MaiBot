@@ -103,6 +103,7 @@ export function useImportQueue({
 
   // 队列读失败：局部 importErrorText 呈现（沿用原 refreshImportQueue 的错误文案语义）
   const [importErrorText, setImportErrorText] = useState('')
+  const [detailRefreshVersion, setDetailRefreshVersion] = useState(0)
 
   const [selectedImportTaskId, setSelectedImportTaskId] = useState('')
   const [selectedImportTask, setSelectedImportTask] = useState<MemoryImportTaskPayload | null>(null)
@@ -234,6 +235,8 @@ export function useImportQueue({
           }
           return currentTaskId
         })
+        // Query 可能复用未变化的列表；由 effect 使用最新选择刷新详情，避免请求期间切换后的旧闭包。
+        setDetailRefreshVersion((version) => version + 1)
       } catch (error) {
         const message = error instanceof Error ? error.message : '刷新导入任务失败'
         setImportErrorText(message)
@@ -389,7 +392,7 @@ export function useImportQueue({
       return
     }
     void loadImportTaskDetail(selectedImportTaskId, true)
-  }, [active, importTasks, loadImportTaskDetail, selectImportTask, selectedImportTaskId])
+  }, [active, detailRefreshVersion, importTasks, loadImportTaskDetail, selectImportTask, selectedImportTaskId])
 
   // 派生：任务分组、选中任务的衍生信息、分块分页
   const runningImportTasks = useMemo(

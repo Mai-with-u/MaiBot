@@ -5,6 +5,7 @@ vi.mock('@/lib/api-base', () => ({
   resolveApiPath: async (path: string) => path,
   onBackendUrlChanged: () => () => {},
   getApiBaseUrl: async () => '',
+  getControlApiBaseUrl: async () => '',
 }))
 
 describe('multipart transport', () => {
