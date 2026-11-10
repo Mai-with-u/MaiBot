@@ -162,8 +162,8 @@ describe('DeleteTab', () => {
     expect(screen.queryByText('当前没有可查看的删除操作详情')).not.toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: '删除操作详情' })).not.toBeInTheDocument()
     expect(screen.getByText('当前筛选条件下没有删除操作')).toBeInTheDocument()
-    expect(screen.getByText('0 个来源 · 已选 0')).toBeInTheDocument()
-    expect(screen.getByText('0 个来源 · 已选 0')).toBeInTheDocument()
+    expect(screen.getByText('当前命中 0 个来源')).toBeInTheDocument()
+    expect(screen.getByText('已选择 0 个来源')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '预览删除' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '上一页' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '下一页' })).toBeDisabled()
@@ -185,7 +185,7 @@ describe('DeleteTab', () => {
       filteredSources,
     })
 
-    expect(screen.getByText('3 个来源 · 已选 0')).toBeInTheDocument()
+    expect(screen.getByText('当前命中 3 个来源')).toBeInTheDocument()
     expect(screen.getByText('chat:alpha')).toBeInTheDocument()
     expect(screen.getByText('chat:beta')).toBeInTheDocument()
     // 段落数按行校验，避免表格内数字混在一起时断言失效
@@ -228,7 +228,7 @@ describe('DeleteTab', () => {
         />
       </Tabs>,
     )
-    expect(screen.getByText('3 个来源 · 已选 1')).toBeInTheDocument()
+    expect(screen.getByText('已选择 1 个来源')).toBeInTheDocument()
     // 删除原因已移到预览对话框填写，这里只负责发起预览
     expect(
       screen.queryByPlaceholderText('例如：清理测试导入批次，会记录在删除历史里'),
@@ -237,8 +237,7 @@ describe('DeleteTab', () => {
     expect(memoryDelete.openSourceDeletePreview).toHaveBeenCalledWith()
   })
 
-  it('来源优先展示聊天流名称与来源类型，原始 source 可在提示中核对', async () => {
-    const user = userEvent.setup()
+  it('来源优先展示聊天流名称与来源类型，裸 source 降级为副标题', () => {
     // 「其他」下类别徽章保留，借此断言行内类型文案
     renderDelete({
       sourceKindFilter: 'other',
@@ -259,8 +258,7 @@ describe('DeleteTab', () => {
     // 类型徽章限定在来源行内断言，避免与筛选标签页的同名文案混淆
     expect(screen.getByText('摸鱼群').closest('tr')).toHaveTextContent('聊天摘要')
     // 原始 source 仍保留，便于核对具体来源标记
-    await user.hover(screen.getByText('摸鱼群'))
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('原始来源：chat_summary:s1')
+    expect(screen.getByText('chat_summary:s1')).toBeInTheDocument()
     // 解析不出聊天流时直接展示原始 source，不额外渲染副标题
     expect(screen.getByText('import:batch-1')).toBeInTheDocument()
   })
@@ -283,7 +281,7 @@ describe('DeleteTab', () => {
 
     // 主标题是可读姓名，不可读的 person_id 降级为副标题
     expect(screen.getByText('张三')).toBeInTheDocument()
-    expect(screen.queryByText(personSource)).not.toBeInTheDocument()
+    expect(screen.getByText(personSource)).toBeInTheDocument()
 
     await user.hover(screen.getByText('张三'))
     const tooltip = await screen.findByRole('tooltip')
@@ -357,7 +355,7 @@ describe('DeleteTab', () => {
     expect(screen.getAllByText('段落 3').length).toBeGreaterThan(0)
     expect(screen.getAllByText('来源 4').length).toBeGreaterThan(0)
 
-    await user.click(screen.getByRole('button', { name: /已恢复 混合/ }))
+    await user.click(screen.getByText('op-restored'))
     expect(memoryDelete.setSelectedOperationId).toHaveBeenCalledWith('op-restored')
   })
 
@@ -375,7 +373,7 @@ describe('DeleteTab', () => {
       deleteOperationPageCount: 3,
     })
 
-    fireEvent.change(screen.getByRole('textbox', { name: '搜索删除记录' }), {
+    fireEvent.change(screen.getByPlaceholderText('搜索 operation / reason / requested_by / source'), {
       target: { value: 'op-2' },
     })
     expect(memoryDelete.setOperationSearch).toHaveBeenCalledWith('op-2')

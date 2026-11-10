@@ -137,12 +137,11 @@ describe('RestartOverlay（Provider 模式）', () => {
   it('showAnimation=false 时不渲染背景动画粒子', () => {
     useRestartMock.mockReturnValue(makeContext(makeState()))
 
-    const { baseElement, rerender } = render(<RestartOverlay />)
-    // 遮罩通过 Portal 挂载到 body，动画不在 render 的局部 container 内。
-    expect(baseElement.querySelector('.animate-bounce')).not.toBeNull()
+    const { container, rerender } = render(<RestartOverlay />)
+    expect(container.querySelector('.animate-bounce')).not.toBeNull()
 
     rerender(<RestartOverlay showAnimation={false} />)
-    expect(baseElement.querySelector('.animate-bounce')).toBeNull()
+    expect(container.querySelector('.animate-bounce')).toBeNull()
   })
 })
 

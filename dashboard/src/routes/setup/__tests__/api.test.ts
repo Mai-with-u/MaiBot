@@ -222,12 +222,10 @@ describe('loadModelSetupConfig', () => {
     await expect(loadModelSetupConfig()).resolves.toEqual({
       planner_model_name: 'planner-model',
       planner_model_identifier: 'deepseek-v4',
-      planner_reasoning_effort: 'high',
       planner_visual: true,
       planner_thinking: true,
       replyer_model_name: 'replyer-model',
       replyer_model_identifier: 'glm-5',
-      replyer_reasoning_effort: 'high',
       replyer_visual: false,
       replyer_thinking: true,
     })
@@ -270,12 +268,10 @@ describe('loadModelSetupConfig', () => {
     await expect(loadModelSetupConfig()).resolves.toEqual({
       planner_model_name: '',
       planner_model_identifier: '',
-      planner_reasoning_effort: 'high',
       planner_visual: false,
       planner_thinking: false,
       replyer_model_name: '',
       replyer_model_identifier: '',
-      replyer_reasoning_effort: 'high',
       replyer_visual: false,
       replyer_thinking: false,
     })
@@ -427,7 +423,6 @@ describe('saveApiProviderSetupConfig', () => {
 })
 
 describe('saveModelSetupConfig', () => {
-  const providers = [{ name: 'DeepSeek', base_url: 'https://api.deepseek.com', client_type: 'openai' }]
   const setupConfig = {
     planner_model_name: '（表单里的名称会被标识符覆盖）',
     planner_model_identifier: ' deepseek-v4 ',
@@ -453,22 +448,20 @@ describe('saveModelSetupConfig', () => {
     })
   })
 
-  it('已配置 DeepSeek 提供商时新建 planner/replyer 模型并同步任务模型列表', async () => {
-    getMock.mockResolvedValue({ config: { api_providers: providers } })
+  it('空配置下新建 planner/replyer 模型并同步任务模型列表', async () => {
+    getMock.mockResolvedValue({ config: {} })
     postMock.mockResolvedValue({ success: true })
 
     await saveModelSetupConfig(setupConfig, ' DeepSeek ')
 
     expect(postMock).toHaveBeenCalledWith('/api/webui/config/model', {
       body: {
-        api_providers: providers,
         models: [
           {
             price_in: 0,
             cache_price_in: 0,
             price_out: 0,
             force_stream_mode: false,
-            model_type: 'llm',
             // 开启思考：thinking enabled 且附带 reasoning_effort
             extra_params: { thinking: { type: 'enabled' }, reasoning_effort: 'high' },
             visual: true,
@@ -481,7 +474,6 @@ describe('saveModelSetupConfig', () => {
             cache_price_in: 0,
             price_out: 0,
             force_stream_mode: false,
-            model_type: 'llm',
             // 关闭思考：thinking disabled 且不携带 reasoning_effort
             extra_params: { thinking: { type: 'disabled' } },
             visual: false,
@@ -503,7 +495,6 @@ describe('saveModelSetupConfig', () => {
   it('已有同名模型时保留价格等既有字段并清理旧的 enable_thinking', async () => {
     getMock.mockResolvedValue({
       config: {
-        api_providers: providers,
         models: [
           {
             model_identifier: 'deepseek-v4-old',

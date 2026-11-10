@@ -12,8 +12,7 @@ import {
   useResolvedAvatarUrl,
 } from '../avatar-url'
 
-vi.mock('@/lib/api-base', async (importOriginal) => ({
-  ...await importOriginal<typeof import('@/lib/api-base')>(),
+vi.mock('@/lib/api-base', () => ({
   getApiBaseUrl: vi.fn(),
   resolveApiPath: vi.fn(),
 }))

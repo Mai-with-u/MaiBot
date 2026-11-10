@@ -103,7 +103,6 @@ export function useImportQueue({
 
   // 队列读失败：局部 importErrorText 呈现（沿用原 refreshImportQueue 的错误文案语义）
   const [importErrorText, setImportErrorText] = useState('')
-  const [detailRefreshVersion, setDetailRefreshVersion] = useState(0)
 
   const [selectedImportTaskId, setSelectedImportTaskId] = useState('')
   const [selectedImportTask, setSelectedImportTask] = useState<MemoryImportTaskPayload | null>(null)
@@ -215,7 +214,7 @@ export function useImportQueue({
 
   // 命令式刷新队列：触发任务列表查询重拉，并维护选中任务（沿用原 refreshImportQueue 语义）
   const refreshImportQueue = useCallback(
-    async (silent: boolean = false, refreshUnchangedDetail: boolean = true) => {
+    async (silent: boolean = false) => {
       try {
         const result = await tasksQuery.refetch({ throwOnError: true })
         const nextTasks = result.data?.items ?? []
@@ -235,10 +234,6 @@ export function useImportQueue({
           }
           return currentTaskId
         })
-        // 手动刷新遇到相同列表时也刷新详情。已主动加载详情的操作无需额外触发。
-        if (refreshUnchangedDetail && nextTasks === importTasks) {
-          setDetailRefreshVersion((version) => version + 1)
-        }
       } catch (error) {
         const message = error instanceof Error ? error.message : '刷新导入任务失败'
         setImportErrorText(message)
@@ -251,12 +246,12 @@ export function useImportQueue({
         }
       }
     },
-    [importTasks, tasksQuery, toast]
+    [tasksQuery, toast]
   )
 
   const afterCreated = useCallback(
     async (taskId: string) => {
-      await refreshImportQueue(true, false)
+      await refreshImportQueue(true)
       if (taskId) {
         setSelectedImportTaskId(taskId)
         await loadImportTaskDetail(taskId, true)
@@ -313,7 +308,7 @@ export function useImportQueue({
       if (!payload.success) {
         throw new Error(payload.error || '取消导入任务失败')
       }
-      await refreshImportQueue(true, false)
+      await refreshImportQueue(true)
       await loadImportTaskDetail(selectedImportTaskId, true)
       toast({
         title: '已请求取消任务',
@@ -342,7 +337,7 @@ export function useImportQueue({
         throw new Error(payload.error || '重试失败项失败')
       }
       const nextTaskId = String(payload.task?.task_id ?? '')
-      await refreshImportQueue(true, false)
+      await refreshImportQueue(true)
       if (nextTaskId) {
         setSelectedImportTaskId(nextTaskId)
         await loadImportTaskDetail(nextTaskId, true)
@@ -394,7 +389,7 @@ export function useImportQueue({
       return
     }
     void loadImportTaskDetail(selectedImportTaskId, true)
-  }, [active, detailRefreshVersion, importTasks, loadImportTaskDetail, selectImportTask, selectedImportTaskId])
+  }, [active, importTasks, loadImportTaskDetail, selectImportTask, selectedImportTaskId])
 
   // 派生：任务分组、选中任务的衍生信息、分块分页
   const runningImportTasks = useMemo(

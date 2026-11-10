@@ -123,9 +123,9 @@ describe('SecurityTab', () => {
     render(<SecurityTab />)
 
     fireEvent.click(screen.getAllByTitle('settings.security.show')[0])
-    expect(screen.getByLabelText('settings.security.newTokenLabel')).toHaveAttribute('type', 'text')
-    fireEvent.click(screen.getByTitle('settings.security.hide'))
-    expect(screen.getByLabelText('settings.security.newTokenLabel')).toHaveAttribute('type', 'password')
+    expect(mocks.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'settings.security.cannotView' })
+    )
 
     const input = screen.getByLabelText('settings.security.newTokenLabel')
     fireEvent.change(input, { target: { value: 'short' } })
@@ -248,33 +248,46 @@ describe('SecurityTab', () => {
     )
   })
 
-  it('仅在生成弹窗中提供 Token 复制，关闭后清除内容', async () => {
+  it('未生成 Token 时复制按钮禁用；生成后复制成功并在超时后还原图标', async () => {
     fetchMock.mockResolvedValue({
       ok: true,
       json: vi.fn().mockResolvedValue({ success: true, token: 'generated-token' }),
     })
     clipboardWrite.mockResolvedValue(undefined)
     render(<SecurityTab />)
-    expect(screen.queryByRole('button', { name: 'settings.security.copyToken' })).not.toBeInTheDocument()
+
+    const currentCopyButton = screen.getByTitle('settings.security.copyTip')
+    expect(currentCopyButton).toBeDisabled()
 
     fireEvent.click(screen.getByRole('button', { name: 'settings.security.confirmGenerate' }))
     await screen.findByText('generated-token')
-    fireEvent.click(screen.getByRole('button', { name: 'settings.security.copyToken' }))
-    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith('generated-token'))
-    expect(screen.getByRole('button', { name: 'settings.security.copied' })).toBeInTheDocument()
+    expect(currentCopyButton).toBeEnabled()
+
+    vi.useFakeTimers()
+    fireEvent.click(currentCopyButton)
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(clipboardWrite).toHaveBeenCalledWith('generated-token')
     expect(mocks.toast).toHaveBeenCalledWith(
       expect.objectContaining({ title: 'settings.security.copySuccess' })
     )
+    expect(currentCopyButton.querySelector('.lucide-check')).not.toBeNull()
 
-    vi.useFakeTimers()
-    fireEvent.click(screen.getByRole('button', { name: 'settings.security.savedClose' }))
-    act(() => vi.advanceTimersByTime(500))
-    expect(screen.queryByText('generated-token')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'settings.security.copyToken' })).not.toBeInTheDocument()
-    expect(mocks.navigate).toHaveBeenCalledWith({ to: '/auth' })
+    act(() => {
+      vi.advanceTimersByTime(2000)
+    })
+    expect(currentCopyButton.querySelector('.lucide-copy')).not.toBeNull()
+
+    fireEvent.click(screen.getAllByTitle('settings.security.show')[0])
+    expect(screen.getByLabelText('settings.security.yourToken')).toHaveAttribute('type', 'text')
+    expect(screen.getByLabelText('settings.security.yourToken')).toHaveValue('generated-token')
+    fireEvent.click(screen.getByTitle('settings.security.hide'))
+    expect(screen.getByLabelText('settings.security.yourToken')).toHaveAttribute('type', 'password')
   })
 
-  it('生成弹窗复制 Token 失败时给出破坏性提示', async () => {
+  it('复制当前 Token 失败时给出破坏性提示', async () => {
     fetchMock.mockResolvedValue({
       ok: true,
       json: vi.fn().mockResolvedValue({ success: true, token: 'generated-token' }),
@@ -285,7 +298,7 @@ describe('SecurityTab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'settings.security.confirmGenerate' }))
     await screen.findByText('generated-token')
 
-    fireEvent.click(screen.getByRole('button', { name: 'settings.security.copyToken' }))
+    fireEvent.click(screen.getByTitle('settings.security.copyTip'))
     await waitFor(() =>
       expect(mocks.toast).toHaveBeenCalledWith(
         expect.objectContaining({

@@ -1,23 +1,10 @@
-import { useContext, type ComponentPropsWithoutRef, type ReactNode } from 'react'
+import type { ComponentPropsWithoutRef, ReactNode } from 'react'
 
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LogoArea } from './LogoArea'
-import { ThemeProviderContext } from '@/lib/theme-context'
-
-import { Sidebar as ActualSidebar } from './Sidebar'
-
-function Sidebar(props: Parameters<typeof ActualSidebar>[0]) {
-  const theme = useContext(ThemeProviderContext)
-  return (
-    <ThemeProviderContext.Provider
-      value={{ ...theme, themeConfig: { ...theme.themeConfig, dashboardStyle: 'future-retro' } }}
-    >
-      <ActualSidebar {...props} />
-    </ThemeProviderContext.Provider>
-  )
-}
+import { Sidebar } from './Sidebar'
 
 const SIDEBAR_HOVER_EXPAND_DELAY_MS = 180
 
@@ -29,19 +16,15 @@ vi.mock('@tanstack/react-router', async (importOriginal) => ({
   ...await importOriginal<typeof import('@tanstack/react-router')>(),
   Link: ({
     to,
-    children,
     activeOptions: _activeOptions,
     ...props
   }: ComponentPropsWithoutRef<'a'> & { to: string; activeOptions: unknown }) => (
-    <a href={to} {...props}>{children}</a>
+    <a href={to} {...props} />
   ),
 }))
 
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    t: (key: string) => key,
-    i18n: { language: 'zh', resolvedLanguage: 'zh' },
-  }),
+  useTranslation: () => ({ t: (key: string) => key }),
 }))
 
 vi.mock('@/hooks/use-background', () => ({

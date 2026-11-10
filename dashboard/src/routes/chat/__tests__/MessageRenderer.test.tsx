@@ -97,6 +97,7 @@ describe('RenderMessageSegment', () => {
   it.each<[MessageSegment, string]>([
     [{ type: 'face', data: 123 }, 'chat.media.face:123'],
     [{ type: 'music', data: '' }, 'chat.media.music'],
+    [{ type: 'file', data: '报告.pdf' }, 'chat.media.file:报告.pdf'],
     [{ type: 'forward', data: '' }, 'chat.media.forward'],
     [{ type: 'unknown', data: '', original_type: 'xml' }, 'chat.media.unknown:xml'],
     // 无 original_type 时退回未知消息文案
@@ -104,13 +105,6 @@ describe('RenderMessageSegment', () => {
   ])('特殊段 %o 显示占位文案 %s', (segment, expected) => {
     render(<RenderMessageSegment segment={segment} />)
     expect(screen.getByText(expected)).toBeInTheDocument()
-  })
-
-  it('旧格式文件段显示文件名，缺少下载地址时禁用下载', () => {
-    render(<RenderMessageSegment segment={{ type: 'file', data: '报告.pdf' }} />)
-    const attachment = screen.getByRole('button', { name: '报告.pdf' })
-    expect(attachment).toBeDisabled()
-    expect(attachment).toHaveAttribute('title', 'files.disabled')
   })
 
   it('at 段优先显示群名片，并按昵称、用户 ID 逐级降级', () => {

@@ -418,7 +418,7 @@ describe('SetupPage 自定义 Token 步骤', () => {
     expect(screen.getByRole('button', { name: 'setupPage.actions.saveToken' })).toBeInTheDocument()
   })
 
-  it('Token 不满足真实校验规则时禁用提交并显示未满足规则', async () => {
+  it('Token 不满足真实校验规则时提示失败规则且不提交', async () => {
     render(<SetupPage />)
     await waitLoadingDone()
 
@@ -430,9 +430,15 @@ describe('SetupPage 自定义 Token 步骤', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.saveToken' }))
 
-    expect(screen.getByRole('button', { name: 'setupPage.actions.saveToken' })).toBeDisabled()
-    expect(screen.getAllByLabelText('setupPage.forms.customToken.unmet')).toHaveLength(3)
-    expect(mocks.toast).not.toHaveBeenCalled()
+    await waitFor(() => {
+      expect(mocks.toast).toHaveBeenCalledWith({
+        title: 'setupPage.toast.validationFailedTitle',
+        description: `setupPage.validation.customTokenInvalid:${JSON.stringify({
+          failedRules: '长度至少 10 位, 包含大写字母, 包含特殊符号',
+        })}`,
+        variant: 'destructive',
+      })
+    })
     expect(mocks.updateAccessToken).not.toHaveBeenCalled()
   })
 

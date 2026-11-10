@@ -41,12 +41,12 @@ describe('loadThemeConfig', () => {
       styleTokenOverrides: {},
       styleCustomCSS: {},
       styleBackgroundConfig: {},
-      dashboardStyle: 'millennium',
+      dashboardStyle: 'future-retro',
       styleConfig: {
         futureRetro: {
-          paperWarmth: 89,
-          textureStyle: 'coarse',
-          textureIntensity: 64,
+          paperWarmth: 100,
+          textureStyle: 'fine',
+          textureIntensity: 55,
           panelDepth: 100,
         },
       },
@@ -126,7 +126,7 @@ describe('loadThemeConfig', () => {
 
     const config = loadThemeConfig()
 
-    expect(config.dashboardStyle).toBe('millennium')
+    expect(config.dashboardStyle).toBe('future-retro')
     expect(config.accentColor).toBe(DEFAULT_ACCENT_COLOR_HSL)
   })
 

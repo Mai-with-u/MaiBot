@@ -143,7 +143,6 @@ export interface MemoryEpisodeManagerProps {
   initialTimeEnd?: number
 }
 
-/** Browse and repair episode records, with optional initial episode, source, or time filters. */
 export function MemoryEpisodeManager({
   initialEpisodeId = '',
   initialSource = '',
@@ -667,8 +666,8 @@ export function MemoryEpisodeManager({
                     />
                   </div>
                 </div>
-                <label htmlFor="episode-rebuild-all" className="flex items-center gap-2 text-sm">
-                  <Checkbox id="episode-rebuild-all" checked={rebuildAll} onCheckedChange={(checked) => setRebuildAll(checked === true)} />
+                <label className="flex items-center gap-2 text-sm">
+                  <Checkbox checked={rebuildAll} onCheckedChange={(checked) => setRebuildAll(checked === true)} />
                   重新生成全部可用来源
                 </label>
                 <Button onClick={() => void submitRebuild()} disabled={actionLoading}>

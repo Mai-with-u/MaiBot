@@ -18,19 +18,12 @@ interface AddModelMenuProps {
   dataTour?: string
 }
 
-/** Choose an LLM or embedding model and expose the missing-provider hint when creation is disabled. */
 export function AddModelMenu({ onAdd, disabled, className, dataTour }: AddModelMenuProps) {
   return (
     <DropdownMenu>
       <Tooltip>
         <TooltipTrigger asChild>
-          <span
-            className={className}
-            role={disabled ? 'button' : undefined}
-            aria-disabled={disabled || undefined}
-            aria-label={disabled ? '添加模型：请先添加供应商' : undefined}
-            tabIndex={disabled ? 0 : undefined}
-          >
+          <span className={className} tabIndex={disabled ? 0 : undefined}>
             <DropdownMenuTrigger asChild>
               <Button size="sm" disabled={disabled} data-tour={dataTour}>
                 <Plus className="h-4 w-4" strokeWidth={2} fill="none" />

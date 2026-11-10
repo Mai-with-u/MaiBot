@@ -692,7 +692,7 @@ describe('ReasoningProcessPage 浏览筛选与分页', () => {
     expect(screen.getAllByText('输入 10 / 输出 5 / 总计 15 Token').length).toBeGreaterThan(0)
     expect(screen.getByText('2 条记录')).toBeInTheDocument()
     expect(screen.getAllByText('未选择记录').length).toBeGreaterThan(0)
-    expect(screen.getByText('从记录列表选择一条记录')).toBeInTheDocument()
+    expect(screen.getByText('从左侧列表选择一条记录')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '类型' }))
     await screen.findByText('主流程')

@@ -650,9 +650,9 @@ function TemplateInfo({ description }: { description: string }) {
     <TooltipProvider delayDuration={200}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <button type="button" className="ml-1 inline-flex cursor-help text-muted-foreground" aria-label={description}>
+          <span tabIndex={0} className="ml-1 inline-flex cursor-help text-muted-foreground" aria-label={description}>
             <Info className="h-4 w-4" />
-          </button>
+          </span>
         </TooltipTrigger>
         <TooltipContent className="z-[70] max-w-xs whitespace-pre-line">{description}</TooltipContent>
       </Tooltip>

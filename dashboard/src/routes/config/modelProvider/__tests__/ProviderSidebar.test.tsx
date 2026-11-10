@@ -84,8 +84,8 @@ describe('ProviderSidebar', () => {
       />
     )
 
-    const names = screen.getAllByRole('button', { name: /筛选厂商/ }).map((button) => button.getAttribute('aria-label'))
-    expect(names).toEqual(['筛选厂商 beta', '筛选厂商 alpha', '筛选厂商 gamma', '筛选厂商 idle'])
+    const names = screen.getAllByRole('button', { name: /筛选厂商/ }).map((button) => button.textContent)
+    expect(names.map((text) => text?.split('https://')[0])).toEqual(['beta', 'alpha', 'gamma', 'idle'])
 
     const allButton = screen.getByRole('button', { name: '全部' })
     expect(allButton).toHaveAttribute('aria-pressed', 'false')
@@ -99,10 +99,10 @@ describe('ProviderSidebar', () => {
       'title',
       expect.stringContaining('beta · https://beta.example/v1')
     )
-    expect(betaButton).toHaveTextContent('https://beta.example/v1')
-    expect(betaButton).toHaveAttribute('data-selected', 'true')
-    expect(betaButton).toHaveTextContent('5')
-    expect(screen.getByRole('button', { name: '筛选厂商 idle' })).toHaveTextContent('0')
+    expect(betaButton.closest('div')).toHaveTextContent('https://beta.example/v1')
+    expect(betaButton.closest('div')).toHaveAttribute('data-selected', 'true')
+    expect(betaButton.closest('div')).toHaveTextContent('5')
+    expect(screen.getByRole('button', { name: '筛选厂商 idle' }).closest('div')).toHaveTextContent('0')
 
     await user.click(screen.getByRole('button', { name: '筛选厂商 alpha' }))
     expect(onSelectProvider).toHaveBeenCalledWith('alpha')

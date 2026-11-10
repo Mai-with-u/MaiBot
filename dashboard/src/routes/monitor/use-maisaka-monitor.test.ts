@@ -580,14 +580,9 @@ describe('阶段状态', () => {
     expect(view.result.current.stageStatuses.size).toBe(2)
     expect(view.result.current.stageStatuses.get('session-a')?.stage).toBe('回复中')
     expect(view.result.current.stageStatuses.get('session-b')?.stage).toBe('思考中')
-    // 快照补齐可选择的会话元数据，不计入时间线或事件数量。
+    // 快照事件不进时间线也不更新会话
     expect(view.result.current.allTimeline).toHaveLength(0)
-    expect([...view.result.current.sessions.keys()]).toEqual(['session-a', 'session-b'])
-    expect(view.result.current.sessions.get('session-a')).toMatchObject({
-      sessionName: '测试群',
-      eventCount: 0,
-    })
-    expect(view.result.current.sessions.get('session-b')?.eventCount).toBe(0)
+    expect(view.result.current.sessions.size).toBe(0)
   })
 
   it('stage.removed 移除对应会话的阶段状态', async () => {
@@ -1203,6 +1198,7 @@ describe('子代理任务', () => {
       call_id: 'call-1',
       description: '查部署要求',
       granted_tools: ['docs_search'],
+      background: true,
       max_rounds: 5,
       timestamp: 110,
     })
@@ -1234,8 +1230,7 @@ describe('子代理任务', () => {
       taskId: 'subagent-1',
       callId: 'call-1',
       status: 'running',
-      grantedTools: ['docs_search'],
-      maxRounds: 5,
+      background: true,
       toolUsage: { docs_search: 1 },
     })
     expect(runningTask.rounds[0].toolCalls[0].result).toEqual({
@@ -1273,6 +1268,7 @@ describe('子代理任务', () => {
       call_id: 'call-1',
       description: '任务',
       granted_tools: ['docs_search'],
+      background: true,
       max_rounds: 5,
     }
     emitMonitorEvent('message.ingested', makeMessageData({ event_id: 1 }))
@@ -1474,6 +1470,7 @@ describe('历史分页', () => {
             call_id: 'call-1',
             description: '查资料',
             granted_tools: [],
+            background: true,
             max_rounds: 5,
             timestamp: 60,
           },

@@ -3,7 +3,6 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ModelConfigPage } from '../model'
-import { TooltipProvider } from '@/components/ui/tooltip'
 import { modelListCache } from '../model/constants'
 import type { ModelInfo } from '../model/types'
 import * as configApi from '@/lib/config-api'
@@ -329,7 +328,7 @@ beforeEach(() => {
 })
 
 async function renderModelPage() {
-  render(<TooltipProvider><ModelConfigPage /></TooltipProvider>)
+  render(<ModelConfigPage />)
   // 等待初始加载完成（任意一个 tab 出现）
   await screen.findByRole('tab', { name: /^模型库/ })
 }
@@ -376,7 +375,7 @@ describe('ModelConfigPage 特征化', () => {
     vi.mocked(configApi.getModelConfigCached).mockImplementation(
       () => new Promise(() => undefined)
     )
-    render(<TooltipProvider><ModelConfigPage /></TooltipProvider>)
+    render(<ModelConfigPage />)
     expect(await screen.findByRole('status', { name: '加载中' })).toBeInTheDocument()
   })
 
@@ -913,7 +912,6 @@ describe('ModelConfigPage 特征化', () => {
     const user = userEvent.setup()
     const invalidConfig = {
       ...baseConfig(),
-      _warnings: ['任务 model_task_config.replyer 引用的模型 ghost-model 不存在'],
       model_task_config: {
         replyer: { model_list: ['ghost-model'] },
         embedding: { model_list: ['old-embed-model'] },
@@ -923,13 +921,11 @@ describe('ModelConfigPage 特征化', () => {
     vi.mocked(configApi.getModelConfig).mockResolvedValue(invalidConfig as never)
 
     await renderModelPage()
-    expect(screen.getByText('模型配置需要修正')).toBeInTheDocument()
-    expect(screen.getByText('任务 model_task_config.replyer 引用的模型 ghost-model 不存在')).toBeInTheDocument()
+    expect(screen.getByText('检测到无效的模型引用')).toBeInTheDocument()
+    expect(screen.getByText(/引用了不存在的模型: ghost-model/)).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '一键清理' }))
-    await waitFor(() => expect(screen.queryByRole('button', { name: '一键清理' })).not.toBeInTheDocument())
-    // 诊断来自已保存配置；本地草稿清理完成后，历史诊断保留到下一次成功保存。
-    expect(screen.getByText('任务 model_task_config.replyer 引用的模型 ghost-model 不存在')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('检测到无效的模型引用')).not.toBeInTheDocument())
     expect(toastMock).toHaveBeenCalledWith(
       expect.objectContaining({ title: '清理完成', description: '已删除所有无效的模型引用' })
     )
@@ -945,7 +941,7 @@ describe('ModelConfigPage 特征化', () => {
     expect(localStorage.getItem('maibot-model-task-guide-dismissed')).toBe('true')
 
     cleanup()
-    render(<TooltipProvider><ModelConfigPage /></TooltipProvider>)
+    render(<ModelConfigPage />)
     await screen.findByRole('tab', { name: /^模型库/ })
     expect(screen.queryByText('把模型安排到对应的工作')).not.toBeInTheDocument()
   })
@@ -963,7 +959,7 @@ describe('ModelConfigPage 特征化', () => {
     cleanup()
     window.history.replaceState(null, '', '/config/model?tab=configuration')
     routeState.searchStr = '?tab=configuration'
-    render(<TooltipProvider><ModelConfigPage /></TooltipProvider>)
+    render(<ModelConfigPage />)
     await screen.findByRole('tab', { name: /^模型库/ })
     await waitFor(() =>
       expect(screen.getByRole('tab', { name: /^模型库/ })).toHaveAttribute('data-state', 'active')
@@ -1176,7 +1172,7 @@ describe('ModelConfigPage 特征化', () => {
   it('tab=models / tab=providers / 厂商搜索字段都会落到模型设置', async () => {
     window.history.replaceState(null, '', '/config/model?tab=models')
     routeState.searchStr = '?tab=models'
-    const { unmount: unmountModels } = render(<TooltipProvider><ModelConfigPage /></TooltipProvider>)
+    const { unmount: unmountModels } = render(<ModelConfigPage />)
     await screen.findByRole('tab', { name: /^模型库/ })
     await waitFor(() =>
       expect(screen.getByRole('tab', { name: /^模型库/ })).toHaveAttribute('data-state', 'active')
@@ -1185,7 +1181,7 @@ describe('ModelConfigPage 特征化', () => {
 
     window.history.replaceState(null, '', '/config/model?tab=providers')
     routeState.searchStr = '?tab=providers'
-    const { unmount: unmountProviders } = render(<TooltipProvider><ModelConfigPage /></TooltipProvider>)
+    const { unmount: unmountProviders } = render(<ModelConfigPage />)
     await screen.findByRole('tab', { name: /^模型库/ })
     await waitFor(() =>
       expect(screen.getByRole('tab', { name: /^模型库/ })).toHaveAttribute('data-state', 'active')
@@ -1195,7 +1191,7 @@ describe('ModelConfigPage 特征化', () => {
     const scrollSpy = vi.spyOn(configSearchNavigation, 'scrollToConfigSearchField')
     window.history.replaceState(null, '', '/config/model?field=api_providers')
     routeState.searchStr = '?field=api_providers'
-    render(<TooltipProvider><ModelConfigPage /></TooltipProvider>)
+    render(<ModelConfigPage />)
     await waitFor(() => expect(scrollSpy).toHaveBeenCalledWith('api_providers'))
     expect(screen.getByRole('tab', { name: /^模型库/ })).toHaveAttribute('data-state', 'active')
     scrollSpy.mockRestore()
