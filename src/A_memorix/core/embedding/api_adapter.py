@@ -32,6 +32,7 @@ class EmbeddingAPIAdapter:
     """适配宿主 embedding 请求接口。"""
 
     _GLOBAL_DIMENSION_CACHE: Dict[str, Tuple[int, str, str]] = {}
+    TEXT_EMBEDDING_CACHE_MAX_ENTRIES = 2048
     _GLOBAL_TEXT_EMBEDDING_CACHE: Dict[Tuple[str, int, str], np.ndarray] = {}
 
     def __init__(
@@ -452,6 +453,8 @@ class EmbeddingAPIAdapter:
         show_progress: bool = False,
         normalize: bool = True,
         dimensions: Optional[int] = None,
+        *,
+        use_cache: bool = True,
     ) -> np.ndarray:
         del show_progress
         del normalize
@@ -485,6 +488,7 @@ class EmbeddingAPIAdapter:
                 normalized_texts,
                 batch_size=max(1, int(batch_size)),
                 dimensions=requested_dimension,
+                use_cache=use_cache,
             )
             if embeddings.ndim == 1:
                 embeddings = embeddings.reshape(1, -1)
@@ -508,20 +512,25 @@ class EmbeddingAPIAdapter:
         texts: List[str],
         batch_size: int,
         dimensions: Optional[int] = None,
+        use_cache: bool = True,
     ) -> np.ndarray:
+        cache_enabled = self.enable_cache and use_cache
         all_embeddings: List[np.ndarray] = []
         for offset in range(0, len(texts), batch_size):
             batch = texts[offset : offset + batch_size]
             batch_results: List[Tuple[int, np.ndarray]] = []
             uncached_items: List[Tuple[int, str]] = []
 
-            if self.enable_cache:
+            if cache_enabled:
                 for index, text in enumerate(batch):
                     cache_key = self._embedding_cache_key(text, dimensions)
                     cached_vector = self._GLOBAL_TEXT_EMBEDDING_CACHE.get(cache_key)
                     if cached_vector is None:
                         uncached_items.append((index, text))
                     else:
+                        # 命中时刷新插入顺序，按最近使用顺序淘汰。
+                        self._GLOBAL_TEXT_EMBEDDING_CACHE.pop(cache_key)
+                        self._GLOBAL_TEXT_EMBEDDING_CACHE[cache_key] = cached_vector
                         batch_results.append((index, cached_vector.copy()))
             else:
                 uncached_items = list(enumerate(batch))
@@ -558,10 +567,13 @@ class EmbeddingAPIAdapter:
                     continue
                 batch_index, vector = result
                 normalized_results.append((batch_index, vector))
-                if self.enable_cache:
+                if cache_enabled:
                     text = batch[batch_index]
                     cache_key = self._embedding_cache_key(text, dimensions)
+                    self._GLOBAL_TEXT_EMBEDDING_CACHE.pop(cache_key, None)
                     self._GLOBAL_TEXT_EMBEDDING_CACHE[cache_key] = vector.copy()
+                    while len(self._GLOBAL_TEXT_EMBEDDING_CACHE) > self.TEXT_EMBEDDING_CACHE_MAX_ENTRIES:
+                        del self._GLOBAL_TEXT_EMBEDDING_CACHE[next(iter(self._GLOBAL_TEXT_EMBEDDING_CACHE))]
 
             if errors:
                 raise errors[0]
@@ -578,16 +590,18 @@ class EmbeddingAPIAdapter:
         num_workers: Optional[int] = None,
         show_progress: bool = False,
         dimensions: Optional[int] = None,
+        *,
+        use_cache: bool = True,
     ) -> np.ndarray:
         del show_progress
         if num_workers is not None:
             previous = self.max_concurrent
             self.max_concurrent = max(1, int(num_workers))
             try:
-                return await self.encode(texts, batch_size=batch_size, dimensions=dimensions)
+                return await self.encode(texts, batch_size=batch_size, dimensions=dimensions, use_cache=use_cache)
             finally:
                 self.max_concurrent = previous
-        return await self.encode(texts, batch_size=batch_size, dimensions=dimensions)
+        return await self.encode(texts, batch_size=batch_size, dimensions=dimensions, use_cache=use_cache)
 
     def get_embedding_dimension(self) -> int:
         if self._dimension is not None:

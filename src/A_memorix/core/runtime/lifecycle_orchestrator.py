@@ -198,6 +198,7 @@ async def initialize_storage_async(plugin: Any) -> None:
     await asyncio.to_thread(run_startup_format_migration, data_dir)
 
     plugin.embedding_manager = create_embedding_api_adapter(
+        enable_cache=plugin.get_config("embedding.enable_cache", False),
         batch_size=plugin.get_config("embedding.batch_size", 32),
         max_concurrent=plugin.get_config("embedding.max_concurrent", 5),
         default_dimension=plugin.get_config("embedding.dimension", 1024),
