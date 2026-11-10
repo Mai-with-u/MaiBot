@@ -298,7 +298,7 @@ async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
         from src.emoji_system.emoji_manager import emoji_manager
         from src.mcp_module.service import get_mcp_service
 
-        # 分阶段推进截止时间；前一阶段超时后，关键协程仍有非零执行窗口。
+        # 前置关停阶段完成后才开放预留预算；不能跳过尚未启动的生产者关停来关闭存储。
         _shutdown_deadline += MEMORY_WRITER_TIMEOUT
         success = (
             await _await_shutdown_step(

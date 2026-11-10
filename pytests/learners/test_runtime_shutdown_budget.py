@@ -398,3 +398,62 @@ async def test_diagnostic_failure_cannot_leave_unowned_stop_or_close_dependencie
         service._submit_lock.release()
         await service.stop()
         await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exhaust_after", ["inference", "image"])
+async def test_reserved_memory_budget_requires_finished_producers_not_only_no_pending(monkeypatch, exhaust_after):
+    """已完成的步骤耗尽前置预算时，只有生产者确已停止才能进入预留存储阶段。"""
+    namespace, events, _operation = load_runtime(monkeypatch)
+    now = [100.0]
+    namespace["time"] = SimpleNamespace(monotonic=lambda: now[0])
+    active = {"pet", "heart", "agent"}
+    unsafe_closures = []
+
+    async def complete(name):
+        """记录已完成步骤，在选定边界模拟耗尽前置阶段预算。"""
+        events.append(name)
+        active.discard(name)
+        if name == exhaust_after:
+            # 前置阶段是 50ms；总预算还有 writer/kernel/final 合计 30ms。
+            now[0] += 0.055
+
+    async def close_storage(name):
+        """记录打开预留预算时是否仍有上游生产者活跃。"""
+        events.append(name)
+        if active:
+            unsafe_closures.append((name, sorted(active)))
+
+    modules = {
+        "src.learners.jargon_inference_service": {
+            "get_jargon_inference_service": lambda: SimpleNamespace(stop=lambda: complete("inference")),
+        },
+        "src.desktop_pet.service": {"desktop_pet_service": SimpleNamespace(stop=lambda: complete("pet"))},
+        "src.chat.heart_flow.heartflow_manager": {
+            "heartflow_manager": SimpleNamespace(shutdown=lambda: complete("heart")),
+        },
+        "src.agent.service": {"agent_service": SimpleNamespace(stop=lambda: complete("agent"))},
+        "src.chat.image_system.image_manager": {
+            "image_manager": SimpleNamespace(shutdown=lambda: complete("image")),
+        },
+        "src.services.memory_flow_service": {
+            "memory_automation_service": SimpleNamespace(shutdown=lambda: close_storage("writer")),
+        },
+        "src.A_memorix.host_service": {
+            "a_memorix_host_service": SimpleNamespace(stop=lambda: close_storage("memory")),
+        },
+    }
+    for name, members in modules.items():
+        monkeypatch.setitem(sys.modules, name, SimpleNamespace(**members))
+
+    result = await namespace["graceful_shutdown"]()
+    assert not namespace["_pending_shutdown_steps"]
+    assert not unsafe_closures, (events, unsafe_closures)
+    if exhaust_after == "inference":
+        assert result is False
+        assert active == {"pet", "heart", "agent"}
+        assert "writer" not in events and "memory" not in events
+    else:
+        assert result is True
+        assert not active
+        assert events.index("image") < events.index("writer") < events.index("memory")
