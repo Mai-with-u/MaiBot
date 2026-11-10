@@ -9,9 +9,8 @@ from typing import Any, Dict, Literal, Optional
 from urllib.parse import quote, urlencode
 import asyncio
 import json
-import os
-import tempfile
 
+from src.common.atomic_file import quarantine_file, write_private
 from src.common.git_source import GitSource
 from src.common.logger import get_logger
 from src.common.http_client import get_shared_ssl_context
@@ -43,13 +42,18 @@ def load_source_settings() -> PluginSourceSettings:
     with _settings_lock:
         if not SETTINGS_FILE.exists():
             return PluginSourceSettings()
-        data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-        # 旧开关只表达是否使用 Git 索引，开启时迁移为固定的 CNB 信息源。
-        if "use_github" in data:
-            if not isinstance(data["use_github"], bool):
-                raise ValueError("插件市场 use_github 设置必须为布尔值")
-            data = {"information_source": "cnb" if data["use_github"] else "official"}
-        return PluginSourceSettings.model_validate(data)
+        try:
+            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            # 旧开关只表达是否使用 Git 索引，开启时迁移为固定的 CNB 信息源。
+            if isinstance(data, dict) and "use_github" in data:
+                if not isinstance(data["use_github"], bool):
+                    raise ValueError("插件市场 use_github 设置必须为布尔值")
+                data = {"information_source": "cnb" if data["use_github"] else "official"}
+            return PluginSourceSettings.model_validate(data)
+        except ValueError:
+            backup = quarantine_file(SETTINGS_FILE)
+            logger.warning(f"插件市场源设置损坏，已保留原文件并恢复默认源：{backup}", exc_info=True)
+            return PluginSourceSettings()
 
 
 def save_source_settings(settings: PluginSourceSettings) -> None:
@@ -58,15 +62,7 @@ def save_source_settings(settings: PluginSourceSettings) -> None:
             "custom_download_prefix": GitSource.select("custom", settings.custom_download_prefix).clone_prefix
         })
     with _settings_lock:
-        SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        descriptor, name = tempfile.mkstemp(dir=SETTINGS_FILE.parent, prefix=".plugin-market-")
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                json.dump(settings.model_dump(), stream)
-            os.replace(name, SETTINGS_FILE)
-        finally:
-            if os.path.exists(name):
-                os.unlink(name)
+        write_private(SETTINGS_FILE, settings.model_dump_json())
 
 
 def download_source() -> GitSource:

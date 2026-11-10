@@ -29,6 +29,17 @@ def configure(**values):
     market.SETTINGS_FILE.write_text(json.dumps(values), encoding="utf-8")
 
 
+def test_corrupt_market_settings_are_preserved_and_reset():
+    corrupt = bytes(32)
+    market.SETTINGS_FILE.write_bytes(corrupt)
+
+    assert market.load_source_settings() == market.PluginSourceSettings()
+    backup, = market.SETTINGS_FILE.parent.glob("sources.json.corrupt-*")
+    assert backup.read_bytes() == corrupt
+    market.save_source_settings(market.PluginSourceSettings(information_source="github"))
+    assert market.load_source_settings().information_source == "github"
+
+
 @pytest.mark.parametrize("source,host", [("cnb", "cnb.cool"), ("github", "raw.githubusercontent.com")])
 @pytest.mark.parametrize("status", [200, 503])
 def test_information_source_is_fixed_and_never_uses_download_source(monkeypatch, source, host, status):
