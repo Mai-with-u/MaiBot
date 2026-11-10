@@ -955,20 +955,36 @@ describe('useImportQueue', () => {
     )
   })
 
-  it('任务没有文件时不拉分块；队列非空时清空选中会被自动切回第一项', async () => {
+  it('任务没有文件时不拉分块；清空选中后刷新队列会切回第一项', async () => {
+    vi.mocked(memoryApi.getMemoryImportSettings).mockResolvedValue({
+      success: true,
+      settings: { poll_interval_ms: 60_000 },
+    })
     vi.mocked(memoryApi.getMemoryImportTask).mockResolvedValue({
       success: true,
       task: makeTask({ files: [] }),
     })
     const { result } = renderQueue()
+    await waitFor(() => expect(result.current.importPollInterval).toBe(60_000))
     await waitForSelectedTask(result, 'task-1')
+    await waitFor(() => expect(result.current.selectedImportTaskResolved?.files).toEqual([]))
     await waitFor(() => expect(result.current.selectedImportFiles).toEqual([]))
     expect(result.current.selectedImportChunks).toEqual([])
+    expect(memoryApi.getMemoryImportTaskChunks).not.toHaveBeenCalled()
 
     await act(async () => {
       await result.current.selectImportTask('')
     })
-    await waitForSelectedTask(result, 'task-1')
+    expect(result.current.selectedImportTaskId).toBe('')
+    vi.mocked(memoryApi.getMemoryImportTasks).mockClear()
+    await act(async () => {
+      await result.current.refreshImportQueue(true)
+    })
+    expect(result.current.selectedImportTaskId).toBe('task-1')
+    expect(memoryApi.getMemoryImportTasks).toHaveBeenCalledTimes(1)
+    expect(result.current.selectedImportFiles).toEqual([])
+    expect(result.current.selectedImportChunks).toEqual([])
+    expect(memoryApi.getMemoryImportTaskChunks).not.toHaveBeenCalled()
   })
 
   it('分块接口 success=false 时清空分块并弹 toast', async () => {

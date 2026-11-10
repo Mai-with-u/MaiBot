@@ -70,6 +70,12 @@ export interface UseImportQueueResult {
   invalidate: () => void
 }
 
+/**
+ * 管理导入任务轮询、当前详情和分块，让手动刷新与任务操作共用同一加载路径。
+ *
+ * 详情与分块响应只有在请求序号及当前选择仍匹配时才能写回；切换选择或卸载会使旧响应失效。
+ * 即使列表内容未变，手动刷新也重新加载详情，并在当前文件仍存在时保留其分块偏移。
+ */
 export function useImportQueue({
   active,
   buildRetryOverrides,
@@ -147,6 +153,7 @@ export function useImportQueue({
     }
   }, [tasksError])
 
+  /** 只写回当前任务、文件和分页的最新请求；旧响应也不能清除新请求的加载或错误状态。 */
   const loadImportChunks = useCallback(
     async (taskId: string, fileId: string, offset: number = 0, silent: boolean = false) => {
       const requestId = ++chunksRequestRef.current
@@ -192,6 +199,7 @@ export function useImportQueue({
     [toast]
   )
 
+  /** 详情返回后按最新选择保留文件及偏移；当前请求失败时清空派生分块，并使旧分块响应失效。 */
   const loadImportTaskDetail = useCallback(
     async (taskId: string, silent: boolean = false) => {
       const requestId = ++detailRequestRef.current
@@ -253,7 +261,10 @@ export function useImportQueue({
     [loadImportChunks, toast]
   )
 
-  // 手动刷新统一负责详情加载；轮询 effect 跳过该次查询更新，避免两条路径重复请求。
+  /**
+   * 刷新列表后选中指定任务或仍有效的最新选择，再加载一次详情。
+   * 标记该次查询更新已处理，使轮询 effect 不重复加载同一详情；没有有效选择时回到首项。
+   */
   const refreshQueue = useCallback(
     async (silent: boolean = false, preferredTaskId?: string) => {
       refreshingQueueRef.current += 1
