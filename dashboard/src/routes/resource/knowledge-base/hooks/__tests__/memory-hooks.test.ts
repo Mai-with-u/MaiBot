@@ -632,6 +632,52 @@ describe('useImportQueue', () => {
     )
   })
 
+  it('列表内容未变时每次手动刷新仍重新读取详情与分块', async () => {
+    let doneChunks = 1
+    vi.mocked(memoryApi.getMemoryImportTask).mockImplementation(async () => ({
+      success: true,
+      task: makeTask({ done_chunks: doneChunks }),
+    }))
+    const { result } = renderQueue()
+    await waitFor(() => expect(result.current.selectedImportFileId).toBe('file-1'))
+    vi.mocked(memoryApi.getMemoryImportTask).mockClear()
+    vi.mocked(memoryApi.getMemoryImportTaskChunks).mockClear()
+
+    for (doneChunks of [2, 3]) {
+      await act(async () => {
+        await result.current.refreshImportQueue(true)
+      })
+      await waitFor(() =>
+        expect(result.current.selectedImportTaskResolved?.done_chunks).toBe(doneChunks),
+      )
+      expect(memoryApi.getMemoryImportTask).toHaveBeenCalledTimes(doneChunks - 1)
+      expect(memoryApi.getMemoryImportTaskChunks).toHaveBeenCalledTimes(doneChunks - 1)
+    }
+  })
+
+  it.each(['afterCreated', 'cancelSelectedImportTask', 'retrySelectedImportTask'] as const)(
+    '%s 已主动加载详情时，相同列表不再额外触发详情刷新',
+    async (operation) => {
+      const { result } = renderQueue()
+      await waitFor(() => expect(result.current.selectedImportFileId).toBe('file-1'))
+      vi.mocked(memoryApi.getMemoryImportTask).mockClear()
+      vi.mocked(memoryApi.getMemoryImportTaskChunks).mockClear()
+
+      await act(async () => {
+        if (operation === 'afterCreated') {
+          await result.current.afterCreated('task-1')
+        } else {
+          await result.current[operation]()
+        }
+      })
+
+      expect(memoryApi.getMemoryImportTask).toHaveBeenCalledExactlyOnceWith('task-1', false)
+      expect(memoryApi.getMemoryImportTaskChunks).toHaveBeenCalledExactlyOnceWith(
+        'task-1', 'file-1', 0, IMPORT_CHUNK_PAGE_SIZE,
+      )
+    },
+  )
+
   it('轮询间隔取 settings.poll_interval_ms，且不低于 200ms', async () => {
     vi.mocked(memoryApi.getMemoryImportSettings).mockResolvedValue({
       success: true,
