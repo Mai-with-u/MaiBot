@@ -122,7 +122,7 @@ async def run_host(workspace: Workspace, *, upgrade_confirmed: set[str]) -> bool
                 previous_handlers[signum] = signal.getsignal(signum)
                 signal.signal(signum, lambda _sig, _frame: loop.call_soon_threadsafe(control.stopping.set))
             print(f"MaiBot 宿主已启动：{workspace.root}", flush=True)
-            if control.webui is not None:
+            if webui.management and webui.credentials is not None:
                 print(f"WebUI：{await asyncio.to_thread(webui.open_url)}（登录链接一分钟内有效）", flush=True)
                 if webui.credentials.token_source == "temporary":
                     print(f"WebUI 临时登录密码：{webui.credentials.token}", flush=True)

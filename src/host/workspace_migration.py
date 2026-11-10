@@ -6,6 +6,7 @@ from uuid import uuid4
 import json
 import tomlkit
 
+from src.common.logger import get_logger
 from src.common.process_lease import ProcessLease
 from src.config.shared_models import CATALOG_FILENAME, CATALOG_VERSION
 
@@ -14,6 +15,9 @@ from .config_transaction import commit_config_files, recover_config_transaction,
 from .model_migration import plan_model_catalog
 from .registry import BotRecord
 from .retention_migration import plan_retention
+
+
+logger = get_logger("host.workspace_migration")
 
 
 def migrate_workspace_config(root: Path, bots: List[BotRecord]) -> None:
@@ -25,18 +29,31 @@ def migrate_workspace_config(root: Path, bots: List[BotRecord]) -> None:
         originals: Dict[Path, str] = {}
         documents = {}
         paths = [host_path, catalog_path]
+        snapshots: List[Path] = []
         for bot in bots:
             if bot.initialization == "initialized":
                 paths.extend(bot.directory / "config" / name for name in ("bot_config.toml", "model_config.toml"))
-                paths.extend(sorted((bot.directory / "config" / "versions" / "model").glob("*.toml")))
+                snapshots.extend(sorted((bot.directory / "config" / "versions" / "model").glob("*.toml")))
         for path in paths:
             if path.exists():
-                originals[path] = path.read_bytes().decode("utf-8")
-                documents[path] = tomlkit.parse(originals[path])
+                try:
+                    originals[path] = path.read_bytes().decode("utf-8")
+                    documents[path] = tomlkit.parse(originals[path])
+                except (UnicodeError, tomlkit.exceptions.ParseError) as exc:
+                    raise ValueError(f"当前配置无法解析：{path}") from exc
             elif path == catalog_path:
                 documents[path] = tomlkit.document()
             else:
                 raise ValueError(f"实例配置缺失: {path}")
+        for path in snapshots:
+            try:
+                content = path.read_bytes().decode("utf-8")
+                document = tomlkit.parse(content)
+            except (OSError, UnicodeError, tomlkit.exceptions.ParseError):
+                logger.exception(f"历史模型配置无法读取，已跳过迁移：{path}")
+                continue
+            originals[path] = content
+            documents[path] = document
         if catalog_path in originals and documents[catalog_path].get("inner", {}).get("version") != CATALOG_VERSION:
             raise ValueError("不支持的公共模型配置版本")
         local_bots = {path: doc for path, doc in documents.items() if path.name == "bot_config.toml"}
