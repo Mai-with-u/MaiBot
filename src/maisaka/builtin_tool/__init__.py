@@ -158,8 +158,12 @@ def _is_builtin_tool_enabled_by_config(entry: BuiltinToolEntry) -> bool:
         # 只有后台子代理才有需要查看和终止的任务
         return global_config.capabilities.planner_subagent and global_config.capabilities.advanced_sub_agent
     if entry.name == "read_tool_result":
-        # 长结果整理和统一联网工具均会暂存原文，任一开启都需要回查入口。
-        return global_config.capabilities.tool_result_condense or bool(model_config.model_task_config.web_search.model_list)
+        # 记忆预览、长结果整理和统一联网工具都会暂存原文，需要保留回查入口。
+        return (
+            global_config.capabilities.tool_result_condense
+            or bool(model_config.model_task_config.web_search.model_list)
+            or (global_config.a_memorix.plugin.enabled and global_config.a_memorix.integration.enable_memory_query_tool)
+        )
     return True
 
 
