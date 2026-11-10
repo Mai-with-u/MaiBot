@@ -18,7 +18,7 @@ from src.plugin_runtime.transport.factory import create_transport_client, create
 from .layout import Workspace
 from .console import HostConsole
 from .maintenance import HostMaintenance
-from .supervisor import BotSupervisor
+from .supervisor import BotShutdownError, BotSupervisor
 from .webui import HostWebUI
 
 
@@ -162,6 +162,9 @@ async def run_host(workspace: Workspace, *, upgrade_confirmed: set[str]) -> bool
                         from src.common.self_update import clear_pending_update
 
                         await asyncio.to_thread(clear_pending_update, control.maintenance.update_root)
+                    # 若宿主主流程也抛出了异常，保留它和关停失败的异常链。
+                    if len(failures) == 1 and isinstance(failures[0], BotShutdownError) and sys.exception() is None:
+                        raise failures[0]
                     raise BaseExceptionGroup("宿主关闭未完成", failures)
             finally:
                 for signum, previous in previous_handlers.items():

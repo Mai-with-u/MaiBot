@@ -61,9 +61,14 @@ def main(root: Path) -> int:
     confirmed = confirm_upgrades(workspace)
     from .update_locks import register_host_instance
     from .control import run_host
+    from .supervisor import BotShutdownError
 
     with register_host_instance(workspace.root):
-        update_requested = asyncio.run(run_host(workspace, upgrade_confirmed=confirmed))
+        try:
+            update_requested = asyncio.run(run_host(workspace, upgrade_confirmed=confirmed))
+        except BotShutdownError as exc:
+            print(f"MaiBot 宿主关闭未完成。{exc}", file=sys.stderr)
+            return 1
     # 先完整退出并释放模块，再由稳定启动器启动更新阶段；Windows execv 会提前退出父 PID。
     return UPDATE_REQUESTED if update_requested else 0
 
