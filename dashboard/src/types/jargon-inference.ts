@@ -16,11 +16,20 @@ export interface JargonInferenceRequest {
   last_status?: string
 }
 
+export type JargonInferenceReasonCode =
+  | 'has_meaning'
+  | 'threshold'
+  | 'locked'
+  | 'manual'
+  | 'no_session'
+  | 'duplicate'
+
 export interface JargonInferencePreview {
   total: number
   eligible: number
   skipped: number
-  reasons: Record<string, number>
+  /** Selection reason codes, not server-localized sentences. */
+  reasons: Partial<Record<JargonInferenceReasonCode, number>>
 }
 
 export interface JargonInferenceJob {
@@ -40,6 +49,8 @@ export interface JargonInferenceTask {
   session_name: string
   status: string
   reason: string
+  /** Stable selection reason; absent on legacy tasks and free-form model failures. */
+  reason_code?: JargonInferenceReasonCode | null
   /** The classification written by this attempt, independent of later edits. */
   is_jargon: boolean | null
   attempts: number

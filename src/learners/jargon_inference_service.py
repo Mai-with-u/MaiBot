@@ -303,13 +303,17 @@ class JargonInferenceService:
                 if request.get("last_status") and (state.status if state else "unattempted") != request["last_status"]:
                     continue
                 reason = ""
+                reason_code = None
                 status = "queued"
                 if record.created_by == JargonCreatedBy.MANUAL or (state and state.locked):
                     status, reason = "protected", "人工维护或已锁定"
+                    reason_code = "manual" if record.created_by == JargonCreatedBy.MANUAL else "locked"
                 elif request.get("mode", "missing") == "missing" and (record.meaning or "").strip():
                     status, reason = "skipped", "已有含义"
+                    reason_code = "has_meaning"
                 elif not request.get("force", True) and not JargonMiner("", "")._should_infer_meaning(record):
                     status, reason = "skipped", "未达到自动推断条件"
+                    reason_code = "threshold"
                 snapshot = _snapshot(record)
                 scope = set(snapshot["session_ids"])
                 unchecked = scope - checked_sessions
@@ -325,6 +329,7 @@ class JargonInferenceService:
                     continue
                 if not reason and not session_ids:
                     status, reason = "missing_evidence", "词条没有可解析的所属会话"
+                    reason_code = "no_session"
                 if source != "manual" and reason:
                     continue
                 fingerprint = evidence_hash(record.evidence_messages)
@@ -364,6 +369,7 @@ class JargonInferenceService:
                         "session_name": "",
                         "status": status,
                         "reason": reason,
+                        "reason_code": reason_code,
                         "attempts": 0,
                         "requests": 0,
                         "snapshot": snapshot,
@@ -388,13 +394,13 @@ class JargonInferenceService:
         return items
 
     async def preview(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """预览当前可入队数量，同时反映正在运行的词条预留。"""
+        """预览可入队数量，按稳定原因代码统计跳过项，同时反映正在运行的预留。"""
         self._check_ready()
         items = await asyncio.to_thread(self._select, request, "manual")
         for item in items:
             if item["jargon_id"] in self._reserved:
-                item.update(status="skipped", reason="已有排队或运行中的任务")
-        reasons = Counter(item["reason"] for item in items if item["status"] != "queued")
+                item.update(status="skipped", reason="已有排队或运行中的任务", reason_code="duplicate")
+        reasons = Counter(item["reason_code"] for item in items if item["status"] != "queued")
         eligible = sum(item["status"] == "queued" for item in items)
         return {"total": len(items), "eligible": eligible, "skipped": len(items) - eligible, "reasons": dict(reasons)}
 
@@ -411,7 +417,7 @@ class JargonInferenceService:
                 items = []
             for item in items:
                 if item["jargon_id"] in self._reserved:
-                    item.update(status="skipped", reason="已有排队或运行中的任务")
+                    item.update(status="skipped", reason="已有排队或运行中的任务", reason_code="duplicate")
             now = time.time()
             job = {
                 "id": uuid.uuid4().hex,

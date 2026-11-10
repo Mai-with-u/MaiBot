@@ -513,7 +513,9 @@ function JobProgress({
                   })}
                 </p>
                 {item.reason && (
-                  <p className="text-muted-foreground text-xs break-words">{item.reason}</p>
+                  <p className="text-muted-foreground text-xs break-words">
+                    {item.reason_code ? <InferenceStatus status={item.reason_code} /> : item.reason}
+                  </p>
                 )}
               </li>
             ))}

@@ -23,6 +23,7 @@ from src.common.database.database_model import (
 from src.common.llm_json import parse_llm_json
 from src.common.logger import get_logger
 from src.common.utils.utils_config import JargonConfigUtils
+from src.common.utils.utils_jargon import parse_session_id_dict
 from src.common.utils.utils_message import MessageUtils
 from src.config.config import global_config
 from src.llm_models.payload_content.context_item import ContextItemBuilder, RoleType
@@ -800,8 +801,13 @@ class JargonMiner:
             jargon_items = session.exec(select(Jargon).filter_by(content=entry["content"])).all()
             matched: Optional[Jargon] = None
             for item in jargon_items:
-                if not item.is_global and not related_session_ids.intersection(json.loads(item.session_id_dict)):
-                    continue
+                if not item.is_global:
+                    session_counts = parse_session_id_dict(item.session_id_dict)
+                    if not session_counts:
+                        logger.warning(f"黑话记录 {item.id} 没有可解析的会话归属，保留原记录并跳过候选匹配")
+                        continue
+                    if not related_session_ids.intersection(session_counts):
+                        continue
                 if item.created_by == JargonCreatedBy.MANUAL:
                     return "protected", None
                 if matched is None:
@@ -873,9 +879,16 @@ class JargonMiner:
         )
         merged = self._merge_evidence_message_groups(existing, evidence_message_groups)
         db_jargon.evidence_messages = json.dumps(merged, ensure_ascii=False) if merged else None
-        session_counts: Dict[str, int] = json.loads(db_jargon.session_id_dict)
-        session_counts[self.session_id] = session_counts.get(self.session_id, 0) + 1
-        db_jargon.session_id_dict = json.dumps(session_counts)
+        try:
+            session_counts = json.loads(db_jargon.session_id_dict)
+            if not isinstance(session_counts, dict) or not isinstance(session_counts.get(self.session_id, 0), int):
+                raise ValueError("会话归属不是有效的计数字典")
+        except (ValueError, TypeError, RecursionError):
+            # 全局记录不依赖会话归属来匹配；仍可合并命中与证据，但不能伪造未知的旧归属。
+            logger.warning(f"黑话记录 {db_jargon.id} 的会话归属损坏，保留原始 session_id_dict")
+        else:
+            session_counts[self.session_id] = session_counts.get(self.session_id, 0) + 1
+            db_jargon.session_id_dict = json.dumps(session_counts)
 
     def _update_jargon(self, db_jargon: Jargon, evidence_message_groups: List[JargonEvidenceMessageGroup]) -> None:
         """读取最新的已有黑话记录，再合并写回，避免旧对象覆盖并发更新。"""

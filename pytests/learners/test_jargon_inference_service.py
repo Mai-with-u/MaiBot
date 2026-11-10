@@ -16,6 +16,7 @@ import time
 import pytest
 
 from src.common.database.database_model import ChatSession, Jargon, JargonInferenceJob, JargonInferenceState
+from src.common.database.database_model import JargonCreatedBy
 from src.config.official_configs import JargonInferenceConfig
 from src.learners import jargon_inference_service as module
 from src.learners.jargon_inference_result import InferenceResult
@@ -102,6 +103,35 @@ def runtime(tmp_path, monkeypatch):
 def arm(runtime):
     runtime.service._loop = asyncio.get_running_loop()
     return runtime.service
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["has_meaning", "threshold", "locked", "manual", "no_session", "duplicate"])
+async def test_preview_counts_stable_reason_codes_and_keeps_task_explanation(runtime, code):
+    """预览不以中文句子为键；任务仍保存可独立阅读的跳过说明。"""
+    service = arm(runtime)
+    with runtime.database() as session:
+        record = session.get(Jargon, 1)
+        if code == "has_meaning":
+            record.meaning = "已有解释"
+        elif code == "threshold":
+            record.count = 1
+        elif code == "locked":
+            session.add(JargonInferenceState(jargon_id=1, locked=True))
+        elif code == "manual":
+            record.created_by = JargonCreatedBy.MANUAL
+        elif code == "no_session":
+            record.session_id_dict = "null"
+        session.add(record)
+    if code == "duplicate":
+        service._reserved.add(1)
+    request = {"ids": [1], "force": code != "threshold"}
+    result = await service.preview(request)
+    assert result == {"total": 1, "eligible": 0, "skipped": 1, "reasons": {code: 1}}
+    submitted = await service.submit(request)
+    item = (await service.get_job(submitted["id"]))["items"][0]
+    assert item["reason_code"] == code
+    assert item["reason"] and item["reason"] != code
 
 
 @pytest.mark.asyncio
@@ -676,7 +706,7 @@ async def test_damaged_scope_does_not_block_manual_or_threshold_scan(runtime, st
         "total": 3,
         "eligible": 2,
         "skipped": 1,
-        "reasons": {"词条没有可解析的所属会话": 1},
+        "reasons": {"no_session": 1},
     }
     manual = await service.submit({"ids": [1]})
     detail = await service.get_job(manual["id"])

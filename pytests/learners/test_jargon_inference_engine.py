@@ -31,6 +31,7 @@ from src.common.database.database_model import (
     Messages,
 )
 from src.learners.jargon_inference_result import InferenceResult, evidence_hash
+from src.common.utils.utils_jargon import parse_session_id_dict
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -142,6 +143,7 @@ def engine_runtime(tmp_path: Path) -> Iterator[SimpleNamespace]:
         "InferenceResult": InferenceResult,
         "replace": replace,
         "evidence_hash": evidence_hash,
+        "parse_session_id_dict": parse_session_id_dict,
         "HookAbortedError": lambda result: "aborted",
         "is_single_char_jargon": lambda value: len(value) <= 1,
         "JargonConfigUtils": SimpleNamespace(resolve_jargon_group_scope=lambda session_id: ({session_id}, None)),
@@ -505,6 +507,85 @@ def test_parallel_new_candidate_upsert_creates_one_record(engine_runtime: Simple
         assert len(json.loads(record.evidence_messages)) == 6
 
 
+@pytest.mark.parametrize("stored_scope", ["{坏数据", "null", "[]"])
+def test_damaged_local_candidate_does_not_drop_valid_match(engine_runtime: SimpleNamespace, stored_scope: str) -> None:
+    """同名坏归属不参与匹配，也不能阻止更新另一个正常所属会话的记录。"""
+    with engine_runtime.db_session() as session:
+        damaged = session.get(Jargon, 1)
+        damaged.session_id_dict = stored_scope
+        session.add(damaged)
+        session.add(Jargon(id=2, content="起飞", meaning="有效记录", count=2, session_id_dict='{"chat-a":2}'))
+    outcome, matched = engine_runtime.miner._persist_extracted_entry(
+        {"content": "起飞", "raw_content": set(), "evidence_messages": [[{"platform": "qq", "message_id": "m2"}]]}
+    )
+    assert (outcome, matched.id) == ("updated", 2)
+    with engine_runtime.db_session() as session:
+        assert session.get(Jargon, 1).session_id_dict == stored_scope
+        assert session.get(Jargon, 1).count == 4
+        assert session.get(Jargon, 2).count == 3
+        assert json.loads(session.get(Jargon, 2).session_id_dict) == {"chat-a": 3}
+
+
+@pytest.mark.parametrize("stored_scope", ["{坏数据", "null", "[]"])
+def test_damaged_local_candidate_does_not_abort_extraction_batch(
+    engine_runtime: SimpleNamespace, stored_scope: str
+) -> None:
+    """坏数据保持原归属；新候选仍可在当前会话创建，并继续保存后续词条。"""
+    engine_runtime.config.jargon.inference.thresholds = [100]
+    with engine_runtime.db_session() as session:
+        damaged = session.get(Jargon, 1)
+        damaged.session_id_dict = stored_scope
+        session.add(damaged)
+    result = asyncio.run(
+        engine_runtime.miner.process_extracted_entries(
+            [{"content": word, "raw_content": set(), "evidence_messages": []} for word in ("起飞", "另一词")]
+        )
+    )
+    assert result == (2, 0)
+    with engine_runtime.db_session() as session:
+        assert session.get(Jargon, 1).session_id_dict == stored_scope
+        assert session.get(Jargon, 1).count == 4
+        created = session.exec(select(Jargon).where(Jargon.id != 1)).all()
+        assert {record.content for record in created} == {"起飞", "另一词"}
+        assert all(json.loads(record.session_id_dict) == {"chat-a": 1} for record in created)
+
+
+@pytest.mark.parametrize("stored_scope", ["{坏数据", "null", "[]"])
+def test_global_candidate_preserves_damaged_scope_while_merging_evidence(
+    engine_runtime: SimpleNamespace, stored_scope: str
+) -> None:
+    """全局词条可继续累计命中和证据，但不得把未知的原始归属改写为空对象。"""
+    with engine_runtime.db_session() as session:
+        record = session.get(Jargon, 1)
+        record.is_global = True
+        record.session_id_dict = stored_scope
+        session.add(record)
+    outcome, matched = engine_runtime.miner._persist_extracted_entry(
+        {"content": "起飞", "raw_content": set(), "evidence_messages": [[{"platform": "qq", "message_id": "m2"}]]}
+    )
+    assert (outcome, matched.id) == ("updated", 1)
+    record = get_record(engine_runtime)
+    assert record.session_id_dict == stored_scope
+    assert record.count == 5
+    assert len(json.loads(record.evidence_messages)) == 2
+
+
+def test_global_candidate_merges_valid_scope_without_losing_other_sessions(engine_runtime: SimpleNamespace) -> None:
+    """有效的全局归属仍累加当前会话，并保留其他会话已有计数。"""
+    with engine_runtime.db_session() as session:
+        record = session.get(Jargon, 1)
+        record.is_global = True
+        record.session_id_dict = '{"chat-a":4,"chat-b":7}'
+        session.add(record)
+    outcome, _ = engine_runtime.miner._persist_extracted_entry(
+        {"content": "起飞", "raw_content": set(), "evidence_messages": []}
+    )
+    assert outcome == "updated"
+    record = get_record(engine_runtime)
+    assert record.count == 5
+    assert json.loads(record.session_id_dict) == {"chat-a": 5, "chat-b": 7}
+
+
 def test_reclassification_saves_new_meaning_in_record_and_history(engine_runtime: SimpleNamespace) -> None:
     engine_runtime.responses[0] = {"meaning": "飞机离地", "no_info": False}
     engine_runtime.responses[2] = {"is_similar": True}
@@ -552,7 +633,7 @@ def test_null_timestamps_keep_identity_during_recovery_and_writeback(engine_runt
         record.evidence_messages = None
         session.add(record)
     loaded = engine_runtime.miner._load_jargon_by_id(1)
-    assert loaded.created_timestamp is None and loaded.updated_timestamp is None
+    assert loaded.created_timestamp is None
     assert run_inference(engine_runtime).status == "succeeded"
     record = get_record(engine_runtime)
     assert record.created_timestamp is None

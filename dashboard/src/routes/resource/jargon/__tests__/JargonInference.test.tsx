@@ -302,7 +302,7 @@ describe('Jargon inference scope and preview', () => {
     })
     expect(screen.getByRole('button', { name: '开始批量推断' })).toBeDisabled()
     await act(async () => {
-      resolveNew(preview({ eligible: 0, skipped: 1, reasons: { protected: 1 } }))
+      resolveNew(preview({ eligible: 0, skipped: 1, reasons: { manual: 1 } }))
     })
     await waitFor(() => expect(screen.getByText(/可执行 0 条/)).toBeInTheDocument())
     expect(screen.getByRole('button', { name: '开始批量推断' })).toBeDisabled()
@@ -432,6 +432,31 @@ describe('Jargon inference task controls', () => {
     await user.click(screen.getByRole('tab', { name: '任务与进度' }))
     expect(await screen.findByText('已取消')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '重试失败项' })).toBeDisabled()
+  })
+
+  it('renders coded skip explanations through the locale labels', async () => {
+    const user = userEvent.setup()
+    const current = job({ counts: { protected: 1 } })
+    vi.mocked(api.getJargonInferenceJob).mockResolvedValue({
+      ...detail(current),
+      items: [{ ...detail(current).items[0], status: 'protected', reason_code: 'manual', reason: '人工维护或已锁定' }],
+    })
+    renderDialog()
+    await user.click(screen.getByRole('tab', { name: '任务与进度' }))
+    expect(await screen.findByText('手动维护')).toBeInTheDocument()
+    expect(screen.queryByText('人工维护或已锁定')).not.toBeInTheDocument()
+  })
+
+  it('keeps readable explanations from legacy tasks without a reason code', async () => {
+    const user = userEvent.setup()
+    const current = job({ counts: { failed: 1 } })
+    vi.mocked(api.getJargonInferenceJob).mockResolvedValue({
+      ...detail(current),
+      items: [{ ...detail(current).items[0], status: 'failed', reason: '供应商请求超时' }],
+    })
+    renderDialog()
+    await user.click(screen.getByRole('tab', { name: '任务与进度' }))
+    expect(await screen.findByText('供应商请求超时')).toBeInTheDocument()
   })
 
   it('retries a terminal job with failures and displays the new job', async () => {

@@ -81,9 +81,8 @@ class MaiJargon(BaseDatabaseDataModel[Jargon]):
             created_timestamp=db_record.created_timestamp,
             updated_timestamp=db_record.updated_timestamp,
         )
-        # 数据库中的 NULL 是原始身份的一部分，不能在读取时伪造为当前时间。
+        # 创建时间参与推断身份校验，数据库中的 NULL 不能在读取时伪造为当前时间。
         result.created_timestamp = db_record.created_timestamp
-        result.updated_timestamp = db_record.updated_timestamp
         return result
 
     def to_db_instance(self) -> Jargon:
