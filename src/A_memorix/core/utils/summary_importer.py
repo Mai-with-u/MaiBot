@@ -111,16 +111,19 @@ def _normalize_relation_items(raw_relations: Any) -> List[Dict[str, str]]:
 
 def _normalize_summary_facts(raw_facts: Any) -> List[Dict[str, Any]]:
     if not isinstance(raw_facts, list):
-        return []
+        raise ValueError("增量总结 facts 必须是数组")
     facts: List[Dict[str, Any]] = []
     seen_ids: set[str] = set()
     for item in raw_facts:
         if not isinstance(item, dict):
-            continue
-        fact_id = str(item.get("fact_id") or "").strip()
-        text = str(item.get("text") or "").strip()
+            raise ValueError("增量总结 facts 的每一项必须是对象")
+        fact_id = item.get("fact_id")
+        text = item.get("text")
+        if not isinstance(fact_id, str) or not isinstance(text, str):
+            raise ValueError("增量总结事实的 fact_id 和 text 必须是字符串")
+        fact_id, text = fact_id.strip(), text.strip()
         if not fact_id or not text or fact_id in seen_ids:
-            continue
+            raise ValueError("增量总结事实的 fact_id 和 text 不能为空，fact_id 不得重复")
         evidence = []
         for raw_evidence in item.get("image_evidence") or []:
             if not isinstance(raw_evidence, dict):
@@ -873,6 +876,8 @@ class SummaryImporter:
             entities = _normalize_entity_items(data.get("entities"))
             relations = _normalize_relation_items(data.get("relations"))
             facts = _normalize_summary_facts(data.get("facts"))
+            if summary_text and not facts:
+                return SummaryImportResult(False, "非空增量总结必须提供非空 facts，不能跳过事实去重")
             if not summary_text:
                 if data.get("entities") != [] or data.get("relations") != [] or facts:
                     return SummaryImportResult(False, "空增量必须同时返回空实体、空关系和空事实数组")
@@ -919,74 +924,29 @@ class SummaryImporter:
                     key = (str(evidence["message_id"]), str(evidence["component_path"]))
                     if key not in allowed_image_evidence:
                         raise ValueError(f"总结模型返回了窗口外图片证据: {key[0]}:{key[1]}")
-            if facts:
-                source = {
-                    "platform": str(messages[0].platform), "chat_id": stream_id,
-                    "message_ids": [str(message.message_id) for message in messages],
-                    "observed_at": max(msg_times) if msg_times else None,
-                    **time_meta,
-                }
-                source["observation_id"] = observation_id(
-                    platform=source["platform"], chat_id=stream_id, message_ids=source["message_ids"],
-                    window_id=str(metadata.get("external_id") or ""),
-                )
-                if not str(metadata.get("external_id") or "").strip():
-                    metadata["external_id"] = f"summary:{source['observation_id']}"
-                dedup = FactDeduplicator(self.metadata_store, self.embedding_manager, self.vector_store, task_name_to_use)
-                plan = await dedup.plan(scope_type="chat", scope_id=stream_id, facts=facts,
-                                        source=source, relations=relations)
-                payload = {"plan": plan, "metadata": metadata, "entities": entities, "relations": relations,
-                           "time_meta": time_meta, "allowed_images": list(allowed_image_evidence)}
-                await asyncio.to_thread(
-                    self.metadata_store.record_summary_checkpoint, external_id=metadata["external_id"],
-                    chat_id=stream_id, trigger_message_count=int(metadata.get("trigger_message_count") or 0),
-                    phase="pending", result=payload,
-                )
-                return await self._finish_fact_summary(payload)
-            paragraph_hash = await self._execute_import(
-                summary_text,
-                entities,
-                relations,
-                stream_id,
-                time_meta=time_meta,
-                metadata=metadata,
+            source = {
+                "platform": str(messages[0].platform), "chat_id": stream_id,
+                "message_ids": [str(message.message_id) for message in messages],
+                "observed_at": max(msg_times) if msg_times else None,
+                **time_meta,
+            }
+            source["observation_id"] = observation_id(
+                platform=source["platform"], chat_id=stream_id, message_ids=source["message_ids"],
+                window_id=str(metadata.get("external_id") or ""),
             )
-            self._link_summary_image_evidence(
-                stream_id=stream_id,
-                paragraph_hash=paragraph_hash,
-                facts=facts,
-                allowed=allowed_image_evidence,
+            if not str(metadata.get("external_id") or "").strip():
+                metadata["external_id"] = f"summary:{source['observation_id']}"
+            dedup = FactDeduplicator(self.metadata_store, self.embedding_manager, self.vector_store, task_name_to_use)
+            plan = await dedup.plan(scope_type="chat", scope_id=stream_id, facts=facts,
+                                    source=source, relations=relations)
+            payload = {"plan": plan, "metadata": metadata, "entities": entities, "relations": relations,
+                       "time_meta": time_meta, "allowed_images": list(allowed_image_evidence)}
+            await asyncio.to_thread(
+                self.metadata_store.record_summary_checkpoint, external_id=metadata["external_id"],
+                chat_id=stream_id, trigger_message_count=int(metadata.get("trigger_message_count") or 0),
+                phase="pending", result=payload,
             )
-
-            # 7. 持久化
-            self._persist_vector_store(self.vector_store)
-            self.graph_store.save()
-
-            external_id = str((metadata or {}).get("external_id", "") or "").strip()
-            if external_id:
-                await asyncio.to_thread(
-                    self.metadata_store.upsert_external_memory_ref,
-                    external_id=external_id,
-                    paragraph_hash=paragraph_hash,
-                    source_type="chat_summary",
-                    metadata={
-                        "chat_id": stream_id, "person_ids": metadata.get("person_ids", []),
-                        "trigger_message_count": int(metadata.get("trigger_message_count") or 0),
-                    },
-                )
-                await asyncio.to_thread(
-                    self.metadata_store.record_summary_checkpoint,
-                    external_id=external_id, chat_id=stream_id,
-                    trigger_message_count=int(metadata.get("trigger_message_count") or 0),
-                )
-
-            result_msg = f"总结导入成功|长度: {len(summary_text)}|实体: {len(entities)}|关系: {len(relations)}"
-            return SummaryImportResult(
-                True,
-                result_msg,
-                paragraph_hash=paragraph_hash,
-                source=f"chat_summary:{stream_id}",
-            )
+            return await self._finish_fact_summary(payload)
 
         except Exception as e:
             logger.error(f"总结导入过程中出错: {e}\n{traceback.format_exc()}")
