@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from functools import cached_property
 from pathlib import Path
-from typing import Any, Awaitable, Dict, List, Optional
+from typing import Any, Awaitable, Dict, List, Optional, OrderedDict
 
 import asyncio
+import hashlib
 import json
 import os
 import time
@@ -37,6 +39,11 @@ class PersonFactEvidence:
 
 
 class PersonFactWritebackService:
+    @cached_property
+    def _extraction_cache(self) -> OrderedDict[str, List[Any]]:
+        """仅复用成功提取的证据窗口；限制容量，避免长期保存所有聊天证据。"""
+        return OrderedDict()
+
     def __init__(self) -> None:
         self._queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=256)
         self._worker_task: Optional[asyncio.Task] = None
@@ -153,14 +160,26 @@ class PersonFactWritebackService:
             return
         user_evidence_text = self._format_user_evidence(evidence)
 
-        facts = await self._extract_facts(target_person, reply_text, user_evidence_text)
-        if not facts:
-            return
-
         session_id = str(
             getattr(message, "session_id", "") or getattr(getattr(message, "session", None), "session_id", "") or ""
         ).strip()
         if not session_id:
+            return
+
+        # 事实值只来自用户证据；分段回复不应反复提取同一窗口。
+        # 上下文正文或人物身份变化会改变键，调用失败则不写入缓存。
+        cache_key = hashlib.sha256(json.dumps(
+            [session_id, target_person.person_id, user_evidence_text], ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        if cache_key in self._extraction_cache:
+            facts = self._extraction_cache[cache_key]
+            self._extraction_cache.move_to_end(cache_key)
+        else:
+            facts = await self._extract_facts(target_person, reply_text, user_evidence_text)
+            self._extraction_cache[cache_key] = facts
+            while len(self._extraction_cache) > 256:
+                self._extraction_cache.popitem(last=False)
+        if not facts:
             return
 
         person_name = str(
@@ -345,17 +364,15 @@ class PersonFactWritebackService:
                 target_lines.append(f"- [消息ID: {message_id}] {line}" if message_id else f"- {line}")
 
         context_lines: List[str] = []
-        target_ids = {
-            str(getattr(item, "message_id", "") or "").strip()
-            for item in evidence.target_messages
-            if str(getattr(item, "message_id", "") or "").strip()
+        target_references = {
+            str(item.message_id or "").strip() or id(item): str(item.message_id or "").strip() or f"第{index}条"
+            for index, item in enumerate(evidence.target_messages[:3], start=1)
         }
         for item in evidence.context_messages[:8]:
-            line = PersonFactWritebackService._format_evidence_message_line(
-                item,
-                include_sender=True,
-                mark_target=str(getattr(item, "message_id", "") or "").strip() in target_ids,
-            )
+            reference = target_references.get(str(item.message_id or "").strip() or id(item))
+            # 保留对话顺序与短答的位置，但不再次发送目标用户的证据正文。
+            line = (f"[目标用户发言，正文见目标证据 {reference}]" if reference is not None else
+                    PersonFactWritebackService._format_evidence_message_line(item, include_sender=True))
             if line:
                 context_lines.append(f"- {line}")
 
@@ -425,8 +442,7 @@ class PersonFactWritebackService:
                 self._extractor = LLMServiceClient(task_name="utils", request_type="A_Memorix.person_fact_writeback")
             response_result = await self._extractor.generate_response(prompt)
         except Exception as exc:
-            logger.debug(f"人物事实提取模型调用失败: {exc}")
-            return []
+            raise RuntimeError("人物事实提取模型调用失败") from exc
         return self._parse_fact_items(response_result.response)
 
     @staticmethod
@@ -435,14 +451,14 @@ class PersonFactWritebackService:
 
         text = str(raw or "").strip()
         if not text:
-            return []
+            raise ValueError("人物事实提取响应为空")
         try:
             repaired = repair_json(text)
             payload = json.loads(repaired) if isinstance(repaired, str) else repaired
-        except Exception:
-            return []
+        except Exception as exc:
+            raise ValueError("人物事实提取响应不是有效 JSON") from exc
         if not isinstance(payload, list):
-            return []
+            raise ValueError("人物事实提取响应必须为数组")
         items: List[Any] = []
         seen = set()
         for raw_item in payload:
