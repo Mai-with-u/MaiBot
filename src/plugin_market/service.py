@@ -9,6 +9,7 @@ import asyncio
 import json
 
 from src.common.git_source import GitSource
+from src.common.logger import get_logger
 from src.config.config import MMC_VERSION
 
 from .catalog import _filter_plugins, _normalize_plugin_catalog_item, _sort_stat_plugins
@@ -26,6 +27,8 @@ from .releases import (
 )
 from .sources import download_source, fetch_information_file, load_source_settings, request_market, request_market_detail
 from . import statistics
+
+logger = get_logger("plugin_market")
 
 MarketSort = Literal[
     "name", "downloads", "likes", "rating", "downloads_growth_7d", "likes_growth_7d",
@@ -103,7 +106,11 @@ def _catalog(
     plugins = []
     for item in items:
         if source == "official":
-            entry = parse_market_release_entry({**item, "versions": [item["release"]] if item.get("release") else []})
+            try:
+                entry = parse_market_release_entry({**item, "versions": [item["release"]] if item.get("release") else []})
+            except ValueError as exc:
+                logger.warning(f"跳过无效的插件市场条目：{exc}")
+                entry = None
             raw = {"id": item["marketplace_id"], "manifest": item["manifest"]}
         else:
             entry = entries.get(item["id"])

@@ -5,7 +5,10 @@ from typing import Any, Dict, List, Literal, Optional
 from packaging.version import Version
 from pydantic import BaseModel, Field
 
+from src.common.logger import get_logger
 from src.plugin_runtime.runner.manifest_validator import ManifestValidator
+
+logger = get_logger("plugin_market")
 
 
 class PluginRelease(BaseModel):
@@ -79,7 +82,13 @@ def parse_market_release_entry(data: Dict[str, Any], plugin_id: Optional[str] = 
 def parse_release_index(content: str) -> PluginReleaseIndex:
     index = PluginReleaseIndex.model_validate_json(content)
     aliases: Dict[str, str] = {}
+    valid: List[PluginReleaseEntry] = []
     for entry in index.plugins:
+        try:
+            _validate_release_entry(entry)
+        except ValueError as exc:
+            logger.warning(f"跳过无效的插件版本索引条目：{exc}")
+            continue
         for alias in {entry.id, entry.manifest_id} - {None}:
             if entry.sync_error:
                 continue
@@ -87,7 +96,8 @@ def parse_release_index(content: str) -> PluginReleaseIndex:
             if key in aliases and aliases[key] != entry.id:
                 raise ValueError(f"版本索引插件 ID 冲突：{alias}")
             aliases[key] = entry.id
-        _validate_release_entry(entry)
+        valid.append(entry)
+    index.plugins = valid
     return index
 
 
