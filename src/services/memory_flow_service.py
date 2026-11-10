@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Awaitable, Dict, List, Optional, OrderedDict
+from typing import Any, Awaitable, Dict, List, Optional, OrderedDict, Tuple
 
 import asyncio
 import hashlib
@@ -902,16 +902,26 @@ class ImageMemoryWritebackService:
         if not claimed.get("success"):
             return
         lease_token = str(claimed.get("lease_token") or "")
+        # 同一消息的多张图片共享聊天窗口，合并本批已领取任务后只补偿一次摘要。
+        # 消息或时间不同的任务保持独立，避免跨窗口遗漏事实。
+        grouped: Dict[Tuple[str, str, float], List[Dict[str, Any]]] = {}
         for item in claimed.get("items") or []:
-            occurrence_id = str(item.get("occurrence_id") or "")
-            description_hash = str(item.get("description_hash") or "")
+            key = (str(item["chat_id"]), str(item["message_id"]), float(item["occurred_at"]))
+            grouped.setdefault(key, []).append(item)
+        for (chat_id, message_id, occurred_at), items in grouped.items():
+            references = sorted((str(item["occurrence_id"]), str(item["description_hash"])) for item in items)
+            if len(references) == 1:
+                external_id = f"image_description_compensation:{references[0][0]}:{references[0][1]}"
+            else:
+                fingerprint = hashlib.sha256(json.dumps(references).encode("utf-8")).hexdigest()
+                external_id = f"image_description_compensation_batch:{fingerprint}"
             try:
                 result = await memory_service.ingest_summary(
-                    external_id=(f"image_description_compensation:{occurrence_id}:{description_hash}"),
-                    chat_id=str(item["chat_id"]),
+                    external_id=external_id,
+                    chat_id=chat_id,
                     text="",
                     participants=[],
-                    time_end=float(item["occurred_at"]) + 0.001,
+                    time_end=occurred_at + 0.001,
                     metadata={
                         "generate_from_chat": True,
                         "context_length": int(
@@ -919,7 +929,7 @@ class ImageMemoryWritebackService:
                         ),
                         "writeback_source": "image_description_compensation",
                         "trigger": "image_description_ready",
-                        "image_message_id": str(item["message_id"]),
+                        "image_message_id": message_id,
                         "summary_review_count": 2,
                     },
                     respect_filter=True,
@@ -929,14 +939,15 @@ class ImageMemoryWritebackService:
             except Exception as exc:
                 success = False
                 error = str(exc)
-            await memory_service.image_memory(
-                action="complete_description_compensation",
-                occurrence_id=occurrence_id,
-                description_hash=description_hash,
-                lease_token=lease_token,
-                success=success,
-                error=error,
-            )
+            for item in items:
+                await memory_service.image_memory(
+                    action="complete_description_compensation",
+                    occurrence_id=str(item["occurrence_id"]),
+                    description_hash=str(item["description_hash"]),
+                    lease_token=lease_token,
+                    success=success,
+                    error=error,
+                )
 
     @staticmethod
     def _explicit_user_text(components: List[Any]) -> str:
