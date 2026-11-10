@@ -381,7 +381,24 @@ class MemoryIngestService(KernelServiceBase):
                 "skipped_ids": [paragraph_hash] if reused else [], "fact_claim_ids": claim_ids,
                 "detail": "fact_reused" if reused else "fact_added"}
 
-    async def _ingest_text_raw(
+    async def _ingest_text_raw(self, **kwargs: Any) -> Dict[str, Any]:
+        """同一外部来源的检查与派生写入串行执行，避免映射被并发请求覆盖。"""
+        content = normalize_text(kwargs["text"])
+        source_type = kwargs["source_type"]
+        chat_id = kwargs.get("chat_id", "")
+        external_token = str(kwargs.get("external_id") or "").strip() or compute_hash(
+            f"{source_type}:{chat_id}:{content}"
+        )
+        if self._is_chat_filtered(
+            respect_filter=kwargs.get("respect_filter", True), stream_id=chat_id,
+            group_id=kwargs.get("group_id", ""), user_id=kwargs.get("user_id", ""),
+        ):
+            return {"success": True, "stored_ids": [], "skipped_ids": [external_token], "detail": "chat_filtered"}
+        await self.initialize()
+        async with fact_scope_lock(self.metadata_store, "external", external_token):
+            return await self._ingest_text_unlocked(**{**kwargs, "external_id": external_token})
+
+    async def _ingest_text_unlocked(
         self,
         *,
         external_id: str,
@@ -430,6 +447,18 @@ class MemoryIngestService(KernelServiceBase):
             return {"stored_ids": [], "skipped_ids": [external_token], "reason": "empty_text"}
 
         existing_ref = await asyncio.to_thread(self.metadata_store.get_external_memory_ref, external_token)
+        if existing_ref:
+            paragraph = await asyncio.to_thread(self.metadata_store.get_paragraph, existing_ref["paragraph_hash"])
+            saved_metadata = existing_ref["metadata"]
+            if (
+                existing_ref["source_type"] != source_type
+                or ("chat_id" in saved_metadata and saved_metadata["chat_id"] != chat_id)
+                or ("person_ids" in saved_metadata and set(saved_metadata["person_ids"]) != set(tokens(person_ids)))
+                or ("person_id" in saved_metadata and [saved_metadata["person_id"]] != tokens(person_ids))
+            ):
+                raise ValueError(f"external_id={external_token} 与已保存的来源归属不一致")
+            if paragraph is None or paragraph.get("is_deleted") or normalize_text(paragraph["content"]) != content:
+                raise ValueError(f"external_id={external_token} 与已保存的段落正文不一致或段落已删除")
         if existing_ref and existing_ref.get("metadata", {}).get("dedup_phase") != "pending":
             if source_type == "person_fact":
                 paragraph_hash = str(existing_ref.get("paragraph_hash", "") or "")
