@@ -22,7 +22,6 @@ import {
   type DesktopPetCardState,
   type DesktopPetStatus,
 } from '@/lib/desktop-pet-api'
-import { buildSearchNavigationPath } from '@/lib/config-search-navigation'
 import '@/styles/desktop-pet-card.css'
 
 const MESSAGE_MAX_LENGTH = 2000
@@ -36,12 +35,11 @@ const LIGHTS: Record<DesktopPetCardState, LightStatus> = {
   error: 'error',
 }
 
-/** 卡片标题栏右侧：跳到 Bot 配置里的桌宠设置 */
+/** 卡片标题栏右侧：定位到独立页面内的桌宠设置。 */
 export function DesktopPetCardActions() {
   const { t } = useTranslation()
-  const url = new URL(buildSearchNavigationPath('/config/bot', 'desktop_pet.enabled'), window.location.origin)
   return (
-    <Link to={url.pathname} search={Object.fromEntries(url.searchParams)} data-board-link="true">
+    <Link to="/desktop-pet" hash="desktop-pet-settings" data-board-link="true">
       {t('observation.pet.settings')} <ArrowRight aria-hidden="true" />
     </Link>
   )

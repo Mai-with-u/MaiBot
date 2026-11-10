@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useHostRuntime } from '@/host/state'
 
-import { ThemeProviderContext } from '@/lib/theme-context'
+import { DashboardStylePreviewContext, ThemeProviderContext } from '@/lib/theme-context'
 import { getCommonSettings, saveWebUIStyle } from '@/host/api'
 import { buildFutureRetroTexture } from '@/lib/theme/future-retro'
 import { DEFAULT_DASHBOARD_STYLE, DEFAULT_FUTURE_RETRO_STYLE_CONFIG } from '@/lib/theme/tokens'
@@ -63,6 +63,11 @@ export function ThemeProvider({
     return saved || defaultTheme
   })
   const [themeConfig, setThemeConfig] = useState<UserThemeConfig>(() => loadThemeConfig())
+  const [dashboardStylePreview, setDashboardStylePreview] = useState<DashboardStyle | null>(null)
+  const displayedThemeConfig = useMemo(
+    () => dashboardStylePreview === null ? themeConfig : { ...themeConfig, dashboardStyle: dashboardStylePreview },
+    [themeConfig, dashboardStylePreview]
+  )
   const [systemThemeTick, setSystemThemeTick] = useState(0)
   const pendingWebUIStyleRef = useRef<WebUIStyleConfigValue | null>(null)
 
@@ -83,16 +88,16 @@ export function ThemeProvider({
     return () => mediaQuery.removeEventListener('change', handleChange)
   }, [themeMode])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const root = document.documentElement
     root.classList.remove('light', 'dark')
     root.classList.add(resolvedTheme)
 
     const isDark = resolvedTheme === 'dark'
-    const dashboardStyle = themeConfig.dashboardStyle ?? DEFAULT_DASHBOARD_STYLE
+    const dashboardStyle = displayedThemeConfig.dashboardStyle ?? DEFAULT_DASHBOARD_STYLE
     const futureRetroConfig = {
       ...DEFAULT_FUTURE_RETRO_STYLE_CONFIG,
-      ...themeConfig.styleConfig?.futureRetro,
+      ...displayedThemeConfig.styleConfig?.futureRetro,
     }
 
     root.dataset.dashboardStyle = dashboardStyle
@@ -117,8 +122,8 @@ export function ThemeProvider({
     }[futureRetroConfig.textureStyle]
     root.style.setProperty('--retro-paper-texture-size', textureSize)
 
-    applyThemePipeline(themeConfig, isDark)
-  }, [resolvedTheme, themeConfig])
+    applyThemePipeline(displayedThemeConfig, isDark)
+  }, [resolvedTheme, displayedThemeConfig])
 
   const applyRemoteWebUIStyle = useCallback((styleValue: unknown) => {
     const nextDashboardStyle = configValueToDashboardStyle(styleValue)
@@ -216,12 +221,18 @@ export function ThemeProvider({
       theme: themeMode,
       resolvedTheme,
       setTheme,
-      themeConfig,
+      themeConfig: displayedThemeConfig,
       updateThemeConfig,
       resetTheme,
     }),
-    [themeMode, resolvedTheme, setTheme, themeConfig, updateThemeConfig, resetTheme]
+    [themeMode, resolvedTheme, setTheme, displayedThemeConfig, updateThemeConfig, resetTheme]
   )
 
-  return <ThemeProviderContext value={value}>{children}</ThemeProviderContext>
+  return (
+    <ThemeProviderContext value={value}>
+      <DashboardStylePreviewContext value={setDashboardStylePreview}>
+        {children}
+      </DashboardStylePreviewContext>
+    </ThemeProviderContext>
+  )
 }

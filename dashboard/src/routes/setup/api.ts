@@ -2,7 +2,7 @@
 
 import i18n from '@/i18n'
 import { authApi, backendApi } from '@/lib/http'
-import { testModelCapability } from '@/lib/config-api'
+import { testModelCapability, updateBotConfigSection } from '@/lib/config-api'
 import {
   findTemplateByBaseUrl,
   PROVIDER_TEMPLATES,
@@ -126,7 +126,7 @@ export async function loadSetupStatus(): Promise<SetupStatus> {
   })
 }
 
-type ReplyTimingSetupConfig = Pick<BasicSetupConfig, 'inevitable_at_reply' | 'private_reply_paused'>
+type ReplyTimingSetupConfig = Pick<BasicSetupConfig, 'inevitable_at_reply'>
 
 export async function loadBasicSetupConfig(): Promise<BasicSetupConfig> {
   const { config } = await backendApi.get<{ config: {
@@ -136,11 +136,11 @@ export async function loadBasicSetupConfig(): Promise<BasicSetupConfig> {
     '/api/webui/config/bot',
     { errorMessage: i18n.t('setupPage.errors.loadBot') }
   )
-  const { inevitable_at_reply, private_reply_paused } = config.chat.reply_timing
-  return { inevitable_at_reply, private_reply_paused, desktop_pet_enabled: config.desktop_pet.enabled }
+  const { inevitable_at_reply } = config.chat.reply_timing
+  return { inevitable_at_reply, desktop_pet_enabled: config.desktop_pet.enabled }
 }
 
-export async function saveBasicSetupConfig(config: Partial<ReplyTimingSetupConfig>) {
+export async function saveBasicSetupConfig(config: ReplyTimingSetupConfig) {
   return backendApi.post('/api/webui/config/bot/section/chat', {
     body: { reply_timing: config },
     errorMessage: i18n.t('setupPage.toast.saveFailedTitle'),
@@ -148,10 +148,7 @@ export async function saveBasicSetupConfig(config: Partial<ReplyTimingSetupConfi
 }
 
 export async function saveDesktopPetEnabled(enabled: boolean) {
-  return backendApi.post('/api/webui/config/bot/section/desktop_pet', {
-    body: { enabled },
-    errorMessage: i18n.t('setupPage.toast.saveFailedTitle'),
-  })
+  return updateBotConfigSection('desktop_pet', { enabled }, i18n.t('setupPage.toast.saveFailedTitle'))
 }
 
 // 读取Bot基础配置

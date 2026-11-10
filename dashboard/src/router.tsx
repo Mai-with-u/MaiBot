@@ -11,8 +11,10 @@ import { AppShell } from './components/app-shell'
 import { BasicFeaturesTour } from './components/tour/BasicFeaturesTour'
 import { RoutePendingFallback } from './components/route-pending-fallback'
 import { checkAuth } from './hooks/use-auth'
+import { isDesktopPetEnabled } from './hooks/use-feature-flags'
 import { getHostRuntime } from './host/state'
 import { RouteErrorBoundary } from './components/error-boundary'
+import { getBotConfig } from './lib/config-api'
 import { rememberMarketInstall } from './lib/plugin-market-navigation'
 import { rememberPersonalityImport } from './lib/personality-import'
 
@@ -122,6 +124,17 @@ const botConfigRoute = createRoute({
     throw redirect({ href: `/settings${search}${hash}`, replace: true })
   },
   component: lazyRouteComponent(() => import('./routes/config/bot'), 'BotConfigPage'),
+})
+
+const desktopPetRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/desktop-pet',
+  beforeLoad: async () => {
+    const { host, selected_bot_running } = getHostRuntime()
+    if (host && !selected_bot_running) throw redirect({ to: '/bots', replace: true })
+    if (!isDesktopPetEnabled(await getBotConfig())) throw redirect({ to: '/config/bot', replace: true })
+  },
+  component: lazyRouteComponent(() => import('./routes/desktop-pet'), 'DesktopPetPage'),
 })
 
 // 配置路由 - 麦麦模型配置
@@ -438,6 +451,7 @@ const routeTree = rootRoute.addChildren([
     helpHistoryRoute,
     statisticsRoute,
     botConfigRoute,
+    desktopPetRoute,
     modelConfigRoute,
     promptManagementRoute,
     emojiManagementRoute,

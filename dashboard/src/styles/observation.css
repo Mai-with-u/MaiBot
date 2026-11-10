@@ -416,6 +416,10 @@
   display: none;
 }
 
+[data-observation-update='true']:empty {
+  display: none;
+}
+
 [data-observation-tools='true'] {
   display: flex;
   flex-shrink: 0;

@@ -106,7 +106,13 @@
     "keyNeedsBot": "{{label}} · 먼저 Bot을 시작하세요",
     "pet": {
       "title": "데스크톱 펫",
+      "statusTitle": "데스크톱 펫 상태",
+      "statusLoadFailed": "데스크톱 펫 상태를 불러올 수 없습니다: {{error}}",
       "settings": "펫 설정",
+      "settingsUnavailable": "현재 봇에서 데스크톱 펫 설정을 사용할 수 없습니다.",
+      "settingsSaving": "저장 중…",
+      "settingsSaved": "데스크톱 펫 설정을 저장했습니다",
+      "settingsSaveFailed": "데스크톱 펫 설정을 저장할 수 없습니다",
       "enabledLamp": "펫 사용",
       "mode": {
         "local": "로컬 창",
@@ -246,6 +252,7 @@
     "menu": {
       "home": "홈",
       "botMainConfig": "봇 메인 설정",
+      "desktopPet": "데스크톱 펫",
       "aiModelProvider": "AI 모델 공급자",
       "modelManagement": "모델 관리",
       "promptManagement": "Prompt 관리",
@@ -747,16 +754,16 @@
       "dashboardStyle": "대시보드 스타일",
       "dashboardStyles": {
         "modern": {
-          "label": "클래식 대시보드",
-          "description": "둥근 카드와 사용자 지정 배경 및 테마."
+          "label": "모던",
+          "description": "평면적인 현대 UI"
         },
         "future-retro": {
           "label": "퓨처 레트로",
-          "description": "종이 질감, 굵은 테두리, 모서리를 깎은 패널."
+          "description": "높은 대비, 거친 질감, 따뜻한 색감과 무광 마감"
         },
         "millennium": {
           "label": "밀레니엄",
-          "description": "베이지색 케이스, 키캡 버튼, 안쪽으로 들어간 화면."
+          "description": "향수를 불러일으키는 밀레니엄 스타일"
         }
       },
       "layoutVersion": "레이아웃",
@@ -1175,25 +1182,25 @@
   "setupPage": {
     "steps": {
       "nickname": {
-        "title": "닉네임",
-        "description": "채팅에 사용할 이름을 정하세요."
+        "title": "이름 정하기",
+        "label": "닉네임",
+        "description": ""
       },
       "defineModel": {
-        "title": "모델 정의",
-        "description": "제공자와 초기 모델을 선택하세요. 다음 단계에서 역할마다 다른 모델을 고를 수 있습니다.",
-        "modelLabel": "초기 모델",
-        "required": "초기 모델을 입력하거나 선택하세요"
+        "title": "모델 제공처 설정",
+        "label": "모델 정의",
+        "description": ""
       },
       "replyer": {
-        "title": "Replyer 설정",
-        "description": "Replyer는 상대에게 표시되는 답장을 작성합니다."
+        "title": "답변 모델 설정",
+        "description": "이 모델이 말투를 결정합니다. 글쓰기와 표현력이 좋은 모델이 적합합니다."
       },
       "planner": {
-        "title": "Planner 설정",
-        "description": "Planner는 언제 답장하고 어떻게 행동할지 판단합니다."
+        "title": "행동 모델 설정",
+        "description": "이 모델은 마이마이의 행동을 결정합니다. 작업을 이해하고 도구를 사용할 수 있는 에이전트 모델을 선택하세요."
       },
       "basicSettings": {
-        "title": "기본 설정",
+        "title": "설정",
         "description": ""
       },
       "groupReplies": {
@@ -1201,19 +1208,18 @@
         "description": "켜면 그룹 채팅에서 @멘션을 받았을 때 가능한 한 답장합니다.",
         "label": "@멘션에 우선 답장"
       },
-      "desktopAndAppearance": {
-        "title": "데스크톱 펫 및 모양",
-        "description": "데스크톱 펫을 켤지 정하고 대시보드 스타일을 선택하세요.",
-        "desktopPet": "데스크톱 펫 사용",
-        "desktopPetHint": "내장 데스크톱 펫은 Windows를 지원합니다. 독립 클라이언트를 사용하려면 봇 설정에서 원격 모드를 선택하세요."
+      "desktopPet": {
+        "title": "데스크톱 펫",
+        "description": "",
+        "label": "데스크톱 펫 사용",
+        "hint": "데스크톱 펫에는 Windows 데스크톱 환경이 필요합니다.\n서버에 배포한 경우 나중에 설정에서 데스크톱 펫의 원격 연결을 구성할 수 있습니다."
       },
-      "privateReplies": {
-        "title": "개인 채팅 답장",
-        "description": "끄면 개인 메시지는 계속 받고 기록하지만 답장은 일시 중지합니다.",
-        "label": "개인 채팅 답장 허용"
+      "dashboardAppearance": {
+        "title": "인터페이스 스타일",
+        "description": ""
       },
       "botProfile": {
-        "title": "기본 정보와 성격",
+        "title": "페르소나",
         "description": "닉네임, 성격, 답변 스타일을 설정합니다"
       },
       "customToken": {
@@ -1226,18 +1232,19 @@
         "description": "봇의 기본 정보를 설정합니다"
       },
       "personality": {
-        "title": "성격 설정",
-        "description": "봇의 성격과 말투를 정의합니다",
+        "title": "페르소나 만들기",
         "choose": "어떤 방식으로 시작할까요?",
-        "template": "수정할 수 있는 캐릭터 템플릿 사용",
-        "manual": "캐릭터 설정 직접 작성"
+        "templateTitle": "템플릿 선택",
+        "editTitle": "페르소나 편집",
+        "template": "기존 템플릿 사용",
+        "manual": "직접 작성"
       },
       "apiProvider": {
         "title": "API 설정",
         "description": "API 제공자를 설정합니다"
       },
       "modelSetup": {
-        "title": "모델 설정",
+        "title": "모델",
         "description": "planner와 replyer 모델을 설정합니다"
       }
     },
@@ -1260,8 +1267,8 @@
       "enterProviderName": "API 제공자 이름을 입력해 주세요",
       "enterBaseUrl": "API Base URL을 입력해 주세요",
       "enterApiKey": "API Key를 입력해 주세요",
-      "enterPlannerModelIdentifier": "planner 모델 식별자를 입력해 주세요",
-      "enterReplyerModelIdentifier": "replyer 모델 식별자를 입력해 주세요",
+      "enterPlannerModelIdentifier": "행동 모델 식별자를 입력해 주세요",
+      "enterReplyerModelIdentifier": "답변 모델 식별자를 입력해 주세요",
       "customTokenInvalid": "Token이 요구 사항을 충족하지 않습니다: {{failedRules}}"
     },
     "toast": {
@@ -1377,17 +1384,17 @@
         "personality": {
           "label": "성격 특성",
           "placeholder": "봇의 성격과 설정을 설명해 주세요 (권장 120자 이내)",
-          "description": "bot의 핵심 성격을 설명하며, bot이 자신을 인식하는 방식에 영향을 줍니다"
+          "description": "성격의 특징과 주요 정보"
         },
         "behaviorStyle": {
           "label": "행동 스타일",
           "placeholder": "대화에 참여하거나 상황을 관찰하거나 조용히 있을 때를 설명하세요",
-          "description": "bot의 행동을 설명하며, 행동 방식을 결정합니다"
+          "description": "채팅할 때의 행동과 일 처리 방식"
         },
         "replyStyle": {
           "label": "말투",
           "placeholder": "봇이 말하는 방식과 표현 습관을 설명해 주세요",
-          "description": "bot의 말하는 방식과 말투에 직접 영향을 줍니다"
+          "description": "말하는 스타일"
         },
         "multipleReplyStyle": {
           "label": "대체 답변 스타일",
@@ -1438,7 +1445,7 @@
       },
       "apiProvider": {
         "providerName": {
-          "label": "API 제공자 이름 *",
+          "label": "제공자",
           "placeholder": "예: OpenAI, DeepSeek, 자체 호스팅",
           "description": "이 이름은 model_config.toml에 저장되며 아래 모델에서 참조됩니다"
         },
@@ -1513,8 +1520,8 @@
       "saveFailed": "설정을 저장하지 못해 테스트하지 못했습니다: {{error}}",
       "canContinue": "테스트에 실패해도 설정을 완료할 수 있으며, 나중에 모델 설정 페이지에서 조정할 수 있습니다.",
       "roles": {
-        "planner": "계획 모델",
-        "replyer": "응답 모델"
+        "planner": "행동 모델",
+        "replyer": "답변 모델"
       }
     }
   },

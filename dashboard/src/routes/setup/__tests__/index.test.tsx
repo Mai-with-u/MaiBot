@@ -178,11 +178,11 @@ async function clickNextAndWaitStep(current: number, total = 3) {
 }
 
 beforeEach(() => {
+  sessionStorage.clear()
   mocks.loadSetupStatus.mockResolvedValue({ ...defaultStatus })
   mocks.loadBotBasicConfig.mockResolvedValue({ ...defaultBotBasic })
   mocks.loadBasicSetupConfig.mockResolvedValue({
     inevitable_at_reply: true,
-    private_reply_paused: false,
     desktop_pet_enabled: false,
   })
   mocks.loadPersonalityConfig.mockResolvedValue({ ...defaultPersonality })
@@ -389,6 +389,7 @@ describe('SetupPage 完成与跳过', () => {
   it('确认跳过向导后标记完成并跳转首页', async () => {
     render(<SetupPage />)
     await waitLoadingDone()
+    expect(sessionStorage.getItem('maibot-setup-draft-v1:standalone')).not.toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'setupPage.skipDialog.confirm' }))
 
@@ -396,6 +397,7 @@ describe('SetupPage 完成与跳过', () => {
       expect(mocks.navigate).toHaveBeenCalledWith({ to: '/' })
     })
     expect(mocks.completeSetup).toHaveBeenCalledTimes(1)
+    expect(sessionStorage.getItem('maibot-setup-draft-v1:standalone')).toBeNull()
   })
 
   it('跳过时标记完成失败则提示错误且不跳转', async () => {
@@ -621,7 +623,7 @@ describe('SetupPage 错误态与空态', () => {
     mocks.completeSetup.mockRejectedValue(new Error('写入失败'))
     render(<SetupPage />)
     await waitLoadingDone()
-    await advanceTo('personality', 'defineModel', 'replyer', 'planner', 'groupReplies', 'privateReplies', 'desktopAndAppearance')
+    await advanceTo('personality', 'defineModel', 'replyer', 'planner', 'groupReplies', 'desktopPet', 'dashboardAppearance')
 
     fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.complete' }))
 
@@ -665,37 +667,86 @@ describe('SetupPage 错误态与空态', () => {
 async function advanceTo(...steps: string[]) {
   for (const step of steps) {
     const template = screen.queryByRole('button', { name: 'setupPage.steps.personality.template' })
-    if (template) fireEvent.click(template)
+    if (template) {
+      fireEvent.click(template)
+      await screen.findByRole('heading', { name: 'setupPage.steps.personality.templateTitle' })
+      fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.next' }))
+      await screen.findByRole('heading', { name: 'setupPage.steps.personality.editTitle' })
+    }
     fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.next' }))
     await screen.findByRole('heading', { name: `setupPage.steps.${step}.title` })
   }
 }
 
+it('刷新后恢复模型草稿，重新输入 API Key 后接续原步骤', async () => {
+  mocks.loadApiProviderSetupConfig.mockResolvedValue({
+    provider_name: 'MyProvider',
+    base_url: 'https://api.example.com/v1',
+    api_key: '',
+  })
+  const { unmount } = render(<SetupPage />)
+  await waitLoadingDone()
+  await advanceTo('personality', 'defineModel')
+  const apiKey = () => screen.getByLabelText('setupPage.forms.apiProvider.apiKey.label')
+  fireEvent.change(apiKey(), { target: { value: 'draft-secret' } })
+  await advanceTo('replyer', 'planner')
+  const modelInput = () => screen.getByPlaceholderText('setupPage.forms.modelSetup.identifierPlaceholder')
+  fireEvent.change(modelInput(), { target: { value: 'my-planner' } })
+  unmount()
+
+  render(<SetupPage />)
+  await screen.findByRole('heading', { name: 'setupPage.steps.defineModel.title' })
+  expect(apiKey()).toHaveValue('')
+  expect(sessionStorage.getItem('maibot-setup-draft-v1:standalone')).not.toContain('draft-secret')
+  fireEvent.change(apiKey(), { target: { value: 'draft-secret' } })
+  await advanceTo('planner')
+  expect(modelInput()).toHaveValue('my-planner')
+})
+
 it('先选择人设路径，返回切换时保留各自的草稿', async () => {
   render(<SetupPage />)
   await waitLoadingDone()
   await advanceTo('personality')
-  const choose = (mode: 'manual' | 'template') => fireEvent.click(
-    screen.getByRole('button', { name: `setupPage.steps.personality.${mode}` })
-  )
+  const choose = async (mode: 'manual' | 'template') => {
+    fireEvent.click(screen.getByRole('button', { name: `setupPage.steps.personality.${mode}` }))
+    await screen.findByRole('heading', {
+      name: `setupPage.steps.personality.${mode === 'manual' ? 'editTitle' : 'templateTitle'}`,
+    })
+  }
   const field = () => screen.getByRole('textbox', { name: 'setupPage.forms.personality.personality.label' })
-  const back = () => fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.previous' }))
+  const back = async (title: string) => {
+    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.previous' }))
+    await screen.findByRole('heading', { name: `setupPage.steps.personality.${title}` })
+  }
+  const preset = () => screen.queryByRole('combobox', { name: 'setupPage.forms.personality.presets.label' })
+  const editTemplate = async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.next' }))
+    await screen.findByRole('heading', { name: 'setupPage.steps.personality.editTitle' })
+    expect(field()).not.toHaveAttribute('readonly')
+    expect(preset()).not.toBeInTheDocument()
+  }
 
   expect(screen.queryAllByRole('textbox')).toHaveLength(0)
-  choose('manual')
+  await choose('manual')
   expect(field()).toHaveValue('')
-  expect(screen.queryByRole('combobox', { name: 'setupPage.forms.personality.presets.label' })).not.toBeInTheDocument()
+  expect(preset()).not.toBeInTheDocument()
   fireEvent.change(field(), { target: { value: '手写草稿' } })
-  back()
-  choose('template')
-  expect(field()).toHaveValue('setupPage.defaults.personality.personality')
-  expect(screen.getByRole('combobox', { name: 'setupPage.forms.personality.presets.label' })).toBeInTheDocument()
+  await back('title')
+  await choose('template')
+  expect(screen.getByText('setupPage.defaults.personality.personality')).toBeInTheDocument()
+  expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /setupPage\.forms\.personality\.expand/ })).not.toBeInTheDocument()
+  expect(preset()).toBeInTheDocument()
+  await editTemplate()
   fireEvent.change(field(), { target: { value: '模板草稿' } })
-  back()
-  choose('manual')
+  await back('templateTitle')
+  expect(screen.getByText('setupPage.defaults.personality.personality')).toBeInTheDocument()
+  await back('title')
+  await choose('manual')
   expect(field()).toHaveValue('手写草稿')
-  back()
-  choose('template')
+  await back('title')
+  await choose('template')
+  await editTemplate()
   expect(field()).toHaveValue('模板草稿')
   await advanceTo('defineModel')
   expect(mocks.savePersonalityConfig).toHaveBeenCalledWith(expect.objectContaining({ personality: '模板草稿' }))
@@ -711,18 +762,18 @@ it('展开当前阶段，保存基础设置后进入带试聊引导的聊天页'
   await advanceTo('replyer', 'planner', 'groupReplies')
   expect(screen.queryByRole('list', { name: 'setupPage.steps.modelSetup.title' })).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('switch', { name: 'setupPage.steps.groupReplies.label' }))
-  await advanceTo('privateReplies')
-  fireEvent.click(screen.getByRole('switch', { name: 'setupPage.steps.privateReplies.label' }))
-  await advanceTo('desktopAndAppearance')
-  fireEvent.click(screen.getByRole('switch', { name: 'setupPage.steps.desktopAndAppearance.desktopPet' }))
+  await advanceTo('desktopPet')
+  fireEvent.click(screen.getByRole('switch', { name: 'setupPage.steps.desktopPet.label' }))
+  expect(screen.queryByRole('button', { name: /settings\.appearance\.dashboardStyles/ })).not.toBeInTheDocument()
+  await advanceTo('dashboardAppearance')
+  expect(screen.queryByRole('switch', { name: 'setupPage.steps.desktopPet.label' })).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: /settings\.appearance\.dashboardStyles\.future-retro\.label/ }))
   fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.complete' }))
   await waitFor(() => {
     expect(mocks.navigate).toHaveBeenCalledWith({ to: '/chat', search: { setupTrial: true } })
   })
   expect(mocks.completeSetup).toHaveBeenCalledTimes(1)
-  expect(mocks.saveBasicSetupConfig).toHaveBeenNthCalledWith(1, { inevitable_at_reply: false })
-  expect(mocks.saveBasicSetupConfig).toHaveBeenNthCalledWith(2, { private_reply_paused: true })
+  expect(mocks.saveBasicSetupConfig).toHaveBeenCalledExactlyOnceWith({ inevitable_at_reply: false })
   expect(mocks.saveDesktopPetEnabled).toHaveBeenCalledWith(true)
   expect(mocks.updateThemeConfig).toHaveBeenCalledWith({ dashboardStyle: 'future-retro' })
 })
@@ -735,6 +786,8 @@ describe('SetupPage 模型列表拉取', () => {
     await waitLoadingDone()
     await advanceTo('personality', 'defineModel')
 
+    expect(screen.queryByPlaceholderText('setupPage.forms.modelSetup.identifierPlaceholder')).not.toBeInTheDocument()
+    await advanceTo('replyer')
     await vi.advanceTimersByTimeAsync(600 + 1000 + 2000)
     await waitFor(() => expect(mocks.fetchSetupModels).toHaveBeenCalledTimes(3))
     await vi.advanceTimersByTimeAsync(30_000)

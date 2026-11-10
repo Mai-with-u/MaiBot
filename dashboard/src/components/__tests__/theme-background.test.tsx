@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { useContext } from 'react'
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,6 +8,7 @@ import { BackgroundEffectsControls } from '@/components/background-effects-contr
 import { BackgroundLayer } from '@/components/background-layer'
 import { ThemeProvider } from '@/components/theme-provider'
 import { useTheme } from '@/components/use-theme'
+import { DashboardStylePreviewContext } from '@/lib/theme-context'
 import type { BackgroundConfig, BackgroundEffects, UserThemeConfig } from '@/lib/theme/tokens'
 import { DEFAULT_DASHBOARD_STYLE_CONFIG, defaultBackgroundEffects } from '@/lib/theme/tokens'
 
@@ -124,6 +126,7 @@ function makeBackgroundConfig(
 
 function ThemeProbe() {
   const { resetTheme, resolvedTheme, setTheme, theme, themeConfig, updateThemeConfig } = useTheme()
+  const setDashboardStylePreview = useContext(DashboardStylePreviewContext)
 
   return (
     <div>
@@ -138,6 +141,12 @@ function ThemeProbe() {
       </button>
       <button type="button" onClick={resetTheme}>
         重置主题
+      </button>
+      <button type="button" onClick={() => setDashboardStylePreview('millennium')}>
+        预览千禧
+      </button>
+      <button type="button" onClick={() => setDashboardStylePreview(null)}>
+        退出预览
       </button>
     </div>
   )
@@ -224,6 +233,25 @@ describe('ThemeProvider', () => {
       }
     })
     expect(screen.getByTestId('theme-state')).toHaveTextContent('system:dark:modern')
+  })
+
+  it('立即应用预览风格，退出后恢复已保存风格', async () => {
+    render(
+      <ThemeProvider>
+        <ThemeProbe />
+      </ThemeProvider>
+    )
+    await act(async () => {})
+
+    fireEvent.click(screen.getByRole('button', { name: '预览千禧' }))
+    expect(screen.getByTestId('theme-state')).toHaveTextContent('system:light:millennium')
+    expect(document.documentElement.dataset.dashboardStyle).toBe('millennium')
+    expect(mocks.applyThemePipeline).toHaveBeenLastCalledWith(expect.objectContaining({ dashboardStyle: 'millennium' }), false)
+    expect(mocks.saveThemePartial).not.toHaveBeenCalled()
+    expect(mocks.saveWebUIStyle).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '退出预览' }))
+    expect(document.documentElement.dataset.dashboardStyle).toBe('modern')
   })
 
   it('读取远端 WebUI 风格，并在本地切换时写回数值协议', async () => {

@@ -1,5 +1,7 @@
 import type { ComponentType, ReactNode } from 'react'
 
+import type { FeatureFlags } from '@/hooks/use-feature-flags'
+
 export interface LayoutProps {
   children: ReactNode
 }
@@ -20,7 +22,7 @@ export interface MenuItem {
   external?: boolean
   searchDescription?: string
   tourId?: string
-  featureFlag?: 'agent' | 'files'
+  featureFlag?: keyof FeatureFlags
 }
 
 export interface MenuSection {
