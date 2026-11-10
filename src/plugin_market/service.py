@@ -128,10 +128,16 @@ def _catalog(
             raise ValueError(f"插件 {plugin['id']} 的统计数据格式无效")
         plugin["stats"] = statistics.normalize_statistics(stats) if stats is not None else None
         if entry is None:
-            entry = PluginReleaseEntry(
-                id=plugin["marketplace_id"], manifest_id=plugin["id"], repositoryUrl=plugin["repository_url"],
-                mode="releases", versions=[], sync_error="插件尚未收录到版本索引，请先同步插件中心",
-            )
+            # 官方条目声明的仓库地址比清单解析结果可靠：清单未登记仓库地址时后者是空串，过不了发布条目校验。
+            repository_url = item.get("repository_url") or plugin["repository_url"]
+            try:
+                entry = PluginReleaseEntry(
+                    id=plugin["marketplace_id"], manifest_id=plugin["id"], repositoryUrl=repository_url,
+                    mode="releases", versions=[], sync_error="插件尚未收录到版本索引，请先同步插件中心",
+                )
+            except ValueError as exc:
+                logger.warning(f"跳过无法构造回退发布信息的插件市场条目：{exc}")
+                continue
         plugin["releases"] = _release_description(entry, plugin["manifest"])
         assets = item.get("assets") or {}
         icon = item.get("icon_url") if source == "official" else assets.get("icon_64")

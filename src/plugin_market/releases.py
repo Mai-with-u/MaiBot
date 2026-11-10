@@ -38,6 +38,13 @@ class PluginReleaseIndex(BaseModel):
     plugins: List[PluginReleaseEntry]
 
 
+class _ReleaseIndexEnvelope(BaseModel):
+    """只校验版本索引的外层结构，条目留给逐条解析时单独校验。"""
+
+    schema_version: Literal[1]
+    plugins: List[Any]
+
+
 def manifest_compatibility(manifest: Dict[str, Any]) -> List[str]:
     validator = ManifestValidator(
         validate_python_package_dependencies=False, log_errors=False, log_compat_warnings=False
@@ -80,11 +87,13 @@ def parse_market_release_entry(data: Dict[str, Any], plugin_id: Optional[str] = 
 
 
 def parse_release_index(content: str) -> PluginReleaseIndex:
-    index = PluginReleaseIndex.model_validate_json(content)
+    """解析版本索引：单条无效只跳过该条，插件 ID 冲突仍视为索引整体错误。"""
+    envelope = _ReleaseIndexEnvelope.model_validate_json(content)
     aliases: Dict[str, str] = {}
     valid: List[PluginReleaseEntry] = []
-    for entry in index.plugins:
+    for raw in envelope.plugins:
         try:
+            entry = PluginReleaseEntry.model_validate(raw)
             _validate_release_entry(entry)
         except ValueError as exc:
             logger.warning(f"跳过无效的插件版本索引条目：{exc}")
@@ -97,8 +106,7 @@ def parse_release_index(content: str) -> PluginReleaseIndex:
                 raise ValueError(f"版本索引插件 ID 冲突：{alias}")
             aliases[key] = entry.id
         valid.append(entry)
-    index.plugins = valid
-    return index
+    return PluginReleaseIndex(schema_version=envelope.schema_version, plugins=valid)
 
 
 def _validate_release_entry(entry: PluginReleaseEntry) -> None:
