@@ -117,8 +117,8 @@ async def test_host_service_passes_shared_memory_session_ids(monkeypatch: pytest
     monkeypatch.setattr(service, "is_enabled", lambda: True)
     monkeypatch.setattr(service, "_read_config", lambda: {"global_memory_sharing_enabled": False})
     monkeypatch.setattr(
-        "src.A_memorix.host_service.AMemorixConfigUtils.get_shared_memory_session_ids",
-        lambda chat_id: {"session-a", "session-b"} if chat_id == "session-a" else {chat_id},
+        "src.A_memorix.host_service.resolve_scope",
+        lambda chat_id, capability: ({"session-a", "session-b"} if chat_id == "session-a" else {chat_id}, False),
     )
 
     await service.invoke(
@@ -145,14 +145,15 @@ async def test_host_service_global_memory_sharing_uses_global_search_scope(
     fake_kernel = _FakeKernel()
     service = _ready_service(fake_kernel)
 
-    def fail_shared_group_lookup(chat_id: str) -> set[str]:
-        raise AssertionError(f"全局共享开启时不应解析共享记忆组: {chat_id}")
+    def global_group_scope(chat_id: str, capability: str) -> tuple[set[str], bool]:
+        assert capability == "memory"
+        return {chat_id}, True
 
     monkeypatch.setattr(service, "is_enabled", lambda: True)
     monkeypatch.setattr(service, "_read_config", lambda: {"global_memory_sharing_enabled": True})
     monkeypatch.setattr(
-        "src.A_memorix.host_service.AMemorixConfigUtils.get_shared_memory_session_ids",
-        fail_shared_group_lookup,
+        "src.A_memorix.host_service.resolve_scope",
+        global_group_scope,
     )
 
     await service.invoke(
@@ -473,7 +474,7 @@ async def test_host_service_queue_append_survives_previous_killed_partial_line(
             service.is_enabled = lambda: True
             service._read_config = lambda: {"storage": {"data_dir": sys.argv[1]}}
 
-            async def partial_append(path, payload):
+            def partial_append(path, payload):
                 path = Path(path)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with path.open("a", encoding="utf-8") as handle:
@@ -482,7 +483,7 @@ async def test_host_service_queue_append_survives_previous_killed_partial_line(
                 Path(sys.argv[2]).write_text("partial", encoding="utf-8")
                 time.sleep(60)
 
-            service._append_jsonl = partial_append
+            service._append_jsonl_sync = partial_append
             await service.invoke(
                 "ingest_text",
                 {

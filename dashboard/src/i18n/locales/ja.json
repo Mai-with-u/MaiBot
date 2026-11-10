@@ -92,6 +92,7 @@
       "model": "モデル",
       "adapter": "アダプター",
       "learning": "学習",
+      "mutualGroups": "共有",
       "memory": "記憶",
       "plugin": "プラグイン",
       "market": "マーケット",
@@ -252,6 +253,7 @@
       "system": "システム"
     },
     "menu": {
+      "mutualGroups": "共有",
       "home": "ホーム",
       "botMainConfig": "ボットメイン設定",
       "aiModelProvider": "AIモデルプロバイダー",

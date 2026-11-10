@@ -53,6 +53,7 @@ from .v44_to_v45 import migrate_v44_to_v45
 from .v45_to_v46 import migrate_v45_to_v46
 from .v46_to_v47 import migrate_v46_to_v47
 from .v47_to_v48 import migrate_v47_to_v48
+from .v48_to_v49 import migrate_v48_to_v49
 from .version_store import SQLiteUserVersionStore
 
 EMPTY_SCHEMA_VERSION = 0
@@ -104,7 +105,8 @@ V45_SCHEMA_VERSION = 45
 V46_SCHEMA_VERSION = 46
 V47_SCHEMA_VERSION = 47
 V48_SCHEMA_VERSION = 48
-LATEST_SCHEMA_VERSION = V48_SCHEMA_VERSION
+V49_SCHEMA_VERSION = 49
+LATEST_SCHEMA_VERSION = V49_SCHEMA_VERSION
 
 _LEGACY_V1_EXCLUSIVE_TABLES = (
     "chat_streams",
@@ -2006,6 +2008,13 @@ def build_default_migration_registry() -> MigrationRegistry:
                 name="v47_to_v48",
                 description="新增按全部统计维度汇总的小时表，历史数据由统计任务分批回填。",
                 handler=migrate_v47_to_v48,
+            ),
+            MigrationStep(
+                version_from=V48_SCHEMA_VERSION,
+                version_to=V49_SCHEMA_VERSION,
+                name="v48_to_v49",
+                description="新增独立相通组、统一成员、共享能力与配置导入记录。",
+                handler=migrate_v48_to_v49,
             ),
         ]
     )

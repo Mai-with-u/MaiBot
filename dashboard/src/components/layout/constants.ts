@@ -7,6 +7,7 @@ import {
   Home,
   MessageCircle,
   MessageSquare,
+  Network,
   Puzzle,
   Settings,
   Store,
@@ -78,6 +79,11 @@ export const menuSections: MenuSection[] = [
         label: 'sidebar.menu.learning',
         path: '/resource/learning',
         searchDescription: 'search.items.learningDesc',
+      },
+      {
+        icon: (props) => createElement(Network, props),
+        label: 'sidebar.menu.mutualGroups',
+        path: '/chat-management',
       },
       {
         icon: KnowledgeIcon,

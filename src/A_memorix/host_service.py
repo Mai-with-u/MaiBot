@@ -16,7 +16,7 @@ import tomlkit
 
 from src.common.logger import get_logger
 from src.common.runtime_loop import run_on_main_loop
-from src.common.utils.utils_config import AMemorixConfigUtils
+from src.services.sharing_group_service import resolve_scope
 from src.config.official_configs import AMemorixConfig
 from src.webui.utils.toml_utils import _update_toml_doc
 
@@ -257,12 +257,9 @@ class AMemorixHostService:
             from .core.runtime.sdk_memory_kernel import KernelSearchRequest
 
             chat_id = str(payload.get("chat_id", "") or "").strip()
-            config = self._read_config()
-            global_memory_sharing_enabled = bool(config.get("global_memory_sharing_enabled", False))
+            shared_ids, global_memory_sharing_enabled = resolve_scope(chat_id, "memory")
             search_chat_id = "" if global_memory_sharing_enabled else chat_id
-            shared_chat_ids = ()
-            if not global_memory_sharing_enabled:
-                shared_chat_ids = tuple(AMemorixConfigUtils.get_shared_memory_session_ids(chat_id))
+            shared_chat_ids = () if global_memory_sharing_enabled else tuple(shared_ids)
 
             return await kernel.search_memory(
                 KernelSearchRequest(
@@ -317,15 +314,8 @@ class AMemorixHostService:
             scoped_payload = dict(payload)
             if action in {"search", "get"} and "chat_ids" not in scoped_payload:
                 chat_id = str(payload.get("chat_id") or "").strip()
-                config = self._read_config()
-                if bool(config.get("global_memory_sharing_enabled", False)):
-                    scoped_payload["chat_ids"] = None
-                else:
-                    scoped_payload["chat_ids"] = [
-                        item
-                        for item in (chat_id, *AMemorixConfigUtils.get_shared_memory_session_ids(chat_id))
-                        if item
-                    ]
+                shared_ids, is_global = resolve_scope(chat_id, "memory")
+                scoped_payload["chat_ids"] = None if is_global else sorted(shared_ids)
             scoped_payload.pop("action", None)
             return await kernel.image_memory(action=action, **scoped_payload)
 

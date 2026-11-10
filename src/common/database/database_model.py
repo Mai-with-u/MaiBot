@@ -5,6 +5,7 @@ from typing import Optional
 from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, Float, Index, Integer, String, Text, UniqueConstraint
 from sqlmodel import Field, LargeBinary, SQLModel
 
+from src.common.database.sharing_models import SharingGroup, SharingGroupMember, SharingGroupCapability, SharingGroupRule, SharingGroupMigration  # noqa: F401
 from src.files.models import FileAsset, FileBinding, FileParse  # noqa: F401 -- 注册文件服务模型
 
 

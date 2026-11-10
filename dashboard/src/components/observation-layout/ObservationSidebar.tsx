@@ -47,6 +47,7 @@ const SHORT_LABELS: Record<string, string> = {
   '/config/model': 'observation.keys.model',
   '/adapter-management': 'observation.keys.adapter',
   '/resource/learning': 'observation.keys.learning',
+  '/chat-management': 'observation.keys.mutualGroups',
   '/resource/knowledge-base': 'observation.keys.memory',
   '/plugin-config': 'observation.keys.plugin',
   '/plugins': 'observation.keys.market',

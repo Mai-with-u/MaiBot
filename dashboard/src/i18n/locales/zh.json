@@ -92,6 +92,7 @@
       "model": "模型",
       "adapter": "适配器",
       "learning": "学习",
+      "mutualGroups": "相通",
       "memory": "记忆",
       "plugin": "插件",
       "market": "市场",
@@ -252,6 +253,7 @@
       "system": "系统"
     },
     "menu": {
+      "mutualGroups": "相通",
       "home": "首页",
       "botMainConfig": "麦麦设置",
       "aiModelProvider": "模型厂商设置",

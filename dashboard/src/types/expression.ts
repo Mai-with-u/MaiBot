@@ -46,6 +46,8 @@ export interface ChatListResponse {
 }
 
 export interface ExpressionGroupInfo {
+  id: string
+  color: string
   index: number
   name: string
   chat_ids: string[]

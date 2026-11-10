@@ -92,6 +92,7 @@
       "model": "Models",
       "adapter": "Adapters",
       "learning": "Learning",
+      "mutualGroups": "Sharing",
       "memory": "Memory",
       "plugin": "Plugins",
       "market": "Market",
@@ -252,6 +253,7 @@
       "system": "System"
     },
     "menu": {
+      "mutualGroups": "Sharing",
       "home": "Home",
       "botMainConfig": "Bot Main Config",
       "aiModelProvider": "AI Model Providers",
