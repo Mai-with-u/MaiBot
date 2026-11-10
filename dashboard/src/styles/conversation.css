@@ -457,3 +457,39 @@
   flex-wrap: wrap;
   gap: 0.5rem;
 }
+
+/* ---------- 原版风格的对话列表可读性 ----------
+   预览改用次要字色而不是整体调淡；行之间靠留白分开，不再画点线；
+   设置齿轮平时隐藏，悬停、键盘聚焦或选中时才出现；灰灯（未在观察）不画，只有待命和处理中亮灯。 */
+:root[data-dashboard-style='modern'] [data-conversation-item='true'] {
+  margin-bottom: 2px;
+  border-bottom: 0;
+  border-radius: 0.5rem;
+}
+:root[data-dashboard-style='modern']
+  [data-conversation-hover-anchor='true']:not(:last-child)
+  > [data-conversation-item='true'] {
+  border-bottom: 0;
+}
+:root[data-dashboard-style='modern'] [data-conversation-item-heading='true'] strong {
+  font-size: 0.875rem;
+}
+:root[data-dashboard-style='modern'] [data-conversation-item-preview='true'] {
+  margin-top: 0.125rem;
+  font-size: 0.75rem;
+  opacity: 1;
+}
+:root[data-dashboard-style='modern']
+  [data-conversation-item='true']:not([data-selected='true'])
+  [data-conversation-item-preview='true'] {
+  color: hsl(var(--muted-foreground));
+}
+:root[data-dashboard-style='modern'] [data-conversation-item-status='true'] [data-status='off'] {
+  display: none;
+}
+:root[data-dashboard-style='modern']
+  [data-conversation-item='true']:not([data-selected='true'], :hover, :focus-within)
+  [data-conversation-item-actions='true']
+  > :not([data-conversation-item-status='true']) {
+  opacity: 0;
+}

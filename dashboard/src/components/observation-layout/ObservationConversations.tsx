@@ -23,6 +23,14 @@ import { getStageStatusLight } from '@/routes/monitor/stage-status-light'
 import { useMaisakaMonitorOverview } from '@/routes/monitor/use-maisaka-monitor'
 import type { SessionInfo, StageStatusInfo } from '@/routes/monitor/use-maisaka-monitor'
 
+/** 状态灯的悬停说明：灯本身只有颜色，靠这里告诉人它代表什么。 */
+const STATUS_TITLE: Record<ReturnType<typeof getStageStatusLight>, string> = {
+  on: '待命中',
+  mixed: '正在处理',
+  off: '未在观察',
+  error: '出错',
+}
+
 type Selection = { kind: 'chat' } | { kind: 'agent' } | { kind: 'observed'; id: string } | { kind: 'none' }
 
 function previewText(data: unknown): string {
@@ -61,7 +69,11 @@ const ObservedRow = memo(function ObservedRow({
         avatar={<ConversationAvatar src={avatarUrl} name={session.sessionName} />}
         status={
           <span className="inline-flex min-w-0 items-center gap-1">
-            <StatusIndicator variant="inline" status={getStageStatusLight(status)} />
+            <StatusIndicator
+              variant="inline"
+              status={getStageStatusLight(status)}
+              title={STATUS_TITLE[getStageStatusLight(status)]}
+            />
           </span>
         }
         preview={status?.stage ? <StageStatusLabel status={status} /> : preview || t('chat.sidebar.emptyPreview')}

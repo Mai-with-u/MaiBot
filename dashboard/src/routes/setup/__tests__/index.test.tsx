@@ -29,6 +29,8 @@ const mocks = vi.hoisted(() => {
     loadModelSetupConfig: vi.fn(),
     saveBotBasicConfig: vi.fn(),
     saveBasicSetupConfig: vi.fn(),
+    saveDesktopPetEnabled: vi.fn(),
+    updateThemeConfig: vi.fn(),
     savePersonalityConfig: vi.fn(),
     saveApiProviderSetupConfig: vi.fn(),
     saveModelSetupConfig: vi.fn(),
@@ -58,6 +60,14 @@ vi.mock('@/hooks/use-toast', () => ({
   useToast: () => ({ toast: mocks.toast }),
 }))
 
+vi.mock('@/components/use-theme', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/use-theme')>()
+  return {
+    ...actual,
+    useTheme: () => ({ ...actual.useTheme(), updateThemeConfig: mocks.updateThemeConfig }),
+  }
+})
+
 vi.mock('../api', () => ({
   loadSetupStatus: mocks.loadSetupStatus,
   loadBotBasicConfig: mocks.loadBotBasicConfig,
@@ -67,6 +77,7 @@ vi.mock('../api', () => ({
   loadModelSetupConfig: mocks.loadModelSetupConfig,
   saveBotBasicConfig: mocks.saveBotBasicConfig,
   saveBasicSetupConfig: mocks.saveBasicSetupConfig,
+  saveDesktopPetEnabled: mocks.saveDesktopPetEnabled,
   savePersonalityConfig: mocks.savePersonalityConfig,
   saveApiProviderSetupConfig: mocks.saveApiProviderSetupConfig,
   saveModelSetupConfig: mocks.saveModelSetupConfig,
@@ -169,12 +180,17 @@ async function clickNextAndWaitStep(current: number, total = 3) {
 beforeEach(() => {
   mocks.loadSetupStatus.mockResolvedValue({ ...defaultStatus })
   mocks.loadBotBasicConfig.mockResolvedValue({ ...defaultBotBasic })
-  mocks.loadBasicSetupConfig.mockResolvedValue({ inevitable_at_reply: true, private_reply_paused: false })
+  mocks.loadBasicSetupConfig.mockResolvedValue({
+    inevitable_at_reply: true,
+    private_reply_paused: false,
+    desktop_pet_enabled: false,
+  })
   mocks.loadPersonalityConfig.mockResolvedValue({ ...defaultPersonality })
   mocks.loadApiProviderSetupConfig.mockResolvedValue({ ...defaultApiProvider })
   mocks.loadModelSetupConfig.mockResolvedValue({ ...defaultModelSetup })
   mocks.saveBotBasicConfig.mockResolvedValue({ success: true })
   mocks.saveBasicSetupConfig.mockResolvedValue({ success: true })
+  mocks.saveDesktopPetEnabled.mockResolvedValue({ success: true })
   mocks.savePersonalityConfig.mockResolvedValue({ success: true })
   mocks.saveApiProviderSetupConfig.mockResolvedValue({ success: true })
   mocks.saveModelSetupConfig.mockImplementation(async (config: ModelSetupConfig) => ({
@@ -605,7 +621,7 @@ describe('SetupPage 错误态与空态', () => {
     mocks.completeSetup.mockRejectedValue(new Error('写入失败'))
     render(<SetupPage />)
     await waitLoadingDone()
-    await advanceTo('personality', 'defineModel', 'replyer', 'planner', 'groupReplies', 'privateReplies')
+    await advanceTo('personality', 'defineModel', 'replyer', 'planner', 'groupReplies', 'privateReplies', 'desktopAndAppearance')
 
     fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.complete' }))
 
@@ -697,6 +713,9 @@ it('展开当前阶段，保存基础设置后进入带试聊引导的聊天页'
   fireEvent.click(screen.getByRole('switch', { name: 'setupPage.steps.groupReplies.label' }))
   await advanceTo('privateReplies')
   fireEvent.click(screen.getByRole('switch', { name: 'setupPage.steps.privateReplies.label' }))
+  await advanceTo('desktopAndAppearance')
+  fireEvent.click(screen.getByRole('switch', { name: 'setupPage.steps.desktopAndAppearance.desktopPet' }))
+  fireEvent.click(screen.getByRole('button', { name: /settings\.appearance\.dashboardStyles\.future-retro\.label/ }))
   fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.complete' }))
   await waitFor(() => {
     expect(mocks.navigate).toHaveBeenCalledWith({ to: '/chat', search: { setupTrial: true } })
@@ -704,6 +723,8 @@ it('展开当前阶段，保存基础设置后进入带试聊引导的聊天页'
   expect(mocks.completeSetup).toHaveBeenCalledTimes(1)
   expect(mocks.saveBasicSetupConfig).toHaveBeenNthCalledWith(1, { inevitable_at_reply: false })
   expect(mocks.saveBasicSetupConfig).toHaveBeenNthCalledWith(2, { private_reply_paused: true })
+  expect(mocks.saveDesktopPetEnabled).toHaveBeenCalledWith(true)
+  expect(mocks.updateThemeConfig).toHaveBeenCalledWith({ dashboardStyle: 'future-retro' })
 })
 
 describe('SetupPage 模型列表拉取', () => {

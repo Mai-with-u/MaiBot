@@ -126,18 +126,30 @@ export async function loadSetupStatus(): Promise<SetupStatus> {
   })
 }
 
+type ReplyTimingSetupConfig = Pick<BasicSetupConfig, 'inevitable_at_reply' | 'private_reply_paused'>
+
 export async function loadBasicSetupConfig(): Promise<BasicSetupConfig> {
-  const { config } = await backendApi.get<{ config: { chat: { reply_timing: BasicSetupConfig } } }>(
+  const { config } = await backendApi.get<{ config: {
+    chat: { reply_timing: ReplyTimingSetupConfig }
+    desktop_pet: { enabled: boolean }
+  } }>(
     '/api/webui/config/bot',
     { errorMessage: i18n.t('setupPage.errors.loadBot') }
   )
   const { inevitable_at_reply, private_reply_paused } = config.chat.reply_timing
-  return { inevitable_at_reply, private_reply_paused }
+  return { inevitable_at_reply, private_reply_paused, desktop_pet_enabled: config.desktop_pet.enabled }
 }
 
-export async function saveBasicSetupConfig(config: Partial<BasicSetupConfig>) {
+export async function saveBasicSetupConfig(config: Partial<ReplyTimingSetupConfig>) {
   return backendApi.post('/api/webui/config/bot/section/chat', {
     body: { reply_timing: config },
+    errorMessage: i18n.t('setupPage.toast.saveFailedTitle'),
+  })
+}
+
+export async function saveDesktopPetEnabled(enabled: boolean) {
+  return backendApi.post('/api/webui/config/bot/section/desktop_pet', {
+    body: { enabled },
     errorMessage: i18n.t('setupPage.toast.saveFailedTitle'),
   })
 }

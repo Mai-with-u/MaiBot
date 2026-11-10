@@ -8,6 +8,8 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { HostSetup } from '@/host/HostSetup'
 import { useHostRuntime } from '@/host/state'
+import { DashboardStylePicker } from '@/components/dashboard-style-picker'
+import { useTheme } from '@/components/use-theme'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -35,6 +37,7 @@ import { APP_NAME } from '@/lib/version'
 import { useToast } from '@/hooks/use-toast'
 import { validateToken } from '@/lib/token-validator'
 import type { ModelListItem } from '@/lib/config-api'
+import type { DashboardStyle } from '@/lib/theme/tokens'
 import type {
   ApiProviderSetupConfig,
   BasicSetupConfig,
@@ -61,6 +64,7 @@ import {
   loadModelSetupConfig,
   saveBotBasicConfig,
   saveBasicSetupConfig,
+  saveDesktopPetEnabled,
   savePersonalityConfig,
   saveApiProviderSetupConfig,
   saveModelSetupConfig,
@@ -94,6 +98,7 @@ function SetupPageContent() {
   const navigate = useNavigate()
   const { t, i18n: i18nInstance } = useTranslation()
   const { toast } = useToast()
+  const { themeConfig, updateThemeConfig } = useTheme()
   const currentLang = i18nInstance.resolvedLanguage || i18nInstance.language || 'zh'
   const createDefaultPersonalityConfig = (): PersonalityConfig => ({
     personality: t('setupPage.defaults.personality.personality'),
@@ -115,6 +120,8 @@ function SetupPageContent() {
   const [customToken, setCustomToken] = useState('')
   const [customTokenConfirmation, setCustomTokenConfirmation] = useState('')
   const [basicSettings, setBasicSettings] = useState<BasicSetupConfig | null>(null)
+  const [desktopPetDraft, setDesktopPetDraft] = useState<boolean | null>(null)
+  const [dashboardStyleDraft, setDashboardStyleDraft] = useState<DashboardStyle | null>(null)
   const [definedModel, setDefinedModel] = useState('')
 
   // 步骤1：Bot基础信息
@@ -191,6 +198,7 @@ function SetupPageContent() {
     step('planner', 'planner', models),
     step('group-replies', 'groupReplies', basics),
     step('private-replies', 'privateReplies', basics),
+    step('desktop-and-appearance', 'desktopAndAppearance', basics),
   ]
 
   const currentStepId = steps[currentStep]?.id
@@ -386,6 +394,13 @@ function SetupPageContent() {
           await saveBasicSetupConfig({ [key]: basicSettings[key] })
           break
         }
+        case 'desktop-and-appearance':
+          if (!basicSettings) throw new Error(t('setupPage.errors.loadBot'))
+          if (desktopPetDraft !== null && desktopPetDraft !== basicSettings.desktop_pet_enabled) {
+            await saveDesktopPetEnabled(desktopPetDraft)
+            setBasicSettings({ ...basicSettings, desktop_pet_enabled: desktopPetDraft })
+          }
+          break
       }
 
       toast({
@@ -543,14 +558,17 @@ function SetupPageContent() {
     setIsCompleting(true)
 
     try {
-      // 保存最后一项基础设置，再进入试聊。
+      // 保存桌宠设置，完成引导后应用界面风格并进入试聊。
       const saved = await saveCurrentStep()
       if (!saved) {
         return
       }
 
-      // 2. 标记设置完成
       await completeSetup()
+
+      if (dashboardStyleDraft !== null && dashboardStyleDraft !== themeConfig.dashboardStyle) {
+        updateThemeConfig({ dashboardStyle: dashboardStyleDraft })
+      }
 
       toast({
         title: t('setupPage.toast.completeSuccessTitle'),
@@ -559,7 +577,7 @@ function SetupPageContent() {
         }),
       })
 
-      // 3. 配置文件会被 MaiBot 热加载；完成后进入聊聊，先体验本地对话。
+      // MaiBot 会热加载配置文件，完成后进入聊聊体验本地对话。
       navigate({ to: '/chat', search: { setupTrial: true } })
     } catch (error) {
       toast({
@@ -692,6 +710,38 @@ function SetupPageContent() {
               onCheckedChange={(checked) => setBasicSettings({ ...basicSettings, [key]: group ? checked : !checked })}
               disabled={isSaving || isCompleting}
             />
+          </div>
+        )
+      }
+      case 'desktop-and-appearance': {
+        if (!basicSettings) return <p role="alert">{t('setupPage.errors.loadBot')}</p>
+        const disabled = isSaving || isCompleting
+        return (
+          <div className="space-y-5">
+            <div className="border-border flex items-center justify-between gap-4 border p-4">
+              <div className="space-y-1">
+                <Label htmlFor="setup-desktop-pet">{t('setupPage.steps.desktopAndAppearance.desktopPet')}</Label>
+                <p id="setup-desktop-pet-hint" className="text-muted-foreground text-sm">
+                  {t('setupPage.steps.desktopAndAppearance.desktopPetHint')}
+                </p>
+              </div>
+              <Switch
+                id="setup-desktop-pet"
+                aria-describedby="setup-desktop-pet-hint"
+                checked={desktopPetDraft ?? basicSettings.desktop_pet_enabled}
+                onCheckedChange={setDesktopPetDraft}
+                disabled={disabled}
+              />
+            </div>
+            <fieldset className="space-y-3">
+              <legend className="text-sm font-medium">{t('settings.appearance.dashboardStyle')}</legend>
+              <DashboardStylePicker
+                value={dashboardStyleDraft ?? themeConfig.dashboardStyle}
+                onChange={setDashboardStyleDraft}
+                disabled={disabled}
+                className="grid gap-3 sm:grid-cols-3"
+              />
+            </fieldset>
           </div>
         )
       }

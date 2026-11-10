@@ -793,6 +793,21 @@
       "about": "について"
     },
     "appearance": {
+      "dashboardStyle": "画面スタイル",
+      "dashboardStyles": {
+        "modern": {
+          "label": "クラシック",
+          "description": "角丸カード。背景とテーマをカスタマイズできます。"
+        },
+        "future-retro": {
+          "label": "フューチャーレトロ",
+          "description": "紙の質感、太い輪郭、角を落としたパネル。"
+        },
+        "millennium": {
+          "label": "ミレニアム",
+          "description": "ベージュの筐体、キーキャップ風ボタン、奥まった画面。"
+        }
+      },
       "layoutVersion": "レイアウト",
       "layoutVersionDesc": "クラシックはトップバーとカード型ホームを保ちます。観察レイアウトはトップバーをなくし、サイドバー上部に設定、下部にすべての会話を表示し、ホームは状態ボードになります。デスクトップ幅のみ。",
       "layoutClassic": "クラシック",
@@ -1234,6 +1249,12 @@
         "title": "グループ返信",
         "description": "有効にすると、グループで @メンションされたときにできるだけ返信します。",
         "label": "@メンションへの返信を優先"
+      },
+      "desktopAndAppearance": {
+        "title": "デスクトップペットと外観",
+        "description": "デスクトップペットの有効・無効と、画面スタイルを選びます。",
+        "desktopPet": "デスクトップペットを有効にする",
+        "desktopPetHint": "内蔵のデスクトップペットは Windows 対応です。単体クライアントを使う場合は、Bot 設定でリモートモードを選択してください。"
       },
       "privateReplies": {
         "title": "個別チャットの返信",

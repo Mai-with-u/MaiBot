@@ -10,6 +10,7 @@ export interface SetupStep {
 export interface BasicSetupConfig {
   inevitable_at_reply: boolean
   private_reply_paused: boolean
+  desktop_pet_enabled: boolean
 }
 
 // 步骤1：Bot基础信息

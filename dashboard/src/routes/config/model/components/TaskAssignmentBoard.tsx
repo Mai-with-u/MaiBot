@@ -3,7 +3,7 @@
  * 基础工作用卡片放在最前面，进阶工作默认收起；点开任一项在右侧抽屉里编辑模型顺序、使用方式和参数。
  */
 import { type ReactNode, useState } from 'react'
-import { ChevronDown, Plus, X } from 'lucide-react'
+import { ChevronDown, Pencil, Plus, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { DashedButton } from '@/components/ui/dashed-button'
@@ -194,9 +194,14 @@ export function TaskAssignmentBoard({
                 </ol>
                 <div data-task-card-foot="true">
                   <span className="text-xs text-muted-foreground">
-                    {list.length > 1 && !meta.hideStrategy ? strategyLabel(field.name) : ''}
+                    {list.length > 1 && !meta.hideStrategy && (
+                      <>
+                        调用策略 <b className="font-semibold text-foreground">{strategyLabel(field.name)}</b>
+                      </>
+                    )}
                   </span>
                   <Button type="button" size="sm" variant="outline" onClick={() => onOpenTaskChange(field.name)}>
+                    <Pencil aria-hidden="true" />
                     编辑
                   </Button>
                 </div>
@@ -242,6 +247,7 @@ export function TaskAssignmentBoard({
                       </DashedButton>
                     ) : (
                       <Button type="button" size="sm" variant="outline" onClick={() => onOpenTaskChange(field.name)}>
+                        <Pencil aria-hidden="true" />
                         编辑
                       </Button>
                     )}

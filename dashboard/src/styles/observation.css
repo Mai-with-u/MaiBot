@@ -1222,3 +1222,46 @@
 [data-observation-keys='true'][data-paginated='true'] {
   grid-template-rows: repeat(3, 3.125rem);
 }
+
+/* ---------- 原版风格的可读性 ----------
+   侧栏比主区暗一档，分出层次；设置键收进一张白卡；筛选框用输入框的白底和控件边，看得出能输入。 */
+:root[data-dashboard-style='modern'] [data-observation-shell='true'] {
+  --obs-side-bg: hsl(var(--muted) / 0.75);
+  --obs-key-ink: hsl(var(--foreground) / 0.78);
+  --obs-key-hover: hsl(var(--foreground) / 0.06);
+  --obs-input-bg: hsl(var(--background));
+  --obs-input-border: 1px solid hsl(var(--input));
+  --list-hover-bg: hsl(var(--foreground) / 0.06);
+}
+
+:root[data-dashboard-style='modern']
+  [data-observation-sidebar='true']:not([data-collapsed='true'])
+  [data-observation-settings='true'] {
+  padding: 0.5rem 0.375rem 0.375rem;
+  background: hsl(var(--background));
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.75rem;
+}
+
+:root[data-dashboard-style='modern'] [data-observation-key-label='true'] {
+  font-weight: 600;
+}
+
+:root[data-dashboard-style='modern'] [data-observation-conversations-head='true'] input {
+  background: hsl(var(--background));
+  border-color: hsl(var(--input));
+}
+
+:root[data-dashboard-style='modern'] [data-observation-count='true'] {
+  padding: 0 0.4375rem;
+  border-radius: 999px;
+  background: hsl(var(--foreground) / 0.08);
+  color: hsl(var(--foreground) / 0.8);
+  font-size: 0.6875rem;
+  letter-spacing: 0;
+}
+
+:root[data-dashboard-style='modern'] [data-observation-list-section='true'] {
+  padding-top: 0.75rem;
+  letter-spacing: 0.04em;
+}

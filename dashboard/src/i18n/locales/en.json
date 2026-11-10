@@ -793,6 +793,21 @@
       "about": "About"
     },
     "appearance": {
+      "dashboardStyle": "Dashboard style",
+      "dashboardStyles": {
+        "modern": {
+          "label": "Classic Dashboard",
+          "description": "Rounded cards with customizable backgrounds and themes."
+        },
+        "future-retro": {
+          "label": "Future Retro",
+          "description": "Paper grain, bold outlines, and clipped corners."
+        },
+        "millennium": {
+          "label": "Millennium",
+          "description": "Beige cases, keycap buttons, and recessed screens."
+        }
+      },
       "layoutVersion": "Layout",
       "layoutVersionDesc": "Classic keeps the top bar and card home page. Observation removes the top bar: the sidebar shows settings on top and all conversations below, and home becomes a status board. Desktop width only.",
       "layoutClassic": "Classic",
@@ -1234,6 +1249,12 @@
         "title": "Group replies",
         "description": "When enabled, MaiBot will try to reply when it is @mentioned in a group.",
         "label": "Prioritize replies to @mentions"
+      },
+      "desktopAndAppearance": {
+        "title": "Desktop pet and appearance",
+        "description": "Choose whether to enable the desktop pet and pick a dashboard style.",
+        "desktopPet": "Enable desktop pet",
+        "desktopPetHint": "The built-in desktop pet runs on Windows. For a standalone client, select remote mode in the bot settings."
       },
       "privateReplies": {
         "title": "Private replies",

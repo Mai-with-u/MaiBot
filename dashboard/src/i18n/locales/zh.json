@@ -793,6 +793,21 @@
       "about": "关于"
     },
     "appearance": {
+      "dashboardStyle": "界面风格",
+      "dashboardStyles": {
+        "modern": {
+          "label": "原版 Dashboard",
+          "description": "圆角卡片，支持自定义背景和主题。"
+        },
+        "future-retro": {
+          "label": "未来复古",
+          "description": "纸面颗粒、硬朗描边和切角面板。"
+        },
+        "millennium": {
+          "label": "千禧",
+          "description": "米黄机壳、键帽按钮和下沉屏幕。"
+        }
+      },
       "layoutVersion": "布局",
       "layoutVersionDesc": "经典布局保留顶栏和卡片首页；麦麦观察布局去掉顶栏，侧栏上半区是设置、下半区是所有对话，首页是运行状态面板。只在桌面宽度生效。",
       "layoutClassic": "经典",
@@ -1234,6 +1249,12 @@
         "title": "群聊回复",
         "description": "开启后，麦麦在群聊被 @ 时会尽量回复。",
         "label": "被 @ 时优先回复"
+      },
+      "desktopAndAppearance": {
+        "title": "桌宠与界面",
+        "description": "选择是否启用桌宠，以及控制台的界面风格。",
+        "desktopPet": "启用桌宠",
+        "desktopPetHint": "本机桌宠支持 Windows。使用独立桌宠客户端时，请在主程序配置中选择远程模式。"
       },
       "privateReplies": {
         "title": "私聊回复",
