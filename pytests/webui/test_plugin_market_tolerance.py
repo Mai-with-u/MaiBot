@@ -124,7 +124,7 @@ def test_official_catalog_skips_item_with_mismatched_manifest_id(monkeypatch):
 
 
 def test_official_catalog_falls_back_to_official_repository_url(monkeypatch):
-    """清单未登记仓库地址时，回退发布信息改用官方条目声明的仓库地址。"""
+    """清单未登记仓库地址时，回退发布信息改用官方条目声明的仓库地址，并把该地址写回插件信息。"""
 
     monkeypatch.setattr(service, "download_source", lambda: SimpleNamespace(id="github"))
 
@@ -135,6 +135,26 @@ def test_official_catalog_falls_back_to_official_repository_url(monkeypatch):
 
     assert [plugin["id"] for plugin in plugins] == ["github.example.renamed"]
     assert plugins[0]["releases"]["repositoryUrl"] == REPOSITORY_URL
+    assert plugins[0]["repository_url"] == REPOSITORY_URL
+
+
+def test_official_catalog_falls_back_to_manifest_repository_url(monkeypatch):
+    """官方地址非空但过不了发布条目校验时改用清单登记的仓库地址，插件不因此被跳过。"""
+
+    monkeypatch.setattr(service, "download_source", lambda: SimpleNamespace(id="github"))
+
+    plugins = service._catalog(
+        [
+            _official_item(
+                "github.example.renamed", "github.example.old", repository_url="https://gitlab.com/example/plugin"
+            )
+        ],
+        "official",
+    )
+
+    assert [plugin["id"] for plugin in plugins] == ["github.example.renamed"]
+    assert plugins[0]["releases"]["repositoryUrl"] == REPOSITORY_URL
+    assert plugins[0]["repository_url"] == REPOSITORY_URL
 
 
 def test_official_catalog_skips_item_without_usable_repository_url(monkeypatch):
