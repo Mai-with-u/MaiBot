@@ -195,6 +195,7 @@ async function openProfileDetail(name: string) {
   await screen.findByRole('dialog', { name: '画像详情' })
 }
 
+/** Switch modes only if the requested mode is not already active. */
 function setSearchMode(mode: 'exact' | 'fuzzy') {
   const toggle = screen.queryByRole('button', {
     name: mode === 'exact' ? '切换为精确查询' : '切换为模糊查询',

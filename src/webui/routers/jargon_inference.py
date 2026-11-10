@@ -225,6 +225,7 @@ def restore_inference_history(history_id: int) -> Dict[str, bool]:
 
 @router.post("/lock/{jargon_id}")
 def set_inference_lock(jargon_id: int, request: InferenceLockRequest) -> Dict[str, bool]:
+    """在同一个写事务中确认词条仍存在，并更新独立于含义的推断保护状态。"""
     with get_db_session() as session:
         session.connection().execute(text("BEGIN IMMEDIATE"))
         if session.get(Jargon, jargon_id) is None:

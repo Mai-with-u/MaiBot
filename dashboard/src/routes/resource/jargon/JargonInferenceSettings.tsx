@@ -225,6 +225,7 @@ function SettingsForm({
           numericSettings[field.key] = value
         }
         setValidationError('')
+        // Send the form's baseline so a concurrent server update cannot be silently overwritten.
         if (!conflict && !save.isPending)
           save.mutate({
             ...numericSettings,

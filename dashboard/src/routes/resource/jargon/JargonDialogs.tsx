@@ -117,6 +117,7 @@ export function JargonDetailDialog({
     : null
   const recordId = jargon?.id
   useEffect(() => {
+    // A lock update does not change the editable snapshot, so it cannot reset the draft.
     if (editableSnapshot && open) setFormData(JSON.parse(editableSnapshot) as JargonUpdateRequest)
   }, [editableSnapshot, recordId, open])
 

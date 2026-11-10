@@ -28,6 +28,7 @@ export function JargonInferenceMonitor() {
     const isActive = ['queued', 'running', 'cancelling'].includes(jobs.data?.items[0]?.status ?? '')
     const changed = revision !== previous.current
     previous.current = revision
+    // Active work can update terms between summary changes. Refresh once more on transition to idle.
     if (!changed && !isActive && !wasActive.current) return
     wasActive.current = isActive
     void queryClient.invalidateQueries({ queryKey: ['jargon'] })

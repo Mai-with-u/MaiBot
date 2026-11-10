@@ -119,12 +119,10 @@ class JargonInferenceService:
         self._cleanup_requested = False
         self._last_request = 0.0
         self._stopping = False
-        self._threshold_policy = (
+        self._threshold_target_policy = (
             tuple(global_config.jargon.inference.thresholds),
             global_config.jargon.inference.stop_after_last_threshold,
         )
-
-        self._threshold_target_policy = self._threshold_policy
 
     def _check_ready(self) -> None:
         """拒绝错误事件循环、尚未启动或正在停止时的请求。"""
@@ -206,11 +204,10 @@ class JargonInferenceService:
         await run_on_main_loop(self._configuration_changed())
 
     async def _configuration_changed(self) -> None:
-        """重算调度时间，并在次数策略变化时完整补扫存量。"""
+        """发布最新阈值策略并唤醒调度器，不在配置重载回调中等待数据库。"""
         if self._loop is None or self._stopping:
             return
         self._wake.set()
-        self._schedule_wake.set()
         if global_config.jargon.inference.job_retention_days != self._retention_days:
             self._retention_days = global_config.jargon.inference.job_retention_days
             self._cleanup_requested = True
@@ -218,16 +215,16 @@ class JargonInferenceService:
             tuple(global_config.jargon.inference.thresholds),
             global_config.jargon.inference.stop_after_last_threshold,
         )
-        if policy != self._threshold_policy or self._threshold_pending:
-            if policy != self._threshold_target_policy:
-                self._threshold_target_policy = policy
-                self._threshold_seen.clear()
-            self._threshold_pending = True
-            # 成功补扫全部批次后才确认策略；失败保留断点，调度器会继续尝试。
-            try:
-                await self.rescan()
-            finally:
-                self._schedule_wake.set()
+        if policy != self._threshold_target_policy:
+            self._request_threshold_rescan(policy)
+        self._schedule_wake.set()
+
+    def _request_threshold_rescan(self, policy: Tuple[Tuple[int, ...], bool]) -> None:
+        """每次策略切换创建独立断点，避免旧批次清除或覆盖新策略的进度。"""
+        self._threshold_target_policy = policy
+        self._threshold_seen = set()
+        self._threshold_pending = True
+        self._threshold_retry_at = 0.0
 
     @staticmethod
     def _recover_interrupted_jobs() -> None:
@@ -409,6 +406,9 @@ class JargonInferenceService:
         async with self._submit_lock:
             self._check_ready()
             items = await asyncio.to_thread(self._select, request, source, set(self._reserved), excluded_ids)
+            if source == "threshold" and excluded_ids is not None and excluded_ids is not self._threshold_seen:
+                # 筛选期间阈值策略变化，尚未提交的批次交给新一轮重新判断。
+                items = []
             for item in items:
                 if item["jargon_id"] in self._reserved:
                     item.update(status="skipped", reason="已有排队或运行中的任务")
@@ -475,35 +475,47 @@ class JargonInferenceService:
         return result["counts"].get("queued", 0) > 0
 
     async def rescan(self) -> Dict[str, Any]:
-        """分批补扫所有达标词条，记录已提交 ID，失败后从未提交批次继续。"""
+        """显式补扫等待全部批次提交，并返回第一批任务摘要。"""
         self._check_ready()
         async with self._rescan_lock:
+            self._check_ready()
             if not self._threshold_pending:
-                self._threshold_seen.clear()
-                self._threshold_target_policy = (
-                    tuple(global_config.jargon.inference.thresholds),
-                    global_config.jargon.inference.stop_after_last_threshold,
-                )
-            self._threshold_pending = True
-            first = None
-            try:
-                while True:
-                    result = await self.submit(
-                        {"mode": "all", "force": False},
-                        source="threshold",
-                        excluded_ids=self._threshold_seen,
+                self._request_threshold_rescan(
+                    (
+                        tuple(global_config.jargon.inference.thresholds),
+                        global_config.jargon.inference.stop_after_last_threshold,
                     )
-                    if first is None:
-                        first = result
-                    if result["total"] == 0:
-                        break
+                )
+            try:
+                return await self._drain_threshold_rescan()
+            finally:
+                self._schedule_wake.set()
+
+    async def _drain_threshold_rescan(self) -> Dict[str, Any]:
+        """持补扫锁提交批次；失败保留当前断点，策略改变则重新筛选。"""
+        first = None
+        while True:
+            seen = self._threshold_seen
+            try:
+                result = await self.submit(
+                    {"mode": "all", "force": False},
+                    source="threshold",
+                    excluded_ids=seen,
+                )
             except Exception:
-                self._threshold_retry_at = time.monotonic() + THRESHOLD_RETRY_SECONDS
+                if seen is self._threshold_seen:
+                    self._threshold_retry_at = time.monotonic() + THRESHOLD_RETRY_SECONDS
                 raise
-            self._threshold_policy = self._threshold_target_policy
+            if result["total"]:
+                if first is None:
+                    first = result
+                continue
+            if seen is not self._threshold_seen:
+                continue
             self._threshold_pending = False
             self._threshold_seen.clear()
-            return first
+            self._threshold_retry_at = 0.0
+            return first if first is not None else result
 
     async def _persist(self, job: Dict[str, Any]) -> None:
         """串行持久化任务快照，防止较早的进度写入覆盖新结果。"""
@@ -763,10 +775,12 @@ class JargonInferenceService:
                 self._cleanup_requested = False
                 self._last_cleanup = now
             if self._threshold_pending and now >= self._threshold_retry_at:
-                try:
-                    await self.rescan()
-                except Exception:
-                    logger.exception("黑话阈值补扫失败，将从已提交批次后重试")
+                async with self._rescan_lock:
+                    if self._threshold_pending and time.monotonic() >= self._threshold_retry_at:
+                        try:
+                            await self._drain_threshold_rescan()
+                        except Exception:
+                            logger.exception("黑话阈值补扫失败，将从已提交批次后重试")
             settings = global_config.jargon.inference
             now = time.monotonic()
             due = (

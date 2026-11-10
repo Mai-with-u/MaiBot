@@ -671,6 +671,7 @@ export function JargonManagementPage({
         onOpenChange={setIsDetailDialogOpen}
         chatList={formChatList}
         onLockChanged={(id, locked) => {
+          // A completed request belongs to its original term even if another detail is now open.
           setSelectedJargon((current) =>
             current?.id === id ? { ...current, inference_locked: locked } : current
           )

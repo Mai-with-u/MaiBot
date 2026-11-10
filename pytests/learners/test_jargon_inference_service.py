@@ -1,6 +1,7 @@
 """后台队列使用真实 SQLite；推断引擎作为模型请求边界替换。"""
 
 from contextlib import contextmanager
+from threading import Event
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -22,6 +23,7 @@ from src.learners.jargon_inference_result import InferenceResult
 
 @pytest.fixture
 def runtime(tmp_path, monkeypatch):
+    """使用真实 SQLite 事务和可替换的模型边界验证队列状态。"""
     engine = create_engine(f"sqlite:///{tmp_path / 'queue.db'}", connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(
         engine,
@@ -35,6 +37,7 @@ def runtime(tmp_path, monkeypatch):
 
     @contextmanager
     def database(auto_commit=True):
+        """允许测试在提交或回滚后通过独立会话检查持久状态。"""
         with Session(engine, expire_on_commit=False) as session:
             try:
                 yield session
@@ -112,6 +115,7 @@ async def test_concurrent_submissions_reserve_term_once(runtime):
 
 @pytest.mark.asyncio
 async def test_dispatch_claims_handoff_before_cancellation(runtime, monkeypatch):
+    """派发任务先认领队列项，取消不能把已交接的任务当成待处理项。"""
     service = arm(runtime)
     job = await service.submit({"ids": [1]})
     handed_off = asyncio.Event()
@@ -142,6 +146,7 @@ async def test_dispatch_claims_handoff_before_cancellation(runtime, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_reservation_covers_terminal_persistence(runtime, monkeypatch):
+    """终态落盘之前继续保留词条预留，防止新任务与旧结果互相覆盖。"""
     service = arm(runtime)
     first = await service.submit({"ids": [1]})
     finalizing = asyncio.Event()
@@ -167,6 +172,7 @@ async def test_reservation_covers_terminal_persistence(runtime, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_cancel_preserves_running_result_and_cancels_only_pending(runtime, monkeypatch):
+    """取消批量任务只停止尚未开始的词条，正在执行的请求保留结果。"""
     service = arm(runtime)
     started = asyncio.Event()
     release = asyncio.Event()
@@ -194,6 +200,7 @@ async def test_cancel_preserves_running_result_and_cancels_only_pending(runtime,
 
 @pytest.mark.asyncio
 async def test_schedule_wake_during_scan_recalculates_without_running_early(runtime, monkeypatch):
+    """扫描中收到唤醒信号时仍以已有扫描时间计算下一轮。"""
     service = arm(runtime)
     runtime.settings.scheduled_enabled = True
     first_started = asyncio.Event()
@@ -238,6 +245,7 @@ def test_scheduled_scan_prefers_unattempted_over_repeated_low_ids(runtime):
 
 
 def test_recovery_preserves_completed_results_and_marks_only_active_items(runtime):
+    """重启恢复只标记上次运行中断的项目，保留已完成结果及成功时间。"""
     with runtime.database() as session:
         session.add(
             JargonInferenceJob(
@@ -523,21 +531,90 @@ async def test_bounded_scans_skip_reserved_ids_before_applying_limit(runtime, so
 
 @pytest.mark.asyncio
 async def test_config_reload_rescans_only_when_threshold_policy_changes(runtime, monkeypatch):
+    """数据库补扫受锁阻塞时，配置通知仍应立即返回并唤醒调度器。"""
     service = arm(runtime)
-    rescan = AsyncMock(wraps=service.rescan)
-    monkeypatch.setattr(service, "rescan", rescan)
+    scan = AsyncMock(wraps=service._drain_threshold_rescan)
+    monkeypatch.setattr(service, "_drain_threshold_rescan", scan)
     runtime.settings.request_interval_seconds = 2
     await service._configuration_changed()
-    rescan.assert_not_awaited()
+    assert not service._threshold_pending
     assert service._schedule_wake.is_set()
-    runtime.settings.thresholds = [1, 8, 25, 100]
-    await service._configuration_changed()
-    assert rescan.await_count == 1
-    await service._configuration_changed()
-    assert rescan.await_count == 1
-    runtime.settings.stop_after_last_threshold = False
-    await service._configuration_changed()
-    assert rescan.await_count == 2
+
+    scheduler = asyncio.create_task(service._schedule())
+    try:
+        async with service._rescan_lock:
+            runtime.settings.thresholds = [1, 8, 25, 100]
+            await asyncio.wait_for(service._configuration_changed(), 2)
+            assert service._threshold_pending
+            scan.assert_not_awaited()
+        await asyncio.wait_for(_wait_for_threshold_rescan(service), 2)
+        assert scan.await_count == 1
+        assert service._threshold_target_policy[0] == (1, 8, 25, 100)
+
+        await service._configuration_changed()
+        assert not service._threshold_pending
+        runtime.settings.stop_after_last_threshold = False
+        await service._configuration_changed()
+        await asyncio.wait_for(_wait_for_threshold_rescan(service), 2)
+        assert scan.await_count == 2
+        assert service._threshold_target_policy[1] is False
+    finally:
+        scheduler.cancel()
+        await asyncio.gather(scheduler, return_exceptions=True)
+
+
+async def _wait_for_threshold_rescan(service):
+    """等待后台补扫确认策略，不等待队列中的模型请求。"""
+    while service._threshold_pending:
+        await asyncio.sleep(0.01)
+
+
+@pytest.mark.asyncio
+async def test_policy_change_discards_obsolete_selection_and_rescans_latest(runtime, monkeypatch):
+    """筛选已返回旧阈值候选时改变策略，旧候选不可入队，新策略仍应补扫。"""
+    service = arm(runtime)
+    runtime.settings.max_items_per_scan = 1
+    with runtime.database() as session:
+        record = session.get(Jargon, 1)
+        record.count = 1
+        session.add(record)
+    monkeypatch.setattr(
+        runtime.miner,
+        "_should_infer_meaning",
+        lambda _self, record: record.count >= runtime.settings.thresholds[0],
+    )
+
+    selected = Event()
+    release = Event()
+    original_select = service._select
+
+    def pause_first_selection(*args, **kwargs):
+        """在线程中保留旧筛选结果，让主循环在提交前接收新策略。"""
+        items = original_select(*args, **kwargs)
+        if not selected.is_set():
+            assert [item["jargon_id"] for item in items] == [1]
+            selected.set()
+            assert release.wait(2)
+        return items
+
+    monkeypatch.setattr(service, "_select", pause_first_selection)
+    scheduler = asyncio.create_task(service._schedule())
+    try:
+        runtime.settings.thresholds = [1, 8, 25, 100]
+        await service._configuration_changed()
+        assert await asyncio.to_thread(selected.wait, 2)
+        runtime.settings.thresholds = [4, 8, 25, 100]
+        await asyncio.wait_for(service._configuration_changed(), 2)
+        release.set()
+        await asyncio.wait_for(_wait_for_threshold_rescan(service), 2)
+    finally:
+        release.set()
+        scheduler.cancel()
+        await asyncio.gather(scheduler, return_exceptions=True)
+    assert service._threshold_target_policy[0] == (4, 8, 25, 100)
+    with runtime.database() as session:
+        saved = session.exec(select(JargonInferenceJob)).all()
+        assert [item["jargon_id"] for job in saved for item in json.loads(job.items_json)] == [2, 3]
 
 
 @pytest.mark.asyncio
@@ -559,6 +636,7 @@ async def test_retry_uses_failed_items_after_original_status_filter_has_changed(
 
 @pytest.mark.asyncio
 async def test_threshold_rescan_drains_batches_and_does_not_repeat_fast_failures(runtime, monkeypatch):
+    """显式补扫提交全部批次，即使词条预留在每批结束后立即释放。"""
     service = arm(runtime)
     runtime.settings.max_items_per_scan = 1
     original_submit = service.submit
@@ -574,8 +652,9 @@ async def test_threshold_rescan_drains_batches_and_does_not_repeat_fast_failures
         return result
 
     monkeypatch.setattr(service, "submit", submit)
-    await service.rescan()
+    first = await service.rescan()
     assert seen == [1, 2, 3]
+    assert first["total"] == 1
     assert not service._threshold_pending
     with runtime.database() as session:
         assert len(session.exec(select(JargonInferenceJob)).all()) == 3
@@ -613,6 +692,7 @@ async def test_damaged_scope_does_not_block_manual_or_threshold_scan(runtime, st
 
 @pytest.mark.asyncio
 async def test_failed_policy_rescan_resumes_checkpoint_on_scheduler_when_disabled(runtime, monkeypatch):
+    """关闭定时推断也要后台重试阈值补扫，并保留已提交批次和退避期限。"""
     service = arm(runtime)
     runtime.settings.max_items_per_scan = 1
     runtime.settings.thresholds = [1, 8, 25, 100]
@@ -627,26 +707,32 @@ async def test_failed_policy_rescan_resumes_checkpoint_on_scheduler_when_disable
         original_save(job)
 
     monkeypatch.setattr(service, "_save_new_job", fail_second_batch)
-    with pytest.raises(RuntimeError, match="database unavailable"):
-        await service._configuration_changed()
-    assert service._threshold_policy[0] == (4, 8, 25, 100)
-    assert service._threshold_pending
-    assert service._threshold_seen == {1}
-    # 已成功提交的第一批即使结束也不可重复。
-    await service.cancel(next(iter(service._jobs)))
-    service._threshold_retry_at = 0
+    await service._configuration_changed()
     scheduler = asyncio.create_task(service._schedule())
     try:
 
-        async def wait_complete():
-            while service._threshold_pending:
+        async def wait_for_retry():
+            """等待调度器接收第二批写入失败并建立退避期限。"""
+            while service._threshold_retry_at == 0:
                 await asyncio.sleep(0.01)
 
-        await asyncio.wait_for(wait_complete(), 2)
+        await asyncio.wait_for(wait_for_retry(), 2)
+        assert service._threshold_pending
+        assert service._threshold_seen == {1}
+        retry_at = service._threshold_retry_at
+        # 已成功提交的第一批即使结束也不可重复。
+        await service.cancel(next(iter(service._jobs)))
+        runtime.settings.request_interval_seconds = 2
+        await service._configuration_changed()
+        assert service._threshold_retry_at == retry_at
+        assert attempts == 2
+        service._threshold_retry_at = 0
+        service._schedule_wake.set()
+        await asyncio.wait_for(_wait_for_threshold_rescan(service), 2)
     finally:
         scheduler.cancel()
         await asyncio.gather(scheduler, return_exceptions=True)
-    assert service._threshold_policy[0] == (1, 8, 25, 100)
+    assert service._threshold_target_policy[0] == (1, 8, 25, 100)
     with runtime.database() as session:
         saved = session.exec(select(JargonInferenceJob)).all()
         assert [item["jargon_id"] for job in saved for item in json.loads(job.items_json)] == [1, 2, 3]
@@ -709,6 +795,7 @@ async def test_recreated_id_does_not_inherit_old_terminal_state(runtime):
 
 @pytest.mark.asyncio
 async def test_job_pagination_filters_preserve_manual_access_amid_automatic_flood(runtime):
+    """来源筛选、活动优先排序和分页不受大量自动任务挤占。"""
     service = arm(runtime)
     now = time.time()
     with runtime.database() as session:
@@ -780,8 +867,7 @@ async def test_submission_and_progress_writes_leave_retention_to_cleanup(runtime
 
 @pytest.mark.asyncio
 async def test_cancelled_submission_waits_for_commit_then_shutdown_marks_it_interrupted(runtime, monkeypatch):
-    from threading import Event
-
+    """取消提交后仍等待已开始的事务，关停时能持久化中断状态。"""
     service = arm(runtime)
     writing = Event()
     release = Event()
@@ -816,8 +902,7 @@ async def test_cancelled_submission_waits_for_commit_then_shutdown_marks_it_inte
 
 @pytest.mark.asyncio
 async def test_shutdown_waits_for_progress_write_before_terminal_write(runtime, monkeypatch):
-    from threading import Event
-
+    """关停等待进行中的进度事务，避免旧运行状态覆盖中断终态。"""
     service = runtime.service
     writing = Event()
     release = Event()
@@ -860,6 +945,7 @@ async def test_stop_clears_memory_even_when_database_write_fails(runtime, monkey
 
 
 def test_missing_evidence_can_recover_later_messages_with_unchanged_reference_hash(runtime, monkeypatch):
+    """没有新增引用时也可发现稍后出现的可恢复聊天证据。"""
     with runtime.database() as session:
         record = session.get(Jargon, 1)
         record.evidence_messages = None

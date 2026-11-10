@@ -21,6 +21,7 @@ import { JargonManagementPage } from '..'
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
+    /** Render default copy and interpolate counts without loading locale resources. */
     t: (key: string, fallback?: string | Record<string, unknown>) => {
       const value = typeof fallback === 'string' ? fallback : String(fallback?.defaultValue ?? key)
       return value.replace(/\{\{(\w+)\}\}/g, (_match, name: string) =>
