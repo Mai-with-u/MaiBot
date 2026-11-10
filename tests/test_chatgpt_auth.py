@@ -1,11 +1,15 @@
 """SIWC registration and failure recovery using generated identities, never live accounts."""
 
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import base64
 import hashlib
 import json
+import os
+import subprocess
+import sys
 import threading
 import time
 
@@ -280,3 +284,25 @@ def test_declining_login_and_listing_never_creates_credentials(tmp_path, monkeyp
     assert run_chatgpt_command("accounts", tmp_path, "default") == 0
     assert not (tmp_path / "data").exists()
     assert "没有启动登录" in capsys.readouterr().out
+
+
+def test_chatgpt_accounts_preserves_host_cli_without_initializing_bot(tmp_path: Path) -> None:
+    instance = tmp_path / "saved-bot"
+    env = os.environ.copy()
+    env.pop("MAIBOT_INSTANCE_DIR", None)
+    env.pop("MAIBOT_INITIALIZE_ONLY", None)
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
+    env["PYTHONIOENCODING"] = "utf-8"
+    result = subprocess.run(
+        [sys.executable, "-m", "src.cli.tool", "chatgpt", "accounts", "-d", str(instance), "--account", "work"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == []
+    assert not instance.exists()
+    assert not list(tmp_path.iterdir())

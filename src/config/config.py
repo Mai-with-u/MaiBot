@@ -19,7 +19,7 @@ from src.files.config import FilesConfig
 from src.web_search.config import WebConfig
 
 from .config_base import AttributeData, ConfigBase, Field
-from .builtin_typo_migration import migrate_builtin_typo_config
+from .builtin_typo_migration import migrate_builtin_keyword_reaction_config, migrate_builtin_typo_config
 from .config_upgrade_hooks import apply_config_upgrade_hooks
 from .config_utils import compare_versions, output_config_changes, recursive_parse_item_to_table
 from .default_model_config import create_default_model_config
@@ -43,7 +43,6 @@ from .official_configs import (
     ExperimentalConfig,
     ExpressionConfig,
     JargonConfig,
-    KeywordReactionConfig,
     LogConfig,
     MaimMessageConfig,
     MCPConfig,
@@ -145,7 +144,6 @@ class Config(ConfigBase):
     emoji: EmojiConfig = Field(default_factory=EmojiConfig)
     """表情包配置类"""
 
-    keyword_reaction: KeywordReactionConfig = Field(default_factory=KeywordReactionConfig)
     """关键词反应配置类"""
 
     response_post_process: ResponsePostProcessConfig = Field(default_factory=ResponsePostProcessConfig)
@@ -799,12 +797,18 @@ def load_config_from_file(
             if not isinstance(legacy_typo, Mapping):
                 raise TypeError("旧错字配置 chinese_typo 必须是 TOML 表")
             migrate_builtin_typo_config(legacy_typo)
+        legacy_keyword_reaction = original_data.get("keyword_reaction") if config_class is Config else None
+        if legacy_keyword_reaction is not None:
+            if not isinstance(legacy_keyword_reaction, Mapping):
+                raise TypeError("旧关键词反应配置 keyword_reaction 必须是 TOML 表")
+            migrate_builtin_keyword_reaction_config(legacy_keyword_reaction)
         if (
             compare_versions(old_ver, new_ver)
             or env_migration_applied
             or legacy_config_migration_applied
             or upgrade_hook_applied
             or legacy_typo is not None
+            or legacy_keyword_reaction is not None
         ):
             output_config_changes(attribute_data, logger, old_ver, new_ver, config_path.name)
             output_config = target_config

@@ -275,6 +275,7 @@ class MaisakaReasoningEngine:
         source_messages: list[SessionMessage],
         deferred_tools_reminder: str,
         round_text: Optional[str] = None,
+        context_timings: Optional[Dict[str, float]] = None,
     ) -> list[str]:
         """构造本轮 planner 的一次性注入消息。"""
 
@@ -311,7 +312,9 @@ class MaisakaReasoningEngine:
                 logger.debug(f"{self._runtime.log_prefix} 图片记忆自然拉起失败，已跳过: {exc}")
                 return ""
 
-        pending = {"启发式记忆", "人物画像", "图片记忆"}
+        injection_names = ("启发式记忆", "人物画像", "图片记忆")
+        pending = set(injection_names)
+        elapsed_by_name: Dict[str, float] = {}
         if round_text is not None:
             self._runtime._update_stage_status("组织上下文", "正在准备：启发式记忆、人物画像、图片记忆", round_text=round_text)
 
@@ -320,11 +323,10 @@ class MaisakaReasoningEngine:
             try:
                 return await build()
             finally:
-                elapsed = time.perf_counter() - started
+                elapsed_by_name[name] = time.perf_counter() - started
                 pending.discard(name)
-                logger.info(f"{self._runtime.log_prefix} 上下文准备: {name} 耗时={elapsed:.2f}s")
                 if pending and round_text is not None:
-                    remaining = "、".join(item for item in ("启发式记忆", "人物画像", "图片记忆") if item in pending)
+                    remaining = "、".join(item for item in injection_names if item in pending)
                     self._runtime._update_stage_status("组织上下文", f"正在等待：{remaining}", round_text=round_text)
 
         heuristic_memory_message, profile_messages, image_memory_message = await asyncio.gather(
@@ -332,6 +334,11 @@ class MaisakaReasoningEngine:
             measure_injection("人物画像", build_profile_messages),
             measure_injection("图片记忆", build_image_memory_message),
         )
+        if context_timings is None:
+            details = "，".join(f"{name}={elapsed_by_name[name]:.2f}s" for name in injection_names)
+            logger.info(f"{self._runtime.log_prefix} 上下文参考准备完成: {details}")
+        else:
+            context_timings.update((name, elapsed_by_name[name]) for name in injection_names)
         if global_config.debug.save_maisaka_reasoning:
             # 在宿主注入边界记录实际结果，不改动记忆实现，也不把检索步骤伪装成模型调用。
             def save_memory_steps() -> None:
@@ -420,7 +427,7 @@ class MaisakaReasoningEngine:
         # stop 是终止信号，不是供下一轮参考的工具交互。
         # 在写入整段模型输出和执行同批工具前截断，避免留下孤立调用、
         # 参数错误或与终止意图冲突的正文；监控仍保留本轮 Planner 输出。
-        if self.passive_replyer_enabled and any(tool_call.func_name == "stop" for tool_call in response.tool_calls or []):
+        if any(tool_call.func_name == "stop" for tool_call in response.tool_calls or []):
             self._end_planner_no_tool_cycle(planner_extra_lines, status_line="状态：已结束本轮思考")
             state.cycle_end = self._cycle_end_for_pause_tool("stop")
             state.tool_result_summaries = []
@@ -632,7 +639,7 @@ class MaisakaReasoningEngine:
         context_started = time.perf_counter()
         self._runtime._update_stage_status("组织上下文", "正在准备：可用工具", round_text=round_text)
         action_tool_definitions, deferred_tools_reminder = await self._build_action_tool_definitions()
-        logger.info(f"{self._runtime.log_prefix} 上下文准备: 可用工具 耗时={time.perf_counter() - context_started:.2f}s")
+        context_timings = {"可用工具": time.perf_counter() - context_started}
         self._runtime._update_stage_status("组织上下文", "正在准备：黑话参考", round_text=round_text)
         jargon_started = time.perf_counter()
         try:
@@ -641,22 +648,22 @@ class MaisakaReasoningEngine:
                 logger.debug(f"{self._runtime.log_prefix} 已刷新黑话参考消息")
         except Exception as exc:
             logger.debug(f"{self._runtime.log_prefix} 黑话参考消息刷新失败，已跳过: {exc}")
-        finally:
-            logger.info(f"{self._runtime.log_prefix} 上下文准备: 黑话参考 耗时={time.perf_counter() - jargon_started:.2f}s")
+        context_timings["黑话参考"] = time.perf_counter() - jargon_started
         injected_user_messages = await self._build_planner_injected_user_messages(
             profile_message=trigger_message,
             source_messages=source_messages,
             deferred_tools_reminder=deferred_tools_reminder,
             round_text=round_text,
+            context_timings=context_timings,
         )
         if not resolve_enable_visual_planner():
             log_pending_image_recognition_before_text_planner(
                 self._runtime._chat_history,
                 log_prefix=self._runtime.log_prefix,
             )
-        logger.info(
-            f"{self._runtime.log_prefix} 上下文准备完成: 总耗时={time.perf_counter() - context_started:.2f}s"
-        )
+        context_elapsed = time.perf_counter() - context_started
+        details = "，".join(f"{name}={elapsed:.2f}s" for name, elapsed in context_timings.items())
+        logger.info(f"{self._runtime.log_prefix} 上下文准备完成: 总耗时={context_elapsed:.2f}s（{details}）")
         logger.info(
             f"{self._runtime.log_prefix} 开始思考 "
             f"轮次={round_index + 1} 历史消息={len(self._runtime._chat_history)}"
@@ -2175,11 +2182,6 @@ class MaisakaReasoningEngine:
                 result = ToolExecutionResult(
                     tool_name=invocation.tool_name, success=False,
                     error_message=f"未执行：前面的 reply 已选择 after_reply={reply_pause}。",
-                )
-            elif not self.passive_replyer_enabled and invocation.tool_name == "stop":
-                result = ToolExecutionResult(
-                    tool_name=invocation.tool_name, success=False,
-                    error_message="普通模式不提供 stop 工具；静默结束时不调用工具。",
                 )
             elif self.passive_replyer_enabled and invocation.tool_name == "reply":
                 result = ToolExecutionResult(

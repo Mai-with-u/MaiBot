@@ -191,7 +191,7 @@
     "customReload": "重载页面",
     "customStop": "停止页面",
     "customStopped": "页面已停止。点击重载页面可再次运行。",
-    "customStopRequestRate": "请求过于频繁，页面已停止（允许每秒 20 次请求，最多突发 200 次）。",
+    "customStopRequestRate": "请求过于频繁，页面已停止（允许每秒 {{rate}} 次请求，最多突发 {{burst}} 次）。",
     "customStopLayoutRate": "页面尺寸更新过于频繁，页面已停止。",
     "customStopHeight": "页面高度无效或超过 30000 像素，页面已停止。",
     "customStopDuplicateId": "插件发送了重复的请求编号，页面已停止。",
@@ -615,7 +615,11 @@
       "repliedTitle": "已收到麦麦的回复",
       "repliedDescription": "如果回复和说话风格符合预期，就可以继续配置消息平台。",
       "keepChatting": "继续聊聊",
-      "continue": "试聊正常，配置消息平台"
+      "continue": "试聊正常，配置消息平台",
+      "failedTitle": "麦麦暂时没有回复",
+      "failedDescription": "可能是模型地址、API Key 或模型名有误。可以再发一句试试，或去模型配置检查。",
+      "checkModelConfig": "检查模型配置",
+      "learnBasics": "带我认识基础配置"
     },
     "botNameFallback": "麦麦",
     "userFallback": "用户",
@@ -1202,6 +1206,38 @@
   },
   "setupPage": {
     "steps": {
+      "nickname": {
+        "title": "昵称",
+        "description": "给麦麦起一个聊天时使用的名字。"
+      },
+      "defineModel": {
+        "title": "定义模型",
+        "description": "选择服务商和起始模型。后续可以为两个角色分别选模型。",
+        "modelLabel": "起始模型",
+        "required": "请输入或选择一个起始模型"
+      },
+      "replyer": {
+        "title": "设置 Replyer",
+        "description": "Replyer 负责组织措辞，生成用户看到的回复。"
+      },
+      "planner": {
+        "title": "设置 Planner",
+        "description": "Planner 负责判断何时回复、如何行动。"
+      },
+      "basicSettings": {
+        "title": "基础设置",
+        "description": ""
+      },
+      "groupReplies": {
+        "title": "群聊回复",
+        "description": "开启后，麦麦在群聊被 @ 时会尽量回复。",
+        "label": "被 @ 时优先回复"
+      },
+      "privateReplies": {
+        "title": "私聊回复",
+        "description": "关闭后，麦麦仍会接收和记录私聊消息，但会暂停回复。",
+        "label": "允许私聊回复"
+      },
       "botProfile": {
         "title": "基础与人格",
         "description": ""
@@ -1217,7 +1253,10 @@
       },
       "personality": {
         "title": "人格配置",
-        "description": "定义机器人的性格和说话风格"
+        "description": "定义机器人的性格和说话风格",
+        "choose": "你希望：",
+        "template": "使用可修改的人设模板",
+        "manual": "自己编写人设"
       },
       "apiProvider": {
         "title": "API配置",
@@ -1263,7 +1302,7 @@
       "completeFailedTitle": "配置失败",
       "skipFailedTitle": "跳过失败",
       "customTokenSuccessTitle": "密码已更新",
-      "customTokenSuccessDescription": "请使用新的自定义密码重新登录，然后继续配置。",
+      "customTokenSuccessDescription": "已使用新密码登录，可以继续配置。",
       "unknownError": "未知错误"
     },
     "actions": {
@@ -1303,6 +1342,8 @@
         "noticeDescription": "需要修改登录密码，如果不修改，每次会随机生成密码",
         "label": "自定义密码 *",
         "placeholder": "输入新密码",
+        "confirmation": "再次输入新密码",
+        "mismatch": "两次输入的密码不一致。",
         "description": "",
         "requirements": "密码要求",
         "show": "显示",
@@ -1432,11 +1473,14 @@
           "description": "请填写 OpenAI 兼容接口地址，例如 https://api.example.com/v1"
         },
         "apiKey": {
-          "label": "API Key *",
+          "label": "API Key",
           "description": "请填写该提供商的 API Key",
           "show": "显示 API Key",
           "hide": "隐藏 API Key"
-        }
+        },
+        "presetSelect": "选择预置提供商",
+        "usePreset": "预置",
+        "useCustom": "自定义"
       },
       "modelSetup": {
         "identifierPlaceholder": "输入模型标识符",
@@ -1458,7 +1502,44 @@
           "visual": {
             "label": "启用视觉"
           }
+        },
+        "fetching": "正在获取模型列表…",
+        "fetchFailed": "{{error}}，请手动填写模型标识符。",
+        "enableThinking": "启用思考",
+        "effort": {
+          "label": "思考强度",
+          "low": "低",
+          "high": "高",
+          "max": "最高"
         }
+      }
+    },
+    "errors": {
+      "loadStatus": "读取设置状态失败",
+      "loadBot": "读取 Bot 配置失败",
+      "loadPersonality": "读取人格配置失败",
+      "loadModel": "读取模型配置失败",
+      "fetchModels": "获取模型列表失败",
+      "emptyModelList": "提供商返回的模型列表为空",
+      "saveBot": "保存 Bot 配置失败",
+      "savePersonality": "保存人格配置失败",
+      "saveProvider": "保存 API 提供商配置失败",
+      "saveModel": "保存模型配置失败",
+      "complete": "标记设置完成失败",
+      "updateToken": "更新 Token 失败"
+    },
+    "connectionTest": {
+      "hint": "可以先测试一下模型能否正常调用，结果仅供参考。",
+      "button": "测试连通性",
+      "testing": "测试中…",
+      "passed": "通过",
+      "failed": "未通过",
+      "passedWithLatency": "通过（{{latency}}）",
+      "saveFailed": "保存配置失败，无法测试：{{error}}",
+      "canContinue": "测试未通过也可以继续完成配置，之后可在模型配置页调整。",
+      "roles": {
+        "planner": "规划思考模型",
+        "replyer": "回复发言模型"
       }
     }
   },
@@ -2264,5 +2345,42 @@
     "current": "当前没有可应用的更新",
     "updated": "最近一次程序更新成功",
     "restarting": "宿主正在更新并重启，正在等待重新连接。若更新回滚失败，需查看终端处理后手动启动。"
+  },
+  "tour": {
+    "controls": {
+      "back": "上一步",
+      "close": "关闭",
+      "last": "完成",
+      "next": "下一步",
+      "nextWithProgress": "下一步 ({step}/{steps})",
+      "open": "打开引导",
+      "skip": "跳过"
+    },
+    "basicFeatures": {
+      "personality": {
+        "title": "人格",
+        "content": "这里写麦麦是一个怎样的人。性格、身份、说话视角都从这里来，可以直接在高亮处改改看。"
+      },
+      "replyStyle": {
+        "title": "说话风格",
+        "content": "控制回复的语气和长短，比如更简短、更活泼或更正式。改完记得点保存。"
+      },
+      "talkValue": {
+        "title": "群聊发言频率",
+        "content": "决定麦麦在群里主动说话的多少。数值越小越安静，觉得她太吵或太闷都可以调这里。"
+      },
+      "plugins": {
+        "title": "插件市场",
+        "content": "在这里搜索和安装插件，给麦麦加上新能力。装好的插件可以在「插件配置」里调整。"
+      },
+      "knowledgeBase": {
+        "title": "知识库",
+        "content": "在「导入导出」里导入资料，麦麦聊天时会参考这些内容，也会自动积累聊天中的记忆。"
+      },
+      "done": {
+        "title": "基础配置就是这些",
+        "content": "改过的配置都在左侧菜单里，随时可以回来调整。现在去和麦麦多聊聊吧！"
+      }
+    }
   }
 }

@@ -8,6 +8,7 @@ import {
 } from '@tanstack/react-router'
 import { NotFoundPage } from './routes/404'
 import { AppShell } from './components/app-shell'
+import { BasicFeaturesTour } from './components/tour/BasicFeaturesTour'
 import { RoutePendingFallback } from './components/route-pending-fallback'
 import { checkAuth } from './hooks/use-auth'
 import { getHostRuntime } from './host/state'
@@ -60,6 +61,7 @@ const protectedRoute = createRoute({
   component: () => (
     <AppShell>
       <Outlet />
+      <BasicFeaturesTour />
     </AppShell>
   ),
   errorComponent: ({ error }) => <RouteErrorBoundary error={error} />,

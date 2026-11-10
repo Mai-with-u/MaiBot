@@ -2272,18 +2272,6 @@ function TalkValueRuleEditor({
   )
 }
 
-const truncate = (text: string, max = 32) => {
-  if (text.length <= max) return text
-  return `${text.slice(0, max)}…`
-}
-
-const collectStringList = (value: unknown): string[] => {
-  if (!Array.isArray(value)) return []
-  return value
-    .map((item) => (typeof item === 'string' ? item.trim() : ''))
-    .filter((item) => item.length > 0)
-}
-
 const normalizeExpressionRuleType = (value: unknown): ExpressionRuleType => {
   return value === 'private' ? 'private' : 'group'
 }
@@ -3103,50 +3091,6 @@ export const BotPlatformAccountsHook: FieldHookComponent = ({
     </div>
   )
 }
-
-export const KeywordRulesHook = createListItemEditorHook({
-  addLabel: '添加关键词规则',
-  helperText: '匹配命中后会把反应提示作为额外上下文。关键词至少填写一条。',
-  emptyText: '尚未添加任何关键词规则。',
-  visibleFields: ['keywords', 'reaction'],
-  normalizeItems: (items) =>
-    items.map((item) => ({
-      ...item,
-      regex: [],
-    })),
-  itemTitle: (item) => {
-    const keywords = collectStringList(item.keywords)
-    const reaction =
-      typeof item.reaction === 'string' ? item.reaction.trim() : ''
-    const left = keywords.length
-      ? `关键词 ${keywords.length} 条`
-      : '未配置关键词'
-    const right = reaction ? `→ ${truncate(reaction)}` : '→ 未填写反应'
-    return `${left} ${right}`
-  },
-})
-
-export const RegexRulesHook = createListItemEditorHook({
-  addLabel: '添加正则规则',
-  helperText: '正则模式按 Python 语法编写，命中时把反应提示作为额外上下文。',
-  emptyText: '尚未添加任何正则规则。',
-  visibleFields: ['regex', 'reaction'],
-  normalizeItems: (items) =>
-    items.map((item) => ({
-      ...item,
-      keywords: [],
-    })),
-  itemTitle: (item) => {
-    const regex = collectStringList(item.regex)
-    const reaction =
-      typeof item.reaction === 'string' ? item.reaction.trim() : ''
-    const left = regex.length
-      ? `正则 ${regex.length} 条`
-      : '未配置正则'
-    const right = reaction ? `→ ${truncate(reaction)}` : '→ 未填写反应'
-    return `${left} ${right}`
-  },
-})
 
 export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, onParentChange, parentValues, schema, value }) => {
   const groups = normalizeExpressionGroups(value)

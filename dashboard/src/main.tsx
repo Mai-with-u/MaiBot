@@ -13,6 +13,7 @@ import './styles/data-browser.css'
 import './styles/workspace.css'
 import './styles/management.css'
 import './styles/conversation.css'
+import './styles/desktop-embedded.css'
 import './i18n'
 import { ElectronShell } from './components/electron/electron-shell'
 import { AnnouncerProvider } from './components/ui/announcer'
@@ -25,6 +26,7 @@ import { BootErrorScreen } from './components/boot-error-screen'
 import { ErrorBoundary } from './components/error-boundary'
 import { installMillenniumIconStyle } from './components/ui/millennium-icon-set'
 import { Toaster } from './components/ui/toaster'
+import { applyDesktopEmbedding } from './lib/desktop-host'
 import { isElectron } from './lib/runtime'
 import { queryClient } from './lib/query'
 import { router } from './router'
@@ -32,6 +34,7 @@ import { bootstrapHostRuntime } from './host/api'
 import { HostRuntimeObserver, HostVersionCompatibility } from './host/HostRuntimeObserver'
 
 installMillenniumIconStyle()
+applyDesktopEmbedding()
 
 const root = createRoot(document.getElementById('root')!)
 void bootstrapHostRuntime()

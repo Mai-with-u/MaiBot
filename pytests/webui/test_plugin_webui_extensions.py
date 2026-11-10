@@ -14,7 +14,7 @@ from src.plugin_runtime.host.api_registry import APIRegistry
 from src.plugin_runtime.host.supervisor import PluginSupervisor
 from src.plugin_runtime.protocol.envelope import Envelope, MessageType, RegisterPluginPayload
 from src.plugin_runtime.protocol.errors import ErrorCode, RPCError
-from src.plugin_runtime.webui_schema import MAX_CUSTOM_DOCUMENT_BYTES, WebUIExtension, load_webui_extension
+from src.plugin_runtime.webui_schema import MAX_DOCUMENTS_BYTES, WebUIExtension, load_webui_extension, replace_webui_documents
 from src.webui.routers.plugin import webui_extensions as routes
 
 
@@ -93,6 +93,21 @@ def test_rejects_deep_component_trees():
     raw["pages"][0]["content"] = [node]
     with pytest.raises(ValidationError, match="8 层"):
         WebUIExtension.model_validate(raw)
+
+
+def test_declarative_page_accepts_more_components_and_bindings():
+    raw = declaration()
+    page = raw["pages"][0]
+    page["queries"].update({f"query{index}": {"api": "summary"} for index in range(11)})
+    page["actions"].update({f"action{index}": {"api": "reset"} for index in range(21)})
+    node = {"type": "text", "value": "内容"}
+    page["content"] = [node] * 51 + [{"type": "stack", "children": [node] * 151}]
+
+    registered = WebUIExtension.model_validate(raw).pages[0]
+    assert len(registered.queries) == 12
+    assert len(registered.actions) == 22
+    assert len(registered.content) == 52
+    assert len(registered.content[-1].children) == 151
 
 
 def detail_declaration():
@@ -329,7 +344,7 @@ def test_custom_page_registration_roundtrip_and_capability():
         {"entry": None},
         {"auto_refresh": True},
         {"poll_interval_seconds": 3},
-        {"document": "界" * (MAX_CUSTOM_DOCUMENT_BYTES // 3 + 1)},
+        {"document": "界" * (MAX_DOCUMENTS_BYTES // 3 + 1)},
     ],
 )
 def test_custom_page_rejects_invalid_or_oversized_declarations(changes):
@@ -351,8 +366,11 @@ def test_custom_loader_reads_bounded_utf8_snapshot(tmp_path):
     revision = extension.pages[0].document_revision
     entry.write_text("<h1>Changed</h1>", encoding="utf-8")
     assert load_webui_extension(str(tmp_path)).pages[0].document_revision != revision
-    entry.write_bytes(b"x" * (MAX_CUSTOM_DOCUMENT_BYTES + 1))
-    with pytest.raises(ValueError, match="2 MiB"):
+    large_document = "x" * (3 * 1024 * 1024)
+    entry.write_text(large_document, encoding="utf-8")
+    assert load_webui_extension(str(tmp_path)).pages[0].document == large_document
+    entry.write_bytes(b"x" * (MAX_DOCUMENTS_BYTES + 1))
+    with pytest.raises(ValueError, match="总量超过 8 MiB"):
         load_webui_extension(str(tmp_path))
 
 
@@ -390,13 +408,25 @@ def test_custom_document_is_authenticated_json_and_unload_revokes_access(supervi
         assert client.get(path).status_code == 404
 
 
-def test_custom_loader_bounds_page_count_before_reading_files(tmp_path):
+def test_custom_pages_can_register_and_reload_more_than_twenty_documents(tmp_path):
     raw = custom_declaration()
     del raw["pages"][0]["document"]
-    raw["pages"] *= 21
+    raw["pages"] = [{**raw["pages"][0], "id": f"page{index}"} for index in range(21)]
+    (tmp_path / "webui").mkdir()
+    (tmp_path / "webui/index.html").write_text("<h1>Original</h1>", encoding="utf-8")
     (tmp_path / "webui.json").write_text(json.dumps(raw), encoding="utf-8")
-    with pytest.raises(ValueError, match="20 个页面"):
-        load_webui_extension(str(tmp_path))
+
+    extension = load_webui_extension(str(tmp_path))
+    assert len(extension.pages) == 21
+    payload = RegisterPluginPayload(plugin_id="test.plugin", webui=extension)
+    assert RegisterPluginPayload.model_validate(payload.model_dump()).webui == extension
+    documents = [
+        {"id": page.id, "entry": page.entry, "document": "<h1>Updated</h1>"}
+        for page in extension.pages
+    ]
+    updated = replace_webui_documents(extension, {"documents": documents})
+    assert len(updated.pages) == 21
+    assert all(page.document == "<h1>Updated</h1>" for page in updated.pages)
 
 
 def test_custom_loader_bounds_total_documents_before_registration(tmp_path):
@@ -404,7 +434,7 @@ def test_custom_loader_bounds_total_documents_before_registration(tmp_path):
     del raw["pages"][0]["document"]
     raw["pages"] = [{**raw["pages"][0], "id": f"page{index}"} for index in range(5)]
     (tmp_path / "webui").mkdir()
-    (tmp_path / "webui/index.html").write_bytes(b"x" * MAX_CUSTOM_DOCUMENT_BYTES)
+    (tmp_path / "webui/index.html").write_bytes(b"x" * (MAX_DOCUMENTS_BYTES // 4))
     (tmp_path / "webui.json").write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(ValueError, match="总量超过 8 MiB"):
         load_webui_extension(str(tmp_path))

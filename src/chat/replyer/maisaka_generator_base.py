@@ -4,7 +4,6 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 import asyncio
 import random
-import re
 import time
 
 from src.chat.message_receive.chat_manager import BotChatSession
@@ -449,14 +448,6 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         return "请注意不要输出多余内容(包括不必要的前后缀，冒号，括号，表情包，@等 )，只输出发言内容就好。"
 
     @staticmethod
-    def _replace_regex_capture_groups(reaction: str, match: re.Match[str]) -> str:
-        """将 reaction 中的 [name] 替换为正则命名捕获组的内容。"""
-        replaced_reaction = reaction
-        for group_name, group_value in match.groupdict().items():
-            replaced_reaction = replaced_reaction.replace(f"[{group_name}]", group_value or "")
-        return replaced_reaction
-
-    @staticmethod
     def _build_text_from_message_sequence(message: SessionBackedMessage) -> str:
         text_parts: List[str] = []
         for component in message.raw_message.components:
@@ -498,44 +489,6 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             if match_text:
                 return match_text
         return ""
-
-    def _build_keyword_reaction_prompt(
-        self,
-        chat_history: List[LLMContextMessage],
-        reply_message: Optional[SessionMessage],
-    ) -> str:
-        match_text = self._extract_keyword_reaction_match_text(chat_history, reply_message)
-        if not match_text:
-            return ""
-
-        matched_reactions: List[str] = []
-        keyword_reaction = global_config.keyword_reaction
-
-        for rule in keyword_reaction.keyword_rules:
-            keywords = [keyword.strip() for keyword in rule.keywords if keyword.strip()]
-            if keywords and any(keyword in match_text for keyword in keywords):
-                reaction = rule.reaction.strip()
-                if reaction:
-                    matched_reactions.append(reaction)
-
-        for rule in keyword_reaction.regex_rules:
-            reaction = rule.reaction.strip()
-            if not reaction:
-                continue
-            for pattern in rule.regex:
-                if not pattern.strip():
-                    continue
-                match = re.search(pattern, match_text)
-                if match is None:
-                    continue
-                matched_reactions.append(self._replace_regex_capture_groups(reaction, match))
-                break
-
-        if not matched_reactions:
-            return ""
-
-        reaction_lines = "\n".join(f"- {reaction}" for reaction in matched_reactions)
-        return f"【关键词反应】\n最新消息命中了预设反应规则，请在回复时优先参考以下要求：\n{reaction_lines}\n"
 
     def _build_system_prompt(
         self,
@@ -712,10 +665,8 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             )
 
         items: List[ContextItem] = []
-        keywords_reaction_prompt = self._build_keyword_reaction_prompt(
-            chat_history=chat_history,
-            reply_message=reply_message,
-        )
+        # 关键词反应由内置插件通过 maisaka.replyer.before_request 追加到回复要求里。
+        keywords_reaction_prompt = ""
         system_prompt = self._build_system_prompt(
             reply_message=reply_message,
             reply_reason=reply_reason,
@@ -1226,6 +1177,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                     task_name=default_task_name,
                     model_name=cache_model_name,
                     extra_prompt=plugin_reply_prompt,
+                    match_text=self._extract_keyword_reaction_match_text(chat_history, reply_message),
                     attempt=retry_count + 1,
                     retry_count=retry_count,
                     max_retries=REPLYER_MAX_HOOK_RETRIES,

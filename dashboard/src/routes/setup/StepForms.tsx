@@ -41,11 +41,19 @@ import type {
 interface CustomTokenFormProps {
   token: string
   onChange: (token: string) => void
+  confirmation: string
+  onConfirmationChange: (confirmation: string) => void
 }
 
-export function CustomTokenForm({ token, onChange }: CustomTokenFormProps) {
+export function CustomTokenForm({
+  token,
+  onChange,
+  confirmation,
+  onConfirmationChange,
+}: CustomTokenFormProps) {
   const { t } = useTranslation()
   const tokenValidation = useMemo(() => validateToken(token), [token])
+  const mismatch = confirmation.length > 0 && confirmation !== token
 
   return (
     <div className="space-y-6">
@@ -90,6 +98,27 @@ export function CustomTokenForm({ token, onChange }: CustomTokenFormProps) {
           </li>
         ))}
       </ul>
+      <Label htmlFor="confirm-custom-token" className="sr-only">
+        {t('setupPage.forms.customToken.confirmation')}
+      </Label>
+      <PasswordInput
+        id="confirm-custom-token"
+        controlSize="lg"
+        placeholder={t('setupPage.forms.customToken.confirmation')}
+        value={confirmation}
+        onChange={(event) => onConfirmationChange(event.target.value)}
+        showLabel={t('setupPage.forms.customToken.show')}
+        hideLabel={t('setupPage.forms.customToken.hide')}
+        autoComplete="new-password"
+        aria-invalid={mismatch}
+        aria-describedby={mismatch ? 'custom-token-mismatch' : undefined}
+        className="text-base sm:text-lg md:text-xl"
+      />
+      {mismatch && (
+        <p id="custom-token-mismatch" className="text-destructive text-sm" role="alert">
+          {t('setupPage.forms.customToken.mismatch')}
+        </p>
+      )}
     </div>
   )
 }
@@ -123,7 +152,11 @@ interface PersonalityFormProps {
   onChange: (config: PersonalityConfig) => void
 }
 
-export function PersonalityPresetSelect({ config, onChange }: PersonalityFormProps) {
+export function PersonalityPresetSelect({ config, onChange, presetId }: {
+  config: PersonalityConfig
+  presetId: string
+  onChange: (config: PersonalityConfig, presetId: string) => void
+}) {
   const { t } = useTranslation()
   const presets = [
     {
@@ -136,19 +169,13 @@ export function PersonalityPresetSelect({ config, onChange }: PersonalityFormPro
     ...PERSONALITY_PRESETS,
   ]
 
-  const selectedPreset = presets.find((preset) =>
-    config.personality === preset.personality
-    && config.behavior_style === preset.behavior_style
-    && config.reply_style === preset.reply_style
-  )
-
   return (
     <div className="flex items-center justify-end gap-3">
       <Label htmlFor="personality-preset" className="shrink-0">
         {t('setupPage.forms.personality.presets.label')}
       </Label>
       <Select
-        value={selectedPreset?.id ?? ''}
+        value={presetId}
         onValueChange={(id) => {
           const preset = presets.find((item) => item.id === id)
           if (!preset) return
@@ -157,7 +184,7 @@ export function PersonalityPresetSelect({ config, onChange }: PersonalityFormPro
             personality: preset.personality,
             behavior_style: preset.behavior_style,
             reply_style: preset.reply_style,
-          })
+          }, id)
         }}
       >
         <SelectTrigger id="personality-preset" className="w-48">
@@ -313,7 +340,7 @@ export function ApiProviderSetupForm({ config, onChange }: ApiProviderSetupFormP
               >
                 {!customMode ? (
                   <Select value={selectedPreset} onValueChange={selectPreset}>
-                    <SelectTrigger aria-label="选择预置提供商" className="h-11 min-w-0 flex-1">
+                    <SelectTrigger aria-label={t('setupPage.forms.apiProvider.presetSelect')} className="h-11 min-w-0 flex-1">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent position="popper" collisionPadding={12}>
@@ -358,7 +385,7 @@ export function ApiProviderSetupForm({ config, onChange }: ApiProviderSetupFormP
               className="h-11 w-full"
               onClick={customMode ? switchToPreset : switchToCustom}
             >
-              {customMode ? '预置' : '自定义'}
+              {customMode ? t('setupPage.forms.apiProvider.usePreset') : t('setupPage.forms.apiProvider.useCustom')}
             </Button>
           </motion.div>
         </div>
@@ -398,6 +425,8 @@ export function ApiProviderSetupForm({ config, onChange }: ApiProviderSetupFormP
 
 // ====== 步骤4：基础模型配置 ======
 interface ModelSetupFormProps {
+  role?: 'planner' | 'replyer'
+  definition?: { value: string; onChange: (value: string) => void }
   config: ModelSetupConfig
   onChange: (config: ModelSetupConfig) => void
   models?: ModelListItem[]
@@ -407,6 +436,8 @@ interface ModelSetupFormProps {
 }
 
 export function ModelSetupForm({
+  role,
+  definition,
   config,
   onChange,
   models = [],
@@ -433,7 +464,7 @@ export function ModelSetupForm({
 
   const renderThinkingEffort = (role: 'planner' | 'replyer') => {
     const efforts = ['low', 'high', 'max'] as const
-    const labels = ['低', '高', '最高']
+    const labels = efforts.map((effort) => t(`setupPage.forms.modelSetup.effort.${effort}`))
     const selected = efforts.indexOf(config[`${role}_reasoning_effort`] ?? 'high')
     return (
       <AnimatePresence initial={false}>
@@ -448,11 +479,11 @@ export function ModelSetupForm({
           >
             <div className="space-y-3 px-2 pt-1 pb-2">
               <Label htmlFor={`${role}_reasoning_effort`} className="flex justify-between text-sm">
-                <span>思考强度</span><span>{labels[selected]}</span>
+                <span>{t('setupPage.forms.modelSetup.effort.label')}</span><span>{labels[selected]}</span>
               </Label>
               <Slider
                 id={`${role}_reasoning_effort`}
-                aria-label="思考强度"
+                aria-label={t('setupPage.forms.modelSetup.effort.label')}
                 min={0}
                 max={2}
                 step={1}
@@ -473,8 +504,8 @@ export function ModelSetupForm({
   }
 
   const renderModelInput = (role: 'planner' | 'replyer') => {
-    const identifier = config[`${role}_model_identifier`]
-    const changeModel = (value: string) =>
+    const identifier = definition?.value ?? config[`${role}_model_identifier`]
+    const changeModel = definition?.onChange ?? ((value: string) =>
       onChange({
         ...config,
         [`${role}_model_identifier`]: value,
@@ -482,7 +513,8 @@ export function ModelSetupForm({
         [`${role}_thinking`]: providerTemplate?.id === 'deepseek'
           ? role === 'replyer' : inferThinkingEnabled(value),
         [`${role}_reasoning_effort`]: 'high',
-      })
+      }))
+    const label = t(definition ? 'setupPage.steps.defineModel.modelLabel' : `setupPage.forms.modelSetup.${role}.identifier.label`)
     return (
       <div className="flex min-w-0 items-center gap-2">
         <Input
@@ -495,7 +527,7 @@ export function ModelSetupForm({
         <Select value={identifier} onValueChange={changeModel}>
           <SelectTrigger
             disabled={models.length === 0}
-            aria-label={`${t(`setupPage.forms.modelSetup.${role}.identifier.label`)} · ${t('setupPage.forms.modelSetup.pickFromList')}`}
+            aria-label={`${label} · ${t('setupPage.forms.modelSetup.pickFromList')}`}
             className="w-auto shrink-0 gap-2"
           >
             {t('setupPage.forms.modelSetup.pickFromList')}
@@ -513,77 +545,55 @@ export function ModelSetupForm({
   return (
     <div className="space-y-4">
       {fetchStatus === 'loading' && (
-        <p role="status" className="text-muted-foreground text-sm">正在获取模型列表…</p>
+        <p role="status" className="text-muted-foreground text-sm">{t('setupPage.forms.modelSetup.fetching')}</p>
       )}
       {fetchStatus === 'error' && (
         <p role="alert" className="text-destructive text-sm">
-          {fetchError}，请手动填写模型标识符。
+          {t('setupPage.forms.modelSetup.fetchFailed', { error: fetchError })}
         </p>
       )}
-      <div className="grid min-w-0 md:grid-cols-2">
-        <div className="min-w-0 space-y-3 pb-4 md:pr-4 md:pb-0">
+      {definition ? (
+        <div className="space-y-2">
+          <Label htmlFor="replyer_model_identifier">{t('setupPage.steps.defineModel.modelLabel')}</Label>
+          {renderModelInput('replyer')}
+        </div>
+      ) : (
+      <div className={cn('grid min-w-0 gap-4', !role && 'md:grid-cols-2')}>
+        {(role ? [role] : ['planner', 'replyer'] as const).map((item) => (
+        <div key={item} className="min-w-0 space-y-3">
           <div className="space-y-2">
-            <Label htmlFor="planner_model_identifier" className="flex items-center gap-1">
-              {t('setupPage.forms.modelSetup.planner.identifier.label')}
+            <Label htmlFor={`${item}_model_identifier`} className="flex items-center gap-1">
+              {t(`setupPage.forms.modelSetup.${item}.identifier.label`)}
               <HelpTooltip
-                content={t('setupPage.forms.modelSetup.planner.identifier.description')}
+                content={t(`setupPage.forms.modelSetup.${item}.identifier.description`)}
                 side="right"
               />
             </Label>
-            {renderModelInput('planner')}
+            {renderModelInput(item)}
           </div>
 
-          {supportsThinkingSwitch(config.planner_model_identifier) && (
+          {supportsThinkingSwitch(config[`${item}_model_identifier`]) && (
             <div>
               <div className="flex items-center justify-between gap-4 rounded-md bg-muted/40 p-2">
-                <Label htmlFor="planner_thinking" className="text-sm font-medium">
-                  启用思考
+                <Label htmlFor={`${item}_thinking`} className="text-sm font-medium">
+                  {t('setupPage.forms.modelSetup.enableThinking')}
                 </Label>
                 <Switch
-                  id="planner_thinking"
-                  checked={config.planner_thinking}
+                  id={`${item}_thinking`}
+                  checked={config[`${item}_thinking`]}
                   onCheckedChange={(checked) =>
-                    onChange({ ...config, planner_thinking: checked })
+                    onChange({ ...config, [`${item}_thinking`]: checked })
                   }
                 />
               </div>
-              {renderThinkingEffort('planner')}
+              {renderThinkingEffort(item)}
             </div>
           )}
         </div>
 
-        <div className="border-border min-w-0 space-y-3 border-t-2 pt-4 md:border-t-0 md:border-l-2 md:pt-0 md:pl-4">
-          <div className="space-y-2">
-            <Label htmlFor="replyer_model_identifier" className="flex items-center gap-1">
-              {t('setupPage.forms.modelSetup.replyer.identifier.label')}
-              <HelpTooltip
-                content={t('setupPage.forms.modelSetup.replyer.identifier.description')}
-                side="right"
-              />
-            </Label>
-            {renderModelInput('replyer')}
-          </div>
-
-          {supportsThinkingSwitch(config.replyer_model_identifier) && (
-            <div>
-              <div className="flex items-center justify-between gap-4 rounded-md bg-muted/40 p-2">
-                <Label htmlFor="replyer_thinking" className="text-sm font-medium">
-                  启用思考
-                </Label>
-                <Switch
-                  id="replyer_thinking"
-                  checked={config.replyer_thinking}
-                  onCheckedChange={(checked) =>
-                    onChange({ ...config, replyer_thinking: checked })
-                  }
-                />
-              </div>
-              {renderThinkingEffort('replyer')}
-            </div>
-          )}
-        </div>
+        ))}
       </div>
-
+      )}
     </div>
   )
 }

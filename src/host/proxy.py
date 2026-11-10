@@ -25,15 +25,12 @@ _HOP_HEADERS = frozenset({
     "transfer-encoding", "upgrade",
 })
 _REQUEST_PRIVATE_HEADERS = frozenset({"host", "cookie", "authorization", "origin", "forwarded"})
-DEVELOPMENT_ORIGINS = frozenset({"http://localhost:7999", "http://127.0.0.1:7999"})
 
 
 class SessionValidator(Protocol):
     cookie_name: str
 
     def valid(self, session: str | None) -> bool: ...
-
-    def login_origin(self, session: str | None) -> str | None: ...
 
 
 def _allowed_path(path: str) -> bool:
@@ -57,34 +54,6 @@ def _request_headers(headers: Mapping[str, str]) -> Dict[str, str]:
         name: value for name, value in headers.items()
         if name.lower() not in prohibited and not name.lower().startswith(("x-forwarded-", "sec-websocket-"))
     }
-
-
-def same_webui_origin(headers: Mapping[str, str], login_origin: str | None = None) -> bool:
-    origin = headers.get("origin")
-    if origin is None or origin in DEVELOPMENT_ORIGINS:
-        return True
-    host = headers.get("host", "").lower()
-    try:
-        parsed = urlsplit(origin)
-        port = parsed.port
-    except ValueError:
-        return False
-    if not parsed.hostname or parsed.scheme not in {"http", "https"} or parsed.username is not None:
-        return False
-    if parsed.path or parsed.query or parsed.fragment:
-        return False
-    site = headers.get("sec-fetch-site")
-    if site in {"cross-site", "same-site"} and headers.get("sec-fetch-mode") != "websocket":
-        return False
-    if parsed.netloc.lower() == host:
-        # 已知此会话的外部端口时，不能把同域默认端口上的另一个站点认作它。
-        if login_origin and urlsplit(login_origin).netloc.lower().rpartition(":")[0] == host:
-            return origin == login_origin or site == "same-origin"
-        return True
-    # Nginx 的 $host 会丢弃端口。浏览器须确认同源，或与此会话登录时验证的完整来源一致。
-    return bool(port and parsed.netloc.lower().rsplit(":", 1)[0] == host and (
-        site == "same-origin" or origin == login_origin
-    ))
 
 
 def _upstream_url(path: str, query: str) -> URL:
@@ -121,12 +90,10 @@ class BotProxy:
         self.supervisor = supervisor
         self.sessions = sessions
 
-    def _require_session(self, connection: Any) -> None:
+    def _require_session(self, connection: Request | WebSocket) -> None:
         session = connection.cookies.get(self.sessions.cookie_name)
         if not self.sessions.valid(session):
             raise HTTPException(401, "请先登录 WebUI")
-        if not same_webui_origin(connection.headers, self.sessions.login_origin(session)):
-            raise HTTPException(403, "请从当前 WebUI 发起请求")
 
     def _client(self, bot_id: str) -> ClientSession:
         if _BOT_ID.fullmatch(bot_id) is None:

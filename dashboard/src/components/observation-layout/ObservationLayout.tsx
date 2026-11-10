@@ -20,6 +20,7 @@ import {
   usePluginWebUI,
   visibleExtensions,
 } from '@/lib/plugin-webui'
+import { subscribeDesktopSidebar } from '@/lib/desktop-host'
 import { isElectron } from '@/lib/runtime'
 import { cn } from '@/lib/utils'
 import { useMenuSections } from '@/components/layout/use-menu-sections'
@@ -101,6 +102,9 @@ export function ObservationLayout({ children }: { children: ReactNode }) {
       // 存储不可用时只影响折叠状态的记忆
     }
   }, [collapsed])
+
+  // 嵌入一键包时折叠键在外壳顶栏上
+  useEffect(() => subscribeDesktopSidebar(setCollapsed), [])
 
   // 搜索快捷键监听（Cmd/Ctrl + K）
   useEffect(() => {

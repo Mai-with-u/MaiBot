@@ -82,13 +82,11 @@ import {
   FocusWhitelistHook,
   JargonGroupsHook,
   JargonLearningListHook,
-  KeywordRulesHook,
   HiddenFieldHook,
   MCPRootItemsHook,
   MCPServersHook,
   MultipleReplyStyleHook,
   PrivateReplyPauseRulesHook,
-  RegexRulesHook,
   useAutoSave,
 } from './bot/hooks'
 import { collectChatSettings } from '@/lib/chat-settings-schema'
@@ -394,8 +392,6 @@ function BotConfigPageContent() {
       ['a_memorix.filter.retrieval.chat_stream.chats', AMemorixRetrievalChatsHook],
       ['a_memorix.filter.retrieval.chat_summary.chats', AMemorixRetrievalChatsHook],
       ['a_memorix.filter.retrieval.episode.chats', AMemorixRetrievalChatsHook],
-      ['keyword_reaction.keyword_rules', KeywordRulesHook],
-      ['keyword_reaction.regex_rules', RegexRulesHook],
       ['mcp.client.roots.items', MCPRootItemsHook],
       ['mcp.servers', MCPServersHook],
     ] as const

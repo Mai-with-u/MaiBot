@@ -1,11 +1,26 @@
 from maibot_sdk import Field, PluginConfigBase
-from typing import ClassVar, Literal
+from typing import ClassVar, List, Literal
 
 
 class TypoSettings(PluginConfigBase):
     """设置错别字生成方式、概率和纠正消息。"""
 
     __ui_label__: ClassVar[str] = "错别字生成"
+
+    enabled: bool = Field(
+        default=True,
+        description="关闭后回复不会再生成错别字。",
+        json_schema_extra={
+            "label": "启用错别字生成",
+            "i18n": {
+                "zh_CN": {"label": "启用错别字生成"},
+                "en_US": {"label": "Enable typo generation"},
+                "ja_JP": {"label": "誤字生成を有効化"},
+            },
+            "x-widget": "switch",
+        },
+    )
+    """关闭后回复不会再生成错别字。"""
 
     mode: Literal["rule", "dictionary"] = Field(
         default="rule",
@@ -145,6 +160,62 @@ class TypoSettings(PluginConfigBase):
     """仅规则模式使用。整词被替换成错词的概率。"""
 
 
+class KeywordRule(PluginConfigBase):
+    """一条关键词反应规则：命中关键词或正则时，给麦麦追加一段反应提示。"""
+
+    keywords: List[str] = Field(
+        default_factory=list,
+        description="命中任意一个关键词即触发。",
+        json_schema_extra={"label": "关键词"},
+    )
+    regex: List[str] = Field(
+        default_factory=list,
+        description="Python 正则；命中任意一个即触发。反应提示里的 [名称] 会替换为同名捕获组的内容。",
+        json_schema_extra={"label": "正则表达式"},
+    )
+    reaction: str = Field(
+        default="",
+        description="命中后给麦麦看的提示，不会直接当作消息发送。",
+        json_schema_extra={"label": "反应提示", "x-widget": "textarea"},
+    )
+
+
+class KeywordReactionSettings(PluginConfigBase):
+    """最新消息命中规则时，给麦麦追加固定的反应提示。"""
+
+    __ui_label__: ClassVar[str] = "关键词反应"
+
+    enabled: bool = Field(
+        default=True,
+        description="关闭后不再匹配关键词规则。",
+        json_schema_extra={
+            "label": "启用关键词反应",
+            "i18n": {
+                "zh_CN": {"label": "启用关键词反应"},
+                "en_US": {"label": "Enable keyword reactions"},
+                "ja_JP": {"label": "キーワード反応を有効化"},
+            },
+            "x-widget": "switch",
+        },
+    )
+    """关闭后不再匹配关键词规则。"""
+
+    rules: List[KeywordRule] = Field(
+        default_factory=list,
+        description="命中后追加到回复要求里的提示规则，按顺序匹配，可同时命中多条。",
+        json_schema_extra={
+            "label": "规则",
+            "i18n": {
+                "zh_CN": {"label": "规则"},
+                "en_US": {"label": "Rules"},
+                "ja_JP": {"label": "ルール"},
+            },
+            "x-widget": "list",
+        },
+    )
+    """命中后追加到回复要求里的提示规则，按顺序匹配，可同时命中多条。"""
+
+
 class PluginSettings(PluginConfigBase):
     __ui_label__: ClassVar[str] = "插件"
 
@@ -155,3 +226,4 @@ class PluginSettings(PluginConfigBase):
 class ChineseTypoPluginConfig(PluginConfigBase):
     plugin: PluginSettings = Field(default_factory=PluginSettings)
     typo: TypoSettings = Field(default_factory=TypoSettings)
+    keyword_reaction: KeywordReactionSettings = Field(default_factory=KeywordReactionSettings)

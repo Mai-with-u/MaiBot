@@ -1,6 +1,7 @@
 import Joyride from 'react-joyride'
 import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
+import { useTranslation } from 'react-i18next'
 import { useTour } from './use-tour'
 
 // Joyride 主题配置
@@ -56,19 +57,19 @@ const joyrideStyles = {
   },
 }
 
-// 中文本地化
-const locale = {
-  back: '上一步',
-  close: '关闭',
-  last: '完成',
-  next: '下一步',
-  nextLabelWithProgress: '下一步 ({step}/{steps})',
-  open: '打开对话框',
-  skip: '跳过',
-}
-
 export function TourRenderer() {
+  const { t } = useTranslation()
   const { state, getCurrentSteps, handleJoyrideCallback } = useTour()
+  const locale = {
+    back: t('tour.controls.back'),
+    close: t('tour.controls.close'),
+    last: t('tour.controls.last'),
+    next: t('tour.controls.next'),
+    // {step}/{steps} 是 Joyride 自己的单花括号占位符，i18next 不会替换。
+    nextLabelWithProgress: t('tour.controls.nextWithProgress'),
+    open: t('tour.controls.open'),
+    skip: t('tour.controls.skip'),
+  }
   const steps = getCurrentSteps()
   const [targetReady, setTargetReady] = useState(false)
   const [seenStepIndex, setSeenStepIndex] = useState(state.stepIndex)

@@ -114,26 +114,26 @@ export function ProviderSidebar({
           const count = modelCounts.get(provider.name) ?? 0
 
           return (
-            <div key={provider.name} data-library-row="true" data-selected={isSelected || undefined}>
+            <button
+              key={provider.name}
+              type="button"
+              data-library-row="true"
+              data-selected={isSelected || undefined}
+              onClick={() => onSelectProvider(provider.name)}
+              aria-pressed={isSelected}
+              aria-label={`筛选厂商 ${provider.name}`}
+              title={`${provider.name} · ${provider.base_url}\n${testStatus.description}`}
+            >
               <StatusLight status={count > 0 ? 'on' : 'off'} glow={false} decorative />
-              <button
-                type="button"
-                className="min-w-0 text-left"
-                onClick={() => onSelectProvider(provider.name)}
-                aria-pressed={isSelected}
-                aria-label={`筛选厂商 ${provider.name}`}
-                title={`${provider.name} · ${provider.base_url}\n${testStatus.description}`}
+              <span
+                data-library-row-name="true"
+                className={cn('max-w-full justify-self-start border-b-2', testStatus.className)}
               >
-                <span
-                  data-library-row-name="true"
-                  className={cn('inline-block max-w-full border-b-2', testStatus.className)}
-                >
-                  {provider.name}
-                </span>
-              </button>
+                {provider.name}
+              </span>
               <span data-library-row-count="true">{count}</span>
               <span data-library-row-sub="true">{provider.base_url}</span>
-            </div>
+            </button>
           )
         })}
       </DataPanel>

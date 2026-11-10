@@ -19,7 +19,6 @@ from .authentication import HostCredentials
 _SESSION_SECONDS = 8 * 60 * 60
 _TICKET_SECONDS = 60
 _MAX_TICKETS = 64
-_MAX_SESSIONS = 64
 
 
 class _Session(NamedTuple):
@@ -87,8 +86,6 @@ class HostSessions:
         with self._lock:
             now = time.time()
             self._sessions = {key: record for key, record in self._sessions.items() if record.expires_at > now}
-            if len(self._sessions) >= _MAX_SESSIONS:
-                raise HTTPException(429, "登录会话过多，请稍后再试")
             session = secrets.token_urlsafe(32)
             digest = self._digest(session)
             expires_at = now + _SESSION_SECONDS
@@ -119,6 +116,18 @@ class HostSessions:
                 db.execute("DELETE FROM sessions")
             self._sessions.clear()
             self._tickets.clear()
+
+    def update_password(self, session: Optional[str], new_token: str) -> Optional[str]:
+        with self._lock:
+            record = self._active_session(session)
+            if record is None:
+                raise HTTPException(401, "登录已失效，请重新登录")
+            setting_initial_password = self._credentials.token_source == "temporary"
+            self._credentials.update(new_token)
+            self.clear_all()
+            if setting_initial_password:
+                return self.create_session(record.origin)
+            return None
 
     def valid(self, session: Optional[str]) -> bool:
         # 仅读取已提交的内存快照，不等待持有写锁的数据库操作。

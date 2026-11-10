@@ -127,7 +127,7 @@ def test_replyer_matches_eager_output(monkeypatch):
     service = BaseMaisakaReplyGenerator(llm_client_cls=lambda **kwargs: None, load_prompt_func=lambda *args, **kwargs: "prompt")
     # 使用通用图文夹具隔离 IM 来源检查，仍走真实历史构建、筛选和编码链路。
     monkeypatch.setattr(service, "_is_replyer_filtered_history_message", lambda message: False)
-    for name in ("_build_keyword_reaction_prompt", "_build_system_prompt", "_build_final_user_message",
+    for name in ("_build_system_prompt", "_build_final_user_message",
                  "_build_temporary_reply_style_message", "_select_temporary_reply_style",
                  "_build_reply_reference_message", "_build_requested_reply_style_message"):
         monkeypatch.setattr(service, name, lambda *args, **kwargs: "fixed")

@@ -31,6 +31,7 @@ def authenticate(request: Request, sessions: "HostSessions") -> bool:
 
 def register_host_auth(
     app: FastAPI, sessions: "HostSessions", credentials: HostCredentials, require_session: Callable,
+    get_client_ip: Callable[[Request], str],
 ) -> None:
     attempts = LoginAttempts()
 
@@ -41,7 +42,7 @@ def register_host_auth(
 
     @app.post("/api/webui/auth/verify")
     async def verify(body: VerifyRequest, request: Request, response: Response) -> Dict[str, Any]:
-        address = request.client.host if request.client else "unknown"
+        address = get_client_ip(request)
         if attempts.blocked(address):
             raise HTTPException(429, "认证失败次数过多，请稍后再试")
         valid = credentials.verify(body.token)
@@ -61,12 +62,16 @@ def register_host_auth(
         return {"success": True, "message": "已登出"}
 
     @app.post("/api/webui/auth/update", dependencies=[Depends(require_session)])
-    async def update(body: UpdateRequest, response: Response) -> Dict[str, Any]:
+    async def update(body: UpdateRequest, request: Request, response: Response) -> Dict[str, Any]:
         try:
-            await asyncio.to_thread(credentials.update, body.new_token)
+            session = await asyncio.to_thread(
+                sessions.update_password, request.cookies.get(sessions.cookie_name), body.new_token,
+            )
         except ValueError as exc:
             return {"success": False, "message": str(exc)}
-        await asyncio.to_thread(sessions.clear_all)
+        if session is not None:
+            sessions.set_cookie(response, session)
+            return {"success": True, "message": "密码已设置"}
         response.delete_cookie(sessions.cookie_name, path="/")
         return {"success": True, "message": "密码已更新，请重新登录"}
 
