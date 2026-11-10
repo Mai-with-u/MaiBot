@@ -14,6 +14,7 @@ from src.common.database.database_model import Jargon, JargonInferenceState, Jar
 
 
 def load_cleanup():
+    """仅编译聊天删除路由的清理函数，使测试使用真实逻辑而不启动聊天运行时。"""
     path = Path(__file__).resolve().parents[2] / "src/webui/routers/chat/routes.py"
     parsed = ast.parse(path.read_text(encoding="utf-8"))
     function = next(
@@ -58,6 +59,7 @@ def test_chat_delete_then_sqlite_id_reuse_has_no_old_inference_metadata():
 
 
 def test_unlinking_shared_chat_preserves_other_chat_and_inference_metadata():
+    """删除共享词条的一个归属会话时，只减去该会话贡献的次数。"""
     engine = create_engine("sqlite://")
     try:
         SQLModel.metadata.create_all(

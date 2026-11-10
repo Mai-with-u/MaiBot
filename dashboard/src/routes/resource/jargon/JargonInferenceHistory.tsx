@@ -27,6 +27,7 @@ import type { JargonMeaningHistory } from '@/types/jargon-inference'
 import { InferenceStatus } from './JargonInferenceStatus'
 import { inferenceTime } from '@/lib/jargon-inference-format'
 
+/** Show persisted inference history and protect unsaved edits from lock or restore operations. */
 export function JargonInferenceHistory({
   jargon,
   dirty,
@@ -45,6 +46,7 @@ export function JargonInferenceHistory({
   const [error, setError] = useState('')
   const [restoring, setRestoring] = useState<JargonMeaningHistory | null>(null)
 
+  /** Fetch history on demand and keep the last loaded entries available if a refresh fails. */
   async function loadHistory() {
     setLoading(true)
     setError('')
@@ -57,6 +59,7 @@ export function JargonInferenceHistory({
     }
   }
 
+  /** Report the lock change after persistence without replacing the parent's edited fields. */
   async function lock(locked: boolean) {
     setBusy(true)
     setError('')
@@ -70,6 +73,7 @@ export function JargonInferenceHistory({
     }
   }
 
+  /** Restore the previous meaning and classification, then reload the record and its audit trail. */
   async function restore(entry: JargonMeaningHistory) {
     setBusy(true)
     setError('')

@@ -21,10 +21,14 @@ from src.learners import jargon_inference_service
 
 @pytest.fixture
 def lifecycle(monkeypatch):
+    """用可注入失败的组件记录启动和关停顺序，不启动实际网络或插件服务。"""
     events = []
 
     def asynchronous(name, error=None):
+        """创建带顺序记录的异步替身，并在指定组件上抛出传入错误。"""
+
         async def operation(*_args, **_kwargs):
+            """先记录组件已被调用，再模拟该组件的可选失败。"""
             events.append(name)
             if error is not None:
                 raise error
@@ -91,11 +95,13 @@ def lifecycle(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_corrupt_job_recovery_preserves_data_and_other_components_start(tmp_path, monkeypatch, lifecycle):
+    """损坏任务导致恢复事务整体回滚，但其余组件仍可启动。"""
     engine = create_engine(f"sqlite:///{tmp_path / 'corrupt.db'}", connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(engine, tables=[JargonInferenceJob.__table__, JargonInferenceState.__table__])
 
     @contextmanager
     def session_scope():
+        """使恢复操作与测试断言读取同一 SQLite，异常时回滚事务。"""
         with Session(engine) as session:
             try:
                 yield session
@@ -137,6 +143,7 @@ async def test_corrupt_job_recovery_preserves_data_and_other_components_start(tm
 
 @pytest.mark.asyncio
 async def test_main_cleanup_continues_after_inference_stop_failure(monkeypatch, lifecycle):
+    """保留推断关停的原始异常，同时验证其余依赖完成清理。"""
     failure = RuntimeError("inference state write failed")
     stop = lifecycle.async_op("inference_stop", failure)
     monkeypatch.setattr(jargon_inference_service, "get_jargon_inference_service", lambda: SimpleNamespace(stop=stop))
@@ -160,6 +167,7 @@ async def test_main_cleanup_continues_after_inference_stop_failure(monkeypatch, 
 
 def runtime_shutdown_functions(lifecycle, monkeypatch):
     # runtime 的模块入口会申请真实进程锁；只加载同一源码中的关停函数，保留其完整控制流。
+    """加载 CLI 关停控制流并替换其依赖，避免在测试进程内申请真实进程锁。"""
     path = Path(__file__).resolve().parents[2] / "src/runtime.py"
     parsed = ast.parse(path.read_text(encoding="utf-8"))
     selected = [

@@ -15,6 +15,7 @@ from src.common.database.migrations.v48_to_v49 import migrate_v48_to_v49
 
 
 def test_upgrade_preserves_existing_jargon_and_is_replayable() -> None:
+    """验证迁移只新增附属表，重复执行不会改写原词条或已保存的推断记录。"""
     engine = create_engine("sqlite://")
     try:
         SQLModel.metadata.create_all(engine, tables=[Jargon.__table__])

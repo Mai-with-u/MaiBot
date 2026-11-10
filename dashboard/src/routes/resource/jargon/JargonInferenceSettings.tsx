@@ -50,6 +50,7 @@ const numberFields = [
 
 type NumericKey = (typeof numberFields)[number]['key']
 
+/** Load the server settings before mounting the form, and offer a retry if the initial fetch fails. */
 export function JargonInferenceSettingsPanel({
   chats,
   onRescan,
@@ -78,6 +79,7 @@ export function JargonInferenceSettingsPanel({
   return <SettingsForm initial={settings.data} chats={chats} onRescan={onRescan} />
 }
 
+/** Merge remote changes into untouched inputs and block saves when the server and draft conflict. */
 function SettingsForm({
   initial,
   chats,
@@ -103,6 +105,7 @@ function SettingsForm({
   )
   const [validationError, setValidationError] = useState('')
   const [saved, setSaved] = useState(false)
+  // Compare edits with the baseline before adopting each field from a newer server snapshot.
   useEffect(() => {
     const previous = baseline.current
     const equal = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
@@ -169,6 +172,7 @@ function SettingsForm({
   })
   const rescan = useMutation({
     mutationFn: rescanJargonInference,
+    /** Open progress only when the rescan actually enqueued work. */
     onSuccess: (job) => {
       if (job.total > 0) onRescan(job)
     },

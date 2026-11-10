@@ -42,6 +42,7 @@ from src.webui.routers import jargon, jargon_inference
 
 @pytest.fixture
 def integrated_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
+    """在独立主循环运行真实队列和推断引擎，让 HTTP 路由经生产桥接路径访问同一 SQLite。"""
     engine = create_engine(f"sqlite:///{tmp_path / 'integration.db'}", connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(
         engine,
@@ -57,6 +58,7 @@ def integrated_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Itera
 
     @contextmanager
     def db_session(auto_commit: bool = True) -> Iterator[Session]:
+        """让 HTTP 请求、队列工作线程和断言分别使用会话，并统一提交或回滚。"""
         with Session(engine, expire_on_commit=False) as session:
             try:
                 yield session
@@ -81,7 +83,7 @@ def integrated_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Itera
     calls = []
     started = Event()
     release = asyncio.Event()
-    controls = SimpleNamespace(pause=False, fail=False)
+    controls = SimpleNamespace(pause=False, fail=False, is_similar=False)
 
     class Prompt:
         def __init__(self, name: str):
@@ -95,6 +97,7 @@ def integrated_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Itera
         return json.dumps({"name": template.name, "context": template.context}, ensure_ascii=False)
 
     async def generate(prompt: str, *, session_id: str) -> LLMResponseResult:
+        """按请求阶段返回固定模型结果，允许测试暂停请求或模拟服务失败。"""
         parsed = json.loads(prompt)
         calls.append((session_id, parsed))
         if controls.pause:
@@ -105,7 +108,7 @@ def integrated_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Itera
         outputs = {
             "jargon_inference_with_context": {"meaning": "任务完成后的庆祝", "no_info": False},
             "jargon_inference_content_only": {"meaning": "飞机离地"},
-            "jargon_compare_inference": {"is_similar": False},
+            "jargon_compare_inference": {"is_similar": controls.is_similar},
         }
         return LLMResponseResult(
             output_items=build_portable_output_items(
@@ -208,6 +211,7 @@ def integrated_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Itera
 
 
 def wait_job(runtime: Any, job_id: str) -> dict[str, Any]:
+    """轮询任务进入终态后，再等待队列释放预留，确保 SQLite 写回已结束。"""
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         response = runtime.client.get(f"/api/webui/jargon/inference/jobs/{job_id}")
@@ -216,6 +220,7 @@ def wait_job(runtime: Any, job_id: str) -> dict[str, Any]:
         if result["job"]["status"] not in {"queued", "running", "cancelling"}:
             # 完成状态写入也完成后再读取 SQLite/重启服务。
             async def settled() -> None:
+                """等待主循环释放正在持久化的任务项预留。"""
                 while runtime.service._reserved:
                     await asyncio.sleep(0.01)
 
@@ -226,6 +231,7 @@ def wait_job(runtime: Any, job_id: str) -> dict[str, Any]:
 
 
 def test_http_job_source_pagination_keeps_older_manual_tasks_reachable(integrated_runtime):
+    """来源过滤先于分页，较多的自动任务不能挤掉旧的手动记录。"""
     runtime = integrated_runtime
     now = time.time()
     with runtime.session() as session:
@@ -261,9 +267,11 @@ def test_http_job_source_pagination_keeps_older_manual_tasks_reachable(integrate
     assert [job["id"] for job in active["items"]] == ["automatic-0"]
 
 
-@pytest.mark.parametrize("recover_context", [False, True])
-def test_http_to_real_queue_engine_and_durable_history(integrated_runtime, monkeypatch, recover_context):
+@pytest.mark.parametrize(("recover_context", "is_jargon"), [(False, True), (True, False)])
+def test_http_to_real_queue_engine_and_durable_history(integrated_runtime, monkeypatch, recover_context, is_jargon):
+    """详情返回模型实际分类，重启后保留历史结论而非词条最新分类。"""
     runtime = integrated_runtime
+    runtime.controls.is_similar = not is_jargon
     if recover_context:
         with runtime.session() as session:
             row = session.get(Jargon, 1)
@@ -276,6 +284,7 @@ def test_http_to_real_queue_engine_and_durable_history(integrated_runtime, monke
     job_id = response.json()["id"]
     finished = wait_job(runtime, job_id)
     assert finished["job"]["counts"] == {"succeeded": 1}, finished
+    assert finished["items"][0]["is_jargon"] is is_jargon
     assert finished["items"][0]["requests"] == 3
     assert finished["items"][0]["session_name"] == "测试群"
     assert len(runtime.calls) == 3
@@ -289,12 +298,19 @@ def test_http_to_real_queue_engine_and_durable_history(integrated_runtime, monke
         assert state.last_attempt_at and state.last_success_at
         assert state.last_attempt_evidence_hash == evidence_hash(record.evidence_messages)
         history = session.exec(select(JargonMeaningHistory)).one()
+        assert record.is_jargon is history.is_jargon is is_jargon
         assert (history.job_id, history.source, history.previous_meaning, history.meaning) == (
             job_id,
             "manual",
             "",
             record.meaning,
         )
+        record.is_jargon = not is_jargon
+        session.add(record)
+        saved = session.get(JargonInferenceJob, job_id)
+        legacy_items = json.loads(saved.items_json)
+        legacy_items[0].pop("is_jargon")
+        session.add(JargonInferenceJob(id="legacy", status="completed", items_json=json.dumps(legacy_items)))
 
     runtime.run(runtime.service.stop())
     replacement = jargon_inference_service.JargonInferenceService()
@@ -303,10 +319,14 @@ def test_http_to_real_queue_engine_and_durable_history(integrated_runtime, monke
     runtime.run(replacement.start())
     restored = runtime.client.get(f"/api/webui/jargon/inference/jobs/{job_id}").json()
     assert restored["job"]["counts"] == {"succeeded": 1}
+    assert restored["items"][0]["is_jargon"] is is_jargon
+    legacy = runtime.client.get("/api/webui/jargon/inference/jobs/legacy").json()
+    assert legacy["items"][0]["is_jargon"] is None
     assert len(runtime.calls) == 3  # 服务恢复只恢复记录，不重放已完成的模型请求。
 
 
 def test_stop_restart_and_http_retry_preserve_original_evidence(integrated_runtime, monkeypatch):
+    """中断时保留原证据和历史一致性，重启后通过 HTTP 重试能复用该证据。"""
     runtime = integrated_runtime
     runtime.controls.pause = True
     submitted = runtime.client.post("/api/webui/jargon/inference/jobs", json={"ids": [1]}).json()
@@ -355,7 +375,9 @@ def test_http_manual_edit_wins_over_running_model(integrated_runtime):
     edited = runtime.client.patch("/api/webui/jargon/1", json={"meaning": "用户确认的含义", "is_jargon": True})
     assert edited.status_code == 200
     runtime.release()
-    assert wait_job(runtime, original["id"])["job"]["counts"] == {"protected": 1}
+    result = wait_job(runtime, original["id"])
+    assert result["job"]["counts"] == {"protected": 1}
+    assert result["items"][0]["is_jargon"] is None
     with runtime.session() as session:
         record = session.get(Jargon, 1)
         assert (record.meaning, record.created_by, record.count) == ("用户确认的含义", JargonCreatedBy.MANUAL, 1)
@@ -364,6 +386,7 @@ def test_http_manual_edit_wins_over_running_model(integrated_runtime):
 
 @pytest.mark.parametrize("operation", ["lock", "restore"])
 def test_concurrent_manual_controls_initialize_single_state(integrated_runtime, operation):
+    """并发锁定或回退共用一条推断状态，成功回退各自留下历史。"""
     runtime = integrated_runtime
     with runtime.session() as session:
         session.add(JargonMeaningHistory(id=1, jargon_id=1, previous_meaning="人工旧含义", meaning="当前含义"))
@@ -371,6 +394,7 @@ def test_concurrent_manual_controls_initialize_single_state(integrated_runtime, 
     ready = Barrier(4)
 
     def request():
+        """等所有请求线程到达屏障，再调用相同的锁定或回退入口。"""
         ready.wait(timeout=5)
         if operation == "restore":
             return runtime.client.post("/api/webui/jargon/inference/history/1/restore")

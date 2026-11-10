@@ -79,6 +79,7 @@ function selectorPayload(type: MemoryBundleSelectorType, value: string): Record<
   return { type, installation_id: token }
 }
 
+/** Export selected memories and inspect a bundle before installing it globally or for a chat. */
 export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
   const [contentLevel, setContentLevel] = useState<MemoryBundleContentLevel>('knowledge')
   const [selectorType, setSelectorType] = useState<MemoryBundleSelectorType>('all')

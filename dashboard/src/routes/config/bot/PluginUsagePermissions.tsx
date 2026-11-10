@@ -18,6 +18,7 @@ interface Props {
   onChange: (value: Record<string, unknown>) => void
 }
 
+/** Edit one plugin's user and chat allowlists without discarding rules for the other plugins. */
 export function PluginUsagePermissions({ pluginSection, onChange }: Props) {
   const [plugins, setPlugins] = useState<InstalledPlugin[]>([])
   const [chats, setChats] = useState<Array<{ label: string; value: string }>>([])

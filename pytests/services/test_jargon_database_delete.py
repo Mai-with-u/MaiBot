@@ -14,6 +14,7 @@ from src.services import database_service
 
 @pytest.fixture
 def database(tmp_path, monkeypatch):
+    """为插件数据库能力准备两个独立词条和关联的推断状态及历史。"""
     engine = create_engine(f"sqlite:///{tmp_path / 'delete.db'}", connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(
         engine, tables=[Jargon.__table__, JargonInferenceState.__table__, JargonMeaningHistory.__table__]
@@ -21,6 +22,7 @@ def database(tmp_path, monkeypatch):
 
     @contextmanager
     def session_scope(**_kwargs):
+        """让通用删除与关联清理共享一次真实的 SQLite 提交。"""
         with Session(engine) as session:
             try:
                 yield session
@@ -42,6 +44,7 @@ def database(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("query_api", [False, True])
 async def test_plugin_delete_cleans_only_matching_jargon_metadata_before_id_reuse(database, query_api):
+    """两种插件删除入口都应清除目标元数据，且重用 ID 后不得继承旧锁。"""
     capability = RuntimeDataCapabilityMixin()
     args = {"model_name": "Jargon", "filters": {"id": 2}}
     if query_api:

@@ -87,6 +87,7 @@ interface JargonDetailDialogProps {
   onLockChanged: (id: number, locked: boolean) => void
 }
 
+/** Edit a term and manage its inference history, keeping lock updates separate from the draft. */
 export function JargonDetailDialog({
   jargon,
   open,

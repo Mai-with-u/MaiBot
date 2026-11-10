@@ -36,6 +36,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def load_class(path: Path, name: str, namespace: dict[str, Any]) -> type:
+    """从真实源码编译指定类，使用测试注入的依赖，不执行模块初始化。"""
     parsed = ast.parse(path.read_text(encoding="utf-8"))
     body = [ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0)]
     body.extend(item for item in parsed.body if isinstance(item, ast.ClassDef) and item.name == name)
@@ -46,6 +47,7 @@ def load_class(path: Path, name: str, namespace: dict[str, Any]) -> type:
 
 @pytest.fixture
 def engine_runtime(tmp_path: Path) -> Iterator[SimpleNamespace]:
+    """在文件 SQLite 上运行真实推断引擎，按阶段注入模型输出和写回竞争。"""
     engine = create_engine(f"sqlite:///{tmp_path / 'jargon.db'}", connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(
         engine,
@@ -59,6 +61,7 @@ def engine_runtime(tmp_path: Path) -> Iterator[SimpleNamespace]:
 
     @contextmanager
     def db_session(auto_commit: bool = True) -> Iterator[Session]:
+        """使各推断阶段使用独立会话，并按调用方选项提交或回滚。"""
         with Session(engine, expire_on_commit=False) as session:
             try:
                 yield session
@@ -90,6 +93,7 @@ def engine_runtime(tmp_path: Path) -> Iterator[SimpleNamespace]:
     runtime = SimpleNamespace(before_response=None, abort_hook=False)
 
     async def generate(prompt: str, session_id: str) -> SimpleNamespace:
+        """消费下一条模型输出或异常，并在返回前触发预设的并发操作。"""
         calls.append(prompt)
         if runtime.before_response:
             runtime.before_response(len(calls))
@@ -268,6 +272,7 @@ def test_insufficient_info_retains_meaning_and_reusable_evidence(engine_runtime:
 
 @pytest.mark.parametrize("protection", ["manual", "locked"])
 def test_initial_manual_and_locked_records_do_not_call_model(engine_runtime: SimpleNamespace, protection: str) -> None:
+    """保护检查必须先于任何模型请求；人工来源和显式锁定分别验证。"""
     with engine_runtime.db_session() as session:
         if protection == "manual":
             record = session.get(Jargon, 1)
@@ -281,7 +286,10 @@ def test_initial_manual_and_locked_records_do_not_call_model(engine_runtime: Sim
 
 @pytest.mark.parametrize("mutation", ["manual", "locked", "meaning", "replacement"])
 def test_inflight_user_changes_are_never_overwritten(engine_runtime: SimpleNamespace, mutation: str) -> None:
+    """推断开始后改变词条身份、人工内容或保护状态时，旧结果不得写入历史。"""
+
     def modify(stage: int) -> None:
+        """在首次模型响应前提交用户操作，使其发生在读取快照与写回之间。"""
         if stage != 1:
             return
         with engine_runtime.db_session() as session:
@@ -308,7 +316,10 @@ def test_inflight_user_changes_are_never_overwritten(engine_runtime: SimpleNames
 def test_concurrent_candidate_preserves_evidence_and_does_not_invalidate_meaning(
     engine_runtime: SimpleNamespace,
 ) -> None:
+    """仅追加候选证据时允许写回，且本次证据哈希只涵盖已使用的消息。"""
+
     def modify(stage: int) -> None:
+        """在首次响应前通过真实合并路径追加一条证据。"""
         if stage != 1:
             return
         engine_runtime.miner._update_jargon(get_record(engine_runtime), [[{"platform": "qq", "message_id": "m2"}]])
@@ -330,6 +341,7 @@ def test_hook_abort_preserves_evidence(engine_runtime: SimpleNamespace) -> None:
 
 
 def test_history_retention_is_bounded(engine_runtime: SimpleNamespace) -> None:
+    """新推断历史计入容量上限，淘汰时保留最新的变更记录。"""
     engine_runtime.config.jargon.inference.history_limit = 2
     with engine_runtime.db_session() as session:
         for i in range(5):
@@ -341,6 +353,7 @@ def test_history_retention_is_bounded(engine_runtime: SimpleNamespace) -> None:
 
 
 def test_lost_references_recover_only_original_session_evidence(engine_runtime: SimpleNamespace) -> None:
+    """引用缺失时从归属会话恢复文字证据，即使其他群也提到了该词条。"""
     with engine_runtime.db_session() as session:
         record = session.get(Jargon, 1)
         record.evidence_messages = None
@@ -427,6 +440,7 @@ def test_new_entry_threshold_one_uses_shared_queue(
 
 
 def test_evidence_limit_keeps_newest_groups(engine_runtime: SimpleNamespace) -> None:
+    """合并重叠消息组时先去重，再按配置保留最近的组。"""
     engine_runtime.config.jargon.inference.evidence_limit = 2
     groups = [[{"platform": "qq", "message_id": str(i)}] for i in range(5)]
     assert engine_runtime.miner._merge_evidence_message_groups(groups[:3], groups[2:]) == groups[-2:]
@@ -435,9 +449,11 @@ def test_evidence_limit_keeps_newest_groups(engine_runtime: SimpleNamespace) -> 
 def test_commit_failure_rolls_back_meaning_and_history(
     engine_runtime: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """提交历史失败时，含义变更必须与历史一起回滚。"""
     original = Session.commit
 
     def fail_on_history(session: Session) -> None:
+        """仅在事务包含待提交历史时注入错误，允许后续查询正常执行。"""
         if session.exec(select(JargonMeaningHistory)).first() is not None:
             raise RuntimeError("simulated commit failure")
         original(session)
@@ -513,6 +529,7 @@ def test_invalid_comparison_cannot_change_classification(engine_runtime: SimpleN
 
 
 def test_unchanged_inference_does_not_evict_meaning_history(engine_runtime: SimpleNamespace) -> None:
+    """结果未变化时更新推断计数，但不消耗历史保留名额。"""
     with engine_runtime.db_session() as session:
         record = session.get(Jargon, 1)
         record.meaning = "完成任务的庆祝"
@@ -527,6 +544,7 @@ def test_unchanged_inference_does_not_evict_meaning_history(engine_runtime: Simp
 
 
 def test_null_timestamps_keep_identity_during_recovery_and_writeback(engine_runtime: SimpleNamespace) -> None:
+    """历史空时间戳保持原样，避免证据恢复后写回误判词条身份变化。"""
     with engine_runtime.db_session() as session:
         record = session.get(Jargon, 1)
         record.created_timestamp = None
@@ -563,6 +581,7 @@ def add_message(runtime: SimpleNamespace, message_id: str, content: str, **field
 
 
 def test_recovery_blacklist_matches_platform_and_keeps_neighbor_context(engine_runtime: SimpleNamespace) -> None:
+    """平台与用户 ID 共同决定来源是否受限，被屏蔽的邻近消息仍可提供上下文。"""
     engine_runtime.config.jargon.learning_blacklist = [SimpleNamespace(platform="qq", user_id="test")]
     jargon = engine_runtime.miner._load_jargon_by_id(1)
     assert engine_runtime.miner._recover_evidence_groups(jargon, {"chat-a"}) == []
@@ -574,6 +593,7 @@ def test_recovery_blacklist_matches_platform_and_keeps_neighbor_context(engine_r
 
 
 def test_recovery_pages_past_media_only_matches(engine_runtime: SimpleNamespace) -> None:
+    """即使检索首页只有媒体描述，也应继续查找正文中含词条的旧消息。"""
     engine_runtime.config.jargon.inference.evidence_limit = 1
     timestamp = datetime.now()
     for index in range(105):
@@ -591,6 +611,7 @@ def test_recovery_pages_past_media_only_matches(engine_runtime: SimpleNamespace)
 
 
 def test_recovery_neighbors_with_same_timestamp_are_in_id_order(engine_runtime: SimpleNamespace) -> None:
+    """同一时间戳的消息按数据库 ID 确定邻居顺序和截取边界。"""
     with engine_runtime.db_session() as session:
         session.exec(delete(Messages))
     timestamp = datetime.now()
@@ -602,6 +623,7 @@ def test_recovery_neighbors_with_same_timestamp_are_in_id_order(engine_runtime: 
 
 
 def test_ambiguous_legacy_refs_recover_exact_message_identity(engine_runtime: SimpleNamespace) -> None:
+    """相同平台消息号出现在多个会话时，重建含会话和数据库 ID 的精确引用。"""
     with engine_runtime.db_session() as session:
         record = session.get(Jargon, 1)
         record.session_id_dict = '{"chat-a": 2, "chat-b": 2}'
@@ -622,6 +644,7 @@ def test_ambiguous_legacy_refs_recover_exact_message_identity(engine_runtime: Si
 def test_malformed_message_is_logged_and_does_not_block_other_evidence(
     engine_runtime: SimpleNamespace, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """解码失败的消息会被记录并剔除，其他有效来源仍能支持推断。"""
     malformed_id = add_message(engine_runtime, "bad", "起飞", raw_content=b"\xff")
     with engine_runtime.db_session() as session:
         record = session.get(Jargon, 1)
@@ -651,6 +674,7 @@ def test_readonly_recovery_hash_detects_later_arriving_evidence(engine_runtime: 
 def test_shutdown_waits_for_started_commit_and_reports_actual_outcome(
     engine_runtime: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """取消到达提交线程后等待真实写回结果，即使任务被多次取消。"""
     from threading import Event
 
     started, release = Event(), Event()
@@ -664,6 +688,7 @@ def test_shutdown_waits_for_started_commit_and_reports_actual_outcome(
     monkeypatch.setattr(engine_runtime.miner, "_modify_jargon_entry", delayed_commit)
 
     async def run() -> InferenceResult:
+        """等提交线程阻塞后发出取消，并在断言失败时也释放写回事务。"""
         task = asyncio.create_task(engine_runtime.miner._infer_meaning_by_id(1))
         assert await asyncio.to_thread(started.wait, 5)
         try:
@@ -684,6 +709,7 @@ def test_shutdown_waits_for_started_commit_and_reports_actual_outcome(
 def test_neighbor_only_groups_do_not_supply_false_evidence(
     engine_runtime: SimpleNamespace, source_problem: str
 ) -> None:
+    """来源消息无效时，单独存在的邻近文字不能触发模型请求。"""
     add_message(engine_runtime, "neighbor", "只是普通上下文", user_id="neighbor")
     with engine_runtime.db_session() as session:
         source = session.exec(select(Messages).where(Messages.message_id == "m1")).one()

@@ -22,6 +22,7 @@ from src.common.database.database_model import (
 )
 from src.common.logger import get_logger
 from src.common.runtime_loop import run_on_main_loop
+from src.common.utils.utils_jargon import parse_session_id_dict
 from src.config.config import config_manager, global_config
 
 from .jargon_inference_result import InferenceResult, evidence_hash
@@ -53,10 +54,10 @@ async def _complete_database_write(operation: Callable[..., Any], *args: Any) ->
 
 
 def _snapshot(record: Jargon) -> Dict[str, Any]:
-    """记录词条身份与归属，不把新增命中次数视为身份变更。"""
+    """只记录可解析的会话 ID；命中次数和存储格式不改变词条身份。"""
     return {
         "content": record.content,
-        "session_ids": sorted(json.loads(record.session_id_dict or "{}")),
+        "session_ids": sorted(parse_session_id_dict(record.session_id_dict)),
         "is_global": record.is_global,
         "created_timestamp": str(record.created_timestamp),
     }
@@ -94,6 +95,7 @@ class JargonInferenceService:
     """所有内存状态只在 bot 主循环访问，数据库操作均在线程池执行。"""
 
     def __init__(self) -> None:
+        """初始化队列、保留期和阈值策略，等待主循环启动工作任务。"""
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._jobs: Dict[str, Dict[str, Any]] = {}
         self._reserved: Set[int] = set()
@@ -311,8 +313,9 @@ class JargonInferenceService:
                     status, reason = "skipped", "已有含义"
                 elif not request.get("force", True) and not JargonMiner("", "")._should_infer_meaning(record):
                     status, reason = "skipped", "未达到自动推断条件"
-                scope = json.loads(record.session_id_dict or "{}")
-                unchecked = set(scope) - checked_sessions
+                snapshot = _snapshot(record)
+                scope = set(snapshot["session_ids"])
+                unchecked = scope - checked_sessions
                 if unchecked:
                     existing_sessions.update(
                         session.exec(
@@ -320,11 +323,13 @@ class JargonInferenceService:
                         ).all()
                     )
                     checked_sessions.update(unchecked)
-                session_ids = sorted(set(scope) & existing_sessions)
+                session_ids = sorted(scope & existing_sessions)
                 if source == "automatic" and request.get("trigger_session_id") not in session_ids:
                     continue
                 if not reason and not session_ids:
                     status, reason = "missing_evidence", "词条没有可解析的所属会话"
+                if source != "manual" and reason:
+                    continue
                 fingerprint = evidence_hash(record.evidence_messages)
                 if source == "scheduled":
                     if settings.scheduled_scope == "failed" and (
@@ -352,8 +357,6 @@ class JargonInferenceService:
                         if recovered == fingerprint or recovered == evidence_hash(None):
                             continue
                         fingerprint = recovered
-                if source != "manual" and reason:
-                    continue
                 items.append(
                     {
                         "jargon_id": record.id,
@@ -366,7 +369,7 @@ class JargonInferenceService:
                         "reason": reason,
                         "attempts": 0,
                         "requests": 0,
-                        "snapshot": _snapshot(record),
+                        "snapshot": snapshot,
                         "evidence_hash": fingerprint,
                         "count": record.count,
                     }
@@ -510,7 +513,7 @@ class JargonInferenceService:
 
     @staticmethod
     def _save_job(job: Dict[str, Any]) -> None:
-        """写入完整任务快照，并清理保留期外的终态任务。"""
+        """持久化任务进度快照，过期清理由启动恢复与调度器处理。"""
         with get_db_session() as session:
             row = session.get(JargonInferenceJob, job["id"])
             if row is None:
@@ -520,8 +523,6 @@ class JargonInferenceService:
             row.options_json = json.dumps(job["options"], ensure_ascii=False)
             row.items_json = json.dumps(job["items"], ensure_ascii=False)
             session.add(row)
-            session.flush()
-            JargonInferenceService._prune_jobs(session)
 
     @staticmethod
     def _save_new_job(job: Dict[str, Any]) -> None:
@@ -557,8 +558,6 @@ class JargonInferenceService:
                     items_json=json.dumps(job["items"], ensure_ascii=False),
                 )
             )
-            session.flush()
-            JargonInferenceService._prune_jobs(session)
 
     @staticmethod
     def _prune_jobs(session: Session) -> None:
@@ -579,6 +578,7 @@ class JargonInferenceService:
 
     @staticmethod
     def _write_state(item: Dict[str, Any], source: str) -> None:
+        """使用批量状态写入的同一事务规则保存单条进度。"""
         JargonInferenceService._write_states([item], source)
 
     @staticmethod
@@ -703,6 +703,7 @@ class JargonInferenceService:
                 await _complete_database_write(self._write_state, item, job["source"])
 
                 async def before_request() -> None:
+                    """取得全局速率许可后记录实际模型请求数。"""
                     await self._before_request()
                     item["requests"] += 1
 
@@ -728,13 +729,17 @@ class JargonInferenceService:
         finally:
             if result.evidence_hash:
                 item["evidence_hash"] = result.evidence_hash
-            item.update(status=result.status, reason=result.reason)
+            item.update(
+                status=result.status,
+                reason=result.reason,
+                is_jargon=result.is_jargon if result.status == "succeeded" else None,
+            )
             self._finish_job(job)
             try:
                 await _complete_database_write(self._write_state, item, job["source"])
                 await self._persist(job)
             except Exception as exc:
-                item.update(status="failed", reason=f"任务状态写入失败: {str(exc)[:400]}")
+                item.update(status="failed", reason=f"任务状态写入失败: {str(exc)[:400]}", is_jargon=None)
                 self._finish_job(job)
                 logger.exception("黑话推断任务状态写入失败: %s", job_id)
                 raise
@@ -802,6 +807,7 @@ class JargonInferenceService:
         self._check_ready()
 
         def read() -> Dict[str, Any]:
+            """在同一数据库会话中读取筛选后的总数和当前页。"""
             with get_db_session() as session:
                 conditions = []
                 if source:
@@ -836,6 +842,7 @@ class JargonInferenceService:
             return self._jobs[job_id]
 
         def read() -> Dict[str, Any]:
+            """从持久记录恢复已离开活动队列的任务。"""
             with get_db_session() as session:
                 row = session.get(JargonInferenceJob, job_id)
                 if row is None:
@@ -845,7 +852,7 @@ class JargonInferenceService:
         return await asyncio.to_thread(read)
 
     async def get_job(self, job_id: str, page: int = 1, page_size: int = 50) -> Dict[str, Any]:
-        """分页返回任务结果，不向接口暴露内部证据与身份快照。"""
+        """分页返回任务保存时的分类结论，未得到结论的词条返回空值。"""
         self._check_ready()
         job = await self._load_job(job_id)
         items = job["items"][(page - 1) * page_size : page * page_size]
@@ -853,9 +860,12 @@ class JargonInferenceService:
             "job": _job_summary(job),
             "items": [
                 {
-                    key: value
-                    for key, value in item.items()
-                    if key not in ("snapshot", "evidence_hash", "session_id", "count")
+                    **{
+                        key: value
+                        for key, value in item.items()
+                        if key not in ("snapshot", "evidence_hash", "session_id", "count", "is_jargon")
+                    },
+                    "is_jargon": item.get("is_jargon") if item["status"] == "succeeded" else None,
                 }
                 for item in items
             ],

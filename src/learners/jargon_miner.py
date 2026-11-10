@@ -391,6 +391,7 @@ class JargonMiner:
         excluded_sources = {(user.platform, user.user_id) for user in global_config.jargon.learning_blacklist}
 
         def load(groups: List[JargonEvidenceMessageGroup]) -> None:
+            """解析归属会话内的消息组，只保留仍含有效来源的上下文和引用。"""
             with get_db_session() as session:
                 for group in groups:
                     messages: List[Messages] = []
@@ -593,6 +594,7 @@ class JargonMiner:
             return InferenceResult("missing_evidence", "所属会话内没有可用的文字证据")
 
         async def generate(prompt: str, stage_name: str) -> Optional[Dict[str, Any]]:
+            """依次等待请求节流、调用模型并记录阶段日志，空响应返回无结果。"""
             if before_request is not None:
                 await before_request()
             requests[0] += 1
@@ -894,6 +896,7 @@ class JargonMiner:
             db_jargon.is_complete = persisted.is_complete
 
     def _parse_result(self, response: str) -> Optional[Dict[str, Any]]:
+        """解析模型输出为字典，必要时修复 JSON 格式，拒绝非对象结果。"""
         try:
             result = parse_llm_json(response)
         except Exception:
@@ -909,6 +912,7 @@ class JargonMiner:
 
     @staticmethod
     def _is_locked(jargon_id: Optional[int]) -> bool:
+        """读取词条当前的显式推断锁，尚未持久化的词条不可能有锁。"""
         if jargon_id is None:
             return False
         with get_db_session() as session:

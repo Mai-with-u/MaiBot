@@ -2456,6 +2456,8 @@
     "cancelPending": "取消未开始的词条",
     "retryFailed": "重试失败项",
     "results": "词条处理结果",
+    "classification": "黑话判定",
+    "noClassification": "无判定结果",
     "requestCounts": "{{attempts}} 次尝试 / {{requests}} 次模型请求",
     "previous": "上一页",
     "next": "下一页",

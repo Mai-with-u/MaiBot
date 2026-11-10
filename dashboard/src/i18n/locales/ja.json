@@ -2459,6 +2459,8 @@
     "cancelPending": "未開始の項目をキャンセル",
     "retryFailed": "失敗した項目を再試行",
     "results": "項目ごとの処理結果",
+    "classification": "スラング判定",
+    "noClassification": "判定結果なし",
     "requestCounts": "試行 {{attempts}} 回 / モデルリクエスト {{requests}} 回",
     "previous": "前のページ",
     "next": "次のページ",

@@ -21,6 +21,7 @@ from src.common.database.database_model import (
 )
 from src.common.logger import get_logger
 from src.common.utils.utils_config import JargonConfigUtils
+from src.common.utils.utils_jargon import parse_session_id_dict
 from src.config.config import global_config
 
 from .jargon_inference import router as inference_router
@@ -363,40 +364,6 @@ class JargonImportResponse(BaseModel):
 
 
 # ==================== 工具函数 ====================
-
-
-def parse_session_id_dict(session_id_dict_str: Optional[str]) -> Dict[str, int]:
-    """解析会话计数字典。
-
-    Args:
-        session_id_dict_str: 数据库中保存的会话计数字典 JSON 字符串。
-
-    Returns:
-        Dict[str, int]: 解析后的会话计数字典。
-    """
-    if not session_id_dict_str:
-        return {}
-
-    try:
-        parsed = json.loads(session_id_dict_str)
-    except (json.JSONDecodeError, TypeError):
-        return {}
-
-    if not isinstance(parsed, dict):
-        return {}
-
-    session_counts: Dict[str, int] = {}
-    for session_id, count in parsed.items():
-        if not isinstance(session_id, str):
-            continue
-        if isinstance(count, int):
-            session_counts[session_id] = count
-        else:
-            try:
-                session_counts[session_id] = int(count)
-            except (TypeError, ValueError):
-                session_counts[session_id] = 0
-    return session_counts
 
 
 def dump_session_id_dict(session_counts: Dict[str, int]) -> str:

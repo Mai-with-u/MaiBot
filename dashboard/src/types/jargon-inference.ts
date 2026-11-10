@@ -40,6 +40,8 @@ export interface JargonInferenceTask {
   session_name: string
   status: string
   reason: string
+  /** The classification written by this attempt, independent of later edits. */
+  is_jargon: boolean | null
   attempts: number
   requests: number
 }

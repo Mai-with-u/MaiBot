@@ -2412,6 +2412,8 @@
     "cancelPending": "시작하지 않은 항목 취소",
     "retryFailed": "실패한 항목 재시도",
     "results": "항목 처리 결과",
+    "classification": "슬랭 판정",
+    "noClassification": "판정 결과 없음",
     "requestCounts": "시도 {{attempts}}회 / 모델 요청 {{requests}}회",
     "previous": "이전 페이지",
     "next": "다음 페이지",

@@ -6,6 +6,7 @@ import { getChatStreamDetail } from '@/lib/chat-management-api'
 
 import { isFocusFlowId } from './observed-sessions'
 
+/** Open chat details on hover or focus, using group-level status for shared Focus streams. */
 export function ObservedConversationHoverCard({
   sessionId,
   name,

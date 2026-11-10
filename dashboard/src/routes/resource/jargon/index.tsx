@@ -73,7 +73,7 @@ type JargonStatusFilter = 'confirmed_jargon' | 'confirmed_not_jargon' | 'manual_
 type JargonSummaryTab = 'total' | JargonStatusFilter | 'global_count' | 'complete_count'
 
 /**
- * 黑话管理主页面
+ * 按会话和共享组管理黑话，并为批量推断提供所选或当前页的词条。
  */
 export function JargonManagementPage({
   browserTabs,
@@ -652,7 +652,9 @@ export function JargonManagementPage({
           onOpenChange={setIsInferenceOpen}
           selectedIds={Array.from(selectedIds)}
           pageIds={
-            list.isFetching || list.isSearchPending ? [] : jargons.map((jargon) => jargon.id)
+            list.isPlaceholderData || list.isSearchPending
+              ? []
+              : jargons.map((jargon) => jargon.id)
           }
           filters={inferenceFilters}
           scopeValid={inferenceScopeValid}

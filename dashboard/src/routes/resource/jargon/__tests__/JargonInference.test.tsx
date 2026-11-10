@@ -17,6 +17,7 @@ import type {
 import { JargonInferenceDialog } from '../JargonInferenceDialog'
 import { JargonInferenceHistory } from '../JargonInferenceHistory'
 import { JargonInferenceMonitor } from '../JargonInferenceMonitor'
+import { JargonManagementPage } from '..'
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -43,7 +44,14 @@ vi.mock('@/lib/jargon-inference-api', () => ({
   restoreJargonMeaning: vi.fn(),
   lockJargonInference: vi.fn(),
 }))
-vi.mock('@/lib/jargon-api', () => ({ getJargonDetail: vi.fn() }))
+vi.mock('@/lib/jargon-api', async (importOriginal) => ({
+  ...(await importOriginal<typeof jargonApi>()),
+  getJargonDetail: vi.fn(),
+  getJargonList: vi.fn(),
+  getJargonStats: vi.fn(),
+  getJargonGroups: vi.fn(),
+  getJargonChatList: vi.fn(),
+}))
 
 const clients: QueryClient[] = []
 
@@ -72,6 +80,7 @@ function detail(currentJob: JargonInferenceJob): JargonInferenceJobDetail {
         session_name: '测试群',
         status: 'succeeded',
         reason: '',
+        is_jargon: true,
         attempts: 1,
         requests: 3,
       },
@@ -320,6 +329,54 @@ describe('Jargon inference scope and preview', () => {
 })
 
 describe('Jargon inference task controls', () => {
+  it('shows each recorded classification independently of the attempt status', async () => {
+    const user = userEvent.setup()
+    const completed = job({ total: 4, completed: 4, counts: { succeeded: 3, insufficient_info: 1 } })
+    const initialDetail = detail(completed)
+    const entry = initialDetail.items[0]
+    vi.mocked(api.getJargonInferenceJobs).mockResolvedValue({
+      items: [completed],
+      total: 1,
+      page: 1,
+      page_size: 50,
+    })
+    vi.mocked(api.getJargonInferenceJob).mockResolvedValue({
+      ...initialDetail,
+      total: 4,
+      items: [
+        { ...entry, content: '群内黑话' },
+        { ...entry, jargon_id: 8, content: '普通词语', is_jargon: false },
+        {
+          ...entry,
+          jargon_id: 9,
+          content: '证据不足的词语',
+          status: 'insufficient_info',
+          is_jargon: null,
+        },
+        { ...entry, jargon_id: 10, content: '无历史判定快照', is_jargon: null },
+      ],
+    })
+    renderDialog()
+    await user.click(screen.getByRole('tab', { name: '任务与进度' }))
+
+    const results = await screen.findByRole('list', { name: '词条处理结果' })
+    const rows = within(results).getAllByRole('listitem')
+    const expected = [
+      ['群内黑话', '推断成功', '黑话'],
+      ['普通词语', '推断成功', '非黑话'],
+      ['证据不足的词语', '信息不足', '无判定结果'],
+      ['无历史判定快照', '推断成功', '无判定结果'],
+    ]
+    expect(rows).toHaveLength(expected.length)
+    for (const [index, [content, status, classification]] of expected.entries()) {
+      const row = within(rows[index])
+      expect(row.getByText(content)).toBeVisible()
+      expect(row.getByText(status)).toBeVisible()
+      expect(row.getByRole('term')).toHaveTextContent('黑话判定')
+      expect(row.getByRole('definition').textContent).toBe(classification)
+    }
+  })
+
   it('cancels pending items of the selected running job while preserving completed progress', async () => {
     const user = userEvent.setup()
     const running = job({
@@ -368,7 +425,7 @@ describe('Jargon inference task controls', () => {
     const cancelled = job({ counts: { cancelled: 1 } })
     vi.mocked(api.getJargonInferenceJob).mockResolvedValue({
       ...detail(cancelled),
-      items: [{ ...detail(cancelled).items[0], status: 'cancelled' }],
+      items: [{ ...detail(cancelled).items[0], status: 'cancelled', is_jargon: null }],
     })
     renderDialog()
     await user.click(screen.getByRole('tab', { name: '任务与进度' }))
@@ -599,6 +656,61 @@ describe('Jargon inference settings', () => {
 })
 
 describe('Jargon background progress', () => {
+  it('keeps the current-page batch available while job progress refreshes the list', async () => {
+    const user = userEvent.setup()
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    })
+    clients.push(client)
+    const response = { success: true, data: [makeJargon()], total: 1, page: 1, page_size: 20 }
+    vi.mocked(jargonApi.getJargonList).mockResolvedValue(response)
+    vi.mocked(jargonApi.getJargonChatList).mockResolvedValue({ success: true, data: [] })
+    vi.mocked(jargonApi.getJargonGroups).mockResolvedValue({ success: true, data: [] })
+    vi.mocked(jargonApi.getJargonStats).mockResolvedValue({
+      success: true,
+      data: {
+        total: 1,
+        confirmed_jargon: 1,
+        confirmed_not_jargon: 0,
+        manual_jargon: 0,
+        global_count: 0,
+        complete_count: 0,
+        chat_count: 1,
+        top_chats: {},
+      },
+    })
+    client.setQueryData(['jargon-inference', 'monitor'], { items: [job()] })
+    render(
+      <QueryClientProvider client={client}>
+        <JargonManagementPage />
+      </QueryClientProvider>
+    )
+    await user.click(screen.getByRole('button', { name: '黑话 AI 推断' }))
+    const start = screen.getByRole('button', { name: '开始批量推断' })
+    await waitFor(() => expect(start).toBeEnabled())
+
+    let finishRefresh!: (value: typeof response) => void
+    const refresh = new Promise<typeof response>((resolve) => {
+      finishRefresh = resolve
+    })
+    vi.mocked(jargonApi.getJargonList).mockReturnValueOnce(refresh)
+    await act(async () => {
+      client.setQueryData(['jargon-inference', 'monitor'], {
+        items: [job({ status: 'running', completed: 0 })],
+      })
+    })
+    await waitFor(() => expect(client.isFetching({ queryKey: ['jargon', 'list'] })).toBe(1))
+    await user.click(start)
+    await waitFor(() =>
+      expect(api.startJargonInference).toHaveBeenCalledWith({
+        ids: [7],
+        mode: 'missing',
+        force: true,
+      })
+    )
+    await act(async () => finishRefresh(response))
+  })
+
   it('refreshes records during activity and on completion even with no dialog mounted', async () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: Infinity } },

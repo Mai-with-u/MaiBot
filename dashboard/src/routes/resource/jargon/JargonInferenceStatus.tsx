@@ -24,6 +24,7 @@ const labels: Record<string, string> = {
   skipped: '已跳过',
 }
 
+/** Translate known job and item states while displaying new server states by name. */
 export function InferenceStatus({ status }: { status: string }) {
   const { t } = useTranslation()
   return <>{t(`jargonInference.states.${status}`, labels[status] ?? status)}</>

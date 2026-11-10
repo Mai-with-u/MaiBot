@@ -49,6 +49,7 @@ interface Props {
   onChanged: () => void
 }
 
+/** Preview the selected scope before enqueueing work, then show the submitted job in the progress tab. */
 export function JargonInferenceDialog({
   open,
   onOpenChange,
@@ -92,6 +93,7 @@ export function JargonInferenceDialog({
   })
   const jobs = useQuery({
     queryKey: ['jargon-inference', 'jobs', jobSource, jobPage],
+    /** An omitted source requests jobs from every trigger type. */
     queryFn: () =>
       getJargonInferenceJobs({
         page: jobPage,
@@ -397,6 +399,7 @@ export function JargonInferenceDialog({
   )
 }
 
+/** Polls active jobs and displays each entry's recorded status and classification independently. */
 function JobProgress({
   jobId,
   onRetry,
@@ -412,6 +415,7 @@ function JobProgress({
   const detail = useQuery({
     queryKey: ['jargon-inference', 'job', jobId, page],
     queryFn: () => getJargonInferenceJob(jobId, page),
+    /** Keep results live only while the job can still change. */
     refetchInterval: (query) =>
       ['queued', 'running', 'cancelling'].includes(query.state.data?.job.status ?? '')
         ? 2000
@@ -488,6 +492,18 @@ function JobProgress({
                     <InferenceStatus status={item.status} />
                   </Badge>
                 </div>
+                <dl className="flex items-baseline gap-2 text-xs">
+                  <dt className="text-muted-foreground">
+                    {t('jargonInference.classification', '黑话判定')}
+                  </dt>
+                  <dd>
+                    {item.is_jargon === true
+                      ? t('jargonInference.isJargon', '黑话')
+                      : item.is_jargon === false
+                        ? t('jargonInference.notJargon', '非黑话')
+                        : t('jargonInference.noClassification', '无判定结果')}
+                  </dd>
+                </dl>
                 <p className="text-muted-foreground text-xs">
                   {item.session_name} ·{' '}
                   {t('jargonInference.requestCounts', {

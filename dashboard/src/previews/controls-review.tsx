@@ -101,6 +101,7 @@ function applyPreviewTheme(style: DashboardStyle, dark: boolean) {
   }, dark)
 }
 
+/** Show interactive control states under the selected theme without persisting their values. */
 function Samples({ label, dark }: { label: string; dark: boolean }) {
   const sampleId = useId()
   const [range, setRange] = useState({start: 18 * 60, end: 6 * 60})

@@ -582,6 +582,36 @@ async def test_threshold_rescan_drains_batches_and_does_not_repeat_fast_failures
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stored_scope", ["{坏数据", '[["chat", 4]]', "null"])
+async def test_damaged_scope_does_not_block_manual_or_threshold_scan(runtime, stored_scope):
+    """单条损坏归属在手动预览中可见，分批补扫仍能完成。"""
+    service = arm(runtime)
+    runtime.settings.max_items_per_scan = 1
+    with runtime.database() as session:
+        record = session.get(Jargon, 1)
+        record.session_id_dict = stored_scope
+        session.add(record)
+
+    preview = await service.preview({})
+    assert preview == {
+        "total": 3,
+        "eligible": 2,
+        "skipped": 1,
+        "reasons": {"词条没有可解析的所属会话": 1},
+    }
+    manual = await service.submit({"ids": [1]})
+    detail = await service.get_job(manual["id"])
+    assert detail["items"][0]["status"] == "missing_evidence"
+    assert detail["items"][0]["is_jargon"] is None
+
+    await asyncio.wait_for(service.rescan(), 2)
+    assert not service._threshold_pending
+    with runtime.database() as session:
+        saved = session.exec(select(JargonInferenceJob).where(JargonInferenceJob.source == "threshold")).all()
+        assert {item["jargon_id"] for job in saved for item in json.loads(job.items_json)} == {2, 3}
+
+
+@pytest.mark.asyncio
 async def test_failed_policy_rescan_resumes_checkpoint_on_scheduler_when_disabled(runtime, monkeypatch):
     service = arm(runtime)
     runtime.settings.max_items_per_scan = 1
@@ -644,13 +674,16 @@ async def test_automatic_enqueue_failure_does_not_abort_learning(runtime, monkey
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("change", ["content", "session_id_dict"])
-async def test_modified_queued_term_reaches_stale_status_without_model_call(runtime, change):
+@pytest.mark.parametrize(
+    "change, value", [("content", "已修改"), ("session_id_dict", '{"other":4}'), ("session_id_dict", "{损坏")]
+)
+async def test_modified_queued_term_reaches_stale_status_without_model_call(runtime, change, value):
+    """排队后丢失可解析归属的词条也必须阻止模型请求和写回。"""
     service = arm(runtime)
     result = await service.submit({"ids": [1]})
     with runtime.database() as session:
         record = session.get(Jargon, 1)
-        setattr(record, change, "已修改" if change == "content" else '{"other":4}')
+        setattr(record, change, value)
         session.add(record)
     await service._run_item(result["id"], 0)
     with runtime.database() as session:
@@ -723,6 +756,26 @@ def test_terminal_job_retention_uses_configured_age_without_source_count_cap(run
         assert {"old-queued", "old-running", "old-cancelling"} <= ids
         assert "old-completed" not in ids
         assert "old-interrupted" not in ids
+
+
+@pytest.mark.asyncio
+async def test_submission_and_progress_writes_leave_retention_to_cleanup(runtime):
+    """进度写入不触发清理，专用清理仍会删除过期终态任务。"""
+    service = arm(runtime)
+    runtime.settings.job_retention_days = 7
+    with runtime.database() as session:
+        session.add(JargonInferenceJob(id="expired", status="completed", updated_at=time.time() - 8 * 86400))
+
+    job = await service.submit({"ids": [1]})
+    await service._run_item(job["id"], 0)
+    with runtime.database() as session:
+        assert session.get(JargonInferenceJob, "expired") is not None
+        assert session.get(JargonInferenceJob, job["id"]).status == "completed"
+
+    service._cleanup_jobs()
+    with runtime.database() as session:
+        assert session.get(JargonInferenceJob, "expired") is None
+        assert session.get(JargonInferenceJob, job["id"]) is not None
 
 
 @pytest.mark.asyncio

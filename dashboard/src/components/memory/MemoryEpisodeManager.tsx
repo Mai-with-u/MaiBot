@@ -143,6 +143,7 @@ export interface MemoryEpisodeManagerProps {
   initialTimeEnd?: number
 }
 
+/** Browse and repair episode records, with optional initial episode, source, or time filters. */
 export function MemoryEpisodeManager({
   initialEpisodeId = '',
   initialSource = '',

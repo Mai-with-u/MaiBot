@@ -18,6 +18,7 @@ interface AddModelMenuProps {
   dataTour?: string
 }
 
+/** Choose an LLM or embedding model and expose the missing-provider hint when creation is disabled. */
 export function AddModelMenu({ onAdd, disabled, className, dataTour }: AddModelMenuProps) {
   return (
     <DropdownMenu>

@@ -2459,6 +2459,8 @@
     "cancelPending": "Cancel unstarted entries",
     "retryFailed": "Retry failed entries",
     "results": "Entry results",
+    "classification": "Slang classification",
+    "noClassification": "No classification result",
     "requestCounts": "{{attempts}} attempts / {{requests}} model requests",
     "previous": "Previous page",
     "next": "Next page",

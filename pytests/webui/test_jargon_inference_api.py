@@ -22,6 +22,7 @@ from src.webui.routers import jargon, jargon_inference
 
 @pytest.fixture
 def inference_api(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
+    """挂载真实黑话路由，用隔离 SQLite 保留状态与历史，用替身记录任务操作。"""
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(
         engine,
@@ -34,6 +35,7 @@ def inference_api(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
 
     @contextmanager
     def db_session() -> Iterator[Session]:
+        """在请求线程与断言之间共享测试数据库，并为每次写操作提供事务边界。"""
         with Session(engine, expire_on_commit=False) as session:
             try:
                 yield session
@@ -179,6 +181,7 @@ def test_job_controls_and_pagination(inference_api):
 
 
 def test_history_restore_protects_previous_state_without_changing_evidence_or_count(inference_api):
+    """历史回退把词条标为人工并锁定，只改含义和分类，不改证据及计数。"""
     response = inference_api.client.post("/api/webui/jargon/inference/history/1/restore")
     assert response.status_code == 200
     with inference_api.session() as session:
@@ -198,6 +201,7 @@ def test_history_restore_protects_previous_state_without_changing_evidence_or_co
 
 
 def test_history_retention_and_missing_ids(inference_api):
+    """回退生成的新历史占用保留名额，无效词条或历史 ID 返回 404。"""
     inference_api.config.jargon.inference.history_limit = 1
     client = inference_api.client
     assert client.post("/api/webui/jargon/inference/history/1/restore").status_code == 200
@@ -209,6 +213,7 @@ def test_history_retention_and_missing_ids(inference_api):
 
 
 def test_lock_and_metadata(inference_api):
+    """列表和详情应同时读取最新的锁定状态及各自展示的推断时间。"""
     client = inference_api.client
     assert client.post("/api/webui/jargon/inference/lock/1", json={"locked": True}).status_code == 200
     detail = client.get("/api/webui/jargon/1").json()["data"]
@@ -251,6 +256,7 @@ def test_patch_returns_actual_locked_inference_state(inference_api):
 
 @pytest.mark.parametrize("batch", [False, True])
 def test_deletion_cleans_state_and_history(inference_api, batch):
+    """单条与批量删除均须清除相应推断状态及历史。"""
     client = inference_api.client
     response = (
         client.post("/api/webui/jargon/batch/delete", json={"ids": [1]})
@@ -265,6 +271,7 @@ def test_deletion_cleans_state_and_history(inference_api, batch):
 
 
 def test_overwrite_import_cleans_prior_inference_metadata(inference_api, monkeypatch):
+    """覆盖导入创建人工词条，并清除旧词条留下的状态与历史。"""
     monkeypatch.setattr(jargon, "require_existing_session_ids", lambda session_ids: session_ids)
     response = inference_api.client.post(
         "/api/webui/jargon/import",
@@ -307,6 +314,7 @@ def test_settings_save_uses_shared_writer_and_main_loop_reload(inference_api, mo
 
 
 def test_settings_reload_failure_reports_saved_but_not_loaded(inference_api, monkeypatch):
+    """配置写入成功而热重载失败时，接口需区分两步的实际结果。"""
     writes = []
     monkeypatch.setitem(
         sys.modules,
@@ -357,12 +365,14 @@ def test_stale_admin_settings_rejected_before_write(inference_api, monkeypatch):
 
 @pytest.mark.parametrize("optimistic", [False, True])
 def test_concurrent_settings_puts_serialize_save_and_reload(inference_api, monkeypatch, optimistic):
+    """整个保存和热重载过程串行；携带旧快照的并发请求在写入前被拒绝。"""
     first_save_started, release_first_save, second_save_started = Event(), Event(), Event()
     saved = {}
     operations = []
     expected = {"expected_settings": inference_api.config.jargon.inference.model_dump()} if optimistic else {}
 
     def save(section, data):
+        """阻塞第一次保存，验证第二次请求不会提前修改待重载数据。"""
         threshold = data["inference"]["thresholds"][0]
         operations.append(("save", threshold))
         if threshold == 1:
