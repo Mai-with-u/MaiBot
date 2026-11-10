@@ -6,6 +6,7 @@ import { getChatStreamDetail } from '@/lib/chat-management-api'
 
 import { isFocusFlowId } from './observed-sessions'
 
+/** Open chat details on hover or focus, using group-level status for shared Focus streams. */
 export function ObservedConversationHoverCard({
   sessionId,
   name,
@@ -48,6 +49,7 @@ export function ObservedConversationHoverCard({
     <Popover open={open} onOpenChange={(value) => { clearTimer(); setOpen(value) }}>
       <PopoverAnchor asChild>
         <div
+          role="presentation"
           data-conversation-hover-anchor="true"
           onPointerEnter={(event) => { if (event.pointerType === 'mouse') schedule(true) }}
           onPointerLeave={() => schedule(false)}
