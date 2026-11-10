@@ -4,9 +4,7 @@ from os import getenv
 from pathlib import Path
 from pydantic import BaseModel, model_validator
 from threading import RLock
-from time import monotonic
 from typing import Any, Dict, Literal, Optional
-from urllib.parse import quote, urlencode
 import asyncio
 import json
 
@@ -18,6 +16,7 @@ from src.common.http_client import get_shared_ssl_context
 from .cache import market_cache
 
 SETTINGS_FILE = Path("data/plugin_market.json")
+# 官方服务只负责统计与互动（点赞、评分、下载计数）；插件清单和版本索引来自 CNB / GitHub 的 plugin-repo。
 MARKET_BASE_URL = getenv("MAIBOT_PLUGIN_MARKET_BASE_URL", "http://hyybuth.xyz:10059").rstrip("/")
 CATALOG_TTL = 30 * 60
 MARKET_TTL = 5 * 60
@@ -27,7 +26,7 @@ _settings_lock = RLock()
 
 
 class PluginSourceSettings(BaseModel):
-    information_source: Literal["official", "cnb", "github"] = "official"
+    information_source: Literal["cnb", "github"] = "cnb"
     download_source: Literal["cnb", "github", "custom"] = "cnb"
     custom_download_prefix: Optional[str] = None
 
@@ -44,11 +43,13 @@ def load_source_settings() -> PluginSourceSettings:
             return PluginSourceSettings()
         try:
             data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-            # 旧开关只表达是否使用 Git 索引，开启时迁移为固定的 CNB 信息源。
+            # 旧开关只表达是否使用 Git 索引；已移除官方信息源，旧设置一律迁移为 CNB 信息源。
             if isinstance(data, dict) and "use_github" in data:
                 if not isinstance(data["use_github"], bool):
                     raise ValueError("插件市场 use_github 设置必须为布尔值")
-                data = {"information_source": "cnb" if data["use_github"] else "official"}
+                data = {"information_source": "cnb"}
+            if isinstance(data, dict) and data.get("information_source") == "official":
+                data = {**data, "information_source": "cnb"}
             return PluginSourceSettings.model_validate(data)
         except ValueError:
             backup = quarantine_file(SETTINGS_FILE)
@@ -88,30 +89,3 @@ def _fetch_information_file(file_path: str, source: Optional[str], force_refresh
     data, cache = market_cache.get(url, load, ttl, force_refresh)
     logger.debug(f"插件市场索引: source={selected} cache={cache} url={url}")
     return {"success": True, "data": data, "mirror_used": selected, "attempts": 1, "url": url, "cache": cache}
-
-
-async def request_market(path: str, params: Dict[str, Any], force_refresh: bool = False) -> Dict[str, Any]:
-    url = f"{MARKET_BASE_URL}/api/v2/market/{path}?{urlencode(params)}"
-
-    def load() -> Dict[str, Any]:
-        return GitSource.read_json(url, REQUEST_TIMEOUT, get_shared_ssl_context())
-
-    def read() -> Dict[str, Any]:
-        started = monotonic()
-        try:
-            data, cache = market_cache.get(url, load, MARKET_TTL, force_refresh)
-        except (OSError, ValueError):
-            logger.warning(f"插件市场请求失败: url={url} elapsed={monotonic() - started:.2f}s")
-            raise
-        logger.debug(f"插件市场请求: url={url} cache={cache} elapsed={monotonic() - started:.2f}s")
-        return {**data, "cache": cache, "source_url": url}
-
-    return await asyncio.to_thread(read)
-
-
-async def request_market_detail(
-    plugin_id: str, maibot_version: str, force_refresh: bool = False,
-) -> Dict[str, Any]:
-    return await request_market(
-        f"plugins/{quote(plugin_id, safe='')}", {"maibot_version": maibot_version}, force_refresh,
-    )

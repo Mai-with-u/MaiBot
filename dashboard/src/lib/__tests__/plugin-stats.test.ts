@@ -32,9 +32,6 @@ async function loadPluginStats() {
   return await import('../plugin-stats')
 }
 
-const invalidateMarket = vi.hoisted(() => vi.fn())
-vi.mock('@/lib/plugin-api/marketplace', () => ({ invalidatePluginMarketStats: invalidateMarket }))
-
 describe('公共市场统计与互动', () => {
   beforeEach(() => {
     vi.resetModules()
@@ -56,14 +53,13 @@ describe('公共市场统计与互动', () => {
     await expect(stats.getPluginStats('a')).rejects.toThrow('offline')
   })
 
-  it('点赞成功后失效唯一的市场列表缓存', async () => {
+  it('点赞走公共互动接口并返回最新统计', async () => {
     const stats = await loadPluginStats()
     httpMocks.backendApi.post.mockResolvedValue({ likes: 3, liked: true })
     expect(await stats.likePlugin('a', 'user')).toMatchObject({ success: true, likes: 3 })
     expect(httpMocks.backendApi.post).toHaveBeenCalledWith('/api/webui/plugins/marketplace/like', {
       body: { plugin_id: 'a', user_id: 'user' },
     })
-    expect(invalidateMarket).toHaveBeenCalledTimes(1)
   })
 
   it('评分与匿名评论使用公共互动接口', async () => {
@@ -74,7 +70,6 @@ describe('公共市场统计与互动', () => {
     expect(httpMocks.backendApi.post).toHaveBeenCalledWith('/api/webui/plugins/marketplace/rate', {
       body: { plugin_id: 'a', user_id: 'user', rating: 5, comment: '好用', anonymous: true },
     })
-    expect(invalidateMarket).toHaveBeenCalledTimes(1)
     expect((await stats.ratePlugin('a', 8, undefined, 'user')).success).toBe(false)
   })
 

@@ -61,7 +61,7 @@ def test_information_source_is_fixed_and_never_uses_download_source(monkeypatch,
     assert len(calls) == 1 and calls[0].hostname == host
 
 
-@pytest.mark.parametrize("information", ["official", "cnb", "github"])
+@pytest.mark.parametrize("information", ["cnb", "github"])
 @pytest.mark.parametrize("download,host", [("cnb", "cnb.cool"), ("github", "github.com"), ("custom", "127.0.0.1")])
 def test_download_uses_only_selected_source_even_on_failure(monkeypatch, tmp_path, information, download, host):
     market.save_source_settings(market.PluginSourceSettings(
@@ -131,7 +131,7 @@ def test_release_index_cache_does_not_cross_information_sources(monkeypatch):
     assert calls == ["cnb.cool", "raw.githubusercontent.com"]
 
 
-@pytest.mark.parametrize("source", ["official", "cnb", "github"])
+@pytest.mark.parametrize("source", ["cnb", "github"])
 def test_marketplace_listing_only_calls_selected_information_source(monkeypatch, source):
     from src.plugin_market import service
 
@@ -147,7 +147,7 @@ def test_marketplace_listing_only_calls_selected_information_source(monkeypatch,
     with pytest.raises(OSError, match="offline"):
         asyncio.run(service.get_catalog())
     assert calls
-    expected = {"official": "hyybuth.xyz", "cnb": "cnb.cool", "github": "raw.githubusercontent.com"}[source]
+    expected = {"cnb": "cnb.cool", "github": "raw.githubusercontent.com"}[source]
     assert all(urlsplit(url).hostname == expected for url in calls)
 
 

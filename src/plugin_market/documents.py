@@ -74,7 +74,7 @@ def _remote_document(
         owner, repo = parsed.path.strip("/").removesuffix(".git").split("/")
         # README 跟随下载源，并保留所选发布版本的提交，避免展示其他版本的文档。
         # 更新日志仍按信息源读取，外部声明的 URL 则直接使用原地址。
-        git = download_source() if kind == "readme" else GitSource.select("github" if source == "official" else source)
+        git = download_source() if kind == "readme" else GitSource.select(source)
         url = git.raw_url(owner, repo, branch, declared if kind == "changelog" else "README.md")
 
     def load() -> str:
