@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -125,16 +125,33 @@ describe('插件商店来源设置', () => {
   })
 
   it('保存失败保留草稿，可再次保存', async () => {
-    vi.mocked(backendApi.put).mockRejectedValueOnce(new Error('保存失败'))
-    const { onSaved } = renderSettings()
+    let rejectSave!: (error: Error) => void
+    const pendingSave = new Promise<never>((_resolve, reject) => { rejectSave = reject })
+    vi.mocked(backendApi.put).mockReturnValueOnce(pendingSave)
+    const { client, onSaved } = renderSettings()
     await screen.findByRole('combobox', { name: '插件下载源' })
     await choose('插件下载源', 'Github源')
-    await userEvent.click(screen.getByRole('button', { name: '保存设置' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '保存设置' })).toBeEnabled())
+    const saveButton = screen.getByRole('button', { name: '保存设置' })
+    await userEvent.click(saveButton)
+    await waitFor(() => {
+      expect(backendApi.put).toHaveBeenCalledOnce()
+      expect(saveButton).toBeDisabled()
+    })
+    expect(onSaved).not.toHaveBeenCalled()
+
+    await act(async () => { rejectSave(new Error('保存失败')) })
+    await waitFor(() => expect(saveButton).toBeEnabled())
     expect(onSaved).not.toHaveBeenCalled()
     expect(screen.getByRole('combobox', { name: '插件下载源' })).toHaveTextContent('Github源')
-    await userEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    expect(client.getQueryData(['plugin-market-source'])).toEqual(settings)
+
+    await userEvent.click(saveButton)
     await waitFor(() => expect(onSaved).toHaveBeenCalledOnce())
     expect(backendApi.put).toHaveBeenCalledTimes(2)
+    expect(backendApi.put).toHaveBeenLastCalledWith('/api/webui/plugins/marketplace/source', {
+      body: { ...settings, download_source: 'github' }, errorMessage: '保存插件商店设置失败',
+    })
+    expect(client.getQueryData(['plugin-market-source'])).toEqual({ ...settings, download_source: 'github' })
+    expect(saveButton).toBeDisabled()
   })
 })

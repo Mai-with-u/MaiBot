@@ -482,6 +482,61 @@ describe('ProviderForm 弹窗开关与模板选择', () => {
     expect(screen.getByRole('combobox', { name: '客户端类型' })).toHaveTextContent('gemini')
   })
 
+  it.each(['click', 'Space', 'Enter'] as const)(
+    '模板说明按钮的 %s 操作不选择模板或覆盖当前草稿',
+    async (activation) => {
+      const user = userEvent.setup()
+      const { onSave, onOpenChange } = renderForm({ editingProvider: makeProvider(), editingIndex: 0 })
+      await user.clear(screen.getByLabelText('名称 *'))
+      await user.type(screen.getByLabelText('名称 *'), '我的提供商草稿')
+      await user.click(screen.getByRole('combobox', { name: '客户端类型' }))
+      await user.click(await screen.findByRole('option', { name: 'openai_responses' }))
+
+      const trigger = getTemplateTrigger()
+      await user.click(trigger)
+      await user.type(screen.getByPlaceholderText('搜索提供商模板...'), '麦麦特调回复')
+      const option = await screen.findByRole('option', { name: /麦麦特调回复/ })
+      const info = within(option).getByRole('button')
+      if (activation === 'click') {
+        await user.click(info)
+      } else {
+        await waitFor(() => expect(option).toHaveAttribute('aria-selected', 'true'))
+        await user.tab()
+        expect(info).toHaveFocus()
+        expect(await screen.findByRole('tooltip')).toHaveTextContent('只能用在回复模型哦')
+        await user.keyboard(activation === 'Space' ? ' ' : '{Enter}')
+      }
+
+      expect(onSave).not.toHaveBeenCalled()
+      expect(onOpenChange).not.toHaveBeenCalled()
+      expect(trigger).toHaveAttribute('aria-expanded', 'true')
+      expect(screen.getByLabelText('名称 *')).toHaveValue('我的提供商草稿')
+      expect(screen.getByLabelText('基础 URL *')).toHaveValue('https://api.deepseek.com')
+      expect(screen.getByRole('combobox', { name: '客户端类型' })).toHaveTextContent('openai_responses')
+      expect(screen.getByLabelText('API Key')).toHaveValue('sk-test')
+    },
+  )
+
+  it('模板搜索框的 Enter 仍选择当前选项并关闭列表', async () => {
+    const user = userEvent.setup()
+    renderForm()
+    const trigger = getTemplateTrigger()
+    await user.click(trigger)
+    await user.type(screen.getByPlaceholderText('搜索提供商模板...'), 'OpenAI')
+    await user.keyboard('{Enter}')
+
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByLabelText('名称 *')).toHaveValue('OpenAI')
+    expect(screen.getByLabelText('基础 URL *')).toHaveValue('https://api.openai.com/v1')
+  })
+
+  it('名称输入框的 Enter 仍提交当前表单草稿', async () => {
+    const user = userEvent.setup()
+    const { onSave } = renderForm()
+    await user.type(screen.getByLabelText('名称 *'), '{Enter}')
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce())
+  })
+
   it('编辑无 allowed_client_types 的 OpenAI 提供商时仍按 URL 匹配模板', async () => {
     renderForm({
       editingProvider: makeProvider({

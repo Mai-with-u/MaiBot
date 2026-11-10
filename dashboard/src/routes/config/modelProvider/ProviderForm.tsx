@@ -650,7 +650,16 @@ function TemplateInfo({ description }: { description: string }) {
     <TooltipProvider delayDuration={200}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <button type="button" className="ml-1 inline-flex cursor-help text-muted-foreground" aria-label={description}>
+          <button
+            type="button"
+            className="ml-1 inline-flex cursor-help text-muted-foreground"
+            aria-label={description}
+            data-dialog-skip-confirm
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') event.stopPropagation()
+            }}
+          >
             <Info className="h-4 w-4" />
           </button>
         </TooltipTrigger>
