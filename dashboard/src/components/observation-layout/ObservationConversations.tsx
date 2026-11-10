@@ -129,7 +129,7 @@ export function ObservationConversations({ collapsed }: { collapsed: boolean }) 
     [chatStreams, monitorSessions, stageStatuses]
   )
   const sorted = useMemo(
-    () => Array.from(sessions.values()).sort((a, b) => b.lastActivity - a.lastActivity),
+    () => Array.from(sessions.values()).filter((session) => session.platform !== 'internal').sort((a, b) => b.lastActivity - a.lastActivity),
     [sessions]
   )
   const normalizedQuery = query.trim().toLowerCase()

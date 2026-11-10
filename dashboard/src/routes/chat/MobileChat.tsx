@@ -21,6 +21,7 @@ import { cn } from '@/lib/utils'
 import type { SessionInfo, StageStatusInfo } from '@/routes/monitor/use-maisaka-monitor'
 import { StageStatusLabel } from '@/routes/monitor/StageStatusLabel'
 
+import { Button } from '@/components/ui/button'
 import { ConversationAvatar } from '@/components/ui/conversation'
 
 import { useChatTabAvatarUrl } from './local-bot-avatar'
@@ -386,6 +387,7 @@ export function MobileChatList({
       getChatTabDisplayName(tab, t('chat.botNameFallback')).toLowerCase().includes(normalizedQuery)
   )
   const visibleObserved = Array.from(observedSessions.values())
+    .filter((session) => session.platform !== 'internal')
     .sort((a, b) => b.lastActivity - a.lastActivity)
     .filter(
       (session) => !normalizedQuery || session.sessionName.toLowerCase().includes(normalizedQuery)
@@ -526,6 +528,7 @@ interface MobileChatRoomBarProps {
   avatar: ReactNode
   onBack: () => void
   /** 观察聊天流显示设置入口，本地会话显示「我的头像」入口 */
+  onObserve?: () => void
   onOpenSettings?: () => void
   userAvatar?: {
     userId: string
@@ -544,6 +547,7 @@ export function MobileChatRoomBar({
   avatar,
   onBack,
   onOpenSettings,
+  onObserve,
   userAvatar,
 }: MobileChatRoomBarProps) {
   const { t } = useTranslation()
@@ -596,6 +600,7 @@ export function MobileChatRoomBar({
         </span>
       </div>
       <span className="flex-1" />
+      {onObserve && <Button variant="outline" size="sm" onClick={onObserve}>观察</Button>}
       {onOpenSettings && (
         <button
           type="button"

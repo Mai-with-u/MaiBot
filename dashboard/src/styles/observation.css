@@ -1217,3 +1217,8 @@
 :root[data-dashboard-style='millennium'] [data-observation-composer-input='true'] input { color: var(--mil-screen-ink); }
 [data-observation-composer-input='true']:focus-within { outline: 2px solid hsl(var(--ring)); outline-offset: 1px; }
 [data-observation-send='true'] svg { width: 1rem; height: 1rem; }
+
+/* 分页保留三行高度，最后一页不足十二项时不会带动下方会话列表跳动。 */
+[data-observation-keys='true'][data-paginated='true'] {
+  grid-template-rows: repeat(3, 3.125rem);
+}
