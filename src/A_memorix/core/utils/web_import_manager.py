@@ -804,12 +804,13 @@ class ImportTaskManager:
 
     def _llm_retry_config(self) -> Dict[str, float]:
         timeout_cfg = self._timeout_config()
-        retries = max(0, self._cfg_int("web.import.llm_retry.max_attempts", 4))
+        # max_attempts 包含首次调用，额外重试次数应少一次。
+        max_attempts = max(1, self._cfg_int("web.import.llm_retry.max_attempts", 4))
         min_wait = max(0.1, float(self._cfg("web.import.llm_retry.min_wait_seconds", 3) or 3))
         max_wait = max(min_wait, float(self._cfg("web.import.llm_retry.max_wait_seconds", 40) or 40))
         mult = max(1.0, float(self._cfg("web.import.llm_retry.backoff_multiplier", 3) or 3))
         return {
-            "retries": retries,
+            "retries": max_attempts - 1,
             "min_wait": min_wait,
             "max_wait": max_wait,
             "multiplier": mult,
