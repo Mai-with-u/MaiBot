@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from src.common.logger import get_logger
+from src.webui.routers.chat_migration import router as chat_migration_router
 from src.webui.routers.agent import router as agent_router
 from src.webui.routers.desktop_pet import router as desktop_pet_router
 from src.webui.routers.desktop_pet_remote import router as desktop_pet_remote_router
@@ -40,6 +41,7 @@ router = APIRouter(prefix="/api/webui", tags=["WebUI"])
 
 # 注册配置管理路由
 router.include_router(config_router)
+router.include_router(chat_migration_router)
 router.include_router(mcp_router)
 # 注册统计数据路由
 router.include_router(statistics_router)

@@ -54,6 +54,9 @@ from .v45_to_v46 import migrate_v45_to_v46
 from .v46_to_v47 import migrate_v46_to_v47
 from .v47_to_v48 import migrate_v47_to_v48
 from .v48_to_v49 import migrate_v48_to_v49
+from .v49_to_v50 import migrate_v49_to_v50
+from .v50_to_v51 import migrate_v50_to_v51
+from .v51_to_v52 import migrate_v51_to_v52
 from .version_store import SQLiteUserVersionStore
 
 EMPTY_SCHEMA_VERSION = 0
@@ -106,7 +109,10 @@ V46_SCHEMA_VERSION = 46
 V47_SCHEMA_VERSION = 47
 V48_SCHEMA_VERSION = 48
 V49_SCHEMA_VERSION = 49
-LATEST_SCHEMA_VERSION = V49_SCHEMA_VERSION
+V50_SCHEMA_VERSION = 50
+V51_SCHEMA_VERSION = 51
+V52_SCHEMA_VERSION = 52
+LATEST_SCHEMA_VERSION = V52_SCHEMA_VERSION
 
 _LEGACY_V1_EXCLUSIVE_TABLES = (
     "chat_streams",
@@ -2015,6 +2021,27 @@ def build_default_migration_registry() -> MigrationRegistry:
                 name="v48_to_v49",
                 description="新增独立相通组、统一成员、共享能力与配置导入记录。",
                 handler=migrate_v48_to_v49,
+            ),
+            MigrationStep(
+                version_from=V49_SCHEMA_VERSION,
+                version_to=V50_SCHEMA_VERSION,
+                name="v49_to_v50",
+                description="新增在线聊天流迁移任务与复制来源账本。",
+                handler=migrate_v49_to_v50,
+            ),
+            MigrationStep(
+                version_from=V50_SCHEMA_VERSION,
+                version_to=V51_SCHEMA_VERSION,
+                name="v50_to_v51",
+                description="补齐已有聊天迁移账本的记录签名与目标记录索引。",
+                handler=migrate_v50_to_v51,
+            ),
+            MigrationStep(
+                version_from=V51_SCHEMA_VERSION,
+                version_to=V52_SCHEMA_VERSION,
+                name="v51_to_v52",
+                description="移除聊天迁移记录指纹，使用稳定来源记录键去重。",
+                handler=migrate_v51_to_v52,
             ),
         ]
     )

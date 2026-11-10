@@ -355,8 +355,8 @@ const mcpSettingsRoute = createRoute({
 const dataTransferRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/data-transfer',
-  validateSearch: (search: Record<string, unknown>): { tab?: 'transfer' | 'files' } => ({
-    tab: search.tab === 'files' ? 'files' : undefined,
+  validateSearch: (search: Record<string, unknown>): { tab?: 'transfer' | 'files' | 'chat-migration' } => ({
+    tab: search.tab === 'files' || search.tab === 'chat-migration' ? search.tab : undefined,
   }),
   component: lazyRouteComponent(() => import('./routes/data-transfer'), 'DataTransferPage'),
 })

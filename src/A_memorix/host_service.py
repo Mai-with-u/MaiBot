@@ -222,6 +222,19 @@ class AMemorixHostService:
         return await run_on_main_loop(self._invoke_on_runtime(component_name, args, timeout_ms=timeout_ms))
 
     async def _invoke_on_runtime(
+        self, component_name: str, args: Dict[str, Any] | None = None,
+        *, timeout_ms: Optional[int] = None,
+    ) -> Any:
+        from src.services.chat_migration_gate import chat_migration_gate
+
+        payload = args or {}
+        session_id = str(payload.get("chat_id") or payload.get("session_id") or "")
+        if session_id and component_name != "memory_chat_migration":
+            async with chat_migration_gate.activity(session_id):
+                return await self._invoke_unguarded(component_name, args, timeout_ms=timeout_ms)
+        return await self._invoke_unguarded(component_name, args, timeout_ms=timeout_ms)
+
+    async def _invoke_unguarded(
         self,
         component_name: str,
         args: Dict[str, Any] | None = None,
@@ -252,6 +265,21 @@ class AMemorixHostService:
             if self._runtime_state == "stopped":
                 await self._ensure_startup_task()
             return await self._unavailable_response(component_name, payload)
+
+        if component_name == "memory_chat_migration":
+            from .core.runtime.services.chat_migration_service import ChatMemoryMigration
+            from src.services.chat_migration_gate import settled_thread
+
+            service = ChatMemoryMigration(kernel.metadata_store)
+            action = payload["action"]
+            arguments = {key: value for key, value in payload.items() if key != "action"}
+            if action == "snapshot":
+                return await asyncio.to_thread(service.snapshot, **arguments)
+            if action == "apply":
+                return await settled_thread(service.apply, **arguments)
+            if action == "restore":
+                return await settled_thread(service.restore, **arguments)
+            raise ValueError("未知记忆迁移动作")
 
         if component_name == "search_memory":
             from .core.runtime.sdk_memory_kernel import KernelSearchRequest

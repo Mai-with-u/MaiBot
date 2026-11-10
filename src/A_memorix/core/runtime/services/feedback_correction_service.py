@@ -1373,6 +1373,15 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
         return resolved
 
     async def _process_feedback_task(self, task: Dict[str, Any]) -> None:
+        from src.services.chat_migration_gate import chat_migration_gate
+
+        session_id = str(task.get("session_id") or "")
+        if session_id in chat_migration_gate.blocked:
+            return
+        async with chat_migration_gate.activity(session_id):
+            await self._process_unpaused_feedback_task(task)
+
+    async def _process_unpaused_feedback_task(self, task: Dict[str, Any]) -> None:
         task_id = int(task.get("id") or 0)
         query_tool_id = str(task.get("query_tool_id", "") or "").strip()
         if task_id <= 0 or not query_tool_id:
