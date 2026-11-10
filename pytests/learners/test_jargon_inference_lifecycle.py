@@ -173,8 +173,16 @@ def runtime_shutdown_functions(lifecycle, monkeypatch):
     selected = [
         node
         for node in parsed.body
-        if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef)
-        and node.name in {"graceful_shutdown", "_await_shutdown_step", "_shutdown_time_left"}
+        if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef | ast.ClassDef)
+        and node.name
+        in {
+            "graceful_shutdown",
+            "_await_shutdown_step",
+            "_shutdown_time_left",
+            "_ShutdownStepIncomplete",
+            "_remember_shutdown_step",
+            "_finish_shutdown_step",
+        }
     ]
     namespace = {
         "asyncio": asyncio,
@@ -186,6 +194,7 @@ def runtime_shutdown_functions(lifecycle, monkeypatch):
         "FINAL_CLEANUP_TIMEOUT": 5.0,
         "IMAGE_SYNC_TIMEOUT": 5.0,
         "_shutdown_deadline": None,
+        "_pending_shutdown_steps": set(),
         "request_shutdown": Mock(),
         "report_phase": Mock(),
         "logger": Mock(),
