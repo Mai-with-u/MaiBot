@@ -1,7 +1,7 @@
 from collections import OrderedDict
 from dataclasses import replace
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple, TypedDict
+from typing import Any, Awaitable, Callable, Dict, List, NotRequired, Optional, Set, Tuple, TypedDict
 
 from sqlalchemy import text
 from sqlmodel import col, delete, select
@@ -45,6 +45,8 @@ llm_inference = LLMServiceClient(task_name="learner", request_type="jargon.infer
 class JargonEvidenceMessageRef(TypedDict):
     platform: str
     message_id: str
+    session_id: NotRequired[str]
+    database_id: NotRequired[int]
 
 
 JargonEvidenceMessageGroup = List[JargonEvidenceMessageRef]
@@ -243,12 +245,12 @@ class JargonMiner:
             return []
 
         normalized_groups: List[JargonEvidenceMessageGroup] = []
-        seen_groups: Set[Tuple[Tuple[str, str], ...]] = set()
+        seen_groups: Set[str] = set()
         for raw_group in raw_groups:
             if not isinstance(raw_group, list):
                 continue
             group: JargonEvidenceMessageGroup = []
-            seen_refs: Set[Tuple[str, str]] = set()
+            seen_refs: Set[str] = set()
             for raw_ref in raw_group:
                 if not isinstance(raw_ref, dict):
                     continue
@@ -256,14 +258,19 @@ class JargonMiner:
                 message_id = str(raw_ref.get("message_id") or "").strip()
                 if not platform or not message_id:
                     continue
-                ref_key = (platform, message_id)
+                ref: JargonEvidenceMessageRef = {"platform": platform, "message_id": message_id}
+                if raw_ref.get("session_id"):
+                    ref["session_id"] = str(raw_ref["session_id"])
+                if isinstance(raw_ref.get("database_id"), int) and raw_ref["database_id"] > 0:
+                    ref["database_id"] = raw_ref["database_id"]
+                ref_key = json.dumps(ref, sort_keys=True)
                 if ref_key in seen_refs:
                     continue
                 seen_refs.add(ref_key)
-                group.append({"platform": platform, "message_id": message_id})
+                group.append(ref)
             if not group:
                 continue
-            group_key = tuple((ref["platform"], ref["message_id"]) for ref in group)
+            group_key = json.dumps(group, sort_keys=True)
             if group_key in seen_groups:
                 continue
             seen_groups.add(group_key)
@@ -293,44 +300,84 @@ class JargonMiner:
     def _recover_evidence_groups(
         self, jargon_obj: MaiJargon, session_ids: Set[str]
     ) -> List[JargonEvidenceMessageGroup]:
-        """引用已丢失时，在原有会话范围内寻找带该词条的文字及相邻消息。"""
+        """按时间和 ID 分页查找有效来源，再按相同边界还原相邻消息。"""
         if not session_ids or not jargon_obj.content.strip():
             return []
         limit = global_config.jargon.inference.evidence_limit
+        page_size = max(limit, 100)
         groups: List[JargonEvidenceMessageGroup] = []
+        excluded_sources = {(user.platform, user.user_id) for user in global_config.jargon.learning_blacklist}
+        cursor: Optional[Tuple[datetime, int]] = None
         with get_db_session() as session:
-            matches = session.exec(
-                select(Messages)
-                .where(col(Messages.session_id).in_(session_ids))
-                .where(col(Messages.processed_plain_text).contains(jargon_obj.content, autoescape=True))
-                .order_by(col(Messages.timestamp).desc(), col(Messages.id).desc())
-                .limit(limit)
-            ).all()
-            for message in reversed(matches):
-                # 搜索列可能包含媒体描述，只有原始消息的文字正文真正包含词条才作为证据。
-                sequence = MessageUtils.from_db_record_msg_to_MaiSeq(message.raw_content)
-                if jargon_obj.content not in extract_learning_text(sequence):
-                    continue
-                before = session.exec(
+            while len(groups) < limit:
+                query = (
                     select(Messages)
-                    .where(col(Messages.session_id) == message.session_id)
-                    .where(col(Messages.timestamp) <= message.timestamp)
-                    .order_by(col(Messages.timestamp).desc(), col(Messages.id).desc())
-                    .limit(3)
+                    .where(col(Messages.session_id).in_(session_ids))
+                    .where(col(Messages.processed_plain_text).contains(jargon_obj.content, autoescape=True))
+                )
+                if cursor is not None:
+                    query = query.where(
+                        (col(Messages.timestamp) < cursor[0])
+                        | ((col(Messages.timestamp) == cursor[0]) & (col(Messages.id) < cursor[1]))
+                    )
+                matches = session.exec(
+                    query.order_by(col(Messages.timestamp).desc(), col(Messages.id).desc()).limit(page_size)
                 ).all()
-                after = session.exec(
-                    select(Messages)
-                    .where(col(Messages.session_id) == message.session_id)
-                    .where(col(Messages.timestamp) > message.timestamp)
-                    .order_by(col(Messages.timestamp), col(Messages.id))
-                    .limit(2)
-                ).all()
-                refs = [
-                    {"platform": item.platform, "message_id": item.message_id}
-                    for item in [*reversed(before), message, *after]
-                ]
-                groups.extend(self._normalize_evidence_message_groups([refs]))
-        return self._normalize_evidence_message_groups(groups)[-limit:]
+                if not matches:
+                    break
+                for message in matches:
+                    if (message.platform, message.user_id) in excluded_sources:
+                        continue
+                    # 搜索列可能包含媒体描述，只有原始正文真正包含词条才作为来源。
+                    try:
+                        sequence = MessageUtils.from_db_record_msg_to_MaiSeq(message.raw_content)
+                        message_text = extract_learning_text(sequence)
+                    except Exception:
+                        logger.exception("恢复黑话证据时无法解码消息 id=%s", message.id)
+                        continue
+                    if jargon_obj.content not in message_text:
+                        continue
+                    before = session.exec(
+                        select(Messages)
+                        .where(col(Messages.session_id) == message.session_id)
+                        .where(
+                            (col(Messages.timestamp) < message.timestamp)
+                            | ((col(Messages.timestamp) == message.timestamp) & (col(Messages.id) < message.id))
+                        )
+                        .order_by(col(Messages.timestamp).desc(), col(Messages.id).desc())
+                        .limit(3)
+                    ).all()
+                    after = session.exec(
+                        select(Messages)
+                        .where(col(Messages.session_id) == message.session_id)
+                        .where(
+                            (col(Messages.timestamp) > message.timestamp)
+                            | ((col(Messages.timestamp) == message.timestamp) & (col(Messages.id) > message.id))
+                        )
+                        .order_by(col(Messages.timestamp), col(Messages.id))
+                        .limit(2)
+                    ).all()
+                    # 黑名单只限制学习来源，仍允许其消息作为相邻上下文。
+                    refs = [
+                        {
+                            "platform": item.platform,
+                            "message_id": item.message_id,
+                            "session_id": item.session_id,
+                            "database_id": item.id,
+                        }
+                        for item in [*reversed(before), message, *after]
+                    ]
+                    groups.extend(self._normalize_evidence_message_groups([refs]))
+                    if len(groups) >= limit:
+                        break
+                cursor = (matches[-1].timestamp, matches[-1].id)
+        # 推断使用由旧到新的上下文组；分页查询由新到旧以保留最近的有效证据。
+        return self._normalize_evidence_message_groups(list(reversed(groups)))
+
+    def recoverable_evidence_hash(self, jargon_obj: MaiJargon) -> str:
+        """只读检查当前可用的文字证据，供定期任务发现失效引用后的新消息。"""
+        _, evidence_messages, _ = self._load_evidence_contexts(jargon_obj)
+        return evidence_hash(evidence_messages)
 
     def _load_evidence_contexts(self, jargon_obj: MaiJargon) -> Tuple[List[str], Optional[str], bool]:
         """还原有效文字上下文，限定来源范围，缺失时重建并保留有界引用。"""
@@ -341,34 +388,51 @@ class JargonMiner:
         session_ids = self._evidence_session_ids(jargon_obj)
         context_texts: List[str] = []
         valid_groups: List[JargonEvidenceMessageGroup] = []
+        excluded_sources = {(user.platform, user.user_id) for user in global_config.jargon.learning_blacklist}
 
         def load(groups: List[JargonEvidenceMessageGroup]) -> None:
             with get_db_session() as session:
                 for group in groups:
                     messages: List[Messages] = []
                     for ref in group:
-                        message = session.exec(
+                        query = (
                             select(Messages)
                             .where(col(Messages.platform) == ref["platform"])
                             .where(col(Messages.message_id) == ref["message_id"])
                             .where(col(Messages.session_id).in_(session_ids))
-                            .limit(1)
-                        ).first()
-                        if message is None:
+                        )
+                        if "session_id" in ref:
+                            query = query.where(col(Messages.session_id) == ref["session_id"])
+                        if "database_id" in ref:
+                            query = query.where(col(Messages.id) == ref["database_id"])
+                        candidates = session.exec(query.limit(2)).all()
+                        # 旧引用只有平台和消息号，存在歧义时重建，避免取错共享会话的同号消息。
+                        if len(candidates) != 1:
                             break
-                        messages.append(message)
+                        messages.append(candidates[0])
                     if len(messages) != len(group):
                         continue
                     context_lines: List[str] = []
                     valid_group: JargonEvidenceMessageGroup = []
+                    has_valid_source = False
                     for ref, message in zip(group, messages, strict=True):
                         # 与候选提取共用文字白名单，避免完整渲染文本重新带入引用或媒体描述。
-                        sequence = MessageUtils.from_db_record_msg_to_MaiSeq(message.raw_content)
-                        message_text = extract_learning_text(sequence)
+                        try:
+                            sequence = MessageUtils.from_db_record_msg_to_MaiSeq(message.raw_content)
+                            message_text = extract_learning_text(sequence)
+                        except Exception:
+                            logger.exception("载入黑话证据时无法解码消息 id=%s", message.id)
+                            continue
                         if message_text:
                             context_lines.append(f"[{len(context_lines) + 1}] {message_text}")
                             valid_group.append(ref)
-                    if context_lines:
+                            if (
+                                jargon_obj.content in message_text
+                                and (message.platform, message.user_id) not in excluded_sources
+                            ):
+                                has_valid_source = True
+                    # 邻近消息可以保留，但来源本身必须仍有可解码的文字证据。
+                    if context_lines and has_valid_source:
                         context_texts.append("\n".join(context_lines))
                         valid_groups.append(valid_group)
 
@@ -400,7 +464,7 @@ class JargonMiner:
         original_groups = self._normalize_evidence_message_groups(
             self._load_json_list(jargon_obj.evidence_messages, "evidence_messages")
         )
-        original_keys = {tuple((ref["platform"], ref["message_id"]) for ref in group) for group in original_groups}
+        original_keys = {json.dumps(group, sort_keys=True) for group in original_groups}
         cleaned_groups = self._normalize_evidence_message_groups(
             self._load_json_list(cleaned_evidence_messages, "evidence_messages")
         )
@@ -421,11 +485,7 @@ class JargonMiner:
             current_groups = self._normalize_evidence_message_groups(
                 self._load_json_list(db_record.evidence_messages, "evidence_messages")
             )
-            new_groups = [
-                group
-                for group in current_groups
-                if tuple((ref["platform"], ref["message_id"]) for ref in group) not in original_keys
-            ]
+            new_groups = [group for group in current_groups if json.dumps(group, sort_keys=True) not in original_keys]
             merged = self._merge_evidence_message_groups(cleaned_groups, new_groups)
             db_record.evidence_messages = json.dumps(merged, ensure_ascii=False) if merged else None
             db_record.updated_timestamp = datetime.now()
@@ -503,6 +563,7 @@ class JargonMiner:
         source: str,
         job_id: str,
     ) -> InferenceResult:
+        """用限定会话的证据推断含义，在事务中复核保护状态后写回。"""
         content = jargon_obj.content
         if jargon_obj.created_by == JargonCreatedBy.MANUAL or await asyncio.to_thread(
             self._is_locked, jargon_obj.item_id
@@ -573,7 +634,7 @@ class JargonMiner:
         if no_info:
             # 更新最后一次判定的count值，避免在同一阈值重复尝试；证据仍保留供新证据到来后复用。
             jargon_obj.last_inference_count = current_count
-            outcome = await asyncio.to_thread(self._modify_jargon_entry, jargon_obj, expected, source, job_id, False)
+            outcome = await self._commit_inference(jargon_obj, expected, source, job_id, False)
             if outcome != "succeeded":
                 return InferenceResult(outcome, "词条已删除、被保护或已更新", requests=requests[0])
             return InferenceResult("insufficient_info", "模型认为现有上下文不足", requests=requests[0])
@@ -596,7 +657,7 @@ class JargonMiner:
         if comparison_result is None or not isinstance(comparison_result.get("is_similar"), bool):
             return InferenceResult("failed", "比较结果缺少有效 is_similar", requests=requests[0])
         is_jargon = not comparison_result["is_similar"]  # 如果相似，说明不是黑话；如果有差异，说明是黑话
-        finalized_meaning = meaning1.strip() if is_jargon else previous_meaning
+        finalized_meaning = meaning1.strip()
         config = global_config.jargon.inference
         is_complete = config.stop_after_last_threshold and current_count >= config.thresholds[-1]
         last_inference_count = current_count
@@ -627,7 +688,7 @@ class JargonMiner:
         jargon_obj.last_inference_count = last_inference_count
         # 达到配置的最后阶段时标记完成；手动和定期任务仍可显式重新推断。
         jargon_obj.is_complete = is_complete
-        outcome = await asyncio.to_thread(self._modify_jargon_entry, jargon_obj, expected, source, job_id, True)
+        outcome = await self._commit_inference(jargon_obj, expected, source, job_id, True)
         if outcome != "succeeded":
             return InferenceResult(outcome, "词条已删除、被保护或已更新", requests=requests[0])
         logger.debug(
@@ -854,6 +915,25 @@ class JargonMiner:
             state = session.get(JargonInferenceState, jargon_id)
             return state is not None and state.locked
 
+    async def _commit_inference(
+        self,
+        jargon_obj: MaiJargon,
+        expected: Dict[str, Any],
+        source: str,
+        job_id: str,
+        record_history: bool,
+    ) -> str:
+        """写回线程启动后等待其终态，关停取消不能越过尚未完成的事务。"""
+        commit = asyncio.create_task(
+            asyncio.to_thread(self._modify_jargon_entry, jargon_obj, expected, source, job_id, record_history)
+        )
+        while True:
+            try:
+                return await asyncio.shield(commit)
+            except asyncio.CancelledError:
+                if commit.done():
+                    return commit.result()
+
     def _modify_jargon_entry(
         self,
         jargon_obj: MaiJargon,
@@ -884,7 +964,9 @@ class JargonMiner:
                 or db_record.created_timestamp != expected["created_timestamp"]
             ):
                 return "stale"
-            if record_history:
+            if record_history and (
+                db_record.meaning != jargon_obj.meaning or db_record.is_jargon != jargon_obj.is_jargon
+            ):
                 session.add(
                     JargonMeaningHistory(
                         jargon_id=jargon_obj.item_id,
@@ -932,6 +1014,7 @@ class JargonMiner:
 
     @staticmethod
     def _load_jargon_by_id(jargon_id: int) -> Optional[MaiJargon]:
+        """读取本轮推断的业务快照，保留数据库中的原始时间戳。"""
         with get_db_session() as session:
             db_record = session.get(Jargon, jargon_id)
             return MaiJargon.from_db_instance(db_record) if db_record is not None else None
@@ -944,6 +1027,7 @@ class JargonMiner:
         source: str = "automatic",
         job_id: str = "",
     ) -> InferenceResult:
+        """从任务 ID 对应的词条启动推断，将删除和查询失败区分为不同终态。"""
         try:
             jargon_obj = await asyncio.to_thread(self._load_jargon_by_id, jargon_id)
             if jargon_obj is None:

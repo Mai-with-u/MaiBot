@@ -54,6 +54,7 @@ import {
 } from './JargonDialogs'
 import { JargonList } from './JargonList'
 import { JargonInferenceDialog } from './JargonInferenceDialog'
+import { JargonInferenceMonitor } from './JargonInferenceMonitor'
 import type { JargonInferenceFilters } from '@/types/jargon-inference'
 
 import type { Jargon, JargonChatInfo } from '@/types/jargon'
@@ -644,12 +645,15 @@ export function JargonManagementPage({
         </DataBrowserLayout>
       </div>
 
+      <JargonInferenceMonitor />
       {isInferenceOpen && (
         <JargonInferenceDialog
           open={isInferenceOpen}
           onOpenChange={setIsInferenceOpen}
           selectedIds={Array.from(selectedIds)}
-          pageIds={list.isFetching ? [] : jargons.map((jargon) => jargon.id)}
+          pageIds={
+            list.isFetching || list.isSearchPending ? [] : jargons.map((jargon) => jargon.id)
+          }
           filters={inferenceFilters}
           scopeValid={inferenceScopeValid}
           total={total}
@@ -664,6 +668,12 @@ export function JargonManagementPage({
         open={isDetailDialogOpen}
         onOpenChange={setIsDetailDialogOpen}
         chatList={formChatList}
+        onLockChanged={(id, locked) => {
+          setSelectedJargon((current) =>
+            current?.id === id ? { ...current, inference_locked: locked } : current
+          )
+          invalidateJargon()
+        }}
         onChanged={(jargon) => {
           setSelectedJargon((current) => (current?.id === jargon.id ? jargon : current))
           invalidateJargon()

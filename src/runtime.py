@@ -196,6 +196,7 @@ def easter_egg():
 
 
 async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
+    """先停止产生后台工作的组件，再按预算依次关闭插件和存储。"""
     global _shutdown_deadline
     shutdown_deadline = time.monotonic() + SHUTDOWN_TIMEOUT
     # 前置关闭（含图片同步）共享 10 秒，不能挤占写入者、内核和最终任务清理的预算。
@@ -219,6 +220,13 @@ async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
             success = (
                 await _await_shutdown_step(main_system.app.stop(), timeout=5.0, step_name="停止消息入口") and success
             )
+        from src.learners.jargon_inference_service import get_jargon_inference_service
+
+        # CLI 入口直接运行 MainSystem，须在插件和存储关闭前停止推断并等待任务状态落盘。
+        success = (
+            await _await_shutdown_step(get_jargon_inference_service().stop(), timeout=5.0, step_name="停止黑话推断")
+            and success
+        )
         # 先停止桌宠轮询和主动唤醒，窗口退出时仍可调用插件关闭钩子。
         success = (
             await _await_shutdown_step(desktop_pet_service.stop(), timeout=6.0, step_name="停止桌宠") and success

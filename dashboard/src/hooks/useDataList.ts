@@ -61,6 +61,7 @@ export interface UseDataListResult<TItem, TFilters, TId> {
   setPageSize: (n: number) => void
   // 搜索（受控输入；内部防抖值驱动查询，变更重置页码并清空选中）
   searchInput: string
+  isSearchPending: boolean
   setSearchInput: (value: string) => void
   // 筛选（泛型袋；setFilter 自动重置页码并清空选中）
   filters: TFilters
@@ -238,6 +239,7 @@ export function useDataList<TItem, TFilters, TId = string>(
     pageSize,
     setPageSize,
     searchInput,
+    isSearchPending: searchInput !== search,
     setSearchInput,
     filters,
     setFilter,

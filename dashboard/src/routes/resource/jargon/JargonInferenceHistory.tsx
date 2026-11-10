@@ -31,10 +31,12 @@ export function JargonInferenceHistory({
   jargon,
   dirty,
   onChanged,
+  onLockChanged,
 }: {
   jargon: Jargon
   dirty: boolean
   onChanged: (jargon: Jargon) => void
+  onLockChanged: (id: number, locked: boolean) => void
 }) {
   const { t } = useTranslation()
   const [history, setHistory] = useState<JargonMeaningHistory[] | null>(null)
@@ -60,7 +62,7 @@ export function JargonInferenceHistory({
     setError('')
     try {
       await lockJargonInference(jargon.id, locked)
-      onChanged({ ...jargon, inference_locked: locked })
+      onLockChanged(jargon.id, locked)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {

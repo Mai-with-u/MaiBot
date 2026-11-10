@@ -104,6 +104,7 @@ describe('JargonDetailDialog', () => {
         onOpenChange={onOpenChange}
         chatList={chatList}
         onChanged={onChanged}
+        onLockChanged={vi.fn()}
       />
     )
     return { onChanged, onOpenChange }
@@ -128,6 +129,25 @@ describe('JargonDetailDialog', () => {
     expect(screen.getByText('AI')).toBeInTheDocument()
     expect(screen.getByText('全局')).toBeInTheDocument()
     expect(screen.getByText('推断完成')).toBeInTheDocument()
+  })
+
+  it('preserves typing when a pending lock updates only inference metadata', async () => {
+    const user = userEvent.setup()
+    const jargon = makeJargon(7)
+    const props = {
+      open: true,
+      onOpenChange: vi.fn(),
+      chatList,
+      onChanged: vi.fn(),
+      onLockChanged: vi.fn(),
+    }
+    const view = render(<JargonDetailDialog {...props} jargon={jargon} />)
+    const meaning = screen.getByLabelText('含义')
+    await user.clear(meaning)
+    await user.type(meaning, '请求期间输入的新含义')
+    view.rerender(<JargonDetailDialog {...props} jargon={{ ...jargon, inference_locked: true }} />)
+    expect(meaning).toHaveValue('请求期间输入的新含义')
+    expect(screen.getByRole('switch', { name: '锁定，阻止 AI 推断覆盖' })).toBeChecked()
   })
 
   it('内容清空后保存触发验证失败，不调用更新接口', async () => {

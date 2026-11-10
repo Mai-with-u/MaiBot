@@ -236,11 +236,13 @@ describe('useDataList', () => {
       act(() => result.current.setSearchInput('a'))
       act(() => result.current.setSearchInput('ab'))
       expect(result.current.searchInput).toBe('ab')
+      expect(result.current.isSearchPending).toBe(true)
 
       // 推进定时器，防抖值落定，queryFn 以最终值再次被调用
       await act(async () => {
         vi.advanceTimersByTime(300)
       })
+      expect(result.current.isSearchPending).toBe(false)
       await vi.waitFor(() =>
         expect(queryFn).toHaveBeenLastCalledWith(
           expect.objectContaining({ search: 'ab', page: 1 }),

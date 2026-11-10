@@ -46,7 +46,7 @@ def inference_api(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     service = SimpleNamespace(
         preview=AsyncMock(return_value={"total": 1, "eligible": 1, "skipped": 0, "reasons": {}}),
         submit=AsyncMock(return_value={"id": "job-a", "status": "queued"}),
-        list_jobs=AsyncMock(return_value=[]),
+        list_jobs=AsyncMock(return_value={"items": [], "total": 0, "page": 1, "page_size": 50}),
         get_job=AsyncMock(return_value={"job": {"id": "job-a"}, "items": [], "total": 0}),
         cancel=AsyncMock(return_value={"id": "job-a", "status": "cancelled"}),
         retry=AsyncMock(return_value={"id": "job-b", "status": "queued"}),
@@ -100,7 +100,26 @@ def test_static_inference_routes_precede_jargon_id(inference_api):
     response = inference_api.client.get("/api/webui/jargon/inference/settings")
     assert response.status_code == 200
     assert response.json()["thresholds"] == [4, 8, 25, 100]
-    assert inference_api.client.get("/api/webui/jargon/inference/jobs").json() == {"items": []}
+    assert inference_api.client.get("/api/webui/jargon/inference/jobs").json() == {
+        "items": [],
+        "total": 0,
+        "page": 1,
+        "page_size": 50,
+    }
+
+
+def test_jobs_list_passes_source_pagination_and_activity_filter(inference_api):
+    response = inference_api.client.get(
+        "/api/webui/jargon/inference/jobs?page=2&page_size=10&source=manual&active_only=true"
+    )
+    assert response.status_code == 200
+    inference_api.service.list_jobs.assert_awaited_once_with(page=2, page_size=10, source="manual", active_only=True)
+
+
+@pytest.mark.parametrize("query", ["page=0", "page_size=101", "source=unknown"])
+def test_jobs_list_rejects_invalid_scope(inference_api, query):
+    assert inference_api.client.get(f"/api/webui/jargon/inference/jobs?{query}").status_code == 422
+    inference_api.service.list_jobs.assert_not_called()
 
 
 def test_preview_keeps_explicit_empty_session_scope(inference_api):
@@ -213,6 +232,23 @@ def test_manual_edit_and_explicit_ai_opt_in(inference_api):
         assert session.get(Jargon, 1).created_by == JargonCreatedBy.MANUAL
 
 
+def test_patch_returns_actual_locked_inference_state(inference_api):
+    with inference_api.session() as session:
+        state = session.get(JargonInferenceState, 1)
+        state.locked = True
+        state.reason = "已完成的含义推断"
+        session.add(state)
+    response = inference_api.client.patch("/api/webui/jargon/1", json={"meaning": "人工修订"})
+    assert response.status_code == 200
+    row = response.json()["data"]
+    assert row["meaning"] == "人工修订"
+    assert row["created_by"] == "MANUAL"
+    assert row["inference_status"] == "succeeded"
+    assert row["inference_reason"] == "已完成的含义推断"
+    assert row["inference_locked"] is True
+    assert (row["last_attempt_at"], row["last_success_at"]) == (10, 11)
+
+
 @pytest.mark.parametrize("batch", [False, True])
 def test_deletion_cleans_state_and_history(inference_api, batch):
     client = inference_api.client
@@ -288,10 +324,43 @@ def test_settings_reload_failure_reports_saved_but_not_loaded(inference_api, mon
     assert "已保存" in response.json()["detail"] and "热重载失败" in response.json()["detail"]
 
 
-def test_concurrent_settings_puts_serialize_save_and_reload(inference_api, monkeypatch):
+def test_stale_admin_settings_rejected_before_write(inference_api, monkeypatch):
+    writes = []
+    expected = inference_api.config.jargon.inference.model_dump()
+
+    def save(section, data):
+        writes.append(data["inference"])
+
+    async def reload(**_kwargs):
+        inference_api.config.jargon.inference = JargonInferenceConfig(**writes[-1])
+        return True
+
+    monkeypatch.setitem(sys.modules, "src.webui.routers.config", SimpleNamespace(update_bot_config_section=save))
+    monkeypatch.setattr(jargon_inference, "config_manager", SimpleNamespace(reload_config=reload))
+    client = inference_api.client
+    first = client.put(
+        "/api/webui/jargon/inference/settings",
+        json={**expected, "thresholds": [1, 5], "expected_settings": expected},
+    )
+    assert first.status_code == 200
+    assert "expected_settings" not in first.json()
+    stale = client.put(
+        "/api/webui/jargon/inference/settings",
+        json={**expected, "scheduled_enabled": True, "expected_settings": expected},
+    )
+    assert stale.status_code == 409
+    assert len(writes) == 1
+    assert "expected_settings" not in writes[0]
+    assert inference_api.config.jargon.inference.thresholds == [1, 5]
+    assert not inference_api.config.jargon.inference.scheduled_enabled
+
+
+@pytest.mark.parametrize("optimistic", [False, True])
+def test_concurrent_settings_puts_serialize_save_and_reload(inference_api, monkeypatch, optimistic):
     first_save_started, release_first_save, second_save_started = Event(), Event(), Event()
     saved = {}
     operations = []
+    expected = {"expected_settings": inference_api.config.jargon.inference.model_dump()} if optimistic else {}
 
     def save(section, data):
         threshold = data["inference"]["thresholds"][0]
@@ -314,18 +383,31 @@ def test_concurrent_settings_puts_serialize_save_and_reload(inference_api, monke
         first = executor.submit(
             inference_api.client.put,
             "/api/webui/jargon/inference/settings",
-            json={"thresholds": [1]},
+            json={"thresholds": [1], **expected},
         )
         assert first_save_started.wait(5)
         second = executor.submit(
             inference_api.client.put,
             "/api/webui/jargon/inference/settings",
-            json={"thresholds": [2]},
+            json={"thresholds": [2], **expected},
         )
         try:
             assert not second_save_started.wait(0.1)
         finally:
             release_first_save.set()
         assert first.result(timeout=5).json()["thresholds"] == [1]
-        assert second.result(timeout=5).json()["thresholds"] == [2]
-    assert operations == [("save", 1), ("reload", 1), ("save", 2), ("reload", 2)]
+        response = second.result(timeout=5)
+        if optimistic:
+            assert response.status_code == 409
+        else:
+            assert response.json()["thresholds"] == [2]
+    assert operations == (
+        [("save", 1), ("reload", 1)]
+        if optimistic
+        else [
+            ("save", 1),
+            ("reload", 1),
+            ("save", 2),
+            ("reload", 2),
+        ]
+    )

@@ -225,6 +225,42 @@ def wait_job(runtime: Any, job_id: str) -> dict[str, Any]:
     pytest.fail(f"任务 {job_id} 未在测试期限内完成")
 
 
+def test_http_job_source_pagination_keeps_older_manual_tasks_reachable(integrated_runtime):
+    runtime = integrated_runtime
+    now = time.time()
+    with runtime.session() as session:
+        for index in range(55):
+            session.add(
+                JargonInferenceJob(
+                    id=f"automatic-{index}",
+                    source="automatic",
+                    status="queued" if index == 0 else "completed",
+                    created_at=now + index,
+                    updated_at=now,
+                    items_json="[]",
+                )
+            )
+        for index in range(3):
+            session.add(
+                JargonInferenceJob(
+                    id=f"manual-{index}",
+                    source="manual",
+                    status="completed",
+                    created_at=now - 100 + index,
+                    updated_at=now,
+                    items_json="[]",
+                )
+            )
+    response = runtime.client.get("/api/webui/jargon/inference/jobs?source=manual&page=2&page_size=2")
+    assert response.status_code == 200, response.text
+    page = response.json()
+    assert (page["total"], page["page"], page["page_size"]) == (3, 2, 2)
+    assert [job["id"] for job in page["items"]] == ["manual-0"]
+    active = runtime.client.get("/api/webui/jargon/inference/jobs?active_only=true").json()
+    assert active["total"] == 1
+    assert [job["id"] for job in active["items"]] == ["automatic-0"]
+
+
 @pytest.mark.parametrize("recover_context", [False, True])
 def test_http_to_real_queue_engine_and_durable_history(integrated_runtime, monkeypatch, recover_context):
     runtime = integrated_runtime

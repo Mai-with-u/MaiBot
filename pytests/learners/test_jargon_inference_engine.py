@@ -71,12 +71,13 @@ def engine_runtime(tmp_path: Path) -> Iterator[SimpleNamespace]:
     config = SimpleNamespace(
         bot=SimpleNamespace(nickname="麦麦"),
         jargon=SimpleNamespace(
+            learning_blacklist=[],
             inference=SimpleNamespace(
                 thresholds=[4, 8, 25, 100],
                 stop_after_last_threshold=True,
                 evidence_limit=50,
                 history_limit=20,
-            )
+            ),
         ),
     )
     responses: list[Any] = [
@@ -335,7 +336,8 @@ def test_history_retention_is_bounded(engine_runtime: SimpleNamespace) -> None:
             session.add(JargonMeaningHistory(jargon_id=1, previous_meaning=str(i), meaning=str(i + 1)))
     assert run_inference(engine_runtime).status == "succeeded"
     with engine_runtime.db_session() as session:
-        assert len(session.exec(select(JargonMeaningHistory)).all()) == 2
+        retained = session.exec(select(JargonMeaningHistory).order_by(JargonMeaningHistory.id)).all()
+        assert [(row.previous_meaning, row.meaning) for row in retained] == [("4", "5"), ("旧含义", "完成任务的庆祝")]
 
 
 def test_lost_references_recover_only_original_session_evidence(engine_runtime: SimpleNamespace) -> None:
@@ -485,3 +487,218 @@ def test_parallel_new_candidate_upsert_creates_one_record(engine_runtime: Simple
         record = session.exec(select(Jargon).where(Jargon.content == "开香槟")).one()
         assert record.count == 6
         assert len(json.loads(record.evidence_messages)) == 6
+
+
+def test_reclassification_saves_new_meaning_in_record_and_history(engine_runtime: SimpleNamespace) -> None:
+    engine_runtime.responses[0] = {"meaning": "飞机离地", "no_info": False}
+    engine_runtime.responses[2] = {"is_similar": True}
+    result = run_inference(engine_runtime)
+    assert (result.status, result.meaning, result.is_jargon) == ("succeeded", "飞机离地", False)
+    record = get_record(engine_runtime)
+    assert (record.meaning, record.is_jargon) == ("飞机离地", False)
+    with engine_runtime.db_session() as session:
+        history = session.exec(select(JargonMeaningHistory)).one()
+        assert (history.previous_meaning, history.meaning, history.is_jargon) == ("旧含义", "飞机离地", False)
+
+
+@pytest.mark.parametrize("payload", [{}, {"is_similar": "false"}, {"is_similar": 0}, {"is_similar": None}])
+def test_invalid_comparison_cannot_change_classification(engine_runtime: SimpleNamespace, payload: Any) -> None:
+    engine_runtime.responses[2] = payload
+    result = run_inference(engine_runtime)
+    assert (result.status, result.requests) == ("failed", 3)
+    record = get_record(engine_runtime)
+    assert (record.meaning, record.last_inference_count) == ("旧含义", 0)
+    with engine_runtime.db_session() as session:
+        assert session.exec(select(JargonMeaningHistory)).all() == []
+
+
+def test_unchanged_inference_does_not_evict_meaning_history(engine_runtime: SimpleNamespace) -> None:
+    with engine_runtime.db_session() as session:
+        record = session.get(Jargon, 1)
+        record.meaning = "完成任务的庆祝"
+        record.is_jargon = True
+        session.add(record)
+        session.add(JargonMeaningHistory(jargon_id=1, previous_meaning="更早解释", meaning=record.meaning))
+    assert run_inference(engine_runtime).status == "succeeded"
+    with engine_runtime.db_session() as session:
+        history = session.exec(select(JargonMeaningHistory)).all()
+        assert [(row.previous_meaning, row.meaning) for row in history] == [("更早解释", "完成任务的庆祝")]
+    assert get_record(engine_runtime).last_inference_count == 4
+
+
+def test_null_timestamps_keep_identity_during_recovery_and_writeback(engine_runtime: SimpleNamespace) -> None:
+    with engine_runtime.db_session() as session:
+        record = session.get(Jargon, 1)
+        record.created_timestamp = None
+        record.updated_timestamp = None
+        record.evidence_messages = None
+        session.add(record)
+    loaded = engine_runtime.miner._load_jargon_by_id(1)
+    assert loaded.created_timestamp is None and loaded.updated_timestamp is None
+    assert run_inference(engine_runtime).status == "succeeded"
+    record = get_record(engine_runtime)
+    assert record.created_timestamp is None
+    assert record.meaning == "完成任务的庆祝"
+    assert record.evidence_messages is not None
+
+
+def add_message(runtime: SimpleNamespace, message_id: str, content: str, **fields: Any) -> int:
+    """保存真实消息行，允许测试独立设置平台、会话、原文和检索文本。"""
+    values = dict(
+        message_id=message_id,
+        timestamp=datetime.now(),
+        platform="qq",
+        session_id="chat-a",
+        user_id="test",
+        user_nickname="test",
+        raw_content=content.encode(),
+        processed_plain_text=content,
+    )
+    values.update(fields)
+    with runtime.db_session() as session:
+        record = Messages(**values)
+        session.add(record)
+        session.flush()
+        return record.id
+
+
+def test_recovery_blacklist_matches_platform_and_keeps_neighbor_context(engine_runtime: SimpleNamespace) -> None:
+    engine_runtime.config.jargon.learning_blacklist = [SimpleNamespace(platform="qq", user_id="test")]
+    jargon = engine_runtime.miner._load_jargon_by_id(1)
+    assert engine_runtime.miner._recover_evidence_groups(jargon, {"chat-a"}) == []
+    # 同一用户 ID 在其他平台不受 QQ 黑名单影响；黑名单原消息仍可用于前后文。
+    add_message(engine_runtime, "allowed", "终于起飞", platform="discord")
+    groups = engine_runtime.miner._recover_evidence_groups(jargon, {"chat-a"})
+    assert len(groups) == 1
+    assert [(ref["platform"], ref["message_id"]) for ref in groups[0]] == [("qq", "m1"), ("discord", "allowed")]
+
+
+def test_recovery_pages_past_media_only_matches(engine_runtime: SimpleNamespace) -> None:
+    engine_runtime.config.jargon.inference.evidence_limit = 1
+    timestamp = datetime.now()
+    for index in range(105):
+        add_message(
+            engine_runtime,
+            f"media-{index}",
+            "纯媒体没有词条正文",
+            processed_plain_text="图片描述里起飞",
+            timestamp=timestamp,
+        )
+    jargon = engine_runtime.miner._load_jargon_by_id(1)
+    groups = engine_runtime.miner._recover_evidence_groups(jargon, {"chat-a"})
+    assert len(groups) == 1
+    assert "m1" in [ref["message_id"] for ref in groups[0]]
+
+
+def test_recovery_neighbors_with_same_timestamp_are_in_id_order(engine_runtime: SimpleNamespace) -> None:
+    with engine_runtime.db_session() as session:
+        session.exec(delete(Messages))
+    timestamp = datetime.now()
+    for index in range(8):
+        add_message(engine_runtime, f"tie-{index}", "起飞" if index == 4 else f"上下文 {index}", timestamp=timestamp)
+    jargon = engine_runtime.miner._load_jargon_by_id(1)
+    groups = engine_runtime.miner._recover_evidence_groups(jargon, {"chat-a"})
+    assert [[ref["message_id"] for ref in group] for group in groups] == [[f"tie-{i}" for i in range(1, 7)]]
+
+
+def test_ambiguous_legacy_refs_recover_exact_message_identity(engine_runtime: SimpleNamespace) -> None:
+    with engine_runtime.db_session() as session:
+        record = session.get(Jargon, 1)
+        record.session_id_dict = '{"chat-a": 2, "chat-b": 2}'
+        session.add(record)
+    add_message(engine_runtime, "m1", "另一群也说起飞", session_id="chat-b")
+    jargon = engine_runtime.miner._load_jargon_by_id(1)
+    texts, cleaned, changed = engine_runtime.miner._load_evidence_contexts(jargon)
+    assert changed is True
+    groups = json.loads(cleaned)
+    assert {group[0]["session_id"] for group in groups} == {"chat-a", "chat-b"}
+    assert len({group[0]["database_id"] for group in groups}) == 2
+    assert len(texts) == 2
+    jargon.evidence_messages = cleaned
+    reloaded, _, _ = engine_runtime.miner._load_evidence_contexts(jargon)
+    assert reloaded == texts
+
+
+def test_malformed_message_is_logged_and_does_not_block_other_evidence(
+    engine_runtime: SimpleNamespace, caplog: pytest.LogCaptureFixture
+) -> None:
+    malformed_id = add_message(engine_runtime, "bad", "起飞", raw_content=b"\xff")
+    with engine_runtime.db_session() as session:
+        record = session.get(Jargon, 1)
+        record.evidence_messages = json.dumps([[{"platform": "qq", "message_id": "bad"}]])
+        session.add(record)
+    result = run_inference(engine_runtime)
+    assert result.status == "succeeded"
+    assert f"无法解码消息 id={malformed_id}" in caplog.text
+    assert {
+        ref["message_id"] for group in json.loads(get_record(engine_runtime).evidence_messages) for ref in group
+    } == {"m1"}
+
+
+def test_readonly_recovery_hash_detects_later_arriving_evidence(engine_runtime: SimpleNamespace) -> None:
+    with engine_runtime.db_session() as session:
+        session.exec(delete(Messages))
+        record = session.get(Jargon, 1)
+        record.evidence_messages = None
+        session.add(record)
+    jargon = engine_runtime.miner._load_jargon_by_id(1)
+    assert engine_runtime.miner.recoverable_evidence_hash(jargon) == evidence_hash(None)
+    add_message(engine_runtime, "new", "现在终于起飞")
+    assert engine_runtime.miner.recoverable_evidence_hash(jargon) != evidence_hash(None)
+    assert get_record(engine_runtime).evidence_messages is None
+
+
+def test_shutdown_waits_for_started_commit_and_reports_actual_outcome(
+    engine_runtime: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from threading import Event
+
+    started, release = Event(), Event()
+    original = engine_runtime.miner._modify_jargon_entry
+
+    def delayed_commit(*args: Any) -> str:
+        started.set()
+        assert release.wait(5), "test must release commit thread"
+        return original(*args)
+
+    monkeypatch.setattr(engine_runtime.miner, "_modify_jargon_entry", delayed_commit)
+
+    async def run() -> InferenceResult:
+        task = asyncio.create_task(engine_runtime.miner._infer_meaning_by_id(1))
+        assert await asyncio.to_thread(started.wait, 5)
+        try:
+            for _ in range(2):
+                task.cancel()
+                await asyncio.sleep(0)
+                assert not task.done()
+            assert get_record(engine_runtime).meaning == "旧含义"
+        finally:
+            release.set()
+        return await task
+
+    assert asyncio.run(run()).status == "succeeded"
+    assert get_record(engine_runtime).meaning == "完成任务的庆祝"
+
+
+@pytest.mark.parametrize("source_problem", ["corrupt", "unrelated", "blacklisted"])
+def test_neighbor_only_groups_do_not_supply_false_evidence(
+    engine_runtime: SimpleNamespace, source_problem: str
+) -> None:
+    add_message(engine_runtime, "neighbor", "只是普通上下文", user_id="neighbor")
+    with engine_runtime.db_session() as session:
+        source = session.exec(select(Messages).where(Messages.message_id == "m1")).one()
+        if source_problem == "corrupt":
+            source.raw_content = b"\xff"
+        elif source_problem == "unrelated":
+            source.raw_content = "正文里已经没有原词".encode()
+        else:
+            engine_runtime.config.jargon.learning_blacklist = [SimpleNamespace(platform="qq", user_id="test")]
+        session.add(source)
+        record = session.get(Jargon, 1)
+        record.evidence_messages = json.dumps(
+            [[{"platform": "qq", "message_id": "m1"}, {"platform": "qq", "message_id": "neighbor"}]]
+        )
+        session.add(record)
+    assert run_inference(engine_runtime).status == "missing_evidence"
+    assert engine_runtime.calls == []
+    assert get_record(engine_runtime).meaning == "旧含义"

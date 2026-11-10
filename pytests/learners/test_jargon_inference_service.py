@@ -64,6 +64,9 @@ def runtime(tmp_path, monkeypatch):
         def __init__(self, _session_id, _session_name):
             pass
 
+        def recoverable_evidence_hash(self, record):
+            return module.evidence_hash(record.evidence_messages)
+
         def _should_infer_meaning(self, record):
             return record.count >= 4
 
@@ -125,7 +128,7 @@ async def test_dispatch_claims_handoff_before_cancellation(runtime, monkeypatch)
     try:
         await asyncio.wait_for(handed_off.wait(), 2)
         cancelled = await service.cancel(job["id"])
-        assert cancelled["status"] == "cancelling"
+        assert cancelled["status"] == "queued"
         release.set()
         await asyncio.gather(*service._workers)
         detail = await service.get_job(job["id"])
@@ -190,7 +193,7 @@ async def test_cancel_preserves_running_result_and_cancels_only_pending(runtime,
 
 
 @pytest.mark.asyncio
-async def test_schedule_does_not_lose_wake_during_scan(runtime, monkeypatch):
+async def test_schedule_wake_during_scan_recalculates_without_running_early(runtime, monkeypatch):
     service = arm(runtime)
     runtime.settings.scheduled_enabled = True
     first_started = asyncio.Event()
@@ -214,6 +217,10 @@ async def test_schedule_does_not_lose_wake_during_scan(runtime, monkeypatch):
         await asyncio.wait_for(first_started.wait(), 2)
         service._schedule_wake.set()
         first_release.set()
+        await asyncio.sleep(0.05)
+        assert not second_started.is_set()
+        service._last_scheduled_scan = time.monotonic() - runtime.settings.scan_interval_hours * 3600
+        service._schedule_wake.set()
         await asyncio.wait_for(second_started.wait(), 0.5)
     finally:
         scheduler.cancel()
@@ -517,7 +524,7 @@ async def test_bounded_scans_skip_reserved_ids_before_applying_limit(runtime, so
 @pytest.mark.asyncio
 async def test_config_reload_rescans_only_when_threshold_policy_changes(runtime, monkeypatch):
     service = arm(runtime)
-    rescan = AsyncMock(return_value={})
+    rescan = AsyncMock(wraps=service.rescan)
     monkeypatch.setattr(service, "rescan", rescan)
     runtime.settings.request_interval_seconds = 2
     await service._configuration_changed()
@@ -548,3 +555,408 @@ async def test_retry_uses_failed_items_after_original_status_filter_has_changed(
     detail = await service.get_job(retried["id"])
     assert retried["counts"] == {"queued": 1}
     assert [item["jargon_id"] for item in detail["items"]] == [1]
+
+
+@pytest.mark.asyncio
+async def test_threshold_rescan_drains_batches_and_does_not_repeat_fast_failures(runtime, monkeypatch):
+    service = arm(runtime)
+    runtime.settings.max_items_per_scan = 1
+    original_submit = service.submit
+    seen = []
+
+    async def submit(request, source="manual", **kwargs):
+        result = await original_submit(request, source, **kwargs)
+        if result["total"]:
+            detail = await service.get_job(result["id"])
+            seen.extend(item["jargon_id"] for item in detail["items"])
+            # 模拟每一批立即失败并释放预留，补扫仍不能重复已提交项。
+            await service.cancel(result["id"])
+        return result
+
+    monkeypatch.setattr(service, "submit", submit)
+    await service.rescan()
+    assert seen == [1, 2, 3]
+    assert not service._threshold_pending
+    with runtime.database() as session:
+        assert len(session.exec(select(JargonInferenceJob)).all()) == 3
+
+
+@pytest.mark.asyncio
+async def test_failed_policy_rescan_resumes_checkpoint_on_scheduler_when_disabled(runtime, monkeypatch):
+    service = arm(runtime)
+    runtime.settings.max_items_per_scan = 1
+    runtime.settings.thresholds = [1, 8, 25, 100]
+    original_save = service._save_new_job
+    attempts = 0
+
+    def fail_second_batch(job):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 2:
+            raise RuntimeError("database unavailable")
+        original_save(job)
+
+    monkeypatch.setattr(service, "_save_new_job", fail_second_batch)
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        await service._configuration_changed()
+    assert service._threshold_policy[0] == (4, 8, 25, 100)
+    assert service._threshold_pending
+    assert service._threshold_seen == {1}
+    # 已成功提交的第一批即使结束也不可重复。
+    await service.cancel(next(iter(service._jobs)))
+    service._threshold_retry_at = 0
+    scheduler = asyncio.create_task(service._schedule())
+    try:
+
+        async def wait_complete():
+            while service._threshold_pending:
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(wait_complete(), 2)
+    finally:
+        scheduler.cancel()
+        await asyncio.gather(scheduler, return_exceptions=True)
+    assert service._threshold_policy[0] == (1, 8, 25, 100)
+    with runtime.database() as session:
+        saved = session.exec(select(JargonInferenceJob)).all()
+        assert [item["jargon_id"] for job in saved for item in json.loads(job.items_json)] == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_automatic_task_preserves_triggering_session_and_name(runtime):
+    service = arm(runtime)
+    with runtime.database() as session:
+        session.add(ChatSession(session_id="z-chat", platform="qq", group_id="2", group_name="触发群"))
+        record = session.get(Jargon, 1)
+        record.session_id_dict = '{"chat":2,"z-chat":2}'
+        session.add(record)
+    assert await service.enqueue_auto(1, "z-chat", "触发群")
+    item = next(iter(service._jobs.values()))["items"][0]
+    assert item["session_id"] == "z-chat"
+    assert item["session_name"] == "触发群"
+
+
+@pytest.mark.asyncio
+async def test_automatic_enqueue_failure_does_not_abort_learning(runtime, monkeypatch):
+    service = arm(runtime)
+    monkeypatch.setattr(service, "submit", AsyncMock(side_effect=RuntimeError("database unavailable")))
+    assert not await service.enqueue_auto(1, "chat", "测试群")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["content", "session_id_dict"])
+async def test_modified_queued_term_reaches_stale_status_without_model_call(runtime, change):
+    service = arm(runtime)
+    result = await service.submit({"ids": [1]})
+    with runtime.database() as session:
+        record = session.get(Jargon, 1)
+        setattr(record, change, "已修改" if change == "content" else '{"other":4}')
+        session.add(record)
+    await service._run_item(result["id"], 0)
+    with runtime.database() as session:
+        state = session.get(JargonInferenceState, 1)
+        assert state.status == "stale"
+    assert runtime.calls == []
+
+
+@pytest.mark.asyncio
+async def test_recreated_id_does_not_inherit_old_terminal_state(runtime):
+    service = arm(runtime)
+    result = await service.submit({"ids": [1]})
+    with runtime.database() as session:
+        record = session.get(Jargon, 1)
+        session.delete(record)
+        session.delete(session.get(JargonInferenceState, 1))
+        session.flush()
+        session.add(Jargon(id=1, content="新记录", meaning="", session_id_dict='{"chat":4}'))
+    await service._run_item(result["id"], 0)
+    with runtime.database() as session:
+        assert session.get(JargonInferenceState, 1) is None
+
+
+@pytest.mark.asyncio
+async def test_job_pagination_filters_preserve_manual_access_amid_automatic_flood(runtime):
+    service = arm(runtime)
+    now = time.time()
+    with runtime.database() as session:
+        session.add(
+            JargonInferenceJob(id="manual", source="manual", status="completed", created_at=now, updated_at=now)
+        )
+        session.add(
+            JargonInferenceJob(id="active", source="manual", status="running", created_at=now - 1000, updated_at=now)
+        )
+        for index in range(80):
+            session.add(
+                JargonInferenceJob(
+                    id=f"auto-{index:03}",
+                    source="automatic",
+                    status="completed",
+                    created_at=now + index,
+                    updated_at=now,
+                )
+            )
+    manual = await service.list_jobs(source="manual", page_size=1)
+    assert manual["total"] == 2
+    assert manual["items"][0]["id"] == "active"
+    assert (await service.list_jobs(source="manual", page=2, page_size=1))["items"][0]["id"] == "manual"
+    active = await service.list_jobs(active_only=True)
+    assert active["total"] == 1
+    assert active["items"][0]["id"] == "active"
+    assert len((await service.list_jobs(page=2))["items"]) == 32
+
+
+def test_terminal_job_retention_uses_configured_age_without_source_count_cap(runtime):
+    runtime.settings.job_retention_days = 7
+    now = time.time()
+    with runtime.database() as session:
+        for index in range(250):
+            session.add(
+                JargonInferenceJob(id=f"recent-{index}", source="automatic", status="completed", updated_at=now)
+            )
+        for status in ("queued", "running", "cancelling", "completed", "interrupted"):
+            session.add(JargonInferenceJob(id=f"old-{status}", status=status, updated_at=now - 8 * 86400))
+    runtime.service._cleanup_jobs()
+    with runtime.database() as session:
+        rows = session.exec(select(JargonInferenceJob)).all()
+        ids = {row.id for row in rows}
+        assert len(rows) == 253
+        assert {"old-queued", "old-running", "old-cancelling"} <= ids
+        assert "old-completed" not in ids
+        assert "old-interrupted" not in ids
+
+
+@pytest.mark.asyncio
+async def test_cancelled_submission_waits_for_commit_then_shutdown_marks_it_interrupted(runtime, monkeypatch):
+    from threading import Event
+
+    service = arm(runtime)
+    writing = Event()
+    release = Event()
+    original_save = service._save_new_job
+
+    def blocked_save(job):
+        writing.set()
+        assert release.wait(2)
+        original_save(job)
+
+    monkeypatch.setattr(service, "_save_new_job", blocked_save)
+    submission = asyncio.create_task(service.submit({"ids": [1]}))
+    try:
+        assert await asyncio.to_thread(writing.wait, 2)
+        submission.cancel()
+        stopping = asyncio.create_task(service.stop())
+        await asyncio.sleep(0.02)
+        assert not submission.done()
+        assert not stopping.done()
+        release.set()
+        await asyncio.gather(submission, return_exceptions=True)
+        await asyncio.wait_for(stopping, 2)
+    finally:
+        release.set()
+    with runtime.database() as session:
+        jobs = session.exec(select(JargonInferenceJob)).all()
+        assert len(jobs) == 1
+        assert jobs[0].status == "interrupted"
+        assert session.get(JargonInferenceState, 1).status == "interrupted"
+    assert not runtime.calls
+
+
+@pytest.mark.asyncio
+async def test_shutdown_waits_for_progress_write_before_terminal_write(runtime, monkeypatch):
+    from threading import Event
+
+    service = runtime.service
+    writing = Event()
+    release = Event()
+    original_save = service._save_job
+
+    def blocked_save(job):
+        if job["status"] == "running":
+            writing.set()
+            assert release.wait(2)
+        original_save(job)
+
+    monkeypatch.setattr(service, "_save_job", blocked_save)
+    await service.start()
+    job = await service.submit({"ids": [1]})
+    try:
+        assert await asyncio.to_thread(writing.wait, 2)
+        stopping = asyncio.create_task(service.stop())
+        await asyncio.sleep(0.02)
+        assert not stopping.done()
+        release.set()
+        await asyncio.wait_for(stopping, 2)
+    finally:
+        release.set()
+    with runtime.database() as session:
+        assert session.get(JargonInferenceJob, job["id"]).status == "interrupted"
+        assert session.get(JargonInferenceState, 1).status == "interrupted"
+
+
+@pytest.mark.asyncio
+async def test_stop_clears_memory_even_when_database_write_fails(runtime, monkeypatch):
+    service = arm(runtime)
+    await service.submit({"ids": [1]})
+    monkeypatch.setattr(service, "_write_states", Mock(side_effect=RuntimeError("database unavailable")))
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        await service.stop()
+    assert service._loop is None
+    assert not service._jobs
+    assert not service._pending
+    assert not service._reserved
+
+
+def test_missing_evidence_can_recover_later_messages_with_unchanged_reference_hash(runtime, monkeypatch):
+    with runtime.database() as session:
+        record = session.get(Jargon, 1)
+        record.evidence_messages = None
+        session.add(record)
+        session.add(
+            JargonInferenceState(
+                jargon_id=1, status="missing_evidence", last_attempt_evidence_hash=module.evidence_hash(None)
+            )
+        )
+    recovered_hash = module.evidence_hash('[[{"platform":"qq","message_id":"new"}]]')
+    monkeypatch.setattr(runtime.miner, "recoverable_evidence_hash", lambda _self, _record: recovered_hash)
+    items = runtime.service._select({"ids": [1], "force": True}, "scheduled")
+    assert [item["jargon_id"] for item in items] == [1]
+    assert items[0]["evidence_hash"] == recovered_hash
+
+
+@pytest.mark.asyncio
+async def test_retention_change_triggers_cleanup_even_when_scheduling_disabled(runtime):
+    service = arm(runtime)
+    now = time.time()
+    service._last_cleanup = time.monotonic()
+    with runtime.database() as session:
+        session.add(JargonInferenceJob(id="expired", status="completed", updated_at=now - 3 * 86400))
+    runtime.settings.job_retention_days = 2
+    await service._configuration_changed()
+    scheduler = asyncio.create_task(service._schedule())
+    try:
+
+        async def wait_cleanup():
+            while service._cleanup_requested:
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(wait_cleanup(), 2)
+    finally:
+        scheduler.cancel()
+        await asyncio.gather(scheduler, return_exceptions=True)
+    with runtime.database() as session:
+        assert session.get(JargonInferenceJob, "expired") is None
+
+
+@pytest.mark.asyncio
+async def test_cancelled_stop_finishes_worker_and_pending_cleanup(runtime, monkeypatch):
+    from threading import Event
+
+    service = runtime.service
+    writing = Event()
+    release = Event()
+    original_save = service._save_job
+    runtime.settings.max_concurrency = 1
+
+    def blocked_save(job):
+        if job["status"] == "running":
+            writing.set()
+            assert release.wait(2)
+        original_save(job)
+
+    monkeypatch.setattr(service, "_save_job", blocked_save)
+    await service.start()
+    job = await service.submit({"ids": [1, 2]})
+    stopping = None
+    try:
+        assert await asyncio.to_thread(writing.wait, 2)
+        stopping = asyncio.create_task(service.stop())
+        await asyncio.sleep(0.01)
+        stopping.cancel()
+        await asyncio.sleep(0.01)
+        assert not stopping.done()
+        release.set()
+        result = await asyncio.gather(stopping, return_exceptions=True)
+        assert isinstance(result[0], asyncio.CancelledError)
+    finally:
+        release.set()
+        if stopping is not None:
+            await asyncio.gather(stopping, return_exceptions=True)
+    assert service._loop is None
+    assert not service._pending
+    assert not service._reserved
+    with runtime.database() as session:
+        row = session.get(JargonInferenceJob, job["id"])
+        assert row.status == "interrupted"
+        assert [item["status"] for item in json.loads(row.items_json)] == ["interrupted", "interrupted"]
+
+
+@pytest.mark.asyncio
+async def test_callback_registration_failure_clears_service_readiness(runtime, monkeypatch):
+    monkeypatch.setattr(
+        module.config_manager, "register_reload_callback", Mock(side_effect=RuntimeError("register failed"))
+    )
+    with pytest.raises(RuntimeError, match="register failed"):
+        await runtime.service.start()
+    assert runtime.service._loop is None
+    with pytest.raises(RuntimeError, match="尚未就绪"):
+        await runtime.service.submit({"ids": [1]})
+
+
+@pytest.mark.asyncio
+async def test_automatic_task_never_substitutes_removed_trigger_session(runtime):
+    service = arm(runtime)
+    assert not await service.enqueue_auto(1, "removed-session", "已移除群")
+    assert not service._pending
+    with runtime.database() as session:
+        assert session.exec(select(JargonInferenceJob)).all() == []
+
+
+@pytest.mark.asyncio
+async def test_cancel_request_cancellation_waits_for_state_and_job_persistence(runtime, monkeypatch):
+    from threading import Event
+
+    service = arm(runtime)
+    job = await service.submit({"ids": [1, 2]})
+    writing = Event()
+    release = Event()
+    original_write = service._write_states
+
+    def blocked_write(items, source):
+        writing.set()
+        assert release.wait(2)
+        original_write(items, source)
+
+    monkeypatch.setattr(service, "_write_states", blocked_write)
+    cancellation = asyncio.create_task(service.cancel(job["id"]))
+    try:
+        assert await asyncio.to_thread(writing.wait, 2)
+        cancellation.cancel()
+        await asyncio.sleep(0.01)
+        assert not cancellation.done()
+        assert service._reserved == {1, 2}
+        release.set()
+        result = await asyncio.gather(cancellation, return_exceptions=True)
+        assert isinstance(result[0], asyncio.CancelledError)
+    finally:
+        release.set()
+    with runtime.database() as session:
+        persisted = session.get(JargonInferenceJob, job["id"])
+        assert persisted.status == "cancelled"
+        assert [item["status"] for item in json.loads(persisted.items_json)] == ["cancelled", "cancelled"]
+        assert session.get(JargonInferenceState, 1).status == "cancelled"
+        assert session.get(JargonInferenceState, 2).status == "cancelled"
+    assert not service._reserved
+    assert job["id"] not in service._jobs
+
+
+@pytest.mark.asyncio
+async def test_cancel_without_pending_items_keeps_terminal_retention_timestamp(runtime):
+    service = arm(runtime)
+    job = await service.submit({"ids": [1]})
+    await service.cancel(job["id"])
+    with runtime.database() as session:
+        previous = session.get(JargonInferenceJob, job["id"]).updated_at
+    again = await service.cancel(job["id"])
+    assert again["updated_at"] == previous
+    with runtime.database() as session:
+        assert session.get(JargonInferenceJob, job["id"]).updated_at == previous

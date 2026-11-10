@@ -11,7 +11,14 @@ from sqlmodel import Session, col, delete, select
 
 from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
 from src.common.database.database import get_db_session
-from src.common.database.database_model import ChatSession, Jargon, JargonCreatedBy, JargonInferenceState, JargonMeaningHistory, Messages
+from src.common.database.database_model import (
+    ChatSession,
+    Jargon,
+    JargonCreatedBy,
+    JargonInferenceState,
+    JargonMeaningHistory,
+    Messages,
+)
 from src.common.logger import get_logger
 from src.common.utils.utils_config import JargonConfigUtils
 from src.config.config import global_config
@@ -879,13 +886,23 @@ def get_jargon_list(
             for row in page_rows:
                 page_session_ids.extend(get_session_ids(str(row["session_id_dict"] or "{}")))
             chat_name_cache = build_session_display_name_cache(page_session_ids, session, include_message_fallback=True)
-            state_by_id = {
-                state.jargon_id: state for state in session.exec(
-                    select(JargonInferenceState).where(col(JargonInferenceState.jargon_id).in_([row["id"] for row in page_rows]))
-                ).all()
-            } if page_rows else {}
+            state_by_id = (
+                {
+                    state.jargon_id: state
+                    for state in session.exec(
+                        select(JargonInferenceState).where(
+                            col(JargonInferenceState.jargon_id).in_([row["id"] for row in page_rows])
+                        )
+                    ).all()
+                }
+                if page_rows
+                else {}
+            )
             data = [
-                {**jargon_list_row_to_dict(row, session, chat_name_cache), **inference_state_fields(state_by_id.get(row["id"]))}
+                {
+                    **jargon_list_row_to_dict(row, session, chat_name_cache),
+                    **inference_state_fields(state_by_id.get(row["id"])),
+                }
                 for row in page_rows
             ]
 
@@ -1340,13 +1357,18 @@ def update_jargon(jargon_id: int, request: JargonUpdateRequest) -> JargonUpdateR
                 if "created_by" in update_data and update_data["created_by"] is not None:
                     # 显式切回 AI 维护时保留用户选择；其余人工编辑默认受到保护。
                     jargon.created_by = update_data["created_by"]
-                elif {"meaning", "content", "is_jargon", "session_id", "session_ids", "is_global"}.intersection(update_data):
+                elif {"meaning", "content", "is_jargon", "session_id", "session_ids", "is_global"}.intersection(
+                    update_data
+                ):
                     jargon.created_by = JargonCreatedBy.MANUAL
                 jargon.updated_timestamp = datetime.now()
                 session.add(jargon)
 
             logger.info(f"更新黑话成功: id={jargon_id}")
-            data = JargonResponse(**jargon_to_dict(jargon, session))
+            data = JargonResponse(
+                **jargon_to_dict(jargon, session),
+                **inference_state_fields(session.get(JargonInferenceState, jargon_id)),
+            )
 
         return JargonUpdateResponse(success=True, message="更新成功", data=data)
 

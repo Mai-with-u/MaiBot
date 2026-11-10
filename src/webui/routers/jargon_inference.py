@@ -68,6 +68,12 @@ class InferenceLockRequest(BaseModel):
     locked: bool
 
 
+class InferenceSettingsRequest(JargonInferenceConfig):
+    """附带编辑起点，避免并发管理员保存时覆盖另一人的配置。"""
+
+    expected_settings: Optional[JargonInferenceConfig] = None
+
+
 def get_service() -> Any:
     """延迟导入，防止任务服务的列表筛选依赖形成循环。"""
     from src.learners.jargon_inference_service import get_jargon_inference_service
@@ -76,6 +82,7 @@ def get_service() -> Any:
 
 
 async def _run_task_operation(operation: Awaitable[T]) -> T:
+    """在 Bot 主循环执行队列操作，并把输入、查找及未就绪错误映射到 HTTP。"""
     try:
         return await run_on_main_loop(operation)
     except LookupError as exc:
@@ -91,11 +98,14 @@ def get_inference_settings() -> Dict[str, Any]:
     return global_config.jargon.inference.model_dump()
 
 
-async def _save_inference_settings(settings: JargonInferenceConfig) -> Dict[str, Any]:
+async def _save_inference_settings(request: InferenceSettingsRequest) -> Dict[str, Any]:
     """在主循环串行保存和重载，避免并发请求确认了其他请求的配置。"""
     from .config import update_bot_config_section
 
     async with _settings_lock:
+        if request.expected_settings is not None and request.expected_settings.model_dump() != get_inference_settings():
+            raise HTTPException(status_code=409, detail="推断设置已被其他操作修改，请刷新并确认后重新保存")
+        settings = JargonInferenceConfig(**request.model_dump(exclude={"expected_settings"}))
         await asyncio.to_thread(update_bot_config_section, "jargon", {"inference": settings.model_dump()})
         reloaded = await config_manager.reload_config(changed_scopes=["bot"], changed_sections=["jargon"])
         if not reloaded:
@@ -104,7 +114,7 @@ async def _save_inference_settings(settings: JargonInferenceConfig) -> Dict[str,
 
 
 @router.put("/settings")
-async def update_inference_settings(settings: JargonInferenceConfig) -> Dict[str, Any]:
+async def update_inference_settings(settings: InferenceSettingsRequest) -> Dict[str, Any]:
     """通过统一配置保存路径验证整个配置，再在主循环热重载。"""
     return await run_on_main_loop(_save_inference_settings(settings))
 
@@ -120,8 +130,16 @@ async def submit_inference(request: InferenceRequest) -> Dict[str, Any]:
 
 
 @router.get("/jobs")
-async def list_inference_jobs() -> Dict[str, Any]:
-    return {"items": await _run_task_operation(get_service().list_jobs())}
+async def list_inference_jobs(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
+    source: Optional[Literal["manual", "automatic", "threshold", "scheduled"]] = None,
+    active_only: bool = False,
+) -> Dict[str, Any]:
+    """按来源分页保留任务可达性，并支持独立于对话框的活动任务轮询。"""
+    return await _run_task_operation(
+        get_service().list_jobs(page=page, page_size=page_size, source=source, active_only=active_only)
+    )
 
 
 @router.get("/jobs/{job_id}")
@@ -150,6 +168,7 @@ async def rescan_inference() -> Dict[str, Any]:
 
 @router.get("/history/{jargon_id}")
 def get_inference_history(jargon_id: int) -> Dict[str, Any]:
+    """返回指定词条最近的含义变更，数量受词条历史上限约束。"""
     with get_db_session() as session:
         if session.get(Jargon, jargon_id) is None:
             raise HTTPException(status_code=404, detail="黑话不存在")

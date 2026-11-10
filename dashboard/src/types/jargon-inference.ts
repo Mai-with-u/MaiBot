@@ -65,6 +65,7 @@ export interface JargonInferenceSettings {
   max_items_per_scan: number
   evidence_limit: number
   history_limit: number
+  job_retention_days: number
 }
 
 export interface JargonMeaningHistory {

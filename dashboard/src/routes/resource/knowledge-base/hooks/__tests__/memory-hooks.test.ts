@@ -679,6 +679,162 @@ describe('useImportQueue', () => {
     expect(result.current.importChunkOffset).toBe(expectedOffset)
   })
 
+  it.each([false, true])('取消任务只刷新一次详情和分块（列表变化：%s）', async (changed) => {
+    const { result } = renderQueue()
+    await waitFor(() => expect(result.current.selectedImportChunks).toHaveLength(1))
+    vi.mocked(memoryApi.getMemoryImportTask).mockClear()
+    vi.mocked(memoryApi.getMemoryImportTaskChunks).mockClear()
+    if (changed) vi.mocked(memoryApi.getMemoryImportTasks).mockResolvedValue({
+      success: true, items: [makeTask({ status: 'cancel_requested' })],
+    })
+    await act(async () => { await result.current.cancelSelectedImportTask() })
+    expect(memoryApi.getMemoryImportTask).toHaveBeenCalledTimes(1)
+    expect(memoryApi.getMemoryImportTaskChunks).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([false, true])('重试操作只刷新一次目标详情和分块（新任务：%s）', async (newTask) => {
+    const { result } = renderQueue()
+    await waitFor(() => expect(result.current.selectedImportChunks).toHaveLength(1))
+    const task = makeTask({ task_id: newTask ? 'retry-task' : 'task-1' })
+    vi.mocked(memoryApi.retryMemoryImportTask).mockResolvedValue({
+      success: true, task: newTask ? task : undefined,
+    })
+    vi.mocked(memoryApi.getMemoryImportTasks).mockResolvedValue({ success: true, items: [task] })
+    vi.mocked(memoryApi.getMemoryImportTask).mockClear()
+    vi.mocked(memoryApi.getMemoryImportTaskChunks).mockClear()
+    await act(async () => { await result.current.retrySelectedImportTask() })
+    expect(memoryApi.getMemoryImportTask).toHaveBeenCalledExactlyOnceWith(task.task_id, false)
+    expect(memoryApi.getMemoryImportTaskChunks).toHaveBeenCalledTimes(1)
+    expect(result.current.selectedImportTaskResolved?.task_id).toBe(task.task_id)
+  })
+
+  it('手动刷新时列表相同也会写回新的详情字段', async () => {
+    const { result } = renderQueue()
+    await waitFor(() => expect(result.current.selectedImportChunks).toHaveLength(1))
+    expect(result.current.selectedImportTaskResolved?.done_chunks).toBe(1)
+    vi.mocked(memoryApi.getMemoryImportTask).mockResolvedValue({
+      success: true, task: makeTask({ done_chunks: 7, progress: 70 }),
+    })
+    await act(async () => { await result.current.refreshImportQueue(true) })
+    expect(result.current.selectedImportTaskResolved?.done_chunks).toBe(7)
+    expect(result.current.selectedImportTaskResolved?.progress).toBe(70)
+  })
+
+  it.each([
+    ['success', 'before'], ['failure', 'before'], ['success', 'after'], ['failure', 'after'],
+  ] as const)('过期任务详情 %s 响应在新请求 %s 完成时不覆盖选择、错误或加载状态', async (outcome, order) => {
+    type Detail = Awaited<ReturnType<typeof memoryApi.getMemoryImportTask>>
+    let resolveOld!: (value: Detail) => void
+    let rejectOld!: (reason: Error) => void
+    let resolveNew!: (value: Detail) => void
+    const oldResponse = new Promise<Detail>((resolve, reject) => {
+      resolveOld = resolve; rejectOld = reject
+    })
+    const newResponse = new Promise<Detail>((resolve) => { resolveNew = resolve })
+    vi.mocked(memoryApi.getMemoryImportTask)
+      .mockImplementationOnce(() => oldResponse).mockImplementationOnce(() => newResponse)
+    const { result } = renderQueue({ active: false })
+    let oldRequest!: Promise<void>
+    let newRequest!: Promise<void>
+    act(() => { oldRequest = result.current.selectImportTask('old-task') })
+    act(() => { newRequest = result.current.selectImportTask('new-task') })
+    const finishOld = async () => {
+      if (outcome === 'success') resolveOld({ success: true, task: makeTask({ task_id: 'old-task' }) })
+      else rejectOld(new Error('old error'))
+      await oldRequest
+    }
+    if (order === 'before') {
+      await act(finishOld)
+      expect(result.current.selectedImportTaskLoading).toBe(true)
+      expect(result.current.selectedImportTaskResolved).toBeNull()
+    }
+    await act(async () => {
+      resolveNew({ success: true, task: makeTask({ task_id: 'new-task', done_chunks: 9 }) })
+      await newRequest
+    })
+    if (order === 'after') await act(finishOld)
+    expect(result.current.selectedImportTaskId).toBe('new-task')
+    expect(result.current.selectedImportTaskResolved?.task_id).toBe('new-task')
+    expect(result.current.selectedImportTaskResolved?.done_chunks).toBe(9)
+    expect(result.current.importErrorText).toBe('')
+    expect(result.current.selectedImportTaskLoading).toBe(false)
+    expect(toastMock).not.toHaveBeenCalled()
+    expect(vi.mocked(memoryApi.getMemoryImportTaskChunks).mock.calls.every(([task]) => task === 'new-task')).toBe(true)
+  })
+
+  it.each([
+    ['success', 'page'], ['failure', 'page'], ['success', 'task'], ['failure', 'task'],
+  ] as const)('过期分块 %s 响应不能覆盖新的 %s 选择及加载状态', async (outcome, selection) => {
+    type Chunks = Awaited<ReturnType<typeof memoryApi.getMemoryImportTaskChunks>>
+    const { result } = renderQueue({ active: false })
+    await act(async () => { await result.current.selectImportTask('task-1') })
+    let resolveOld!: (value: Chunks) => void
+    let rejectOld!: (reason: Error) => void
+    let resolveNew!: (value: Chunks) => void
+    const oldResponse = new Promise<Chunks>((resolve, reject) => {
+      resolveOld = resolve; rejectOld = reject
+    })
+    const newResponse = new Promise<Chunks>((resolve) => { resolveNew = resolve })
+    vi.mocked(memoryApi.getMemoryImportTaskChunks)
+      .mockImplementationOnce(() => oldResponse).mockImplementationOnce(() => newResponse)
+    let oldRequest!: Promise<void>
+    let newRequest!: Promise<void>
+    act(() => { oldRequest = result.current.moveImportChunkPage(1) })
+    act(() => { newRequest = selection === 'page'
+      ? result.current.moveImportChunkPage(-1) : result.current.selectImportTask('task-2') })
+    await waitFor(() => expect(memoryApi.getMemoryImportTaskChunks).toHaveBeenCalledTimes(3))
+    await act(async () => {
+      if (outcome === 'success') resolveOld({ success: true, items: [makeChunk({ chunk_id: 'old' })], total: 99 })
+      else rejectOld(new Error('old chunks error'))
+      await oldRequest
+    })
+    expect(result.current.importChunksLoading).toBe(true)
+    expect(result.current.selectedImportChunks).toEqual([])
+    expect(result.current.importErrorText).toBe('')
+    await act(async () => {
+      resolveNew({ success: true, items: [makeChunk({ chunk_id: 'new' })], total: 1 })
+      await newRequest
+    })
+    expect(result.current.selectedImportChunks[0]?.chunk_id).toBe('new')
+    expect(result.current.importChunkOffset).toBe(0)
+    expect(result.current.selectedImportTaskId).toBe(selection === 'page' ? 'task-1' : 'task-2')
+    expect(result.current.importChunksLoading).toBe(false)
+    expect(result.current.importErrorText).toBe('')
+    expect(toastMock).not.toHaveBeenCalled()
+  })
+
+  it.each(['success', 'failure'] as const)('详情请求期间翻页后忽略旧详情的 %s 响应', async (outcome) => {
+    type Detail = Awaited<ReturnType<typeof memoryApi.getMemoryImportTask>>
+    const { result } = renderQueue()
+    await waitFor(() => expect(result.current.selectedImportChunks).toHaveLength(1))
+    let resolveOld!: (value: Detail) => void
+    let rejectOld!: (reason: Error) => void
+    const response = new Promise<Detail>((resolve, reject) => {
+      resolveOld = resolve; rejectOld = reject
+    })
+    vi.mocked(memoryApi.getMemoryImportTask).mockImplementationOnce(() => response)
+    let refresh!: Promise<void>
+    act(() => { refresh = result.current.refreshImportQueue(true) })
+    await waitFor(() => expect(memoryApi.getMemoryImportTask).toHaveBeenCalledTimes(2))
+    vi.mocked(memoryApi.getMemoryImportTaskChunks).mockResolvedValue({
+      success: true, items: [makeChunk({ chunk_id: 'new-page' })], total: 100,
+    })
+    await act(async () => { await result.current.moveImportChunkPage(1) })
+    vi.mocked(memoryApi.getMemoryImportTaskChunks).mockClear()
+    await act(async () => {
+      if (outcome === 'success') resolveOld({ success: true, task: makeTask({ files: [] }) })
+      else rejectOld(new Error('old details error'))
+      await refresh
+    })
+    expect(result.current.selectedImportChunks[0]?.chunk_id).toBe('new-page')
+    expect(result.current.selectedImportFileId).toBe('file-1')
+    expect(result.current.importChunkOffset).toBe(IMPORT_CHUNK_PAGE_SIZE)
+    expect(result.current.importErrorText).toBe('')
+    expect(result.current.importChunksLoading).toBe(false)
+    expect(memoryApi.getMemoryImportTaskChunks).not.toHaveBeenCalled()
+    expect(toastMock).not.toHaveBeenCalled()
+  })
+
   it('轮询间隔取 settings.poll_interval_ms，且不低于 200ms', async () => {
     vi.mocked(memoryApi.getMemoryImportSettings).mockResolvedValue({
       success: true,

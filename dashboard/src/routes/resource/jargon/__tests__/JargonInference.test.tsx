@@ -16,6 +16,7 @@ import type {
 } from '@/types/jargon-inference'
 import { JargonInferenceDialog } from '../JargonInferenceDialog'
 import { JargonInferenceHistory } from '../JargonInferenceHistory'
+import { JargonInferenceMonitor } from '../JargonInferenceMonitor'
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -132,6 +133,7 @@ function settings(overrides: Partial<JargonInferenceSettings> = {}): JargonInfer
     max_items_per_scan: 100,
     evidence_limit: 50,
     history_limit: 20,
+    job_retention_days: 7,
     ...overrides,
   }
 }
@@ -179,13 +181,20 @@ beforeEach(() => {
   Element.prototype.releasePointerCapture = () => {}
   vi.mocked(api.previewJargonInference).mockResolvedValue(preview())
   vi.mocked(api.startJargonInference).mockResolvedValue(job())
-  vi.mocked(api.getJargonInferenceJobs).mockResolvedValue({ items: [job()] })
+  vi.mocked(api.getJargonInferenceJobs).mockResolvedValue({
+    items: [job()],
+    total: 1,
+    page: 1,
+    page_size: 50,
+  })
   vi.mocked(api.getJargonInferenceJob).mockResolvedValue(detail(job()))
   vi.mocked(api.getJargonMeaningHistory).mockResolvedValue({ items: [history] })
   vi.mocked(api.restoreJargonMeaning).mockResolvedValue({ success: true })
   vi.mocked(api.lockJargonInference).mockResolvedValue({ success: true })
   vi.mocked(api.getJargonInferenceSettings).mockResolvedValue(settings())
-  vi.mocked(api.saveJargonInferenceSettings).mockImplementation(async (value) => value)
+  vi.mocked(api.saveJargonInferenceSettings).mockImplementation(
+    async ({ expected_settings: _expected, ...value }) => value
+  )
   vi.mocked(api.rescanJargonInference).mockResolvedValue(
     job({ id: 'rescan-job', source: 'rescan' })
   )
@@ -248,6 +257,13 @@ describe('Jargon inference scope and preview', () => {
     expect(screen.getByText(/当前范围没有可处理词条/)).toBeInTheDocument()
     expect(api.previewJargonInference).toHaveBeenCalledTimes(calls)
     expect(api.startJargonInference).not.toHaveBeenCalled()
+  })
+
+  it('blocks selected batches above the API limit before making a preview request', () => {
+    renderDialog({ selectedIds: Array.from({ length: 5001 }, (_, index) => index + 1) })
+    expect(screen.getByRole('alert')).toHaveTextContent('每批最多选择 5,000 条')
+    expect(screen.getByRole('button', { name: '开始批量推断' })).toBeDisabled()
+    expect(api.previewJargonInference).not.toHaveBeenCalled()
   })
 
   it('requires a fresh preview after changing scope, even while an older request resolves', async () => {
@@ -318,12 +334,46 @@ describe('Jargon inference task controls', () => {
     renderDialog()
     await waitFor(() => expect(screen.getByRole('button', { name: '开始批量推断' })).toBeEnabled())
     await user.click(screen.getByRole('button', { name: '开始批量推断' }))
-    const cancel = await screen.findByRole('button', { name: '取消未开始任务' })
+    const cancel = await screen.findByRole('button', { name: '取消未开始的词条' })
     expect(cancel).toBeEnabled()
     expect(screen.getByText('1 / 4')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '重试失败项' })).toBeDisabled()
     await user.click(cancel)
     await waitFor(() => expect(api.cancelJargonInference).toHaveBeenCalledWith('job-1'))
+  })
+
+  it('keeps older manual tasks accessible through source filtering and pagination', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.getJargonInferenceJobs).mockImplementation(async (options) => ({
+      items: [job({ id: options?.page === 2 ? 'older-manual' : 'job-1' })],
+      total: 75,
+      page: options?.page ?? 1,
+      page_size: 50,
+    }))
+    renderDialog()
+    await user.click(screen.getByRole('tab', { name: '任务与进度' }))
+    await waitFor(() =>
+      expect(api.getJargonInferenceJobs).toHaveBeenCalledWith({ page: 1, source: 'manual' })
+    )
+    await user.click(screen.getAllByRole('button', { name: '下一页' })[0])
+    await waitFor(() => expect(api.getJargonInferenceJob).toHaveBeenCalledWith('older-manual', 1))
+    await choose(user, '任务来源', /全部来源/)
+    await waitFor(() =>
+      expect(api.getJargonInferenceJobs).toHaveBeenCalledWith({ page: 1, source: undefined })
+    )
+  })
+
+  it('shows cancelled entries without offering a retry for cancelled-only results', async () => {
+    const user = userEvent.setup()
+    const cancelled = job({ counts: { cancelled: 1 } })
+    vi.mocked(api.getJargonInferenceJob).mockResolvedValue({
+      ...detail(cancelled),
+      items: [{ ...detail(cancelled).items[0], status: 'cancelled' }],
+    })
+    renderDialog()
+    await user.click(screen.getByRole('tab', { name: '任务与进度' }))
+    expect(await screen.findByText('已取消')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重试失败项' })).toBeDisabled()
   })
 
   it('retries a terminal job with failures and displays the new job', async () => {
@@ -339,7 +389,7 @@ describe('Jargon inference task controls', () => {
     await user.click(screen.getByRole('button', { name: '开始批量推断' }))
     const retry = await screen.findByRole('button', { name: '重试失败项' })
     expect(retry).toBeEnabled()
-    expect(screen.getByRole('button', { name: '取消未开始任务' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '取消未开始的词条' })).toBeDisabled()
     await user.click(retry)
     await waitFor(() => expect(api.retryJargonInference).toHaveBeenCalledWith('job-1'))
     await waitFor(() => expect(api.getJargonInferenceJob).toHaveBeenCalledWith('job-2', 1))
@@ -357,7 +407,14 @@ describe('Jargon inference protection and history', () => {
       inference_locked: true,
     })
     vi.mocked(jargonApi.getJargonDetail).mockResolvedValue({ success: true, data: restored })
-    render(<JargonInferenceHistory jargon={makeJargon()} dirty={false} onChanged={onChanged} />)
+    render(
+      <JargonInferenceHistory
+        jargon={makeJargon()}
+        dirty={false}
+        onChanged={onChanged}
+        onLockChanged={onChanged}
+      />
+    )
     await user.click(screen.getByRole('button', { name: '查看含义变更历史' }))
     expect(await screen.findByText('旧含义')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '恢复变更前' }))
@@ -371,7 +428,14 @@ describe('Jargon inference protection and history', () => {
 
   it('prevents lock and history changes while the detail form has unsaved edits', async () => {
     const user = userEvent.setup()
-    render(<JargonInferenceHistory jargon={makeJargon()} dirty onChanged={vi.fn()} />)
+    render(
+      <JargonInferenceHistory
+        jargon={makeJargon()}
+        dirty
+        onChanged={vi.fn()}
+        onLockChanged={vi.fn()}
+      />
+    )
     expect(screen.getByRole('switch', { name: '锁定，阻止 AI 推断覆盖' })).toBeDisabled()
     await user.click(screen.getByRole('button', { name: '查看含义变更历史' }))
     expect(await screen.findByRole('button', { name: '恢复变更前' })).toBeDisabled()
@@ -383,11 +447,18 @@ describe('Jargon inference protection and history', () => {
     const user = userEvent.setup()
     const onChanged = vi.fn()
     const manual = makeJargon({ created_by: 'MANUAL', inference_locked: true })
-    render(<JargonInferenceHistory jargon={manual} dirty={false} onChanged={onChanged} />)
+    render(
+      <JargonInferenceHistory
+        jargon={manual}
+        dirty={false}
+        onChanged={onChanged}
+        onLockChanged={onChanged}
+      />
+    )
     expect(screen.getByText(/取消固定/)).toBeInTheDocument()
     await user.click(screen.getByRole('switch', { name: '锁定，阻止 AI 推断覆盖' }))
     await waitFor(() => expect(api.lockJargonInference).toHaveBeenCalledWith(7, false))
-    expect(onChanged).toHaveBeenCalledWith({ ...manual, inference_locked: false })
+    expect(onChanged).toHaveBeenCalledWith(7, false)
     expect(jargonApi.getJargonDetail).not.toHaveBeenCalled()
   })
 
@@ -395,7 +466,14 @@ describe('Jargon inference protection and history', () => {
     const user = userEvent.setup()
     const onChanged = vi.fn()
     vi.mocked(api.getJargonMeaningHistory).mockRejectedValue(new Error('历史读取失败'))
-    render(<JargonInferenceHistory jargon={makeJargon()} dirty={false} onChanged={onChanged} />)
+    render(
+      <JargonInferenceHistory
+        jargon={makeJargon()}
+        dirty={false}
+        onChanged={onChanged}
+        onLockChanged={onChanged}
+      />
+    )
     await user.click(screen.getByRole('button', { name: '查看含义变更历史' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('历史读取失败')
     expect(onChanged).not.toHaveBeenCalled()
@@ -435,48 +513,74 @@ describe('Jargon inference settings', () => {
     await user.type(interval, '12')
     await user.click(screen.getByRole('button', { name: '保存设置' }))
     await waitFor(() =>
-      expect(vi.mocked(api.saveJargonInferenceSettings).mock.calls.at(-1)?.[0]).toEqual(
-        settings({
+      expect(vi.mocked(api.saveJargonInferenceSettings).mock.calls.at(-1)?.[0]).toEqual({
+        ...settings({
           thresholds: [1, 4, 10],
           scheduled_enabled: true,
           require_new_evidence: false,
           scheduled_scope: 'all',
           scan_interval_hours: 12,
-        })
-      )
+        }),
+        expected_settings: settings(),
+      })
     )
     expect(await screen.findByText('设置已保存并生效。')).toHaveAttribute('role', 'status')
   })
 
-  it('keeps saved feedback and local edits when background settings data changes', async () => {
+  it('merges untouched remote settings but blocks conflicting edits until explicitly reloaded', async () => {
     const user = userEvent.setup()
     const { client } = renderDialog()
     await user.click(screen.getByRole('tab', { name: '触发与定时设置' }))
     const thresholds = await screen.findByLabelText('累计命中次数阈值')
     await user.clear(thresholds)
-    await user.type(thresholds, '1, 5, 10')
-    await user.click(screen.getByRole('button', { name: '保存设置' }))
-    expect(await screen.findByText('设置已保存并生效。')).toHaveAttribute('role', 'status')
-    expect(thresholds).toHaveValue('1, 5, 10')
-    await act(async () => {
-      client.setQueryData(['jargon-inference', 'settings'], settings({ thresholds: [2, 6] }))
-    })
-    expect(screen.getByText('设置已保存并生效。')).toHaveAttribute('role', 'status')
-    expect(thresholds).toHaveValue('1, 5, 10')
-    await user.clear(thresholds)
     await user.type(thresholds, '1, 3, 9')
-    expect(screen.queryByText('设置已保存并生效。')).not.toBeInTheDocument()
-    vi.mocked(api.getJargonInferenceSettings).mockResolvedValue(settings({ thresholds: [5, 15] }))
     await act(async () => {
-      await client.invalidateQueries({ queryKey: ['jargon-inference', 'settings'] })
+      client.setQueryData(['jargon-inference', 'settings'], settings({ scan_interval_hours: 12 }))
     })
     expect(thresholds).toHaveValue('1, 3, 9')
+    await waitFor(() =>
+      expect(screen.getByRole('spinbutton', { name: '定时扫描周期（小时）' })).toHaveValue(12)
+    )
+    await act(async () => {
+      client.setQueryData(
+        ['jargon-inference', 'settings'],
+        settings({ thresholds: [2, 6], scan_interval_hours: 12 })
+      )
+    })
+    expect(thresholds).toHaveValue('1, 3, 9')
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存设置' })).toBeDisabled())
+    vi.mocked(api.getJargonInferenceSettings).mockResolvedValue(
+      settings({ thresholds: [2, 6], scan_interval_hours: 12 })
+    )
+    await user.click(screen.getByRole('button', { name: '放弃本地编辑并重新加载' }))
+    await waitFor(() => expect(thresholds).toHaveValue('2, 6'))
     await user.click(screen.getByRole('button', { name: '保存设置' }))
     await waitFor(() =>
-      expect(vi.mocked(api.saveJargonInferenceSettings).mock.calls.at(-1)?.[0].thresholds).toEqual([
-        1, 3, 9,
-      ])
+      expect(vi.mocked(api.saveJargonInferenceSettings).mock.calls.at(-1)?.[0]).toEqual({
+        ...settings({ thresholds: [2, 6], scan_interval_hours: 12 }),
+        expected_settings: settings({ thresholds: [2, 6], scan_interval_hours: 12 }),
+      })
     )
+  })
+
+  it('disables all configuration controls during a save so its result cannot overwrite later edits', async () => {
+    const user = userEvent.setup()
+    let finish!: (value: JargonInferenceSettings) => void
+    vi.mocked(api.saveJargonInferenceSettings).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    renderDialog()
+    await user.click(screen.getByRole('tab', { name: '触发与定时设置' }))
+    const thresholds = await screen.findByLabelText('累计命中次数阈值')
+    await user.click(screen.getByRole('button', { name: '保存设置' }))
+    expect(thresholds).toBeDisabled()
+    expect(screen.getByRole('switch', { name: '启用定期重新推断' })).toBeDisabled()
+    expect(screen.getByRole('combobox', { name: '定期处理范围' })).toBeDisabled()
+    await act(async () => finish(settings()))
+    await waitFor(() => expect(thresholds).toBeEnabled())
   })
 
   it('starts a scan with saved configuration and navigates to its progress without saving local edits', async () => {
@@ -491,5 +595,51 @@ describe('Jargon inference settings', () => {
     await waitFor(() => expect(api.getJargonInferenceJob).toHaveBeenCalledWith('rescan-job', 1))
     expect(screen.getByRole('tab', { name: '任务与进度' })).toHaveAttribute('aria-selected', 'true')
     expect(api.saveJargonInferenceSettings).not.toHaveBeenCalled()
+  })
+})
+
+describe('Jargon background progress', () => {
+  it('refreshes records during activity and on completion even with no dialog mounted', async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    })
+    clients.push(client)
+    const snapshot = {
+      items: [job({ status: 'running', completed: 0 })],
+      total: 80,
+      page: 1,
+      page_size: 1,
+    }
+    client.setQueryData(['jargon-inference', 'monitor'], snapshot, { updatedAt: 100 })
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    render(
+      <QueryClientProvider client={client}>
+        <JargonInferenceMonitor />
+      </QueryClientProvider>
+    )
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['jargon'] }))
+    invalidate.mockClear()
+    await act(async () => {
+      client.setQueryData(['jargon-inference', 'monitor'], snapshot, { updatedAt: 200 })
+    })
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['jargon'] }))
+    invalidate.mockClear()
+    await act(async () => {
+      client.setQueryData(
+        ['jargon-inference', 'monitor'],
+        { ...snapshot, items: [job()] },
+        { updatedAt: 300 }
+      )
+    })
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['jargon'] }))
+    invalidate.mockClear()
+    await act(async () => {
+      client.setQueryData(
+        ['jargon-inference', 'monitor'],
+        { ...snapshot, items: [job()] },
+        { updatedAt: 400 }
+      )
+    })
+    expect(invalidate).not.toHaveBeenCalled()
   })
 })

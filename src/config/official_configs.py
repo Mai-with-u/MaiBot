@@ -4339,7 +4339,10 @@ class JargonInferenceConfig(ConfigBase):
     """使用已有聊天流 ID 限定范围，留空表示全部聊天。"""
 
     max_items_per_scan: int = Field(default=100, ge=1, le=10000, json_schema_extra={"label": "每轮最多处理词条数"})
-    """限制定期扫描和配置变化补处理的单轮任务数量。"""
+    """限制定期扫描每轮、阈值补扫每批的词条数量。"""
+
+    job_retention_days: int = Field(default=7, ge=1, le=365, json_schema_extra={"label": "已结束任务保留天数"})
+    """按结束时间保留任务记录。到期后可按需发起新推断，活动任务和含义历史不受影响。"""
 
     evidence_limit: int = Field(default=50, ge=1, le=200, json_schema_extra={"label": "证据上下文组上限"})
     """每个词条保留和使用的证据上下文组上限。"""

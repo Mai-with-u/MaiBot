@@ -67,6 +67,8 @@ export function JargonInferenceDialog({
   const [force, setForce] = useState(true)
   const [lastStatus, setLastStatus] = useState('any')
   const [jobId, setJobId] = useState<string | null>(null)
+  const [jobPage, setJobPage] = useState(1)
+  const [jobSource, setJobSource] = useState('manual')
   const queryClient = useQueryClient()
 
   // An explicit empty ID list must never become an unfiltered, cross-page request.
@@ -79,7 +81,9 @@ export function JargonInferenceDialog({
     }),
     [scope, filters, selectedIds, pageIds, mode, force, lastStatus]
   )
-  const validScope = scope === 'all' ? scopeValid : (request.ids?.length ?? 0) > 0
+  const selectionTooLarge = (request.ids?.length ?? 0) > 5000
+  const validScope =
+    !selectionTooLarge && (scope === 'all' ? scopeValid : (request.ids?.length ?? 0) > 0)
   const preview = useQuery({
     queryKey: ['jargon-inference', 'preview', request],
     queryFn: () => previewJargonInference(request),
@@ -87,8 +91,12 @@ export function JargonInferenceDialog({
     retry: false,
   })
   const jobs = useQuery({
-    queryKey: ['jargon-inference', 'jobs'],
-    queryFn: getJargonInferenceJobs,
+    queryKey: ['jargon-inference', 'jobs', jobSource, jobPage],
+    queryFn: () =>
+      getJargonInferenceJobs({
+        page: jobPage,
+        source: jobSource === 'all' ? undefined : jobSource,
+      }),
     enabled: open,
     refetchInterval: open ? 3000 : false,
   })
@@ -97,6 +105,8 @@ export function JargonInferenceDialog({
     mutationFn: () => startJargonInference(request),
     onSuccess: (job) => {
       setJobId(job.id)
+      setJobSource(job.source)
+      setJobPage(1)
       setTab('jobs')
       void queryClient.invalidateQueries({ queryKey: ['jargon-inference'] })
       onChanged()
@@ -104,6 +114,8 @@ export function JargonInferenceDialog({
   })
   const selectJob = (job: JargonInferenceJob) => {
     setJobId(job.id)
+    setJobSource(job.source)
+    setJobPage(1)
     setTab('jobs')
     void queryClient.invalidateQueries({ queryKey: ['jargon-inference'] })
   }
@@ -222,7 +234,15 @@ export function JargonInferenceDialog({
                   )}
                 </Label>
               </div>
-              {!validScope && (
+              {selectionTooLarge && (
+                <p role="alert" className="text-destructive text-sm">
+                  {t(
+                    'jargonInference.selectionLimit',
+                    '每批最多选择 5,000 条。请减少勾选数量后再推断。'
+                  )}
+                </p>
+              )}
+              {!validScope && !selectionTooLarge && (
                 <p role="status" className="text-muted-foreground text-sm">
                   {t('jargonInference.noScope', '当前范围没有可处理词条，请更换范围或先选择词条。')}
                 </p>
@@ -280,6 +300,23 @@ export function JargonInferenceDialog({
               </Button>
             </TabsContent>
             <TabsContent value="jobs" className="mt-0 space-y-4">
+              <InferenceChoice
+                id="inference-job-source"
+                label={t('jargonInference.jobSource', '任务来源')}
+                value={jobSource}
+                onChange={(value) => {
+                  setJobSource(value)
+                  setJobPage(1)
+                  setJobId(null)
+                }}
+                options={[
+                  { value: 'all', label: t('jargonInference.allSources', '全部来源') },
+                  ...['manual', 'automatic', 'threshold', 'scheduled'].map((value) => ({
+                    value,
+                    label: t(`jargonInference.sources.${value}`, value),
+                  })),
+                ]}
+              />
               {jobs.error && (
                 <p role="alert" className="text-destructive text-sm">
                   {jobs.error.message}
@@ -316,6 +353,31 @@ export function JargonInferenceDialog({
                   {t('jargonInference.noJobs', '暂无推断任务。')}
                 </p>
               )}
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={jobPage === 1 || jobs.isFetching}
+                  onClick={() => {
+                    setJobPage((value) => value - 1)
+                    setJobId(null)
+                  }}
+                >
+                  {t('jargonInference.previous', '上一页')}
+                </Button>
+                <span className="text-muted-foreground text-xs">{jobPage}</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={jobs.isFetching || jobPage * 50 >= (jobs.data?.total ?? 0)}
+                  onClick={() => {
+                    setJobPage((value) => value + 1)
+                    setJobId(null)
+                  }}
+                >
+                  {t('jargonInference.next', '下一页')}
+                </Button>
+              </div>
               {selectedJobId && (
                 <JobProgress
                   key={selectedJobId}
@@ -401,7 +463,7 @@ function JobProgress({
               disabled={!active || cancel.isPending || job.status === 'cancelling'}
               onClick={() => cancel.mutate()}
             >
-              {t('jargonInference.cancelPending', '取消未开始任务')}
+              {t('jargonInference.cancelPending', '取消未开始的词条')}
             </Button>
             <Button
               variant="outline"

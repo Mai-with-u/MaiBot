@@ -18,8 +18,15 @@ export function startJargonInference(body: JargonInferenceRequest) {
   return backendApi.post<JargonInferenceJob>(`${API_BASE}/jobs`, { body })
 }
 
-export function getJargonInferenceJobs() {
-  return backendApi.get<{ items: JargonInferenceJob[] }>(`${API_BASE}/jobs`)
+export function getJargonInferenceJobs(
+  options: { page?: number; page_size?: number; source?: string; active_only?: boolean } = {}
+) {
+  return backendApi.get<{
+    items: JargonInferenceJob[]
+    total: number
+    page: number
+    page_size: number
+  }>(`${API_BASE}/jobs`, { query: options })
 }
 
 export function getJargonInferenceJob(id: string, page = 1) {
@@ -40,7 +47,9 @@ export function getJargonInferenceSettings() {
   return backendApi.get<JargonInferenceSettings>(`${API_BASE}/settings`)
 }
 
-export function saveJargonInferenceSettings(body: JargonInferenceSettings) {
+export function saveJargonInferenceSettings(
+  body: JargonInferenceSettings & { expected_settings?: JargonInferenceSettings }
+) {
   return backendApi.put<JargonInferenceSettings>(`${API_BASE}/settings`, { body })
 }
 

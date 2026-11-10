@@ -1,17 +1,19 @@
 """数据库服务模块。"""
 
-import json
-import time
-import traceback
 from datetime import date, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional, cast
 
 from sqlalchemy import delete, func
-from sqlmodel import SQLModel, select
+from sqlmodel import SQLModel, col, select
+
+import asyncio
+import json
+import time
+import traceback
 
 from src.common.database.database import get_db_session
-from src.common.database.database_model import ToolRecord
+from src.common.database.database_model import Jargon, JargonInferenceState, JargonMeaningHistory, ToolRecord
 from src.common.logger import get_logger
 
 if TYPE_CHECKING:
@@ -147,10 +149,21 @@ async def db_update(model_class: type[SQLModel], data: dict[str, Any], filters: 
 
 
 async def db_delete(model_class: type[SQLModel], filters: Optional[dict[str, Any]] = None) -> int:
+    """在线程池中原子删除匹配记录及黑话附属数据，避免复用 ID 继承旧状态。"""
+    return await asyncio.to_thread(_delete_records, model_class, filters)
+
+
+def _delete_records(model_class: type[SQLModel], filters: Optional[dict[str, Any]]) -> int:
+    """在同一事务中清理附属表；任一步骤失败时保留原词条和元数据。"""
     try:
         with get_db_session() as session:
+            conditions = _build_filters(model_class, filters)
+            if model_class is Jargon:
+                jargon_ids = select(Jargon.id).where(*conditions)
+                for metadata_model in (JargonInferenceState, JargonMeaningHistory):
+                    session.exec(delete(metadata_model).where(col(metadata_model.jargon_id).in_(jargon_ids)))
             statement = delete(model_class)
-            if conditions := _build_filters(model_class, filters):
+            if conditions:
                 statement = statement.where(*conditions)
             result = session.exec(statement)
             return result.rowcount or 0

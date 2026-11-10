@@ -84,6 +84,7 @@ interface JargonDetailDialogProps {
   onOpenChange: (open: boolean) => void
   chatList: JargonChatInfo[]
   onChanged: (jargon: Jargon) => void
+  onLockChanged: (id: number, locked: boolean) => void
 }
 
 export function JargonDetailDialog({
@@ -92,6 +93,7 @@ export function JargonDetailDialog({
   onOpenChange,
   chatList,
   onChanged,
+  onLockChanged,
 }: JargonDetailDialogProps) {
   const [formData, setFormData] = useState<JargonUpdateRequest>({})
   const [saving, setSaving] = useState(false)
@@ -99,9 +101,9 @@ export function JargonDetailDialog({
   const [unpinning, setUnpinning] = useState(false)
   const { toast } = useToast()
 
-  useEffect(() => {
-    if (jargon && open) {
-      setFormData({
+  // Metadata refreshes (e.g. a lock completing) must not replace unsaved edits.
+  const editableSnapshot = jargon
+    ? JSON.stringify({
         content: jargon.content,
         meaning: jargon.meaning || '',
         session_id: jargon.session_id,
@@ -111,8 +113,11 @@ export function JargonDetailDialog({
         is_global: jargon.is_global,
         is_jargon: jargon.is_jargon,
       })
-    }
-  }, [jargon, open])
+    : null
+  const recordId = jargon?.id
+  useEffect(() => {
+    if (editableSnapshot && open) setFormData(JSON.parse(editableSnapshot) as JargonUpdateRequest)
+  }, [editableSnapshot, recordId, open])
 
   const handleSave = async () => {
     if (!jargon) return
@@ -358,6 +363,7 @@ export function JargonDetailDialog({
                   )
               }
               onChanged={onChanged}
+              onLockChanged={onLockChanged}
             />
           </div>
         </DialogBody>
