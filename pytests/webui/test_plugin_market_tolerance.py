@@ -56,13 +56,15 @@ def _official_item(plugin_id: str, release_manifest_id: str) -> Dict[str, Any]:
 
 
 def test_parse_release_index_skips_entry_with_mismatched_manifest_id():
-    content = json.dumps({
-        "schema_version": 1,
-        "plugins": [
-            _index_entry("github.example.valid", "github.example.valid"),
-            _index_entry("github.example.renamed", "github.example.old"),
-        ],
-    })
+    content = json.dumps(
+        {
+            "schema_version": 1,
+            "plugins": [
+                _index_entry("github.example.valid", "github.example.valid"),
+                _index_entry("github.example.renamed", "github.example.old"),
+            ],
+        }
+    )
 
     parsed = parse_release_index(content)
 
