@@ -692,6 +692,124 @@ describe('useImportQueue', () => {
     expect(memoryApi.getMemoryImportTaskChunks).toHaveBeenCalledTimes(1)
   })
 
+  it.each(['created', 'retry'] as const)('%s 刷新期间用户改选任务后不跳到新任务', async (source) => {
+    const tasks = [makeTask(), makeTask({ task_id: 'task-2' })]
+    const preferredTask = makeTask({ task_id: 'new-task' })
+    vi.mocked(memoryApi.getMemoryImportTasks).mockResolvedValue({ success: true, items: tasks })
+    vi.mocked(memoryApi.getMemoryImportSettings).mockResolvedValue({
+      success: true, settings: { poll_interval_ms: 60_000 },
+    })
+    const { result } = renderQueue()
+    await waitFor(() => expect(result.current.selectedImportChunks).toHaveLength(1))
+    let resolveRefresh!: (value: Awaited<ReturnType<typeof memoryApi.getMemoryImportTasks>>) => void
+    const pending = new Promise<Awaited<ReturnType<typeof memoryApi.getMemoryImportTasks>>>((resolve) => {
+      resolveRefresh = resolve
+    })
+    vi.mocked(memoryApi.getMemoryImportTasks).mockReturnValueOnce(pending)
+    vi.mocked(memoryApi.retryMemoryImportTask).mockResolvedValue({ success: true, task: preferredTask })
+    let refresh!: Promise<void>
+    act(() => {
+      refresh = source === 'created'
+        ? result.current.afterCreated(preferredTask.task_id)
+        : result.current.retrySelectedImportTask()
+    })
+    await waitFor(() => expect(memoryApi.getMemoryImportTasks).toHaveBeenCalledTimes(2))
+    await act(async () => { await result.current.selectImportTask('task-2') })
+    vi.mocked(memoryApi.getMemoryImportTask).mockClear()
+    await act(async () => {
+      resolveRefresh({ success: true, items: [...tasks, preferredTask] })
+      await refresh
+    })
+    expect(result.current.selectedImportTaskId).toBe('task-2')
+    expect(result.current.selectedImportTaskResolved?.task_id).toBe('task-2')
+    expect(vi.mocked(memoryApi.getMemoryImportTask).mock.calls.every(([id]) => id === 'task-2')).toBe(true)
+  })
+
+  it('连续重试的新刷新完成后，较早刷新不能重新选中旧重试任务', async () => {
+    const olderTask = makeTask({ task_id: 'retry-older' })
+    const newerTask = makeTask({ task_id: 'retry-newer' })
+    vi.mocked(memoryApi.getMemoryImportSettings).mockResolvedValue({
+      success: true, settings: { poll_interval_ms: 60_000 },
+    })
+    const { result } = renderQueue()
+    await waitFor(() => expect(result.current.selectedImportChunks).toHaveLength(1))
+    type Tasks = Awaited<ReturnType<typeof memoryApi.getMemoryImportTasks>>
+    let resolveOlder!: (value: Tasks) => void
+    let resolveNewer!: (value: Tasks) => void
+    const olderResponse = new Promise<Tasks>((resolve) => { resolveOlder = resolve })
+    const newerResponse = new Promise<Tasks>((resolve) => { resolveNewer = resolve })
+    vi.mocked(memoryApi.getMemoryImportTasks)
+      .mockReturnValueOnce(olderResponse).mockReturnValueOnce(newerResponse)
+    vi.mocked(memoryApi.retryMemoryImportTask)
+      .mockResolvedValueOnce({ success: true, task: olderTask })
+      .mockResolvedValueOnce({ success: true, task: newerTask })
+    let olderRetry!: Promise<void>
+    let newerRetry!: Promise<void>
+    act(() => { olderRetry = result.current.retrySelectedImportTask() })
+    await waitFor(() => expect(memoryApi.getMemoryImportTasks).toHaveBeenCalledTimes(2))
+    act(() => { newerRetry = result.current.retrySelectedImportTask() })
+    await waitFor(() => expect(memoryApi.getMemoryImportTasks).toHaveBeenCalledTimes(3))
+    vi.mocked(memoryApi.getMemoryImportTask).mockClear()
+    await act(async () => {
+      resolveNewer({ success: true, items: [makeTask(), olderTask, newerTask] })
+      await Promise.all([olderRetry, newerRetry])
+      resolveOlder({ success: true, items: [makeTask(), olderTask] })
+    })
+    expect(result.current.selectedImportTaskId).toBe('retry-newer')
+    expect(result.current.selectedImportTaskResolved?.task_id).toBe('retry-newer')
+    expect(memoryApi.getMemoryImportTask).toHaveBeenCalledExactlyOnceWith('retry-newer', false)
+  })
+
+  it('重试接口返回前用户改选任务，返回后仍保留用户选择', async () => {
+    const tasks = [makeTask(), makeTask({ task_id: 'task-2' }), makeTask({ task_id: 'retry-task' })]
+    vi.mocked(memoryApi.getMemoryImportTasks).mockResolvedValue({ success: true, items: tasks })
+    const { result } = renderQueue()
+    await waitFor(() => expect(result.current.selectedImportChunks).toHaveLength(1))
+    let resolveRetry!: (value: Awaited<ReturnType<typeof memoryApi.retryMemoryImportTask>>) => void
+    const pending = new Promise<Awaited<ReturnType<typeof memoryApi.retryMemoryImportTask>>>((resolve) => {
+      resolveRetry = resolve
+    })
+    vi.mocked(memoryApi.retryMemoryImportTask).mockReturnValueOnce(pending)
+    let retry!: Promise<void>
+    act(() => { retry = result.current.retrySelectedImportTask() })
+    await act(async () => { await result.current.selectImportTask('task-2') })
+    vi.mocked(memoryApi.getMemoryImportTask).mockClear()
+    await act(async () => {
+      resolveRetry({ success: true, task: tasks[2] })
+      await retry
+    })
+    expect(result.current.selectedImportTaskId).toBe('task-2')
+    expect(vi.mocked(memoryApi.getMemoryImportTask).mock.calls.every(([id]) => id === 'task-2')).toBe(true)
+  })
+
+  it('较早重试接口晚返回时，不覆盖较新重试任务或再次刷新详情', async () => {
+    const olderTask = makeTask({ task_id: 'retry-older' })
+    const newerTask = makeTask({ task_id: 'retry-newer' })
+    vi.mocked(memoryApi.getMemoryImportTasks).mockResolvedValue({
+      success: true, items: [makeTask(), olderTask, newerTask],
+    })
+    const { result } = renderQueue()
+    await waitFor(() => expect(result.current.selectedImportChunks).toHaveLength(1))
+    let resolveOlder!: (value: Awaited<ReturnType<typeof memoryApi.retryMemoryImportTask>>) => void
+    const pending = new Promise<Awaited<ReturnType<typeof memoryApi.retryMemoryImportTask>>>((resolve) => {
+      resolveOlder = resolve
+    })
+    vi.mocked(memoryApi.retryMemoryImportTask)
+      .mockReturnValueOnce(pending).mockResolvedValueOnce({ success: true, task: newerTask })
+    let olderRetry!: Promise<void>
+    act(() => { olderRetry = result.current.retrySelectedImportTask() })
+    await act(async () => { await result.current.retrySelectedImportTask() })
+    expect(result.current.selectedImportTaskId).toBe('retry-newer')
+    vi.mocked(memoryApi.getMemoryImportTask).mockClear()
+    await act(async () => {
+      resolveOlder({ success: true, task: olderTask })
+      await olderRetry
+    })
+    expect(result.current.selectedImportTaskId).toBe('retry-newer')
+    expect(result.current.selectedImportTaskResolved?.task_id).toBe('retry-newer')
+    expect(memoryApi.getMemoryImportTask).not.toHaveBeenCalled()
+  })
+
   it.each([false, true])('重试操作只刷新一次目标详情和分块（新任务：%s）', async (newTask) => {
     const { result } = renderQueue()
     await waitFor(() => expect(result.current.selectedImportChunks).toHaveLength(1))
