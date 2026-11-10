@@ -1,11 +1,15 @@
 """插件市场的发布清单模型与兼容版本判断，不依赖 WebUI 路由。"""
 
+import json
+import logging
 from typing import Any, Dict, List, Literal, Optional
 
 from packaging.version import Version
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from src.plugin_runtime.runner.manifest_validator import ManifestValidator
+
+logger = logging.getLogger(__name__)
 
 
 class PluginRelease(BaseModel):
@@ -77,18 +81,40 @@ def parse_market_release_entry(data: Dict[str, Any], plugin_id: Optional[str] = 
 
 
 def parse_release_index(content: str) -> PluginReleaseIndex:
-    index = PluginReleaseIndex.model_validate_json(content)
-    aliases: Dict[str, str] = {}
-    for entry in index.plugins:
-        for alias in {entry.id, entry.manifest_id} - {None}:
-            if entry.sync_error:
-                continue
-            key = alias.casefold()
-            if key in aliases and aliases[key] != entry.id:
-                raise ValueError(f"版本索引插件 ID 冲突：{alias}")
-            aliases[key] = entry.id
-        _validate_release_entry(entry)
-    return index
+    data = json.loads(content)
+    if not isinstance(data, dict):
+        raise ValueError("版本索引顶层必须为 JSON 对象")
+    raw_plugins = data.get("plugins", [])
+    if not isinstance(raw_plugins, list):
+        raise ValueError("版本索引 plugins 必须为数组")
+
+    skipped: List[str] = []
+    entries: List[PluginReleaseEntry] = []
+    owners: Dict[str, str] = {}
+    # 单条脏数据（字段不合法、manifest ID 与条目不一致等）只跳过该条，不让整个索引解析失败。
+    for raw in raw_plugins:
+        label = raw.get("id") if isinstance(raw, dict) else repr(raw)
+        try:
+            entry = PluginReleaseEntry.model_validate(raw)
+            _validate_release_entry(entry)
+        except (ValidationError, ValueError) as exc:
+            skipped.append(f"{label or '?'}: {exc}")
+            continue
+        keys = {alias.casefold() for alias in (entry.id, entry.manifest_id) if alias}
+        clash = {key: owners[key] for key in keys if key in owners}
+        if clash:
+            # 别名冲突时把先前条目也剔除，只跳过后一个仍会让安装请求按别名匹配到错误的仓库。
+            for lost in set(clash.values()):
+                entries = [kept for kept in entries if kept.id != lost]
+                owners = {key: owner for key, owner in owners.items() if owner != lost}
+            skipped.append(f"{entry.id}: 插件 ID 别名冲突（{'/'.join(sorted(set(clash.values())))}）")
+            continue
+        entries.append(entry)
+        for key in keys:
+            owners[key] = entry.id
+    if skipped:
+        logger.warning("版本索引解析跳过 %d 条无效条目：%s", len(skipped), "；".join(skipped))
+    return PluginReleaseIndex.model_validate({**data, "plugins": entries})
 
 
 def _validate_release_entry(entry: PluginReleaseEntry) -> None:
