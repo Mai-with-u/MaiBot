@@ -387,9 +387,17 @@ describe('SetupPage 完成与跳过', () => {
   })
 
   it('确认跳过向导后标记完成并跳转首页', async () => {
+    const draftKey = 'maibot-setup-draft-v1:standalone'
+    let resolveStatus!: (status: SetupStatus) => void
+    mocks.loadSetupStatus.mockReturnValueOnce(new Promise<SetupStatus>((resolve) => {
+      resolveStatus = resolve
+    }))
     render(<SetupPage />)
+    expect(sessionStorage.getItem(draftKey)).toBeNull()
+    resolveStatus({ ...defaultStatus })
     await waitLoadingDone()
-    expect(sessionStorage.getItem('maibot-setup-draft-v1:standalone')).not.toBeNull()
+    await waitFor(() => expect(sessionStorage.getItem(draftKey)).not.toBeNull())
+    expect(JSON.parse(sessionStorage.getItem(draftKey)!)).toMatchObject({ botBasic: defaultBotBasic })
 
     fireEvent.click(screen.getByRole('button', { name: 'setupPage.skipDialog.confirm' }))
 
@@ -397,7 +405,7 @@ describe('SetupPage 完成与跳过', () => {
       expect(mocks.navigate).toHaveBeenCalledWith({ to: '/' })
     })
     expect(mocks.completeSetup).toHaveBeenCalledTimes(1)
-    expect(sessionStorage.getItem('maibot-setup-draft-v1:standalone')).toBeNull()
+    expect(sessionStorage.getItem(draftKey)).toBeNull()
   })
 
   it('跳过时标记完成失败则提示错误且不跳转', async () => {
