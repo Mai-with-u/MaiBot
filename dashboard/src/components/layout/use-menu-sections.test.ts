@@ -12,22 +12,6 @@ vi.mock('@/lib/config-api', () => ({
   getBotConfigCached: vi.fn(),
 }))
 
-// 真实菜单已移除电脑入口；用受控 fixture 验证 hook 的通用特性过滤。
-vi.mock('./constants', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./constants')>()
-  return {
-    ...actual,
-    menuSections: actual.menuSections.map((section, index) => index === 0 ? {
-      ...section,
-      items: [...section.items, {
-        ...section.items[0],
-        path: '/feature-test',
-        featureFlag: 'agent' as const,
-      }],
-    } : section),
-  }
-})
-
 const mockGetBotConfigCached = vi.mocked(getBotConfigCached)
 
 /** 把菜单分组拍平成路径列表，便于断言某个入口是否可见 */
@@ -43,7 +27,7 @@ describe('useMenuSections', () => {
     const { result } = renderHook(() => useMenuSections())
     const paths = flattenPaths(result.current)
 
-    expect(paths).not.toContain('/feature-test')
+    expect(paths).not.toContain('/desktop-pet')
     // 其它常规入口不受特性开关影响
     expect(paths).toContain('/')
     expect(paths).toContain('/config/bot')
@@ -56,8 +40,8 @@ describe('useMenuSections', () => {
 
   it('收到配置更新事件后重新拉取并刷新菜单', async () => {
     mockGetBotConfigCached
-      .mockResolvedValueOnce({ agent: { enabled: false } })
-      .mockResolvedValueOnce({ agent: { enabled: true } })
+      .mockResolvedValueOnce({ desktop_pet: { enabled: false } })
+      .mockResolvedValueOnce({ desktop_pet: { enabled: true } })
 
     const { result } = renderHook(() => useMenuSections())
     const initial = result.current
@@ -66,7 +50,7 @@ describe('useMenuSections', () => {
     await waitFor(() => {
       expect(result.current).not.toBe(initial)
     })
-    expect(flattenPaths(result.current)).not.toContain('/feature-test')
+    expect(flattenPaths(result.current)).not.toContain('/desktop-pet')
 
     // 派发配置更新事件，触发第二次拉取（开关开启）
     act(() => {
@@ -74,7 +58,7 @@ describe('useMenuSections', () => {
     })
 
     await waitFor(() => {
-      expect(flattenPaths(result.current)).toContain('/feature-test')
+      expect(flattenPaths(result.current)).toContain('/desktop-pet')
     })
     expect(mockGetBotConfigCached).toHaveBeenCalledTimes(2)
   })

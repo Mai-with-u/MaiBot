@@ -17,7 +17,7 @@ vi.mock('@/lib/http', () => ({ backendApi: { get: vi.fn(), put: vi.fn() } }))
 vi.mock('@/lib/plugin-api', () => ({ invalidatePluginMarketCache: vi.fn() }))
 vi.mock('@/host/PluginDependenciesSection', () => ({ PluginDependenciesSection: () => <div>插件依赖</div> }))
 
-const settings = { information_source: 'official', download_source: 'cnb', custom_download_prefix: null }
+const settings = { information_source: 'cnb', download_source: 'cnb', custom_download_prefix: null }
 
 function renderSettings() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
@@ -52,7 +52,7 @@ describe('旧镜像页迁移', () => {
 describe('插件商店来源设置', () => {
   it('加载当前来源，初始没有修改时不允许保存', async () => {
     renderSettings()
-    expect(await screen.findByRole('combobox', { name: '插件信息源' })).toHaveTextContent('麦麦官方')
+    expect(await screen.findByRole('combobox', { name: '插件信息源' })).toHaveTextContent('CNB镜像')
     expect(screen.getByRole('combobox', { name: '插件下载源' })).toHaveTextContent('CNB镜像')
     expect(screen.getByRole('button', { name: '保存设置' })).toBeDisabled()
     expect(backendApi.get).toHaveBeenCalledWith('/api/webui/plugins/marketplace/source', { errorMessage: '获取插件商店设置失败' })

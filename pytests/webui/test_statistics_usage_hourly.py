@@ -191,7 +191,7 @@ def usage_db(tmp_path, monkeypatch):
     engine = create_engine(f"sqlite:///{tmp_path / 'usage.db'}")
     SQLModel.metadata.create_all(
         engine,
-        tables=[ModelUsage.__table__, StatisticsAggregationCursor.__table__, StatisticsUsageHourly.__table__],
+        tables=[ModelUsage.__table__, StatisticsAggregationCursor.__table__, StatisticsUsageHourly.__table__, hourly.migration_copies],
     )
 
     @contextmanager

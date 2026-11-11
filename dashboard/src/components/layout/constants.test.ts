@@ -119,6 +119,10 @@ describe('menuSections 菜单结构', () => {
     expect(allItems.map((item) => item.path)).not.toContain('/agent')
   })
 
+  it('桌宠入口受桌宠开关控制', () => {
+    expect(allItems.find((item) => item.path === '/desktop-pet')?.featureFlag).toBe('desktopPet')
+  })
+
   it('searchDescription 均为 search.items 命名空间的 i18n key', () => {
     for (const item of allItems) {
       if (item.searchDescription !== undefined) {

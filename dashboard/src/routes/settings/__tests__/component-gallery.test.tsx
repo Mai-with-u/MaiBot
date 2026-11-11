@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import ComponentGallery from '../component-gallery'
@@ -43,5 +43,16 @@ describe('公共组件库', () => {
     expect(screen.getByText('没有找到匹配的组件')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '清除筛选' }))
     expect(screen.getAllByText(/^@\/components\/ui\//).length).toBeGreaterThan(24)
+  })
+
+  it('关系图示例使用真实节点选择，轮廓示例绘制实际合并路径', () => {
+    render(<ComponentGallery />)
+    const graph = within(screen.getByRole('region', { name: 'RelationshipGraph' }))
+    const node = graph.getByRole('button', { name: '示例私聊' })
+    fireEvent.click(node)
+    expect(node).toHaveAttribute('aria-pressed', 'true')
+
+    const outline = screen.getByRole('img', { name: '矩形合并后的外轮廓' })
+    expect(outline.querySelector('path')).toHaveAttribute('d', expect.stringMatching(/^M .+ Z$/))
   })
 })

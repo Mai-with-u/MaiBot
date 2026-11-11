@@ -101,6 +101,13 @@ class MainSystem:
 
         start_memory_diagnostics()
 
+        from src.services.sharing_group_service import initialize as initialize_sharing_groups
+
+        await asyncio.to_thread(initialize_sharing_groups)
+        from src.services.chat_migration_service import initialize_migrations
+
+        await initialize_migrations()
+
         try:
             # 启动现场采样默认开启，完成初始化后关闭；常驻看门狗仍由原配置控制。
             with monitor_startup_loop():

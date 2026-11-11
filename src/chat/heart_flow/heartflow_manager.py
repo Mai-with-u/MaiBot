@@ -79,9 +79,26 @@ class HeartflowManager:
 
     @staticmethod
     def _ensure_chat_online(session_id: str) -> None:
+        from src.services.chat_migration_gate import chat_migration_gate
+
+        if session_id in chat_migration_gate.blocked:
+            raise ChatPausedError("聊天数据迁移中")
         session = chat_manager.get_session_by_session_id(session_id)
         if session is not None and chat_pause_state.is_paused(session_id, session.is_group_session):
             raise ChatPausedError(f"聊天回复已暂停: {session_id}")
+
+    async def stop_migrating_chats(self, session_ids: set[str]) -> None:
+        """仅停止迁移双方，保留其他聊天流及其任务。"""
+        for session_id in session_ids:
+            lock = self._chat_create_locks.get(session_id)
+            if lock is not None:
+                async with lock:
+                    pass
+            chat = self.heartflow_chat_list.get(session_id)
+            if chat is not None:
+                await chat.stop()
+                self.heartflow_chat_list.pop(session_id, None)
+                self._chat_last_active_at.pop(session_id, None)
 
     async def stop_paused_chats(self) -> None:
         """等待在途创建结束，再停止暂停会话的思考、回复和唤醒任务。"""

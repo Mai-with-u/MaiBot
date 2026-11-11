@@ -92,6 +92,7 @@
       "model": "模型",
       "adapter": "适配器",
       "learning": "学习",
+      "mutualGroups": "相通",
       "memory": "记忆",
       "plugin": "插件",
       "market": "市场",
@@ -106,7 +107,13 @@
     "keyNeedsBot": "{{label}} · 需要先启动 Bot",
     "pet": {
       "title": "桌宠",
+      "statusTitle": "桌宠状态",
+      "statusLoadFailed": "无法读取桌宠状态：{{error}}",
       "settings": "桌宠设置",
+      "settingsUnavailable": "当前主程序未提供桌宠配置",
+      "settingsSaving": "正在保存…",
+      "settingsSaved": "桌宠设置已保存",
+      "settingsSaveFailed": "保存桌宠设置失败",
       "enabledLamp": "启用桌宠",
       "mode": {
         "local": "本机窗口",
@@ -252,8 +259,10 @@
       "system": "系统"
     },
     "menu": {
+      "mutualGroups": "相通",
       "home": "首页",
       "botMainConfig": "麦麦设置",
+      "desktopPet": "桌宠",
       "aiModelProvider": "模型厂商设置",
       "modelManagement": "模型管理",
       "promptManagement": "Prompt管理",
@@ -791,6 +800,21 @@
       "about": "关于"
     },
     "appearance": {
+      "dashboardStyle": "界面风格",
+      "dashboardStyles": {
+        "modern": {
+          "label": "现代",
+          "description": "扁平的现代化UI"
+        },
+        "future-retro": {
+          "label": "未来复古",
+          "description": "高对比、粗糙、温暖和磨砂质感"
+        },
+        "millennium": {
+          "label": "千禧",
+          "description": "怀旧的千禧年风格"
+        }
+      },
       "layoutVersion": "布局",
       "layoutVersionDesc": "经典布局保留顶栏和卡片首页；麦麦观察布局去掉顶栏，侧栏上半区是设置、下半区是所有对话，首页是运行状态面板。只在桌面宽度生效。",
       "layoutClassic": "经典",
@@ -1207,25 +1231,25 @@
   "setupPage": {
     "steps": {
       "nickname": {
-        "title": "昵称",
-        "description": "给麦麦起一个聊天时使用的名字。"
+        "title": "取一个名字",
+        "label": "昵称",
+        "description": ""
       },
       "defineModel": {
-        "title": "定义模型",
-        "description": "选择服务商和起始模型。后续可以为两个角色分别选模型。",
-        "modelLabel": "起始模型",
-        "required": "请输入或选择一个起始模型"
+        "title": "设置你的模型来源",
+        "label": "定义模型",
+        "description": ""
       },
       "replyer": {
-        "title": "设置 Replyer",
-        "description": "Replyer 负责组织措辞，生成用户看到的回复。"
+        "title": "设置 回复模型",
+        "description": "这个模型决定了ta说话的风格，适合文笔和风格好的模型"
       },
       "planner": {
-        "title": "设置 Planner",
-        "description": "Planner 负责判断何时回复、如何行动。"
+        "title": "设置 行为模型",
+        "description": "这个模型控制麦麦的行为，需要能够使用工具，理解任务，拥有Agent能力的模型"
       },
       "basicSettings": {
-        "title": "基础设置",
+        "title": "设置",
         "description": ""
       },
       "groupReplies": {
@@ -1233,13 +1257,18 @@
         "description": "开启后，麦麦在群聊被 @ 时会尽量回复。",
         "label": "被 @ 时优先回复"
       },
-      "privateReplies": {
-        "title": "私聊回复",
-        "description": "关闭后，麦麦仍会接收和记录私聊消息，但会暂停回复。",
-        "label": "允许私聊回复"
+      "desktopPet": {
+        "title": "桌宠",
+        "description": "",
+        "label": "启用桌宠",
+        "hint": "桌宠需要Windows桌面环境\n如果部署在服务器，可以稍后在设置中配置远程连接桌宠"
+      },
+      "dashboardAppearance": {
+        "title": "界面风格",
+        "description": ""
       },
       "botProfile": {
-        "title": "基础与人格",
+        "title": "人格",
         "description": ""
       },
       "customToken": {
@@ -1252,18 +1281,19 @@
         "description": "配置机器人的基本信息"
       },
       "personality": {
-        "title": "人格配置",
-        "description": "定义机器人的性格和说话风格",
+        "title": "创建人格",
         "choose": "你希望：",
-        "template": "使用可修改的人设模板",
-        "manual": "自己编写人设"
+        "templateTitle": "选择模板",
+        "editTitle": "编辑人格",
+        "template": "使用现有的模板",
+        "manual": "自己来编写"
       },
       "apiProvider": {
         "title": "API配置",
         "description": ""
       },
       "modelSetup": {
-        "title": "模型配置",
+        "title": "模型",
         "description": ""
       }
     },
@@ -1286,8 +1316,8 @@
       "enterProviderName": "请输入 API 提供商名称",
       "enterBaseUrl": "请输入 API Base URL",
       "enterApiKey": "请输入 API Key",
-      "enterPlannerModelIdentifier": "请输入 planner 模型标识符",
-      "enterReplyerModelIdentifier": "请输入 replyer 模型标识符",
+      "enterPlannerModelIdentifier": "请输入行为模型标识符",
+      "enterReplyerModelIdentifier": "请输入回复模型标识符",
       "customTokenInvalid": "密码不符合要求：{{failedRules}}"
     },
     "toast": {
@@ -1403,17 +1433,17 @@
         "personality": {
           "label": "人格特征",
           "placeholder": "描述机器人的人格特质和身份特征（建议 120 字以内）",
-          "description": "描述bot的核心人格特征，影响bot如何认识自己"
+          "description": "ta的性格特点和关键信息"
         },
         "behaviorStyle": {
           "label": "行为风格",
           "placeholder": "描述何时参与聊天、如何观察局面以及何时保持安静",
-          "description": "描述bot的行为，决定bot行为方式"
+          "description": "ta聊天时的行为和做事风格"
         },
         "replyStyle": {
           "label": "表达风格",
           "placeholder": "描述机器人说话的表达风格、表达习惯",
-          "description": "直接影响bot如何说话，说话风格"
+          "description": "ta说话的风格"
         },
         "multipleReplyStyle": {
           "label": "备用表达风格",
@@ -1464,7 +1494,7 @@
       },
       "apiProvider": {
         "providerName": {
-          "label": "API 提供商名称 *",
+          "label": "提供商",
           "placeholder": "例如 OpenAI、DeepSeek、自建服务",
           "description": "为api提供商命名"
         },
@@ -1538,8 +1568,8 @@
       "saveFailed": "保存配置失败，无法测试：{{error}}",
       "canContinue": "测试未通过也可以继续完成配置，之后可在模型配置页调整。",
       "roles": {
-        "planner": "规划思考模型",
-        "replyer": "回复发言模型"
+        "planner": "行为模型",
+        "replyer": "回复模型"
       }
     }
   },

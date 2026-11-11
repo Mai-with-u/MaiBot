@@ -86,13 +86,16 @@ def _response_headers(headers: Mapping[str, str], bot_id: str) -> Dict[str, str]
 class BotProxy:
     """每次转发使用独立的客户端：通道地址随 Bot 的每次运行变化，不跨运行复用连接。"""
 
-    def __init__(self, supervisor: BotSupervisor, sessions: SessionValidator) -> None:
+    def __init__(self, supervisor: BotSupervisor, sessions: SessionValidator | None) -> None:
         self.supervisor = supervisor
         self.sessions = sessions
 
+    def is_authenticated(self, connection: Request | WebSocket) -> bool:
+        sessions = self.sessions
+        return sessions is not None and sessions.valid(connection.cookies.get(sessions.cookie_name))
+
     def _require_session(self, connection: Request | WebSocket) -> None:
-        session = connection.cookies.get(self.sessions.cookie_name)
-        if not self.sessions.valid(session):
+        if not self.is_authenticated(connection):
             raise HTTPException(401, "请先登录 WebUI")
 
     def _client(self, bot_id: str) -> ClientSession:
@@ -177,7 +180,7 @@ class BotProxy:
 
         async def session_is_current() -> bool:
             nonlocal revoked
-            if self.sessions.valid(websocket.cookies.get(self.sessions.cookie_name)):
+            if self.is_authenticated(websocket):
                 return True
             # 改密码、登出和会话到期也必须作用于已有长连接；不能等下一次握手才停止转发。
             if not revoked:

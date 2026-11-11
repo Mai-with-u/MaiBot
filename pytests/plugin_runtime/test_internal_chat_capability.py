@@ -126,6 +126,16 @@ def test_shared_name_keeps_first_browser_name_and_rejects_stale_browser_values()
     assert internal_chat_profile.get_internal_chat_user_name() == "新称呼"
 
 
+def test_corrupt_shared_name_is_preserved_and_chat_can_open():
+    path = internal_chat_profile.PROFILE_PATH
+    path.write_bytes(bytes(32))
+
+    assert internal_chat_profile.get_internal_chat_user_name("新称呼") == "新称呼"
+    assert internal_chat_profile.get_internal_chat_user_name() == "新称呼"
+    backup, = path.parent.glob(f"{path.name}.corrupt-*")
+    assert backup.read_bytes() == bytes(32)
+
+
 @pytest.mark.asyncio
 async def test_web_rename_reaches_other_windows_and_pet_without_changing_virtual_identity(monkeypatch):
     manager = chat_service.ChatConnectionManager()

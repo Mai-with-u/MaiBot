@@ -48,6 +48,8 @@ import {
 } from '@/components/ui/management'
 import { Markdown } from '@/components/ui/markdown'
 import { OrderControls } from '@/components/ui/order-controls'
+import { RelationshipGraph } from '@/components/ui/relationship-graph'
+import { regionOutline } from '@/components/ui/relationship-regions'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { SelectionListItem } from '@/components/ui/selection-list-item'
 import { Tabs, TabsContent } from '@/components/ui/tabs'
@@ -311,6 +313,26 @@ function SelectionExample() {
   )
 }
 
+function RelationshipExample() {
+  const [selectedId, setSelectedId] = useState('group')
+  return (
+    <div className="h-96">
+      <RelationshipGraph
+        layout="overview"
+        columns={['相通组', '会话']}
+        nodes={[
+          { id: 'group', label: '示例相通组', column: 0 },
+          { id: 'chat-one', label: '示例群聊', column: 1 },
+          { id: 'chat-two', label: '示例私聊', column: 1 },
+        ]}
+        edges={[{ from: 'group', to: 'chat-one' }, { from: 'group', to: 'chat-two' }]}
+        selectedId={selectedId}
+        onSelect={setSelectedId}
+      />
+    </div>
+  )
+}
+
 export const layoutExamples: ComponentExample[] = [
   {
     file: 'accent-panel',
@@ -392,6 +414,29 @@ export const layoutExamples: ComponentExample[] = [
     category: '表单',
     description: '上下移动列表项，首尾自动禁用。',
     preview: <OrderExample />,
+  },
+  {
+    file: 'relationship-graph',
+    name: 'RelationshipGraph',
+    category: '图表',
+    description: '展示相通组与会话的关联，点击节点切换选中状态。',
+    preview: <RelationshipExample />,
+  },
+  {
+    file: 'relationship-regions',
+    name: 'regionOutline',
+    category: '图表',
+    description: '将相交矩形合并成外轮廓，不保留内部拼接线。',
+    preview: (
+      <svg viewBox="0 0 240 160" role="img" aria-label="矩形合并后的外轮廓" className="h-40 w-full">
+        <path
+          d={regionOutline([{ x: 20, y: 20, width: 120, height: 70 }, { x: 80, y: 60, width: 120, height: 70 }])}
+          fill="var(--muted)"
+          stroke="var(--primary)"
+          strokeWidth={2}
+        />
+      </svg>
+    ),
   },
   {
     file: 'scroll-area',

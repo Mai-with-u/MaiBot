@@ -92,6 +92,7 @@
       "model": "モデル",
       "adapter": "アダプター",
       "learning": "学習",
+      "mutualGroups": "共有",
       "memory": "記憶",
       "plugin": "プラグイン",
       "market": "マーケット",
@@ -106,7 +107,13 @@
     "keyNeedsBot": "{{label}} · 先に Bot を起動してください",
     "pet": {
       "title": "デスクトップペット",
+      "statusTitle": "デスクトップペットの状態",
+      "statusLoadFailed": "デスクトップペットの状態を取得できませんでした：{{error}}",
       "settings": "ペット設定",
+      "settingsUnavailable": "現在のボットではデスクトップペットの設定を利用できません。",
+      "settingsSaving": "保存中…",
+      "settingsSaved": "デスクトップペットの設定を保存しました",
+      "settingsSaveFailed": "デスクトップペットの設定を保存できませんでした",
       "enabledLamp": "ペット有効",
       "mode": {
         "local": "ローカルウィンドウ",
@@ -252,8 +259,10 @@
       "system": "システム"
     },
     "menu": {
+      "mutualGroups": "共有",
       "home": "ホーム",
       "botMainConfig": "ボットメイン設定",
+      "desktopPet": "デスクトップペット",
       "aiModelProvider": "AIモデルプロバイダー",
       "modelManagement": "モデル管理",
       "promptManagement": "Prompt管理",
@@ -791,6 +800,21 @@
       "about": "について"
     },
     "appearance": {
+      "dashboardStyle": "画面スタイル",
+      "dashboardStyles": {
+        "modern": {
+          "label": "モダン",
+          "description": "フラットでモダンなUI"
+        },
+        "future-retro": {
+          "label": "フューチャーレトロ",
+          "description": "高いコントラスト、粗い質感、暖かみのある色、マットな仕上げ"
+        },
+        "millennium": {
+          "label": "ミレニアム",
+          "description": "懐かしい2000年前後のスタイル"
+        }
+      },
       "layoutVersion": "レイアウト",
       "layoutVersionDesc": "クラシックはトップバーとカード型ホームを保ちます。観察レイアウトはトップバーをなくし、サイドバー上部に設定、下部にすべての会話を表示し、ホームは状態ボードになります。デスクトップ幅のみ。",
       "layoutClassic": "クラシック",
@@ -1207,25 +1231,25 @@
   "setupPage": {
     "steps": {
       "nickname": {
-        "title": "ニックネーム",
-        "description": "チャットで使う名前を決めます。"
+        "title": "名前を決める",
+        "label": "ニックネーム",
+        "description": ""
       },
       "defineModel": {
-        "title": "モデルを定義",
-        "description": "プロバイダーと初期モデルを選びます。次の手順で役割ごとに別のモデルを選べます。",
-        "modelLabel": "初期モデル",
-        "required": "初期モデルを入力または選択してください"
+        "title": "モデルの提供元を設定",
+        "label": "モデルを定義",
+        "description": ""
       },
       "replyer": {
-        "title": "Replyer を設定",
-        "description": "Replyer は相手に表示される返信を書きます。"
+        "title": "返信モデルを設定",
+        "description": "このモデルが話し方を決めます。文章力と表現力に優れたモデルが適しています。"
       },
       "planner": {
-        "title": "Planner を設定",
-        "description": "Planner は返信するタイミングや行動を判断します。"
+        "title": "行動モデルを設定",
+        "description": "このモデルが麦麦の行動を決めます。タスクを理解し、ツールを使えるエージェント対応モデルを選んでください。"
       },
       "basicSettings": {
-        "title": "基本設定",
+        "title": "設定",
         "description": ""
       },
       "groupReplies": {
@@ -1233,13 +1257,18 @@
         "description": "有効にすると、グループで @メンションされたときにできるだけ返信します。",
         "label": "@メンションへの返信を優先"
       },
-      "privateReplies": {
-        "title": "個別チャットの返信",
-        "description": "無効にしても個別メッセージの受信と記録は続きます。返信は一時停止します。",
-        "label": "個別チャットで返信する"
+      "desktopPet": {
+        "title": "デスクトップペット",
+        "description": "",
+        "label": "デスクトップペットを有効にする",
+        "hint": "デスクトップペットには Windows のデスクトップ環境が必要です。\nサーバーに導入している場合は、後から設定でデスクトップペットへのリモート接続を構成できます。"
+      },
+      "dashboardAppearance": {
+        "title": "画面スタイル",
+        "description": ""
       },
       "botProfile": {
-        "title": "基本情報と人格",
+        "title": "人格",
         "description": "ニックネーム、人格、返信スタイルを設定します"
       },
       "customToken": {
@@ -1252,18 +1281,19 @@
         "description": "ボットの基本情報を設定します"
       },
       "personality": {
-        "title": "人格設定",
-        "description": "ボットの性格や話し方を定義します",
+        "title": "人格を作成",
         "choose": "どちらの方法で始めますか？",
-        "template": "編集できる人物設定のテンプレートを使う",
-        "manual": "人物設定を自分で書く"
+        "templateTitle": "テンプレートを選ぶ",
+        "editTitle": "人格を編集",
+        "template": "既存のテンプレートを使う",
+        "manual": "自分で書く"
       },
       "apiProvider": {
         "title": "API設定",
         "description": "APIプロバイダーを設定します"
       },
       "modelSetup": {
-        "title": "モデル設定",
+        "title": "モデル",
         "description": "planner と replyer モデルを設定します"
       }
     },
@@ -1286,8 +1316,8 @@
       "enterProviderName": "APIプロバイダー名を入力してください",
       "enterBaseUrl": "API Base URL を入力してください",
       "enterApiKey": "API Key を入力してください",
-      "enterPlannerModelIdentifier": "planner モデル識別子を入力してください",
-      "enterReplyerModelIdentifier": "replyer モデル識別子を入力してください",
+      "enterPlannerModelIdentifier": "行動モデルの識別子を入力してください",
+      "enterReplyerModelIdentifier": "返信モデルの識別子を入力してください",
       "customTokenInvalid": "Token が要件を満たしていません：{{failedRules}}"
     },
     "toast": {
@@ -1403,17 +1433,17 @@
         "personality": {
           "label": "人格特性",
           "placeholder": "ボットの人格や設定を説明してください（120文字以内推奨）",
-          "description": "botの核となる性格を記述し、botの自己認識に影響します"
+          "description": "性格の特徴と大事な情報"
         },
         "behaviorStyle": {
           "label": "行動スタイル",
           "placeholder": "会話に参加するタイミングや、様子を見る・静かにする場面を記述",
-          "description": "botの行動を記述し、行動の仕方を決めます"
+          "description": "チャット中の振る舞いと物事への取り組み方"
         },
         "replyStyle": {
           "label": "話し方",
           "placeholder": "ボットの話し方や表現の癖を説明してください",
-          "description": "botの話し方や口調に直接影響します"
+          "description": "話し方"
         },
         "multipleReplyStyle": {
           "label": "代替返信スタイル",
@@ -1464,7 +1494,7 @@
       },
       "apiProvider": {
         "providerName": {
-          "label": "APIプロバイダー名 *",
+          "label": "プロバイダー",
           "placeholder": "例: OpenAI、DeepSeek、自ホストサービス",
           "description": "この名前は model_config.toml に保存され、下のモデルから参照されます"
         },
@@ -1539,8 +1569,8 @@
       "saveFailed": "設定を保存できなかったため、テストできませんでした：{{error}}",
       "canContinue": "テストに失敗してもセットアップは完了できます。後からモデル設定ページで調整できます。",
       "roles": {
-        "planner": "計画用モデル",
-        "replyer": "返信用モデル"
+        "planner": "行動モデル",
+        "replyer": "返信モデル"
       }
     }
   },

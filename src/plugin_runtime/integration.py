@@ -63,7 +63,13 @@ from src.plugin_runtime.runner.manifest_validator import ManifestValidator, is_r
 from src.plugin_runtime.runner.plugin_enabled import is_plugin_disabled
 from src.plugin_runtime.usage_tracker import PluginUsageTracker
 
-from .builtin_adapter_migration import migrate_qq_official_adapter, migrate_telegram_adapter
+from .builtin_adapter_migration import (
+    PLUGIN_ID as QQ_OFFICIAL_PLUGIN_ID,
+    TELEGRAM_LEGACY_ID,
+    TELEGRAM_PLUGIN_ID,
+    migrate_qq_official_adapter,
+    migrate_telegram_adapter,
+)
 from .plugin_catalog import PluginCatalog
 
 if TYPE_CHECKING:
@@ -139,6 +145,7 @@ class PluginRuntimeManager(
         )
         self._plugin_dependency_pipeline: PluginDependencyPipeline = PluginDependencyPipeline()
         self._blocked_plugin_reasons: Dict[str, str] = {}
+        self._adapter_migration_errors: Dict[str, str] = {}
         self._config_reload_callback: Callable[[Sequence[str]], Awaitable[None]] = self._handle_main_config_reload
         self._config_reload_callback_registered: bool = False
         self._pending_config_broadcast_scopes: Set[str] = set()
@@ -209,15 +216,17 @@ class PluginRuntimeManager(
         return self._plugin_usage_tracker.snapshot() if self._plugin_usage_tracker is not None else {}
 
     async def _start_plugin_usage_tracking(self) -> None:
-        tracker = PluginUsageTracker(get_instance_root() / "data" / "plugin_runtime" / "plugin_usage.json")
+        usage_path = get_instance_root() / "data" / "plugin_runtime" / "plugin_usage.json"
+        tracker = PluginUsageTracker(usage_path)
         self._plugin_usage_tracker = None
         self._plugin_usage_tracking = False
         self._plugin_usage_error = None
         try:
             await tracker.load()
-        except Exception as exc:
+        except (OSError, ValueError) as exc:
             self._plugin_usage_error = str(exc)
-            raise
+            logger.exception(f"读取插件累计使用时长失败，已停用计时: {usage_path}")
+            return
         self._plugin_usage_tracker = tracker
         self._plugin_usage_tracking = True
         self._reconcile_plugin_usage()
@@ -278,7 +287,7 @@ class PluginRuntimeManager(
         return {"statuses": statuses, "failure_reasons": reasons,
                 "status_badges": status_badges,
                 "circuit_statuses": self.get_plugin_circuit_statuses(), "running": self._started,
-                "usage_seconds": self.get_plugin_usage_seconds(),
+                "usage_seconds": None if self._plugin_usage_error is not None else self.get_plugin_usage_seconds(),
                 "plugins": tuple(entries)}
 
     async def apply_plugin_config(
@@ -681,6 +690,7 @@ class PluginRuntimeManager(
             duplicate_plugin_reasons["sengokucola.desktop-pet"] = (
                 "桌宠已合并到主程序，请在主程序配置中启用 desktop_pet.enabled；旧待办和窗口位置继续沿用。"
             )
+        duplicate_plugin_reasons.update(self._adapter_migration_errors)
         result = await self._plugin_dependency_pipeline.execute(
             plugin_dirs,
             initial_blocked_plugin_reasons=duplicate_plugin_reasons,
@@ -934,8 +944,17 @@ class PluginRuntimeManager(
         # 元数据索引独立于插件激活；运行时禁用或仍在加载时也能查看已安装插件。
         plugin_root = third_party_plugin_root()
         await asyncio.to_thread(plugin_root.mkdir, parents=True, exist_ok=True)
-        await asyncio.to_thread(migrate_qq_official_adapter)
-        await asyncio.to_thread(migrate_telegram_adapter)
+        self._adapter_migration_errors.clear()
+        for plugin_ids, migrate in (
+            ((QQ_OFFICIAL_PLUGIN_ID,), migrate_qq_official_adapter),
+            ((TELEGRAM_PLUGIN_ID, TELEGRAM_LEGACY_ID), migrate_telegram_adapter),
+        ):
+            try:
+                await asyncio.to_thread(migrate)
+            except (OSError, ValueError) as exc:
+                reason = f"适配器迁移失败，请修复后重启 Bot：{exc}"
+                logger.exception(f"{plugin_ids[0]} {reason}")
+                self._adapter_migration_errors.update(dict.fromkeys(plugin_ids, reason))
         await self._plugin_catalog.start(self._get_builtin_plugin_dirs(), [plugin_root])
 
         _cfg = config_manager.get_global_config().plugin_runtime

@@ -58,7 +58,6 @@ from src.maisaka.context.messages import (
     SessionBackedMessage,
     build_context_items_from_history_entry,
 )
-from src.maisaka.context.planner_messages import extract_quote_ids_from_message_sequence
 from src.maisaka.context.compaction import PlannerRequestSnapshot
 from src.llm_models.model_client.base_client import ResponseRequest
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
@@ -186,52 +185,23 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             return ""
 
         user_info = reply_message.message_info.user_info
+        if not is_bot_self(reply_message.platform, user_info.user_id):
+            return ""
+
         sender_name = user_info.user_cardname or user_info.user_nickname or user_info.user_id
         bot_name = global_config.bot.nickname.strip() or sender_name
         target_message_id = to_display_message_id(reply_message.message_id) if reply_message.message_id else "未知"
-        # target_time = reply_message.timestamp.strftime("%Y-%m-%d %H:%M:%S")
-        quote_ids = extract_quote_ids_from_message_sequence(reply_message.raw_message)
         target_content = self._normalize_content(self._build_target_message_content(reply_message), limit=300)
         if not target_content:
             target_content = "[无可见文本内容]"
 
-        if is_bot_self(reply_message.platform, user_info.user_id):
-            return "\n".join(
-                [
-                    f"你想要补充说明你自己（{bot_name}） 发送的 msg_id为 {target_message_id} 的消息，"
-                    "你可以在这条目标消息的基础上补充发言，不要把你自己的发言当成别人的发言。",
-                    f"- 你之前的发言内容：{target_content}",
-                ]
-            )
-
-        # target_lines = [
-        #     "【本次回复目标】",
-        #     f"- msg_id：{target_message_id}",
-        # ]
-        # if quote_ids:
-        #     target_lines.append(f"- quote={','.join(quote_ids)}")
-        # target_lines.extend(
-        #     [
-        #         f"- 时间：{target_time}",
-        #         f"- 用户名：{sender_name}",
-        #         f"- 发言内容：{target_content}",
-        #         "",
-        #         "你这次要回复的就是这条目标消息，请结合整段上下文理解，但不要把其他历史消息当成当前回复对象。",
-        #     ]
-        # )
-        # return "\n".join(target_lines)
-
-        target_lines = [
-            f"你想要回复的消息是 {sender_name} 发送的 msg_id为 {target_message_id} 的消息，你这次要回复的就是这条目标消息，不要把其他历史消息当成当前回复对象。",
-        ]
-        if quote_ids:
-            target_lines.append(f"- quote={','.join(to_display_message_id(quote_id) for quote_id in quote_ids)}")
-        target_lines.extend(
+        return "\n".join(
             [
-                f"- 发言内容：{target_content}",
+                f"你想要补充说明你自己（{bot_name}） 发送的 msg_id为 {target_message_id} 的消息，"
+                "你可以在这条目标消息的基础上补充发言，不要把你自己的发言当成别人的发言。",
+                f"- 你之前的发言内容：{target_content}",
             ]
         )
-        return "\n".join(target_lines)
 
     @staticmethod
     def _render_target_at_component(component: AtComponent) -> str:

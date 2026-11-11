@@ -132,7 +132,7 @@ describe('PersonalityForm', () => {
     const onChange = vi.fn()
     render(<PersonalityForm config={config} onChange={onChange} />)
 
-    const textarea = screen.getByLabelText('setupPage.forms.personality.personality.label')
+    const textarea = screen.getByRole('textbox', { name: 'setupPage.forms.personality.personality.label' })
     expect(textarea).toHaveValue('活泼开朗')
 
     fireEvent.change(textarea, { target: { value: '沉稳理性' } })
@@ -144,7 +144,7 @@ describe('PersonalityForm', () => {
     const onChange = vi.fn()
     render(<PersonalityForm config={config} onChange={onChange} />)
 
-    fireEvent.change(screen.getByLabelText('setupPage.forms.personality.replyStyle.label'), {
+    fireEvent.change(screen.getByRole('textbox', { name: 'setupPage.forms.personality.replyStyle.label' }), {
       target: { value: '长文详细' },
     })
 

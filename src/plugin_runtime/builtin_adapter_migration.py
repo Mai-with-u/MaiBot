@@ -8,6 +8,7 @@ import json
 import shutil
 import tomllib
 
+from src.common.atomic_file import write_private
 from src.common.logger import get_logger
 from src.common.paths import builtin_plugin_root, get_instance_root, resolve_plugin_config_path, third_party_plugin_root
 
@@ -126,15 +127,12 @@ def _migrate_adapter(
         raise ValueError(f"{display_name}配置不能是符号链接: {old_config}")
     if old_config.is_file() and not config.exists():
         # 先验证并原子复制，失败时保留旧安装；已存在的内置配置始终优先。
-        with old_config.open("rb") as handle:
-            tomllib.load(handle)
-        config.parent.mkdir(parents=True, exist_ok=True)
-        temporary = config.with_name(f".migration-{uuid4().hex}.toml")
         try:
-            shutil.copy2(old_config, temporary)
-            temporary.replace(config)
-        finally:
-            temporary.unlink(missing_ok=True)
+            content = old_config.read_bytes().decode("utf-8")
+            tomllib.loads(content)
+        except ValueError as exc:
+            raise ValueError(f"{display_name}旧配置无法解析：{old_config}，{exc}") from exc
+        write_private(config, content)
 
     # 隐藏目录不参与插件扫描；完整保留旧安装、配置备份及可能的历史数据。
     backup = _backup_directory(root, source, directory_name)

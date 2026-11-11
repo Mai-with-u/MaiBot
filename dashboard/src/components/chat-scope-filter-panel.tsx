@@ -31,6 +31,7 @@ interface ChatScopeFilterPanelProps<TMode extends string> {
   selectedItemId?: string | number | null
   onItemSelect?: (id: string | number) => void
   title?: string
+  titleActions?: ReactNode
   titleMeta?: ReactNode
   density?: 'default' | 'compact'
   emptyContent?: ReactNode
@@ -53,6 +54,7 @@ export function ChatScopeFilterPanel<TMode extends string>({
   onItemSelect,
   title,
   titleMeta,
+  titleActions,
   density = 'default',
   emptyContent,
   footer,
@@ -91,6 +93,7 @@ export function ChatScopeFilterPanel<TMode extends string>({
                       {titleMeta}
                     </span>
                   )}
+                  {titleActions}
                 </>
               )}
               {onCollapsedChange && (
@@ -161,7 +164,11 @@ export function ChatScopeFilterPanel<TMode extends string>({
                         density={density}
                         disabled={item.disabled}
                         title={item.title}
-                        className={item.trailing ? 'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2' : undefined}
+                        className={
+                          item.trailing
+                            ? 'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2'
+                            : undefined
+                        }
                       >
                         <span className="col-start-1 flex min-w-0 items-center gap-2">
                           <span className="min-w-0 flex-1 truncate font-medium">{item.label}</span>

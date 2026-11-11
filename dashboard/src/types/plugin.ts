@@ -123,7 +123,7 @@ export interface PluginReleaseCatalog {
  */
 export interface PluginInfo {
   /** 市场数据来源；详情按相同来源获取。 */
-  market_data_source?: 'official' | 'cnb' | 'github'
+  market_data_source?: 'cnb' | 'github'
   /** 插件中心复合列表携带的公开统计。 */
   marketplace_stats?: import('@/lib/plugin-stats').PluginStatsData
   releases?: PluginReleaseCatalog

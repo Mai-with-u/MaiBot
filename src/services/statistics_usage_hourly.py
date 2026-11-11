@@ -22,6 +22,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import OperationalError
 
 from src.common.database.database import get_db_session
+from src.common.database.chat_migration_models import copies as migration_copies
 from src.common.database.database_model import ModelUsage, StatisticsAggregationCursor, StatisticsUsageHourly
 from src.common.logger import get_logger
 from src.services.statistics_usage_rules import clamp_hour_range
@@ -141,7 +142,13 @@ def _aggregate_next_chunk(chunk_size: int) -> int:
             return 0
 
         grouped: dict[tuple[datetime, UsageKey], list[float]] = {}
+        copied_ids = set(session.scalars(select(migration_copies.c.target_key).where(
+            migration_copies.c.table_name == "llm_usage",
+            migration_copies.c.target_key.in_([str(row[0]) for row in rows]),
+        )))
         for row in rows:
+            if str(row[0]) in copied_ids:
+                continue  # 迁移事务已同步复制对应小时汇总，不能再次累加。
             record = dict(zip(_USAGE_COLUMNS, row[1:], strict=True))
             timestamp = record["timestamp"]
             if not isinstance(timestamp, datetime):
@@ -227,7 +234,10 @@ def fetch_usage_records_after_id(cursor: int) -> Iterable[dict[str, object]]:
 
     columns = [getattr(ModelUsage, name) for name in ("id", *_USAGE_COLUMNS)]
     with get_db_session(auto_commit=False) as session:
-        rows = session.exec(select(*columns).where(ModelUsage.id > cursor)).all()
+        rows = session.exec(select(*columns).where(
+            ModelUsage.id > cursor,
+            ~ModelUsage.id.in_(select(migration_copies.c.target_key).where(migration_copies.c.table_name == "llm_usage")),
+        )).all()
     return [dict(zip(("id", *_USAGE_COLUMNS), row, strict=True)) for row in rows]
 
 

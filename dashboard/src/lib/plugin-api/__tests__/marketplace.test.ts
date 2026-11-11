@@ -62,14 +62,14 @@ describe('plugin-api/marketplace', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.clearAllMocks()
-    httpMocks.backendApi.get.mockReset().mockResolvedValue({ source: 'official', plugins: [createMarketItem()] })
+    httpMocks.backendApi.get.mockReset().mockResolvedValue({ source: 'cnb', plugins: [createMarketItem()] })
     httpMocks.backendApi.post.mockReset()
     localStorage.clear()
     vi.spyOn(console, 'warn').mockImplementation(() => {})
   })
 
   describe('公共市场列表与文档', () => {
-    it.each(['official', 'cnb', 'github'])('信息源 %s 都只调用公共列表接口', async (source) => {
+    it.each(['cnb', 'github'])('信息源 %s 都只调用公共列表接口', async (source) => {
       httpMocks.backendApi.get.mockResolvedValue({ source, plugins: [createMarketItem()] })
       const marketplace = await loadMarketplace()
       const plugins = await marketplace.fetchPluginList()
@@ -79,11 +79,9 @@ describe('plugin-api/marketplace', () => {
       expect(httpMocks.backendApi.post).not.toHaveBeenCalled()
     })
 
-    it('列表自带统计和发布版本，不再另拉摘要；强制刷新透传到 Host', async () => {
-      const stats = { plugin_id: 'plugin-a', downloads: 12, likes: 3, rating: 4, comment_count: 2 }
-      httpMocks.backendApi.get.mockResolvedValue({ source: 'official', plugins: [createMarketItem({ stats })] })
+    it('列表不含统计，统计由官方统计服务单独提供；强制刷新透传到 Host', async () => {
       const marketplace = await loadMarketplace()
-      expect((await marketplace.fetchPluginList())[0]).toMatchObject({ downloads: 12, rating: 4, marketplace_stats: stats })
+      expect((await marketplace.fetchPluginList())[0]).toMatchObject({ id: 'plugin-a', marketplace_stats: undefined })
       await marketplace.fetchPluginList()
       expect(httpMocks.backendApi.get).toHaveBeenCalledTimes(1)
       await marketplace.fetchPluginList({ forceRefresh: true })

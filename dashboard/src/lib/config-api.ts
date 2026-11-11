@@ -291,13 +291,14 @@ export async function deleteModelConfigVersion(versionId: string): Promise<void>
  */
 export async function updateBotConfigSection(
   sectionName: string,
-  sectionData: unknown
+  sectionData: unknown,
+  errorMessage = '更新配置失败'
 ): Promise<Record<string, unknown>> {
   const result = await backendApi.post<Record<string, unknown>>(
     `${API_BASE}/bot/section/${sectionName}`,
     {
       body: sectionData,
-      errorMessage: '更新配置失败',
+      errorMessage,
     }
   )
   invalidateConfigDataCache('bot')

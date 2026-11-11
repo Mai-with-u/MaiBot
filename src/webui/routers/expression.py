@@ -17,8 +17,9 @@ from src.chat.replyer.expression_vector_index import expression_vector_index, no
 from src.common.database.database import get_db_session
 from src.common.database.database_model import ChatSession, Expression, Messages, ModifiedBy
 from src.common.logger import get_logger
-from src.common.utils.utils_config import ChatConfigUtils, ExpressionConfigUtils
+from src.common.utils.utils_config import ExpressionConfigUtils
 from src.config.config import global_config
+from src.services.sharing_group_service import list_groups, resolved_members
 from src.learners.expression_review_store import (
     append_manual_rescue_log,
     get_ai_review_log,
@@ -582,6 +583,8 @@ class ChatListResponse(BaseModel):
 class ExpressionGroupInfo(BaseModel):
     """表达共享组信息。"""
 
+    id: str
+    color: str
     index: int
     name: str
     chat_ids: List[str]
@@ -737,22 +740,9 @@ def get_expression_groups(
                     select(ChatSession).where(col(ChatSession.session_id).in_(all_expression_chat_ids))
                 ).all()
             }
-            for index, expression_group in enumerate(global_config.expression.expression_groups):
-                chat_ids: set[str] = set()
-                is_global = False
-
-                for target_item in expression_group.targets:
-                    platform = str(target_item.platform or "").strip()
-                    item_id = str(target_item.item_id or "").strip()
-                    if not platform and not item_id:
-                        continue
-                    if is_global_expression_group_marker(platform, item_id):
-                        is_global = True
-                    chat_ids.update(ChatConfigUtils.get_target_session_ids_with_wildcards(target_item))
-
-                if not expression_group.targets:
-                    is_global = True
-
+            for index, expression_group in enumerate(group for group in list_groups() if group["enabled"] and group["capabilities"].get("expression")):
+                chat_ids = resolved_members(expression_group)
+                is_global = any(rule == {"platform": "*", "item_id": "*", "rule_type": "all"} for rule in expression_group["rules"])
                 resolved_chat_ids = sorted(all_expression_chat_ids if is_global else chat_ids & all_expression_chat_ids)
                 members = [
                     build_chat_info(chat_id, session, chat_sessions_by_id.get(chat_id))
@@ -761,7 +751,9 @@ def get_expression_groups(
                 groups.append(
                     ExpressionGroupInfo(
                         index=index,
-                        name=f"共享组 {index + 1}",
+                        id=expression_group["id"],
+                        color=expression_group["color"],
+                        name=expression_group["name"],
                         chat_ids=resolved_chat_ids,
                         members=members,
                         is_global=is_global,

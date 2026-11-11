@@ -70,6 +70,7 @@ import {
   getStoredUserAvatarVersion,
   getStoredUserName,
   getSavedVirtualTabs,
+  isChatRuntimeEventCurrent,
   saveUserAvatarVersion,
   saveUserName,
   saveVirtualTabs,
@@ -720,7 +721,14 @@ export function ChatPage() {
             processedSet.delete(firstKey)
           }
           processedMessagesMapRef.current.set(tabId, processedSet)
-          updateTab(tabId, { messages: formattedMessages })
+          setTabs((prev) => prev.map((tab) => {
+            if (tab.id !== tabId) return tab
+            const status = tab.runtimeStatus
+            if (status && !isChatRuntimeEventCurrent(formattedMessages, status.updatedAt)) {
+              return { ...tab, messages: formattedMessages, isTyping: false, runtimeStatus: null }
+            }
+            return { ...tab, messages: formattedMessages }
+          }))
           setIsLoadingHistory(false)
           break
         }
@@ -892,7 +900,8 @@ export function ChatPage() {
         if (event.type === 'llm.retry') {
           setTabs((prev) =>
             prev.map((tab) => {
-              if (!matchesMonitorTarget(tab, event.data)) {
+              if (!matchesMonitorTarget(tab, event.data) ||
+                !isChatRuntimeEventCurrent(tab.messages, event.data.timestamp, event.data.replayed)) {
                 return tab
               }
               const currentStatus = tab.runtimeStatus
@@ -919,7 +928,8 @@ export function ChatPage() {
         if (event.type === 'llm.error') {
           setTabs((prev) =>
             prev.map((tab) => {
-              if (!matchesMonitorTarget(tab, event.data)) {
+              if (!matchesMonitorTarget(tab, event.data) ||
+                !isChatRuntimeEventCurrent(tab.messages, event.data.timestamp, event.data.replayed)) {
                 return tab
               }
               const currentStatus = tab.runtimeStatus
@@ -1262,6 +1272,13 @@ export function ChatPage() {
     setActiveObservedSessionId(sessionId)
   }, [setSelectedObservedSession])
 
+  const internalSessionId = activeTab?.type === 'webui' || activeTab?.sessionInfo.platform === 'internal'
+    ? activeTab?.sessionInfo.session_id
+    : undefined
+  const observeInternalSession = internalSessionId
+    ? () => selectObservedSession(internalSessionId)
+    : undefined
+
   // 在页内直接打开观察聊天流的设置弹窗，不再跳转到聊天管理页
   const openObservedSettings = useCallback((sessionId: string) => {
     // 名称来自聊天流资料，不依赖实时活动时间，避免每个监控事件都改变行回调。
@@ -1399,6 +1416,7 @@ export function ChatPage() {
               }
               online={activeTab.isConnected}
               avatar={<MobileChatRoomTabAvatar tab={activeTab} />}
+              onObserve={observeInternalSession}
               onBack={() => setMobileRoomOpen(false)}
               userAvatar={{
                 userId,
@@ -1412,7 +1430,12 @@ export function ChatPage() {
         </div>
 
         {activeObservedSessionId ? (
-          <div className="relative min-h-0 min-w-0 flex-1" data-chat-observed-session>
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-chat-observed-session>
+            {internalSessionId === activeObservedSessionId && (
+              <div className="shrink-0 px-3 py-2">
+                <Button variant="outline" size="sm" onClick={() => switchTab(activeTab.id)}>返回聊天</Button>
+              </div>
+            )}
             <MaisakaMonitor sessionName={activeObservedSession?.sessionName}
               reasoningReturnTo={`/chat?observe=${encodeURIComponent(activeObservedSessionId)}`}
               floatingToolbarContainer={isMobileChat ? observedToolbarSlot : undefined}
@@ -1449,7 +1472,7 @@ export function ChatPage() {
           <>
             {activeTab && (
               <div className="hidden md:block">
-                <ChatConversationHeader tab={activeTab} onClear={() => setTabs(current => current.map(tab => tab.id === activeTab.id ? { ...tab, messages: [] } : tab))} />
+                <ChatConversationHeader tab={activeTab} onObserve={observeInternalSession} onClear={() => setTabs(current => current.map(tab => tab.id === activeTab.id ? { ...tab, messages: [] } : tab))} />
               </div>
             )}
             <MessageList
