@@ -11,6 +11,7 @@ import pytest
 
 @pytest.fixture
 def image_module(monkeypatch, tmp_path):
+    """隔离宿主依赖，加载用于验证描述同步开关的真实图片模块。"""
     config = SimpleNamespace(
         a_memorix=SimpleNamespace(
             plugin=SimpleNamespace(enabled=True),
@@ -49,6 +50,7 @@ def image_module(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("plugin_enabled,image_enabled", [(False, False), (False, True), (True, False), (True, True)])
 async def test_description_sync_respects_memory_switches(image_module, monkeypatch, plugin_enabled, image_enabled):
+    """验证记忆开关控制描述同步，且所有组合均保留识图完成通知。"""
     module, config, memory, notify = image_module
     config.a_memorix.plugin.enabled = plugin_enabled
     config.a_memorix.image_memory.enabled = image_enabled
