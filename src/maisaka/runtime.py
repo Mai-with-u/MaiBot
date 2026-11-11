@@ -737,6 +737,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         self._chat_history.append(InternalContextMessage(
             raw_message=MessageSequence([TextComponent(text), *images]), visible_text=text,
             timestamp=datetime.now(), message_id=task_id, source_kind=source_kind,
+            current_cycle_only=source_kind == "desktop_pet_proactive_wake",
         ))
         self._arm_forced_turn_state(message_id=task_id, reason=reason)
         self._queue_proactive_turn(proactive_trigger_message)
