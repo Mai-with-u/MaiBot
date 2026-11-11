@@ -7,6 +7,7 @@ import sys
 
 
 def test_positional_arguments_are_formatted_in_json_logs(tmp_path: Path) -> None:
+    """验证真实日志链路的位置参数插值，并保留异常堆栈。"""
     # 在子进程中加载真实日志配置，避免重配 pytest 所在进程的全局日志。
     script = """
 from io import StringIO
