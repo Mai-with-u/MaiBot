@@ -1,6 +1,5 @@
 """内部聊天的共享主人昵称，不依赖某个浏览器或插件配置。"""
 
-from pathlib import Path
 from threading import RLock
 from typing import Optional
 
