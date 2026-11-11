@@ -431,8 +431,8 @@ export const layoutExamples: ComponentExample[] = [
       <svg viewBox="0 0 240 160" role="img" aria-label="矩形合并后的外轮廓" className="h-40 w-full">
         <path
           d={regionOutline([{ x: 20, y: 20, width: 120, height: 70 }, { x: 80, y: 60, width: 120, height: 70 }])}
-          fill="var(--muted)"
-          stroke="var(--primary)"
+          fill="hsl(var(--muted))"
+          stroke="hsl(var(--primary))"
           strokeWidth={2}
         />
       </svg>

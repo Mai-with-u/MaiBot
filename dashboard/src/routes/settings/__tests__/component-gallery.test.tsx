@@ -54,5 +54,7 @@ describe('公共组件库', () => {
 
     const outline = screen.getByRole('img', { name: '矩形合并后的外轮廓' })
     expect(outline.querySelector('path')).toHaveAttribute('d', expect.stringMatching(/^M .+ Z$/))
+    expect(outline.querySelector('path')).toHaveAttribute('fill', 'hsl(var(--muted))')
+    expect(outline.querySelector('path')).toHaveAttribute('stroke', 'hsl(var(--primary))')
   })
 })
