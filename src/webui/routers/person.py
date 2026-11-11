@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import case
 from sqlmodel import col, delete, select
@@ -13,12 +13,11 @@ import json
 from src.common.database.database import get_db_session
 from src.common.database.database_model import PersonInfo
 from src.common.logger import get_logger
-from src.webui.dependencies import require_auth
 
 logger = get_logger("webui.person")
 
 # 创建路由器
-router = APIRouter(prefix="/person", tags=["Person"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/person", tags=["Person"])
 
 
 class PersonInfoResponse(BaseModel):

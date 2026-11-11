@@ -3,6 +3,7 @@ from typing import Any
 
 import aiohttp
 import asyncio
+import os
 import platform
 
 from src.common.logger import get_logger
@@ -54,13 +55,23 @@ class TelemetryHeartBeatTask(AsyncTask):
             "mmc_version": MMC_VERSION,
         }
 
-        match platform.system():
+        system_name = platform.system()
+        # Android 上的 Termux 或 proot 容器（如 MaiDroid）运行的是普通 Linux 版 Python，
+        # platform.system() 只会返回 "Linux"；这些进程都继承了 Android 系统设置的
+        # ANDROID_ROOT 和 ANDROID_DATA，两者同时存在时按 Android 上报。
+        if system_name == "Linux" and os.getenv("ANDROID_ROOT") == "/system" and os.getenv("ANDROID_DATA") == "/data":
+            system_name = "Android"
+
+        match system_name:
             case "Windows":
                 info_dict["os_type"] = "Windows"
             case "Linux":
                 info_dict["os_type"] = "Linux"
             case "Darwin":
                 info_dict["os_type"] = "macOS"
+            case "Android":
+                # Python 3.13 起，官方 Android 构建的 platform.system() 会直接返回 "Android"
+                info_dict["os_type"] = "Android"
             case _:
                 info_dict["os_type"] = "Unknown"
 

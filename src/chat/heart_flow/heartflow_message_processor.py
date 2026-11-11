@@ -2,11 +2,13 @@ from typing import TYPE_CHECKING
 
 import traceback
 
-from src.chat.heart_flow.heartflow_manager import heartflow_manager
+from src.chat.heart_flow.heartflow_manager import ChatPausedError, heartflow_manager
+from src.chat.message_receive.chat_manager import chat_manager
 
 # from src.chat.utils.chat_message_builder import replace_user_references
 from src.common.utils.utils_message import MessageUtils
 from src.common.logger import get_logger
+from src.core.chat_pause import chat_pause_state
 from src.person_info.person_info import Person
 
 if TYPE_CHECKING:
@@ -54,18 +56,21 @@ class HeartFCMessageReceiver:
             chat = None
             try:
                 chat = await heartflow_manager.get_or_create_heartflow_chat(message.session_id)
+            except ChatPausedError:
+                logger.debug(f"聊天回复已暂停，仅接收消息: {message.session_id}")
             except Exception as e:
                 logger.error(f"出现错误: {e}")
 
             await MessageUtils.store_message_to_db_async(message)  # 存储消息到数据库
-            if chat is not None:
+            if chat is not None and not chat_pause_state.is_paused(message.session_id, chat.chat_stream.is_group_session):
                 await chat.register_message(message)
             from src.services.memory_flow_service import memory_automation_service
 
             await memory_automation_service.on_incoming_message(message)
 
             # 3. 日志记录
-            mes_name = group_info.group_name if group_info else "私聊"
+            # 官方平台事件可能不带群名，使用已登记会话中的真实名称，与 Maisaka 日志保持一致。
+            mes_name = chat_manager.get_session_name(message.session_id) or ("群聊" if group_info else "私聊")
 
             # TODO: 修复引用格式替换
             # # 应用用户引用格式替换，将回复<aaa:bbb>和@<aaa:bbb>格式转换为可读格式

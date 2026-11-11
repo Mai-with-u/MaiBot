@@ -32,5 +32,4 @@ export interface DeleteConfirmState {
 export interface FormErrors {
   name?: string
   base_url?: string
-  api_key?: string
 }

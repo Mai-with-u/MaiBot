@@ -1,10 +1,9 @@
+import { Settings } from 'lucide-react'
 import {
   ArrowLeft,
-  Download,
   FileClock,
   MoreHorizontal,
   Network,
-  Plus,
   Star,
   StarOff,
   Trash2,
@@ -12,7 +11,8 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import { type ReactNode, useRef, useState } from 'react'
+import { useImperativeHandle, useState } from 'react'
+import type { Ref } from 'react'
 
 import { useQuery } from '@tanstack/react-query'
 
@@ -37,7 +37,13 @@ import { MOBILE_GLASS_CLASS } from '@/components/layout/mobile-glass'
 import { MobileHeaderActions } from '@/components/layout/MobileHeaderActions'
 import { useHideMobileTabBar } from '@/components/layout/mobile-nav-context'
 import { useMediaQuery } from '@/hooks/use-media-query'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { SwitchField } from '@/components/ui/switch'
 import { useDataList } from '@/hooks/useDataList'
 import { useToast } from '@/hooks/use-toast'
@@ -66,7 +72,6 @@ import {
   DeleteConfirmDialog,
   ExpressionCreateDialog,
   ExpressionEditDialog,
-  LegacyExpressionImportDialog,
 } from './ExpressionDialogs'
 import { ExpressionClusterBrowser } from './ExpressionClusterBrowser'
 import { ExpressionList } from './ExpressionList'
@@ -75,6 +80,7 @@ import { ExpressionScopeStatus } from './ExpressionScopeStatus'
 
 import type { ChatInfo, Expression, ExpressionGroupInfo } from '@/types/expression'
 import type { StatsData } from './types'
+import type { LearningBrowserTabs, LearningCreateHandle } from '../learning'
 
 type IndicatorStatus = 'on' | 'off' | 'mixed'
 type ExpressionReviewFilter = 'all' | 'user_checked' | 'unchecked'
@@ -84,7 +90,7 @@ type BrowseMode = 'chat' | 'group' | 'all'
 interface ExpressionFilters {
   browseMode: BrowseMode
   selectedChatId: string
-  selectedGroupIndex: number | null
+  selectedGroupIndex: string | null
   sortBy: 'time' | 'time_asc' | 'created' | 'created_asc'
   reviewFilter: ExpressionReviewFilter
 }
@@ -107,9 +113,14 @@ const DEFAULT_STATS: StatsData = {
 /**
  * 表达方式管理主页面
  */
-export function ExpressionManagementPage({ browserHeader }: { browserHeader?: ReactNode }) {
+export function ExpressionManagementPage({
+  browserTabs,
+  createHandle,
+}: {
+  browserTabs?: LearningBrowserTabs
+  createHandle?: Ref<LearningCreateHandle>
+}) {
   const { toast } = useToast()
-  const importInputRef = useRef<HTMLInputElement>(null)
 
   // 浏览面板与对话框等纯 UI 局部态
   const [browserPanelCollapsed, setBrowserPanelCollapsed] = useState(false)
@@ -117,7 +128,15 @@ export function ExpressionManagementPage({ browserHeader }: { browserHeader?: Re
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [isCreateChoiceOpen, setIsCreateChoiceOpen] = useState(false)
-  const [isLegacyImportOpen, setIsLegacyImportOpen] = useState(false)
+  // 新增入口在学习页的「添加学习内容」里，对话框仍在这里打开。
+  useImperativeHandle(
+    createHandle,
+    () => ({
+      open: (mode) =>
+        mode === 'manual' ? setIsCreateDialogOpen(true) : setIsCreateChoiceOpen(true),
+    }),
+    []
+  )
   const [deleteConfirmExpression, setDeleteConfirmExpression] = useState<Expression | null>(null)
   const [isBatchDeleteDialogOpen, setIsBatchDeleteDialogOpen] = useState(false)
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false)
@@ -142,10 +161,13 @@ export function ExpressionManagementPage({ browserHeader }: { browserHeader?: Re
       // 按共享组浏览时取该组的 chat_ids（全局组传 undefined，让后端返回全部）
       const selectedGroup =
         filters.browseMode === 'group'
-          ? groups.find((group) => group.index === filters.selectedGroupIndex)
+          ? groups.find((group) => group.id === filters.selectedGroupIndex)
           : undefined
       // 已选中的非全局组但无任何聊天：直接返回空，避免无意义请求
-      if (selectedGroup && !selectedGroup.is_global && selectedGroup.chat_ids.length === 0) {
+      if (
+        filters.browseMode === 'group' &&
+        (!selectedGroup || (!selectedGroup.is_global && selectedGroup.chat_ids.length === 0))
+      ) {
         return { items: [], total: 0 }
       }
       const response = await getExpressionList({
@@ -230,14 +252,13 @@ export function ExpressionManagementPage({ browserHeader }: { browserHeader?: Re
       ? (chatList.find((chat) => chat.chat_id === selectedChatId) ?? null)
       : null
 
-  // 导入 / 清除：写成功后 invalidate 刷新
-  const { handleImportFileChange, clearCurrentChat } =
-    useExpressionImportExport({
-      currentChat,
-      onChanged: refreshAll,
-      onClearSelection: list.clearSelection,
-      onCloseClearConfirm: () => setIsClearConfirmOpen(false),
-    })
+  // 清除当前聊天：写成功后 invalidate 刷新（导入统一走学习页的「导入学习内容」）
+  const { clearCurrentChat } = useExpressionImportExport({
+    currentChat,
+    onChanged: refreshAll,
+    onClearSelection: list.clearSelection,
+    onCloseClearConfirm: () => setIsClearConfirmOpen(false),
+  })
 
   // 手机上卡片审核是全屏的滑卡界面，底部按钮占据标签栏的位置
   useHideMobileTabBar(isMobileViewport && activeView === 'quick')
@@ -313,7 +334,7 @@ export function ExpressionManagementPage({ browserHeader }: { browserHeader?: Re
     }
   }
 
-  // 浏览维度切换：按聊天 / 按共享组 / 全部（变更后 setFilter 自动重置页码并清空选中）
+  // 浏览范围切换：按聊天 / 相通（含特殊的全部组）（变更后 setFilter 自动重置页码并清空选中）
   const handleBrowseModeChange = (mode: BrowseMode) => {
     list.setFilter('browseMode', mode)
     if (mode === 'chat' && !selectedChatId && chatList.length > 0) {
@@ -323,7 +344,7 @@ export function ExpressionManagementPage({ browserHeader }: { browserHeader?: Re
       list.setFilter('selectedChatId', '')
     }
     if (mode === 'group' && selectedGroupIndex === null && groups.length > 0) {
-      list.setFilter('selectedGroupIndex', groups[0].index)
+      list.setFilter('selectedGroupIndex', groups[0].id)
     }
     if (mode !== 'group') {
       list.setFilter('selectedGroupIndex', null)
@@ -334,7 +355,7 @@ export function ExpressionManagementPage({ browserHeader }: { browserHeader?: Re
     list.setFilter('selectedChatId', chatId)
   }
 
-  const handleGroupChange = (groupIndex: number | null) => {
+  const handleGroupChange = (groupIndex: string | null) => {
     list.setFilter('selectedGroupIndex', groupIndex)
   }
 
@@ -348,6 +369,16 @@ export function ExpressionManagementPage({ browserHeader }: { browserHeader?: Re
     return 'mixed'
   }
 
+  const summary = (
+    <MetricStrip
+      responsiveCompact
+      items={[
+        { label: '总数量', value: stats.total.toLocaleString() },
+        { label: '近7天新增', value: `+${stats.recent_7days.toLocaleString()}`, positive: true },
+      ]}
+    />
+  )
+
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden p-3 pb-4 sm:p-4">
       {isExportDialogOpen && (
@@ -360,7 +391,7 @@ export function ExpressionManagementPage({ browserHeader }: { browserHeader?: Re
             targetId: chat.target_id,
           }))}
           groups={groups.map((group) => ({
-            id: group.index,
+            id: group.id,
             name: group.name,
             chatIds: group.chat_ids,
             isGlobal: group.is_global,
@@ -368,8 +399,12 @@ export function ExpressionManagementPage({ browserHeader }: { browserHeader?: Re
               group.name,
               group.is_global ? '全局共享组：包含全部聊天' : `包含 ${group.members.length} 个聊天`,
               ...group.members.map((member) =>
-                [formatChatDisplayName(member.chat_name, member.account_id), formatChatTargetLabel(member)]
-                  .filter(Boolean).join(' · ')
+                [
+                  formatChatDisplayName(member.chat_name, member.account_id),
+                  formatChatTargetLabel(member),
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
               ),
             ].join('\n'),
           }))}
@@ -414,43 +449,35 @@ export function ExpressionManagementPage({ browserHeader }: { browserHeader?: Re
             : 'hidden'
         }
       >
-        <DataBrowserHeader
-          title="学习"
-          navigation={browserHeader}
-          summary={
-            <>
-              <MetricStrip
-                items={[
-                  { label: '总数量', value: stats.total.toLocaleString() },
-                  {
-                    label: '近7天新增',
-                    value: `+${stats.recent_7days.toLocaleString()}`,
-                    positive: true,
-                  },
-                ]}
-              />
-            </>
-          }
-        />
+        {!browserTabs && <DataBrowserHeader title="学习" summary={summary} />}
         <DataBrowserLayout
+          tabs={browserTabs?.(summary)}
           sidebar={
             <ChatScopeFilterPanel
               density="compact"
               title="聊天范围"
+              titleActions={
+                browseMode !== 'chat' && (
+                  <Button asChild variant="ghost" size="icon-xs">
+                    <a
+                      href={`/chat-management?kind=expression&group=${browseMode === 'all' ? 'all' : (selectedGroupIndex ?? 'all')}`}
+                      title="管理当前相通组"
+                      aria-label="管理当前相通组"
+                    >
+                      <Settings className="h-3 w-3" />
+                    </a>
+                  </Button>
+                )
+              }
               titleMeta={
-                browseMode === 'chat'
-                  ? `${chatList.length} 个`
-                  : browseMode === 'group'
-                    ? `${groups.length} 组`
-                    : undefined
+                browseMode === 'chat' ? `${chatList.length} 个` : `${groups.length + 1} 组`
               }
               modes={[
                 { label: '聊天', value: 'chat' },
-                { label: '组', value: 'group' },
-                { label: '全部', value: 'all' },
+                { label: '相通', value: 'group' },
               ]}
-              activeMode={browseMode}
-              onModeChange={handleBrowseModeChange}
+              activeMode={browseMode === 'chat' ? 'chat' : 'group'}
+              onModeChange={(mode) => handleBrowseModeChange(mode === 'group' ? 'all' : 'chat')}
               items={
                 browseMode === 'chat'
                   ? chatList.map((chat) => ({
@@ -476,42 +503,78 @@ export function ExpressionManagementPage({ browserHeader }: { browserHeader?: Re
                         />
                       ),
                     }))
-                  : browseMode === 'group'
-                    ? groups.map((group) => {
+                  : [
+                      {
+                        id: 'all',
+                        label: '全部',
+                        description: '包含全部聊天',
+                        title: '全部聊天的相通组',
+                        meta: statsQuery.data?.total.toLocaleString(),
+                        trailing:
+                          chatList.length > 0 ? (
+                            <ExpressionScopeStatus
+                              enableLearning={summarizeStatus(
+                                chatList.map((chat) => chat.enable_learning)
+                              )}
+                              useExpression={summarizeStatus(
+                                chatList.map((chat) => chat.use_expression)
+                              )}
+                            />
+                          ) : undefined,
+                      },
+                      ...groups.map((group) => {
                         const memberNames = group.members
                           .map((member) =>
                             formatChatDisplayName(member.chat_name, member.account_id)
                           )
                           .join('、')
+                        const groupChatIds = new Set(group.chat_ids)
+                        const expressionCount = group.is_global
+                          ? statsQuery.data?.total
+                          : chatListQuery.isSuccess
+                            ? chatList
+                                .filter((chat) => groupChatIds.has(chat.chat_id))
+                                .reduce((total, chat) => total + (chat.expression_count ?? 0), 0)
+                            : undefined
                         return {
-                          id: group.index,
+                          id: group.id,
+                          meta: expressionCount?.toLocaleString(),
                           label: `${group.name}${group.is_global ? '（全局）' : ''}`,
                           description: memberNames || '暂无已解析聊天',
                           descriptionTitle: memberNames,
                           title: memberNames,
-                          trailing: group.members.length > 0 ? (
-                            <ExpressionScopeStatus
-                              enableLearning={summarizeStatus(
-                                group.members.map((member) => member.enable_learning)
-                              )}
-                              useExpression={summarizeStatus(
-                                group.members.map((member) => member.use_expression)
-                              )}
-                            />
-                          ) : undefined,
+                          trailing:
+                            group.members.length > 0 ? (
+                              <ExpressionScopeStatus
+                                enableLearning={summarizeStatus(
+                                  group.members.map((member) => member.enable_learning)
+                                )}
+                                useExpression={summarizeStatus(
+                                  group.members.map((member) => member.use_expression)
+                                )}
+                              />
+                            ) : undefined,
                         }
-                      })
-                    : []
+                      }),
+                    ]
               }
-              selectedItemId={browseMode === 'chat' ? selectedChatId : selectedGroupIndex}
+              selectedItemId={
+                browseMode === 'chat'
+                  ? selectedChatId
+                  : browseMode === 'all'
+                    ? 'all'
+                    : selectedGroupIndex
+              }
               onItemSelect={(id) => {
                 if (browseMode === 'chat') handleChatChange(String(id))
-                else if (browseMode === 'group') handleGroupChange(Number(id))
+                else if (id === 'all') handleBrowseModeChange('all')
+                else {
+                  handleBrowseModeChange('group')
+                  handleGroupChange(String(id))
+                }
               }}
               emptyContent={
-                <div className="text-muted-foreground px-2 py-6 text-center text-sm">
-                  {browseMode === 'group' ? '暂无共享组' : '当前显示全部表达方式'}
-                </div>
+                <div className="text-muted-foreground px-2 py-6 text-center text-sm">暂无聊天</div>
               }
               collapsed={browserPanelCollapsed}
               onCollapsedChange={setBrowserPanelCollapsed}
@@ -532,9 +595,15 @@ export function ExpressionManagementPage({ browserHeader }: { browserHeader?: Re
                   <>
                     <Select
                       value={filters.sortBy}
-                      onValueChange={(value: ExpressionFilters['sortBy']) => list.setFilter('sortBy', value)}
+                      onValueChange={(value: ExpressionFilters['sortBy']) =>
+                        list.setFilter('sortBy', value)
+                      }
                     >
-                      <SelectTrigger controlSize="sm" className="w-[130px]" aria-label="表达方式排序">
+                      <SelectTrigger
+                        controlSize="sm"
+                        className="w-[130px]"
+                        aria-label="表达方式排序"
+                      >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -560,13 +629,6 @@ export function ExpressionManagementPage({ browserHeader }: { browserHeader?: Re
                       aria-label="导出表达方式"
                     >
                       <Upload className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      onClick={() => setIsCreateChoiceOpen(true)}
-                    >
-                      <Plus className="h-4 w-4" />
-                      新增
                     </Button>
                     <DropdownMenu open={isMoreActionsOpen} onOpenChange={setIsMoreActionsOpen}>
                       <DropdownMenuTrigger asChild>
@@ -620,17 +682,6 @@ export function ExpressionManagementPage({ browserHeader }: { browserHeader?: Re
                           <Network className="mr-2 h-4 w-4" />
                           聚类
                         </DropdownMenuItem>
-                        <DropdownMenuItem onSelect={() => setIsLegacyImportOpen(true)}>
-                          <Download className="mr-2 h-4 w-4" />
-                          从旧版本导入
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          disabled={!currentChat}
-                          onSelect={() => importInputRef.current?.click()}
-                        >
-                          <Download className="mr-2 h-4 w-4" />
-                          导入
-                        </DropdownMenuItem>
                         <DropdownMenuItem
                           className="text-destructive focus:text-destructive"
                           disabled={!currentChat}
@@ -641,13 +692,6 @@ export function ExpressionManagementPage({ browserHeader }: { browserHeader?: Re
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
-                    <input
-                      ref={importInputRef}
-                      type="file"
-                      accept="application/json,.json"
-                      className="hidden"
-                      onChange={handleImportFileChange}
-                    />
                   </>
                 }
               >
@@ -752,6 +796,7 @@ export function ExpressionManagementPage({ browserHeader }: { browserHeader?: Re
         onOpenChange={setIsCreateChoiceOpen}
         kind="expression"
         initialTargetIds={currentChat ? [currentChat.chat_id] : []}
+        initialMode="auto"
         onManual={() => setIsCreateDialogOpen(true)}
         onSuccess={(isGlobal) => {
           if (isGlobal) handleBrowseModeChange('all')
@@ -779,13 +824,6 @@ export function ExpressionManagementPage({ browserHeader }: { browserHeader?: Re
           refreshAll()
           setIsEditDialogOpen(false)
         }}
-      />
-
-      <LegacyExpressionImportDialog
-        open={isLegacyImportOpen}
-        onOpenChange={setIsLegacyImportOpen}
-        chatList={chatList}
-        onSuccess={refreshAll}
       />
 
       {/* 删除确认对话框 */}

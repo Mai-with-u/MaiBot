@@ -274,7 +274,7 @@ sudo journalctl -u caddy -f
 2. 打开反向代理。
 3. 新增反向代理。
 4. 目标 URL 填写 http://127.0.0.1:8001。
-5. 发送域名通常保持目标域或原域名即可。
+5. 将发送给 MaiBot 的 `Host` 设为 `$http_host`，保留浏览器访问的主机名和端口，供桌宠连接页设置 WebSocket 的访问策略。
 
 如果使用的是宝塔站点配置文件，也可以手动补这一段：
 
@@ -282,7 +282,7 @@ sudo journalctl -u caddy -f
 location / {
     proxy_pass http://127.0.0.1:8001;
     proxy_http_version 1.1;
-    proxy_set_header Host $host;
+    proxy_set_header Host $http_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;

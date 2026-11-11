@@ -10,7 +10,7 @@ vi.mock('react-i18next', () => ({
 }))
 
 // 更新卡片会请求后端，由自己的测试覆盖。
-vi.mock('../SelfUpdateCard', () => ({ SelfUpdateCard: () => null }))
+vi.mock('@/host/HostUpdateSection', () => ({ HostUpdateSection: () => null }))
 
 afterEach(() => cleanup())
 

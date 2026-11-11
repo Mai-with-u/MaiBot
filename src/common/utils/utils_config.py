@@ -4,7 +4,7 @@ import time
 
 from src.common.logger import get_logger
 from src.config.config import global_config
-from src.config.official_configs import PrivateReplyPauseRule
+from src.config.official_configs import PrivateReplyPauseRule, get_active_talk_rule_group
 
 logger = get_logger("config_utils")
 
@@ -68,33 +68,9 @@ class JargonConfigUtils:
     @staticmethod
     def resolve_jargon_group_scope(session_id: Optional[str]) -> tuple[set[str], bool]:
         """解析当前会话可共享黑话的会话范围，以及是否命中全平台全目标通配。"""
-        related_session_ids = {session_id} if session_id else set()
-        has_global_share = False
-        if not session_id:
-            return related_session_ids, has_global_share
+        from src.services.sharing_group_service import resolve_scope
 
-        for jargon_group in global_config.jargon.jargon_groups:
-            target_items = jargon_group.targets
-            group_session_ids: set[str] = set()
-            contains_current_session = False
-
-            for target_item in target_items:
-                platform = str(target_item.platform or "").strip()
-                item_id = str(target_item.item_id or "").strip()
-                if not platform or not item_id:
-                    continue
-
-                target_session_ids = JargonConfigUtils.get_target_session_ids_with_wildcards(target_item)
-                group_session_ids.update(target_session_ids)
-                if ChatConfigUtils.target_matches_session_with_wildcards(target_item, session_id):
-                    contains_current_session = True
-                    if platform == "*" and item_id == "*":
-                        has_global_share = True
-
-            if contains_current_session:
-                related_session_ids.update(group_session_ids)
-
-        return related_session_ids, has_global_share
+        return resolve_scope(session_id, "jargon")
 
 
 class ChatConfigUtils:
@@ -494,15 +470,17 @@ class ChatConfigUtils:
         if is_group_chat is False:
             return 0.0 if ChatConfigUtils.is_private_reply_paused(session_id) else 1.0
 
-        result = global_config.chat.reply_timing.talk_value
-        if not global_config.chat.reply_timing.enable_talk_value_rules or not global_config.chat.reply_timing.talk_value_rules:
+        reply_timing = global_config.chat.reply_timing
+        result = reply_timing.talk_value
+        rules = get_active_talk_rule_group(reply_timing.talk_rule_groups).rules
+        if not rules:
             return result
         local_time = time.localtime()
         now_min = local_time.tm_hour * 60 + local_time.tm_min
 
         matched_rules = []
-        for rule in global_config.chat.reply_timing.talk_value_rules:
-            if rule.rule_type != "group":
+        for rule in rules:
+            if not rule.enabled or rule.rule_type != "group":
                 continue
             target_priority = ChatConfigUtils._talk_rule_target_priority(rule, session_id, is_group_chat)
             if target_priority is None:
@@ -622,17 +600,6 @@ class AMemorixConfigUtils:
     @staticmethod
     def get_shared_memory_session_ids(session_id: Optional[str]) -> set[str]:
         """获取与当前聊天流共享长期记忆检索范围的真实聊天流 ID。"""
-        clean_session_id = str(session_id or "").strip()
-        if not clean_session_id:
-            return set()
+        from src.services.sharing_group_service import resolve_scope
 
-        shared_groups = global_config.a_memorix.shared_memory_groups
-        resolved_session_ids: set[str] = set()
-        for group in shared_groups:
-            targets = group.targets
-            group_session_ids: set[str] = set()
-            for target in targets:
-                group_session_ids.update(ChatConfigUtils.get_target_session_ids(target))
-            if clean_session_id in group_session_ids:
-                resolved_session_ids.update(group_session_ids)
-        return resolved_session_ids or {clean_session_id}
+        return resolve_scope(session_id, "memory")[0]

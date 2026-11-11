@@ -7,10 +7,14 @@ import {
   redirect,
 } from '@tanstack/react-router'
 import { NotFoundPage } from './routes/404'
-import { Layout } from './components/layout'
+import { AppShell } from './components/app-shell'
+import { BasicFeaturesTour } from './components/tour/BasicFeaturesTour'
 import { RoutePendingFallback } from './components/route-pending-fallback'
 import { checkAuth } from './hooks/use-auth'
+import { isDesktopPetEnabled } from './hooks/use-feature-flags'
+import { getHostRuntime } from './host/state'
 import { RouteErrorBoundary } from './components/error-boundary'
+import { getBotConfig } from './lib/config-api'
 import { rememberMarketInstall } from './lib/plugin-market-navigation'
 import { rememberPersonalityImport } from './lib/personality-import'
 
@@ -28,6 +32,12 @@ const rootRoute = createRootRoute({
       if (!authenticated) {
         throw redirect({ to: '/auth' })
       }
+      if (getHostRuntime().host && !getHostRuntime().selected_bot_running) {
+        throw redirect({ to: '/bots' })
+      }
+    }, () => {
+      // 认证服务未就绪时，由认证页显示等待连接并重试。
+      throw redirect({ to: '/auth' })
     })
   },
 })
@@ -46,14 +56,15 @@ const setupRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/setup/index.tsx'), 'SetupPage'),
 })
 
-// 受保护的路由 Root（带 Layout）
+// 受保护的路由 Root（带外壳：按设置使用经典布局或麦麦观察布局）
 const protectedRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: 'protected',
   component: () => (
-    <Layout>
+    <AppShell>
       <Outlet />
-    </Layout>
+      <BasicFeaturesTour />
+    </AppShell>
   ),
   errorComponent: ({ error }) => <RouteErrorBoundary error={error} />,
 })
@@ -76,7 +87,16 @@ const pluginWebUIManagerRoute = createRoute({
 const indexRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/',
-  component: lazyRouteComponent(() => import('./routes/index'), 'IndexPage'),
+  component: lazyRouteComponent(() => import('./routes/home-entry'), 'HomeEntry'),
+})
+
+const helpHistoryRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/help-history',
+  validateSearch: (search: Record<string, unknown>): { session?: string } => ({
+    session: typeof search.session === 'string' ? search.session : undefined,
+  }),
+  component: lazyRouteComponent(() => import('./routes/help-history'), 'HelpHistoryPage'),
 })
 
 // 详细统计路由
@@ -104,6 +124,17 @@ const botConfigRoute = createRoute({
     throw redirect({ href: `/settings${search}${hash}`, replace: true })
   },
   component: lazyRouteComponent(() => import('./routes/config/bot'), 'BotConfigPage'),
+})
+
+const desktopPetRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/desktop-pet',
+  beforeLoad: async () => {
+    const { host, selected_bot_running } = getHostRuntime()
+    if (host && !selected_bot_running) throw redirect({ to: '/bots', replace: true })
+    if (!isDesktopPetEnabled(await getBotConfig())) throw redirect({ to: '/config/bot', replace: true })
+  },
+  component: lazyRouteComponent(() => import('./routes/desktop-pet'), 'DesktopPetPage'),
 })
 
 // 配置路由 - 麦麦模型配置
@@ -196,19 +227,6 @@ const reasoningProcessRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/reasoning-process',
   component: lazyRouteComponent(() => import('./routes/logs'), 'ReasoningLogViewerPage'),
-})
-
-// MaiSaka 聊天流监控路由
-const plannerMonitorRoute = createRoute({
-  getParentRoute: () => protectedRoute,
-  path: '/planner-monitor',
-  component: lazyRouteComponent(() => import('./routes/monitor/index.tsx'), 'PlannerMonitorPage'),
-})
-
-const computerRoute = createRoute({
-  getParentRoute: () => protectedRoute,
-  path: '/computer',
-  component: lazyRouteComponent(() => import('./routes/computer'), 'ComputerPage'),
 })
 
 const filesRoute = createRoute({
@@ -350,10 +368,25 @@ const mcpSettingsRoute = createRoute({
 const dataTransferRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/data-transfer',
-  validateSearch: (search: Record<string, unknown>): { tab?: 'transfer' | 'files' } => ({
-    tab: search.tab === 'files' ? 'files' : undefined,
+  validateSearch: (search: Record<string, unknown>): { tab?: 'transfer' | 'files' | 'chat-migration' } => ({
+    tab: search.tab === 'files' || search.tab === 'chat-migration' ? search.tab : undefined,
   }),
   component: lazyRouteComponent(() => import('./routes/data-transfer'), 'DataTransferPage'),
+})
+
+const hostManagementRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/bots',
+  component: lazyRouteComponent(() => import('./routes/bots'), 'HostEntryPage'),
+})
+
+const componentLibraryRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/settings/components',
+  component: lazyRouteComponent(
+    () => import('./routes/settings/component-library-page'),
+    'ComponentLibraryPage'
+  ),
 })
 
 const settingsRoute = createRoute({
@@ -415,8 +448,10 @@ const routeTree = rootRoute.addChildren([
     pluginWebUIRoute,
     pluginWebUIManagerRoute,
     indexRoute,
+    helpHistoryRoute,
     statisticsRoute,
     botConfigRoute,
+    desktopPetRoute,
     modelConfigRoute,
     promptManagementRoute,
     emojiManagementRoute,
@@ -435,14 +470,14 @@ const routeTree = rootRoute.addChildren([
     dataTransferRoute,
     logsRoute,
     reasoningProcessRoute,
-    plannerMonitorRoute,
     agentRoute,
-    computerRoute,
     filesRoute,
     chatManagementRoute,
     chatRoute,
     manageRoute,
+    hostManagementRoute,
     settingsRoute,
+    componentLibraryRoute,
     packMarketRoute,
     packDetailRoute,
     webuiFeedbackSurveyRoute,
@@ -481,5 +516,11 @@ export const registeredRoutePaths = new Set(collectRoutePaths(routeTree as Route
 declare module '@tanstack/react-router' {
   interface Register {
     router: typeof router
+  }
+}
+
+declare module '@tanstack/history' {
+  interface HistoryState {
+    helpDraft?: { id: number; question?: string; submitted?: boolean }
   }
 }

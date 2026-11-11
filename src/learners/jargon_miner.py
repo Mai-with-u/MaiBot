@@ -2,7 +2,6 @@ from collections import OrderedDict
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict
 
-from json_repair import repair_json
 from sqlmodel import col, select
 
 import asyncio
@@ -12,6 +11,7 @@ from src.common.data_models.jargon_data_model import MaiJargon
 from src.common.data_models.llm_service_data_models import LLMResponseResult
 from src.common.database.database import get_db_session
 from src.common.database.database_model import Jargon, JargonCreatedBy, Messages
+from src.common.llm_json import parse_llm_json
 from src.common.logger import get_logger
 from src.common.utils.utils_config import JargonConfigUtils
 from src.common.utils.utils_message import MessageUtils
@@ -19,6 +19,7 @@ from src.config.config import global_config
 from src.llm_models.payload_content.context_item import ContextItemBuilder, RoleType
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
 from src.plugin_runtime.hook_schema_utils import build_object_schema
+from src.plugin_runtime.host.hook_dispatcher import HookAbortedError
 from src.plugin_runtime.host.hook_spec_registry import HookSpec, HookSpecRegistry
 from src.prompt.prompt_manager import prompt_manager
 from src.services.llm_service import LLMServiceClient
@@ -541,7 +542,7 @@ class JargonMiner:
             last_inference_count=last_inference_count,
         )
         if finalize_result.aborted:
-            logger.info(f"jargon {content} 的推断结果被 Hook 中止写回")
+            logger.info(f"jargon {content} 的推断结果中止写回：{HookAbortedError(finalize_result)}")
             return
 
         finalize_kwargs = finalize_result.kwargs
@@ -625,7 +626,7 @@ class JargonMiner:
             entries=self._serialize_jargon_entries(uniq_entries),
         )
         if before_persist_result.aborted:
-            logger.info(f"[{self.session_name}] 黑话提取结果被 Hook 中止，不写入数据库")
+            logger.info(f"[{self.session_name}] 黑话提取中止写入：{HookAbortedError(before_persist_result)}")
             return 0, 0
 
         raw_hook_entries = before_persist_result.kwargs.get("entries")
@@ -800,11 +801,10 @@ class JargonMiner:
 
     def _parse_result(self, response: str) -> Optional[Dict[str, str]]:
         try:
-            result = json.loads(response.strip())
+            result = parse_llm_json(response)
         except Exception:
             try:
-                repaired = repair_json(response.strip())
-                result = json.loads(repaired)
+                result = parse_llm_json(response, repair=True)
             except Exception as e2:
                 logger.error(f"推断结果解析失败: {e2}")
                 return None

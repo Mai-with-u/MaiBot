@@ -4,6 +4,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { getChatStreamDetail } from '@/lib/chat-management-api'
 
+import { isFocusFlowId } from './observed-sessions'
+
 export function ObservedConversationHoverCard({
   sessionId,
   name,
@@ -23,6 +25,7 @@ export function ObservedConversationHoverCard({
   preview: string
   children: ReactNode
 }) {
+  const isFocus = isFocusFlowId(sessionId)
   const [open, setOpen] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const clearTimer = () => clearTimeout(timer.current)
@@ -32,13 +35,13 @@ export function ObservedConversationHoverCard({
   }
   useEffect(() => () => clearTimeout(timer.current), [])
 
-  // 只为正在查看的会话请求详情；与设置弹窗共享缓存，打开时刷新当前生效规则。
+  // 只有真实聊天流有学习规则和回复频率；共享流展示组级状态，不查询聊天配置。
   const detail = useQuery({
     queryKey: ['chat-stream-detail', sessionId],
     queryFn: () => getChatStreamDetail(sessionId),
-    enabled: open,
+    enabled: open && !isFocus,
     staleTime: 0,
-    refetchInterval: open ? 30_000 : false,
+    refetchInterval: open && !isFocus ? 30_000 : false,
   })
 
   return (
@@ -72,11 +75,15 @@ export function ObservedConversationHoverCard({
         <div className="space-y-1">
           <p className="break-words text-sm font-semibold">{name}</p>
           <p className="text-muted-foreground break-all">
-            {platform ? `${platform} · ` : ''}{isGroupChat ? '群聊' : '私聊'}{targetId ? ` · ${targetId}` : ''}
+            {isFocus ? 'Focus 共享流' : <>
+              {platform ? `${platform} · ` : ''}{isGroupChat ? '群聊' : '私聊'}{targetId ? ` · ${targetId}` : ''}
+            </>}
           </p>
           <div>{status}</div>
         </div>
-        {detail.isError ? (
+        {isFocus ? (
+          <p className="text-muted-foreground">组内消息统一进入同一个 Planner，由工具选择回复目标。</p>
+        ) : detail.isError ? (
           <p role="alert" className="text-destructive">聊天流信息加载失败，请重新悬停重试。</p>
         ) : detail.data ? (
           <dl className="space-y-2 border-y py-3">

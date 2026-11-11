@@ -1,6 +1,8 @@
+import { Settings } from 'lucide-react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Check, ChevronDown, Download, MoreHorizontal, Plus, Trash2, Upload, X } from 'lucide-react'
-import { type ReactNode, useState } from 'react'
+import { Check, ChevronDown, Trash2, Upload, X } from 'lucide-react'
+import { useImperativeHandle, useState } from 'react'
+import type { Ref } from 'react'
 
 import { ChatScopeFilterPanel } from '@/components/chat-scope-filter-panel'
 import { LearningExportDialog } from '@/components/learning-export-dialog'
@@ -12,12 +14,17 @@ import {
   DataToolbar,
   MetricStrip,
 } from '@/components/ui/data-browser'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { PageFrame } from '@/components/ui/surface'
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
@@ -44,19 +51,19 @@ import {
   DeleteConfirmDialog,
   JargonCreateDialog,
   JargonDetailDialog,
-  JargonImportDialog,
 } from './JargonDialogs'
 import { JargonList } from './JargonList'
 
 import type { Jargon, JargonChatInfo } from '@/types/jargon'
 import type { StatsData } from './types'
+import type { LearningBrowserTabs, LearningCreateHandle } from '../learning'
 
 interface JargonFilters {
   sortBy: 'time' | 'time_asc' | 'created' | 'created_asc'
   summary: JargonSummaryTab
   chatId: string
   browseMode: 'chat' | 'group' | 'all'
-  groupIndex: number | null
+  groupIndex: string | null
 }
 
 type JargonStatusFilter = 'confirmed_jargon' | 'confirmed_not_jargon' | 'manual_jargon'
@@ -65,12 +72,26 @@ type JargonSummaryTab = 'total' | JargonStatusFilter | 'global_count' | 'complet
 /**
  * 黑话管理主页面
  */
-export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactNode }) {
+export function JargonManagementPage({
+  browserTabs,
+  createHandle,
+}: {
+  browserTabs?: LearningBrowserTabs
+  createHandle?: Ref<LearningCreateHandle>
+}) {
   const [selectedJargon, setSelectedJargon] = useState<Jargon | null>(null)
   const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false)
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [isCreateChoiceOpen, setIsCreateChoiceOpen] = useState(false)
-  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
+  // 新增入口在学习页的「添加学习内容」里，对话框仍在这里打开。
+  useImperativeHandle(
+    createHandle,
+    () => ({
+      open: (mode) =>
+        mode === 'manual' ? setIsCreateDialogOpen(true) : setIsCreateChoiceOpen(true),
+    }),
+    []
+  )
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false)
   const [deleteConfirmJargon, setDeleteConfirmJargon] = useState<Jargon | null>(null)
   const [isBatchDeleteDialogOpen, setIsBatchDeleteDialogOpen] = useState(false)
@@ -89,7 +110,13 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
   const list = useDataList<Jargon, JargonFilters, number>({
     domain: 'jargon',
     getId: (jargon) => jargon.id,
-    initialFilters: { summary: 'total', chatId: 'all', browseMode: 'all', groupIndex: null, sortBy: 'time' },
+    initialFilters: {
+      summary: 'total',
+      chatId: 'all',
+      browseMode: 'all',
+      groupIndex: null,
+      sortBy: 'time',
+    },
     preserveSelectionOnParamsChange: true,
     searchDebounceMs: 300,
     queryFn: async ({ page, pageSize, search, filters }) => {
@@ -102,7 +129,7 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
         : undefined
       const group =
         filters.browseMode === 'group'
-          ? groups.find((item) => item.index === filters.groupIndex)
+          ? groups.find((item) => item.id === filters.groupIndex)
           : undefined
       // 未选组或组内尚无真实聊天流时返回空，避免误显示全部词条。
       if (
@@ -277,7 +304,7 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
       ...filters,
       browseMode: mode,
       chatId: mode === 'chat' ? filters.chatId : 'all',
-      groupIndex: mode === 'group' ? (groups[0]?.index ?? null) : null,
+      groupIndex: mode === 'group' ? (groups[0]?.id ?? null) : null,
       summary: mode === 'group' && filters.summary === 'global_count' ? 'total' : filters.summary,
     }))
   }
@@ -395,23 +422,6 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
           >
             <Upload className="h-4 w-4" />
           </Button>
-          <Button size="sm" onClick={() => setIsCreateChoiceOpen(true)} aria-label="新增黑话">
-            <Plus className="h-4 w-4" />
-            新增
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon-sm" aria-label="更多操作" title="更多操作">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={() => setIsImportDialogOpen(true)}>
-                <Download className="mr-2 h-4 w-4" />
-                导入黑话
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
         </>
       }
     >
@@ -441,6 +451,16 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
     </DataToolbar>
   )
 
+  const summary = (
+    <MetricStrip
+      items={[
+        { label: '总数量', value: stats.total.toLocaleString() },
+        { label: '已确认黑话', value: stats.confirmed_jargon.toLocaleString(), positive: true },
+        { label: '推断完成', value: stats.complete_count.toLocaleString() },
+      ]}
+    />
+  )
+
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden p-3 pb-4 sm:p-4">
       {isExportDialogOpen && (
@@ -453,7 +473,7 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
             targetId: chat.target_id,
           }))}
           groups={groups.map((group) => ({
-            id: group.index,
+            id: group.id,
             name: group.name,
             chatIds: group.session_ids,
             isGlobal: group.is_global,
@@ -461,8 +481,12 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
               group.name,
               group.is_global ? '全局共享组：包含全部聊天' : `包含 ${group.members.length} 个聊天`,
               ...group.members.map((member) =>
-                [formatChatDisplayName(member.chat_name, member.account_id), formatChatTargetLabel(member)]
-                  .filter(Boolean).join(' · ')
+                [
+                  formatChatDisplayName(member.chat_name, member.account_id),
+                  formatChatTargetLabel(member),
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
               ),
             ].join('\n'),
           }))}
@@ -479,42 +503,35 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
         />
       )}
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto lg:overflow-hidden">
-        <DataBrowserHeader
-          title="学习"
-          navigation={browserHeader}
-          summary={
-            <MetricStrip
-              items={[
-                { label: '总数量', value: stats.total.toLocaleString() },
-                {
-                  label: '已确认黑话',
-                  value: stats.confirmed_jargon.toLocaleString(),
-                  positive: true,
-                },
-                { label: '推断完成', value: stats.complete_count.toLocaleString() },
-              ]}
-            />
-          }
-        />
+        {!browserTabs && <DataBrowserHeader title="学习" summary={summary} />}
         <DataBrowserLayout
+          tabs={browserTabs?.(summary)}
           sidebar={
             <ChatScopeFilterPanel
               density="compact"
               title="聊天范围"
+              titleActions={
+                browseMode !== 'chat' && (
+                  <Button asChild variant="ghost" size="icon-xs">
+                    <a
+                      href={`/chat-management?kind=jargon&group=${browseMode === 'all' ? 'all' : (groupIndex ?? 'all')}`}
+                      title="管理当前相通组"
+                      aria-label="管理当前相通组"
+                    >
+                      <Settings className="h-3 w-3" />
+                    </a>
+                  </Button>
+                )
+              }
               titleMeta={
-                browseMode === 'chat'
-                  ? `${chatList.length} 个`
-                  : browseMode === 'group'
-                    ? `${groups.length} 组`
-                    : undefined
+                browseMode === 'chat' ? `${chatList.length} 个` : `${groups.length + 1} 组`
               }
               modes={[
                 { label: '聊天', value: 'chat' },
-                { label: '组', value: 'group' },
-                { label: '全部', value: 'all' },
+                { label: '相通', value: 'group' },
               ]}
-              activeMode={browseMode}
-              onModeChange={handleBrowseModeChange}
+              activeMode={browseMode === 'chat' ? 'chat' : 'group'}
+              onModeChange={(mode) => handleBrowseModeChange(mode === 'group' ? 'all' : 'chat')}
               items={
                 browseMode === 'chat'
                   ? chatList.map((chat) => ({
@@ -525,25 +542,43 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
                       descriptionTitle: formatChatTargetLabel(chat),
                       title: formatChatDisplayName(chat.chat_name, chat.account_id),
                     }))
-                  : browseMode === 'group'
-                    ? groups.map((group) => {
+                  : [
+                      {
+                        id: 'all',
+                        label: '全部',
+                        description: '包含全部聊天',
+                        title: '全部聊天的相通组',
+                        meta: statsQuery.data?.data.total.toLocaleString(),
+                      },
+                      ...groups.map((group) => {
                         const memberNames = group.members
                           .map((chat) => formatChatDisplayName(chat.chat_name, chat.account_id))
                           .join('、')
                         return {
-                          id: group.index,
+                          id: group.id,
+                          meta: group.jargon_count.toLocaleString(),
                           label: `${group.name}${group.is_global ? '（全局）' : ''}`,
                           description: memberNames || '暂无已解析聊天',
                           descriptionTitle: memberNames,
                           title: memberNames,
                         }
-                      })
-                    : []
+                      }),
+                    ]
               }
-              selectedItemId={browseMode === 'chat' ? filterChatId : groupIndex}
+              selectedItemId={
+                browseMode === 'chat' ? filterChatId : browseMode === 'all' ? 'all' : groupIndex
+              }
               onItemSelect={(id) => {
-                if (browseMode === 'group') list.setFilter('groupIndex', Number(id))
-                else if (browseMode === 'chat') handleChatChange(String(id))
+                if (browseMode === 'chat') handleChatChange(String(id))
+                else if (id === 'all') handleBrowseModeChange('all')
+                else {
+                  list.updateFilters((filters) => ({
+                    ...filters,
+                    browseMode: 'group',
+                    groupIndex: String(id),
+                    summary: filters.summary === 'global_count' ? 'total' : filters.summary,
+                  }))
+                }
               }}
               emptyContent={
                 <div className="text-muted-foreground px-2 py-6 text-center text-sm">
@@ -551,10 +586,10 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
                     ? '当前显示全部黑话'
                     : browseMode === 'group'
                       ? groupsQuery.isError
-                        ? '共享组加载失败'
+                        ? '相通组加载失败'
                         : groupsQuery.isPending
-                          ? '正在加载共享组...'
-                          : '暂无共享组'
+                          ? '正在加载相通组...'
+                          : '暂无相通组'
                       : chatListQuery.isError
                         ? '聊天列表加载失败'
                         : chatListQuery.isPending
@@ -623,9 +658,15 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
         onOpenChange={setIsCreateChoiceOpen}
         kind="jargon"
         initialTargetIds={browseMode === 'chat' && filterChatId !== 'all' ? [filterChatId] : []}
+        initialMode="auto"
         onManual={() => setIsCreateDialogOpen(true)}
         onSuccess={(isGlobal) => {
-          if (isGlobal) list.updateFilters((filters) => ({ ...filters, browseMode: 'all', summary: 'global_count' }))
+          if (isGlobal)
+            list.updateFilters((filters) => ({
+              ...filters,
+              browseMode: 'all',
+              summary: 'global_count',
+            }))
           invalidateJargon()
         }}
       />
@@ -634,20 +675,14 @@ export function JargonManagementPage({ browserHeader }: { browserHeader?: ReactN
         onOpenChange={setIsCreateDialogOpen}
         chatList={formChatList}
         onSuccess={(isGlobal) => {
-          if (isGlobal) list.updateFilters((filters) => ({ ...filters, browseMode: 'all', summary: 'global_count' }))
+          if (isGlobal)
+            list.updateFilters((filters) => ({
+              ...filters,
+              browseMode: 'all',
+              summary: 'global_count',
+            }))
           invalidateJargon()
           setIsCreateDialogOpen(false)
-        }}
-      />
-
-      {/* 导入对话框 */}
-      <JargonImportDialog
-        open={isImportDialogOpen}
-        onOpenChange={setIsImportDialogOpen}
-        chatList={formChatList}
-        onSuccess={() => {
-          list.clearSelection()
-          invalidateJargon()
         }}
       />
 

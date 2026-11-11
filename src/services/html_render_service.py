@@ -774,15 +774,16 @@ class HTMLRenderService:
         if request.wait_for_timeout_ms > 0:
             await page.wait_for_timeout(request.wait_for_timeout_ms)
 
-    async def _handle_network_route(self, route: Any, allow_network: bool) -> None:
+    async def _handle_network_route(self, route: Any, request: Any, *, allow_network: bool) -> None:
         """处理页面资源请求的网络准入策略。
 
         Args:
             route: Playwright 路由对象。
+            request: Playwright 请求对象。
             allow_network: 是否允许页面访问外部网络资源。
         """
 
-        request_url = str(route.request.url)
+        request_url = str(request.url)
         if allow_network or self._is_network_request_allowed(request_url):
             await route.continue_()
             return

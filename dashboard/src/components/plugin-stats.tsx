@@ -453,13 +453,19 @@ function PluginStatsContent({
     )
   }
 
+  const hasFourDigitCount = [stats.downloads, stats.rating_count, stats.likes, stats.dislikes]
+    .some((count) => count >= 1000)
+
   // 评分与评论分流：评论及其星级、回复由独立服务读取，仅有评分的进入「最近评分」。
   const recentRatings = stats.recent_ratings ?? []
   const recentRatingOnly = recentRatings.filter((item) => item.rating != null && !item.comment?.trim())
 
   return (
     <div className="space-y-4">
-      <div data-plugin-stat-tiles="true" className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div
+        data-plugin-stat-tiles="true"
+        className={hasFourDigitCount ? 'grid grid-cols-2 gap-4' : 'grid grid-cols-2 gap-4 sm:grid-cols-4'}
+      >
         <DataPanel data-plugin-stat-tile="true" className="flex flex-col items-center p-3">
           <Download className="mb-1 h-5 w-5 text-muted-foreground" />
           <span className="text-2xl font-bold">{stats.downloads.toLocaleString()}</span>

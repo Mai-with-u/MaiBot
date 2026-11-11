@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, TextIO, Tuple
 from uuid import uuid4
 
 import argparse
+import base64
 import ctypes
 import io
 import json
@@ -25,11 +26,11 @@ if TYPE_CHECKING:
 
 # 页面设计尺寸（CSS 像素），与 index.html 布局一致。
 PAGE_WIDTH = 260
-PAGE_HEIGHT = 460
+PAGE_HEIGHT = 900
 PAGE = Path(__file__).parent / "web" / "index.html"
 
 # 页面就绪前先放行桌宠所在的大致区域，与 index.html 中 #pet 的位置一致。
-INITIAL_HIT_RECT = [47.0, PAGE_HEIGHT - 4 - 107 - 24.0, 166.0, 139.0, 42.0]
+INITIAL_HIT_RECT = [47.0, PAGE_HEIGHT - 24 - 107 - 24.0, 166.0, 139.0, 42.0]
 # 默认位置距工作区右边缘的留白（CSS 像素）。
 EDGE_MARGIN = 8
 
@@ -45,10 +46,14 @@ DCX_CACHE = 0x0002
 BLACK_BRUSH = 4
 SPI_GETWORKAREA = 0x0030
 MONITOR_DEFAULTTONULL = 0
+DWMWA_SYSTEMBACKDROP_TYPE = 38
+DWMSBT_NONE = 1
 
-user32 = ctypes.windll.user32 if sys.platform == "win32" else None
-gdi32 = ctypes.windll.gdi32 if sys.platform == "win32" else None
-dwmapi = ctypes.windll.dwmapi if sys.platform == "win32" else None
+# 独立 DLL 包装器隔离 argtypes；不能修改 pywebview 共用的 ctypes.windll 缓存。
+# 特别是 DWM 的 MARGINS，pywebview 创建普通窗口时会传入它自己的结构体类型。
+user32 = ctypes.WinDLL("user32") if sys.platform == "win32" else None
+gdi32 = ctypes.WinDLL("gdi32") if sys.platform == "win32" else None
+dwmapi = ctypes.WinDLL("dwmapi") if sys.platform == "win32" else None
 
 
 class MARGINS(ctypes.Structure):
@@ -61,9 +66,14 @@ class MARGINS(ctypes.Structure):
 
 
 def _bind_win32() -> None:
+    dwmapi.DwmSetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+    dwmapi.DwmSetWindowAttribute.restype = ctypes.c_long
     dwmapi.DwmExtendFrameIntoClientArea.argtypes = [wintypes.HWND, ctypes.POINTER(MARGINS)]
     dwmapi.DwmExtendFrameIntoClientArea.restype = ctypes.c_long
     user32.SetProcessDPIAware.restype = wintypes.BOOL
+    user32.ReleaseCapture.restype = wintypes.BOOL
+    user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, ctypes.c_size_t, ctypes.c_ssize_t]
+    user32.SendMessageW.restype = ctypes.c_ssize_t
     user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
     user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
     user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
@@ -202,6 +212,8 @@ class PetApi:
         self._request_dir = request_dir
         request_dir.mkdir(parents=True, exist_ok=True)
         self._window: Optional["webview.Window"] = None
+        self._exploration_window: Optional["webview.Window"] = None
+        self._exploration_window_lock = threading.Lock()
         self._hwnd = 0
         self._size = (0, 0)
         self._placed_size = (0, 0)
@@ -217,10 +229,22 @@ class PetApi:
     def _attach(self, window: "webview.Window") -> None:
         """在窗口首次显示前（GUI 线程）调整样式与位置。"""
         # pythonnet 由 pywebview 的 WinForms 后端加载，只能在窗口创建后导入。
+        from Microsoft.Win32 import SystemEvents
         from System.Drawing import Color
 
         self._window = window
         self._hwnd = window.native.Handle.ToInt64()
+        # 无标题栏的透明窗口不需要标题栏主题同步。pywebview 在深色模式下会开启
+        # Mica，将整个透明客户区填成实色；取消订阅，避免系统主题变化时再次开启。
+        SystemEvents.UserPreferenceChanged -= window.native.on_system_theme_changed
+        # 系统背景属性从 Windows 11 22H2 起可用，旧系统没有这一层背景。
+        if sys.getwindowsversion().build >= 22621:
+            backdrop = ctypes.c_int(DWMSBT_NONE)
+            result = dwmapi.DwmSetWindowAttribute(
+                self._hwnd, DWMWA_SYSTEMBACKDROP_TYPE, ctypes.byref(backdrop), ctypes.sizeof(backdrop),
+            )
+            if result != 0:
+                raise OSError(f"关闭桌宠系统背景失败: 0x{result & 0xFFFFFFFF:08X}")
         # 工具窗口不出现在任务栏和 Alt+Tab 中。
         style = user32.GetWindowLongPtrW(self._hwnd, GWL_EXSTYLE)
         user32.SetWindowLongPtrW(self._hwnd, GWL_EXSTYLE, (style | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW)
@@ -233,7 +257,9 @@ class PetApi:
         # 页面缩放要等页面加载后才知道，先按系统 DPI 摆放，就绪后由 fit() 校正。
         scale = user32.GetDpiForWindow(self._hwnd) / 96
         self.fit(scale)
-        apply_region(self._hwnd, [INITIAL_HIT_RECT], scale)
+        initial_rect = list(INITIAL_HIT_RECT)
+        initial_rect[1] += self._size[1] / scale - PAGE_HEIGHT
+        apply_region(self._hwnd, [initial_rect], scale)
 
     def _place(self) -> None:
         width, height = self._size
@@ -254,12 +280,15 @@ class PetApi:
 
     def _shutdown(self) -> None:
         self._closing = True
+        if self._exploration_window is not None:
+            self._exploration_window.destroy()
         self._window.destroy()
 
-    def fit(self, scale: float) -> None:
+    def fit(self, scale: float, height: float = PAGE_HEIGHT) -> None:
         """按页面实际缩放调整窗口尺寸，保持桌宠站立点不动。"""
         self._scale = scale
-        self._size = (round(PAGE_WIDTH * scale), round(PAGE_HEIGHT * scale))
+        height = max(460, min(PAGE_HEIGHT, height))
+        self._size = (round(PAGE_WIDTH * scale), round(height * scale))
         if not self._placed_by_user:
             self._anchor = default_anchor(scale)
         self._place()
@@ -268,8 +297,9 @@ class PetApi:
         self._outbox.emit({"type": "ready"})
 
     def send(self, request_id: str, text: str, images: List[Dict[str, str]]) -> None:
-        from attachments import MAX_REQUEST_BYTES
         import re
+
+        from .attachments import MAX_REQUEST_BYTES
 
         if not re.fullmatch(r"[0-9a-f]{32}", request_id):
             raise ValueError("无效请求 ID")
@@ -280,11 +310,54 @@ class PetApi:
         path.write_bytes(payload)
         self._outbox.emit({"type": "chat", "request_id": request_id})
 
-    def todos(self) -> List[Dict[str, Any]]:
-        return self._todos.list()
+    def open_exploration_records(self) -> None:
+        """复用普通可缩放窗口；记录仍由主进程按真实主人会话读取。"""
+        import webview
 
-    def add_todo(self, text: str) -> Dict[str, Any]:
-        return self._todos.add(text)
+        with self._exploration_window_lock:
+            if self._closing:
+                raise RuntimeError("桌宠正在关闭")
+            if self._exploration_window is not None:
+                self._exploration_window.show()
+                self._exploration_window.restore()
+                return
+            window = webview.create_window(
+                "探索记录 · MaiBot", url=PAGE.with_name("exploration.html").as_uri(),
+                js_api=ExplorationRecordsApi(self), width=1040, height=740,
+                min_size=(680, 480), resizable=True, background_color="#faf7ef",
+                frameless=True, easy_drag=False,
+            )
+            self._exploration_window = window
+
+            def closed() -> None:
+                with self._exploration_window_lock:
+                    if self._exploration_window is window:
+                        self._exploration_window = None
+
+            window.events.closed += closed
+
+    def exploration_tasks(self, task_id: str, request_id: str) -> None:
+        if not isinstance(task_id, str) or len(task_id) > 64 or not isinstance(request_id, str) or len(request_id) > 64:
+            raise ValueError("无效探索任务请求")
+        self._outbox.emit({"type": "exploration_tasks", "task_id": task_id, "request_id": request_id})
+
+    def explore(self, goal: str) -> None:
+        if not isinstance(goal, str) or not 1 <= len(goal.strip()) <= 2000:
+            raise ValueError("探索目标必须为 1 至 2000 字")
+        self._outbox.emit({"type": "explore", "goal": goal.strip()})
+
+    def todos(self, completed: bool = False) -> List[Dict[str, Any]]:
+        items = self._todos.list(include_completed=completed)
+        return sorted((item for item in items if item["status"] == "completed"), key=lambda item: item["completed_at"]) if completed else items
+
+    def todo_image(self, image_id: str) -> str:
+        return self._todos.image(image_id)
+
+    def add_todo(self, text: str, options: Dict[str, Any]) -> Dict[str, Any]:
+        return self._todos.add(text, **options)
+
+    def update_todo(self, todo_id: str, text: str, options: Dict[str, Any]) -> Dict[str, Any]:
+        return self._todos.update(todo_id, text, **options)
 
     def done_todo(self, todo_id: str) -> None:
         self._todos.done(todo_id)
@@ -331,15 +404,40 @@ class PetApi:
     def clicked(self) -> None:
         self._outbox.emit({"type": "clicked"})
 
+    def screen_action(self, action: str) -> None:
+        if action not in {"read", "start", "stop"}:
+            raise ValueError("未知桌面读取操作")
+        self._outbox.emit({"type": "screen_action", "action": action})
+
     def refresh_buttons(self) -> None:
         self._outbox.emit({"type": "buttons_refresh"})
 
-    def click_button(self, plugin_id: str, button_id: str) -> None:
+    def click_button(self, plugin_id: str, button_id: str, action_id: Optional[str] = None) -> None:
         if not isinstance(plugin_id, str) or not 1 <= len(plugin_id) <= 200:
             raise ValueError("无效的插件 ID")
         if not isinstance(button_id, str) or not 1 <= len(button_id) <= 64:
             raise ValueError("无效的按钮 ID")
-        self._outbox.emit({"type": "button_click", "plugin_id": plugin_id, "button_id": button_id})
+        if action_id is not None and (not isinstance(action_id, str) or not 1 <= len(action_id) <= 64):
+            raise ValueError("无效的面板操作 ID")
+        self._outbox.emit({"type": "button_click", "plugin_id": plugin_id, "button_id": button_id,
+                           "action_id": action_id})
+
+    def copy_panel_content(self, kind: str, content: str) -> None:
+        """只供本地桌宠页面的用户复制操作使用；拒绝外部 URL 与超大图片。"""
+        from PIL import Image
+        from .clipboard import copy_image, copy_text
+
+        if not isinstance(content, str):
+            raise ValueError("无效的复制内容")
+        if kind == "text" and len(content) <= 16000:
+            copy_text(content, self._hwnd)
+        elif kind == "image" and len(content) <= 1000000:
+            with Image.open(io.BytesIO(base64.b64decode(content, validate=True))) as image:
+                if image.format != "PNG" or image.width * image.height > 4000000:
+                    raise ValueError("面板仅支持不超过 400 万像素的 PNG")
+                copy_image(image, self._hwnd)
+        else:
+            raise ValueError("不支持的复制类型或内容过大")
 
     def region(self, rects: List[List[float]], scale: float) -> None:
         apply_region(self._hwnd, rects, scale)
@@ -347,69 +445,150 @@ class PetApi:
         clear_gdi_layer(self._hwnd)
 
 
+class ExplorationRecordsApi:
+    """记录窗口只暴露记录读取及自身窗口操作，不暴露聊天或数据写入。"""
+
+    def __init__(self, pet: PetApi) -> None:
+        self._pet = pet
+
+    def refresh(self, task_id: str, request_id: str) -> None:
+        self._pet.exploration_tasks(task_id, "records:" + request_id)
+
+    def window_control(self, action: str) -> bool:
+        from System import Action
+        from System.Windows.Forms import FormWindowState, Screen
+
+        window = self._pet._exploration_window
+        if window is None:
+            raise RuntimeError("探索记录窗口已关闭")
+        if action == "close":
+            window.destroy()
+            return False
+        if action not in {"state", "minimize", "maximize"}:
+            raise ValueError("未知窗口操作")
+        result = []
+
+        def apply() -> None:
+            native = window.native
+            if action == "minimize":
+                native.WindowState = FormWindowState.Minimized
+            elif action == "maximize":
+                if native.WindowState == FormWindowState.Maximized:
+                    native.WindowState = FormWindowState.Normal
+                else:
+                    # 无系统边框时显式使用当前屏幕工作区，避免盖住任务栏。
+                    native.MaximizedBounds = Screen.FromHandle(native.Handle).WorkingArea
+                    native.WindowState = FormWindowState.Maximized
+            result.append(native.WindowState == FormWindowState.Maximized)
+
+        window.native.Invoke(Action(apply))
+        return result[0]
+
+    def window_gesture(self, edge: str) -> None:
+        from System import Action
+        from System.Windows.Forms import FormWindowState
+
+        hit_tests = {"move": 2, "w": 10, "e": 11, "n": 12, "nw": 13,
+                     "ne": 14, "s": 15, "sw": 16, "se": 17}
+        if edge not in hit_tests:
+            raise ValueError("未知窗口拖动方向")
+        window = self._pet._exploration_window
+        if window is None:
+            raise RuntimeError("探索记录窗口已关闭")
+
+        def begin() -> None:
+            if edge != "move" and window.native.WindowState == FormWindowState.Maximized:
+                return
+            # 交给原生移动/缩放循环处理光标捕获、跨屏 DPI 和最小尺寸。
+            user32.ReleaseCapture()
+            x, y = cursor_pos()
+            position = (x & 0xFFFF) | ((y & 0xFFFF) << 16)
+            user32.SendMessageW(window.native.Handle.ToInt64(), 0x00A1, hit_tests[edge], position)
+
+        window.native.Invoke(Action(begin))
+
+
+def execute_command(api: PetApi, window: "webview.Window", command: Dict[str, Any]) -> Dict[str, Any]:
+    """本机和远端共用的窗口指令处理器；完成操作后返回回执。"""
+    ack = {"type": "ack", "id": command["id"]}
+    try:
+        if command["type"] == "show":
+            window.show()
+            window.evaluate_js("window.petSkin.visibility(true)")
+        elif command["type"] == "hide":
+            api.drag_end()
+            window.hide()
+            window.evaluate_js("window.petSkin.visibility(false)")
+        elif command["type"] == "skin":
+            completed = threading.Event()
+            results = []
+            def loaded(result, results=results, completed=completed):
+                results.append(result)
+                completed.set()
+            window.evaluate_js(
+                f"window.petSkin.install({json.dumps(command['skin'])}).catch(e => ({{error: String(e.message || e)}}))",
+                callback=loaded,
+            )
+            if not completed.wait(10):
+                window.evaluate_js("window.petSkin.cancelInstall()")
+                raise TimeoutError("皮肤资源解码超时")
+            if results[0].get("error"):
+                raise ValueError(results[0]["error"])
+            ack["result"] = results[0]
+        elif command["type"] == "animation":
+            ack["result"] = window.evaluate_js(
+                f"window.petSkin.command({json.dumps(command['action'])}, {json.dumps(command['args'])}, {json.dumps(command['owner'])})"
+            )
+        elif command["type"] == "todo":
+            action = command["action"]
+            if action == "list":
+                result = {"items": api._todos.list(include_completed=command.get("include_completed", False))}
+            elif action == "add":
+                result = {"item": api._todos.add(command["text"], **command.get("options", {}))}
+            elif action == "update":
+                result = {"item": api._todos.update(command["todo_id"], command.get("text"), **command.get("options", {}))}
+            elif action == "claim_due":
+                result = {"items": api._todos.claim_due()}
+            elif action == "claim_condition":
+                result = {"item": api._todos.claim_condition(command["todo_id"], command["revision"], command["evidence"])}
+            elif action == "finish":
+                api._todos.finish(command["todo_id"], command["revision"], command.get("error", ""))
+                result = {}
+            elif action == "complete":
+                api._todos.done(command["todo_id"])
+                result = {"completed": command["todo_id"]}
+            elif action == "delete":
+                api._todos.delete(command["todo_id"])
+                result = {"deleted": command["todo_id"]}
+            else:
+                raise ValueError("未知待办操作")
+            ack["result"] = result
+            if action not in {"list", "claim_due"}:
+                try:
+                    window.evaluate_js("window.pet.refreshTodos()")
+                except Exception as exc:
+                    # 数据已保存；界面刷新失败不能误报为写入失败并诱发重复新增。
+                    result["display_error"] = str(exc)
+        elif command["type"] == "exploration_tasks" and command["request_id"].startswith("records:"):
+            # 窗口关闭后的迟到回执直接丢弃，不影响桌宠面板自己的查询。
+            records_window = api._exploration_window
+            if records_window is not None:
+                records_window.evaluate_js(f"window.records.receive({json.dumps(command)})")
+        elif command["type"] in {"reply", "notice", "thinking_caption", "thinking", "idle", "failed", "accepted", "buttons", "button_result", "screen_state", "exploration_state", "exploration_result", "exploration_tasks"}:
+            window.evaluate_js(f"window.pet.receive({json.dumps(command)})")
+        else:
+            raise ValueError(f"未知的桌宠指令: {command['type']}")
+    except Exception as exc:
+        ack["error"] = str(exc)
+    return ack
+
+
 def pump_commands(api: PetApi, window: "webview.Window", commands: TextIO) -> None:
     """执行主程序指令并回执；管道关闭即主程序已停止，桌宠随之退出。"""
     try:
         for line in commands:
-            if not line.strip():
-                continue
-            command = json.loads(line)
-            ack = {"type": "ack", "id": command["id"]}
-            try:
-                if command["type"] == "show":
-                    window.show()
-                    window.evaluate_js("window.petSkin.visibility(true)")
-                elif command["type"] == "hide":
-                    api.drag_end()
-                    window.hide()
-                    window.evaluate_js("window.petSkin.visibility(false)")
-                elif command["type"] == "skin":
-                    completed = threading.Event()
-                    results = []
-                    def loaded(result, results=results, completed=completed):
-                        results.append(result)
-                        completed.set()
-                    window.evaluate_js(
-                        f"window.petSkin.install({json.dumps(command['skin'])}).catch(e => ({{error: String(e.message || e)}}))",
-                        callback=loaded,
-                    )
-                    if not completed.wait(10):
-                        window.evaluate_js("window.petSkin.cancelInstall()")
-                        raise TimeoutError("皮肤资源解码超时")
-                    if results[0].get("error"):
-                        raise ValueError(results[0]["error"])
-                    ack["result"] = results[0]
-                elif command["type"] == "animation":
-                    ack["result"] = window.evaluate_js(
-                        f"window.petSkin.command({json.dumps(command['action'])}, {json.dumps(command['args'])}, {json.dumps(command['owner'])})"
-                    )
-                elif command["type"] == "todo":
-                    action = command["action"]
-                    if action == "list":
-                        result = {"items": api._todos.list()}
-                    elif action == "add":
-                        result = {"item": api._todos.add(command["text"])}
-                    elif action == "update":
-                        result = {"item": api._todos.update(command["todo_id"], command["text"])}
-                    elif action == "delete":
-                        api._todos.done(command["todo_id"])
-                        result = {"deleted": command["todo_id"]}
-                    else:
-                        raise ValueError("未知待办操作")
-                    ack["result"] = result
-                    if action != "list":
-                        try:
-                            window.evaluate_js("window.pet.refreshTodos()")
-                        except Exception as exc:
-                            # 数据已保存；界面刷新失败不能误报为写入失败并诱发重复新增。
-                            result["display_error"] = str(exc)
-                elif command["type"] in {"reply", "notice", "thinking", "idle", "failed", "accepted", "buttons", "button_result"}:
-                    window.evaluate_js(f"window.pet.receive({json.dumps(command)})")
-                else:
-                    raise ValueError(f"未知的桌宠指令: {command['type']}")
-            except Exception as exc:
-                ack["error"] = str(exc)
-            api._outbox.emit(ack)
+            if line.strip():
+                api._outbox.emit(execute_command(api, window, json.loads(line)))
     finally:
         api._shutdown()
 
@@ -424,7 +603,7 @@ def main() -> None:
 
     import webview
 
-    from todos import TodoStore
+    from .todos import TodoStore
 
     _bind_win32()
     # 显式声明 DPI 感知，窗口位置、光标与窗口区域统一使用物理像素。

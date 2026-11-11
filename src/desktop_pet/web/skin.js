@@ -5,8 +5,12 @@
   const builtin = document.getElementById('builtin-pet');
   const canvas = document.getElementById('skin-canvas');
   const ctx = canvas.getContext('2d');
+  const previousCanvas = document.createElement('canvas');
+  const previousCtx = previousCanvas.getContext('2d');
+  const transitionDuration = 160;
   let skin = null, images = {}, active = null, visible = true, switching = 0;
   let selected = '', started = performance.now(), flash = null;
+  let transitionStarted = null, hasFrame = false;
   const history = new Map();
   let builtinEffectNodes = [];
   const fail = (code, message) => ({error: {code, message}});
@@ -31,14 +35,16 @@
     if (revision !== switching) throw new Error('皮肤切换已被新请求替代');
     finish('interrupted', 'skin_changed');
     skin = next; images = loaded; flash = null; selected = '';
+    transitionStarted = null; hasFrame = false;
     const c = skin.canvas;
-    // 落脚点固定在窗口底边中点，气泡随皮肤锚点调整，输入区仍由主页面管理。
+    // 底部预留阶段字幕，落脚点固定在窗口底边中点，气泡随皮肤锚点调整，输入区仍由主页面管理。
     pet.style.width = c.width + 'px'; pet.style.height = c.height + 'px';
     pet.style.left = (130 - c.anchor[0]) + 'px';
-    pet.style.bottom = (4 - (c.height - c.anchor[1])) + 'px';
+    pet.style.bottom = (24 - (c.height - c.anchor[1])) + 'px';
     pet.dataset.skinHitbox = JSON.stringify(c.hitbox);
-    stage.style.setProperty('--pet-top', (4 + c.anchor[1] - c.bubble_anchor[1] + 8) + 'px');
+    stage.style.setProperty('--pet-top', (24 + c.anchor[1] - c.bubble_anchor[1] + 8) + 'px');
     canvas.width = c.width * 2; canvas.height = c.height * 2;
+    previousCanvas.width = canvas.width; previousCanvas.height = canvas.height;
     canvas.style.width = c.width + 'px'; canvas.style.height = c.height + 'px';
     builtin.style.display = skin.id === 'builtin' ? '' : 'none';
     canvas.style.display = skin.id === 'builtin' ? 'none' : 'block';
@@ -71,15 +77,36 @@
     if (active && now - active.started >= active.duration_ms) finish('finished', 'completed');
     if (flash && now >= flash.until) flash = null;
     if (skin.id === 'builtin' || !visible) return;
-    const name = active?.animation || (['talking', 'dragging'].includes(current) ? skin.states[current] : flash?.name || skin.states[current]);
-    if (selected !== name) { selected = name; started = now; }
+    const event = ['talking', 'dragging'].includes(current) ? null : flash;
+    const name = active?.animation || event?.name || skin.states[current];
+    const selection = active || event || name;
+    if (selected !== selection) {
+      // 保存实际显示的画面，连续点击或中途切换也从当前姿势开始过渡。
+      if (hasFrame) {
+        previousCtx.clearRect(0, 0, previousCanvas.width, previousCanvas.height);
+        previousCtx.drawImage(canvas, 0, 0);
+        transitionStarted = now;
+      }
+      selected = selection; started = now;
+    }
     const animation = skin.animations[name];
-    const elapsed = now - (active?.started ?? started);
+    const elapsed = now - (active?.started ?? event?.started ?? started);
     let progress = elapsed % animation.duration_ms;
     let frame = animation.sequence[0];
     for (const candidate of animation.sequence) { frame = candidate; if (progress < frame.duration_ms) break; progress -= frame.duration_ms; }
     const [x,y,w,h] = frame.rect, c = skin.canvas;
-    ctx.clearRect(0,0,canvas.width,canvas.height); ctx.save(); ctx.scale(2,2);
+    ctx.clearRect(0,0,canvas.width,canvas.height); ctx.save();
+    if (transitionStarted !== null && now - transitionStarted >= transitionDuration) transitionStarted = null;
+    if (transitionStarted !== null) {
+      const progress = (now - transitionStarted) / transitionDuration;
+      const blend = progress * progress * (3 - 2 * progress);
+      ctx.globalAlpha = 1 - blend;
+      ctx.drawImage(previousCanvas, 0, 0);
+      // 透明帧按预乘颜色相加，避免两帧重叠处在过渡中变暗或变透明。
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = blend;
+    }
+    ctx.scale(2,2);
     const phase = elapsed / Math.max(600, animation.duration_ms) * Math.PI * 2;
     ctx.translate(c.width / 2, c.height - 4);
     if (animation.motion === 'bob') ctx.translate(0, -2 - 2 * Math.sin(phase));
@@ -91,6 +118,7 @@
     const scale = Math.min((c.width - 8) / w, (c.height - 12) / h);
     ctx.drawImage(images[frame.file], x,y,w,h, (c.width-w*scale)/2,c.height-4-h*scale,w*scale,h*scale);
     ctx.restore();
+    hasFrame = true;
   }
   requestAnimationFrame(tick);
   window.petSkin = {
@@ -99,7 +127,10 @@
     event(event) {
       if (!skin || skin.id === 'builtin' || active) return;
       const name = skin.events[event];
-      if (name) flash = {name, until: performance.now() + skin.animations[name].duration_ms};
+      if (name) {
+        const started = performance.now();
+        flash = {name, started, until: started + skin.animations[name].duration_ms};
+      }
     },
     visibility(value) { visible = value; if (!visible) finish('interrupted', 'hidden'); },
     command(action, args, owner) {

@@ -1,0 +1,14 @@
+/* 画布占满工作区剩余高度，保留外壳为手机导航栏预留的空间。 */
+[data-dashboard-main='true']:has([data-component-library-page]) {
+  overflow: hidden;
+}
+
+[data-dashboard-workspace-content='true']:has([data-component-library-page]) {
+  height: 100%;
+  min-height: 0;
+}
+
+[data-dashboard-workspace-content='true'] > div:has([data-component-library-page]) {
+  flex: 1;
+  min-height: 0;
+}

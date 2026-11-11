@@ -34,6 +34,7 @@ export default defineConfig({
   server: {
     host: '127.0.0.1',
     port: 7999,
+    strictPort: true,
     watch: {
       // 依赖目录的本地备份不应进入 Vite 文件监听，否则会占用大量句柄并导致服务无响应。
       ignored: ['**/node_modules.mixed-backup-*/**', ...VITEST_TEMP_WATCH_IGNORED],
@@ -42,15 +43,11 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8001',  // WebUI 后端服务器
-        changeOrigin: true,
+        changeOrigin: false, // 保留公网转发入口的 Host，供宿主校验浏览器同源。
         ws: true,
         // 确保 Cookie 正确转发
         cookieDomainRewrite: '',  // 移除域名限制
         cookiePathRewrite: '/',   // 确保路径一致
-      },
-      '/maibot_statistics.html': {
-        target: 'http://127.0.0.1:8001',
-        changeOrigin: true,
       },
     },
   },

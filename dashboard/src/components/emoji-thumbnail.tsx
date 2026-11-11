@@ -12,6 +12,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ImageIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { resolveApiPath } from '@/lib/api-base'
 
 interface EmojiThumbnailProps {
   src: string
@@ -47,7 +48,7 @@ export function EmojiThumbnail({
 
   const loadImage = useCallback(async () => {
     try {
-      const response = await fetch(src, {
+      const response = await fetch(await resolveApiPath(src), {
         credentials: 'include', // 携带 Cookie
       })
 

@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>探索记录 · MaiBot</title>
+<script src="host-bridge.js"></script>
+<link rel="stylesheet" href="exploration-products.css">
+<style>
+  :root { color-scheme: light; --ink: #1d1d1b; --paper: #fff8ec; --paper-2: #f6e6cf; --cream: #f4e0c6; --orange: #ec9341; --line: #d8c5a9; --leaf: #8dc85c; }
+  * { box-sizing: border-box; }
+  body { margin: 0; height: 100vh; overflow: hidden; border: 2px solid var(--ink); background: var(--paper); color: var(--ink); font: 14px/1.65 "Microsoft YaHei UI", "PingFang SC", sans-serif; display: flex; flex-direction: column; }
+  #titlebar { display: flex; align-items: center; flex-shrink: 0; height: 55px; padding: 0 14px 0 20px; gap: 14px; background: var(--cream); border-bottom: 2px solid var(--ink); user-select: none; }
+  #title-drag { display: flex; flex: 1; align-items: center; gap: 10px; align-self: stretch; cursor: grab; touch-action: none; }
+  #title-drag:active { cursor: grabbing; }
+  .title-mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--leaf); border: 2px solid var(--ink); }
+  .window-buttons { display: flex; gap: 8px; }
+  .window-buttons button { display: grid; place-items: center; width: 31px; height: 29px; padding: 5px; border-radius: 9px; }
+  .window-buttons svg, .title-mark svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  #window-close:hover { background: var(--orange); }
+  .resize-edge { position: fixed; z-index: 10; touch-action: none; }
+  [data-edge="n"], [data-edge="s"] { height: 6px; left: 10px; right: 10px; cursor: ns-resize; }
+  [data-edge="n"] { top: 0; } [data-edge="s"] { bottom: 0; }
+  [data-edge="e"], [data-edge="w"] { width: 6px; top: 10px; bottom: 10px; cursor: ew-resize; }
+  [data-edge="e"] { right: 0; } [data-edge="w"] { left: 0; }
+  [data-edge="nw"], [data-edge="ne"], [data-edge="sw"], [data-edge="se"] { width: 11px; height: 11px; }
+  [data-edge="nw"] { top: 0; left: 0; cursor: nwse-resize; } [data-edge="ne"] { top: 0; right: 0; cursor: nesw-resize; }
+  [data-edge="sw"] { bottom: 0; left: 0; cursor: nesw-resize; } [data-edge="se"] { bottom: 0; right: 0; cursor: nwse-resize; }
+  body.maximized .resize-edge { display: none; }
+  header { padding: 18px 24px 12px; border-bottom: 1px solid var(--line); }
+  h1 { margin: 0; font-size: 23px; } header p { margin: 2px 0 10px; color: #716858; }
+  .toolbar { display: flex; gap: 10px; align-items: center; }
+  input, select, button { font: inherit; color: inherit; border: 2px solid var(--ink); border-radius: 12px; padding: 7px 11px; background: var(--paper); }
+  input { min-width: 100px; flex: 1; } button { cursor: pointer; box-shadow: 0 2px 0 var(--ink); transition: background .12s, transform .12s; } button:hover { background: var(--paper-2); }
+  button:active { transform: translateY(2px); box-shadow: none; } #refresh { background: var(--orange); }
+  :focus-visible { outline: 2px solid #748754; outline-offset: 2px; }
+  #status { min-height: 23px; font-size: 12px; color: #716858; margin-top: 8px; }
+  #status.error { color: #a03022; }
+  main { display: grid; grid-template-columns: minmax(220px, 30%) 1fr; min-height: 0; flex: 1; }
+  nav { overflow-y: auto; border-right: 2px solid var(--ink); padding: 14px; background: var(--paper-2); }
+  #list { display: flex; flex-direction: column; gap: 9px; }
+  .task { width: 100%; text-align: left; padding: 12px; }
+  .task[aria-current="true"] { background: var(--leaf); border-color: var(--ink); }
+  .task strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; }
+  .task small { display: block; margin-top: 6px; color: #716858; }
+  #detail { overflow-y: auto; padding: 24px 30px; overflow-wrap: anywhere; }
+  h2 { margin: 0 0 12px; font-size: 21px; white-space: pre-wrap; }
+  h3 { font-size: 16px; margin: 24px 0 10px; }
+  .meta, .empty { color: #716858; } .empty { padding: 20px 5px; }
+  .result { white-space: pre-wrap; line-height: 1.85; background: #fffdf8; border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .explore-result { line-height: 1.85; background: #fffdf8; border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .explore-result p { white-space: pre-wrap; }
+  .explore-result pre { overflow-x: auto; background: #eee9de; padding: 12px; border-radius: 8px; }
+  .explore-result code { font-family: Consolas, monospace; }
+  .explore-result h4 { font-size: 17px; margin: 16px 0 8px; }
+  ol { padding-left: 24px; } li { padding: 0 0 16px 6px; white-space: pre-wrap; }
+  time { display: block; font-size: 12px; color: #716858; }
+  details { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 16px; } summary { cursor: pointer; font-weight: 600; }
+</style>
+</head>
+<body>
+<div id="titlebar">
+  <div id="title-drag" title="拖动窗口；双击最大化或还原">
+    <span class="title-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m16 8-2 6-6 2 2-6Z"/></svg></span>
+    <strong>麦麦 · 探索手记</strong>
+  </div>
+  <div class="window-buttons">
+    <button id="window-minimize" type="button" title="最小化" aria-label="最小化"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 17h14"/></svg></button>
+    <button id="window-maximize" type="button" title="最大化" aria-label="最大化"><svg viewBox="0 0 24 24" aria-hidden="true"><path id="maximize-icon" d="M5 5h14v14H5Z"/></svg></button>
+    <button id="window-close" type="button" title="关闭记录窗口" aria-label="关闭记录窗口"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+  </div>
+</div>
+<div class="resize-edge" data-edge="n"></div><div class="resize-edge" data-edge="s"></div>
+<div class="resize-edge" data-edge="e"></div><div class="resize-edge" data-edge="w"></div>
+<div class="resize-edge" data-edge="nw"></div><div class="resize-edge" data-edge="ne"></div>
+<div class="resize-edge" data-edge="sw"></div><div class="resize-edge" data-edge="se"></div>
+<header>
+  <h1>探索记录</h1>
+  <p>查看每次探索的目标、执行进度与最终结果</p>
+  <div class="toolbar">
+    <input id="search" type="search" placeholder="搜索探索目标…" aria-label="搜索探索目标">
+    <select id="filter" aria-label="筛选任务状态"><option value="all">全部状态</option><option value="active">进行中</option><option value="completed">已完成</option><option value="failed">失败</option><option value="interrupted">已中断</option></select>
+    <button id="refresh" type="button">刷新</button>
+  </div>
+  <div id="status" role="status">正在连接桌宠…</div>
+</header>
+<main>
+  <nav aria-label="探索任务列表"><div id="list"></div></nav>
+  <section id="detail" aria-label="探索任务详情"><p class="empty">选择一条探索记录查看详情。</p></section>
+</main>
+<script src="exploration-render.js"></script>
+<script>
+(() => {
+  const labels = { queued: "等待执行", running: "探索中", completed: "已完成", failed: "失败", interrupted: "已中断" };
+  const list = document.getElementById("list"), detail = document.getElementById("detail");
+  const status = document.getElementById("status"), search = document.getElementById("search"), filter = document.getElementById("filter");
+  const instance = Date.now().toString(36);
+  let api, items = [], selected = "", sequence = 0, latest = "", pending = false, timeout, signature = "";
+  const date = value => new Date(value * 1000).toLocaleString();
+  function node(tag, text, className) {
+    const element = document.createElement(tag);
+    element.textContent = text;
+    if (className) element.className = className;
+    return element;
+  }
+  function message(text, error = false) { status.textContent = text; status.classList.toggle("error", error); }
+  function windowState(maximized) {
+    document.body.classList.toggle("maximized", maximized);
+    const button = document.getElementById("window-maximize");
+    button.title = maximized ? "还原" : "最大化";
+    button.setAttribute("aria-label", button.title);
+    document.getElementById("maximize-icon").setAttribute("d", maximized ? "M8 8h11v11H8ZM5 16V5h11" : "M5 5h14v14H5Z");
+  }
+  async function control(action) {
+    if (!api) return;
+    try { windowState(await api.window_control(action)); }
+    catch (error) { message(String(error), true); }
+  }
+  for (const action of ["minimize", "maximize", "close"]) {
+    document.getElementById(`window-${action}`).addEventListener("click", () => control(action));
+  }
+  async function gesture(edge) {
+    if (!api) return;
+    try { await api.window_gesture(edge); await control("state"); }
+    catch (error) { message(String(error), true); }
+  }
+  // 移动达到阈值后才进入原生拖动循环，保留标题栏双击事件。
+  const titleDrag = document.getElementById("title-drag");
+  let dragStart = null;
+  titleDrag.addEventListener("pointerdown", event => {
+    if (event.button === 0) dragStart = { x: event.screenX, y: event.screenY };
+  });
+  titleDrag.addEventListener("pointermove", event => {
+    if (!dragStart) return;
+    if (!(event.buttons & 1)) { dragStart = null; return; }
+    if (Math.hypot(event.screenX - dragStart.x, event.screenY - dragStart.y) < 4) return;
+    dragStart = null; gesture("move");
+  });
+  window.addEventListener("pointerup", () => { dragStart = null; });
+  window.addEventListener("blur", () => { dragStart = null; });
+  titleDrag.addEventListener("dblclick", () => control("maximize"));
+  for (const edge of document.querySelectorAll(".resize-edge")) {
+    edge.addEventListener("pointerdown", event => {
+      if (event.button !== 0) return;
+      event.preventDefault(); gesture(edge.dataset.edge);
+    });
+  }
+  let resizeTimer;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer); resizeTimer = setTimeout(() => control("state"), 120);
+  });
+  function renderList() {
+    const keyword = search.value.trim().toLocaleLowerCase();
+    const visible = items.filter(item => item.goal.toLocaleLowerCase().includes(keyword) &&
+      (filter.value === "all" || (filter.value === "active" ? ["queued", "running"].includes(item.status) : item.status === filter.value)));
+    list.replaceChildren(...visible.map(item => {
+      const button = node("button", "", "task");
+      button.type = "button";
+      button.setAttribute("aria-current", String(item.id === selected));
+      button.append(node("strong", item.goal), node("small", `${labels[item.status]} · ${date(item.created_at)}`));
+      button.append(node("small", `资源 ${item.resource_count ?? 0} · 经验 ${item.experience_count ?? 0}`));
+      button.addEventListener("click", () => {
+        if (selected === item.id) return;
+        selected = item.id;
+        signature = "";
+        detail.replaceChildren(node("p", "正在读取详情…", "empty"));
+        renderList(); refresh(true);
+      });
+      return button;
+    }));
+    if (!visible.length) list.append(node("p", items.length ? "没有符合条件的记录。" : "还没有探索记录，可以从桌宠发起一次探索。", "empty"));
+  }
+  function renderDetail(item) {
+    const next = JSON.stringify(item);
+    if (next === signature) return;
+    signature = next;
+    const same = detail.dataset.taskId === item?.id;
+    const scroll = same ? detail.scrollTop : 0;
+    const expanded = same ? detail.querySelector("details.execution-progress")?.open : undefined;
+    detail.dataset.taskId = item?.id || "";
+    detail.replaceChildren();
+    if (!item) { detail.append(node("p", "暂无任务详情。", "empty")); return; }
+    detail.append(node("h2", item.goal), node("div", `${labels[item.status]} · 创建 ${date(item.created_at)} · 更新 ${date(item.updated_at)}`, "meta"));
+    if (item.status === "interrupted") detail.append(node("p", "主程序已重启，此任务没有确认完成的结果。"));
+    detail.append(window.explorationProducts(item));
+    const progress = document.createElement("details");
+    progress.className = "execution-progress";
+    progress.open = expanded ?? true;
+    progress.append(node("summary", `执行记录 · ${item.events.length} 条`));
+    const events = document.createElement("ol");
+    for (const event of item.events) {
+      const entry = document.createElement("li");
+      entry.append(node("time", `${date(event.time)} · ${labels[event.status]}`), node("div", event.text));
+      events.append(entry);
+    }
+    progress.append(events); detail.append(progress);
+    detail.scrollTop = scroll;
+  }
+  async function refresh(force = false) {
+    if (!api || (pending && !force)) return;
+    latest = `${instance}:${++sequence}`;
+    const request = latest;
+    pending = true; clearTimeout(timeout);
+    message("正在刷新…");
+    timeout = setTimeout(() => {
+      if (latest !== request) return;
+      pending = false; message("读取超时，请检查主程序状态后刷新。", true);
+    }, 10000);
+    try { await api.refresh(selected, request); }
+    catch (error) {
+      if (latest !== request) return;
+      clearTimeout(timeout); pending = false; message(String(error), true);
+    }
+  }
+  window.records = { receive(messageData) {
+    if (messageData.request_id !== `records:${latest}`) return;
+    clearTimeout(timeout); pending = false;
+    if (messageData.error) { message(messageData.error, true); return; }
+    items = messageData.items;
+    selected = messageData.selected?.id || "";
+    renderList(); renderDetail(messageData.selected);
+    message(`共 ${items.length} 条记录 · 更新于 ${new Date().toLocaleTimeString()} · 每 5 秒自动刷新`);
+  }};
+  search.addEventListener("input", renderList);
+  filter.addEventListener("change", renderList);
+  document.getElementById("refresh").addEventListener("click", () => refresh(true));
+  window.addEventListener("pywebviewready", () => { api = window.pywebview.api; refresh(); });
+  setInterval(() => { if (!document.hidden) refresh(); }, 5000);
+})();
+</script>
+</body>
+</html>

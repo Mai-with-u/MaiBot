@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
-from .official_configs import ChatConfig
+from pydantic import TypeAdapter
+
+from .official_configs import ChatConfig, DEFAULT_TALK_RULE_GROUP_NAME, is_global_talk_rule_target
 
 
 ConfigUpgradeHookCallable = Callable[[dict[str, Any]], list[str]]
@@ -559,6 +561,67 @@ def _migrate_webui_http_bindings(data: Dict[str, Any]) -> List[str]:
     return reasons
 
 
+def _remove_global_talk_value_rules(data: Dict[str, Any]) -> List[str]:
+    chat = _as_dict(data.get("chat"))
+    reply_timing = _as_dict(chat.get("reply_timing")) if chat is not None else None
+    if reply_timing is None:
+        return []
+
+    rules = _as_list(reply_timing.get("talk_value_rules"))
+    if rules is None:
+        return []
+
+    scoped_rules = []
+    for rule in rules:
+        if isinstance(rule, dict) and rule.get("rule_type", "group") == "group":
+            platform = rule.get("platform", "")
+            item_id = rule.get("item_id", "")
+            if isinstance(platform, str) and isinstance(item_id, str) and is_global_talk_rule_target(platform, item_id):
+                continue
+        scoped_rules.append(rule)
+
+    if len(scoped_rules) == len(rules):
+        return []
+    reply_timing["talk_value_rules"] = scoped_rules
+    return ["chat.reply_timing.talk_value_rules"]
+
+
+def _remove_talk_value_rules_switch(data: Dict[str, Any]) -> List[str]:
+    chat = _as_dict(data.get("chat"))
+    reply_timing = _as_dict(chat.get("reply_timing")) if chat is not None else None
+    if reply_timing is None:
+        return []
+
+    switch_key = "enable_talk_value_rules"
+    enabled = TypeAdapter(bool).validate_python(reply_timing.get(switch_key, False))
+    reasons = []
+    if switch_key in reply_timing:
+        del reply_timing[switch_key]
+        reasons.append(f"chat.reply_timing.{switch_key}")
+    rules = _as_list(reply_timing.get("talk_value_rules"))
+    if not enabled and rules:
+        # 保留关闭状态下存着的旧规则，迁入规则组后仍可逐条开启。
+        for rule in rules:
+            rule["enabled"] = False
+        reasons.append("chat.reply_timing.talk_value_rules")
+    return reasons
+
+
+def _group_talk_value_rules(data: Dict[str, Any]) -> List[str]:
+    chat = _as_dict(data.get("chat"))
+    reply_timing = _as_dict(chat.get("reply_timing")) if chat is not None else None
+    if reply_timing is None or "talk_value_rules" not in reply_timing:
+        return []
+    if "talk_rule_groups" in reply_timing:
+        raise ValueError("动态发言配置同时包含旧规则和规则组，请合并后移除 talk_value_rules")
+
+    reply_timing["talk_rule_groups"] = {
+        "active_group": DEFAULT_TALK_RULE_GROUP_NAME,
+        "groups": [{"name": DEFAULT_TALK_RULE_GROUP_NAME, "rules": reply_timing.pop("talk_value_rules")}],
+    }
+    return ["chat.reply_timing.talk_rule_groups"]
+
+
 BOT_CONFIG_UPGRADE_HOOKS: tuple[ConfigUpgradeHook, ...] = (
     ConfigUpgradeHook(
         target_version="8.10.11",
@@ -620,6 +683,16 @@ BOT_CONFIG_UPGRADE_HOOKS: tuple[ConfigUpgradeHook, ...] = (
         config_names=("bot_config.toml",),
         migrate=_migrate_webui_http_bindings,
     ),
+    ConfigUpgradeHook(
+        target_version="8.16.9",
+        config_names=("bot_config.toml",),
+        migrate=_remove_global_talk_value_rules,
+    ),
+    ConfigUpgradeHook(
+        target_version="8.16.11",
+        config_names=("bot_config.toml",),
+        migrate=_remove_talk_value_rules_switch,
+    ),
 )
 
 
@@ -672,6 +745,9 @@ def apply_config_upgrade_hooks(
         hook_reasons = hook.migrate(data)
         for reason in hook_reasons:
             migrated_reasons.append(f"{hook.target_version}:{reason}")
+
+    if config_name == "bot_config.toml" and _version_in_upgrade_range(old_ver, "8.16.18", new_ver):
+        migrated_reasons.extend(f"8.16.18:{reason}" for reason in _group_talk_value_rules(data))
 
     reason = ",".join(migrated_reasons)
     return ConfigUpgradeHookResult(data=data, migrated=bool(migrated_reasons), reason=reason)

@@ -1,0 +1,30 @@
+{
+  "manifest_version": 2,
+  "id": "maibot-team.telegram-adapter",
+  "version": "0.1.17",
+  "name": "Telegram 适配器",
+  "description": "单账号 Telegram Bot API 适配器，支持论坛话题、文本、图片、静态/动画/视频贴纸、语音、@、回复引用和转发。",
+  "author": {"name": "MaiBot Team", "url": "https://github.com/Mai-with-u"},
+  "license": "MIT",
+  "urls": {
+    "repository": "https://github.com/Mai-with-u/Maibot-telegram-adaptor",
+    "homepage": "https://github.com/Mai-with-u/Maibot-telegram-adaptor",
+    "documentation": "https://github.com/Mai-with-u/Maibot-telegram-adaptor/blob/main/README.md",
+    "issues": "https://github.com/Mai-with-u/Maibot-telegram-adaptor/issues"
+  },
+  "changelog": "CHANGELOG.md",
+  "plugin_type": "adapter",
+  "host_application": {"min_version": "1.3.18", "max_version": "1.99.99"},
+  "sdk": {"min_version": "2.19.0", "max_version": "2.98.99"},
+  "dependencies": [
+    {"type": "python_package", "name": "aiohttp", "version_spec": ">=3.14.3,<4"},
+    {"type": "python_package", "name": "httpx", "version_spec": ">=0.28,<1"},
+    {"type": "python_package", "name": "socksio", "version_spec": ">=1,<2"},
+    {"type": "python_package", "name": "imageio-ffmpeg", "version_spec": ">=0.6,<1"},
+    {"type": "python_package", "name": "pillow", "version_spec": ">=12.3"},
+    {"type": "python_package", "name": "rlottie-python", "version_spec": ">=1.3.7,<2"}
+  ],
+  "display": {"icon": {"type": "local", "value": "assets/icon.png", "fallback": "puzzle", "background": "#087fc5"}},
+  "capabilities": ["chat.get_all_streams", "message.get_by_id"],
+  "i18n": {"default_locale": "zh-CN", "supported_locales": ["zh-CN"]}
+}

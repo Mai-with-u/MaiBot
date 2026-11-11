@@ -1,0 +1,5 @@
+Use for a feature that does not work, a startup failure, an error code, or unexpected behavior.
+1. Identify the error code or stable fragment and the stage where it occurs. Start with lookup_help using the component and symptom. Use search_official_docs to narrow by exact error code when useful.
+2. Use read_official_docs for missing passages and read_local_config for a few exact paths from the index. If there is no new evidence, change the query to the upstream error or component name.
+3. Connect the observed fact, the cause it supports or rules out, and the next distinguishing check. If logs or platform status are unavailable, ask for the smallest missing item, such as one redacted error line. Keep hidden values hidden.
+4. Finish with a targeted fix and an observable check when the evidence identifies the cause. Otherwise, give the one check that best separates the remaining causes. Skip generic checklists.

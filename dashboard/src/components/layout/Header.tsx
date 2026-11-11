@@ -38,14 +38,11 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toggleThemeWithTransition } from '@/components/use-theme'
 import { useBackground } from '@/hooks/use-background'
+import { useBotAvailable } from '@/host/state'
 import { isElectron } from '@/lib/runtime'
 import { ThemeProviderContext } from '@/lib/theme-context'
 import { cn } from '@/lib/utils'
-import { extensionIcons, extensionPath, extensionWorkspace } from '@/lib/plugin-webui'
-import type { WebUIExtension } from '@/lib/plugin-webui'
-import { splitWorkspaceTabs } from '@/lib/workspace-tabs'
 
-import { HeaderUpdateButton } from './HeaderUpdateButton'
 import { TopbarMascot } from './TopbarMascot'
 import type { WorkspaceMode } from './types'
 
@@ -71,7 +68,6 @@ const WORKSPACE_TABS: Array<{
 ]
 
 interface HeaderProps {
-  extensions?: WebUIExtension[]
   /** 工作区切换动画期间隐藏日志视图切换，让它随页面一起淡入淡出 */
   logSwitcherHidden?: boolean
   /** 侧栏滑入/滑出期间让顶栏延伸到侧栏下方，顶栏自身保持不动 */
@@ -89,15 +85,12 @@ interface HeaderProps {
 }
 
 type HeaderActionId =
-  | 'update'
   | 'settings'
   | 'docs'
   | 'theme'
   | 'collapse'
-  | 'extensions'
 
 export function Header({
-  extensions = [],
   logSwitcherHidden = false,
   sidebarUnderlay = false,
   sidebarOpen,
@@ -120,29 +113,8 @@ export function Header({
     const timer = window.setTimeout(() => setPreloadMobileSearch(true), 300)
     return () => window.clearTimeout(timer)
   }, [])
-  const pluginTabs = extensions.flatMap((extension) => {
-    const page = extension.pages.find((page) => page.placement === 'workspace')
-    return page
-      ? [
-          {
-            value: extensionWorkspace(extension.plugin_id),
-            to: extensionPath(extension.plugin_id, page.id),
-            icon: extensionIcons[page.icon],
-            labelKey: extension.workspace_title ?? extension.plugin_id,
-            literal: true,
-          },
-        ]
-      : []
-  })
-  // 顶栏最多直接展示两个插件工作区，其余收进“更多”；当前工作区保持可见。
-  const activePluginTab = pluginTabs.find((tab) => tab.value === workspaceMode)
-  const { visible: visiblePluginTabs, overflow: overflowTabs } = splitWorkspaceTabs(pluginTabs, activePluginTab)
-  const workspaceTabs = [
-    ...WORKSPACE_TABS.map((tab) => ({ ...tab, literal: false })),
-    ...visiblePluginTabs,
-  ]
-  const workspaceTabsKey = workspaceTabs.map((tab) => `${tab.value}:${tab.labelKey}`).join('|')
   const { themeConfig } = useContext(ThemeProviderContext)
+  const botAvailable = useBotAvailable()
   // 千禧风格的顶栏要放得下键帽，比其它风格高一截；高度由动画驱动，所以在这里按风格取值。
   const expandedTopbarHeight = themeConfig.dashboardStyle === 'millennium' ? 52 : 42
   // 原版风格和千禧一样用顶栏里的按钮收起顶栏，不再显示顶栏下沿的滑条。
@@ -278,7 +250,7 @@ export function Header({
       window.removeEventListener('resize', updateCompactState)
       resizeObserver.disconnect()
     }
-  }, [workspaceMode, workspaceTabsKey, themeConfig.dashboardStyle])
+  }, [workspaceMode, themeConfig.dashboardStyle])
 
   const highlightedHeaderAction = hoveredWorkspace === null ? hoveredHeaderAction : null
 
@@ -429,14 +401,14 @@ export function Header({
                 aria-hidden="true"
                 className="pointer-events-none invisible absolute top-0 left-0 inline-flex h-9 items-center justify-center gap-0.5 rounded-lg p-1"
               >
-                {workspaceTabs.map(({ value, icon: Icon, labelKey, literal }) => (
+                {WORKSPACE_TABS.map(({ value, icon: Icon, labelKey }) => (
                   <div
                     key={value}
                     className="inline-flex h-7 items-center justify-center gap-1.5 rounded-md px-2 text-sm font-medium whitespace-nowrap"
                   >
                     <Icon className="h-3.5 w-3.5" />
                     <span className="font-sans text-base font-semibold tracking-wider uppercase">
-                      {literal ? labelKey : t(labelKey)}
+                      {t(labelKey)}
                     </span>
                   </div>
                 ))}
@@ -461,7 +433,7 @@ export function Header({
                     }, WORKSPACE_HOVER_LEAVE_DELAY_MS)
                   }}
                 >
-                  {workspaceTabs.map(({ value, to, icon: Icon, labelKey, literal }) => (
+                  {WORKSPACE_TABS.map(({ value, to, icon: Icon, labelKey }) => (
                     <TabsTrigger
                       size="sm"
                       key={value}
@@ -484,7 +456,7 @@ export function Header({
                     >
                       <Link
                         to={to}
-                        title={literal ? labelKey : t(labelKey)}
+                        title={t(labelKey)}
                         onPointerEnter={() => {
                           if (!workspaceHoverLocked) {
                             if (workspaceHoverTimerRef.current !== null) {
@@ -535,47 +507,13 @@ export function Header({
                             !workspaceTabsCompact && 'sm:inline'
                           )}
                         >
-                          {literal ? labelKey : t(labelKey)}
+                          {t(labelKey)}
                         </span>
                       </Link>
                     </TabsTrigger>
                   ))}
                 </TabsList>
               </Tabs>
-              {overflowTabs.length > 0 && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      title={t('pluginWebUI.more')}
-                      aria-label={t('pluginWebUI.more')}
-                      data-dashboard-header-action="true"
-                      data-dashboard-workspace-more="true"
-                      data-header-action-highlighted={
-                        highlightedHeaderAction === 'extensions' ? 'true' : 'false'
-                      }
-                      onPointerEnter={() => handleHeaderActionEnter('extensions')}
-                      onPointerLeave={handleHeaderActionLeave}
-                      className="relative isolate shrink-0 border-0 bg-transparent shadow-none"
-                    >
-                      {renderHeaderActionPill('extensions')}
-                      <MoreHorizontal className="h-4 w-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    {overflowTabs.map((tab) => (
-                      <DropdownMenuItem
-                        key={tab.value}
-                        onSelect={() => onWorkspaceNavigate(tab.to)}
-                      >
-                        <tab.icon className="mr-2 h-4 w-4" />
-                        {tab.labelKey}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
               {/* 顶栏搜索：提交问题后打开搜索窗口并自动执行 AI 搜索。 */}
               <form
                 role="search"
@@ -657,7 +595,7 @@ export function Header({
               </>
             )}
             {/* 搜索对话框 */}
-            {(searchOpen || searchDialogLoaded || preloadMobileSearch) && (
+            {botAvailable && (searchOpen || searchDialogLoaded || preloadMobileSearch) && (
               <Suspense fallback={null}>
                 <SearchDialog
                   open={searchOpen}
@@ -669,13 +607,7 @@ export function Header({
               </Suspense>
             )}
 
-            <HeaderUpdateButton
-              highlighted={highlightedHeaderAction === 'update'}
-              onPointerEnter={() => handleHeaderActionEnter('update')}
-              onPointerLeave={handleHeaderActionLeave}
-            >
-              {renderHeaderActionPill('update')}
-            </HeaderUpdateButton>
+
 
             {/* WebUI 设置 */}
             <span data-dashboard-header-vent="true" aria-hidden="true" className="hidden" />

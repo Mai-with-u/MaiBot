@@ -22,6 +22,7 @@ from src.common.utils.image_path import resolve_stored_image_path, serialize_sto
 from src.common.utils.utils_image import ImageUtils
 from src.config.config import config_manager, global_config
 from src.plugin_runtime.hook_schema_utils import build_object_schema
+from src.plugin_runtime.host.hook_dispatcher import HookAbortedError
 from src.plugin_runtime.host.hook_spec_registry import HookSpec, HookSpecRegistry
 from src.prompt.prompt_manager import prompt_manager
 from src.services.llm_service import LLMServiceClient
@@ -52,73 +53,40 @@ def register_emoji_hook_specs(registry: HookSpecRegistry) -> list[HookSpec]:
         "type": "object",
         "description": "当前表情包的序列化信息，主要包含 file_hash、description、emotions 等字段。",
     }
-    string_array_schema = {
-        "type": "array",
-        "items": {"type": "string"},
-    }
     return registry.register_hook_specs(
         [
             HookSpec(
-                name="emoji.maisaka.before_select",
-                description="Maisaka 表情发送工具选择表情前触发，可改写情绪、上下文和采样参数，或中止本次选择。",
+                name="emoji.receive.before_cache",
+                description="聊天表情未命中缓存且即将写入时触发，可跳过该表情的缓存和内置识别。",
                 parameters_schema=build_object_schema(
                     {
-                        "stream_id": {"type": "string", "description": "目标会话 ID。"},
-                        "requested_emotion": {"type": "string", "description": "请求的目标情绪标签。"},
-                        "reasoning": {"type": "string", "description": "本次发送表情的推理理由。"},
-                        "context_texts": {
-                            **string_array_schema,
-                            "description": "最近聊天上下文文本列表。",
-                        },
-                        "sample_size": {"type": "integer", "description": "候选表情采样数量。"},
-                        "abort_message": {
-                            "type": "string",
-                            "description": "当 Hook 主动中止时可附带的失败提示。",
-                        },
+                        "emoji_hash": {"type": "string", "description": "表情包的 SHA-256 哈希。"},
+                        "binary_data_base64": {"type": "string", "description": "原始表情包的 Base64 数据。"},
+                        "session_id": {"type": "string", "description": "来源聊天会话 ID。"},
                     },
-                    required=["stream_id", "requested_emotion", "reasoning", "context_texts", "sample_size"],
+                    required=["emoji_hash", "binary_data_base64", "session_id"],
                 ),
                 default_timeout_ms=5000,
                 allow_abort=True,
-                allow_kwargs_mutation=True,
+                allow_kwargs_mutation=False,
             ),
             HookSpec(
-                name="emoji.maisaka.after_select",
-                description="Maisaka 已选出表情后触发，可替换选中的表情哈希、补充匹配情绪，或中止发送。",
+                name="emoji.maintenance.before_register",
+                description="定时维护尝试注册候选表情前触发，可跳过当前候选并继续扫描。",
                 parameters_schema=build_object_schema(
                     {
-                        "stream_id": {"type": "string", "description": "目标会话 ID。"},
-                        "requested_emotion": {"type": "string", "description": "请求的目标情绪标签。"},
-                        "reasoning": {"type": "string", "description": "本次发送表情的推理理由。"},
-                        "context_texts": {
-                            **string_array_schema,
-                            "description": "最近聊天上下文文本列表。",
-                        },
-                        "sample_size": {"type": "integer", "description": "候选表情采样数量。"},
-                        "selected_emoji": emoji_schema,
-                        "selected_emoji_hash": {"type": "string", "description": "选中的表情哈希。"},
-                        "matched_emotion": {"type": "string", "description": "最终命中的情绪标签。"},
-                        "abort_message": {
-                            "type": "string",
-                            "description": "当 Hook 主动中止时可附带的失败提示。",
-                        },
+                        "file_name": {"type": "string", "description": "候选表情包文件名。"},
+                        "file_size": {"type": "integer", "description": "候选文件的字节数。"},
                     },
-                    required=[
-                        "stream_id",
-                        "requested_emotion",
-                        "reasoning",
-                        "context_texts",
-                        "sample_size",
-                        "matched_emotion",
-                    ],
+                    required=["file_name", "file_size"],
                 ),
                 default_timeout_ms=5000,
                 allow_abort=True,
-                allow_kwargs_mutation=True,
+                allow_kwargs_mutation=False,
             ),
             HookSpec(
                 name="emoji.register.after_build_description",
-                description="表情包描述生成并通过内容审查后触发，可改写描述文本或拒绝本次注册。",
+                description="视觉模型生成表情包描述后触发，可改写描述或中止本次描述生成。",
                 parameters_schema=build_object_schema(
                     {
                         "emoji": emoji_schema,
@@ -359,6 +327,16 @@ class EmojiManager:
         # 如果提供了字节数据但数据库中没有找到，尝试构建
         if not emoji_bytes:
             return None
+        if _is_collected_emoji_size_allowed(len(emoji_bytes)):
+            hook_result = await _get_runtime_manager().invoke_hook(
+                "emoji.receive.before_cache",
+                emoji_hash=emoji_hash,
+                binary_data_base64=await asyncio.to_thread(ImageUtils.image_bytes_to_base64, emoji_bytes),
+                session_id=session_id,
+            )
+            if hook_result.aborted:
+                logger.info(f"插件跳过聊天表情缓存: {emoji_hash} {HookAbortedError(hook_result)}")
+                return None
         if not _is_vlm_task_configured():
             await self.ensure_emoji_saved(emoji_bytes, emoji_hash=emoji_hash)
             logger.info("未配置 VLM 模型，跳过表情包识别、打标签和审核")
@@ -403,11 +381,13 @@ class EmojiManager:
 
         logger.info(f"表情包不存在于数据库中，准备缓存新表情包，哈希值: {hash_str}")
         tmp_file_path = EMOJI_DIR / f"{hash_str}.tmp"
-        with tmp_file_path.open("wb") as file:
-            file.write(emoji_bytes)
+        await asyncio.to_thread(tmp_file_path.write_bytes, emoji_bytes)
 
         emoji = MaiEmoji(full_path=tmp_file_path, image_bytes=emoji_bytes)
-        await emoji.calculate_hash_format()
+        if not await emoji.calculate_hash_format():
+            # 格式识别失败的临时文件不能进入数据库，也不能留给维护任务反复注册。
+            await asyncio.to_thread(tmp_file_path.unlink, missing_ok=True)
+            raise ValueError(f"表情包格式识别失败，无法缓存: {tmp_file_path}")
 
         try:
             with get_db_session() as session:
@@ -944,8 +924,11 @@ class EmojiManager:
                 if self.unregister_emoji(emoji_to_unregister):
                     register_status = self.register_emoji_to_db(new_emoji)
                     if register_status == "registered":
+                        from .semantic_match import schedule_emoji_index
+
                         self.emojis.append(new_emoji)
                         self._emoji_num = len(self.emojis)
+                        schedule_emoji_index(new_emoji.file_hash)
                         logger.info(f"[register_emoji] 成功替换并注册新表情包: {new_emoji.description}")
                         return True
                     if register_status == "skipped":
@@ -1007,36 +990,8 @@ class EmojiManager:
             )
             return False, target_emoji
 
-        if not target_emoji.file_hash or not target_emoji.image_format:
-            # Should not happen, but just in case
-            await target_emoji.calculate_hash_format()
-
-        # 调用VLM生成描述
-        image_format = target_emoji.image_format
-        image_bytes = target_emoji.image_bytes or await asyncio.to_thread(
-            target_emoji.read_image_bytes, target_emoji.full_path
-        )
         try:
-            request_image_format = image_format
-            if image_format == "gif":
-                try:
-                    image_bytes = await asyncio.to_thread(ImageUtils.gif_2_static_image, image_bytes)
-                except Exception as e:
-                    logger.error(f"[构建描述] 转换 GIF 图片时出错: {e}")
-                    return False, target_emoji
-                request_image_format = "jpg"
-
-            analysis_prompt_template = prompt_manager.get_prompt("emoji_content_analysis")
-            analysis_prompt_template.add_context("image_type", "GIF" if image_format == "gif" else "STATIC")
-            analysis_prompt = await prompt_manager.render_prompt(analysis_prompt_template)
-            image_base64 = ImageUtils.image_bytes_to_base64(image_bytes)
-            description_result = await emoji_manager_vlm.generate_response_for_image(
-                analysis_prompt,
-                image_base64,
-                request_image_format,
-                session_id=session_id,
-            )
-            description = description_result.response
+            description = await self.analyze_emoji_image(target_emoji, "emoji_content_analysis", session_id=session_id)
         except Exception as e:
             logger.error(f"[构建描述] 调用视觉模型生成表情包描述时出错: {e}")
             return False, target_emoji
@@ -1053,10 +1008,10 @@ class EmojiManager:
             "emoji.register.after_build_description",
             emoji=_serialize_emoji_for_hook(target_emoji),
             description=normalized_description,
-            image_format=image_format,
+            image_format=target_emoji.image_format,
         )
         if hook_result.aborted:
-            logger.info(f"[构建描述] 表情包描述被 Hook 中止注册: {target_emoji.file_name}")
+            logger.info(f"[构建描述] 表情包中止注册: {target_emoji.file_name} {HookAbortedError(hook_result)}")
             return False, target_emoji
 
         normalized_description = str(hook_result.kwargs.get("description", description) or "").strip()
@@ -1073,6 +1028,23 @@ class EmojiManager:
         target_emoji.emotion = normalized_emotions
         logger.info(f"理解表情包情绪: {target_emoji.description}")
         return True, target_emoji
+
+    async def analyze_emoji_image(self, emoji: MaiEmoji, prompt_name: str, *, session_id: str = "") -> str:
+        """为描述与分组标签共用静态图和 GIF 抽帧流程。"""
+        if not emoji.file_hash or not emoji.image_format:
+            await emoji.calculate_hash_format()
+        image_format = emoji.image_format
+        image_bytes = emoji.image_bytes or await asyncio.to_thread(emoji.read_image_bytes, emoji.full_path)
+        if image_format == "gif":
+            image_bytes = await asyncio.to_thread(ImageUtils.gif_2_static_image, image_bytes)
+        template = prompt_manager.get_prompt(prompt_name)
+        template.add_context("image_type", "GIF" if image_format == "gif" else "STATIC")
+        prompt = await prompt_manager.render_prompt(template)
+        image_base64 = await asyncio.to_thread(ImageUtils.image_bytes_to_base64, image_bytes)
+        result = await emoji_manager_vlm.generate_response_for_image(
+            prompt, image_base64, "jpg" if image_format == "gif" else image_format, session_id=session_id,
+        )
+        return result.response
 
     def _mark_emoji_vlm_processed(self, target_emoji: MaiEmoji) -> None:
         """记录表情包已经过 VLM 处理，避免自动维护任务反复消耗识别额度。"""
@@ -1151,6 +1123,12 @@ class EmojiManager:
 
     async def periodic_emoji_maintenance(self) -> None:
         """Run emoji maintenance tasks periodically."""
+        from .semantic_match import backfill_emoji_index
+
+        try:
+            await backfill_emoji_index()
+        except Exception:
+            logger.exception("启动时补算表情包向量索引失败")
         while True:
             wait_seconds = max(global_config.emoji.check_interval * 60, 0)
             try:
@@ -1175,16 +1153,28 @@ class EmojiManager:
                             known_paths.add(record_path)
                 logger.info("[emoji_maintenance] Scanning data/emoji for new emojis...")
                 for emoji_file in EMOJI_DIR.iterdir():
+                    # .tmp 由缓存流程管理，可能尚未完成写入或格式识别。
+                    if emoji_file.suffix.lower() == ".tmp":
+                        continue
                     if not emoji_file.is_file():
                         continue
                     resolved_file = emoji_file.absolute().resolve()
                     if resolved_file in known_paths:
                         continue
-                    if not _is_collected_emoji_size_allowed(emoji_file.stat().st_size):
+                    file_size = emoji_file.stat().st_size
+                    if not _is_collected_emoji_size_allowed(file_size):
                         logger.info(
                             f"[emoji_maintenance] Emoji file exceeds size limit "
                             f"{global_config.emoji.max_emoji_size_mb:g} MB, skipping: {emoji_file.name}"
                         )
+                        continue
+                    hook_result = await _get_runtime_manager().invoke_hook(
+                        "emoji.maintenance.before_register",
+                        file_name=emoji_file.name,
+                        file_size=file_size,
+                    )
+                    if hook_result.aborted:
+                        logger.info(f"插件跳过自动注册表情: {emoji_file.name} {HookAbortedError(hook_result)}")
                         continue
                     try:
                         register_status = await self.register_emoji_by_filename(emoji_file)
@@ -1204,6 +1194,10 @@ class EmojiManager:
                 await asyncio.to_thread(self.check_emoji_file_integrity)
             except Exception as e:
                 logger.error(f"[emoji_maintenance] Maintenance task failed: {e}")
+            try:
+                await backfill_emoji_index()
+            except Exception:
+                logger.exception("定时补算表情包向量索引失败")
 
     async def register_emoji_by_filename(self, filename: Path | str) -> EmojiRegisterStatus:
         """Register an emoji file from ``data/emoji`` without moving or deleting it."""
@@ -1282,8 +1276,11 @@ class EmojiManager:
 
         register_status = self.register_emoji_to_db(target_emoji)
         if register_status == "registered":
+            from .semantic_match import schedule_emoji_index
+
             self.emojis.append(target_emoji)
             self._emoji_num = len(self.emojis)
+            schedule_emoji_index(target_emoji.file_hash)
             logger.info(f"[register_emoji] Registered new emoji: {target_emoji.file_name}")
         elif register_status == "failed":
             logger.error(f"[register_emoji] Failed to register emoji in database: {file_full_path}")

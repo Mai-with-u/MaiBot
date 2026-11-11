@@ -17,6 +17,7 @@ from openai import APITimeoutError
 from rich.traceback import install
 
 from src.common.logger import get_logger
+from src.common.exceptions import OperationAbortedError
 from src.common.data_models.llm_service_data_models import (
     LLMAudioTranscriptionResult,
     LLMEmbeddingResult,
@@ -1446,7 +1447,7 @@ class LLMOrchestrator:
                     request_started_at=datetime.fromtimestamp(trace_context.current_attempt_started_at),
                 )
 
-            except (ReqAbortException, asyncio.CancelledError) as e:
+            except (OperationAbortedError, asyncio.CancelledError) as e:
                 self._adjust_model_usage(model_info.name, usage_penalty_delta=-1)
                 if self.request_type.startswith("maisaka."):
                     logger.debug(

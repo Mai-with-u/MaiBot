@@ -8,7 +8,6 @@ from sqlmodel import Session, SQLModel, create_engine, select
 import pytest
 
 from src.common.database.database_model import Expression, Jargon, JargonCreatedBy, ModifiedBy
-from src.webui.dependencies import require_auth
 from src.webui.routers import expression, jargon
 
 
@@ -33,7 +32,6 @@ def storage(monkeypatch):
     app = FastAPI()
     app.include_router(expression.router)
     app.include_router(jargon.router)
-    app.dependency_overrides[require_auth] = lambda: True
     with TestClient(app) as client:
         yield engine, client
     engine.dispose()

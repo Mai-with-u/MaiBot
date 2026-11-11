@@ -1,3 +1,4 @@
+import { useHostRuntime } from '@/host/state'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
@@ -7,10 +8,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useFeatureFlags } from '@/hooks/use-feature-flags'
 import { DataTransferWorkspace } from '@/routes/data-transfer/DataTransferWorkspace'
 import { useDataTransfer } from '@/routes/data-transfer/useDataTransfer'
+import { ChatMigrationWorkspace } from '@/routes/data-transfer/ChatMigrationWorkspace'
 import { FilesPage } from '@/routes/files'
 import { LocalCacheTab } from '@/routes/settings/LocalCacheTab'
 
 export function DataTransferPage() {
+  const runtime = useHostRuntime()
+  return <BotDataTransferPage key={runtime.selected_bot_id} />
+}
+
+function BotDataTransferPage() {
   const { t } = useTranslation()
   const { tab = 'transfer' } = useSearch({ from: '/protected/data-transfer' })
   const navigate = useNavigate()
@@ -19,6 +26,7 @@ export function DataTransferPage() {
   const pageTabs = (
     <TabsList aria-label={t('sidebar.menu.dataTransfer')} className="shrink-0">
       <TabsTrigger value="transfer">{t('dataManagement.transfer')}</TabsTrigger>
+      <TabsTrigger value="chat-migration">聊天迁移</TabsTrigger>
       {(flags?.files || tab === 'files') && (
         <TabsTrigger value="files">{t('files.title')}</TabsTrigger>
       )}
@@ -35,8 +43,8 @@ export function DataTransferPage() {
         <Tabs
           value={tab}
           onValueChange={(value) => {
-            if (value !== 'transfer' && value !== 'files') return
-            void navigate({ to: '/data-transfer', search: { tab: value === 'files' ? 'files' : undefined } })
+            if (value !== 'transfer' && value !== 'files' && value !== 'chat-migration') return
+            void navigate({ to: '/data-transfer', search: { tab: value === 'transfer' ? undefined : value } })
           }}
           className="min-w-0"
         >
@@ -49,6 +57,9 @@ export function DataTransferPage() {
                 <LocalCacheTab />
               </div>
             </details>
+          </TabsContent>
+          <TabsContent value="chat-migration" className="mt-0">
+            <ChatMigrationWorkspace headerActions={pageTabs} />
           </TabsContent>
           <TabsContent value="files" className="mt-0">
             <FilesPage headerActions={pageTabs} />

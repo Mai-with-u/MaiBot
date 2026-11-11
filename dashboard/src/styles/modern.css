@@ -312,3 +312,118 @@
     background-color: hsl(var(--background) / var(--mdn-glass-surface-alpha));
   }
 }
+
+/* ---------- 可读性：层级与按钮状态 ----------
+   原版风格的公共控件在这里补足「一眼看出选中了哪个、哪里能点」。
+   手机和桌面都生效；千禧、未来复古有各自的主题样式，不受影响。 */
+
+/* 分段选择：凹槽轨道 + 白色滑块，选中项加粗。 */
+:root[data-dashboard-style='modern'] [data-dashboard-segmented-control='true'] {
+  gap: 2px;
+  padding: 3px;
+  border-radius: calc(var(--radius) + 1px);
+  background: hsl(var(--muted));
+  box-shadow: inset 0 0 0 1px hsl(var(--border));
+}
+
+:root[data-dashboard-style='modern'] [data-dashboard-segmented-control='true'] > .dashboard-button {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: hsl(var(--muted-foreground));
+}
+
+:root[data-dashboard-style='modern'] [data-dashboard-segmented-control='true'] > .dashboard-button:hover {
+  color: hsl(var(--foreground));
+}
+
+:root[data-dashboard-style='modern']
+  [data-dashboard-segmented-control='true']
+  > .dashboard-button[aria-pressed='true'] {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-weight: 600;
+  box-shadow:
+    0 1px 2px hsl(var(--foreground) / 0.12),
+    0 0 0 1px hsl(var(--input));
+}
+
+/* 其他可切换的描边按钮：选中时浅主色底 + 主色边，不再只是换成同样很浅的灰。 */
+:root[data-dashboard-style='modern']
+  .dashboard-button--outline[aria-pressed='true']:not([data-dashboard-segmented-control='true'] > *) {
+  border-color: hsl(var(--primary) / 0.7);
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--foreground));
+  font-weight: 600;
+}
+
+/* 标签页：选中项是浮起的白块并加粗，未选项用次要字色。文件夹标签和顶栏标签有自己的样式。 */
+:root[data-dashboard-style='modern']
+  [data-dashboard-tabs-list='true']:not(
+    [data-dashboard-folder-tabs] > *,
+    [data-dashboard-workspace-tabs='true'],
+    [data-dashboard-workspace-tabs='true'] *
+  ) {
+  box-shadow: inset 0 0 0 1px hsl(var(--border));
+}
+
+:root[data-dashboard-style='modern']
+  [data-dashboard-tabs-list='true']:not(
+    [data-dashboard-folder-tabs] > *,
+    [data-dashboard-workspace-tabs='true'],
+    [data-dashboard-workspace-tabs='true'] *
+  )
+  > [data-dashboard-tabs-trigger='true'][data-state='active'] {
+  font-weight: 600;
+  box-shadow:
+    0 1px 2px hsl(var(--foreground) / 0.12),
+    0 0 0 1px hsl(var(--input));
+}
+
+/* 设置页的分类标签：一条底线 + 主色下划线，和页面内容的分组标签区分开。 */
+:root[data-dashboard-style='modern'] [data-dashboard-tabs-list='true']:has(> [data-dashboard-settings-tabs='true']) {
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: inset 0 -1px 0 hsl(var(--border));
+}
+
+:root[data-dashboard-style='modern'] [data-dashboard-settings-tabs='true'] {
+  border-radius: 0;
+  min-height: 2.75rem;
+  color: hsl(var(--muted-foreground));
+  box-shadow: none;
+}
+
+:root[data-dashboard-style='modern'] [data-dashboard-settings-tabs='true']:hover {
+  color: hsl(var(--foreground));
+}
+
+:root[data-dashboard-style='modern'] [data-dashboard-settings-tabs='true'][data-state='active'] {
+  background: transparent;
+  color: hsl(var(--foreground));
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 hsl(var(--primary));
+}
+
+/* 选项卡片：选中加粗主色边和对勾，未选显示空心圆。 */
+:root[data-dashboard-style='modern'] [data-dashboard-option-card='true'][aria-pressed='true'] {
+  border-color: hsl(var(--primary));
+  box-shadow: inset 0 0 0 1px hsl(var(--primary));
+}
+
+/* 模型分工：英文等宽小标只在千禧里当装饰，原版直接用中文分组标题。 */
+:root[data-dashboard-style='modern'] :is([data-task-board-label], [data-task-board-more]) > b {
+  display: none;
+}
+
+:root[data-dashboard-style='modern'] [data-task-board-label] > h2 {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+:root[data-dashboard-style='modern'] [data-task-board-more] > span {
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}

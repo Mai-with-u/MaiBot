@@ -3,14 +3,13 @@
 from typing import Literal
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from src.common.runtime_loop import run_on_main_loop
 from src.agent.service import agent_service
-from src.webui.dependencies import require_auth
 
-router = APIRouter(prefix="/agent", tags=["agent"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/agent", tags=["agent"])
 
 
 class AgentControl(BaseModel):
@@ -36,13 +35,13 @@ async def events(after: int = 0):
     async def snapshot():
         if agent_service.agent is None:
             return {"events": [], "queued": [], "state": "disabled", "error": agent_service.error,
-                    "pending": False, "backend": "acp", "desktop_enabled": agent_service.computer.config.enabled}
+                    "pending": False, "backend": "acp"}
         agent = agent_service.require_agent()
         # 先取队列，再读已提交记录；输入即使此时被消费，也只会重复而不会漏掉，前端按 ID 合并。
         queued = [{"index": -1, **record} for record in agent.inbox]
         return {"events": await asyncio.to_thread(agent.history.events, after),
                 "state": "paused" if agent_service.paused else agent.state,
-                "error": agent_service.error, "backend": agent.backend, "desktop_enabled": agent_service.computer.config.enabled,
+                "error": agent_service.error, "backend": agent.backend,
                 "pending": agent.pending is not None, "queued": queued}
     return await run_on_main_loop(snapshot())
 

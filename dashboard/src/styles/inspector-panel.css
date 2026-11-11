@@ -1,0 +1,46 @@
+/* 麦麦观察检查器：标题条下沿一道线，数据屏里可点的行选中时用列表选中色。 */
+[data-inspector-head='true'] {
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+[data-inspector-row-button='true'] {
+  cursor: pointer;
+  color: var(--surface-ink);
+}
+[data-inspector-row-button='true']:not([data-selected='true']):hover {
+  background-color: var(--list-hover-bg);
+}
+[data-inspector-row-button='true'][data-selected='true'] {
+  background-color: var(--list-selected-bg);
+  color: var(--list-selected-ink);
+}
+[data-inspector-row-button='true']:focus-visible {
+  outline: 2px solid var(--surface-focus);
+  outline-offset: -2px;
+}
+
+[data-inspector-meter='true'] {
+  padding: 2px;
+  border: 1px solid hsl(var(--border));
+  background: var(--surface-data-bg);
+}
+
+/* 未来复古：浮动检查器用纸面盖住下方的观察时间线。 */
+:root[data-dashboard-style='future-retro'] [data-maisaka-inspector-panel='true'] {
+  background-color: var(--retro-paper);
+  background-image: var(--retro-paper-brightness-overlay), var(--retro-paper-texture);
+  background-size: auto, var(--retro-paper-texture-size);
+}
+
+/* 千禧：标题条是刻线，占比条是下沉小屏，色块带描边 */
+:root[data-dashboard-style='millennium'] [data-inspector-head='true'] {
+  border-bottom: 2px solid var(--mil-lo);
+  box-shadow: 0 2px 0 var(--mil-hi);
+}
+:root[data-dashboard-style='millennium'] [data-inspector-meter='true'] {
+  border: 2px solid var(--mil-line);
+  box-shadow: inset 2px 2px 0 var(--mil-screen-shade);
+}
+:root[data-dashboard-style='millennium'] [data-inspector-swatch='true'] {
+  outline: 1px solid var(--mil-line);
+}

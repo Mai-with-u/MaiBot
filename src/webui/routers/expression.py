@@ -6,10 +6,8 @@ from typing import Any, Dict, List, Optional
 
 import json
 import random
-import sqlite3
-import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import case, func
 from sqlmodel import col, delete, select
@@ -19,8 +17,9 @@ from src.chat.replyer.expression_vector_index import expression_vector_index, no
 from src.common.database.database import get_db_session
 from src.common.database.database_model import ChatSession, Expression, Messages, ModifiedBy
 from src.common.logger import get_logger
-from src.common.utils.utils_config import ChatConfigUtils, ExpressionConfigUtils
+from src.common.utils.utils_config import ExpressionConfigUtils
 from src.config.config import global_config
+from src.services.sharing_group_service import list_groups, resolved_members
 from src.learners.expression_review_store import (
     append_manual_rescue_log,
     get_ai_review_log,
@@ -28,16 +27,13 @@ from src.learners.expression_review_store import (
 )
 from src.services.bot_account_service import get_all_bot_account_pairs
 from src.services.expression_vector_service import expression_vector_service
-from src.webui.dependencies import require_auth
 
 logger = get_logger("webui.expression")
 EXCLUDE_IDS_QUERY = Query(None, description="需要排除的表达方式 ID")
 EXPRESSION_CHAT_IDS_QUERY = Query(None, description="multiple chat ids")
-LEGACY_EXPRESSION_IMPORT_FILE = File(...)
 
 # 创建路由器
-router = APIRouter(prefix="/expression", tags=["Expression"], dependencies=[Depends(require_auth)])
-LEGACY_IMPORT_UPLOAD_DIR = Path("data/webui_legacy_expression_imports")
+router = APIRouter(prefix="/expression", tags=["Expression"])
 LOGGED_INVALID_EXPRESSION_SESSION_IDS: set[int] = set()
 
 
@@ -71,24 +67,6 @@ def is_current_account_session(chat_session: Optional[ChatSession]) -> bool:
     platform = str(chat_session.platform or "").strip()
     account_id = str(chat_session.account_id or "").strip()
     return bool(platform and account_id and (platform, account_id) in get_configured_platform_accounts())
-
-
-def select_legacy_import_matched_sessions(
-    sessions: List[Any],
-    configured_accounts: set[tuple[str, str]],
-) -> List[Any]:
-    """为旧版导入选择可自动匹配的聊天流。"""
-
-    configured_matches = [
-        session
-        for session in sessions
-        if (str(session.platform or "").strip(), str(session.account_id or "").strip()) in configured_accounts
-    ]
-    if configured_matches:
-        return configured_matches
-
-    # 旧数据升级后可能没有 account_id。严格账号匹配没有结果时，允许这些历史聊天流参与自动匹配。
-    return [session for session in sessions if not str(session.account_id or "").strip()]
 
 
 def decode_expression_session_id(expression_id: int, raw_session_id: Any) -> Optional[str]:
@@ -335,71 +313,6 @@ class ExpressionReviewLogApproveResponse(BaseModel):
     data: ExpressionResponse
 
 
-class LegacyExpressionImportPreviewRequest(BaseModel):
-    """旧版表达方式导入预览请求。"""
-
-    db_path: str
-
-
-class LegacyExpressionMatchOption(BaseModel):
-    """旧版导入自动匹配到的当前聊天流候选。"""
-
-    session_id: str
-    chat_name: str
-    account_id: Optional[str] = None
-
-
-class LegacyExpressionGroupPreview(BaseModel):
-    """旧版表达方式按旧聊天流分组后的预览信息。"""
-
-    old_chat_id: str
-    expression_count: int
-    platform: Optional[str] = None
-    target_id: Optional[str] = None
-    chat_type: Optional[str] = None
-    matched_session_id: Optional[str] = None
-    matched_chat_name: Optional[str] = None
-    matched: bool = False
-    matched_sessions: List[LegacyExpressionMatchOption] = Field(default_factory=list)
-
-
-class LegacyExpressionImportPreviewResponse(BaseModel):
-    """旧版表达方式导入预览响应。"""
-
-    success: bool = True
-    db_path: str
-    total_count: int
-    matched_count: int
-    unmatched_count: int
-    groups: List[LegacyExpressionGroupPreview]
-
-
-class LegacyExpressionImportMapping(BaseModel):
-    """旧聊天流到新聊天流的导入映射。"""
-
-    old_chat_id: str
-    target_chat_id: Optional[str] = None
-    target_chat_ids: Optional[List[str]] = None
-
-
-class LegacyExpressionImportRequest(BaseModel):
-    """旧版表达方式导入请求。"""
-
-    db_path: str
-    mappings: List[LegacyExpressionImportMapping]
-
-
-class LegacyExpressionImportResponse(BaseModel):
-    """旧版表达方式导入响应。"""
-
-    success: bool = True
-    message: str
-    imported_count: int = 0
-    skipped_count: int = 0
-    failed_count: int = 0
-    ignored_group_count: int = 0
-
-
 def require_existing_chat_id(chat_id: Optional[str]) -> str:
     """校验资源归属的聊天流 ID 必须是真实存在的会话。"""
 
@@ -587,78 +500,6 @@ def parse_modified_by(value: Optional[str]) -> Optional[ModifiedBy]:
         return None
 
 
-def normalize_legacy_bool(raw_value: Any, default: bool = False) -> bool:
-    """兼容旧 SQLite 中的布尔字段。"""
-
-    if raw_value is None:
-        return default
-    if isinstance(raw_value, bool):
-        return raw_value
-    if isinstance(raw_value, (int, float)):
-        return bool(raw_value)
-    value = str(raw_value).strip().lower()
-    if value in {"1", "true", "t", "yes", "y"}:
-        return True
-    if value in {"0", "false", "f", "no", "n", "", "none", "null"}:
-        return False
-    return default
-
-
-def normalize_legacy_int(raw_value: Any, default: int = 0) -> int:
-    """兼容旧 SQLite 中的整数字段。"""
-
-    if raw_value is None:
-        return default
-    try:
-        return int(raw_value)
-    except (TypeError, ValueError):
-        return default
-
-
-def normalize_legacy_datetime(raw_value: Any, fallback_now: bool = True) -> datetime:
-    """兼容旧 SQLite 中的 Unix 时间戳或 ISO 时间字符串。"""
-
-    if raw_value in (None, ""):
-        return datetime.now() if fallback_now else datetime.fromtimestamp(0)
-    if isinstance(raw_value, datetime):
-        return raw_value
-    if isinstance(raw_value, (int, float)):
-        return datetime.fromtimestamp(float(raw_value))
-    value = str(raw_value).strip()
-    try:
-        return datetime.fromtimestamp(float(value))
-    except (TypeError, ValueError, OSError, OverflowError):
-        try:
-            return datetime.fromisoformat(value)
-        except ValueError:
-            return datetime.now() if fallback_now else datetime.fromtimestamp(0)
-
-
-def normalize_legacy_content_list(raw_value: Any) -> str:
-    """将旧库 content_list 标准化为 JSON 字符串。"""
-
-    def normalize_list(items: list[Any]) -> str:
-        normalized_items = [str(item).strip() for item in items if str(item).strip()]
-        return json.dumps(normalized_items, ensure_ascii=False)
-
-    if raw_value is None:
-        return "[]"
-    if isinstance(raw_value, str):
-        raw_text = raw_value.strip()
-        if not raw_text:
-            return "[]"
-        try:
-            parsed = json.loads(raw_text)
-        except json.JSONDecodeError:
-            return normalize_list([raw_text])
-        if isinstance(parsed, list):
-            return normalize_list(parsed)
-        return normalize_list([parsed])
-    if isinstance(raw_value, list):
-        return normalize_list(raw_value)
-    return normalize_list([raw_value])
-
-
 def apply_expression_list_review_filter(statement: Any, review_filter: str) -> Any:
     """为表达方式列表应用人工审核状态筛选。"""
 
@@ -669,210 +510,6 @@ def apply_expression_list_review_filter(statement: Any, review_filter: str) -> A
     if review_filter == "unchecked":
         return statement.where(col(Expression.checked).is_(False))
     raise HTTPException(status_code=400, detail=f"不支持的表达方式筛选: {review_filter}")
-
-
-def connect_legacy_sqlite(db_path: str) -> sqlite3.Connection:
-    """以只读方式连接旧版 SQLite 数据库。"""
-
-    path = Path(db_path).expanduser().resolve()
-    if not path.is_file():
-        raise HTTPException(status_code=400, detail=f"旧数据库文件不存在: {path}")
-    connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
-    connection.row_factory = sqlite3.Row
-    return connection
-
-
-async def save_legacy_db_upload(file: UploadFile) -> Path:
-    """保存上传的旧版数据库文件到临时导入目录。"""
-
-    filename = Path(file.filename or "legacy.db").name
-    suffix = Path(filename).suffix or ".db"
-    LEGACY_IMPORT_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    target_path = (LEGACY_IMPORT_UPLOAD_DIR / f"{uuid.uuid4().hex}{suffix}").resolve()
-    try:
-        with target_path.open("wb") as target_file:
-            while chunk := await file.read(1024 * 1024):
-                target_file.write(chunk)
-    finally:
-        await file.close()
-    return target_path
-
-
-def get_legacy_upload_path(db_path: str) -> Optional[Path]:
-    """仅在旧版导入路径属于临时上传目录时解析出路径。"""
-
-    upload_dir = LEGACY_IMPORT_UPLOAD_DIR.resolve()
-    path = Path(db_path).expanduser().resolve()
-    try:
-        path.relative_to(upload_dir)
-    except ValueError:
-        return None
-    return path
-
-
-def cleanup_legacy_db_upload(db_path: str) -> None:
-    """旧版导入成功后删除临时上传的数据库文件。"""
-
-    upload_path = get_legacy_upload_path(db_path)
-    if not upload_path or not upload_path.is_file():
-        return
-    try:
-        upload_path.unlink()
-    except OSError as e:
-        logger.warning(f"删除旧版导入临时文件失败: {e}")
-
-
-def legacy_table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
-    """判断旧库中表是否存在。"""
-
-    row = connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
-        (table_name,),
-    ).fetchone()
-    return row is not None
-
-
-def resolve_legacy_table(connection: sqlite3.Connection, candidates: List[str]) -> str:
-    """从候选表名中解析旧库实际表名。"""
-
-    for table_name in candidates:
-        if legacy_table_exists(connection, table_name):
-            return table_name
-    raise HTTPException(status_code=400, detail=f"旧数据库缺少表: {', '.join(candidates)}")
-
-
-def get_legacy_columns(connection: sqlite3.Connection, table_name: str) -> set[str]:
-    """读取旧库表字段集合。"""
-
-    return {str(row["name"]) for row in connection.execute(f"PRAGMA table_info('{table_name}')").fetchall()}
-
-
-def load_legacy_expressions(connection: sqlite3.Connection) -> tuple[List[sqlite3.Row], set[str]]:
-    """读取旧库表达方式表。"""
-
-    table_name = resolve_legacy_table(connection, ["expression", "expressions"])
-    columns = get_legacy_columns(connection, table_name)
-    if "situation" not in columns or "style" not in columns:
-        raise HTTPException(status_code=400, detail=f"旧表达方式表 {table_name} 缺少 situation/style 字段")
-    rows = connection.execute(f"SELECT * FROM {table_name}").fetchall()
-    return rows, columns
-
-
-def load_legacy_chat_streams(connection: sqlite3.Connection) -> Dict[str, sqlite3.Row]:
-    """读取旧库 chat_streams，按 stream_id 建索引。"""
-
-    if not legacy_table_exists(connection, "chat_streams"):
-        return {}
-    columns = get_legacy_columns(connection, "chat_streams")
-    if "stream_id" not in columns:
-        return {}
-    rows = connection.execute("SELECT * FROM chat_streams").fetchall()
-    return {str(row["stream_id"]).strip(): row for row in rows if row["stream_id"] is not None}
-
-
-def get_legacy_row_chat_id(row: sqlite3.Row, columns: set[str]) -> str:
-    """读取旧表达方式归属的聊天流 ID。"""
-
-    if "chat_id" in columns and row["chat_id"] is not None:
-        return str(row["chat_id"]).strip()
-    if "session_id" in columns and row["session_id"] is not None:
-        return str(row["session_id"]).strip()
-    return ""
-
-
-def resolve_legacy_group_preview(
-    old_chat_id: str,
-    expression_count: int,
-    stream_row: Optional[sqlite3.Row],
-) -> LegacyExpressionGroupPreview:
-    """解析单个旧聊天流分组与当前聊天流的匹配关系。"""
-
-    platform = str(stream_row["platform"]).strip() if stream_row and "platform" in stream_row.keys() and stream_row["platform"] else None
-    group_id = str(stream_row["group_id"]).strip() if stream_row and "group_id" in stream_row.keys() and stream_row["group_id"] else None
-    user_id = str(stream_row["user_id"]).strip() if stream_row and "user_id" in stream_row.keys() and stream_row["user_id"] else None
-
-    chat_type: Optional[str] = None
-    target_id: Optional[str] = None
-    matched_session_id: Optional[str] = None
-    matched_chat_name: Optional[str] = None
-    matched_options: List[LegacyExpressionMatchOption] = []
-    if platform and group_id:
-        chat_type = "group"
-        target_id = group_id
-    elif platform and user_id:
-        chat_type = "private"
-        target_id = user_id
-
-    if platform and target_id and chat_type:
-        configured_accounts = get_configured_platform_accounts()
-        candidate_sessions = _chat_manager.resolve_sessions_by_target(
-            platform=platform,
-            target_id=target_id,
-            chat_type=chat_type,
-        )
-        matched_sessions = sorted(
-            select_legacy_import_matched_sessions(candidate_sessions, configured_accounts),
-            key=lambda session: session.session_id,
-        )
-        if matched_sessions:
-            with get_db_session() as db_session:
-                matched_session_id = matched_sessions[0].session_id if len(matched_sessions) == 1 else None
-                matched_chat_name = get_chat_name(matched_session_id, db_session) if matched_session_id else None
-                matched_options = [
-                    LegacyExpressionMatchOption(
-                        session_id=session.session_id,
-                        chat_name=get_chat_name(session.session_id, db_session),
-                        account_id=session.account_id,
-                    )
-                    for session in matched_sessions
-                ]
-        else:
-            matched_options = []
-
-    return LegacyExpressionGroupPreview(
-        old_chat_id=old_chat_id,
-        expression_count=expression_count,
-        platform=platform,
-        target_id=target_id,
-        chat_type=chat_type,
-        matched_session_id=matched_session_id,
-        matched_chat_name=matched_chat_name,
-        matched=bool(matched_options),
-        matched_sessions=matched_options,
-    )
-
-
-def build_legacy_preview(db_path: str) -> LegacyExpressionImportPreviewResponse:
-    """构建旧版表达方式导入预览。"""
-
-    with connect_legacy_sqlite(db_path) as connection:
-        expression_rows, expression_columns = load_legacy_expressions(connection)
-        chat_streams = load_legacy_chat_streams(connection)
-
-        grouped_counts: Dict[str, int] = {}
-        for row in expression_rows:
-            old_chat_id = get_legacy_row_chat_id(row, expression_columns)
-            if not old_chat_id:
-                continue
-            grouped_counts[old_chat_id] = grouped_counts.get(old_chat_id, 0) + 1
-
-        groups = [
-            resolve_legacy_group_preview(
-                old_chat_id=old_chat_id,
-                expression_count=count,
-                stream_row=chat_streams.get(old_chat_id),
-            )
-            for old_chat_id, count in sorted(grouped_counts.items())
-        ]
-
-    matched_count = sum(1 for group in groups if group.matched)
-    return LegacyExpressionImportPreviewResponse(
-        db_path=str(Path(db_path).expanduser().resolve()),
-        total_count=sum(group.expression_count for group in groups),
-        matched_count=matched_count,
-        unmatched_count=len(groups) - matched_count,
-        groups=groups,
-    )
 
 
 def get_chat_names_batch(chat_ids: List[str]) -> Dict[str, str]:
@@ -946,6 +583,8 @@ class ChatListResponse(BaseModel):
 class ExpressionGroupInfo(BaseModel):
     """表达共享组信息。"""
 
+    id: str
+    color: str
     index: int
     name: str
     chat_ids: List[str]
@@ -1101,22 +740,9 @@ def get_expression_groups(
                     select(ChatSession).where(col(ChatSession.session_id).in_(all_expression_chat_ids))
                 ).all()
             }
-            for index, expression_group in enumerate(global_config.expression.expression_groups):
-                chat_ids: set[str] = set()
-                is_global = False
-
-                for target_item in expression_group.targets:
-                    platform = str(target_item.platform or "").strip()
-                    item_id = str(target_item.item_id or "").strip()
-                    if not platform and not item_id:
-                        continue
-                    if is_global_expression_group_marker(platform, item_id):
-                        is_global = True
-                    chat_ids.update(ChatConfigUtils.get_target_session_ids_with_wildcards(target_item))
-
-                if not expression_group.targets:
-                    is_global = True
-
+            for index, expression_group in enumerate(group for group in list_groups() if group["enabled"] and group["capabilities"].get("expression")):
+                chat_ids = resolved_members(expression_group)
+                is_global = any(rule == {"platform": "*", "item_id": "*", "rule_type": "all"} for rule in expression_group["rules"])
                 resolved_chat_ids = sorted(all_expression_chat_ids if is_global else chat_ids & all_expression_chat_ids)
                 members = [
                     build_chat_info(chat_id, session, chat_sessions_by_id.get(chat_id))
@@ -1125,7 +751,9 @@ def get_expression_groups(
                 groups.append(
                     ExpressionGroupInfo(
                         index=index,
-                        name=f"共享组 {index + 1}",
+                        id=expression_group["id"],
+                        color=expression_group["color"],
+                        name=expression_group["name"],
                         chat_ids=resolved_chat_ids,
                         members=members,
                         is_global=is_global,
@@ -1524,155 +1152,6 @@ def clear_expressions(request: ExpressionClearRequest) -> ExpressionClearRespons
     except Exception as e:
         logger.exception(f"清除表达方式失败: {e}")
         raise HTTPException(status_code=500, detail=f"清除表达方式失败: {str(e)}") from e
-
-
-@router.post("/legacy-import/preview", response_model=LegacyExpressionImportPreviewResponse)
-def preview_legacy_expression_import(
-    request: LegacyExpressionImportPreviewRequest,
-) -> LegacyExpressionImportPreviewResponse:
-    """预览旧版数据库表达方式导入分组。"""
-
-    try:
-        return build_legacy_preview(request.db_path)
-    except HTTPException:
-        raise
-    except sqlite3.Error as e:
-        logger.exception(f"读取旧版表达方式数据库失败: {e}")
-        raise HTTPException(status_code=400, detail=f"读取旧版表达方式数据库失败: {str(e)}") from e
-    except Exception as e:
-        logger.exception(f"预览旧版表达方式导入失败: {e}")
-        raise HTTPException(status_code=500, detail=f"预览旧版表达方式导入失败: {str(e)}") from e
-
-
-@router.post("/legacy-import/preview-file", response_model=LegacyExpressionImportPreviewResponse)
-async def preview_legacy_expression_import_file(
-    file: UploadFile = LEGACY_EXPRESSION_IMPORT_FILE,
-) -> LegacyExpressionImportPreviewResponse:
-    """上传旧版数据库文件并预览表达方式导入分组。"""
-
-    try:
-        db_path = await save_legacy_db_upload(file)
-        return build_legacy_preview(str(db_path))
-    except HTTPException:
-        raise
-    except sqlite3.Error as e:
-        logger.exception(f"读取上传的旧版表达方式数据库失败: {e}")
-        raise HTTPException(status_code=400, detail=f"读取上传的旧版表达方式数据库失败: {str(e)}") from e
-    except Exception as e:
-        logger.exception(f"预览上传旧版表达方式导入失败: {e}")
-        raise HTTPException(status_code=500, detail=f"预览上传旧版表达方式导入失败: {str(e)}") from e
-
-
-@router.post("/legacy-import/import", response_model=LegacyExpressionImportResponse)
-def import_legacy_expressions(request: LegacyExpressionImportRequest) -> LegacyExpressionImportResponse:
-    """按预览后的映射从旧版数据库导入表达方式。"""
-
-    try:
-        mapping_by_old_chat_id: Dict[str, List[str]] = {}
-        for mapping in request.mappings:
-            target_chat_ids = mapping.target_chat_ids or ([mapping.target_chat_id] if mapping.target_chat_id else [])
-            valid_target_chat_ids = []
-            for target_chat_id in target_chat_ids:
-                valid_chat_id = require_existing_chat_id(target_chat_id)
-                if valid_chat_id not in valid_target_chat_ids:
-                    valid_target_chat_ids.append(valid_chat_id)
-            if valid_target_chat_ids:
-                mapping_by_old_chat_id[mapping.old_chat_id] = valid_target_chat_ids
-        if not mapping_by_old_chat_id:
-            raise HTTPException(status_code=400, detail="没有可导入的聊天映射")
-
-        with connect_legacy_sqlite(request.db_path) as connection:
-            expression_rows, expression_columns = load_legacy_expressions(connection)
-
-        imported_count = 0
-        skipped_count = 0
-        failed_count = 0
-        ignored_old_chat_ids: set[str] = set()
-
-        with get_db_session() as session:
-            existing_pairs_by_chat: Dict[str, set[tuple[str, str]]] = {}
-
-            for row in expression_rows:
-                old_chat_id = get_legacy_row_chat_id(row, expression_columns)
-                target_chat_ids = mapping_by_old_chat_id.get(old_chat_id)
-                if not target_chat_ids:
-                    if old_chat_id:
-                        ignored_old_chat_ids.add(old_chat_id)
-                    continue
-
-                situation = str(row["situation"] or "").strip()
-                style = str(row["style"] or "").strip()
-                if not situation or not style:
-                    failed_count += 1
-                    continue
-
-                legacy_checked = normalize_legacy_bool(row["checked"] if "checked" in expression_columns else None)
-                legacy_rejected = normalize_legacy_bool(row["rejected"] if "rejected" in expression_columns else None)
-                if legacy_checked and legacy_rejected:
-                    skipped_count += 1
-                    continue
-
-                dedupe_key = (situation, style)
-                for target_chat_id in target_chat_ids:
-                    if target_chat_id not in existing_pairs_by_chat:
-                        existing_pairs_by_chat[target_chat_id] = {
-                            (existing_situation, existing_style)
-                            for existing_situation, existing_style in session.exec(
-                                select(Expression.situation, Expression.style).where(
-                                    col(Expression.session_id) == target_chat_id
-                                )
-                            ).all()
-                        }
-
-                    if dedupe_key in existing_pairs_by_chat[target_chat_id]:
-                        skipped_count += 1
-                        continue
-
-                    expression = Expression(
-                        situation=situation,
-                        style=style,
-                        content_list=normalize_legacy_content_list(
-                            row["content_list"] if "content_list" in expression_columns else None
-                        ),
-                        count=normalize_legacy_int(row["count"] if "count" in expression_columns else None),
-                        last_active_time=normalize_legacy_datetime(
-                            row["last_active_time"] if "last_active_time" in expression_columns else None
-                        ),
-                        create_time=normalize_legacy_datetime(
-                            row["create_date"] if "create_date" in expression_columns else None
-                        ),
-                        session_id=target_chat_id,
-                        checked=legacy_checked,
-                        modified_by=parse_modified_by(
-                            str(row["modified_by"]) if "modified_by" in expression_columns and row["modified_by"] else None
-                        ),
-                    )
-                    session.add(expression)
-                    existing_pairs_by_chat[target_chat_id].add(dedupe_key)
-                    imported_count += 1
-
-        message = (
-            f"旧版导入完成：成功 {imported_count} 个，跳过 {skipped_count} 个，"
-            f"失败 {failed_count} 个，未导入分组 {len(ignored_old_chat_ids)} 个"
-        )
-        logger.info(message)
-        cleanup_legacy_db_upload(request.db_path)
-        return LegacyExpressionImportResponse(
-            message=message,
-            imported_count=imported_count,
-            skipped_count=skipped_count,
-            failed_count=failed_count,
-            ignored_group_count=len(ignored_old_chat_ids),
-        )
-
-    except HTTPException:
-        raise
-    except sqlite3.Error as e:
-        logger.exception(f"读取旧版表达方式数据库失败: {e}")
-        raise HTTPException(status_code=400, detail=f"读取旧版表达方式数据库失败: {str(e)}") from e
-    except Exception as e:
-        logger.exception(f"导入旧版表达方式失败: {e}")
-        raise HTTPException(status_code=500, detail=f"导入旧版表达方式失败: {str(e)}") from e
 
 
 @router.get("/{expression_id}", response_model=ExpressionDetailResponse)

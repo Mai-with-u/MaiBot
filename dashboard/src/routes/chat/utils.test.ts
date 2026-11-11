@@ -7,6 +7,7 @@ import {
   getSavedVirtualTabs,
   getStoredUserAvatarVersion,
   getStoredUserName,
+  isChatRuntimeEventCurrent,
   saveUserAvatarVersion,
   saveUserName,
   saveVirtualTabs,
@@ -60,6 +61,17 @@ function makeSavedTab(id: string): SavedVirtualTab {
 
 beforeEach(() => {
   localStorage.clear()
+})
+
+it('历史回放和早于聊天消息的模型状态不会成为当前状态', () => {
+  const messages: ChatTab['messages'] = [
+    { id: 'reply', type: 'bot', content: '回复', timestamp: 20 },
+    { id: 'reconnect', type: 'system', content: '已连接', timestamp: 30 },
+  ]
+
+  expect(isChatRuntimeEventCurrent([], 10, true)).toBe(false)
+  expect(isChatRuntimeEventCurrent(messages, 10)).toBe(false)
+  expect(isChatRuntimeEventCurrent(messages, 25)).toBe(true)
 })
 
 describe('用户昵称存取', () => {

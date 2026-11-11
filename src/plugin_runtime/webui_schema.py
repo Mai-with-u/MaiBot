@@ -1,19 +1,19 @@
 """插件 WebUI 协议：共享 API 边界，分别定义简单组件页面与隔离 HTML 页面。"""
 
 from pathlib import Path
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 import hashlib
 import json
 import math
+import warnings
 
 Identifier = Annotated[str, Field(pattern=r"^[a-zA-Z][a-zA-Z0-9_-]{0,63}$")]
 Text = Annotated[str, Field(max_length=4000)]
 Label = Annotated[str, Field(min_length=1, max_length=80)]
 Scalar = Union[str, int, float, bool, None]
 MAX_DECLARATION_BYTES = 131072
-MAX_CUSTOM_DOCUMENT_BYTES = 2 * 1024 * 1024
 MAX_DOCUMENTS_BYTES = 8 * 1024 * 1024
 MAX_REGISTRATION_BYTES = 524288
 MAX_ARGUMENT_BYTES = 65536
@@ -175,7 +175,7 @@ class Node(StrictModel):
 
 class StackNode(Node):
     type: Literal["stack", "card"]
-    children: List["WebUINode"] = Field(default_factory=list, max_length=50)
+    children: List["WebUINode"] = Field(default_factory=list)
 
 
 class GridNode(StackNode):
@@ -330,12 +330,24 @@ class Page(StrictModel):
     placement: Literal["sidebar", "workspace"] = "sidebar"
     icon: Literal["puzzle", "chart", "settings", "database", "list"] = "puzzle"
 
+    @field_validator("placement")
+    @classmethod
+    def normalize_legacy_placement(cls, value: Literal["sidebar", "workspace"]) -> Literal["sidebar"]:
+        """旧插件的顶栏页面现在统一进入侧栏。"""
+        if value == "workspace":
+            warnings.warn(
+                'webui.json 的 placement="workspace" 已停用，页面已转入侧栏。请删除 placement 字段。',
+                UserWarning,
+                stacklevel=2,
+            )
+        return "sidebar"
+
 
 class DeclarativePage(Page):
     mode: Literal["declarative"] = "declarative"
-    queries: Dict[Identifier, DeclarativeBinding] = Field(default_factory=dict, max_length=10)
-    actions: Dict[Identifier, DeclarativeBinding] = Field(default_factory=dict, max_length=20)
-    content: List[WebUINode] = Field(min_length=1, max_length=50)
+    queries: Dict[Identifier, DeclarativeBinding] = Field(default_factory=dict)
+    actions: Dict[Identifier, DeclarativeBinding] = Field(default_factory=dict)
+    content: List[WebUINode] = Field(min_length=1)
     auto_refresh: bool = False
     poll_interval_seconds: int = Field(default=0, ge=0, le=60)
 
@@ -349,8 +361,8 @@ class DeclarativePage(Page):
         while pending:
             node, depth = pending.pop()
             nodes.append(node)
-            if depth > 8 or len(nodes) > 200:
-                raise ValueError("页面超过 8 层或 200 个组件")
+            if depth > 8:
+                raise ValueError("页面超过 8 层")
             if isinstance(node, StackNode):
                 pending.extend((child, depth + 1) for child in node.children)
             if isinstance(node, DialogNode):
@@ -404,11 +416,11 @@ class CustomPage(Page):
     mode: Literal["custom"]
     entry: str = Field(min_length=1, max_length=200)
     layout: Literal["document", "viewport"] = "document"
-    queries: Dict[Identifier, APIBinding] = Field(default_factory=dict, max_length=10)
-    actions: Dict[Identifier, APIBinding] = Field(default_factory=dict, max_length=20)
-    uploads: Dict[Identifier, ImageUpload] = Field(default_factory=dict, max_length=10)
+    queries: Dict[Identifier, APIBinding] = Field(default_factory=dict)
+    actions: Dict[Identifier, APIBinding] = Field(default_factory=dict)
+    uploads: Dict[Identifier, ImageUpload] = Field(default_factory=dict)
     # Runner 在线程读取产物；Host 保存已校验快照，不开放插件文件目录。
-    document: str = Field(min_length=1, max_length=MAX_CUSTOM_DOCUMENT_BYTES)
+    document: str = Field(min_length=1)
 
     @property
     def document_revision(self) -> str:
@@ -416,8 +428,8 @@ class CustomPage(Page):
 
     @model_validator(mode="after")
     def validate_page(self) -> "CustomPage":
-        if not self.document.strip() or len(self.document.encode("utf-8")) > MAX_CUSTOM_DOCUMENT_BYTES:
-            raise ValueError("自定义页面必须非空且不超过 2 MiB")
+        if not self.document.strip():
+            raise ValueError("自定义页面必须非空")
         if any(binding.confirmation for binding in self.queries.values()):
             raise ValueError("queries 不声明 confirmation")
         for upload in self.uploads.values():
@@ -440,7 +452,7 @@ class WebUIExtension(StrictModel):
         max_length=4,
     )
     workspace_title: Optional[Label] = None
-    pages: List[WebUIPage] = Field(min_length=1, max_length=20)
+    pages: List[WebUIPage] = Field(min_length=1)
 
     @model_validator(mode="before")
     @classmethod
@@ -472,8 +484,6 @@ class WebUIExtension(StrictModel):
     def validate_pages(self) -> "WebUIExtension":
         if len({page.id for page in self.pages}) != len(self.pages):
             raise ValueError("页面 ID 重复")
-        if any(page.placement == "workspace" for page in self.pages) and self.workspace_title is None:
-            raise ValueError("顶部工作区必须声明 workspace_title")
         total = 0
         for page in self.pages:
             bindings = [*page.queries.values(), *page.actions.values()]
@@ -500,11 +510,11 @@ class WebUIExtension(StrictModel):
 class WebUIDocument(StrictModel):
     id: Identifier
     entry: str = Field(min_length=1, max_length=200)
-    document: str = Field(min_length=1, max_length=MAX_CUSTOM_DOCUMENT_BYTES)
+    document: str = Field(min_length=1)
 
 
 class DocumentReload(StrictModel):
-    documents: List[WebUIDocument] = Field(max_length=20)
+    documents: List[WebUIDocument]
 
 
 def replace_webui_documents(extension: WebUIExtension, payload: Dict[str, Any]) -> WebUIExtension:
@@ -535,8 +545,6 @@ def load_webui_extension(plugin_dir: str) -> Optional[WebUIExtension]:
         raise ValueError("webui.json 超过 128 KiB")
     declaration = json.loads(raw)
     if isinstance(declaration, dict) and isinstance(declaration.get("pages"), list):
-        if len(declaration["pages"]) > 20:
-            raise ValueError("每插件最多 20 个页面")
         document_bytes = 0
         for page in declaration["pages"]:
             if not isinstance(page, dict) or page.get("mode") != "custom":
@@ -561,9 +569,7 @@ def load_webui_extension(plugin_dir: str) -> Optional[WebUIExtension]:
             if not target.is_file():
                 raise ValueError("entry 必须是普通 HTML 文件")
             with target.open("rb") as stream:
-                document = stream.read(MAX_CUSTOM_DOCUMENT_BYTES + 1)
-            if len(document) > MAX_CUSTOM_DOCUMENT_BYTES:
-                raise ValueError("自定义页面超过 2 MiB")
+                document = stream.read(MAX_DOCUMENTS_BYTES - document_bytes + 1)
             document_bytes += len(document)
             if document_bytes > MAX_DOCUMENTS_BYTES:
                 raise ValueError("自定义页面总量超过 8 MiB")

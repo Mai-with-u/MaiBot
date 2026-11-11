@@ -38,25 +38,35 @@ display_name = "Reply attachments"
 advanced = true
 description = "Explains that the system sends reply images, mentions and emojis, preventing attachment information from being repeated in the reply text."
 
-[retro_replyer]
-display_name = "Retro reply"
+[reply_group]
+display_name = "Group chat reply"
 advanced = true
-description = "Group chat reply template for retro mode (experimental.replyer_retro_prompt). Persona and chat guidelines are sent in the first system message; the remaining template is sent as a user message."
+description = "Default group chat reply template in Creative mode."
 
-[retro_replyer_light]
-display_name = "Retro reply (short)"
+[reply_group_mai_replier]
+display_name = "Mai Replier group chat reply"
 advanced = true
-description = "Short group chat reply template for retro mode, matching the legacy light reply used when think_level=0."
+description = "Group chat reply template for Mai Replier, using the wording from training."
 
-[retro_private_replyer]
-display_name = "Retro private reply"
+[reply_private]
+display_name = "Private chat reply"
 advanced = true
-description = "Private chat reply template for retro mode, organizing all reply instructions the legacy way."
+description = "Default private chat reply template in Creative mode."
 
-[retro_private_replyer_self]
-display_name = "Retro private follow-up reply"
+[reply_private_mai_replier]
+display_name = "Mai Replier private chat reply"
 advanced = true
-description = "Private chat follow-up template for retro mode, used to keep adding to a message Mai just sent."
+description = "Private chat reply template for Mai Replier."
+
+[reply_private_followup]
+display_name = "Private chat follow-up"
+advanced = true
+description = "Used in Creative mode when Mai adds to a message it just sent in a private chat."
+
+[reply_private_followup_mai_replier]
+display_name = "Mai Replier private chat follow-up"
+advanced = true
+description = "Used when Mai Replier adds to a message it just sent in a private chat."
 
 [default_expressor]
 display_name = "Default Expressor"
@@ -68,6 +78,11 @@ display_name = "Emoji Content Analysis"
 advanced = true
 description = "Template for analyzing the visual content of emoji or sticker images."
 
+[emoji_grouped_tags]
+display_name = "Grouped Sticker Tags"
+advanced = true
+description = "Identifies the sticker's emotion and visible content separately."
+
 [emoji_content_filtration]
 display_name = "Emoji Content Filtration"
 advanced = true
@@ -77,11 +92,6 @@ description = "Template for judging whether emoji or sticker content meets filtr
 display_name = "Emoji Replacement"
 advanced = true
 description = "Template for selecting or replacing emojis or stickers based on text context."
-
-[emoji_selection]
-display_name = "Emoji Selection"
-advanced = true
-description = "Template for choosing the most suitable emoji or sticker from a grid according to context and tone."
 
 [expression_evaluation]
 display_name = "Expression Evaluation"
@@ -168,6 +178,31 @@ display_name = "WebUI AI Search"
 advanced = true
 description = "Selects relevant results from real WebUI page and configuration candidates based on natural-language intent."
 
+[webui_help_skill_setup]
+display_name = "Setup and configuration workflow"
+advanced = true
+description = "Locates configuration, checks current values, and gives verifiable setup steps."
+
+[webui_help_skill_troubleshoot]
+display_name = "Troubleshooting workflow"
+advanced = true
+description = "Uses observed errors and settings to narrow the cause and identify the next check."
+
+[webui_help_skill_plugin]
+display_name = "Plugin selection and operations workflow"
+advanced = true
+description = "Checks plugin compatibility and uses the appropriate tools for installation or configuration."
+
+[webui_help_skill_develop]
+display_name = "Plugin development workflow"
+advanced = true
+description = "Uses version-relevant SDK docs for a minimal implementation and verification path."
+
+[webui_ai_search_input]
+display_name = "WebUI Help Conversation Input"
+advanced = true
+description = "Formats the current question and prior answers as untrusted context for the WebUI help agent."
+
 [webui_ai_search_final]
 display_name = "WebUI AI Search Final Instruction"
 advanced = true
@@ -193,11 +228,6 @@ display_name = "External agent policy"
 advanced = true
 description = "External agent policy。"
 
-[agent_acp_computer]
-display_name = "External agent computer usage"
-advanced = true
-description = "External agent computer usage。"
-
 [agent_acp_environment]
 display_name = "External agent environment"
 advanced = true
@@ -222,3 +252,68 @@ description = "External planner recovery。"
 display_name = "External planner continuation"
 advanced = true
 description = "External planner continuation。"
+
+[planner_reply_capabilities]
+display_name = "Planner reply capabilities"
+advanced = true
+description = "Available plugin reply capabilities for the current chat."
+
+[reply_cache]
+display_name = "Cached reply task"
+advanced = true
+description = "Switches to creative Replyer generation at the end of the Planner context."
+
+[desktop_pet_proactive_wake]
+display_name = "Desktop pet periodic reflection"
+advanced = false
+description = "Internal prompt for periodic reflection, autonomous exploration, and optional conversation."
+
+[desktop_pet_screen_read]
+display_name = "Desktop pet screen reading"
+advanced = false
+description = "Understand a local primary-screen capture, once or continuously."
+
+[desktop_pet_todo_context]
+display_name = "Resident owner todos"
+advanced = false
+description = "Refresh todos every turn and guide condition-based triggering."
+
+[desktop_pet_exploration]
+display_name = "Desktop pet exploration"
+advanced = false
+description = "Explore tool combinations for a human-defined goal and save evidence-backed candidate workflows."
+
+[desktop_pet_exploration_reuse]
+display_name = "Everyday exploration reuse"
+advanced = false
+description = "Retrieve and reuse exploration products as needed in ordinary owner chats."
+
+[desktop_pet_thinking_caption]
+display_name = "Desktop pet thinking caption"
+advanced = false
+description = "Summarizes the current run stage as a short, playful desktop pet status line."
+
+[maisaka_expression_selector]
+display_name = "Expression selection"
+advanced = true
+description = "Picks the expressions that fit this reply from the candidates, based on the chat context."
+
+[maisaka_replyer_document]
+display_name = "Long-form writing"
+advanced = false
+description = "Writes a complete article or community post in the bot's own identity and voice."
+
+[maisaka_wait_reminder]
+display_name = "Repeated wait reminder"
+advanced = true
+description = "After several consecutive waits, suggests waiting longer or ending this round to avoid an endless loop."
+
+[reply_supplement]
+display_name = "Reply supplement planning"
+advanced = true
+description = "While the reply body is generated in parallel, plans quotes, attachments and sending order."
+
+[reply_supplement_retry]
+display_name = "Reply supplement retry"
+advanced = true
+description = "Regenerates the reply supplement plan from the error of the previous failed attempt."

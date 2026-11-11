@@ -4,7 +4,7 @@ from typing import Any
 
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, ValidationError
 
 from src.config.official_configs import MCPServerItemConfig
@@ -12,9 +12,8 @@ from src.mcp_module.config import MCPClientRuntimeConfig, build_mcp_server_runti
 from src.mcp_module.connection import MCPConnection
 from src.mcp_module.models import build_tool_annotation
 from src.mcp_module.service import get_mcp_service
-from src.webui.dependencies import require_auth
 
-router = APIRouter(prefix="/mcp", tags=["mcp"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/mcp", tags=["mcp"])
 
 
 class MCPToolPreview(BaseModel):

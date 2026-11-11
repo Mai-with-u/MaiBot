@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional, Set
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, case, cast, func, not_, or_, String as SQLString
 from sqlmodel import Session, col, delete, select
@@ -13,13 +13,11 @@ from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
 from src.common.database.database import get_db_session
 from src.common.database.database_model import ChatSession, Jargon, JargonCreatedBy, Messages
 from src.common.logger import get_logger
-from src.common.utils.utils_config import JargonConfigUtils
-from src.config.config import global_config
-from src.webui.dependencies import require_auth
+from src.services.sharing_group_service import list_groups, resolved_members
 
 logger = get_logger("webui.jargon")
 
-router = APIRouter(prefix="/jargon", tags=["Jargon"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/jargon", tags=["Jargon"])
 JARGON_SESSION_IDS_QUERY = Query(None, description="按共享组内任一聊天流ID筛选")
 
 
@@ -273,10 +271,13 @@ class ChatListResponse(BaseModel):
 class JargonGroupInfo(BaseModel):
     """黑话共享组及已解析的真实聊天流。"""
 
+    id: str
+    color: str
     index: int
     name: str
     session_ids: List[str]
     members: List[ChatInfoResponse]
+    jargon_count: int = 0
     is_global: bool = False
 
 
@@ -953,23 +954,31 @@ def get_jargon_groups() -> JargonGroupListResponse:
     """按黑话共享配置解析组成员，不生成新的会话 ID。"""
     chats = {chat.session_id: chat for chat in get_chat_list(include_empty=True).data}
     groups: List[JargonGroupInfo] = []
-    for index, group in enumerate(global_config.jargon.jargon_groups):
-        session_ids: Set[str] = set()
-        is_global = False
-        for target in group.targets:
-            session_ids.update(JargonConfigUtils.get_target_session_ids_with_wildcards(target))
-            if target.platform.strip() == "*" and target.item_id.strip() == "*":
-                is_global = True
+    for index, group in enumerate(group for group in list_groups() if group["enabled"] and group["capabilities"].get("jargon")):
+        session_ids = resolved_members(group)
+        is_global = any(rule == {"platform": "*", "item_id": "*", "rule_type": "all"} for rule in group["rules"])
         resolved_ids = sorted(session_ids)
         groups.append(
             JargonGroupInfo(
                 index=index,
-                name=f"共享组 {index + 1}",
+                id=group["id"],
+                color=group["color"],
+                name=group["name"],
                 session_ids=resolved_ids,
                 members=[chats[session_id] for session_id in resolved_ids if session_id in chats],
                 is_global=is_global,
             )
         )
+    # 按组查询记录数，同一条黑话命中多个成员时只计一次。
+    with get_db_session() as session:
+        for group_info in groups:
+            statement = select(Jargon.id)
+            if not group_info.is_global:
+                scope_filter = build_session_id_dict_filter(group_info.session_ids)
+                if scope_filter is None:
+                    continue
+                statement = statement.where(scope_filter)
+            group_info.jargon_count = count_jargon_query(session, statement)
     return JargonGroupListResponse(data=groups)
 
 

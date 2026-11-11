@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from maim_message import BaseMessageInfo, MessageBase, Seg, UserInfo
+from pathlib import Path
 from sqlmodel import select
 from typing import Any, Dict, List, Optional, Union
 
@@ -113,13 +114,15 @@ class EmojiComponent(BaseMessageComponentModel, ByteComponent):
         from src.common.database.database import get_db_session
         from src.common.database.database_model import Images, ImageType
 
-        try:
+        def find_image_path() -> Path:
             with get_db_session() as db:
                 statement = select(Images).filter_by(image_hash=self.binary_hash, image_type=ImageType.EMOJI).limit(1)
                 if image_record := db.exec(statement).first():
-                    image_path = resolve_stored_image_path(image_record.full_path)
-                else:
-                    raise ValueError(f"无法通过 emoji_hash 加载表情二进制数据: {self.binary_hash}")
+                    return resolve_stored_image_path(image_record.full_path)
+                raise ValueError(f"无法通过 emoji_hash 加载表情二进制数据: {self.binary_hash}")
+
+        try:
+            image_path = await asyncio.to_thread(find_image_path)
             self.binary_data = await asyncio.to_thread(image_path.read_bytes)
         except Exception as e:
             raise ValueError(f"通过 emoji_hash 加载表情二进制数据时发生错误: {e}") from e

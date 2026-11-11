@@ -5,20 +5,18 @@ import { Button } from '@/components/ui/button'
 import { ConversationAvatar, ConversationHeader } from '@/components/ui/conversation'
 import { StatusIndicator } from '@/components/ui/data-browser'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { useResolvedAvatarUrl } from '@/lib/avatar-url'
+import { useChatTabAvatarUrl } from './local-bot-avatar'
+import { LocalBotAvatarSettings } from './LocalBotAvatarSettings'
 
 import type { ChatTab } from './types'
 import { getChatTabDisplayName } from './utils'
 
 /** 本地与虚拟会话共用标题栏；清空仅作用于当前显示的消息。 */
-export function ChatConversationHeader({ tab, onClear }: { tab: ChatTab; onClear: () => void }) {
+export function ChatConversationHeader({ tab, onClear, onObserve }: { tab: ChatTab; onClear: () => void; onObserve?: () => void }) {
   const { t } = useTranslation()
   const name = getChatTabDisplayName(tab, t('chat.botNameFallback'))
   const virtual = tab.type === 'virtual'
-  const avatar = useResolvedAvatarUrl(
-    virtual ? tab.virtualConfig?.platform : 'qq',
-    virtual ? tab.virtualConfig?.userId : tab.sessionInfo.bot_qq
-  )
+  const avatar = useChatTabAvatarUrl(tab)
   const connection = t(tab.isConnected ? 'chat.sidebar.online' : 'chat.sidebar.offline')
   return (
     <ConversationHeader
@@ -31,6 +29,7 @@ export function ChatConversationHeader({ tab, onClear }: { tab: ChatTab; onClear
       }
       actions={
         <>
+          {onObserve && <Button variant="outline" size="sm" onClick={onObserve}>观察</Button>}
           <Popover>
             <PopoverTrigger asChild>
               <Button variant="outline" size="icon-sm" aria-label="会话信息">
@@ -42,6 +41,7 @@ export function ChatConversationHeader({ tab, onClear }: { tab: ChatTab; onClear
               <p className="text-muted-foreground mt-2 text-xs">
                 {tab.messages.length} 条消息 · {connection}
               </p>
+              {!virtual && <LocalBotAvatarSettings botQq={tab.sessionInfo.bot_qq} />}
             </PopoverContent>
           </Popover>
           <Button

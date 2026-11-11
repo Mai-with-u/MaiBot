@@ -158,7 +158,6 @@ def _build_client(
         ).normalized_config
 
     monkeypatch.setattr(support_module, "get_plugins_dir", lambda: plugins_dir)
-    monkeypatch.setattr(config_routes_module, "require_plugin_token", lambda _: "ok")
     monkeypatch.setattr(config_routes_module, "_inspect_plugin_config_via_runtime", fake_inspect_plugin_config)
     monkeypatch.setattr(config_routes_module, "_validate_plugin_config_via_runtime", fake_validate_plugin_config)
 

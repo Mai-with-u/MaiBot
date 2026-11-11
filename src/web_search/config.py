@@ -5,6 +5,14 @@ from urllib.parse import urlsplit
 
 from src.config.config_base import ConfigBase, Field
 
+from .models import WebSearchError
+
+
+class WebSearchConfigError(WebSearchError):
+    """已分配的联网服务缺失或配置不完整。"""
+
+    code = "E_WEB_SERVICE_CONFIG_INVALID"
+
 
 class WebServiceConfig(ConfigBase):
     adapter: Literal["deepseek", "tavily", "stepsearch_mcp", "anysearch", "exa", "firecrawl"] = "deepseek"
@@ -65,12 +73,24 @@ class WebSearchTaskConfig(ConfigBase):
 def resolve_web_search_config(config: WebConfig, task: WebSearchTaskConfig) -> "WebRuntimeConfig":
     """只有功能分配能启用统一联网工具，服务定义本身不授予使用权限。"""
     selected = task.model_list[0] if task.model_list else ""
-    if selected and selected not in config.services:
-        raise ValueError(f"web_search 引用了不存在的联网服务：{selected}，请先取消该功能分配")
     return WebRuntimeConfig(
         enabled=bool(selected), search=selected, fetch=selected,
         preview_chars=config.preview_chars, services=config.services,
     )
+
+
+def require_web_service(config: WebConfig, name: str) -> WebServiceConfig:
+    """获取指定的联网服务并检查调用所需的配置。"""
+    service = config.services.get(name)
+    if service is None:
+        raise WebSearchConfigError(f"web_search 引用了不存在的联网服务：{name}，请修正或取消该功能分配")
+    if service.adapter == "stepsearch_mcp":
+        field, value = "server_ref", service.server_ref
+    else:
+        field, value = "api_key", service.api_key
+    if not value.strip():
+        raise WebSearchConfigError(f"联网服务 {name} 缺少 {field}")
+    return service
 
 
 class WebRuntimeConfig(WebConfig):
@@ -86,16 +106,6 @@ class WebRuntimeConfig(WebConfig):
     """网页读取使用的 services 条目名；留空不提供统一读取工具。"""
 
     def model_post_init(self, context: Any = None) -> None:
-        for operation in ("search", "fetch"):
-            selected = self.search if operation == "search" else self.fetch
-            if selected and selected not in self.services:
-                raise ValueError(f"web.{operation} 引用了不存在的服务：{selected}")
-            if self.enabled and selected:
-                service = self.services[selected]
-                if service.adapter == "stepsearch_mcp" and not service.server_ref.strip():
-                    raise ValueError(f"联网服务 {selected} 缺少 server_ref")
-                if service.adapter != "stepsearch_mcp" and not service.api_key.strip():
-                    raise ValueError(f"联网服务 {selected} 缺少 api_key")
         if self.enabled and not (self.search or self.fetch):
             raise ValueError("启用联网功能时至少需要选择一个 search 或 fetch 服务")
         super().model_post_init(context)

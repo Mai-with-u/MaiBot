@@ -12,7 +12,6 @@ import venv
 import pytest
 
 from src.plugin_runtime.dependency_pipeline import CombinedPackageRequirement, PluginDependencyPipeline
-from src.plugin_runtime.runner.plugin_loader import PluginLoader
 from src.plugin_runtime.runner.manifest_validator import ManifestValidator, PluginManifest
 
 
@@ -74,12 +73,13 @@ async def test_disabled_plugin_is_skipped_before_manifest_and_dependency_analysi
     monkeypatch.setattr(pipeline._manifest_validator, "load_from_plugin_path", load_manifest)
     monkeypatch.setattr(ManifestValidator, "get_installed_package_version", lambda self, name: None)
     installer = AsyncMock(return_value=(True, ""))
-    monkeypatch.setattr(pipeline, "_install_requirements", installer)
+    monkeypatch.setattr(pipeline, "install_requirements", installer)
 
     result = await pipeline.execute([plugin_root])
 
-    assert result.blocked_plugin_reasons == {}
-    installer.assert_awaited_once()
+    assert "test.enabled" in result.blocked_plugin_reasons
+    # Python 环境由所有 Bot 共用，运行中的 Bot 只汇报缺少的依赖，安装由宿主统一执行。
+    installer.assert_not_awaited()
     assert [item.requirement_text for item in result.install_requirements] == ["missing-package>=1"]
     assert result.install_requirements[0].plugin_ids == ("test.enabled",)
 
@@ -87,7 +87,7 @@ async def test_disabled_plugin_is_skipped_before_manifest_and_dependency_analysi
 @pytest.mark.asyncio
 @pytest.mark.parametrize("installed_version, requirement", [("13.0.0", ">=11,<13"), ("10.0.0", ">=11")])
 @pytest.mark.parametrize("loaded", [False, True])
-async def test_installed_version_conflict_skips_install_without_blocking_plugin(
+async def test_installed_version_conflict_blocks_import_without_modifying_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, installed_version: str, requirement: str, loaded: bool
 ) -> None:
     # Pillow 的发行包名与导入名不同；无论 PIL 是否已导入，都禁止热替换。
@@ -100,17 +100,16 @@ async def test_installed_version_conflict_skips_install_without_blocking_plugin(
     monkeypatch.setattr(pipeline, "_collect_manifests", lambda dirs: manifests)
     monkeypatch.setattr(ManifestValidator, "get_installed_package_version", lambda self, name: installed_version)
     installer = AsyncMock()
-    monkeypatch.setattr(pipeline, "_install_requirements", installer)
+    monkeypatch.setattr(pipeline, "install_requirements", installer)
 
     result = await pipeline.execute([])
 
     installer.assert_not_called()
-    assert not result.environment_changed
     assert result.install_requirements == ()
-    assert result.blocked_plugin_reasons == {}
+    assert "共享环境冲突" in result.blocked_plugin_reasons["test.incompatible"]
 
 
-def test_installed_package_conflicts_do_not_block_plugins_or_their_missing_dependencies(
+def test_installed_package_conflicts_isolate_incompatible_plugins(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pipeline = PluginDependencyPipeline(project_root=tmp_path)
@@ -125,72 +124,41 @@ def test_installed_package_conflicts_do_not_block_plugins_or_their_missing_depen
 
     plan = pipeline.build_plan([])
 
-    assert plan.blocked_plugin_reasons == {}
-    assert [requirement.requirement_text for requirement in plan.install_requirements] == [
-        "another-package>=1", "new-package>=1"
-    ]
-    assert plan.install_requirements[0].plugin_ids == ("test.incompatible",)
-    assert plan.install_requirements[1].plugin_ids == ("test.compatible",)
+    assert "test.incompatible" in plan.blocked_plugin_reasons
+    assert [item.requirement_text for item in plan.install_requirements] == ["new-package>=1"]
+    assert plan.install_requirements[0].plugin_ids == ("test.compatible",)
+
 
 
 @pytest.mark.asyncio
-async def test_install_failure_reports_error_without_blocking_plugin(
+async def test_dependency_request_failure_blocks_import_and_preserves_other_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pipeline = PluginDependencyPipeline(project_root=tmp_path)
     manifests = {"test.plugin": _manifest("test.plugin", {"new-package": ">=1"})}
     monkeypatch.setattr(pipeline, "_collect_manifests", lambda dirs: manifests)
     monkeypatch.setattr(ManifestValidator, "get_installed_package_version", lambda self, name: None)
-    monkeypatch.setattr(pipeline, "_install_requirements", AsyncMock(return_value=(False, "resolver conflict")))
     error_log = Mock()
     monkeypatch.setattr("src.plugin_runtime.dependency_pipeline.logger.error", error_log)
 
     result = await pipeline.execute([], initial_blocked_plugin_reasons={"test.duplicate": "插件 ID 重复"})
 
-    assert result.blocked_plugin_reasons == {"test.duplicate": "插件 ID 重复"}
-    assert not result.environment_changed
-    assert "resolver conflict" in error_log.call_args.args[0]
+    assert result.blocked_plugin_reasons["test.duplicate"] == "插件 ID 重复"
+    assert "无法准备插件依赖" in result.blocked_plugin_reasons["test.plugin"]
+    assert "无法准备插件依赖" in error_log.call_args.args[0] and "new-package>=1" in error_log.call_args.args[0]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("runtime_error", [False, True])
-async def test_version_mismatch_reaches_plugin_code_and_reports_actual_errors(
-    tmp_path: Path, runtime_error: bool
-) -> None:
-    # 主程序和插件约束没有交集，但已有 packaging 可用，仍应执行插件入口。
-    (tmp_path / "pyproject.toml").write_text(
-        '[project]\nname = "fake-host"\nversion = "1.0.0"\ndependencies = ["packaging>=24"]\n',
-        encoding="utf-8",
-    )
-    plugin_root = tmp_path / "plugins"
-    plugin_dir = plugin_root / "version_mismatch"
-    plugin_dir.mkdir(parents=True)
-    manifest = _manifest("test.version-mismatch", {"packaging": "<1"})
-    (plugin_dir / "_manifest.json").write_text(manifest.model_dump_json(), encoding="utf-8")
-    # 成功路径实际调用已安装包；失败路径模拟插件使用不兼容 API 时暴露原始异常。
-    code = (
-        'raise RuntimeError("actual dependency API incompatible")\n'
-        if runtime_error
-        else 'from packaging.version import Version\ndef create_plugin():\n    return Version("1.0")\n'
-    )
-    (plugin_dir / "plugin.py").write_text(code, encoding="utf-8")
+async def test_missing_dependency_requests_host_and_blocks_import(tmp_path, monkeypatch):
     pipeline = PluginDependencyPipeline(project_root=tmp_path)
-    result = await pipeline.execute([plugin_root])
-    assert result.install_requirements == ()
-    assert result.blocked_plugin_reasons == {}
-
-    loader = PluginLoader(host_version="1.0.0")
-    loader.set_blocked_plugin_reasons(result.blocked_plugin_reasons)
-    try:
-        loaded = loader.discover_and_load([str(plugin_root)])
-        if runtime_error:
-            assert loaded == []
-            assert "actual dependency API incompatible" in loader.failed_plugins[manifest.id]
-        else:
-            assert [plugin.plugin_id for plugin in loaded] == [manifest.id]
-            assert loader.failed_plugins == {}
-    finally:
-        loader.purge_plugin_modules(manifest.id, str(plugin_dir))
+    manifests = {"test.plugin": _manifest("test.plugin", {"new-package": ">=1"})}
+    monkeypatch.setattr(pipeline, "_collect_manifests", lambda dirs: manifests)
+    monkeypatch.setattr(ManifestValidator, "get_installed_package_version", lambda self, name: None)
+    request = AsyncMock()
+    monkeypatch.setattr("src.plugin_runtime.dependency_pipeline.request_dependency_preparation", request)
+    result = await pipeline.execute([])
+    request.assert_awaited_once()
+    assert "自动恢复" in result.blocked_plugin_reasons["test.plugin"]
 
 
 def test_installed_constraints_use_distribution_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -213,7 +181,7 @@ async def test_constraint_snapshot_failure_cancels_install(tmp_path: Path, monke
     monkeypatch.setattr(pipeline, "_load_installed_package_constraints", snapshot)
     monkeypatch.setattr(subprocess, "run", installer)
 
-    succeeded, error = await pipeline._install_requirements(
+    succeeded, error = await pipeline.install_requirements(
         [CombinedPackageRequirement("new-package", ("test.plugin",), "new-package", "")]
     )
 
@@ -271,7 +239,7 @@ async def test_transitive_dependency_preserves_installed_package(
         return [*command, "--no-config", "--offline", "--no-index", "--find-links", str(tmp_path)]
 
     monkeypatch.setattr(pipeline, "_build_install_command", offline_command)
-    succeeded, error = await pipeline._install_requirements(
+    succeeded, error = await pipeline.install_requirements(
         [CombinedPackageRequirement("safety-plugin-dep", ("test.plugin",), "safety-plugin-dep", "")]
     )
 

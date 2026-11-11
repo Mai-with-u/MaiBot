@@ -37,6 +37,7 @@ export interface TimelineEntry {
 
 /** 会话概要信息 */
 export interface SessionInfo {
+  focusSessionIds?: string[]
   sessionId: string
   sessionName: string
   isGroupChat?: boolean
@@ -83,7 +84,6 @@ export interface SubagentTaskInfo {
   callId: string
   description: string
   grantedTools: string[]
-  background: boolean
   maxRounds: number
   status: SubagentTaskStatus
   startedAt: number
@@ -370,12 +370,16 @@ function updateSessionInfo(
   const sessionName =
     typeof dataRecord.session_name === 'string' ? dataRecord.session_name : undefined
 
+  const focusSessionIds = Array.isArray(dataRecord.focus_session_ids)
+    ? dataRecord.focus_session_ids.filter((id): id is string => typeof id === 'string')
+    : undefined
   const next = new Map(cachedSessions)
   const existing = next.get(sessionId)
 
   if (event.type === 'session.start' || !existing) {
     next.set(sessionId, {
       sessionId,
+      focusSessionIds,
       sessionName: resolveSessionDisplayName({
         fallbackName: sessionName,
         groupId,
@@ -393,6 +397,7 @@ function updateSessionInfo(
   } else {
     next.set(sessionId, {
       ...existing,
+      focusSessionIds: focusSessionIds ?? existing.focusSessionIds,
       sessionName: resolveSessionDisplayName({
         fallbackName: sessionName ?? existing.sessionName,
         groupId: groupId ?? existing.groupId,
@@ -434,6 +439,7 @@ function updateStageStatus(event: MaisakaMonitorEvent) {
       const status = toStageStatusInfo(rawEntry as Record<string, unknown>)
       if (status) {
         applyStatusIfFresh(next, status)
+        updateSessionInfo({ type: 'stage.status', data: rawEntry }, status.sessionId, status.updatedAt, false)
       }
     }
     cachedStageStatuses = next
@@ -548,7 +554,6 @@ function applySubagentEvent(event: MaisakaMonitorEvent, sessionId: string) {
       callId: data.call_id,
       description: data.description,
       grantedTools: data.granted_tools ?? [],
-      background: data.background,
       maxRounds: data.max_rounds,
       status: 'running',
       startedAt: data.timestamp,

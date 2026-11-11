@@ -21,6 +21,8 @@ from src.common.paths import get_instance_root
 from src.common.logger import get_logger
 from src.config.config import config_manager
 
+from .expression_vector_storage import VectorMatrix, blocks, cleanup_migration_backup, cleanup_retired, generation_files, generation_guard, load_array, normalize, remove_generation, retire_generation, stack_rows, write_arrays
+
 logger = get_logger("expression_vector_index")
 PROJECT_ROOT = get_instance_root()
 
@@ -92,7 +94,7 @@ class ExpressionVectorIndexSnapshot:
     mtime: float
     embedding_model: str
     expressions: List[IndexedExpression]
-    profile_vectors: Dict[str, np.ndarray]
+    profile_vectors: Dict[str, VectorMatrix]
     profile_cluster_centers: Dict[str, np.ndarray]
 
 
@@ -406,19 +408,12 @@ def resolve_project_path(raw_path: str) -> Path:
 def l2_normalize(matrix: np.ndarray) -> np.ndarray:
     """按行执行 L2 归一化。"""
 
-    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-    if np.any(norms <= 0):
-        raise ValueError("表达向量索引包含零向量，无法用于余弦检索")
-    return matrix / norms
+    return normalize(matrix)
 
 
-def _load_npz_array(npz_path: Path, key: str) -> np.ndarray:
-    """从 npz 中读取指定数组，并给出清晰错误。"""
-
-    with np.load(npz_path) as payload:
-        if key not in payload:
-            raise ValueError(f"表达向量索引缺少数组: {key}")
-        return np.array(payload[key], dtype=np.float32)
+def _load_npz_array(npz_path: Path, key: str) -> VectorMatrix:
+    """兼容历史 NPZ，或加载已归一化的只读 NPY 映射。"""
+    return load_array(npz_path, key)
 
 
 def _resolve_vectors_path(index_path: Path, payload: dict[str, Any]) -> Path:
@@ -492,6 +487,34 @@ def _read_and_parse_index_payload(index_path: Path) -> dict[str, Any] | None:
             f"path={index_path} type={type(payload).__name__}"
         )
         return None
+    raw_rows = payload.get("expressions", [])
+    if not isinstance(raw_rows, list):
+        raise ValueError("表达索引 expressions 不是列表")
+    valid_rows = []
+    rejected = 0
+    seen = set()
+    for position, row in enumerate(raw_rows):
+        try:
+            if not isinstance(row, dict):
+                raise ValueError("记录不是对象")
+            expression_id = int(row.get("id") or 0)
+            if expression_id <= 0 or expression_id in seen:
+                raise ValueError("表达 ID 无效或重复")
+            for field_name in ("vector_index", "cluster_id", "count", "embedding_dimension"):
+                if row.get(field_name) is not None:
+                    int(row[field_name])
+            if not normalize_text(row.get("situation")) or not normalize_text(row.get("style")):
+                raise ValueError("表达情景或风格为空")
+            seen.add(expression_id)
+            # 旧版以记录位置关联向量；过滤坏记录前固定原位置，防止后续行错配。
+            row.setdefault("vector_index", position)
+            valid_rows.append(row)
+        except (ValueError, TypeError, OverflowError) as exc:
+            rejected += 1
+            logger.warning("表达索引跳过损坏元数据: path=%s row=%s reason=%s", index_path, position, exc)
+    if rejected > max(1, len(raw_rows) // 100) or (raw_rows and not valid_rows):
+        raise ValueError(f"表达索引元数据损坏超出恢复上限: rejected={rejected} total={len(raw_rows)}")
+    payload["expressions"] = valid_rows
     return payload
 
 
@@ -538,7 +561,9 @@ def _load_mutable_index_payload(index_path: Path) -> dict[str, Any] | None:
     payload = _load_index_payload(index_path)
     if payload is None:
         return None
-    return copy.deepcopy(payload)
+    # 表达记录只包含标量字段；保留共享不可变字符串，独立复制可变元数据。
+    return {key: ([dict(item) for item in value] if key == "expressions" else copy.deepcopy(value))
+            for key, value in payload.items()}
 
 
 # 补建流程会在同一轮里多次判断「哪些表达缺向量」，每次都全表读取 expressions
@@ -768,12 +793,13 @@ class ExpressionVectorIndex:
                 or vectors_path.name.startswith(f"{index_path.stem}.vectors-")
             ):
                 vectors_path.unlink(missing_ok=True)
-            index_path.unlink()
+            with generation_guard():
+                index_path.unlink()
+                retire_generation(vectors_path)
         else:
             # 保留其余模型分组的数组和索引位置，只移除目标分组。
-            with np.load(vectors_path) as arrays:
-                vectors = {item["marker"]: arrays[item["vectors_key"]] for item in remaining}
-                centers = {item["marker"]: arrays[item["cluster_centers_key"]] for item in remaining}
+            vectors = {item["marker"]: _load_npz_array(vectors_path, item["vectors_key"]) for item in remaining}
+            centers = {item["marker"]: _load_npz_array(vectors_path, item["cluster_centers_key"]) for item in remaining}
             payload["expressions"] = [
                 item for item in payload.get("expressions", [])
                 if (item.get("embedding_profile_marker") or payload.get("embedding_profile_marker")
@@ -992,6 +1018,8 @@ class ExpressionVectorIndex:
     def _load_snapshot(self, index_path: Path) -> ExpressionVectorIndexSnapshot | None:
         """按 mtime 缓存并加载索引文件。"""
 
+        cleanup_migration_backup(index_path)
+
         if not index_path.exists():
             logger.warning(f"表达向量索引不存在，跳过向量召回: {index_path}")
             return None
@@ -1009,7 +1037,7 @@ class ExpressionVectorIndex:
 
         vectors_path = _resolve_vectors_path(index_path, payload)
 
-        profile_vectors: Dict[str, np.ndarray] = {}
+        profile_vectors: Dict[str, VectorMatrix] = {}
         profile_cluster_centers: Dict[str, np.ndarray] = {}
         raw_profiles = payload.get("embedding_profiles")
         if isinstance(raw_profiles, list) and raw_profiles:
@@ -1021,8 +1049,8 @@ class ExpressionVectorIndex:
                 cluster_centers_key = normalize_text(raw_profile.get("cluster_centers_key"))
                 if not marker or not vectors_key or not cluster_centers_key:
                     continue
-                vectors = l2_normalize(_load_npz_array(vectors_path, vectors_key))
-                cluster_centers = l2_normalize(_load_npz_array(vectors_path, cluster_centers_key))
+                vectors = _load_npz_array(vectors_path, vectors_key)
+                cluster_centers = _load_npz_array(vectors_path, cluster_centers_key)
                 if cluster_centers.ndim != 2 or vectors.ndim != 2 or cluster_centers.shape[1] != vectors.shape[1]:
                     raise ValueError(
                         f"表达向量索引 profile 维度异常: marker={marker[:12]} "
@@ -1032,10 +1060,11 @@ class ExpressionVectorIndex:
                 profile_cluster_centers[marker] = cluster_centers
         else:
             legacy_marker = normalize_text(payload.get("embedding_profile_marker")) or LEGACY_EMBEDDING_PROFILE_MARKER
-            profile_vectors[legacy_marker] = l2_normalize(_load_npz_array(vectors_path, "vectors"))
-            profile_cluster_centers[legacy_marker] = l2_normalize(_load_npz_array(vectors_path, "cluster_centers"))
+            profile_vectors[legacy_marker] = _load_npz_array(vectors_path, "vectors")
+            profile_cluster_centers[legacy_marker] = _load_npz_array(vectors_path, "cluster_centers")
 
         expressions: List[IndexedExpression] = []
+        invalid_vector_rows = 0
         for index, raw_expression in enumerate(payload.get("expressions") or []):
             if not isinstance(raw_expression, dict):
                 continue
@@ -1054,10 +1083,20 @@ class ExpressionVectorIndex:
             if profile_vectors_for_marker is None:
                 continue
             if vector_index < 0 or vector_index >= profile_vectors_for_marker.shape[0]:
-                raise ValueError(
-                    f"表达向量索引 vector_index 越界: id={expression_id}, marker={profile_marker[:12]}, "
-                    f"vector_index={vector_index}, vectors={profile_vectors_for_marker.shape[0]}"
-                )
+                invalid_vector_rows += 1
+                logger.warning("跳过表达索引越界引用: id=%s row=%s", expression_id, vector_index)
+                if invalid_vector_rows > max(1, len(payload.get("expressions", [])) // 100):
+                    raise ValueError("表达索引越界引用超过恢复上限")
+                continue
+            if not np.isfinite(profile_vectors_for_marker[vector_index]).all():
+                logger.warning("跳过表达索引坏向量: id=%s profile=%s row=%s", expression_id, profile_marker, vector_index)
+                continue
+            centers = profile_cluster_centers[profile_marker]
+            if cluster_id < 0 or cluster_id >= centers.shape[0]:
+                if not len(centers):
+                    raise ValueError("表达索引没有可用聚类中心")
+                logger.warning("表达旧索引簇标签越界，重新分配: id=%s cluster=%s", expression_id, cluster_id)
+                cluster_id = int(np.argmax(centers @ profile_vectors_for_marker[vector_index]))
             expressions.append(
                 IndexedExpression(
                     id=expression_id,
@@ -1140,7 +1179,7 @@ class ExpressionVectorIndex:
     @staticmethod
     def _select_by_mmr(
         scored_candidates: List[dict[str, Any]],
-        vectors: np.ndarray,
+        vectors: VectorMatrix,
         *,
         limit: int,
     ) -> List[dict[str, Any]]:
@@ -1156,14 +1195,14 @@ class ExpressionVectorIndex:
             dtype=np.int64,
             count=len(scored_candidates),
         )
-        candidate_vectors = np.ascontiguousarray(vectors[candidate_vector_indices])
+        # 只保留候选行号，MMR 按块读取，避免候选池复制整个向量矩阵。
         relevance_scores = np.fromiter(
             (float(item["score"]) for item in scored_candidates),
             dtype=np.float64,
             count=len(scored_candidates),
         )
         selected_mask = np.zeros(len(scored_candidates), dtype=bool)
-        max_diversity_penalties = np.empty(len(scored_candidates), dtype=candidate_vectors.dtype)
+        max_diversity_penalties = np.empty(len(scored_candidates), dtype=vectors.dtype)
         selected_positions: List[int] = []
 
         for selection_index in range(min(limit, len(scored_candidates))):
@@ -1179,7 +1218,10 @@ class ExpressionVectorIndex:
             selected_mask[best_position] = True
 
             # 已计算过的最大重复度不会下降；每轮只需与新选中的表达比较一次。
-            similarities_to_new_selection = candidate_vectors @ candidate_vectors[best_position]
+            selected_vector = vectors[candidate_vector_indices[best_position]]
+            similarities_to_new_selection = np.empty(len(scored_candidates), dtype=vectors.dtype)
+            for part in blocks(len(scored_candidates), vectors.shape[1]):
+                similarities_to_new_selection[part] = vectors[candidate_vector_indices[part]] @ selected_vector
             if selection_index == 0:
                 max_diversity_penalties[:] = similarities_to_new_selection
             else:
@@ -1527,7 +1569,7 @@ class ExpressionVectorIndex:
 
     @staticmethod
     def _select_nearest_clusters(
-        vectors: np.ndarray,
+        vectors: VectorMatrix,
         cluster_centers: np.ndarray,
     ) -> np.ndarray:
         """批量将新增/更新向量分配到最近的现有簇。"""
@@ -1557,7 +1599,8 @@ class ExpressionVectorIndex:
 
         repaired_labels = labels.copy()
         member_counts = np.bincount(repaired_labels, minlength=cluster_count)
-        assigned_similarities = similarities[np.arange(repaired_labels.shape[0]), repaired_labels]
+        assigned_similarities = (similarities if similarities.ndim == 1
+                                 else similarities[np.arange(repaired_labels.shape[0]), repaired_labels])
 
         for empty_cluster_id in np.flatnonzero(member_counts == 0):
             donor_candidates = np.flatnonzero(member_counts[repaired_labels] > 1)
@@ -1577,7 +1620,7 @@ class ExpressionVectorIndex:
 
     @staticmethod
     def _run_kmeans(
-        normalized_vectors: np.ndarray,
+        normalized_vectors: VectorMatrix,
         *,
         cluster_count: int,
         initial_centers: np.ndarray | None = None,
@@ -1635,8 +1678,13 @@ class ExpressionVectorIndex:
             centroids = normalized_vectors[centroid_indices].copy()
         labels = np.full(sample_count, -1, dtype=np.int32)
         for _ in range(max_iter):
-            similarities = normalized_vectors @ centroids.T
-            next_labels = np.argmax(similarities, axis=1).astype(np.int32)
+            next_labels = np.empty(sample_count, dtype=np.int32)
+            similarities = np.empty(sample_count, dtype=np.float32)
+            for part in blocks(sample_count, max(normalized_vectors.shape[1], cluster_count)):
+                batch_scores = normalized_vectors[part] @ centroids.T
+                batch_labels = np.argmax(batch_scores, axis=1)
+                next_labels[part] = batch_labels
+                similarities[part] = batch_scores[np.arange(len(batch_labels)), batch_labels]
             next_labels = ExpressionVectorIndex._repair_empty_cluster_labels(
                 next_labels,
                 similarities,
@@ -1660,27 +1708,26 @@ class ExpressionVectorIndex:
 
     @staticmethod
     def _build_cluster_centers_from_labels(
-        normalized_vectors: np.ndarray,
+        normalized_vectors: VectorMatrix,
         labels: np.ndarray,
         cluster_count: int,
     ) -> np.ndarray:
         """根据 k-means 标签计算中心向量。"""
 
-        centers: List[np.ndarray] = []
-        for cluster_id in range(cluster_count):
-            member_vectors = normalized_vectors[labels == cluster_id]
-            if len(member_vectors) == 0:
-                raise ValueError(f"表达向量索引聚类 {cluster_id} 没有成员")
-            center = member_vectors.mean(axis=0)
-            norm = float(np.linalg.norm(center))
-            if norm <= 0:
-                raise ValueError(f"表达向量索引聚类 {cluster_id} 中心向量为零")
-            centers.append((center / norm).astype(np.float32))
-        return np.vstack(centers).astype(np.float32)
+        sums = np.zeros((cluster_count, normalized_vectors.shape[1]), dtype=np.float64)
+        counts = np.bincount(labels, minlength=cluster_count)
+        if np.any(counts == 0):
+            raise ValueError("表达向量聚类存在空簇")
+        for part in blocks(*normalized_vectors.shape):
+            batch = normalized_vectors[part]
+            batch_labels = labels[part]
+            for cluster_id in np.unique(batch_labels):
+                sums[cluster_id] += batch[batch_labels == cluster_id].sum(axis=0, dtype=np.float64)
+        return l2_normalize((sums / counts[:, None]).astype(np.float32))
 
     @staticmethod
     def _rebuild_cluster_centers(
-        vectors: np.ndarray,
+        vectors: VectorMatrix,
         raw_expressions: Sequence[dict[str, Any]],
         previous_cluster_centers: np.ndarray,
     ) -> np.ndarray:
@@ -1768,18 +1815,18 @@ class ExpressionVectorIndex:
             raw_expression["embedding_profile_marker"] = profile_marker
             grouped_expression_indices.setdefault(profile_marker, []).append(expression_index)
 
-        profile_vectors: Dict[str, np.ndarray] = {}
+        profile_vectors: Dict[str, VectorMatrix] = {}
         profile_cluster_centers: Dict[str, np.ndarray] = {}
         profile_metadata: List[dict[str, Any]] = []
         for profile_index, profile_marker in enumerate(sorted(grouped_expression_indices)):
             expression_indices = grouped_expression_indices[profile_marker]
-            vectors = np.vstack(
+            vectors = stack_rows(
                 [
                     vector_by_expression_id[int(raw_expressions[expression_index].get("id") or 0)]
                     for expression_index in expression_indices
                 ]
-            ).astype(np.float32)
-            vectors = l2_normalize(vectors).astype(np.float32)
+            )
+            # 持久化向量和本批 embedding 已归一化，直接复用，避免整矩阵副本。
             previous_centers = previous_profile_cluster_centers.get(profile_marker)
             previous_cluster_count = int(previous_centers.shape[0]) if previous_centers is not None else 0
             cluster_count = self._choose_cluster_count(
@@ -1855,18 +1902,18 @@ class ExpressionVectorIndex:
             raw_expression["embedding_profile_marker"] = profile_marker
             grouped_expression_indices.setdefault(profile_marker, []).append(expression_index)
 
-        profile_vectors: Dict[str, np.ndarray] = {}
+        profile_vectors: Dict[str, VectorMatrix] = {}
         profile_cluster_centers: Dict[str, np.ndarray] = {}
         profile_metadata: List[dict[str, Any]] = []
         for profile_index, profile_marker in enumerate(sorted(grouped_expression_indices)):
             expression_indices = grouped_expression_indices[profile_marker]
-            vectors = np.vstack(
+            vectors = stack_rows(
                 [
                     vector_by_expression_id[int(raw_expressions[expression_index].get("id") or 0)]
                     for expression_index in expression_indices
                 ]
-            ).astype(np.float32)
-            vectors = l2_normalize(vectors).astype(np.float32)
+            )
+            # 持久化向量和本批 embedding 已归一化，直接复用，避免整矩阵副本。
             previous_centers = previous_profile_cluster_centers.get(profile_marker)
             if (
                 previous_centers is None
@@ -2052,15 +2099,28 @@ class ExpressionVectorIndex:
                     if isinstance(expression_id, int) and expression_id > 0
                 }
 
+        invalid_vector_rows = 0
+        cached_snapshot = self._snapshot
+        if cached_snapshot is not None and (cached_snapshot.path != index_path
+                                             or cached_snapshot.mtime != index_path.stat().st_mtime):
+            cached_snapshot = None
+
+        def read_vectors(marker: str, key: str, *, centers: bool = False) -> np.ndarray:
+            if cached_snapshot is not None:
+                cached_arrays = (cached_snapshot.profile_cluster_centers if centers else cached_snapshot.profile_vectors)
+                if marker in cached_arrays:
+                    return cached_arrays[marker]
+            return _load_npz_array(vectors_path, key)
+
         vectors_path = _resolve_vectors_path(index_path, payload)
         raw_expressions = [
-            dict(raw_expression)
+            raw_expression
             for raw_expression in payload.get("expressions") or []
             if isinstance(raw_expression, dict)
         ]
         raw_profiles = payload.get("embedding_profiles")
         if isinstance(raw_profiles, list) and raw_profiles:
-            profile_vectors: Dict[str, np.ndarray] = {}
+            profile_vectors: Dict[str, VectorMatrix] = {}
             for raw_profile in raw_profiles:
                 if not isinstance(raw_profile, dict):
                     continue
@@ -2069,12 +2129,8 @@ class ExpressionVectorIndex:
                 cluster_centers_key = normalize_text(raw_profile.get("cluster_centers_key"))
                 if not vectors_key or not cluster_centers_key:
                     continue
-                profile_vectors[marker] = l2_normalize(
-                    _load_npz_array(vectors_path, vectors_key)
-                )
-                previous_profile_cluster_centers[marker] = l2_normalize(
-                    _load_npz_array(vectors_path, cluster_centers_key)
-                )
+                profile_vectors[marker] = read_vectors(marker, vectors_key)
+                previous_profile_cluster_centers[marker] = read_vectors(marker, cluster_centers_key, centers=True)
 
             for raw_expression in raw_expressions:
                 expression_id = int(raw_expression.get("id") or 0)
@@ -2089,27 +2145,31 @@ class ExpressionVectorIndex:
                 if expression_id <= 0 or vectors is None:
                     continue
                 if vector_index < 0 or vector_index >= vectors.shape[0]:
-                    raise ValueError(
-                        f"表达向量索引 vector_index 越界: id={expression_id}, "
-                        f"marker={marker[:12]}, vector_index={vector_index}"
-                    )
+                    invalid_vector_rows += 1
+                    logger.warning("更新时剔除表达越界引用: id=%s row=%s", expression_id, vector_index)
+                    if invalid_vector_rows > max(1, len(raw_expressions) // 100):
+                        raise ValueError("表达索引越界引用超过恢复上限")
+                    continue
                 raw_expression["embedding_profile_marker"] = marker
-                vector_by_expression_id[expression_id] = vectors[vector_index].astype(np.float32)
+                if not np.isfinite(vectors[vector_index]).all():
+                    logger.warning("更新时剔除表达坏向量，等待历史回填: id=%s", expression_id)
+                    continue
+                vector_by_expression_id[expression_id] = vectors[vector_index]
         else:
             legacy_marker = (
                 normalize_text(payload.get("embedding_profile_marker"))
                 or LEGACY_EMBEDDING_PROFILE_MARKER
             )
-            vectors = l2_normalize(_load_npz_array(vectors_path, 'vectors'))
-            previous_profile_cluster_centers[legacy_marker] = l2_normalize(
-                _load_npz_array(vectors_path, 'cluster_centers')
-            )
-            if vectors.shape[0] != len(raw_expressions):
-                raise ValueError(
-                    f"表达向量索引数量不一致: "
-                    f"vectors={vectors.shape[0]}, expressions={len(raw_expressions)}"
-                )
+            vectors = read_vectors(legacy_marker, 'vectors')
+            previous_profile_cluster_centers[legacy_marker] = read_vectors(legacy_marker, 'cluster_centers', centers=True)
             for expression_index, raw_expression in enumerate(raw_expressions):
+                expression_index = int(raw_expression.get("vector_index", expression_index))
+                if expression_index < 0 or expression_index >= len(vectors):
+                    invalid_vector_rows += 1
+                    logger.warning("跳过旧表达索引越界行: row=%s", expression_index)
+                    if invalid_vector_rows > max(1, len(raw_expressions) // 100):
+                        raise ValueError("旧表达索引越界行超过恢复上限")
+                    continue
                 expression_id = int(raw_expression.get("id") or 0)
                 if not self._is_current_index_expression(raw_expression, current_fingerprints):
                     continue
@@ -2121,8 +2181,12 @@ class ExpressionVectorIndex:
                     raw_expression.get("embedding_dimension") or vectors.shape[1]
                 )
                 raw_expression["vector_index"] = expression_index
-                vector_by_expression_id[expression_id] = vectors[expression_index].astype(np.float32)
+                if not np.isfinite(vectors[expression_index]).all():
+                    logger.warning("更新时剔除表达坏向量，等待历史回填: id=%s", expression_id)
+                    continue
+                vector_by_expression_id[expression_id] = vectors[expression_index]
 
+        raw_expressions = [item for item in raw_expressions if int(item.get("id") or 0) in vector_by_expression_id]
         return _MutableExpressionIndexState(
             existing_payload=True,
             payload=payload,
@@ -2166,22 +2230,15 @@ class ExpressionVectorIndex:
         index_path: Path,
         vectors_path: Path,
         payload: dict[str, Any],
-        profile_vectors: Dict[str, np.ndarray],
+        profile_vectors: Dict[str, VectorMatrix],
         profile_cluster_centers: Dict[str, np.ndarray],
         publish: Optional[Callable[[Path, Path], bool]] = None,
     ) -> Optional[Path]:
-        """先提交版本化 NPZ，再原子切换 JSON 清单。"""
+        """先提交不可变 NPY 代，再原子切换 JSON 清单；保留旧 NPZ 供恢复。"""
 
         index_path.parent.mkdir(parents=True, exist_ok=True)
         vectors_path.parent.mkdir(parents=True, exist_ok=True)
-        generation = uuid.uuid4().hex
-        next_vectors_path = index_path.with_name(
-            f"{index_path.stem}.vectors-{generation}.npz"
-        )
-        temporary_vectors_path = index_path.with_name(
-            f".{next_vectors_path.name}.tmp"
-        )
-        arrays: dict[str, np.ndarray] = {}
+        arrays: Dict[str, VectorMatrix] = {}
         for raw_profile in payload.get("embedding_profiles") or []:
             if not isinstance(raw_profile, dict):
                 continue
@@ -2190,45 +2247,47 @@ class ExpressionVectorIndex:
             cluster_centers_key = normalize_text(raw_profile.get("cluster_centers_key"))
             if not marker or not vectors_key or not cluster_centers_key:
                 continue
-            arrays[vectors_key] = profile_vectors[marker].astype(np.float32)
-            arrays[cluster_centers_key] = profile_cluster_centers[marker].astype(np.float32)
+            arrays[vectors_key] = profile_vectors[marker]
+            arrays[cluster_centers_key] = profile_cluster_centers[marker]
         if not arrays:
             raise ValueError("表达向量索引没有可写入的 embedding profile 数组")
+        if vectors_path.suffix != ".json" and index_path.exists():
+            backup = index_path.with_name(index_path.name + ".pre-npy.bak")
+            if not backup.exists():
+                try:
+                    with backup.open("xb") as handle:
+                        handle.write(index_path.read_bytes())
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                except OSError:
+                    logger.warning("表达旧索引备份失败，旧向量仍保留，继续迁移: %s", backup, exc_info=True)
+        started = time.monotonic()
+        next_vectors_path = write_arrays(index_path.parent, arrays, previous=vectors_path)
+        arrays_finished = time.monotonic()
         committed = False
         try:
-            with temporary_vectors_path.open("xb") as temporary_vectors_file:
-                # 1024 维 embedding 本身几乎不可压缩，旧实现仅节省少量空间，
-                # 却会在每次在线同步时额外占满 CPU；这里改用无压缩 NPZ。
-                np.savez(temporary_vectors_file, **arrays)
-                temporary_vectors_file.flush()
-                os.fsync(temporary_vectors_file.fileno())
-            temporary_vectors_path.replace(next_vectors_path)
             payload["vectors_file"] = next_vectors_path.name
-            committed = _atomic_write_text(
-                index_path, json.dumps(payload, ensure_ascii=False, indent=2), publish=publish,
-            )
+            serialized = json.dumps(payload, ensure_ascii=False, indent=2)
+            encoding_finished = time.monotonic()
+            with generation_guard():
+                committed = _atomic_write_text(index_path, serialized, publish=publish)
+                if committed and vectors_path != next_vectors_path and vectors_path.parent == index_path.parent:
+                    retire_generation(vectors_path)
+            publish_finished = time.monotonic()
             if not committed:
                 return None
         finally:
-            temporary_vectors_path.unlink(missing_ok=True)
             if not committed:
-                next_vectors_path.unlink(missing_ok=True)
-
-        # JSON 已经指向新一代文件后，旧文件才不再参与当前索引。
-        if vectors_path != next_vectors_path and vectors_path.parent == index_path.parent:
-            canonical_vectors_name = f"{index_path.stem}.npz"
-            generation_prefix = f"{index_path.stem}.vectors-"
-            if (
-                vectors_path.name == canonical_vectors_name
-                or vectors_path.name.startswith(generation_prefix)
-            ):
-                try:
-                    vectors_path.unlink(missing_ok=True)
-                except OSError as exc:
-                    logger.warning(
-                        f"表达向量索引旧向量代清理失败，旧文件可安全保留: "
-                        f"path={vectors_path} error={exc}"
-                    )
+                remove_generation(next_vectors_path, keep=generation_files(vectors_path))
+        # 旧代已在原子发布后登记退役，最后一个数组视图释放时自动回收。
+        cleanup_retired(index_path.parent)
+        cleanup_migration_backup(index_path)
+        logger.info(
+            "表达向量发布耗时: arrays=%.3fs json_encode=%.3fs publish=%.3fs cleanup=%.3fs thread=%s",
+            arrays_finished - started, encoding_finished - arrays_finished,
+            publish_finished - encoding_finished, time.monotonic() - publish_finished,
+            threading.current_thread().name,
+        )
         return next_vectors_path
 
     async def _embed_expression_items(
@@ -2466,7 +2525,7 @@ class ExpressionVectorIndex:
         *,
         resolved_index_path: Path,
         normalized_items: List[ExpressionVectorIndexUpsertItem],
-        next_vectors: np.ndarray,
+        next_vectors: VectorMatrix,
         embedding_failures: List[Tuple[ExpressionVectorIndexUpsertItem, Exception]],
         current_profile: ExpressionEmbeddingProfile,
         profile_generation: int,
@@ -3117,7 +3176,9 @@ class ExpressionVectorIndex:
             )
             return []
 
-        indexed_candidates = self._filter_indexed_expressions(snapshot, scoped_candidates, current_profile)
+        indexed_candidates = await asyncio.to_thread(
+            self._filter_indexed_expressions, snapshot, scoped_candidates, current_profile,
+        )
         if len(indexed_candidates) < 10:
             logger.info(
                 f"表达向量召回已跳过：当前 profile 范围内可用索引候选不足 "
@@ -3134,7 +3195,20 @@ class ExpressionVectorIndex:
         )
         query_result = await embedding_client.embed_text(normalized_query, session_id=session_id)
         self._validate_embedding_result_profile(query_result, current_profile, usage="表达向量 query")
-        query_vector = np.array(query_result.embedding, dtype=np.float32).reshape(1, -1)
+        return await asyncio.to_thread(
+            self._score_indexed_candidates,
+            indexed_candidates=indexed_candidates, query_embedding=query_result.embedding,
+            profile_vectors=profile_vectors, profile_cluster_centers=profile_cluster_centers,
+            candidate_pool_size=candidate_pool_size, cluster_pool_size=cluster_pool_size,
+        )
+
+    def _score_indexed_candidates(
+        self, *, indexed_candidates: Sequence[IndexedExpression], query_embedding: Sequence[float],
+        profile_vectors: VectorMatrix, profile_cluster_centers: np.ndarray,
+        candidate_pool_size: int, cluster_pool_size: int,
+    ) -> List[dict[str, Any]]:
+        """工作线程内完成映射页读取、向量打分及 MMR，避免同步计算占住主循环。"""
+        query_vector = np.array(query_embedding, dtype=np.float32).reshape(1, -1)
         query_vector = l2_normalize(query_vector)[0]
         if query_vector.shape[0] != profile_vectors.shape[1]:
             raise ValueError(

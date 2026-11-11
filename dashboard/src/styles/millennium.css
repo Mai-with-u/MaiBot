@@ -729,6 +729,19 @@
   opacity: 1;
 }
 
+:root[data-dashboard-style='millennium'] [data-dashboard-info-trigger='true'] {
+  background-color: var(--mil-key);
+  border-radius: 0;
+  box-shadow: inset 1px 1px 0 var(--mil-key-hi),
+    inset -1px -1px 0 var(--mil-key-side),
+    1px 1px 0 var(--mil-drop);
+  color: var(--mil-ink);
+}
+
+:root[data-dashboard-style='millennium'] [data-dashboard-info-trigger='true']:hover {
+  background-color: var(--mil-key-hover);
+}
+
 :root[data-dashboard-style='millennium']
   :is(
     [data-dashboard-floating-content='true'],
@@ -1003,7 +1016,8 @@
   --color-muted-foreground: 44 30% 82%;
 }
 
-:root[data-dashboard-style='millennium'] [data-chart] {
+/* HTML 图例渲染在 [data-chart] 之外，需要使用同一套图表配色 */
+:root[data-dashboard-style='millennium'] :is([data-chart], [data-chart-legend]) {
   --color-primary: 134.4 62% 72%;
   --color-chart-1: 134.4 62% 72%;
   --color-chart-2: 18.4 83.1% 65.3%;

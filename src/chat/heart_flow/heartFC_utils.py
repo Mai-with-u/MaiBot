@@ -7,9 +7,6 @@ import time
 class CyclePlanInfo(TypedDict): ...  # TODO: 根据实际需要补充字段
 
 
-class CycleActionInfo(TypedDict): ...  # TODO: 根据实际需要补充字段
-
-
 @dataclass
 class CycleDetail:
     """循环信息记录类"""
@@ -25,5 +22,3 @@ class CycleDetail:
     """计时器记录，key为计时器名称，value为用时，单位为秒"""
     loop_plan_info: Optional[CyclePlanInfo] = None
     """循环计划记录"""
-    loop_action_info: Optional[CycleActionInfo] = None
-    """循环Action调用记录"""

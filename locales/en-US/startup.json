@@ -12,7 +12,7 @@
   "startup.env_template_missing": ".env file not found, and template template/template.env is also missing",
   "startup.event_loop_closed": "[Main] Event loop closed",
   "startup.graceful_shutdown_error": "Error during graceful shutdown: {error}",
-  "startup.initialization_completed_banner": "\n--------------------------------\nAll systems initialized. {nickname} has been awakened successfully.\n--------------------------------\nTo customize {nickname}'s behavior, see: https://docs.mai-mai.org/manual/usage/\nOr if you've run into issues, visit our documentation: https://docs.mai-mai.org/\n--------------------------------\nTo write or learn about plugins, visit the developer docs: https://docs.mai-mai.org/develop/\n--------------------------------\nTo view model usage and MaiBot statistics, open maibot_statistics.html in the root directory.\n",
+  "startup.initialization_completed_banner": "\n--------------------------------\nAll systems initialized. {nickname} has been awakened successfully.\n--------------------------------\nTo customize {nickname}'s behavior, see: https://docs.mai-mai.org/manual/usage/\nOr if you've run into issues, visit our documentation: https://docs.mai-mai.org/\n--------------------------------\nTo write or learn about plugins, visit the developer docs: https://docs.mai-mai.org/develop/\n",
   "startup.initialization_completed_cycles": "Initialization complete, neurons fired {init_time} times",
   "startup.interrupt_received": "Interrupt signal received, initiating graceful shutdown...",
   "startup.launching_script": "Launching {script_file}...",

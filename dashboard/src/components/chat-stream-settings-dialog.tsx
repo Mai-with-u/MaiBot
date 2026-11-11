@@ -224,7 +224,8 @@ function TalkFrequencyRuleStackItem({ rule }: { rule: ChatTalkFrequencyRule }) {
       )}
     >
       <div className="flex flex-wrap items-center gap-2">
-        {!rule.is_effective && !rule.time_active && <Badge variant="outline">时间未命中</Badge>}
+        {!rule.enabled && <Badge variant="outline">已关闭</Badge>}
+        {rule.enabled && !rule.time_active && <Badge variant="outline">时间未命中</Badge>}
         <span className="font-mono text-xs">{targetLabel}</span>
       </div>
       <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
@@ -246,11 +247,13 @@ function TalkFrequencyRuleEditor({
   const { toast } = useToast()
   const [time, setTime] = useState(rule.time)
   const [value, setValue] = useState(() => clampTalkFrequencyValue(rule.value))
+  const [enabled, setEnabled] = useState(rule.enabled)
 
   useEffect(() => {
     const frameId = window.requestAnimationFrame(() => {
       setTime(rule.time)
       setValue(clampTalkFrequencyValue(rule.value))
+      setEnabled(rule.enabled)
     })
 
     return () => window.cancelAnimationFrame(frameId)
@@ -264,6 +267,8 @@ function TalkFrequencyRuleEditor({
   const saveMutation = useMutation({
     mutationFn: () =>
       updateChatStreamTalkFrequency(detail.session_id, {
+        active_group: detail.talk_frequency.active_group,
+        enabled,
         previous_time: rule.time,
         time: time.trim(),
         value: clampTalkFrequencyValue(value),
@@ -285,7 +290,7 @@ function TalkFrequencyRuleEditor({
   })
 
   const deleteMutation = useMutation({
-    mutationFn: () => deleteChatStreamTalkFrequency(detail.session_id, rule.time),
+    mutationFn: () => deleteChatStreamTalkFrequency(detail.session_id, rule.time, detail.talk_frequency.active_group),
     onSuccess: (updatedDetail) => {
       updateDetailCache(updatedDetail)
       toast({
@@ -324,6 +329,7 @@ function TalkFrequencyRuleEditor({
         />
       </div>
       <div className="flex items-center justify-end gap-2">
+        <Switch checked={enabled} onCheckedChange={setEnabled} aria-label="启用发言频率规则" />
         <Button
           type="button"
           className="shrink-0"
@@ -357,8 +363,9 @@ function TalkFrequencyTimelineRule({
 }) {
   const queryClient = useQueryClient()
   const { toast } = useToast()
-  const [time, setTime] = useState(rule.time || '00:00-23:59')
+  const [time, setTime] = useState(rule.time)
   const [value, setValue] = useState(() => clampTalkFrequencyValue(rule.value))
+  const [enabled, setEnabled] = useState(rule.enabled)
   const range = !time.trim() || time.trim() === '*' ? { start: 0, end: DAY_MINUTES - 1 } : parseTalkTimeRange(time)
   const draggableRange = range && time.trim() !== '' && time.trim() !== '*'
   const segments = range ? getTimelineSegments(range) : []
@@ -369,8 +376,9 @@ function TalkFrequencyTimelineRule({
 
   useEffect(() => {
     const frameId = window.requestAnimationFrame(() => {
-      setTime(rule.time || '00:00-23:59')
+      setTime(rule.time)
       setValue(clampTalkFrequencyValue(rule.value))
+      setEnabled(rule.enabled)
     })
 
     return () => window.cancelAnimationFrame(frameId)
@@ -384,6 +392,8 @@ function TalkFrequencyTimelineRule({
   const saveMutation = useMutation({
     mutationFn: () =>
       updateChatStreamTalkFrequency(detail.session_id, {
+        active_group: detail.talk_frequency.active_group,
+        enabled,
         previous_time: rule.time,
         time: time.trim(),
         value: clampTalkFrequencyValue(value),
@@ -405,7 +415,7 @@ function TalkFrequencyTimelineRule({
   })
 
   const deleteMutation = useMutation({
-    mutationFn: () => deleteChatStreamTalkFrequency(detail.session_id, rule.time),
+    mutationFn: () => deleteChatStreamTalkFrequency(detail.session_id, rule.time, detail.talk_frequency.active_group),
     onSuccess: (updatedDetail) => {
       updateDetailCache(updatedDetail)
       toast({
@@ -423,11 +433,11 @@ function TalkFrequencyTimelineRule({
   })
 
   return (
-    <div className="bg-muted/25 grid min-w-0 gap-3 rounded-md border p-3 xl:grid-cols-[minmax(12rem,1fr)_8rem_8rem] xl:items-center">
+    <div className="bg-muted/25 grid min-w-0 gap-3 rounded-md border p-3 xl:grid-cols-[minmax(12rem,1fr)_8rem_auto] xl:items-center">
       <div className="min-w-0">
         <TimeRangeTicks />
         <TimeRangeTrack range={range} segments={segments} disabled={!draggableRange}
-          colorClassName={cn(talkValueColor(value), range ? 'opacity-85' : 'opacity-35')}
+          colorClassName={cn(talkValueColor(value), range && enabled ? 'opacity-85' : 'opacity-35')}
           onChange={(next) => setTime(formatTalkTimeRange(next))} />
         <div className="text-muted-foreground relative mt-1 h-4 text-[11px]">
           {range ? (
@@ -462,7 +472,8 @@ function TalkFrequencyTimelineRule({
         />
         <span className="w-12 text-right font-mono text-xs tabular-nums">{value.toFixed(2)}</span>
       </div>
-      <div className="flex justify-end gap-2">
+      <div className="flex items-center justify-end gap-2">
+        <Switch checked={enabled} onCheckedChange={setEnabled} aria-label="启用发言频率规则" />
         <Button
           type="button"
           size="sm"
@@ -523,6 +534,7 @@ function AddTalkFrequencyRuleButton({ detail }: { detail: ChatStreamDetail }) {
   const addMutation = useMutation({
     mutationFn: () =>
       updateChatStreamTalkFrequency(detail.session_id, {
+        active_group: detail.talk_frequency.active_group,
         previous_time: null,
         time: '00:00-23:59',
         value: 1,
@@ -668,9 +680,9 @@ function PrivateReplyPauseSection({ detail }: { detail: ChatStreamDetail }) {
 function TalkFrequencySection({ detail }: { detail: ChatStreamDetail }) {
   return (
     <section className="space-y-3 rounded-md border p-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="font-medium">发言频率规则</div>
-        <StatusBadge enabled={detail.talk_frequency.enabled} />
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium">发言频率规则</span>
+        <Badge variant="outline">{detail.talk_frequency.active_group}</Badge>
       </div>
       <div className="grid gap-2 text-sm sm:grid-cols-3">
         <FrequencySummaryItem label="默认频率" value={detail.talk_frequency.base_value_label} />

@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QQ 群与用户映射</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { padding: 20px; line-height: 1.6; }
+    main { max-width: 1400px; margin: auto; }
+    header, .identity, h2 { display: flex; align-items: center; gap: 12px; }
+    header { justify-content: space-between; flex-wrap: wrap; margin-bottom: 16px; }
+    h2 { font-size: 17px; margin: 0; }
+    p { margin: 6px 0; }
+    .muted, .hint { color: var(--maibot-muted); font-size: 13px; }
+    section { margin-bottom: 20px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; margin-top: 14px; text-align: left; }
+    th, td { padding: 12px 8px; border-bottom: 1px solid var(--maibot-border); }
+    th { font-size: 13px; color: var(--maibot-muted); font-weight: 500; }
+    td:first-child { min-width: 190px; }
+    .openid { font-family: monospace; overflow-wrap: anywhere; min-width: 160px; user-select: all; }
+    .avatar { position: relative; width: 42px; height: 42px; flex-shrink: 0; display: grid; place-items: center; border-radius: 12px; background: var(--maibot-background); border: 1px solid var(--maibot-border); }
+    .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
+    .icon { width: 20px; height: 20px; flex-shrink: 0; }
+    .badge { font-size: 12px; color: var(--maibot-muted); margin-left: auto; }
+    .hint { font-size: 12px; max-width: 250px; }
+    .mapping-value { min-width: 110px; overflow-wrap: anywhere; }
+    .mapping-status { min-width: 150px; }
+    .conflict { color: var(--maibot-danger); }
+    #status.error { color: var(--maibot-danger); }
+    .empty { padding: 24px 8px; color: var(--maibot-muted); }
+    #login-panel { margin-bottom: 20px; }
+    .login-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+    #login-qr { width: 230px; height: 230px; max-width: 100%; background: white; margin-top: 16px; }
+    #login-message.error { color: var(--maibot-danger); }
+    [hidden] { display: none !important; }
+    @media (max-width: 600px) { body { padding: 10px; } th, td { padding: 10px 4px; } }
+  </style>
+</head>
+<body class="maibot-page"><main>
+  <header><div><strong>QQ 群与用户映射</strong><p class="muted">查看手动与自动绑定、用户名称及冲突状态。同步后点击刷新更新。</p></div><button id="refresh" class="maibot-button" type="button">刷新映射</button></header>
+  <section id="login-panel" class="maibot-card" aria-labelledby="login-heading">
+    <h2 id="login-heading">QQ 官方机器人登录</h2>
+    <p id="connection-status" class="muted">正在读取连接状态…</p>
+    <p class="muted">扫码授权后自动保存 AppID / AppSecret 并启用连接；已有凭据将被替换。也可继续在插件配置中手动填写。</p>
+    <div class="login-actions"><button id="login-start" type="button" class="maibot-button maibot-button-primary" disabled>扫码登录</button><button id="login-cancel" type="button" class="maibot-button" hidden>取消扫码</button></div>
+    <img id="login-qr" alt="使用手机 QQ 扫码授权机器人" hidden>
+    <p id="login-message" role="status" aria-live="polite"></p>
+  </section>
+  <p id="status" role="status" aria-live="polite">正在加载…</p>
+  <div id="sections"></div>
+</main>
+<script>
+  const make = (tag, className, text) => {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    if (text !== undefined) element.textContent = text;
+    return element;
+  };
+  const requests = [];
+  let runningRequests = 0;
+  function request(kind, name, args = {}) {
+    return new Promise((resolve, reject) => {
+      requests.push({kind, name, args, resolve, reject});
+      drainRequests();
+    });
+  }
+  function drainRequests() {
+    // 页面桥接最多允许两个在途请求；头像、刷新、登录轮询及操作共用名额。
+    while (runningRequests < 2 && requests.length) {
+      const job = requests.shift();
+      runningRequests++;
+      Promise.resolve().then(() => maibot[job.kind](job.name, job.args))
+        .then(job.resolve, job.reject)
+        .finally(() => { runningRequests--; drainRequests(); });
+    }
+  }
+  function icon(kind) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('class', 'icon');
+    svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.7'); svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS(svg.namespaceURI, 'path');
+    path.setAttribute('d', kind === 'group'
+      ? 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M16 3a4 4 0 0 1 0 8M22 21v-2a4 4 0 0 0-3-3.87M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0'
+      : 'M20 21v-2a7 7 0 0 0-14 0v2M17 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0');
+    svg.append(path); return svg;
+  }
+  let queue = [], active = 0;
+  const jobs = new WeakMap();
+  const observer = new IntersectionObserver(entries => {
+    for (const entry of entries) if (entry.isIntersecting) {
+      observer.unobserve(entry.target); queue.push(jobs.get(entry.target));
+    }
+    drain();
+  }, {rootMargin: '120px'});
+  function drain() {
+    // 可见附近的头像逐个加载，给登录状态查询与用户操作留出一个请求名额。
+    while (active < 1 && queue.length) {
+      const job = queue.shift();
+      if (!job.avatar.isConnected) continue;
+      active++;
+      loadAvatar(job).finally(() => { active--; drain(); });
+    }
+  }
+  async function loadAvatar({kind, item, avatar, hint}) {
+    try {
+      const result = await request('query', 'avatar', {kind, openid: item.openid, source: item.source, group_openid: item.group_openid});
+      if (!result.image) { hint.textContent = result.message; return; }
+      const image = make('img'); image.alt = `${kind === 'group' ? '群' : '用户'} ${item.id} 的头像`;
+      image.onload = () => { hint.textContent = ''; };
+      image.onerror = () => { image.remove(); hint.textContent = '头像图片无法显示'; };
+      image.src = result.image; avatar.append(image);
+    } catch (error) { hint.textContent = `头像加载失败：${error.message || error}`; }
+  }
+  function section(kind, items) {
+    const group = kind === 'group';
+    const panel = make('section', 'maibot-card');
+    const heading = make('h2'); heading.append(icon(kind), make('span', '', group ? '群映射' : '用户映射'), make('span', 'badge', `${items.length} 条记录`));
+    panel.append(heading);
+    if (!group) panel.append(make('p', 'muted', '自动绑定按群分别展示；手动绑定优先生效。旧手动记录未保存昵称、群名片和所属群时显示「—」或「全局」。'));
+    if (!items.length) {
+      panel.append(make('p', 'empty', group ? '暂无群映射。在目标群内发送 /assign_group_id <群号> 完成绑定。' : '暂无用户映射。可发送 /assign_id <QQ号> 手动绑定，或等待已绑定群内的静默匹配完成。'));
+      return panel;
+    }
+    const wrap = make('div', 'table-wrap'), table = make('table'), head = make('thead'), titles = make('tr'), body = make('tbody');
+    const columns = group ? ['群头像 / 绑定群号', 'OpenID', '绑定来源', '状态']
+      : ['用户头像 / QQ 号', '昵称', '群名片', '所属群', '绑定来源', '状态', '用户 OpenID'];
+    for (const label of columns) {
+      const th = make('th', '', label); th.scope = 'col'; titles.append(th);
+    }
+    head.append(titles); table.append(head, body); wrap.append(table); panel.append(wrap);
+    for (const item of items) {
+      const row = make('tr'), cell = make('td'), identity = make('div', 'identity'), avatar = make('div', 'avatar'), details = make('div'), hint = make('div', 'hint', '头像待加载');
+      avatar.append(icon(kind)); details.append(make('strong', '', item.id), hint);
+      identity.append(avatar, details); cell.append(identity); row.append(cell);
+      const source = make('td', 'mapping-value', item.source === 'auto' ? '自动绑定' : '手动绑定');
+      const state = make('td', `mapping-status${item.conflict ? ' conflict' : ''}`, item.status);
+      if (group) row.append(make('td', 'openid', item.openid), source, state);
+      else {
+        const membership = make('td', 'mapping-value', item.group_id || '全局');
+        if (item.group_openid) membership.append(make('div', 'hint openid', item.group_openid));
+        row.append(make('td', 'mapping-value', item.nickname || '—'), make('td', 'mapping-value', item.cardname || '—'),
+          membership, source, state, make('td', 'openid', item.openid));
+      }
+      body.append(row);
+      jobs.set(avatar, {kind, item, avatar, hint}); observer.observe(avatar);
+    }
+    return panel;
+  }
+  async function refresh() {
+    const button = document.getElementById('refresh'), status = document.getElementById('status');
+    button.disabled = true; status.className = 'muted'; status.textContent = '正在加载…';
+    observer.disconnect(); queue = []; document.getElementById('sections').replaceChildren();
+    try {
+      const result = await request('query', 'mappings');
+      document.getElementById('sections').replaceChildren(section('group', result.group), section('user', result.user));
+      const automatic = result.user.filter(item => item.source === 'auto').length;
+      const conflicts = result.user.filter(item => item.conflict).length;
+      status.textContent = `共 ${result.group.length} 条群映射 · ${result.user.length} 条用户映射（自动 ${automatic} 条 · 冲突 ${conflicts} 条）`;
+    } catch (error) { status.className = 'error'; status.textContent = `映射加载失败：${error.message || error}`; }
+    finally { button.disabled = false; }
+  }
+  document.getElementById('refresh').onclick = refresh;
+  let loginBusy = false, loginTimer, lastLoginState = '';
+  const loginStart = document.getElementById('login-start'), loginCancel = document.getElementById('login-cancel');
+  const loginMessage = document.getElementById('login-message'), loginQr = document.getElementById('login-qr');
+  function renderLogin(data) {
+    const pending = ['creating', 'waiting', 'saving'].includes(data.state);
+    loginStart.disabled = loginBusy || pending;
+    loginStart.textContent = ['expired', 'error', 'cancelled'].includes(data.state) ? '重新扫码' : '扫码登录';
+    loginCancel.hidden = !pending; loginCancel.disabled = loginBusy || data.state === 'saving';
+    loginMessage.textContent = data.message; loginMessage.className = data.state === 'error' ? 'error' : 'muted';
+    loginQr.hidden = !data.image;
+    if (data.image) { if (loginQr.getAttribute('src') !== data.image) loginQr.src = data.image; }
+    else loginQr.removeAttribute('src');
+    const connection = data.connected ? '已连接' : data.enabled ? '连接未就绪' : '未启用连接';
+    document.getElementById('connection-status').textContent = `${connection}${data.bot_name ? ' · ' + data.bot_name : ''}${data.configured_app_id ? ' · AppID ' + data.configured_app_id : ''}`;
+    if (data.state === 'success' && lastLoginState !== 'success') void refresh();
+    lastLoginState = data.state;
+    return pending ? 2000 : 10000;
+  }
+  async function pollLogin() {
+    clearTimeout(loginTimer);
+    let delay = 10000;
+    try { delay = renderLogin(await request('query', 'login_status')); }
+    catch (error) {
+      loginMessage.textContent = `登录状态读取失败：${error.message || error}`;
+      loginMessage.className = 'error'; loginQr.hidden = true;
+      loginStart.disabled = false;
+    }
+    loginTimer = setTimeout(pollLogin, delay);
+  }
+  async function loginAction(action) {
+    if (loginBusy) return;
+    loginBusy = true; loginStart.disabled = true; loginCancel.disabled = true;
+    clearTimeout(loginTimer);
+    try { await request('action', action); }
+    catch (error) {
+      loginMessage.textContent = `操作未完成：${error.message || error}`;
+      loginMessage.className = 'error';
+      loginBusy = false; loginStart.disabled = false; loginCancel.disabled = false;
+      loginTimer = setTimeout(pollLogin, 10000); return;
+    }
+    loginBusy = false; await pollLogin();
+  }
+  loginStart.onclick = () => loginAction('login_start');
+  loginCancel.onclick = () => loginAction('login_cancel');
+  window.addEventListener('pagehide', () => clearTimeout(loginTimer));
+  maibot.ready.then(() => { void refresh(); void pollLogin(); });
+</script>
+</body>
+</html>

@@ -46,6 +46,8 @@ export interface ChatListResponse {
 }
 
 export interface ExpressionGroupInfo {
+  id: string
+  color: string
   index: number
   name: string
   chat_ids: string[]
@@ -127,42 +129,6 @@ export interface ExpressionClearResponse {
   success: boolean
   message: string
   deleted_count: number
-}
-
-export interface LegacyExpressionGroupPreview {
-  old_chat_id: string
-  expression_count: number
-  platform: string | null
-  target_id: string | null
-  chat_type: 'group' | 'private' | null
-  matched_session_id: string | null
-  matched_chat_name: string | null
-  matched: boolean
-  matched_sessions: LegacyExpressionMatchOption[]
-}
-
-export interface LegacyExpressionMatchOption {
-  session_id: string
-  chat_name: string
-  account_id?: string | null
-}
-
-export interface LegacyExpressionImportPreviewResponse {
-  success: boolean
-  db_path: string
-  total_count: number
-  matched_count: number
-  unmatched_count: number
-  groups: LegacyExpressionGroupPreview[]
-}
-
-export interface LegacyExpressionImportResponse {
-  success: boolean
-  message: string
-  imported_count: number
-  skipped_count: number
-  failed_count: number
-  ignored_group_count: number
 }
 
 /**

@@ -1,38 +1,216 @@
 {
+  "hostManager": {
+    "title": "Bot 管理",
+    "entrySubtitle": "1 つの管理センターで複数の独立した Bot を作成・操作します。",
+    "workspace": "宿主ワークスペース",
+    "subtitle": "独立した Bot を 1 つの画面で管理。",
+    "runtimeHint": "「実行中」は Bot のプロセスが動作していることを表します。アカウントのログインやモデル・アダプターの準備完了を示すものではありません。",
+    "refresh": "更新",
+    "refreshFailed": "状態を更新できませんでした",
+    "staleData": "前回取得した状態です。現在の状態と異なる場合があります。",
+    "summary": "Bot 数",
+    "total": "すべての Bot",
+    "needsAttention": "要確認",
+    "createTitle": "Bot を新規作成",
+    "createHint": "専用の設定とデータディレクトリを作成します。自動起動やログインは行いません。",
+    "botName": "Bot 表示名",
+    "namePlaceholder": "例：仕事アシスタント",
+    "create": "作成",
+    "creating": "作成中…",
+    "botList": "管理対象の Bot",
+    "lastUpdated": "更新：{{time}}",
+    "loading": "Bot 一覧を読み込み中…",
+    "emptyTitle": "管理対象の Bot はまだありません",
+    "emptyHint": "上の欄に名前を入力し、最初の独立した Bot を作成してください。",
+    "pid": "プロセス ID",
+    "exitCode": "終了コード",
+    "start": "起動",
+    "stop": "停止",
+    "restart": "再起動",
+    "details": "ディレクトリと実行情報",
+    "directory": "Bot ディレクトリ",
+    "logs": "実行ログ",
+    "botId": "Bot ID",
+    "startedAt": "起動日時",
+    "exitedAt": "終了日時",
+    "operationFailed": "操作が完了しませんでした。Bot のエラー情報を確認してください。",
+    "uncertainResult": "結果を確認できません。宿主で処理が続いている可能性があります。重複作成を避けるため、一覧を更新して確認してから操作してください。",
+    "status": {
+      "initializing": "初期化中",
+      "initializationFailed": "初期化失敗",
+      "starting": "起動中",
+      "running": "実行中",
+      "stopping": "停止処理中",
+      "stopped": "停止",
+      "exited": "終了",
+      "failed": "実行失敗",
+      "migrating": "データ移行中",
+      "crashLoop": "クラッシュが続いたため再起動を停止"
+    },
+    "retryAt": "{{time}} に自動で再起動します",
+    "pending": {
+      "start": "起動しています。しばらくお待ちください…",
+      "stop": "Bot と子プロセスの終了を待っています。1 分以上かかる場合があります…",
+      "restart": "Bot を停止して再起動しています…"
+    },
+    "currentBot": "現在の Bot",
+    "noSelection": "Bot が未選択です",
+    "selectedStopped": "現在の Bot は停止しています",
+    "selectToContinue": "設定、チャット、プラグインを開く前に、Bot 管理で Bot を選択して起動してください。管理ページは常に利用できます。",
+    "selected": "現在の Bot",
+    "useBot": "この Bot を使用",
+    "unifiedScope": "設定、チャット、プラグイン、リソースは選択した Bot のデータを使用します。タブごとに別の Bot を選択でき、すべて停止しても管理できます。",
+    "pluginDeps": {
+      "title": "プラグインの依存関係",
+      "hint": "全 Bot の有効なプラグインの依存条件を確認してから、不足するパッケージをインストールします。既存ライブラリのバージョンは自動変更しません。",
+      "check": "確認",
+      "none": "すべての Bot のプラグイン依存関係は満たされています。",
+      "install": "全 Bot を停止してインストール",
+      "installHint": "インストール中はすべての Bot が一時停止し、完了後に元の状態へ戻ります。",
+      "installed": "インストールしました。Bot は元の状態に戻りつつあります。"
+    }
+  },
+  "helpHistory": {
+    "newSession": "新しい会話",
+    "retryLoad": "再読み込み",
+    "draftRestored": "下書きを復元しました。内容を確認してから送信できます。",
+    "description": "最近のエージェントの質問履歴を確認し、続けて質問できます。",
+    "deleteSession": "「{{title}}」を削除",
+    "deleteTitle": "会話を削除",
+    "deleteDescription": "「{{title}}」とすべての質問・回答を削除しますか？",
+    "deleteConfirm": "削除",
+    "loading": "ヘルプ履歴を読み込み中…",
+    "loadError": "ヘルプ履歴を読み込めませんでした。",
+    "empty": "質問セッションはまだありません。",
+    "select": "セッションを選択して質問と回答を表示します。",
+    "noReply": "この質問の回答はまだ記録されていません。"
+  },
+  "observation": {
+    "helpHistory": "ヘルプ履歴",
+    "keys": {
+      "bot": "麦麦",
+      "model": "モデル",
+      "adapter": "アダプター",
+      "learning": "学習",
+      "mutualGroups": "共有",
+      "memory": "記憶",
+      "plugin": "プラグイン",
+      "market": "マーケット",
+      "prompt": "Prompt",
+      "data": "データ",
+      "logs": "ログ"
+    },
+    "expandSidebar": "サイドバーを展開",
+    "collapseSidebar": "サイドバーを折りたたむ",
+    "settingsBlock": "設定",
+    "compactSettings": "設定を1行で表示",
+    "keyNeedsBot": "{{label}} · 先に Bot を起動してください",
+    "pet": {
+      "title": "デスクトップペット",
+      "statusTitle": "デスクトップペットの状態",
+      "statusLoadFailed": "デスクトップペットの状態を取得できませんでした：{{error}}",
+      "settings": "ペット設定",
+      "settingsUnavailable": "現在のボットではデスクトップペットの設定を利用できません。",
+      "settingsSaving": "保存中…",
+      "settingsSaved": "デスクトップペットの設定を保存しました",
+      "settingsSaveFailed": "デスクトップペットの設定を保存できませんでした",
+      "enabledLamp": "ペット有効",
+      "mode": {
+        "local": "ローカルウィンドウ",
+        "remote": "リモートクライアント"
+      },
+      "state": {
+        "idle": "表示中",
+        "thinking": "考え中",
+        "hidden": "非表示",
+        "starting": "起動中",
+        "waiting": "接続待ち",
+        "error": "未起動"
+      },
+      "thinkingMeta": "返信を作成中",
+      "hiddenMeta": "バックグラウンドで実行中",
+      "waitingTitle": "ペットクライアントの接続を待っています",
+      "waitingHint": "ペットクライアントにホストの WebUI アドレスを入力してログインすると、ここにペットが表示されます。",
+      "startingTitle": "ペットウィンドウを起動しています…",
+      "errorTitle": "ペットウィンドウが起動していません",
+      "unsupported": "このシステムはローカルウィンドウに対応していません。リモートクライアントを使ってください。",
+      "show": "表示",
+      "showFailed": "ペットを表示できませんでした",
+      "inputPlaceholder": "ペットに話しかける…",
+      "send": "送信",
+      "sendFailed": "送信できませんでした",
+      "todos": "ToDo",
+      "todosLabel": "ToDo、未完了 {{count}} 件",
+      "todosEmpty": "未完了の ToDo はありません",
+      "todosMore": "ほか {{count}} 件はペットで確認できます"
+    },
+    "allConversations": "すべての会話",
+    "filterConversations": "絞り込み",
+    "focusFlows": "Focus 共有フロー",
+    "overviewPreview": "状態と使用量の概要",
+    "agentHelper": "Agentアシスタント",
+    "localChatPreview": "ローカルチャットルーム",
+    "console": "コンソール",
+    "uptime": "稼働時間",
+    "unread": "未読 {{count}} 件",
+    "loading": "読み込み中…",
+    "noNews": "ニュースはありません",
+    "detailedStats": "詳細統計",
+    "otherModels": "その他のモデル",
+    "noData": "データなし",
+    "quickChat": "麦麦とチャット",
+    "quickChatPlaceholder": "麦麦に話しかけて、Enter で会話を開く…",
+    "composerMode": "入力モード",
+    "modeChat": "チャット",
+    "modeAsk": "質問",
+    "editCards": "カードを編集",
+    "cardLibrary": "カードライブラリ",
+    "resetLayout": "初期状態に戻す",
+    "doneEditing": "完了",
+    "removeCard": "「{{name}}」を外す",
+    "moveCard": "ドラッグまたは矢印キーで「{{name}}」を移動",
+    "cardWidth": "カードの幅",
+    "addCard": "「{{name}}」をボードに追加",
+    "libraryHint": "+ でボードに戻せます。統計カードは区切り線の下に入ります。",
+    "libraryEmpty": "すべてのカードがボードにあります",
+    "closeLibrary": "カードライブラリを閉じる",
+    "refreshQuote": "次の一言",
+    "emptyBoard": "ボードが空です。ライブラリからカードを追加してください。",
+    "zoneTop": "上段",
+    "zoneStats": "統計",
+    "modeChatLabel": "チャットモード",
+    "modeAskLabel": "質問モード",
+    "switchMode": "{{mode}}に切り替え",
+    "askTitle": "麦麦に質問",
+    "askPreview": "ドキュメントとプラグインマーケット",
+    "askPlaceholder": "設定やプラグインの使い方を質問して Enter…",
+    "ask": "質問",
+    "send": "送信"
+  },
   "pluginWebUI": {
     "settingsTitle": "プラグインページ",
-    "settingsHint": "上部に表示するプラグインページと順序を設定します。このブラウザーにのみ保存され、プラグインの権限には影響しません。",
-    "topbarPreview": "上部バーのプレビュー",
-    "moreShort": "その他",
-    "topbarLimit": "上部には最大 {{count}} 件、残りは「その他」に表示",
+    "settingsHint": "サイドバーに表示するプラグインページとその順序を設定します。設定はこのブラウザーに保存されます。",
     "orderAndVisibility": "順序と表示",
     "pluginCount": "{{count}} 件のプラグイン",
     "hiddenLabel": "非表示",
-    "topbarLabel": "上部バー",
-    "overflowLabel": "その他メニュー",
     "sidebarLabel": "サイドバー",
-    "overflowGroup": "以下は「その他」メニューに表示",
-    "sidebarGroup": "以下はサイドバーのページのみを提供",
     "visibleLabel": "表示",
     "customReload": "ページを再読み込み",
     "customStop": "ページを停止",
     "customStopped": "ページを停止しました。再読み込みで再開できます。",
-    "customStopRequestRate": "リクエストが多すぎるため停止しました（毎秒20回、瞬間最大200回）。",
+    "customStopRequestRate": "リクエストが多すぎるため停止しました（毎秒{{rate}}回、瞬間最大{{burst}}回）。",
     "customStopLayoutRate": "ページサイズの更新が多すぎるため停止しました。",
     "customStopHeight": "ページの高さが無効、または30000ピクセルを超えたため停止しました。",
     "customStopDuplicateId": "リクエストIDが重複したため停止しました。",
     "customStopTimeout": "10秒以内に接続できなかったため停止しました。",
     "customStopManual": "ページを手動で停止しました。",
     "customStopNavigation": "ページの再読み込みまたは移動により接続を停止しました。",
-    "workspaceOrder": "上部タブの順序",
-    "workspaceOrderHint": "非表示でないプラグインはこの順序で並びます。上部には最大2つのタブを表示し、残りは隣の「その他」メニューから開けます。現在のプラグインは常に表示されます。変更は即座に反映され、このブラウザーに保存されます。",
     "galleryLayout": "配置選択",
     "paginationSummary": "{{page}} / {{pages}}ページ · {{total}}枚",
     "galleryAuto": "自動配置",
     "galleryColumns": "{{count}}列",
     "extensions": "プラグイン拡張",
     "manage": "プラグインページの管理",
-    "more": "その他のプラグインワークスペース",
     "refresh": "更新",
     "loading": "読み込み中…",
     "empty": "データがありません",
@@ -81,8 +259,10 @@
       "system": "システム"
     },
     "menu": {
+      "mutualGroups": "共有",
       "home": "ホーム",
       "botMainConfig": "ボットメイン設定",
+      "desktopPet": "デスクトップペット",
       "aiModelProvider": "AIモデルプロバイダー",
       "modelManagement": "モデル管理",
       "promptManagement": "Prompt管理",
@@ -114,15 +294,37 @@
     "generatedAt": "統計截止時刻：{{time}}",
     "periodRange": "統計期間：{{start}} から {{end}}",
     "empty": "この期間のデータはありません",
-    "actions": { "refresh": "更新", "openHtml": "HTML版を開く" },
-    "error": { "title": "詳細統計を読み込めませんでした", "description": "しばらくしてから再試行してください" },
-    "periods": {
-      "all_time": "デプロイ以降", "last_30_days": "過去30日", "last_7_days": "過去7日",
-      "last_3_days": "過去3日", "last_24_hours": "過去1日", "last_3_hours": "過去3時間",
-      "last_hour": "過去1時間", "last_15_minutes": "過去15分"
+    "actions": {
+      "refresh": "更新",
+      "compare": "Compare with previous",
+      "details": "Details"
     },
-    "tabs": { "trends": "データグラフ", "metrics": "指標トレンド" },
-    "sections": { "breakdowns": "分類統計", "embeddings": "埋め込み統計", "distributions": "データ分布" },
+    "error": {
+      "title": "詳細統計を読み込めませんでした",
+      "description": "しばらくしてから再試行してください"
+    },
+    "periods": {
+      "all_time": "デプロイ以降",
+      "last_30_days": "過去30日",
+      "last_7_days": "過去7日",
+      "last_3_days": "過去3日",
+      "last_24_hours": "過去1日",
+      "last_3_hours": "過去3時間",
+      "last_hour": "過去1時間",
+      "last_15_minutes": "過去15分"
+    },
+    "tabs": {
+      "trends": "データグラフ",
+      "metrics": "指標トレンド"
+    },
+    "sections": {
+      "breakdowns": "Detailed Breakdown",
+      "embeddings": "埋め込み統計",
+      "distributions": "Distributions",
+      "period": "Period",
+      "trend": "Trends & Insights",
+      "reliability": "Reliability & Failures"
+    },
     "breakdowns": {
       "taskGroups": "タスクグループ別",
       "models": "モデル別",
@@ -131,19 +333,47 @@
       "chats": "チャットメッセージ"
     },
     "summary": {
-      "onlineTime": "総稼働時間", "messages": "総メッセージ数", "replies": "総返信数", "requests": "総リクエスト数",
-      "tokens": "総Token数", "inputTokens": "入力Token", "outputTokens": "出力Token", "cacheHitRate": "Promptキャッシュヒット率",
-      "cacheHitTokens": "キャッシュヒットToken", "cacheMissTokens": "キャッシュミスToken", "totalCost": "総費用",
-      "costPerMessages": "費用/メッセージ", "costPerReceivedMessages": "費用/受信メッセージ", "costPerReplies": "費用/返信",
-      "costPerHour": "費用/時間", "tokensPerHour": "Token/時間"
+      "onlineTime": "総稼働時間",
+      "messages": "総メッセージ数",
+      "replies": "総返信数",
+      "requests": "総リクエスト数",
+      "tokens": "総Token数",
+      "inputTokens": "入力Token",
+      "outputTokens": "出力Token",
+      "cacheHitRate": "Promptキャッシュヒット率",
+      "cacheHitTokens": "キャッシュヒットToken",
+      "cacheMissTokens": "キャッシュミスToken",
+      "totalCost": "総費用",
+      "costPerMessages": "費用/メッセージ",
+      "costPerReceivedMessages": "費用/受信メッセージ",
+      "costPerReplies": "費用/返信",
+      "costPerHour": "費用/時間",
+      "tokensPerHour": "Token/時間",
+      "callsPerReply": "Calls / Reply",
+      "failureRate": "Failure Rate",
+      "replyRate": "Reply Rate",
+      "sparkLabel": "{{name}} recent trend"
     },
-    "units": { "per100": "100件あたり", "perHour": "1時間あたり" },
+    "units": {
+      "per100": "100件あたり",
+      "perHour": "1時間あたり"
+    },
     "table": {
-      "name": "名前", "requests": "呼び出し回数", "inputTokens": "入力Token", "outputTokens": "出力Token",
-      "totalTokens": "総Token", "cacheHitTokens": "キャッシュヒットToken", "cacheMissTokens": "キャッシュミスToken",
-      "cacheHitRate": "キャッシュヒット率", "cost": "累計費用", "time": "所要時間",
-      "callsPerReply": "返信あたりの呼び出し", "tokensPerReply": "返信あたりのToken", "tokensPerCall": "呼び出しあたりのToken",
-      "chat": "連絡先/グループ", "messages": "メッセージ数"
+      "name": "名前",
+      "requests": "呼び出し回数",
+      "inputTokens": "入力Token",
+      "outputTokens": "出力Token",
+      "totalTokens": "総Token",
+      "cacheHitTokens": "キャッシュヒットToken",
+      "cacheMissTokens": "キャッシュミスToken",
+      "cacheHitRate": "キャッシュヒット率",
+      "cost": "累計費用",
+      "time": "所要時間",
+      "callsPerReply": "返信あたりの呼び出し",
+      "tokensPerReply": "返信あたりのToken",
+      "tokensPerCall": "呼び出しあたりのToken",
+      "chat": "連絡先/グループ",
+      "messages": "メッセージ数"
     },
     "distributions": {
       "metric": "統計指標",
@@ -154,13 +384,202 @@
       "moduleTokens": "モジュール別Token分布",
       "requestTypeTokens": "リクエスト種別Token分布",
       "chatTokens": "チャット別Token分布",
-      "ownerCosts": "呼び出し元の費用分布", "modelCosts": "モデル費用分布", "moduleCosts": "モジュール費用分布",
-      "requestTypeCosts": "リクエスト種別の費用分布", "chatMessages": "チャットメッセージ分布", "chatCosts": "チャットストリーム費用分布"
+      "ownerCosts": "呼び出し元の費用分布",
+      "modelCosts": "モデル費用分布",
+      "moduleCosts": "モジュール費用分布",
+      "requestTypeCosts": "リクエスト種別の費用分布",
+      "chatMessages": "チャットメッセージ分布",
+      "chatCosts": "チャットストリーム費用分布",
+      "hint": "Click a legend item to filter the table below",
+      "itemCount": "{{count}} items",
+      "filterTable": "Filter {{name}} in detail table",
+      "singleSource": "Only \"{{name}}\" is present in this period",
+      "zeroCount": "{{count}} items with 0 value",
+      "titles": {
+        "owner": "Owner {{metric}} Distribution",
+        "model": "Model {{metric}} Distribution",
+        "module": "Module {{metric}} Distribution",
+        "requestType": "Request Type {{metric}} Distribution",
+        "taskGroup": "Task Group {{metric}} Distribution",
+        "chat": "Chat {{metric}} Distribution"
+      },
+      "totals": {
+        "costs": "Total Cost",
+        "tokens": "Total Tokens"
+      }
     },
-    "charts": { "timeRange": "時間範囲", "timeScale": "時間尺度", "toggleSeries": "{{name}} の表示を切り替える" },
-    "ranges": { "6h": "6時間", "12h": "12時間", "24h": "24時間", "48h": "48時間", "7d": "7日", "30d": "30日" },
-    "trends": { "totalCost": "総費用トレンド", "moduleCosts": "モジュール別費用トレンド", "modelCosts": "モデル別費用トレンド", "chatMessages": "チャット別メッセージトレンド" },
-    "metrics": { "costPerMessages": "メッセージあたり費用トレンド", "costPerHour": "時間あたり費用トレンド", "tokensPerHour": "時間あたりTokenトレンド", "costPerReplies": "返信あたり費用トレンド" }
+    "charts": {
+      "timeRange": "時間範囲",
+      "timeScale": "時間尺度",
+      "toggleSeries": "{{name}} の表示を切り替える"
+    },
+    "ranges": {
+      "6h": "6時間",
+      "12h": "12時間",
+      "24h": "24時間",
+      "48h": "48時間",
+      "7d": "7日",
+      "30d": "30日"
+    },
+    "trends": {
+      "totalCost": "総費用トレンド",
+      "moduleCosts": "モジュール別費用トレンド",
+      "modelCosts": "モデル別費用トレンド",
+      "chatMessages": "チャット別メッセージトレンド"
+    },
+    "metrics": {
+      "costPerMessages": "メッセージあたり費用トレンド",
+      "costPerHour": "時間あたり費用トレンド",
+      "tokensPerHour": "時間あたりTokenトレンド",
+      "costPerReplies": "返信あたり費用トレンド"
+    },
+    "other": "Other ({{count}})",
+    "delta": {
+      "vsPrevious": "Compared with previous period",
+      "noBaseline": "Previous period was 0",
+      "new": "NEW"
+    },
+    "modules": {
+      "usage": "Usage Overview",
+      "cache": "Prompt Cache",
+      "modelCosts": "Model Cost Share",
+      "flow": "Token Flow",
+      "unit": "Unit Cost & Efficiency",
+      "insights": "Auto Insights",
+      "failureRank": "Failure Rate Ranking",
+      "failureTrend": "Failure Trend & Latency",
+      "heatmap": "Activity Heatmap",
+      "chats": "Top Active Chats"
+    },
+    "cache": {
+      "all": "Overall",
+      "uncachedHint": "{{tokens}} input tokens without cache breakdown"
+    },
+    "models": {
+      "freeHint": "{{count}} additional models with ¥0.00 cost"
+    },
+    "flow": {
+      "total": "Total {{tokens}}",
+      "cacheHit": "Cache Hit Input",
+      "cacheMiss": "Cache Miss Input",
+      "noCacheInfo": "Uncached Input",
+      "output": "Output Tokens",
+      "ioRatio": "Input : Output Ratio"
+    },
+    "trend": {
+      "metric": "Metric",
+      "group": "Group By",
+      "mode": "Chart Mode",
+      "sum": "Total",
+      "truncated": "Detailed series kept for 30 days (since {{start}})",
+      "metrics": {
+        "cost": "Cost",
+        "tokens": "Tokens",
+        "requests": "Requests",
+        "messages": "Messages"
+      },
+      "groups": {
+        "total": "Total",
+        "model": "By Model",
+        "module": "By Module",
+        "chat": "By Chat"
+      },
+      "modes": {
+        "stack": "Stacked",
+        "line": "Line",
+        "percent": "100% Share"
+      },
+      "titles": {
+        "cost": "Cost Trend",
+        "tokens": "Token Usage Trend",
+        "requests": "Request Trend",
+        "messages": "Message Trend"
+      },
+      "totals": {
+        "cost": "Total Cost",
+        "tokens": "Total Tokens",
+        "requests": "Total Requests",
+        "messages": "Total Messages"
+      }
+    },
+    "insights": {
+      "empty": "No notable anomalies or concentrations in this period",
+      "alertCount": "{{count}} alerts",
+      "costUp": "Cost is {{current}}, up {{change}} from {{previous}}.",
+      "costDown": "Cost is {{current}}, down {{change}} from {{previous}}.",
+      "failureRate": "{{name}} failure rate reached {{rate}} ({{failures}} / {{attempts}}), above overall {{overall}}.",
+      "failureShare": "{{name}} had {{failures}} failures ({{share}} of all failures).",
+      "costShare": "{{name}} cost {{cost}}, accounting for {{share}} of total cost.",
+      "cacheLow": "{{name}} cache hit rate is {{rate}}, well below overall {{overall}}.",
+      "unitPrice": "{{name}} averages {{unit}} / 1M tokens ({{ratio}}x overall average).",
+      "latencyTail": "{{name}} latency std dev is {{std}} (avg {{avg}}), showing long-tail spikes.",
+      "topChat": "\"{{name}}\" is most active with {{messages}} messages ({{share}})."
+    },
+    "reliability": {
+      "source": "Based on 1-minute task usage buckets",
+      "truncated": "Task usage kept for 7 days (covered since {{start}})",
+      "dimension": "Dimension",
+      "empty": "No task usage records in this period",
+      "attempts": "Attempts",
+      "failures": "Failures",
+      "failureRate": "Failure Rate",
+      "avgSuccessDuration": "Avg Success Time",
+      "chartLegend": "Bars: Failures · Line: Failure Rate",
+      "hint": "Highlighted when failure rate reaches {{threshold}}",
+      "dimensions": {
+        "model": "By Model",
+        "provider": "By Provider",
+        "task": "By Task"
+      }
+    },
+    "heatmap": {
+      "metric": "Heatmap Metric",
+      "weekdays": "Mon,Tue,Wed,Thu,Fri,Sat,Sun",
+      "less": "Less",
+      "more": "More",
+      "messagesValue": "{{value}} msgs",
+      "cellTitle": "{{day}} {{hour}}:00 · {{value}}",
+      "metrics": {
+        "messages": "Messages",
+        "costs": "Cost"
+      }
+    },
+    "chats": {
+      "topHint": "Top {{count}} / {{total}}",
+      "costPer100": "{{cost}} / 100 msgs"
+    },
+    "columns": {
+      "name": "Name",
+      "requests": "Requests",
+      "tokens": "Tokens (Total / In·Out)",
+      "cacheRate": "Cache Hit Rate",
+      "cost": "Total Cost",
+      "failureRate": "Failure Rate",
+      "time": "Avg Latency",
+      "unitCost": "Cost / 1M",
+      "costPerCall": "Cost / 1K Calls",
+      "callsPerReply": "Calls / Reply",
+      "tokensPerReply": "Tokens / Reply"
+    },
+    "detail": {
+      "hideEmbedding": "Hide Embeddings",
+      "columnGroups": "Column Groups",
+      "dimension": "Dimension",
+      "search": "Filter by name…",
+      "rowCount": "{{shown}} / {{total}}",
+      "total": "Total ({{count}})",
+      "embeddingTag": "Embed",
+      "freeTag": "Free",
+      "failureCount": "{{value}} failed",
+      "attemptsFailures": "Failures / Attempts",
+      "groups": {
+        "token": "Tokens",
+        "cache": "Cache",
+        "perf": "Latency & Errors",
+        "unit": "Unit Cost",
+        "reply": "Per Reply"
+      }
+    }
   },
   "workspace": {
     "switcherLabel": "麦麦ワークスペースを切り替え",
@@ -169,8 +588,7 @@
     "logs": "ログ"
   },
   "chat": {
-    "computerDesktop": "デスクトップと操作引き継ぎ",
-    "computer": {
+    "agent": {
       "desktopSetup": "dsh Desktop に接続",
       "desktopInstall": "Desktop 同梱の dsh コマンドでブリッジをインストール（0.2.1-rc.2 以降）：",
       "desktopConnect": "Desktop を起動または再起動します。ブリッジファイルとモデル選択は空欄で既定値を使います。タスクは Desktop の「麦麦」会話に表示され、麦麦を終了しても Desktop は終了しません。",
@@ -180,27 +598,9 @@
       "dshEnable": "接続方式で dsh CLI を選択して有効にし、保存してから Agent ページでタスクを送信します。プログラムが見つからない場合、Windows では ACP 起動プログラムに dsh.cmd の絶対パスを指定します。",
       "dshCommand": "プリセットの起動コマンド：",
       "disabled": "Agent は無効です",
-      "reasoning": "思考履歴",
-      "connecting": "接続中",
-      "disabled": "コンピューター機能は無効です",
-      "stopped": "サンドボックス停止中",
-      "manual": "手動操作",
       "paused": "判断を一時停止中",
-      "resting": "休憩中",
-      "autonomous": "自律探索中",
-      "running": "操作実行中",
-      "pause": "PC入力を一時停止",
-      "takeover": "操作を引き継ぐ",
+      "running": "タスク実行中",
       "resume": "再開",
-      "stop": "サンドボックスを停止",
-      "restart": "サンドボックスを再作成",
-      "refresh": "画面を更新",
-      "help": "内部Planner、サブエージェント、外部AgentはこのPCを共有します。引き継ぐとクリック、右クリック、文字入力ができます。引き継ぎ時は実行中の操作をキャンセルし、自律入力を停止します。入力の一時停止では送信済みの操作は続行されます。",
-      "screen": "コンピューター画面",
-      "text": "操作を引き継いで文字を入力",
-      "type": "文字入力",
-      "enter": "Enter",
-      "takeoverFirst": "先に操作を引き継いでください",
       "toolCall": "ツール呼び出し",
       "toolResult": "実行結果",
       "failed": "実行失敗",
@@ -224,7 +624,11 @@
       "repliedTitle": "麦麦から返信が届きました",
       "repliedDescription": "返信や話し方に問題がなければ、メッセージプラットフォームの設定に進めます。",
       "keepChatting": "チャットを続ける",
-      "continue": "プラットフォームを設定"
+      "continue": "プラットフォームを設定",
+      "failedTitle": "麦麦からまだ返信がありません",
+      "failedDescription": "モデルの URL、API キー、またはモデル名が間違っている可能性があります。もう一度送るか、モデル設定を確認してください。",
+      "checkModelConfig": "モデル設定を確認",
+      "learnBasics": "基本設定を案内して"
     },
     "botNameFallback": "麦麦",
     "userFallback": "ユーザー",
@@ -396,6 +800,25 @@
       "about": "について"
     },
     "appearance": {
+      "dashboardStyle": "画面スタイル",
+      "dashboardStyles": {
+        "modern": {
+          "label": "モダン",
+          "description": "フラットでモダンなUI"
+        },
+        "future-retro": {
+          "label": "フューチャーレトロ",
+          "description": "高いコントラスト、粗い質感、暖かみのある色、マットな仕上げ"
+        },
+        "millennium": {
+          "label": "ミレニアム",
+          "description": "懐かしい2000年前後のスタイル"
+        }
+      },
+      "layoutVersion": "レイアウト",
+      "layoutVersionDesc": "クラシックはトップバーとカード型ホームを保ちます。観察レイアウトはトップバーをなくし、サイドバー上部に設定、下部にすべての会話を表示し、ホームは状態ボードになります。デスクトップ幅のみ。",
+      "layoutClassic": "クラシック",
+      "layoutObservation": "観察",
       "themeMode": "テーマモード",
       "themeModeDesc": "ライト / ダーク / システムに従う",
       "light": "ライト",
@@ -781,6 +1204,7 @@
     "loginFailed": "ログイン失敗",
     "loginSuccess": "ログイン成功",
     "checkingAuth": "ログイン状態を確認中...",
+    "waitingConnection": "接続を待機中です。サーバーの準備ができ次第、自動的に進みます…",
     "welcome": "MaiBot へようこそ",
     "accessDesc": "MaiBot に入るにはアクセスパスワードを入力してください",
     "tokenRequired": "アクセストークンを入力してください",
@@ -806,8 +1230,45 @@
   },
   "setupPage": {
     "steps": {
+      "nickname": {
+        "title": "名前を決める",
+        "label": "ニックネーム",
+        "description": ""
+      },
+      "defineModel": {
+        "title": "モデルの提供元を設定",
+        "label": "モデルを定義",
+        "description": ""
+      },
+      "replyer": {
+        "title": "返信モデルを設定",
+        "description": "このモデルが話し方を決めます。文章力と表現力に優れたモデルが適しています。"
+      },
+      "planner": {
+        "title": "行動モデルを設定",
+        "description": "このモデルが麦麦の行動を決めます。タスクを理解し、ツールを使えるエージェント対応モデルを選んでください。"
+      },
+      "basicSettings": {
+        "title": "設定",
+        "description": ""
+      },
+      "groupReplies": {
+        "title": "グループ返信",
+        "description": "有効にすると、グループで @メンションされたときにできるだけ返信します。",
+        "label": "@メンションへの返信を優先"
+      },
+      "desktopPet": {
+        "title": "デスクトップペット",
+        "description": "",
+        "label": "デスクトップペットを有効にする",
+        "hint": "デスクトップペットには Windows のデスクトップ環境が必要です。\nサーバーに導入している場合は、後から設定でデスクトップペットへのリモート接続を構成できます。"
+      },
+      "dashboardAppearance": {
+        "title": "画面スタイル",
+        "description": ""
+      },
       "botProfile": {
-        "title": "基本情報と人格",
+        "title": "人格",
         "description": "ニックネーム、人格、返信スタイルを設定します"
       },
       "customToken": {
@@ -820,15 +1281,19 @@
         "description": "ボットの基本情報を設定します"
       },
       "personality": {
-        "title": "人格設定",
-        "description": "ボットの性格や話し方を定義します"
+        "title": "人格を作成",
+        "choose": "どちらの方法で始めますか？",
+        "templateTitle": "テンプレートを選ぶ",
+        "editTitle": "人格を編集",
+        "template": "既存のテンプレートを使う",
+        "manual": "自分で書く"
       },
       "apiProvider": {
         "title": "API設定",
         "description": "APIプロバイダーを設定します"
       },
       "modelSetup": {
-        "title": "モデル設定",
+        "title": "モデル",
         "description": "planner と replyer モデルを設定します"
       }
     },
@@ -851,8 +1316,8 @@
       "enterProviderName": "APIプロバイダー名を入力してください",
       "enterBaseUrl": "API Base URL を入力してください",
       "enterApiKey": "API Key を入力してください",
-      "enterPlannerModelIdentifier": "planner モデル識別子を入力してください",
-      "enterReplyerModelIdentifier": "replyer モデル識別子を入力してください",
+      "enterPlannerModelIdentifier": "行動モデルの識別子を入力してください",
+      "enterReplyerModelIdentifier": "返信モデルの識別子を入力してください",
       "customTokenInvalid": "Token が要件を満たしていません：{{failedRules}}"
     },
     "toast": {
@@ -867,7 +1332,7 @@
       "completeFailedTitle": "設定の完了に失敗しました",
       "skipFailedTitle": "セットアップのスキップに失敗しました",
       "customTokenSuccessTitle": "Token を更新しました",
-      "customTokenSuccessDescription": "新しいカスタム Token で再度ログインしてから、設定を続けてください。",
+      "customTokenSuccessDescription": "新しいパスワードでログインしました。設定を続けられます。",
       "unknownError": "不明なエラー"
     },
     "actions": {
@@ -907,6 +1372,8 @@
         "noticeDescription": "ランダム Token は次回起動時に変わります。固定のカスタム Token を設定し、今後の WebUI ログインに使用してください。",
         "label": "カスタム Token *",
         "placeholder": "新しいパスワードを入力",
+        "confirmation": "新しいパスワードを再入力",
+        "mismatch": "パスワードが一致しません。",
         "description": "保存後、現在のログインは無効になります。新しい Token で再度ログインしてください。",
         "requirements": "Token の要件",
         "show": "表示",
@@ -966,17 +1433,17 @@
         "personality": {
           "label": "人格特性",
           "placeholder": "ボットの人格や設定を説明してください（120文字以内推奨）",
-          "description": "botの核となる性格を記述し、botの自己認識に影響します"
+          "description": "性格の特徴と大事な情報"
         },
         "behaviorStyle": {
           "label": "行動スタイル",
           "placeholder": "会話に参加するタイミングや、様子を見る・静かにする場面を記述",
-          "description": "botの行動を記述し、行動の仕方を決めます"
+          "description": "チャット中の振る舞いと物事への取り組み方"
         },
         "replyStyle": {
           "label": "話し方",
           "placeholder": "ボットの話し方や表現の癖を説明してください",
-          "description": "botの話し方や口調に直接影響します"
+          "description": "話し方"
         },
         "multipleReplyStyle": {
           "label": "代替返信スタイル",
@@ -1027,7 +1494,7 @@
       },
       "apiProvider": {
         "providerName": {
-          "label": "APIプロバイダー名 *",
+          "label": "プロバイダー",
           "placeholder": "例: OpenAI、DeepSeek、自ホストサービス",
           "description": "この名前は model_config.toml に保存され、下のモデルから参照されます"
         },
@@ -1036,13 +1503,18 @@
           "description": "OpenAI互換エンドポイントを入力してください。例: https://api.example.com/v1"
         },
         "apiKey": {
-          "label": "API Key *",
+          "label": "API キー",
           "description": "このプロバイダーの API Key を入力してください",
           "show": "API Key を表示",
           "hide": "API Key を非表示"
-        }
+        },
+        "presetSelect": "プリセットのプロバイダーを選択",
+        "usePreset": "プリセット",
+        "useCustom": "カスタム"
       },
       "modelSetup": {
+        "identifierPlaceholder": "モデル ID を入力",
+        "pickFromList": "モデルを選択",
         "planner": {
           "identifier": {
             "label": "planner モデル識別子 *",
@@ -1061,7 +1533,44 @@
             "label": "ビジョンを有効化"
           }
         },
-        "saveHint": "より詳細なタスク割り当ては後で設定できます。"
+        "saveHint": "より詳細なタスク割り当ては後で設定できます。",
+        "fetching": "モデル一覧を取得中…",
+        "fetchFailed": "{{error}}。モデル ID を手動で入力してください。",
+        "enableThinking": "思考を有効化",
+        "effort": {
+          "label": "思考の強さ",
+          "low": "低",
+          "high": "高",
+          "max": "最大"
+        }
+      }
+    },
+    "errors": {
+      "loadStatus": "セットアップ状態の読み込みに失敗しました",
+      "loadBot": "Bot 設定の読み込みに失敗しました",
+      "loadPersonality": "人格設定の読み込みに失敗しました",
+      "loadModel": "モデル設定の読み込みに失敗しました",
+      "fetchModels": "モデル一覧の取得に失敗しました",
+      "emptyModelList": "プロバイダーから返されたモデル一覧が空です",
+      "saveBot": "Bot 設定の保存に失敗しました",
+      "savePersonality": "人格設定の保存に失敗しました",
+      "saveProvider": "API プロバイダー設定の保存に失敗しました",
+      "saveModel": "モデル設定の保存に失敗しました",
+      "complete": "セットアップ完了の記録に失敗しました",
+      "updateToken": "トークンの更新に失敗しました"
+    },
+    "connectionTest": {
+      "hint": "モデルを呼び出せるか事前に確認できます。結果は参考情報です。",
+      "button": "接続テスト",
+      "testing": "テスト中…",
+      "passed": "成功",
+      "failed": "失敗",
+      "passedWithLatency": "成功（{{latency}}）",
+      "saveFailed": "設定を保存できなかったため、テストできませんでした：{{error}}",
+      "canContinue": "テストに失敗してもセットアップは完了できます。後からモデル設定ページで調整できます。",
+      "roles": {
+        "planner": "行動モデル",
+        "replyer": "返信モデル"
       }
     }
   },
@@ -1133,6 +1642,43 @@
     "copyError": "エラー情報をコピー"
   },
   "search": {
+    "previewArtifactImage": "画像をプレビュー",
+    "invalidArtifactImage": "このファイルはプレビューできる画像ではありません。",
+    "harness": {
+      "title": "質問への対応状況",
+      "plan": "現在の計画",
+      "skills": "読み込んだスキル",
+      "status": {
+        "pending": "未着手",
+        "in_progress": "進行中",
+        "completed": "完了"
+      },
+      "skill": {
+        "setup": "初期設定",
+        "troubleshoot": "トラブル対応",
+        "plugin": "プラグインの利用",
+        "develop": "プラグイン開発"
+      }
+    },
+    "allowPluginConfigWrite": "プラグイン設定の変更を許可",
+    "allowPluginConfigWriteHint": "今回の質問にのみ適用されます。エージェントは依頼内容に従ってプラグイン設定を保存できます。",
+    "progressPrepareInstall": "インストール確認を準備",
+    "progressListInstalled": "導入済みプラグインを確認",
+    "progressReadPluginConfig": "プラグイン設定を読む",
+    "progressUpdatePluginConfig": "プラグイン設定を変更",
+    "pluginInstallTitle": "プラグインのインストール",
+    "pluginInstallPending": "まだインストールしていません。確認すると、このプラグインとバージョンをダウンロードしてインストールします。",
+    "pluginConfirmInstall": "インストールを確認",
+    "pluginCancelInstall": "インストールをキャンセル",
+    "pluginOpenConfig": "プラグイン設定を開く",
+    "pluginConfigUpdated": "プラグイン設定を保存しました",
+    "pluginInstallFailed": "プラグインのインストールに失敗しました",
+    "pluginInstallStatus": {
+      "installing": "インストール中…",
+      "success": "インストール完了",
+      "error": "インストール失敗",
+      "cancelled": "キャンセル済み・未実行"
+    },
     "placeholder": "ページ、設定、または解決したい問題を検索...",
     "title": "検索",
     "noResults": "一致するページまたは設定項目が見つかりません",
@@ -1153,6 +1699,21 @@
     "progressSearchDocs": "公式ドキュメントを検索",
     "progressReadDocs": "公式ドキュメントを読む",
     "progressReadConfig": "ローカル設定を読む",
+    "progressReadLogs": "最近のログを確認",
+    "progressListReasoning": "最近の推論記録を検索",
+    "progressReadReasoning": "推論記録を確認",
+    "progressPublishArtifact": "表示用コンテンツを公開",
+    "progressSearchPlugins": "プラグイン市場を検索",
+    "progressReadPluginDetail": "プラグイン詳細と互換性を確認",
+    "progressReadPluginReadme": "プラグインの README を読む",
+    "pluginResults": "関連プラグイン",
+    "pluginOpenStore": "プラグインストアで見る",
+    "pluginRecommendedVersion": "推奨バージョン：{{version}}",
+    "pluginCompatibility": {
+      "unknown": "互換性は未確認",
+      "compatible": "現在の環境に対応",
+      "incompatible": "対応する安定版またはブランチなし"
+    },
     "progressTool": "検索操作を実行",
     "progressCompleted": "{{action}}完了（{{count}} 件）",
     "progressFailed": "{{action}}失敗",
@@ -1165,9 +1726,9 @@
     "aiRecommendation": "AI のおすすめ",
     "aiAnswer": "AI の回答",
     "aiSuggestions": "提案",
-    "aiSources": "公式ドキュメント",
+    "aiSources": "参考資料",
     "aiUnderstood": "AI の解釈：{{terms}}",
-    "aiNoResults": "十分に関連するページまたは設定項目が見つかりませんでした",
+    "aiNoResults": "関連するページ、設定項目、プラグインが見つかりませんでした",
     "aiFailed": "AI 検索に失敗しました",
     "indexLoading": "設定検索インデックスを読み込み中…",
     "categories": {
@@ -1181,6 +1742,7 @@
     "items": {
       "home": "ホーム",
       "homeDesc": "ダッシュボード概要を表示",
+      "chatDesc": "チャットの会話設定でグループの返信頻度を確認できます。頻度が 0 の場合、メッセージを受信しても Planner は呼び出されません。個別チャットの一時停止は別設定です。",
       "botConfig": "ボットメイン設定",
       "botConfigDesc": "ボットの詳細設定と共有グループを設定",
       "model": "モデル設定",
@@ -1555,8 +2117,7 @@
         "modelTasks": "モデル管理 / 機能割り当てを開く",
         "botConfig": "MaiBot 本体設定を開く",
         "emojiManagement": "絵文字リソース管理を開く",
-        "expressionManagement": "表現管理を開く",
-        "statistics": "maibot_statistics.html を開く"
+        "expressionManagement": "表現管理を開く"
       },
       "categories": {
         "system": "システム",
@@ -1772,6 +2333,87 @@
     "delivery": {
       "sent": "送信済み",
       "unknown": "配信結果が不明です。再送前にチャットを確認してください。"
+    }
+  },
+  "hostShared": {
+    "title": "共有モデルカタログ",
+    "hint": "プロバイダー、キー、モデルをホストで共有します。タスクの選択は Bot ごとに独立し、同名のローカル設定が優先されます。変更は稼働中の Bot に自動反映されます。",
+    "source": "Bot を選択",
+    "importHint": "インポート後、保存すると公開されます。継承は同一のローカル項目だけを削除し、タスク選択と異なるローカル設定を維持します。",
+    "adopt": "同一項目を継承",
+    "adopted": "同一のローカル項目を {{count}} 件削除しました。稼働中の Bot は自動再読込します。",
+    "saved": "共有カタログを保存しました。稼働中の Bot は自動再読込します。",
+    "api_providers": "プロバイダー",
+    "models": "モデル",
+    "name": "名前",
+    "base_url": "Base URL",
+    "api_key": "API Key",
+    "client_type": "クライアント種類",
+    "model_identifier": "モデル識別子",
+    "api_provider": "プロバイダー",
+    "model_type": "モデル種類",
+    "remove": "削除",
+    "add": "追加",
+    "save": "共有カタログを保存",
+    "reload": "再読込 / 変更を破棄",
+    "inherited": "以下はホストから継承した項目です。編集はこの Bot のみに適用されます。共有設定は Bot 管理の共有モデルカタログで編集してください。",
+    "gateway": "統合メッセージ接続先（この Bot の token / API Key が必要）",
+    "import": "Bot からインポート"
+  },
+  "hostOperations": {
+    "rename": "名前を変更",
+    "clone": "テンプレートを複製",
+    "archive": "アーカイブして削除",
+    "renameHint": "Change the host display name only; the Bot ID, directory and persona name stay unchanged.",
+    "cloneHint": "Temporarily stop the source, copy configuration and plugins, then restore its desired state. History, memory, login state and logs are excluded. The clone stays stopped; review accounts and credentials before starting it.",
+    "archiveHint": "Stop this Bot, move its directory into host/archives and remove its registration. Data is retained.",
+    "unregisterHint": "Stop and unregister this Bot. Its original or external directory stays in place.",
+    "working": "処理中…",
+    "confirm": "実行を確認",
+    "cancel": "キャンセル",
+    "update": "プログラム更新",
+    "updateHint": "Update the program shared by all Bots. Stop all Bots and the host, then restart after success or a safe rollback and restore desired states.",
+    "check": "更新を確認",
+    "apply": "更新してホストを再起動",
+    "current": "適用できる更新はありません",
+    "updated": "前回の更新は成功しました",
+    "restarting": "The host is updating and restarting. Waiting to reconnect. If rollback fails, check the terminal and restart manually after repair."
+  },
+  "tour": {
+    "controls": {
+      "back": "戻る",
+      "close": "閉じる",
+      "last": "完了",
+      "next": "次へ",
+      "nextWithProgress": "次へ ({step}/{steps})",
+      "open": "ガイドを開く",
+      "skip": "スキップ"
+    },
+    "basicFeatures": {
+      "personality": {
+        "title": "人格",
+        "content": "麦麦がどんな人物かをここに書きます。性格・立場・話す視点はすべてここから決まります。ハイライト内で直接編集してみてください。"
+      },
+      "replyStyle": {
+        "title": "話し方",
+        "content": "返信の口調や長さを調整します。短め・元気・丁寧などに変えられます。編集後は保存を忘れずに。"
+      },
+      "talkValue": {
+        "title": "グループ発言頻度",
+        "content": "グループで麦麦が自分から話す量を決めます。値が小さいほど静かになります。"
+      },
+      "plugins": {
+        "title": "プラグインマーケット",
+        "content": "ここでプラグインを検索・インストールして、麦麦に新しい機能を追加できます。設定は「プラグイン設定」で調整できます。"
+      },
+      "knowledgeBase": {
+        "title": "ナレッジベース",
+        "content": "「インポート/エクスポート」で資料を取り込むと、麦麦が会話で参考にします。会話から記憶も自動で蓄積されます。"
+      },
+      "done": {
+        "title": "基本設定は以上です",
+        "content": "変更した設定はすべて左のメニューからいつでも調整できます。さっそく麦麦と話してみましょう！"
+      }
     }
   }
 }

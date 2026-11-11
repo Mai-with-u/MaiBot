@@ -4,7 +4,7 @@ from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, case, delete, func
 from sqlmodel import col, select
@@ -33,6 +33,8 @@ from src.common.utils.utils_config import (
     JargonConfigUtils,
 )
 from src.config.config import BOT_CONFIG_PATH, config_manager, global_config
+from src.config.config_utils import recursive_parse_item_to_table
+from src.config.official_configs import TalkRuleGroups, TalkRulesItem, get_active_talk_rule_group
 from src.platform_io import (
     AdapterIdentity,
     AdapterPolicyManager,
@@ -41,7 +43,6 @@ from src.platform_io import (
     get_adapter_policy_manager,
     get_platform_io_manager,
 )
-from src.webui.dependencies import require_auth
 from src.webui.utils.toml_utils import save_toml_with_format
 
 from .service import (
@@ -49,11 +50,12 @@ from .service import (
     INTERNAL_CHAT_PLATFORM,
     chat_history,
     chat_manager,
+    get_chat_bot_qq,
 )
 
 logger = get_logger("webui.chat")
 
-router = APIRouter(prefix="/api/chat", tags=["LocalChat"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/api/chat", tags=["LocalChat"])
 
 
 class TalkFrequencyUpdateRequest(BaseModel):
@@ -62,6 +64,8 @@ class TalkFrequencyUpdateRequest(BaseModel):
     previous_time: Optional[str] = None
     time: str = Field(default="*")
     value: float = Field(ge=0, le=1)
+    enabled: Optional[bool] = None
+    active_group: Optional[str] = None
 
 
 class PrivateReplyPauseUpdateRequest(BaseModel):
@@ -101,6 +105,7 @@ class AdapterHostPolicySectionRequest(BaseModel):
     """单类聊天的主程序适配器放行规则。"""
 
     default_action: Literal["inherit", "allow", "block"] = Field(default="inherit")
+    disabled_ids: List[str] = Field(default_factory=list)
     allow_ids: List[str] = Field(default_factory=list)
     deny_ids: List[str] = Field(default_factory=list)
 
@@ -470,7 +475,9 @@ def _format_frequency(value: float) -> str:
     return f"{normalized_value:.2f}（{normalized_value * 100:.1f}%）"
 
 
-def _talk_rule_to_dict(rule: Any, session_id: str, is_group_chat: bool, now_min: int) -> Optional[Dict[str, Any]]:
+def _talk_rule_to_dict(
+    rule: TalkRulesItem, session_id: str, is_group_chat: bool, now_min: int
+) -> Optional[Dict[str, Any]]:
     """序列化一条匹配当前聊天流的发言频率规则。"""
 
     target_priority = ChatConfigUtils._talk_rule_target_priority(rule, session_id, is_group_chat)
@@ -487,6 +494,7 @@ def _talk_rule_to_dict(rule: Any, session_id: str, is_group_chat: bool, now_min:
         "type": rule_type,
         "time": rule_time,
         "value": value,
+        "enabled": rule.enabled,
         "value_label": _format_frequency(value),
         "target_priority": target_priority,
         "time_priority": time_priority,
@@ -501,19 +509,20 @@ def _get_talk_rule_details(chat_session: ChatSession) -> Dict[str, Any]:
 
     session_id = chat_session.session_id
     is_group_chat = _get_chat_type(chat_session) == "group"
-    reply_timing_config = global_config.chat.reply_timing
     if not is_group_chat:
         value = ChatConfigUtils.get_talk_value(session_id, is_group_chat=False)
         label = "已暂停" if value == 0 else "正常回复"
         return {
-            "enabled": False,
             "base_value": value,
             "base_value_label": label,
             "effective_value": value,
             "effective_value_label": label,
             "current_time": datetime.now().strftime("%H:%M"),
+            "active_group": None,
             "matched_rules": [],
         }
+    reply_timing_config = global_config.chat.reply_timing
+    active_group = get_active_talk_rule_group(reply_timing_config.talk_rule_groups)
     base_value = float(reply_timing_config.talk_value)
     effective_value = float(ChatConfigUtils.get_talk_value(session_id, is_group_chat=is_group_chat))
     local_time = datetime.now().strftime("%H:%M")
@@ -521,14 +530,14 @@ def _get_talk_rule_details(chat_session: ChatSession) -> Dict[str, Any]:
     now_min = current_time.hour * 60 + current_time.minute
     rules = [
         rule_detail
-        for rule in reply_timing_config.talk_value_rules
+        for rule in active_group.rules
         if (rule_detail := _talk_rule_to_dict(rule, session_id, is_group_chat, now_min)) is not None
     ]
     selected_index: Optional[int] = None
     selected_priority = (0, 0)
     for index, rule in enumerate(rules):
         time_priority = rule["time_priority"]
-        if time_priority is None:
+        if not rule["enabled"] or time_priority is None:
             continue
         priority = (rule["target_priority"], time_priority)
         if priority <= selected_priority:
@@ -550,12 +559,12 @@ def _get_talk_rule_details(chat_session: ChatSession) -> Dict[str, Any]:
     )
 
     return {
-        "enabled": bool(reply_timing_config.enable_talk_value_rules),
         "base_value": base_value,
         "base_value_label": _format_frequency(base_value),
         "effective_value": effective_value,
         "effective_value_label": _format_frequency(effective_value),
         "current_time": local_time,
+        "active_group": active_group.name,
         "matched_rules": sorted_rules,
     }
 
@@ -708,27 +717,21 @@ def _normalize_talk_rule_time(rule_time: Optional[str]) -> str:
     return normalized_time
 
 
-def _talk_rule_to_config_dict(rule: Any) -> Dict[str, Any]:
-    """把 TOML/Pydantic 规则项转换为可保存的普通字典。"""
-
-    platform, item_id, rule_type = ChatConfigUtils._target_values(rule)
-    return {
-        "platform": platform,
-        "item_id": item_id,
-        "rule_type": rule_type or "group",
-        "time": ChatConfigUtils._get_rule_time(rule),
-        "value": ChatConfigUtils._get_rule_value(rule),
-    }
-
-
-def _is_same_talk_rule_target(rule: Dict[str, Any], chat_session: ChatSession) -> bool:
+def _is_same_talk_rule_target(rule: TalkRulesItem, chat_session: ChatSession) -> bool:
     """判断规则是否精确作用于当前聊天流。"""
 
     return (
-        str(rule.get("platform") or "").strip() == str(chat_session.platform or "").strip()
-        and str(rule.get("item_id") or "").strip() == _get_chat_target_id(chat_session)
-        and str(rule.get("rule_type") or "").strip() == _get_chat_type(chat_session)
+        rule.platform.strip() == chat_session.platform.strip()
+        and rule.item_id.strip() == _get_chat_target_id(chat_session)
+        and rule.rule_type == _get_chat_type(chat_session)
     )
+
+
+def _read_talk_rule_groups(reply_timing: Any, expected_group: Optional[str]) -> TalkRuleGroups:
+    groups = TalkRuleGroups.model_validate(reply_timing.unwrap().get("talk_rule_groups", {}))
+    if expected_group is not None and expected_group != groups.active_group:
+        raise HTTPException(status_code=409, detail="当前发言频率规则组已切换，请刷新后重试")
+    return groups
 
 
 async def _save_chat_talk_frequency_rule(
@@ -756,64 +759,55 @@ def _write_chat_talk_frequency_rule(chat_session: ChatSession, request: TalkFreq
         if request.previous_time is not None
         else None
     )
-    next_rule = {
-        "platform": str(chat_session.platform or "").strip(),
-        "item_id": _get_chat_target_id(chat_session),
-        "rule_type": _get_chat_type(chat_session),
-        "time": normalized_time,
-        "value": float(request.value),
-    }
-    if not next_rule["platform"] or not next_rule["item_id"]:
+    platform = chat_session.platform.strip()
+    item_id = _get_chat_target_id(chat_session)
+    if not platform or not item_id:
         raise HTTPException(status_code=400, detail="聊天流缺少平台或目标 ID，无法保存规则")
 
     with config_path.open("r", encoding="utf-8") as config_file:
         config_data = tomlkit.load(config_file)
 
-    chat_config = config_data.get("chat")
-    if not isinstance(chat_config, dict):
-        raise HTTPException(status_code=400, detail="配置文件缺少 [chat] 配置节")
-
-    reply_timing_config = chat_config.get("reply_timing")
-    if not isinstance(reply_timing_config, dict):
-        raise HTTPException(status_code=400, detail="配置文件缺少 [chat.reply_timing] 配置节")
-
-    raw_rules = reply_timing_config.get("talk_value_rules")
-    rules = (
-        [_talk_rule_to_config_dict(rule) for rule in raw_rules]
-        if raw_rules is not None and not isinstance(raw_rules, (str, bytes, dict))
-        else []
-    )
+    reply_timing_config = _get_config_table(_get_config_table(config_data, "chat"), "reply_timing")
+    groups = _read_talk_rule_groups(reply_timing_config, request.active_group)
+    rules = get_active_talk_rule_group(groups).rules
     replace_index: Optional[int] = None
     fallback_index: Optional[int] = None
     for index, rule in enumerate(rules):
         if not _is_same_talk_rule_target(rule, chat_session):
             continue
-        if str(rule.get("time") or "").strip() == normalized_time:
+        if rule.time.strip() == normalized_time:
             replace_index = index
             break
-        if previous_time is not None and str(rule.get("time") or "").strip() == previous_time:
+        if previous_time is not None and rule.time.strip() == previous_time:
             fallback_index = index
 
     target_index = replace_index if replace_index is not None else fallback_index
+    enabled = request.enabled
+    if enabled is None:
+        enabled = target_index is None or rules[target_index].enabled
+    next_rule = TalkRulesItem(platform=platform, item_id=item_id, time=normalized_time, value=request.value, enabled=enabled)
     if target_index is None:
         rules.append(next_rule)
     else:
         rules[target_index] = next_rule
 
-    reply_timing_config["enable_talk_value_rules"] = True
-    reply_timing_config["talk_value_rules"] = rules
+    reply_timing_config["talk_rule_groups"] = recursive_parse_item_to_table(groups)
     save_toml_with_format(config_data, str(config_path))
 
 
-async def _delete_chat_talk_frequency_rule(chat_session: ChatSession, rule_time: Optional[str]) -> None:
+async def _delete_chat_talk_frequency_rule(
+    chat_session: ChatSession, rule_time: Optional[str], active_group: Optional[str]
+) -> None:
     """删除当前聊天流的一条精确发言频率规则，并热重载配置。"""
 
-    await asyncio.to_thread(_remove_chat_talk_frequency_rule, chat_session, rule_time)
+    await asyncio.to_thread(_remove_chat_talk_frequency_rule, chat_session, rule_time, active_group)
     if not await config_manager.reload_config(changed_scopes=["bot"], changed_sections=["chat.reply_timing"]):
         raise HTTPException(status_code=500, detail="配置已写入，但热重载失败")
 
 
-def _remove_chat_talk_frequency_rule(chat_session: ChatSession, rule_time: Optional[str]) -> None:
+def _remove_chat_talk_frequency_rule(
+    chat_session: ChatSession, rule_time: Optional[str], active_group: Optional[str]
+) -> None:
     """在线程池中删除群聊频率规则。"""
     if _get_chat_type(chat_session) != "group":
         raise HTTPException(status_code=400, detail="私聊不再使用回复频率，请使用暂停回复开关")
@@ -825,32 +819,19 @@ def _remove_chat_talk_frequency_rule(chat_session: ChatSession, rule_time: Optio
     with config_path.open("r", encoding="utf-8") as config_file:
         config_data = tomlkit.load(config_file)
 
-    chat_config = config_data.get("chat")
-    if not isinstance(chat_config, dict):
-        raise HTTPException(status_code=400, detail="配置文件缺少 [chat] 配置节")
-
-    reply_timing_config = chat_config.get("reply_timing")
-    if not isinstance(reply_timing_config, dict):
-        raise HTTPException(status_code=400, detail="配置文件缺少 [chat.reply_timing] 配置节")
-
-    raw_rules = reply_timing_config.get("talk_value_rules")
-    rules = (
-        [_talk_rule_to_config_dict(rule) for rule in raw_rules]
-        if raw_rules is not None and not isinstance(raw_rules, (str, bytes, dict))
-        else []
-    )
+    reply_timing_config = _get_config_table(_get_config_table(config_data, "chat"), "reply_timing")
+    groups = _read_talk_rule_groups(reply_timing_config, active_group)
+    group = get_active_talk_rule_group(groups)
     next_rules = [
         rule
-        for rule in rules
-        if not (
-            _is_same_talk_rule_target(rule, chat_session)
-            and str(rule.get("time") or "").strip() == normalized_time
-        )
+        for rule in group.rules
+        if not (_is_same_talk_rule_target(rule, chat_session) and rule.time.strip() == normalized_time)
     ]
-    if len(next_rules) == len(rules):
+    if len(next_rules) == len(group.rules):
         raise HTTPException(status_code=404, detail="未找到可删除的当前聊天流发言频率规则")
 
-    reply_timing_config["talk_value_rules"] = next_rules
+    group.rules = next_rules
+    reply_timing_config["talk_rule_groups"] = recursive_parse_item_to_table(groups)
     save_toml_with_format(config_data, str(config_path))
 
 
@@ -1517,11 +1498,12 @@ async def update_chat_session_talk_frequency(
 async def delete_chat_session_talk_frequency(
     session_id: str,
     time: Optional[str] = Query(default=None),
+    active_group: Optional[str] = Query(default=None),
 ) -> Dict[str, object]:
     """删除当前聊天流的一条精确发言频率规则。"""
 
     chat_session = await asyncio.to_thread(_get_settings_chat_session, session_id)
-    await _delete_chat_talk_frequency_rule(chat_session, time)
+    await _delete_chat_talk_frequency_rule(chat_session, time, active_group)
     return {"success": True, "detail": await asyncio.to_thread(_chat_session_detail_to_response, chat_session)}
 
 
@@ -1781,6 +1763,7 @@ def get_chat_info() -> Dict[str, object]:
     """获取聊天室信息。"""
     return {
         "bot_name": global_config.bot.nickname,
+        "bot_qq": get_chat_bot_qq(),
         "platform": INTERNAL_CHAT_PLATFORM,
         "active_sessions": len(chat_manager.active_connections),
     }

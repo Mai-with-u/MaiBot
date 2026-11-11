@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { Download, Plus, Wrench } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { useTheme } from '@/components/use-theme'
 import { useToast } from '@/hooks/use-toast'
 import {
   clearPersonalityImport, parsePersonalityImport, PERSONALITY_IMPORT_EVENT, PERSONALITY_IMPORT_EXAMPLE,
@@ -35,7 +37,9 @@ export function PersonalityProfiles({ values, onChange }: {
   const [draft, setDraft] = useState<Profile | null>(null)
   const [originalName, setOriginalName] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirmMarket, setConfirmMarket] = useState(false)
   const { toast } = useToast()
+  const { themeConfig, resolvedTheme } = useTheme()
   const profiles = (values.profiles ?? []) as Profile[]
   const selected = profiles.find((profile) => profile.name === values.selected_profile)
 
@@ -127,6 +131,16 @@ export function PersonalityProfiles({ values, onChange }: {
     setConfirmDelete(false)
   }
 
+  const openMarket = () => {
+    const url = new URL('https://maiprompt.top/')
+    url.hash = new URLSearchParams({
+      'maibot-webui-origin': window.location.origin,
+      appearance: themeConfig.dashboardStyle,
+      theme: resolvedTheme,
+    }).toString()
+    window.open(url.href, '_blank', 'noopener,noreferrer')
+  }
+
   return (
     <>
       <div className="flex min-w-0 items-center gap-2">
@@ -153,19 +167,16 @@ export function PersonalityProfiles({ values, onChange }: {
       </div>
 
       <Dialog open={panel !== null} onOpenChange={(open) => { if (!open) closePanel() }}>
-        <DialogContent className="[--dialog-width:44rem]">
+        <DialogContent className="[--dialog-width:44rem]" {...(panel === 'import' ? { 'aria-describedby': undefined } : {})}>
           <DialogHeader>
             <DialogTitle>{panel === 'import' ? '导入人设' : panel === 'create' ? '新建人设' : '管理人设'}</DialogTitle>
-            <DialogDescription>{panel === 'import' ? '粘贴 maibot.personality v1 JSON，解析后可继续编辑并确认保存。' : panel === 'create' ? '编辑完成后保存到人设库，可在下拉框中切换。' : '选择人设查看或修改，保存当前使用的人设会同步生效。'}</DialogDescription>
+            {panel !== 'import' && <DialogDescription>{panel === 'create' ? '编辑完成后保存到人设库，可在下拉框中切换。' : '选择人设查看或修改，保存当前使用的人设会同步生效。'}</DialogDescription>}
           </DialogHeader>
           <DialogBody>
             <div className="space-y-4">
               {panel === 'import' && <div className="space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <Label htmlFor="personality-import-text">人设 JSON</Label>
-                  <Button type="button" size="sm" variant="outline" onClick={() => setImportText(PERSONALITY_IMPORT_EXAMPLE)}>填入格式示例</Button>
-                </div>
-                <Textarea id="personality-import-text" rows={12} value={importText} onChange={(event) => setImportText(event.target.value)} placeholder={PERSONALITY_IMPORT_EXAMPLE} />
+                <Button type="button" size="sm" variant="outline" onClick={() => setConfirmMarket(true)}>浏览人设市场</Button>
+                <Textarea id="personality-import-text" aria-label="人设 JSON" rows={12} value={importText} onChange={(event) => setImportText(event.target.value)} placeholder={PERSONALITY_IMPORT_EXAMPLE} />
                 {imported.error && <p role="alert" className="text-sm text-destructive">{imported.error}</p>}
                 {imported.profile && <div className="space-y-2 rounded-md border p-3">
                   <p className="font-medium">已解析：{imported.profile.name}</p>
@@ -218,6 +229,21 @@ export function PersonalityProfiles({ values, onChange }: {
           </div>}
         </DialogContent>
       </Dialog>
+      <AlertDialog open={confirmMarket} onOpenChange={setConfirmMarket}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>前往人设市场</AlertDialogTitle>
+            <AlertDialogDescription>
+              即将打开社区提供的人设市场！你可以自由分享和使用大家的人设。如遇到问题，请提交 issue 至{' '}
+              <a href="https://github.com/Natural-Selectionn/maibot-prompt-market" target="_blank" rel="noopener noreferrer" className="underline">https://github.com/Natural-Selectionn/maibot-prompt-market</a>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={openMarket}>确认前往</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   )
 }

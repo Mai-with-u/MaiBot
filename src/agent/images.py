@@ -1,4 +1,4 @@
-"""Agent 双向附图：聊天图片、各宿主工作目录及显式提供的截图。"""
+"""Agent 双向附图：聊天图片和工作目录内的图片。"""
 
 from io import BytesIO
 from typing import TYPE_CHECKING, Dict, List, Sequence, Tuple
@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Dict, List, Sequence, Tuple
 from PIL import Image
 
 import asyncio
-import base64
 import re
 
 from src.common.data_models.message_component_data_model import ImageComponent
@@ -52,9 +51,6 @@ async def resolve_images(
                 images.append(image)
                 attachments.append(attachment)
             continue
-        elif caller == service.agent_id and reference == "screenshot":
-            frame = await service.computer.observe()
-            data = await asyncio.to_thread(base64.b64decode, frame["image"], validate=True)
         elif caller == service.agent_id and re.fullmatch(r"[a-f0-9]{64}", reference):
             matches = await asyncio.to_thread(lambda reference=reference: list((workspace / "relay_images").glob(reference + ".*")))
             if len(matches) != 1:

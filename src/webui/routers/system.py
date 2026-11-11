@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Annotated, List, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, inspect, text
@@ -38,9 +38,8 @@ from src.common.utils.image_path import (
 )
 from src.config.config import MMC_VERSION
 from src.plugin_runtime.update_compatibility_notice import collect_update_incompatible_plugins
-from src.webui.dependencies import require_auth
 
-router = APIRouter(prefix="/system", tags=["system"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/system", tags=["system"])
 logger = get_logger("webui_system")
 
 _start_time = time.time()
@@ -1438,13 +1437,11 @@ def _delete_database_records(
 
 
 async def _stop_runtime_before_restart() -> None:
-    """WebUI 重启前保存电脑状态、断开执行器，停止插件 runner。"""
+    """WebUI 重启前停止外接 Agent 和插件 runner。"""
     from src.agent.service import agent_service
-    from src.computer.service import computer_service
 
-    # 后续 os._exit 不执行 finally，先持久保存电脑，保留原沙盒供新进程恢复。
+    # 后续 os._exit 不执行 finally，先保存 Agent 状态并断开连接。
     await agent_service.stop()
-    await computer_service.stop()
     try:
         from src.core.event_bus import event_bus
         from src.core.types import EventType

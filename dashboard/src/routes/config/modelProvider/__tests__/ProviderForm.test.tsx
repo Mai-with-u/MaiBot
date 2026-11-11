@@ -95,7 +95,7 @@ describe('ProviderForm 基础渲染', () => {
     expect(await screen.findByText('编辑提供商')).toBeInTheDocument()
     expect(screen.getByLabelText('名称 *')).toHaveValue('DeepSeek')
     expect(screen.getByLabelText('基础 URL *')).toHaveValue('https://api.deepseek.com')
-    expect(screen.getByLabelText('API Key *')).toHaveValue('sk-test')
+    expect(screen.getByLabelText('API Key')).toHaveValue('sk-test')
   })
 
   it('点击取消按钮调用 onOpenChange(false)', async () => {
@@ -107,7 +107,7 @@ describe('ProviderForm 基础渲染', () => {
 })
 
 describe('ProviderForm 表单校验', () => {
-  it('必填字段为空时提交展示三条错误且不调用 onSave', async () => {
+  it('必填字段为空时提交展示两条错误且不调用 onSave', async () => {
     const user = userEvent.setup()
     const { onSave } = renderForm()
     await user.click(screen.getByRole('button', { name: '使用自定义提供商' }))
@@ -117,8 +117,7 @@ describe('ProviderForm 表单校验', () => {
 
     expect(await screen.findByText('请输入提供商名称')).toBeInTheDocument()
     expect(screen.getByText('请输入基础 URL')).toBeInTheDocument()
-    expect(screen.getByText('请输入 API Key')).toBeInTheDocument()
-    expect(screen.getAllByRole('alert')).toHaveLength(3)
+    expect(screen.getAllByRole('alert')).toHaveLength(2)
     expect(onSave).not.toHaveBeenCalled()
   })
 
@@ -134,7 +133,6 @@ describe('ProviderForm 表单校验', () => {
     await user.type(screen.getByLabelText('名称 *'), 'X')
     expect(screen.queryByText('请输入提供商名称')).not.toBeInTheDocument()
     expect(screen.getByText('请输入基础 URL')).toBeInTheDocument()
-    expect(screen.getByText('请输入 API Key')).toBeInTheDocument()
   })
 
   it('名称与现有提供商重复时报重复错误且不保存', async () => {
@@ -162,7 +160,7 @@ describe('ProviderForm API Key 交互', () => {
   it('默认以密码框隐藏 API Key，点击眼睛按钮切换显示/隐藏', async () => {
     const user = userEvent.setup()
     renderForm({ editingProvider: makeProvider(), editingIndex: 0 })
-    const keyInput = screen.getByLabelText('API Key *')
+    const keyInput = screen.getByLabelText('API Key')
     expect(keyInput).toHaveAttribute('type', 'password')
 
     await user.click(screen.getByTitle('显示密钥'))
@@ -347,9 +345,11 @@ describe('ProviderForm 保存流程', () => {
     const user = userEvent.setup()
     const { onSave } = renderForm({ editingProvider: makeProvider(), editingIndex: 0 })
 
-    expect(screen.queryByText('默认请求 Headers')).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '高级配置' }))
-    expect(screen.getByText('默认请求 Headers')).toBeInTheDocument()
+    const advancedToggle = screen.getByRole('button', { name: '高级配置' })
+    expect(advancedToggle).toHaveAttribute('aria-expanded', 'false')
+    await user.click(advancedToggle)
+    expect(advancedToggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('请求头')).toBeInTheDocument()
 
     await user.click(screen.getByRole('tab', { name: 'JSON 编辑' }))
     const editor = screen.getByRole('textbox', { name: '' })
@@ -397,7 +397,7 @@ describe('ProviderForm 保存流程', () => {
     await user.clear(retryInput)
     await user.type(retryInput, '5')
     // 清空超时输入框，应回传 null（由上层 cleanProviderData 填默认值）
-    await user.clear(screen.getByLabelText('超时(秒)'))
+    await user.clear(screen.getByLabelText('超时'))
 
     await user.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() =>
@@ -505,16 +505,14 @@ describe('ProviderForm 字段编辑补全', () => {
     await user.clear(screen.getByLabelText('基础 URL *'))
     await user.click(screen.getByRole('button', { name: '保存' }))
     expect(await screen.findByText('请输入基础 URL')).toBeInTheDocument()
-    expect(screen.getByText('请输入 API Key')).toBeInTheDocument()
 
     await user.type(screen.getByLabelText('名称 *'), 'Acme')
     await user.type(screen.getByLabelText('基础 URL *'), 'https://acme.example/v1')
-    await user.type(screen.getByLabelText('API Key *'), 'sk-acme')
+    await user.type(screen.getByLabelText('API Key'), 'sk-acme')
     expect(screen.queryByText('请输入基础 URL')).not.toBeInTheDocument()
-    expect(screen.queryByText('请输入 API Key')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '高级配置' }))
-    const intervalInput = screen.getByLabelText('重试间隔(秒)')
+    const intervalInput = screen.getByLabelText('重试间隔')
     await user.clear(intervalInput)
     await user.type(intervalInput, '7')
 
@@ -543,12 +541,12 @@ describe('ProviderForm 字段编辑补全', () => {
     fireEvent.change(screen.getByLabelText('基础 URL *'), {
       target: { value: 'https://nope.example' },
     })
-    fireEvent.change(screen.getByLabelText('API Key *'), { target: { value: 'sk-nope' } })
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'sk-nope' } })
     await user.click(screen.getByRole('button', { name: '高级配置' }))
     fireEvent.change(screen.getByLabelText('最大重试'), { target: { value: '3' } })
-    fireEvent.change(screen.getByLabelText('超时(秒)'), { target: { value: '9' } })
-    fireEvent.change(screen.getByLabelText('重试间隔(秒)'), { target: { value: '' } })
-    fireEvent.change(screen.getByLabelText('重试间隔(秒)'), { target: { value: '4' } })
+    fireEvent.change(screen.getByLabelText('超时'), { target: { value: '9' } })
+    fireEvent.change(screen.getByLabelText('重试间隔'), { target: { value: '' } })
+    fireEvent.change(screen.getByLabelText('重试间隔'), { target: { value: '4' } })
 
     await user.click(screen.getByRole('button', { name: '使用自定义提供商' }))
     await user.click(screen.getByRole('combobox', { name: '客户端类型' }))

@@ -22,9 +22,6 @@ import {
   getReviewList,
   getReviewStats,
   importExpressions,
-  importLegacyExpressions,
-  previewLegacyExpressionImport,
-  previewLegacyExpressionImportFile,
   updateExpression,
   updateExpressionReviewStatus,
 } from '../expression-api'
@@ -207,52 +204,6 @@ describe('clearExpressions', () => {
     expect(postMock).toHaveBeenCalledWith('/api/webui/expression/clear', {
       body: { chat_id: 'c1' },
       errorMessage: '清除表达方式失败',
-    })
-  })
-})
-
-describe('previewLegacyExpressionImport', () => {
-  it('把 db_path 提交到旧版导入预览接口', async () => {
-    const response = { success: true, chats: [] }
-    postMock.mockResolvedValue(response)
-
-    await expect(previewLegacyExpressionImport({ db_path: '/tmp/old.db' })).resolves.toBe(response)
-    expect(postMock).toHaveBeenCalledWith('/api/webui/expression/legacy-import/preview', {
-      body: { db_path: '/tmp/old.db' },
-      errorMessage: '预览旧版导入失败',
-    })
-  })
-})
-
-describe('previewLegacyExpressionImportFile', () => {
-  it('把上传文件包进 FormData 提交到 preview-file 接口', async () => {
-    const response = { success: true, chats: [] }
-    postMock.mockResolvedValue(response)
-    const file = new File(['db-bytes'], 'legacy.db')
-
-    await expect(previewLegacyExpressionImportFile(file)).resolves.toBe(response)
-
-    const [path, options] = postMock.mock.calls[0]
-    expect(path).toBe('/api/webui/expression/legacy-import/preview-file')
-    expect(options?.errorMessage).toBe('预览旧版导入失败')
-    expect(options?.body).toBeInstanceOf(FormData)
-    const formData = options?.body as FormData
-    expect(formData.get('file')).toBe(file)
-  })
-})
-
-describe('importLegacyExpressions', () => {
-  it('把 db_path 与聊天映射提交到旧版导入接口', async () => {
-    const mappings = [{ old_chat_id: 'old-1', target_chat_ids: ['c1'] }]
-    const response = { success: true, imported: 5 }
-    postMock.mockResolvedValue(response)
-
-    await expect(importLegacyExpressions({ db_path: '/tmp/old.db', mappings })).resolves.toBe(
-      response
-    )
-    expect(postMock).toHaveBeenCalledWith('/api/webui/expression/legacy-import/import', {
-      body: { db_path: '/tmp/old.db', mappings },
-      errorMessage: '旧版导入失败',
     })
   })
 })

@@ -8,7 +8,6 @@ from pytest import raises
 from src.config.config import Config
 from src.config.config_base import AttributeData, ConfigBase, Field
 from src.config.official_configs import AMemorixConfig, ChatConfig, MessageReceiveConfig
-from src.webui.dependencies import require_auth
 from src.webui.config_schema import (
     AMEMORIX_ADVANCED_FIELD_PATHS,
     AMEMORIX_BASIC_FIELD_PATHS,
@@ -222,8 +221,8 @@ def test_a_memorix_visibility_policy_marks_and_filters_fields():
     schema = ConfigSchemaGenerator.generate_schema(AMemorixConfig)
 
     assert "storage" not in _field_names(schema)
-    assert _schema_field(schema, "global_memory_sharing_enabled").get("advanced") is not True
-    assert _schema_field(schema, "shared_memory_groups").get("advanced") is not True
+    assert "global_memory_sharing_enabled" not in _field_names(schema)
+    assert "shared_memory_groups" not in _field_names(schema)
 
     integration_schema = schema["nested"]["integration"]
     assert _schema_field(integration_schema, "enable_memory_query_tool").get("advanced") is not True
@@ -305,7 +304,6 @@ def test_compat_config_schema_route_keeps_a_memorix_visibility_policy():
     app = FastAPI()
     for api_router in get_all_routers():
         app.include_router(api_router)
-    app.dependency_overrides[require_auth] = lambda: "test-token"
 
     response = TestClient(app).get("/api/config/schema")
 

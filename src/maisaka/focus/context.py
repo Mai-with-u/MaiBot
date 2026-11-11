@@ -26,8 +26,7 @@ from src.maisaka.context.messages import (
     ToolResultMediaMessage,
     build_context_items_from_history_entry,
 )
-from src.maisaka.context.emoji_candidates import EmojiCandidateMessage
-from src.maisaka.context.compaction import ContextSummaryMessage, message_text_for_compaction
+from src.maisaka.context.compaction import ContextSummaryMessage
 
 CHECKPOINT_VERSION = 1
 _ITEM_TYPES = {
@@ -89,18 +88,6 @@ class FocusContextEntry:
     @property
     def progress(self) -> Dict[str, int]:
         return self.watermarks or ({sid: self.sequence for sid in self.session_ids} if self.sequence else {})
-
-    @property
-    def size(self) -> int:
-        return sum(message.count_in_context for message in self.messages)
-
-    def summary_text(self) -> str:
-        parts = [
-            text for message in self.messages if not isinstance(message, ContextSummaryMessage)
-            if (text := message_text_for_compaction(message))
-        ]
-        return f"session_ids={json.dumps(sorted(self.session_ids), ensure_ascii=False)}\n" + "\n".join(parts)
-
 
 
 def _encode(value: Any) -> Any:
@@ -166,10 +153,6 @@ def serialize_message(message: LLMContextMessage) -> Dict[str, Any]:
         record["tool_call_id"] = message.tool_call_id
         record["message_id"] = message.message_id
         record["session_id"] = message.session_id
-    elif isinstance(message, EmojiCandidateMessage):
-        record["kind"] = "emoji"
-        record["emoji_hashes"] = message.emoji_hashes
-        record["session_id"] = message.session_id
     elif isinstance(message, ReferenceMessage):
         record["kind"] = "reference"
         record["content"] = message.content
@@ -206,14 +189,6 @@ def deserialize_message(record: Dict[str, Any]) -> LLMContextMessage:
             remaining_uses_value=None,
             display_prefix=record["prefix"],
             context_item_id=item.meta.item_id,
-        )
-    if record["kind"] == "emoji":
-        return EmojiCandidateMessage(
-            item=item,
-            emoji_hashes={int(key): value for key, value in record["emoji_hashes"].items()},
-            visible_text=record["text"],
-            timestamp=item.meta.timestamp,
-            session_id=record["session_id"],
         )
     if record["kind"] == "media":
         components = []
@@ -253,7 +228,7 @@ class FocusCheckpointStore:
             raise ValueError("Focus 检查点版本或共享组身份不匹配")
         payload["entries"] = [
             FocusContextEntry(
-                [deserialize_message(message) for message in entry["messages"]],
+                [deserialize_message(message) for message in entry["messages"] if message["kind"] != "emoji"],
                 set(entry["session_ids"]),
                 entry["sequence"],
                 entry["watermarks"],
@@ -311,5 +286,5 @@ class FocusCheckpointStore:
             payload["considered"].pop(session_id, None)
             payload["seen"] = [key for key in payload["seen"] if not key.startswith(session_id + "\0")]
             if payload["wait_session_id"] == session_id:
-                payload.update(wait_until=None, wait_session_id=None, wait_token=None, consecutive_waits=0)
+                payload.update(wait_until=None, wait_session_id=None, consecutive_waits=0)
             store._write(payload)

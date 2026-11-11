@@ -1,3 +1,4 @@
+import i18n from '@/i18n'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError, authApi, backendApi } from '@/lib/http'
@@ -62,12 +63,12 @@ describe('loadSetupStatus', () => {
 
     await expect(loadSetupStatus()).resolves.toBe(status)
     expect(authGetMock).toHaveBeenCalledWith('/api/webui/setup/status', {
-      errorMessage: '读取设置状态失败',
+      errorMessage: i18n.t('setupPage.errors.loadStatus'),
     })
   })
 
   it('后端失败时向上抛出 ApiError', async () => {
-    authGetMock.mockRejectedValue(new ApiError('读取设置状态失败', { status: 503 }))
+    authGetMock.mockRejectedValue(new ApiError(i18n.t('setupPage.errors.loadStatus'), { status: 503 }))
 
     await expect(loadSetupStatus()).rejects.toMatchObject({ status: 503 })
   })
@@ -95,7 +96,7 @@ describe('loadBotBasicConfig', () => {
       alias_names: ['mai'],
     })
     expect(getMock).toHaveBeenCalledWith('/api/webui/config/bot', {
-      errorMessage: '读取 Bot 配置失败',
+      errorMessage: i18n.t('setupPage.errors.loadBot'),
     })
   })
 
@@ -131,7 +132,7 @@ describe('loadBotBasicConfig', () => {
       qq_account: '10001',
     })
 
-    getMock.mockRejectedValue(new ApiError('读取 Bot 配置失败', { status: 500 }))
+    getMock.mockRejectedValue(new ApiError(i18n.t('setupPage.errors.loadBot'), { status: 500 }))
     await expect(loadBotBasicConfig()).rejects.toMatchObject({ status: 500 })
   })
 })
@@ -158,7 +159,7 @@ describe('loadPersonalityConfig', () => {
       multiple_probability: 0,
     })
     expect(getMock).toHaveBeenCalledWith('/api/webui/config/bot', {
-      errorMessage: '读取人格配置失败',
+      errorMessage: i18n.t('setupPage.errors.loadPersonality'),
     })
   })
 
@@ -175,7 +176,7 @@ describe('loadPersonalityConfig', () => {
   })
 
   it('读取人格配置失败时向上抛出', async () => {
-    getMock.mockRejectedValue(new ApiError('读取人格配置失败', { status: 503 }))
+    getMock.mockRejectedValue(new ApiError(i18n.t('setupPage.errors.loadPersonality'), { status: 503 }))
     await expect(loadPersonalityConfig()).rejects.toMatchObject({ status: 503 })
   })
 })
@@ -299,7 +300,7 @@ describe('loadModelSetupConfig', () => {
       replyer_thinking: false,
     })
 
-    getMock.mockRejectedValue(new ApiError('读取模型配置失败', { status: 500 }))
+    getMock.mockRejectedValue(new ApiError(i18n.t('setupPage.errors.loadModel'), { status: 500 }))
     await expect(loadModelSetupConfig()).rejects.toMatchObject({ status: 500 })
   })
 })
@@ -319,7 +320,7 @@ describe('saveBotBasicConfig / savePersonalityConfig', () => {
 
     expect(postMock).toHaveBeenCalledWith('/api/webui/config/bot/section/bot', {
       body: config,
-      errorMessage: '保存 Bot 配置失败',
+      errorMessage: i18n.t('setupPage.errors.saveBot'),
     })
   })
 
@@ -337,7 +338,7 @@ describe('saveBotBasicConfig / savePersonalityConfig', () => {
 
     expect(postMock).toHaveBeenCalledWith('/api/webui/config/bot/section/personality', {
       body: config,
-      errorMessage: '保存人格配置失败',
+      errorMessage: i18n.t('setupPage.errors.savePersonality'),
     })
   })
 })
@@ -373,7 +374,7 @@ describe('saveApiProviderSetupConfig', () => {
           },
         ],
       },
-      errorMessage: '保存 API 提供商配置失败',
+      errorMessage: i18n.t('setupPage.errors.saveProvider'),
     })
   })
 
@@ -412,7 +413,7 @@ describe('saveApiProviderSetupConfig', () => {
   })
 
   it('读取模型配置失败时直接抛出且不提交保存', async () => {
-    getMock.mockRejectedValue(new ApiError('读取模型配置失败', { status: 500 }))
+    getMock.mockRejectedValue(new ApiError(i18n.t('setupPage.errors.loadModel'), { status: 500 }))
 
     await expect(
       saveApiProviderSetupConfig({ provider_name: 'X', base_url: 'https://x', api_key: 'k' })
@@ -432,6 +433,20 @@ describe('saveModelSetupConfig', () => {
     replyer_visual: false,
     replyer_thinking: false,
   }
+
+  it('测试 Replyer 时只保存当前模型并保留 Planner 的配置与任务分配', async () => {
+    const planner = { name: 'glm-5', model_identifier: 'old-planner', api_provider: 'Existing' }
+    const tasks = { planner: { model_list: ['glm-5'] }, replyer: { model_list: ['old-replyer'] } }
+    getMock.mockResolvedValue({ config: { models: [planner], model_task_config: tasks } })
+    postMock.mockResolvedValue({ success: true })
+
+    const names = await saveModelSetupConfig(setupConfig, 'DeepSeek', 'replyer')
+    expect(names.replyer).toBe('glm-5-replyer')
+    expect(postMock.mock.calls[0][1]?.body).toMatchObject({
+      models: [planner, { name: 'glm-5-replyer', model_identifier: 'glm-5' }],
+      model_task_config: tasks,
+    })
+  })
 
   it('空配置下新建 planner/replyer 模型并同步任务模型列表', async () => {
     getMock.mockResolvedValue({ config: {} })
@@ -473,7 +488,7 @@ describe('saveModelSetupConfig', () => {
           utils: { model_list: ['deepseek-v4'] },
         },
       },
-      errorMessage: '保存模型配置失败',
+      errorMessage: i18n.t('setupPage.errors.saveModel'),
     })
   })
 
@@ -530,7 +545,7 @@ describe('saveModelSetupConfig', () => {
   })
 
   it('读取模型配置失败时不提交保存', async () => {
-    getMock.mockRejectedValue(new ApiError('读取模型配置失败', { status: 500 }))
+    getMock.mockRejectedValue(new ApiError(i18n.t('setupPage.errors.loadModel'), { status: 500 }))
 
     await expect(saveModelSetupConfig(setupConfig, 'DeepSeek')).rejects.toBeInstanceOf(ApiError)
     expect(postMock).not.toHaveBeenCalled()
@@ -539,17 +554,17 @@ describe('saveModelSetupConfig', () => {
 
 describe('completeSetup', () => {
   it('调用标记设置完成接口', async () => {
-    postMock.mockResolvedValue({ success: true })
+    authPostMock.mockResolvedValue({ success: true })
 
     await completeSetup()
 
-    expect(postMock).toHaveBeenCalledWith('/api/webui/setup/complete', {
-      errorMessage: '标记设置完成失败',
+    expect(authPostMock).toHaveBeenCalledWith('/api/webui/setup/complete', {
+      errorMessage: i18n.t('setupPage.errors.complete'),
     })
   })
 
   it('标记完成失败时向上抛出', async () => {
-    postMock.mockRejectedValue(new ApiError('标记设置完成失败', { status: 500 }))
+    authPostMock.mockRejectedValue(new ApiError(i18n.t('setupPage.errors.complete'), { status: 500 }))
     await expect(completeSetup()).rejects.toMatchObject({ status: 500 })
   })
 })
@@ -562,12 +577,12 @@ describe('updateAccessToken', () => {
     await expect(updateAccessToken('new-token-123')).resolves.toBe(result)
     expect(authPostMock).toHaveBeenCalledWith('/api/webui/auth/update', {
       body: { new_token: 'new-token-123' },
-      errorMessage: '更新 Token 失败',
+      errorMessage: i18n.t('setupPage.errors.updateToken'),
     })
   })
 
   it('Token 不合法时向上抛出 ApiError', async () => {
-    authPostMock.mockRejectedValue(new ApiError('更新 Token 失败', { status: 400 }))
+    authPostMock.mockRejectedValue(new ApiError(i18n.t('setupPage.errors.updateToken'), { status: 400 }))
 
     await expect(updateAccessToken('bad')).rejects.toMatchObject({ status: 400 })
   })

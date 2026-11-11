@@ -1,6 +1,5 @@
 # raise RuntimeError("System Not Ready")
 from pathlib import Path
-from rich.traceback import install
 from typing import TypeVar
 
 import asyncio
@@ -13,13 +12,29 @@ import sys
 import time
 import traceback
 
+from src.common.runtime_context import RUNTIME_CONTEXT_ENV
+
+
+# 1.3.19 在线更新后仍由旧 Runner 执行本入口，须在加载 Bot 组件前交给新宿主。
+if (
+    __name__ == "__main__"
+    and RUNTIME_CONTEXT_ENV not in os.environ
+    and os.environ.get("MAIBOT_RUNNER_SUPERVISED") == "1"
+    and os.environ.get("MAIBOT_WORKER_PROCESS") != "1"
+):
+    from src.host.legacy_runner import main as handoff_legacy_runner
+
+    raise SystemExit(handoff_legacy_runner())
+
+from rich.traceback import install  # noqa: E402
+
 # 在业务导入前接管 Worker 信号；此时只记录停止请求，不调用尚未初始化的组件。
 _active_main_loop: asyncio.AbstractEventLoop | None = None
 _active_main_task: asyncio.Task[None] | None = None
 _shutdown_signal_count: int = 0
 _shutdown_task: asyncio.Task[bool] | None = None
 _shutdown_deadline: float | None = None
-SHUTDOWN_TIMEOUT = 50.0  # 为 Runner 的 60 秒硬截止保留余量。
+SHUTDOWN_TIMEOUT = 50.0  # 为宿主 60 秒的 Worker 关闭预算保留余量。
 IMAGE_SYNC_TIMEOUT = 5.0
 MEMORY_WRITER_TIMEOUT = 5.0
 MEMORY_KERNEL_TIMEOUT = 30.0
@@ -87,79 +102,35 @@ def _install_early_worker_signal_handlers() -> None:
         signal.signal(sig, _mark_shutdown_and_interrupt)
 
 
-if __name__ == "__main__" and os.environ.get("MAIBOT_WORKER_PROCESS") == "1":
+# Worker 只能由宿主启动；运行契约缺失时在任何业务导入前失败。
+from src.common.runtime_context import RESTART_EXIT_CODE, report_phase, runtime_context  # noqa: E402
+
+runtime_context()
+if __name__ == "__main__":
     _install_early_worker_signal_handlers()
 
 
-from src.common.paths import PACKAGED_INSTALL, SOURCE_ROOT, get_instance_root  # noqa: E402
+from src.common.paths import get_instance_root  # noqa: E402
 from src.common.i18n import set_locale, t, tn  # noqa: E402
 from src.common.logger import get_logger, initialize_logging, shutdown_logging  # noqa: E402
 from src.common.runtime_loop import set_main_loop  # noqa: E402
-from src.common.process_runner import RESTART_EXIT_CODE, run_runner  # noqa: E402
-from src.common.self_update import apply_pending_update, clear_pending_update  # noqa: E402
+from src.common.process_lease import ProcessLease, instance_lock_path  # noqa: E402
 from src.common.shutdown import application_signal_handlers, request_shutdown  # noqa: E402
 from src.common.update_notice import emit_terminal_update_notice_if_needed  # noqa: E402
 from src.config.legacy_upgrade_confirmation import require_legacy_upgrade_confirmation  # noqa: E402
 
-# 设置工作目录为实例目录（源码和 OneKey 默认仍使用仓库目录）。
+# 设置工作目录为实例目录。
 script_dir = str(get_instance_root())
 os.chdir(script_dir)
 set_locale(os.getenv("MAIBOT_LOCALE", "zh-CN"))
 
-# Runner 只需要基本日志；详细组件初始化由 Worker 输出。
-is_worker = os.environ.get("MAIBOT_WORKER_PROCESS") == "1"
-initialize_logging(verbose=is_worker)
+initialize_logging(verbose=True)
 install(extra_lines=3)
 logger = get_logger("main")
 
-
-def run_runner_process():
-    """
-    Runner 进程逻辑：作为守护进程运行，负责启动和监控 Worker 进程。
-    处理重启请求 (退出码 42) 和 Ctrl+C 信号。
-    """
-    script_file = "src.runtime"
-    python_executable = sys.executable
-
-    logger.info(t("startup.launching_script", script_file=script_file))
-    cmd = [python_executable, "-m", script_file]
-    worker_env = os.environ.copy()
-    if not PACKAGED_INSTALL:
-        # 源码 CLI 也可使用独立实例目录；子进程仍需要能找到仓库中的 src 包。
-        pythonpath = worker_env.get("PYTHONPATH", "")
-        worker_env["PYTHONPATH"] = str(SOURCE_ROOT) + (os.pathsep + pythonpath if pythonpath else "")
-    # 上次运行遗留的更新请求不再执行；自更新只在 WebUI 触发的重启（退出码 42）时进行。
-    clear_pending_update()
-
-    def apply_update() -> bool:
-        result = apply_pending_update(logger)
-        if PACKAGED_INSTALL and result is not None and result.rollback_error:
-            # 依赖恢复未完成时不能继续启动 Worker，避免把半更新的环境当成旧版运行。
-            logger.critical(f"包更新回滚失败，已停止启动；请手动修复工具环境: {result.rollback_error}")
-            raise SystemExit(1)
-        return result is not None and result.success
-
-    # run_runner 会给子进程加上 Worker 标记；自更新成功后改由新代码的 Runner 接手。
-    sys.exit(run_runner(cmd, worker_env, logger, apply_update))
-
-
-# 检查是否是 Worker 进程
-# 如果没有设置 MAIBOT_WORKER_PROCESS 环境变量，说明是直接运行的脚本，
-# 此时应该作为 Runner 运行。
-if os.environ.get("MAIBOT_WORKER_PROCESS") != "1":
-    if __name__ == "__main__":
-        require_legacy_upgrade_confirmation(Path(script_dir))
-        run_runner_process()
-    # 如果作为模块导入，不执行 Runner 逻辑，但也不应该执行下面的 Worker 逻辑
-    sys.exit(0)
-
-# 以下是 Worker 进程的逻辑
-
-# 最早期初始化日志系统，确保所有后续模块都使用正确的日志格式
-# 注意：Runner 进程已经在第 37 行初始化了日志系统，但 Worker 进程是独立进程，需要重新初始化
-# 由于 Runner 和 Worker 是不同进程，它们有独立的内存空间，所以都会初始化一次
-# 这是正常的，但为了避免重复的初始化日志，我们在 initialize_logging() 中添加了防重复机制
-# 不过由于是不同进程，每个进程仍会初始化一次，这是预期的行为
+# 实例锁随进程存活：同一 Bot 目录不能被两个宿主同时运行，进程退出时由系统释放。
+_instance_lease = ProcessLease(instance_lock_path(get_instance_root())).__enter__()
+report_phase("starting")
 
 require_legacy_upgrade_confirmation(Path(script_dir))
 asyncio.run(emit_terminal_update_notice_if_needed())
@@ -189,9 +160,9 @@ loop = None
 
 def print_opensource_notice():
     """打印开源项目提示，防止倒卖"""
-    from colorama import init, Fore, Style
+    from colorama import Fore, Style
 
-    init()
+    # Worker 的 stdout 是宿主转发文件；保留 ANSI，由宿主终端呈现，不能按非 TTY 剥离颜色。
 
     notice_lines = [
         "",
@@ -215,15 +186,13 @@ def print_opensource_notice():
 
 def easter_egg():
     # 彩蛋
-    from colorama import init, Fore
-
-    init()
+    from colorama import Fore, Style
     text = t("startup.easter_egg")
     rainbow_colors = [Fore.RED, Fore.YELLOW, Fore.GREEN, Fore.CYAN, Fore.BLUE, Fore.MAGENTA]
     rainbow_text = ""
     for i, char in enumerate(text):
         rainbow_text += rainbow_colors[i % len(rainbow_colors)] + char
-    print(rainbow_text)
+    print(rainbow_text + Style.RESET_ALL)
 
 
 async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
@@ -233,11 +202,13 @@ async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
     _shutdown_deadline = shutdown_deadline - MEMORY_WRITER_TIMEOUT - MEMORY_KERNEL_TIMEOUT - FINAL_CLEANUP_TIMEOUT
     try:
         request_shutdown("graceful_shutdown")
+        report_phase("stopping")
         logger.info(t("startup.shutdown_started"))
         success = True
 
         from src.common.logger import stop_ws_broadcasts
         from src.chat.heart_flow.heartflow_manager import heartflow_manager
+        from src.desktop_pet.service import desktop_pet_service
 
         # 先关闭广播入口，后续关停日志只写文件/终端，不再派生 WebSocket 任务。
         success = (
@@ -248,6 +219,10 @@ async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
             success = (
                 await _await_shutdown_step(main_system.app.stop(), timeout=5.0, step_name="停止消息入口") and success
             )
+        # 先停止桌宠轮询和主动唤醒，窗口退出时仍可调用插件关闭钩子。
+        success = (
+            await _await_shutdown_step(desktop_pet_service.stop(), timeout=6.0, step_name="停止桌宠") and success
+        )
         # 消息生产者先于插件、电脑及存储关闭，避免在依赖销毁后继续调用工具。
         success = (
             await _await_shutdown_step(heartflow_manager.shutdown(), timeout=5.0, step_name="停止聊天循环")
@@ -255,16 +230,10 @@ async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
         )
 
         from src.agent.service import agent_service
-        from src.computer.service import computer_service
 
-        # 实际 CLI 入口不经过 src.main.main 的 finally；保存电脑状态，保留沙盒供下次恢复。
+        # 实际 CLI 入口不经过 src.main.main 的 finally，在此停止外接 Agent。
         success = (
             await _await_shutdown_step(agent_service.stop(), timeout=8.0, step_name="停止外接 Agent")
-            and success
-        )
-
-        success = (
-            await _await_shutdown_step(computer_service.stop(), timeout=8.0, step_name="保存并断开电脑")
             and success
         )
 
@@ -404,7 +373,7 @@ def _shutdown_time_left(step_timeout: float) -> float:
 
 
 async def _await_shutdown_step(awaitable, *, timeout: float, step_name: str) -> bool:
-    """步骤共享当前阶段预算；不响应取消/阻塞事件循环的代码最终由 Runner 有界终止。"""
+    """步骤共享当前阶段预算；不响应取消/阻塞事件循环的代码最终由宿主有界终止。"""
 
     try:
         from src.common.shutdown_diagnostics import shutdown_step

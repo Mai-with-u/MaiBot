@@ -1,0 +1,66 @@
+/* 内置麦麦的动画：待机时轻轻上下浮动、偶尔眨眼、叶子摆动；思考时左右摇摆、眨眼更勤。 */
+[data-desktop-pet-builtin='true'] [data-pet-part] {
+  transform-box: fill-box;
+}
+[data-desktop-pet-builtin='true'] [data-pet-part='body'] {
+  transform-origin: 50% 100%;
+}
+[data-desktop-pet-builtin='true'] [data-pet-part='eye'] {
+  transform-origin: 50% 50%;
+}
+[data-desktop-pet-builtin='true'] [data-pet-part='sprout'] {
+  transform-origin: 50% 100%;
+}
+[data-desktop-pet-builtin='true'] [data-pet-part='tail'] {
+  transform-origin: 100% 50%;
+}
+
+[data-desktop-pet-builtin='true'][data-mood='idle'] [data-pet-part='body'] {
+  animation: desktop-pet-bob 3.2s ease-in-out infinite;
+}
+[data-desktop-pet-builtin='true'][data-mood='idle'] [data-pet-part='eye'] {
+  animation: desktop-pet-blink 4.6s steps(1, end) infinite;
+}
+[data-desktop-pet-builtin='true'][data-mood='idle'] [data-pet-part='sprout'] {
+  animation: desktop-pet-sprout 3.2s ease-in-out infinite;
+}
+[data-desktop-pet-builtin='true'][data-mood='idle'] [data-pet-part='tail'] {
+  animation: desktop-pet-tail 1.6s ease-in-out infinite;
+}
+
+[data-desktop-pet-builtin='true'][data-mood='thinking'] [data-pet-part='body'] {
+  animation: desktop-pet-sway 1.1s ease-in-out infinite;
+}
+[data-desktop-pet-builtin='true'][data-mood='thinking'] [data-pet-part='eye'] {
+  animation: desktop-pet-blink 1.6s steps(1, end) infinite;
+}
+[data-desktop-pet-builtin='true'][data-mood='thinking'] [data-pet-part='sprout'] {
+  animation: desktop-pet-sprout 0.55s ease-in-out infinite;
+}
+
+@keyframes desktop-pet-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+@keyframes desktop-pet-sway {
+  0%, 100% { transform: rotate(-2.5deg); }
+  50% { transform: rotate(2.5deg); }
+}
+@keyframes desktop-pet-blink {
+  0%, 94%, 100% { transform: scaleY(1); }
+  95%, 98% { transform: scaleY(0.12); }
+}
+@keyframes desktop-pet-sprout {
+  0%, 100% { transform: rotate(-4deg); }
+  50% { transform: rotate(4deg); }
+}
+@keyframes desktop-pet-tail {
+  0%, 100% { transform: rotate(0); }
+  50% { transform: rotate(-6deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-desktop-pet-builtin='true'] [data-pet-part] {
+    animation: none !important;
+  }
+}

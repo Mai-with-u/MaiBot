@@ -4,6 +4,7 @@
 提供从各个 AI 厂商 API 获取可用模型列表的代理接口
 """
 
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import asyncio
@@ -12,15 +13,15 @@ import math
 import os
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from PIL import Image
 from pydantic import BaseModel, Field
 
 import httpx
-import tomlkit
 
 from src.common.logger import get_logger
 from src.config.config import CONFIG_DIR
+from src.config.shared_models import read_effective_config
 from src.config.model_configs import APIProvider, TaskConfig
 from src.llm_models.exceptions import RespNotOkException
 from src.llm_models.model_client import ensure_client_type_loaded
@@ -30,14 +31,14 @@ from src.llm_models.payload_content.context_item import ContextItem, ContextItem
 from src.llm_models.payload_content.tool_option import ToolCall
 from src.llm_models.request_snapshot import format_request_snapshot_log_info
 from src.llm_models.utils_model import LLMOrchestrator, LLMResponseResult
-from src.webui.dependencies import require_auth
+from src.webui.services.thinking_probe import ThinkingProbeRequest, ThinkingProbeResponse, probe_thinking
 from src.common.http_client import get_shared_ssl_context_async
 from src.common.network_security import validate_public_url
 from src.common.prompt_i18n import load_prompt
 
 logger = get_logger("webui")
 
-router = APIRouter(prefix="/models", tags=["models"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/models", tags=["models"])
 # 模型获取器配置
 MODEL_FETCHER_CONFIG = {
     # OpenAI 兼容格式的提供商
@@ -157,6 +158,27 @@ def get_registered_client_types():
         "client_types": client_types,
         "count": len(client_types),
     }
+
+
+@router.post("/probe-thinking", response_model=ThinkingProbeResponse)
+async def probe_model_thinking(request: ThinkingProbeRequest, http_request: Request) -> ThinkingProbeResponse:
+    """探测未保存模型的思考开关，凭证仅从已保存的厂商配置读取。"""
+    provider_config = await asyncio.to_thread(_get_provider_config, request.api_provider)
+    if provider_config is None:
+        raise HTTPException(status_code=404, detail="未找到 API 提供商，请先保存厂商配置")
+    if provider_config.get("client_type", "openai") not in {"openai", "openai_responses"}:
+        raise HTTPException(status_code=400, detail="自动测试仅支持 OpenAI Chat Completions 和 Responses 兼容客户端")
+    try:
+        provider = APIProvider(**provider_config)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail="API 提供商配置无效，请检查厂商设置") from error
+    if not provider.base_url:
+        raise HTTPException(status_code=400, detail="API 提供商缺少基础地址")
+    try:
+        return await probe_thinking(provider, request, should_stop=http_request.is_disconnected)
+    except ValueError as error:
+        # URL 校验错误可能包含带密钥的查询参数，避免把配置原文返回浏览器。
+        raise HTTPException(status_code=400, detail="无法测试此厂商地址或请求参数，请检查配置") from error
 
 
 @router.post("/test-model", response_model=ModelTestResponse)
@@ -279,7 +301,6 @@ async def _fetch_models_from_provider(
     auth_query_name: str = "api_key",
     default_headers: Optional[Dict[str, str]] = None,
     default_query: Optional[Dict[str, str]] = None,
-    allow_configured_private_network: bool = False,
 ) -> List[Dict]:
     """从提供商 API 获取模型列表。
 
@@ -295,16 +316,12 @@ async def _fetch_models_from_provider(
         auth_query_name: Query 鉴权时使用的查询参数名称。
         default_headers: 默认附带的请求头。
         default_query: 默认附带的查询参数。
-        allow_configured_private_network: 是否允许已保存厂商配置指向回环或私网地址。
 
     Returns:
         List[Dict]: 解析后的模型列表。
     """
     try:
-        base_url = validate_public_url(
-            _normalize_url(base_url),
-            allow_configured_private_network=allow_configured_private_network,
-        )
+        base_url = validate_public_url(_normalize_url(base_url), require_public_network=False)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -316,7 +333,8 @@ async def _fetch_models_from_provider(
 
     if client_type == "gemini":
         # Gemini 使用 URL 参数传递 API Key
-        params["key"] = api_key
+        if api_key:
+            params["key"] = api_key
     else:
         provider = APIProvider(
             name="webui-openai-compatible-fetcher",
@@ -388,8 +406,7 @@ def _get_provider_config(provider_name: str) -> Optional[Dict]:
         return None
 
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            config_data = tomlkit.load(f)
+        config_data = read_effective_config(Path(config_path))
 
         providers = config_data.get("api_providers", [])
         provider = next((provider for provider in providers if provider.get("name") == provider_name), None)
@@ -414,8 +431,7 @@ def _get_model_config(model_name: str) -> Optional[Dict]:
         return None
 
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            config_data = tomlkit.load(f)
+        config_data = read_effective_config(Path(config_path))
 
         models = config_data.get("models", [])
         model = next((model for model in models if model.get("name") == model_name), None)
@@ -584,9 +600,9 @@ def _is_replyer_test_model(model_config: Dict[str, Any]) -> bool:
 
 
 def _build_replyer_test_context_factory() -> Callable[[BaseClient], List[ContextItem]]:
-    """用真实复古回复模板模拟一轮群聊，不测试工具调用或视觉能力。"""
+    """用 Mai Replier 专用模板模拟一轮群聊，只验证文本回复。"""
     prompt = load_prompt(
-        "retro_replyer",
+        "reply_group_mai_replier",
         extra_info_block="",
         expression_habits_block="",
         bot_name="麦麦",
@@ -739,13 +755,11 @@ async def get_provider_models(
         raise HTTPException(status_code=404, detail=f"未找到提供商: {provider_name}")
 
     base_url = provider_config.get("base_url")
-    api_key = provider_config.get("api_key")
+    api_key = provider_config.get("api_key", "")
     client_type = provider_config.get("client_type", "openai")
 
     if not base_url:
         raise HTTPException(status_code=400, detail="提供商配置缺少 base_url")
-    if not api_key:
-        raise HTTPException(status_code=400, detail="提供商配置缺少 api_key")
 
     resolved_endpoint = provider_config.get("model_list_endpoint", endpoint) if endpoint == "/models" else endpoint
 
@@ -762,7 +776,6 @@ async def get_provider_models(
         auth_query_name=provider_config.get("auth_query_name", "api_key"),
         default_headers=provider_config.get("default_headers", {}),
         default_query=provider_config.get("default_query", {}),
-        allow_configured_private_network=True,
     )
 
     return {
@@ -776,7 +789,7 @@ async def get_provider_models(
 @router.get("/list-by-url")
 async def get_models_by_url(
     base_url: str = Query(..., description="提供商的基础 URL"),
-    api_key: str = Query(..., description="API Key"),
+    api_key: str = Query("", description="API Key（无鉴权服务可留空）"),
     parser: str = Query("openai", description="响应解析器类型 (openai | gemini)"),
     endpoint: str = Query("/models", description="获取模型列表的端点"),
     client_type: str = Query("openai", description="客户端类型 (openai | openai_responses | gemini)"),
@@ -809,7 +822,6 @@ async def _test_provider_connection(
     base_url: str,
     api_key: Optional[str],
     client_type: str,
-    allow_configured_private_network: bool = False,
 ):
     """
     测试提供商连接状态
@@ -831,10 +843,7 @@ async def _test_provider_connection(
         raise HTTPException(status_code=400, detail="base_url 不能为空")
 
     try:
-        base_url = validate_public_url(
-            base_url,
-            allow_configured_private_network=allow_configured_private_network,
-        )
+        base_url = validate_public_url(base_url, require_public_network=False)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -919,7 +928,7 @@ async def test_provider_connection(
     api_key: Optional[str] = Query(None, description="API Key（可选，用于验证 Key 有效性）"),
     client_type: str = Query("openai", description="客户端类型 (openai | openai_responses | gemini)"),
 ):
-    """测试任意厂商地址；该入口只允许访问公网目标。"""
+    """测试指定厂商地址，支持本机与内网服务。"""
     return await _test_provider_connection(
         base_url=base_url,
         api_key=api_key,
@@ -939,8 +948,7 @@ async def test_provider_connection_by_name(
         model_config_path = os.path.join(CONFIG_DIR, "model_config.toml")
         if not os.path.exists(model_config_path):
             raise HTTPException(status_code=404, detail="配置文件不存在")
-        with open(model_config_path, "r", encoding="utf-8") as f:
-            return dict(tomlkit.load(f))
+        return read_effective_config(Path(model_config_path))
 
     config = await asyncio.to_thread(read_config)
 
@@ -983,5 +991,4 @@ async def test_provider_connection_by_name(
         base_url=base_url,
         api_key=api_key if api_key else None,
         client_type=client_type,
-        allow_configured_private_network=True,
     )

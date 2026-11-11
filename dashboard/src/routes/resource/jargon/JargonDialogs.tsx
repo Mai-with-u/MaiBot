@@ -1,6 +1,5 @@
 import { Check, Hash, HelpCircle, Upload } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import type { ChangeEvent } from 'react'
 
 import {
   AlertDialog,
@@ -39,13 +38,12 @@ import { useToast } from '@/hooks/use-toast'
 import { formatChatDisplayName } from '@/lib/chat-display'
 import { cn } from '@/lib/utils'
 
-import { createJargon, importJargons, updateJargon } from '@/lib/jargon-api'
+import { createJargon, updateJargon } from '@/lib/jargon-api'
 
 import type {
   Jargon,
   JargonChatInfo,
   JargonCreateRequest,
-  JargonExportItem,
   JargonUpdateRequest,
 } from '@/types/jargon'
 
@@ -420,9 +418,16 @@ export function JargonCreateDialog({
 
     try {
       setSaving(true)
-      await createJargon(formData.is_global ? {
-        content: formData.content, meaning: formData.meaning, is_global: true, session_ids: [],
-      } : formData)
+      await createJargon(
+        formData.is_global
+          ? {
+              content: formData.content,
+              meaning: formData.meaning,
+              is_global: true,
+              session_ids: [],
+            }
+          : formData
+      )
       toast({
         title: '创建成功',
         description: '黑话已创建',
@@ -474,27 +479,33 @@ export function JargonCreateDialog({
             </div>
 
             <div className="flex items-center gap-2">
-              <Switch id="jargon-create-global" checked={formData.is_global ?? false} disabled={saving}
-                onCheckedChange={(checked) => setFormData({ ...formData, is_global: checked })} />
+              <Switch
+                id="jargon-create-global"
+                checked={formData.is_global ?? false}
+                disabled={saving}
+                onCheckedChange={(checked) => setFormData({ ...formData, is_global: checked })}
+              />
               <Label htmlFor="jargon-create-global">全局（所有聊天）</Label>
             </div>
-            {!formData.is_global && <div className="space-y-2">
-              <Label>
-                聊天 <span className="text-destructive">*</span>
-              </Label>
-              <MultiSelect
-                options={chatList.map((chat) => ({
-                  label: formatChatDisplayName(chat.chat_name, chat.account_id),
-                  value: chat.session_id,
-                }))}
-                selected={formData.session_ids || []}
-                onChange={(values) =>
-                  setFormData({ ...formData, session_ids: values, session_id: values[0] })
-                }
-                placeholder="选择关联的聊天"
-                emptyText="没有可选聊天"
-              />
-            </div>}
+            {!formData.is_global && (
+              <div className="space-y-2">
+                <Label>
+                  聊天 <span className="text-destructive">*</span>
+                </Label>
+                <MultiSelect
+                  options={chatList.map((chat) => ({
+                    label: formatChatDisplayName(chat.chat_name, chat.account_id),
+                    value: chat.session_id,
+                  }))}
+                  selected={formData.session_ids || []}
+                  onChange={(values) =>
+                    setFormData({ ...formData, session_ids: values, session_id: values[0] })
+                  }
+                  placeholder="选择关联的聊天"
+                  emptyText="没有可选聊天"
+                />
+              </div>
+            )}
           </div>
         </DialogBody>
 
@@ -504,184 +515,6 @@ export function JargonCreateDialog({
           </Button>
           <Button data-dialog-action="confirm" onClick={handleCreate} disabled={saving}>
             {saving ? '创建中...' : '创建'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-// ====================
-// 黑话导入对话框
-// ====================
-interface JargonImportDialogProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  chatList: JargonChatInfo[]
-  onSuccess: () => void
-}
-
-function normalizeJargonImportItems(payload: unknown): JargonExportItem[] {
-  if (Array.isArray(payload)) {
-    return payload as JargonExportItem[]
-  }
-  if (
-    payload &&
-    typeof payload === 'object' &&
-    Array.isArray((payload as { jargons?: unknown }).jargons)
-  ) {
-    return (payload as { jargons: JargonExportItem[] }).jargons
-  }
-  return []
-}
-
-export function JargonImportDialog({
-  open,
-  onOpenChange,
-  chatList,
-  onSuccess,
-}: JargonImportDialogProps) {
-  const [items, setItems] = useState<JargonExportItem[]>([])
-  const [fileName, setFileName] = useState('')
-  const [targetSessionIds, setTargetSessionIds] = useState<string[]>([])
-  const [conflictStrategy, setConflictStrategy] = useState<'skip' | 'overwrite'>('skip')
-  const [importing, setImporting] = useState(false)
-  const { toast } = useToast()
-
-  useEffect(() => {
-    if (!open) {
-      setItems([])
-      setFileName('')
-      setTargetSessionIds([])
-      setConflictStrategy('skip')
-    }
-  }, [open])
-
-  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
-
-    try {
-      const payload = JSON.parse(await file.text()) as unknown
-      const nextItems = normalizeJargonImportItems(payload)
-      if (nextItems.length === 0) {
-        toast({
-          title: '读取失败',
-          description: 'JSON 中没有可导入的黑话',
-          variant: 'destructive',
-        })
-        return
-      }
-      setItems(nextItems)
-      setFileName(file.name)
-    } catch (error) {
-      toast({
-        title: '读取失败',
-        description: error instanceof Error ? error.message : '无法解析 JSON 文件',
-        variant: 'destructive',
-      })
-    }
-  }
-
-  const handleImport = async () => {
-    if (items.length === 0) {
-      toast({
-        title: '请选择文件',
-        description: '请先选择要导入的黑话 JSON 文件',
-        variant: 'destructive',
-      })
-      return
-    }
-    if (targetSessionIds.length === 0) {
-      toast({
-        title: '请选择聊天',
-        description: '请至少选择一个导入目标聊天',
-        variant: 'destructive',
-      })
-      return
-    }
-
-    try {
-      setImporting(true)
-      const result = await importJargons({
-        target_session_ids: targetSessionIds,
-        jargons: items,
-        conflict_strategy: conflictStrategy,
-      })
-      toast({
-        title: '导入完成',
-        description: `成功 ${result.imported_count} 个，跳过 ${result.skipped_count} 个，失败 ${result.failed_count} 个`,
-      })
-      onSuccess()
-      onOpenChange(false)
-    } catch (error) {
-      toast({
-        title: '导入失败',
-        description: error instanceof Error ? error.message : '无法导入黑话',
-        variant: 'destructive',
-      })
-    } finally {
-      setImporting(false)
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>导入黑话</DialogTitle>
-          <DialogDescription>将 JSON 中的黑话导入到一个或多个聊天</DialogDescription>
-        </DialogHeader>
-
-        <DialogBody>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="jargon_import_file">JSON 文件</Label>
-              <Input id="jargon_import_file" type="file" accept=".json,application/json" onChange={handleFileChange} />
-              <p className="text-muted-foreground text-xs">
-                {fileName ? `${fileName}，共 ${items.length} 条黑话` : '支持 maibot.jargon.export 或黑话数组'}
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label>导入目标</Label>
-              <MultiSelect
-                options={chatList.map((chat) => ({
-                  label: formatChatDisplayName(chat.chat_name, chat.account_id),
-                  value: chat.session_id,
-                }))}
-                selected={targetSessionIds}
-                onChange={setTargetSessionIds}
-                placeholder="选择一个或多个聊天"
-                emptyText="没有可选聊天"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>冲突处理</Label>
-              <Select
-                value={conflictStrategy}
-                onValueChange={(value) => setConflictStrategy(value as 'skip' | 'overwrite')}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="skip">跳过已有黑话</SelectItem>
-                  <SelectItem value="overwrite">覆盖已有黑话</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        </DialogBody>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            取消
-          </Button>
-          <Button onClick={handleImport} disabled={importing}>
-            {importing ? '导入中...' : '导入'}
           </Button>
         </DialogFooter>
       </DialogContent>

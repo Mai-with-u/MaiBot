@@ -6,6 +6,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useRouterState } from '@tanstack/react-router'
 import { motion } from 'motion/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTour } from '@/components/tour/use-tour'
+import { BASIC_FEATURES_TOUR_ID } from '@/components/tour/tours/basic-features-tour'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -16,6 +18,8 @@ import { MOBILE_GLASS_CLASS } from '@/components/layout/mobile-glass'
 import { useHideMobileTabBar } from '@/components/layout/mobile-nav-context'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { useFeatureFlags } from '@/hooks/use-feature-flags'
+import { useLayoutVersion } from '@/lib/layout-version'
+import { takeQuickChatMessage } from '@/lib/quick-chat'
 import { useToast } from '@/hooks/use-toast'
 import { Button } from '@/components/ui/button'
 import { uploadWebuiUserAvatar } from '@/lib/avatar-url'
@@ -35,8 +39,9 @@ import { loadUserEmojiPayload, type UserEmojiItem } from '@/lib/user-emoji-api'
 import { cn } from '@/lib/utils'
 import { MaisakaMonitor } from '@/routes/monitor/maisaka-monitor'
 import { StageStatusLabel } from '@/routes/monitor/StageStatusLabel'
-import { useMaisakaMonitorOverview, type SessionInfo } from '@/routes/monitor/use-maisaka-monitor'
+import { useMaisakaMonitorOverview } from '@/routes/monitor/use-maisaka-monitor'
 
+import { buildObservedSessions, isFocusFlowId } from './observed-sessions'
 import { ChatComposer } from './ChatComposer'
 import { ChatWorkspaceSidebar } from './ChatWorkspaceSidebar'
 import { MessageList } from './MessageList'
@@ -65,6 +70,7 @@ import {
   getStoredUserAvatarVersion,
   getStoredUserName,
   getSavedVirtualTabs,
+  isChatRuntimeEventCurrent,
   saveUserAvatarVersion,
   saveUserName,
   saveVirtualTabs,
@@ -74,6 +80,8 @@ const MAX_CHAT_IMAGES = 8
 const MAX_MESSAGES_PER_CHAT_TAB = 1000
 const MAX_PROCESSED_MESSAGE_KEYS = 100
 const MAX_USER_AVATAR_BYTES = 5 * 1024 * 1024
+// 试聊等待回复的时长；收到「正在输入」会重新计时。
+const SETUP_TRIAL_REPLY_TIMEOUT_MS = 60_000
 
 function getRequestedObservedSessionId(): string | null {
   if (typeof window === 'undefined') {
@@ -268,12 +276,30 @@ export function ChatPage() {
   const agentParam = useRouterState({
     select: (state) => new URLSearchParams(state.location.searchStr).get('agent') === 'true',
   })
+  // 麦麦观察布局的侧栏已经列出所有对话，聊天页不再显示自带的会话列表，选择完全跟随地址
+  const inObservationLayout = useLayoutVersion() === 'observation'
   const [agentSelected, setAgentSelected] = useState(agentParam)
   const [handledAgentParam, setHandledAgentParam] = useState(agentParam)
   const [trialReplied, setTrialReplied] = useState(false)
+  // 试聊消息发出后迟迟没有回复或收到错误时提示检查模型配置；之后仍收到回复则恢复成功态。
+  const [trialFailed, setTrialFailed] = useState(false)
   const trialMessagePending = useRef(false)
+  const trialTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const clearTrialTimeout = useCallback(() => {
+    if (trialTimeoutRef.current) clearTimeout(trialTimeoutRef.current)
+    trialTimeoutRef.current = null
+  }, [])
+  const startTrialTimeout = useCallback(() => {
+    clearTrialTimeout()
+    trialTimeoutRef.current = setTimeout(() => {
+      trialTimeoutRef.current = null
+      if (trialMessagePending.current) setTrialFailed(true)
+    }, SETUP_TRIAL_REPLY_TIMEOUT_MS)
+  }, [clearTrialTimeout])
+  useEffect(() => clearTrialTimeout, [clearTrialTimeout])
   const canOpenMessagePlatform = typeof window.maibotDesktopHost?.openMessagePlatform === 'function'
   const { t, i18n } = useTranslation()
+  const { startTour } = useTour()
   const queryClient = useQueryClient()
   const {
     sessions: observedSessions,
@@ -300,27 +326,10 @@ export function ChatPage() {
     }
   }, [observedSessions, queryClient])
 
-  // 数据库中的真实聊天流为列表来源，实时监控事件只更新对应项的活动时间。
-  const knownSessions = useMemo(() => {
-    const sessions = new Map<string, SessionInfo>()
-    for (const chat of knownChatStreams) {
-      const live = observedSessions.get(chat.session_id)
-      sessions.set(chat.session_id, {
-        sessionId: chat.session_id,
-        sessionName: chat.display_name,
-        isGroupChat: chat.chat_type === 'group',
-        groupId: chat.group_id,
-        userId: chat.user_id,
-        platform: chat.platform,
-        lastActivity: Math.max(
-          chat.last_active_at ?? chat.created_at ?? 0,
-          live?.lastActivity ?? 0
-        ),
-        eventCount: live?.eventCount ?? 0,
-      })
-    }
-    return sessions
-  }, [knownChatStreams, observedSessions])
+  const { sessions: knownSessions, focusFlowByMember } = useMemo(
+    () => buildObservedSessions(knownChatStreams, observedSessions, observedStageStatuses),
+    [knownChatStreams, observedSessions, observedStageStatuses]
+  )
 
   // 最新消息由监控仓库增量维护，状态/Planner 更新不再触发扫描全部历史。
   const observedLatestMessages = useMemo(() => {
@@ -377,6 +386,11 @@ export function ChatPage() {
     getRequestedObservedSessionId
   )
 
+  useEffect(() => {
+    const flowId = activeObservedSessionId ? focusFlowByMember.get(activeObservedSessionId) : undefined
+    if (flowId) setActiveObservedSessionId(flowId)
+  }, [activeObservedSessionId, focusFlowByMember])
+
   const activeObservedSession = activeObservedSessionId
     ? knownSessions.get(activeObservedSessionId)
     : undefined
@@ -409,6 +423,8 @@ export function ChatPage() {
       setAgentSelected(false)
       setActiveObservedSessionId(observeParam)
       setMobileRoomOpen(true)
+    } else if (inObservationLayout) {
+      setActiveObservedSessionId(null)
     }
   }
 
@@ -584,6 +600,8 @@ export function ChatPage() {
           // Only a live reply after this trial's own message completes the trial, not loaded history.
           if (tabId === 'webui-default' && trialMessagePending.current && (data.content?.trim() || data.segments?.length)) {
             trialMessagePending.current = false
+            clearTrialTimeout()
+            setTrialFailed(false)
             setTrialReplied(true)
           }
           updateTab(tabId, { isTyping: false, runtimeStatus: null })
@@ -622,6 +640,10 @@ export function ChatPage() {
         }
 
         case 'typing':
+          // 麦麦仍在生成时重新计时，避免本地慢模型被误判为失败。
+          if (tabId === 'webui-default' && trialMessagePending.current && data.is_typing) {
+            startTrialTimeout()
+          }
           updateTab(tabId, {
             isTyping: data.is_typing || false,
             runtimeStatus: data.is_typing
@@ -635,6 +657,10 @@ export function ChatPage() {
           break
 
         case 'error':
+          if (tabId === 'webui-default' && trialMessagePending.current) {
+            clearTrialTimeout()
+            setTrialFailed(true)
+          }
           setTabs((prev) =>
             prev.map((tab) => {
               if (tab.id !== tabId) return tab
@@ -695,7 +721,14 @@ export function ChatPage() {
             processedSet.delete(firstKey)
           }
           processedMessagesMapRef.current.set(tabId, processedSet)
-          updateTab(tabId, { messages: formattedMessages })
+          setTabs((prev) => prev.map((tab) => {
+            if (tab.id !== tabId) return tab
+            const status = tab.runtimeStatus
+            if (status && !isChatRuntimeEventCurrent(formattedMessages, status.updatedAt)) {
+              return { ...tab, messages: formattedMessages, isTyping: false, runtimeStatus: null }
+            }
+            return { ...tab, messages: formattedMessages }
+          }))
           setIsLoadingHistory(false)
           break
         }
@@ -704,7 +737,7 @@ export function ChatPage() {
           break
       }
     },
-    [addMessageToTab, t, toast, updateTab]
+    [addMessageToTab, clearTrialTimeout, startTrialTimeout, t, toast, updateTab]
   )
 
   const ensureSessionListener = useCallback(
@@ -867,7 +900,8 @@ export function ChatPage() {
         if (event.type === 'llm.retry') {
           setTabs((prev) =>
             prev.map((tab) => {
-              if (!matchesMonitorTarget(tab, event.data)) {
+              if (!matchesMonitorTarget(tab, event.data) ||
+                !isChatRuntimeEventCurrent(tab.messages, event.data.timestamp, event.data.replayed)) {
                 return tab
               }
               const currentStatus = tab.runtimeStatus
@@ -894,7 +928,8 @@ export function ChatPage() {
         if (event.type === 'llm.error') {
           setTabs((prev) =>
             prev.map((tab) => {
-              if (!matchesMonitorTarget(tab, event.data)) {
+              if (!matchesMonitorTarget(tab, event.data) ||
+                !isChatRuntimeEventCurrent(tab.messages, event.data.timestamp, event.data.replayed)) {
                 return tab
               }
               const currentStatus = tab.runtimeStatus
@@ -978,7 +1013,11 @@ export function ChatPage() {
     setFilesByTab(previous => ({ ...previous, [activeTabId]: [] }))
 
     try {
-      if (setupTrial && activeTabId === 'webui-default') trialMessagePending.current = true
+      if (setupTrial && activeTabId === 'webui-default') {
+        trialMessagePending.current = true
+        setTrialFailed(false)
+        startTrialTimeout()
+      }
       await chatWsClient.sendMessage(activeTabId, messageContent, displayName, {
         files: filesToSend.map(file => ({ file_ref: file.file_ref, name: file.name })),
         images: imagesToSend.map((image) => ({
@@ -988,7 +1027,11 @@ export function ChatPage() {
         })),
       })
     } catch (error) {
-      if (activeTabId === 'webui-default') trialMessagePending.current = false
+      if (activeTabId === 'webui-default') {
+        if (setupTrial && trialMessagePending.current) setTrialFailed(true)
+        trialMessagePending.current = false
+        clearTrialTimeout()
+      }
       console.error('发送聊天消息失败:', error)
       setTabs((prev) =>
         prev.map((tab) => {
@@ -1006,7 +1049,22 @@ export function ChatPage() {
         variant: 'destructive',
       })
     }
-  }, [activeTab, activeTabId, addMessageToTab, inputValue, selectedImages, filesByTab, filesEnabled, uploadingFiles, setupTrial, t, toast, userName])
+  }, [activeTab, activeTabId, addMessageToTab, inputValue, selectedImages, filesByTab, filesEnabled, uploadingFiles, setupTrial, startTrialTimeout, clearTrialTimeout, t, toast, userName])
+
+  // 首页快速聊天：带着首页写下的消息进来，连上本地聊天室后自动发出
+  const [quickChatPending, setQuickChatPending] = useState(false)
+  useEffect(() => {
+    const message = takeQuickChatMessage()
+    if (!message) return
+    setInputValue(message)
+    setQuickChatPending(true)
+  }, [])
+  useEffect(() => {
+    if (!quickChatPending || activeObservedSessionId || agentActive) return
+    if (activeTabId !== 'webui-default' || !activeTab?.isConnected || !inputValue.trim()) return
+    setQuickChatPending(false)
+    void sendMessage()
+  }, [activeObservedSessionId, activeTab?.isConnected, activeTabId, agentActive, inputValue, quickChatPending, sendMessage])
 
   const handleAddFiles = async (files: FileList) => {
     if (!filesEnabled) return
@@ -1214,6 +1272,13 @@ export function ChatPage() {
     setActiveObservedSessionId(sessionId)
   }, [setSelectedObservedSession])
 
+  const internalSessionId = activeTab?.type === 'webui' || activeTab?.sessionInfo.platform === 'internal'
+    ? activeTab?.sessionInfo.session_id
+    : undefined
+  const observeInternalSession = internalSessionId
+    ? () => selectObservedSession(internalSessionId)
+    : undefined
+
   // 在页内直接打开观察聊天流的设置弹窗，不再跳转到聊天管理页
   const openObservedSettings = useCallback((sessionId: string) => {
     // 名称来自聊天流资料，不依赖实时活动时间，避免每个监控事件都改变行回调。
@@ -1226,8 +1291,8 @@ export function ChatPage() {
 
   return (
     <div data-chat-workspace="true">
-      {/* 桌面端：左侧会话侧边栏 */}
-      <motion.div
+      {/* 桌面端：左侧会话侧边栏（麦麦观察布局由外壳侧栏提供） */}
+      {!inObservationLayout && <motion.div
         className="hidden shrink-0 md:block"
         variants={{
           initial: { opacity: 0, x: '-100%' },
@@ -1256,7 +1321,7 @@ export function ChatPage() {
           onOpenObservedSettings={openObservedSettings}
           onClose={closeTab}
         />
-      </motion.div>
+      </motion.div>}
 
       {/* 移动端：会话列表（未进入对话时） */}
       {!mobileRoomOpen && (
@@ -1303,13 +1368,24 @@ export function ChatPage() {
         {setupTrial && (
           <section className="bg-card mx-4 mt-4 flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-lg border p-4" aria-live="polite">
             <div>
-              <p className="text-sm font-semibold">{t(trialReplied ? 'chat.setupTrial.repliedTitle' : 'chat.setupTrial.title')}</p>
-              <p className="text-muted-foreground mt-1 text-xs">{t(trialReplied ? 'chat.setupTrial.repliedDescription' : 'chat.setupTrial.description')}</p>
+              <p className="text-sm font-semibold">{t(trialReplied ? 'chat.setupTrial.repliedTitle' : trialFailed ? 'chat.setupTrial.failedTitle' : 'chat.setupTrial.title')}</p>
+              <p className="text-muted-foreground mt-1 text-xs">{t(trialReplied ? 'chat.setupTrial.repliedDescription' : trialFailed ? 'chat.setupTrial.failedDescription' : 'chat.setupTrial.description')}</p>
             </div>
+            {!trialReplied && trialFailed && (
+              <Button variant="outline" size="sm" onClick={() => navigate({ to: '/config/model' })}>
+                {t('chat.setupTrial.checkModelConfig')}
+              </Button>
+            )}
             {trialReplied && (
               <div className="flex gap-2">
                 <Button variant="ghost" size="sm" onClick={() => navigate({ to: '/chat', search: {}, replace: true })}>
                   {t('chat.setupTrial.keepChatting')}
+                </Button>
+                <Button variant={canOpenMessagePlatform ? 'outline' : 'default'} size="sm" onClick={() => {
+                  void navigate({ to: '/chat', search: {}, replace: true })
+                  startTour(BASIC_FEATURES_TOUR_ID)
+                }}>
+                  {t('chat.setupTrial.learnBasics')}
                 </Button>
                 {canOpenMessagePlatform && (
                   <Button size="sm" onClick={() => {
@@ -1340,6 +1416,7 @@ export function ChatPage() {
               }
               online={activeTab.isConnected}
               avatar={<MobileChatRoomTabAvatar tab={activeTab} />}
+              onObserve={observeInternalSession}
               onBack={() => setMobileRoomOpen(false)}
               userAvatar={{
                 userId,
@@ -1353,9 +1430,13 @@ export function ChatPage() {
         </div>
 
         {activeObservedSessionId ? (
-          <div className="relative min-h-0 min-w-0 flex-1" data-chat-observed-session>
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-chat-observed-session>
+            {internalSessionId === activeObservedSessionId && (
+              <div className="shrink-0 px-3 py-2">
+                <Button variant="outline" size="sm" onClick={() => switchTab(activeTab.id)}>返回聊天</Button>
+              </div>
+            )}
             <MaisakaMonitor sessionName={activeObservedSession?.sessionName}
-              embedded
               reasoningReturnTo={`/chat?observe=${encodeURIComponent(activeObservedSessionId)}`}
               floatingToolbarContainer={isMobileChat ? observedToolbarSlot : undefined}
             />
@@ -1377,7 +1458,7 @@ export function ChatPage() {
                     ) : null
                   }
                   onBack={() => setMobileRoomOpen(false)}
-                  onOpenSettings={() => openObservedSettings(activeObservedSessionId)}
+                  onOpenSettings={isFocusFlowId(activeObservedSessionId) ? undefined : () => openObservedSettings(activeObservedSessionId)}
                 />
                 <div
                   ref={setObservedToolbarSlot}
@@ -1391,7 +1472,7 @@ export function ChatPage() {
           <>
             {activeTab && (
               <div className="hidden md:block">
-                <ChatConversationHeader tab={activeTab} onClear={() => setTabs(current => current.map(tab => tab.id === activeTab.id ? { ...tab, messages: [] } : tab))} />
+                <ChatConversationHeader tab={activeTab} onObserve={observeInternalSession} onClear={() => setTabs(current => current.map(tab => tab.id === activeTab.id ? { ...tab, messages: [] } : tab))} />
               </div>
             )}
             <MessageList
@@ -1400,6 +1481,7 @@ export function ChatPage() {
               isLoadingHistory={isLoadingHistory}
               botDisplayName={activeTab?.sessionInfo.bot_name || t('chat.botNameFallback')}
               botQq={activeTab?.sessionInfo.bot_qq}
+              localBotAvatar={activeTab?.type === 'webui'}
               userName={userName}
               userAvatarPlatform={
                 activeTab?.type === 'virtual'

@@ -5,18 +5,20 @@ from tempfile import TemporaryDirectory
 from typing import Any, BinaryIO, Dict, List, Tuple
 from zipfile import BadZipFile, ZipFile, ZipInfo
 
-from fastapi import APIRouter, Cookie, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, UploadFile
+import asyncio
 import shutil
 import stat
 
+from src.common.runtime_loop import run_on_main_loop
+from src.plugin_runtime.integration import get_plugin_runtime_manager
 from src.plugin_runtime.runner.manifest_validator import ManifestValidator
 
 from .management import _reserve_plugin_operation
 from .support import (
     get_plugin_candidate_paths,
     get_plugins_dir,
-    require_plugin_token,
-    resolve_installed_plugin_path,
+    resolve_mutable_plugin_path,
 )
 
 router = APIRouter()
@@ -107,19 +109,35 @@ def install_zip_archive(source: BinaryIO) -> Dict[str, Any]:
             raise HTTPException(status_code=400, detail=f"插件校验失败：{'；'.join(validator.errors)}")
         with _reserve_plugin_operation(manifest.id, "install"):
             target, old_target = get_plugin_candidate_paths(manifest.id)
-            if target.exists() or old_target.exists() or resolve_installed_plugin_path(manifest.id) is not None:
+            if target.exists() or old_target.exists() or resolve_mutable_plugin_path(manifest.id) is not None:
                 raise HTTPException(status_code=409, detail=f"插件 {manifest.id} 已安装，请先卸载后再从 ZIP 安装")
             candidate.rename(target)
-        return {"success": True, "plugin_id": manifest.id, "message": f"{manifest.name} 安装成功，请重启麦麦使其生效"}
+        return {
+            "success": True,
+            "plugin_id": manifest.id,
+            "path": str(target),
+            "message": f"{manifest.name} 安装成功，请重启麦麦使其生效",
+        }
 
 
 @router.post("/install-zip")
-def install_plugin_zip(file: UploadFile = File(...), maibot_session: str | None = Cookie(default=None)):
-    """同步端点在线程池读取上传文件并解压，避免阻塞 WebUI 事件循环。"""
-    require_plugin_token(maibot_session)
+async def install_plugin_zip(file: UploadFile = File(...)):
+    """在线程池读取上传文件并解压，再在主循环同步插件目录索引。"""
     if not file.filename or not file.filename.lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail="请选择 ZIP 文件")
+
+    async def publish() -> Dict[str, Any]:
+        result = await asyncio.to_thread(install_zip_archive, file.file)
+        await run_on_main_loop(get_plugin_runtime_manager().refresh_plugin_catalog([Path(result["path"])]))
+        return result
+
     try:
-        return install_zip_archive(file.file)
+        install_task = asyncio.create_task(publish())
+        try:
+            return await asyncio.shield(install_task)
+        except asyncio.CancelledError:
+            # 发布文件的线程不能被取消；等待其收尾后才可关闭上传文件。
+            await install_task
+            raise
     finally:
         file.file.close()

@@ -1,0 +1,4 @@
+# Available plugin reply capabilities
+These extensions are enabled and in scope for this chat. They are reply capabilities, not tools that require searching. Follow their declared conditions.
+State the desired capability, intent, and content in your reply guidance. The reply supplementer generates parameters for the plugin. Availability does not guarantee successful execution; use the actual result.
+{capabilities}

@@ -1,27 +1,30 @@
-import { useId } from 'react'
-import { motion, useReducedMotion } from 'motion/react'
+import { Link } from '@tanstack/react-router'
+import { useTranslation } from 'react-i18next'
 
 import { useTheme } from '@/components/use-theme'
 import { cn } from '@/lib/utils'
 
 interface LogoAreaProps {
   sidebarOpen: boolean
+  onMobileMenuClose?: () => void
 }
 
-const SIDEBAR_SPECTRUM_TRANSITION = {
-  duration: 0.22,
-  ease: [0.22, 1, 0.36, 1] as const,
+function SpectrumBands() {
+  return (
+    <>
+      {Array.from({ length: 6 }, (_, index) => (
+        <span key={index} />
+      ))}
+    </>
+  )
 }
 
-export function LogoArea({ sidebarOpen }: LogoAreaProps) {
-  const spectrumLayoutId = useId()
+export function LogoArea({ sidebarOpen, onMobileMenuClose }: LogoAreaProps) {
+  const { t } = useTranslation()
   const { themeConfig } = useTheme()
+  const homeLabel = t('sidebar.menu.home')
   // 原版风格的 Logo 行与顶栏同高：色块在前、字标在后，字标用大小写混排。
   const isModernStyle = themeConfig.dashboardStyle === 'modern'
-  const prefersReducedMotion = useReducedMotion()
-  const spectrumTransition = prefersReducedMotion
-    ? { duration: 0 }
-    : SIDEBAR_SPECTRUM_TRANSITION
 
   return (
     <div
@@ -35,52 +38,45 @@ export function LogoArea({ sidebarOpen }: LogoAreaProps) {
         <div
           className={cn(
             'flex h-10 w-28 shrink-0 flex-col items-start justify-start gap-2 transition-opacity duration-[220ms] motion-reduce:transition-none',
-            !sidebarOpen && 'lg:pointer-events-none lg:opacity-0'
+            !sidebarOpen && 'lg:invisible lg:opacity-0'
           )}
         >
-          <span
+          <Link
+            to="/"
+            activeOptions={{ exact: true }}
+            aria-label={homeLabel}
+            title={homeLabel}
+            onClick={onMobileMenuClose}
             data-dashboard-logo-title="true"
-            className="w-28 whitespace-nowrap text-xl font-bold text-primary-gradient"
+            className="w-28 whitespace-nowrap text-left text-xl font-bold text-primary-gradient"
           >
             {isModernStyle ? 'MaiBot' : 'MAIBOT'}
-          </span>
+          </Link>
           {sidebarOpen && (
-            <motion.span
-              layoutId={`sidebar-logo-spectrum-${spectrumLayoutId}`}
+            <span
               aria-hidden="true"
               data-dashboard-logo-spectrum="true"
               className="flex h-2 w-28 max-w-full translate-y-1 items-end"
-              transition={spectrumTransition}
             >
-              {Array.from({ length: 6 }, (_, index) => (
-                <motion.span
-                  key={index}
-                  layoutId={`sidebar-logo-spectrum-band-${spectrumLayoutId}-${index}`}
-                  transition={spectrumTransition}
-                />
-              ))}
-            </motion.span>
+              <SpectrumBands />
+            </span>
           )}
         </div>
       </div>
       {/* 折叠彩虹块与导航 Tab 复用相同的左边距和宽度。 */}
       {!sidebarOpen && (
-        <motion.span
-          layoutId={`sidebar-logo-spectrum-${spectrumLayoutId}`}
-          aria-hidden="true"
+        <Link
+          to="/"
+          activeOptions={{ exact: true }}
+          aria-label={homeLabel}
+          title={homeLabel}
+          onClick={onMobileMenuClose}
           data-dashboard-logo-spectrum="true"
           data-dashboard-logo-spectrum-block="true"
-          className="pointer-events-none absolute top-[1.625rem] left-[var(--layout-sidebar-nav-padding-collapsed)] flex h-7 w-[var(--layout-sidebar-nav-item-collapsed-width)] items-stretch overflow-hidden max-lg:hidden"
-          transition={spectrumTransition}
+          className="absolute top-[1.625rem] left-[var(--layout-sidebar-nav-padding-collapsed)] flex h-7 w-[var(--layout-sidebar-nav-item-collapsed-width)] items-stretch overflow-hidden max-lg:hidden"
         >
-          {Array.from({ length: 6 }, (_, index) => (
-            <motion.span
-              key={index}
-              layoutId={`sidebar-logo-spectrum-band-${spectrumLayoutId}-${index}`}
-              transition={spectrumTransition}
-            />
-          ))}
-        </motion.span>
+          <SpectrumBands />
+        </Link>
       )}
     </div>
   )

@@ -1,24 +1,207 @@
 {
+  "hostManager": {
+    "title": "Bot 관리",
+    "entrySubtitle": "하나의 관리 센터에서 여러 독립 Bot을 만들고 제어합니다.",
+    "workspace": "Host 작업 공간",
+    "subtitle": "독립적인 Bot들을 한곳에서 관리하세요.",
+    "runtimeHint": "'실행 중'은 Bot 프로세스가 동작 중임을 뜻합니다. 계정 로그인이나 모델·어댑터의 준비 완료를 뜻하지는 않습니다.",
+    "refresh": "새로 고침",
+    "refreshFailed": "상태를 새로 고치지 못했습니다",
+    "staleData": "이전에 읽은 상태이며 현재 상태와 다를 수 있습니다.",
+    "summary": "Bot 수",
+    "total": "전체 Bot",
+    "needsAttention": "확인 필요",
+    "createTitle": "새 Bot 만들기",
+    "createHint": "독립적인 설정과 데이터 디렉터리를 만듭니다. 자동으로 시작하거나 로그인하지 않습니다.",
+    "botName": "Bot 표시 이름",
+    "namePlaceholder": "예: 업무 도우미",
+    "create": "만들기",
+    "creating": "생성 중…",
+    "botList": "관리 중인 Bot",
+    "lastUpdated": "업데이트 {{time}}",
+    "loading": "Bot 목록을 불러오는 중…",
+    "emptyTitle": "관리 중인 Bot이 없습니다",
+    "emptyHint": "위에 이름을 입력하여 첫 번째 독립 Bot을 만드세요.",
+    "pid": "프로세스 ID",
+    "exitCode": "종료 코드",
+    "start": "시작",
+    "stop": "중지",
+    "restart": "재시작",
+    "details": "디렉터리 및 실행 정보",
+    "directory": "Bot 디렉터리",
+    "logs": "실행 로그",
+    "botId": "Bot ID",
+    "startedAt": "시작 시간",
+    "exitedAt": "종료 시간",
+    "operationFailed": "작업이 완료되지 않았습니다. Bot 오류 정보를 확인하세요.",
+    "uncertainResult": "결과를 확인할 수 없습니다. Host에서 아직 처리 중일 수 있습니다. 중복 생성을 피하려면 목록을 새로 고침하고 확인한 후 다시 시도하세요.",
+    "status": {
+      "initializing": "초기화 중",
+      "initializationFailed": "초기화 실패",
+      "starting": "시작 중",
+      "running": "실행 중",
+      "stopping": "중지 중",
+      "stopped": "중지됨",
+      "exited": "종료됨",
+      "failed": "실행 실패",
+      "migrating": "데이터 마이그레이션 중",
+      "crashLoop": "반복 충돌로 재시작 중지됨"
+    },
+    "retryAt": "{{time}}에 자동으로 다시 시작합니다",
+    "pending": {
+      "start": "시작 중입니다. 잠시 기다려 주세요…",
+      "stop": "Bot 및 하위 프로세스가 종료되기를 기다립니다. 1분 이상 걸릴 수 있습니다…",
+      "restart": "Bot을 중지하고 다시 시작하는 중…"
+    },
+    "currentBot": "현재 Bot",
+    "noSelection": "선택된 Bot 없음",
+    "selectedStopped": "현재 Bot이 실행 중이 아닙니다",
+    "selectToContinue": "설정, 채팅, 플러그인을 열기 전에 Bot 관리에서 Bot을 선택하고 시작하세요. 관리 페이지는 계속 사용할 수 있습니다.",
+    "selected": "현재 Bot",
+    "useBot": "이 Bot 사용",
+    "unifiedScope": "설정, 채팅, 플러그인 및 리소스는 선택한 Bot의 데이터를 사용합니다. 탭마다 다른 Bot을 선택할 수 있으며 모든 Bot이 중지되어도 관리할 수 있습니다.",
+    "pluginDeps": {
+      "title": "플러그인 의존성",
+      "hint": "모든 Bot에서 활성화된 플러그인의 의존성을 확인한 후 누락된 패키지를 설치합니다. 기존 라이브러리 버전은 자동으로 변경하지 않습니다.",
+      "check": "확인",
+      "none": "모든 Bot의 플러그인 의존성이 충족되었습니다.",
+      "install": "모든 Bot 중지 후 설치",
+      "installHint": "설치하는 동안 모든 Bot이 일시 중지되며, 완료 후 이전 상태로 복구됩니다.",
+      "installed": "의존성을 설치했습니다. Bot이 이전 상태로 복구되는 중입니다."
+    }
+  },
+  "helpHistory": {
+    "newSession": "새 대화",
+    "retryLoad": "다시 불러오기",
+    "draftRestored": "초안을 복원했습니다. 내용을 확인한 뒤 다시 보낼 수 있습니다.",
+    "description": "최근 에이전트 질문 기록을 보고 이어서 질문할 수 있습니다.",
+    "deleteSession": "‘{{title}}’ 세션 삭제",
+    "deleteTitle": "세션 삭제",
+    "deleteDescription": "‘{{title}}’와 모든 질문 및 답변을 삭제할까요?",
+    "deleteConfirm": "삭제",
+    "loading": "도움말 기록을 불러오는 중…",
+    "loadError": "도움말 기록을 불러오지 못했습니다.",
+    "empty": "아직 질문 세션이 없습니다.",
+    "select": "세션을 선택해 질문과 답변을 확인하세요.",
+    "noReply": "이 질문에 기록된 답변이 없습니다."
+  },
+  "observation": {
+    "helpHistory": "도움말 기록",
+    "keys": {
+      "bot": "麦麦",
+      "model": "모델",
+      "adapter": "어댑터",
+      "learning": "학습",
+      "memory": "기억",
+      "plugin": "플러그인",
+      "market": "마켓",
+      "prompt": "Prompt",
+      "data": "데이터",
+      "logs": "로그"
+    },
+    "expandSidebar": "사이드바 펼치기",
+    "collapseSidebar": "사이드바 접기",
+    "settingsBlock": "설정",
+    "compactSettings": "설정을 한 줄로 표시",
+    "keyNeedsBot": "{{label}} · 먼저 Bot을 시작하세요",
+    "pet": {
+      "title": "데스크톱 펫",
+      "statusTitle": "데스크톱 펫 상태",
+      "statusLoadFailed": "데스크톱 펫 상태를 불러올 수 없습니다: {{error}}",
+      "settings": "펫 설정",
+      "settingsUnavailable": "현재 봇에서 데스크톱 펫 설정을 사용할 수 없습니다.",
+      "settingsSaving": "저장 중…",
+      "settingsSaved": "데스크톱 펫 설정을 저장했습니다",
+      "settingsSaveFailed": "데스크톱 펫 설정을 저장할 수 없습니다",
+      "enabledLamp": "펫 사용",
+      "mode": {
+        "local": "로컬 창",
+        "remote": "원격 클라이언트"
+      },
+      "state": {
+        "idle": "표시 중",
+        "thinking": "생각 중",
+        "hidden": "숨김",
+        "starting": "시작 중",
+        "waiting": "연결 대기",
+        "error": "실행 안 됨"
+      },
+      "thinkingMeta": "답장을 작성하는 중",
+      "hiddenMeta": "백그라운드에서 실행 중",
+      "waitingTitle": "펫 클라이언트 연결을 기다리는 중",
+      "waitingHint": "펫 클라이언트에 호스트 WebUI 주소를 입력하고 로그인하면 여기에 펫이 표시됩니다.",
+      "startingTitle": "펫 창을 시작하는 중…",
+      "errorTitle": "펫 창이 실행되지 않았습니다",
+      "unsupported": "이 시스템은 로컬 창을 지원하지 않습니다. 원격 클라이언트를 사용하세요.",
+      "show": "표시",
+      "showFailed": "펫을 표시하지 못했습니다",
+      "inputPlaceholder": "펫에게 말 걸기…",
+      "send": "보내기",
+      "sendFailed": "보내지 못했습니다",
+      "todos": "할 일",
+      "todosLabel": "할 일, 미완료 {{count}}개",
+      "todosEmpty": "미완료 할 일이 없습니다",
+      "todosMore": "나머지 {{count}}개는 펫에서 확인하세요"
+    },
+    "allConversations": "모든 대화",
+    "filterConversations": "필터",
+    "focusFlows": "Focus 공유 흐름",
+    "overviewPreview": "상태와 사용량 개요",
+    "localChatPreview": "로컬 채팅방",
+    "console": "콘솔",
+    "uptime": "가동 시간",
+    "unread": "읽지 않음 {{count}}개",
+    "loading": "불러오는 중…",
+    "noNews": "소식이 없습니다",
+    "detailedStats": "상세 통계",
+    "otherModels": "기타 모델",
+    "noData": "데이터 없음",
+    "quickChat": "麦麦와 채팅",
+    "quickChatPlaceholder": "麦麦에게 말을 걸고 Enter로 대화 열기…",
+    "composerMode": "입력 모드",
+    "modeChat": "채팅",
+    "modeAsk": "질문",
+    "editCards": "카드 편집",
+    "cardLibrary": "카드 라이브러리",
+    "resetLayout": "기본값으로",
+    "doneEditing": "완료",
+    "removeCard": "“{{name}}” 제거",
+    "moveCard": "드래그하거나 방향키로 “{{name}}” 이동",
+    "cardWidth": "카드 너비",
+    "addCard": "“{{name}}”을(를) 보드에 추가",
+    "libraryHint": "+ 를 눌러 다시 추가합니다. 통계 카드는 구분선 아래에 놓입니다.",
+    "libraryEmpty": "모든 카드가 보드에 있습니다",
+    "closeLibrary": "카드 라이브러리 닫기",
+    "refreshQuote": "다음 한마디",
+    "emptyBoard": "보드가 비어 있습니다. 라이브러리에서 카드를 추가하세요.",
+    "zoneTop": "윗줄",
+    "zoneStats": "통계",
+    "modeChatLabel": "채팅 모드",
+    "modeAskLabel": "질문 모드",
+    "switchMode": "{{mode}}로 전환",
+    "askTitle": "麦麦에게 질문",
+    "askPreview": "문서와 플러그인 마켓",
+    "askPlaceholder": "설정이나 플러그인 사용법을 묻고 Enter…",
+    "ask": "질문",
+    "send": "보내기"
+  },
   "pluginWebUI": {
     "customReload": "페이지 새로고침",
     "customStop": "페이지 중지",
     "customStopped": "페이지가 중지되었습니다. 다시 불러오면 실행됩니다.",
-    "customStopRequestRate": "요청이 너무 많아 중지되었습니다(초당 20회, 순간 최대 200회).",
+    "customStopRequestRate": "요청이 너무 많아 중지되었습니다(초당 {{rate}}회, 순간 최대 {{burst}}회).",
     "customStopLayoutRate": "페이지 크기 업데이트가 너무 많아 중지되었습니다.",
     "customStopHeight": "페이지 높이가 잘못되었거나 30000픽셀을 초과하여 중지되었습니다.",
     "customStopDuplicateId": "요청 ID가 중복되어 중지되었습니다.",
     "customStopTimeout": "10초 안에 연결되지 않아 중지되었습니다.",
     "customStopManual": "페이지를 수동으로 중지했습니다.",
     "customStopNavigation": "페이지가 다시 로드되거나 이동하여 연결이 중지되었습니다.",
-    "workspaceOrder": "상단 탭 순서",
-    "workspaceOrderHint": "숨기지 않은 플러그인은 이 순서로 표시됩니다. 상단에는 최대 두 개의 탭이 표시되며 나머지는 옆의 더 보기 메뉴에서 열 수 있습니다. 현재 플러그인은 항상 표시됩니다. 변경 사항은 즉시 적용되며 이 브라우저에 저장됩니다.",
     "galleryLayout": "갤러리 배치",
     "paginationSummary": "{{page}} / {{pages}}페이지 · {{total}}장",
     "galleryAuto": "자동 배치",
     "galleryColumns": "{{count}}열",
     "extensions": "플러그인 확장",
     "manage": "플러그인 페이지 관리",
-    "more": "다른 플러그인 작업 공간",
     "refresh": "새로 고침",
     "loading": "로딩 중…",
     "empty": "데이터 없음",
@@ -69,6 +252,7 @@
     "menu": {
       "home": "홈",
       "botMainConfig": "봇 메인 설정",
+      "desktopPet": "데스크톱 펫",
       "aiModelProvider": "AI 모델 공급자",
       "modelManagement": "모델 관리",
       "promptManagement": "Prompt 관리",
@@ -99,7 +283,11 @@
     "generatedAt": "통계 기준 시각: {{time}}",
     "periodRange": "통계 기간: {{start}}부터 {{end}}까지",
     "empty": "이 기간에는 데이터가 없습니다",
-    "actions": { "refresh": "새로고침", "openHtml": "HTML 버전 열기" },
+    "actions": {
+      "refresh": "새로고침",
+      "compare": "Compare with previous",
+      "details": "Details"
+    },
     "error": {
       "title": "상세 통계를 불러오지 못했습니다",
       "description": "잠시 후 다시 시도해 주세요"
@@ -114,8 +302,18 @@
       "last_hour": "최근 1시간",
       "last_15_minutes": "최근 15분"
     },
-    "tabs": { "trends": "데이터 차트", "metrics": "지표 추이" },
-    "sections": { "breakdowns": "분류 통계", "embeddings": "임베딩 통계", "distributions": "데이터 분포" },
+    "tabs": {
+      "trends": "데이터 차트",
+      "metrics": "지표 추이"
+    },
+    "sections": {
+      "breakdowns": "Detailed Breakdown",
+      "embeddings": "임베딩 통계",
+      "distributions": "Distributions",
+      "period": "Period",
+      "trend": "Trends & Insights",
+      "reliability": "Reliability & Failures"
+    },
     "breakdowns": {
       "taskGroups": "작업 그룹별",
       "models": "모델별",
@@ -139,9 +337,16 @@
       "costPerReceivedMessages": "비용/수신 메시지",
       "costPerReplies": "비용/답변",
       "costPerHour": "비용/시간",
-      "tokensPerHour": "Token/시간"
+      "tokensPerHour": "Token/시간",
+      "callsPerReply": "Calls / Reply",
+      "failureRate": "Failure Rate",
+      "replyRate": "Reply Rate",
+      "sparkLabel": "{{name}} recent trend"
     },
-    "units": { "per100": "100개당", "perHour": "시간당" },
+    "units": {
+      "per100": "100개당",
+      "perHour": "시간당"
+    },
     "table": {
       "name": "이름",
       "requests": "호출 횟수",
@@ -173,7 +378,24 @@
       "moduleCosts": "모듈 비용 분포",
       "requestTypeCosts": "요청 유형 비용 분포",
       "chatMessages": "채팅 메시지 분포",
-      "chatCosts": "채팅 스트림 비용 분포"
+      "chatCosts": "채팅 스트림 비용 분포",
+      "hint": "Click a legend item to filter the table below",
+      "itemCount": "{{count}} items",
+      "filterTable": "Filter {{name}} in detail table",
+      "singleSource": "Only \"{{name}}\" is present in this period",
+      "zeroCount": "{{count}} items with 0 value",
+      "titles": {
+        "owner": "Owner {{metric}} Distribution",
+        "model": "Model {{metric}} Distribution",
+        "module": "Module {{metric}} Distribution",
+        "requestType": "Request Type {{metric}} Distribution",
+        "taskGroup": "Task Group {{metric}} Distribution",
+        "chat": "Chat {{metric}} Distribution"
+      },
+      "totals": {
+        "costs": "Total Cost",
+        "tokens": "Total Tokens"
+      }
     },
     "charts": {
       "timeRange": "시간 범위",
@@ -199,6 +421,153 @@
       "costPerHour": "시간당 비용 추이",
       "tokensPerHour": "시간당 Token 추이",
       "costPerReplies": "답변당 비용 추이"
+    },
+    "other": "Other ({{count}})",
+    "delta": {
+      "vsPrevious": "Compared with previous period",
+      "noBaseline": "Previous period was 0",
+      "new": "NEW"
+    },
+    "modules": {
+      "usage": "Usage Overview",
+      "cache": "Prompt Cache",
+      "modelCosts": "Model Cost Share",
+      "flow": "Token Flow",
+      "unit": "Unit Cost & Efficiency",
+      "insights": "Auto Insights",
+      "failureRank": "Failure Rate Ranking",
+      "failureTrend": "Failure Trend & Latency",
+      "heatmap": "Activity Heatmap",
+      "chats": "Top Active Chats"
+    },
+    "cache": {
+      "all": "Overall",
+      "uncachedHint": "{{tokens}} input tokens without cache breakdown"
+    },
+    "models": {
+      "freeHint": "{{count}} additional models with ¥0.00 cost"
+    },
+    "flow": {
+      "total": "Total {{tokens}}",
+      "cacheHit": "Cache Hit Input",
+      "cacheMiss": "Cache Miss Input",
+      "noCacheInfo": "Uncached Input",
+      "output": "Output Tokens",
+      "ioRatio": "Input : Output Ratio"
+    },
+    "trend": {
+      "metric": "Metric",
+      "group": "Group By",
+      "mode": "Chart Mode",
+      "sum": "Total",
+      "truncated": "Detailed series kept for 30 days (since {{start}})",
+      "metrics": {
+        "cost": "Cost",
+        "tokens": "Tokens",
+        "requests": "Requests",
+        "messages": "Messages"
+      },
+      "groups": {
+        "total": "Total",
+        "model": "By Model",
+        "module": "By Module",
+        "chat": "By Chat"
+      },
+      "modes": {
+        "stack": "Stacked",
+        "line": "Line",
+        "percent": "100% Share"
+      },
+      "titles": {
+        "cost": "Cost Trend",
+        "tokens": "Token Usage Trend",
+        "requests": "Request Trend",
+        "messages": "Message Trend"
+      },
+      "totals": {
+        "cost": "Total Cost",
+        "tokens": "Total Tokens",
+        "requests": "Total Requests",
+        "messages": "Total Messages"
+      }
+    },
+    "insights": {
+      "empty": "No notable anomalies or concentrations in this period",
+      "alertCount": "{{count}} alerts",
+      "costUp": "Cost is {{current}}, up {{change}} from {{previous}}.",
+      "costDown": "Cost is {{current}}, down {{change}} from {{previous}}.",
+      "failureRate": "{{name}} failure rate reached {{rate}} ({{failures}} / {{attempts}}), above overall {{overall}}.",
+      "failureShare": "{{name}} had {{failures}} failures ({{share}} of all failures).",
+      "costShare": "{{name}} cost {{cost}}, accounting for {{share}} of total cost.",
+      "cacheLow": "{{name}} cache hit rate is {{rate}}, well below overall {{overall}}.",
+      "unitPrice": "{{name}} averages {{unit}} / 1M tokens ({{ratio}}x overall average).",
+      "latencyTail": "{{name}} latency std dev is {{std}} (avg {{avg}}), showing long-tail spikes.",
+      "topChat": "\"{{name}}\" is most active with {{messages}} messages ({{share}})."
+    },
+    "reliability": {
+      "source": "Based on 1-minute task usage buckets",
+      "truncated": "Task usage kept for 7 days (covered since {{start}})",
+      "dimension": "Dimension",
+      "empty": "No task usage records in this period",
+      "attempts": "Attempts",
+      "failures": "Failures",
+      "failureRate": "Failure Rate",
+      "avgSuccessDuration": "Avg Success Time",
+      "chartLegend": "Bars: Failures · Line: Failure Rate",
+      "hint": "Highlighted when failure rate reaches {{threshold}}",
+      "dimensions": {
+        "model": "By Model",
+        "provider": "By Provider",
+        "task": "By Task"
+      }
+    },
+    "heatmap": {
+      "metric": "Heatmap Metric",
+      "weekdays": "Mon,Tue,Wed,Thu,Fri,Sat,Sun",
+      "less": "Less",
+      "more": "More",
+      "messagesValue": "{{value}} msgs",
+      "cellTitle": "{{day}} {{hour}}:00 · {{value}}",
+      "metrics": {
+        "messages": "Messages",
+        "costs": "Cost"
+      }
+    },
+    "chats": {
+      "topHint": "Top {{count}} / {{total}}",
+      "costPer100": "{{cost}} / 100 msgs"
+    },
+    "columns": {
+      "name": "Name",
+      "requests": "Requests",
+      "tokens": "Tokens (Total / In·Out)",
+      "cacheRate": "Cache Hit Rate",
+      "cost": "Total Cost",
+      "failureRate": "Failure Rate",
+      "time": "Avg Latency",
+      "unitCost": "Cost / 1M",
+      "costPerCall": "Cost / 1K Calls",
+      "callsPerReply": "Calls / Reply",
+      "tokensPerReply": "Tokens / Reply"
+    },
+    "detail": {
+      "hideEmbedding": "Hide Embeddings",
+      "columnGroups": "Column Groups",
+      "dimension": "Dimension",
+      "search": "Filter by name…",
+      "rowCount": "{{shown}} / {{total}}",
+      "total": "Total ({{count}})",
+      "embeddingTag": "Embed",
+      "freeTag": "Free",
+      "failureCount": "{{value}} failed",
+      "attemptsFailures": "Failures / Attempts",
+      "groups": {
+        "token": "Tokens",
+        "cache": "Cache",
+        "perf": "Latency & Errors",
+        "unit": "Unit Cost",
+        "reply": "Per Reply"
+      }
     }
   },
   "workspace": {
@@ -214,7 +583,11 @@
       "repliedTitle": "봇이 응답했습니다",
       "repliedDescription": "응답과 말투가 괜찮다면 메시지 플랫폼 설정을 계속하세요.",
       "keepChatting": "계속 대화하기",
-      "continue": "메시지 플랫폼 설정"
+      "continue": "메시지 플랫폼 설정",
+      "failedTitle": "봇이 아직 응답하지 않았습니다",
+      "failedDescription": "모델 주소, API 키 또는 모델 이름이 잘못되었을 수 있습니다. 다시 보내 보거나 모델 설정을 확인하세요.",
+      "checkModelConfig": "모델 설정 확인",
+      "learnBasics": "기본 설정 안내 받기"
     },
     "botNameFallback": "麦麦",
     "userFallback": "사용자",
@@ -378,6 +751,25 @@
       "about": "정보"
     },
     "appearance": {
+      "dashboardStyle": "대시보드 스타일",
+      "dashboardStyles": {
+        "modern": {
+          "label": "모던",
+          "description": "평면적인 현대 UI"
+        },
+        "future-retro": {
+          "label": "퓨처 레트로",
+          "description": "높은 대비, 거친 질감, 따뜻한 색감과 무광 마감"
+        },
+        "millennium": {
+          "label": "밀레니엄",
+          "description": "향수를 불러일으키는 밀레니엄 스타일"
+        }
+      },
+      "layoutVersion": "레이아웃",
+      "layoutVersionDesc": "클래식은 상단 바와 카드형 홈을 유지합니다. 관찰 레이아웃은 상단 바를 없애고 사이드바 위쪽에 설정, 아래쪽에 모든 대화를 표시하며 홈은 상태 보드가 됩니다. 데스크톱 너비에서만 적용됩니다.",
+      "layoutClassic": "클래식",
+      "layoutObservation": "관찰",
       "themeMode": "테마 모드",
       "themeModeDesc": "라이트 / 다크 / 시스템 따라가기",
       "light": "라이트",
@@ -763,6 +1155,7 @@
     "loginFailed": "로그인 실패",
     "loginSuccess": "로그인 성공",
     "checkingAuth": "로그인 상태 확인 중...",
+    "waitingConnection": "연결 대기 중입니다. 서버가 준비되면 자동으로 이동합니다…",
     "welcome": "MaiBot에 오신 것을 환영합니다",
     "accessDesc": "시스템에 액세스하려면 액세스 토큰을 입력하세요",
     "tokenRequired": "액세스 토큰을 입력해 주세요",
@@ -788,8 +1181,45 @@
   },
   "setupPage": {
     "steps": {
+      "nickname": {
+        "title": "이름 정하기",
+        "label": "닉네임",
+        "description": ""
+      },
+      "defineModel": {
+        "title": "모델 제공처 설정",
+        "label": "모델 정의",
+        "description": ""
+      },
+      "replyer": {
+        "title": "답변 모델 설정",
+        "description": "이 모델이 말투를 결정합니다. 글쓰기와 표현력이 좋은 모델이 적합합니다."
+      },
+      "planner": {
+        "title": "행동 모델 설정",
+        "description": "이 모델은 마이마이의 행동을 결정합니다. 작업을 이해하고 도구를 사용할 수 있는 에이전트 모델을 선택하세요."
+      },
+      "basicSettings": {
+        "title": "설정",
+        "description": ""
+      },
+      "groupReplies": {
+        "title": "그룹 채팅 답장",
+        "description": "켜면 그룹 채팅에서 @멘션을 받았을 때 가능한 한 답장합니다.",
+        "label": "@멘션에 우선 답장"
+      },
+      "desktopPet": {
+        "title": "데스크톱 펫",
+        "description": "",
+        "label": "데스크톱 펫 사용",
+        "hint": "데스크톱 펫에는 Windows 데스크톱 환경이 필요합니다.\n서버에 배포한 경우 나중에 설정에서 데스크톱 펫의 원격 연결을 구성할 수 있습니다."
+      },
+      "dashboardAppearance": {
+        "title": "인터페이스 스타일",
+        "description": ""
+      },
       "botProfile": {
-        "title": "기본 정보와 성격",
+        "title": "페르소나",
         "description": "닉네임, 성격, 답변 스타일을 설정합니다"
       },
       "customToken": {
@@ -802,15 +1232,19 @@
         "description": "봇의 기본 정보를 설정합니다"
       },
       "personality": {
-        "title": "성격 설정",
-        "description": "봇의 성격과 말투를 정의합니다"
+        "title": "페르소나 만들기",
+        "choose": "어떤 방식으로 시작할까요?",
+        "templateTitle": "템플릿 선택",
+        "editTitle": "페르소나 편집",
+        "template": "기존 템플릿 사용",
+        "manual": "직접 작성"
       },
       "apiProvider": {
         "title": "API 설정",
         "description": "API 제공자를 설정합니다"
       },
       "modelSetup": {
-        "title": "모델 설정",
+        "title": "모델",
         "description": "planner와 replyer 모델을 설정합니다"
       }
     },
@@ -833,8 +1267,8 @@
       "enterProviderName": "API 제공자 이름을 입력해 주세요",
       "enterBaseUrl": "API Base URL을 입력해 주세요",
       "enterApiKey": "API Key를 입력해 주세요",
-      "enterPlannerModelIdentifier": "planner 모델 식별자를 입력해 주세요",
-      "enterReplyerModelIdentifier": "replyer 모델 식별자를 입력해 주세요",
+      "enterPlannerModelIdentifier": "행동 모델 식별자를 입력해 주세요",
+      "enterReplyerModelIdentifier": "답변 모델 식별자를 입력해 주세요",
       "customTokenInvalid": "Token이 요구 사항을 충족하지 않습니다: {{failedRules}}"
     },
     "toast": {
@@ -849,7 +1283,7 @@
       "completeFailedTitle": "설정 완료에 실패했습니다",
       "skipFailedTitle": "설정 마법사 건너뛰기에 실패했습니다",
       "customTokenSuccessTitle": "Token이 업데이트되었습니다",
-      "customTokenSuccessDescription": "새 사용자 지정 Token으로 다시 로그인한 뒤 설정을 계속해 주세요.",
+      "customTokenSuccessDescription": "새 비밀번호로 로그인했습니다. 설정을 계속할 수 있습니다.",
       "unknownError": "알 수 없는 오류"
     },
     "actions": {
@@ -889,6 +1323,8 @@
         "noticeDescription": "랜덤 Token은 다음 실행 때 변경됩니다. 고정 사용자 지정 Token을 설정하고 앞으로 WebUI 로그인에 사용하세요.",
         "label": "사용자 지정 Token *",
         "placeholder": "새 비밀번호 입력",
+        "confirmation": "새 비밀번호 다시 입력",
+        "mismatch": "비밀번호가 일치하지 않습니다.",
         "description": "저장하면 현재 로그인이 만료되며 새 Token으로 다시 로그인해야 합니다.",
         "requirements": "Token 요구 사항",
         "show": "표시",
@@ -948,17 +1384,17 @@
         "personality": {
           "label": "성격 특성",
           "placeholder": "봇의 성격과 설정을 설명해 주세요 (권장 120자 이내)",
-          "description": "bot의 핵심 성격을 설명하며, bot이 자신을 인식하는 방식에 영향을 줍니다"
+          "description": "성격의 특징과 주요 정보"
         },
         "behaviorStyle": {
           "label": "행동 스타일",
           "placeholder": "대화에 참여하거나 상황을 관찰하거나 조용히 있을 때를 설명하세요",
-          "description": "bot의 행동을 설명하며, 행동 방식을 결정합니다"
+          "description": "채팅할 때의 행동과 일 처리 방식"
         },
         "replyStyle": {
           "label": "말투",
           "placeholder": "봇이 말하는 방식과 표현 습관을 설명해 주세요",
-          "description": "bot의 말하는 방식과 말투에 직접 영향을 줍니다"
+          "description": "말하는 스타일"
         },
         "multipleReplyStyle": {
           "label": "대체 답변 스타일",
@@ -1009,7 +1445,7 @@
       },
       "apiProvider": {
         "providerName": {
-          "label": "API 제공자 이름 *",
+          "label": "제공자",
           "placeholder": "예: OpenAI, DeepSeek, 자체 호스팅",
           "description": "이 이름은 model_config.toml에 저장되며 아래 모델에서 참조됩니다"
         },
@@ -1018,13 +1454,18 @@
           "description": "OpenAI 호환 엔드포인트를 입력해 주세요. 예: https://api.example.com/v1"
         },
         "apiKey": {
-          "label": "API Key *",
+          "label": "API 키",
           "description": "이 제공자의 API Key를 입력해 주세요",
           "show": "API Key 표시",
           "hide": "API Key 숨기기"
-        }
+        },
+        "presetSelect": "사전 설정 제공자 선택",
+        "usePreset": "사전 설정",
+        "useCustom": "사용자 지정"
       },
       "modelSetup": {
+        "identifierPlaceholder": "모델 ID 입력",
+        "pickFromList": "모델 선택",
         "planner": {
           "identifier": {
             "label": "planner 모델 식별자 *",
@@ -1043,7 +1484,44 @@
             "label": "비전 사용"
           }
         },
-        "saveHint": "더 자세한 작업 할당은 나중에 설정할 수 있습니다."
+        "saveHint": "더 자세한 작업 할당은 나중에 설정할 수 있습니다.",
+        "fetching": "모델 목록을 가져오는 중…",
+        "fetchFailed": "{{error}}. 모델 ID를 직접 입력하세요.",
+        "enableThinking": "생각 활성화",
+        "effort": {
+          "label": "생각 강도",
+          "low": "낮음",
+          "high": "높음",
+          "max": "최대"
+        }
+      }
+    },
+    "errors": {
+      "loadStatus": "설정 상태를 읽지 못했습니다",
+      "loadBot": "봇 설정을 읽지 못했습니다",
+      "loadPersonality": "인격 설정을 읽지 못했습니다",
+      "loadModel": "모델 설정을 읽지 못했습니다",
+      "fetchModels": "모델 목록을 가져오지 못했습니다",
+      "emptyModelList": "제공자가 빈 모델 목록을 반환했습니다",
+      "saveBot": "봇 설정을 저장하지 못했습니다",
+      "savePersonality": "인격 설정을 저장하지 못했습니다",
+      "saveProvider": "API 제공자 설정을 저장하지 못했습니다",
+      "saveModel": "모델 설정을 저장하지 못했습니다",
+      "complete": "설정 완료를 기록하지 못했습니다",
+      "updateToken": "토큰을 업데이트하지 못했습니다"
+    },
+    "connectionTest": {
+      "hint": "모델을 호출할 수 있는지 미리 확인해 보세요. 결과는 참고용입니다.",
+      "button": "연결 테스트",
+      "testing": "테스트 중…",
+      "passed": "통과",
+      "failed": "실패",
+      "passedWithLatency": "통과 ({{latency}})",
+      "saveFailed": "설정을 저장하지 못해 테스트하지 못했습니다: {{error}}",
+      "canContinue": "테스트에 실패해도 설정을 완료할 수 있으며, 나중에 모델 설정 페이지에서 조정할 수 있습니다.",
+      "roles": {
+        "planner": "행동 모델",
+        "replyer": "답변 모델"
       }
     }
   },
@@ -1115,6 +1593,43 @@
     "copyError": "오류 정보 복사"
   },
   "search": {
+    "previewArtifactImage": "이미지 미리 보기",
+    "invalidArtifactImage": "이 파일은 미리 볼 수 있는 이미지가 아닙니다.",
+    "harness": {
+      "title": "답변 작업 진행 상황",
+      "plan": "현재 계획",
+      "skills": "불러온 스킬",
+      "status": {
+        "pending": "대기 중",
+        "in_progress": "진행 중",
+        "completed": "완료"
+      },
+      "skill": {
+        "setup": "초기 설정",
+        "troubleshoot": "문제 해결",
+        "plugin": "플러그인 사용",
+        "develop": "플러그인 개발"
+      }
+    },
+    "allowPluginConfigWrite": "플러그인 설정 변경 허용",
+    "allowPluginConfigWriteHint": "이번 질문에만 적용됩니다. 에이전트가 요청에 따라 플러그인 설정을 저장할 수 있습니다.",
+    "progressPrepareInstall": "설치 확인 준비",
+    "progressListInstalled": "설치된 플러그인 조회",
+    "progressReadPluginConfig": "플러그인 설정 읽기",
+    "progressUpdatePluginConfig": "플러그인 설정 변경",
+    "pluginInstallTitle": "플러그인 설치",
+    "pluginInstallPending": "아직 설치되지 않았습니다. 확인하면 이 플러그인과 버전을 다운로드하여 설치합니다.",
+    "pluginConfirmInstall": "설치 확인",
+    "pluginCancelInstall": "설치 취소",
+    "pluginOpenConfig": "플러그인 설정 열기",
+    "pluginConfigUpdated": "플러그인 설정 저장됨",
+    "pluginInstallFailed": "플러그인 설치 실패",
+    "pluginInstallStatus": {
+      "installing": "설치 중…",
+      "success": "설치 완료",
+      "error": "설치 실패",
+      "cancelled": "취소됨; 설치하지 않음"
+    },
     "placeholder": "페이지, 설정 또는 해결하려는 문제 검색...",
     "title": "검색",
     "noResults": "일치하는 페이지나 설정 항목을 찾을 수 없습니다",
@@ -1135,6 +1650,21 @@
     "progressSearchDocs": "공식 문서 검색",
     "progressReadDocs": "공식 문서 읽기",
     "progressReadConfig": "로컬 설정 읽기",
+    "progressReadLogs": "최근 로그 읽기",
+    "progressListReasoning": "최근 추론 기록 찾기",
+    "progressReadReasoning": "추론 기록 읽기",
+    "progressPublishArtifact": "표시 콘텐츠 게시",
+    "progressSearchPlugins": "플러그인 마켓 검색",
+    "progressReadPluginDetail": "플러그인 상세 및 호환성 확인",
+    "progressReadPluginReadme": "플러그인 README 읽기",
+    "pluginResults": "관련 플러그인",
+    "pluginOpenStore": "플러그인 스토어에서 보기",
+    "pluginRecommendedVersion": "권장 버전: {{version}}",
+    "pluginCompatibility": {
+      "unknown": "호환성 미확인",
+      "compatible": "현재 환경과 호환",
+      "incompatible": "호환되는 안정 버전 또는 브랜치 없음"
+    },
     "progressTool": "검색 작업 실행",
     "progressCompleted": "{{action}} 완료 ({{count}}개)",
     "progressFailed": "{{action}} 실패",
@@ -1147,9 +1677,9 @@
     "aiRecommendation": "AI 추천",
     "aiAnswer": "AI 답변",
     "aiSuggestions": "제안",
-    "aiSources": "공식 문서",
+    "aiSources": "참고 자료",
     "aiUnderstood": "AI 해석: {{terms}}",
-    "aiNoResults": "충분히 관련된 페이지나 설정 항목을 찾지 못했습니다",
+    "aiNoResults": "관련 페이지, 설정 또는 플러그인을 찾지 못했습니다",
     "aiFailed": "AI 검색에 실패했습니다",
     "indexLoading": "설정 검색 인덱스를 불러오는 중…",
     "categories": {
@@ -1163,6 +1693,7 @@
     "items": {
       "home": "홈",
       "homeDesc": "대시보드 개요 보기",
+      "chatDesc": "대화 설정에서 그룹 채팅의 응답 빈도를 확인할 수 있습니다. 빈도가 0이면 메시지는 받지만 Planner는 호출되지 않습니다. 개인 채팅 일시 정지는 별도 설정입니다.",
       "botConfig": "속 메인 설정",
       "botConfigDesc": "봇 상세 설정과 공유 그룹 구성",
       "model": "모델 설정",
@@ -1537,8 +2068,7 @@
         "modelTasks": "모델 관리 / 기능 할당 열기",
         "botConfig": "MaiBot 코어 설정 열기",
         "emojiManagement": "이모지 리소스 관리 열기",
-        "expressionManagement": "표현 관리 열기",
-        "statistics": "maibot_statistics.html 열기"
+        "expressionManagement": "표현 관리 열기"
       },
       "categories": {
         "system": "시스템",
@@ -1754,6 +2284,87 @@
     "delivery": {
       "sent": "전송됨",
       "unknown": "전송 결과를 알 수 없습니다. 재전송 전에 채팅을 확인하세요."
+    }
+  },
+  "hostShared": {
+    "title": "Shared model catalog",
+    "hint": "The host shares providers, keys and models. Each Bot keeps its task choices; local entries override shared names. Running Bots reload shared changes.",
+    "source": "Select Bot",
+    "importHint": "Import fills this editor; save to publish. Inherit removes identical local copies only, preserving task choices and different local overrides.",
+    "adopt": "Inherit identical entries",
+    "adopted": "Removed {{count}} identical local copies. Running Bots reload automatically.",
+    "saved": "Catalog saved. Running Bots will reload automatically.",
+    "api_providers": "Providers",
+    "models": "Models",
+    "name": "Name",
+    "base_url": "Base URL",
+    "api_key": "API Key",
+    "client_type": "Client type",
+    "model_identifier": "Model identifier",
+    "api_provider": "Provider",
+    "model_type": "Model type",
+    "remove": "Remove",
+    "add": "Add",
+    "save": "Save shared catalog",
+    "reload": "Reload / discard changes",
+    "inherited": "These entries come from the host. Editing creates an override for this Bot. Manage shared entries in Bot management → Shared model catalog.",
+    "gateway": "Unified message endpoints (configure this Bot’s token / API key)",
+    "import": "Import from Bot"
+  },
+  "hostOperations": {
+    "rename": "이름 변경",
+    "clone": "템플릿 복제",
+    "archive": "보관 후 삭제",
+    "renameHint": "Change the host display name only; the Bot ID, directory and persona name stay unchanged.",
+    "cloneHint": "Temporarily stop the source, copy configuration and plugins, then restore its desired state. History, memory, login state and logs are excluded. The clone stays stopped; review accounts and credentials before starting it.",
+    "archiveHint": "Stop this Bot, move its directory into host/archives and remove its registration. Data is retained.",
+    "unregisterHint": "Stop and unregister this Bot. Its original or external directory stays in place.",
+    "working": "처리 중…",
+    "confirm": "실행 확인",
+    "cancel": "취소",
+    "update": "프로그램 업데이트",
+    "updateHint": "Update the program shared by all Bots. Stop all Bots and the host, then restart after success or a safe rollback and restore desired states.",
+    "check": "업데이트 확인",
+    "apply": "업데이트 및 호스트 재시작",
+    "current": "적용 가능한 업데이트가 없습니다",
+    "updated": "최근 업데이트에 성공했습니다",
+    "restarting": "The host is updating and restarting. Waiting to reconnect. If rollback fails, check the terminal and restart manually after repair."
+  },
+  "tour": {
+    "controls": {
+      "back": "이전",
+      "close": "닫기",
+      "last": "완료",
+      "next": "다음",
+      "nextWithProgress": "다음 ({step}/{steps})",
+      "open": "가이드 열기",
+      "skip": "건너뛰기"
+    },
+    "basicFeatures": {
+      "personality": {
+        "title": "인격",
+        "content": "봇이 어떤 사람인지 여기에 적습니다. 성격, 신분, 말하는 시점이 모두 여기서 정해집니다. 강조된 칸에서 바로 수정해 보세요."
+      },
+      "replyStyle": {
+        "title": "말투",
+        "content": "답장의 어조와 길이를 조절합니다. 더 짧게, 더 활발하게, 더 정중하게 바꿀 수 있습니다. 수정 후 저장을 잊지 마세요."
+      },
+      "talkValue": {
+        "title": "그룹 발언 빈도",
+        "content": "그룹 채팅에서 봇이 먼저 말하는 정도를 정합니다. 값이 작을수록 조용해집니다."
+      },
+      "plugins": {
+        "title": "플러그인 마켓",
+        "content": "여기서 플러그인을 검색하고 설치해 봇에 새 기능을 추가할 수 있습니다. 설치한 플러그인은 「플러그인 설정」에서 조정합니다."
+      },
+      "knowledgeBase": {
+        "title": "지식 베이스",
+        "content": "「가져오기/내보내기」에서 자료를 가져오면 봇이 대화할 때 참고합니다. 대화 속 기억도 자동으로 쌓입니다."
+      },
+      "done": {
+        "title": "기본 설정은 여기까지입니다",
+        "content": "변경한 설정은 모두 왼쪽 메뉴에서 언제든 다시 조정할 수 있습니다. 이제 봇과 이야기해 보세요!"
+      }
     }
   }
 }

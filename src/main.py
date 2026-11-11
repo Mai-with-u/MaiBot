@@ -3,11 +3,11 @@ from typing import TYPE_CHECKING, Any, Optional
 from rich.traceback import install
 
 import asyncio
-import sys
 import time
 
 from src.common.i18n import t
 from src.common.logger import get_logger
+from src.common.runtime_context import report_phase
 from src.common.runtime_loop import set_main_loop
 from src.common.startup_diagnostics import diagnostic_stage, monitor_startup_loop
 from src.config.config import config_manager, global_config
@@ -27,7 +27,6 @@ logger = get_logger("main")
 
 if TYPE_CHECKING:
     from maim_message import MessageServer
-    from src.common.message_server.server import Server
     from src.common.http_service.server import ThreadedHTTPServer
 
 
@@ -52,7 +51,6 @@ class MainSystem:
     def __init__(self) -> None:
         # 使用消息API替代直接的FastAPI实例
         self.app: MessageServer | None = None
-        self.server: Server | None = None
         self.http_server: ThreadedHTTPServer | None = None  # 独立线程中的公共 HTTP 服务器
         self._message_handlers_registered = False
         self.watchdog_task: Optional[asyncio.Task[None]] = None
@@ -60,14 +58,12 @@ class MainSystem:
     def _ensure_message_server(self) -> None:
         """按需初始化消息 API，避免阻塞主启动链路的早期阶段。"""
 
-        if self.app is not None and self.server is not None:
+        if self.app is not None:
             return
 
         from src.common.message_server import get_global_api
-        from src.common.message_server.server import get_global_server
 
         self.app = get_global_api()
-        self.server = get_global_server()
 
     def _register_message_handlers(self) -> None:
         """注册主消息处理器；消息服务实际调度前完成即可。"""
@@ -105,6 +101,13 @@ class MainSystem:
 
         start_memory_diagnostics()
 
+        from src.services.sharing_group_service import initialize as initialize_sharing_groups
+
+        await asyncio.to_thread(initialize_sharing_groups)
+        from src.services.chat_migration_service import initialize_migrations
+
+        await initialize_migrations()
+
         try:
             # 启动现场采样默认开启，完成初始化后关闭；常驻看门狗仍由原配置控制。
             with monitor_startup_loop():
@@ -125,6 +128,11 @@ class MainSystem:
             raise
 
         logger.info(t("startup.initialization_completed_banner", nickname=global_config.bot.nickname))
+        if global_config.maim_message.enabled:
+            self._register_message_handlers()
+            await self.app.run()
+        # 消息协议与 HTTP 均已就绪，宿主才能开始转发。
+        report_phase("ready")
 
     async def _init_components(self) -> None:
         """初始化其他组件"""
@@ -203,10 +211,8 @@ class MainSystem:
         await memory_automation_service.start()
 
         from src.agent.service import agent_service
-        from src.computer.service import computer_service
         from src.desktop_pet.service import desktop_pet_service
 
-        await computer_service.start()
         await agent_service.start()
 
         await desktop_pet_service.start()
@@ -252,7 +258,6 @@ class MainSystem:
                 run_image_path_maintenance_background,
                 should_schedule_image_path_maintenance_background,
             )
-            from src.webui.routers.data_transfer import periodic_transfer_temp_cleanup
             from src.files.service import periodic_file_cleanup
 
             # 在独立线程中巡检推理图片，空闲时也能清理旧版本遗留的孤立缓存。
@@ -262,25 +267,11 @@ class MainSystem:
                 emoji_manager.periodic_emoji_maintenance(),
                 periodic_emoji_cache_cleanup(),
                 periodic_image_cache_cleanup(),
-                periodic_transfer_temp_cleanup(),
                 periodic_file_cleanup(),
             ]
-            # 插件式适配器通过 SDK 通信，不依赖 maim_message 的网络监听服务。
-            if global_config.maim_message.enabled:
-                self._register_message_handlers()
-                if self.app is None or self.server is None:
-                    raise RuntimeError("消息服务未初始化")
-                tasks.extend([self.app.run(), self.server.run()])
-            else:
-                logger.info("maim_message 已关闭，跳过旧版 WS 和新版 API 服务启动")
             if global_config.debug.enable_console_input:
-                if sys.stdin.isatty():
-                    from src.cli.bot_console import BotConsole
-
-                    logger.info("已启用终端输入，可输入普通消息或 /clear、/pm 等指令；输入 exit() 关闭终端输入")
-                    tasks.append(BotConsole().run())
-                else:
-                    logger.warning("终端输入已配置为启用，但当前 stdin 不是交互式终端，已跳过")
+                # Worker 不读取 stdin，宿主通过专用 IPC 接口投递本地操作员消息。
+                logger.info("终端输入已启用：请在宿主终端使用 /use 选择此 Bot")
             image_path_maintenance_needed = await asyncio.to_thread(should_schedule_image_path_maintenance_background)
             if image_path_maintenance_needed:
                 tasks.append(run_image_path_maintenance_background())
@@ -303,17 +294,18 @@ async def main() -> None:
         from src.common.logger import stop_ws_broadcasts
         from src.common.shutdown import request_shutdown
         from src.agent.service import agent_service
-        from src.computer.service import computer_service
         from src.desktop_pet.service import desktop_pet_service
 
         request_shutdown("main_finally")
+        from src.common.http_service.console import close_console
+
+        await close_console()
         await stop_ws_broadcasts()
         await desktop_pet_service.stop()
         if system.app is not None:
             await system.app.stop()
         await heartflow_manager.shutdown()
         await agent_service.stop()
-        await computer_service.stop()
         if system.http_server:
             await system.http_server.shutdown()
         if system.watchdog_task is not None:

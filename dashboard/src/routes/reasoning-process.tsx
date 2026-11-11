@@ -1,13 +1,10 @@
 import { useNavigate } from '@tanstack/react-router'
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   AlertTriangle,
   ArrowLeft,
-  ArrowUpLeft,
-  ArrowUpRight,
   CheckCircle2,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -24,6 +21,7 @@ import {
   Search,
   Timer,
   Trash2,
+  Upload,
 } from 'lucide-react'
 
 import {
@@ -38,7 +36,10 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { FilterPanel, FilterPanelToggle } from '@/components/ui/filter-panel'
+import { StatusLight } from '@/components/ui/status-light'
+import { DataPanel } from '@/components/ui/surface'
+import '@/styles/data-rows.css'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -51,12 +52,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/u
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import { resolveApiPath } from '@/lib/api-base'
-import { useAvatarFetchEnabled } from '@/lib/avatar-url'
+import { useAvatarFetchEnabled, useResolvedAvatarUrl } from '@/lib/avatar-url'
 import {
-  findReasoningToolCallRecords,
-  findReasoningToolCallSource,
+  listRelatedReasoningRecords,
   getReasoningPromptFile,
   getReasoningPromptHtmlUrl,
+  importReasoningPrompt,
   listReasoningPromptFiles,
   listReasoningPromptStages,
   clearReasoningPromptStage,
@@ -86,6 +87,7 @@ import {
   parseMessageTagAttributes,
   type ReasoningPromptMessageAvatarMap,
 } from './reasoning-process/context-items'
+import { RelatedStepsCard } from './reasoning-process/related-steps-card'
 import { GenerationAttemptTimeline } from './reasoning-process/generation-attempts'
 import {
   ReasoningReplayPanel,
@@ -98,9 +100,32 @@ import {
 const PAGE_SIZE = 50
 const AUTO_SESSION = 'auto'
 const ALL_GROUP_SESSIONS = '__all_group_chats__'
-const CORE_STAGE_NAMES = ['planner', 'replyer']
+const CORE_STAGE_NAMES = ['planner', 'replyer', 'replyer_creative', 'replyer_translation']
 const LLM_ERROR_STAGE_NAMES = ['llm_error']
 const REMOVED_STAGE_NAMES = ['timing_gate', 'reply_effect_judge']
+
+function SessionAvatar({ sessionInfo }: { sessionInfo?: ReasoningPromptSessionInfo }) {
+  const avatarUrl = useResolvedAvatarUrl(
+    sessionInfo?.platform,
+    sessionInfo?.target_id,
+    sessionInfo?.chat_type === 'group' ? 'group' : 'user',
+    undefined,
+    { accountId: sessionInfo?.account_id }
+  )
+  const [loadedUrl, setLoadedUrl] = useState<string>()
+
+  if (!avatarUrl) return null
+
+  return (
+    <img
+      src={avatarUrl}
+      alt=""
+      className={cn('h-6 w-6 shrink-0 rounded-full object-cover', loadedUrl !== avatarUrl && 'hidden')}
+      onLoad={() => setLoadedUrl(avatarUrl)}
+      onError={() => setLoadedUrl(undefined)}
+    />
+  )
+}
 
 type StageCategoryRow = {
   key: string
@@ -134,6 +159,9 @@ function getSafeInternalReturnTo(value: string | null): string {
   }
 }
 
+const STAGE_TABLE_GRID =
+  'grid grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-2 sm:grid-cols-[28px_minmax(0,1fr)_72px_150px_48px]'
+
 function isLearnerStage(stage: string): boolean {
   return stage.includes('learner') || stage.includes('learning')
 }
@@ -159,11 +187,13 @@ function buildStageCategoryRows(stageCards: ReasoningPromptStageInfo[]): StageCa
   const learnerStages = takeMatchingStages(isLearnerStage)
   const llmErrorStages = takeNamedStages(LLM_ERROR_STAGE_NAMES)
   const removedStages = takeNamedStages(REMOVED_STAGE_NAMES)
+  const importedStages = takeNamedStages(['imported'])
   const otherStages = takeMatchingStages(() => true)
 
   return [
     { key: 'core', label: '主流程', items: coreStages },
     { key: 'learners', label: '学习器', items: learnerStages },
+    { key: 'imported', label: '导入', items: importedStages },
     { key: 'others', label: '其余', items: otherStages },
     { key: 'llm-errors', label: 'LLM 请求', items: llmErrorStages, collapsedByDefault: true },
     { key: 'removed', label: '不再使用', items: removedStages, collapsedByDefault: true },
@@ -472,7 +502,8 @@ interface ReasoningProcessPageProps {
   embedded?: boolean
   toolbarContainerId?: string
   toolbarVisible?: boolean
-  topbarActionsContainerId?: string
+  /** 标签行右侧的状态位，类型总览时显示近期活跃的模块数 */
+  statusContainerId?: string
   onToolbarContentVisibleChange?: (visible: boolean) => void
 }
 
@@ -480,7 +511,7 @@ export function ReasoningProcessPage({
   embedded = false,
   toolbarContainerId,
   toolbarVisible = true,
-  topbarActionsContainerId,
+  statusContainerId,
   onToolbarContentVisibleChange,
 }: ReasoningProcessPageProps) {
   const { toast } = useToast()
@@ -526,12 +557,17 @@ export function ReasoningProcessPage({
     )
   )
   const [toolbarRoot, setToolbarRoot] = useState<HTMLElement | null>(null)
-  const [topbarActionsRoot, setTopbarActionsRoot] = useState<HTMLElement | null>(null)
+  const [statusRoot, setStatusRoot] = useState<HTMLElement | null>(null)
+  const [stageSearch, setStageSearch] = useState('')
+  const [stageGroupsOpen, setStageGroupsOpen] = useState(false)
   const [replayPanelOpen, setReplayPanelOpen] = useState(false)
   const [replayItems, setReplayItems] = useState<EditableReplayItem[]>([])
   const [eraseNicknameOnExport, setEraseNicknameOnExport] = useState(true)
-  const [toolCallRecords, setToolCallRecords] = useState<ReasoningToolCallRecord[]>([])
-  const [toolCallSource, setToolCallSource] = useState<ReasoningToolCallRecord | null>(null)
+  const [relatedRecords, setRelatedRecords] = useState<ReasoningToolCallRecord[]>([])
+  const [relatedLoading, setRelatedLoading] = useState(false)
+  const [relatedError, setRelatedError] = useState<string | null>(null)
+  const importInputRef = useRef<HTMLInputElement>(null)
+  const [importing, setImporting] = useState(false)
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const stageCards = useMemo(() => {
@@ -544,16 +580,14 @@ export function ReasoningProcessPage({
   }, [sessionInfos])
   const structuredPrompt = useMemo(() => parseStructuredPrompt(jsonContent), [jsonContent])
   const avatarFetchEnabled = useAvatarFetchEnabled()
-  const outputToolCallIds = useMemo(
-    () =>
-      (structuredPrompt?.output_items ?? []).flatMap((item) =>
-        item.item_type === 'FunctionCallItem' && isRecord(item.tool_call) && item.tool_call.call_id
-          ? [String(item.tool_call.call_id)]
-          : []
-      ),
-    [structuredPrompt]
-  )
-  const hasToolbarContent = browsingStage || Boolean(returnTo)
+  // 类型总览和会话浏览都有工具行（搜索、筛选、导入、刷新），始终占用日志页的工具位
+  const hasToolbarContent = true
+  const recentStageNames = useMemo(() => {
+    const threshold = Date.now() / 1000 - 3600
+    return new Set(
+      stageCards.filter((item) => item.latest_modified_at > threshold).map((item) => item.name)
+    )
+  }, [stageCards])
 
   useEffect(() => {
     if (!replayPanelOpen) {
@@ -568,50 +602,28 @@ export function ReasoningProcessPage({
     setToolbarRoot(toolbarContainerId ? document.getElementById(toolbarContainerId) : null)
   }, [toolbarContainerId])
 
-  // 输出里的工具调用（如 reply）如果留有自己的推理记录，查出它们的位置，供输出卡片上的跳转键使用
+  // 同轮次关联走索引；旧记录仍按已有的精确调用关系定位。
   const selectedSessionId = selected?.session_id
   const selectedStage = selected?.stage
   const selectedStem = selected?.stem
+  const selectedJsonPath = selected?.json_path
   useEffect(() => {
     let ignore = false
-    setToolCallRecords([])
-    if (!selectedSessionId || !selectedStage || !selectedStem || outputToolCallIds.length === 0) {
-      return
-    }
-
-    findReasoningToolCallRecords({
-      session: selectedSessionId,
-      sourceStage: selectedStage,
-      sourceStem: selectedStem,
-      callIds: outputToolCallIds,
-    })
-      .then((data) => {
-        if (ignore) return
-        setToolCallRecords(data.records)
-      })
-      .catch((err) => {
-        if (ignore) return
-        toast({
-          title: '查找工具推理记录失败',
-          description: err instanceof Error ? err.message : '请稍后再试',
-          variant: 'destructive',
-        })
-      })
-
-    return () => {
-      ignore = true
-    }
-  }, [outputToolCallIds, selectedSessionId, selectedStage, selectedStem, toast])
+    setRelatedRecords([])
+    setRelatedError(null)
+    setRelatedLoading(false)
+    if (!selectedSessionId || !selectedStage || !selectedStem || !selectedJsonPath) return
+    setRelatedLoading(true)
+    listRelatedReasoningRecords({ session: selectedSessionId, stage: selectedStage, stem: selectedStem })
+      .then((data) => { if (!ignore) setRelatedRecords(data.records) })
+      .catch((err) => { if (!ignore) setRelatedError(err instanceof Error ? err.message : '加载关联步骤失败') })
+      .finally(() => { if (!ignore) setRelatedLoading(false) })
+    return () => { ignore = true }
+  }, [selectedSessionId, selectedStage, selectedStem, selectedJsonPath, refreshKey])
 
   useEffect(() => {
-    const frameId = requestAnimationFrame(() => {
-      setTopbarActionsRoot(
-        topbarActionsContainerId ? document.getElementById(topbarActionsContainerId) : null
-      )
-    })
-
-    return () => cancelAnimationFrame(frameId)
-  }, [topbarActionsContainerId, toolbarVisible])
+    setStatusRoot(statusContainerId ? document.getElementById(statusContainerId) : null)
+  }, [statusContainerId])
 
   useEffect(() => {
     onToolbarContentVisibleChange?.(hasToolbarContent)
@@ -969,6 +981,38 @@ export function ReasoningProcessPage({
     }
   }
 
+  async function handleImportReasoning(file: File | undefined) {
+    if (!file) return
+    setImporting(true)
+    try {
+      const payload: unknown = JSON.parse(await file.text())
+      if (!isRecord(payload)) throw new Error('文件不是有效的推理记录 JSON')
+      const result = await importReasoningPrompt(payload)
+      setStage(result.stage)
+      setSession(result.session)
+      setActionFilter('')
+      setSearch('')
+      setPage(1)
+      setSelected(null)
+      setTargetStem(result.stem)
+      setBrowsingStage(true)
+      setRefreshKey((current) => current + 1)
+      toast({ title: '已导入推理记录' })
+    } catch (err) {
+      toast({ title: '导入失败', description: err instanceof Error ? err.message : '请检查 JSON 文件', variant: 'destructive' })
+    } finally {
+      setImporting(false)
+      if (importInputRef.current) importInputRef.current.value = ''
+    }
+  }
+
+  const renderImportButton = () => (
+    <Button variant="outline" size="sm" disabled={importing} onClick={() => importInputRef.current?.click()}>
+      {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+      导入推理
+    </Button>
+  )
+
   const updateReplayItem = (id: string, patch: Partial<EditableReplayItem>) => {
     setReplayItems((current) =>
       current.map((item) => (item.id === id ? { ...item, ...patch } : item))
@@ -1000,37 +1044,6 @@ export function ReasoningProcessPage({
     [structuredPrompt]
   )
 
-  // 工具自己的推理记录（如回复器）带有调用 ID：反查发起这次调用的记录，供标题栏的「前往」键使用
-  const selectedCallId = headerMeta.callId
-  useEffect(() => {
-    let ignore = false
-    setToolCallSource(null)
-    if (!selectedSessionId || !selectedStage || !selectedStem || !selectedCallId) {
-      return
-    }
-
-    findReasoningToolCallSource({
-      session: selectedSessionId,
-      stage: selectedStage,
-      stem: selectedStem,
-      callId: selectedCallId,
-    })
-      .then((data) => {
-        if (!ignore) setToolCallSource(data.record)
-      })
-      .catch((err) => {
-        if (ignore) return
-        toast({
-          title: '查找发起调用的推理记录失败',
-          description: err instanceof Error ? err.message : '请稍后再试',
-          variant: 'destructive',
-        })
-      })
-
-    return () => {
-      ignore = true
-    }
-  }, [selectedCallId, selectedSessionId, selectedStage, selectedStem, toast])
   const selectedTokenText = selected
     ? formatTokenUsage(selected.prompt_tokens, selected.completion_tokens, selected.total_tokens)
     : ''
@@ -1098,7 +1111,10 @@ export function ReasoningProcessPage({
             placement === 'sidebarRow' && 'w-full'
           )}
         >
-          <span className="truncate">{selectedSessionLabel || '会话'}</span>
+          <div className="flex min-w-0 items-center gap-2">
+            <SessionAvatar sessionInfo={sessionInfoByName.get(session)} />
+            <span className="truncate">{selectedSessionLabel || '会话'}</span>
+          </div>
         </SelectTrigger>
         <SelectContent>
           {session === AUTO_SESSION && (
@@ -1115,11 +1131,14 @@ export function ReasoningProcessPage({
             const sessionDisplayName = getSessionDisplayName(item, sessionInfo)
             return (
               <SelectItem key={item} value={item} textValue={sessionDisplayName}>
-                <div className="min-w-0">
-                  <div className="truncate">{sessionDisplayName}</div>
-                  {sessionSubtitle && (
-                    <div className="text-muted-foreground truncate text-xs">{sessionSubtitle}</div>
-                  )}
+                <div className="flex min-w-0 items-center gap-2">
+                  <SessionAvatar sessionInfo={sessionInfo} />
+                  <div className="min-w-0">
+                    <div className="truncate">{sessionDisplayName}</div>
+                    {sessionSubtitle && (
+                      <div className="text-muted-foreground truncate text-xs">{sessionSubtitle}</div>
+                    )}
+                  </div>
                 </div>
               </SelectItem>
             )
@@ -1169,139 +1188,191 @@ export function ReasoningProcessPage({
       {renderBrowsingFilters('toolbar')}
     </>
   )
-  const toolbarContent = (
-    <div
-      data-reasoning-toolbar-mobile-only={embedded ? 'true' : undefined}
-      className={cn(
-        'flex w-full min-w-0 flex-wrap items-center justify-start gap-1.5 sm:justify-end',
-        embedded && 'sm:hidden'
+  const stageGroupOptions = stageCategoryRows.map((row) => ({
+    id: row.key,
+    label: row.label,
+    count: row.items.length,
+  }))
+  const selectedStageGroups = new Set(
+    stageGroupOptions.filter((option) => !collapsedStageRows.has(option.id)).map((option) => option.id)
+  )
+  const normalizedStageSearch = stageSearch.trim().toLowerCase()
+  const visibleStageRows = stageCategoryRows
+    .filter((row) => !collapsedStageRows.has(row.key))
+    .map((row) => ({
+      ...row,
+      items: normalizedStageSearch
+        ? row.items.filter(
+            (item) =>
+              item.name.toLowerCase().includes(normalizedStageSearch) ||
+              formatStageName(item.name).toLowerCase().includes(normalizedStageSearch)
+          )
+        : row.items,
+    }))
+    .filter((row) => row.items.length > 0)
+  const toggleStageGroup = (key: string) => {
+    setCollapsedStageRows((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const overviewToolbar = (
+    <div className="flex w-full min-w-0 flex-col gap-2">
+      <div className="flex w-full min-w-0 flex-wrap items-center gap-1.5">
+        <div className="relative w-full min-w-[180px] sm:w-60">
+          <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2" />
+          <Input
+            value={stageSearch}
+            onChange={(event) => setStageSearch(event.target.value)}
+            className="h-8 pl-8 text-xs sm:text-sm"
+            placeholder="筛选模块名"
+            aria-label="筛选模块名"
+          />
+        </div>
+        <FilterPanelToggle
+          label="分组"
+          open={stageGroupsOpen}
+          selectedCount={selectedStageGroups.size}
+          total={stageGroupOptions.length}
+          controls="reasoning-group-panel"
+          onOpenChange={setStageGroupsOpen}
+        />
+        <span className="flex-1" />
+        {renderReturnButton(true)}
+        {renderImportButton()}
+        {renderRefreshButton('toolbar')}
+      </div>
+      {stageGroupsOpen && (
+        <FilterPanel
+          id="reasoning-group-panel"
+          title="分组"
+          options={stageGroupOptions}
+          selected={selectedStageGroups}
+          onToggle={toggleStageGroup}
+          onSelectAll={() => setCollapsedStageRows(new Set())}
+          onSelectNone={() => setCollapsedStageRows(new Set(stageGroupOptions.map((option) => option.id)))}
+        />
       )}
-    >
-      {renderReturnButton()}
-      {!embedded && browsingStage && renderBrowsingControls(true)}
-      {!embedded && renderRefreshButton('default')}
     </div>
   )
-  // 嵌入模式下「返回观察」键放在顶栏；顶栏操作区在移动端不显示，这时才退回到独立工具栏。
-  // 没有这颗键就不渲染，让日志页把空工具栏整行收起
+  const browsingToolbar = (
+    <div className="flex w-full min-w-0 flex-wrap items-center gap-1.5">
+      {renderReturnButton(true)}
+      {renderBrowsingControls(true)}
+      <span className="flex-1" />
+      {renderRefreshButton('toolbar')}
+    </div>
+  )
+  const toolbarContent = browsingStage ? browsingToolbar : overviewToolbar
   const toolbarPortal =
-    embedded && toolbarVisible && toolbarRoot && returnTo
-      ? createPortal(toolbarContent, toolbarRoot)
-      : null
-  const topbarActionsPortal =
-    embedded && toolbarVisible && topbarActionsRoot && returnTo
+    embedded && toolbarVisible && toolbarRoot ? createPortal(toolbarContent, toolbarRoot) : null
+  const showToolbarInline = !embedded || !toolbarRoot
+  const statusPortal =
+    embedded && toolbarVisible && statusRoot && !browsingStage
       ? createPortal(
-          <div className="flex items-center gap-2">
-            {renderReturnButton(true)}
-          </div>,
-          topbarActionsRoot
+          <span data-reasoning-status="true" className="flex items-center gap-2 text-xs whitespace-nowrap">
+            <StatusLight status={recentStageNames.size > 0 ? 'on' : 'off'} decorative />
+            一小时内有请求
+            <span className="text-muted-foreground font-mono">
+              {recentStageNames.size} / {stageCards.length} 个模块
+            </span>
+          </span>,
+          statusRoot
         )
       : null
-  const showBrowsingControlsInline = browsingStage && (!embedded || !toolbarVisible || !toolbarRoot)
-  const renderStageCard = (item: ReasoningPromptStageInfo) => (
-    <div
-      key={item.name}
-      data-reasoning-stage-card="true"
-      className={cn(
-        'group bg-background relative flex min-h-20 flex-col rounded-md border text-left shadow-sm',
-        'transition-[border-color,background-color,box-shadow,transform] duration-150 ease-out',
-        'hover:border-primary/80 hover:bg-primary/5 hover:-translate-y-0.5 hover:shadow-md',
-        'focus-within:border-primary/80 focus-within:bg-primary/5 focus-within:-translate-y-0.5 focus-within:shadow-md'
-      )}
+
+  const renderStageTable = () => (
+    <DataPanel
+      padding="none"
+      role="table"
+      aria-label="推理过程类型"
+      data-reasoning-stage-table="true"
+      className="min-h-0 flex-1 overflow-auto text-sm"
     >
-      <button
-        type="button"
-        onClick={() => enterStage(item.name)}
-        className="focus-visible:ring-ring flex min-h-20 flex-1 cursor-pointer flex-col justify-between rounded-md p-3 pr-10 text-left focus-visible:ring-2 focus-visible:outline-none"
-      >
-        <div className="space-y-1.5">
-          <div className="text-primary group-hover:text-primary text-sm font-extrabold tracking-normal uppercase transition-colors sm:text-base">
-            {item.name}
+      <div role="row" data-rows-head="true" className={STAGE_TABLE_GRID}>
+        <span role="columnheader" aria-label="状态" />
+        <span role="columnheader">模块</span>
+        <span role="columnheader" className="text-right max-sm:hidden">会话</span>
+        <span role="columnheader" className="max-sm:hidden">最近一次</span>
+        <span role="columnheader" className="sr-only">操作</span>
+      </div>
+      {visibleStageRows.map((row) => (
+        <Fragment key={row.key}>
+          <div role="row" data-rows-group="true">
+            <span role="cell">
+              <span>{row.label}</span>
+              <span className="font-mono font-normal"> · {row.items.length} 个模块</span>
+            </span>
           </div>
-          <div className="text-foreground group-hover:text-primary text-sm font-semibold transition-colors">
-            {formatStageName(item.name)}
-          </div>
+          {row.items.map((item) => {
+            const recent = recentStageNames.has(item.name)
+            const stageLabel = formatStageName(item.name)
+            return (
+              <div
+                key={item.name}
+                role="row"
+                data-rows-row="true"
+                data-reasoning-stage-row="true"
+                className={cn(STAGE_TABLE_GRID, 'relative cursor-pointer')}
+              >
+                <span role="cell">
+                  <StatusLight
+                    status={recent ? 'on' : 'off'}
+                    glow={recent}
+                    label={recent ? '一小时内有请求' : '近期无请求'}
+                  />
+                </span>
+                <span role="cell" className="min-w-0">
+                  {/* 整行都是这颗键的点击区（伸展到行的伪元素），删除键浮在它上面 */}
+                  <button
+                    type="button"
+                    onClick={() => enterStage(item.name)}
+                    className="focus-visible:ring-ring flex max-w-full min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5 text-left after:absolute after:inset-0 after:content-[''] focus-visible:ring-2 focus-visible:outline-none"
+                  >
+                    <span className="text-primary font-mono text-[13px] tracking-wide break-all">{item.name}</span>
+                    {' '}
+                    {stageLabel !== item.name && <span className="font-semibold">{stageLabel}</span>}
+                  </button>
+                  <span className="text-muted-foreground block text-xs sm:hidden">
+                    {item.session_count} 个会话
+                  </span>
+                </span>
+                <span role="cell" className="text-right font-mono max-sm:hidden">{item.session_count}</span>
+                <span role="cell" className="text-muted-foreground font-mono text-xs max-sm:hidden">
+                  {item.latest_modified_at > 0 ? formatTime(null, item.latest_modified_at) : '—'}
+                </span>
+                <span role="cell" className="relative z-10 flex justify-end">
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="icon-xs"
+                    title={`清空${stageLabel}`}
+                    aria-label={`清空${stageLabel}`}
+                    disabled={clearingStage === item.name}
+                    onClick={() => setPendingClearStage(item)}
+                  >
+                    {clearingStage === item.name ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-3.5 w-3.5" />
+                    )}
+                  </Button>
+                </span>
+              </div>
+            )
+          })}
+        </Fragment>
+      ))}
+      {!loading && visibleStageRows.length === 0 && (
+        <div className="text-muted-foreground px-3 py-10 text-center text-sm">
+          {stageCards.length === 0 ? '没有找到推理过程类型' : '没有符合筛选的模块'}
         </div>
-        <div className="text-muted-foreground group-hover:text-foreground/80 mt-2 text-xs transition-colors">
-          {item.session_count} 个会话
-          {item.latest_modified_at > 0
-            ? ` · 最新 ${formatTime(null, item.latest_modified_at)}`
-            : ''}
-        </div>
-      </button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className="hover:bg-destructive/10 hover:text-destructive absolute right-2 bottom-2 h-7 w-7 p-0 opacity-70 group-hover:opacity-100"
-        title={`清空${formatStageName(item.name)}`}
-        aria-label={`清空${formatStageName(item.name)}`}
-        disabled={clearingStage === item.name}
-        onClick={() => setPendingClearStage(item)}
-      >
-        {clearingStage === item.name ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        ) : (
-          <Trash2 className="h-3.5 w-3.5" />
-        )}
-      </Button>
-    </div>
+      )}
+    </DataPanel>
   )
-
-  const renderStageRow = (row: StageCategoryRow) => {
-    const collapsed = collapsedStageRows.has(row.key)
-    const setRowOpen = (open: boolean) => {
-      setCollapsedStageRows((current) => {
-        const next = new Set(current)
-        if (open) {
-          next.delete(row.key)
-        } else {
-          next.add(row.key)
-        }
-        return next
-      })
-    }
-
-    if (!row.collapsedByDefault) {
-      return (
-        <section
-          key={row.key}
-          className="grid gap-2 sm:grid-cols-[72px_minmax(0,1fr)] sm:items-start"
-        >
-          <div className="text-muted-foreground px-1 pt-1 text-xs font-medium sm:pt-3">
-            {row.label}
-          </div>
-          <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-            {row.items.map((item) => renderStageCard(item))}
-          </div>
-        </section>
-      )
-    }
-
-    return (
-      <Collapsible key={row.key} open={!collapsed} onOpenChange={setRowOpen}>
-        <section className="grid gap-2 sm:grid-cols-[72px_minmax(0,1fr)] sm:items-start">
-          <CollapsibleTrigger asChild>
-            <button
-              type="button"
-              className="text-muted-foreground hover:text-foreground flex items-center gap-1 px-1 pt-1 text-left text-xs font-medium transition-colors sm:pt-3"
-            >
-              <ChevronDown
-                className={cn('h-3.5 w-3.5 transition-transform', collapsed && '-rotate-90')}
-              />
-              {row.label}
-              <span className="text-muted-foreground/80">({row.items.length})</span>
-            </button>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-              {row.items.map((item) => renderStageCard(item))}
-            </div>
-          </CollapsibleContent>
-        </section>
-      </Collapsible>
-    )
-  }
 
   const pendingClearStageLabel = pendingClearStage ? formatStageName(pendingClearStage.name) : ''
   const pendingClearStageDeleting = pendingClearStage
@@ -1331,13 +1402,8 @@ export function ReasoningProcessPage({
         </MobileHeaderActions>
       )}
       {toolbarPortal}
-      {topbarActionsPortal}
-      {embedded && !browsingStage && (
-        <div className="flex shrink-0 justify-end px-2 pt-2 sm:px-3">
-          {renderRefreshButton('toolbar')}
-        </div>
-      )}
-
+      {statusPortal}
+      <input ref={importInputRef} type="file" accept=".json,application/json" className="hidden" onChange={(event) => void handleImportReasoning(event.target.files?.[0])} />
       <AlertDialog
         open={Boolean(pendingClearStage)}
         onOpenChange={(open) => {
@@ -1382,18 +1448,10 @@ export function ReasoningProcessPage({
               浏览 logs/maisaka_prompt 下的 prompt 记录
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {renderReturnButton()}
-            {renderRefreshButton()}
-          </div>
         </div>
       )}
 
-      {showBrowsingControlsInline && (
-        <div className="grid flex-shrink-0 grid-cols-[auto_minmax(0,1fr)] gap-2 sm:grid-cols-[auto_minmax(220px,320px)_1fr] [&>div:last-child]:col-span-2 sm:[&>div:last-child]:col-span-1">
-          {renderBrowsingControls()}
-        </div>
-      )}
+      {showToolbarInline && <div className="shrink-0">{toolbarContent}</div>}
 
       {error && (
         <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-sm">
@@ -1402,18 +1460,7 @@ export function ReasoningProcessPage({
       )}
 
       {!browsingStage ? (
-        <div className="bg-background flex min-h-0 flex-1 flex-col overflow-hidden rounded-md">
-          <ScrollArea className="min-h-0 flex-1">
-            <div className="space-y-4 p-2 sm:p-3">
-              {stageCategoryRows.map(renderStageRow)}
-              {!loading && stageCards.length === 0 && (
-                <div className="text-muted-foreground px-3 py-10 text-center text-sm">
-                  没有找到推理过程类型
-                </div>
-              )}
-            </div>
-          </ScrollArea>
-        </div>
+        renderStageTable()
       ) : (
         <div
           className={cn(
@@ -1458,8 +1505,8 @@ export function ReasoningProcessPage({
                   const metadataText = getReasoningMetadataText(item)
                   const rawPreviewText =
                     item.display_title ||
-                    (item.stage === 'replyer' || item.stage === 'expression_selector'
-                      ? item.output_preview : item.action_preview)
+                    item.output_preview ||
+                    item.action_preview
                   // 规划器没有调用任何工具时，这一轮就是不回复；用次要颜色标出，不和有动作的记录抢视线
                   const noReply = !rawPreviewText && item.stage === 'planner'
                   const previewText = rawPreviewText
@@ -1549,6 +1596,7 @@ export function ReasoningProcessPage({
               data-reasoning-panel-footer="true"
               className="flex h-10 flex-shrink-0 items-center justify-between border-t px-2"
             >
+              {renderImportButton()}
               <Button
                 variant="outline"
                 size="sm"
@@ -1669,32 +1717,6 @@ export function ReasoningProcessPage({
                                 )}
                               </TabsList>
                             )}
-                            {/* 两个方向的跳转键都放在标题栏：去发起调用的记录，或去工具自己的推理记录 */}
-                            {toolCallRecords.map((record) => (
-                              <Button
-                                key={record.call_id}
-                                variant="outline"
-                                size="sm"
-                                className="h-8 gap-1.5"
-                                onClick={() => openReasoningRecord(record)}
-                                title={`跳转到这次工具调用自己的推理记录（${record.call_id}）`}
-                              >
-                                <ArrowUpRight className="h-3.5 w-3.5" />
-                                前往{formatStageName(record.stage)}
-                              </Button>
-                            ))}
-                            {toolCallSource && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-8 gap-1.5"
-                                onClick={() => openReasoningRecord(toolCallSource)}
-                                title="跳转到发起这次工具调用的推理记录"
-                              >
-                                <ArrowUpLeft className="h-3.5 w-3.5" />
-                                前往{formatStageName(toolCallSource.stage)}
-                              </Button>
-                            )}
                             <Button
                               variant="outline"
                               size="sm"
@@ -1789,6 +1811,10 @@ export function ReasoningProcessPage({
                         )}
                       </div>
 
+                      {selected?.json_path && (
+                        <RelatedStepsCard records={relatedRecords} current={selected} loading={relatedLoading}
+                          error={relatedError} onSelect={openReasoningRecord} />
+                      )}
                       <TabsContent value="structured" className="m-0">
                         {contentLoading ? (
                           <div className="flex min-h-[360px] items-center justify-center p-4">

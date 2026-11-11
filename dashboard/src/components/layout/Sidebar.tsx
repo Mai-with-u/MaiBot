@@ -1,13 +1,17 @@
-import { ChevronRight, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { SidebarUpdateButton } from './SidebarUpdateButton'
+import { ChevronRight, ChevronsUpDown, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
 import { BackgroundLayer } from '@/components/background-layer'
+import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useTheme } from '@/components/use-theme'
 import { useBackground } from '@/hooks/use-background'
+import { BotSwitcher } from '@/host/BotSwitcher'
+import { useBotAvailable } from '@/host/state'
 import { cn } from '@/lib/utils'
 import { promptCatalogQueryOptions } from '@/lib/prompt-query'
 import { queryClient } from '@/lib/query'
@@ -40,6 +44,7 @@ export function Sidebar({
   onSidebarToggle,
 }: SidebarProps) {
   const { t, i18n } = useTranslation()
+  const botAvailable = useBotAvailable()
   const { themeConfig } = useTheme()
   const isMillennium = themeConfig.dashboardStyle === 'millennium'
   // 原版风格的侧栏模式开关都放在 Logo 行右侧，顶栏左端不再放折线按钮。
@@ -47,10 +52,15 @@ export function Sidebar({
   const { config: sidebarBg, inheritedFrom } = useBackground('sidebar')
   const inheritsPageBackground = inheritedFrom === 'page'
   const builtInMenuSections = useMenuSections()
-  const menuSections = suppliedMenuSections ?? builtInMenuSections
+  const menuSections = useMemo(
+    () => (suppliedMenuSections ?? builtInMenuSections)
+      .map((section) => ({ ...section, items: section.items.filter((item) => item.path !== '/') }))
+      .filter((section) => section.items.length > 0),
+    [suppliedMenuSections, builtInMenuSections]
+  )
   const { data: promptCatalog } = useQuery({
     ...promptCatalogQueryOptions,
-    enabled: menuSections.some((section) => section.items.some((item) => item.path === '/config/prompts')),
+    enabled: botAvailable && menuSections.some((section) => section.items.some((item) => item.path === '/config/prompts')),
     refetchOnWindowFocus: true,
     refetchInterval: 60_000,
   }, queryClient)
@@ -71,8 +81,14 @@ export function Sidebar({
   const [collapseTransitionActive, setCollapseTransitionActive] = useState(false)
   const hoverExpandTimerRef = useRef<number | null>(null)
   const collapseTransitionTimerRef = useRef<number | null>(null)
-  const sidebarRevealed = !isMillennium && (sidebarOpen || hoverExpanded || fixTransitionActive)
-  const visuallyOpen = sidebarRevealed || (!isMillennium && collapseTransitionActive)
+  const wasSidebarOpenRef = useRef(sidebarOpen)
+  const effectiveHoverExpanded = !sidebarOpen && hoverExpanded
+  const effectiveFixTransition = !sidebarOpen && fixTransitionActive
+  const justCollapsedFromFixed = wasSidebarOpenRef.current && !sidebarOpen && !isMillennium
+  const sidebarRevealed =
+    !isMillennium && (sidebarOpen || effectiveHoverExpanded || effectiveFixTransition)
+  const visuallyOpen =
+    sidebarRevealed || (!isMillennium && (collapseTransitionActive || justCollapsedFromFixed))
 
   const closeGroupFlyout = useCallback(() => setGroupFlyout(null), [])
   const handleGroupWheel = useCallback((event: WheelEvent) => {
@@ -133,16 +149,23 @@ export function Sidebar({
     }
   }, [])
 
-  if (sidebarOpen && (hoverExpanded || fixTransitionActive || collapseTransitionActive)) {
-    setHoverExpanded(false)
-    setFixTransitionActive(false)
-    setCollapseTransitionActive(false)
-  }
-
   useEffect(() => {
+    const wasOpen = wasSidebarOpenRef.current
+    wasSidebarOpenRef.current = sidebarOpen
     if (sidebarOpen || isMillennium) {
       cancelHoverExpand()
       cancelCollapseTransition()
+      setHoverExpanded(false)
+      setFixTransitionActive(false)
+      setCollapseTransitionActive(false)
+    } else if (wasOpen) {
+      cancelHoverExpand()
+      cancelCollapseTransition()
+      setCollapseTransitionActive(true)
+      collapseTransitionTimerRef.current = window.setTimeout(() => {
+        collapseTransitionTimerRef.current = null
+        setCollapseTransitionActive(false)
+      }, SIDEBAR_COLLAPSE_TRANSITION_MS)
     }
     return () => {
       cancelHoverExpand()
@@ -154,10 +177,10 @@ export function Sidebar({
     <aside
       data-dashboard-sidebar="true"
       data-dashboard-sidebar-topbar-collapsed={isMillennium && topbarCollapsed ? 'true' : undefined}
-      data-dashboard-sidebar-hover-expanded={hoverExpanded ? 'true' : undefined}
+      data-dashboard-sidebar-hover-expanded={effectiveHoverExpanded ? 'true' : undefined}
       data-dashboard-sidebar-mobile-open={mobileMenuOpen ? 'true' : 'false'}
       data-dashboard-sidebar-mode={sidebarOpen ? 'fixed' : 'hover'}
-      data-dashboard-sidebar-fix-transition={fixTransitionActive ? 'true' : undefined}
+      data-dashboard-sidebar-fix-transition={effectiveFixTransition ? 'true' : undefined}
       data-dashboard-sidebar-visually-open={visuallyOpen ? 'true' : 'false'}
       onPointerEnter={(event) => {
         if (!isMillennium && !sidebarOpen && event.pointerType === 'mouse') {
@@ -172,18 +195,19 @@ export function Sidebar({
       }}
       onPointerLeave={() => {
         cancelHoverExpand()
-        cancelCollapseTransition()
         if (hoverExpanded) {
+          cancelCollapseTransition()
           setCollapseTransitionActive(true)
           collapseTransitionTimerRef.current = window.setTimeout(() => {
             collapseTransitionTimerRef.current = null
             setCollapseTransitionActive(false)
           }, SIDEBAR_COLLAPSE_TRANSITION_MS)
+          setHoverExpanded(false)
         }
-        setHoverExpanded(false)
       }}
       className={cn(
         'fixed inset-y-0 left-0 isolate z-50 flex flex-col border-r transition-transform duration-300 motion-reduce:transition-none lg:relative lg:z-0 lg:h-full lg:w-[var(--layout-sidebar-width)] lg:transition-[clip-path] lg:duration-[220ms] lg:ease-[cubic-bezier(0.22,1,0.36,1)] lg:will-change-[clip-path]',
+        !isMillennium && 'lg:[contain:layout_style]',
         inheritsPageBackground ? 'bg-transparent' : 'bg-card',
         // 桌面端始终保持完整内容宽度，仅用裁剪展示折叠状态，避免悬浮时反复触发布局计算。
         'w-[var(--layout-sidebar-width)]',
@@ -205,8 +229,8 @@ export function Sidebar({
 
       {/* Logo 区域 */}
       <div className="relative z-10">
-        <LogoArea sidebarOpen={sidebarRevealed} />
-        {!isMillennium && !sidebarOpen && hoverExpanded && (
+        <LogoArea sidebarOpen={sidebarRevealed} onMobileMenuClose={onMobileMenuClose} />
+        {!isMillennium && !sidebarOpen && effectiveHoverExpanded && (
           <button
             type="button"
             data-dashboard-sidebar-fix-switch="true"
@@ -246,7 +270,7 @@ export function Sidebar({
         className={cn(
           'relative z-10',
           'min-h-0 flex-1 overflow-x-hidden',
-          !visuallyOpen && 'lg:w-[var(--layout-sidebar-collapsed-width)]'
+          isMillennium && 'lg:w-[var(--layout-sidebar-collapsed-width)]'
         )}
         viewportClassName="[&>div]:!block"
       >
@@ -254,7 +278,7 @@ export function Sidebar({
           aria-label={t('a11y.sidebarNav')}
           className={cn(
             'px-[var(--layout-sidebar-nav-padding-collapsed)] py-[var(--layout-sidebar-nav-padding)]',
-            !visuallyOpen && 'lg:w-[var(--layout-sidebar-collapsed-width)]'
+            isMillennium && 'lg:w-[var(--layout-sidebar-collapsed-width)]'
           )}
         >
           <ul
@@ -262,7 +286,7 @@ export function Sidebar({
               // 移动端始终使用正常间距,桌面端根据 sidebarOpen 切换
               'flex flex-col gap-[var(--layout-sidebar-section-gap)]',
               isMillennium && 'lg:gap-4',
-              !visuallyOpen && 'lg:w-full'
+              isMillennium && 'lg:w-full'
             )}
           >
             {menuSections.map((section, sectionIndex) => (
@@ -287,13 +311,10 @@ export function Sidebar({
                     'h-[var(--layout-sidebar-section-title-height)] px-[var(--layout-sidebar-nav-item-padding-x)]',
                     isMillennium && 'lg:h-auto lg:px-0 lg:mb-0.5 lg:text-center',
                     section.title === 'sidebar.groups.overview' && 'hidden',
-                    // 移动端始终显示，桌面端根据状态切换
+                    // 移动端始终显示，桌面端仅切换透明度，保持固定高度与边距避免折叠/展开时纵向重排
                     'mb-[var(--layout-sidebar-section-title-margin-bottom)]',
                     'transition-opacity duration-[220ms] motion-reduce:transition-none',
-                    !isMillennium && !sidebarRevealed && 'lg:opacity-0',
-                    !isMillennium &&
-                      !sidebarRevealed &&
-                      'lg:mb-[var(--layout-sidebar-section-title-margin-bottom-collapsed)]'
+                    !isMillennium && !sidebarRevealed && 'lg:opacity-0'
                   )}
                 >
                   <h3
@@ -362,6 +383,14 @@ export function Sidebar({
           </ul>
         </nav>
       </ScrollArea>
+      <div className="flex shrink-0 flex-col items-start gap-2 border-t p-3">
+        <BotSwitcher>
+          <Button type="button" variant="outline" size="icon-sm">
+            <ChevronsUpDown aria-hidden="true" />
+          </Button>
+        </BotSwitcher>
+        <SidebarUpdateButton collapsed={!sidebarRevealed} />
+      </div>
     </aside>
   )
 }

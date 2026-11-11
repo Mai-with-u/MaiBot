@@ -17,6 +17,7 @@ import {
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import {
   Command,
@@ -36,6 +37,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { SegmentedControl } from '@/components/ui/management'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Select,
@@ -196,6 +198,7 @@ interface TalkRuleTimelineItem {
   title: string
   timeLabel: string
   value: number
+  enabled: boolean
   invalidTime: boolean
   range: TimelineRange | null
   segments: TimelineSegment[]
@@ -332,38 +335,6 @@ const withCurrentPlatformOption = (
     },
   ]
 }
-
-const LEARNING_SCOPE_OPTIONS: Array<{
-  description: string
-  kind: LearningScopeKind
-  title: string
-}> = [
-  {
-    kind: 'default',
-    title: '默认兜底',
-    description: '没有更具体规则命中时使用',
-  },
-  {
-    kind: 'global',
-    title: '全局通配',
-    description: '所有平台和聊天流都会命中',
-  },
-  {
-    kind: 'platform',
-    title: '平台通配',
-    description: '某个平台下的全部聊天流都会命中',
-  },
-  {
-    kind: 'platformDefault',
-    title: '平台兜底',
-    description: '该平台没有更具体规则时使用',
-  },
-  {
-    kind: 'chat',
-    title: '指定聊天流',
-    description: '指定平台里的一个具体聊天',
-  },
-]
 
 const LEARNING_RULE_SCOPE_OPTIONS: Array<{
   description: string
@@ -840,7 +811,7 @@ function LearningScopeFields({
     <div className="min-w-0 space-y-1.5">
       <div className="flex min-w-0 flex-wrap items-center gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <Label className="shrink-0 whitespace-nowrap text-[11px] leading-none text-muted-foreground">平台</Label>
+          <Label className={scopeKind === 'chat' ? 'shrink-0 whitespace-nowrap text-[11px] leading-none text-muted-foreground' : 'sr-only'}>平台</Label>
           <div className="w-28 min-w-0">
             <LearningPlatformControl
               invalid={invalidChatTarget}
@@ -1111,7 +1082,6 @@ function ChatTargetFields({
 function AddTargetScopeDialog<TScopeKind extends string>({
   description,
   defaultScope,
-  fixedRuleType,
   open,
   onAdd,
   onOpenChange,
@@ -1120,7 +1090,6 @@ function AddTargetScopeDialog<TScopeKind extends string>({
 }: {
   description: string
   defaultScope: TScopeKind
-  fixedRuleType?: ExpressionRuleType
   open: boolean
   onAdd: (scopeKind: TScopeKind, ruleType: ExpressionRuleType) => void
   onOpenChange: (open: boolean) => void
@@ -1164,26 +1133,24 @@ function AddTargetScopeDialog<TScopeKind extends string>({
               </button>
             ))}
           </div>
-          {!fixedRuleType && (
-            <div className="max-w-40 space-y-1">
-              <Label className="text-[11px] leading-none text-muted-foreground">聊天类型</Label>
-              <Select value={ruleType} onValueChange={(nextRuleType) => setRuleType(normalizeExpressionRuleType(nextRuleType))}>
-                <SelectTrigger className="h-8">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="group">群聊</SelectItem>
-                  <SelectItem value="private">私聊</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+          <div className="max-w-40 space-y-1">
+            <Label className="text-[11px] leading-none text-muted-foreground">聊天类型</Label>
+            <Select value={ruleType} onValueChange={(nextRuleType) => setRuleType(normalizeExpressionRuleType(nextRuleType))}>
+              <SelectTrigger className="h-8">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="group">群聊</SelectItem>
+                <SelectItem value="private">私聊</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             取消
           </Button>
-          <Button type="button" onClick={() => onAdd(activeScope, fixedRuleType ?? ruleType)}>
+          <Button type="button" onClick={() => onAdd(activeScope, ruleType)}>
             添加
           </Button>
         </DialogFooter>
@@ -1278,17 +1245,43 @@ function LearningRuleItem({
   }
 
   return (
-    <div className="space-y-2 rounded-md border bg-muted/20 p-2.5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <TableRow>
+      <TableCell>
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          <span className="truncate text-sm font-semibold">
-            {scopeLabel}
-          </span>
-          <Badge variant="secondary" className="px-1.5 py-0 text-[11px]">
-            {ruleTypeLabel(ruleType)}
-          </Badge>
+          <span className="truncate font-semibold">{scopeLabel}</span>
           {scopeKind === 'chat' && <ChatTargetResolutionPreview state={chatTargetState} />}
         </div>
+      </TableCell>
+      <TableCell>{ruleTypeLabel(ruleType)}</TableCell>
+      <TableCell>
+        {scopeKind === 'default' || scopeKind === 'global' ? (
+          <span className="text-muted-foreground">全部平台</span>
+        ) : (
+          <LearningScopeFields
+            chatTargetState={chatTargetState}
+            item={item}
+            onFieldChange={updateScopeField}
+            platformOptions={platformOptions}
+            scopeKind={scopeKind}
+            usePlatformSelect={usePlatformSelect}
+          />
+        )}
+      </TableCell>
+      <TableCell>
+        <Switch
+          aria-label={`使用 ${scopeLabel}`}
+          checked={Boolean(item.use)}
+          onCheckedChange={(checked) => onItemFieldChange(index, 'use', checked)}
+        />
+      </TableCell>
+      <TableCell>
+        <Switch
+          aria-label={`学习 ${scopeLabel}`}
+          checked={Boolean(item.learn)}
+          onCheckedChange={(checked) => onItemFieldChange(index, 'learn', checked)}
+        />
+      </TableCell>
+      <TableCell className="text-right">
         <Button
           type="button"
           size="icon"
@@ -1300,47 +1293,8 @@ function LearningRuleItem({
         >
           <Trash2 className="h-4 w-4" />
         </Button>
-      </div>
-
-      <div className="space-y-2">
-        <div className="grid min-w-0 items-center gap-2 lg:grid-cols-[max-content_minmax(13rem,14rem)]">
-          <div className="min-w-0">
-            {scopeKind === 'default' || scopeKind === 'global' ? (
-              <div className="rounded-md border bg-background/70 px-2.5 py-2 text-xs text-muted-foreground">
-                当前范围不需要填写平台或聊天流 ID。
-              </div>
-            ) : (
-              <LearningScopeFields
-                chatTargetState={chatTargetState}
-                item={item}
-                onFieldChange={updateScopeField}
-                platformOptions={platformOptions}
-                scopeKind={scopeKind}
-                usePlatformSelect={usePlatformSelect}
-              />
-            )}
-          </div>
-          <div className="grid min-w-0 grid-cols-2 gap-1.5">
-            <div className="flex min-w-0 items-center justify-between gap-2 rounded-md border bg-background/70 px-2 py-1.5">
-              <Label className="whitespace-nowrap text-xs">使用</Label>
-              <Switch
-                className="shrink-0"
-                checked={Boolean(item.use)}
-                onCheckedChange={(checked) => onItemFieldChange(index, 'use', checked)}
-              />
-            </div>
-            <div className="flex min-w-0 items-center justify-between gap-2 rounded-md border bg-background/70 px-2 py-1.5">
-              <Label className="whitespace-nowrap text-xs">学习</Label>
-              <Switch
-                className="shrink-0"
-                checked={Boolean(item.learn)}
-                onCheckedChange={(checked) => onItemFieldChange(index, 'learn', checked)}
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+      </TableCell>
+    </TableRow>
   )
 }
 
@@ -1425,20 +1379,32 @@ function LearningRuleEditor({
           {emptyText}
         </div>
       ) : (
-        <div className="space-y-2">
-          {items.map((item, index) => (
-            <LearningRuleItem
-              key={index}
-              index={index}
-              item={item}
-              onItemFieldChange={onItemFieldChange}
-              onRemoveItem={removeRule}
-              platformOptions={getPlatformOptions(item.platform)}
-              scopeKindOverride={scopeKindOverrides[index]}
-              usePlatformSelect={usePlatformSelect}
-            />
-          ))}
-        </div>
+        <Table className="min-w-[40rem]">
+          <TableHeader>
+            <TableRow>
+              <TableHead>范围</TableHead>
+              <TableHead className="w-24">类型</TableHead>
+              <TableHead className="w-[22rem]">平台</TableHead>
+              <TableHead className="w-24">使用</TableHead>
+              <TableHead className="w-24">学习</TableHead>
+              <TableHead className="w-14"><span className="sr-only">操作</span></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.map((item, index) => (
+              <LearningRuleItem
+                key={index}
+                index={index}
+                item={item}
+                onItemFieldChange={onItemFieldChange}
+                onRemoveItem={removeRule}
+                platformOptions={getPlatformOptions(item.platform)}
+                scopeKindOverride={scopeKindOverrides[index]}
+                usePlatformSelect={usePlatformSelect}
+              />
+            ))}
+          </TableBody>
+        </Table>
       )}
 
       <Button
@@ -1638,7 +1604,7 @@ const parseTalkTimeSegments = (time: string): { invalid: boolean; label: string;
   if (!range) {
     return { invalid: true, label: '时间格式错误', segments: [fullDaySegment()] }
   }
-  return { invalid: false, label: range.start > range.end ? `${normalizedTime} 跨夜` : normalizedTime, segments: getTimelineSegments(range) }
+  return { invalid: false, label: normalizedTime, segments: getTimelineSegments(range) }
 }
 
 const normalizeTalkValue = (value: unknown) => {
@@ -1681,6 +1647,7 @@ const buildTalkTimelineItems = (items: Record<string, unknown>[]): TalkRuleTimel
       title: `轨道 ${index + 1}`,
       timeLabel: parsedTime.label,
       value,
+      enabled: item.enabled !== false,
       invalidTime: parsedTime.invalid,
       range,
       segments: parsedTime.segments,
@@ -1746,8 +1713,9 @@ const createTalkRuleForGroup = (
 
 const normalizeTalkRuleItems = (
   items: Record<string, unknown>[],
-  context?: { addedIndex?: number; changedIndex?: number },
+  context?: { addedIndex?: number; changedIndex?: number; changedField?: string },
 ) => {
+  if (context?.changedField === 'enabled') return items
   const preferredIndex = context?.changedIndex ?? context?.addedIndex
   const specialTimeOwner = new Map<string, number>()
   const duplicateIndexes = new Set<number>()
@@ -1802,13 +1770,35 @@ const moveTalkRuleItem = (items: Record<string, unknown>[], fromIndex: number, t
   return nextItems
 }
 
+const TALK_TRACK_GRID_CLASS = 'grid grid-cols-[7.5rem_minmax(14rem,1fr)_8.5rem_auto] items-center gap-3'
+
+function TalkGroupTargetLabel({ group }: { group: TalkRuleTimelineGroup }) {
+  const target = platformLabel({ platform: group.platform, item_id: group.itemId })
+  const { session } = useExactChatTargetResolution(group.platform, group.itemId, 'group', group.scopeLabel === '精确')
+  return (
+    <span className="min-w-0 truncate font-mono text-sm font-semibold" title={target}>
+      {session ? formatChatDisplayName(session.display_name, session.account_id) : target}
+    </span>
+  )
+}
+
+function TalkEmptyState({ text }: { text: string }) {
+  return (
+    <div className="rounded-md border border-dashed border-muted-foreground/25 p-6 text-center text-sm text-muted-foreground">
+      {text}
+    </div>
+  )
+}
+
 function TalkValueTimelineOverview({
+  emptyText,
   items,
   onAddItem,
   onItemFieldChange,
   onItemsChange,
   onRemoveItem,
 }: {
+  emptyText: string
   items: Record<string, unknown>[]
   onAddItem: (item?: Record<string, unknown>) => void
   onItemFieldChange: (index: number, fieldName: string, fieldValue: unknown) => void
@@ -1821,7 +1811,7 @@ function TalkValueTimelineOverview({
   const timelineItems = buildTalkTimelineItems(items)
   const timelineGroups = groupTalkTimelineItems(timelineItems)
   const draggingTrackRef = useRef<{ groupKey: string; index: number } | null>(null)
-  if (timelineItems.length === 0) return null
+  if (timelineItems.length === 0) return <TalkEmptyState text={emptyText} />
 
   const reorderTrack = (targetItem: TalkRuleTimelineItem) => {
     const draggingTrack = draggingTrackRef.current
@@ -1837,145 +1827,135 @@ function TalkValueTimelineOverview({
     draggingTrackRef.current = null
   }
 
+  // 只保留一层分组：聊天之间用分隔线隔开，轨道行直接排在聊天标题下面。
   return (
-    <div className="overflow-hidden rounded-lg border bg-muted/20">
-      <div className="border-b bg-background/70 px-3 py-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <h5 className="text-sm font-semibold">时间轴视图</h5>
-          <Badge variant="secondary">聊天区域 {timelineGroups.length}</Badge>
-          <Badge variant="outline">轨道 {timelineItems.length}</Badge>
+    <div className="overflow-x-auto">
+      <div className="min-w-[600px]">
+        <div className={`${TALK_TRACK_GRID_CLASS} pb-1.5 text-[11px] text-muted-foreground`}>
+          <div>时段</div>
+          <TimeRangeTicks />
+          <div>频率</div>
+          <div />
         </div>
-      </div>
-      <div className="overflow-x-auto">
-        <div className="min-w-[540px] p-2.5">
-          <div className="grid grid-cols-[5.5rem_minmax(16rem,1fr)_6.5rem] gap-2 pb-1.5 text-[11px] text-muted-foreground">
-            <div>轨道</div>
-            <TimeRangeTicks />
-            <div>频率</div>
-          </div>
-          <div className="space-y-2.5">
-            {timelineGroups.map((group) => (
-              <div key={group.key} className="overflow-hidden rounded-lg border bg-card/60">
-                <div className="flex flex-wrap items-center gap-1.5 border-b bg-background/70 px-2 py-1.5">
-                  <div className="min-w-0 flex-1 truncate text-xs font-semibold">{group.label}</div>
-                  <Badge variant="secondary">{group.scopeLabel}</Badge>
-                  <Badge variant="outline">{group.items.length} 轨道</Badge>
-                  <div className="ml-auto flex flex-wrap gap-1">
+        <div className="divide-y border-y">
+          {timelineGroups.map((group) => (
+            <section key={group.key} className="py-2.5" aria-label={group.label}>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pb-1">
+                <TalkGroupTargetLabel group={group} />
+                <span className="text-xs text-muted-foreground">{group.scopeLabel}</span>
+                <div className="ml-auto flex gap-1">
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => onAddItem(createTalkRuleForGroup(group, '00:00-23:59'))}
+                  >
+                    <Plus className="mr-1 h-3 w-3" />
+                    时间段
+                  </Button>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="ghost"
+                    disabled={group.hasFallback}
+                    title="时间留空：该范围内没有时间段命中时使用"
+                    onClick={() => onAddItem(createTalkRuleForGroup(group, ''))}
+                  >
+                    <Plus className="mr-1 h-3 w-3" />
+                    兜底
+                  </Button>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="ghost"
+                    disabled={group.hasWildcard}
+                    title="时间为 *：全天强制使用该频率"
+                    onClick={() => onAddItem(createTalkRuleForGroup(group, '*'))}
+                  >
+                    <Plus className="mr-1 h-3 w-3" />
+                    全天
+                  </Button>
+                </div>
+              </div>
+              {group.items.map((item, trackIndex) => (
+                <div
+                  key={item.index}
+                  className={`${TALK_TRACK_GRID_CLASS} min-h-9`}
+                  onDragOver={(event) => {
+                    if (item.range && draggingTrackRef.current?.groupKey === item.groupKey) {
+                      event.preventDefault()
+                    }
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault()
+                    reorderTrack(item)
+                  }}
+                >
+                  <div className="flex min-w-0 items-center gap-1">
+                    <button
+                      type="button"
+                      draggable={Boolean(item.range)}
+                      disabled={!item.range}
+                      className="inline-flex h-6 w-4 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:text-foreground disabled:cursor-default disabled:opacity-0"
+                      aria-label={`拖动${group.label}轨道 ${trackIndex + 1} 调整顺序`}
+                      onDragEnd={() => {
+                        draggingTrackRef.current = null
+                      }}
+                      onDragStart={(event) => {
+                        if (!item.range) {
+                          event.preventDefault()
+                          return
+                        }
+                        draggingTrackRef.current = {
+                          groupKey: item.groupKey,
+                          index: item.index,
+                        }
+                        event.dataTransfer.effectAllowed = 'move'
+                      }}
+                    >
+                      <GripVertical className="h-3.5 w-3.5" />
+                    </button>
+                    <span
+                      className={`truncate font-mono text-xs ${item.invalidTime ? 'text-destructive' : 'text-muted-foreground'}`}
+                      title={item.range && item.range.start > item.range.end ? `${item.timeLabel}（跨夜）` : item.timeLabel}
+                    >
+                      {item.timeLabel}
+                    </span>
+                  </div>
+                  <TimeRangeTrack range={item.range} segments={item.segments}
+                    disabled={item.invalidTime} label={`${group.label}轨道 ${trackIndex + 1} `}
+                    colorClassName={`${talkValueColor(item.value)} ${item.invalidTime || !item.enabled ? 'opacity-35' : 'opacity-85'}`}
+                    onChange={(next) => onItemFieldChange(item.index, 'time', formatTalkTimeRange(next))} />
+                  <Slider
+                    value={[item.value]}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    onValueChange={(values) => onItemFieldChange(item.index, 'value', values[0])}
+                    variant="value"
+                    valueFormat="fixed-2"
+                  />
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={item.enabled}
+                      aria-label={`启用${group.label}轨道 ${trackIndex + 1}`}
+                      onCheckedChange={(enabled) => onItemFieldChange(item.index, 'enabled', enabled)}
+                    />
                     <Button
                       type="button"
-                      size="sm"
-                      variant="outline"
-                      className="h-7 px-2 text-xs"
-                      onClick={() => onAddItem(createTalkRuleForGroup(group, '00:00-23:59'))}
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 text-destructive hover:text-destructive"
+                      aria-label={`删除${group.label} 轨道 ${trackIndex + 1}`}
+                      onClick={() => onRemoveItem(item.index)}
                     >
-                      <Plus className="mr-1 h-3 w-3" />
-                      时间段
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="h-7 px-2 text-xs"
-                      disabled={group.hasFallback}
-                      onClick={() => onAddItem(createTalkRuleForGroup(group, ''))}
-                    >
-                      <Plus className="mr-1 h-3 w-3" />
-                      兜底
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="h-7 px-2 text-xs"
-                      disabled={group.hasWildcard}
-                      onClick={() => onAddItem(createTalkRuleForGroup(group, '*'))}
-                    >
-                      <Plus className="mr-1 h-3 w-3" />
-                      *
+                      <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </div>
                 </div>
-                <div className="space-y-1.5 p-2">
-                  {group.items.map((item, trackIndex) => (
-                    <div
-                      key={item.index}
-                      className="grid min-h-12 grid-cols-[5.5rem_minmax(16rem,1fr)_6.5rem] items-center gap-2 rounded-md bg-muted/25 px-2 py-1.5"
-                      onDragOver={(event) => {
-                        if (item.range && draggingTrackRef.current?.groupKey === item.groupKey) {
-                          event.preventDefault()
-                        }
-                      }}
-                      onDrop={(event) => {
-                        event.preventDefault()
-                        reorderTrack(item)
-                      }}
-                    >
-                      <div className="flex min-w-0 items-center gap-2">
-                        <button
-                          type="button"
-                          draggable={Boolean(item.range)}
-                          disabled={!item.range}
-                          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
-                          aria-label={`拖动${group.label}轨道 ${trackIndex + 1} 调整顺序`}
-                          onDragEnd={() => {
-                            draggingTrackRef.current = null
-                          }}
-                          onDragStart={(event) => {
-                            if (!item.range) {
-                              event.preventDefault()
-                              return
-                            }
-                            draggingTrackRef.current = {
-                              groupKey: item.groupKey,
-                              index: item.index,
-                            }
-                            event.dataTransfer.effectAllowed = 'move'
-                          }}
-                        >
-                          <GripVertical className="h-3.5 w-3.5" />
-                        </button>
-                        <div className="min-w-0">
-                          <div className="truncate text-xs font-medium">轨道 {trackIndex + 1}</div>
-                        <div
-                          className={item.invalidTime ? 'text-[11px] text-destructive' : 'text-[11px] text-muted-foreground'}
-                        >
-                          {item.timeLabel}
-                        </div>
-                        </div>
-                      </div>
-                      <TimeRangeTrack range={item.range} segments={item.segments}
-                        disabled={item.invalidTime} label={`${group.label}轨道 ${trackIndex + 1} `}
-                        colorClassName={`${talkValueColor(item.value)} ${item.invalidTime ? 'opacity-35' : 'opacity-85'}`}
-                        onChange={(next) => onItemFieldChange(item.index, 'time', formatTalkTimeRange(next))} />
-                      <div className="grid grid-cols-[minmax(0,1fr)_1.75rem] items-center gap-1.5">
-                        <div>
-                          <Slider
-                            value={[item.value]}
-                            min={0}
-                            max={1}
-                            step={0.01}
-                            onValueChange={(values) => onItemFieldChange(item.index, 'value', values[0])}
-                            variant="value"
-                            valueFormat="fixed-2"
-                          />
-                        </div>
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="ghost"
-                          className="h-7 w-7 text-destructive hover:text-destructive"
-                          aria-label={`删除${group.label} 轨道 ${trackIndex + 1}`}
-                          onClick={() => onRemoveItem(item.index)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </section>
+          ))}
         </div>
       </div>
     </div>
@@ -2000,11 +1980,7 @@ function TalkValueGroupedRuleEditor({
 }) {
   const timelineGroups = groupTalkTimelineItems(buildTalkTimelineItems(items))
   if (timelineGroups.length === 0) {
-    return (
-      <div className="rounded-md border border-dashed border-muted-foreground/25 bg-muted/10 p-6 text-center text-sm text-muted-foreground">
-        {emptyText}
-      </div>
-    )
+    return <TalkEmptyState text={emptyText} />
   }
 
   const updateGroupField = (
@@ -2026,15 +2002,14 @@ function TalkValueGroupedRuleEditor({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="divide-y border-y">
       {timelineGroups.map((group) => (
-        <div key={group.key} className="space-y-4 rounded-lg border bg-card/40 p-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-semibold">{group.label}</div>
-              <div className="text-xs text-muted-foreground">{group.items.length} 条轨道</div>
-            </div>
-            <Badge variant="secondary">{group.scopeLabel}</Badge>
+        <section key={group.items[0]?.index} className="space-y-3 py-4" aria-label={group.label}>
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            <TalkGroupTargetLabel group={group} />
+            <span className="text-xs text-muted-foreground">
+              {group.scopeLabel} · {group.items.length} 条轨道
+            </span>
           </div>
 
           <div className="grid gap-3 md:grid-cols-3">
@@ -2042,7 +2017,7 @@ function TalkValueGroupedRuleEditor({
               <Label className="text-xs font-medium">平台</Label>
               <Input
                 value={group.platform}
-                placeholder="留空表示全局，* 表示通配"
+                placeholder="平台名称，* 表示任意平台"
                 onChange={(event) => updateGroupField(group, 'platform', event.target.value)}
               />
             </div>
@@ -2050,7 +2025,7 @@ function TalkValueGroupedRuleEditor({
               <Label className="text-xs font-medium">聊天流 ID</Label>
               <Input
                 value={group.itemId}
-                placeholder="留空表示全局，* 表示通配"
+                placeholder="群号，留空表示平台兜底"
                 onChange={(event) => updateGroupField(group, 'item_id', event.target.value)}
               />
             </div>
@@ -2067,7 +2042,7 @@ function TalkValueGroupedRuleEditor({
             </div>
           </div>
 
-          <div className="space-y-2">
+          <div className="divide-y divide-dashed">
             {group.items.map((item, trackIndex) => {
               const isFallback = item.rawTime === ''
               const isWildcard = item.rawTime === '*'
@@ -2077,10 +2052,15 @@ function TalkValueGroupedRuleEditor({
               return (
                 <div
                   key={item.index}
-                  className="grid gap-3 rounded-md border bg-muted/20 p-3 lg:grid-cols-[7rem_minmax(16rem,1fr)_14rem_2.5rem]"
+                  className="grid gap-3 py-3 lg:grid-cols-[4rem_minmax(16rem,1fr)_14rem_2.5rem]"
                 >
-                  <div className="flex items-center">
-                    <span className="text-sm font-medium">轨道 {trackIndex + 1}</span>
+                  <div className="flex items-center gap-2 lg:flex-col lg:items-start">
+                    <span className="text-xs text-muted-foreground">轨道 {trackIndex + 1}</span>
+                    <Switch
+                      checked={item.enabled}
+                      aria-label={`启用${group.label}轨道 ${trackIndex + 1}`}
+                      onCheckedChange={(enabled) => onItemFieldChange(item.index, 'enabled', enabled)}
+                    />
                   </div>
                   <div className="space-y-2">
                     <div className="grid grid-cols-3 gap-2">
@@ -2112,9 +2092,10 @@ function TalkValueGroupedRuleEditor({
                         size="sm"
                         variant={isWildcard ? 'default' : 'outline'}
                         disabled={!canUseWildcard}
+                        title="时间为 *：全天强制使用该频率"
                         onClick={() => onItemFieldChange(item.index, 'time', '*')}
                       >
-                        *
+                        全天
                       </Button>
                     </div>
                     <Input
@@ -2168,19 +2149,13 @@ function TalkValueGroupedRuleEditor({
               )
             })}
           </div>
-        </div>
+        </section>
       ))}
     </div>
   )
 }
 
 type TalkValueEditorMode = 'grouped' | 'timeline'
-
-const createEmptyTalkRuleDraft = () => ({
-  itemId: '',
-  platform: '',
-  ruleType: 'group',
-})
 
 function TalkValueRuleEditor({
   emptyText,
@@ -2202,60 +2177,82 @@ function TalkValueRuleEditor({
 }) {
   const [mode, setMode] = useState<TalkValueEditorMode>('timeline')
   const [addDialogOpen, setAddDialogOpen] = useState(false)
-  const handleAddRule = (scopeKind: LearningScopeKind, ruleType: ExpressionRuleType) => {
-    const target = buildLearningRulePatch(scopeKind, createEmptyTalkRuleDraft(), [])
+  const [draftPlatform, setDraftPlatform] = useState('')
+  const [draftItemId, setDraftItemId] = useState('')
+  const platform = draftPlatform.trim()
+  const itemId = draftItemId.trim()
+  const validTarget = Boolean((platform && platform !== '*') || (itemId && itemId !== '*'))
+  const handleAddRule = () => {
     onAddItem({
-      ...target,
-      rule_type: ruleType,
+      platform,
+      item_id: itemId,
+      rule_type: 'group',
       time: '00:00-23:59',
       value: 0.5,
     })
+    setMode('grouped')
     setAddDialogOpen(false)
   }
 
+  const groupCount = new Set(items.map(talkRuleGroupKey)).size
+
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <Button
           type="button"
           size="sm"
           variant="outline"
-          onClick={() => setAddDialogOpen(true)}
+          onClick={() => {
+            setDraftPlatform('')
+            setDraftItemId('')
+            setAddDialogOpen(true)
+          }}
         >
           <Plus className="mr-1 h-4 w-4" />
-          添加发言频率规则
+          添加规则
         </Button>
-        <div className="inline-flex rounded-md border bg-background p-1">
-          <Button
-            type="button"
-            size="sm"
-            variant={mode === 'timeline' ? 'default' : 'ghost'}
-            onClick={() => setMode('timeline')}
-          >
-            可视化轨道
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant={mode === 'grouped' ? 'default' : 'ghost'}
-            onClick={() => setMode('grouped')}
-          >
-            合并编辑
-          </Button>
-        </div>
+        {items.length > 0 && (
+          <span className="text-xs text-muted-foreground">
+            {groupCount} 个聊天 · {items.length} 条轨道
+          </span>
+        )}
+        <SegmentedControl
+          className="ml-auto"
+          aria-label="编辑方式"
+          value={mode}
+          onValueChange={(value) => setMode(value as TalkValueEditorMode)}
+          options={[
+            { value: 'timeline', label: '时间轴' },
+            { value: 'grouped', label: '逐项编辑' },
+          ]}
+        />
       </div>
-      <AddTargetScopeDialog
-        defaultScope="chat"
-        fixedRuleType="group"
-        description="选择群聊规则的作用范围。添加后可继续填写平台、群聊 ID、时间段和发言频率。"
-        open={addDialogOpen}
-        onAdd={handleAddRule}
-        onOpenChange={setAddDialogOpen}
-        scopeOptions={LEARNING_SCOPE_OPTIONS}
-        title="添加发言频率规则"
-      />
+      <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>添加发言频率规则</DialogTitle>
+            <DialogDescription>至少指定平台或群聊 ID。留空表示默认范围，* 表示通配。</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="talk-rule-platform">平台</Label>
+              <Input id="talk-rule-platform" placeholder="qq" value={draftPlatform} onChange={(event) => setDraftPlatform(event.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="talk-rule-item-id">群聊 ID</Label>
+              <Input id="talk-rule-item-id" value={draftItemId} onChange={(event) => setDraftItemId(event.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setAddDialogOpen(false)}>取消</Button>
+            <Button type="button" disabled={!validTarget} onClick={handleAddRule}>添加</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {mode === 'timeline' ? (
         <TalkValueTimelineOverview
+          emptyText={emptyText}
           items={items}
           onAddItem={onAddItem}
           onItemFieldChange={onItemFieldChange}
@@ -2273,18 +2270,6 @@ function TalkValueRuleEditor({
       )}
     </div>
   )
-}
-
-const truncate = (text: string, max = 32) => {
-  if (text.length <= max) return text
-  return `${text.slice(0, max)}…`
-}
-
-const collectStringList = (value: unknown): string[] => {
-  if (!Array.isArray(value)) return []
-  return value
-    .map((item) => (typeof item === 'string' ? item.trim() : ''))
-    .filter((item) => item.length > 0)
 }
 
 const normalizeExpressionRuleType = (value: unknown): ExpressionRuleType => {
@@ -2547,12 +2532,8 @@ export const MultipleReplyStyleHook = createStringListHook({
 const GroupTalkValueRulesHook = createListItemEditorHook({
   addLabel: '添加发言频率规则',
   addButtonPlacement: 'none',
-  collapseWhen: ({ parentValues }) => parentValues?.enable_talk_value_rules === false,
-  collapsedText: '动态发言频率规则未启用，规则列表已折叠。展开后仍可查看或编辑已有规则。',
-  expandLabel: '展开规则',
-  collapseLabel: '折叠规则',
-  helperText: '仅对群聊生效，可按平台/群聊/时段配置频率。平台和群聊都空表示全局；只填其中一项表示对应默认值；* 表示通配覆盖。时间留空表示兜底，* 表示强制全天。',
-  emptyText: '尚未配置任何规则，将使用全局默认频率。',
+  helperText: '仅对群聊生效，须指定平台或群聊 ID。时间留空表示该范围内兜底，* 表示强制全天。没有规则命中时使用总体发言频率。',
+  emptyText: '尚未配置任何规则，将使用总体发言频率。',
   collapseButtonDisplay: 'icon',
   fieldRows: [
     ['platform', 'item_id', 'rule_type'],
@@ -2585,18 +2566,98 @@ const GroupTalkValueRulesHook = createListItemEditorHook({
   },
 })
 
-export const ChatTalkValueRulesHook: FieldHookComponent = (props) => {
-  const rules = Array.isArray(props.value) ? props.value as Record<string, unknown>[] : []
+interface TalkRuleGroup {
+  name: string
+  rules: Record<string, unknown>[]
+}
+
+interface TalkRuleGroupsConfig {
+  active_group: string
+  groups: TalkRuleGroup[]
+}
+
+export const ChatTalkRuleGroupsHook: FieldHookComponent = (props) => {
+  const [nameEditor, setNameEditor] = useState<'create' | 'rename' | null>(null)
+  const [name, setName] = useState('')
+  const config = props.value as Partial<TalkRuleGroupsConfig> | undefined
+  const defaultName = props.nestedSchema?.fields.find((field) => field.name === 'active_group')?.default as string
+  const activeName = config?.active_group ?? defaultName
+  const groups = config?.groups ?? [{ name: defaultName, rules: [] }]
+  const activeGroup = groups.find((group) => group.name === activeName)
+  if (!activeGroup) return <p role="alert" className="text-sm text-destructive">找不到启用的发言频率规则组。</p>
+
+  const rules = activeGroup.rules ?? []
   const privateRules = rules.filter((rule) => rule.rule_type === 'private')
+  const nextName = name.trim()
+  const duplicateName = groups.some((group) => group.name === nextName && (nameEditor === 'create' || group !== activeGroup))
+  const saveName = () => {
+    if (!nextName || duplicateName) return
+    const nextGroup = { name: nextName, rules }
+    props.onChange?.({
+      active_group: nextName,
+      groups: nameEditor === 'create'
+        ? [...groups, nextGroup]
+        : groups.map((group) => group === activeGroup ? nextGroup : group),
+    })
+    setNameEditor(null)
+  }
+
   return (
-    <GroupTalkValueRulesHook
-      {...props}
-      value={rules.filter((rule) => rule.rule_type !== 'private')}
-      onChange={(value) => {
-        // 旧私聊频率规则不再展示或生效，编辑群聊时仍保留原配置。
-        props.onChange?.([...privateRules, ...(value as Record<string, unknown>[])])
-      }}
-    />
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Label htmlFor="talk-rule-group">当前规则组</Label>
+        <Select value={activeName} onValueChange={(active_group) => {
+          setNameEditor(null)
+          props.onChange?.({ active_group, groups })
+        }}>
+          <SelectTrigger id="talk-rule-group" className="min-w-32 max-w-64 flex-1">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {groups.map((group) => <SelectItem key={group.name} value={group.name}>{group.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Button type="button" size="sm" variant="outline" onClick={() => { setName(''); setNameEditor('create') }}>
+          <Plus className="mr-1 h-4 w-4" /> 新建组
+        </Button>
+        <Button type="button" size="sm" variant="outline" onClick={() => { setName(activeName); setNameEditor('rename') }}>
+          <Pencil className="mr-1 h-4 w-4" /> 重命名
+        </Button>
+      </div>
+      {nameEditor && (
+        <div className="space-y-2 rounded-md border p-3">
+          <Label htmlFor="talk-rule-group-name">{nameEditor === 'create' ? '新规则组名称' : '规则组名称'}</Label>
+          <div className="flex flex-wrap gap-2">
+            <Input id="talk-rule-group-name" className="min-w-32 flex-1" value={name}
+              onChange={(event) => setName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  saveName()
+                }
+              }} />
+            <Button type="button" size="sm" disabled={!nextName || duplicateName} onClick={saveName}>保存</Button>
+            <Button type="button" size="sm" variant="ghost" onClick={() => setNameEditor(null)}>取消</Button>
+          </div>
+          {duplicateName && <p role="alert" className="text-sm text-destructive">该规则组名称已存在。</p>}
+          {nameEditor === 'create' && <p className="text-xs text-muted-foreground">新组复制当前规则，保存后切换到新组。</p>}
+        </div>
+      )}
+      <GroupTalkValueRulesHook
+        key={activeName}
+        {...props}
+        nestedSchema={props.nestedSchema?.nested?.groups?.nested?.rules}
+        value={rules.filter((rule) => rule.rule_type !== 'private')}
+        onChange={(value) => {
+          // 旧私聊频率规则不再展示或生效，编辑群聊时仍保留原配置。
+          const nextRules = [...privateRules, ...(value as Record<string, unknown>[])]
+          props.onChange?.({
+            active_group: activeName,
+            groups: groups.map((group) => group === activeGroup ? { ...group, rules: nextRules } : group),
+          })
+        }}
+      />
+    </div>
   )
 }
 
@@ -2613,10 +2674,7 @@ export const ChatPromptsHook = createListItemEditorHook({
   helperText: '为指定平台和聊天流添加额外提示。platform、item_id 和 prompt 同时留空时表示空条目；填写任意一项后这三项都需要填写。',
   emptyText: '尚未配置任何聊天额外 Prompt。',
   addButtonPlacement: 'top',
-  fieldRows: [
-    ['platform', 'item_id'],
-    ['rule_type'],
-  ],
+  fieldRows: [['platform', 'item_id', 'rule_type']],
   fieldSchemaOverrides: {
     item_id: {
       'x-input-width': '6.5rem',
@@ -3033,50 +3091,6 @@ export const BotPlatformAccountsHook: FieldHookComponent = ({
     </div>
   )
 }
-
-export const KeywordRulesHook = createListItemEditorHook({
-  addLabel: '添加关键词规则',
-  helperText: '匹配命中后会把反应提示作为额外上下文。关键词至少填写一条。',
-  emptyText: '尚未添加任何关键词规则。',
-  visibleFields: ['keywords', 'reaction'],
-  normalizeItems: (items) =>
-    items.map((item) => ({
-      ...item,
-      regex: [],
-    })),
-  itemTitle: (item) => {
-    const keywords = collectStringList(item.keywords)
-    const reaction =
-      typeof item.reaction === 'string' ? item.reaction.trim() : ''
-    const left = keywords.length
-      ? `关键词 ${keywords.length} 条`
-      : '未配置关键词'
-    const right = reaction ? `→ ${truncate(reaction)}` : '→ 未填写反应'
-    return `${left} ${right}`
-  },
-})
-
-export const RegexRulesHook = createListItemEditorHook({
-  addLabel: '添加正则规则',
-  helperText: '正则模式按 Python 语法编写，命中时把反应提示作为额外上下文。',
-  emptyText: '尚未添加任何正则规则。',
-  visibleFields: ['regex', 'reaction'],
-  normalizeItems: (items) =>
-    items.map((item) => ({
-      ...item,
-      keywords: [],
-    })),
-  itemTitle: (item) => {
-    const regex = collectStringList(item.regex)
-    const reaction =
-      typeof item.reaction === 'string' ? item.reaction.trim() : ''
-    const left = regex.length
-      ? `正则 ${regex.length} 条`
-      : '未配置正则'
-    const right = reaction ? `→ ${truncate(reaction)}` : '→ 未填写反应'
-    return `${left} ${right}`
-  },
-})
 
 export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, onParentChange, parentValues, schema, value }) => {
   const groups = normalizeExpressionGroups(value)

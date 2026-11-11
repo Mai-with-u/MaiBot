@@ -14,7 +14,7 @@ from src.chat.heart_flow.heartFC_utils import CycleDetail
 from src.chat.message_receive.chat_manager import BotChatSession, chat_manager
 from src.chat.message_receive.message import SessionMessage
 from src.chat.replyer.expression_vector_index import expression_vector_index
-from src.chat.utils.utils import is_bot_self, is_mentioned_bot_in_message
+from src.chat.utils.utils import is_bot_self
 from src.common.data_models.mai_message_data_model import GroupInfo, MessageInfo, UserInfo
 from src.common.data_models.message_component_data_model import (
     ForwardNodeComponent,
@@ -24,13 +24,14 @@ from src.common.data_models.message_component_data_model import (
 )
 from src.common.logger import get_logger
 from src.common.message_repository import find_messages
-from src.common.utils.utils_config import ChatConfigUtils, ExpressionConfigUtils, JargonConfigUtils
+from src.common.utils.utils_config import ExpressionConfigUtils, JargonConfigUtils
 from src.config.config import global_config, model_config
 from src.agent.provider import AgentToolProvider
-from src.computer.provider import ComputerToolProvider
 from src.files.provider import FileToolProvider
 from src.desktop_pet.chat_tools import ChatSessionToolProvider
 from src.desktop_pet.todo_tools import TodoToolProvider
+from src.desktop_pet.exploration_tools import ExplorationToolProvider
+from src.desktop_pet.screen_tools import DesktopScreenToolProvider
 from src.core.tooling import ToolRegistry, ToolSpec
 from src.learners.expression_learner import ExpressionLearner
 from src.learners.jargon_learner import JargonLearner
@@ -67,7 +68,8 @@ from src.maisaka.monitor.message_payload import (
     build_monitor_message_media,
     build_monitor_reply_preview,
 )
-from src.maisaka.turn_trigger import IdleBackoffController, MessageTurnScheduler
+from src.maisaka.scenes.base import ChatScene
+from src.maisaka.scenes.factory import get_scene
 from src.mcp_module.provider import MCPToolProvider
 from src.mcp_module.service import get_mcp_service
 from src.web_search.provider import WebSearchToolProvider
@@ -135,6 +137,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
     _STATE_RUNNING: Literal["running"] = "running"
     _STATE_WAIT: Literal["wait"] = "wait"
     _STATE_STOP: Literal["stop"] = "stop"
+    _pending_wait_after_reply: bool = False
 
     def __init__(self, session_id: str):
         self.session_id = session_id
@@ -197,8 +200,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         self._jargon_miner = JargonMiner(session_id, session_name=session_name)
 
         self._reasoning_engine = MaisakaReasoningEngine(self)
-        self._message_turn_scheduler = MessageTurnScheduler(self)
-        self._idle_backoff = IdleBackoffController(self)
+        self._message_turn_scheduler = self.scene.create_scheduler(self)
         self._forced_turn_enabled = False
         self._forced_turn_message_id = ""
         self._forced_turn_reason = ""
@@ -214,12 +216,12 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
     def _max_context_size(self) -> int:
         """返回当前会话实时生效的上下文窗口大小。"""
 
-        configured_context_size = (
-            global_config.chat.max_context_size
-            if self.chat_stream.is_group_session
-            else global_config.chat.max_private_context_size
-        )
-        return max(1, int(configured_context_size))
+        return self.scene.max_context_size
+
+    @property
+    def scene(self) -> ChatScene:
+        """真实聊天流唯一决定场景；场景无状态，运行状态由每个调度器持有。"""
+        return get_scene(self.chat_stream.is_group_session)
 
     @property
     def _enable_expression_learning(self) -> bool:
@@ -398,24 +400,13 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
             # 会话流发生分裂迁移时，历史消息仍挂在旧 session_id 下，
             # 此时按平台目标（群号或用户号）回退查询，保证仍能取到历史。
             if not recent_messages:
-                if self.chat_stream.is_group_session:
-                    recent_messages = await asyncio.to_thread(
-                        find_messages,
-                        platform=self.chat_stream.platform,
-                        group_id=self.chat_stream.group_id,
-                        limit=self._get_context_restore_limit(),
-                        limit_mode="latest",
-                        filter_bot=True,
-                    )
-                else:
-                    recent_messages = await asyncio.to_thread(
-                        find_messages,
-                        platform=self.chat_stream.platform,
-                        user_id=self.chat_stream.user_id,
-                        limit=self._get_context_restore_limit(),
-                        limit_mode="latest",
-                        filter_bot=True,
-                    )
+                recent_messages = await asyncio.to_thread(
+                    find_messages,
+                    **self.scene.history_target(self.chat_stream),
+                    limit=self._get_context_restore_limit(),
+                    limit_mode="latest",
+                    filter_bot=True,
+                )
         except Exception as exc:
             logger.warning(f"{self.log_prefix} 主动回合回填用户消息失败: {exc}", exc_info=True)
             return 0
@@ -562,7 +553,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         await self._tool_registry.close()
         remove_stage_status(self.session_id)
 
-        logger.info(f"{self.log_prefix} Maisaka 运行时已停止")
+        logger.debug(f"{self.log_prefix} Maisaka 运行时已停止")
 
     def adjust_talk_frequency(self, frequency: float) -> None:
         """调整当前会话的回复频率倍率。"""
@@ -704,6 +695,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
             ]
         )
         visible_text = "\n".join(detail_lines)
+        proactive_trigger_message = self._prepare_task_enqueue(task_id)
         self._chat_history.append(
             InternalContextMessage(
                 raw_message=MessageSequence([TextComponent(visible_text)]),
@@ -713,7 +705,6 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
                 source_kind=f"plugin_proactive:{normalized_plugin_id}",
             )
         )
-        proactive_trigger_message = self._build_proactive_trigger_message(task_id)
         self._arm_forced_turn_state(message_id=task_id, reason="插件主动聊天任务")
         self._queue_proactive_turn(proactive_trigger_message)
         logger.info(f"{self.log_prefix} 已接收插件主动聊天任务: plugin_id={normalized_plugin_id} task_id={task_id}")
@@ -727,9 +718,16 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         self, *, source_kind: str, text: str, reason: str, images: Sequence[ImageComponent] = (),
     ) -> Dict[str, Any]:
         """本体后台任务复用真实会话上下文和正常 Planner 调度。"""
-        if not self._running:
-            raise RuntimeError("不能向已停止的聊天运行实例投递任务")
         task_id = f"{source_kind}:{uuid.uuid4().hex}"
+        proactive_trigger_message = self._prepare_task_enqueue(task_id)
+        if source_kind == "desktop_pet_screen":
+            # 持续阅读只保留最近两帧用于对照，避免截图二进制随运行时间无限堆积。
+            previous_frames = [message for message in self._chat_history
+                               if isinstance(message, InternalContextMessage)
+                               and message.source_kind == "desktop_pet_screen"]
+            expired = {id(message) for message in previous_frames[:-1]}
+            if expired:
+                self._chat_history[:] = [message for message in self._chat_history if id(message) not in expired]
         if images:
             # 内部传话没有 IM 消息头，显式给出真实附件的引用，不能让模型用传话 ID 猜工具媒体索引。
             references = [{"msg_id": to_display_message_id(task_id), "index": index} for index in range(len(images))]
@@ -738,10 +736,19 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
             raw_message=MessageSequence([TextComponent(text), *images]), visible_text=text,
             timestamp=datetime.now(), message_id=task_id, source_kind=source_kind,
         ))
-        self._ensure_background_tasks_running()
         self._arm_forced_turn_state(message_id=task_id, reason=reason)
-        self._queue_proactive_turn(self._build_proactive_trigger_message(task_id))
+        self._queue_proactive_turn(proactive_trigger_message)
         return {"task_id": task_id, "queued": True}
+
+    def _prepare_task_enqueue(self, task_id: str) -> SessionMessage:
+        """在修改历史前检查运行状态、构建触发消息，并确保普通消费者存活。"""
+        if not self._running:
+            raise RuntimeError("不能向已停止的聊天运行实例投递任务")
+
+        trigger_message = self._build_proactive_trigger_message(task_id)
+        # 与后续历史写入和入队同步完成，不给 stop 或 Focus 归属切换留下中途交接窗口。
+        self._ensure_background_tasks_running()
+        return trigger_message
 
     async def _stop_background_subagents(self) -> None:
         """运行时停止时终止全部后台子代理，并让观察页知道它们已被终止。"""
@@ -1006,10 +1013,10 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
 
     async def register_message(self, message: SessionMessage) -> None:
         """缓存一条新消息并唤醒主循环。"""
-        await focus_mode_manager.reconcile(self)
         async with self._message_ingest_lock:
             if not self._running:
                 raise RuntimeError(f"聊天运行时已停止，不能接收入站消息：{self.session_id}")
+            await focus_mode_manager._reconcile_member(self)
             await self._register_message(message)
 
     async def _register_message(self, message: SessionMessage) -> None:
@@ -1025,7 +1032,8 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         # 媒体预处理可能使较早收到的消息较晚入队，不能回退静默窗口。
         self._last_message_received_at = max(self._last_message_received_at, received_at)
         self._update_message_trigger_state(message)
-        self._observe_message_debounce(message, received_at)
+        if self._focus_group is None:
+            self._observe_message_debounce(message, received_at)
         self.message_cache.append(message)
         self._emit_monitor_message_ingested(message)
         self._prune_processed_message_cache()
@@ -1034,6 +1042,8 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
             if history_message is not None:
                 self._chat_history.append(history_message)
             await self._focus_group.register_message(self, message, history_message)
+            # Focus 统一维护处理进度，本聊天缓存仅用于查询原始消息。
+            self._last_processed_index = len(self.message_cache)
             return
         self._request_planner_interrupt_for_message(message)
         if self._running:
@@ -1046,7 +1056,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
 
     def _request_planner_interrupt_for_message(self, message: SessionMessage) -> None:
         """快速反应模式下，用新消息打断运行中的 Planner。"""
-        if not global_config.chat.reply_timing.planner_message_steering or self._agent_state != self._STATE_RUNNING:
+        if not self.scene.is_group or not global_config.chat.reply_timing.planner_message_steering or self._agent_state != self._STATE_RUNNING:
             return
 
         request_result = self._planner_interrupt.request()
@@ -1067,25 +1077,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
 
     def _get_effective_reply_frequency(self) -> float:
         """返回当前会话生效的回复频率。"""
-        if not self.chat_stream.is_group_session:
-            # 私聊只使用暂停开关，忽略旧频率、动态频率规则与插件频率倍率。
-            return ChatConfigUtils.get_talk_value(self.session_id, is_group_chat=False)
-        if self._is_focus_mode_active_for_current_chat():
-            return 1.0
-
-        base_talk_value = self._get_base_reply_frequency()
-        if base_talk_value <= 0 or self._talk_frequency_adjust <= 0:
-            return 0.0
-
-        talk_value = float(
-            ChatConfigUtils.get_talk_value(
-                self.session_id,
-                is_group_chat=self.chat_stream.is_group_session,
-            )
-        )
-        if talk_value <= 0:
-            return 0.0
-        return max(0.0, talk_value * self._talk_frequency_adjust)
+        return self.scene.effective_reply_frequency(self)
 
     @staticmethod
     def _format_reply_frequency_for_display(frequency: float) -> str:
@@ -1095,9 +1087,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
 
     def _get_base_reply_frequency(self) -> float:
         """返回当前会话类型对应的基础回复频率。"""
-        if self.chat_stream.is_group_session:
-            return float(global_config.chat.reply_timing.talk_value)
-        return 0.0 if ChatConfigUtils.is_private_reply_paused(self.session_id) else 1.0
+        return self.scene.base_reply_frequency(self.session_id)
 
     def _is_reply_frequency_silent(self) -> bool:
         """判断当前会话是否因群聊频率为 0 或私聊暂停而静默接收。"""
@@ -1192,26 +1182,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
 
     def _update_message_trigger_state(self, message: SessionMessage) -> None:
         """补齐消息中的 @/提及 标记，并在命中时启用强制触发。"""
-
-        detected_mentioned, detected_at, reply_probability_boost = is_mentioned_bot_in_message(message)
-        if detected_at:
-            message.is_at = True
-        if detected_mentioned:
-            message.is_mentioned = True
-
-        should_force_reply = (
-            reply_probability_boost >= 1.0
-            or (message.is_at and global_config.chat.reply_timing.inevitable_at_reply)
-            or (message.is_mentioned and global_config.chat.reply_timing.mentioned_bot_reply)
-        )
-        if not should_force_reply or (not message.is_at and not message.is_mentioned):
-            return
-
-        self._arm_forced_turn(
-            message,
-            is_at=message.is_at,
-            is_mentioned=message.is_mentioned,
-        )
+        self.scene.update_message_trigger(self, message)
 
     def _arm_forced_turn(
         self,
@@ -1224,7 +1195,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
 
         trigger_reason = "@消息" if is_at else "提及消息" if is_mentioned else "触发消息"
         was_armed = self._arm_forced_turn_state(message_id=message.message_id, reason=trigger_reason)
-        self._idle_backoff.reset()
+        self._message_turn_scheduler.reset_backoff()
 
         if was_armed:
             logger.info(
@@ -1344,7 +1315,8 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         self._tool_registry.register_provider(AgentToolProvider())
         self._tool_registry.register_provider(ChatSessionToolProvider())
         self._tool_registry.register_provider(TodoToolProvider())
-        self._tool_registry.register_provider(ComputerToolProvider())
+        self._tool_registry.register_provider(ExplorationToolProvider())
+        self._tool_registry.register_provider(DesktopScreenToolProvider())
         self._tool_registry.register_provider(FileToolProvider())
         self._tool_registry.register_provider(MCPToolProvider(get_mcp_service()))
         self._chat_loop_service.set_tool_registry(self._tool_registry)
@@ -1663,10 +1635,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
 
     def _get_message_debounce_mode(self) -> Literal["off", "fast", "natural", "steady"]:
         """按真实聊天流类型读取档位，使群聊和私聊的配置及热重载互不影响。"""
-        timing = global_config.chat.reply_timing
-        if self.chat_stream.is_group_session:
-            return timing.message_debounce_mode
-        return timing.private_message_debounce_mode
+        return self.scene.debounce_mode
 
     def _is_message_debounce_enabled(self) -> bool:
         return self._get_message_debounce_mode() != "off"
@@ -1693,10 +1662,11 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
             wall_time=time.time(),
             now=time.monotonic(),
         )
+        reason = self.scene.finish_debounce(self, message, reason)
         deadline = self._fixed_message_debouncer.deadline
         if deadline is not None:
             mode_label = {"fast": "快速", "natural": "自然", "steady": "沉稳"}[mode]
-            logger.info(
+            logger.debug(
                 f"{self.log_prefix} 消息防抖：档位={mode_label}，规则={reason}，"
                 f"剩余等待={max(0.0, deadline - time.monotonic()):.3f} 秒，"
                 f"待处理={self._get_pending_message_count() + 1} 条，消息编号={message.message_id}"
@@ -1717,6 +1687,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         """清理 wait 工具挂起状态与超时任务。"""
 
         self._pending_wait_tool_call_id = None
+        self._pending_wait_after_reply = False
         self._pending_wait_logical_turn_id = None
         self._pending_wait_started_at = None
         self._pending_wait_seconds = None
@@ -1735,6 +1706,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         seconds: Optional[float] = None,
         tool_call_id: Optional[str] = None,
         logical_turn_id: Optional[str] = None,
+        after_reply: bool = False,
     ) -> int:
         """进入 wait 状态并返回连续次数；多次等待由下一轮上下文提醒，不强制停止。"""
 
@@ -1743,6 +1715,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
             seconds=seconds,
             tool_call_id=tool_call_id,
             logical_turn_id=logical_turn_id,
+            after_reply=after_reply,
         )
         return self._consecutive_wait_count
 
@@ -1759,6 +1732,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         seconds: Optional[float] = None,
         tool_call_id: Optional[str] = None,
         logical_turn_id: Optional[str] = None,
+        after_reply: bool = False,
     ) -> None:
         """切换到等待状态。"""
 
@@ -1766,6 +1740,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
             raise ValueError("进入 wait 状态必须绑定非空 tool_call_id 和 logical_turn_id")
         self._agent_state = self._STATE_WAIT
         self._pending_wait_tool_call_id = tool_call_id
+        self._pending_wait_after_reply = after_reply
         self._pending_wait_logical_turn_id = logical_turn_id
         self._pending_wait_started_at = time.time()
         self._pending_wait_seconds = seconds
@@ -1776,7 +1751,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
             self._wait_timeout_task = asyncio.create_task(
                 self._schedule_wait_timeout(seconds=seconds, tool_call_id=tool_call_id)
             )
-        if global_config.chat.reply_timing.planner_message_steering and self._has_pending_messages():
+        if self._has_pending_messages():
             # 工具执行期间收到的消息也能唤醒刚进入的 wait，避免漏掉已有新输入。
             self._schedule_message_turn()
 
@@ -1818,6 +1793,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         started_at = self._pending_wait_started_at
         requested_seconds = self._pending_wait_seconds
         elapsed_seconds = max(0.0, time.time() - started_at) if started_at is not None else 0.0
+        self._pending_wait_after_reply = False
         self._cancel_wait_timeout_task()
         self._pending_wait_tool_call_id = None
         self._pending_wait_logical_turn_id = None

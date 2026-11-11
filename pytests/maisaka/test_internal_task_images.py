@@ -1,6 +1,5 @@
 from datetime import datetime
 from io import BytesIO
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 from PIL import Image
@@ -18,10 +17,14 @@ from src.maisaka.runtime import MaisakaHeartFlowChatting
 
 
 def runtime():
-    return SimpleNamespace(
-        _running=True, _chat_history=[], _ensure_background_tasks_running=Mock(),
-        _arm_forced_turn_state=Mock(), _queue_proactive_turn=Mock(), _build_proactive_trigger_message=Mock(),
-    )
+    chat = object.__new__(MaisakaHeartFlowChatting)
+    chat._running = True
+    chat._chat_history = []
+    chat._ensure_background_tasks_running = Mock()
+    chat._arm_forced_turn_state = Mock()
+    chat._queue_proactive_turn = Mock()
+    chat._build_proactive_trigger_message = Mock()
+    return chat
 
 
 def picture(color):

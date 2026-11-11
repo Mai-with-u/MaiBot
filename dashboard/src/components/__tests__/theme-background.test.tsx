@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { useContext } from 'react'
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,13 +8,14 @@ import { BackgroundEffectsControls } from '@/components/background-effects-contr
 import { BackgroundLayer } from '@/components/background-layer'
 import { ThemeProvider } from '@/components/theme-provider'
 import { useTheme } from '@/components/use-theme'
+import { DashboardStylePreviewContext } from '@/lib/theme-context'
 import type { BackgroundConfig, BackgroundEffects, UserThemeConfig } from '@/lib/theme/tokens'
 import { DEFAULT_DASHBOARD_STYLE_CONFIG, defaultBackgroundEffects } from '@/lib/theme/tokens'
 
 const mocks = vi.hoisted(() => ({
   getAssetUrl: vi.fn(),
-  getBotConfig: vi.fn(),
-  updateBotConfigSection: vi.fn(),
+  getCommonSettings: vi.fn(),
+  saveWebUIStyle: vi.fn(),
   loadThemeConfig: vi.fn(),
   resetThemeToDefault: vi.fn(),
   saveThemePartial: vi.fn(),
@@ -25,9 +27,13 @@ vi.mock('@/lib/asset-store-context', () => ({
   useAssetStore: () => ({ getAssetUrl: mocks.getAssetUrl }),
 }))
 
-vi.mock('@/lib/config-api', () => ({
-  getBotConfig: mocks.getBotConfig,
-  updateBotConfigSection: mocks.updateBotConfigSection,
+vi.mock('@/host/state', () => ({
+  useHostRuntime: () => ({ host: true, authenticated: true }),
+}))
+
+vi.mock('@/host/api', () => ({
+  getCommonSettings: mocks.getCommonSettings,
+  saveWebUIStyle: mocks.saveWebUIStyle,
 }))
 
 vi.mock('@/lib/theme/storage', () => ({
@@ -120,6 +126,7 @@ function makeBackgroundConfig(
 
 function ThemeProbe() {
   const { resetTheme, resolvedTheme, setTheme, theme, themeConfig, updateThemeConfig } = useTheme()
+  const setDashboardStylePreview = useContext(DashboardStylePreviewContext)
 
   return (
     <div>
@@ -135,6 +142,12 @@ function ThemeProbe() {
       <button type="button" onClick={resetTheme}>
         重置主题
       </button>
+      <button type="button" onClick={() => setDashboardStylePreview('millennium')}>
+        预览千禧
+      </button>
+      <button type="button" onClick={() => setDashboardStylePreview(null)}>
+        退出预览
+      </button>
     </div>
   )
 }
@@ -149,8 +162,8 @@ describe('ThemeProvider', () => {
     localStorage.clear()
     window.history.replaceState(null, '', '/')
     mocks.loadThemeConfig.mockReturnValue(makeThemeConfig())
-    mocks.getBotConfig.mockResolvedValue({ webui: {} })
-    mocks.updateBotConfigSection.mockResolvedValue(undefined)
+    mocks.getCommonSettings.mockResolvedValue({ webui: {} })
+    mocks.saveWebUIStyle.mockResolvedValue(undefined)
     vi.stubGlobal(
       'matchMedia',
       vi.fn((query: string) => {
@@ -222,8 +235,27 @@ describe('ThemeProvider', () => {
     expect(screen.getByTestId('theme-state')).toHaveTextContent('system:dark:modern')
   })
 
+  it('立即应用预览风格，退出后恢复已保存风格', async () => {
+    render(
+      <ThemeProvider>
+        <ThemeProbe />
+      </ThemeProvider>
+    )
+    await act(async () => {})
+
+    fireEvent.click(screen.getByRole('button', { name: '预览千禧' }))
+    expect(screen.getByTestId('theme-state')).toHaveTextContent('system:light:millennium')
+    expect(document.documentElement.dataset.dashboardStyle).toBe('millennium')
+    expect(mocks.applyThemePipeline).toHaveBeenLastCalledWith(expect.objectContaining({ dashboardStyle: 'millennium' }), false)
+    expect(mocks.saveThemePartial).not.toHaveBeenCalled()
+    expect(mocks.saveWebUIStyle).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '退出预览' }))
+    expect(document.documentElement.dataset.dashboardStyle).toBe('modern')
+  })
+
   it('读取远端 WebUI 风格，并在本地切换时写回数值协议', async () => {
-    mocks.getBotConfig.mockResolvedValue({ webui: { webui_style: 1 } })
+    mocks.getCommonSettings.mockResolvedValue({ webui: { webui_style: 1 } })
     render(
       <ThemeProvider>
         <ThemeProbe />
@@ -239,9 +271,7 @@ describe('ThemeProvider', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '切到复古' }))
     await waitFor(() =>
-      expect(mocks.updateBotConfigSection).toHaveBeenCalledWith('webui', {
-        webui_style: 1,
-      })
+      expect(mocks.saveWebUIStyle).toHaveBeenCalledWith(1)
     )
   })
 
@@ -260,9 +290,7 @@ describe('ThemeProvider', () => {
     expect(mocks.resetThemeToDefault).toHaveBeenCalledOnce()
     expect(mocks.removeCustomCSS).toHaveBeenCalledOnce()
     await waitFor(() =>
-      expect(mocks.updateBotConfigSection).toHaveBeenCalledWith('webui', {
-        webui_style: 0,
-      })
+      expect(mocks.saveWebUIStyle).toHaveBeenCalledWith(0)
     )
   })
 
@@ -279,8 +307,8 @@ describe('ThemeProvider', () => {
       await Promise.resolve()
     })
 
-    expect(mocks.getBotConfig).not.toHaveBeenCalled()
-    expect(mocks.updateBotConfigSection).not.toHaveBeenCalled()
+    expect(mocks.getCommonSettings).not.toHaveBeenCalled()
+    expect(mocks.saveWebUIStyle).not.toHaveBeenCalled()
   })
 })
 

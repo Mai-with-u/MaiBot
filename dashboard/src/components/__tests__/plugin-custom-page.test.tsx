@@ -294,9 +294,11 @@ describe('custom page bridge lifecycle', () => {
 
   it('stops a page that floods messages', async () => {
     const { port, iframe } = await start()
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(performance.now())
     act(() => {
-      for (let index = 0; index < 201; index++) void port.onmessage?.({ data: null })
+      for (let index = 0; index < 601; index++) void port.onmessage?.({ data: null })
     })
+    clock.mockRestore()
     expect(port.close).toHaveBeenCalled()
     expect(iframe.isConnected).toBe(false)
     expect(screen.getByText('pluginWebUI.customStopped')).toBeInTheDocument()

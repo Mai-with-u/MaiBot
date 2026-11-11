@@ -1,7 +1,8 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import type { LearningBrowserTabs } from '../learning'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { skipToken, useMutation, useQuery } from '@tanstack/react-query'
 import { ArrowUpDown, Plus, Search, SlidersHorizontal, Trash2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -43,6 +44,7 @@ import {
   banEmoji,
   batchDeleteEmojis,
   deleteEmoji,
+  getEmojiDetail,
   getEmojiList,
   getEmojiStats,
   registerEmoji,
@@ -69,9 +71,14 @@ function alignEmojiPageSize(preferredSize: number, columns: number): number {
   return rows * columns
 }
 
-export function EmojiManagementPage({ browserHeader }: { browserHeader?: ReactNode }) {
+export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBrowserTabs }) {
   const [selectedEmoji, setSelectedEmoji] = useState<Emoji | null>(null)
   const [detailDialogOpen, setDetailDialogOpen] = useState(false)
+  const detailEmojiId = selectedEmoji?.id
+  const detailQuery = useQuery({
+    queryKey: ['emoji', 'detail', detailEmojiId],
+    queryFn: detailDialogOpen && detailEmojiId !== undefined ? () => getEmojiDetail(detailEmojiId) : skipToken,
+  })
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [batchDeleteDialogOpen, setBatchDeleteDialogOpen] = useState(false)
@@ -297,7 +304,7 @@ export function EmojiManagementPage({ browserHeader }: { browserHeader?: ReactNo
     <div className="flex h-full min-h-0 min-w-0 flex-col p-3 pb-4 max-lg:h-auto sm:p-4">
       {!isMobile && (
         <EmojiBrowser
-          browserHeader={browserHeader}
+          browserTabs={browserTabs}
           stats={stats}
           filters={list.filters}
           onFilterChange={list.setFilter}
@@ -441,6 +448,8 @@ export function EmojiManagementPage({ browserHeader }: { browserHeader?: ReactNo
       {/* 详情对话框 */}
       <EmojiDetailDialog
         emoji={selectedEmoji}
+        emotionTags={detailQuery.data?.emotion_tags}
+        contentTags={detailQuery.data?.content_tags}
         open={detailDialogOpen}
         onOpenChange={setDetailDialogOpen}
         actions={

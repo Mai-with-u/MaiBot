@@ -17,7 +17,7 @@ const tourState = vi.hoisted(() => ({ startTour: vi.fn() }))
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
-  localStorage.removeItem('model-assignment-tour-entry-dismissed')
+  localStorage.removeItem('maibot-model-task-guide-dismissed')
   modelListCache.clear()
 })
 
@@ -65,37 +65,6 @@ vi.mock('@/lib/config-api', () => ({
 vi.mock('@/lib/expression-api', () => ({ getExpressionVectorBuildProgress: vi.fn() }))
 vi.mock('@/lib/memory-api', () => ({ getMemoryRuntimeConfig: vi.fn() }))
 
-// 真实表格/卡片用于覆盖响应式双视图；任务卡片仍桩以便稳定触发 embedding 警告
-vi.mock('../model/components', async (importActual) => {
-  const actual = await importActual<typeof import('../model/components')>()
-  return {
-    ...actual,
-    TaskConfigCard: ({
-      taskConfig,
-      onChange,
-      hideTemperature,
-      hideMaxTokens,
-    }: {
-      taskConfig: { model_list?: string[] }
-      onChange: (f: string, v: string[]) => void
-      hideTemperature?: boolean
-      hideMaxTokens?: boolean
-    }) => (
-      <div data-testid="task-config-card">
-        <span data-testid="task-models">{JSON.stringify(taskConfig.model_list ?? [])}</span>
-        {hideTemperature ? <span>温度已隐藏</span> : null}
-        {hideMaxTokens ? <span>最大 Token 已隐藏</span> : null}
-        <button type="button" onClick={() => onChange('model_list', ['new-embed-model'])}>
-          change-embedding
-        </button>
-        <button type="button" onClick={() => onChange('model_list', ['another-embed-model'])}>
-          change-embedding-alt
-        </button>
-      </div>
-    ),
-  }
-})
-
 vi.mock('../modelProvider/ProviderForm', () => ({
   ProviderForm: ({ open }: { open: boolean }) =>
     open ? <div data-testid="provider-form">厂商表单</div> : null,
@@ -103,7 +72,7 @@ vi.mock('../modelProvider/ProviderForm', () => ({
 
 function baseConfig() {
   return {
-    models: [{ name: 'gpt-4', model_identifier: 'gpt-4', api_provider: 'openai' }],
+    models: [{ model_type: 'llm', name: 'gpt-4', model_identifier: 'gpt-4', api_provider: 'openai' }],
     api_providers: [
       {
         name: 'openai',
@@ -128,6 +97,18 @@ function baseSchema() {
         },
       },
     },
+  }
+}
+
+function withEmbeddingModels(config = baseConfig()) {
+  return {
+    ...config,
+    models: [
+      ...config.models,
+      ...['old-embed-model', 'new-embed-model', 'another-embed-model'].map((name) => ({
+        model_type: 'embedding', name, model_identifier: name, api_provider: 'openai',
+      })),
+    ],
   }
 }
 
@@ -169,6 +150,7 @@ function baseVersions() {
 function makeModels(count: number, provider = 'openai') {
   return Array.from({ length: count }, (_, index) => ({
     name: `model-${String(index).padStart(2, '0')}`,
+    model_type: 'llm',
     model_identifier: `id-${index}`,
     api_provider: provider,
     price_in: 1,
@@ -250,9 +232,7 @@ function stubMatchMedia(matchesMinWidthLg: boolean) {
 }
 
 function getModelIdentifierCombobox(container: HTMLElement) {
-  return within(container)
-    .getAllByRole('combobox')
-    .find((element) => element.getAttribute('aria-haspopup') === 'dialog') as HTMLElement
+  return within(container).getByRole('button', { name: '展开列表' })
 }
 
 function clickDialogAction(container: HTMLElement, name: string) {
@@ -294,7 +274,7 @@ function extraVersions() {
 beforeEach(() => {
   routeState.searchStr = ''
   window.history.replaceState(null, '', '/config/model')
-  localStorage.removeItem('model-assignment-tour-entry-dismissed')
+  localStorage.removeItem('maibot-model-task-guide-dismissed')
   installPointerCaptureStub()
   vi.mocked(configApi.getModelConfigCached).mockResolvedValue(baseConfig() as never)
   vi.mocked(configApi.getModelConfig).mockResolvedValue(baseConfig() as never)
@@ -350,12 +330,37 @@ beforeEach(() => {
 async function renderModelPage() {
   render(<ModelConfigPage />)
   // 等待初始加载完成（任意一个 tab 出现）
-  await screen.findByRole('tab', { name: '模型设置' })
+  await screen.findByRole('tab', { name: /^模型库/ })
 }
 
 async function openConfigurationTab(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole('tab', { name: '模型设置' }))
+  await user.click(screen.getByRole('tab', { name: /^模型库/ }))
   await screen.findByRole('table', { name: '模型列表' })
+}
+
+async function openAddModel(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(document.querySelector<HTMLButtonElement>('[data-tour="add-model-button"]')!)
+  await user.click(screen.getByRole('menuitem', { name: '添加 LLM 模型' }))
+}
+
+async function openVersionAction(user: ReturnType<typeof userEvent.setup>, name: string) {
+  await user.click(screen.getByRole('button', { name: 'Bot 任务配置副本' }))
+  await user.click(screen.getByRole('menuitem', { name }))
+}
+
+async function openTaskEditor(user: ReturnType<typeof userEvent.setup>, task: string, title: string) {
+  const selector = `[data-config-field-path="model_task_config.${task}"]`
+  if (!document.querySelector(selector)) {
+    await user.click(screen.getByRole('button', { name: /MORE/ }))
+  }
+  const card = document.querySelector<HTMLElement>(selector)!
+  await user.click(within(card).getByRole('button', { name: /编辑|安排模型|开启/ }))
+  return screen.findByRole('dialog', { name: new RegExp(title) })
+}
+
+async function selectTaskModel(user: ReturnType<typeof userEvent.setup>, editor: HTMLElement, name: string) {
+  await user.click(within(editor).getByRole('combobox', { name: '添加模型' }))
+  await user.click(await screen.findByRole('option', { name: new RegExp(`^${name}`) }))
 }
 
 describe('ModelConfigPage 特征化', () => {
@@ -363,7 +368,7 @@ describe('ModelConfigPage 特征化', () => {
     await renderModelPage()
     expect(configApi.getModelConfigCached).toHaveBeenCalled()
     expect(configApi.getModelConfigSchema).toHaveBeenCalled()
-    expect(screen.getByRole('tab', { name: '模型设置' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /^模型库/ })).toBeInTheDocument()
   })
 
   it('加载未完成时展示加载状态', async () => {
@@ -392,15 +397,11 @@ describe('ModelConfigPage 特征化', () => {
     vi.mocked(configApi.getModelConfig).mockResolvedValue(deepSeekConfig as never)
 
     await renderModelPage()
-    await user.click(screen.getByRole('tab', { name: '模型设置' }))
-    const addModelButton = document.querySelector<HTMLButtonElement>(
-      '[data-tour="add-model-button"]'
-    )
-    expect(addModelButton).not.toBeNull()
-    await user.click(addModelButton!)
+    await user.click(screen.getByRole('tab', { name: /^模型库/ }))
+    await openAddModel(user)
 
     const dialog = await screen.findByRole('dialog')
-    expect(within(dialog).getByRole('heading', { name: '添加模型' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('heading', { name: '添加 LLM 模型' })).toBeInTheDocument()
     expect(within(dialog).queryByText('支持缓存')).not.toBeInTheDocument()
     const thinkingSwitch = within(dialog).getByRole('switch', { name: '启用思考' })
     const effortSelect = within(dialog).getByRole('combobox', { name: '思考力度' })
@@ -455,12 +456,12 @@ describe('ModelConfigPage 特征化', () => {
     // 内层弹窗打开时 Radix 会把外层弹窗标记为 aria-hidden，但外层不应被触摸事件卸载。
     expect(dialog).toBeInTheDocument()
     await user.click(saveExtraParamsButton)
-    expect(within(dialog).getByRole('heading', { name: '添加模型' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('heading', { name: '添加 LLM 模型' })).toBeInTheDocument()
     expect(thinkingSwitch).toBeChecked()
     expect(effortSelect).toBeEnabled()
     expect(effortSelect).toHaveTextContent('最高')
 
-    await user.click(within(dialog).getByRole('button', { name: '高级' }))
+    await user.click(within(dialog).getByRole('switch', { name: '高级设置' }))
     expect(within(dialog).queryByRole('switch', { name: '支持缓存' })).not.toBeInTheDocument()
     const sendTemperatureSwitch = within(dialog).getByRole('switch', {
       name: '发送 temperature 参数',
@@ -482,15 +483,22 @@ describe('ModelConfigPage 特征化', () => {
     })
     await user.click(within(reopenedExtraParamsDialog).getByRole('button', { name: '保存' }))
 
-    expect(within(dialog).getByRole('heading', { name: '添加模型' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('heading', { name: '添加 LLM 模型' })).toBeInTheDocument()
     expect(within(dialog).getByText('未配置额外参数')).toBeInTheDocument()
   })
 
   describe('embedding 换模型警告', () => {
+    beforeEach(() => {
+      const config = withEmbeddingModels()
+      vi.mocked(configApi.getModelConfigCached).mockResolvedValue(config as never)
+      vi.mocked(configApi.getModelConfig).mockResolvedValue(config as never)
+    })
+
     it('显示表达库进度和记忆库重建状态', async () => {
       const user = userEvent.setup()
       await renderModelPage()
-      await user.click(screen.getByRole('tab', { name: '功能分配' }))
+      await user.click(screen.getByRole('tab', { name: /^分工/ }))
+      await openTaskEditor(user, 'embedding', '文本嵌入')
 
       expect(await screen.findByText('表达库构建')).toBeInTheDocument()
       expect(screen.getByText('后台补建中 · 40/100')).toBeInTheDocument()
@@ -501,26 +509,28 @@ describe('ModelConfigPage 特征化', () => {
     it('确认后应用选中的模型', async () => {
       const user = userEvent.setup()
       await renderModelPage()
-      await user.click(screen.getByRole('tab', { name: '功能分配' }))
-      await user.click(await screen.findByText('change-embedding'))
+      await user.click(screen.getByRole('tab', { name: /^分工/ }))
+      const editor = await openTaskEditor(user, 'embedding', '文本嵌入')
+      await selectTaskModel(user, editor, 'new-embed-model')
       expect(await screen.findByText('更换嵌入模型警告')).toBeInTheDocument()
 
       await user.click(screen.getByRole('button', { name: '确认更换' }))
       await waitFor(() =>
-        expect(screen.getByTestId('task-models')).toHaveTextContent('new-embed-model')
+        expect(within(editor).getByRole('list', { name: '文本嵌入的模型顺序' })).toHaveTextContent('new-embed-model')
       )
     })
 
     it('取消则不应用变更', async () => {
       const user = userEvent.setup()
       await renderModelPage()
-      await user.click(screen.getByRole('tab', { name: '功能分配' }))
-      await user.click(await screen.findByText('change-embedding'))
+      await user.click(screen.getByRole('tab', { name: /^分工/ }))
+      const editor = await openTaskEditor(user, 'embedding', '文本嵌入')
+      await selectTaskModel(user, editor, 'new-embed-model')
       expect(await screen.findByText('更换嵌入模型警告')).toBeInTheDocument()
 
       await user.click(screen.getByRole('button', { name: '取消' }))
       await waitFor(() => expect(screen.queryByText('更换嵌入模型警告')).not.toBeInTheDocument())
-      expect(screen.getByTestId('task-models')).toHaveTextContent('old-embed-model')
+      expect(within(editor).getByRole('list', { name: '文本嵌入的模型顺序' })).toHaveTextContent('old-embed-model')
     })
   })
 
@@ -541,7 +551,7 @@ describe('ModelConfigPage 特征化', () => {
 
     await openConfigurationTab(user)
     await user.click(within(getModelTable()).getByRole('button', { name: '编辑模型 gpt-4' }))
-    const nameInput = await screen.findByRole('textbox', { name: '模型名称 *' })
+    const nameInput = await screen.findByRole('textbox', { name: /^名称/ })
     await user.clear(nameInput)
     await user.type(nameInput, 'renamed-gpt-4')
     await user.click(screen.getByRole('button', { name: '保存' }))
@@ -575,7 +585,7 @@ describe('ModelConfigPage 特征化', () => {
     await renderModelPage()
     await openConfigurationTab(user)
     expect(screen.getAllByText('1 个价格时段')).toHaveLength(2)
-    expect(within(getModelTable()).getByRole('columnheader', { name: '默认输入' })).toBeInTheDocument()
+    expect(within(getModelTable()).getByRole('columnheader', { name: /^价格/ })).toBeInTheDocument()
     await user.click(within(getModelTable()).getByRole('button', { name: '编辑模型 gpt-4' }))
     const dialog = await screen.findByRole('dialog', { name: '编辑模型' })
     expect(within(dialog).getByLabelText('时段 1 开始时间')).toHaveAttribute('type', 'time')
@@ -687,8 +697,8 @@ describe('ModelConfigPage 特征化', () => {
     const filteredConfig = {
       ...baseConfig(),
       models: [
-        { name: 'gpt-4', model_identifier: 'gpt-4', api_provider: 'openai' },
-        { name: 'local-model', model_identifier: 'local-model', api_provider: 'ollama' },
+        { model_type: 'llm', name: 'gpt-4', model_identifier: 'gpt-4', api_provider: 'openai' },
+        { model_type: 'llm', name: 'local-model', model_identifier: 'local-model', api_provider: 'ollama' },
       ],
       api_providers: [
         ...baseConfig().api_providers,
@@ -714,14 +724,14 @@ describe('ModelConfigPage 特征化', () => {
     expect(screen.getByRole('heading', { name: 'ollama' })).toBeInTheDocument()
     expect(screen.getByText('客户端类型：openai')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: '全部' }))
+    await user.click(within(document.querySelector<HTMLElement>('[data-config-field-path="api_providers"]')!).getByRole('button', { name: '全部' }))
     expectTableHasModel('gpt-4')
   })
 
   it('删除被模型引用的提供商触发级联确认，确认后连带移除关联模型', async () => {
     const user = userEvent.setup()
     await renderModelPage()
-    await user.click(screen.getByRole('tab', { name: '模型设置' }))
+    await user.click(screen.getByRole('tab', { name: /^模型库/ }))
     await user.click(screen.getByRole('button', { name: '筛选厂商 openai' }))
 
     // 删除 openai（被 gpt-4 引用）→ 单删确认框
@@ -776,7 +786,7 @@ describe('ModelConfigPage 特征化', () => {
     expect(screen.getByText(/replyer、embedding 还未分配模型/)).toBeInTheDocument()
 
     await openConfigurationTab(user)
-    expect(screen.getByRole('button', { name: '全部' })).toBeInTheDocument()
+    expect(within(document.querySelector<HTMLElement>('[data-config-field-path="api_providers"]')!).getByRole('button', { name: '全部' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /筛选厂商/ })).not.toBeInTheDocument()
     expect(screen.getAllByText('暂无模型配置')).toHaveLength(2)
     expect(screen.queryByRole('heading', { name: 'openai' })).not.toBeInTheDocument()
@@ -793,11 +803,11 @@ describe('ModelConfigPage 特征化', () => {
     vi.mocked(configApi.getModelConfig).mockResolvedValue(emptyConfig as never)
 
     await renderModelPage()
-    await user.click(screen.getByRole('tab', { name: '模型设置' }))
-    await user.click(document.querySelector<HTMLButtonElement>('[data-tour="add-model-button"]')!)
+    await user.click(screen.getByRole('tab', { name: /^模型库/ }))
+    await openAddModel(user)
 
     const dialog = await screen.findByRole('dialog')
-    expect(within(dialog).getByRole('heading', { name: '添加模型' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('heading', { name: '添加 LLM 模型' })).toBeInTheDocument()
     await user.click(within(dialog).getByRole('button', { name: '保存' }))
 
     expect(within(dialog).getByText('请输入模型名称')).toBeInTheDocument()
@@ -826,10 +836,10 @@ describe('ModelConfigPage 特征化', () => {
     await renderModelPage()
     await openConfigurationTab(user)
     await user.click(screen.getByRole('button', { name: '筛选厂商 custom-provider' }))
-    await user.click(document.querySelector<HTMLButtonElement>('[data-tour="add-model-button"]')!)
+    await openAddModel(user)
 
     const dialog = await screen.findByRole('dialog')
-    expect(within(dialog).getByRole('combobox', { name: 'API 提供商 *' })).toHaveTextContent(
+    expect(within(dialog).getByRole('combobox', { name: /^提供商/ })).toHaveTextContent(
       'custom-provider'
     )
   })
@@ -839,8 +849,8 @@ describe('ModelConfigPage 特征化', () => {
     await renderModelPage()
     await openConfigurationTab(user)
 
-    await user.type(screen.getByPlaceholderText('搜索模型名称、标识符或提供商...'), 'zzzz-missing')
-    expect(screen.getByText('找到 0 个结果')).toBeInTheDocument()
+    await user.type(screen.getByRole('textbox', { name: '搜索模型' }), 'zzzz-missing')
+    expect(screen.getByText('找到 0 个')).toBeInTheDocument()
     expect(screen.getAllByText('未找到匹配的模型')).toHaveLength(2)
   })
 
@@ -889,10 +899,10 @@ describe('ModelConfigPage 特征化', () => {
     fireEvent.scroll(scroller)
     await waitFor(() => expectTableHasModel('model-24'))
 
-    fireEvent.change(screen.getByPlaceholderText('搜索模型名称、标识符或提供商...'), {
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索模型' }), {
       target: { value: 'model-24' },
     })
-    expect(screen.getByText('找到 1 个结果')).toBeInTheDocument()
+    expect(screen.getByText('找到 1 个')).toBeInTheDocument()
     expectTableHasModel('model-24')
     expectTableNotHasModel('model-00')
     expectTableNotHasModel('model-19')
@@ -921,38 +931,38 @@ describe('ModelConfigPage 特征化', () => {
     )
   })
 
-  it('关闭新手引导后写入本地标记且不再展示', async () => {
+  it('关闭使用提示后写入本地标记且不再展示', async () => {
     const user = userEvent.setup()
     await renderModelPage()
-    expect(screen.getByText(/新手引导/)).toBeInTheDocument()
+    expect(screen.getByText('把模型安排到对应的工作')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: '关闭' }))
-    expect(screen.queryByText(/新手引导/)).not.toBeInTheDocument()
-    expect(localStorage.getItem('model-assignment-tour-entry-dismissed')).toBe('true')
+    await user.click(screen.getByRole('button', { name: '关闭使用提示' }))
+    expect(screen.queryByText('把模型安排到对应的工作')).not.toBeInTheDocument()
+    expect(localStorage.getItem('maibot-model-task-guide-dismissed')).toBe('true')
 
     cleanup()
     render(<ModelConfigPage />)
-    await screen.findByRole('tab', { name: '模型设置' })
-    expect(screen.queryByText(/新手引导/)).not.toBeInTheDocument()
+    await screen.findByRole('tab', { name: /^模型库/ })
+    expect(screen.queryByText('把模型安排到对应的工作')).not.toBeInTheDocument()
   })
 
   it('切换标签会改写地址栏，URL tab 参数会决定初始标签', async () => {
     const user = userEvent.setup()
     await renderModelPage()
 
-    await user.click(screen.getByRole('tab', { name: '模型设置' }))
+    await user.click(screen.getByRole('tab', { name: /^模型库/ }))
     expect(window.location.pathname + window.location.search).toBe('/config/model?tab=configuration')
 
-    await user.click(screen.getByRole('tab', { name: '功能分配' }))
+    await user.click(screen.getByRole('tab', { name: /^分工/ }))
     expect(window.location.pathname + window.location.search).toBe('/config/model')
 
     cleanup()
     window.history.replaceState(null, '', '/config/model?tab=configuration')
     routeState.searchStr = '?tab=configuration'
     render(<ModelConfigPage />)
-    await screen.findByRole('tab', { name: '模型设置' })
+    await screen.findByRole('tab', { name: /^模型库/ })
     await waitFor(() =>
-      expect(screen.getByRole('tab', { name: '模型设置' })).toHaveAttribute('data-state', 'active')
+      expect(screen.getByRole('tab', { name: /^模型库/ })).toHaveAttribute('data-state', 'active')
     )
   })
 
@@ -988,15 +998,15 @@ describe('ModelConfigPage 特征化', () => {
     vi.mocked(configApi.getModelConfigVersions).mockResolvedValue(versions as never)
 
     await renderModelPage()
-    await user.click(screen.getByRole('button', { name: '保存当前配置副本' }))
-    const createDialog = await screen.findByRole('dialog', { name: '保存模型配置副本' })
+    await openVersionAction(user, '保存当前配置副本')
+    const createDialog = await screen.findByRole('dialog', { name: '保存Bot 任务配置副本' })
     await user.type(within(createDialog).getByLabelText('副本名称'), '备份-A')
     await user.click(within(createDialog).getByRole('button', { name: '保存副本' }))
     await waitFor(() => expect(configApi.createModelConfigVersion).toHaveBeenCalledWith('备份-A'))
-    expect(screen.queryByRole('dialog', { name: '保存模型配置副本' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '保存Bot 任务配置副本' })).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: '管理配置副本' }))
-    const manageDialog = await screen.findByRole('dialog', { name: '模型配置副本' })
+    await openVersionAction(user, '管理配置副本')
+    const manageDialog = await screen.findByRole('dialog', { name: 'Bot 任务配置副本' })
     expect(within(manageDialog).getByText('夜间副本')).toBeInTheDocument()
     expect(within(manageDialog).getByText('无时间副本')).toBeInTheDocument()
     expect(within(manageDialog).getByText('-')).toBeInTheDocument()
@@ -1026,9 +1036,9 @@ describe('ModelConfigPage 特征化', () => {
     await user.click(switchButtons.find((button) => !(button as HTMLButtonElement).disabled)!)
     await waitFor(() => expect(configApi.switchModelConfigVersion).toHaveBeenCalledWith('v1'))
 
-    const reopened = await screen.findByRole('dialog', { name: '模型配置副本' })
+    const reopened = await screen.findByRole('dialog', { name: 'Bot 任务配置副本' })
     await user.click(within(reopened).getByRole('button', { name: '删除副本 夜间副本' }))
-    expect(await screen.findByText('删除模型配置副本')).toBeInTheDocument()
+    expect(await screen.findByText('删除Bot 任务配置副本')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '删除' }))
     await waitFor(() => expect(configApi.deleteModelConfigVersion).toHaveBeenCalledWith('v1'))
   })
@@ -1036,7 +1046,7 @@ describe('ModelConfigPage 特征化', () => {
   it('管理副本在没有任何未启用副本时展示空态', async () => {
     const user = userEvent.setup()
     await renderModelPage()
-    await user.click(screen.getByRole('button', { name: '管理配置副本' }))
+    await openVersionAction(user, '管理配置副本')
     expect(await screen.findByText('暂无未启用副本')).toBeInTheDocument()
   })
 
@@ -1047,11 +1057,11 @@ describe('ModelConfigPage 特征化', () => {
 
     await renderModelPage()
     await waitFor(() => expect(scrollSpy).toHaveBeenCalledWith('models'))
-    expect(screen.getByRole('tab', { name: '模型设置' })).toHaveAttribute('data-state', 'active')
+    expect(screen.getByRole('tab', { name: /^模型库/ })).toHaveAttribute('data-state', 'active')
     scrollSpy.mockRestore()
   })
 
-  it('任务搜索字段会展开高级设置并选中对应任务', async () => {
+  it('任务搜索直接打开对应抽屉，其他任务仍可从面板编辑', async () => {
     const user = userEvent.setup()
     vi.mocked(configApi.getModelConfigSchema).mockResolvedValue(schemaWithTasks() as never)
     routeState.searchStr = '?field=model_task_config.vlm.model_list'
@@ -1059,15 +1069,15 @@ describe('ModelConfigPage 特征化', () => {
 
     await renderModelPage()
     await waitFor(() =>
-      expect(screen.getByRole('tab', { name: '功能分配' })).toHaveAttribute('data-state', 'active')
+      expect(screen.getByRole('tab', { name: /^分工/, hidden: true })).toHaveAttribute('data-state', 'active')
     )
-    // vlm 现在展示温度滑块，不再上报「温度已隐藏」
-    expect(await screen.findByTestId('task-config-card')).toBeInTheDocument()
-    expect(screen.queryByText('温度已隐藏')).toBeNull()
-
-    const voiceButton = await screen.findByRole('button', { name: /voice/ })
-    await user.click(voiceButton)
-    expect(await screen.findByText('最大 Token 已隐藏')).toBeInTheDocument()
+    const visualEditor = await screen.findByRole('dialog', { name: /识图/ })
+    expect(within(visualEditor).getByLabelText('温度')).toBeInTheDocument()
+    expect(visualEditor.querySelector('[data-tour="task-model-select"]')).not.toBeNull()
+    await user.keyboard('{Escape}')
+    const voiceEditor = await openTaskEditor(user, 'voice', '语音')
+    expect(within(voiceEditor).queryByLabelText('最大 Token')).not.toBeInTheDocument()
+    expect(within(voiceEditor).getByLabelText('超时')).toBeInTheDocument()
   })
 
   it('全选后可批量删除当前页模型', async () => {
@@ -1096,61 +1106,25 @@ describe('ModelConfigPage 特征化', () => {
     await waitFor(() => expect(within(getModelTable()).queryByText('gpt-4')).not.toBeInTheDocument())
   })
 
-  it('ResizeObserver 不可用时模型标识用 window resize 计算滚动距离', async () => {
-    const originalObserver = window.ResizeObserver
-    // 覆盖页面在无 ResizeObserver 时回退到 resize 监听的分支
-    // @ts-expect-error 测试故意删除浏览器观察者
-    delete window.ResizeObserver
-    const restoreWidth = (() => {
-      const proto = HTMLElement.prototype
-      const scrollDesc = Object.getOwnPropertyDescriptor(proto, 'scrollWidth')
-      const clientDesc = Object.getOwnPropertyDescriptor(proto, 'clientWidth')
-      Object.defineProperty(proto, 'scrollWidth', { configurable: true, get: () => 400 })
-      Object.defineProperty(proto, 'clientWidth', { configurable: true, get: () => 80 })
-      return () => {
-        if (scrollDesc) Object.defineProperty(proto, 'scrollWidth', scrollDesc)
-        else delete (proto as { scrollWidth?: number }).scrollWidth
-        if (clientDesc) Object.defineProperty(proto, 'clientWidth', clientDesc)
-        else delete (proto as { clientWidth?: number }).clientWidth
-      }
-    })()
-
-    try {
-      vi.mocked(configApi.getModelConfigSchema).mockResolvedValue(schemaWithTasks() as never)
-      await renderModelPage()
-      const marqueeText = document.querySelector('.model-identifier-marquee-text') as HTMLElement
-      expect(marqueeText).not.toBeNull()
-      fireEvent(window, new Event('resize'))
-      await waitFor(() =>
-        expect(marqueeText.style.getPropertyValue('--model-identifier-marquee-distance')).toBe(
-          '-320px'
-        )
-      )
-    } finally {
-      restoreWidth()
-      window.ResizeObserver = originalObserver
-    }
-  })
-
   it('schema 加载失败时功能分配不渲染任务卡片', async () => {
     const user = userEvent.setup()
     vi.mocked(configApi.getModelConfigSchema).mockRejectedValue(new Error('schema 不可用'))
     vi.mocked(configApi.getModelConfigVersions).mockRejectedValue(new Error('副本服务挂了'))
 
     await renderModelPage()
-    await user.click(screen.getByRole('tab', { name: '功能分配' }))
+    await user.click(screen.getByRole('tab', { name: /^分工/ }))
 
-    expect(screen.getByRole('tab', { name: '功能分配' })).toHaveAttribute('data-state', 'active')
+    expect(screen.getByRole('tab', { name: /^分工/ })).toHaveAttribute('data-state', 'active')
     expect(screen.queryByText('模型类别')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('task-config-card')).not.toBeInTheDocument()
+    expect(document.querySelector('[data-task-board]')).toBeNull()
 
-    expect(screen.getByRole('combobox', { name: '模型配置副本' })).toHaveTextContent('默认配置')
+    expect(screen.getByRole('button', { name: 'Bot 任务配置副本' })).toHaveTextContent('默认配置')
   })
 
   it('空 embedding 首次分配不弹警告，Esc 关闭警告会放弃变更', async () => {
     const user = userEvent.setup()
     const emptyEmbeddingConfig = {
-      ...baseConfig(),
+      ...withEmbeddingModels(),
       model_task_config: {
         replyer: { model_list: ['gpt-4'] },
         embedding: { model_list: [] },
@@ -1161,19 +1135,20 @@ describe('ModelConfigPage 特征化', () => {
     vi.mocked(configApi.getModelConfigSchema).mockResolvedValue(schemaWithTasks() as never)
 
     await renderModelPage()
-    await user.click(screen.getByRole('tab', { name: '功能分配' }))
-    await user.click(await screen.findByRole('button', { name: /^embedding/ }))
-    await waitFor(() => expect(screen.getByTestId('task-models')).toHaveTextContent('[]'))
-    await user.click(await screen.findByText('change-embedding'))
+    await user.click(screen.getByRole('tab', { name: /^分工/ }))
+    const editor = await openTaskEditor(user, 'embedding', '文本嵌入')
+    const modelOrder = within(editor).getByRole('list', { name: '文本嵌入的模型顺序' })
+    expect(modelOrder).toBeEmptyDOMElement()
+    await selectTaskModel(user, editor, 'new-embed-model')
 
     expect(screen.queryByText('更换嵌入模型警告')).not.toBeInTheDocument()
-    expect(screen.getByTestId('task-models')).toHaveTextContent('new-embed-model')
+    expect(modelOrder).toHaveTextContent('new-embed-model')
 
-    await user.click(screen.getByText('change-embedding-alt'))
+    await selectTaskModel(user, editor, 'another-embed-model')
     expect(await screen.findByText('更换嵌入模型警告')).toBeInTheDocument()
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByText('更换嵌入模型警告')).not.toBeInTheDocument())
-    expect(screen.getByTestId('task-models')).toHaveTextContent('new-embed-model')
+    expect(modelOrder).toHaveTextContent('new-embed-model')
   })
 
   it('通过顶部选择器切换草稿，失败时保留当前列表', async () => {
@@ -1182,9 +1157,9 @@ describe('ModelConfigPage 特征化', () => {
     vi.mocked(configApi.switchModelConfigVersion).mockRejectedValue(new Error('副本损坏'))
 
     await renderModelPage()
-    await user.click(screen.getByRole('combobox', { name: '模型配置副本' }))
-    expect(screen.getByRole('option', { name: /损坏副本/ })).toHaveAttribute('data-disabled')
-    await user.click(screen.getByRole('option', { name: /夜间副本/ }))
+    await user.click(screen.getByRole('button', { name: 'Bot 任务配置副本' }))
+    expect(screen.getByRole('menuitemradio', { name: /损坏副本/ })).toHaveAttribute('data-disabled')
+    await user.click(screen.getByRole('menuitemradio', { name: /夜间副本/ }))
 
     await waitFor(() => expect(configApi.switchModelConfigVersion).toHaveBeenCalledWith('v1'))
     expect(toastMock).toHaveBeenCalledWith(
@@ -1198,18 +1173,18 @@ describe('ModelConfigPage 特征化', () => {
     window.history.replaceState(null, '', '/config/model?tab=models')
     routeState.searchStr = '?tab=models'
     const { unmount: unmountModels } = render(<ModelConfigPage />)
-    await screen.findByRole('tab', { name: '模型设置' })
+    await screen.findByRole('tab', { name: /^模型库/ })
     await waitFor(() =>
-      expect(screen.getByRole('tab', { name: '模型设置' })).toHaveAttribute('data-state', 'active')
+      expect(screen.getByRole('tab', { name: /^模型库/ })).toHaveAttribute('data-state', 'active')
     )
     unmountModels()
 
     window.history.replaceState(null, '', '/config/model?tab=providers')
     routeState.searchStr = '?tab=providers'
     const { unmount: unmountProviders } = render(<ModelConfigPage />)
-    await screen.findByRole('tab', { name: '模型设置' })
+    await screen.findByRole('tab', { name: /^模型库/ })
     await waitFor(() =>
-      expect(screen.getByRole('tab', { name: '模型设置' })).toHaveAttribute('data-state', 'active')
+      expect(screen.getByRole('tab', { name: /^模型库/ })).toHaveAttribute('data-state', 'active')
     )
     unmountProviders()
 
@@ -1218,7 +1193,7 @@ describe('ModelConfigPage 特征化', () => {
     routeState.searchStr = '?field=api_providers'
     render(<ModelConfigPage />)
     await waitFor(() => expect(scrollSpy).toHaveBeenCalledWith('api_providers'))
-    expect(screen.getByRole('tab', { name: '模型设置' })).toHaveAttribute('data-state', 'active')
+    expect(screen.getByRole('tab', { name: /^模型库/ })).toHaveAttribute('data-state', 'active')
     scrollSpy.mockRestore()
   })
 
@@ -1349,13 +1324,13 @@ describe('ModelConfigPage 特征化', () => {
     vi.mocked(configApi.createModelConfigVersion).mockRejectedValue(new Error('磁盘满'))
 
     await renderModelPage()
-    await user.click(screen.getByRole('button', { name: '保存当前配置副本' }))
-    const createDialog = await screen.findByRole('dialog', { name: '保存模型配置副本' })
+    await openVersionAction(user, '保存当前配置副本')
+    const createDialog = await screen.findByRole('dialog', { name: '保存Bot 任务配置副本' })
     await user.click(within(createDialog).getByRole('button', { name: '取消' }))
-    expect(screen.queryByRole('dialog', { name: '保存模型配置副本' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '保存Bot 任务配置副本' })).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: '保存当前配置副本' }))
-    const retryCreate = await screen.findByRole('dialog', { name: '保存模型配置副本' })
+    await openVersionAction(user, '保存当前配置副本')
+    const retryCreate = await screen.findByRole('dialog', { name: '保存Bot 任务配置副本' })
     await user.type(within(retryCreate).getByLabelText('副本名称'), '失败副本')
     await user.click(within(retryCreate).getByRole('button', { name: '保存副本' }))
     await waitFor(() =>
@@ -1364,17 +1339,17 @@ describe('ModelConfigPage 特征化', () => {
       )
     )
     await waitFor(() =>
-      expect(screen.queryByRole('dialog', { name: '保存模型配置副本' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: '保存Bot 任务配置副本' })).not.toBeInTheDocument()
     )
 
-    await user.click(screen.getByRole('button', { name: '管理配置副本' }))
-    const manageDialog = await screen.findByRole('dialog', { name: '模型配置副本' })
+    await openVersionAction(user, '管理配置副本')
+    const manageDialog = await screen.findByRole('dialog', { name: 'Bot 任务配置副本' })
     await user.click(within(manageDialog).getByRole('button', { name: '删除副本 夜间副本' }))
-    expect(await screen.findByText('删除模型配置副本')).toBeInTheDocument()
+    expect(await screen.findByText('删除Bot 任务配置副本')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '取消' }))
-    await waitFor(() => expect(screen.queryByText('删除模型配置副本')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByText('删除Bot 任务配置副本')).not.toBeInTheDocument())
     clickDialogAction(manageDialog, '关闭')
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '模型配置副本' })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Bot 任务配置副本' })).not.toBeInTheDocument())
   })
 
   it('切换副本过程中管理弹窗展示切换中', async () => {
@@ -1384,8 +1359,8 @@ describe('ModelConfigPage 特征化', () => {
     vi.mocked(configApi.switchModelConfigVersion).mockImplementation(() => switchJob.promise as never)
 
     await renderModelPage()
-    await user.click(screen.getByRole('button', { name: '管理配置副本' }))
-    const manageDialog = await screen.findByRole('dialog', { name: '模型配置副本' })
+    await openVersionAction(user, '管理配置副本')
+    const manageDialog = await screen.findByRole('dialog', { name: 'Bot 任务配置副本' })
     const switchButtons = within(manageDialog).getAllByRole('button', { name: '切换' })
     await user.click(switchButtons.find((button) => !(button as HTMLButtonElement).disabled)!)
     expect(await screen.findByText('切换中...')).toBeInTheDocument()
@@ -1413,12 +1388,11 @@ describe('ModelConfigPage 特征化', () => {
     vi.mocked(configApi.getModelConfig).mockResolvedValue(deepSeekChatConfig as never)
 
     await renderModelPage()
-    await user.click(screen.getByRole('tab', { name: '模型设置' }))
-    await user.click(document.querySelector<HTMLButtonElement>('[data-tour="add-model-button"]')!)
+    await user.click(screen.getByRole('tab', { name: /^模型库/ }))
+    await openAddModel(user)
 
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText('写入 thinking.type')).toBeInTheDocument()
-    expect(within(dialog).getByText('仅 DeepSeek Responses API 支持原生联网搜索')).toBeInTheDocument()
     const webSearchSwitch = within(dialog).getByRole('switch', { name: '启用联网搜索' })
     expect(webSearchSwitch).toBeDisabled()
 
@@ -1436,6 +1410,7 @@ describe('ModelConfigPage 特征化', () => {
       models: [
         {
           name: 'gpt-4',
+          model_type: 'llm',
           model_identifier: 'gpt-4',
           api_provider: 'openai',
           visual: true,
@@ -1459,14 +1434,12 @@ describe('ModelConfigPage 特征化', () => {
 
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByRole('heading', { name: '编辑模型' })).toBeInTheDocument()
-    expect(within(dialog).getByText('...')).toBeInTheDocument()
     expect(within(dialog).getByText(/温度 > 1 会产生更随机/)).toBeInTheDocument()
-    expect(within(dialog).getAllByRole('button', { name: '帮助信息' })).toHaveLength(2)
 
-    await user.click(within(dialog).getByRole('switch', { name: '启用视觉' }))
-    fireEvent.change(within(dialog).getByLabelText('输入价格 (¥/M token)'), { target: { value: '' } })
-    fireEvent.change(within(dialog).getByLabelText('输出价格 (¥/M token)'), { target: { value: '3.5' } })
-    fireEvent.change(within(dialog).getByLabelText('缓存价格 (¥/M token)'), { target: { value: '' } })
+    await user.click(within(dialog).getByRole('switch', { name: '视觉' }))
+    fireEvent.change(within(dialog).getByLabelText('输入'), { target: { value: '' } })
+    fireEvent.change(within(dialog).getByLabelText('输出'), { target: { value: '3.5' } })
+    fireEvent.change(within(dialog).getByLabelText('缓存命中'), { target: { value: '' } })
 
     const temperatureInput = within(dialog).getByDisplayValue('1.2')
     fireEvent.change(temperatureInput, { target: { value: '0.55' } })
@@ -1483,11 +1456,11 @@ describe('ModelConfigPage 特征化', () => {
     await user.click(within(dialog).getByRole('switch', { name: '自定义最大 Token' }))
     expect(within(dialog).getByDisplayValue('2048')).toBeInTheDocument()
 
-    await user.click(within(dialog).getByRole('button', { name: '高级' }))
+    await user.click(within(dialog).getByRole('switch', { name: '高级设置' }))
     await user.click(within(dialog).getByRole('switch', { name: '强制流式输出模式' }))
     // 缓存价格输入恒显示，不再依赖「支持缓存」开关；上方已将其清空
     expect(within(dialog).queryByRole('switch', { name: '支持缓存' })).not.toBeInTheDocument()
-    expect(within(dialog).getByLabelText('缓存价格 (¥/M token)')).toHaveValue(null)
+    expect(within(dialog).getByLabelText('缓存命中')).toHaveValue(null)
 
     await user.click(within(dialog).getByRole('button', { name: '已配置 4 个参数' }))
     const extraDialog = await screen.findByRole('dialog', { name: '编辑额外参数' })
@@ -1511,8 +1484,6 @@ describe('ModelConfigPage 特征化', () => {
     await openConfigurationTab(user)
     await user.click(within(getModelTable()).getByRole('button', { name: '编辑模型 gpt-4' }))
     const dialog = await screen.findByRole('dialog')
-    expect(await within(dialog).findByText('OpenAI')).toBeInTheDocument()
-
     const identifierCombobox = getModelIdentifierCombobox(dialog)
     await waitFor(() => expect(identifierCombobox).not.toBeDisabled())
     await user.click(identifierCombobox)
@@ -1524,14 +1495,12 @@ describe('ModelConfigPage 特征化', () => {
     expect(within(dialog).getByLabelText(/模型标识符/)).toHaveValue('gpt-4o')
 
     vi.mocked(configApi.fetchProviderModels).mockRejectedValueOnce(new Error('timeout'))
-    const refreshButton = within(dialog).getByText('OpenAI').parentElement?.querySelector('button')
-    expect(refreshButton).not.toBeNull()
-    await user.click(refreshButton!)
-    expect(await within(dialog).findByText('请求超时，请检查网络连接后重试')).toBeInTheDocument()
-    expect(within(dialog).getByText('手动填写')).toBeInTheDocument()
-    expect(
-      within(dialog).getByText('请手动输入模型标识符，或前往"模型厂商设置"检查 API Key')
-    ).toBeInTheDocument()
+    await user.click(getModelIdentifierCombobox(dialog))
+    await user.click(screen.getByRole('button', { name: '刷新列表' }))
+    expect(await screen.findByText(/请求超时，请检查网络连接后重试/)).toBeInTheDocument()
+    expect(screen.getByText(/可直接手动输入/)).toBeInTheDocument()
+    fireEvent.change(within(dialog).getByLabelText(/模型标识符/), { target: { value: 'manual-model' } })
+    expect(within(dialog).getByLabelText(/模型标识符/)).toHaveValue('manual-model')
   })
 
   it('提供商配置不完整时提示手动填写模型标识符', async () => {
@@ -1558,9 +1527,11 @@ describe('ModelConfigPage 特征化', () => {
     await openConfigurationTab(user)
     await user.click(within(getModelTable()).getByRole('button', { name: '编辑模型 gpt-4' }))
     const keyDialog = await screen.findByRole('dialog')
-    expect(
-      await within(keyDialog).findByText('请手动输入模型标识符，或前往"模型厂商设置"检查 API Key')
-    ).toBeInTheDocument()
+    const identifier = within(keyDialog).getByLabelText(/模型标识符/)
+    expect(identifier).toBeEnabled()
+    fireEvent.change(identifier, { target: { value: 'manual-model' } })
+    expect(identifier).toHaveValue('manual-model')
+    expect(configApi.fetchProviderModels).not.toHaveBeenCalled()
   })
 
   it('添加模型时切换厂商会清空列表，重复名称会校验失败', async () => {
@@ -1568,8 +1539,8 @@ describe('ModelConfigPage 特征化', () => {
     const twoProviderConfig = {
       ...baseConfig(),
       models: [
-        { name: 'gpt-4', model_identifier: 'gpt-4', api_provider: 'openai' },
-        { name: 'local-model', model_identifier: 'local-model', api_provider: 'ollama' },
+        { model_type: 'llm', name: 'gpt-4', model_identifier: 'gpt-4', api_provider: 'openai' },
+        { model_type: 'llm', name: 'local-model', model_identifier: 'local-model', api_provider: 'ollama' },
       ],
       api_providers: [
         ...baseConfig().api_providers,
@@ -1586,23 +1557,23 @@ describe('ModelConfigPage 特征化', () => {
 
     await renderModelPage()
     await openConfigurationTab(user)
-    await user.click(document.querySelector<HTMLButtonElement>('[data-tour="add-model-button"]')!)
+    await openAddModel(user)
     const dialog = await screen.findByRole('dialog')
-    await user.type(within(dialog).getByRole('textbox', { name: '模型名称 *' }), 'gpt-4')
+    await user.type(within(dialog).getByRole('textbox', { name: /^名称/ }), 'gpt-4')
     await user.type(within(dialog).getByLabelText(/模型标识符/), 'dup')
     await user.click(within(dialog).getByRole('button', { name: '保存' }))
     expect(within(dialog).getByText('模型名称已存在，请使用其他名称')).toBeInTheDocument()
 
-    await user.clear(within(dialog).getByRole('textbox', { name: '模型名称 *' }))
-    await user.type(within(dialog).getByRole('textbox', { name: '模型名称 *' }), 'fresh-model')
+    await user.clear(within(dialog).getByRole('textbox', { name: /^名称/ }))
+    await user.type(within(dialog).getByRole('textbox', { name: /^名称/ }), 'fresh-model')
     expect(within(dialog).queryByText('模型名称已存在，请使用其他名称')).not.toBeInTheDocument()
 
-    await user.click(within(dialog).getByRole('combobox', { name: 'API 提供商 *' }))
+    await user.click(within(dialog).getByRole('combobox', { name: /^提供商/ }))
     await user.click(screen.getByRole('option', { name: 'ollama' }))
-    expect(within(dialog).getByRole('combobox', { name: 'API 提供商 *' })).toHaveTextContent('ollama')
+    expect(within(dialog).getByRole('combobox', { name: /^提供商/ })).toHaveTextContent('ollama')
   })
 
-  it('功能分配可展开高级任务，空模型列表仍显示未配置摘要', async () => {
+  it('分工面板可展开进阶任务，空模型列表显示安排入口', async () => {
     const user = userEvent.setup()
     const emptyModelsConfig = {
       models: [],
@@ -1620,17 +1591,14 @@ describe('ModelConfigPage 特征化', () => {
 
     await renderModelPage()
     expect(screen.getByText('以下任务未配置模型')).toBeInTheDocument()
-    await user.click(screen.getByRole('tab', { name: '功能分配' }))
-    expect(screen.getAllByText('未配置模型').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('未配置').length).toBeGreaterThan(0)
-
-    await user.click(screen.getByRole('button', { name: '高级设置' }))
-    const voiceButton = await screen.findByRole('button', { name: /voice/ })
-    expect(within(voiceButton).getByText('高级')).toBeInTheDocument()
-    await user.click(voiceButton)
-    expect(await screen.findByText('最大 Token 已隐藏')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '高级设置' }))
-    await waitFor(() => expect(screen.queryByRole('button', { name: /voice/ })).not.toBeInTheDocument())
+    await user.click(screen.getByRole('tab', { name: /^分工/ }))
+    expect(screen.getAllByRole('button', { name: /安排模型/ })).toHaveLength(2)
+    expect(screen.getByRole('button', { name: /MORE/ })).toHaveAttribute('aria-expanded', 'false')
+    const editor = await openTaskEditor(user, 'voice', '语音')
+    expect(within(editor).queryByLabelText('最大 Token')).not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByRole('button', { name: /MORE/ }))
+    expect(screen.queryByText('语音')).not.toBeInTheDocument()
   })
 
   it('取消删除单个模型与批量删除都不会改动列表', async () => {
@@ -1700,7 +1668,7 @@ describe('ModelConfigPage 特征化', () => {
   it('点击新手引导入口会启动引导', async () => {
     const user = userEvent.setup()
     await renderModelPage()
-    await user.click(screen.getByRole('button', { name: '开始引导' }))
+    await user.click(screen.getByRole('button', { name: '跟着引导走一遍' }))
     expect(tourState.startTour).toHaveBeenCalled()
   })
 })

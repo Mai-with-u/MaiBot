@@ -436,7 +436,7 @@ class ChatConnectionManager:
             if not user_session_ids:
                 del self.user_sessions[session_connection.user_id]
 
-        logger.info(f"WebUI 聊天会话已断开: session={session_id}")
+        logger.debug(f"WebUI 聊天会话已断开: session={session_id}")
 
     def disconnect_connection(self, connection_id: str) -> None:
         """断开物理连接下的全部逻辑聊天会话。
@@ -709,6 +709,12 @@ def resolve_initial_virtual_identity(
         return None
 
 
+def get_chat_bot_qq() -> Optional[str]:
+    """聊天室默认头像使用配置的 QQ 账号，0 或留空表示未配置。"""
+    account = int(global_config.bot.qq_account or 0)
+    return str(account) if account > 0 else None
+
+
 def build_session_info_message(
     session_id: str,
     user_id: str,
@@ -730,7 +736,7 @@ def build_session_info_message(
     """
     normalized_client_info = normalize_chat_client_info(client_info)
     # bot_qq 用于前端通过 WebUI 头像缓存接口加载机器人头像（qq_account == 0 表示未配置，不推送）。
-    bot_qq_account = int(global_config.bot.qq_account or 0)
+    bot_qq_account = get_chat_bot_qq()
     session_info_data: Dict[str, Any] = {
         "type": "session_info",
         "session_id": session_id,
@@ -746,8 +752,8 @@ def build_session_info_message(
         "client": normalized_client_info,
         "capabilities": build_chat_client_capabilities(normalized_client_info),
     }
-    if bot_qq_account > 0:
-        session_info_data["bot_qq"] = str(bot_qq_account)
+    if bot_qq_account:
+        session_info_data["bot_qq"] = bot_qq_account
 
     if is_virtual_mode_enabled(virtual_config):
         assert virtual_config is not None

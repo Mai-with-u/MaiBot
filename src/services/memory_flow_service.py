@@ -12,8 +12,8 @@ import json
 import os
 import time
 
-from json_repair import repair_json
 
+from src.common.llm_json import parse_llm_json
 from src.common.logger import get_logger
 from src.common.database.database import ROOT_PATH
 from src.common.message_repository import count_messages, find_messages
@@ -453,8 +453,7 @@ class PersonFactWritebackService:
         if not text:
             raise ValueError("人物事实提取响应为空")
         try:
-            repaired = repair_json(text)
-            payload = json.loads(repaired) if isinstance(repaired, str) else repaired
+            payload = parse_llm_json(text, repair=True)
         except Exception as exc:
             raise ValueError("人物事实提取响应不是有效 JSON") from exc
         if not isinstance(payload, list):
@@ -475,8 +474,7 @@ class PersonFactWritebackService:
         if not text:
             return []
         try:
-            repaired = repair_json(text)
-            payload = json.loads(repaired) if isinstance(repaired, str) else repaired
+            payload = parse_llm_json(text, repair=True)
         except Exception:
             payload = None
         if not isinstance(payload, list):

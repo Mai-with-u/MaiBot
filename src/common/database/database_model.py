@@ -5,7 +5,27 @@ from typing import Optional
 from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, Float, Index, Integer, String, Text, UniqueConstraint
 from sqlmodel import Field, LargeBinary, SQLModel
 
+from src.common.database.chat_migration_models import copies, jobs  # noqa: F401 -- 注册迁移账本
+from src.common.database.sharing_models import SharingGroup, SharingGroupMember, SharingGroupCapability, SharingGroupRule, SharingGroupMigration  # noqa: F401
 from src.files.models import FileAsset, FileBinding, FileParse  # noqa: F401 -- 注册文件服务模型
+
+
+class WebUIHelpSession(SQLModel, table=True):
+    __tablename__ = "webui_help_sessions"  # type: ignore
+
+    id: str = Field(primary_key=True)
+    title: str
+    updated_at: float = Field(index=True)
+
+
+class WebUIHelpTurn(SQLModel, table=True):
+    __tablename__ = "webui_help_turns"  # type: ignore
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: str = Field(foreign_key="webui_help_sessions.id", index=True)
+    question: str
+    reply_json: Optional[str] = None
+    error: str = ""
 
 
 class ImageType(str, Enum):
@@ -275,6 +295,47 @@ class StatisticsModelHourly(SQLModel, table=True):
     cost: float = Field(default=0.0)
     time_cost_sum: float = Field(default=0.0)
     time_cost_sq_sum: float = Field(default=0.0)
+
+
+class StatisticsUsageHourly(SQLModel, table=True):
+    """按小时、按全部统计维度汇总的模型调用；口径与逐条统计完全一致，可替代 30 天明细扫描。
+
+    维度值写入前已按统计规则归一化（空值归为 unknown / 未记录），
+    缓存 token 已逐条归一化，耗时只累计大于 0 的有效耗时。
+    """
+
+    __tablename__ = "statistics_usage_hourly"  # type: ignore
+    __table_args__ = (
+        UniqueConstraint(
+            "bucket_time",
+            "request_type",
+            "provider_name",
+            "model_name",
+            "task_name",
+            "session_id",
+            name="uq_statistics_usage_hourly_dimensions",
+        ),
+        Index("ix_statistics_usage_hourly_bucket_time", "bucket_time"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    bucket_time: datetime = Field(sa_column=Column(DateTime, nullable=False))
+    request_type: str = Field(max_length=100)
+    provider_name: str = Field(max_length=255)
+    model_name: str = Field(max_length=255)
+    task_name: str = Field(max_length=100)
+    session_id: str = Field(default="", max_length=255)
+    request_count: int = Field(default=0)
+    prompt_tokens: int = Field(default=0)
+    completion_tokens: int = Field(default=0)
+    cache_hit_tokens: int = Field(default=0)
+    cache_miss_tokens: int = Field(default=0)
+    cost: float = Field(default=0.0)
+    duration_count: int = Field(default=0)
+    duration_sum: float = Field(default=0.0)
+    duration_sum_sq: float = Field(default=0.0)
+    response_time_count: int = Field(default=0)
+    response_time_sum: float = Field(default=0.0)
 
 
 class HighFrequencyTerm(SQLModel, table=True):

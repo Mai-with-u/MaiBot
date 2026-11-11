@@ -53,6 +53,36 @@
 [data-browser-layout='true']:has(> [data-collapsed='true']) {
   grid-template-columns: 3.25rem minmax(0, 1fr);
 }
+/* 带文件夹标签时：侧栏占满两行，标签在右上，主窗口在标签正下方并与之相接。 */
+[data-browser-layout='true'][data-has-tabs='true'] {
+  grid-template-rows: auto minmax(0, 1fr);
+  row-gap: 0;
+}
+[data-browser-layout='true'][data-has-tabs='true'] > :first-child {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+[data-browser-layout='true'][data-has-tabs='true'] > [data-browser-tabs='true'] {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+}
+[data-browser-layout='true'][data-has-tabs='true'] > :last-child {
+  grid-column: 2;
+  grid-row: 2;
+  min-height: 0;
+}
+/* 空间不足时将统计与操作换到上方，文件夹标签始终贴住下方内容框。 */
+[data-browser-tabs='true'] > [data-dashboard-folder-tabs] {
+  flex-wrap: wrap-reverse;
+  align-items: end;
+}
+[data-browser-tabs='true'] [data-dashboard-folder-tabs-trailing] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+}
 [data-browser-toolbar='true'] {
   flex-shrink: 0;
   padding: 12px;
@@ -76,5 +106,66 @@
   [data-browser-layout='true'],
   [data-browser-layout='true']:has(> [data-collapsed='true']) {
     grid-template-columns: minmax(0, 1fr);
+  }
+  [data-browser-layout='true'][data-has-tabs='true'] > * {
+    grid-column: auto !important;
+    grid-row: auto !important;
+  }
+}
+
+/* 学习页根据内容区的可用宽度切换密度，大屏保留完整尺寸。 */
+[data-browser-tabs='true']:has([data-learning-tabs]) {
+  container-type: inline-size;
+}
+[data-browser-tabs='true'] > [data-dashboard-folder-tabs]:has([data-learning-tabs]) {
+  flex-wrap: nowrap;
+}
+[data-dashboard-folder-tabs] > [data-learning-tabs] {
+  flex: 1 1 auto;
+}
+[data-dashboard-folder-tabs]:has([data-learning-tabs]) > [data-dashboard-folder-tabs-trailing] {
+  flex-shrink: 0;
+}
+@container (max-width: 960px) {
+  [data-learning-create] {
+    width: var(--control-height-sm);
+    padding-inline: 0;
+  }
+  [data-learning-create] > span {
+    display: none;
+  }
+  :root [data-dashboard-folder-tabs][data-size='large'] [data-learning-tabs] [data-dashboard-tabs-trigger='true'] {
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 10.5rem;
+    column-gap: clamp(4px, 1cqi, 10px);
+    padding-inline: clamp(4px, 1.5cqi, 16px) !important;
+  }
+  [data-learning-tabs] [data-dashboard-folder-tab-label] {
+    font-size: clamp(12px, 1.8cqi, 15px);
+  }
+}
+@container (max-width: 800px) {
+  [data-metric-strip][data-responsive-compact] > [data-dashboard-data-panel] {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  [data-metric-strip][data-responsive-compact] [data-dashboard-separator] {
+    display: none;
+  }
+  [data-metric-strip][data-responsive-compact] [data-metric-item] {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 8px;
+  }
+  [data-metric-strip][data-responsive-compact] .tabular-nums {
+    font-size: 13px;
+  }
+}
+@container (max-width: 620px) {
+  [data-learning-tabs] [data-dashboard-folder-tab-description] {
+    display: none;
   }
 }

@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import {
   Select,
   SelectContent,
@@ -52,7 +53,7 @@ interface AdapterHostPolicyEditorProps {
   toolbarContainer?: HTMLElement | null
   onSectionChange: (
     chatType: ChatStreamType,
-    field: 'default_action' | 'allow_ids' | 'deny_ids',
+    field: 'default_action' | 'allow_ids' | 'deny_ids' | 'disabled_ids',
     value: AdapterHostDefaultAction | string[]
   ) => void
 }
@@ -66,11 +67,13 @@ function clonePolicy(policy: AdapterHostPolicy): AdapterHostPolicy {
       default_action: policy.group.default_action,
       allow_ids: [...policy.group.allow_ids],
       deny_ids: [...policy.group.deny_ids],
+      ...(policy.group.disabled_ids?.length ? { disabled_ids: [...policy.group.disabled_ids] } : {}),
     },
     private: {
       default_action: policy.private.default_action,
       allow_ids: [...policy.private.allow_ids],
       deny_ids: [...policy.private.deny_ids],
+      ...(policy.private.disabled_ids?.length ? { disabled_ids: [...policy.private.disabled_ids] } : {}),
     },
   }
   if (policy.policy_groups) {
@@ -90,6 +93,13 @@ function normalizePolicy(policy: AdapterHostPolicy): AdapterHostPolicy {
     for (const field of ['allow_ids', 'deny_ids'] as const) {
       normalized[chatType][field] = [...new Set(policy[chatType][field].map((id) => id.trim()).filter(Boolean))]
     }
+  }
+  for (const chatType of ['group', 'private'] as const) {
+    const section = normalized[chatType]
+    const disabledIds = [...new Set((section.disabled_ids ?? []).map((id) => id.trim()))]
+      .filter((id) => section.allow_ids.includes(id) || section.deny_ids.includes(id))
+    if (disabledIds.length) section.disabled_ids = disabledIds
+    else delete section.disabled_ids
   }
   if (normalized.policy_groups) {
     normalized.policy_groups = normalized.policy_groups.map((group) => ({
@@ -130,7 +140,7 @@ function GroupIdentity({
     scope: identity.scope,
   })
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-2">
+    <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
       <Avatar className="h-7 w-7">
         <AvatarImage src={avatarUrl} alt={name || groupId} />
         <AvatarFallback><UsersRound className="h-4 w-4 text-muted-foreground" /></AvatarFallback>
@@ -321,7 +331,7 @@ function AdapterHostPolicyEditor({
           </AlertDescription>
         </Alert>
       )}
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
+      <div className="flex flex-col gap-4">
         {(['group', 'private'] as const).map((chatType) => {
           const section = policy[chatType]
           const globalAction = globalDefaults[chatType]
@@ -349,7 +359,7 @@ function AdapterHostPolicyEditor({
                           <Info className="h-4 w-4" />
                         </button>
                       </TooltipTrigger>
-                      <TooltipContent>拒收优先，支持 * 匹配全部。</TooltipContent>
+                      <TooltipContent>拒收优先，支持 * 匹配全部。关闭条目后保留记录，暂不参与名单匹配。</TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
                 </div>
@@ -399,7 +409,17 @@ function AdapterHostPolicyEditor({
                       itemType="string"
                       emptyText="空列表"
                       placeholder={chatType === 'group' ? '输入接收消息的群号' : '输入接收消息的用户 ID'}
-                      renderItemSuffix={chatType === 'group' ? renderGroupIdentity : undefined}
+                      renderItemSuffix={(value) => {
+                        const id = String(value).trim()
+                        const enabled = !(section.disabled_ids ?? []).includes(id)
+                        return <>
+                          {chatType === 'group' && renderGroupIdentity(value)}
+                          <Switch checked={enabled} disabled={!id} aria-label={`启用名单规则 ${id}`}
+                            onCheckedChange={(checked) => onSectionChange(chatType, 'disabled_ids', checked
+                              ? (section.disabled_ids ?? []).filter((item) => item !== id)
+                              : [...(section.disabled_ids ?? []), id])} />
+                        </>
+                      }}
                     />
                   </div>
                 )}
@@ -424,7 +444,17 @@ function AdapterHostPolicyEditor({
                       itemType="string"
                       emptyText="空列表"
                       placeholder={chatType === 'group' ? '输入不接收消息的群号' : '输入不接收消息的用户 ID'}
-                      renderItemSuffix={chatType === 'group' ? renderGroupIdentity : undefined}
+                      renderItemSuffix={(value) => {
+                        const id = String(value).trim()
+                        const enabled = !(section.disabled_ids ?? []).includes(id)
+                        return <>
+                          {chatType === 'group' && renderGroupIdentity(value)}
+                          <Switch checked={enabled} disabled={!id} aria-label={`启用名单规则 ${id}`}
+                            onCheckedChange={(checked) => onSectionChange(chatType, 'disabled_ids', checked
+                              ? (section.disabled_ids ?? []).filter((item) => item !== id)
+                              : [...(section.disabled_ids ?? []), id])} />
+                        </>
+                      }}
                     />
                   </div>
                 )}
@@ -611,17 +641,20 @@ export function AdapterHostPolicyPanel({
       }}
       toolbarContainer={toolbarContainer}
       onSectionChange={(chatType, field, value) =>
-        setPolicy((current) =>
-          current
-            ? {
-                ...current,
-                [chatType]: {
-                  ...current[chatType],
-                  [field]: value,
-                },
-              }
-            : current
-        )
+        setPolicy((current) => {
+          if (!current) return current
+          const section = { ...current[chatType], [field]: value }
+          if ((field === 'allow_ids' || field === 'deny_ids') && Array.isArray(value)) {
+            const previous = current[chatType][field]
+            // 修改 ID 时保留开关状态；删除时同时清理状态，避免重新添加后意外停用。
+            section.disabled_ids = (section.disabled_ids ?? []).map((id) => {
+              const index = previous.findIndex((item) => item.trim() === id)
+              return previous.length === value.length && index >= 0 && !value.some((item) => item.trim() === id)
+                ? value[index].trim() : id
+            }).filter((id) => [...section.allow_ids, ...section.deny_ids].some((item) => item.trim() === id))
+          }
+          return { ...current, [chatType]: section }
+        })
       }
     />
   )

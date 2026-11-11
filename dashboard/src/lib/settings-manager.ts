@@ -14,6 +14,7 @@ export const STORAGE_KEYS = {
   ACCENT_COLOR: 'accent-color',
   ENABLE_ANIMATIONS: 'maibot-animations',
   ENABLE_AVATAR_FETCH: 'maibot-enable-avatar-fetch',
+  LAYOUT_VERSION: 'maibot-layout-version',
 
   // 调试设置
   ALWAYS_SHOW_UPDATE_NOTICE: 'maibot-always-show-update-notice',
@@ -63,6 +64,8 @@ export const DEFAULT_SETTINGS = {
   accentColor: DEFAULT_ACCENT_COLOR_HSL,
   enableAnimations: true,
   enableAvatarFetch: true,
+  /** 桌面端外壳：classic 为顶栏 + 侧栏的经典布局，observation 为以麦麦观察为首页的新布局 */
+  layoutVersion: 'observation' as 'classic' | 'observation',
 
   // 调试
   alwaysShowUpdateNotice: false,
@@ -140,6 +143,7 @@ export function getAllSettings(): Settings {
     accentColor: getSetting('accentColor'),
     enableAnimations: getSetting('enableAnimations'),
     enableAvatarFetch: getSetting('enableAvatarFetch'),
+    layoutVersion: getSetting('layoutVersion'),
     alwaysShowUpdateNotice: getSetting('alwaysShowUpdateNotice'),
     alwaysShowUpdateButton: getSetting('alwaysShowUpdateButton'),
     logCacheSize: getSetting('logCacheSize'),
@@ -380,6 +384,7 @@ function getStorageKey(settingKey: keyof Settings): string {
     accentColor: STORAGE_KEYS.ACCENT_COLOR,
     enableAnimations: STORAGE_KEYS.ENABLE_ANIMATIONS,
     enableAvatarFetch: STORAGE_KEYS.ENABLE_AVATAR_FETCH,
+    layoutVersion: STORAGE_KEYS.LAYOUT_VERSION,
     alwaysShowUpdateNotice: STORAGE_KEYS.ALWAYS_SHOW_UPDATE_NOTICE,
     alwaysShowUpdateButton: STORAGE_KEYS.ALWAYS_SHOW_UPDATE_BUTTON,
     logCacheSize: STORAGE_KEYS.LOG_CACHE_SIZE,

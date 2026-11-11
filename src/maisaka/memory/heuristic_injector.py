@@ -13,6 +13,7 @@ from src.common.logger import get_logger
 from src.common.message_repository import count_messages, find_messages
 from src.common.prompt_i18n import load_prompt
 from src.config.config import global_config
+from src.maisaka.scenes.factory import get_scene
 from src.person_info.person_info import get_person_id
 from src.services.llm_service import LLMServiceClient
 from src.services.memory_service import MemoryHit, memory_service
@@ -301,11 +302,7 @@ class HeuristicMemoryInjector:
         if source_session is None:
             return False
 
-        if source_session.is_group_session and not current_session.is_group_session:
-            return config.heuristic_memory_group_to_private_enabled
-        if not source_session.is_group_session and current_session.is_group_session:
-            return config.heuristic_memory_private_to_group_enabled
-        return True
+        return get_scene(current_session.is_group_session).allows_memory_from(source_session.is_group_session)
 
     @staticmethod
     def _collect_active_person_ids(messages: Sequence[SessionMessage]) -> set[str]:

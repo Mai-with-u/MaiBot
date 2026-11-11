@@ -1,11 +1,12 @@
-import { type CSSProperties, type MouseEvent, type UIEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { type UIEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useRouterState } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Button } from '@/components/ui/button'
+import { DraftNumberInput } from '@/components/ui/draft-number-input'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tabs, TabsContent } from '@/components/ui/tabs'
+import { DashboardFolderPanel, DashboardFolderTab, DashboardFolderTabBar } from '@/components/ui/dashboard-tabs'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import {
@@ -34,40 +35,25 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command'
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover'
+import { FormColumn, FormColumns, FormRow, FormSection, FormUnit } from '@/components/ui/form-section'
+import { ComboboxInput } from '@/components/ui/combobox-input'
 import { SplitDropdownSelect } from '@/components/ui/split-dropdown-select'
 import { Switch } from '@/components/ui/switch'
 import { Slider } from '@/components/ui/slider'
 import { Badge } from '@/components/ui/badge'
 import {
   AlertTriangle,
-  Check,
-  ChevronsUpDown,
   Copy,
-  GraduationCap,
   History,
-  Info,
   Loader2,
   Pencil,
   Plus,
-  RefreshCw,
-  Save,
   Search,
   Settings,
   Trash2,
   Zap,
+  Boxes,
+  ListChecks,
 } from 'lucide-react'
 import { resolveFieldLabel } from '@/lib/config-label'
 import {
@@ -75,20 +61,21 @@ import {
   getModelConfigTabForField,
   scrollToConfigSearchField,
 } from '@/lib/config-search-navigation'
-import { cn } from '@/lib/utils'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { HelpTooltip } from '@/components/ui/help-tooltip'
 import { MobileAddMenu } from '@/components/layout/MobileAddMenu'
 import { MobileHeaderActions } from '@/components/layout/MobileHeaderActions'
 import { RestartOverlay } from '@/components/restart-overlay'
-import { RestartProvider, useRestart } from '@/lib/restart-context'
+import { RestartProvider } from '@/lib/restart-context'
 import { ExtraParamsDialog } from '@/components/ui/extra-params-dialog'
-import { TaskConfigCard, ModelTable, ModelCardList } from './model/components'
-import type { ModelCreationType } from './model/components/AddModelMenu'
+import { ModelTable, ModelCardList } from './model/components'
+import { TaskAssignmentBoard } from './model/components/TaskAssignmentBoard'
+import { taskShortName } from './model/taskMeta'
+import { AddModelMenu, type ModelCreationType } from './model/components/AddModelMenu'
 import { EmbeddingBuildProgress } from './model/components/EmbeddingBuildProgress'
 import { TaskRuntimeSummary } from './model/components/TaskRuntimeSummary'
 import { TaskUsageStats } from './model/components/TaskUsageStats'
-import { TASK_CONFIGS } from './model/constants'
+import { ThinkingProbeControls } from './model/components/ThinkingProbeControls'
 import { useModelTour, useModelFetcher, useModelConfig } from './model/hooks'
 import {
   getThinkingBudget,
@@ -100,7 +87,7 @@ import {
   validateThinkingParams,
   type ThinkingFormatConfig,
 } from './model/thinkingFormats'
-import { resolveThinkingFormatForModel } from './providerTemplates'
+import { findTemplateByBaseUrl, resolveThinkingFormatForModel } from './providerTemplates'
 import {
   getDeepSeekReasoningEffort,
   isDeepSeekThinkingEnabled,
@@ -115,7 +102,6 @@ import {
 import { ProviderForm } from './modelProvider/ProviderForm'
 import { ProviderSidebar } from './modelProvider/ProviderSidebar'
 import { WebSearchDialog } from './webSearch/WebSearchDialog'
-import { WebSearchTaskCard } from './webSearch/WebSearchTaskCard'
 import type { APIProvider } from './modelProvider/types'
 
 // 导入模块化的类型定义和组件
@@ -123,73 +109,6 @@ import type { ModelInfo, ModelPricePeriod } from './model/types'
 
 const MODEL_CONFIG_TABS = ['configuration', 'tasks'] as const
 type ModelConfigTab = (typeof MODEL_CONFIG_TABS)[number]
-
-interface ModelIdentifierMarqueeProps {
-  text: string
-  className?: string
-  textClassName?: string
-}
-
-function ModelIdentifierMarquee({ text, className, textClassName }: ModelIdentifierMarqueeProps) {
-  const containerRef = useRef<HTMLSpanElement>(null)
-  const textRef = useRef<HTMLSpanElement>(null)
-  const [scrollDistance, setScrollDistance] = useState(0)
-
-  useEffect(() => {
-    const containerElement = containerRef.current
-    const textElement = textRef.current
-    if (!containerElement || !textElement) {
-      return
-    }
-
-    const updateOverflowState = () => {
-      setScrollDistance(Math.max(0, textElement.scrollWidth - containerElement.clientWidth))
-    }
-
-    updateOverflowState()
-
-    if (typeof ResizeObserver === 'undefined') {
-      window.addEventListener('resize', updateOverflowState)
-      return () => window.removeEventListener('resize', updateOverflowState)
-    }
-
-    const resizeObserver = new ResizeObserver(updateOverflowState)
-    resizeObserver.observe(containerElement)
-    resizeObserver.observe(textElement)
-    return () => resizeObserver.disconnect()
-  }, [text])
-
-  const shouldScroll = scrollDistance > 1
-  const durationMs = Math.min(Math.max(scrollDistance * 45, 1800), 6000)
-
-  return (
-    <span
-      ref={containerRef}
-      className={cn('group/model-marquee block min-w-0 overflow-hidden', className)}
-      title={text}
-    >
-      <span
-        ref={textRef}
-        className={cn(
-          'model-identifier-marquee-text block max-w-full overflow-hidden text-ellipsis whitespace-nowrap',
-          shouldScroll &&
-            'group-hover/model-marquee:w-max group-hover/model-marquee:max-w-none group-hover/model-marquee:animate-[model-identifier-marquee_var(--model-identifier-marquee-duration)_ease-in-out_infinite_alternate] group-hover/model-marquee:overflow-visible group-hover/model-option:w-max group-hover/model-option:max-w-none group-hover/model-option:animate-[model-identifier-marquee_var(--model-identifier-marquee-duration)_ease-in-out_infinite_alternate] group-hover/model-option:overflow-visible',
-          textClassName
-        )}
-        style={
-          shouldScroll
-            ? ({
-                '--model-identifier-marquee-distance': `-${scrollDistance}px`,
-                '--model-identifier-marquee-duration': `${durationMs}ms`,
-              } as CSSProperties)
-            : undefined
-        }
-      >
-        {text}
-      </span>
-    </span>
-  )
-}
 
 function getInitialModelConfigTab(): ModelConfigTab {
   if (typeof window === 'undefined') {
@@ -204,6 +123,15 @@ function getInitialModelConfigTab(): ModelConfigTab {
 }
 
 // 主导出组件：包装 RestartProvider
+type ModelKindFilter = 'all' | 'used' | 'visual' | 'embedding'
+
+const MODEL_KIND_FILTERS: Array<{ value: ModelKindFilter; label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: 'used', label: '使用中' },
+  { value: 'visual', label: '视觉' },
+  { value: 'embedding', label: '嵌入' },
+]
+
 export function ModelConfigPage() {
   return (
     <RestartProvider>
@@ -215,7 +143,6 @@ export function ModelConfigPage() {
 // 内部实现组件
 function ModelConfigPageContent() {
   const { i18n } = useTranslation()
-  const { isRestarting } = useRestart()
   const routeSearch = useRouterState({ select: (state) => state.location.searchStr })
   const searchFieldPath = getConfigSearchField(routeSearch)
   const scrolledSearchFieldRef = useRef('')
@@ -235,17 +162,16 @@ function ModelConfigPageContent() {
     loading,
     saving,
     autoSaving,
-    hasUnsavedChanges,
     activeConfigVersion,
     configVersions,
     versionsLoading,
     switchingConfigVersion,
     creatingConfigVersion,
-    saveConfig,
     handleCreateConfigVersion,
     handleSwitchConfigVersion,
     handleDeleteConfigVersion,
     // 任务配置问题
+    configWarnings,
     invalidModelRefs,
     emptyTasks,
     handleRemoveInvalidRefs,
@@ -270,7 +196,7 @@ function ModelConfigPageContent() {
     editingProvider,
     editingProviderIndex,
     openProviderDialog: openProviderDialogBase,
-    handleSaveProviderEdit,
+    handleSaveProviderEdit: saveProviderEdit,
     providerDeleteDialogOpen,
     setProviderDeleteDialogOpen,
     deletingProviderIndex,
@@ -292,7 +218,6 @@ function ModelConfigPageContent() {
     // 模型批量
     selectedModels,
     toggleModelSelection,
-    toggleSelectAll,
     batchDeleteDialogOpen,
     setBatchDeleteDialogOpen,
     openBatchDeleteDialog,
@@ -315,12 +240,30 @@ function ModelConfigPageContent() {
   const [activeTab, setActiveTab] = useState<ModelConfigTab>(getInitialModelConfigTab)
   const [modelConfigurationHeight, setModelConfigurationHeight] = useState<number>()
   const [visibleModelCount, setVisibleModelCount] = useState(20)
-  const visibleModels = useMemo(
-    () => filteredModels.slice(0, visibleModelCount),
-    [filteredModels, visibleModelCount]
+  // 模型列表上方的筛选键：全部 / 使用中 / 视觉 / 嵌入，只影响显示
+  const [modelKindFilter, setModelKindFilter] = useState<ModelKindFilter>('all')
+  const shownModels = useMemo(
+    () =>
+      filteredModels.filter((model) => {
+        if (modelKindFilter === 'used') return isModelUsed(model.name)
+        if (modelKindFilter === 'visual') return model.model_type === 'llm' && Boolean(model.visual)
+        if (modelKindFilter === 'embedding') return model.model_type !== 'llm'
+        return true
+      }),
+    [filteredModels, isModelUsed, modelKindFilter]
   )
+  const visibleModels = useMemo(
+    () => shownModels.slice(0, visibleModelCount),
+    [shownModels, visibleModelCount]
+  )
+  // 全选只作用于当前筛选出的模型
+  const toggleShownSelectAll = () => {
+    const indices = shownModels.map((shown) => models.findIndex((model) => model === shown))
+    const allSelected = indices.length > 0 && indices.every((index) => selectedModels.has(index))
+    mc.setSelectedModels(allSelected ? new Set() : new Set(indices))
+  }
 
-  const modelListFilterKey = `${modelProviderFilter}:${searchQuery}`
+  const modelListFilterKey = `${modelProviderFilter}:${searchQuery}:${modelKindFilter}`
   const [seenModelListFilterKey, setSeenModelListFilterKey] = useState(modelListFilterKey)
   if (seenModelListFilterKey !== modelListFilterKey) {
     setSeenModelListFilterKey(modelListFilterKey)
@@ -337,13 +280,18 @@ function ModelConfigPageContent() {
   const [advancedModelSettingsVisible, setAdvancedModelSettingsVisible] = useState(false)
   const [advancedTaskSettingsVisible, setAdvancedTaskSettingsVisible] = useState(false)
   const [selectedTaskName, setSelectedTaskName] = useState('replyer')
+  // 模型库里每个模型负责哪些工作，和「分工」页互相对应
+  const getModelTasks = (modelName: string) =>
+    Object.entries(taskConfig ?? {})
+      .filter(([task, config]) => task !== 'web_search' && config?.model_list?.includes(modelName))
+      .map(([task]) => taskShortName(task))
+  // 分工页编辑抽屉里正在编辑的工作；搜索定位到某项工作时直接打开它
+  const [taskDrawerTask, setTaskDrawerTask] = useState<string | null>(null)
   const [extraParamsDialogOpen, setExtraParamsDialogOpen] = useState(false)
-  const [modelComboboxOpen, setModelComboboxOpen] = useState(false)
   // 用户是否手动编辑过模型名称；编辑过后，名称不再跟随模型标识符自动填充
   const [modelNameTouched, setModelNameTouched] = useState(false)
   const [createVersionDialogOpen, setCreateVersionDialogOpen] = useState(false)
   const [manageVersionsDialogOpen, setManageVersionsDialogOpen] = useState(false)
-  const reduceTaskMotion = useReducedMotion()
   const visibleTaskFields = useMemo(
     () =>
       taskConfigSchema?.fields.filter(
@@ -355,27 +303,6 @@ function ModelConfigPageContent() {
   )
   const selectedTaskField =
     visibleTaskFields.find((field) => field.name === selectedTaskName) ?? visibleTaskFields[0]
-  const selectedTaskMetadata = TASK_CONFIGS.find((config) => config.key === selectedTaskField?.name)
-  const selectedTaskHideTemperature = Boolean(
-    selectedTaskMetadata && 'hideTemperature' in selectedTaskMetadata && selectedTaskMetadata.hideTemperature
-  )
-  const selectedTaskHideMaxTokens = Boolean(
-    selectedTaskMetadata && 'hideMaxTokens' in selectedTaskMetadata && selectedTaskMetadata.hideMaxTokens
-  )
-  const selectedTaskHideSelectionStrategy = Boolean(
-    selectedTaskMetadata &&
-      'hideSelectionStrategy' in selectedTaskMetadata &&
-      selectedTaskMetadata.hideSelectionStrategy
-  )
-  const selectedTaskSingleModel = Boolean(
-    selectedTaskMetadata && 'singleModel' in selectedTaskMetadata && selectedTaskMetadata.singleModel
-  )
-  const selectedTaskModelNames =
-    selectedTaskField?.name === 'embedding' || selectedTaskField?.name === 'image_embedding'
-      ? models
-          .filter((model) => model.model_type === 'embedding' || model.model_type === 'image_embedding')
-          .map((model) => model.name)
-      : models.filter((model) => model.model_type === 'llm').map((model) => model.name)
 
   if (selectedTaskField && selectedTaskField.name !== selectedTaskName) {
     setSelectedTaskName(selectedTaskField.name)
@@ -402,6 +329,7 @@ function ModelConfigPageContent() {
       }
       if (searchedTaskName) {
         setSelectedTaskName(searchedTaskName)
+        setTaskDrawerTask(searchedTaskName)
       }
     })
 
@@ -444,9 +372,6 @@ function ModelConfigPageContent() {
   }, [activeTab, advancedModelSettingsVisible, advancedTaskSettingsVisible, loading, searchFieldPath, selectedTaskName])
   const [newVersionLabel, setNewVersionLabel] = useState('')
   const [deletingVersionId, setDeletingVersionId] = useState<string | null>(null)
-  const [tourEntryVisible, setTourEntryVisible] = useState(
-    () => localStorage.getItem('model-assignment-tour-entry-dismissed') !== 'true'
-  )
 
   useLayoutEffect(() => {
     const updateConfigurationHeight = () => {
@@ -475,7 +400,7 @@ function ModelConfigPageContent() {
       window.removeEventListener('resize', updateConfigurationHeight)
       window.visualViewport?.removeEventListener('resize', updateConfigurationHeight)
     }
-  }, [activeTab, loading, tourEntryVisible])
+  }, [activeTab, loading])
 
   const providerModelCounts = useMemo(() => {
     const counts = new Map<string, number>()
@@ -507,19 +432,21 @@ function ModelConfigPageContent() {
     ? getProviderConfig(editingModel.api_provider)
     : undefined
   const selectedClientType = selectedProviderConfig?.client_type
+  const selectedThinkingTemplate = findTemplateByBaseUrl(selectedProviderConfig?.base_url ?? '')
+  const [thinkingProbeRunning, setThinkingProbeRunning] = useState(false)
   const modelExtraParams = editingModel?.extra_params || {}
   const editingModelType = editingModel?.model_type
   const editingModelIsEmbedding = editingModelType === 'embedding' || editingModelType === 'image_embedding'
   const deepSeekClientType: DeepSeekClientType | null =
-    !editingModelIsEmbedding && matchedTemplate?.id === 'deepseek' &&
+    !editingModelIsEmbedding && selectedThinkingTemplate?.id === 'deepseek' &&
     (selectedClientType === 'openai' || selectedClientType === 'openai_responses')
       ? selectedClientType
       : null
-  // 思考开关格式由命中的服务商模板元数据决定，未命中则不显示思考开关
+  // 预置思考格式直接匹配当前提供商地址；无预置时显示自动测试入口。
   // DeepSeek 有专用段（含 Responses 客户端的 reasoning.effort 与联网搜索），不走通用开关
   const thinkingFormatActive: ThinkingFormatConfig | null =
-    !editingModelIsEmbedding && matchedTemplate?.id !== 'deepseek'
-      ? resolveThinkingFormatForModel(matchedTemplate, editingModel?.model_identifier ?? '')
+    !editingModelIsEmbedding && selectedThinkingTemplate?.id !== 'deepseek'
+      ? resolveThinkingFormatForModel(selectedThinkingTemplate, editingModel?.model_identifier ?? '')
       : null
   const thinkingEnabled = thinkingFormatActive
     ? isThinkingEnabled(modelExtraParams, thinkingFormatActive)
@@ -608,12 +535,6 @@ function ModelConfigPageContent() {
     }
   }, [editDialogOpen, editingModel?.api_provider, fetchModelsForProvider])
 
-  const dismissTourEntry = (event: MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation()
-    localStorage.setItem('model-assignment-tour-entry-dismissed', 'true')
-    setTourEntryVisible(false)
-  }
-
   const handleActiveTabChange = (value: string) => {
     const nextTab = MODEL_CONFIG_TABS.includes(value as ModelConfigTab)
       ? (value as ModelConfigTab)
@@ -621,6 +542,18 @@ function ModelConfigPageContent() {
     setActiveTab(nextTab)
     const nextUrl = nextTab === 'tasks' ? '/config/model' : '/config/model?tab=configuration'
     window.history.replaceState(null, '', nextUrl)
+  }
+
+  const handleSaveProviderEdit = async (provider: APIProvider, index: number | null, templateId?: string) => {
+    const savedProvider = await saveProviderEdit(provider, index, templateId)
+    if (!savedProvider || index !== null) return
+
+    // 新建成功后衔接模型配置，显式指定供应商，避免沿用之前的选择。
+    handleActiveTabChange('configuration')
+    setModelProviderFilter(savedProvider.name)
+    setSearchQuery('')
+    clearModels()
+    openEditDialog(null, null, savedProvider.name)
   }
 
   const formatVersionTime = (timestamp?: number) => {
@@ -646,14 +579,18 @@ function ModelConfigPageContent() {
     : null
 
   // Tour 引导 (使用 hook 封装的逻辑)
-  const { startTour: handleStartTour, isRunning: tourIsRunning } = useModelTour({
+  const { startTour: handleStartTour, stopTour: handleStopTour, isRunning: tourIsRunning } = useModelTour({
     onOpenEditDialog: () => openEditDialog(null, null),
     onCloseEditDialog: () => setEditDialogOpen(false),
-    onOpenProviderDialog: () => openProviderDialog(null, null),
+    onOpenProviderDialog: () => {
+      if (!providerDialogOpen) openProviderDialog(null, null)
+    },
     onCloseProviderDialog: () => setProviderDialogOpen(false),
     onOpenProvidersTab: () => handleActiveTabChange('configuration'),
     onOpenModelsTab: () => handleActiveTabChange('configuration'),
     onOpenTasksTab: () => handleActiveTabChange('tasks'),
+    onOpenTaskEditor: () => setTaskDrawerTask('replyer'),
+    onCloseTaskEditor: () => setTaskDrawerTask(null),
   })
 
   if (loading) {
@@ -682,29 +619,31 @@ function ModelConfigPageContent() {
         data-model-config-page="true"
         className="flex min-h-full flex-col gap-4 p-4 sm:gap-6 sm:p-6 lg:h-full lg:overflow-hidden"
       >
-        {/* 无效模型引用警告 */}
-        {invalidModelRefs.length > 0 && (
+        {/* 已保存配置的诊断 */}
+        {configWarnings.length > 0 && (
           <Alert variant="destructive">
             <AlertTriangle className="h-4 w-4" />
             <AlertDescription className="flex items-start justify-between gap-4">
               <div className="flex-1">
-                <strong>检测到无效的模型引用</strong>
+                <strong>模型配置需要修正</strong>
                 <div className="mt-2 space-y-1">
-                  {invalidModelRefs.map(({ taskName, invalidModels }) => (
-                    <div key={taskName} className="text-sm">
-                      <strong>{taskName}</strong> 引用了不存在的模型: {invalidModels.join(', ')}
+                  {configWarnings.map((warning) => (
+                    <div key={warning} className="text-sm">
+                      {warning}
                     </div>
                   ))}
                 </div>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="shrink-0 bg-background hover:bg-accent"
-                onClick={handleRemoveInvalidRefs}
-              >
-                一键清理
-              </Button>
+              {invalidModelRefs.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 bg-background hover:bg-accent"
+                  onClick={handleRemoveInvalidRefs}
+                >
+                  一键清理
+                </Button>
+              )}
             </AlertDescription>
           </Alert>
         )}
@@ -723,25 +662,6 @@ function ModelConfigPageContent() {
         )}
 
 
-        {/* 新手引导入口 - 仅在桌面端显示，移动端隐藏 */}
-        {tourEntryVisible && (
-        <Alert className="hidden lg:flex border-primary/30 bg-primary/5 cursor-pointer hover:bg-primary/10 transition-colors" onClick={handleStartTour}>
-          <GraduationCap className="h-4 w-4 text-primary" />
-          <AlertDescription className="flex items-center justify-between">
-            <span>
-              <strong className="text-primary">新手引导：</strong>不知道如何配置模型？点击这里开始学习如何为麦麦的组件分配模型。
-            </span>
-            <div className="ml-4 flex shrink-0 items-center gap-2">
-            <Button variant="outline" size="sm">
-              开始引导
-            </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={dismissTourEntry}>
-              关闭
-            </Button>
-            </div>
-          </AlertDescription>
-        </Alert>
-        )}
 
         {/* 标签页 */}
         <Tabs
@@ -751,19 +671,30 @@ function ModelConfigPageContent() {
         >
           <div
             data-model-config-tabs-bar="true"
-            className="sticky top-0 z-40 -mx-4 flex w-[calc(100%+2rem)] flex-wrap items-stretch gap-2 bg-background px-4 py-2 sm:-mx-6 sm:w-[calc(100%+3rem)] sm:px-6"
+            className="sticky top-0 z-40 -mx-4 flex w-[calc(100%+2rem)] flex-wrap items-end gap-2 bg-background px-4 pt-2 sm:-mx-6 sm:w-[calc(100%+3rem)] sm:px-6"
           >
-            <TabsList
-              data-model-config-tabs-list="true"
-              className="grid h-9 min-w-[min(100%,22rem)] flex-1 grid-cols-2 bg-transparent shadow-none"
-            >
-              <TabsTrigger value="configuration" className="w-full" data-tour="providers-tab-trigger">模型设置</TabsTrigger>
-              <TabsTrigger value="tasks" className="w-full" data-tour="tasks-tab-trigger">功能分配</TabsTrigger>
-            </TabsList>
-            <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
+            {/* 「分工」决定每项工作由谁来做，「模型库」管理可用的厂商和模型；分工在前，是这一页的主入口。 */}
+            <DashboardFolderTabBar size="large" data-model-config-tabs-list="true" aria-label="模型页">
+              <DashboardFolderTab
+                value="tasks"
+                data-tour="tasks-tab-trigger"
+                icon={<ListChecks />}
+              >
+                分工
+              </DashboardFolderTab>
+              <DashboardFolderTab
+                value="configuration"
+                data-tour="providers-tab-trigger"
+                icon={<Boxes />}
+              >
+                模型库
+              </DashboardFolderTab>
+            </DashboardFolderTabBar>
+            <div className="flex w-full min-w-0 items-center gap-2 pb-2 sm:ml-auto sm:w-auto">
               <SplitDropdownSelect
                 value="active"
-                label="模型配置副本"
+                label="Bot 任务配置副本"
+                controlSize="sm"
                 icon={<History />}
                 className="flex-1 sm:w-[190px] sm:flex-none"
                 disabled={versionsLoading || saving || autoSaving || Boolean(switchingConfigVersion)}
@@ -804,12 +735,13 @@ function ModelConfigPageContent() {
           {/* 厂商与模型合并配置视图 */}
           <TabsContent
             value="configuration"
-            className="mt-0 min-h-0 flex-1 overflow-visible lg:overflow-hidden"
+            className="mt-0 flex min-h-0 flex-1 flex-col overflow-visible lg:overflow-hidden"
           >
+            <DashboardFolderPanel className="flex min-h-0 flex-1 flex-col p-3 sm:p-4">
             <div
               ref={modelConfigurationRef}
               data-model-config-layout="true"
-              className="grid min-h-0 gap-4 lg:grid-cols-4 lg:overflow-hidden"
+              className="grid min-h-0 gap-5 lg:grid-cols-[17rem_minmax(0,1fr)] lg:overflow-hidden"
               style={
                 modelConfigurationHeight === undefined
                   ? undefined
@@ -834,57 +766,57 @@ function ModelConfigPageContent() {
               />
 
               <section
-                className="flex min-h-0 min-w-0 flex-col gap-4 lg:col-span-3 lg:h-full lg:overflow-hidden"
+                className="flex min-h-0 min-w-0 flex-col gap-2 lg:h-full lg:overflow-hidden"
                 data-tour="models-tab-trigger"
               >
-          {/* 搜索与模型操作 */}
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-1 sm:flex-row sm:items-center">
-              <div className="relative w-full sm:max-w-sm">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          {/* 列表标签、筛选键、搜索和添加入口排在同一行 */}
+          <div data-library-label="true" className="flex-wrap gap-y-2">
+            <b>MODELS</b>
+            <h2>模型列表</h2>
+            <div role="group" aria-label="筛选模型" data-library-filters="true" className="ml-1">
+              {MODEL_KIND_FILTERS.map((item) => (
+                <Button
+                  key={item.value}
+                  type="button"
+                  size="xs"
+                  variant={modelKindFilter === item.value ? 'default' : 'outline'}
+                  aria-pressed={modelKindFilter === item.value}
+                  onClick={() => setModelKindFilter(item.value)}
+                >
+                  {item.label}
+                </Button>
+              ))}
+            </div>
+            <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
+              {searchQuery && (
+                <span className="text-xs text-muted-foreground whitespace-nowrap">
+                  找到 {shownModels.length} 个
+                </span>
+              )}
+              <div className="relative w-full sm:w-60">
+                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
-                  placeholder="搜索模型名称、标识符或提供商..."
+                  placeholder="搜索名称、标识符或厂商"
+                  aria-label="搜索模型"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9"
+                  controlSize="sm"
+                  className="pl-8"
                 />
               </div>
-              {/* 桌面端添加模型按钮位于表格表头；手机上由页头右上角的「+」添加 */}
-              {searchQuery && (
-                <p className="text-sm text-muted-foreground whitespace-nowrap">
-                  找到 {filteredModels.length} 个结果
-                </p>
-              )}
-            </div>
-
-          {/* 模型列表 - 移动端卡片视图 */}
-            <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row sm:items-center sm:justify-end">
-              <Button 
-                onClick={saveConfig} 
-                disabled={saving || autoSaving || !hasUnsavedChanges || isRestarting} 
-                size="icon"
-                variant="outline"
-                className="h-9 w-9 shrink-0"
-                title={saving ? '保存中' : autoSaving ? '自动保存中' : hasUnsavedChanges ? '保存配置' : '已保存'}
-                aria-label={saving ? '保存中' : autoSaving ? '自动保存中' : hasUnsavedChanges ? '保存配置' : '已保存'}
-              >
-                {saving || autoSaving ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Save className="h-4 w-4" strokeWidth={2} fill="none" />
-                )}
-              </Button>
               {selectedModels.size > 0 && (
-                <Button
-                  onClick={openBatchDeleteDialog}
-                  size="sm"
-                  variant="destructive"
-                  className="w-full sm:w-auto"
-                >
-                  <Trash2 className="mr-2 h-4 w-4" strokeWidth={2} fill="none" />
-                  <span className="text-sm">批量删除 ({selectedModels.size})</span>
+                <Button onClick={openBatchDeleteDialog} size="sm" variant="destructive">
+                  <Trash2 className="h-4 w-4" strokeWidth={2} fill="none" />
+                  批量删除 ({selectedModels.size})
                 </Button>
               )}
+              {/* 手机上由页头右上角的「+」添加 */}
+              <AddModelMenu
+                onAdd={openAddModelDialog}
+                disabled={apiProviders.length === 0}
+                className="hidden md:inline-flex"
+                dataTour="add-model-button"
+              />
             </div>
           </div>
 
@@ -957,6 +889,7 @@ function ModelConfigPageContent() {
               onDelete={openDeleteDialog}
               onTest={handleTestModelCapability}
               isModelUsed={isModelUsed}
+              getModelTasks={getModelTasks}
               testingModels={testingModels}
               modelTestResults={modelTestResults}
               searchQuery={searchQuery}
@@ -966,14 +899,15 @@ function ModelConfigPageContent() {
             <ModelTable
               paginatedModels={visibleModels}
               allModels={models}
-              filteredModels={filteredModels}
+              filteredModels={shownModels}
               selectedModels={selectedModels}
               onEdit={openEditDialog}
               onDelete={openDeleteDialog}
               onTest={handleTestModelCapability}
               onToggleSelection={toggleModelSelection}
-              onToggleSelectAll={toggleSelectAll}
+              onToggleSelectAll={toggleShownSelectAll}
               isModelUsed={isModelUsed}
+              getModelTasks={getModelTasks}
               testingModels={testingModels}
               modelTestResults={modelTestResults}
               searchQuery={searchQuery}
@@ -983,6 +917,7 @@ function ModelConfigPageContent() {
 
               </section>
             </div>
+            </DashboardFolderPanel>
           </TabsContent>
 
         {/* 模型任务配置标签页 */}
@@ -990,177 +925,56 @@ function ModelConfigPageContent() {
           value="tasks"
           className="mt-0 flex min-h-0 flex-1 flex-col gap-3 overflow-visible lg:overflow-hidden"
         >
-          {taskConfig && taskConfigSchema && selectedTaskField && (
-            <div className="grid min-h-0 gap-4 lg:flex-1 lg:grid-cols-4 lg:overflow-hidden">
-              <aside className="flex min-h-0 flex-col overflow-hidden rounded-lg border lg:h-full">
-                <div className="flex items-center justify-between gap-2 border-b px-3 py-2.5">
-                  <h2 className="text-sm font-semibold">功能任务</h2>
-                  {taskConfigSchema.fields.some((field) => field.advanced) && (
-                    <div className="flex shrink-0 items-center gap-2">
-                      <Label htmlFor="advanced-task-settings" className="cursor-pointer whitespace-nowrap text-xs">
-                        高级
-                      </Label>
-                      <Switch
-                        id="advanced-task-settings"
-                        checked={advancedTaskSettingsVisible}
-                        onCheckedChange={setAdvancedTaskSettingsVisible}
-                      />
-                    </div>
+          <DashboardFolderPanel className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
+          {taskConfig && taskConfigSchema && (
+            <TaskAssignmentBoard
+              fields={taskConfigSchema.fields}
+              taskConfig={taskConfig}
+              models={models}
+              webServices={Object.keys(mc.webConfig.services)}
+              openTask={taskDrawerTask}
+              onOpenTaskChange={(task) => {
+                if (task === null && tourIsRunning) handleStopTour()
+                setTaskDrawerTask(task)
+              }}
+              onChange={updateTaskConfig}
+              onAddWebService={() => setWebSearchEditor({ name: null })}
+              hasProviders={providers.length > 0}
+              onStartTour={handleStartTour}
+              tourRunning={tourIsRunning}
+              fallbackLabel={(field) => resolveFieldLabel(field, i18n.language)}
+              renderExtra={(task) => (
+                <>
+                  {task === 'embedding' && (
+                    <EmbeddingBuildProgress selectedEmbeddingModel={taskConfig.embedding?.model_list[0] ?? ''} />
                   )}
-                </div>
-                {/* 移动端用紧凑选择器，避免类别列表占满屏幕并接管页面纵向滚动。 */}
-                <div className="min-w-0 p-2 lg:hidden">
-                  <Select value={selectedTaskField.name} onValueChange={setSelectedTaskName}>
-                    <SelectTrigger className="w-full min-w-0" aria-label="功能任务">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {visibleTaskFields.map((field) => {
-                        const assignedCount = taskConfig[field.name]?.model_list.length ?? 0
-
-                        return (
-                          <SelectItem key={field.name} value={field.name}>
-                            {TASK_CONFIGS.find((task) => task.key === field.name)?.title ?? resolveFieldLabel(field, i18n.language)}
-                            {field.advanced ? ' · 高级' : ''}
-                            {assignedCount > 0 ? ` · 已配置 ${assignedCount}` : ' · 未配置'}
-                          </SelectItem>
+                  {task !== 'web_search' && (taskConfig[task]?.model_list.length ?? 0) > 0 && (
+                    <TaskUsageStats
+                      key={task}
+                      taskName={task}
+                      summary={
+                        (task === 'planner' || task === 'replyer') && (
+                          <TaskRuntimeSummary
+                            taskName={task}
+                            modelList={taskConfig[task]?.model_list ?? []}
+                            models={models}
+                          />
                         )
-                      })}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="hidden min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain p-2 lg:block lg:h-0">
-                  <AnimatePresence initial={false}>
-                    {visibleTaskFields.map((field) => {
-                      const isSelected = field.name === selectedTaskField.name
-                      const assignedModels = taskConfig[field.name]?.model_list ?? []
-                      const isConfigured = assignedModels.length > 0
-                      const modelSummary = isConfigured ? assignedModels.join('、') : '未配置模型'
-
-                      return (
-                        <motion.button
-                          layout={!reduceTaskMotion}
-                          key={field.name}
-                          type="button"
-                          className={cn(
-                            'flex w-full min-w-0 items-center justify-between gap-3 overflow-hidden rounded-md px-3 py-2 text-left transition-colors',
-                            isSelected ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
-                          )}
-                          initial={reduceTaskMotion ? false : { height: 0, opacity: 0, y: -6 }}
-                          animate={{ height: 'auto', opacity: 1, y: 0 }}
-                          exit={reduceTaskMotion ? undefined : { height: 0, opacity: 0, y: -6 }}
-                          transition={{ duration: reduceTaskMotion ? 0 : 0.18, ease: 'easeOut' }}
-                          onClick={() => setSelectedTaskName(field.name)}
-                          aria-pressed={isSelected}
-                        >
-                          <span className="min-w-0 flex-1">
-                            <span className="flex min-w-0 items-center gap-1.5">
-                              <span className="truncate text-sm font-medium">
-                                {TASK_CONFIGS.find((task) => task.key === field.name)?.title ?? resolveFieldLabel(field, i18n.language)}
-                              </span>
-                              {field.advanced && (
-                                <span
-                                  className={cn(
-                                    'shrink-0 text-[10px]',
-                                    isSelected ? 'text-primary-foreground/70' : 'text-amber-600 dark:text-amber-400'
-                                  )}
-                                >
-                                  高级
-                                </span>
-                              )}
-                            </span>
-                            <ModelIdentifierMarquee
-                              text={modelSummary}
-                              className="mt-0.5"
-                              textClassName={cn(
-                                'text-xs',
-                                isSelected ? 'text-primary-foreground/70' : 'text-muted-foreground'
-                              )}
-                            />
-                          </span>
-                          <span
-                            className={cn(
-                              'shrink-0 text-xs',
-                              isSelected
-                                ? 'text-primary-foreground/75'
-                                : isConfigured
-                                  ? 'text-emerald-600 dark:text-emerald-400'
-                                  : 'text-muted-foreground'
-                            )}
-                          >
-                            {isConfigured ? `已配置 · ${assignedModels.length}` : '未配置'}
-                          </span>
-                        </motion.button>
-                      )
-                    })}
-                  </AnimatePresence>
-                </div>
-              </aside>
-
-              <section className="min-h-0 min-w-0 overflow-x-clip lg:col-span-3 lg:h-full lg:overflow-hidden">
-                <AnimatePresence mode="wait" initial={false}>
-                  <motion.div
-                    key={selectedTaskField.name}
-                    className="flex min-h-0 flex-col gap-3 p-1 lg:h-full lg:overflow-hidden"
-                    data-config-field-path={`model_task_config.${selectedTaskField.name}`}
-                    initial={reduceTaskMotion ? false : { opacity: 0, x: 12 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={reduceTaskMotion ? undefined : { opacity: 0, x: -8 }}
-                    transition={{ duration: reduceTaskMotion ? 0 : 0.16, ease: 'easeOut' }}
-                  >
-                    {selectedTaskField.name === 'web_search' ? (
-                      <WebSearchTaskCard
-                        config={mc.webConfig}
-                        selected={taskConfig.web_search?.model_list[0] ?? ''}
-                        onChange={(names) => updateTaskConfig('web_search', 'model_list', names)}
-                        onAdd={() => setWebSearchEditor({ name: null })}
-                      />
-                    ) : <TaskConfigCard
-                      title={selectedTaskMetadata?.title ?? resolveFieldLabel(selectedTaskField, i18n.language)}
-                      description={selectedTaskField.description}
-                      taskConfig={taskConfig[selectedTaskField.name] ?? { model_list: [] }}
-                      modelNames={selectedTaskModelNames}
-                      onChange={(field, value) => updateTaskConfig(selectedTaskField.name, field, value)}
-                      hideTemperature={selectedTaskHideTemperature}
-                      hideMaxTokens={selectedTaskHideMaxTokens}
-                      hideSelectionStrategy={selectedTaskHideSelectionStrategy}
-                      advanced={selectedTaskField.advanced}
-                      showAdvancedSettings={advancedTaskSettingsVisible}
-                      singleModel={selectedTaskSingleModel}
-                      dataTour="task-model-select"
-                      modelContent={selectedTaskField.name === 'embedding' && (
-                        <EmbeddingBuildProgress
-                          selectedEmbeddingModel={taskConfig.embedding?.model_list[0] ?? ''}
-                        />
-                      )}
-                    />}
-                    {selectedTaskField.name !== 'web_search' && (taskConfig[selectedTaskField.name]?.model_list.length ?? 0) > 0 && (
-                      <TaskUsageStats
-                        key={selectedTaskField.name}
-                        taskName={selectedTaskField.name}
-                        summary={
-                          (selectedTaskField.name === 'planner' || selectedTaskField.name === 'replyer') && (
-                            <TaskRuntimeSummary
-                              taskName={selectedTaskField.name}
-                              modelList={taskConfig[selectedTaskField.name]?.model_list ?? []}
-                              models={models}
-                            />
-                          )
-                        }
-                      />
-                    )}
-                  </motion.div>
-                </AnimatePresence>
-              </section>
-            </div>
+                      }
+                    />
+                  )}
+                </>
+              )}
+            />
           )}
+          </DashboardFolderPanel>
         </TabsContent>
       </Tabs>
 
       <Dialog open={createVersionDialogOpen} onOpenChange={setCreateVersionDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>保存模型配置副本</DialogTitle>
+            <DialogTitle>保存Bot 任务配置副本</DialogTitle>
             <DialogDescription>
               当前启用的 model_config.toml 会复制到 config/versions/model，之后可随时切换回来。
             </DialogDescription>
@@ -1171,7 +985,7 @@ function ModelConfigPageContent() {
               id="model_config_version_label"
               value={newVersionLabel}
               onChange={(event) => setNewVersionLabel(event.target.value)}
-              placeholder="例如：生产环境模型配置副本"
+              placeholder="例如：生产环境Bot 任务配置副本"
               maxLength={80}
             />
           </div>
@@ -1198,9 +1012,9 @@ function ModelConfigPageContent() {
       <Dialog open={manageVersionsDialogOpen} onOpenChange={setManageVersionsDialogOpen}>
         <DialogContent className="max-w-[95vw] sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>模型配置副本</DialogTitle>
+            <DialogTitle>Bot 任务配置副本</DialogTitle>
             <DialogDescription>
-              未启用副本保存在 config/versions/model，切换副本时当前配置会先自动归档。
+              副本保存当前 Bot 的任务选择和参数，不包含公共供应商、模型与联网服务定义；切换前会自动归档当前配置。
             </DialogDescription>
           </DialogHeader>
           <DialogBody viewportClassName="max-h-[60vh] pr-3 sm:pr-4">
@@ -1490,23 +1304,26 @@ function ModelConfigPageContent() {
             </DialogTitle>
             {/* 「高级」开关浮在右上角，与 DialogContent 内置的关闭按钮同行 */}
             {!editingModelIsEmbedding && (
-            <Button
-              type="button"
-              variant={advancedModelSettingsVisible ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setAdvancedModelSettingsVisible((current) => !current)}
-              className="absolute top-3.5 right-12"
+            <label
+              htmlFor="advanced_model_settings"
+              className="absolute top-4 right-12 flex cursor-pointer items-center gap-2 text-sm font-semibold"
             >
-              高级
-            </Button>
+              高级设置
+              <Switch
+                id="advanced_model_settings"
+                checked={advancedModelSettingsVisible}
+                onCheckedChange={setAdvancedModelSettingsVisible}
+              />
+            </label>
             )}
           </DialogHeader>
 
-          <DialogBody viewportClassName="min-h-0 flex-1 pr-3 sm:pr-4 [&>div]:!block">
-          <div className="grid gap-3 py-2 sm:gap-4 sm:py-4">
+          <DialogBody type="auto" data-form-scroll="true" viewportClassName="min-h-0 flex-1 pr-0 [&>div]:!block">
+          <FormColumns className="py-2 sm:py-3">
+          <FormColumn>
+          <FormSection title="模型">
             {editingModelIsEmbedding && (
-            <div className="grid gap-2">
-              <Label htmlFor="model_type">模型类型</Label>
+            <FormRow label="模型类型" htmlFor="model_type">
               <Select
                 value={editingModelType}
                 onValueChange={(value) => setEditingModel((model) => model
@@ -1520,251 +1337,96 @@ function ModelConfigPageContent() {
                   <SelectItem value="image_embedding">图片嵌入模型</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
+            </FormRow>
             )}
-            <div className="grid gap-3 md:grid-cols-2 md:gap-4">
-              <div className="grid gap-2" data-tour="model-name-input">
-                <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2">
-                  <Label
-                    htmlFor="model_name"
-                    className={`sm:w-28 sm:flex-shrink-0 ${formErrors.name ? 'text-destructive' : ''}`}
-                  >
-                    模型名称 *
-                  </Label>
-                  <Input
-                    id="model_name"
-                    value={editingModel?.name || ''}
-                    onChange={(e) => {
-                      setModelNameTouched(true)
-                      setEditingModel((prev) =>
-                        prev ? { ...prev, name: e.target.value } : null
-                      )
-                      if (formErrors.name) {
-                        setFormErrors((prev) => ({ ...prev, name: undefined }))
-                      }
-                    }}
-                    placeholder={editingModelType === 'embedding'
-                      ? '例如: text-embedding-v4'
-                      : editingModelType === 'image_embedding'
-                        ? '例如: multimodal-embedding-v1'
-                        : '例如: qwen3-30b'}
-                    className={`sm:flex-1 ${formErrors.name ? 'border-destructive focus-visible:ring-destructive' : ''}`}
-                  />
-                </div>
-                {formErrors.name ? (
-                  <p className="text-xs text-destructive sm:pl-28">{formErrors.name}</p>
-                ) : null}
-              </div>
 
-              <div className="grid gap-2" data-tour="model-provider-select">
-                <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2">
-                  <Label
-                    htmlFor="api_provider"
-                    className={`sm:w-28 sm:flex-shrink-0 ${formErrors.api_provider ? 'text-destructive' : ''}`}
-                  >
-                    API 提供商 *
-                  </Label>
-                  <Select
-                    value={editingModel?.api_provider || ''}
-                    onValueChange={(value) => {
-                      setEditingModel((prev) =>
-                        prev
-                          ? { ...prev, api_provider: value }
-                          : null
-                      )
-                      // 清空模型列表和错误状态，等待 useEffect 重新获取
-                      clearModels()
-                      if (formErrors.api_provider) {
-                        setFormErrors((prev) => ({ ...prev, api_provider: undefined }))
-                      }
-                    }}
-                  >
-                    <SelectTrigger id="api_provider" className={`sm:flex-1 ${formErrors.api_provider ? 'border-destructive focus-visible:ring-destructive' : ''}`}>
-                      <SelectValue placeholder="选择提供商" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {providers.map((provider) => (
-                        <SelectItem key={provider} value={provider}>
-                          {provider}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {formErrors.api_provider && (
-                  <p className="text-xs text-destructive sm:pl-28">{formErrors.api_provider}</p>
-                )}
-              </div>
-            </div>
+            <FormRow label="提供商" htmlFor="api_provider" required error={formErrors.api_provider} data-tour="model-provider-select">
+              <Select
+                value={editingModel?.api_provider || ''}
+                onValueChange={(value) => {
+                  setEditingModel((prev) =>
+                    prev
+                      ? { ...prev, api_provider: value }
+                      : null
+                  )
+                  // 清空模型列表和错误状态，等待 useEffect 重新获取
+                  clearModels()
+                  if (formErrors.api_provider) {
+                    setFormErrors((prev) => ({ ...prev, api_provider: undefined }))
+                  }
+                }}
+              >
+                <SelectTrigger id="api_provider" className={formErrors.api_provider ? 'border-destructive focus-visible:ring-destructive' : ''}>
+                  <SelectValue placeholder="选择提供商" />
+                </SelectTrigger>
+                <SelectContent>
+                  {providers.map((provider) => (
+                    <SelectItem key={provider} value={provider}>
+                      {provider}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FormRow>
 
-            <div className="grid gap-2" data-tour="model-identifier-input">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="model_identifier" className={formErrors.model_identifier ? 'text-destructive' : ''}>模型标识符 *</Label>
-                {matchedTemplate?.modelFetcher && (
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="text-xs">
-                      {matchedTemplate.display_name}
-                    </Badge>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 px-2"
-                      onClick={() => editingModel?.api_provider && fetchModelsForProvider(editingModel.api_provider, true)}
-                      disabled={fetchingModels}
-                    >
-                      {fetchingModels ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <RefreshCw className="h-3 w-3" />
-                      )}
-                    </Button>
-                  </div>
-                )}
-              </div>
-              
-              <div className="flex flex-col gap-1.5 sm:flex-row sm:gap-2">
-                {/* 模型标识符 Combobox */}
-                {matchedTemplate?.modelFetcher && (
-                  <Popover open={modelComboboxOpen} onOpenChange={setModelComboboxOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        role="combobox"
-                        aria-expanded={modelComboboxOpen}
-                        className="w-full justify-between font-normal sm:w-[46%]"
-                        disabled={fetchingModels || !!modelFetchError}
-                      >
-                        {fetchingModels ? (
-                          <span className="flex items-center gap-2 text-muted-foreground">
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            正在获取模型列表...
-                          </span>
-                        ) : modelFetchError ? (
-                          <span className="text-muted-foreground text-sm">手动填写</span>
-                        ) : editingModel?.model_identifier ? (
-                          <ModelIdentifierMarquee
-                            text={editingModel.model_identifier}
-                            className="min-w-0 flex-1 text-left"
-                          />
-                        ) : (
-                          <span className="text-muted-foreground">搜索或选择模型...</span>
-                        )}
-                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="z-[60] p-0" align="start" style={{ width: 'var(--radix-popover-trigger-width)' }}>
-                      <Command>
-                        <CommandInput placeholder="搜索模型..." />
-                        <CommandList className="max-h-[300px]">
-                          <CommandEmpty>
-                            {modelFetchError ? (
-                              <div className="py-4 px-2 text-center space-y-2">
-                                <p className="text-sm text-destructive">{modelFetchError}</p>
-                                {!modelFetchError.includes('API Key') && (
-                                  <Button
-                                    variant="link"
-                                    size="sm"
-                                    onClick={() => editingModel?.api_provider && fetchModelsForProvider(editingModel.api_provider, true)}
-                                  >
-                                    重试
-                                  </Button>
-                                )}
-                              </div>
-                            ) : (
-                              '未找到匹配的模型'
-                            )}
-                          </CommandEmpty>
-                          <CommandGroup heading="可用模型">
-                            {availableModels.map((model) => (
-                              <CommandItem
-                                key={model.id}
-                                value={model.id}
-                                className="group/model-option pr-8"
-                                onSelect={() => {
-                                  setEditingModel((prev) => {
-                                    if (!prev) return null
-                                    // 名称留空且用户未手动编辑过时，名称跟随标识符自动填充
-                                    const shouldFillName = !prev.name && !modelNameTouched
-                                    return {
-                                      ...prev,
-                                      model_identifier: model.id,
-                                      ...(shouldFillName ? { name: model.id } : {}),
-                                    }
-                                  })
-                                  setModelComboboxOpen(false)
-                                }}
-                              >
-                                {editingModel?.model_identifier === model.id && (
-                                  <Check className="absolute right-2 h-4 w-4" />
-                                )}
-                                <div className="flex min-w-0 flex-1 flex-col">
-                                  <ModelIdentifierMarquee text={model.id} />
-                                  {model.name !== model.id && (
-                                    <ModelIdentifierMarquee
-                                      text={model.name}
-                                      textClassName="text-xs text-muted-foreground"
-                                    />
-                                  )}
-                                </div>
-                              </CommandItem>
-                            ))}
-                          </CommandGroup>
-                        </CommandList>
-                      </Command>
-                    </PopoverContent>
-                  </Popover>
-                )}
-
-                <Input
-                  id="model_identifier"
-                  value={editingModel?.model_identifier || ''}
-                  onChange={(e) => {
-                    setEditingModel((prev) => {
-                      if (!prev) return null
-                      // 名称留空且用户未手动编辑过时，名称跟随标识符自动填充
-                      const shouldFillName = !prev.name && !modelNameTouched
-                      return {
-                        ...prev,
-                        model_identifier: e.target.value,
-                        ...(shouldFillName ? { name: e.target.value } : {}),
-                      }
-                    })
-                    if (formErrors.model_identifier) {
-                      setFormErrors((prev) => ({ ...prev, model_identifier: undefined }))
+            <FormRow label="模型标识符" htmlFor="model_identifier" required error={formErrors.model_identifier} data-tour="model-identifier-input">
+              <ComboboxInput
+                id="model_identifier"
+                value={editingModel?.model_identifier || ''}
+                onValueChange={(value) => {
+                  setEditingModel((prev) => {
+                    if (!prev) return null
+                    // 名称留空且用户未手动编辑过时，名称跟随标识符自动填充
+                    const shouldFillName = !prev.name && !modelNameTouched
+                    return {
+                      ...prev,
+                      model_identifier: value,
+                      ...(shouldFillName ? { name: value } : {}),
                     }
-                  }}
-                  placeholder={matchedTemplate?.modelFetcher ? '手动输入模型标识符' : 'Qwen/Qwen3-30B-A3B-Instruct-2507'}
-                  className={`${matchedTemplate?.modelFetcher ? 'sm:flex-1' : 'w-full'} ${formErrors.model_identifier ? 'border-destructive focus-visible:ring-destructive' : ''}`}
-                />
-              </div>
-              
-              {/* 表单验证错误提示 */}
-              {formErrors.model_identifier && (
-                <p className="text-xs text-destructive">{formErrors.model_identifier}</p>
-              )}
-              
-              {/* 模型获取错误提示 */}
-              {modelFetchError && matchedTemplate?.modelFetcher && !formErrors.model_identifier && (
-                <Alert variant="destructive" className="mt-2 py-2">
-                  <Info className="h-4 w-4" />
-                  <AlertDescription className="text-xs">
-                    {modelFetchError}
-                  </AlertDescription>
-                </Alert>
-              )}
-              
-              {!formErrors.model_identifier && (modelFetchError || !matchedTemplate?.modelFetcher) && (
-                <p className="text-xs text-muted-foreground">
-                  {modelFetchError
-                    ? '请手动输入模型标识符，或前往"模型厂商设置"检查 API Key'
-                    : 'API 提供商提供的模型 ID'}
-                </p>
-              )}
-            </div>
+                  })
+                  if (formErrors.model_identifier) {
+                    setFormErrors((prev) => ({ ...prev, model_identifier: undefined }))
+                  }
+                }}
+                options={matchedTemplate?.modelFetcher
+                  ? availableModels.map((model) => ({ value: model.id, description: model.name }))
+                  : undefined}
+                loading={Boolean(matchedTemplate?.modelFetcher) && fetchingModels}
+                error={matchedTemplate?.modelFetcher && modelFetchError
+                  ? `${modelFetchError}。可直接手动输入，或前往「模型厂商设置」检查 API Key`
+                  : undefined}
+                onRefresh={matchedTemplate?.modelFetcher
+                  ? () => editingModel?.api_provider && fetchModelsForProvider(editingModel.api_provider, true)
+                  : undefined}
+                placeholder={matchedTemplate?.modelFetcher ? '输入或从列表选择' : 'Qwen/Qwen3-30B-A3B-Instruct-2507'}
+                invalid={Boolean(formErrors.model_identifier)}
+              />
+            </FormRow>
 
-            {!editingModelIsEmbedding && (
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:gap-6">
-              <div className="flex items-center space-x-2">
+            <FormRow label="名称" htmlFor="model_name" required error={formErrors.name} data-tour="model-name-input">
+              <Input
+                id="model_name"
+                value={editingModel?.name || ''}
+                onChange={(e) => {
+                  setModelNameTouched(true)
+                  setEditingModel((prev) =>
+                    prev ? { ...prev, name: e.target.value } : null
+                  )
+                  if (formErrors.name) {
+                    setFormErrors((prev) => ({ ...prev, name: undefined }))
+                  }
+                }}
+                placeholder="默认与标识符相同"
+                className={formErrors.name ? 'border-destructive focus-visible:ring-destructive' : ''}
+              />
+            </FormRow>
+          </FormSection>
+
+          {!editingModelIsEmbedding && (
+          <FormSection title="能力">
+            <FormRow label="视觉" htmlFor="model_visual">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs text-muted-foreground">能看图片</span>
                 <Switch
                   id="model_visual"
                   checked={editingModel?.visual || false}
@@ -1774,129 +1436,281 @@ function ModelConfigPageContent() {
                     )
                   }
                 />
-                <Label htmlFor="model_visual" className="cursor-pointer">
-                  启用视觉
-                </Label>
               </div>
-            </div>
+            </FormRow>
+
+            {deepSeekClientType && (
+              <>
+                <FormRow label="思考" htmlFor="deepseek_thinking">
+                  <div className="flex items-center justify-between gap-3">
+                    <Select
+                      value={deepSeekReasoningEffort}
+                      disabled={!deepSeekThinkingEnabled}
+                      onValueChange={(value) => updateModelExtraParams((params) =>
+                        setDeepSeekReasoningEffort(
+                          params,
+                          deepSeekClientType,
+                          value as DeepSeekReasoningEffort
+                        )
+                      )}
+                    >
+                      <SelectTrigger id="deepseek_reasoning_effort" aria-label="思考力度" className="w-36">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="low">低</SelectItem>
+                        <SelectItem value="high">高（默认）</SelectItem>
+                        <SelectItem value="max">最高</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Switch
+                      id="deepseek_thinking"
+                      aria-label="启用思考"
+                      checked={deepSeekThinkingEnabled}
+                      onCheckedChange={(checked) => updateModelExtraParams((params) =>
+                        setDeepSeekThinkingEnabled(params, deepSeekClientType, checked)
+                      )}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {deepSeekClientType === 'openai_responses' ? '写入 reasoning.effort' : '写入 thinking.type'}
+                  </p>
+                </FormRow>
+                <FormRow label="联网搜索" htmlFor="deepseek_web_search">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs text-muted-foreground">
+                      {deepSeekClientType === 'openai_responses'
+                        ? '添加 DeepSeek 原生 web_search 工具'
+                        : '仅 DeepSeek Responses API 支持'}
+                    </span>
+                    <Switch
+                      id="deepseek_web_search"
+                      aria-label="启用联网搜索"
+                      checked={deepSeekWebSearchEnabled}
+                      disabled={deepSeekClientType !== 'openai_responses' || deepSeekToolsInvalid}
+                      onCheckedChange={(checked) => updateModelExtraParams((params) =>
+                        setDeepSeekWebSearchEnabled(params, checked)
+                      )}
+                    />
+                  </div>
+                </FormRow>
+                {deepSeekExtraParamsError && (
+                  <p role="alert" className="text-xs text-destructive">
+                    额外参数配置冲突：{deepSeekExtraParamsError}
+                  </p>
+                )}
+              </>
             )}
 
-            <fieldset className={`grid min-w-0 grid-cols-1 gap-3 sm:gap-4 ${editingModelIsEmbedding ? '' : 'md:grid-cols-3'}`}>
-              <legend className="mb-2 text-sm font-medium">默认价格</legend>
-              <div className="grid gap-2">
-                <Label htmlFor="price_in">输入价格 (¥/M token)</Label>
-                <Input
-                  id="price_in"
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  value={editingModel?.price_in ?? ''}
-                  onChange={(e) => {
-                    const val = e.target.value === '' ? null : parseFloat(e.target.value)
-                    setEditingModel((prev) => {
-                      if (!prev) return null
-                      // 缓存价格未被手动改过时（当前值仍等于修改前的输入价）跟随输入价格
-                      const cacheFollowsInput = (prev.cache_price_in ?? 0) === (prev.price_in ?? 0)
-                      return {
-                        ...prev,
-                        price_in: val,
-                        cache_price_in: cacheFollowsInput ? val : prev.cache_price_in,
-                      }
-                    })
-                  }}
-                  placeholder="默认: 0"
-                />
-              </div>
-
-              {!editingModelIsEmbedding && (
+            {!deepSeekClientType && thinkingFormatActive && (
               <>
-              <div className="grid gap-2">
-                <Label htmlFor="price_out">输出价格 (¥/M token)</Label>
-                <Input
-                  id="price_out"
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  value={editingModel?.price_out ?? ''}
-                  onChange={(e) => {
-                    const val = e.target.value === '' ? null : parseFloat(e.target.value)
-                    setEditingModel((prev) =>
-                      prev
-                        ? { ...prev, price_out: val }
-                        : null
-                    )
-                  }}
-                  placeholder="默认: 0"
-                />
-              </div>
+                {/* 不支持关闭时将已开启的开关置灰；旧配置若为关闭状态，仍允许切回开启。 */}
+                <FormRow label="思考" htmlFor="model_thinking">
+                  <div className="flex items-center justify-between gap-3">
+                    {thinkingEffortOptions.length > 0 ? (
+                      <Select
+                        value={thinkingEffort}
+                        disabled={!thinkingEnabled}
+                        onValueChange={(value) => updateModelExtraParams((params) =>
+                          setThinkingEffort(params, thinkingFormatActive, value)
+                        )}
+                      >
+                        <SelectTrigger id="model_thinking_effort" aria-label="思考力度" className="w-36">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {thinkingEffortOptions.map((effort) => (
+                            <SelectItem key={effort} value={effort}>
+                              {effort}
+                              {effort === getThinkingEffort({}, thinkingFormatActive) ? '（默认）' : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : <span />}
+                    <Switch
+                      id="model_thinking"
+                      aria-label="启用思考"
+                      checked={thinkingEnabled}
+                      disabled={!thinkingSwitchInteractive}
+                      onCheckedChange={(checked) => updateModelExtraParams((params) =>
+                        setThinkingEnabled(params, thinkingFormatActive, checked)
+                      )}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {thinkingFormatActive.kind === 'reasoning_effort'
+                      ? '推理模型思考常开，仅支持调整力度档位'
+                      : thinkingFormatActive.kind === 'enable_thinking'
+                        ? '写入 enable_thinking'
+                        : `写入 thinking.type（${thinkingFormatActive.onValue ?? 'enabled'}）`}
+                    {thinkingFormatActive.kind === 'thinking_type' && thinkingFormatActive.disableNote
+                      ? `。${thinkingFormatActive.disableNote}`
+                      : ''}
+                  </p>
+                </FormRow>
 
-              <div className="grid gap-2">
-                <Label htmlFor="cache_price_in">缓存价格 (¥/M token)</Label>
-                <Input
-                  id="cache_price_in"
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  value={editingModel?.cache_price_in ?? ''}
-                  onChange={(e) => {
-                    const val = e.target.value === '' ? null : parseFloat(e.target.value)
-                    setEditingModel((prev) =>
-                      prev
-                        ? { ...prev, cache_price_in: val }
-                        : null
-                    )
-                  }}
-                  placeholder="留空=与输入价一致"
-                />
-              </div>
+                {/* 思考预算：配置了预算参数的格式显示 */}
+                {thinkingFormatActive.budgetParam && (
+                  <FormRow label="思考预算" htmlFor="model_thinking_budget">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="model_thinking_budget"
+                        type="number"
+                        min="0"
+                        step="1"
+                        className="w-36"
+                        value={thinkingBudget ?? ''}
+                        onChange={(e) => {
+                          const value = e.target.value === '' ? null : Math.max(0, parseInt(e.target.value, 10))
+                          if (e.target.value === '' || Number.isFinite(value)) {
+                            updateModelExtraParams((params) => setThinkingBudget(params, thinkingFormatActive, value))
+                          }
+                        }}
+                        placeholder={thinkingFormatActive.budgetNote ?? '服务商默认'}
+                      />
+                      <FormUnit>token</FormUnit>
+                    </div>
+                  </FormRow>
+                )}
+
+                {thinkingFormatActive.note && (
+                  <p className="text-xs text-muted-foreground">{thinkingFormatActive.note}</p>
+                )}
+
+                {thinkingExtraParamsError && (
+                  <p role="alert" className="text-xs text-destructive">
+                    思考参数配置有误：{thinkingExtraParamsError}
+                  </p>
+                )}
               </>
-              )}
-            </fieldset>
+            )}
 
-            <section aria-labelledby="price-periods-heading" className="min-w-0 space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <h3
-                    id="price-periods-heading"
-                    className="text-sm font-medium"
-                    title="按成功请求尝试的开始时间计价；包含开始、不包含结束，支持跨午夜。无时段或时段外使用默认价格。"
-                  >
-                    分时价格
-                  </h3>
-                  <p className="text-xs text-muted-foreground">每日 · 服务器本地时间 · ¥/M token</p>
+            {editDialogOpen && editingModel && !deepSeekClientType && !thinkingFormatActive &&
+              (selectedClientType === 'openai' || selectedClientType === 'openai_responses') && (
+              <ThinkingProbeControls
+                key={JSON.stringify([editingModel.api_provider, editingModel.model_identifier, selectedClientType, selectedProviderConfig?.base_url, editingModel.force_stream_mode])}
+                apiProvider={editingModel.api_provider}
+                modelIdentifier={editingModel.model_identifier}
+                extraParams={modelExtraParams}
+                forceStreamMode={editingModel.force_stream_mode ?? false}
+                disabled={saving}
+                onBusyChange={setThinkingProbeRunning}
+                onChange={(params) => setEditingModel((previousModel) => previousModel
+                  ? { ...previousModel, extra_params: params }
+                  : null
+                )}
+              />
+            )}
+          </FormSection>
+          )}
+          </FormColumn>
+
+          <FormColumn>
+          <FormSection
+            title="价格"
+            action={<span className="text-xs text-muted-foreground">¥ / 百万 token</span>}
+          >
+            <FormRow label="默认价格">
+              <div className={`grid min-w-0 gap-2 ${editingModelIsEmbedding ? 'grid-cols-1 sm:w-1/3' : 'grid-cols-3'}`}>
+                <div className="grid min-w-0 gap-1">
+                  <Label htmlFor="price_in" className="text-xs text-muted-foreground">输入</Label>
+                  <Input
+                    id="price_in"
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    value={editingModel?.price_in ?? ''}
+                    onChange={(e) => {
+                      const val = e.target.value === '' ? null : parseFloat(e.target.value)
+                      setEditingModel((prev) => {
+                        if (!prev) return null
+                        // 缓存价格未被手动改过时（当前值仍等于修改前的输入价）跟随输入价格
+                        const cacheFollowsInput = (prev.cache_price_in ?? 0) === (prev.price_in ?? 0)
+                        return {
+                          ...prev,
+                          price_in: val,
+                          cache_price_in: cacheFollowsInput ? val : prev.cache_price_in,
+                        }
+                      })
+                    }}
+                    placeholder="0"
+                  />
                 </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 shrink-0 gap-1"
-                  onClick={() => updatePricePeriods((periods) => [...periods, {
-                    start_time: '',
-                    end_time: '',
-                    price_in: editingModel?.price_in ?? 0,
-                    price_out: editingModel?.price_out ?? 0,
-                    cache_price_in: editingModel?.cache_price_in ?? 0,
-                  }])}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  添加时段
-                </Button>
+                {!editingModelIsEmbedding && (
+                <>
+                <div className="grid min-w-0 gap-1">
+                  <Label htmlFor="price_out" className="text-xs text-muted-foreground">输出</Label>
+                  <Input
+                    id="price_out"
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    value={editingModel?.price_out ?? ''}
+                    onChange={(e) => {
+                      const val = e.target.value === '' ? null : parseFloat(e.target.value)
+                      setEditingModel((prev) =>
+                        prev
+                          ? { ...prev, price_out: val }
+                          : null
+                      )
+                    }}
+                    placeholder="0"
+                  />
+                </div>
+                <div className="grid min-w-0 gap-1">
+                  <Label htmlFor="cache_price_in" className="text-xs text-muted-foreground">缓存命中</Label>
+                  <Input
+                    id="cache_price_in"
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    value={editingModel?.cache_price_in ?? ''}
+                    onChange={(e) => {
+                      const val = e.target.value === '' ? null : parseFloat(e.target.value)
+                      setEditingModel((prev) =>
+                        prev
+                          ? { ...prev, cache_price_in: val }
+                          : null
+                      )
+                    }}
+                    placeholder="同输入价"
+                  />
+                </div>
+                </>
+                )}
               </div>
+            </FormRow>
+
+            <FormRow
+              label="分时价格"
+              alignTop
+              labelExtra={(
+                <HelpTooltip
+                  content="每日按服务器本地时间计价，按成功请求尝试的开始时间计；包含开始、不包含结束，支持跨午夜。无时段或时段外使用默认价格。"
+                  side="right"
+                  maxWidth="320px"
+                />
+              )}
+            >
+              {(editingModel?.price_periods?.length ?? 0) === 0 && (
+                <span className="flex min-h-9 items-center text-xs text-muted-foreground">全天按默认价格计</span>
+              )}
               {editingModel?.price_periods?.map((period, index) => (
-                <fieldset key={index} className="min-w-0 border-t pt-2">
+                <fieldset key={index} className={`min-w-0 ${index > 0 ? 'border-t border-dashed pt-2' : ''}`}>
                   <legend className="sr-only">时段 {index + 1}</legend>
                   <div className="flex items-end gap-2">
-                    <div className="grid min-w-0 flex-1 gap-2 md:grid-cols-2">
+                    <div className="grid min-w-0 flex-1 gap-2">
                       <div className="grid min-w-0 grid-cols-2 gap-2">
                         {([
                           ['start_time', '开始时间'],
                           ['end_time', '结束时间'],
                         ] as const).map(([field, label]) => (
                           <div key={field} className="grid min-w-0 gap-1">
-                            <Label htmlFor={`price-period-${index}-${field}`} className="text-xs">
+                            <Label htmlFor={`price-period-${index}-${field}`} className="text-xs text-muted-foreground">
                               {label}
                               {field === 'end_time' && period.end_time && period.end_time < period.start_time && (
-                                <span className="ml-1 text-muted-foreground">次日</span>
+                                <span className="ml-1">次日</span>
                               )}
                             </Label>
                             <Input
@@ -1925,7 +1739,7 @@ function ModelConfigPageContent() {
                           ['cache_price_in', '缓存价格'],
                         ] as const).filter(([field]) => !editingModelIsEmbedding || field === 'price_in').map(([field, label]) => (
                           <div key={field} className="grid min-w-0 gap-1">
-                            <Label htmlFor={`price-period-${index}-${field}`} className="text-xs">{label}</Label>
+                            <Label htmlFor={`price-period-${index}-${field}`} className="text-xs text-muted-foreground">{label}</Label>
                             <Input
                               id={`price-period-${index}-${field}`}
                               aria-label={`时段 ${index + 1} ${label}`}
@@ -1966,290 +1780,75 @@ function ModelConfigPageContent() {
                   {formErrors.price_periods}
                 </p>
               )}
-            </section>
-
-            {deepSeekClientType && (
-              <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
-                  <div className="flex items-center justify-between gap-4 rounded-md border bg-background/50 p-3">
-                    <div className="space-y-1">
-                      <Label htmlFor="deepseek_thinking" className="cursor-pointer">启用思考</Label>
-                      <p className="text-xs text-muted-foreground">
-                        {deepSeekClientType === 'openai_responses'
-                          ? '写入 reasoning.effort'
-                          : '写入 thinking.type'}
-                      </p>
-                    </div>
-                    <Switch
-                      id="deepseek_thinking"
-                      checked={deepSeekThinkingEnabled}
-                      onCheckedChange={(checked) => updateModelExtraParams((params) =>
-                        setDeepSeekThinkingEnabled(params, deepSeekClientType, checked)
-                      )}
-                    />
-                  </div>
-
-                  <div className="space-y-2 rounded-md border bg-background/50 p-3">
-                    <Label htmlFor="deepseek_reasoning_effort">思考力度</Label>
-                    <Select
-                      value={deepSeekReasoningEffort}
-                      disabled={!deepSeekThinkingEnabled}
-                      onValueChange={(value) => updateModelExtraParams((params) =>
-                        setDeepSeekReasoningEffort(
-                          params,
-                          deepSeekClientType,
-                          value as DeepSeekReasoningEffort
-                        )
-                      )}
-                    >
-                      <SelectTrigger id="deepseek_reasoning_effort">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="low">低</SelectItem>
-                        <SelectItem value="high">高（默认）</SelectItem>
-                        <SelectItem value="max">最高</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-4 rounded-md border bg-background/50 p-3 sm:col-span-2 md:col-span-1">
-                    <div className="space-y-1">
-                      <Label htmlFor="deepseek_web_search" className="cursor-pointer">启用联网搜索</Label>
-                      <p className="text-xs text-muted-foreground">
-                        {deepSeekClientType === 'openai_responses'
-                          ? '添加 DeepSeek 原生 web_search 工具，并保留其他工具配置'
-                          : '仅 DeepSeek Responses API 支持原生联网搜索'}
-                      </p>
-                    </div>
-                    <Switch
-                      id="deepseek_web_search"
-                      checked={deepSeekWebSearchEnabled}
-                      disabled={deepSeekClientType !== 'openai_responses' || deepSeekToolsInvalid}
-                      onCheckedChange={(checked) => updateModelExtraParams((params) =>
-                        setDeepSeekWebSearchEnabled(params, checked)
-                      )}
-                    />
-                  </div>
-                {deepSeekExtraParamsError && (
-                  <p role="alert" className="text-xs text-destructive sm:col-span-2 md:col-span-3">
-                    额外参数配置冲突：{deepSeekExtraParamsError}
-                  </p>
-                )}
+              <div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1"
+                  onClick={() => updatePricePeriods((periods) => [...periods, {
+                    start_time: '',
+                    end_time: '',
+                    price_in: editingModel?.price_in ?? 0,
+                    price_out: editingModel?.price_out ?? 0,
+                    cache_price_in: editingModel?.cache_price_in ?? 0,
+                  }])}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  添加时段
+                </Button>
               </div>
-            )}
+            </FormRow>
+          </FormSection>
 
-            {!deepSeekClientType && thinkingFormatActive && (
-              <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
-                {/* 不支持关闭时将已开启的开关置灰；旧配置若为关闭状态，仍允许切回开启。 */}
-                <div className="flex items-center justify-between gap-4 rounded-md border bg-background/50 p-3">
-                  <div className="space-y-1">
-                    <Label
-                      htmlFor="model_thinking"
-                      className={thinkingSwitchInteractive ? 'cursor-pointer' : 'cursor-not-allowed'}
-                    >
-                      启用思考
-                    </Label>
-                    <p className="text-xs text-muted-foreground">
-                      {thinkingFormatActive.kind === 'reasoning_effort'
-                        ? '推理模型思考常开，仅支持调整力度档位'
-                        : thinkingFormatActive.kind === 'enable_thinking'
-                          ? '写入 enable_thinking'
-                          : `写入 thinking.type（${thinkingFormatActive.onValue ?? 'enabled'}）`}
-                    </p>
-                    {thinkingFormatActive.kind === 'thinking_type' && thinkingFormatActive.disableNote && (
-                      <p className="text-xs text-muted-foreground">{thinkingFormatActive.disableNote}</p>
-                    )}
-                  </div>
-                  <Switch
-                    id="model_thinking"
-                    checked={thinkingEnabled}
-                    disabled={!thinkingSwitchInteractive}
-                    onCheckedChange={(checked) => updateModelExtraParams((params) =>
-                      setThinkingEnabled(params, thinkingFormatActive, checked)
-                    )}
-                  />
-                </div>
-
-                {/* 思考力度：配置了力度值域的格式显示 */}
-                {thinkingEffortOptions.length > 0 && (
-                  <div className="space-y-2 rounded-md border bg-background/50 p-3">
-                    <Label htmlFor="model_thinking_effort">思考力度</Label>
-                    <Select
-                      value={thinkingEffort}
-                      disabled={!thinkingEnabled}
-                      onValueChange={(value) => updateModelExtraParams((params) =>
-                        setThinkingEffort(params, thinkingFormatActive, value)
-                      )}
-                    >
-                      <SelectTrigger id="model_thinking_effort">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {thinkingEffortOptions.map((effort) => (
-                          <SelectItem key={effort} value={effort}>
-                            {effort}
-                            {effort === getThinkingEffort({}, thinkingFormatActive) ? '（默认）' : ''}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-
-                {/* 思考预算：配置了预算参数的格式显示 */}
-                {thinkingFormatActive.budgetParam && (
-                  <div className="space-y-2 rounded-md border bg-background/50 p-3">
-                    <Label htmlFor="model_thinking_budget">思考预算 (token)</Label>
-                    <Input
-                      id="model_thinking_budget"
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={thinkingBudget ?? ''}
-                      onChange={(e) => {
-                        const value = e.target.value === '' ? null : Math.max(0, parseInt(e.target.value, 10))
-                        if (e.target.value === '' || Number.isFinite(value)) {
-                          updateModelExtraParams((params) => setThinkingBudget(params, thinkingFormatActive, value))
-                        }
-                      }}
-                      placeholder={thinkingFormatActive.budgetNote ?? '留空使用服务商默认'}
-                    />
-                  </div>
-                )}
-
-                {/* 附加提示：并入开关卡片说明，不再单独占卡 */}
-                {thinkingFormatActive.note && (
-                  <p className="text-xs text-muted-foreground sm:col-span-2 md:col-span-3">
-                    {thinkingFormatActive.note}
-                  </p>
-                )}
-
-                {thinkingExtraParamsError && (
-                  <p role="alert" className="text-xs text-destructive sm:col-span-2 md:col-span-3">
-                    思考参数配置有误：{thinkingExtraParamsError}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {!editingModelIsEmbedding && advancedModelSettingsVisible && (
-              <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/50 p-3 dark:border-amber-500/40 dark:bg-amber-500/10 sm:space-y-4 sm:p-4">
-                <div className="flex items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <Label htmlFor="force_stream_mode" className="cursor-pointer">强制流式输出模式</Label>
-                    <p className="text-xs text-muted-foreground">
-                      用于必须通过流式响应返回内容的模型
-                    </p>
-                  </div>
-                  <Switch
-                    id="force_stream_mode"
-                    checked={editingModel?.force_stream_mode || false}
-                    onCheckedChange={(checked) =>
-                      setEditingModel((prev) =>
-                        prev ? { ...prev, force_stream_mode: checked } : null
-                      )
-                    }
-                  />
-                </div>
-                <div className="flex items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <Label htmlFor="send_temperature" className="cursor-pointer">
-                      发送 temperature 参数
-                    </Label>
-                    <p className="text-xs text-muted-foreground">
-                      关闭后不发送由 MaiBot 管理的模型温度和任务温度
-                    </p>
-                  </div>
-                  <Switch
-                    id="send_temperature"
-                    checked={editingModel?.send_temperature ?? true}
-                    onCheckedChange={(checked) =>
-                      setEditingModel((prev) =>
-                        prev ? { ...prev, send_temperature: checked } : null
-                      )
-                    }
-                  />
-                </div>
-              </div>
-            )}
-
+          <FormSection title="生成参数">
             {!editingModelIsEmbedding && (
-            <div className="grid items-start gap-3 md:grid-cols-2 md:gap-4">
-              {/* 模型级别温度 */}
-              <div className="space-y-2 rounded-lg border p-3 sm:space-y-3 sm:p-4">
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <div className="flex items-center gap-1.5">
-                    <Label htmlFor="enable_model_temperature" className="cursor-pointer">自定义模型温度</Label>
-                    <HelpTooltip
-                      content={
-                        <div className="space-y-2">
-                          <p className="font-medium">什么是温度（Temperature）？</p>
-                          <p>温度控制模型输出的随机性和创造性：</p>
-                          <ul className="list-disc list-inside space-y-1 text-xs">
-                            <li><strong>低温度（0.1-0.3）</strong>：更确定、更保守的输出，适合事实性任务</li>
-                            <li><strong>中温度（0.5-0.7）</strong>：平衡创造性与可控性</li>
-                            <li><strong>高温度（0.8-1.0）</strong>：更有创意、更多样化的输出</li>
-                            <li><strong>极高温度（1.0-2.0）</strong>：极度随机，可能产生不可预测的结果</li>
-                          </ul>
-                          <p className="text-xs text-muted-foreground">
-                            启用后覆盖「为模型分配功能」中该任务配置的温度。
-                          </p>
-                        </div>
-                      }
-                      side="right"
-                      maxWidth="400px"
-                    />
-                  </div>
-                  {editingModel?.send_temperature === false && (
-                    <p className="text-xs text-muted-foreground">
-                      已在高级设置中关闭 temperature 参数发送
-                    </p>
-                  )}
-                </div>
+            <>
+            <FormRow
+              label="温度"
+              htmlFor="enable_model_temperature"
+              alignTop
+              labelExtra={(
+                <HelpTooltip
+                  content={
+                    <div className="space-y-2">
+                      <p className="font-medium">什么是温度（Temperature）？</p>
+                      <p>温度控制模型输出的随机性和创造性：</p>
+                      <ul className="list-disc list-inside space-y-1 text-xs">
+                        <li><strong>低温度（0.1-0.3）</strong>：更确定、更保守的输出，适合事实性任务</li>
+                        <li><strong>中温度（0.5-0.7）</strong>：平衡创造性与可控性</li>
+                        <li><strong>高温度（0.8-1.0）</strong>：更有创意、更多样化的输出</li>
+                        <li><strong>极高温度（1.0-2.0）</strong>：极度随机，可能产生不可预测的结果</li>
+                      </ul>
+                      <p className="text-xs text-muted-foreground">
+                        启用后覆盖「为模型分配功能」中该任务配置的温度。
+                      </p>
+                    </div>
+                  }
+                  side="right"
+                  maxWidth="400px"
+                />
+              )}
+            >
+              <div className="flex min-h-9 items-center justify-between gap-3">
+                <span className="text-xs text-muted-foreground">
+                  {editingModel?.send_temperature === false
+                    ? '已在高级设置中关闭 temperature 参数发送'
+                    : editingModel?.temperature != null ? '自定义' : '使用任务配置'}
+                </span>
                 <Switch
                   id="enable_model_temperature"
+                  aria-label="自定义模型温度"
                   checked={editingModel?.temperature != null}
                   disabled={editingModel?.send_temperature === false}
                   onCheckedChange={(checked) => {
-                    if (checked) {
-                      setEditingModel((prev) => prev ? { ...prev, temperature: 0.7 } : null)
-                    } else {
-                      setEditingModel((prev) => prev ? { ...prev, temperature: null } : null)
-                    }
+                    setEditingModel((prev) => prev ? { ...prev, temperature: checked ? 0.7 : null } : null)
                   }}
                 />
               </div>
-              
               {editingModel?.temperature != null && editingModel.send_temperature !== false && (
-                <div className="space-y-3 pt-2 border-t">
-                  <div className="flex items-center justify-between gap-3">
-                    <Label className="text-sm">温度值</Label>
-                    <Input
-                      type="number"
-                      value={editingModel.temperature}
-                      onChange={(e) => {
-                        const value = parseFloat(e.target.value)
-                        if (!isNaN(value) && value >= 0 && value <= 2) {
-                          setEditingModel((prev) => prev ? { ...prev, temperature: value } : null)
-                        }
-                      }}
-                      onBlur={(e) => {
-                        const value = parseFloat(e.target.value)
-                        if (isNaN(value) || value < 0) {
-                          setEditingModel((prev) => prev ? { ...prev, temperature: 0 } : null)
-                        } else if (value > 2) {
-                          setEditingModel((prev) => prev ? { ...prev, temperature: 2 } : null)
-                        }
-                      }}
-                      step={0.01}
-                      min={0}
-                      max={2}
-                      className="h-8 w-24 text-right text-sm tabular-nums sm:w-20"
-                    />
-                  </div>
-                  <div className="hidden items-center gap-3 sm:flex">
-                    <span className="text-xs text-muted-foreground tabular-nums">0</span>
+                <>
+                  <div className="flex items-center gap-3">
                     <Slider
                       value={[editingModel.temperature]}
                       onValueChange={(values) =>
@@ -2261,121 +1860,150 @@ function ModelConfigPageContent() {
                       max={2}
                       step={0.05}
                       className="flex-1"
+                      aria-label="温度值"
                     />
-                    <span className="text-xs text-muted-foreground tabular-nums">2</span>
+                    <DraftNumberInput
+                      aria-label="温度数值"
+                      value={editingModel.temperature}
+                      onValueChange={(temperature) => {
+                        setEditingModel((prev) => prev ? { ...prev, temperature } : null)
+                      }}
+                      step={0.01}
+                      range={[0, 2]}
+                      className="h-8 w-20 text-right text-sm tabular-nums"
+                    />
                   </div>
                   {editingModel.temperature > 1 && (
-                    <Alert className="bg-amber-500/10 border-amber-500/20 [&>svg+div]:translate-y-0">
-                      <AlertTriangle className="h-4 w-4 text-amber-500" />
-                      <AlertDescription className="text-xs text-amber-600 dark:text-amber-400">
-                        温度 &gt; 1 会产生更随机、更不可预测的输出，请谨慎使用
-                      </AlertDescription>
-                    </Alert>
+                    <p className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                      温度 &gt; 1 会产生更随机、更不可预测的输出，请谨慎使用
+                    </p>
                   )}
-                  <p className="text-xs text-muted-foreground">
-                    较低（0.1-0.5）产生确定输出，中等（0.5-1.0）平衡创造性，较高（1.0-2.0）产生极度随机输出
-                  </p>
-                </div>
+                </>
               )}
-              </div>
+            </FormRow>
 
-              {/* 模型级别最大 Token */}
-              <div className="space-y-2 rounded-lg border p-3 sm:space-y-3 sm:p-4">
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <div className="flex items-center gap-1.5">
-                    <Label htmlFor="enable_model_max_tokens" className="cursor-pointer">自定义最大 Token</Label>
-                    <HelpTooltip
-                      content={
-                        <div className="space-y-2">
-                          <p className="font-medium">什么是最大 Token？</p>
-                          <p>控制模型单次回复的最大长度。1 token ≈ 0.75 个英文单词或 0.5 个中文字符。</p>
-                          <ul className="list-disc list-inside space-y-1 text-xs">
-                            <li><strong>较小值（512-1024）</strong>：简短回复，节省成本</li>
-                            <li><strong>中等值（2048-4096）</strong>：正常对话长度</li>
-                            <li><strong>较大值（8192+）</strong>：长文本生成，成本较高</li>
-                          </ul>
-                          <p className="text-xs text-muted-foreground">
-                            启用后覆盖「为模型分配功能」中该任务配置的最大 Token。
-                          </p>
-                        </div>
-                      }
-                      side="right"
-                      maxWidth="400px"
-                    />
-                  </div>
-                </div>
+            <FormRow
+              label="最大 Token"
+              htmlFor="enable_model_max_tokens"
+              alignTop
+              labelExtra={(
+                <HelpTooltip
+                  content={
+                    <div className="space-y-2">
+                      <p className="font-medium">什么是最大 Token？</p>
+                      <p>控制模型单次回复的最大长度。1 token ≈ 0.75 个英文单词或 0.5 个中文字符。</p>
+                      <ul className="list-disc list-inside space-y-1 text-xs">
+                        <li><strong>较小值（512-1024）</strong>：简短回复，节省成本</li>
+                        <li><strong>中等值（2048-4096）</strong>：正常对话长度</li>
+                        <li><strong>较大值（8192+）</strong>：长文本生成，成本较高</li>
+                      </ul>
+                      <p className="text-xs text-muted-foreground">
+                        启用后覆盖「为模型分配功能」中该任务配置的最大 Token。
+                      </p>
+                    </div>
+                  }
+                  side="right"
+                  maxWidth="400px"
+                />
+              )}
+            >
+              <div className="flex min-h-9 items-center justify-between gap-3">
+                <span className="text-xs text-muted-foreground">
+                  {editingModel?.max_tokens != null ? '自定义' : '使用任务配置'}
+                </span>
                 <Switch
                   id="enable_model_max_tokens"
+                  aria-label="自定义最大 Token"
                   checked={editingModel?.max_tokens != null}
                   onCheckedChange={(checked) => {
-                    if (checked) {
-                      // 启用时设置默认值 2048
-                      setEditingModel((prev) => prev ? { ...prev, max_tokens: 2048 } : null)
-                    } else {
-                      // 禁用时清除
-                      setEditingModel((prev) => prev ? { ...prev, max_tokens: null } : null)
-                    }
+                    // 启用时设置默认值 2048，禁用时清除
+                    setEditingModel((prev) => prev ? { ...prev, max_tokens: checked ? 2048 : null } : null)
                   }}
                 />
               </div>
-              
               {editingModel?.max_tokens != null && (
-                <div className="space-y-2 pt-2 border-t">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-sm">最大 Token 数</Label>
-                    <Input
-                      type="number"
-                      min="1"
-                      max="128000"
-                      value={editingModel.max_tokens}
-                      onChange={(e) => {
-                        const val = parseInt(e.target.value)
-                        if (!isNaN(val) && val >= 1) {
-                          setEditingModel((prev) => prev ? { ...prev, max_tokens: val } : null)
-                        }
-                      }}
-                      className="w-28 h-8 text-sm"
-                    />
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    限制模型单次输出的最大 token 数量，不同模型支持的上限不同
-                  </p>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    aria-label="最大 Token 数"
+                    min="1"
+                    max="128000"
+                    value={editingModel.max_tokens}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value)
+                      if (!isNaN(val) && val >= 1) {
+                        setEditingModel((prev) => prev ? { ...prev, max_tokens: val } : null)
+                      }
+                    }}
+                    className="h-8 w-28 text-sm"
+                  />
+                  <FormUnit>token</FormUnit>
                 </div>
               )}
-              </div>
-            </div>
+            </FormRow>
 
+            {advancedModelSettingsVisible && (
+              <>
+                <FormRow label="强制流式" htmlFor="force_stream_mode">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs text-muted-foreground">用于必须通过流式响应返回内容的模型</span>
+                    <Switch
+                      id="force_stream_mode"
+                      aria-label="强制流式输出模式"
+                      checked={editingModel?.force_stream_mode || false}
+                      onCheckedChange={(checked) =>
+                        setEditingModel((prev) =>
+                          prev ? { ...prev, force_stream_mode: checked } : null
+                        )
+                      }
+                    />
+                  </div>
+                </FormRow>
+                <FormRow label="发送温度" htmlFor="send_temperature">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs text-muted-foreground">关闭后不发送模型温度和任务温度</span>
+                    <Switch
+                      id="send_temperature"
+                      aria-label="发送 temperature 参数"
+                      checked={editingModel?.send_temperature ?? true}
+                      onCheckedChange={(checked) =>
+                        setEditingModel((prev) =>
+                          prev ? { ...prev, send_temperature: checked } : null
+                        )
+                      }
+                    />
+                  </div>
+                </FormRow>
+              </>
+            )}
+            </>
             )}
 
-            {/* 额外参数 */}
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">额外参数</Label>
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="flex-1 justify-start h-9"
-                  onClick={() => setExtraParamsDialogOpen(true)}
-                >
-                  <Settings className="h-4 w-4 mr-2" />
-                  {Object.keys(editingModel?.extra_params || {}).length > 0 ? (
-                    <span>
-                      已配置 {Object.keys(editingModel?.extra_params || {}).length} 个参数
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">未配置额外参数</span>
-                  )}
-                </Button>
-              </div>
+            <FormRow label="额外参数">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-9 justify-start"
+                onClick={() => setExtraParamsDialogOpen(true)}
+              >
+                <Settings className="mr-2 h-4 w-4" />
+                {Object.keys(editingModel?.extra_params || {}).length > 0 ? (
+                  <span>
+                    已配置 {Object.keys(editingModel?.extra_params || {}).length} 个参数
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">未配置额外参数</span>
+                )}
+              </Button>
               {Object.keys(editingModel?.extra_params || {}).length > 0 && (
-                <div className="text-xs text-muted-foreground px-1">
+                <div className="text-xs text-muted-foreground">
                   {Object.keys(editingModel?.extra_params || {})
                     .slice(0, 3)
                     .map((key) => (
-                      <span key={key} className="inline-block mr-2">
-                        <code className="px-1.5 py-0.5 bg-muted rounded">{key}</code>
+                      <span key={key} className="mr-2 inline-block">
+                        <code className="rounded bg-muted px-1.5 py-0.5">{key}</code>
                       </span>
                     ))}
                   {Object.keys(editingModel?.extra_params || {}).length > 3 && (
@@ -2383,8 +2011,10 @@ function ModelConfigPageContent() {
                   )}
                 </div>
               )}
-            </div>
-          </div>
+            </FormRow>
+          </FormSection>
+          </FormColumn>
+          </FormColumns>
           </DialogBody>
 
           <DialogFooter className="flex-row justify-end gap-2 space-x-0">
@@ -2400,7 +2030,7 @@ function ModelConfigPageContent() {
               data-dialog-action="confirm"
               className="flex-1 sm:flex-none"
               onClick={handleSaveEdit}
-              disabled={saving || Boolean(deepSeekExtraParamsError) || Boolean(thinkingExtraParamsError)}
+              disabled={saving || thinkingProbeRunning || Boolean(deepSeekExtraParamsError) || Boolean(thinkingExtraParamsError)}
               data-tour="model-save-button"
             >
               {saving ? '保存中...' : '保存'}
@@ -2495,7 +2125,7 @@ function ModelConfigPageContent() {
       <AlertDialog open={deletingVersionId !== null} onOpenChange={(open) => !open && setDeletingVersionId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>删除模型配置副本</AlertDialogTitle>
+            <AlertDialogTitle>删除Bot 任务配置副本</AlertDialogTitle>
             <AlertDialogDescription>
               确定要删除副本「{deletingVersion?.label || deletingVersionId}」吗？此操作不会影响当前启用配置，但无法撤销。
             </AlertDialogDescription>
@@ -2533,8 +2163,8 @@ function ModelConfigPageContent() {
         <MobileAddMenu
           label="添加"
           items={[
-            { label: '添加 LLM 模型', onSelect: () => openAddModelDialog('llm') },
-            { label: '添加嵌入模型', onSelect: () => openAddModelDialog('embedding') },
+            { label: '添加 LLM 模型', onSelect: () => openAddModelDialog('llm'), disabled: apiProviders.length === 0 },
+            { label: '添加嵌入模型', onSelect: () => openAddModelDialog('embedding'), disabled: apiProviders.length === 0 },
             { label: '添加 LLM 模型提供商', onSelect: () => openProviderDialog(null, null) },
             { label: '添加联网搜索', onSelect: () => setWebSearchEditor({ name: null }) },
           ]}

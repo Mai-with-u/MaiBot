@@ -1,4 +1,4 @@
-import type { PluginInfo, PluginReleaseCatalog, PluginType } from '@/types/plugin'
+import type { PluginInfo, PluginReleaseCatalog } from '@/types/plugin'
 
 import { ApiError, backendApi } from '@/lib/http'
 import { pluginProgressClient } from '@/lib/plugin-progress-client'
@@ -9,22 +9,7 @@ import type { GitStatus, MaimaiVersion } from './types'
  * 插件市场展示缓存
  */
 const PLUGIN_LIST_CACHE_TTL = 5 * 60 * 1000
-const PLUGIN_LIST_STORAGE_KEY = 'maibot-plugin-market-list-cache-v4'
-const PLUGIN_TYPES = new Set<PluginType>([
-  'adapter',
-  'chat',
-  'creative',
-  'provider',
-  'management',
-  'search',
-  'knowledge',
-  'media',
-  'game',
-  'security',
-  'automation',
-  'extension',
-  'other',
-])
+const PLUGIN_LIST_STORAGE_KEY = 'maibot-plugin-market-list-cache-v7'
 
 const pluginListCaches = new Map<boolean, { timestamp: number; result: PluginInfo[] }>()
 const pluginListRequests = new Map<boolean, Promise<PluginInfo[]>>()
@@ -81,6 +66,7 @@ interface PluginApiResponse {
     }
     keywords: string[]
     plugin_type?: string
+    type?: string
     display?: PluginInfo['manifest']['display']
     changelog?: string
     default_locale?: string
@@ -93,19 +79,6 @@ interface PluginApiResponse {
 
 function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
-}
-
-function normalizePluginType(value: unknown): PluginType {
-  if (typeof value !== 'string' || !value.trim()) {
-    return 'extension'
-  }
-
-  const normalizedValue = value.trim()
-  if (PLUGIN_TYPES.has(normalizedValue as PluginType)) {
-    return normalizedValue as PluginType
-  }
-
-  return 'other'
 }
 
 function normalizePluginManifest(manifest: PluginApiResponse['manifest']): PluginInfo['manifest'] {
@@ -126,7 +99,7 @@ function normalizePluginManifest(manifest: PluginApiResponse['manifest']): Plugi
     repository_url: repositoryUrl,
     urls: manifest.urls,
     keywords: manifest.keywords || [],
-    plugin_type: normalizePluginType(manifest.plugin_type),
+    plugin_type: normalizeOptionalString(manifest.plugin_type ?? manifest.type),
     display: manifest.display,
     changelog: normalizeOptionalString(manifest.changelog),
     default_locale: manifest.i18n?.default_locale || manifest.default_locale || 'zh-CN',
@@ -210,7 +183,7 @@ export function getCachedPluginList(compatibleOnly = false): PluginInfo[] | null
  */
 async function fetchPluginListUncached(compatibleOnly: boolean, forceRefresh: boolean): Promise<PluginInfo[]> {
   const market = await backendApi.get<{
-    source: 'official' | 'cnb' | 'github'
+    source: 'cnb' | 'github'
     plugins: PluginApiResponse[]
   }>('/api/webui/plugins/marketplace', {
     query: { compatible_only: compatibleOnly, force_refresh: forceRefresh }, errorMessage: '获取插件市场数据失败',
@@ -226,9 +199,9 @@ async function fetchPluginListUncached(compatibleOnly: boolean, forceRefresh: bo
     manifest: normalizePluginManifest(item.manifest),
     releases: item.releases,
     assets: item.assets ?? undefined,
-    downloads: item.stats?.downloads ?? 0,
-    rating: item.stats?.rating ?? 0,
-    review_count: item.stats?.comment_count ?? 0,
+    downloads: item.stats?.downloads,
+    rating: item.stats?.rating,
+    review_count: item.stats?.comment_count,
     installed: false,
     source: 'market' as const,
     changelog: normalizeOptionalString(item.changelog),
@@ -409,15 +382,32 @@ export function isPluginCompatible(
     const maxVersion = parseVersionTuple(pluginMaxVersion)
     const isHigherThanMax = compareVersionTuple(currentVersion, maxVersion) > 0
 
-    // 与运行时 manifest 校验保持一致：仅修订号高于声明上限时，以兼容模式允许。
-    const isSameMajorMinor =
-      currentVersion[0] === maxVersion[0] && currentVersion[1] === maxVersion[1]
-    if (isHigherThanMax && !isSameMajorMinor) {
+    // 与运行时 manifest 校验保持一致：同主版本内，修订号超出上限或次版本高 1 时允许兼容模式。
+    const isWithinCompatibilityWindow =
+      currentVersion[0] === maxVersion[0] &&
+      currentVersion[1] - maxVersion[1] >= 0 &&
+      currentVersion[1] - maxVersion[1] <= 1
+    if (isHigherThanMax && !isWithinCompatibilityWindow) {
       return false
     }
   }
 
   return true
+}
+
+/** 已超出声明上限、但仍在运行时允许的兼容窗口内。 */
+export function isPluginCompatibilityMode(
+  pluginMinVersion: string,
+  pluginMaxVersion: string | undefined,
+  maimaiVersion: MaimaiVersion
+): boolean {
+  if (!pluginMaxVersion || !isPluginCompatible(pluginMinVersion, pluginMaxVersion, maimaiVersion)) {
+    return false
+  }
+  return compareVersionTuple(
+    [maimaiVersion.version_major, maimaiVersion.version_minor, maimaiVersion.version_patch],
+    parseVersionTuple(pluginMaxVersion)
+  ) > 0
 }
 
 /**

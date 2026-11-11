@@ -38,25 +38,35 @@ display_name = "回复附件提示"
 advanced = true
 description = "说明回复附带的图片、@ 和表情包由系统发送，避免正文重复输出附件信息。"
 
-[retro_replyer]
-display_name = "复古回复"
+[reply_group]
+display_name = "群聊回复"
 advanced = true
-description = "复古模式（experimental.replyer_retro_prompt）下的群聊回复模板，人设与聊天注意事项作为首条 system 消息，其余模板作为 user 消息发送。"
+description = "创意模式下的默认群聊回复模板。"
 
-[retro_replyer_light]
-display_name = "复古回复（简短）"
+[reply_group_mai_replier]
+display_name = "Mai Replier 群聊回复"
 advanced = true
-description = "复古模式下的群聊简短回复模板，对应旧版 think_level=0 的轻量回复。"
+description = "Mai Replier 专用的群聊回复模板，沿用训练时的提示词。"
 
-[retro_private_replyer]
-display_name = "复古私聊回复"
+[reply_private]
+display_name = "私聊回复"
 advanced = true
-description = "复古模式下的私聊回复模板，按旧版方式集中回复指令。"
+description = "创意模式下的默认私聊回复模板。"
 
-[retro_private_replyer_self]
-display_name = "复古私聊补充回复"
+[reply_private_mai_replier]
+display_name = "Mai Replier 私聊回复"
 advanced = true
-description = "复古模式下的私聊补充回复模板，用于在麦麦自己刚刚的发言基础上继续补充。"
+description = "Mai Replier 专用的私聊回复模板。"
+
+[reply_private_followup]
+display_name = "私聊补充发言"
+advanced = true
+description = "创意模式下，麦麦在私聊中继续补充自己上一条发言时使用。"
+
+[reply_private_followup_mai_replier]
+display_name = "Mai Replier 私聊补充发言"
+advanced = true
+description = "Mai Replier 在私聊中继续补充自己上一条发言时使用。"
 
 [default_expressor]
 display_name = "改写器"
@@ -68,6 +78,11 @@ display_name = "表情包内容分析"
 advanced = true
 description = "用于分析表情包图片内容的模板。"
 
+[emoji_grouped_tags]
+display_name = "表情包分组标签"
+advanced = true
+description = "分别识别表情包表达的情绪和画面内容。"
+
 [emoji_content_filtration]
 display_name = "表情包内容过滤"
 advanced = true
@@ -77,11 +92,6 @@ description = "用于判断表情包内容是否符合过滤要求的模板。"
 display_name = "表情包替换"
 advanced = true
 description = "用于根据文本语境选择或替换表情包的模板。"
-
-[emoji_selection]
-display_name = "表情包选择"
-advanced = true
-description = "用于从表情包拼图中按上下文和当前语气选择最合适表情包的模板。"
 
 [expression_evaluation]
 display_name = "表达评价"
@@ -163,6 +173,31 @@ display_name = "WebUI AI 搜索"
 advanced = true
 description = "用于根据自然语言意图从 WebUI 提供的真实页面与配置候选中选择搜索结果。"
 
+[webui_help_skill_setup]
+display_name = "部署与配置流程"
+advanced = true
+description = "定位配置入口，核对当前值，给出可验证的操作步骤。"
+
+[webui_help_skill_troubleshoot]
+display_name = "故障定位流程"
+advanced = true
+description = "用报错与实际设置缩小故障范围，并给出下一项核验。"
+
+[webui_help_skill_plugin]
+display_name = "插件选型与操作流程"
+advanced = true
+description = "根据实际需求核查兼容性，并用对应工具处理安装和配置。"
+
+[webui_help_skill_develop]
+display_name = "插件开发指导流程"
+advanced = true
+description = "根据对应 SDK 文档给出最小实现、入口和验证步骤。"
+
+[webui_ai_search_input]
+display_name = "WebUI 答疑会话输入"
+advanced = true
+description = "将当前问题和历史问答整理成供 WebUI 答疑 Agent 参考的会话数据。"
+
 [webui_ai_search_final]
 display_name = "WebUI AI 搜索定稿指令"
 advanced = true
@@ -188,11 +223,6 @@ display_name = "外接 Agent 接入说明"
 advanced = true
 description = "外接 Agent 接入说明。"
 
-[agent_acp_computer]
-display_name = "外接 Agent 电脑使用"
-advanced = true
-description = "外接 Agent 电脑使用。"
-
 [agent_acp_environment]
 display_name = "外接 Agent 环境说明"
 advanced = true
@@ -217,3 +247,68 @@ description = "外接 Planner 中断恢复。"
 display_name = "外接 Planner 继续执行"
 advanced = true
 description = "外接 Planner 继续执行。"
+
+[planner_reply_capabilities]
+display_name = "Planner reply capabilities"
+advanced = true
+description = "Available plugin reply capabilities for the current chat."
+
+[reply_cache]
+display_name = "回复缓存任务"
+advanced = true
+description = "在 Planner 上下文末尾切换到创意模式 Replyer 回复任务。"
+
+[desktop_pet_proactive_wake]
+display_name = "桌宠定期主动思考"
+advanced = false
+description = "桌宠周期唤醒时的内部任务提示，引导自主探索并选择是否交流。"
+
+[desktop_pet_screen_read]
+display_name = "桌宠桌面阅读"
+advanced = false
+description = "理解本机主屏截图，支持单次查看和持续关注画面变化。"
+
+[desktop_pet_todo_context]
+display_name = "主人待办常驻上下文"
+advanced = false
+description = "每轮读取最新待办，并指导条件触发判断。"
+
+[desktop_pet_exploration]
+display_name = "桌宠探索任务"
+advanced = false
+description = "人工设定目标后探索工具组合，并保存有实验证据的候选图式。"
+
+[desktop_pet_exploration_reuse]
+display_name = "探索经验日常复用"
+advanced = false
+description = "普通主人聊天按需检索并复用探索资源和经验。"
+
+[desktop_pet_thinking_caption]
+display_name = "桌宠思考状态"
+advanced = false
+description = "把当前运行阶段概括成一句简短风趣的桌宠状态文字。"
+
+[maisaka_expression_selector]
+display_name = "表达方式挑选"
+advanced = true
+description = "根据聊天上下文，从候选表达方式中挑选适合本次回复的若干条。"
+
+[maisaka_replyer_document]
+display_name = "长文写作"
+advanced = false
+description = "以自身身份和口吻撰写完整的文章或社区帖子。"
+
+[maisaka_wait_reminder]
+display_name = "连续等待提醒"
+advanced = true
+description = "连续多次等待后提醒延长等待或结束本轮思考，避免无限循环。"
+
+[reply_supplement]
+display_name = "回复补充编排"
+advanced = true
+description = "在正文并行生成时，编排引用、附件与发送顺序等回复补充内容。"
+
+[reply_supplement_retry]
+display_name = "回复补充重试"
+advanced = true
+description = "回复补充生成失败后，根据错误信息重新生成补充编排。"

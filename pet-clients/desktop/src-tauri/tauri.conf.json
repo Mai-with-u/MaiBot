@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MaiBot Desktop Pet",
+  "version": "1.0.0",
+  "identifier": "org.maibot.desktop-pet",
+  "build": {
+    "beforeDevCommand": "node scripts/prepare.cjs",
+    "beforeBuildCommand": "node scripts/prepare.cjs",
+    "frontendDist": "../web-dist"
+  },
+  "app": {
+    "windows": [],
+    "macOSPrivateApi": true,
+    "security": {
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https: http:; media-src https: http:; font-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'",
+      "capabilities": [
+        { "identifier": "login", "windows": ["login"], "permissions": ["allow-login-call"] },
+        { "identifier": "pet", "windows": ["pet", "records"], "permissions": ["allow-pet-call", "allow-page-result", "allow-page-open-external"] }
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.png", "icons/icon.icns", "../../../dashboard/public/maimai.ico"],
+    "copyright": "MaiBot contributors",
+    "licenseFile": "../../../LICENSE",
+    "category": "Entertainment",
+    "shortDescription": "连接本机或远端 MaiBot 的轻量桌宠",
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
+      "nsis": { "installMode": "currentUser", "compression": "lzma", "languages": ["SimpChinese", "English", "Japanese"] }
+    },
+    "macOS": { "minimumSystemVersion": "10.15", "infoPlist": "Info.plist" }
+  }
+}

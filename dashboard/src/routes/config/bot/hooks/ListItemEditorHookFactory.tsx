@@ -16,6 +16,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { DynamicConfigForm } from '@/components/dynamic-form/DynamicConfigForm'
+import { useInConfigSectionDialog } from '@/components/dynamic-form/config-section-dialog-context'
 import { fieldTitleClassName } from '@/components/dynamic-form/fieldStyle'
 import { resolveLocalizedText } from '@/lib/config-label'
 import type { FieldHookComponent } from '@/lib/field-hooks'
@@ -56,7 +57,7 @@ export interface ListItemEditorOptions {
   collapseButtonDisplay?: 'text' | 'icon'
   normalizeItems?: (
     items: Record<string, unknown>[],
-    context?: { addedIndex?: number; changedIndex?: number },
+    context?: { addedIndex?: number; changedIndex?: number; changedField?: string },
   ) => Record<string, unknown>[]
   renderOverview?: (context: {
     items: Record<string, unknown>[]
@@ -196,7 +197,7 @@ export function createListItemEditorHook(
     }, [value])
 
     const emitItems = useCallback(
-      (nextItems: Record<string, unknown>[], context?: { addedIndex?: number; changedIndex?: number }) => {
+      (nextItems: Record<string, unknown>[], context?: { addedIndex?: number; changedIndex?: number; changedField?: string }) => {
         onChange?.(options.normalizeItems?.(nextItems, context) ?? nextItems)
       },
       [onChange],
@@ -231,7 +232,7 @@ export function createListItemEditorHook(
           setNested(cloned, fieldName, fieldValue)
           return cloned
         })
-        emitItems(next, { changedIndex: index })
+        emitItems(next, { changedIndex: index, changedField: fieldName })
       },
       [emitItems, items],
     )
@@ -336,10 +337,11 @@ export function createListItemEditorHook(
     const addButtonPlacement = options.addButtonPlacement ?? 'bottom'
     const shouldCollapse = options.collapseWhen?.({ parentValues }) ?? false
     const [manuallyExpanded, setManuallyExpanded] = useState(false)
+    const inDialog = useInConfigSectionDialog()
     const collapsed = shouldCollapse && !manuallyExpanded
     const collapseButtonLabel = collapsed
-      ? (options.expandLabel ?? '灞曞紑')
-      : (options.collapseLabel ?? '鎶樺彔')
+      ? (options.expandLabel ?? '展开')
+      : (options.collapseLabel ?? '折叠')
 
     if (!shouldCollapse && manuallyExpanded) {
       setManuallyExpanded(false)
@@ -369,35 +371,8 @@ export function createListItemEditorHook(
       )
     }
 
-    return (
-      <Card>
-        <CardHeader className="space-y-2 pb-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2">
-              <CardTitle className={fieldTitleClassName(schema, 'truncate text-base')}>{label}</CardTitle>
-              {options.infoText && (
-                <TooltipProvider delayDuration={150}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        aria-label={`${label} 说明`}
-                        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      >
-                        <CircleAlert className="h-4 w-4" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent
-                      side="right"
-                      align="center"
-                      className="max-w-80 whitespace-pre-line bg-popover text-popover-foreground"
-                    >
-                      {options.infoText}
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              )}
-            </div>
+    const collapseControl = (
+      <>
             {shouldCollapse && options.collapseButtonDisplay === 'icon' && (
               <Button
                 type="button"
@@ -429,15 +404,10 @@ export function createListItemEditorHook(
                   : (options.collapseLabel ?? '折叠')}
               </Button>
             )}
-          </div>
-          {description && (
-            <CardDescription className="whitespace-pre-line">{description}</CardDescription>
-          )}
-          {options.helperText && (
-            <p className="text-xs text-muted-foreground">{options.helperText}</p>
-          )}
-        </CardHeader>
-        <CardContent className="space-y-3">
+      </>
+    )
+    const content = (
+      <>
           {collapsed ? (
             <div className="rounded-md border border-dashed border-muted-foreground/25 bg-muted/10 p-4 text-sm text-muted-foreground">
               {options.collapsedText ?? '当前配置已折叠，可手动展开查看或编辑。'}
@@ -499,6 +469,67 @@ export function createListItemEditorHook(
           {addButtonPlacement === 'bottom' && addButton}
             </>
           )}
+      </>
+    )
+
+    if (inDialog) {
+      // 弹窗已经给出标题与外框，这里只保留说明和内容，避免卡片层层嵌套。
+      return (
+        <div className="space-y-4">
+          {(description || options.helperText || shouldCollapse) && (
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1 space-y-1 text-muted-foreground">
+                {description && <p className="whitespace-pre-line text-sm">{description}</p>}
+                {options.helperText && <p className="text-xs">{options.helperText}</p>}
+              </div>
+              {collapseControl}
+            </div>
+          )}
+          {content}
+        </div>
+      )
+    }
+
+    return (
+      <Card>
+        <CardHeader className="space-y-2 pb-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <CardTitle className={fieldTitleClassName(schema, 'truncate text-base')}>{label}</CardTitle>
+              {options.infoText && (
+                <TooltipProvider delayDuration={150}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        aria-label={`${label} 说明`}
+                        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <CircleAlert className="h-4 w-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="right"
+                      align="center"
+                      className="max-w-80 whitespace-pre-line bg-popover text-popover-foreground"
+                    >
+                      {options.infoText}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
+            </div>
+            {collapseControl}
+          </div>
+          {description && (
+            <CardDescription className="whitespace-pre-line">{description}</CardDescription>
+          )}
+          {options.helperText && (
+            <p className="text-xs text-muted-foreground">{options.helperText}</p>
+          )}
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {content}
         </CardContent>
       </Card>
     )

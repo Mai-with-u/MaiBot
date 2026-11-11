@@ -1,20 +1,18 @@
-"""外接 Agent 接口：任务队列、执行记录、双向传话及可选沙盒桌面。"""
+"""外接 Agent 接口：任务队列、执行记录和双向传话。"""
 
 from contextlib import AsyncExitStack, suppress
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from typing import Any, Dict, Optional
 import asyncio
 import json
 
 from src.common.async_work import run_sync_work
-from src.common.prompt_i18n import load_prompt
 from src.common.json_storage import read_json, write_json
 from src.common.logger import get_logger
 from src.common.paths import get_instance_root
+from src.common.prompt_i18n import load_prompt
 from src.common.runtime_loop import run_on_main_loop
 from src.config.config import config_manager, global_config
-
-from src.computer.service import ComputerService, computer_service
 
 from .acp_agent import AcpAgent, AgentTurnError
 from .config import AgentConfig
@@ -34,10 +32,9 @@ class AgentService:
     relay_tool = "agent_talk"
     relay_kind = "agent_relay"
 
-    def __init__(self, root: Optional[Path] = None, computer: ComputerService = computer_service) -> None:
+    def __init__(self, root: Optional[Path] = None) -> None:
         instance = get_instance_root()
         self.root = root if root is not None else instance / "data" / "agent"
-        self.computer = computer
         self.agent: Optional[AcpAgent] = None
         self._closing = False
         self.agent_id = "__maibot_agent__"
@@ -62,24 +59,13 @@ class AgentService:
 
     def policy(self) -> str:
         profile = {"nickname": global_config.bot.nickname, "personality": global_config.personality.personality}
-        policy = load_prompt("agent_acp", maibot_profile=json.dumps(profile, ensure_ascii=False))
-        if self.computer.config.enabled:
-            policy += "\n" + load_prompt("agent_acp_computer")
-        return policy
+        return load_prompt("agent_acp", maibot_profile=json.dumps(profile, ensure_ascii=False))
 
     def image_path(self, reference: str) -> Path:
-        guest = PureWindowsPath(reference)
-        if guest.is_relative_to(PureWindowsPath(r"C:\MaiWorkspace")):
-            self.computer.require_enabled()
-            guest = guest.relative_to(PureWindowsPath(r"C:\MaiWorkspace"))
-            workspace = self.computer.bridge.workspace.resolve()
-            path = (workspace / str(guest)).resolve()
-        else:
-            workspace = self.workspace.resolve()
-            raw = Path(reference).expanduser()
-            path = (raw if raw.is_absolute() else workspace / raw).resolve()
+        workspace = self.workspace.resolve()
+        path = (workspace / Path(reference).expanduser()).resolve()
         if not path.is_relative_to(workspace):
-            raise ValueError("附图必须位于当前 Agent 工作目录或已启用的电脑工作目录。")
+            raise ValueError("附图必须位于当前 Agent 工作目录。")
         return path
 
     async def persist(self) -> None:
@@ -230,11 +216,10 @@ class AgentService:
 
     def status(self) -> Dict[str, Any]:
         return {"enabled": self.config.enabled, "name": self.name, "agent_id": self.agent_id,
-                "backend": "acp", "desktop_enabled": self.computer.config.enabled,
+                "backend": "acp",
                 "external_session_id": self.agent.backend_state.get("session_id") if self.agent is not None else None,
                 "paused": self.paused, "error": self.error,
-                "agent_state": self.agent.state if self.agent is not None else "stopped",
-                "computer": self.computer.status()}
+                "agent_state": self.agent.state if self.agent is not None else "stopped"}
 
 
 agent_service = AgentService()

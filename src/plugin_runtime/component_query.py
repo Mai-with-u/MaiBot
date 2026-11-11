@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional, Tupl
 
 from src.common.logger import get_logger
 from src.core.local_operator import is_local_operator
+from src.core.plugin_usage import can_use_plugin
 from src.core.tooling import (
     ToolContentItem,
     ToolAvailabilityContext,
@@ -19,24 +20,22 @@ from src.core.tooling import (
     ToolInvocation,
     ToolSpec,
 )
-from src.core.types import ActionActivationType, ActionInfo, CommandInfo, ComponentInfo, ComponentType, ToolInfo
+from src.core.types import CommandInfo, ComponentInfo, ComponentType, ToolInfo
 from src.llm_models.payload_content.tool_option import normalize_tool_option
 from src.plugin_runtime.host.component_timeout import resolve_component_rpc_timeout_ms
 from src.plugin_runtime.host.message_utils import PluginMessageUtils
 
 if TYPE_CHECKING:
-    from src.plugin_runtime.host.component_registry import ActionEntry, CommandEntry, ComponentEntry, ToolEntry
+    from src.plugin_runtime.host.component_registry import CommandEntry, ComponentEntry, ToolEntry
     from src.plugin_runtime.host.supervisor import PluginSupervisor
     from src.plugin_runtime.integration import PluginRuntimeManager
 
 logger = get_logger("plugin_runtime.component_query")
 
-ActionExecutor = Callable[..., Awaitable[Any]]
 CommandExecutor = Callable[..., Awaitable[Tuple[bool, Optional[str], bool]]]
 ToolExecutor = Callable[..., Awaitable[Any]]
 
 _HOST_COMPONENT_TYPE_MAP: Dict[ComponentType, str] = {
-    ComponentType.ACTION: "ACTION",
     ComponentType.COMMAND: "COMMAND",
     ComponentType.TOOL: "TOOL",
 }
@@ -108,88 +107,6 @@ class ComponentQueryService:
             ):
                 collected_entries.append((supervisor, component))
         return collected_entries
-
-    @staticmethod
-    def _coerce_action_activation_type(raw_value: Any) -> ActionActivationType:
-        """规范化动作激活类型。
-
-        Args:
-            raw_value: 原始激活类型值。
-
-        Returns:
-            ActionActivationType: 规范化后的激活类型枚举。
-        """
-
-        normalized_value = str(raw_value or "").strip().lower()
-        if normalized_value == ActionActivationType.NEVER.value:
-            return ActionActivationType.NEVER
-        if normalized_value == ActionActivationType.RANDOM.value:
-            return ActionActivationType.RANDOM
-        if normalized_value == ActionActivationType.KEYWORD.value:
-            return ActionActivationType.KEYWORD
-        return ActionActivationType.ALWAYS
-
-    @staticmethod
-    def _coerce_float(value: Any, default: float = 0.0) -> float:
-        """将任意值安全转换为浮点数。
-
-        Args:
-            value: 待转换的输入值。
-            default: 转换失败时返回的默认值。
-
-        Returns:
-            float: 转换后的浮点结果。
-        """
-
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return default
-
-    @staticmethod
-    def _build_action_info(entry: "ActionEntry") -> ActionInfo:
-        """将运行时 Action 条目转换为核心动作信息。
-
-        Args:
-            entry: 插件运行时中的 Action 条目。
-
-        Returns:
-            ActionInfo: 供核心 Planner 使用的动作信息。
-        """
-
-        metadata = dict(entry.metadata)
-        raw_action_parameters = metadata.get("action_parameters")
-        action_parameters = (
-            {str(param_name): str(param_description) for param_name, param_description in raw_action_parameters.items()}
-            if isinstance(raw_action_parameters, dict)
-            else {}
-        )
-        action_require = [
-            str(item) for item in (metadata.get("action_require") or []) if item is not None and str(item).strip()
-        ]
-        associated_types = [
-            str(item) for item in (metadata.get("associated_types") or []) if item is not None and str(item).strip()
-        ]
-        activation_keywords = [
-            str(item) for item in (metadata.get("activation_keywords") or []) if item is not None and str(item).strip()
-        ]
-
-        return ActionInfo(
-            name=entry.name,
-            description=str(metadata.get("description", "") or ""),
-            enabled=bool(entry.enabled),
-            plugin_name=entry.plugin_id,
-            action_parameters=action_parameters,
-            action_require=action_require,
-            associated_types=associated_types,
-            activation_type=ComponentQueryService._coerce_action_activation_type(metadata.get("activation_type")),
-            random_activation_probability=ComponentQueryService._coerce_float(
-                metadata.get("activation_probability"),
-                0.0,
-            ),
-            activation_keywords=activation_keywords,
-            parallel_action=bool(metadata.get("parallel_action", False)),
-        )
 
     @staticmethod
     def _build_command_info(entry: "CommandEntry") -> CommandInfo:
@@ -294,7 +211,7 @@ class ComponentQueryService:
         visibility = ComponentQueryService._get_tool_visibility(entry)
         return ToolSpec(
             name=entry.name,
-            description=entry.description or f"工具 {entry.name}",
+            description=entry.description,
             parameters_schema=parameters_schema,
             provider_name=entry.plugin_id,
             provider_type="plugin",
@@ -302,7 +219,6 @@ class ComponentQueryService:
             metadata={
                 "plugin_id": entry.plugin_id,
                 "invoke_method": entry.invoke_method,
-                "legacy_component_type": entry.legacy_component_type,
                 "visibility": visibility,
             },
         )
@@ -365,111 +281,11 @@ class ComponentQueryService:
                 self._log_duplicate_component(component_type, entry.name)
                 continue
 
-            if component_type == ComponentType.ACTION:
-                collected_components[entry.name] = self._build_action_info(entry)  # type: ignore[arg-type]
-            elif component_type == ComponentType.COMMAND:
+            if component_type == ComponentType.COMMAND:
                 collected_components[entry.name] = self._build_command_info(entry)  # type: ignore[arg-type]
             elif component_type == ComponentType.TOOL:
                 collected_components[entry.name] = self._build_tool_info(entry)  # type: ignore[arg-type]
         return collected_components
-
-    @staticmethod
-    def _extract_stream_id_from_action_kwargs(kwargs: Dict[str, Any]) -> str:
-        """从旧 ActionManager 参数中提取聊天流 ID。
-
-        Args:
-            kwargs: 旧动作执行器收到的关键字参数。
-
-        Returns:
-            str: 提取出的 ``stream_id``。
-        """
-
-        chat_stream = kwargs.get("chat_stream")
-        if chat_stream is not None:
-            try:
-                return str(chat_stream.session_id)
-            except AttributeError:
-                pass
-
-        return str(kwargs.get("stream_id", "") or "")
-
-    @staticmethod
-    def _build_action_executor(
-        supervisor: "PluginSupervisor",
-        plugin_id: str,
-        component_name: str,
-        timeout_ms: int = 0,
-    ) -> ActionExecutor:
-        """构造动作执行 RPC 闭包。
-
-        Args:
-            supervisor: 负责该组件的监督器。
-            plugin_id: 插件 ID。
-            component_name: 组件名称。
-
-        Returns:
-            ActionExecutor: 兼容旧 Planner 的异步执行器。
-        """
-
-        rpc_timeout_ms = resolve_component_rpc_timeout_ms(timeout_ms)
-
-        async def _executor(**kwargs: Any) -> tuple[bool, str]:
-            """将核心动作调用桥接到插件运行时。
-
-            Args:
-                **kwargs: 旧 ActionManager 传入的上下文参数。
-
-            Returns:
-                tuple[bool, str]: ``(是否成功, 结果说明)``。
-            """
-
-            invoke_args: Dict[str, Any] = {}
-            action_data = kwargs.get("action_data")
-            if isinstance(action_data, dict):
-                invoke_args.update(action_data)
-
-            stream_id = ComponentQueryService._extract_stream_id_from_action_kwargs(kwargs)
-            invoke_args["action_data"] = action_data if isinstance(action_data, dict) else {}
-            invoke_args["stream_id"] = stream_id
-            invoke_args["chat_id"] = stream_id
-            invoke_args["reasoning"] = str(kwargs.get("action_reasoning", "") or "")
-
-            if (thinking_id := kwargs.get("thinking_id")) is not None:
-                invoke_args["thinking_id"] = str(thinking_id)
-            if isinstance(kwargs.get("cycle_timers"), dict):
-                invoke_args["cycle_timers"] = kwargs["cycle_timers"]
-            if isinstance(kwargs.get("plugin_config"), dict):
-                invoke_args["plugin_config"] = kwargs["plugin_config"]
-            if isinstance(kwargs.get("log_prefix"), str):
-                invoke_args["log_prefix"] = kwargs["log_prefix"]
-            if isinstance(kwargs.get("shutting_down"), bool):
-                invoke_args["shutting_down"] = kwargs["shutting_down"]
-
-            try:
-                response = await supervisor.invoke_plugin(
-                    method="plugin.invoke_action",
-                    plugin_id=plugin_id,
-                    component_name=component_name,
-                    args=invoke_args,
-                    timeout_ms=rpc_timeout_ms,
-                )
-            except Exception as exc:
-                logger.error(f"运行时 Action {plugin_id}.{component_name} 执行失败: {exc}", exc_info=True)
-                return False, str(exc)
-
-            payload = response.payload if isinstance(response.payload, dict) else {}
-            success = bool(payload.get("success", False))
-            result = payload.get("result")
-            if isinstance(result, (list, tuple)):
-                if len(result) >= 2:
-                    return bool(result[0]), "" if result[1] is None else str(result[1])
-                if len(result) == 1:
-                    return bool(result[0]), ""
-            if success:
-                return True, "" if result is None else str(result)
-            return False, "" if result is None else str(result)
-
-        return _executor
 
     @staticmethod
     def _build_command_executor(
@@ -504,6 +320,13 @@ class ComponentQueryService:
             """
 
             message = kwargs.get("message")
+            if not can_use_plugin(
+                plugin_id,
+                platform=message.platform if message is not None else "",
+                user_id=message.message_info.user_info.user_id if message is not None else "",
+                session_id=message.session_id if message is not None else "",
+            ):
+                return False, "没有权限使用此插件。", True
             matched_groups = kwargs.get("matched_groups")
             plugin_config = kwargs.get("plugin_config")
             message_info = getattr(message, "message_info", None)
@@ -590,6 +413,13 @@ class ComponentQueryService:
                 Any: 插件工具返回结果；若结果不是字典，则会包装为 ``{"content": ...}``。
             """
 
+            # function_args 可由模型构造，不能用其中的身份或会话字段授权。
+            if not can_use_plugin(plugin_id):
+                return {"success": False, "content": "插件使用权限不足：请通过带核心会话上下文的工具入口调用。"}
+            if invoke_method == "plugin.invoke_action":
+                function_args = ComponentQueryService._build_tool_invocation_payload(
+                    ToolInvocation(component_name, arguments=function_args), None, legacy_action=True
+                )
             try:
                 response = await supervisor.invoke_plugin(
                     method=invoke_method,
@@ -609,48 +439,6 @@ class ComponentQueryService:
             return {"content": "" if result is None else str(result)}
 
         return _executor
-
-    def get_action_info(self, name: str) -> Optional[ActionInfo]:
-        """获取指定动作的信息。
-
-        Args:
-            name: 动作名称。
-
-        Returns:
-            Optional[ActionInfo]: 匹配到的动作信息。
-        """
-
-        matched_entry = self._get_unique_component_entry(ComponentType.ACTION, name)
-        if matched_entry is None:
-            return None
-        _supervisor, entry = matched_entry
-        return self._build_action_info(entry)  # type: ignore[arg-type]
-
-    def get_action_executor(self, name: str) -> Optional[ActionExecutor]:
-        """获取指定动作的执行器。
-
-        Args:
-            name: 动作名称。
-
-        Returns:
-            Optional[ActionExecutor]: 运行时 RPC 执行闭包。
-        """
-
-        matched_entry = self._get_unique_component_entry(ComponentType.ACTION, name)
-        if matched_entry is None:
-            return None
-        supervisor, entry = matched_entry
-        return self._build_action_executor(supervisor, entry.plugin_id, entry.name, entry.timeout_ms)
-
-    def get_default_actions(self) -> Dict[str, ActionInfo]:
-        """获取当前默认启用的动作集合。
-
-        Returns:
-            Dict[str, ActionInfo]: 动作名到动作信息的映射。
-        """
-
-        action_infos = self._collect_unique_component_infos(ComponentType.ACTION)
-        return {name: info for name, info in action_infos.items() if isinstance(info, ActionInfo) and info.enabled}
 
     def find_command_by_text(self, text: str) -> Optional[Tuple[CommandExecutor, dict, CommandInfo]]:
         """根据文本查找匹配的命令。
@@ -730,11 +518,26 @@ class ComponentQueryService:
 
         collected_specs: Dict[str, ToolSpec] = {}
         for _supervisor, entry in self._iter_component_entries(ComponentType.TOOL, context=context):
+            if not self._can_use_plugin_tool(entry.plugin_id, context):
+                continue
             if entry.name in collected_specs:
                 self._log_duplicate_component(ComponentType.TOOL, entry.name)
                 continue
             collected_specs[entry.name] = self._build_tool_spec(entry)  # type: ignore[arg-type]
         return collected_specs
+
+    @staticmethod
+    def _can_use_plugin_tool(
+        plugin_id: str, context: Optional[ToolAvailabilityContext | ToolExecutionContext],
+    ) -> bool:
+        """群聊工具无单一触发者，只按会话授权；缺少上下文时拒绝受限插件。"""
+
+        return can_use_plugin(
+            plugin_id,
+            platform=context.platform if context is not None else "",
+            user_id=context.user_id if context is not None and context.is_group_chat is False else "",
+            session_id=context.session_id if context is not None else "",
+        )
 
     @staticmethod
     def _build_tool_context_payload(context: Optional[ToolExecutionContext]) -> Dict[str, Any]:
@@ -775,11 +578,12 @@ class ComponentQueryService:
     @staticmethod
     def _build_tool_availability_context(
         context: Optional[ToolExecutionContext],
-    ) -> Optional[ToolAvailabilityContext]:
+    ) -> ToolAvailabilityContext:
         """从执行上下文还原工具可用性判断所需字段。"""
 
         if context is None:
-            return None
+            # 执行请求没有会话时，用空上下文检查作用域。
+            return ToolAvailabilityContext()
         return ToolAvailabilityContext(
             session_id=context.session_id,
             stream_id=context.stream_id,
@@ -791,16 +595,17 @@ class ComponentQueryService:
 
     @staticmethod
     def _build_tool_invocation_payload(
-        entry: "ToolEntry",
         invocation: ToolInvocation,
         context: Optional[ToolExecutionContext],
+        *,
+        legacy_action: bool = False,
     ) -> Dict[str, Any]:
         """构造插件工具执行时发送给 Runner 的参数。
 
         Args:
-            entry: 目标工具条目。
             invocation: 统一工具调用请求。
             context: 统一工具执行上下文。
+            legacy_action: 是否补齐旧 Action 所需的参数。
 
         Returns:
             Dict[str, Any]: 发往 Runner 的参数字典。
@@ -808,26 +613,18 @@ class ComponentQueryService:
 
         payload = dict(invocation.arguments)
         context_payload = ComponentQueryService._build_tool_context_payload(context)
-        if entry.invoke_method == "plugin.invoke_action":
-            stream_id = str(
-                context_payload.get("stream_id")
-                or (context.stream_id if context is not None else invocation.stream_id)
-                or invocation.stream_id
-            ).strip()
-            reasoning = context.reasoning if context is not None else invocation.reasoning
-            payload = {
-                **payload,
-                **{key: value for key, value in context_payload.items() if key not in payload or not payload.get(key)},
-                "stream_id": stream_id,
-                "chat_id": stream_id,
-                "reasoning": reasoning,
-                "action_data": dict(invocation.arguments),
-            }
-            return payload
-
         for key, value in context_payload.items():
             if key not in payload or not payload.get(key):
                 payload[key] = value
+        if legacy_action:
+            # 旧插件通过 action_data 接收业务参数，通过 chat_id 定位聊天流。
+            stream_id = str(context_payload.get("stream_id") or invocation.stream_id).strip()
+            payload.update(
+                stream_id=stream_id,
+                chat_id=stream_id,
+                reasoning=context.reasoning if context is not None else invocation.reasoning,
+                action_data=dict(invocation.arguments),
+            )
         return payload
 
     @staticmethod
@@ -956,14 +753,15 @@ class ComponentQueryService:
 
         supervisor, entry = matched_entry
         tool_entry = cast("ToolEntry", entry)
-        # 执行受限工具必须带真实平台上下文，不能通过省略上下文绕过可见性过滤。
-        if tool_entry.platforms and (context is None or context.platform.strip().lower() not in tool_entry.platforms):
+        if not self._can_use_plugin_tool(tool_entry.plugin_id, context):
             return ToolExecutionResult(
                 tool_name=tool_entry.name,
                 success=False,
-                error_message="当前平台不在插件工具的 platforms 作用域内。",
+                error_message="没有权限使用此插件。",
             )
-        invoke_payload = self._build_tool_invocation_payload(tool_entry, invocation, context)
+        invoke_payload = self._build_tool_invocation_payload(
+            invocation, context, legacy_action=tool_entry.is_legacy_action
+        )
 
         from src.files.service import get_file_service
 

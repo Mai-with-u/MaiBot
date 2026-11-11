@@ -64,6 +64,7 @@ class PluginMeta:
         self.dependencies: List[str] = list(manifest.plugin_dependency_ids)
         self.component_handlers: Dict[str, str] = {}
         self.config_error: str = ""
+        self.load_error: str = ""
         self.llm_provider_handlers: Dict[str, str] = {}
 
 

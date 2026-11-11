@@ -26,8 +26,8 @@ import {
   switchModelConfigVersion,
   testModelCapability,
   testProviderConnection,
-  updateModelConfig,
-  updateModelConfigSection,
+  updateModelConfig as saveModelConfig,
+  updateModelConfigSection as saveModelSection,
 } from '@/lib/config-api'
 import type {
   ModelConfigVersionInfo,
@@ -142,6 +142,20 @@ interface ConfigDraftPersistResult {
 
 export function useModelConfig() {
   const { toast } = useToast()
+  const [configWarnings, setConfigWarnings] = useState<string[]>([])
+  const sharedRevision = useRef<string | undefined>(undefined)
+  const updateModelConfig = useCallback(async (data: Record<string, unknown>) => {
+    const result = await (sharedRevision.current === undefined ? saveModelConfig(data) : saveModelConfig(data, sharedRevision.current))
+    if (typeof result.catalog_revision === 'string') sharedRevision.current = result.catalog_revision
+    setConfigWarnings((result.warnings as string[] | undefined) ?? [])
+    return result
+  }, [])
+  const updateModelConfigSection = useCallback(async (section: string, data: unknown) => {
+    const result = await (sharedRevision.current === undefined ? saveModelSection(section, data) : saveModelSection(section, data, sharedRevision.current))
+    if (typeof result.catalog_revision === 'string') sharedRevision.current = result.catalog_revision
+    setConfigWarnings((result.warnings as string[] | undefined) ?? [])
+    return result
+  }, [])
 
   // ---- 三份可编辑草稿 + 派生态 ----
   const [models, setModels] = useState<ModelInfo[]>([])
@@ -276,6 +290,7 @@ export function useModelConfig() {
     models,
     taskConfig,
     enqueueWrite: enqueueConfigWrite,
+    saveSection: updateModelConfigSection,
     onSavingChange: setModelAutoSaving,
     onUnsavedChange: setModelHasUnsavedChanges,
     onSaveError: handleAutoSaveError,
@@ -418,6 +433,9 @@ export function useModelConfig() {
         return
       }
       const config = unwrapModelConfig(result.value)
+      const shared = config._shared_catalog as { revision: string } | undefined
+      sharedRevision.current = shared?.revision
+      setConfigWarnings((config._warnings as string[] | undefined) ?? [])
       setWebConfig(readWebSearchConfig(config.web))
       const modelList = (config.models as ModelInfo[]) || []
       for (const model of modelList) {
@@ -1050,6 +1068,7 @@ export function useModelConfig() {
             ? '供应商名称及关联模型已同步保存，任务分配已保留'
             : '模型配置已保存',
         })
+        return providerToSave
       } catch (error) {
         toast({
           title: '保存失败',
@@ -1554,6 +1573,7 @@ export function useModelConfig() {
     handleSwitchConfigVersion,
     handleDeleteConfigVersion,
     // 任务配置问题
+    configWarnings,
     invalidModelRefs,
     emptyTasks,
     handleRemoveInvalidRefs,

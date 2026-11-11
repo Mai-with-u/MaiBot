@@ -1,16 +1,14 @@
 """WebSocket 日志推送模块"""
 
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Set
 
 import json
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from src.common.logger import get_logger
 from src.common.logger_color_and_mapping import MODULE_COLORS
-from src.webui.core import get_token_manager
-from src.webui.routers.websocket.auth import verify_ws_token
 from src.webui.routers.websocket.manager import websocket_manager
 
 logger = get_logger("webui.logs_ws")
@@ -113,37 +111,13 @@ def load_recent_logs(limit: int = 100) -> List[Dict]:
 
 
 @router.websocket("/ws/logs")
-async def websocket_logs(websocket: WebSocket, token: Optional[str] = Query(None)):
+async def websocket_logs(websocket: WebSocket):
     """WebSocket 日志推送端点
 
     客户端连接后会持续接收服务器端的日志消息
-    支持三种认证方式（按优先级）：
-    1. query 参数 token（推荐，通过 /api/webui/ws-token 获取临时 token）
-    2. Cookie 中的 maibot_session
-
-    示例：ws://host/ws/logs?token=xxx
+    经宿主登录后转发到此 IPC 端点。
     """
-    is_authenticated = False
-
-    # 方式 1: 尝试验证临时 WebSocket token（推荐方式）
-    if token and verify_ws_token(token):
-        is_authenticated = True
-        logger.debug("WebSocket 使用临时 token 认证成功")
-
-    # 方式 2: 尝试从 Cookie 获取 session token
-    if not is_authenticated:
-        cookie_token = websocket.cookies.get("maibot_session")
-        if cookie_token:
-            token_manager = get_token_manager()
-            if token_manager.verify_cookie_token(cookie_token):
-                is_authenticated = True
-                logger.debug("WebSocket 使用 Cookie 认证成功")
-
-    if not is_authenticated:
-        logger.warning("WebSocket 连接被拒绝：认证失败")
-        await websocket.close(code=4001, reason="认证失败，请重新登录")
-        return
-
+    # 登录与会话失效由宿主代理统一处理。
     await websocket.accept()
     active_connections.add(websocket)
     logger.info(f"📡 WebSocket 客户端已连接（已认证），当前连接数: {len(active_connections)}")

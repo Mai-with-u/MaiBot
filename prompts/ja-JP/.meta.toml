@@ -38,25 +38,35 @@ display_name = "返信の添付案内"
 advanced = true
 description = "返信に添付する画像、メンション、絵文字はシステムが送信することを示し、本文での添付情報の重複を防ぎます。"
 
-[retro_replyer]
-display_name = "レトロ返信"
+[reply_group]
+display_name = "グループチャット返信"
 advanced = true
-description = "レトロモード（experimental.replyer_retro_prompt）のグループチャット返信テンプレート。ペルソナとチャットの注意事項を先頭の system メッセージにまとめ、残りのテンプレートを user メッセージとして送信する。"
+description = "クリエイティブモードの既定のグループチャット返信テンプレート。"
 
-[retro_replyer_light]
-display_name = "レトロ返信（短め）"
+[reply_group_mai_replier]
+display_name = "Mai Replier のグループチャット返信"
 advanced = true
-description = "レトロモードのグループチャット短め返信テンプレート。旧版の think_level=0 の軽量返信に対応する。"
+description = "Mai Replier 専用のグループチャット返信テンプレート。学習時の文面を使用する。"
 
-[retro_private_replyer]
-display_name = "レトロ個人チャット返信"
+[reply_private]
+display_name = "個人チャット返信"
 advanced = true
-description = "レトロモードの個人チャット返信テンプレート。旧版の方式で返信指示をまとめる。"
+description = "クリエイティブモードの既定の個人チャット返信テンプレート。"
 
-[retro_private_replyer_self]
-display_name = "レトロ個人チャット補足返信"
+[reply_private_mai_replier]
+display_name = "Mai Replier の個人チャット返信"
 advanced = true
-description = "レトロモードの個人チャット補足返信テンプレート。直前に自分が送った発言に続けて補足するときに使う。"
+description = "Mai Replier 専用の個人チャット返信テンプレート。"
+
+[reply_private_followup]
+display_name = "個人チャットでの補足発言"
+advanced = true
+description = "クリエイティブモードの個人チャットで、直前の自分の発言に補足するときに使う。"
+
+[reply_private_followup_mai_replier]
+display_name = "Mai Replier の個人チャットでの補足発言"
+advanced = true
+description = "Mai Replier が個人チャットで直前の自分の発言に補足するときに使う。"
 
 [default_expressor]
 display_name = "既定表現器"
@@ -68,6 +78,11 @@ display_name = "絵文字内容分析"
 advanced = true
 description = "絵文字やスタンプ画像の内容を分析するためのテンプレート。"
 
+[emoji_grouped_tags]
+display_name = "スタンプの分類タグ"
+advanced = true
+description = "スタンプの感情と画像内の内容を分けて識別します。"
+
 [emoji_content_filtration]
 display_name = "絵文字内容フィルタ"
 advanced = true
@@ -77,11 +92,6 @@ description = "絵文字やスタンプの内容がフィルタ条件を満た�
 display_name = "絵文字置換"
 advanced = true
 description = "テキスト文脈に応じて絵文字やスタンプを選択・置換するためのテンプレート。"
-
-[emoji_selection]
-display_name = "絵文字選択"
-advanced = true
-description = "文脈と現在の語調に合わせて、絵文字やスタンプのグリッドから最適なものを選ぶためのテンプレート。"
 
 [expression_evaluation]
 display_name = "表現評価"
@@ -168,6 +178,31 @@ display_name = "WebUI AI 検索"
 advanced = true
 description = "自然言語の意図に基づき、WebUI が提供する実在のページと設定候補から関連結果を選択します。"
 
+[webui_help_skill_setup]
+display_name = "導入と設定の手順"
+advanced = true
+description = "設定箇所と現在値を確認し、結果を検証できる手順を示します。"
+
+[webui_help_skill_troubleshoot]
+display_name = "障害の切り分け手順"
+advanced = true
+description = "エラーと実際の設定から原因を絞り込み、次に確認する項目を示します。"
+
+[webui_help_skill_plugin]
+display_name = "プラグインの選定と操作手順"
+advanced = true
+description = "互換性を確認し、導入や設定に適したツールを使います。"
+
+[webui_help_skill_develop]
+display_name = "プラグイン開発の手順"
+advanced = true
+description = "該当する SDK の文書を使い、最小の実装と検証方法を示します。"
+
+[webui_ai_search_input]
+display_name = "WebUI ヘルプの会話入力"
+advanced = true
+description = "現在の質問と過去の回答を、WebUI ヘルプエージェントが参照する会話データとして整形します。"
+
 [webui_ai_search_final]
 display_name = "WebUI AI 検索の最終化指示"
 advanced = true
@@ -193,11 +228,6 @@ display_name = "外部 Agent 接続ガイド"
 advanced = true
 description = "外部 Agent 接続ガイド。"
 
-[agent_acp_computer]
-display_name = "外部 Agent のコンピューター操作"
-advanced = true
-description = "外部 Agent のコンピューター操作。"
-
 [agent_acp_environment]
 display_name = "外部 Agent 環境説明"
 advanced = true
@@ -222,3 +252,68 @@ description = "外部 Planner 中断復帰。"
 display_name = "外部 Planner 継続実行"
 advanced = true
 description = "外部 Planner 継続実行。"
+
+[planner_reply_capabilities]
+display_name = "Planner reply capabilities"
+advanced = true
+description = "Available plugin reply capabilities for the current chat."
+
+[reply_cache]
+display_name = "返信キャッシュタスク"
+advanced = true
+description = "Planner の文脈末尾でクリエイティブ返信生成へ切り替えます。"
+
+[desktop_pet_proactive_wake]
+display_name = "デスクトップペットの定期的な思考"
+advanced = false
+description = "定期起動時に自主的な探索と必要に応じた交流を促す内部プロンプト。"
+
+[desktop_pet_screen_read]
+display_name = "デスクトップペットの画面読み取り"
+advanced = false
+description = "本機のメイン画面を一度確認、または継続的に変化を読み取ります。"
+
+[desktop_pet_todo_context]
+display_name = "主人のタスク常駐コンテキスト"
+advanced = false
+description = "毎ターン最新タスクを読み込み、条件成立による起動を判断します。"
+
+[desktop_pet_exploration]
+display_name = "デスクトップペットの探索"
+advanced = false
+description = "人が設定した目標に沿ってツールの組み合わせを探索し、実験の証拠がある候補図式を保存します。"
+
+[desktop_pet_exploration_reuse]
+display_name = "探索経験の日常利用"
+advanced = false
+description = "通常の主人チャットで必要に応じて探索の資源と経験を検索・再利用します。"
+
+[desktop_pet_thinking_caption]
+display_name = "デスクトップペットの思考キャプション"
+advanced = false
+description = "現在の実行段階を、短く楽しいデスクトップペットの状態文にまとめます。"
+
+[maisaka_expression_selector]
+display_name = "表現の選択"
+advanced = true
+description = "チャットの文脈に基づき、候補の中から今回の返信に合う表現を選びます。"
+
+[maisaka_replyer_document]
+display_name = "長文の執筆"
+advanced = false
+description = "自分の立場と口調で、完全な記事やコミュニティ投稿を書きます。"
+
+[maisaka_wait_reminder]
+display_name = "連続待機のリマインダー"
+advanced = true
+description = "待機が続いたとき、待機時間の延長か今回の思考の終了を促し、無限ループを防ぎます。"
+
+[reply_supplement]
+display_name = "返信補足の構成"
+advanced = true
+description = "本文の並行生成中に、引用・添付・送信順などの返信補足を構成します。"
+
+[reply_supplement_retry]
+display_name = "返信補足の再生成"
+advanced = true
+description = "返信補足の生成に失敗したとき、エラー内容に基づいて構成をやり直します。"

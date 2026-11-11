@@ -4,8 +4,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
-from src.common.prompt_i18n import clear_prompt_cache
-from src.webui.dependencies import require_auth
+from src.common.prompt_i18n import clear_prompt_cache, load_prompt
 from src.webui.routers import config as config_router_module
 
 
@@ -23,7 +22,6 @@ def client_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClien
 
     app = FastAPI()
     app.include_router(config_router_module.router, prefix="/api/webui")
-    app.dependency_overrides[require_auth] = lambda: "test-token"
     return TestClient(app)
 
 
@@ -47,6 +45,27 @@ def test_update_prompt_file_saves_custom_version(client: TestClient) -> None:
     [file_info] = catalog_response.json()["files"]["zh-CN"]
     assert file_info["customized"] is True
     assert file_info["custom_version_count"] == 1
+
+
+def test_renamed_reply_template_keeps_custom_prompt_and_versions(client: TestClient) -> None:
+    prompts_dir = config_router_module.PROMPTS_DIR
+    custom_dir = config_router_module.CUSTOM_PROMPTS_DIR / "zh-CN"
+    custom_dir.mkdir(parents=True)
+    (prompts_dir / "zh-CN" / "reply_group.prompt").write_text("Default {bot_name}", encoding="utf-8")
+    (custom_dir / "retro_replyer.prompt").write_text("Existing {bot_name}", encoding="utf-8")
+
+    base_url = "/api/webui/config/prompts/zh-CN"
+    renamed_url = f"{base_url}/reply_group.prompt"
+    assert client.get(renamed_url).json()["content"] == "Existing {bot_name}"
+    assert load_prompt("reply_group", locale="zh-CN", prompts_root=prompts_dir, bot_name="Mai") == "Existing Mai"
+
+    saved = client.put(renamed_url, json={"content": "Updated {bot_name}", "create_version": True}).json()
+    original = client.get(f"{base_url}/retro_replyer.prompt").json()
+    assert saved["active_version_id"]
+    assert original["active_version_id"] == saved["active_version_id"]
+    assert original["versions"] == saved["versions"]
+    assert original["content"] == "Updated {bot_name}"
+    assert load_prompt("reply_group", locale="zh-CN", prompts_root=prompts_dir, bot_name="Mai") == "Updated Mai"
 
 
 @pytest.mark.parametrize("custom_content", ["Hi", "Hi {name} {other}", "Hi {name"])

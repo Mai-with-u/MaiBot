@@ -1,0 +1,3894 @@
+{
+  "schema_version": 1,
+  "id": "orange-sprout",
+  "name": "橙芽与小鱼",
+  "version": "1.1.0",
+  "author": "Sengoku",
+  "canvas": {
+    "width": 220,
+    "height": 240,
+    "anchor": [
+      110,
+      240
+    ],
+    "bubble_anchor": [
+      110,
+      22
+    ],
+    "hitbox": [
+      36,
+      32,
+      148,
+      204
+    ]
+  },
+  "states": {
+    "idle": "idle",
+    "thinking": "thinking",
+    "talking": "talking",
+    "dragging": "dragging"
+  },
+  "events": {
+    "click": "fish-hug",
+    "happy": "fish-cheer",
+    "error": "error",
+    "greeting": "greeting"
+  },
+  "animations": {
+    "idle": {
+      "sequence": [
+        {
+          "file": "idle-1.webp",
+          "rect": [
+            0,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 100
+        },
+        {
+          "file": "idle-1.webp",
+          "rect": [
+            330,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 100
+        },
+        {
+          "file": "idle-1.webp",
+          "rect": [
+            660,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 100
+        },
+        {
+          "file": "idle-1.webp",
+          "rect": [
+            990,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 100
+        },
+        {
+          "file": "idle-1.webp",
+          "rect": [
+            1320,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 100
+        },
+        {
+          "file": "idle-1.webp",
+          "rect": [
+            1650,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 100
+        },
+        {
+          "file": "idle-1.webp",
+          "rect": [
+            1980,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 100
+        },
+        {
+          "file": "idle-1.webp",
+          "rect": [
+            2310,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 100
+        },
+        {
+          "file": "idle-1.webp",
+          "rect": [
+            0,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 100
+        },
+        {
+          "file": "idle-1.webp",
+          "rect": [
+            330,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 100
+        },
+        {
+          "file": "idle-1.webp",
+          "rect": [
+            660,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 100
+        },
+        {
+          "file": "idle-1.webp",
+          "rect": [
+            990,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 100
+        },
+        {
+          "file": "idle-1.webp",
+          "rect": [
+            1320,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 100
+        },
+        {
+          "file": "idle-1.webp",
+          "rect": [
+            1650,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 100
+        },
+        {
+          "file": "idle-1.webp",
+          "rect": [
+            1980,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 100
+        },
+        {
+          "file": "idle-1.webp",
+          "rect": [
+            2310,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 100
+        },
+        {
+          "file": "idle-1.webp",
+          "rect": [
+            0,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 100
+        },
+        {
+          "file": "idle-1.webp",
+          "rect": [
+            330,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 100
+        },
+        {
+          "file": "idle-1.webp",
+          "rect": [
+            660,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 100
+        },
+        {
+          "file": "idle-1.webp",
+          "rect": [
+            990,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 100
+        }
+      ],
+      "motion": "none"
+    },
+    "thinking": {
+      "sequence": [
+        {
+          "file": "thinking-1.webp",
+          "rect": [
+            0,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "thinking-1.webp",
+          "rect": [
+            330,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "thinking-1.webp",
+          "rect": [
+            660,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "thinking-1.webp",
+          "rect": [
+            990,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "thinking-1.webp",
+          "rect": [
+            1320,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "thinking-1.webp",
+          "rect": [
+            1650,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "thinking-1.webp",
+          "rect": [
+            1980,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "thinking-1.webp",
+          "rect": [
+            2310,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "thinking-1.webp",
+          "rect": [
+            0,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "thinking-1.webp",
+          "rect": [
+            330,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "thinking-1.webp",
+          "rect": [
+            660,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "thinking-1.webp",
+          "rect": [
+            990,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "thinking-1.webp",
+          "rect": [
+            1320,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "thinking-1.webp",
+          "rect": [
+            1650,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "thinking-1.webp",
+          "rect": [
+            1980,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "thinking-1.webp",
+          "rect": [
+            2310,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "thinking-1.webp",
+          "rect": [
+            0,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "thinking-1.webp",
+          "rect": [
+            330,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "thinking-1.webp",
+          "rect": [
+            660,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "thinking-1.webp",
+          "rect": [
+            990,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        }
+      ],
+      "motion": "none"
+    },
+    "talking": {
+      "sequence": [
+        {
+          "file": "talking-1.webp",
+          "rect": [
+            0,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "talking-1.webp",
+          "rect": [
+            330,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "talking-1.webp",
+          "rect": [
+            660,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "talking-1.webp",
+          "rect": [
+            990,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "talking-1.webp",
+          "rect": [
+            1320,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "talking-1.webp",
+          "rect": [
+            1650,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "talking-1.webp",
+          "rect": [
+            1980,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "talking-1.webp",
+          "rect": [
+            2310,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "talking-1.webp",
+          "rect": [
+            0,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "talking-1.webp",
+          "rect": [
+            330,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "talking-1.webp",
+          "rect": [
+            660,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        }
+      ],
+      "motion": "none"
+    },
+    "dragging": {
+      "sequence": [
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            0,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            330,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            660,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            990,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            1320,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            1650,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            1980,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            2310,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            0,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            330,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            660,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            990,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            1320,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            1650,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            1980,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            2310,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            0,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            330,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            660,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            990,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            1320,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            1650,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dragging-1.webp",
+          "rect": [
+            1980,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        }
+      ],
+      "motion": "none"
+    },
+    "fish-hug": {
+      "sequence": [
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            0,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            330,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            660,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            990,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            1320,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            1650,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            1980,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            2310,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            0,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            330,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            660,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            990,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            1320,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            1650,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            1980,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            2310,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            0,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            330,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            660,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            990,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            1320,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            1650,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            1980,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            2310,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            0,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            330,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            660,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            990,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            1320,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            1650,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            1980,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            2310,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            0,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            330,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            660,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            990,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            1320,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            1650,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            1980,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-hug-1.webp",
+          "rect": [
+            2310,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        }
+      ],
+      "motion": "none"
+    },
+    "fish-cheer": {
+      "sequence": [
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            0,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            330,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            660,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            990,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            1320,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            1650,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            1980,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            2310,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            0,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            330,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            660,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            990,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            1320,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            1650,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            1980,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            2310,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            0,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            330,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            660,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            990,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            1320,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            1650,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            1980,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            2310,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            0,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            330,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            660,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            990,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            1320,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            1650,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            1980,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-cheer-1.webp",
+          "rect": [
+            2310,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        }
+      ],
+      "motion": "none"
+    },
+    "error": {
+      "sequence": [
+        {
+          "file": "error-1.webp",
+          "rect": [
+            0,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "error-1.webp",
+          "rect": [
+            330,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "error-1.webp",
+          "rect": [
+            660,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "error-1.webp",
+          "rect": [
+            990,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "error-1.webp",
+          "rect": [
+            1320,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "error-1.webp",
+          "rect": [
+            1650,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "error-1.webp",
+          "rect": [
+            1980,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "error-1.webp",
+          "rect": [
+            2310,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "error-1.webp",
+          "rect": [
+            0,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "error-1.webp",
+          "rect": [
+            330,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "error-1.webp",
+          "rect": [
+            660,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "error-1.webp",
+          "rect": [
+            990,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "error-1.webp",
+          "rect": [
+            1320,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        }
+      ],
+      "motion": "none"
+    },
+    "greeting": {
+      "sequence": [
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            0,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            330,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            660,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            990,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            1320,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            1650,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            1980,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            2310,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            0,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            330,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            660,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            990,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            1320,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            1650,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            1980,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            2310,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            0,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            330,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            660,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            990,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            1320,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            1650,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            1980,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            2310,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            0,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            330,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            660,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            990,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            1320,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            1650,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            1980,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            2310,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            0,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            330,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            660,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            990,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            1320,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            1650,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            1980,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            2310,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            0,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            330,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            660,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            990,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            1320,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            1650,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "greeting-1.webp",
+          "rect": [
+            1980,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        }
+      ],
+      "motion": "none"
+    },
+    "fish-give": {
+      "sequence": [
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            0,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            330,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            660,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            990,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            1320,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            1650,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            1980,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            2310,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            0,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            330,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            660,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            990,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            1320,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            1650,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            1980,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            2310,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            0,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            330,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            660,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            990,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            1320,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            1650,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            1980,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            2310,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            0,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            330,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-give-1.webp",
+          "rect": [
+            660,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        }
+      ],
+      "motion": "none"
+    },
+    "dance": {
+      "sequence": [
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            0,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            330,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            660,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            990,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            1320,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            1650,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            1980,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            2310,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            0,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            330,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            660,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            990,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            1320,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            1650,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            1980,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            2310,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            0,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            330,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            660,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            990,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            1320,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            1650,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            1980,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            2310,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            0,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            330,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "dance-1.webp",
+          "rect": [
+            660,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        }
+      ],
+      "motion": "none"
+    },
+    "fish-orbit": {
+      "sequence": [
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            0,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            330,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            660,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            990,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1320,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1650,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1980,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            2310,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            0,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            330,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            660,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            990,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1320,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1650,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1980,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            2310,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            0,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            330,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            660,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            990,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1320,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1650,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1980,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            2310,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            0,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            330,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            660,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            990,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1320,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1650,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1980,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            2310,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            0,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            330,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            660,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            990,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1320,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1650,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1980,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            2310,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            0,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            330,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            660,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            990,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1320,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1650,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1980,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            2310,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            0,
+            2160,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            330,
+            2160,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            660,
+            2160,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            990,
+            2160,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1320,
+            2160,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1650,
+            2160,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1980,
+            2160,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            2310,
+            2160,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            0,
+            2520,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            330,
+            2520,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            660,
+            2520,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            990,
+            2520,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1320,
+            2520,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1650,
+            2520,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            1980,
+            2520,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-1.webp",
+          "rect": [
+            2310,
+            2520,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            0,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            330,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            660,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            990,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            1320,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            1650,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            1980,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            2310,
+            0,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            0,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            330,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            660,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            990,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            1320,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            1650,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            1980,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            2310,
+            360,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            0,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            330,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            660,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            990,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            1320,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            1650,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            1980,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            2310,
+            720,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            0,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            330,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            660,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            990,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            1320,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            1650,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            1980,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            2310,
+            1080,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            0,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            330,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            660,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            990,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            1320,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            1650,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            1980,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            2310,
+            1440,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            0,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            330,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            660,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            990,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            1320,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            1650,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            1980,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            2310,
+            1800,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            0,
+            2160,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            330,
+            2160,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            660,
+            2160,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            990,
+            2160,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            1320,
+            2160,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            1650,
+            2160,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            1980,
+            2160,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        },
+        {
+          "file": "fish-orbit-2.webp",
+          "rect": [
+            2310,
+            2160,
+            330,
+            360
+          ],
+          "duration_ms": 50
+        }
+      ],
+      "motion": "none"
+    }
+  }
+}
