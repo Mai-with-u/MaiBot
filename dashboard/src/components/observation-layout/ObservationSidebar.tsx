@@ -7,6 +7,7 @@ import {
   ChevronRight,
   ChevronsUpDown,
   Minus,
+  MoreHorizontal,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
@@ -22,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 import { SidebarUpdateButton } from '@/components/layout/SidebarUpdateButton'
 import type { MenuItem } from '@/components/layout/types'
 import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { PromptWarningDot } from '@/components/ui/prompt-warning-dot'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -121,6 +123,7 @@ export function ObservationSidebar({
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const { theme, setTheme } = useTheme()
   const [settingsOpen, setSettingsOpen] = useState(loadSettingsOpen)
+  const [toolsOpen, setToolsOpen] = useState(false)
   const [settingsCompact, setSettingsCompact] = useState(() => {
     try {
       return localStorage.getItem(SETTINGS_COMPACT_STORAGE_KEY) === 'true'
@@ -272,6 +275,66 @@ export function ObservationSidebar({
       return !current
     })
   }
+
+  const toolClassName = collapsed ? 'flex w-full items-center gap-3 rounded-sm px-3 py-2 text-sm hover:bg-accent focus-visible:outline-2' : undefined
+  const toolItem = (element: ReactElement) => collapsed ? <DropdownMenuItem asChild>{element}</DropdownMenuItem> : element
+  const tools = (
+    <>
+      <BotSwitcher submenu={collapsed}>
+        <button type="button" data-observation-icon-key={!collapsed || undefined} className={toolClassName}>
+          <ChevronsUpDown aria-hidden="true" />
+          {collapsed && <span>{t('hostManager.currentBot')}</span>}
+        </button>
+      </BotSwitcher>
+      {toolItem(<Link
+        to="/settings"
+        data-observation-icon-key={!collapsed || undefined}
+        data-active={pathname === '/settings' ? 'true' : 'false'}
+        className={toolClassName}
+        title={t('sidebar.menu.settings')}
+        aria-label={t('sidebar.menu.settings')}
+        onClick={() => setToolsOpen(false)}
+      >
+        <Settings aria-hidden="true" />
+        {collapsed && <span>{t('sidebar.menu.settings')}</span>}
+      </Link>)}
+      {toolItem(<button
+        type="button"
+        data-observation-icon-key={!collapsed || undefined}
+        className={toolClassName}
+        title={t('header.viewDocs')}
+        aria-label={t('header.viewDocs')}
+        onClick={() => { setToolsOpen(false); window.open('https://docs.maibot.chat/', '_blank') }}
+      >
+        <BookOpen aria-hidden="true" />
+        {collapsed && <span>{t('header.viewDocs')}</span>}
+      </button>)}
+      {toolItem(<button
+        type="button"
+        data-observation-icon-key={!collapsed || undefined}
+        className={toolClassName}
+        aria-label={actualTheme === 'dark' ? t('header.switchToLight') : t('header.switchToDark')}
+        title={actualTheme === 'dark' ? t('header.switchToLight') : t('header.switchToDark')}
+        onClick={(event) => toggleThemeWithTransition(actualTheme === 'dark' ? 'light' : 'dark', setTheme, event)}
+      >
+        {actualTheme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+        {collapsed && <span>{actualTheme === 'dark' ? t('header.switchToLight') : t('header.switchToDark')}</span>}
+      </button>)}
+      <KeyTooltip label={collapsed ? t('common.search') : `${t('common.search')} · Ctrl K`} side={collapsed ? 'right' : 'bottom'}>
+        {toolItem(<button
+          type="button"
+          data-observation-icon-key={!collapsed || undefined}
+          className={collapsed ? toolClassName : 'ml-auto'}
+          aria-label={t('common.search')}
+          aria-keyshortcuts="Control+K Meta+K"
+          onClick={() => { setToolsOpen(false); onOpenSearch() }}
+        >
+          <Search aria-hidden="true" />
+          {collapsed && <span>{t('common.search')}</span>}
+        </button>)}
+      </KeyTooltip>
+    </>
+  )
 
   return (
     <aside
@@ -449,53 +512,20 @@ export function ObservationSidebar({
         <SidebarUpdateButton collapsed={collapsed} />
       </div>
       <footer data-observation-tools="true">
-        <BotSwitcher>
-          <button type="button" data-observation-icon-key="true">
-            <ChevronsUpDown aria-hidden="true" />
-          </button>
-        </BotSwitcher>
-        <Link
-          to="/settings"
-          data-observation-icon-key="true"
-          data-active={pathname === '/settings' ? 'true' : 'false'}
-          title={t('sidebar.menu.settings')}
-          aria-label={t('sidebar.menu.settings')}
-        >
-          <Settings aria-hidden="true" />
-        </Link>
-        <button
-          type="button"
-          data-observation-icon-key="true"
-          title={t('header.viewDocs')}
-          aria-label={t('header.viewDocs')}
-          onClick={() => window.open('https://docs.maibot.chat/', '_blank')}
-        >
-          <BookOpen aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          data-observation-icon-key="true"
-          aria-label={actualTheme === 'dark' ? t('header.switchToLight') : t('header.switchToDark')}
-          title={actualTheme === 'dark' ? t('header.switchToLight') : t('header.switchToDark')}
-          onClick={(event) =>
-            toggleThemeWithTransition(actualTheme === 'dark' ? 'light' : 'dark', setTheme, event)
-          }
-        >
-          {actualTheme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
-        </button>
-
-        <KeyTooltip label={`${t('common.search')} · Ctrl K`} side={collapsed ? 'right' : 'bottom'}>
-          <button
-            type="button"
-            data-observation-icon-key="true"
-            className={collapsed ? undefined : 'ml-auto'}
-            aria-label={t('common.search')}
-            aria-keyshortcuts="Control+K Meta+K"
-            onClick={onOpenSearch}
-          >
-            <Search aria-hidden="true" />
-          </button>
-        </KeyTooltip>
+        {collapsed ? (
+          <DropdownMenu open={toolsOpen} onOpenChange={setToolsOpen}>
+            <DropdownMenuTrigger asChild>
+              <button type="button" data-observation-icon-key="true"
+                aria-label={t('header.moreActions')} title={t('header.moreActions')}>
+                <MoreHorizontal aria-hidden="true" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="right" align="end" sideOffset={12}
+              aria-label={t('header.moreActions')} className="w-52 max-h-[calc(100dvh-2rem)] overflow-y-auto p-2 [&_svg]:size-4 [&_svg]:shrink-0">
+              {tools}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : tools}
       </footer>
     </aside>
   )

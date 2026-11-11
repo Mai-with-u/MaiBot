@@ -939,6 +939,7 @@ function ModelConfigPageContent() {
               }}
               onChange={updateTaskConfig}
               onAddWebService={() => setWebSearchEditor({ name: null })}
+              onConfigureMaiReplier={mc.handleConfigureMaiReplier}
               hasProviders={providers.length > 0}
               onStartTour={handleStartTour}
               tourRunning={tourIsRunning}
@@ -1269,7 +1270,7 @@ function ModelConfigPageContent() {
                   </div>
                 )}
                 <p className="font-medium text-foreground">
-                  关联模型会从模型列表和任务分配中移除，此操作无法撤销。
+                  关联模型会从共享模型列表和所有实例的任务分配中移除，此操作无法撤销。
                 </p>
               </div>
             </AlertDialogDescription>
