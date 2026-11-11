@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import {
   BookOpen,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronsUpDown,
   Minus,
   Moon,
@@ -13,11 +15,13 @@ import {
   Settings,
   Sun,
 } from 'lucide-react'
+import { motion, useReducedMotion } from 'motion/react'
 import { useContext, useEffect, useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SidebarUpdateButton } from '@/components/layout/SidebarUpdateButton'
 import type { MenuItem } from '@/components/layout/types'
+import { Button } from '@/components/ui/button'
 import { PromptWarningDot } from '@/components/ui/prompt-warning-dot'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -34,6 +38,7 @@ import { ObservationConversations } from './ObservationConversations'
 
 const SETTINGS_OPEN_STORAGE_KEY = 'maibot-observation-settings-open'
 const SETTINGS_COMPACT_STORAGE_KEY = 'maibot-observation-settings-compact'
+const SETTINGS_PAGE_SIZE = 12
 const LOG_PATHS = ['/logs', '/statistics', '/reasoning-process']
 
 /** 侧栏键位空间有限，常用入口用短名；完整名称仍在悬停提示和读屏里。 */
@@ -42,6 +47,7 @@ const SHORT_LABELS: Record<string, string> = {
   '/config/model': 'observation.keys.model',
   '/adapter-management': 'observation.keys.adapter',
   '/resource/learning': 'observation.keys.learning',
+  '/chat-management': 'observation.keys.mutualGroups',
   '/resource/knowledge-base': 'observation.keys.memory',
   '/plugin-config': 'observation.keys.plugin',
   '/plugins': 'observation.keys.market',
@@ -122,6 +128,9 @@ export function ObservationSidebar({
       return false
     }
   })
+  const reducedMotion = useReducedMotion()
+  const [settingsPage, setSettingsPage] = useState(0)
+  const [settingsPageDirection, setSettingsPageDirection] = useState(1)
   const settingsViewport = useRef<HTMLDivElement>(null)
   const { data: promptCatalog } = useQuery(
     {
@@ -144,6 +153,12 @@ export function ObservationSidebar({
   // 折叠成图标轨时设置键总是显示，否则图标轨里就没有入口了
   const settingsVisible = settingsOpen || collapsed
   const settingsSingleRow = settingsCompact && !collapsed
+  const settingsPaginated = !collapsed && !settingsSingleRow
+  const settingsPageCount = Math.max(1, Math.ceil(settingsItems.length / SETTINGS_PAGE_SIZE))
+  const currentSettingsPage = Math.min(settingsPage, settingsPageCount - 1)
+  const visibleSettingsItems = settingsPaginated
+    ? settingsItems.slice(currentSettingsPage * SETTINGS_PAGE_SIZE, (currentSettingsPage + 1) * SETTINGS_PAGE_SIZE)
+    : settingsItems
 
   useEffect(() => {
     try {
@@ -162,23 +177,7 @@ export function ObservationSidebar({
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
     let maxScroll = viewport.scrollWidth - viewport.clientWidth
     let wheelTarget = viewport.scrollLeft
-    let wheelPosition = wheelTarget
-    let lastFrameTime = 0
-    let wheelFrame = 0
-
-    const animateWheel = (frameTime: number) => {
-      const remaining = wheelTarget - wheelPosition
-      if (Math.abs(remaining) <= 1) {
-        viewport.scrollLeft = wheelTarget
-        wheelFrame = 0
-        return
-      }
-      const elapsed = frameTime - lastFrameTime
-      lastFrameTime = frameTime
-      wheelPosition += remaining * (1 - Math.exp(-elapsed / 30))
-      viewport.scrollLeft = wheelPosition
-      wheelFrame = requestAnimationFrame(animateWheel)
-    }
+    let lastWheelTime = 0
 
     const updateScrollEdges = () => {
       const position = viewport.scrollLeft
@@ -186,26 +185,25 @@ export function ObservationSidebar({
       row.toggleAttribute('data-clipped-right', position < maxScroll - 1)
     }
     const scrollSettings = (event: WheelEvent) => {
-      if (
-        event.ctrlKey || event.shiftKey || event.deltaX || !event.deltaY ||
-        maxScroll <= 0
-      ) {
-        cancelAnimationFrame(wheelFrame)
-        wheelFrame = 0
+      // 横向手势由浏览器直接处理；只将纵向滚轮映射到这一排按钮。
+      if (event.ctrlKey || event.shiftKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY) || maxScroll <= 0) {
+        lastWheelTime = 0
         return
       }
 
-      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewport.clientWidth : 1
       event.preventDefault()
-      const from = wheelFrame ? wheelTarget : viewport.scrollLeft
-      wheelTarget = Math.min(maxScroll, Math.max(0, from + event.deltaY * unit))
-      if (reducedMotion.matches) {
-        viewport.scrollLeft = wheelTarget
-      } else if (!wheelFrame) {
-        wheelPosition = viewport.scrollLeft
-        lastFrameTime = performance.now()
-        wheelFrame = requestAnimationFrame(animateWheel)
-      }
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewport.clientWidth : 1
+      const delta = event.deltaY * unit
+      const now = performance.now()
+      const position = viewport.scrollLeft
+      const reversing = Math.sign(delta) !== Math.sign(wheelTarget - position)
+      const from = now - lastWheelTime < 200 && !reversing ? wheelTarget : position
+      wheelTarget = Math.min(maxScroll, Math.max(0, from + delta))
+      lastWheelTime = now
+      viewport.scrollTo({
+        left: wheelTarget,
+        behavior: reducedMotion.matches ? 'instant' : 'smooth',
+      })
     }
     const observer = new ResizeObserver(() => {
       maxScroll = viewport.scrollWidth - viewport.clientWidth
@@ -217,7 +215,6 @@ export function ObservationSidebar({
     viewport.addEventListener('scroll', updateScrollEdges, { passive: true })
     viewport.addEventListener('wheel', scrollSettings, { passive: false })
     return () => {
-      cancelAnimationFrame(wheelFrame)
       observer.disconnect()
       viewport.removeEventListener('scroll', updateScrollEdges)
       viewport.removeEventListener('wheel', scrollSettings)
@@ -313,7 +310,7 @@ export function ObservationSidebar({
 
       <section data-observation-settings="true">
         {!collapsed && (
-          <div className="flex items-center gap-1">
+          <div className="relative flex items-center gap-1">
             <button
               type="button"
               data-observation-section-title="true"
@@ -324,6 +321,37 @@ export function ObservationSidebar({
               <span>{t('observation.settingsBlock')}</span>
               <ChevronDown aria-hidden="true" data-open={settingsVisible ? 'true' : 'false'} />
             </button>
+            {settingsVisible && settingsPaginated && settingsPageCount > 1 && (
+              <div className="absolute left-1/2 flex -translate-x-1/2 items-center gap-1" role="group" aria-label="设置分页">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="上一页设置"
+                  disabled={currentSettingsPage === 0}
+                  onClick={() => {
+                    setSettingsPageDirection(-1)
+                    setSettingsPage(currentSettingsPage - 1)
+                  }}
+                >
+                  <ChevronLeft aria-hidden="true" />
+                </Button>
+                <span className="text-xs tabular-nums" aria-live="polite">
+                  {currentSettingsPage + 1}/{settingsPageCount}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="下一页设置"
+                  disabled={currentSettingsPage === settingsPageCount - 1}
+                  onClick={() => {
+                    setSettingsPageDirection(1)
+                    setSettingsPage(currentSettingsPage + 1)
+                  }}
+                >
+                  <ChevronRight aria-hidden="true" />
+                </Button>
+              </div>
+            )}
             {settingsVisible && (
               <button
                 type="button"
@@ -346,8 +374,16 @@ export function ObservationSidebar({
             viewportRef={settingsViewport}
           >
             <nav aria-label={t('observation.settingsBlock')}>
-              <ul data-observation-keys="true" data-single-row={settingsSingleRow}>
-                {settingsItems.map((item) => {
+              <motion.ul
+                key={settingsPaginated ? currentSettingsPage : 'unpaged'}
+                data-observation-keys="true"
+                data-single-row={settingsSingleRow}
+                data-paginated={settingsPaginated && settingsPageCount > 1 || undefined}
+                initial={reducedMotion || !settingsPaginated ? false : { opacity: 0, x: settingsPageDirection * 12 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: reducedMotion ? 0 : 0.18, ease: 'easeOut' }}
+              >
+                {visibleSettingsItems.map((item) => {
                   const Icon = item.icon
                   const label = item.literalLabel ? item.label : t(item.label)
                   const shortLabel = SHORT_LABELS[item.path] ? t(SHORT_LABELS[item.path]) : label
@@ -399,7 +435,7 @@ export function ObservationSidebar({
                     </li>
                   )
                 })}
-              </ul>
+              </motion.ul>
             </nav>
           </ScrollArea>
         )}

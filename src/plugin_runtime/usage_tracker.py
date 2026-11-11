@@ -6,8 +6,12 @@ from typing import Callable, Dict, Iterable
 import asyncio
 import json
 import math
-import tempfile
 import time
+
+from src.common.atomic_file import quarantine_file, write_private
+from src.common.logger import get_logger
+
+logger = get_logger("plugin_runtime.usage_tracker")
 
 
 class PluginUsageTracker:
@@ -40,8 +44,16 @@ class PluginUsageTracker:
         return totals
 
     async def load(self) -> None:
-        self._totals = await asyncio.to_thread(self._read_totals)
+        self._totals = await asyncio.to_thread(self._load_totals)
         self._active_since.clear()
+
+    def _load_totals(self) -> Dict[str, float]:
+        try:
+            return self._read_totals()
+        except (ValueError, OverflowError):
+            backup = quarantine_file(self._path)
+            logger.warning(f"插件累计使用时长记录损坏，已保留原文件并重新计时：{backup}", exc_info=True)
+            return {}
 
     def reconcile(self, active_plugin_ids: Iterable[str]) -> None:
         """只结算离开运行集合的插件；重复通知不会重置仍在运行的起点。"""
@@ -60,23 +72,8 @@ class PluginUsageTracker:
         return totals
 
     def _write_totals(self, totals: Dict[str, float]) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            "w", encoding="utf-8", dir=self._path.parent,
-            prefix=f"{self._path.name}.", suffix=".tmp", delete=False,
-        ) as handle:
-            temporary_path = Path(handle.name)
-            try:
-                json.dump({"version": 1, "usage_seconds": totals}, handle, ensure_ascii=False, allow_nan=False)
-                handle.write("\n")
-            except BaseException:
-                handle.close()
-                temporary_path.unlink(missing_ok=True)
-                raise
-        try:
-            temporary_path.replace(self._path)
-        finally:
-            temporary_path.unlink(missing_ok=True)
+        content = json.dumps({"version": 1, "usage_seconds": totals}, ensure_ascii=False, allow_nan=False)
+        write_private(self._path, content + "\n")
 
     async def save(self) -> None:
         async with self._save_lock:

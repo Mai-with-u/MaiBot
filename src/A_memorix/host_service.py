@@ -16,7 +16,7 @@ import tomlkit
 
 from src.common.logger import get_logger
 from src.common.runtime_loop import run_on_main_loop
-from src.common.utils.utils_config import AMemorixConfigUtils
+from src.services.sharing_group_service import resolve_scope
 from src.config.official_configs import AMemorixConfig
 from src.webui.utils.toml_utils import _update_toml_doc
 
@@ -222,6 +222,19 @@ class AMemorixHostService:
         return await run_on_main_loop(self._invoke_on_runtime(component_name, args, timeout_ms=timeout_ms))
 
     async def _invoke_on_runtime(
+        self, component_name: str, args: Dict[str, Any] | None = None,
+        *, timeout_ms: Optional[int] = None,
+    ) -> Any:
+        from src.services.chat_migration_gate import chat_migration_gate
+
+        payload = args or {}
+        session_id = str(payload.get("chat_id") or payload.get("session_id") or "")
+        if session_id and component_name != "memory_chat_migration":
+            async with chat_migration_gate.activity(session_id):
+                return await self._invoke_unguarded(component_name, args, timeout_ms=timeout_ms)
+        return await self._invoke_unguarded(component_name, args, timeout_ms=timeout_ms)
+
+    async def _invoke_unguarded(
         self,
         component_name: str,
         args: Dict[str, Any] | None = None,
@@ -253,16 +266,28 @@ class AMemorixHostService:
                 await self._ensure_startup_task()
             return await self._unavailable_response(component_name, payload)
 
+        if component_name == "memory_chat_migration":
+            from .core.runtime.services.chat_migration_service import ChatMemoryMigration
+            from src.services.chat_migration_gate import settled_thread
+
+            service = ChatMemoryMigration(kernel.metadata_store)
+            action = payload["action"]
+            arguments = {key: value for key, value in payload.items() if key != "action"}
+            if action == "snapshot":
+                return await asyncio.to_thread(service.snapshot, **arguments)
+            if action == "apply":
+                return await settled_thread(service.apply, **arguments)
+            if action == "restore":
+                return await settled_thread(service.restore, **arguments)
+            raise ValueError("未知记忆迁移动作")
+
         if component_name == "search_memory":
             from .core.runtime.sdk_memory_kernel import KernelSearchRequest
 
             chat_id = str(payload.get("chat_id", "") or "").strip()
-            config = self._read_config()
-            global_memory_sharing_enabled = bool(config.get("global_memory_sharing_enabled", False))
+            shared_ids, global_memory_sharing_enabled = resolve_scope(chat_id, "memory")
             search_chat_id = "" if global_memory_sharing_enabled else chat_id
-            shared_chat_ids = ()
-            if not global_memory_sharing_enabled:
-                shared_chat_ids = tuple(AMemorixConfigUtils.get_shared_memory_session_ids(chat_id))
+            shared_chat_ids = () if global_memory_sharing_enabled else tuple(shared_ids)
 
             return await kernel.search_memory(
                 KernelSearchRequest(
@@ -317,15 +342,8 @@ class AMemorixHostService:
             scoped_payload = dict(payload)
             if action in {"search", "get"} and "chat_ids" not in scoped_payload:
                 chat_id = str(payload.get("chat_id") or "").strip()
-                config = self._read_config()
-                if bool(config.get("global_memory_sharing_enabled", False)):
-                    scoped_payload["chat_ids"] = None
-                else:
-                    scoped_payload["chat_ids"] = [
-                        item
-                        for item in (chat_id, *AMemorixConfigUtils.get_shared_memory_session_ids(chat_id))
-                        if item
-                    ]
+                shared_ids, is_global = resolve_scope(chat_id, "memory")
+                scoped_payload["chat_ids"] = None if is_global else sorted(shared_ids)
             scoped_payload.pop("action", None)
             return await kernel.image_memory(action=action, **scoped_payload)
 

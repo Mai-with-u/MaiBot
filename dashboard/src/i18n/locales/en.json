@@ -92,6 +92,7 @@
       "model": "Models",
       "adapter": "Adapters",
       "learning": "Learning",
+      "mutualGroups": "Sharing",
       "memory": "Memory",
       "plugin": "Plugins",
       "market": "Market",
@@ -106,7 +107,13 @@
     "keyNeedsBot": "{{label}} · Start a bot first",
     "pet": {
       "title": "Desktop pet",
+      "statusTitle": "Desktop pet status",
+      "statusLoadFailed": "Could not load desktop pet status: {{error}}",
       "settings": "Pet settings",
+      "settingsUnavailable": "Desktop pet settings are unavailable on this bot.",
+      "settingsSaving": "Saving…",
+      "settingsSaved": "Desktop pet settings saved",
+      "settingsSaveFailed": "Could not save desktop pet settings",
       "enabledLamp": "Desktop pet on",
       "mode": {
         "local": "Local window",
@@ -252,8 +259,10 @@
       "system": "System"
     },
     "menu": {
+      "mutualGroups": "Sharing",
       "home": "Home",
       "botMainConfig": "Bot Main Config",
+      "desktopPet": "Desktop Pet",
       "aiModelProvider": "AI Model Providers",
       "modelManagement": "Model Management",
       "promptManagement": "Prompt Management",
@@ -791,6 +800,21 @@
       "about": "About"
     },
     "appearance": {
+      "dashboardStyle": "Dashboard style",
+      "dashboardStyles": {
+        "modern": {
+          "label": "Modern",
+          "description": "A flat, modern UI"
+        },
+        "future-retro": {
+          "label": "Future Retro",
+          "description": "High contrast, rough textures, warm tones, and a matte finish"
+        },
+        "millennium": {
+          "label": "Millennium",
+          "description": "A nostalgic turn-of-the-millennium style"
+        }
+      },
       "layoutVersion": "Layout",
       "layoutVersionDesc": "Classic keeps the top bar and card home page. Observation removes the top bar: the sidebar shows settings on top and all conversations below, and home becomes a status board. Desktop width only.",
       "layoutClassic": "Classic",
@@ -1207,25 +1231,25 @@
   "setupPage": {
     "steps": {
       "nickname": {
-        "title": "Nickname",
-        "description": "Choose the name MaiBot uses in chats."
+        "title": "Choose a Name",
+        "label": "Nickname",
+        "description": ""
       },
       "defineModel": {
-        "title": "Define a model",
-        "description": "Choose a provider and a starting model. You can choose a different model for each role in the next steps.",
-        "modelLabel": "Starting model",
-        "required": "Enter or select a starting model"
+        "title": "Set Up Your Model Source",
+        "label": "Define a model",
+        "description": ""
       },
       "replyer": {
-        "title": "Set up Replyer",
-        "description": "Replyer writes the messages people see."
+        "title": "Set Up the Reply Model",
+        "description": "This model shapes how they speak. Choose one with strong writing and a good sense of style."
       },
       "planner": {
-        "title": "Set up Planner",
-        "description": "Planner decides when to respond and what to do."
+        "title": "Set Up the Behavior Model",
+        "description": "This model controls how MaiMai acts. Choose an agent-capable model that can understand tasks and use tools."
       },
       "basicSettings": {
-        "title": "Basic settings",
+        "title": "Settings",
         "description": ""
       },
       "groupReplies": {
@@ -1233,13 +1257,18 @@
         "description": "When enabled, MaiBot will try to reply when it is @mentioned in a group.",
         "label": "Prioritize replies to @mentions"
       },
-      "privateReplies": {
-        "title": "Private replies",
-        "description": "When disabled, MaiBot still receives and records private messages but pauses its replies.",
-        "label": "Allow private replies"
+      "desktopPet": {
+        "title": "Desktop pet",
+        "description": "",
+        "label": "Enable desktop pet",
+        "hint": "The desktop pet requires a Windows desktop environment.\nIf MaiBot runs on a server, you can set up a remote connection to the desktop pet later in Settings."
+      },
+      "dashboardAppearance": {
+        "title": "Interface style",
+        "description": ""
       },
       "botProfile": {
-        "title": "Basics & Personality",
+        "title": "Persona",
         "description": "Configure nickname, personality, and reply style"
       },
       "customToken": {
@@ -1252,18 +1281,19 @@
         "description": "Configure the bot's basic information"
       },
       "personality": {
-        "title": "Personality",
-        "description": "Define the bot's personality and speaking style",
-        "choose": "How would you like to get started?",
-        "template": "Use an editable persona template",
-        "manual": "Write your own persona"
+        "title": "Create a Persona",
+        "choose": "What would you like to do?",
+        "templateTitle": "Choose a Template",
+        "editTitle": "Edit Persona",
+        "template": "Use an existing template",
+        "manual": "Write your own"
       },
       "apiProvider": {
         "title": "API Setup",
         "description": "Configure the API provider"
       },
       "modelSetup": {
-        "title": "Model Setup",
+        "title": "Models",
         "description": "Configure planner and replyer models"
       }
     },
@@ -1286,8 +1316,8 @@
       "enterProviderName": "Please enter an API provider name",
       "enterBaseUrl": "Please enter the API base URL",
       "enterApiKey": "Please enter the API key",
-      "enterPlannerModelIdentifier": "Please enter the planner model identifier",
-      "enterReplyerModelIdentifier": "Please enter the replyer model identifier",
+      "enterPlannerModelIdentifier": "Please enter the behavior model identifier",
+      "enterReplyerModelIdentifier": "Please enter the reply model identifier",
       "customTokenInvalid": "Token does not meet the requirements: {{failedRules}}"
     },
     "toast": {
@@ -1403,17 +1433,17 @@
         "personality": {
           "label": "Personality Traits",
           "placeholder": "Describe the bot's personality and identity traits (recommended within 120 characters)",
-          "description": "Describe the bot's core personality traits, shaping how it understands itself"
+          "description": "Their personality traits and key details"
         },
         "behaviorStyle": {
           "label": "Behavior style",
           "placeholder": "Describe when to participate, observe, or stay quiet",
-          "description": "Describe the bot's behavior, determining how it acts"
+          "description": "How they behave and approach things in chat"
         },
         "replyStyle": {
           "label": "Reply Style",
           "placeholder": "Describe how the bot speaks and expresses itself",
-          "description": "Directly shape how the bot speaks and its speaking style"
+          "description": "Their speaking style"
         },
         "multipleReplyStyle": {
           "label": "Alternate Reply Styles",
@@ -1464,7 +1494,7 @@
       },
       "apiProvider": {
         "providerName": {
-          "label": "API Provider Name *",
+          "label": "Provider",
           "placeholder": "For example OpenAI, DeepSeek, or self-hosted",
           "description": "This name is written to model_config.toml and referenced by the models below"
         },
@@ -1539,8 +1569,8 @@
       "saveFailed": "Could not save the config, so the test did not run: {{error}}",
       "canContinue": "You can still finish setup if the test fails and adjust it later on the model settings page.",
       "roles": {
-        "planner": "Planner model",
-        "replyer": "Replyer model"
+        "planner": "Behavior model",
+        "replyer": "Reply model"
       }
     }
   },

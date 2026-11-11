@@ -7,6 +7,7 @@ import {
   Home,
   MessageCircle,
   MessageSquare,
+  Network,
   Puzzle,
   Settings,
   Store,
@@ -28,6 +29,26 @@ const PluginConfigIcon = createStreamlineIcon('application-add-remix', Puzzle)
 const AdapterManagementIcon = createStreamlineIcon('router-wifi-network-solid', Wifi)
 const PluginMarketIcon = createStreamlineIcon('store-2-solid', Store)
 const DataTransferIcon: MenuIcon = (props) => createElement(HardDrive, props)
+const DesktopPetIcon: MenuIcon = ({ size = 20, ...props }) =>
+  createElement(
+    'svg',
+    {
+      ...props,
+      width: size,
+      height: size,
+      viewBox: '0 0 24 24',
+      overflow: 'visible',
+      fill: 'none',
+      stroke: 'currentColor',
+      strokeWidth: 1.7,
+      'aria-hidden': true,
+    },
+    createElement('circle', { cx: 3.5, cy: 12, r: 4.9 }),
+    createElement('circle', { cx: 3.5, cy: 12, r: 2 }),
+    createElement('path', { d: 'M9.5 9h5l-2.5 6.5z', strokeLinejoin: 'round' }),
+    createElement('circle', { cx: 20.5, cy: 12, r: 4.9 }),
+    createElement('circle', { cx: 20.5, cy: 12, r: 2 })
+  )
 
 export const menuSections: MenuSection[] = [
   {
@@ -57,6 +78,12 @@ export const menuSections: MenuSection[] = [
         searchDescription: 'search.items.botConfigDesc',
       },
       {
+        icon: DesktopPetIcon,
+        label: 'sidebar.menu.desktopPet',
+        path: '/desktop-pet',
+        featureFlag: 'desktopPet',
+      },
+      {
         icon: ModelIcon,
         label: 'sidebar.menu.modelManagement',
         path: '/config/model',
@@ -78,6 +105,11 @@ export const menuSections: MenuSection[] = [
         label: 'sidebar.menu.learning',
         path: '/resource/learning',
         searchDescription: 'search.items.learningDesc',
+      },
+      {
+        icon: (props) => createElement(Network, props),
+        label: 'sidebar.menu.mutualGroups',
+        path: '/chat-management',
       },
       {
         icon: KnowledgeIcon,

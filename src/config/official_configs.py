@@ -3983,7 +3983,7 @@ class AMemorixConfig(ConfigBase):
             "x-widget": "switch",
         },
     )
-    """是否让普通记忆查询在所有聊天流范围内检索"""
+    """旧全局共享开关，仅用于首次导入独立相通组；之后在相通页面管理。"""
 
     shared_memory_groups: list[ChatStreamGroup] = Field(
         default_factory=list,
@@ -3997,7 +3997,7 @@ class AMemorixConfig(ConfigBase):
             "x-display-as-section": True,
         },
     )
-    """把需要互相参考长期记忆的群聊或私聊放到同一组"""
+    """旧记忆组，仅用于首次导入独立相通组；之后在相通页面管理。"""
 
     episode: AMemorixEpisodeConfig = Field(
         default_factory=AMemorixEpisodeConfig,
@@ -4270,7 +4270,7 @@ class ExpressionConfig(ConfigBase):
             "x-widget": "custom",
         },
     )
-    """_wrap_让多个群聊或私聊共享学到的表达方式。"""
+    """旧表达组，仅用于首次导入独立相通组；之后在相通页面管理。"""
 
     learning_blacklist: List[LearningBlacklistUser] = Field(
         default_factory=list,
@@ -4405,7 +4405,7 @@ class JargonConfig(ConfigBase):
             "x-widget": "custom",
         },
     )
-    """_wrap_让多个群聊或私聊共享学到的黑话。"""
+    """旧黑话组，仅用于首次导入独立相通组；之后在相通页面管理。"""
 
     learning_blacklist: List[LearningBlacklistUser] = Field(
         default_factory=list,

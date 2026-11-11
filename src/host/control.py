@@ -18,7 +18,7 @@ from src.plugin_runtime.transport.factory import create_transport_client, create
 from .layout import Workspace
 from .console import HostConsole
 from .maintenance import HostMaintenance
-from .supervisor import BotSupervisor
+from .supervisor import BotShutdownError, BotSupervisor
 from .webui import HostWebUI
 
 
@@ -122,7 +122,7 @@ async def run_host(workspace: Workspace, *, upgrade_confirmed: set[str]) -> bool
                 previous_handlers[signum] = signal.getsignal(signum)
                 signal.signal(signum, lambda _sig, _frame: loop.call_soon_threadsafe(control.stopping.set))
             print(f"MaiBot 宿主已启动：{workspace.root}", flush=True)
-            if control.webui is not None:
+            if webui.management and webui.credentials is not None:
                 print(f"WebUI：{await asyncio.to_thread(webui.open_url)}（登录链接一分钟内有效）", flush=True)
                 if webui.credentials.token_source == "temporary":
                     print(f"WebUI 临时登录密码：{webui.credentials.token}", flush=True)
@@ -162,6 +162,9 @@ async def run_host(workspace: Workspace, *, upgrade_confirmed: set[str]) -> bool
                         from src.common.self_update import clear_pending_update
 
                         await asyncio.to_thread(clear_pending_update, control.maintenance.update_root)
+                    # 若宿主主流程也抛出了异常，保留它和关停失败的异常链。
+                    if len(failures) == 1 and isinstance(failures[0], BotShutdownError) and sys.exception() is None:
+                        raise failures[0]
                     raise BaseExceptionGroup("宿主关闭未完成", failures)
             finally:
                 for signum, previous in previous_handlers.items():

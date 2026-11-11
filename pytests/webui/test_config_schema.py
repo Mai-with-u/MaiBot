@@ -221,8 +221,8 @@ def test_a_memorix_visibility_policy_marks_and_filters_fields():
     schema = ConfigSchemaGenerator.generate_schema(AMemorixConfig)
 
     assert "storage" not in _field_names(schema)
-    assert _schema_field(schema, "global_memory_sharing_enabled").get("advanced") is not True
-    assert _schema_field(schema, "shared_memory_groups").get("advanced") is not True
+    assert "global_memory_sharing_enabled" not in _field_names(schema)
+    assert "shared_memory_groups" not in _field_names(schema)
 
     integration_schema = schema["nested"]["integration"]
     assert _schema_field(integration_schema, "enable_memory_query_tool").get("advanced") is not True

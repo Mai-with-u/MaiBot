@@ -4,6 +4,7 @@ from contextlib import closing
 from hashlib import sha256
 from pathlib import Path
 from typing import Dict, NamedTuple, Optional
+from uuid import uuid4
 
 from fastapi import HTTPException, Response
 
@@ -13,9 +14,12 @@ import sqlite3
 import threading
 import time
 
+from src.common.logger import get_logger
+
 from .authentication import HostCredentials
 
 
+logger = get_logger("host.sessions")
 _SESSION_SECONDS = 8 * 60 * 60
 _TICKET_SECONDS = 60
 _MAX_TICKETS = 64
@@ -24,6 +28,10 @@ _MAX_TICKETS = 64
 class _Session(NamedTuple):
     expires_at: float
     origin: Optional[str]
+
+
+class _InvalidSessionSchema(ValueError):
+    """登录表缺少验证已有会话所需的字段。"""
 
 
 class HostSessions:
@@ -42,15 +50,37 @@ class HostSessions:
         self._lock = threading.RLock()
         self._tickets: Dict[str, float] = {}
         self._path = credentials.path.parent / "sessions.sqlite3"
+        try:
+            self._sessions = self._load_sessions()
+        except (_InvalidSessionSchema, sqlite3.DatabaseError) as exc:
+            if isinstance(exc, sqlite3.DatabaseError) and exc.sqlite_errorcode & 0xff not in {
+                sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB,
+            }:
+                raise
+            backup = self._path.with_name(f"{self._path.name}.corrupt-{uuid4().hex}")
+            # 宿主持有租约，先移走伴随文件，避免它们被新库接管。
+            for suffix in ("-wal", "-shm", "-journal"):
+                sidecar = self._path.with_name(self._path.name + suffix)
+                if sidecar.exists():
+                    sidecar.rename(backup.with_name(backup.name + suffix))
+            self._path.rename(backup)
+            logger.warning(f"登录会话库损坏，已保留原库并重建会话：{backup}", exc_info=True)
+            self._sessions = self._load_sessions()
+
+    def _load_sessions(self) -> Dict[str, _Session]:
         with closing(sqlite3.connect(self._path)) as db, db:
             db.execute("CREATE TABLE IF NOT EXISTS sessions (digest TEXT PRIMARY KEY, expires_at REAL NOT NULL)")
-            if "origin" not in {row[1] for row in db.execute("PRAGMA table_info(sessions)")}:
+            columns = {row[1] for row in db.execute("PRAGMA table_info(sessions)")}
+            missing = {"digest", "expires_at"} - columns
+            if missing:
+                raise _InvalidSessionSchema(f"登录会话表缺少必需列：{', '.join(sorted(missing))}")
+            if "origin" not in columns:
                 db.execute("ALTER TABLE sessions ADD COLUMN origin TEXT")
             # 临时密码每次启动都会轮换，不恢复上一进程的登录。
-            if credentials.token_source == "temporary":
+            if self._credentials.token_source == "temporary":
                 db.execute("DELETE FROM sessions")
             db.execute("DELETE FROM sessions WHERE expires_at <= ?", (time.time(),))
-            self._sessions: Dict[str, _Session] = {
+            return {
                 digest: _Session(expires_at, origin)
                 for digest, expires_at, origin in db.execute("SELECT digest, expires_at, origin FROM sessions")
             }

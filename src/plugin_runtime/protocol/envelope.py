@@ -5,12 +5,12 @@
 """
 
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import logging as stdlib_logging
 import time
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.plugin_runtime.desktop_pet_buttons import DesktopPetButton
 from src.plugin_runtime.webui_schema import WebUIExtension
@@ -185,6 +185,9 @@ class HelloResponsePayload(BaseModel):
 
 
 # ====== 组件注册消息 ======
+ComponentChatScope = Literal["all", "group", "private"]
+
+
 class ComponentDeclaration(BaseModel):
     """单个组件声明"""
 
@@ -196,12 +199,36 @@ class ComponentDeclaration(BaseModel):
     """组件协议类型，包括随 reply 注册参数与消息处理器的 REPLY_EXTENSION。"""
     plugin_id: str = Field(description="所属插件 ID")
     """所属插件 ID"""
-    chat_scope: str = Field(default="all", description="组件适用聊天类型：all/group/private")
+    platforms: List[str] = Field(default_factory=list, description="适用平台，空列表表示不限平台")
+    chat_scope: ComponentChatScope = Field(default="all", description="组件适用聊天类型：all/group/private")
     """组件适用聊天类型。"""
     allowed_session: List[str] = Field(default_factory=list, description="允许暴露该组件的会话 ID 或平台作用域 ID")
     """允许暴露该组件的具体会话。空列表表示不限制。"""
     metadata: Dict[str, Any] = Field(default_factory=dict, description="组件元数据")
     """组件元数据"""
+
+    @field_validator("platforms", mode="before")
+    @classmethod
+    def normalize_platforms(cls, value: Any) -> List[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
+            raise ValueError("platforms 必须是非空平台名称字符串或字符串列表")
+        return list(dict.fromkeys(item.strip().lower() for item in value))
+
+    @field_validator("chat_scope", mode="before")
+    @classmethod
+    def normalize_chat_scope(cls, value: Any) -> Any:
+        return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator("allowed_session", mode="before")
+    @classmethod
+    def normalize_allowed_session(cls, value: Any) -> List[str]:
+        if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
+            raise ValueError("allowed_session 必须是非空会话标识的字符串列表")
+        return list(dict.fromkeys(item.strip() for item in value))
 
 
 class LLMProviderDeclaration(BaseModel):

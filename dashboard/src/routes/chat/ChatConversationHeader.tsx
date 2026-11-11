@@ -12,7 +12,7 @@ import type { ChatTab } from './types'
 import { getChatTabDisplayName } from './utils'
 
 /** 本地与虚拟会话共用标题栏；清空仅作用于当前显示的消息。 */
-export function ChatConversationHeader({ tab, onClear }: { tab: ChatTab; onClear: () => void }) {
+export function ChatConversationHeader({ tab, onClear, onObserve }: { tab: ChatTab; onClear: () => void; onObserve?: () => void }) {
   const { t } = useTranslation()
   const name = getChatTabDisplayName(tab, t('chat.botNameFallback'))
   const virtual = tab.type === 'virtual'
@@ -29,6 +29,7 @@ export function ChatConversationHeader({ tab, onClear }: { tab: ChatTab; onClear
       }
       actions={
         <>
+          {onObserve && <Button variant="outline" size="sm" onClick={onObserve}>观察</Button>}
           <Popover>
             <PopoverTrigger asChild>
               <Button variant="outline" size="icon-sm" aria-label="会话信息">

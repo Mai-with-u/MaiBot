@@ -1,3 +1,4 @@
+import { Settings } from 'lucide-react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Check, ChevronDown, Sparkles, Trash2, Upload, X } from 'lucide-react'
 import { useImperativeHandle, useState } from 'react'
@@ -66,7 +67,7 @@ interface JargonFilters {
   summary: JargonSummaryTab
   chatId: string
   browseMode: 'chat' | 'group' | 'all'
-  groupIndex: number | null
+  groupIndex: string | null
 }
 
 type JargonStatusFilter = 'confirmed_jargon' | 'confirmed_not_jargon' | 'manual_jargon'
@@ -134,7 +135,7 @@ export function JargonManagementPage({
         : undefined
       const group =
         filters.browseMode === 'group'
-          ? groups.find((item) => item.index === filters.groupIndex)
+          ? groups.find((item) => item.id === filters.groupIndex)
           : undefined
       // 未选组或组内尚无真实聊天流时返回空，避免误显示全部词条。
       if (
@@ -309,7 +310,7 @@ export function JargonManagementPage({
       ...filters,
       browseMode: mode,
       chatId: mode === 'chat' ? filters.chatId : 'all',
-      groupIndex: mode === 'group' ? (groups[0]?.index ?? null) : null,
+      groupIndex: mode === 'group' ? (groups[0]?.id ?? null) : null,
       summary: mode === 'group' && filters.summary === 'global_count' ? 'total' : filters.summary,
     }))
   }
@@ -367,7 +368,7 @@ export function JargonManagementPage({
     summaryOptions.find((option) => option.value === summaryFilter) ?? summaryOptions[0]
 
   const inferenceGroup =
-    browseMode === 'group' ? groups.find((group) => group.index === groupIndex) : undefined
+    browseMode === 'group' ? groups.find((group) => group.id === groupIndex) : undefined
   const inferenceScopeValid =
     browseMode !== 'group' ||
     Boolean(inferenceGroup && (inferenceGroup.is_global || inferenceGroup.session_ids.length))
@@ -504,7 +505,7 @@ export function JargonManagementPage({
             targetId: chat.target_id,
           }))}
           groups={groups.map((group) => ({
-            id: group.index,
+            id: group.id,
             name: group.name,
             chatIds: group.session_ids,
             isGlobal: group.is_global,
@@ -541,20 +542,28 @@ export function JargonManagementPage({
             <ChatScopeFilterPanel
               density="compact"
               title="聊天范围"
+              titleActions={
+                browseMode !== 'chat' && (
+                  <Button asChild variant="ghost" size="icon-xs">
+                    <a
+                      href={`/chat-management?kind=jargon&group=${browseMode === 'all' ? 'all' : (groupIndex ?? 'all')}`}
+                      title="管理当前相通组"
+                      aria-label="管理当前相通组"
+                    >
+                      <Settings className="h-3 w-3" />
+                    </a>
+                  </Button>
+                )
+              }
               titleMeta={
-                browseMode === 'chat'
-                  ? `${chatList.length} 个`
-                  : browseMode === 'group'
-                    ? `${groups.length} 组`
-                    : undefined
+                browseMode === 'chat' ? `${chatList.length} 个` : `${groups.length + 1} 组`
               }
               modes={[
                 { label: '聊天', value: 'chat' },
-                { label: '组', value: 'group' },
-                { label: '全部', value: 'all' },
+                { label: '相通', value: 'group' },
               ]}
-              activeMode={browseMode}
-              onModeChange={handleBrowseModeChange}
+              activeMode={browseMode === 'chat' ? 'chat' : 'group'}
+              onModeChange={(mode) => handleBrowseModeChange(mode === 'group' ? 'all' : 'chat')}
               items={
                 browseMode === 'chat'
                   ? chatList.map((chat) => ({
@@ -565,25 +574,43 @@ export function JargonManagementPage({
                       descriptionTitle: formatChatTargetLabel(chat),
                       title: formatChatDisplayName(chat.chat_name, chat.account_id),
                     }))
-                  : browseMode === 'group'
-                    ? groups.map((group) => {
+                  : [
+                      {
+                        id: 'all',
+                        label: '全部',
+                        description: '包含全部聊天',
+                        title: '全部聊天的相通组',
+                        meta: statsQuery.data?.data.total.toLocaleString(),
+                      },
+                      ...groups.map((group) => {
                         const memberNames = group.members
                           .map((chat) => formatChatDisplayName(chat.chat_name, chat.account_id))
                           .join('、')
                         return {
-                          id: group.index,
+                          id: group.id,
+                          meta: group.jargon_count.toLocaleString(),
                           label: `${group.name}${group.is_global ? '（全局）' : ''}`,
                           description: memberNames || '暂无已解析聊天',
                           descriptionTitle: memberNames,
                           title: memberNames,
                         }
-                      })
-                    : []
+                      }),
+                    ]
               }
-              selectedItemId={browseMode === 'chat' ? filterChatId : groupIndex}
+              selectedItemId={
+                browseMode === 'chat' ? filterChatId : browseMode === 'all' ? 'all' : groupIndex
+              }
               onItemSelect={(id) => {
-                if (browseMode === 'group') list.setFilter('groupIndex', Number(id))
-                else if (browseMode === 'chat') handleChatChange(String(id))
+                if (browseMode === 'chat') handleChatChange(String(id))
+                else if (id === 'all') handleBrowseModeChange('all')
+                else {
+                  list.updateFilters((filters) => ({
+                    ...filters,
+                    browseMode: 'group',
+                    groupIndex: String(id),
+                    summary: filters.summary === 'global_count' ? 'total' : filters.summary,
+                  }))
+                }
               }}
               emptyContent={
                 <div className="text-muted-foreground px-2 py-6 text-center text-sm">
@@ -591,10 +618,10 @@ export function JargonManagementPage({
                     ? '当前显示全部黑话'
                     : browseMode === 'group'
                       ? groupsQuery.isError
-                        ? '共享组加载失败'
+                        ? '相通组加载失败'
                         : groupsQuery.isPending
-                          ? '正在加载共享组...'
-                          : '暂无共享组'
+                          ? '正在加载相通组...'
+                          : '暂无相通组'
                       : chatListQuery.isError
                         ? '聊天列表加载失败'
                         : chatListQuery.isPending

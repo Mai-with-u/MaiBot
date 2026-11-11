@@ -10,7 +10,7 @@ from typing import Any, Awaitable, Iterator
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, delete, select
 
 import asyncio
 import json
@@ -35,6 +35,14 @@ from src.common.utils.utils_message import MessageUtils
 from src.config.official_configs import JargonConfig, JargonInferenceConfig
 from src.learners import jargon_inference_service, jargon_miner
 from src.learners.jargon_inference_result import evidence_hash
+from src.services import sharing_group_service
+from src.common.database.sharing_models import (
+    SharingGroup,
+    SharingGroupCapability,
+    SharingGroupMember,
+    SharingGroupMigration,
+    SharingGroupRule,
+)
 from src.llm_models.payload_content.context_item import build_portable_output_items
 from src.plugin_runtime.host.hook_dispatcher import HookDispatchResult
 from src.webui.routers import jargon, jargon_inference
@@ -53,6 +61,11 @@ def integrated_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Itera
             JargonInferenceState.__table__,
             JargonInferenceJob.__table__,
             JargonMeaningHistory.__table__,
+            SharingGroup.__table__,
+            SharingGroupCapability.__table__,
+            SharingGroupMember.__table__,
+            SharingGroupMigration.__table__,
+            SharingGroupRule.__table__,
         ],
     )
 
@@ -121,9 +134,11 @@ def integrated_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Itera
     async def invoke_hook(name: str, **kwargs: Any) -> HookDispatchResult:
         return HookDispatchResult(hook_name=name, kwargs=kwargs)
 
-    for module in (jargon_miner, jargon_inference_service, jargon, jargon_inference):
+    for module in (jargon_miner, jargon_inference_service, jargon, jargon_inference, sharing_group_service):
         monkeypatch.setattr(module, "get_db_session", db_session)
+    for module in (jargon_miner, jargon_inference_service, jargon_inference):
         monkeypatch.setattr(module, "global_config", config)
+    monkeypatch.setattr(sharing_group_service, "_snapshot", [])
     monkeypatch.setattr(utils_config, "global_config", config)
     monkeypatch.setattr(jargon_miner, "llm_inference", SimpleNamespace(generate_response=generate))
     monkeypatch.setattr(jargon_miner, "prompt_manager", SimpleNamespace(get_prompt=Prompt, render_prompt=render))
@@ -228,6 +243,83 @@ def wait_job(runtime: Any, job_id: str) -> dict[str, Any]:
             return result
         time.sleep(0.01)
     pytest.fail(f"任务 {job_id} 未在测试期限内完成")
+
+
+def seed_overlapping_sharing_groups(runtime: Any) -> None:
+    """真实数据库相通组 A/B 与 B/C 保持稳定身份，不构造传递闭包。"""
+    with runtime.session() as session:
+        for key in ("b", "c"):
+            session.add(ChatSession(session_id=f"chat-{key}", platform="qq", group_id=key, group_name=f"组{key}"))
+        for group_id, members in (("group-ab", ["chat-a", "chat-b"]), ("group-bc", ["chat-b", "chat-c"])):
+            session.add(SharingGroup(id=group_id, name=group_id, color="#39845A", created_at=1, updated_at=1))
+            session.add(SharingGroupCapability(group_id=group_id, capability="jargon", enabled=True))
+            for member in members:
+                session.add(SharingGroupMember(group_id=group_id, session_id=member, created_at=1))
+        session.add(
+            SharingGroup(id="disabled", name="不启用", color="#39845A", enabled=False, created_at=1, updated_at=1)
+        )
+        session.add(SharingGroupCapability(group_id="disabled", capability="jargon", enabled=True))
+        session.add(SharingGroup(id="memory-only", name="只共享记忆", color="#39845A", created_at=1, updated_at=1))
+        session.add(SharingGroupCapability(group_id="memory-only", capability="memory", enabled=True))
+    sharing_group_service.refresh()
+
+
+def test_stable_sharing_groups_drive_jargon_counts_and_batch_scope(integrated_runtime):
+    """真实相通组元数据、成员和去重计数与批量预览使用同一会话范围。"""
+    runtime = integrated_runtime
+    seed_overlapping_sharing_groups(runtime)
+    with runtime.session() as session:
+        session.add(
+            Jargon(id=2, content="共享词条", meaning="已有含义", count=3, session_id_dict='{"chat-a":1,"chat-b":2}')
+        )
+        session.add(Jargon(id=3, content="另一组词条", meaning="已有含义", count=2, session_id_dict='{"chat-c":2}'))
+    response = runtime.client.get("/api/webui/jargon/groups")
+    assert response.status_code == 200, response.text
+    groups = {group["id"]: group for group in response.json()["data"]}
+    assert set(groups) == {"group-ab", "group-bc"}
+    assert groups["group-ab"]["color"] == "#39845A"
+    assert groups["group-ab"]["session_ids"] == ["chat-a", "chat-b"]
+    assert groups["group-ab"]["jargon_count"] == 2
+    assert groups["group-bc"]["jargon_count"] == 2
+    request = {"filters": {"session_ids": groups["group-ab"]["session_ids"]}, "mode": "all", "force": True}
+    preview = runtime.client.post("/api/webui/jargon/inference/preview", json=request)
+    assert preview.status_code == 200, preview.text
+    assert preview.json() == {"total": 2, "eligible": 2, "skipped": 0, "reasons": {}}
+    submitted = runtime.client.post("/api/webui/jargon/inference/jobs", json=request)
+    assert submitted.status_code == 200, submitted.text
+    detail = wait_job(runtime, submitted.json()["id"])
+    assert {item["jargon_id"] for item in detail["items"]} == {1, 2}
+
+
+def test_inference_recovers_direct_sharing_evidence_without_transitive_access(integrated_runtime):
+    """A 可使用直接相通的 B 证据，不得因为 B/C 相通而读取 C。"""
+    runtime = integrated_runtime
+    seed_overlapping_sharing_groups(runtime)
+    with runtime.session() as session:
+        session.exec(delete(Messages))
+        record = session.get(Jargon, 1)
+        record.evidence_messages = None
+        session.add(record)
+        for source, content in (("b", "允许来源B：起飞！任务完成了。"), ("c", "禁止来源C：起飞是另一种解释。")):
+            session.add(
+                Messages(
+                    message_id=f"from-{source}",
+                    timestamp=datetime.now(),
+                    platform="qq",
+                    session_id=f"chat-{source}",
+                    user_id="member",
+                    user_nickname="成员",
+                    processed_plain_text=content,
+                    raw_content=MessageUtils.from_MaiSeq_to_db_record_msg(MessageSequence([TextComponent(content)])),
+                )
+            )
+    submitted = runtime.client.post("/api/webui/jargon/inference/jobs", json={"ids": [1], "force": True})
+    assert submitted.status_code == 200, submitted.text
+    result = wait_job(runtime, submitted.json()["id"])
+    assert result["job"]["counts"] == {"succeeded": 1}, result
+    context = runtime.calls[0][1]["context"]["raw_content_list"]
+    assert "允许来源B" in context
+    assert "禁止来源C" not in context
 
 
 def test_http_job_source_pagination_keeps_older_manual_tasks_reachable(integrated_runtime):

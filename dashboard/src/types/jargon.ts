@@ -52,10 +52,13 @@ export interface JargonChatListResponse {
 }
 
 export interface JargonGroupInfo {
+  id: string
+  color: string
   index: number
   name: string
   session_ids: string[]
   members: JargonChatInfo[]
+  jargon_count: number
   is_global: boolean
 }
 

@@ -63,8 +63,7 @@ async def _request(method: str, path: str, payload: Optional[Dict[str, Any]] = N
     if not isinstance(data, dict):
         raise ValueError("插件市场互动响应必须为对象")
     if method != "GET" and response.is_success and data.get("success") is not False:
-        market_cache.invalidate(f"{sources.MARKET_BASE_URL}/stats/")
-        market_cache.invalidate(f"{sources.MARKET_BASE_URL}/api/v2/market/plugins/summary")
+        market_cache.invalidate(f"{sources.MARKET_BASE_URL}/stats/")  # 含 /stats/summary
     return MarketReply(response.status_code, data)
 
 

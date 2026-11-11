@@ -1,3 +1,4 @@
+import { Settings } from 'lucide-react'
 import {
   ArrowLeft,
   FileClock,
@@ -89,7 +90,7 @@ type BrowseMode = 'chat' | 'group' | 'all'
 interface ExpressionFilters {
   browseMode: BrowseMode
   selectedChatId: string
-  selectedGroupIndex: number | null
+  selectedGroupIndex: string | null
   sortBy: 'time' | 'time_asc' | 'created' | 'created_asc'
   reviewFilter: ExpressionReviewFilter
 }
@@ -160,10 +161,13 @@ export function ExpressionManagementPage({
       // 按共享组浏览时取该组的 chat_ids（全局组传 undefined，让后端返回全部）
       const selectedGroup =
         filters.browseMode === 'group'
-          ? groups.find((group) => group.index === filters.selectedGroupIndex)
+          ? groups.find((group) => group.id === filters.selectedGroupIndex)
           : undefined
       // 已选中的非全局组但无任何聊天：直接返回空，避免无意义请求
-      if (selectedGroup && !selectedGroup.is_global && selectedGroup.chat_ids.length === 0) {
+      if (
+        filters.browseMode === 'group' &&
+        (!selectedGroup || (!selectedGroup.is_global && selectedGroup.chat_ids.length === 0))
+      ) {
         return { items: [], total: 0 }
       }
       const response = await getExpressionList({
@@ -330,7 +334,7 @@ export function ExpressionManagementPage({
     }
   }
 
-  // 浏览维度切换：按聊天 / 按共享组 / 全部（变更后 setFilter 自动重置页码并清空选中）
+  // 浏览范围切换：按聊天 / 相通（含特殊的全部组）（变更后 setFilter 自动重置页码并清空选中）
   const handleBrowseModeChange = (mode: BrowseMode) => {
     list.setFilter('browseMode', mode)
     if (mode === 'chat' && !selectedChatId && chatList.length > 0) {
@@ -340,7 +344,7 @@ export function ExpressionManagementPage({
       list.setFilter('selectedChatId', '')
     }
     if (mode === 'group' && selectedGroupIndex === null && groups.length > 0) {
-      list.setFilter('selectedGroupIndex', groups[0].index)
+      list.setFilter('selectedGroupIndex', groups[0].id)
     }
     if (mode !== 'group') {
       list.setFilter('selectedGroupIndex', null)
@@ -351,7 +355,7 @@ export function ExpressionManagementPage({
     list.setFilter('selectedChatId', chatId)
   }
 
-  const handleGroupChange = (groupIndex: number | null) => {
+  const handleGroupChange = (groupIndex: string | null) => {
     list.setFilter('selectedGroupIndex', groupIndex)
   }
 
@@ -367,6 +371,7 @@ export function ExpressionManagementPage({
 
   const summary = (
     <MetricStrip
+      responsiveCompact
       items={[
         { label: '总数量', value: stats.total.toLocaleString() },
         { label: '近7天新增', value: `+${stats.recent_7days.toLocaleString()}`, positive: true },
@@ -386,7 +391,7 @@ export function ExpressionManagementPage({
             targetId: chat.target_id,
           }))}
           groups={groups.map((group) => ({
-            id: group.index,
+            id: group.id,
             name: group.name,
             chatIds: group.chat_ids,
             isGlobal: group.is_global,
@@ -451,20 +456,28 @@ export function ExpressionManagementPage({
             <ChatScopeFilterPanel
               density="compact"
               title="聊天范围"
+              titleActions={
+                browseMode !== 'chat' && (
+                  <Button asChild variant="ghost" size="icon-xs">
+                    <a
+                      href={`/chat-management?kind=expression&group=${browseMode === 'all' ? 'all' : (selectedGroupIndex ?? 'all')}`}
+                      title="管理当前相通组"
+                      aria-label="管理当前相通组"
+                    >
+                      <Settings className="h-3 w-3" />
+                    </a>
+                  </Button>
+                )
+              }
               titleMeta={
-                browseMode === 'chat'
-                  ? `${chatList.length} 个`
-                  : browseMode === 'group'
-                    ? `${groups.length} 组`
-                    : undefined
+                browseMode === 'chat' ? `${chatList.length} 个` : `${groups.length + 1} 组`
               }
               modes={[
                 { label: '聊天', value: 'chat' },
-                { label: '组', value: 'group' },
-                { label: '全部', value: 'all' },
+                { label: '相通', value: 'group' },
               ]}
-              activeMode={browseMode}
-              onModeChange={handleBrowseModeChange}
+              activeMode={browseMode === 'chat' ? 'chat' : 'group'}
+              onModeChange={(mode) => handleBrowseModeChange(mode === 'group' ? 'all' : 'chat')}
               items={
                 browseMode === 'chat'
                   ? chatList.map((chat) => ({
@@ -490,15 +503,42 @@ export function ExpressionManagementPage({
                         />
                       ),
                     }))
-                  : browseMode === 'group'
-                    ? groups.map((group) => {
+                  : [
+                      {
+                        id: 'all',
+                        label: '全部',
+                        description: '包含全部聊天',
+                        title: '全部聊天的相通组',
+                        meta: statsQuery.data?.total.toLocaleString(),
+                        trailing:
+                          chatList.length > 0 ? (
+                            <ExpressionScopeStatus
+                              enableLearning={summarizeStatus(
+                                chatList.map((chat) => chat.enable_learning)
+                              )}
+                              useExpression={summarizeStatus(
+                                chatList.map((chat) => chat.use_expression)
+                              )}
+                            />
+                          ) : undefined,
+                      },
+                      ...groups.map((group) => {
                         const memberNames = group.members
                           .map((member) =>
                             formatChatDisplayName(member.chat_name, member.account_id)
                           )
                           .join('、')
+                        const groupChatIds = new Set(group.chat_ids)
+                        const expressionCount = group.is_global
+                          ? statsQuery.data?.total
+                          : chatListQuery.isSuccess
+                            ? chatList
+                                .filter((chat) => groupChatIds.has(chat.chat_id))
+                                .reduce((total, chat) => total + (chat.expression_count ?? 0), 0)
+                            : undefined
                         return {
-                          id: group.index,
+                          id: group.id,
+                          meta: expressionCount?.toLocaleString(),
                           label: `${group.name}${group.is_global ? '（全局）' : ''}`,
                           description: memberNames || '暂无已解析聊天',
                           descriptionTitle: memberNames,
@@ -515,18 +555,26 @@ export function ExpressionManagementPage({
                               />
                             ) : undefined,
                         }
-                      })
-                    : []
+                      }),
+                    ]
               }
-              selectedItemId={browseMode === 'chat' ? selectedChatId : selectedGroupIndex}
+              selectedItemId={
+                browseMode === 'chat'
+                  ? selectedChatId
+                  : browseMode === 'all'
+                    ? 'all'
+                    : selectedGroupIndex
+              }
               onItemSelect={(id) => {
                 if (browseMode === 'chat') handleChatChange(String(id))
-                else if (browseMode === 'group') handleGroupChange(Number(id))
+                else if (id === 'all') handleBrowseModeChange('all')
+                else {
+                  handleBrowseModeChange('group')
+                  handleGroupChange(String(id))
+                }
               }}
               emptyContent={
-                <div className="text-muted-foreground px-2 py-6 text-center text-sm">
-                  {browseMode === 'group' ? '暂无共享组' : '当前显示全部表达方式'}
-                </div>
+                <div className="text-muted-foreground px-2 py-6 text-center text-sm">暂无聊天</div>
               }
               collapsed={browserPanelCollapsed}
               onCollapsedChange={setBrowserPanelCollapsed}

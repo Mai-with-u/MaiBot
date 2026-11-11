@@ -54,6 +54,10 @@ from .v45_to_v46 import migrate_v45_to_v46
 from .v46_to_v47 import migrate_v46_to_v47
 from .v47_to_v48 import migrate_v47_to_v48
 from .v48_to_v49 import migrate_v48_to_v49
+from .v49_to_v50 import migrate_v49_to_v50
+from .v50_to_v51 import migrate_v50_to_v51
+from .v51_to_v52 import migrate_v51_to_v52
+from .v52_to_v53 import migrate_v52_to_v53
 from .version_store import SQLiteUserVersionStore
 
 EMPTY_SCHEMA_VERSION = 0
@@ -106,7 +110,11 @@ V46_SCHEMA_VERSION = 46
 V47_SCHEMA_VERSION = 47
 V48_SCHEMA_VERSION = 48
 V49_SCHEMA_VERSION = 49
-LATEST_SCHEMA_VERSION = V49_SCHEMA_VERSION
+V50_SCHEMA_VERSION = 50
+V51_SCHEMA_VERSION = 51
+V52_SCHEMA_VERSION = 52
+V53_SCHEMA_VERSION = 53
+LATEST_SCHEMA_VERSION = V53_SCHEMA_VERSION
 
 _LEGACY_V1_EXCLUSIVE_TABLES = (
     "chat_streams",
@@ -697,6 +705,31 @@ class LatestSchemaVersionDetector(BaseSchemaVersionDetector):
 
     def detect_version(self, snapshot: DatabaseSchemaSnapshot) -> Optional[int]:
         """检测数据库是否已经是当前最新结构。"""
+
+        # 相通组与复制账本共同标识 v50 之后的结构；单独存在的推断表不是版本依据。
+        sharing_ledger_markers = {
+            "sharing_groups": ("id", "revision", "enabled"),
+            "sharing_group_members": ("group_id", "session_id"),
+            "sharing_group_capabilities": ("group_id", "capability", "enabled"),
+            "sharing_group_rules": ("id", "group_id", "platform", "item_id", "rule_type"),
+            "sharing_group_migrations": ("source", "payload", "migrated_at"),
+            "chat_migration_jobs": ("id", "source", "target", "payload"),
+            "chat_migration_copies": ("table_name", "origin", "target", "target_key", "amounts"),
+        }
+        if (
+            not any(snapshot.has_table(table_name) for table_name in (*_LEGACY_V1_EXCLUSIVE_TABLES, *BEHAVIOR_TABLES))
+            and all(snapshot.has_table(table_name) for table_name in _COMMON_MARKER_TABLES)
+            and all(
+                snapshot.has_column(table_name, column_name)
+                for table_name, columns in sharing_ledger_markers.items()
+                for column_name in columns
+            )
+        ):
+            if snapshot.has_column("chat_migration_copies", "signature"):
+                return V51_SCHEMA_VERSION
+            # v50 与 v52 的列结构相同，旧预览推断表也不能证明账本已补索引。
+            # 未标记的库从 v50 重走幂等升级；带 PRAGMA 的正常库仍按记录版本规划。
+            return V50_SCHEMA_VERSION
 
         behavior_removed = not any(snapshot.has_table(table_name) for table_name in BEHAVIOR_TABLES)
         if not _detect_v37_base_schema(snapshot, behavior_removed=behavior_removed):
@@ -2013,8 +2046,36 @@ def build_default_migration_registry() -> MigrationRegistry:
                 version_from=V48_SCHEMA_VERSION,
                 version_to=V49_SCHEMA_VERSION,
                 name="v48_to_v49",
-                description="新增黑话含义推断状态、后台任务和变更历史表。",
+                description="新增独立相通组、统一成员、共享能力与配置导入记录。",
                 handler=migrate_v48_to_v49,
+            ),
+            MigrationStep(
+                version_from=V49_SCHEMA_VERSION,
+                version_to=V50_SCHEMA_VERSION,
+                name="v49_to_v50",
+                description="新增在线聊天流迁移任务与复制来源账本。",
+                handler=migrate_v49_to_v50,
+            ),
+            MigrationStep(
+                version_from=V50_SCHEMA_VERSION,
+                version_to=V51_SCHEMA_VERSION,
+                name="v50_to_v51",
+                description="补齐已有聊天迁移账本的记录签名与目标记录索引。",
+                handler=migrate_v50_to_v51,
+            ),
+            MigrationStep(
+                version_from=V51_SCHEMA_VERSION,
+                version_to=V52_SCHEMA_VERSION,
+                name="v51_to_v52",
+                description="移除聊天迁移记录指纹，使用稳定来源记录键去重。",
+                handler=migrate_v51_to_v52,
+            ),
+            MigrationStep(
+                version_from=V52_SCHEMA_VERSION,
+                version_to=V53_SCHEMA_VERSION,
+                name="v52_to_v53",
+                description="新增黑话含义推断状态、后台任务和变更历史表。",
+                handler=migrate_v52_to_v53,
             ),
         ]
     )

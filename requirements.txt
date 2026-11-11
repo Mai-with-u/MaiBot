@@ -13,7 +13,7 @@ imageio-ffmpeg>=0.6,<1
 jieba>=0.42.1
 json-repair>=0.60.1,<0.61
 jsonschema>=4.26.0,<5
-maibot-dashboard==1.10.4.dev20261109589
+maibot-dashboard==1.10.4.dev20261110591
 maibot-plugin-sdk>=2.22.1
 maim-message==0.6.8
 mcp>=1.28.1,<2

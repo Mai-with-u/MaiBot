@@ -94,6 +94,40 @@ def lifecycle(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_sharing_and_chat_migrations_initialize_before_inference(monkeypatch, lifecycle):
+    """合并后保留上游相通/聊天迁移初始化，再启动本 PR 的推断服务。"""
+    modules = {
+        "src.common.event_loop_watchdog": {"start_watchdog": lambda *_: None},
+        "src.common.memory_diagnostics": {"start_memory_diagnostics": lambda: None},
+        "src.services.sharing_group_service": {"initialize": lambda: lifecycle.events.append("sharing_start")},
+        "src.services.chat_migration_service": {"initialize_migrations": lifecycle.async_op("migration_start")},
+        "src.services.tool_record_cleanup_service": {"run_startup_tool_record_vacuum_if_needed": lambda: None},
+        "src.files.service": {
+            "get_file_service": lambda: SimpleNamespace(store=SimpleNamespace(cleanup=lambda **_: None))
+        },
+    }
+    for name, members in modules.items():
+        monkeypatch.setitem(sys.modules, name, SimpleNamespace(**members))
+    monkeypatch.setattr(
+        main,
+        "global_config",
+        SimpleNamespace(bot=SimpleNamespace(nickname="测试麦麦"), maim_message=SimpleNamespace(enabled=False)),
+    )
+    monkeypatch.setattr(main, "monitor_startup_loop", lambda: nullcontext())
+    monkeypatch.setattr(main, "report_phase", Mock())
+    monkeypatch.setattr(
+        jargon_inference_service,
+        "get_jargon_inference_service",
+        lambda: SimpleNamespace(start=lifecycle.async_op("inference_start")),
+    )
+    await main.MainSystem().initialize()
+    assert lifecycle.events.index("sharing_start") < lifecycle.events.index("migration_start")
+    assert lifecycle.events.index("migration_start") < lifecycle.events.index("inference_start")
+    assert lifecycle.events.index("chat_start") < lifecycle.events.index("inference_start")
+    main.report_phase.assert_called_once_with("ready")
+
+
+@pytest.mark.asyncio
 async def test_corrupt_job_recovery_preserves_data_and_other_components_start(tmp_path, monkeypatch, lifecycle):
     """损坏任务导致恢复事务整体回滚，但其余组件仍可启动。"""
     engine = create_engine(f"sqlite:///{tmp_path / 'corrupt.db'}", connect_args={"check_same_thread": False})

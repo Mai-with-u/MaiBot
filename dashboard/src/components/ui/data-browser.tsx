@@ -30,16 +30,18 @@ export function DataBrowserHeader({
 
 export function MetricStrip({
   items,
+  responsiveCompact = false,
 }: {
+  responsiveCompact?: boolean
   items: { label: string; value: ReactNode; positive?: boolean }[]
 }) {
   return (
-    <div data-metric-strip="true">
+    <div data-metric-strip="true" data-responsive-compact={responsiveCompact || undefined}>
       <DataPanel padding="none">
         {items.map((item, index) => (
           <Fragment key={item.label}>
             {index > 0 && <Separator orientation="vertical" />}
-            <div className="px-3 py-1">
+            <div data-metric-item="true" className="px-3 py-1">
               <div className="text-muted-foreground text-[10px] leading-tight">{item.label}</div>
               <div
                 className={cn(

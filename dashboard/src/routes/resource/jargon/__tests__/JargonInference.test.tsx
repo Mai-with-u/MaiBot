@@ -208,6 +208,10 @@ beforeEach(() => {
   vi.mocked(api.rescanJargonInference).mockResolvedValue(
     job({ id: 'rescan-job', source: 'rescan' })
   )
+  vi.mocked(jargonApi.getJargonStats).mockResolvedValue({ success: true, data: {
+    total: 1, confirmed_jargon: 1, confirmed_not_jargon: 0, manual_jargon: 0,
+    global_count: 0, complete_count: 0, chat_count: 1, top_chats: {},
+  } })
 })
 
 afterEach(() => {
@@ -682,6 +686,53 @@ describe('Jargon inference settings', () => {
 })
 
 describe('Jargon background progress', () => {
+  it.each([false, true])('shares stable group identity with cross-page inference (global=%s)', async (isGlobal) => {
+    const user = userEvent.setup()
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    clients.push(client)
+    const members = isGlobal ? [] : ['chat-1', 'chat-2']
+    vi.mocked(jargonApi.getJargonList).mockResolvedValue({ success: true, data: [makeJargon()], total: 1, page: 1, page_size: 20 })
+    vi.mocked(jargonApi.getJargonChatList).mockResolvedValue({ success: true, data: [] })
+    vi.mocked(jargonApi.getJargonGroups).mockResolvedValue({ success: true, data: [{
+      id: 'stable-jargon-group', index: 17, name: '相通测试组', color: '#39845A', jargon_count: 1,
+      session_ids: members, members: [], is_global: isGlobal,
+    }] })
+    render(<QueryClientProvider client={client}><JargonManagementPage /></QueryClientProvider>)
+    await screen.findAllByText('测试词')
+    await user.click(screen.getByRole('button', { name: /相通测试组/ }))
+    await waitFor(() => expect(jargonApi.getJargonList).toHaveBeenLastCalledWith(expect.objectContaining({
+      session_ids: isGlobal ? undefined : members,
+    })))
+    await user.click(screen.getByRole('button', { name: '黑话 AI 推断' }))
+    await choose(user, '处理范围', /当前筛选下的全部结果/)
+    const expected = { filters: expect.objectContaining({ session_ids: isGlobal ? undefined : members }), mode: 'missing', force: true }
+    await waitFor(() => expect(api.previewJargonInference).toHaveBeenLastCalledWith(expected))
+    await user.click(screen.getByRole('button', { name: '开始批量推断' }))
+    await waitFor(() => expect(api.startJargonInference).toHaveBeenCalledWith(expected))
+  })
+
+  it('does not widen an empty stable group into an unfiltered batch', async () => {
+    const user = userEvent.setup()
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    clients.push(client)
+    vi.mocked(jargonApi.getJargonList).mockResolvedValue({ success: true, data: [makeJargon()], total: 1, page: 1, page_size: 20 })
+    vi.mocked(jargonApi.getJargonChatList).mockResolvedValue({ success: true, data: [] })
+    vi.mocked(jargonApi.getJargonGroups).mockResolvedValue({ success: true, data: [{
+      id: 'empty-stable-group', index: 3, name: '空相通组', color: '#39845A', jargon_count: 0,
+      session_ids: [], members: [], is_global: false,
+    }] })
+    render(<QueryClientProvider client={client}><JargonManagementPage /></QueryClientProvider>)
+    await screen.findAllByText('测试词')
+    await user.click(screen.getByRole('button', { name: /空相通组/ }))
+    await waitFor(() => expect(screen.queryAllByText('测试词')).toHaveLength(0))
+    await user.click(screen.getByRole('button', { name: '黑话 AI 推断' }))
+    expect(screen.getByRole('button', { name: '开始批量推断' })).toBeDisabled()
+    await user.click(screen.getByRole('combobox', { name: '处理范围' }))
+    expect(screen.getByRole('option', { name: /当前筛选下的全部结果/ })).toHaveAttribute('aria-disabled', 'true')
+    expect(api.previewJargonInference).not.toHaveBeenCalled()
+    expect(api.startJargonInference).not.toHaveBeenCalled()
+  })
+
   it('keeps the current-page batch available while job progress refreshes the list', async () => {
     const user = userEvent.setup()
     const client = new QueryClient({
