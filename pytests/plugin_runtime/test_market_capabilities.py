@@ -382,6 +382,69 @@ def test_tag_manifest_survives_legacy_branch_even_without_compatible_release(cat
     assert plugins[0]["releases"]["versions"][0]["reasons"]
 
 
+def test_parse_release_index_skips_invalid_entries_instead_of_failing_whole_index():
+    from src.plugin_market.releases import parse_release_index
+
+    manifest = {"manifest_version": 2, "id": "demo.a", "version": "1.0.0"}
+    good = {
+        "id": "demo.a", "manifest_id": "demo.a", "repositoryUrl": "https://github.com/test/a", "mode": "releases",
+        "versions": [{"version": "1.0.0", "tag": "v1.0.0", "commit": "a" * 40, "prerelease": False,
+                      "manifest": manifest}],
+    }
+    # 转手类场景：条目 id 已改名，历史版本快照里的 manifest.id 还是原作者的（plugin-repo #1564 实际发生）
+    renamed = {**good, "id": "demo.b", "manifest_id": "demo.b"}
+    bad_id = {**renamed, "versions": [{**renamed["versions"][0], "manifest": {**manifest, "id": "demo.a"}}]}
+    bad_schema = {**good, "id": "demo.c", "manifest_id": "demo.c",
+                  "repositoryUrl": "https://github.com/only-owner"}
+    index = parse_release_index(json.dumps({"schema_version": 1, "plugins": [bad_id, bad_schema, good]}))
+    assert [e.id for e in index.plugins] == ["demo.a"]
+
+
+def test_parse_release_index_all_invalid_entries_yield_empty_index():
+    from src.plugin_market.releases import parse_release_index
+
+    manifest = {"manifest_version": 2, "id": "demo.a", "version": "1.0.0"}
+    bad_id = {
+        "id": "demo.b", "manifest_id": "demo.b", "repositoryUrl": "https://github.com/test/b", "mode": "releases",
+        "versions": [{"version": "1.0.0", "tag": "v1.0.0", "commit": "a" * 40, "prerelease": False,
+                      "manifest": {**manifest, "id": "demo.a"}}],
+    }
+    index = parse_release_index(json.dumps({"schema_version": 1, "plugins": [bad_id]}))
+    assert index.plugins == []
+
+
+def test_parse_release_index_drops_both_sides_of_alias_conflict():
+    from src.plugin_market.releases import parse_release_index
+
+    manifest = {"manifest_version": 2, "id": "demo.a", "version": "1.0.0"}
+    def entry(entry_id, manifest_id, repo):
+        return {
+            "id": entry_id, "manifest_id": manifest_id, "repositoryUrl": f"https://github.com/test/{repo}",
+            "mode": "releases",
+            "versions": [{"version": "1.0.0", "tag": "v1.0.0", "commit": "a" * 40, "prerelease": False,
+                          "manifest": {**manifest, "id": entry_id}}],
+        }
+    first = entry("demo.a", "shared.name", "a")
+    # 后一个条目的 id 撞了前一个条目的 manifest_id：只跳过后一个，安装请求仍会按别名命中前一个。
+    second = entry("shared.name", "demo.b", "b")
+    ok = entry("demo.c", "demo.c", "c")
+    index = parse_release_index(json.dumps({"schema_version": 1, "plugins": [first, second, ok]}))
+    assert [e.id for e in index.plugins] == ["demo.c"]
+
+
+def test_parse_release_index_skips_non_object_entries():
+    from src.plugin_market.releases import parse_release_index
+
+    manifest = {"manifest_version": 2, "id": "demo.a", "version": "1.0.0"}
+    good = {
+        "id": "demo.a", "manifest_id": "demo.a", "repositoryUrl": "https://github.com/test/a", "mode": "releases",
+        "versions": [{"version": "1.0.0", "tag": "v1.0.0", "commit": "a" * 40, "prerelease": False,
+                      "manifest": manifest}],
+    }
+    index = parse_release_index(json.dumps({"schema_version": 1, "plugins": ["oops", 42, good]}))
+    assert [e.id for e in index.plugins] == ["demo.a"]
+
+
 def test_readme_reads_local_without_network_and_remote_uses_only_selected_branch(catalog, tmp_path, monkeypatch):
     folder = tmp_path / "plugins" / "a"
     folder.mkdir(parents=True)
