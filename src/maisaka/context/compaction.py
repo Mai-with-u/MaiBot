@@ -1,8 +1,8 @@
 """将较早的对话压缩为常驻的滚动状态，近期原文继续保留。"""
 
 from dataclasses import dataclass
-from typing import Dict, List, Sequence, Tuple
-from pydantic import BaseModel, ConfigDict, field_validator
+from typing import Any, Dict, List, Sequence, Tuple
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 import asyncio
 import json
 
@@ -47,6 +47,16 @@ class ConversationState(BaseModel):
     progress: List[str]
     pending: List[str]
     agreements: List[str]
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_blank_note(cls, value: Any) -> Any:
+        """兼容模型附加的空 note；核心字段和其他额外内容仍严格校验。"""
+        if isinstance(value, dict):
+            note = value.get("note")
+            if isinstance(note, str) and not note.strip():
+                return {key: entry for key, entry in value.items() if key != "note"}
+        return value
 
     @field_validator("*")
     @classmethod
@@ -209,7 +219,10 @@ def _build_compaction_request(
     tail = "\n".join([*tail_parts, instruction])
     request = planner_snapshot.request.detached_snapshot()
     request.context_items.append(ContextItemBuilder().set_role(RoleType.User).add_text_content(tail).build())
-    # 原生请求的工具定义、顺序和调用模式会影响前缀，全部继承 Planner；ACP 摘要不挂载工具。
+    # 摘要统一禁止函数工具和服务商原生工具；具体工具配置由客户端处理。
+    # 客户端尽量保留函数定义与消息前缀，无工具时省略选择参数；ACP 沿用独立路径。
+    if isinstance(request, ResponseRequest):
+        request.tool_choice = "none"
     # 压缩仅消费摘要文本，不进入宿主工具执行流程；含工具调用的响应会被拒收。
     return request
 

@@ -696,14 +696,17 @@ class OpenAIResponsesClient(OpenaiClient):
             )
             request_overrides = split_openai_request_overrides(request.extra_params)
             extra_body = dict(request_overrides.extra_body)
-            if request.tool_choice is not None:
-                extra_body["tool_choice"] = request.tool_choice
 
             for protected_key in ("input", "model", "previous_response_id", "stream"):
                 if protected_key in extra_body:
                     raise ValueError(f"Responses extra_params 不允许覆盖由客户端管理的字段: {protected_key}")
 
             tools = _merge_native_tools(extra_body, _convert_tool_options(request.tool_options))
+            if request.tool_choice is not None:
+                if tools:
+                    extra_body["tool_choice"] = request.tool_choice
+                else:
+                    extra_body.pop("tool_choice", None)
             text_config = _merge_text_config(extra_body, request.response_format)
             legacy_max_tokens = extra_body.pop("max_tokens", None)
             max_output_tokens = extra_body.pop(
