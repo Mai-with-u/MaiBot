@@ -1115,6 +1115,19 @@ class ExperimentalConfig(ConfigBase):
     __ui_advanced__ = True
     __ui_order__ = 140
 
+    tool_search_tail_loading: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "工具定义末尾加载",
+                "en_US": "Load tool definitions at context tail",
+                "ja_JP": "ツール定義のコンテキスト末尾読み込み",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """实验性功能：搜索命中的工具定义仅追加到搜索结果，附带加载状态和调用指引，保持顶层工具声明不变以保留上下文缓存。关闭时沿用搜索后加入工具声明的逻辑。不使用 API 原生工具搜索；需要模型支持根据结果文本调用工具，普通聊天和 Focus 生效，切换从下一轮工具决策生效。"""
+
     desktop_pet_exploration_enabled: bool = Field(
         default=False,
         json_schema_extra={"label": {"zh_CN": "桌宠自由探索"}, "x-widget": "switch"},

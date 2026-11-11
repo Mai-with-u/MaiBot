@@ -252,6 +252,7 @@ class MaisakaReasoningEngine:
                 continue
             deferred_tool_specs.append(tool_spec)
 
+        self._runtime._tool_search_tail_loading = global_config.experimental.tool_search_tail_loading
         self._runtime.update_deferred_tool_specs(deferred_tool_specs)
         selected_history, _ = self._runtime._chat_loop_service.select_llm_context_messages(
             self._runtime._chat_history,
@@ -261,10 +262,13 @@ class MaisakaReasoningEngine:
         )
         self._runtime.sync_discovered_deferred_tools_with_context(selected_history)
         discovered_deferred_tool_specs = self._runtime.get_discovered_deferred_tool_specs()
-        visible_tool_specs = [*visible_builtin_tool_specs, *discovered_deferred_tool_specs]
-        self._runtime.set_current_action_tool_names([tool_spec.name for tool_spec in visible_tool_specs])
+        active_specs = [*visible_builtin_tool_specs, *discovered_deferred_tool_specs]
+        self._runtime.set_current_action_tool_names([spec.name for spec in active_specs])
+        definitions = [spec.to_llm_definition() for spec in visible_builtin_tool_specs]
+        if not self._runtime._tool_search_tail_loading:
+            definitions.extend(spec.to_llm_definition() for spec in discovered_deferred_tool_specs)
         return (
-            [tool_spec.to_llm_definition() for tool_spec in visible_tool_specs],
+            definitions,
             self._runtime.build_deferred_tools_reminder(),
         )
 
