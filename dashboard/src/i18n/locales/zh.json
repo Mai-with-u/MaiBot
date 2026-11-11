@@ -113,6 +113,7 @@
       "settingsUnavailable": "当前主程序未提供桌宠配置",
       "settingsSaving": "正在保存…",
       "settingsSaved": "桌宠设置已保存",
+      "skinAutoSaveHint": "选择皮肤后会自动保存并应用。",
       "settingsSaveFailed": "保存桌宠设置失败",
       "enabledLamp": "启用桌宠",
       "mode": {

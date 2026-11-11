@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Command as CommandIcon, Search, ShieldCheck } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
+import { ScopedUserSelect } from '@/components/ScopedUserSelect'
 import { Input } from '@/components/ui/input'
 import { MultiSelect } from '@/components/ui/multi-select'
 import { Switch } from '@/components/ui/switch'
@@ -18,10 +19,6 @@ interface CommandRule {
 interface Props {
   pluginSection: Record<string, unknown> | null
   onChange: (value: Record<string, unknown>) => void
-}
-
-function parseUsers(value: string): string[] {
-  return Array.from(new Set(value.split(/[，,\s]+/).map((item) => item.trim()).filter(Boolean)))
 }
 
 export function CommandPermissions({ pluginSection, onChange }: Props) {
@@ -43,7 +40,9 @@ export function CommandPermissions({ pluginSection, onChange }: Props) {
           }))
         )
       })
-      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '加载命令失败'))
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : '加载命令失败')
+      )
   }, [])
 
   const filteredCommands = useMemo(() => {
@@ -59,10 +58,14 @@ export function CommandPermissions({ pluginSection, onChange }: Props) {
   const selectedCommand = commands.find((command) => command.id === selectedId)
   const permissionMap = (pluginSection?.command_permissions ?? {}) as Record<string, CommandRule>
   const selectedRule = permissionMap[selectedId] ?? { allow_users: [], allow_chats: [] }
-  const operators = Array.isArray(pluginSection?.permission) ? (pluginSection.permission as string[]) : []
+  const operators = Array.isArray(pluginSection?.permission)
+    ? (pluginSection.permission as string[])
+    : []
   const silentPermissionDenied = pluginSection?.silent_permission_denied === true
   const disabledCommandIds = new Set(
-    Array.isArray(pluginSection?.disabled_commands) ? (pluginSection.disabled_commands as string[]) : []
+    Array.isArray(pluginSection?.disabled_commands)
+      ? (pluginSection.disabled_commands as string[])
+      : []
   )
 
   const updateRule = (rule: CommandRule) => {
@@ -98,7 +101,8 @@ export function CommandPermissions({ pluginSection, onChange }: Props) {
         <div className="min-w-0">
           <div className="text-sm font-medium">命令含 @ 时须提及自己</div>
           <p className="text-muted-foreground mt-1 text-xs">
-            对所有命令生效。开启后，带 @ 的命令必须提及当前机器人；多个 @ 中包含自己即可。不带 @ 的命令照常执行。
+            对所有命令生效。开启后，带 @ 的命令必须提及当前机器人；多个 @ 中包含自己即可。不带 @
+            的命令照常执行。
           </p>
         </div>
         <Switch
@@ -142,11 +146,15 @@ export function CommandPermissions({ pluginSection, onChange }: Props) {
                   </Badge>
                 </span>
               </div>
-              <div className="text-muted-foreground mt-1 truncate text-xs">{command.plugin_name}</div>
+              <div className="text-muted-foreground mt-1 truncate text-xs">
+                {command.plugin_name}
+              </div>
             </button>
           ))}
           {filteredCommands.length === 0 && (
-            <div className="text-muted-foreground px-3 py-8 text-center text-sm">没有匹配的命令</div>
+            <div className="text-muted-foreground px-3 py-8 text-center text-sm">
+              没有匹配的命令
+            </div>
           )}
         </div>
       </aside>
@@ -195,16 +203,10 @@ export function CommandPermissions({ pluginSection, onChange }: Props) {
             ) : (
               <div className="space-y-6">
                 <div className="space-y-2">
-                  <label htmlFor="global-command-operators" className="text-sm font-medium">
-                    全局管理员
-                  </label>
-                  <Input
-                    id="global-command-operators"
-                    value={operators.join(', ')}
-                    onChange={(event) =>
-                      onChange({ ...(pluginSection ?? {}), permission: parseUsers(event.target.value) })
-                    }
-                    placeholder="例如 qq:123456789，多个用户用逗号分隔"
+                  <ScopedUserSelect
+                    label="全局管理员"
+                    selected={operators}
+                    onChange={(users) => onChange({ ...(pluginSection ?? {}), permission: users })}
                   />
                   <p className="text-muted-foreground text-xs">这些用户可以执行所有受保护命令。</p>
                 </div>
@@ -226,14 +228,11 @@ export function CommandPermissions({ pluginSection, onChange }: Props) {
                 </div>
 
                 <div className="space-y-2">
-                  <label htmlFor="command-users" className="text-sm font-medium">仅为此命令放行用户</label>
-                  <Input
-                    id="command-users"
-                    value={selectedRule.allow_users.join(', ')}
-                    onChange={(event) =>
-                      updateRule({ ...selectedRule, allow_users: parseUsers(event.target.value) })
-                    }
-                    placeholder="例如 qq:234567890，多个用户用逗号分隔"
+                  <ScopedUserSelect
+                    key={selectedId}
+                    label="仅为此命令放行用户"
+                    selected={selectedRule.allow_users}
+                    onChange={(users) => updateRule({ ...selectedRule, allow_users: users })}
                   />
                 </div>
 
@@ -242,7 +241,9 @@ export function CommandPermissions({ pluginSection, onChange }: Props) {
                   <MultiSelect
                     options={chatOptions}
                     selected={selectedRule.allow_chats}
-                    onChange={(allowChats) => updateRule({ ...selectedRule, allow_chats: allowChats })}
+                    onChange={(allowChats) =>
+                      updateRule({ ...selectedRule, allow_chats: allowChats })
+                    }
                     placeholder="选择群聊或私聊"
                     emptyText="没有找到聊天"
                     compact

@@ -322,7 +322,7 @@ describe('SearchDialog', () => {
           sources: [
             {
               title: 'Bot 配置',
-              url: 'https://docs.mai-mai.org/manual/configuration/bot-config',
+              url: 'https://docs.maibot.chat/manual/configuration/bot-config',
             },
           ],
           expanded_terms: ['人格', '身份设定'],
@@ -348,7 +348,7 @@ describe('SearchDialog', () => {
     expect(screen.getByText('测试群').tagName).toBe('CODE')
     expect(screen.getByRole('link', { name: 'Bot 配置' })).toHaveAttribute(
       'href',
-      'https://docs.mai-mai.org/manual/configuration/bot-config'
+      'https://docs.maibot.chat/manual/configuration/bot-config'
     )
     expect(screen.getByText('search.progressTitle')).toBeInTheDocument()
     const progressToggle = screen.getByRole('button', { name: 'search.progressExpand' })
@@ -981,4 +981,3 @@ describe('SearchDialog', () => {
     expect(screen.queryByText('迟到推荐')).not.toBeInTheDocument()
   })
 })
-

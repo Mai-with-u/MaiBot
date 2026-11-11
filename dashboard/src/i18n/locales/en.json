@@ -113,6 +113,7 @@
       "settingsUnavailable": "Desktop pet settings are unavailable on this bot.",
       "settingsSaving": "Saving…",
       "settingsSaved": "Desktop pet settings saved",
+      "skinAutoSaveHint": "Selecting a skin saves and applies it automatically.",
       "settingsSaveFailed": "Could not save desktop pet settings",
       "enabledLamp": "Desktop pet on",
       "mode": {

@@ -146,12 +146,12 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
     const handleChange = React.useCallback(
       (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         onChange?.(e)
-        // 延迟调整高度，确保值已更新
-        requestAnimationFrame(() => {
-          adjustHeight()
-        })
+        // 受控输入由 value 的布局 effect 测量；非受控输入才在事件后调整。
+        if (value === undefined) {
+          requestAnimationFrame(adjustHeight)
+        }
       },
-      [onChange, adjustHeight]
+      [onChange, adjustHeight, value]
     )
 
     return (

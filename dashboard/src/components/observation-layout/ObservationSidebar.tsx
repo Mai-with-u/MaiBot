@@ -468,7 +468,7 @@ export function ObservationSidebar({
           data-observation-icon-key="true"
           title={t('header.viewDocs')}
           aria-label={t('header.viewDocs')}
-          onClick={() => window.open('https://docs.mai-mai.org', '_blank')}
+          onClick={() => window.open('https://docs.maibot.chat/', '_blank')}
         >
           <BookOpen aria-hidden="true" />
         </button>

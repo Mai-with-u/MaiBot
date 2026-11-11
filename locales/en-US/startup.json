@@ -12,7 +12,7 @@
   "startup.env_template_missing": ".env file not found, and template template/template.env is also missing",
   "startup.event_loop_closed": "[Main] Event loop closed",
   "startup.graceful_shutdown_error": "Error during graceful shutdown: {error}",
-  "startup.initialization_completed_banner": "\n--------------------------------\nAll systems initialized. {nickname} has been awakened successfully.\n--------------------------------\nTo customize {nickname}'s behavior, see: https://docs.mai-mai.org/manual/usage/\nOr if you've run into issues, visit our documentation: https://docs.mai-mai.org/\n--------------------------------\nTo write or learn about plugins, visit the developer docs: https://docs.mai-mai.org/develop/\n",
+  "startup.initialization_completed_banner": "\n--------------------------------\nAll systems initialized. {nickname} has been awakened successfully.\n--------------------------------\nTo customize {nickname}'s behavior, see: https://docs.maibot.chat/manual/usage/\nOr if you've run into issues, visit our documentation: https://docs.maibot.chat/\n--------------------------------\nTo write or learn about plugins, visit the developer docs: https://docs.maibot.chat/develop/\n",
   "startup.initialization_completed_cycles": "Initialization complete, neurons fired {init_time} times",
   "startup.interrupt_received": "Interrupt signal received, initiating graceful shutdown...",
   "startup.launching_script": "Launching {script_file}...",
@@ -26,7 +26,7 @@
   "startup.opensource_resale_warning": "  Reselling this software as a \"product\" or concealing its open-source nature violates the license!",
   "startup.opensource_title": "  \u2605 MaiBot - Open Source Humanlike AI Harness \u2605",
   "startup.opensource_docs": "  Official documentation: ",
-  "startup.opensource_docs_value": "https://docs.mai-mai.org",
+  "startup.opensource_docs_value": "https://docs.maibot.chat/",
   "startup.prepare_exit": "[Main] Preparing to exit...",
   "startup.program_exited": "Program exited (exit code {return_code})",
   "startup.remaining_tasks_cancelling": {

@@ -1545,6 +1545,16 @@ async def update_model_config(config_data: ConfigBody, catalog_revision: str | N
 # ===== 配置节更新接口 =====
 
 
+@router.post("/bot/section/desktop_pet")
+async def update_desktop_pet_config(section_data: SectionBody):
+    result = await asyncio.to_thread(update_bot_config_section, "desktop_pet", section_data)
+    if not await run_on_main_loop(
+        config_manager.reload_config(changed_scopes=["bot"], skip_if_unchanged=True)
+    ):
+        raise HTTPException(status_code=500, detail="桌宠配置已保存，但运行时热重载失败，请检查日志")
+    return result
+
+
 @router.post("/bot/section/{section_name}")
 def update_bot_config_section(section_name: str, section_data: SectionBody):
     """更新麦麦主程序配置的指定节（保留注释和格式）"""

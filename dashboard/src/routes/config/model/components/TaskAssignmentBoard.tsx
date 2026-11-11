@@ -86,6 +86,7 @@ export function TaskAssignmentBoard({
 }: TaskAssignmentBoardProps) {
   const [guideDismissed, setGuideDismissed] = useState(readGuideDismissed)
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [replierInfoOpen, setReplierInfoOpen] = useState(false)
   const taskFields = fields.filter((field) => field.type === 'object')
   const metaOf = (field: FieldSchema): TaskMeta =>
     TASK_META[field.name] ?? { name: fallbackLabel(field), desc: field.description ?? '' }
@@ -192,15 +193,20 @@ export function TaskAssignmentBoard({
                   ))}
                   {list.length > 3 && <li data-task-card-more="true">+{list.length - 3}</li>}
                 </ol>
-                <div data-task-card-foot="true">
-                  <span className="text-xs text-muted-foreground">
-                    {list.length > 1 && !meta.hideStrategy && (
-                      <>
-                        调用策略 <b className="font-semibold text-foreground">{strategyLabel(field.name)}</b>
-                      </>
+                <div data-task-card-foot="true" className="flex-wrap">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    {field.name === 'replyer' && (
+                      <Button type="button" size="sm" variant="outline" onClick={() => setReplierInfoOpen(true)}>
+                        了解麦麦特调模型
+                      </Button>
                     )}
-                  </span>
-                  <Button type="button" size="sm" variant="outline" onClick={() => onOpenTaskChange(field.name)}>
+                    {list.length > 1 && !meta.hideStrategy && (
+                      <span>
+                        调用策略 <b className="font-semibold text-foreground">{strategyLabel(field.name)}</b>
+                      </span>
+                    )}
+                  </div>
+                  <Button type="button" size="sm" variant="outline" className="ml-auto" onClick={() => onOpenTaskChange(field.name)}>
                     <Pencil aria-hidden="true" />
                     编辑
                   </Button>
@@ -258,6 +264,22 @@ export function TaskAssignmentBoard({
           )}
         </section>
       )}
+
+      <Dialog open={replierInfoOpen} onOpenChange={setReplierInfoOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>了解麦麦特调模型</DialogTitle>
+            <DialogDescription>为麦麦的拟人发言训练的开源模型，目前正在尝试中。</DialogDescription>
+          </DialogHeader>
+          <DialogBody type="auto">
+            <div className="space-y-3 text-sm">
+              <p>麦麦特调模型仅用于「回复」分工，不适用于规划等其他工作。</p>
+              <p>想试用时，在「模型库」添加提供商，选择「麦麦特调回复」模板，再回到「回复」分工安排模型。</p>
+              <p>模板提供「麦麦特调回复」和「麦麦特调回复（今日版）」两个模型。</p>
+            </div>
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={Boolean(editingField)} modal={!tourRunning} onOpenChange={(open) => !open && onOpenTaskChange(null)}>
         {editingField && (
