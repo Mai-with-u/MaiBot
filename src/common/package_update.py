@@ -66,6 +66,82 @@ class ToolEnvironment:
         return self.prefix.parent / ".maibot-instance-locks"
 
 
+def _requirement_text(requirement: Dict[str, Any]) -> str:
+    """将 uv receipt 中的包索引/URL 安装要求转换为 PEP 508，保留 extras 和环境标记。"""
+    unsupported = set(requirement) - {"name", "extras", "specifier", "marker", "url"}
+    if unsupported:
+        raise SelfUpdateError(
+            "not_uv_tool",
+            f"安装要求 {requirement['name']} 包含尚不支持的字段：{', '.join(sorted(unsupported))}。"
+            "请停止宿主后使用原安装方式更新。",
+        )
+    name = requirement["name"]
+    if requirement.get("extras"):
+        name += f"[{','.join(requirement['extras'])}]"
+    text = f"{name} @ {requirement['url']}" if "url" in requirement else name + requirement.get("specifier", "")
+    if requirement.get("marker"):
+        text += f" ; {requirement['marker']}"
+    return text
+
+
+def _toml_value(value: Any) -> str:
+    """序列化 uv receipt 的标量、数组和内联表；独立更新进程只使用标准库。"""
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+    if isinstance(value, dict):
+        return "{ " + ", ".join(f"{json.dumps(key)} = {_toml_value(item)}" for key, item in value.items()) + " }"
+    raise TypeError(f"uv 安装记录包含不支持的值类型：{type(value).__name__}")
+
+
+@dataclass
+class ToolInstallation:
+    """uv 原始安装契约；主包版本随本次更新调整，其余安装要求和约束原样参与解析。"""
+
+    document: Dict[str, Any]
+
+    def __post_init__(self) -> None:
+        requirements = self.document["tool"]["requirements"]
+        main = [item for item in requirements if item["name"].lower() == "maibot"]
+        if len(main) != 1:
+            raise SelfUpdateError("not_uv_tool", "uv 工具安装记录必须包含唯一的 maibot 安装要求，请使用原安装方式更新。")
+        if "url" in main[0]:
+            raise SelfUpdateError("not_uv_tool", "maibot 来自直接 URL，不能切换为包索引版本，请使用原安装方式更新。")
+        for field in ("requirements", "constraints", "overrides", "build-constraints"):
+            for requirement in self.document["tool"].get(field, []):
+                _requirement_text(requirement)
+
+    def write_inputs(self, directory: Path, target: str) -> Tuple[List[str], List[str]]:
+        """生成一次完整解析的输入，运行约束、覆盖和构建约束分别交给 uv。"""
+        requirements = []
+        for requirement in self.document["tool"]["requirements"]:
+            if requirement["name"].lower() == "maibot":
+                requirement = {**requirement, "specifier": f"=={target}"}
+            requirements.append(_requirement_text(requirement))
+        path = directory / "tool-requirements.txt"
+        path.write_text("\n".join(requirements) + "\n", encoding="utf-8")
+        constraints = []
+        for field in ("constraints", "overrides", "build-constraints"):
+            values = self.document["tool"].get(field, [])
+            if values:
+                constraint_path = directory / f"tool-{field}.txt"
+                constraint_path.write_text("\n".join(_requirement_text(item) for item in values) + "\n", encoding="utf-8")
+                constraints.extend([f"--{field}", str(constraint_path)])
+        return ["--requirements", str(path)], constraints
+
+    def updated_receipt(self, target: str) -> str:
+        document = json.loads(json.dumps(self.document))
+        for requirement in document["tool"]["requirements"]:
+            if requirement["name"].lower() == "maibot" and "specifier" in requirement:
+                requirement["specifier"] = f"=={target}"
+        return "\n".join(f"{json.dumps(key)} = {_toml_value(value)}" for key, value in document.items()) + "\n"
+
+
 def tool_environment() -> ToolEnvironment:
     """只接受当前解释器所属的 uv tool 环境，不猜测全局工具位置。"""
     prefix = Path(sys.prefix).resolve()
@@ -73,21 +149,29 @@ def tool_environment() -> ToolEnvironment:
     uv = shutil.which("uv")
     if uv is None:
         raise SelfUpdateError("uv_missing", "未找到 uv，请将 uv 加入 MaiBot 启动环境的 PATH")
-    if not receipt_path.is_file() or prefix.name.lower() != "maibot":
-        raise SelfUpdateError("not_uv_tool", "当前安装不属于 uv tool 环境，请使用原安装工具更新")
-    receipt = tomllib.loads(receipt_path.read_text(encoding="utf-8"))["tool"]
-    requirements = receipt["requirements"]
-    requirement = next((item for item in requirements if item.get("name", "").lower() == "maibot"), None)
-    if requirement is None or len(requirements) != 1 or set(requirement) - {"name", "specifier"}:
-        raise SelfUpdateError("not_uv_tool", "本地 wheel、URL 或可编辑安装请先切换为 PyPI 工具安装")
-    if any(receipt.get(key) for key in ("constraints", "overrides", "build-constraints")):
-        raise SelfUpdateError("not_uv_tool", "带额外依赖约束的工具环境请手动更新")
+    if not receipt_path.is_file():
+        raise SelfUpdateError(
+            "not_uv_tool", f"当前 Python 环境缺少 uv 工具安装记录：{receipt_path}。请使用原安装工具更新。",
+        )
+    if prefix.name.lower() != "maibot":
+        raise SelfUpdateError(
+            "not_uv_tool", f"当前 uv 工具环境目录名为 {prefix.name}，自动更新仅支持名为 maibot 的环境。请使用原安装方式更新。",
+        )
+    ToolInstallation(tomllib.loads(receipt_path.read_text(encoding="utf-8")))
     # Worker 与普通第三方启动器不能自行更新正在使用的环境，必须经过本程序的 Runner。
     if os.environ.get(PACKAGE_RUNNER_ENV) != "1":
         raise SelfUpdateError("package_runner_missing", "请通过 maibot run 启动，才能自动更新并重启")
     base_python = Path(sys.base_prefix) / ("python.exe" if os.name == "nt" else "bin/python3")
-    if not base_python.is_file() or base_python.resolve().is_relative_to(prefix):
-        raise SelfUpdateError("not_uv_tool", "找不到工具环境之外的 Python，无法执行独立更新")
+    if not base_python.is_file():
+        raise SelfUpdateError(
+            "not_uv_tool", f"找不到可用于独立更新的环境外 Python：{base_python}。请修复基础 Python 安装，或使用原安装方式手动更新。",
+        )
+    if base_python.resolve().is_relative_to(prefix):
+        raise SelfUpdateError(
+            "not_uv_tool",
+            f"独立更新所需的 Python 仍位于待更新的工具环境内：{base_python}。"
+            "无法用它安全更新自身环境，请使用原安装方式手动更新。",
+        )
     return ToolEnvironment(prefix, Path(sys.executable), base_python, uv)
 
 
@@ -248,41 +332,32 @@ def execute_update(request: Dict[str, Any], result: Dict[str, Any]) -> None:
         if name.startswith("UV_") or name in {"VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME"}:
             env.pop(name)
     env["UV_TOOL_DIR"] = str(prefix.parent)
-    receipt = tomllib.loads((prefix / "uv-receipt.toml").read_text(encoding="utf-8"))["tool"]
-    entrypoints = [item for item in receipt["entrypoints"] if item["name"] in {"maibot", "maibot.exe"}]
+    receipt_path = prefix / "uv-receipt.toml"
+    original_receipt = receipt_path.read_bytes()
+    installation = ToolInstallation(tomllib.loads(original_receipt.decode("utf-8")))
+    entrypoints = [item for item in installation.document["tool"]["entrypoints"] if item["name"] in {"maibot", "maibot.exe"}]
     if len(entrypoints) != 1 or not Path(entrypoints[0]["install-path"]).is_file():
         raise SelfUpdateError("not_uv_tool", "找不到 uv 登记的 maibot 命令入口，请手动更新")
     entrypoint = entrypoints[0]["install-path"]
-    receipt_path = prefix / "uv-receipt.toml"
-    original_receipt = receipt_path.read_text(encoding="utf-8")
-    requirement = receipt["requirements"]
-    if len(requirement) != 1 or set(requirement[0]) - {"name", "specifier"}:
-        raise SelfUpdateError("not_uv_tool", "自定义工具依赖请通过原安装方式更新")
-    updated_receipt = original_receipt
-    if "specifier" in requirement[0]:
-        # uv 的工具入口在 Windows 下仍被外层 maibot.exe 占用，不能调用会重写入口的
-        # tool install/upgrade。因此只原地更新 site-packages，并同步 receipt 中的版本约束。
-        # 只修改 uv 自己生成的单行 requirements 字段，其他设置与入口路径原样保留。
-        updated_receipt, count = re.subn(
-            r'(?m)^requirements = \[\{ name = "maibot", specifier = "[^"\r\n]*" \}\][ \t]*$',
-            f'requirements = [{{ name = "maibot", specifier = "=={target}" }}]',
-            original_receipt,
-        )
-        if count != 1:
-            raise SelfUpdateError("not_uv_tool", "uv 安装记录格式不支持自动更新，请手动更新")
+    # uv 的工具入口在 Windows 下仍可能被外层 maibot.exe 占用，不能调用会重写入口的
+    # tool install/upgrade。原地更新 site-packages，结构化更新 receipt 的主包版本约束。
+    updated_receipt = installation.updated_receipt(target)
     env["PYTHONIOENCODING"] = "utf-8"
     verify = [str(environment.python), "-I", "-c", "from importlib.metadata import version; print(version('maibot'))"]
-    def install_command(version: str) -> List[str]:
-        return [environment.uv, "--no-config", "pip", "install", f"maibot=={version}",
-                "--reinstall-package", "maibot", "--python", str(environment.python),
-                "--default-index", index, "--no-python-downloads"]
-
     # 指定当前工具解释器；不重建环境、不重写全局命令入口，也不删除插件额外安装的依赖。
     with FileLock(environment.locks / "update.guard"):
         ensure_other_instances_stopped(environment, root)
         if _run(verify, root, env) != request["current"]:
             raise SelfUpdateError("package_changed", "主程序版本已被外部更新，请重新检查")
         backup = backup_instance(root)
+        install_requirements, constraints = installation.write_inputs(backup, target)
+        install_command = [
+            environment.uv, "--no-config", "pip", "install", *install_requirements, *constraints,
+            "--reinstall-package", "maibot", "--python", str(environment.python),
+            "--default-index", index, "--no-python-downloads",
+        ]
+        # 先完整解析安装契约；冲突在修改环境前直接暴露，不移除约束重试。
+        _run([*install_command, "--dry-run"], root, env)
         result["stage"] = "dependencies"
         # 保存全部已安装依赖的版本，回滚时同时恢复插件共用的依赖。
         inventory = _run([
@@ -292,13 +367,15 @@ def execute_update(request: Dict[str, Any], result: Dict[str, Any]) -> None:
         requirements = backup / "requirements.txt"
         requirements.write_text(inventory + "\n", encoding="utf-8")
         try:
-            _run(install_command(target), root, env)
+            _run(install_command, root, env)
             result["stage"] = "verify"
             if _run(verify, root, env) != target:
                 raise SelfUpdateError("package_version_mismatch", "升级后安装版本与确认的目标版本不一致")
             if _run([entrypoint, "--version"], root, env) != target:
                 raise SelfUpdateError("package_entrypoint_failed", "升级后的 maibot 命令入口验证失败")
-            _run([environment.uv, "--no-config", "pip", "check", "--python", str(environment.python)], root, env)
+            # overrides 明确替换包声明的依赖要求；pip check 不读取覆盖规则，不能用于这种安装契约。
+            if not installation.document["tool"].get("overrides"):
+                _run([environment.uv, "--no-config", "pip", "check", "--python", str(environment.python)], root, env)
             temp_receipt = receipt_path.with_suffix(".toml.tmp")
             temp_receipt.write_text(updated_receipt, encoding="utf-8")
             os.replace(temp_receipt, receipt_path)
@@ -308,13 +385,14 @@ def execute_update(request: Dict[str, Any], result: Dict[str, Any]) -> None:
             try:
                 # 精确恢复快照并清除本次新增的依赖，不能只降级主包、留下新版本依赖。
                 _run([environment.uv, "--no-config", "pip", "sync", "--python", str(environment.python),
-                      "--default-index", index, "--reinstall", str(requirements)], root, env)
+                      "--default-index", index, *constraints, "--reinstall", str(requirements)], root, env)
                 if _run(verify, root, env) != request["current"]:
                     raise SelfUpdateError("rollback_failed", "回滚后的主程序版本不一致")
                 if _run([entrypoint, "--version"], root, env) != request["current"]:
                     raise SelfUpdateError("rollback_failed", "回滚后的命令入口验证失败")
-                _run([environment.uv, "--no-config", "pip", "check", "--python", str(environment.python)], root, env)
-                receipt_path.write_text(original_receipt, encoding="utf-8")
+                if not installation.document["tool"].get("overrides"):
+                    _run([environment.uv, "--no-config", "pip", "check", "--python", str(environment.python)], root, env)
+                receipt_path.write_bytes(original_receipt)
                 result["rolled_back"] = True
             except (SelfUpdateError, OSError, subprocess.SubprocessError) as rollback_error:
                 result["rollback_error"] = str(rollback_error)

@@ -14,7 +14,7 @@ import { applyHostUpdate, checkHostUpdate, getHostUpdate } from './api'
 import type { HostUpdateCheck, HostUpdateStatus } from './api'
 
 export function HostUpdateSection() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [status, setStatus] = useState<HostUpdateStatus | null>(null)
   const [check, setCheck] = useState<HostUpdateCheck | null>(null)
   const [busy, setBusy] = useState(false)
@@ -46,15 +46,24 @@ export function HostUpdateSection() {
   async function run(apply: boolean) {
     setBusy(true)
     setError('')
+    let updateRequested = false
     try {
       if (apply && check?.latest_commit) {
         const started = Date.now() / 1000
         await applyHostUpdate(check.latest_commit)
+        updateRequested = true
         setRestarting(started)
       } else setCheck(await checkHostUpdate())
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
+      if (!updateRequested) {
+        try {
+          setStatus(await getHostUpdate())
+        } catch (reason) {
+          setError((current) => current || (reason instanceof Error ? reason.message : String(reason)))
+        }
+      }
       setBusy(false)
     }
   }
@@ -82,12 +91,20 @@ export function HostUpdateSection() {
         {check && !check.can_apply && !check.blocker_messages.length && (
           <p className="text-sm">{t('hostOperations.current')}</p>
         )}
-        {status?.last_result && (
-          <p role="status" className="text-sm">
-            {status.last_result.success
-              ? t('hostOperations.updated')
-              : `${status.last_result.error} ${status.last_result.rollback_error}`}
-          </p>
+        {!restarting && status?.last_result && (
+          <div role="status" className="space-y-1 text-sm">
+            <p className="text-muted-foreground">
+              {t('hostOperations.lastUpdateTime', {
+                started: new Date(status.last_result.started_at * 1000).toLocaleString(i18n.language),
+                finished: new Date(status.last_result.finished_at * 1000).toLocaleString(i18n.language),
+              })}
+            </p>
+            <p>
+              {status.last_result.success
+                ? t('hostOperations.updated')
+                : `${status.last_result.error} ${status.last_result.rollback_error}`}
+            </p>
+          </div>
         )}
         {error && (
           <Alert variant="destructive">

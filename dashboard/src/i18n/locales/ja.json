@@ -2377,6 +2377,7 @@
     "check": "更新を確認",
     "apply": "更新してホストを再起動",
     "current": "適用できる更新はありません",
+    "lastUpdateTime": "前回の更新実行時間：{{started}} — {{finished}}",
     "updated": "前回の更新は成功しました",
     "restarting": "The host is updating and restarting. Waiting to reconnect. If rollback fails, check the terminal and restart manually after repair."
   },

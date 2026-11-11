@@ -2328,6 +2328,7 @@
     "check": "업데이트 확인",
     "apply": "업데이트 및 호스트 재시작",
     "current": "적용 가능한 업데이트가 없습니다",
+    "lastUpdateTime": "지난 업데이트 실행 시간: {{started}} — {{finished}}",
     "updated": "최근 업데이트에 성공했습니다",
     "restarting": "The host is updating and restarting. Waiting to reconnect. If rollback fails, check the terminal and restart manually after repair."
   },
