@@ -66,7 +66,7 @@ class MaiJargon(BaseDatabaseDataModel[Jargon]):
             json_list = json.loads(db_record.session_id_dict)
         except Exception as e:
             logger.error(f"Error parsing session_id_list: {e}")
-        return cls(
+        result = cls(
             item_id=db_record.id,
             content=db_record.content,
             meaning=db_record.meaning,
@@ -81,6 +81,9 @@ class MaiJargon(BaseDatabaseDataModel[Jargon]):
             created_timestamp=db_record.created_timestamp,
             updated_timestamp=db_record.updated_timestamp,
         )
+        # 创建时间参与推断身份校验，数据库中的 NULL 不能在读取时伪造为当前时间。
+        result.created_timestamp = db_record.created_timestamp
+        return result
 
     def to_db_instance(self) -> Jargon:
         """将 MaiJargon 转换为数据库模型 Jargon。"""

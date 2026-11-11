@@ -91,6 +91,27 @@ describe('useDataList', () => {
   })
 
   describe('分页', () => {
+    it('仅切换查询参数后保留的旧数据被标记为占位数据', async () => {
+      const queryFn = makeQueryFn()
+      let resolvePage!: (value: Awaited<ReturnType<typeof queryFn>>) => void
+      const nextPage = new Promise<Awaited<ReturnType<typeof queryFn>>>((resolve) => {
+        resolvePage = resolve
+      })
+      queryFn.mockResolvedValueOnce({ items: [{ id: 1, name: 'first' }], total: 40 })
+      queryFn.mockReturnValueOnce(nextPage)
+      const { result } = renderDataList({ queryFn })
+      await waitFor(() => expect(result.current.items).toEqual([{ id: 1, name: 'first' }]))
+      expect(result.current.isPlaceholderData).toBe(false)
+
+      act(() => result.current.goToPage(2))
+      expect(result.current.isPlaceholderData).toBe(true)
+      expect(result.current.items).toEqual([{ id: 1, name: 'first' }])
+
+      await act(async () => resolvePage({ items: [{ id: 21, name: 'second' }], total: 40 }))
+      await waitFor(() => expect(result.current.isPlaceholderData).toBe(false))
+      expect(result.current.items).toEqual([{ id: 21, name: 'second' }])
+    })
+
     it('goToPage 钳制到 [1, totalPages]', async () => {
       const { result } = renderDataList({ queryFn: makeQueryFn(95) }) // 5 页
       await waitFor(() => expect(result.current.totalPages).toBe(5))
@@ -236,11 +257,13 @@ describe('useDataList', () => {
       act(() => result.current.setSearchInput('a'))
       act(() => result.current.setSearchInput('ab'))
       expect(result.current.searchInput).toBe('ab')
+      expect(result.current.isSearchPending).toBe(true)
 
       // 推进定时器，防抖值落定，queryFn 以最终值再次被调用
       await act(async () => {
         vi.advanceTimersByTime(300)
       })
+      expect(result.current.isSearchPending).toBe(false)
       await vi.waitFor(() =>
         expect(queryFn).toHaveBeenLastCalledWith(
           expect.objectContaining({ search: 'ab', page: 1 }),

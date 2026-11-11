@@ -21,6 +21,11 @@ export interface Jargon {
   is_legacy_empty_meaning: boolean
   is_complete: boolean
   created_by: JargonCreatedBy
+  inference_status?: string
+  inference_reason?: string
+  last_attempt_at?: number | null
+  last_success_at?: number | null
+  inference_locked?: boolean
   created_timestamp: string
   updated_timestamp: string
 }

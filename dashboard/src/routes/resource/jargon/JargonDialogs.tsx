@@ -39,6 +39,7 @@ import { formatChatDisplayName } from '@/lib/chat-display'
 import { cn } from '@/lib/utils'
 
 import { createJargon, updateJargon } from '@/lib/jargon-api'
+import { JargonInferenceHistory } from './JargonInferenceHistory'
 
 import type {
   Jargon,
@@ -83,14 +84,17 @@ interface JargonDetailDialogProps {
   onOpenChange: (open: boolean) => void
   chatList: JargonChatInfo[]
   onChanged: (jargon: Jargon) => void
+  onLockChanged: (id: number, locked: boolean) => void
 }
 
+/** Edit a term and manage its inference history, keeping lock updates separate from the draft. */
 export function JargonDetailDialog({
   jargon,
   open,
   onOpenChange,
   chatList,
   onChanged,
+  onLockChanged,
 }: JargonDetailDialogProps) {
   const [formData, setFormData] = useState<JargonUpdateRequest>({})
   const [saving, setSaving] = useState(false)
@@ -98,9 +102,9 @@ export function JargonDetailDialog({
   const [unpinning, setUnpinning] = useState(false)
   const { toast } = useToast()
 
-  useEffect(() => {
-    if (jargon && open) {
-      setFormData({
+  // Metadata refreshes (e.g. a lock completing) must not replace unsaved edits.
+  const editableSnapshot = jargon
+    ? JSON.stringify({
         content: jargon.content,
         meaning: jargon.meaning || '',
         session_id: jargon.session_id,
@@ -110,8 +114,12 @@ export function JargonDetailDialog({
         is_global: jargon.is_global,
         is_jargon: jargon.is_jargon,
       })
-    }
-  }, [jargon, open])
+    : null
+  const recordId = jargon?.id
+  useEffect(() => {
+    // A lock update does not change the editable snapshot, so it cannot reset the draft.
+    if (editableSnapshot && open) setFormData(JSON.parse(editableSnapshot) as JargonUpdateRequest)
+  }, [editableSnapshot, recordId, open])
 
   const handleSave = async () => {
     if (!jargon) return
@@ -341,6 +349,24 @@ export function JargonDetailDialog({
               />
               <Label htmlFor="detail_is_global">全局黑话</Label>
             </div>
+            <JargonInferenceHistory
+              key={jargon.id}
+              jargon={jargon}
+              dirty={
+                formData.content !== jargon.content ||
+                (formData.meaning ?? '') !== (jargon.meaning ?? '') ||
+                formData.is_jargon !== jargon.is_jargon ||
+                formData.is_global !== jargon.is_global ||
+                JSON.stringify(formData.session_ids ?? []) !==
+                  JSON.stringify(
+                    jargon.session_ids?.length
+                      ? jargon.session_ids
+                      : [jargon.session_id].filter(Boolean)
+                  )
+              }
+              onChanged={onChanged}
+              onLockChanged={onLockChanged}
+            />
           </div>
         </DialogBody>
 

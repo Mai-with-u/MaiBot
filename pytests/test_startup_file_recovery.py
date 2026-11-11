@@ -1,6 +1,5 @@
 from contextlib import closing
 from io import open as io_open
-from pathlib import Path
 from unittest.mock import Mock
 
 import asyncio

@@ -1185,6 +1185,8 @@ def _delete_rows_by_text_field(session: Any, model: Any, field_name: str, sessio
 def _delete_or_unlink_jargons(session: Any, session_id: str) -> Dict[str, int]:
     """清理黑话中的聊天流关联；仅剩当前聊天流时删除整条黑话。"""
 
+    from src.webui.routers.jargon import delete_inference_metadata
+
     deleted = 0
     unlinked = 0
     removed_refs = 0
@@ -1202,6 +1204,9 @@ def _delete_or_unlink_jargons(session: Any, session_id: str) -> Dict[str, int]:
         removed_count = int(session_counts.pop(session_id, 0) or 0)
         removed_refs += 1
         if not session_counts and not jargon.is_global:
+            # 清理附属状态，避免 SQLite 重用已删除词条 ID 后继承旧锁和旧含义历史。
+            if jargon.id is not None:
+                delete_inference_metadata(session, [jargon.id])
             session.delete(jargon)
             deleted += 1
             continue

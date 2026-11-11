@@ -11,13 +11,24 @@ from sqlmodel import Session, col, delete, select
 
 from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
 from src.common.database.database import get_db_session
-from src.common.database.database_model import ChatSession, Jargon, JargonCreatedBy, Messages
+from src.common.database.database_model import (
+    ChatSession,
+    Jargon,
+    JargonCreatedBy,
+    JargonInferenceState,
+    JargonMeaningHistory,
+    Messages,
+)
 from src.common.logger import get_logger
+from src.common.utils.utils_jargon import parse_session_id_dict
 from src.services.sharing_group_service import list_groups, resolved_members
+
+from .jargon_inference import router as inference_router
 
 logger = get_logger("webui.jargon")
 
 router = APIRouter(prefix="/jargon", tags=["Jargon"])
+router.include_router(inference_router)
 JARGON_SESSION_IDS_QUERY = Query(None, description="按共享组内任一聊天流ID筛选")
 
 
@@ -55,7 +66,9 @@ def message_to_display_name(message: Messages) -> Optional[str]:
 
     if message.group_id:
         return message.group_name or f"群聊{message.group_id}"
-    private_name = message.user_cardname or message.user_nickname or (f"用户{message.user_id}" if message.user_id else None)
+    private_name = (
+        message.user_cardname or message.user_nickname or (f"用户{message.user_id}" if message.user_id else None)
+    )
     return f"{private_name}的私聊" if private_name else None
 
 
@@ -79,7 +92,9 @@ def get_latest_message_display_name(session_id: str, session: Session) -> Option
     return message_to_display_name(message) if message else None
 
 
-def build_session_display_name_cache(session_ids: List[str], session: Session, include_message_fallback: bool = False) -> Dict[str, str]:
+def build_session_display_name_cache(
+    session_ids: List[str], session: Session, include_message_fallback: bool = False
+) -> Dict[str, str]:
     """批量构建聊天流显示名称缓存，避免列表接口逐条查询。"""
 
     unique_session_ids = list(dict.fromkeys(session_id for session_id in session_ids if session_id))
@@ -130,14 +145,16 @@ def get_display_name_for_session_id(session_id_str: str, session: Session) -> st
     if message:
         if message.group_id:
             return message.group_name or f"群聊{message.group_id}"
-        private_name = message.user_cardname or message.user_nickname or (
-            f"用户{message.user_id}" if message.user_id else None
+        private_name = (
+            message.user_cardname or message.user_nickname or (f"用户{message.user_id}" if message.user_id else None)
         )
         if private_name:
             return f"{private_name}的私聊"
 
     if not (
-        chat_session := session.exec(select(ChatSession).where(col(ChatSession.session_id) == primary_session_id)).first()
+        chat_session := session.exec(
+            select(ChatSession).where(col(ChatSession.session_id) == primary_session_id)
+        ).first()
     ):
         return primary_session_id[:20]
 
@@ -171,6 +188,11 @@ class JargonResponse(BaseModel):
     created_by: JargonCreatedBy = JargonCreatedBy.AI
     created_timestamp: Any
     updated_timestamp: Any
+    inference_status: str = "unattempted"
+    inference_reason: str = ""
+    last_attempt_at: Optional[float] = None
+    last_success_at: Optional[float] = None
+    inference_locked: bool = False
 
 
 class JargonListResponse(BaseModel):
@@ -350,40 +372,6 @@ class JargonImportResponse(BaseModel):
 
 
 # ==================== 工具函数 ====================
-
-
-def parse_session_id_dict(session_id_dict_str: Optional[str]) -> Dict[str, int]:
-    """解析会话计数字典。
-
-    Args:
-        session_id_dict_str: 数据库中保存的会话计数字典 JSON 字符串。
-
-    Returns:
-        Dict[str, int]: 解析后的会话计数字典。
-    """
-    if not session_id_dict_str:
-        return {}
-
-    try:
-        parsed = json.loads(session_id_dict_str)
-    except (json.JSONDecodeError, TypeError):
-        return {}
-
-    if not isinstance(parsed, dict):
-        return {}
-
-    session_counts: Dict[str, int] = {}
-    for session_id, count in parsed.items():
-        if not isinstance(session_id, str):
-            continue
-        if isinstance(count, int):
-            session_counts[session_id] = count
-        else:
-            try:
-                session_counts[session_id] = int(count)
-            except (TypeError, ValueError):
-                session_counts[session_id] = 0
-    return session_counts
 
 
 def dump_session_id_dict(session_counts: Dict[str, int]) -> str:
@@ -653,6 +641,24 @@ def jargon_to_export_item(
     )
 
 
+def inference_state_fields(state: Optional[JargonInferenceState]) -> Dict[str, Any]:
+    """将推断状态附加到列表和详情；空状态不代表黑话分类。"""
+    return {
+        "inference_status": state.status if state else "unattempted",
+        "inference_reason": state.reason if state else "",
+        "last_attempt_at": state.last_attempt_at if state else None,
+        "last_success_at": state.last_success_at if state else None,
+        "inference_locked": state.locked if state else False,
+    }
+
+
+def delete_inference_metadata(session: Session, jargon_ids: List[int]) -> None:
+    """词条删除时清理关联状态，避免 SQLite 重用 ID 后串用旧历史。"""
+    if jargon_ids:
+        session.exec(delete(JargonInferenceState).where(col(JargonInferenceState.jargon_id).in_(jargon_ids)))
+        session.exec(delete(JargonMeaningHistory).where(col(JargonMeaningHistory.jargon_id).in_(jargon_ids)))
+
+
 def jargon_to_dict(
     jargon: Jargon,
     session: Session,
@@ -855,7 +861,25 @@ def get_jargon_list(
             for row in page_rows:
                 page_session_ids.extend(get_session_ids(str(row["session_id_dict"] or "{}")))
             chat_name_cache = build_session_display_name_cache(page_session_ids, session, include_message_fallback=True)
-            data = [jargon_list_row_to_dict(row, session, chat_name_cache) for row in page_rows]
+            state_by_id = (
+                {
+                    state.jargon_id: state
+                    for state in session.exec(
+                        select(JargonInferenceState).where(
+                            col(JargonInferenceState.jargon_id).in_([row["id"] for row in page_rows])
+                        )
+                    ).all()
+                }
+                if page_rows
+                else {}
+            )
+            data = [
+                {
+                    **jargon_list_row_to_dict(row, session, chat_name_cache),
+                    **inference_state_fields(state_by_id.get(row["id"])),
+                }
+                for row in page_rows
+            ]
 
         return JargonListResponse(
             success=True,
@@ -902,9 +926,7 @@ def get_chat_list(include_empty: bool = Query(False, description="是否包含�
             display_name_cache = {
                 chat_session.session_id: chat_session_to_display_name(chat_session) for chat_session in chat_sessions
             }
-            orphan_session_ids = [
-                session_id for session_id in seen_session_ids if session_id not in display_name_cache
-            ]
+            orphan_session_ids = [session_id for session_id in seen_session_ids if session_id not in display_name_cache]
             display_name_cache.update(
                 build_session_display_name_cache(orphan_session_ids, session, include_message_fallback=True)
             )
@@ -934,11 +956,13 @@ def get_chat_list(include_empty: bool = Query(False, description="是否包含�
                 )
 
             # 聚合最新消息时间，包含旧黑话保留但已不在会话表中的聊天。
-            latest_message_times = dict(session.exec(
-                select(Messages.session_id, func.max(Messages.timestamp))
-                .where(col(Messages.session_id).in_(chat_by_session_id))
-                .group_by(col(Messages.session_id))
-            ).all())
+            latest_message_times = dict(
+                session.exec(
+                    select(Messages.session_id, func.max(Messages.timestamp))
+                    .where(col(Messages.session_id).in_(chat_by_session_id))
+                    .group_by(col(Messages.session_id))
+                ).all()
+            )
 
         result = sorted(chat_by_session_id.values(), key=lambda item: (item.chat_name, item.session_id))
         result.sort(key=lambda item: latest_message_times.get(item.session_id, datetime.min), reverse=True)
@@ -954,7 +978,9 @@ def get_jargon_groups() -> JargonGroupListResponse:
     """按黑话共享配置解析组成员，不生成新的会话 ID。"""
     chats = {chat.session_id: chat for chat in get_chat_list(include_empty=True).data}
     groups: List[JargonGroupInfo] = []
-    for index, group in enumerate(group for group in list_groups() if group["enabled"] and group["capabilities"].get("jargon")):
+    for index, group in enumerate(
+        group for group in list_groups() if group["enabled"] and group["capabilities"].get("jargon")
+    ):
         session_ids = resolved_members(group)
         is_global = any(rule == {"platform": "*", "item_id": "*", "rule_type": "all"} for rule in group["rules"])
         resolved_ids = sorted(session_ids)
@@ -996,9 +1022,7 @@ def get_jargon_stats() -> JargonStatsResponse:
                 select(func.count()).select_from(Jargon).where(effective_jargon_condition())
             ).one()
             confirmed_not_jargon = session.exec(
-                select(func.count())
-                .select_from(Jargon)
-                .where(no_jargon_condition())
+                select(func.count()).select_from(Jargon).where(no_jargon_condition())
             ).one()
             pending = session.exec(
                 select(func.count()).select_from(Jargon).where(col(Jargon.is_jargon).is_(None))
@@ -1130,15 +1154,13 @@ def import_jargons(request: JargonImportRequest) -> JargonImportResponse:
                     continue
 
                 if request.conflict_strategy == "overwrite":
+                    delete_inference_metadata(session, [item.id for item in overlapping_jargons if item.id is not None])
                     for existing_jargon in overlapping_jargons:
                         session.delete(existing_jargon)
                     if overlapping_jargons:
                         session.flush()
 
-                session_counts = {
-                    session_id: max(item.count, 1)
-                    for session_id in target_session_ids
-                }
+                session_counts = {session_id: max(item.count, 1) for session_id in target_session_ids}
                 jargon = Jargon(
                     content=content,
                     meaning=meaning,
@@ -1183,12 +1205,15 @@ def get_jargon_detail(jargon_id: int) -> JargonDetailResponse:
     """
     try:
         with get_db_session() as session:
-            row = session.execute(
-                build_jargon_compatible_select().where(col(Jargon.id) == jargon_id)
-            ).mappings().first()
+            row = (
+                session.execute(build_jargon_compatible_select().where(col(Jargon.id) == jargon_id)).mappings().first()
+            )
             if row is None:
                 raise HTTPException(status_code=404, detail="黑话不存在")
-            data = JargonResponse(**jargon_list_row_to_dict(row, session))
+            data = JargonResponse(
+                **jargon_list_row_to_dict(row, session),
+                **inference_state_fields(session.get(JargonInferenceState, jargon_id)),
+            )
 
         return JargonDetailResponse(success=True, data=data)
 
@@ -1215,8 +1240,10 @@ def create_jargon(request: JargonCreateRequest) -> JargonCreateResponse:
             raise HTTPException(status_code=400, detail="黑话内容不能为空")
         meaning = (request.meaning or "").strip()
 
-        raw_session_ids = request.session_ids if request.session_ids is not None else (
-            [request.session_id] if request.session_id else []
+        raw_session_ids = (
+            request.session_ids
+            if request.session_ids is not None
+            else ([request.session_id] if request.session_id else [])
         )
         # 全局黑话不要求来源聊天；兼容已有调用方提供的真实来源聊天。
         session_ids = require_existing_session_ids(raw_session_ids) if raw_session_ids or not request.is_global else []
@@ -1240,10 +1267,13 @@ def create_jargon(request: JargonCreateRequest) -> JargonCreateResponse:
                 if normalize_jargon_created_by(existing_jargon.created_by, existing_jargon.id) != JargonCreatedBy.AI:
                     continue
                 if not (
-                    existing_jargon.is_global if request.is_global
+                    existing_jargon.is_global
+                    if request.is_global
                     else scopes_overlap(existing_jargon, target_session_ids, False)
                 ):
                     continue
+                if existing_jargon.id is not None:
+                    delete_inference_metadata(session, [existing_jargon.id])
                 session.delete(existing_jargon)
                 replaced_ai_count += 1
 
@@ -1308,12 +1338,20 @@ def update_jargon(jargon_id: int, request: JargonUpdateRequest) -> JargonUpdateR
                 if "is_jargon" in update_data:
                     jargon.is_jargon = update_data["is_jargon"]
                 if "created_by" in update_data and update_data["created_by"] is not None:
+                    # 显式切回 AI 维护时保留用户选择；其余人工编辑默认受到保护。
                     jargon.created_by = update_data["created_by"]
+                elif {"meaning", "content", "is_jargon", "session_id", "session_ids", "is_global"}.intersection(
+                    update_data
+                ):
+                    jargon.created_by = JargonCreatedBy.MANUAL
                 jargon.updated_timestamp = datetime.now()
                 session.add(jargon)
 
             logger.info(f"更新黑话成功: id={jargon_id}")
-            data = JargonResponse(**jargon_to_dict(jargon, session))
+            data = JargonResponse(
+                **jargon_to_dict(jargon, session),
+                **inference_state_fields(session.get(JargonInferenceState, jargon_id)),
+            )
 
         return JargonUpdateResponse(success=True, message="更新成功", data=data)
 
@@ -1341,6 +1379,7 @@ def delete_jargon(jargon_id: int) -> JargonDeleteResponse:
                 raise HTTPException(status_code=404, detail="黑话不存在")
 
             content = jargon.content
+            delete_inference_metadata(session, [jargon_id])
             session.delete(jargon)
 
             logger.info(f"删除黑话成功: id={jargon_id}, content={content}")
@@ -1369,6 +1408,7 @@ def batch_delete_jargons(request: BatchDeleteRequest) -> JargonDeleteResponse:
             raise HTTPException(status_code=400, detail="ID列表不能为空")
 
         with get_db_session() as session:
+            delete_inference_metadata(session, request.ids)
             result = session.exec(delete(Jargon).where(col(Jargon.id).in_(request.ids)))
             deleted_count = result.rowcount or 0
 
@@ -1409,6 +1449,7 @@ def batch_set_jargon_status(
             jargons = session.exec(select(Jargon).where(col(Jargon.id).in_(ids))).all()
             for jargon in jargons:
                 jargon.is_jargon = is_jargon
+                jargon.created_by = JargonCreatedBy.MANUAL
                 jargon.updated_timestamp = datetime.now()
                 session.add(jargon)
             updated_count = len(jargons)

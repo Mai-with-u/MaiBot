@@ -4279,12 +4279,99 @@ class ExpressionConfig(ConfigBase):
     """不学习来源指向这些用户消息的表达；按平台和用户 ID 精确匹配，仍保留聊天上下文。"""
 
 
+class JargonInferenceConfig(ConfigBase):
+    """黑话含义的自动触发、批量任务与定期更新。"""
+
+    __ui_label__ = "含义推断"
+
+    thresholds: List[int] = Field(
+        default_factory=lambda: [4, 8, 25, 100],
+        min_length=1,
+        max_length=64,
+        json_schema_extra={"label": "累计命中次数阈值"},
+    )
+    """_wrap_严格递增的正整数；达到或超过阈值时推断。一次学习批次命中已有词条记一次，新词条从 1 开始，不是消息条数或证据组数。"""
+
+    stop_after_last_threshold: bool = Field(
+        default=True, json_schema_extra={"label": "最高阈值后停止次数触发", "x-widget": "switch"}
+    )
+    """达到最高阈值后停止按次数推断；关闭后，每新增最后一个阈值数量的命中次数再次推断。手动和定期推断独立生效。"""
+
+    max_concurrency: int = Field(default=2, ge=1, le=16, json_schema_extra={"label": "最大并发词条数"})
+    """手动、次数触发与定时任务共用的最大并发数。"""
+
+    request_interval_seconds: float = Field(
+        default=1.0, ge=0, le=3600, json_schema_extra={"label": "模型请求最小间隔（秒）"}
+    )
+    """所有推断阶段的模型请求共用此间隔；一个词条可能请求模型多次。"""
+
+    max_retries: int = Field(default=2, ge=0, le=5, json_schema_extra={"label": "请求失败重试次数"})
+    """仅对模型请求或解析失败重试，信息不足或缺少证据不立即重试。"""
+
+    scheduled_enabled: bool = Field(default=False, json_schema_extra={"label": "启用定期推断", "x-widget": "switch"})
+    """定期筛选符合范围和更新间隔的词条进行推断。"""
+
+    scan_interval_hours: float = Field(
+        default=24.0, ge=1.0 / 60.0, le=8760, json_schema_extra={"label": "定期扫描间隔（小时）"}
+    )
+    """两轮后台扫描之间的最小间隔。"""
+
+    refresh_interval_hours: float = Field(
+        default=168.0, ge=0, le=8760, json_schema_extra={"label": "词条更新间隔（小时）"}
+    )
+    """定期更新同一个词条的最小间隔。手动推断不受此项限制。"""
+
+    require_new_evidence: bool = Field(
+        default=True, json_schema_extra={"label": "定期推断要求新证据", "x-widget": "switch"}
+    )
+    """没有新的有效聊天证据时跳过定期推断；关闭后可重新使用保留的证据。"""
+
+    scheduled_scope: Literal["pending", "all", "failed"] = Field(
+        default="pending",
+        json_schema_extra={
+            "label": "定期推断范围",
+            "option_labels": {"pending": "含义为空", "all": "全部 AI 词条", "failed": "失败或信息不足"},
+        },
+    )
+    """pending 仅处理空含义，all 包括已有 AI 含义，failed 处理请求失败、信息不足或缺少证据的词条。"""
+
+    scheduled_session_ids: List[str] = Field(default_factory=list, json_schema_extra={"label": "定期推断聊天流范围"})
+    """使用已有聊天流 ID 限定范围，留空表示全部聊天。"""
+
+    max_items_per_scan: int = Field(default=100, ge=1, le=10000, json_schema_extra={"label": "每轮最多处理词条数"})
+    """限制定期扫描每轮、阈值补扫每批的词条数量。"""
+
+    job_retention_days: int = Field(default=7, ge=1, le=365, json_schema_extra={"label": "已结束任务保留天数"})
+    """按结束时间保留任务记录。到期后可按需发起新推断，活动任务和含义历史不受影响。"""
+
+    evidence_limit: int = Field(default=50, ge=1, le=200, json_schema_extra={"label": "证据上下文组上限"})
+    """每个词条保留和使用的证据上下文组上限。"""
+
+    history_limit: int = Field(default=20, ge=1, le=200, json_schema_extra={"label": "含义变更历史上限"})
+    """每个词条保留的最近含义变更条数。"""
+
+    def model_post_init(self, context: Optional[object] = None) -> None:
+        """配置中的次数阈值须具有明确且唯一的执行顺序。"""
+        super().model_post_init(context)
+        if any(value <= 0 for value in self.thresholds) or any(
+            previous >= current for previous, current in zip(self.thresholds, self.thresholds[1:], strict=False)
+        ):
+            raise ValueError("黑话推断阈值必须为严格递增的正整数")
+        if any(not session_id.strip() or session_id != session_id.strip() for session_id in self.scheduled_session_ids):
+            raise ValueError("定期推断聊天流 ID 须非空且无首尾空白")
+        if len(self.scheduled_session_ids) != len(set(self.scheduled_session_ids)):
+            raise ValueError("定期推断聊天流 ID 不能重复")
+
+
 class JargonConfig(ConfigBase):
     """黑话配置类"""
 
     __ui_parent__ = "expression"
     __ui_label__ = "黑话"
     __ui_sub_label__ = "黑话"
+
+    inference: JargonInferenceConfig = Field(default_factory=JargonInferenceConfig)
+    """黑话含义推断的触发阈值、任务额度和定期更新设置。"""
 
     learning_list: list[LearningItem] = Field(
         default_factory=lambda: [

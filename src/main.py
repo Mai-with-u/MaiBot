@@ -210,6 +210,13 @@ class MainSystem:
         logger.info(t("startup.chat_manager_initialized"))
         await memory_automation_service.start()
 
+        from src.learners.jargon_inference_service import get_jargon_inference_service
+
+        try:
+            await get_jargon_inference_service().start()
+        except Exception:
+            logger.exception("黑话推断服务启动失败，任务数据已保留；推断接口暂不可用，继续初始化其他组件")
+
         from src.agent.service import agent_service
         from src.desktop_pet.service import desktop_pet_service
 
@@ -297,6 +304,14 @@ async def main() -> None:
         from src.desktop_pet.service import desktop_pet_service
 
         request_shutdown("main_finally")
+        from src.learners.jargon_inference_service import get_jargon_inference_service
+
+        inference_stop_error: Optional[Exception] = None
+        try:
+            await get_jargon_inference_service().stop()
+        except Exception as exc:
+            inference_stop_error = exc
+            logger.exception("黑话推断服务关停失败，继续关闭 HTTP 和其他组件")
         from src.common.http_service.console import close_console
 
         await close_console()
@@ -330,6 +345,8 @@ async def main() -> None:
         await get_mcp_service().close()
         await config_manager.stop_file_watcher()
         set_main_loop(None)
+        if inference_stop_error is not None:
+            raise RuntimeError("黑话推断服务未完成关停") from inference_stop_error
 
 
 if __name__ == "__main__":

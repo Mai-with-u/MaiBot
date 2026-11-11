@@ -1,6 +1,6 @@
 # raise RuntimeError("System Not Ready")
 from pathlib import Path
-from typing import TypeVar
+from typing import Set, TypeVar
 
 import asyncio
 import os
@@ -34,6 +34,7 @@ _active_main_task: asyncio.Task[None] | None = None
 _shutdown_signal_count: int = 0
 _shutdown_task: asyncio.Task[bool] | None = None
 _shutdown_deadline: float | None = None
+_pending_shutdown_steps: Set[asyncio.Future] = set()
 SHUTDOWN_TIMEOUT = 50.0  # 为宿主 60 秒的 Worker 关闭预算保留余量。
 IMAGE_SYNC_TIMEOUT = 5.0
 MEMORY_WRITER_TIMEOUT = 5.0
@@ -187,6 +188,7 @@ def print_opensource_notice():
 def easter_egg():
     # 彩蛋
     from colorama import Fore, Style
+
     text = t("startup.easter_egg")
     rainbow_colors = [Fore.RED, Fore.YELLOW, Fore.GREEN, Fore.CYAN, Fore.BLUE, Fore.MAGENTA]
     rainbow_text = ""
@@ -195,7 +197,12 @@ def easter_egg():
     print(rainbow_text + Style.RESET_ALL)
 
 
+class _ShutdownStepIncomplete(RuntimeError):
+    """关停步骤仍在运行或没有预算启动，禁止继续销毁其依赖。"""
+
+
 async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
+    """按预算排空组件再关闭依赖；未排空则失败退出，持久任务由重启恢复。"""
     global _shutdown_deadline
     shutdown_deadline = time.monotonic() + SHUTDOWN_TIMEOUT
     # 前置关闭（含图片同步）共享 10 秒，不能挤占写入者、内核和最终任务清理的预算。
@@ -211,31 +218,30 @@ async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
         from src.desktop_pet.service import desktop_pet_service
 
         # 先关闭广播入口，后续关停日志只写文件/终端，不再派生 WebSocket 任务。
-        success = (
-            await _await_shutdown_step(stop_ws_broadcasts(), timeout=2.0, step_name="停止日志广播") and success
-        )
+        success = await _await_shutdown_step(stop_ws_broadcasts(), timeout=2.0, step_name="停止日志广播") and success
 
         if main_system is not None and main_system.app is not None:
             success = (
                 await _await_shutdown_step(main_system.app.stop(), timeout=5.0, step_name="停止消息入口") and success
             )
-        # 先停止桌宠轮询和主动唤醒，窗口退出时仍可调用插件关闭钩子。
+        from src.learners.jargon_inference_service import get_jargon_inference_service
+
+        # CLI 入口直接运行 MainSystem，须在插件和存储关闭前停止推断并等待任务状态落盘。
         success = (
-            await _await_shutdown_step(desktop_pet_service.stop(), timeout=6.0, step_name="停止桌宠") and success
+            await _await_shutdown_step(get_jargon_inference_service().stop(), timeout=5.0, step_name="停止黑话推断")
+            and success
         )
+        # 先停止桌宠轮询和主动唤醒，窗口退出时仍可调用插件关闭钩子。
+        success = await _await_shutdown_step(desktop_pet_service.stop(), timeout=6.0, step_name="停止桌宠") and success
         # 消息生产者先于插件、电脑及存储关闭，避免在依赖销毁后继续调用工具。
         success = (
-            await _await_shutdown_step(heartflow_manager.shutdown(), timeout=5.0, step_name="停止聊天循环")
-            and success
+            await _await_shutdown_step(heartflow_manager.shutdown(), timeout=5.0, step_name="停止聊天循环") and success
         )
 
         from src.agent.service import agent_service
 
         # 实际 CLI 入口不经过 src.main.main 的 finally，在此停止外接 Agent。
-        success = (
-            await _await_shutdown_step(agent_service.stop(), timeout=8.0, step_name="停止外接 Agent")
-            and success
-        )
+        success = await _await_shutdown_step(agent_service.stop(), timeout=8.0, step_name="停止外接 Agent") and success
 
         # 关闭公共 HTTP 服务器（包含文件传输和可选 WebUI）
         if main_system is not None and main_system.http_server is not None:
@@ -292,7 +298,7 @@ async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
         from src.emoji_system.emoji_manager import emoji_manager
         from src.mcp_module.service import get_mcp_service
 
-        # 分阶段推进截止时间；前一阶段超时后，关键协程仍有非零执行窗口。
+        # 前置关停阶段完成后才开放预留预算；不能跳过尚未启动的生产者关停来关闭存储。
         _shutdown_deadline += MEMORY_WRITER_TIMEOUT
         success = (
             await _await_shutdown_step(
@@ -344,13 +350,17 @@ async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
                 from src.common.shutdown_diagnostics import shutdown_step
 
                 with shutdown_step("取消剩余任务"):
-                    await asyncio.wait_for(
-                        asyncio.gather(*remaining_tasks, return_exceptions=True), timeout=_shutdown_time_left(5.0)
-                    )
-                logger.info(t("startup.remaining_tasks_cancelled"))
-            except asyncio.TimeoutError:
-                logger.warning(t("startup.remaining_tasks_cancel_timeout"))
-                success = False
+                    done, pending = await asyncio.wait(remaining_tasks, timeout=_shutdown_time_left(5.0))
+                for task in done:
+                    if not task.cancelled():
+                        task.exception()
+                if pending:
+                    for task in pending:
+                        _remember_shutdown_step(task)
+                    logger.warning(t("startup.remaining_tasks_cancel_timeout"))
+                    success = False
+                else:
+                    logger.info(t("startup.remaining_tasks_cancelled"))
             except Exception as e:
                 logger.error(t("startup.remaining_tasks_cancel_error", error=e))
                 success = False
@@ -361,6 +371,10 @@ async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
             logger.error("应用优雅关闭未完成；退出状态为失败")
         return success
 
+    except _ShutdownStepIncomplete as exc:
+        # 不关闭仍可能被在途写回使用的依赖；Worker 以失败状态退出，由持久任务恢复中断状态。
+        logger.error(f"{exc}；停止后续依赖清理，退出后可在重启时恢复中断任务")
+        return False
     except Exception as e:
         logger.error(t("startup.shutdown_failed", error=e), exc_info=True)
         return False
@@ -372,26 +386,85 @@ def _shutdown_time_left(step_timeout: float) -> float:
     return min(step_timeout, max(0.0, _shutdown_deadline - time.monotonic()))
 
 
-async def _await_shutdown_step(awaitable, *, timeout: float, step_name: str) -> bool:
-    """步骤共享当前阶段预算；不响应取消/阻塞事件循环的代码最终由宿主有界终止。"""
+def _finish_shutdown_step(task: asyncio.Future) -> None:
+    """回收已结束步骤的句柄和异常；未结束步骤一直由 Worker 持有至退出。"""
+    _pending_shutdown_steps.discard(task)
+    if not task.cancelled() and (error := task.exception()) is not None:
+        logger.warning(f"超时关停步骤结束时失败: {error}")
 
+
+def _remember_shutdown_step(task: asyncio.Future) -> None:
+    """保留尚未结束步骤，避免取消后的清理任务丢失所有者或产生未处理异常。"""
+    _pending_shutdown_steps.add(task)
+    task.add_done_callback(_finish_shutdown_step)
+
+
+async def _await_shutdown_step(awaitable, *, timeout: float, step_name: str) -> bool:
+    """按阶段预算等待，未完成则阻止依赖先关闭；同步阻塞仍由宿主回收进程。"""
+    remaining = _shutdown_time_left(timeout)
+    if remaining <= 0:
+        if asyncio.iscoroutine(awaitable):
+            awaitable.close()
+        else:
+            task = asyncio.ensure_future(awaitable)
+            task.cancel()
+            _remember_shutdown_step(task)
+        raise _ShutdownStepIncomplete(f"{step_name} 无剩余关停预算")
+
+    task: asyncio.Future | None = None
     try:
         from src.common.shutdown_diagnostics import shutdown_step
 
         with shutdown_step(step_name):
-            await asyncio.wait_for(awaitable, timeout=_shutdown_time_left(timeout))
+            task = asyncio.ensure_future(awaitable)
+            done, _ = await asyncio.wait({task}, timeout=remaining)
+        if task not in done:
+            task.cancel()
+            # 给可合作取消的步骤一个调度机会，但不等待吞取消的清理或数据库线程。
+            await asyncio.sleep(0)
+            if not task.done():
+                _remember_shutdown_step(task)
+                raise _ShutdownStepIncomplete(f"{step_name} 超时且尚未完成关停")
+            _finish_shutdown_step(task)
+            logger.warning(f"{step_name} 超时，继续执行后续关停步骤")
+            return False
+        task.result()
         return True
-    except asyncio.TimeoutError:
-        logger.warning(f"{step_name} 超时，继续执行后续关停步骤")
-        return False
-    except asyncio.CancelledError:
+    except _ShutdownStepIncomplete:
+        raise
+    except asyncio.CancelledError as exc:
         # 当前关闭任务收到 cancel() 时仍向上传播；子步骤的取消不能跳过后续清理。
         current_task = asyncio.current_task()
+        if task is None:
+            if asyncio.iscoroutine(awaitable):
+                awaitable.close()
+            else:
+                task = asyncio.ensure_future(awaitable)
+                task.cancel()
+                _remember_shutdown_step(task)
+            if current_task is not None and current_task.cancelling():
+                raise
+            raise _ShutdownStepIncomplete(f"{step_name} 准备阶段被取消，组件尚未关停") from exc
         if current_task is not None and current_task.cancelling():
+            task.cancel()
+            if not task.done():
+                _remember_shutdown_step(task)
             raise
         logger.warning(f"{step_name} 内部任务被取消，继续执行后续关停步骤")
         return False
     except Exception as exc:
+        if task is None:
+            if asyncio.iscoroutine(awaitable):
+                awaitable.close()
+            else:
+                task = asyncio.ensure_future(awaitable)
+                task.cancel()
+                _remember_shutdown_step(task)
+            raise _ShutdownStepIncomplete(f"{step_name} 无法开始关停: {exc}") from exc
+        if not task.done():
+            task.cancel()
+            _remember_shutdown_step(task)
+            raise _ShutdownStepIncomplete(f"{step_name} 等待失败且尚未完成关停: {exc}") from exc
         logger.warning(f"{step_name} 失败，继续执行后续关停步骤: {exc}", exc_info=True)
         return False
 
@@ -579,6 +652,6 @@ if __name__ == "__main__":
         if worker_signals is not None:
             worker_signals.__exit__(None, None, None)
 
-        # 使用 os._exit() 强制退出，避免被阻塞
-        # 由于已经在 graceful_shutdown() 中完成了所有清理工作，这是安全的
+        # 成功时依赖已排空；失败时保留非零状态，避免解释器再次无限等待未结束的清理线程。
+        # 尚未标记完成的持久任务由下次启动恢复，不把强制退出宣称为优雅关闭成功。
         os._exit(exit_code)

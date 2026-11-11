@@ -48,6 +48,8 @@ export interface UseDataListResult<TItem, TFilters, TId> {
   totalPages: number
   isPending: boolean
   isFetching: boolean
+  /** 切换参数后是否暂时展示上一组查询结果。 */
+  isPlaceholderData: boolean
   isError: boolean
   error: Error | null
   refetch: () => void
@@ -61,6 +63,7 @@ export interface UseDataListResult<TItem, TFilters, TId> {
   setPageSize: (n: number) => void
   // 搜索（受控输入；内部防抖值驱动查询，变更重置页码并清空选中）
   searchInput: string
+  isSearchPending: boolean
   setSearchInput: (value: string) => void
   // 筛选（泛型袋；setFilter 自动重置页码并清空选中）
   filters: TFilters
@@ -76,6 +79,7 @@ export interface UseDataListResult<TItem, TFilters, TId> {
   selectedCount: number
 }
 
+/** 用当前分页和筛选驱动查询，同时保留上一次结果供列表过渡展示。 */
 export function useDataList<TItem, TFilters, TId = string>(
   config: UseDataListConfig<TItem, TFilters, TId>
 ): UseDataListResult<TItem, TFilters, TId> {
@@ -228,6 +232,7 @@ export function useDataList<TItem, TFilters, TId = string>(
     totalPages,
     isPending: query.isPending,
     isFetching: query.isFetching,
+    isPlaceholderData: query.isPlaceholderData,
     isError: query.isError,
     error: query.error,
     refetch: query.refetch,
@@ -238,6 +243,7 @@ export function useDataList<TItem, TFilters, TId = string>(
     pageSize,
     setPageSize,
     searchInput,
+    isSearchPending: searchInput !== search,
     setSearchInput,
     filters,
     setFilter,

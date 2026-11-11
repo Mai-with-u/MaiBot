@@ -1,3 +1,4 @@
+import { InferenceStatus } from './JargonInferenceStatus'
 import { Check, Edit, Globe, HelpCircle, Trash2, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 
@@ -211,6 +212,14 @@ export function JargonList({
                     ) : (
                       <span className="text-muted-foreground">-</span>
                     )}
+                    {jargon.inference_status && (
+                      <div
+                        className="text-muted-foreground mt-1 text-xs"
+                        title={jargon.inference_reason}
+                      >
+                        <InferenceStatus status={jargon.inference_status} />
+                      </div>
+                    )}
                   </TableCell>
                   {!hideChatColumn && (
                     <TableCell
@@ -291,6 +300,11 @@ export function JargonList({
                   )}
                   <div className="flex flex-wrap items-center gap-2 text-xs">
                     {renderJargonStatus(jargon)}
+                    {jargon.inference_status && (
+                      <Badge variant="outline">
+                        <InferenceStatus status={jargon.inference_status} />
+                      </Badge>
+                    )}
                     {renderManualMarker(jargon.created_by, true)}
                     <span className="text-muted-foreground">次数: {jargon.count}</span>
                   </div>
