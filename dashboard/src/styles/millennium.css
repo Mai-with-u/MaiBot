@@ -729,6 +729,19 @@
   opacity: 1;
 }
 
+:root[data-dashboard-style='millennium'] [data-dashboard-info-trigger='true'] {
+  background-color: var(--mil-key);
+  border-radius: 0;
+  box-shadow: inset 1px 1px 0 var(--mil-key-hi),
+    inset -1px -1px 0 var(--mil-key-side),
+    1px 1px 0 var(--mil-drop);
+  color: var(--mil-ink);
+}
+
+:root[data-dashboard-style='millennium'] [data-dashboard-info-trigger='true']:hover {
+  background-color: var(--mil-key-hover);
+}
+
 :root[data-dashboard-style='millennium']
   :is(
     [data-dashboard-floating-content='true'],

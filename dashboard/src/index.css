@@ -347,7 +347,7 @@
     --color-secondary: 188.5 35% 96%;
     --color-secondary-foreground: 222.2 47.4% 11.2%;
     --color-muted: 188.5 12% 96%;
-    --color-muted-foreground: 188.5 20% 46.9%;
+    --color-muted-foreground: 188.5 20% 40%;
     --color-accent: 112.7 40.2% 47.8%;
     --color-accent-foreground: 210 40% 98%;
     --color-destructive: 0 84.2% 45%;
@@ -358,8 +358,8 @@
     --color-card-foreground: 222.2 84% 4.9%;
     --color-popover: 188.5 16% 99.3%;
     --color-popover-foreground: 222.2 84% 4.9%;
-    --color-border: 188.5 20% 91.4%;
-    --color-input: 188.5 20% 91.4%;
+    --color-border: 188.5 20% 89.5%;
+    --color-input: 188.5 16% 83%;
     --color-ring: 28.9 94.8% 45.1%;
     --color-chart-1: 28.9 94.8% 45.1%;
     --color-chart-2: 160 60% 45%;

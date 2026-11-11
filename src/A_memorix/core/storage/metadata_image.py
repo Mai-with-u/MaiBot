@@ -148,6 +148,7 @@ class MetadataImageMixin:
             FROM image_occurrences AS occurrence
             JOIN image_assets AS asset ON asset.asset_id = occurrence.asset_id
             WHERE occurrence.status = 'active' AND asset.status = 'active'
+              AND occurrence.scope_type IN ('chat', 'global')
         """
         params: List[Any] = []
         if chat_ids is not None:

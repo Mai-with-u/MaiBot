@@ -2,13 +2,12 @@
 
 from pathlib import Path
 from typing import Any, Dict, Tuple
-from uuid import uuid4
-
 import json
-import os
 import secrets
 import threading
 import time
+
+from src.common.atomic_file import write_private
 
 
 class HostCredentials:
@@ -25,7 +24,10 @@ class HostCredentials:
 
     @staticmethod
     def _read(path: Path) -> Dict[str, Any]:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError as exc:
+            raise ValueError(f"WebUI 凭据文件无法解析：{path}") from exc
         if not isinstance(data, dict) or not isinstance(data.get("access_token"), str) or not data["access_token"]:
             raise ValueError(f"WebUI 凭据文件无效，拒绝覆盖：{path}")
         if data.get("token_source") not in {"temporary", "configured"}:
@@ -34,16 +36,8 @@ class HostCredentials:
         return data
 
     def _save(self, data: Dict[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_name(f".{self.path.name}.{uuid4().hex}.tmp")
-        try:
-            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                json.dump(data, stream, ensure_ascii=False, indent=2)
-            os.replace(temporary, self.path)
-            self._data = data
-        finally:
-            temporary.unlink(missing_ok=True)
+        write_private(self.path, json.dumps(data, ensure_ascii=False, indent=2))
+        self._data = data
 
     @property
     def token(self) -> str:

@@ -8,7 +8,9 @@ import json
 
 import pytest
 
+from src.common import atomic_file
 from src.plugin_runtime import integration as integration_module
+from src.plugin_runtime import usage_tracker as usage_tracker_module
 from src.plugin_runtime.host.rpc_server import RPCServer
 from src.plugin_runtime.host.supervisor import PluginRunnerSupervisor
 from src.plugin_runtime.integration import PluginRuntimeManager
@@ -67,13 +69,17 @@ async def test_usage_counts_only_running_intervals_and_survives_restart(tmp_path
     "{broken", '{"version":1,"usage_seconds":{"demo":-1}}',
     '{"version":1,"usage_seconds":{"demo":true}}',
     '{"version":1,"usage_seconds":{"demo":NaN}}', '{"version":2,"usage_seconds":{}}',
+    json.dumps({"version": 1, "usage_seconds": {"demo": 10**400}}),
 ])
-async def test_corrupt_usage_is_not_replaced(tmp_path: Path, contents: str) -> None:
+async def test_corrupt_usage_is_quarantined(tmp_path: Path, contents: str) -> None:
     path = tmp_path / "usage.json"
     path.write_text(contents, encoding="utf-8")
-    with pytest.raises(ValueError):
-        await PluginUsageTracker(path).load()
-    assert path.read_text(encoding="utf-8") == contents
+    tracker = PluginUsageTracker(path)
+    await tracker.load()
+    assert tracker.snapshot() == {}
+    assert not path.exists()
+    (backup,) = tmp_path.glob("usage.json.corrupt-*")
+    assert backup.read_text(encoding="utf-8") == contents
 
 
 @pytest.mark.asyncio
@@ -126,10 +132,10 @@ async def test_failed_atomic_replace_preserves_previous_record(tmp_path: Path, m
     await tracker.save()
     original = path.read_bytes()
 
-    def fail_replace(self, target):
+    def fail_replace(source, target):
         raise OSError("disk write failed")
 
-    monkeypatch.setattr(Path, "replace", fail_replace)
+    monkeypatch.setattr(atomic_file, "_replace_once", fail_replace)
     clock.now += 10
     with pytest.raises(OSError, match="disk write failed"):
         await tracker.save()
@@ -220,18 +226,42 @@ async def test_manager_tracks_without_webui_and_flushes_before_restart(tmp_path:
 
 
 @pytest.mark.asyncio
-async def test_manager_exposes_corrupt_record_without_overwriting_it(tmp_path: Path, monkeypatch) -> None:
+async def test_manager_resumes_tracking_after_corrupt_record(tmp_path: Path, monkeypatch) -> None:
+    clock = Clock()
+    manager = PluginRuntimeManager()
+    manager._third_party_supervisor = SimpleNamespace(get_usage_active_plugin_ids=lambda: {"demo"})
+    monkeypatch.setattr(integration_module, "get_instance_root", lambda: tmp_path)
+    monkeypatch.setattr(integration_module, "PluginUsageTracker", lambda path: PluginUsageTracker(path, clock))
+    path = tmp_path / "data/plugin_runtime/plugin_usage.json"
+    path.parent.mkdir(parents=True)
+    contents = bytes(968)
+    path.write_bytes(contents)
+    await manager._start_plugin_usage_tracking()
+    try:
+        clock.now += 12
+        assert manager.get_plugin_usage_seconds() == {"demo": 12}
+    finally:
+        await manager._stop_plugin_usage_tracking()
+    (backup,) = path.parent.glob("plugin_usage.json.corrupt-*")
+    assert backup.read_bytes() == contents
+    restored = PluginUsageTracker(path, clock)
+    await restored.load()
+    assert restored.snapshot() == {"demo": 12}
+
+
+@pytest.mark.asyncio
+async def test_manager_reports_failed_quarantine_without_overwriting_record(tmp_path: Path, monkeypatch) -> None:
     manager = PluginRuntimeManager()
     monkeypatch.setattr(integration_module, "get_instance_root", lambda: tmp_path)
     path = tmp_path / "data/plugin_runtime/plugin_usage.json"
+    path.parent.mkdir(parents=True)
+    contents = b"{broken"
+    path.write_bytes(contents)
+    monkeypatch.setattr(usage_tracker_module, "quarantine_file", Mock(side_effect=PermissionError("access denied")))
+
     await manager._start_plugin_usage_tracking()
     await manager._stop_plugin_usage_tracking()
-    assert manager._plugin_usage_tracker is not None
-    path.write_text("broken", encoding="utf-8")
-    with pytest.raises(ValueError):
-        await manager._start_plugin_usage_tracking()
-    await manager._stop_plugin_usage_tracking()
-    with pytest.raises(RuntimeError, match="计时不可用"):
+    with pytest.raises(RuntimeError, match="access denied"):
         manager.get_plugin_usage_seconds()
     assert manager._plugin_usage_task is None
-    assert path.read_text(encoding="utf-8") == "broken"
+    assert path.read_bytes() == contents

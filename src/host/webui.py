@@ -15,7 +15,10 @@ import asyncio
 import os
 import re
 import socket
+import sqlite3
 import uvicorn
+
+from src.common.logger import get_logger
 
 from .anti_crawler import AntiCrawlerMiddleware, ClientIPResolver, create_robots_txt_response
 from .authentication import HostCredentials
@@ -32,6 +35,7 @@ from .webui_auth import authenticate, register_host_auth
 
 
 _DEVELOPMENT_ORIGINS = frozenset({"http://localhost:7999", "http://127.0.0.1:7999"})
+logger = get_logger("host.webui")
 _DESKTOP_PET_SESSION_HTML = """<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -56,13 +60,14 @@ class UpdateRequest(BaseModel):
 
 
 def create_host_app(
-    supervisor: BotSupervisor, maintenance: HostMaintenance, sessions: HostSessions, credentials: HostCredentials,
+    supervisor: BotSupervisor, maintenance: HostMaintenance,
+    sessions: Optional[HostSessions], credentials: Optional[HostCredentials],
     stopping: asyncio.Event, *, config: HostConfig, static_path: Optional[Path] = None,
+    management_error: str = "",
 ) -> FastAPI:
     """WebUI 关闭时只提供文件传输，不影响适配器下载文件。"""
     proxy = BotProxy(supervisor, sessions)
     workspace = supervisor.workspace
-    management = config.webui_enabled
     get_client_ip = ClientIPResolver(config.trusted_proxies, config.trust_xff).get_client_ip
 
     app = FastAPI(title="MaiBot WebUI", docs_url=None, redoc_url=None, openapi_url=None)
@@ -75,7 +80,7 @@ def create_host_app(
     app.add_middleware(
         AntiCrawlerMiddleware, mode=config.anti_crawler_mode, allowed_ips=config.allowed_ips,
         get_client_ip=get_client_ip,
-        is_authenticated=lambda request: sessions.valid(request.cookies.get(sessions.cookie_name)),
+        is_authenticated=proxy.is_authenticated,
     )
 
     @app.get("/robots.txt", include_in_schema=False)
@@ -102,8 +107,12 @@ def create_host_app(
         return response
 
     register_maim_gateway(app, supervisor)
-    if not management:
+    if not config.webui_enabled or sessions is None or credentials is None:
         register_bot_proxy(app, proxy, management=False)
+        if management_error:
+            @app.get("/api/host/mode")
+            async def unavailable_mode() -> None:
+                raise HTTPException(503, management_error)
         return app
 
     async def require_session(request: Request) -> None:
@@ -310,14 +319,23 @@ class HostWebUI:
         self.hosts = config.bind_hosts()
         self.port = config.port
         self.base_url = config.local_base_url()
-        self.credentials = HostCredentials(supervisor.workspace.host_directory / "webui.json")
-        self.sessions = HostSessions(
-            supervisor.workspace.root, credentials=self.credentials, secure_cookie=config.secure_cookie,
-        )
-        self.management = config.webui_enabled
+        self.credentials: Optional[HostCredentials] = None
+        self.sessions: Optional[HostSessions] = None
+        self.management_error = supervisor.workspace.webui_migration_error if config.webui_enabled else ""
+        if config.webui_enabled and not self.management_error:
+            try:
+                self.credentials = HostCredentials(supervisor.workspace.host_directory / "webui.json")
+                self.sessions = HostSessions(
+                    supervisor.workspace.root, credentials=self.credentials, secure_cookie=config.secure_cookie,
+                )
+            except (OSError, ValueError, sqlite3.Error):
+                self.management_error = "宿主 WebUI 认证初始化失败，请检查宿主日志"
+                logger.exception(f"{self.management_error}：{supervisor.workspace.host_directory}")
+        self.management = self.sessions is not None
         self.static_path = resolve_static_path() if self.management else None
         self.app = create_host_app(
-            supervisor, maintenance, self.sessions, self.credentials, stopping, config=config, static_path=self.static_path,
+            supervisor, maintenance, self.sessions, self.credentials, stopping, config=config,
+            static_path=self.static_path, management_error=self.management_error,
         )
         self._server: Optional[_HostHTTPServer] = None
         self.ssl_certfile = config.ssl_certfile
@@ -357,6 +375,8 @@ class HostWebUI:
             raise
 
     def open_url(self) -> str:
+        if self.sessions is None:
+            raise RuntimeError(self.management_error or "宿主 WebUI 未启用")
         return f"{self.base_url}/bots#ticket={self.sessions.issue_ticket()}"
 
     async def close(self) -> None:

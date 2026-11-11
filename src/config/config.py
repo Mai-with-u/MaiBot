@@ -7,9 +7,11 @@ import copy
 import hashlib
 import inspect
 import os
+import shutil
 import tomlkit
 
 from src.agent.config import AgentConfig
+from src.common.atomic_file import write_private
 from src.common.i18n import t
 from src.common.logger import get_logger
 from src.common.paths import get_instance_root
@@ -73,7 +75,7 @@ BOT_CONFIG_PATH: Path = (CONFIG_DIR / "bot_config.toml").resolve().absolute()
 MODEL_CONFIG_PATH: Path = (CONFIG_DIR / "model_config.toml").resolve().absolute()
 LEGACY_ENV_PATH: Path = (PROJECT_ROOT / ".env").resolve().absolute()
 MMC_VERSION: str = read_project_version(PROJECT_ROOT)
-CONFIG_VERSION: str = "8.16.18"
+CONFIG_VERSION: str = "8.16.19"
 MODEL_CONFIG_VERSION: str = "1.17.26"
 
 logger = get_logger("config")
@@ -735,7 +737,10 @@ def load_config_from_file(
         logger.warning(f"配置文件缺失，正在生成默认配置: {config_path}")
         generate_new_config_file(config_class, config_path, new_ver, override_repr)
     with open(config_path, "r", encoding="utf-8") as f:
-        config_data = tomlkit.load(f)
+        try:
+            config_data = tomlkit.load(f)
+        except (UnicodeError, tomlkit.exceptions.ParseError) as exc:
+            raise ValueError(f"配置文件无法解析：{config_path}") from exc
     inner_table = config_data.get("inner")
     if not isinstance(inner_table, Mapping):
         raise TypeError(t("config.missing_inner_version"))
@@ -887,17 +892,17 @@ def write_config_to_file(
     if isinstance(config, Config) and shared_settings_path() is not None:
         strip_shared_settings(full_config_data)
 
-    # 备份旧文件
+    # 先完成序列化，再备份旧文件；提交前正式路径始终保留原配置。
+    content = tomlkit.dumps(full_config_data)
     if config_path.exists():
         backup_root = config_path.parent / "old"
         backup_root.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S%f")
         backup_path = backup_root / f"{config_path.stem}_{timestamp}.toml"
-        config_path.replace(backup_path)
+        shutil.copy2(config_path, backup_path)
 
     # 写入文件
-    with open(config_path, "w", encoding="utf-8") as f:
-        tomlkit.dump(full_config_data, f)
+    write_private(config_path, content)
 
 
 class _ConfigProxy:

@@ -1,9 +1,12 @@
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import json
 
 import pytest
 
+from src.plugin_runtime import integration as integration_module
 from src.plugin_runtime.builtin_adapter_migration import PLUGIN_ID, migrate_qq_official_adapter
 
 
@@ -106,3 +109,26 @@ def test_invalid_config_keeps_old_installation(instance: Path) -> None:
 def test_fresh_install_does_not_create_credentials(instance: Path) -> None:
     assert migrate_qq_official_adapter() is None
     assert not (instance / "config/builtin_plugins/qq_official_adapter/config.toml").exists()
+
+
+@pytest.mark.asyncio
+async def test_corrupt_legacy_adapter_does_not_prevent_catalog_start(instance, monkeypatch):
+    source = _install(instance, "qq_official_adapter", "0.4.4")
+    (source / "config.toml").write_bytes(bytes(32))
+    manager = integration_module.PluginRuntimeManager()
+    monkeypatch.setattr(integration_module.config_manager.get_global_config().plugin_runtime, "enabled", False)
+    pipeline = AsyncMock(side_effect=lambda _, initial_blocked_plugin_reasons: SimpleNamespace(
+        blocked_plugin_reasons=initial_blocked_plugin_reasons, pending_plugin_ids=set(),
+    ))
+    monkeypatch.setattr(manager._plugin_dependency_pipeline, "execute", pipeline)
+
+    try:
+        await manager.start()
+        await manager._sync_plugin_dependencies([instance / "plugins"])
+        snapshot = await manager.get_plugin_state_snapshot()
+        assert any(entry.plugin_id == PLUGIN_ID for entry in snapshot["plugins"])
+        assert snapshot["statuses"][PLUGIN_ID] == "failed"
+        assert "旧配置无法解析" in snapshot["failure_reasons"][PLUGIN_ID]
+        assert (source / "config.toml").read_bytes() == bytes(32)
+    finally:
+        await manager.stop()

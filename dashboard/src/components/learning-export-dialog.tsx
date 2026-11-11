@@ -37,7 +37,7 @@ interface LearningExportDialogProps {
   kind: 'expression' | 'jargon'
   selectedIds: Set<number>
   chats: { id: string; name: string; targetId?: string | null }[]
-  groups: { id: number; name: string; chatIds: string[]; isGlobal: boolean; details: string }[]
+  groups: { id: string | number; name: string; chatIds: string[]; isGlobal: boolean; details: string }[]
   loading: boolean
   error: boolean
   onRetry: () => void

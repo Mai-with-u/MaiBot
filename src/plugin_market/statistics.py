@@ -7,8 +7,6 @@ import asyncio
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.config.config import MMC_VERSION
-
 from . import sources
 from .errors import MarketError
 
@@ -32,35 +30,29 @@ def normalize_statistics(data: Dict[str, Any]) -> Dict[str, Any]:
     return PluginStatistics.model_validate(data).model_dump()
 
 
-def _parse_snapshot(data: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+def _parse_summary(data: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    records = data.get("stats")
+    if data.get("success") is not True or not isinstance(records, dict):
+        raise ValueError(f"官方统计汇总接口返回格式无效：{data}")
     stats: Dict[str, Dict[str, Any]] = {}
-    for item in data["plugins"]:
-        if item["manifest"].get("manifest_version") != 2:
-            continue
-        record = item.get("stats")
-        if record is None:
-            continue
+    for plugin_id, record in records.items():
         validated = normalize_statistics(record)
-        plugin_id = validated["plugin_id"]
-        if plugin_id in stats:
-            raise ValueError(f"官方统计快照中的插件 ID 重复：{plugin_id}")
+        if validated["plugin_id"] != plugin_id:
+            raise ValueError(f"官方统计汇总返回了不一致的插件记录：{plugin_id} / {validated['plugin_id']}")
         stats[plugin_id] = validated
     return stats
 
 
 async def _snapshot(force_refresh: bool = False) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Any]]:
-    # 官方统计摘要包含飙升榜；与官方清单复用同一缓存和在途请求。
-    response = await sources.request_market(
-        "plugins/summary",
-        {"maibot_version": MMC_VERSION, "compatible_only": "false"},
-        force_refresh,
-    )
-    try:
-        snapshot = await asyncio.to_thread(_parse_snapshot, response)
-    except (KeyError, TypeError, ValueError):
-        sources.market_cache.invalidate(response["source_url"])
-        raise
-    return snapshot, {"source": "official", "source_url": response["source_url"], "cache": response["cache"]}
+    # 只读统计汇总（约 100KB）；插件清单来自 CNB / GitHub，不再经过官方服务。
+    url = f"{sources.MARKET_BASE_URL}/stats/summary"
+
+    def load() -> Dict[str, Dict[str, Any]]:
+        return _parse_summary(sources.GitSource.read_json(url, sources.REQUEST_TIMEOUT, sources.get_shared_ssl_context()))
+
+    # 只有验证成功的数据才能进入缓存；点赞、评分等互动成功后会按 /stats/ 前缀使其失效。
+    snapshot, cache = await asyncio.to_thread(sources.market_cache.get, url, load, sources.MARKET_TTL, force_refresh)
+    return snapshot, {"source": "official", "source_url": url, "cache": cache}
 
 
 async def get_summary(force_refresh: bool = False) -> Dict[str, Any]:

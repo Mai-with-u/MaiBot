@@ -651,82 +651,86 @@ class MemoryIngestService(KernelServiceBase):
                 source_scope.remove(source)
             lease_token = str(claim.get("lease_token", "") or "").strip()
             claimed_revision = int(claim.get("claimed_revision", 0) or 0)
-            try:
-                heartbeat_stop = asyncio.Event()
-                heartbeat_task = asyncio.create_task(
-                    self._maintain_episode_source_lease(
-                        source=source,
-                        lease_token=lease_token,
-                        claimed_revision=claimed_revision,
-                        generation_hash=generation_hash,
-                        lease_seconds=lease_seconds,
-                        stop_event=heartbeat_stop,
-                    )
-                )
+            from src.services.chat_migration_gate import chat_migration_gate
+
+            owner = source.removeprefix("chat_summary:") if source.startswith("chat_summary:") else ""
+            async with chat_migration_gate.activity(owner):
                 try:
-                    source_type = source.split(":", 1)[0]
-                    if profile_policy.should_auto_enqueue_episode(self._cfg, source_type=source_type):
-                        plan = await self.episode_service.plan_source_rebuild(
-                            source,
-                            segmentation_generation=generation,
+                    heartbeat_stop = asyncio.Event()
+                    heartbeat_task = asyncio.create_task(
+                        self._maintain_episode_source_lease(
+                            source=source,
+                            lease_token=lease_token,
+                            claimed_revision=claimed_revision,
+                            generation_hash=generation_hash,
+                            lease_seconds=lease_seconds,
+                            stop_event=heartbeat_stop,
                         )
-                    else:
-                        plan = {
-                            "source": source,
-                            "payloads": [],
-                            "episode_count": 0,
-                            "fallback_count": 0,
-                            "group_count": 0,
-                            "paragraph_count": 0,
-                            "reused_group_count": 0,
-                            "reused_episode_count": 0,
-                            "recomputed_group_count": 0,
-                            "generation_hash": generation_hash,
-                        }
-                finally:
-                    heartbeat_stop.set()
-                    try:
-                        await heartbeat_task
-                    except Exception as heartbeat_exc:
-                        logger.warning(f"Episode 来源租约心跳异常: source={source}, error={heartbeat_exc}")
-                publish_result = await asyncio.to_thread(
-                    self.metadata_store.publish_episode_source_rebuild,
-                    source,
-                    lease_token=lease_token,
-                    claimed_revision=claimed_revision,
-                    generation_hash=generation_hash,
-                    episodes_payloads=list(plan.get("payloads") or []),
-                    empty_group_fingerprints=list(plan.get("empty_group_fingerprints") or []),
-                )
-                if not bool(publish_result.get("published")):
-                    is_superseded = bool(publish_result.get("superseded"))
-                    superseded += int(is_superseded)
-                    unfinished_items.append(
-                        {
-                            "source": source,
-                            "reason": "superseded" if is_superseded else "lease_lost_or_claim_mismatch",
-                        }
                     )
-                    continue
-                item = {key: value for key, value in plan.items() if key != "payloads"}
-                item.update(publish_result)
-                rebuilt_items.append(item)
-                episode_count += int(publish_result.get("episode_count") or 0)
-                fallback_count += int(plan.get("fallback_count") or 0)
-            except Exception as exc:
-                error = str(exc)[:500]
-                retry_count = max(0, int(claim.get("retry_count", 0) or 0))
-                try:
-                    self.metadata_store.fail_episode_source_rebuild(
+                    try:
+                        source_type = source.split(":", 1)[0]
+                        if profile_policy.should_auto_enqueue_episode(self._cfg, source_type=source_type):
+                            plan = await self.episode_service.plan_source_rebuild(
+                                source,
+                                segmentation_generation=generation,
+                            )
+                        else:
+                            plan = {
+                                "source": source,
+                                "payloads": [],
+                                "episode_count": 0,
+                                "fallback_count": 0,
+                                "group_count": 0,
+                                "paragraph_count": 0,
+                                "reused_group_count": 0,
+                                "reused_episode_count": 0,
+                                "recomputed_group_count": 0,
+                                "generation_hash": generation_hash,
+                            }
+                    finally:
+                        heartbeat_stop.set()
+                        try:
+                            await heartbeat_task
+                        except Exception as heartbeat_exc:
+                            logger.warning(f"Episode 来源租约心跳异常: source={source}, error={heartbeat_exc}")
+                    publish_result = await asyncio.to_thread(
+                        self.metadata_store.publish_episode_source_rebuild,
                         source,
                         lease_token=lease_token,
                         claimed_revision=claimed_revision,
-                        error=error,
-                        retry_backoff_seconds=min(300.0, 5.0 * (2**retry_count)),
+                        generation_hash=generation_hash,
+                        episodes_payloads=list(plan.get("payloads") or []),
+                        empty_group_fingerprints=list(plan.get("empty_group_fingerprints") or []),
                     )
-                except Exception as mark_exc:
-                    logger.warning(f"Episode 来源失败状态回写异常: source={source}, error={mark_exc}")
-                failures.append({"source": source, "error": error})
+                    if not bool(publish_result.get("published")):
+                        is_superseded = bool(publish_result.get("superseded"))
+                        superseded += int(is_superseded)
+                        unfinished_items.append(
+                            {
+                                "source": source,
+                                "reason": "superseded" if is_superseded else "lease_lost_or_claim_mismatch",
+                            }
+                        )
+                        continue
+                    item = {key: value for key, value in plan.items() if key != "payloads"}
+                    item.update(publish_result)
+                    rebuilt_items.append(item)
+                    episode_count += int(publish_result.get("episode_count") or 0)
+                    fallback_count += int(plan.get("fallback_count") or 0)
+                except Exception as exc:
+                    error = str(exc)[:500]
+                    retry_count = max(0, int(claim.get("retry_count", 0) or 0))
+                    try:
+                        self.metadata_store.fail_episode_source_rebuild(
+                            source,
+                            lease_token=lease_token,
+                            claimed_revision=claimed_revision,
+                            error=error,
+                            retry_backoff_seconds=min(300.0, 5.0 * (2**retry_count)),
+                        )
+                    except Exception as mark_exc:
+                        logger.warning(f"Episode 来源失败状态回写异常: source={source}, error={mark_exc}")
+                    failures.append({"source": source, "error": error})
 
         if sources is not None:
             unfinished_items.extend(

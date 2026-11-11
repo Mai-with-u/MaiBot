@@ -34,9 +34,9 @@ export function LearningPage() {
   const jargonCreate = useRef<LearningCreateHandle>(null)
   // 新增和导入共用一个入口，放在标签行最右侧，三个页签都看得到。
   const importButton = (
-    <Button size="sm" onClick={() => setImportOpen(true)} title="新增或导入表达方式、黑话和表情包">
+    <Button size="sm" data-learning-create="true" aria-label="添加学习内容" onClick={() => setImportOpen(true)} title="新增或导入表达方式、黑话和表情包">
       <Plus className="h-4 w-4" />
-      添加学习内容
+      <span>添加学习内容</span>
     </Button>
   )
   const createKind = tab === 'expression' || tab === 'jargon' ? tab : null
@@ -59,6 +59,7 @@ export function LearningPage() {
     : (summary) => (
         <DashboardFolderTabBar
           size="large"
+          data-learning-tabs="true"
           aria-label={t('sidebar.menu.learning')}
           trailing={
             <>

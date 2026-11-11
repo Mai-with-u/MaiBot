@@ -31,6 +31,7 @@ import {
 } from '../config/providerTemplates'
 
 import { PERSONALITY_PRESETS } from './personalityPresets'
+import { SetupFlip } from './SetupFlip'
 import type {
   ApiProviderSetupConfig,
   BotBasicConfig,
@@ -149,7 +150,7 @@ export function BotBasicForm({ config, onChange }: BotBasicFormProps) {
 // ====== 步骤2：人格配置 ======
 interface PersonalityFormProps {
   config: PersonalityConfig
-  onChange: (config: PersonalityConfig) => void
+  onChange?: (config: PersonalityConfig) => void
 }
 
 export function PersonalityPresetSelect({ config, onChange, presetId }: {
@@ -202,32 +203,65 @@ export function PersonalityPresetSelect({ config, onChange, presetId }: {
 
 export function PersonalityForm({ config, onChange }: PersonalityFormProps) {
   const { t } = useTranslation()
+  const reducedMotion = useReducedMotion()
   const fields = [
     { key: 'personality', translation: 'personality' },
     { key: 'behavior_style', translation: 'behaviorStyle' },
     { key: 'reply_style', translation: 'replyStyle' },
   ] as const
+  const [focusedField, setFocusedField] = useState<(typeof fields)[number]['key'] | null>(null)
 
   return (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+    <div
+      className={onChange
+        ? 'grid grid-cols-1 gap-4 md:grid-cols-2'
+        : 'custom-scrollbar h-[min(20rem,45dvh)] space-y-4 overflow-y-auto pr-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring'}
+      role={onChange ? undefined : 'region'}
+      aria-label={onChange ? undefined : t('setupPage.steps.personality.templateTitle')}
+      tabIndex={onChange ? undefined : 0}
+    >
       {fields.map(({ key, translation }) => {
         const label = t(`setupPage.forms.personality.${translation}.label`)
-        const placeholder = t(`setupPage.forms.personality.${translation}.placeholder`)
         const description = t(`setupPage.forms.personality.${translation}.description`)
-        return (
-          <div key={key} className={cn('space-y-1', key === 'reply_style' && 'md:col-span-2')}>
-            <div className="flex items-center justify-between gap-2">
+        if (!onChange) {
+          return (
+            <section key={key} className="space-y-1">
               <div className="flex items-center gap-2">
-                <Label htmlFor={key}>{label}</Label>
+                <h2 className="text-sm font-medium">{label}</h2>
                 <InfoTooltip content={description} label={description} />
               </div>
+              <p className="break-words whitespace-pre-wrap text-sm leading-relaxed">{config[key]}</p>
+            </section>
+          )
+        }
+        const placeholder = t(`setupPage.forms.personality.${translation}.placeholder`)
+        const isFocused = focusedField === key
+        return (
+          <div key={key} className={cn('min-w-0 space-y-1', key === 'reply_style' && 'md:col-span-2')}>
+            <div className="flex items-center justify-between gap-2">
+              <AnimatePresence initial={false} mode="wait">
+                <motion.div
+                  key={isFocused ? 'description' : 'label'}
+                  className="flex min-w-0 items-center gap-2"
+                  initial={reducedMotion ? false : { opacity: 0, y: 3 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={reducedMotion ? undefined : { opacity: 0, y: -3 }}
+                  transition={{ duration: reducedMotion ? 0 : 0.1, ease: 'easeInOut' }}
+                >
+                  <Label htmlFor={key} className="leading-snug">
+                    <span className="sr-only">{label}</span>
+                    <span aria-hidden="true">{isFocused ? description : label}</span>
+                  </Label>
+                  {!isFocused && <InfoTooltip content={description} label={description} />}
+                </motion.div>
+              </AnimatePresence>
               <Dialog>
                 <DialogTrigger asChild>
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="size-7"
+                    className="size-7 shrink-0"
                     aria-label={t('setupPage.forms.personality.expand', { field: label })}
                     title={t('setupPage.forms.personality.expand', { field: label })}
                   >
@@ -252,12 +286,14 @@ export function PersonalityForm({ config, onChange }: PersonalityFormProps) {
               </Dialog>
             </div>
             <Textarea
-                    hideScrollbarWhenIdle
+              hideScrollbarWhenIdle
               id={key}
               autoResize={false}
               className="h-[104px] resize-none overflow-y-auto"
               placeholder={placeholder}
               value={config[key]}
+              onFocus={() => setFocusedField(key)}
+              onBlur={() => setFocusedField(null)}
               onChange={(e) => onChange({ ...config, [key]: e.target.value })}
               rows={3}
             />
@@ -272,13 +308,14 @@ export function PersonalityForm({ config, onChange }: PersonalityFormProps) {
 interface ApiProviderSetupFormProps {
   config: ApiProviderSetupConfig
   onChange: (config: ApiProviderSetupConfig) => void
+  initialCustomMode?: boolean
 }
 
-export function ApiProviderSetupForm({ config, onChange }: ApiProviderSetupFormProps) {
+export function ApiProviderSetupForm({ config, onChange, initialCustomMode = false }: ApiProviderSetupFormProps) {
   const { t } = useTranslation()
   const reduceMotion = useReducedMotion()
   const [showApiKey, setShowApiKey] = useState(false)
-  const [customMode, setCustomMode] = useState(false)
+  const [customMode, setCustomMode] = useState(initialCustomMode)
   const [selectedPreset, setSelectedPreset] = useState('deepseek')
   const apiKeyToggleLabel = showApiKey
     ? t('setupPage.forms.apiProvider.apiKey.hide')
@@ -326,51 +363,46 @@ export function ApiProviderSetupForm({ config, onChange }: ApiProviderSetupFormP
     <div className="space-y-4">
       <div className="space-y-2">
         <Label>{t('setupPage.forms.apiProvider.providerName.label')}</Label>
-        {/* 表单纵向切换，按钮留在原位，仅线性调整宽度。 */}
+        {/* 提供商字段绕水平轴切换，切换按钮留在右侧。 */}
         <div className="flex items-center gap-2">
           <div className="min-w-0 flex-1">
-            <AnimatePresence initial={false} mode="wait">
-              <motion.div
-                key={customMode ? 'custom' : 'preset'}
-                initial={{ opacity: 0, y: reduceMotion ? 0 : customMode ? 16 : -16 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: reduceMotion ? 0 : customMode ? 16 : -16 }}
-                transition={{ duration: reduceMotion ? 0 : 0.16, ease: 'linear' }}
-                className="flex gap-2"
-              >
-                {!customMode ? (
-                  <Select value={selectedPreset} onValueChange={selectPreset}>
-                    <SelectTrigger aria-label={t('setupPage.forms.apiProvider.presetSelect')} className="h-11 min-w-0 flex-1">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent position="popper" collisionPadding={12}>
-                      {providerPresets.map((preset) => (
-                        <SelectItem key={preset.id} value={preset.id}>
-                          {preset.display_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <>
-                    <Input
-                      id="provider_name"
-                      className="h-11 min-w-0 flex-1"
-                      placeholder={t('setupPage.forms.apiProvider.providerName.placeholder')}
-                      value={config.provider_name}
-                      onChange={(e) => onChange({ ...config, provider_name: e.target.value })}
-                    />
-                    <Input
-                      aria-label={t('setupPage.forms.apiProvider.baseUrl.label')}
-                      className="h-11 min-w-0 flex-1 font-mono"
-                      placeholder="https://api.example.com/v1"
-                      value={config.base_url}
-                      onChange={(e) => onChange({ ...config, base_url: e.target.value })}
-                    />
-                  </>
-                )}
-              </motion.div>
-            </AnimatePresence>
+            <SetupFlip
+              viewKey={customMode ? 'custom' : 'preset'}
+              direction={customMode ? 1 : -1}
+              className="flex gap-2"
+            >
+              {!customMode ? (
+                <Select value={selectedPreset} onValueChange={selectPreset}>
+                  <SelectTrigger aria-label={t('setupPage.forms.apiProvider.presetSelect')} className="h-11 min-w-0 flex-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent position="popper" collisionPadding={12}>
+                    {providerPresets.map((preset) => (
+                      <SelectItem key={preset.id} value={preset.id}>
+                        {preset.display_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <>
+                  <Input
+                    id="provider_name"
+                    className="h-11 min-w-0 flex-1"
+                    placeholder={t('setupPage.forms.apiProvider.providerName.placeholder')}
+                    value={config.provider_name}
+                    onChange={(e) => onChange({ ...config, provider_name: e.target.value })}
+                  />
+                  <Input
+                    aria-label={t('setupPage.forms.apiProvider.baseUrl.label')}
+                    className="h-11 min-w-0 flex-1 font-mono"
+                    placeholder="https://api.example.com/v1"
+                    value={config.base_url}
+                    onChange={(e) => onChange({ ...config, base_url: e.target.value })}
+                  />
+                </>
+              )}
+            </SetupFlip>
           </div>
           <motion.div
             initial={false}
@@ -426,7 +458,6 @@ export function ApiProviderSetupForm({ config, onChange }: ApiProviderSetupFormP
 // ====== 步骤4：基础模型配置 ======
 interface ModelSetupFormProps {
   role?: 'planner' | 'replyer'
-  definition?: { value: string; onChange: (value: string) => void }
   config: ModelSetupConfig
   onChange: (config: ModelSetupConfig) => void
   models?: ModelListItem[]
@@ -437,7 +468,6 @@ interface ModelSetupFormProps {
 
 export function ModelSetupForm({
   role,
-  definition,
   config,
   onChange,
   models = [],
@@ -504,8 +534,8 @@ export function ModelSetupForm({
   }
 
   const renderModelInput = (role: 'planner' | 'replyer') => {
-    const identifier = definition?.value ?? config[`${role}_model_identifier`]
-    const changeModel = definition?.onChange ?? ((value: string) =>
+    const identifier = config[`${role}_model_identifier`]
+    const changeModel = (value: string) =>
       onChange({
         ...config,
         [`${role}_model_identifier`]: value,
@@ -513,8 +543,8 @@ export function ModelSetupForm({
         [`${role}_thinking`]: providerTemplate?.id === 'deepseek'
           ? role === 'replyer' : inferThinkingEnabled(value),
         [`${role}_reasoning_effort`]: 'high',
-      }))
-    const label = t(definition ? 'setupPage.steps.defineModel.modelLabel' : `setupPage.forms.modelSetup.${role}.identifier.label`)
+      })
+    const label = t(`setupPage.forms.modelSetup.${role}.identifier.label`)
     return (
       <div className="flex min-w-0 items-center gap-2">
         <Input
@@ -552,22 +582,18 @@ export function ModelSetupForm({
           {t('setupPage.forms.modelSetup.fetchFailed', { error: fetchError })}
         </p>
       )}
-      {definition ? (
-        <div className="space-y-2">
-          <Label htmlFor="replyer_model_identifier">{t('setupPage.steps.defineModel.modelLabel')}</Label>
-          {renderModelInput('replyer')}
-        </div>
-      ) : (
       <div className={cn('grid min-w-0 gap-4', !role && 'md:grid-cols-2')}>
         {(role ? [role] : ['planner', 'replyer'] as const).map((item) => (
         <div key={item} className="min-w-0 space-y-3">
           <div className="space-y-2">
-            <Label htmlFor={`${item}_model_identifier`} className="flex items-center gap-1">
+            <Label htmlFor={`${item}_model_identifier`} className={role ? 'sr-only' : 'flex items-center gap-1'}>
               {t(`setupPage.forms.modelSetup.${item}.identifier.label`)}
-              <HelpTooltip
-                content={t(`setupPage.forms.modelSetup.${item}.identifier.description`)}
-                side="right"
-              />
+              {!role && (
+                <HelpTooltip
+                  content={t(`setupPage.forms.modelSetup.${item}.identifier.description`)}
+                  side="right"
+                />
+              )}
             </Label>
             {renderModelInput(item)}
           </div>
@@ -593,7 +619,6 @@ export function ModelSetupForm({
 
         ))}
       </div>
-      )}
     </div>
   )
 }

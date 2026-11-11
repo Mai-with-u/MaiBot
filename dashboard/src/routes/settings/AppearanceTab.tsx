@@ -4,17 +4,16 @@ import { useTranslation } from 'react-i18next'
 import {
   AlertTriangle,
   Download,
-  Keyboard,
   Monitor,
   Moon,
   RotateCcw,
-  ScanLine,
   Sun,
   Trash2,
   Upload,
 } from 'lucide-react'
 
 import { useAnimation } from '@/hooks/use-animation'
+import { DashboardStylePicker } from '@/components/dashboard-style-picker'
 import { useTheme } from '@/components/use-theme'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
@@ -45,7 +44,6 @@ import type { MillenniumCjkFont, MillenniumFont } from '@/lib/theme/millennium-f
 import type {
   BackgroundConfigMap,
   BackgroundEffects,
-  DashboardStyle,
   FutureRetroStyleConfig,
   FutureRetroTextureStyle,
   ThemeTokens,
@@ -80,7 +78,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { SegmentedControl } from '@/components/ui/management'
+import { OptionCard, SegmentedControl } from '@/components/ui/management'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 import { hslToHex } from './types'
@@ -143,49 +141,18 @@ function MillenniumFontCard({
   onSelect: () => void
 }) {
   return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      onClick={onSelect}
-      className={cn(
-        'bg-card hover:border-primary/70 hover:bg-accent/40 rounded-lg border p-4 text-left transition-all',
-        selected && 'border-primary bg-primary/10 shadow-sm'
-      )}
+    <OptionCard
+      selected={selected}
+      onSelect={onSelect}
+      title={option.label}
+      description={option.description}
     >
-      <div className="font-semibold">{option.label}</div>
-      <div className="mt-2 text-2xl leading-tight" style={{ fontFamily: option.fontFamily }}>
+      <span className="block pt-1 text-2xl leading-tight" style={{ fontFamily: option.fontFamily }}>
         {option.sample}
-      </div>
-      <p className="text-muted-foreground mt-1 text-sm">{option.description}</p>
-    </button>
+      </span>
+    </OptionCard>
   )
 }
-
-const dashboardStyleOptions: Array<{
-  value: DashboardStyle
-  label: string
-  description: string
-  icon: typeof Monitor
-}> = [
-  {
-    value: 'modern',
-    label: '原版 Dashboard',
-    description: '保留当前的卡片、圆角、背景和自定义主题能力。',
-    icon: Monitor,
-  },
-  {
-    value: 'future-retro',
-    label: '未来复古',
-    description: '使用一键包外壳同款纸面颗粒、硬朗描边和切角面板。',
-    icon: ScanLine,
-  },
-  {
-    value: 'millennium',
-    label: '千禧',
-    description: '米黄塑料机壳、键帽按钮和下沉屏幕，夜间模式是关灯后的炭灰机壳。',
-    icon: Keyboard,
-  },
-]
 
 const themeModeOptions: Array<{
   value: ThemeMode
@@ -638,41 +605,14 @@ export function AppearanceTab() {
 
       {/* 界面风格 */}
       <div>
-        <h3 className="mb-3 text-base font-semibold sm:mb-4 sm:text-lg">界面风格</h3>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3">
-          {dashboardStyleOptions.map((option) => {
-            const Icon = option.icon
-            const selected = themeConfig.dashboardStyle === option.value
-
-            return (
-              <button
-                key={option.value}
-                type="button"
-                aria-pressed={selected}
-                onClick={() => updateThemeConfig({ dashboardStyle: option.value })}
-                className={cn(
-                  'bg-card hover:border-primary/70 hover:bg-accent/40 rounded-lg border p-4 text-left transition-all',
-                  selected && 'border-primary bg-primary/10 shadow-sm'
-                )}
-              >
-                <div className="flex items-start gap-3">
-                  <div
-                    className={cn(
-                      'bg-background text-muted-foreground rounded-md border p-2',
-                      selected && 'border-primary bg-primary text-primary-foreground'
-                    )}
-                  >
-                    <Icon className="h-5 w-5" />
-                  </div>
-                  <div className="space-y-1">
-                    <div className="font-semibold">{option.label}</div>
-                    <p className="text-muted-foreground text-sm">{option.description}</p>
-                  </div>
-                </div>
-              </button>
-            )
-          })}
-        </div>
+        <h3 className="mb-3 text-base font-semibold sm:mb-4 sm:text-lg">
+          {t('settings.appearance.dashboardStyle')}
+        </h3>
+        <DashboardStylePicker
+          value={dashboardStyle}
+          onChange={(style) => updateThemeConfig({ dashboardStyle: style })}
+          className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3"
+        />
       </div>
 
       {themeConfig.dashboardStyle === 'millennium' && (

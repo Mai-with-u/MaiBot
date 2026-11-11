@@ -27,7 +27,7 @@ describe('useMenuSections', () => {
     const { result } = renderHook(() => useMenuSections())
     const paths = flattenPaths(result.current)
 
-    expect(paths).not.toContain('/agent')
+    expect(paths).not.toContain('/desktop-pet')
     // 其它常规入口不受特性开关影响
     expect(paths).toContain('/')
     expect(paths).toContain('/config/bot')
@@ -40,8 +40,8 @@ describe('useMenuSections', () => {
 
   it('收到配置更新事件后重新拉取并刷新菜单', async () => {
     mockGetBotConfigCached
-      .mockResolvedValueOnce({ agent: { enabled: false } })
-      .mockResolvedValueOnce({ agent: { enabled: true } })
+      .mockResolvedValueOnce({ desktop_pet: { enabled: false } })
+      .mockResolvedValueOnce({ desktop_pet: { enabled: true } })
 
     const { result } = renderHook(() => useMenuSections())
     const initial = result.current
@@ -50,7 +50,7 @@ describe('useMenuSections', () => {
     await waitFor(() => {
       expect(result.current).not.toBe(initial)
     })
-    expect(flattenPaths(result.current)).not.toContain('/agent')
+    expect(flattenPaths(result.current)).not.toContain('/desktop-pet')
 
     // 派发配置更新事件，触发第二次拉取（开关开启）
     act(() => {
@@ -58,7 +58,7 @@ describe('useMenuSections', () => {
     })
 
     await waitFor(() => {
-      expect(flattenPaths(result.current)).toContain('/agent')
+      expect(flattenPaths(result.current)).toContain('/desktop-pet')
     })
     expect(mockGetBotConfigCached).toHaveBeenCalledTimes(2)
   })

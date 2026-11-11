@@ -779,6 +779,7 @@ def _collect_installed_plugins(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     """将静态索引与运行状态快照合并；不读取文件或重新校验插件。"""
     plugins: List[Dict[str, Any]] = []
     seen_ids: Set[str] = set()
+    usage_seconds = snapshot["usage_seconds"]
     for entry in snapshot["plugins"]:
         plugin_id = entry.plugin_id
         if plugin_id in seen_ids:
@@ -796,7 +797,7 @@ def _collect_installed_plugins(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             and load_status not in {"success", "loading", "timed_out", "stopping"}
         ):
             load_status = "disabled"
-        plugins.append({
+        plugin = {
             "id": plugin_id,
             "manifest": entry.manifest,
             "builtin": entry.builtin,
@@ -806,9 +807,11 @@ def _collect_installed_plugins(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             "loaded": load_status == "success",
             "load_status": load_status,
             "status_badges": snapshot.get("status_badges", {}).get(plugin_id, []) if load_status == "success" else [],
-            "usage_seconds": snapshot["usage_seconds"].get(plugin_id, 0.0),
             "load_error": load_error if load_status in {"failed", "timed_out"} else "",
             "circuit_status": snapshot["circuit_statuses"].get(plugin_id),
             "release": entry.release,
-        })
+        }
+        if usage_seconds is not None:
+            plugin["usage_seconds"] = usage_seconds.get(plugin_id, 0.0)
+        plugins.append(plugin)
     return {"success": True, "plugins": plugins, "total": len(plugins)}

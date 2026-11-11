@@ -182,7 +182,7 @@ async def _handle_maisaka_monitor_subscribe(
                 domain="maisaka_monitor",
                 event=str(replay_event["event"]),
                 topic="main",
-                data=cast(Dict[str, Any], replay_event["data"]),
+                data={**cast(Dict[str, Any], replay_event["data"]), "replayed": True},
             )
 
     from src.maisaka.display.stage_status_board import get_stage_status_snapshot
@@ -262,7 +262,7 @@ async def _handle_maisaka_monitor_call(connection_id: str, message: Dict[str, An
             domain="maisaka_monitor",
             event=str(history_event["event"]),
             topic="main",
-            data=cast(Dict[str, Any], history_event["data"]),
+            data={**cast(Dict[str, Any], history_event["data"]), "replayed": True},
         )
     await websocket_manager.send_response(
         connection_id,

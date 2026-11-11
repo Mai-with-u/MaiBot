@@ -10,13 +10,15 @@
 """
 
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Tuple, TypedDict
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, TypedDict
 
 import contextlib
 import re
 
 from src.core.tooling import normalize_tool_description
 from src.common.logger import get_logger
+from src.plugin_runtime.protocol.envelope import ComponentChatScope
+
 from .component_timeout import normalize_component_timeout_ms
 from .hook_spec_registry import HookSpecRegistry
 from .reply_extension_schema import validate_parameter_schema
@@ -61,33 +63,6 @@ class ComponentTypes(str, Enum):
     REPLY_EXTENSION = "REPLY_EXTENSION"
 
 
-ComponentChatScope = Literal["all", "group", "private"]
-
-
-def _normalize_chat_scope(raw_value: Any) -> ComponentChatScope:
-    """规范化组件聊天类型适用范围。"""
-
-    normalized_value = str(raw_value or "all").strip().lower()
-    if normalized_value == "group":
-        return "group"
-    if normalized_value == "private":
-        return "private"
-    return "all"
-
-
-def _normalize_platforms(raw_platforms: Any, component_name: str) -> Set[str]:
-    """注册时校验 Tool 和回复扩展的平台声明，不依赖调用方使用哪个 SDK。"""
-    if raw_platforms is None:
-        raw_platforms = []
-    elif isinstance(raw_platforms, str):
-        raw_platforms = [raw_platforms]
-    if not isinstance(raw_platforms, list) or any(
-        not isinstance(platform, str) or not platform.strip() for platform in raw_platforms
-    ):
-        raise ValueError(f"{component_name} platforms 必须是非空平台名称字符串或字符串列表；省略、None 或 [] 表示不限平台")
-    return {platform.strip().lower() for platform in raw_platforms}
-
-
 class StatusDict(TypedDict):
     total: int
     command: int
@@ -122,7 +97,7 @@ class ComponentEntry:
         component_type: str,
         plugin_id: str,
         metadata: Dict[str, Any],
-        chat_scope: str = "all",
+        chat_scope: ComponentChatScope = "all",
         allowed_session: Optional[List[str]] = None,
     ) -> None:
         self.name: str = name
@@ -133,24 +108,21 @@ class ComponentEntry:
         self.enabled: bool = metadata.get("enabled", True)
         self.timeout_ms: int = normalize_component_timeout_ms(metadata.get("timeout_ms", 0))
         self.disabled_session: Set[str] = set()
-        self.chat_scope: ComponentChatScope = _normalize_chat_scope(chat_scope)
-        self.allowed_session: Set[str] = {
-            str(session_id).strip()
-            for session_id in (allowed_session or [])
-            if str(session_id).strip()
-        }
+        self.chat_scope: ComponentChatScope = chat_scope
+        self.allowed_session: Set[str] = set(allowed_session or [])
 
 class ReplyExtensionEntry(ComponentEntry):
     """随 reply 注册的命名空间参数和回复处理器，platforms 与 Tool 作用域规则一致。"""
 
     def __init__(
         self, name: str, component_type: str, plugin_id: str, metadata: Dict[str, Any],
-        chat_scope: str = "all", allowed_session: Optional[List[str]] = None,
+        chat_scope: ComponentChatScope = "all", allowed_session: Optional[List[str]] = None,
+        *, platforms: Optional[List[str]] = None,
     ) -> None:
         super().__init__(name, component_type, plugin_id, metadata, chat_scope, allowed_session)
-        self.platforms: Set[str] = _normalize_platforms(metadata.get("platforms"), "ReplyExtension")
-        if not name.strip() or chat_scope.strip().lower() not in {"all", "group", "private"}:
-            raise ValueError("回复扩展名称不能为空，chat_scope 必须是 all/group/private")
+        self.platforms: Set[str] = set(platforms or [])
+        if not name.strip():
+            raise ValueError("回复扩展名称不能为空")
         self.generation_prompt = metadata.get("generation_prompt", "")
         if not isinstance(self.generation_prompt, str):
             raise ValueError("generation_prompt 必须是字符串")
@@ -170,7 +142,7 @@ class CommandEntry(ComponentEntry):
         component_type: str,
         plugin_id: str,
         metadata: Dict[str, Any],
-        chat_scope: str = "all",
+        chat_scope: ComponentChatScope = "all",
         allowed_session: Optional[List[str]] = None,
     ) -> None:
         super().__init__(name, component_type, plugin_id, metadata, chat_scope, allowed_session)
@@ -197,10 +169,12 @@ class ToolEntry(ComponentEntry):
         component_type: str,
         plugin_id: str,
         metadata: Dict[str, Any],
-        chat_scope: str = "all",
+        chat_scope: ComponentChatScope = "all",
         allowed_session: Optional[List[str]] = None,
+        *,
+        platforms: Optional[List[str]] = None,
     ) -> None:
-        self.platforms: Set[str] = _normalize_platforms(metadata.get("platforms"), "Tool")
+        self.platforms: Set[str] = set(platforms or [])
         invoke_method = metadata.get("invoke_method", "plugin.invoke_tool")
         if invoke_method not in ("plugin.invoke_tool", "plugin.invoke_action"):
             raise ValueError("工具组件必须通过 plugin.invoke_tool 或 plugin.invoke_action 调用")
@@ -291,7 +265,7 @@ class EventHandlerEntry(ComponentEntry):
         component_type: str,
         plugin_id: str,
         metadata: Dict[str, Any],
-        chat_scope: str = "all",
+        chat_scope: ComponentChatScope = "all",
         allowed_session: Optional[List[str]] = None,
     ) -> None:
         self.event_type: str = metadata.get("event_type", "")
@@ -309,7 +283,7 @@ class HookHandlerEntry(ComponentEntry):
         component_type: str,
         plugin_id: str,
         metadata: Dict[str, Any],
-        chat_scope: str = "all",
+        chat_scope: ComponentChatScope = "all",
         allowed_session: Optional[List[str]] = None,
     ) -> None:
         self.hook: str = self._normalize_hook_name(metadata.get("hook", ""))
@@ -441,7 +415,7 @@ class MessageGatewayEntry(ComponentEntry):
         component_type: str,
         plugin_id: str,
         metadata: Dict[str, Any],
-        chat_scope: str = "all",
+        chat_scope: ComponentChatScope = "all",
         allowed_session: Optional[List[str]] = None,
     ) -> None:
         self.route_type: str = self._normalize_route_type(metadata.get("route_type", ""))
@@ -500,7 +474,7 @@ class HomeCardEntry(ComponentEntry):
         component_type: str,
         plugin_id: str,
         metadata: Dict[str, Any],
-        chat_scope: str = "all",
+        chat_scope: ComponentChatScope = "all",
         allowed_session: Optional[List[str]] = None,
     ) -> None:
         self.title: str = str(metadata.get("title", "") or name).strip()
@@ -648,8 +622,10 @@ class ComponentRegistry:
         component_type: str,
         plugin_id: str,
         metadata: Dict[str, Any],
-        chat_scope: str = "all",
+        chat_scope: ComponentChatScope = "all",
         allowed_session: Optional[List[str]] = None,
+        *,
+        platforms: Optional[List[str]] = None,
     ) -> ComponentEntry:
         """根据声明构造组件条目。
 
@@ -694,10 +670,12 @@ class ComponentRegistry:
                     normalized_metadata,
                     chat_scope,
                     allowed_session,
+                    platforms=platforms,
                 )
             elif normalized_type == ComponentTypes.REPLY_EXTENSION:
                 component = ReplyExtensionEntry(
                     name, normalized_type.value, plugin_id, normalized_metadata, chat_scope, allowed_session,
+                    platforms=platforms,
                 )
             elif normalized_type == ComponentTypes.EVENT_HANDLER:
                 component = EventHandlerEntry(
@@ -795,8 +773,10 @@ class ComponentRegistry:
         component_type: str,
         plugin_id: str,
         metadata: Dict[str, Any],
-        chat_scope: str = "all",
+        chat_scope: ComponentChatScope = "all",
         allowed_session: Optional[List[str]] = None,
+        *,
+        platforms: Optional[List[str]] = None,
     ) -> bool:
         """注册单个组件。
 
@@ -820,6 +800,7 @@ class ComponentRegistry:
             metadata,
             chat_scope,
             allowed_session,
+            platforms=platforms,
         )
         self._add_component_entry(component)
         return True
@@ -848,21 +829,15 @@ class ComponentRegistry:
                 if isinstance(component_data.get("metadata"), dict)
                 else {}
             )
-            chat_scope = str(component_data.get("chat_scope", raw_metadata.pop("chat_scope", "all")) or "all")
-            raw_allowed_session = component_data.get("allowed_session", raw_metadata.pop("allowed_session", []))
-            allowed_session = (
-                [str(item).strip() for item in raw_allowed_session if str(item).strip()]
-                if isinstance(raw_allowed_session, list)
-                else []
-            )
             prepared_components.append(
                 self._build_component_entry(
                     name=str(component_data.get("name", "") or ""),
                     component_type=str(component_data.get("component_type", "") or ""),
                     plugin_id=plugin_id,
                     metadata=raw_metadata,
-                    chat_scope=chat_scope,
-                    allowed_session=allowed_session,
+                    chat_scope=component_data.get("chat_scope", "all"),
+                    allowed_session=component_data.get("allowed_session"),
+                    platforms=component_data.get("platforms"),
                 )
             )
 
@@ -909,7 +884,9 @@ class ComponentRegistry:
                 return False
         if session_id and session_id in component.disabled_session:
             return False
-        if is_group_chat is not None:
+        if is_group_chat is not None or (
+            platform is not None and isinstance(component, (ToolEntry, ReplyExtensionEntry))
+        ):
             if component.chat_scope == "group" and is_group_chat is not True:
                 return False
             if component.chat_scope == "private" and is_group_chat is not False:
