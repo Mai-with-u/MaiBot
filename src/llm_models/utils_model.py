@@ -68,6 +68,8 @@ from src.llm_models.payload_content.tool_option import (
 from src.llm_models.utils import compress_messages, llm_usage_recorder
 from src.services.model_task_usage_service import track_model_task_usage
 
+from .text_tool_call import normalize_text_tool_response
+
 install(extra_lines=3)
 
 logger = get_logger("llm_models")
@@ -1092,6 +1094,7 @@ class LLMOrchestrator:
                 ):
                     if isinstance(active_request, ResponseRequest):
                         response = await client.get_response(active_request)
+                        await asyncio.to_thread(normalize_text_tool_response, response, active_request)
                     elif isinstance(active_request, EmbeddingRequest):
                         response = await client.get_embedding(active_request)
                     elif isinstance(active_request, ImageEmbeddingRequest):
