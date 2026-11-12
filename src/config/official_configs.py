@@ -1115,6 +1115,19 @@ class ExperimentalConfig(ConfigBase):
     __ui_advanced__ = True
     __ui_order__ = 140
 
+    tool_search_tail_loading: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "工具定义末尾加载",
+                "en_US": "Load tool definitions at context tail",
+                "ja_JP": "ツール定義のコンテキスト末尾読み込み",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """实验性功能：搜索命中的工具定义仅追加到搜索结果，附带加载状态和调用指引，保持顶层工具声明不变以保留上下文缓存。关闭时沿用搜索后加入工具声明的逻辑。不使用 API 原生工具搜索；需要模型支持根据结果文本调用工具，普通聊天和 Focus 生效，切换从下一轮工具决策生效。"""
+
     desktop_pet_exploration_enabled: bool = Field(
         default=False,
         json_schema_extra={"label": {"zh_CN": "桌宠自由探索"}, "x-widget": "switch"},
@@ -1155,6 +1168,19 @@ class ExperimentalConfig(ConfigBase):
         },
     )
     """仅作用于普通聊天模式：Planner 不调用工具而输出正文时，将正文作为自然语言指导启动一次回复；篇幅、表达偏好和插件相关需求直接写入指导，引用与附件由并行回复补充器编排。关闭时使用原有 reply 工具。切换从下一轮思考生效，Focus 不受影响。"""
+
+    lightweight_private_chats: List["TargetItem"] = Field(
+        default_factory=list,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "轻量私聊",
+                "en_US": "Lightweight private chats",
+                "ja_JP": "軽量プライベートチャット",
+            },
+            "x-widget": "custom",
+        },
+    )
+    """_wrap_实验性功能：对指定私聊启用简化被动回复，常驻记忆、人物画像、转发查看、工具搜索和 stop；插件、MCP 等扩展工具及原始结果回查按需搜索加载，遵守原有可用性与权限配置。沿用普通模式的内部循环上限，保留回复补充器；跳过自动参考注入，不提供 wait 或子 Agent 工具，默认回复完成后结束本轮，无需回复时可用 stop 静默结束。仅匹配 private 类型，platform/item_id 可用 *；默认空列表关闭。优先于 Focus，普通聊天不受影响。"""
 
     reply_cache: bool = Field(
         default=False,

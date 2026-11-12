@@ -49,7 +49,7 @@ import { cn } from '@/lib/utils'
 // ============ 类型定义 ============
 
 export interface ItemFieldDefinition {
-  /** 字段类型: "string" | "number" | "boolean" | "select" */
+  /** 字段类型: "string" | "integer" | "number" | "boolean" | "switch" | "slider" | "select" | "array" */
   type: string
   label?: string
   placeholder?: string
@@ -79,7 +79,7 @@ export interface ListFieldEditorProps {
   value: unknown[] | unknown
   /** 值变化回调 */
   onChange: (value: unknown[]) => void
-  /** 数组元素类型: "string" | "number" | "object" */
+  /** 数组元素类型: "string" | "integer" | "number" | "object" */
   itemType?: string
   /** 当 itemType="object" 时的字段定义 */
   itemFields?: Record<string, ItemFieldDefinition>
@@ -175,10 +175,11 @@ function SortableItem({
             fields={itemFields}
             disabled={disabled}
           />
-        ) : itemType === 'number' ? (
+        ) : itemType === 'number' || itemType === 'integer' ? (
           <DraftNumberInput
             value={value}
             defaultValue={0}
+            integer={itemType === 'integer'}
             onValueChange={onChange}
             placeholder={placeholder ?? `第 ${index + 1} 项`}
             disabled={disabled}
@@ -306,6 +307,7 @@ function ObjectItemEditor({
 
   const renderField = (fieldName: string, fieldDef: ItemFieldDefinition) => {
     const fieldValue = value?.[fieldName]
+    const isNumericField = fieldDef.type === 'number' || fieldDef.type === 'integer'
 
     // boolean / switch
     if (fieldDef.type === 'boolean' || fieldDef.type === 'switch') {
@@ -323,8 +325,8 @@ function ObjectItemEditor({
       )
     }
 
-    // slider (number with min/max)
-    if (fieldDef.type === 'slider' || (fieldDef.type === 'number' && fieldDef.min != null && fieldDef.max != null)) {
+    // slider (number / integer with min/max)
+    if (fieldDef.type === 'slider' || (isNumericField && fieldDef.min != null && fieldDef.max != null)) {
       const numValue = (fieldValue as number) ?? (fieldDef.default as number) ?? fieldDef.min ?? 0
       return (
         <div className="space-y-1">
@@ -394,8 +396,8 @@ function ObjectItemEditor({
       )
     }
 
-    // number
-    if (fieldDef.type === 'number') {
+    // number / integer
+    if (isNumericField) {
       return (
         <div className="space-y-1">
           <Label className="text-xs text-muted-foreground">
@@ -404,6 +406,7 @@ function ObjectItemEditor({
           <DraftNumberInput
             value={fieldValue}
             defaultValue={fieldDef.default}
+            integer={fieldDef.type === 'integer'}
             onValueChange={(nextValue) => handleFieldChange(fieldName, nextValue)}
             min={fieldDef.min}
             max={fieldDef.max}
@@ -474,7 +477,7 @@ function ObjectItemEditor({
 
   // 短字段两列并排，长文本（字符串）独占一行
   const isFullRow = (fieldDef: ItemFieldDefinition) =>
-    !['array', 'boolean', 'switch', 'number', 'slider', 'select'].includes(fieldDef.type)
+    !['array', 'boolean', 'switch', 'integer', 'number', 'slider', 'select'].includes(fieldDef.type)
 
   return (
     <Card className="grid gap-x-4 gap-y-3 bg-muted/30 p-3 sm:grid-cols-2">
@@ -576,7 +579,7 @@ export function ListFieldEditor({
       newItem = Object.fromEntries(
         Object.entries(itemFields).map(([k, v]) => [k, v.default ?? ''])
       )
-    } else if (itemType === 'number') {
+    } else if (itemType === 'number' || itemType === 'integer') {
       newItem = 0
     } else {
       newItem = ''

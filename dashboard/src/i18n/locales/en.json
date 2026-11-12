@@ -113,6 +113,7 @@
       "settingsUnavailable": "Desktop pet settings are unavailable on this bot.",
       "settingsSaving": "Saving…",
       "settingsSaved": "Desktop pet settings saved",
+      "skinAutoSaveHint": "Selecting a skin saves and applies it automatically.",
       "settingsSaveFailed": "Could not save desktop pet settings",
       "enabledLamp": "Desktop pet on",
       "mode": {
@@ -2376,6 +2377,7 @@
     "check": "Check for updates",
     "apply": "Confirm update and restart host",
     "current": "No applicable update",
+    "lastUpdateTime": "Last update execution: {{started}} — {{finished}}",
     "updated": "The last program update succeeded",
     "restarting": "The host is updating and restarting. Waiting to reconnect. If rollback fails, check the terminal and restart manually after repair."
   },

@@ -639,7 +639,7 @@ export function Header({
               size="icon"
               onClick={() => {
                 setHoveredHeaderAction('docs')
-                window.open('https://docs.mai-mai.org', '_blank')
+                window.open('https://docs.maibot.chat/', '_blank')
               }}
               className="relative isolate hidden border-0 bg-transparent shadow-none sm:inline-flex"
               title={t('header.viewDocs')}

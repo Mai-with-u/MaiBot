@@ -243,7 +243,7 @@ async def test_lookup_help_returns_citable_passage_and_observed_navigation(monke
     monkeypatch.setattr(
         agent_module._document_store,
         "build_sources",
-        Mock(return_value=[{"title": "Guide", "url": "https://docs.mai-mai.org/guide"}]),
+        Mock(return_value=[{"title": "Guide", "url": "https://docs.maibot.chat/guide"}]),
     )
     call = ContextToolCall.create(call_id="lookup", func_name="lookup_help", args={"query": "bot"})
     requests = scripted_model(

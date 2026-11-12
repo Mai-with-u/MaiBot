@@ -113,6 +113,7 @@
       "settingsUnavailable": "当前主程序未提供桌宠配置",
       "settingsSaving": "正在保存…",
       "settingsSaved": "桌宠设置已保存",
+      "skinAutoSaveHint": "选择皮肤后会自动保存并应用。",
       "settingsSaveFailed": "保存桌宠设置失败",
       "enabledLamp": "启用桌宠",
       "mode": {
@@ -2373,6 +2374,7 @@
     "check": "检查更新",
     "apply": "确认更新并重启宿主",
     "current": "当前没有可应用的更新",
+    "lastUpdateTime": "上次更新执行时间：{{started}} — {{finished}}",
     "updated": "最近一次程序更新成功",
     "restarting": "宿主正在更新并重启，正在等待重新连接。若更新回滚失败，需查看终端处理后手动启动。"
   },

@@ -26,7 +26,7 @@
   "startup.opensource_resale_warning": "  将本软件作为「商品」倒卖、隐瞒开源性质均违反协议！",
   "startup.opensource_title": "  ★ MaiBot - 开源 AI 拟人 Harness ★",
   "startup.opensource_docs": "  官方文档: ",
-  "startup.opensource_docs_value": "https://docs.mai-mai.org",
+  "startup.opensource_docs_value": "https://docs.maibot.chat/",
   "startup.prepare_exit": "[主程序] 准备退出...",
   "startup.program_exited": "程序已退出（退出码 {return_code}）",
   "startup.remaining_tasks_cancelling": {

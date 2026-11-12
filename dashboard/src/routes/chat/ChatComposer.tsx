@@ -1,5 +1,5 @@
 import { ImagePlus, Paperclip, Send, X } from 'lucide-react'
-import { useRef } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -59,15 +59,25 @@ export function ChatComposer({
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const attachmentInputRef = useRef<HTMLInputElement>(null)
+  const [draft, setDraft] = useState(value)
+  const composingRef = useRef(false)
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault()
-      if (!disabled) onSend()
-    }
+  // 首页带入的文字、发送后清空等外部变化同步到输入区。
+  useLayoutEffect(() => setDraft(value), [value])
+
+  const canSend = !disabled && (draft.trim().length > 0 || images.length > 0 || files.length > 0)
+  const handleSend = () => {
+    if (!canSend || composingRef.current) return
+    onSend()
+    setDraft('')
   }
 
-  const canSend = !disabled && (value.trim().length > 0 || images.length > 0 || files.length > 0)
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey && !composingRef.current && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+      e.preventDefault()
+      handleSend()
+    }
+  }
 
   return (
     <MessageComposerFrame
@@ -157,7 +167,7 @@ export function ChatComposer({
           type="button"
           size="sm"
           disabled={!canSend}
-          onClick={onSend}
+          onClick={handleSend}
           aria-label={t('chat.actions.send')}
         >
           <Send />
@@ -173,8 +183,17 @@ export function ChatComposer({
         maxHeight={160}
         minHeight={56}
         placeholder={isConnected ? t('chat.input.placeholder') : t('chat.input.waiting')}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
+        value={draft}
+        onChange={(e) => {
+          setDraft(e.target.value)
+          onChange(e.target.value)
+        }}
+        onCompositionStart={() => { composingRef.current = true }}
+        onCompositionEnd={(e) => {
+          composingRef.current = false
+          setDraft(e.currentTarget.value)
+          onChange(e.currentTarget.value)
+        }}
         onKeyDown={handleKeyDown}
       />
     </MessageComposerFrame>

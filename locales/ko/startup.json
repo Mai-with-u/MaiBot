@@ -12,7 +12,7 @@
   "startup.env_template_missing": ".env 파일과 템플릿 template/template.env 모두 찾을 수 없습니다",
   "startup.event_loop_closed": "[메인 프로세스] 이벤트 루프가 닫혔습니다",
   "startup.graceful_shutdown_error": "정상 종료 중 오류 발생: {error}",
-  "startup.initialization_completed_banner": "\n--------------------------------\n모든 시스템 초기화 완료, {nickname} 깨어났습니다\n--------------------------------\n{nickname}의 기능을 커스터마이즈하려면 참고하세요: https://docs.mai-mai.org/manual/usage/\n문제가 발생했다면 공식 문서를 방문하세요: https://docs.mai-mai.org/\n--------------------------------\n플러그인 개발 또는 관련 내용을 알고 싶다면 개발 문서를 방문하세요: https://docs.mai-mai.org/develop/\n",
+  "startup.initialization_completed_banner": "\n--------------------------------\n모든 시스템 초기화 완료, {nickname} 깨어났습니다\n--------------------------------\n{nickname}의 기능을 커스터마이즈하려면 참고하세요: https://docs.maibot.chat/manual/usage/\n문제가 발생했다면 공식 문서를 방문하세요: https://docs.maibot.chat/\n--------------------------------\n플러그인 개발 또는 관련 내용을 알고 싶다면 개발 문서를 방문하세요: https://docs.maibot.chat/develop/\n",
   "startup.initialization_completed_cycles": "초기화 완료, 뉴런 발화 {init_time}회",
   "startup.interrupt_received": "인터럽트 신호를 받았습니다. 정상 종료 중...",
   "startup.launching_script": "{script_file} 시작 중...",
@@ -26,7 +26,7 @@
   "startup.opensource_resale_warning": "  본 소프트웨어를 '상품'으로 재판매하거나 오픈소스임을 숨기는 행위는 라이선스 위반입니다!",
   "startup.opensource_title": "  ★ MaiBot - 오픈소스 인간형 AI Harness ★",
   "startup.opensource_docs": "  공식 문서: ",
-  "startup.opensource_docs_value": "https://docs.mai-mai.org",
+  "startup.opensource_docs_value": "https://docs.maibot.chat/",
   "startup.prepare_exit": "[메인 프로세스] 종료 준비 중...",
   "startup.program_exited": "프로그램이 종료되었습니다 (종료 코드 {return_code})",
   "startup.remaining_tasks_cancelling": {

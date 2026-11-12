@@ -6,6 +6,10 @@ updates:
     target-branch: dev
     schedule:
       interval: monthly
+    ignore:
+      # Keep Python on 3.13 while allowing patch and digest updates.
+      - dependency-name: python
+        versions: [">=3.14"]
     groups:
       docker-base-images:
         patterns:

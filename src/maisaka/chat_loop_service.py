@@ -78,6 +78,8 @@ from src.maisaka.visual.mode_utils import resolve_enable_visual_planner
 
 from src.maisaka.scenes.factory import get_prompt_profile
 
+from .lightweight import is_lightweight_private_chat
+
 REQUEST_TYPE_BY_REQUEST_KIND = {
     "expression_selector": "expression.selector",
     "planner": "maisaka.planner",
@@ -686,6 +688,7 @@ class MaisakaChatLoopService:
         self._llm_chat_clients: dict[str, LLMServiceClient] = {}
         self.planner_request_snapshot: PlannerRequestSnapshot | None = None
         self.passive_replyer_override: Optional[bool] = None
+        self.lightweight_private_override: Optional[bool] = None
 
     @property
     def behavior_style_prompt(self) -> str:
@@ -815,6 +818,8 @@ class MaisakaChatLoopService:
         """构造每轮 Planner 请求末尾的一次性 user 提醒。"""
 
         prompt_name = self._get_chat_prompt_name()
+        if prompt_name == "maisaka_chat_lightweight":
+            return ""
         if prompt_name == "maisaka_chat_passive":
             return PASSIVE_PLANNER_FINAL_USER_REMINDERS.get(get_locale(), PASSIVE_PLANNER_FINAL_USER_REMINDERS["zh-CN"])
         if prompt_name == "maisaka_chat":
@@ -824,6 +829,12 @@ class MaisakaChatLoopService:
     def _get_chat_prompt_name(self) -> str:
         """选择当前聊天使用的 Planner 模板。"""
 
+        lightweight = (
+            self.lightweight_private_override if self.lightweight_private_override is not None
+            else is_lightweight_private_chat(self._session_id)
+        )
+        if lightweight:
+            return "maisaka_chat_lightweight"
         if focus_mode_manager.is_enabled_for_session(self._session_id, is_group_chat=self._is_group_chat):
             return "maisaka_chat_focus"
         passive_replyer = (
@@ -1041,7 +1052,9 @@ class MaisakaChatLoopService:
         items: List[ContextItem] = []
         system_item = ContextItemBuilder().set_role(RoleType.System)
         uses_builtin_system_prompt = system_prompt is None and self._custom_chat_system_prompt is None
-        if uses_builtin_system_prompt and self._get_chat_prompt_name() in {"maisaka_chat", "maisaka_chat_passive"}:
+        if uses_builtin_system_prompt and self._get_chat_prompt_name() in {
+            "maisaka_chat", "maisaka_chat_passive", "maisaka_chat_lightweight",
+        }:
             # 普通聊天模板自己写明了名字：昵称说明跟在名字之后，且只说明与名字不同的昵称
             bot_nickname_notice = self._build_bot_nickname_notice(selected_history, skip_same_as_bot_name=True)
             resolved_system_prompt = self._build_chat_system_prompt(bot_nickname_notice=bot_nickname_notice)
@@ -1056,7 +1069,7 @@ class MaisakaChatLoopService:
             if bot_nickname_notice:
                 resolved_system_prompt = f"{bot_nickname_notice}\n\n{resolved_system_prompt}"
         # 普通 Planner 不持有 reply 工具，按真实会话展示可用回复扩展。
-        if self._get_chat_prompt_name() == "maisaka_chat_passive":
+        if self._get_chat_prompt_name() in {"maisaka_chat_passive", "maisaka_chat_lightweight"}:
             session = chat_manager.get_session_by_session_id(self._session_id)
             if session is not None:
                 capabilities = build_reply_extension_capabilities(ToolAvailabilityContext(

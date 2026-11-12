@@ -112,6 +112,7 @@
       "settingsUnavailable": "현재 봇에서 데스크톱 펫 설정을 사용할 수 없습니다.",
       "settingsSaving": "저장 중…",
       "settingsSaved": "데스크톱 펫 설정을 저장했습니다",
+      "skinAutoSaveHint": "스킨을 선택하면 자동으로 저장되고 적용됩니다.",
       "settingsSaveFailed": "데스크톱 펫 설정을 저장할 수 없습니다",
       "enabledLamp": "펫 사용",
       "mode": {
@@ -2327,6 +2328,7 @@
     "check": "업데이트 확인",
     "apply": "업데이트 및 호스트 재시작",
     "current": "적용 가능한 업데이트가 없습니다",
+    "lastUpdateTime": "지난 업데이트 실행 시간: {{started}} — {{finished}}",
     "updated": "최근 업데이트에 성공했습니다",
     "restarting": "The host is updating and restarting. Waiting to reconnect. If rollback fails, check the terminal and restart manually after repair."
   },

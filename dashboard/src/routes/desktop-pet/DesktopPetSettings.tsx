@@ -10,10 +10,11 @@ import { Button } from '@/components/ui/button'
 import { useToast } from '@/hooks/use-toast'
 import { getBotConfig, getBotConfigSchema, updateBotConfigSection } from '@/lib/config-api'
 import { FieldHookRegistry } from '@/lib/field-hooks'
+import type { ConfigSchemaResponse } from '@/types/config-schema'
 
 const settingsQueryKey = ['desktop-pet', 'settings'] as const
 const settingsFieldHooks = new FieldHookRegistry()
-settingsFieldHooks.register('desktop_pet.skin_id', DesktopPetSkinField)
+settingsFieldHooks.register('desktop_pet.skin_id', (props) => <DesktopPetSkinField {...props} autoSave />)
 settingsFieldHooks.register('desktop_pet.show_current_task', DesktopPetCurrentTaskField)
 
 export function DesktopPetSettings({ onSaved }: { onSaved: () => void }) {
@@ -24,8 +25,9 @@ export function DesktopPetSettings({ onSaved }: { onSaved: () => void }) {
   const settingsQuery = useQuery({
     queryKey: settingsQueryKey,
     queryFn: async () => {
-      const [config, botSchema] = await Promise.all([getBotConfig(), getBotConfigSchema()])
-      const schema = botSchema.nested?.desktop_pet
+      const [config, schemaResponse] = await Promise.all([getBotConfig(), getBotConfigSchema()])
+      const { schema: botSchema } = schemaResponse as unknown as ConfigSchemaResponse
+      const schema = botSchema?.nested?.desktop_pet
       const values = config.desktop_pet
       if (!schema || !values || typeof values !== 'object' || Array.isArray(values)) {
         throw new Error(t('observation.pet.settingsUnavailable'))
@@ -35,13 +37,20 @@ export function DesktopPetSettings({ onSaved }: { onSaved: () => void }) {
   })
   const settings = settingsQuery.data
   const save = useMutation({
+    scope: { id: 'desktop-pet-settings' },
     mutationFn: (patch: Record<string, unknown>) =>
       updateBotConfigSection('desktop_pet', patch, t('observation.pet.settingsSaveFailed')),
     onSuccess: (_result, patch) => {
-      if (settings) {
-        queryClient.setQueryData(settingsQueryKey, { ...settings, values: { ...settings.values, ...patch } })
-      }
-      setChanges({})
+      queryClient.setQueryData<typeof settings>(settingsQueryKey, (current) =>
+        current && { ...current, values: { ...current.values, ...patch } }
+      )
+      setChanges((current) => {
+        const remaining = { ...current }
+        for (const [field, value] of Object.entries(patch)) {
+          if (Object.is(current[field], value)) delete remaining[field]
+        }
+        return remaining
+      })
       toast({ title: t('observation.pet.settingsSaved') })
       onSaved()
     },
@@ -71,12 +80,14 @@ export function DesktopPetSettings({ onSaved }: { onSaved: () => void }) {
                 basePath="desktop_pet"
                 hooks={settingsFieldHooks}
                 onChange={(field, value) => {
+                  const changed = !Object.is(settings.values[field], value)
                   setChanges((previous) => {
                     const next = { ...previous }
-                    if (Object.is(settings.values[field], value)) delete next[field]
-                    else next[field] = value
+                    if (changed) next[field] = value
+                    else delete next[field]
                     return next
                   })
+                  if (field === 'skin_id' && changed) save.mutate({ skin_id: value })
                 }}
               />
             </fieldset>

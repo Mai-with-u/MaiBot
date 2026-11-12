@@ -13,6 +13,7 @@ export {
   ExpressionLearningListHook,
   FocusGroupsHook,
   FocusWhitelistHook,
+  LightweightPrivateChatsHook,
   JargonGroupsHook,
   JargonLearningListHook,
   HiddenFieldHook,

@@ -67,7 +67,7 @@ export interface HostUpdateCheck {
 export interface HostUpdateStatus {
   busy: boolean
   local: { version: string }
-  last_result: { success: boolean; error: string; rollback_error: string; finished_at: number; to_version: string } | null
+  last_result: { success: boolean; error: string; rollback_error: string; started_at: number; finished_at: number; to_version: string } | null
 }
 export const getHostUpdate = () => hostApi.get<HostUpdateStatus>('/api/host/maintenance/update', { cache: 'no-store', signal: AbortSignal.timeout(10_000) })
 export const HOST_UPDATE_CHECK_EVENT = 'maibot-host-update-check'

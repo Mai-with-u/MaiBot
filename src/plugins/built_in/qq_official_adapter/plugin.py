@@ -57,6 +57,7 @@ ASSIGN_GROUP_COMMAND = "/assign_group_id"
 ASSIGN_USER_COMMAND = "/assign_id"
 SET_MUTE_TOOL_NAME = "set_mute"
 RECALL_TOOL_NAME = "recall_message"
+KICK_TOOL_NAME = "kick_member"
 AVATAR_TTL_SEC = 86400
 # 机器人资料随用户修改而变，头像 URL 短时缓存，避免每条消息都请求 /users/@me。
 BOT_PROFILE_TTL_SEC = 3600
@@ -232,10 +233,11 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         return await self._qr_login.cancel()
 
     async def _sync_tool_states(self) -> None:
-        """按 [mute].enabled、[recall].enabled 同步可选 LLM 工具的启停状态。"""
+        """按禁言、撤回、踢人配置同步可选 LLM 工具的启停状态。"""
         tool_states = (
             (SET_MUTE_TOOL_NAME, "禁言设置", self.config.mute.enabled),
             (RECALL_TOOL_NAME, "撤回", self.config.recall.enabled),
+            (KICK_TOOL_NAME, "踢人", self.config.kick.enabled),
         )
         for tool_name, label, enabled in tool_states:
             component_name = f"{self.ctx.plugin_id}.{tool_name}"
@@ -1327,12 +1329,131 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
             if isinstance(additional_config, Mapping)
             else ""
         ) or self._resolve_group_openid(normalized_group_id)
+        return await self._set_member_mute(
+            normalized_group_id, target_user_id, group_openid,
+            self._resolve_member_openid(target_user_id, additional_config),
+            duration, reason, target_display_name,
+        )
+
+    @Tool(
+        KICK_TOOL_NAME,
+        platforms=PLATFORM,
+        description=(
+            "将指定成员移出 QQ 群，不加入群黑名单。msg_id 使用目标成员发过的消息 ID，"
+            "群和用户均从该消息解析。需要机器人具备群管理权限及 QQ 官方移除成员接口权限。"
+        ),
+        parameters=[
+            ToolParameterInfo(
+                name="msg_id", param_type=ToolParamType.STRING,
+                description="要移出群的成员发过的消息 ID。", required=True,
+            ),
+            ToolParameterInfo(
+                name="reason", param_type=ToolParamType.STRING,
+                description="移出群的原因，可选，仅用于操作日志。", required=False,
+            ),
+        ],
+        enabled=False,
+        visibility="visible",
+    )
+    async def tool_kick_member(self, msg_id: str = "", reason: str = "", **kwargs: Any) -> Dict[str, Any]:
+        """从目标消息解析成员，调用官方批量移除接口移除单个成员。"""
+        if not self.config.kick.enabled:
+            return {"success": False, "error": "踢人工具已停用"}
+        if not self._ready:
+            return {"success": False, "error": "QQ 官方网关未连接"}
+        normalized_msg_id = msg_id.strip()
+        if not normalized_msg_id:
+            return {"success": False, "error": "缺少目标消息 ID"}
+        query_result = await self.ctx.message.get_by_id(
+            normalized_msg_id,
+            stream_id=str(kwargs.get("stream_id") or ""),
+            include_binary_data=False,
+        )
+        message_info = query_result.get("message_info") if isinstance(query_result, Mapping) else None
+        if not isinstance(message_info, Mapping):
+            return {"success": False, "error": f"未找到消息 {normalized_msg_id}"}
+        group_info = message_info.get("group_info")
+        group_id = str(group_info.get("group_id") or "").strip() if isinstance(group_info, Mapping) else ""
+        if not group_id:
+            return {"success": False, "error": "踢人仅支持群聊，目标消息不属于群聊"}
+        user_info = message_info.get("user_info")
+        user_id = str(user_info.get("user_id") or "").strip() if isinstance(user_info, Mapping) else ""
+        if not user_id:
+            return {"success": False, "error": "目标消息缺少发送者信息"}
+        additional_config = message_info.get("additional_config")
+        group_openid = (
+            str(additional_config.get("qq_official_group_openid") or "").strip()
+            if isinstance(additional_config, Mapping) else ""
+        ) or self._resolve_group_openid(group_id)
+        member_openid = self._resolve_member_openid(user_id, additional_config)
+        if not group_openid or group_openid.isdigit() or not member_openid or member_openid.isdigit():
+            return {"success": False, "error": "无法解析目标群或成员的官方 OpenID"}
+        allowed_groups = [item.strip() for item in self.config.kick.allowed_groups if item.strip()]
+        if allowed_groups and group_id not in allowed_groups and group_openid not in allowed_groups:
+            return {"success": False, "error": f"群 {group_id} 不在踢人白名单内"}
+        protected_users = {item.strip() for item in self.config.kick.admin_users if item.strip()}
+        mapped_user_id = self._group_user_map(group_openid).get(member_openid, user_id)
+        if protected_users.intersection({user_id, member_openid, mapped_user_id}):
+            return {"success": False, "error": f"用户 {user_id} 在踢人保护名单中，无法被移除"}
+        if member_openid == self._account_id or user_id in {self._account_id, self._unified_account_id}:
+            return {"success": False, "error": "不能通过踢人工具移除机器人自身"}
+        try:
+            result = await self._api_post(
+                f"/v2/groups/{quote(group_openid, safe='')}/batch_remove_members",
+                {"member_openids": [member_openid], "add_to_member_blacklist": False},
+            )
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+        if result.get("remove_members_result") != "success":
+            return {"success": False, "error": f"QQ 移除群成员未成功: {result}"}
+        self.ctx.logger.info("QQ 官方踢人: group=%s user=%s(%s) reason=%s", group_id, user_id, member_openid, reason)
+        return {"success": True, "content": f"已将 {user_id} 移出群 {group_id}。", "group_id": group_id,
+                "user_id": user_id, "reason": reason}
+
+    @API("adapter.qq_official.group.set_group_ban", description="设置群成员禁言", version="1", public=True)
+    async def api_set_group_ban(
+        self, group_id: str, user_id: str, duration: int, reason: str = "",
+    ) -> Dict[str, Any]:
+        """按群和用户的 OpenID 或已绑定统一 ID 禁言；duration=0 解除禁言。"""
+        normalized_group_id = str(group_id).strip()
+        target_user_id = str(user_id).strip()
+        if not normalized_group_id or not target_user_id:
+            return {"success": False, "error": "group_id 和 user_id 必须非空"}
+        group_openid = self._resolve_group_openid(normalized_group_id)
+        user_map = self._group_user_map(group_openid)
+        # 群内自动身份映射按 OpenID -> QQ 号保存，反查仅限目标群。
+        member_openid = next(
+            (openid for openid, unified in user_map.items() if unified == target_user_id),
+            self._resolve_user_openid(target_user_id),
+        )
+        return await self._set_member_mute(
+            self._id_map["group"].get(group_openid, normalized_group_id),
+            user_map.get(member_openid, target_user_id),
+            group_openid, member_openid, duration, reason, target_user_id,
+        )
+
+    async def _set_member_mute(
+        self, normalized_group_id: str, target_user_id: str, group_openid: str,
+        member_openid: str, duration: int, reason: str, target_display_name: str,
+    ) -> Dict[str, Any]:
+        """工具和公开 API 共用禁言策略及官方请求。"""
+        if not self._ready:
+            return {"success": False, "error": "QQ 官方网关未连接"}
+        mute_settings = self.config.mute
+        if not mute_settings.enabled:
+            return {"success": False, "error": "禁言设置工具已停用"}
+        if isinstance(duration, bool) or not isinstance(duration, int) or duration < 0:
+            return {"success": False, "error": "禁言时长必须为非负整数（秒），0 表示解除禁言"}
+        if duration > 0:
+            duration = max(mute_settings.min_duration, min(duration, mute_settings.max_duration))
+        if not group_openid or group_openid.isdigit():
+            return {"success": False, "error": f"无法解析群 {normalized_group_id} 的 OpenID"}
+        action = "解除禁言" if duration == 0 else "禁言"
         allowed_groups = [str(item).strip() for item in mute_settings.allowed_groups if str(item).strip()]
         if allowed_groups and normalized_group_id not in allowed_groups and group_openid not in allowed_groups:
             return {"success": False, "error": f"群 {normalized_group_id} 不在禁言白名单内"}
 
         # 保护名单：配置内用户一律不禁言（统一 QQ 号或 OpenID 均可命中）。
-        member_openid = self._resolve_member_openid(target_user_id, additional_config)
         admin_users = [str(item).strip() for item in mute_settings.admin_users if str(item).strip()]
         if duration > 0 and (target_user_id in admin_users or (member_openid and member_openid in admin_users)):
             return {"success": False, "error": f"用户 {target_display_name} 在禁言保护名单中，无法被禁言"}
@@ -1401,12 +1522,22 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         visibility="visible",
     )
     async def tool_recall_message(self, msg_id: Any = "", **kwargs: Any) -> Dict[str, Any]:
+        """通过聊天记录中的消息 ID 撤回消息。"""
+        return await self._recall_message(str(msg_id or "").strip(), str(kwargs.get("stream_id") or ""))
+
+    @API("adapter.qq_official.message.delete_msg", description="撤回消息", version="1", public=True)
+    async def api_delete_msg(self, message_id: str, stream_id: str = "") -> Dict[str, Any]:
+        """撤回已记录的群聊或单聊消息；stream_id 可限定查询的聊天流。"""
+        return await self._recall_message(message_id, stream_id)
+
+    async def _recall_message(self, msg_id: str, stream_id: str) -> Dict[str, Any]:
         """撤回指定消息（QQ 官方 DELETE /v2/groups|users/{openid}/messages/{message_id} 接口）。
 
         聊天记录中的消息 ID 即平台真实 ID：入站消息透传官方 d.id，机器人自发消息由发送回执回填。
         会话目标（群/用户）从消息的路由信息解析。
         """
-        stream_id = str(kwargs.get("stream_id") or "")
+        if not self.config.recall.enabled:
+            return {"success": False, "error": "撤回工具已停用"}
         if not self._ready:
             return {"success": False, "error": "QQ 官方网关未连接"}
         normalized_msg_id = str(msg_id or "").strip()
@@ -1455,6 +1586,15 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
             async with session.delete(self._api_url(path), headers={"Authorization": f"QQBot {token}"}) as response:
                 if response.status >= 400:
                     body = await response.text()
+                    try:
+                        error_data = json.loads(body)
+                    except ValueError:
+                        error_data = None
+                    if isinstance(error_data, Mapping) and (
+                        error_data.get("code") == 40062003 or error_data.get("err_code") == 40062003
+                    ):
+                        self.ctx.logger.warning("QQ 撤回无操作权限: HTTP %s %s", response.status, body)
+                        return {"success": False, "error": "无法撤回此消息，可能是因为没有开启权限，或用户是群主或管理员"}
                     return {"success": False, "error": f"QQ 撤回失败: HTTP {response.status} {body[:200]}"}
         except Exception as exc:
             return {"success": False, "error": str(exc)}

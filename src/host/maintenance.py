@@ -57,7 +57,7 @@ class HostMaintenance:
 
         check = await asyncio.to_thread(self_update.check_for_update, self.update_root)
         return {**asdict(check), "can_apply": check.can_apply,
-                "blocker_messages": [self_update.BLOCKER_MESSAGES.get(code, code) for code in check.blockers]}
+                "blocker_messages": [check.local.get_blocker_message(code) for code in check.blockers]}
 
     async def manage_bot(self, bot_id: str, action: str, name: str = "") -> Dict[str, Any]:
         if self.busy:

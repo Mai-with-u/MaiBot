@@ -19,7 +19,7 @@
 ```toml
 [plugin]
 enabled = true
-config_version = "0.4.15"
+config_version = "0.4.16"
 
 [qq_official]
 app_id = "你的 AppID"
@@ -43,6 +43,14 @@ allowed_groups = []
 enabled = true
 # 留空时允许所有群使用撤回工具，单聊不受群白名单限制。
 allowed_groups = []
+
+[kick]
+# 默认关闭；需要 QQ 官方移除群成员接口权限。
+enabled = false
+# 留空时允许所有群使用；建议按需指定群。
+allowed_groups = []
+# 保护名单支持统一 QQ 号或用户 OpenID。
+admin_users = []
 
 [advanced]
 # 在日志中逐条显示主动／被动发送方式，被动发送同时标出目标消息 ID 和回复序号。
@@ -127,6 +135,46 @@ QQ 官方平台的 OpenID 与真实 QQ 号不互通。为了让消息以真实 Q
 未填写工具配置或 `allowed_groups` 时，工具默认启用且不限制群；已有配置中显式设置的 `enabled = false` 仍会关闭对应工具。
 
 平台限制：发送超过 2 分钟的消息不可撤回；群聊中机器人是群管理员时可撤回自己与普通群成员的消息，否则只能撤回自己发的消息；单聊只能撤回机器人自己发的消息。
+
+## 踢人工具
+
+提供 `kick_member` LLM 工具（参数：`msg_id`、可选 `reason`），从目标成员发过的消息解析群与用户，调用官方 `POST /v2/groups/{group_openid}/batch_remove_members` 移除单个成员，不加入群黑名单。`reason` 仅用于操作日志。
+
+默认关闭。在 WebUI 的「QQ 官方机器人适配器 → 踢人工具」打开开关并保存即可启用，也可以设置 `[kick].enabled = true`。`allowed_groups` 限制可操作的群（统一群号或 group_openid），留空不限制；`admin_users` 为独立的踢人保护名单（统一 QQ 号或 OpenID）。工具拒绝移除机器人自身，关闭后不向模型提供该工具。
+
+目标消息必须能从宿主查询，并能解析出群和成员的官方 OpenID。机器人需具备相应群管理权限；[官方移除成员接口](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_groups_group_openid_batch_remove_members.post.html)目前仅对内邀机器人开放，未开通时返回错误码 `11253`。开启工具不会自动取得平台权限，平台拒绝时直接报告失败。
+
+## 对外插件管理 API
+
+提供以下公开 API（`version="1"`），命名和参数参考 OneBot 适配器：
+
+| API | 参数 | 用途 |
+| --- | --- | --- |
+| `adapter.qq_official.group.set_group_ban` | `group_id: str`、`user_id: str`、`duration: int`、`reason: str = ""` | 禁言群成员，`duration=0` 解除禁言 |
+| `adapter.qq_official.message.delete_msg` | `message_id: str`、`stream_id: str = ""` | 撤回聊天记录中的消息，可限定聊天流 |
+
+调用方插件需声明 `api.call` 能力，通过完整 API 名称调用：
+
+```python
+result = await self.ctx.api.call(
+    "Mai-with-u.qq-adapter.adapter.qq_official.group.set_group_ban",
+    version="1",
+    group_id="群 OpenID 或已绑定群号",
+    user_id="用户 OpenID 或已绑定 QQ 号",
+    duration=120,
+)
+
+result = await self.ctx.api.call(
+    "Mai-with-u.qq-adapter.adapter.qq_official.message.delete_msg",
+    version="1",
+    message_id="聊天记录中的平台消息 ID",
+    stream_id="目标聊天流 ID",
+)
+```
+
+禁言 API 无需提供目标成员的消息 ID，支持人工绑定与目标群内的静默身份映射；未绑定的数字群号或 QQ 号无法直接用于官方接口。撤回 API 从宿主消息记录解析群聊或单聊目标，因此消息必须可查询，且能解析出官方 OpenID。
+
+返回字典：成功时 `success=true`，并附带操作信息；失败时 `success=false`、`error` 包含失败原因。禁言返回实际生效的 `duration`；正时长沿用配置的最短/最长限制，零时长不受限制。两个 API 分别受 `[mute].enabled`、`[recall].enabled` 控制，并共用工具的群白名单、禁言保护名单和平台权限限制。QQ 拒绝操作时返回失败。
 
 ## 头像接口
 
