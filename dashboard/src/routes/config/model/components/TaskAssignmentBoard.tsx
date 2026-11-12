@@ -569,7 +569,7 @@ function TaskEditor({
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0">
-                    <Command shouldSort={false}>
+                    <Command>
                       <CommandInput
                         placeholder={isWeb ? '搜索联网服务…' : '搜索模型名称或厂商…'}
                         aria-label={isWeb ? '搜索联网服务' : '搜索模型名称或厂商'}

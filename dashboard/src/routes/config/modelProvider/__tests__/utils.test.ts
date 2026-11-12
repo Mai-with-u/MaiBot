@@ -98,6 +98,19 @@ describe('validateProvider', () => {
     })
   })
 
+  it('普通提供商允许空 API Key，ChatGPT 标签仍拒绝密钥和无效标签', () => {
+    expect(validateProvider(makeProvider({ api_key: '' })).isValid).toBe(true)
+    expect(validateProvider(makeProvider({
+      client_type: 'chatgpt', api_key: '', chatgpt_account: 'work',
+    })).isValid).toBe(true)
+    const invalid = validateProvider(makeProvider({
+      client_type: 'chatgpt', api_key: 'not-a-token', chatgpt_account: 'invalid label',
+    }))
+    expect(invalid.isValid).toBe(false)
+    expect(invalid.errors.api_key).toBe('ChatGPT 使用独立登录，不应填写 API Key 或令牌')
+    expect(invalid.errors.chatgpt_account).toBe('账号标签只允许 1–64 个字母、数字、下划线或短横线')
+  })
+
   it('全部字段合法时校验通过，errors 为空对象', () => {
     const result = validateProvider(makeProvider(), [], null)
     expect(result.isValid).toBe(true)
