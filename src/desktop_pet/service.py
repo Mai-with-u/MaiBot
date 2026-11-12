@@ -28,6 +28,8 @@ from .todos import TodoStore
 logger = get_logger("desktop_pet")
 COMMAND_TIMEOUT = 3
 STOP_TIMEOUT = 5
+MAX_UNANSWERED_PROACTIVE_WAKES = 2
+PROACTIVE_WAKE_SILENCE_SECONDS = 20 * 60
 
 
 class DesktopPetService:
@@ -53,6 +55,8 @@ class DesktopPetService:
         self._button_sync_task: Optional[asyncio.Task[None]] = None
         self._button_revision = 0
         self._proactive_wake_task: Optional[asyncio.Task[None]] = None
+        self._unanswered_proactive_wakes = 0
+        self._last_owner_chat_activity = time.monotonic()
         self._screen_reader_task: Optional[asyncio.Task[None]] = None
         self._screen_busy = False
         self._screen_error = ""
@@ -582,6 +586,9 @@ class DesktopPetService:
         await self._command({"type": "exploration_result", "error": error, "task_id": task["id"] if task else ""})
 
     async def _wake_proactively(self) -> None:
+        if not self._can_wake_proactively():
+            return
+
         from src.prompt.prompt_manager import prompt_manager
 
         template = await asyncio.to_thread(prompt_manager.get_prompt, "desktop_pet_proactive_wake")
@@ -589,6 +596,18 @@ class DesktopPetService:
         await self._enqueue_owner_task(
             source_kind="desktop_pet_proactive_wake", text=text, reason="桌宠定期主动思考",
         )
+
+    def _can_wake_proactively(self) -> bool:
+        return (
+            self._unanswered_proactive_wakes < MAX_UNANSWERED_PROACTIVE_WAKES
+            and time.monotonic() - self._last_owner_chat_activity > PROACTIVE_WAKE_SILENCE_SECONDS
+        )
+
+    def notify_user_message(self, platform: str, user_id: str, *, is_group: bool) -> None:
+        """主人在桌宠或网页聊天中回复后，重新允许最多两次主动唤醒。"""
+        if platform == INTERNAL_CHAT_PLATFORM and user_id == INTERNAL_CHAT_USER_ID and not is_group:
+            self._unanswered_proactive_wakes = 0
+            self._last_owner_chat_activity = time.monotonic()
 
     async def _run_todos(self) -> None:
         next_app_check = 0.0
@@ -711,7 +730,11 @@ class DesktopPetService:
         if not await heartflow_manager._is_session_allowed(session):
             raise PermissionError("当前策略禁止唤醒主人聊天流")
         runtime = await heartflow_manager.get_or_create_heartflow_chat(session.session_id)
+        if source_kind == "desktop_pet_proactive_wake" and not self._can_wake_proactively():
+            return
         runtime.enqueue_internal_task(source_kind=source_kind, text=text, reason=reason, images=images if images is not None else [])
+        if source_kind == "desktop_pet_proactive_wake":
+            self._unanswered_proactive_wakes += 1
 
     async def _dispatch_hook(self, name: str, **kwargs: Any) -> None:
         from src.plugin_runtime.integration import get_plugin_runtime_manager
@@ -889,10 +912,13 @@ class DesktopPetService:
                 self._observe(self._command({"type": "thinking"}))
 
     async def notify_reply(self, message: Dict[str, Any]) -> None:
-        if not self._ready or self._closing or message["platform"] != INTERNAL_CHAT_PLATFORM:
+        if message["platform"] != INTERNAL_CHAT_PLATFORM:
             return
         info = message["message_info"]
         if info.get("group_info") or info.get("additional_config", {}).get("platform_io_target_user_id") != INTERNAL_CHAT_USER_ID:
+            return
+        self._last_owner_chat_activity = time.monotonic()
+        if not self._ready or self._closing:
             return
         self._observe(self._render_reply(message["raw_message"]))
 
