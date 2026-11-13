@@ -20,6 +20,8 @@ from .read_tool_result import get_tool_spec as get_read_tool_result_tool_spec
 from .read_tool_result import handle_tool as handle_read_tool_result_tool
 from .reply import get_tool_spec as get_reply_tool_spec
 from .reply import handle_tool as handle_reply_tool
+from .schedule import get_tool_spec as get_schedule_tool_spec
+from .schedule import handle_tool as handle_schedule_tool
 from .stop import get_tool_spec as get_stop_tool_spec
 from .stop import handle_tool as handle_stop_tool
 from .subagent import get_status_tool_spec as get_subagent_status_tool_spec
@@ -87,6 +89,7 @@ BUILTIN_TOOL_ENTRIES: List[BuiltinToolEntry] = [
     BuiltinToolEntry("wait", get_wait_tool_spec, handle_wait_tool, stage="both"),
     BuiltinToolEntry("stop", get_stop_tool_spec, handle_stop_tool, stage="action"),
     BuiltinToolEntry("reply", get_reply_tool_spec, handle_reply_tool, stage="action"),
+    BuiltinToolEntry("schedule", get_schedule_tool_spec, handle_schedule_tool, stage="action"),
     BuiltinToolEntry(
         "view_forward_message",
         get_view_forward_message_tool_spec,

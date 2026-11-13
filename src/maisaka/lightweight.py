@@ -14,6 +14,7 @@ LIGHTWEIGHT_TOOL_PARAMETERS = {
     "view_forward_message": ("msg_id", "path"),
     "tool_search": ("query",),
     "stop": (),
+    "schedule": ("action", "text", "delay_seconds", "due_at", "todo_id", "include_completed"),
 }
 
 

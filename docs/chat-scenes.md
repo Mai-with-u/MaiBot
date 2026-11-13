@@ -82,3 +82,17 @@ uv run --no-sync python -m pytest pytests/maisaka pytests/plugin_runtime/test_re
 ```
 
 `test_chat_scenes.py` 覆盖配置独立性、热重载、三种语言提示词、模板选择、未知会话、引用公式、方向性记忆权限、画像候选以及群聊/私聊提及差异。
+
+## 聊天单次日程
+
+普通群聊、私聊和 Focus 使用同一个 `schedule` 工具。轻量私聊也可登记日程；`wait` 仍只用于当前思考的结束或短暂等待。
+
+```json
+{"action": "add", "text": "提醒大家提交作业", "delay_seconds": 600}
+```
+
+也可指定未来的 `due_at`（ISO 8601，建议带时区），与 `delay_seconds` 不能同时填写。支持 `list`、`update`、`cancel`、`complete`，修改前先查询真实 `todo_id`。Focus 工具另外填写本组真实 `session_id`，其他模式自动绑定当前聊天。取消保留记录，完成归档；`list(include_completed=true)` 包含已完成、已取消历史。
+
+日程由主程序持久化并每秒检查，不依赖桌宠是否启动。到期向原聊天投递内部任务并唤醒 Planner，包括正在定时等待的 Focus 组；Planner 结合最新上下文执行任务，完成后再归档。不会把任务投给其他群，也不会把跨群事项注入主人聊天的常驻待办上下文。创建日程不暂停当前轮次，也不代表已发送到期消息。
+
+桌宠面板、主人 `desktop_pet_todo` 和 `schedule` 共用原来的事项文件与附件。桌宠是管理入口，主程序是唯一写入方。重启后补投递尚未确认的到期任务；`triggered` 只表示已投递，`failed` 保存错误，重新安排未来时间后才再次尝试。进程在投递成功与保存回执之间退出时可能重复投递，因此不提供严格一次执行保证。

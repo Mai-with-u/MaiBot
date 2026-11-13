@@ -22,7 +22,7 @@ import threading
 if TYPE_CHECKING:
     import webview
 
-    from .todos import TodoStore
+    from .todo_proxy import TodoProxy
 
 # 页面设计尺寸（CSS 像素），与 index.html 布局一致。
 PAGE_WIDTH = 260
@@ -205,7 +205,7 @@ class Outbox:
 class PetApi:
     """暴露给页面的 js_api；下划线开头的成员不会暴露。"""
 
-    def __init__(self, outbox: Outbox, todos: "TodoStore", state_path: Path, request_dir: Path) -> None:
+    def __init__(self, outbox: Outbox, todos: "TodoProxy", state_path: Path, request_dir: Path) -> None:
         self._outbox = outbox
         self._todos = todos
         self._state_path = state_path
@@ -539,36 +539,10 @@ def execute_command(api: PetApi, window: "webview.Window", command: Dict[str, An
             ack["result"] = window.evaluate_js(
                 f"window.petSkin.command({json.dumps(command['action'])}, {json.dumps(command['args'])}, {json.dumps(command['owner'])})"
             )
-        elif command["type"] == "todo":
-            action = command["action"]
-            if action == "list":
-                result = {"items": api._todos.list(include_completed=command.get("include_completed", False))}
-            elif action == "add":
-                result = {"item": api._todos.add(command["text"], **command.get("options", {}))}
-            elif action == "update":
-                result = {"item": api._todos.update(command["todo_id"], command.get("text"), **command.get("options", {}))}
-            elif action == "claim_due":
-                result = {"items": api._todos.claim_due()}
-            elif action == "claim_condition":
-                result = {"item": api._todos.claim_condition(command["todo_id"], command["revision"], command["evidence"])}
-            elif action == "finish":
-                api._todos.finish(command["todo_id"], command["revision"], command.get("error", ""))
-                result = {}
-            elif action == "complete":
-                api._todos.done(command["todo_id"])
-                result = {"completed": command["todo_id"]}
-            elif action == "delete":
-                api._todos.delete(command["todo_id"])
-                result = {"deleted": command["todo_id"]}
-            else:
-                raise ValueError("未知待办操作")
-            ack["result"] = result
-            if action not in {"list", "claim_due"}:
-                try:
-                    window.evaluate_js("window.pet.refreshTodos()")
-                except Exception as exc:
-                    # 数据已保存；界面刷新失败不能误报为写入失败并诱发重复新增。
-                    result["display_error"] = str(exc)
+        elif command["type"] == "todo_response":
+            api._todos.receive(command)
+        elif command["type"] == "todo_refresh":
+            window.evaluate_js("void window.pet.refreshTodos()")
         elif command["type"] == "exploration_tasks" and command["request_id"].startswith("records:"):
             # 窗口关闭后的迟到回执直接丢弃，不影响桌宠面板自己的查询。
             records_window = api._exploration_window
@@ -603,7 +577,7 @@ def main() -> None:
 
     import webview
 
-    from .todos import TodoStore
+    from .todo_proxy import TodoProxy
 
     _bind_win32()
     # 显式声明 DPI 感知，窗口位置、光标与窗口区域统一使用物理像素。
@@ -611,7 +585,7 @@ def main() -> None:
     outbox = Outbox()
     args.data_dir.mkdir(parents=True, exist_ok=True)
     args.runtime_dir.mkdir(parents=True, exist_ok=True)
-    api = PetApi(outbox, TodoStore(args.data_dir / "todos.json"), args.data_dir / "window.json", args.runtime_dir / "requests")
+    api = PetApi(outbox, TodoProxy(outbox.emit), args.data_dir / "window.json", args.runtime_dir / "requests")
     window = webview.create_window(
         "MaiBot Desktop Pet",
         url=PAGE.as_uri(),

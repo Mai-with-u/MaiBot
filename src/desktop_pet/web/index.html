@@ -1318,6 +1318,12 @@
     const title = document.createElement("span");
     title.className = "todo-title";
     title.textContent = item.text;
+    if (item.session_id && item.session_name) {
+      const chat = document.createElement("small");
+      chat.className = "todo-meta";
+      chat.textContent = item.session_name;
+      text.append(chat);
+    }
     viewport.append(title);
     text.append(viewport);
     if (item.images?.length) {

@@ -29,6 +29,7 @@ from src.llm_models.payload_content.context_item import FunctionCallItem
 from src.maisaka.chat_loop_service import ChatResponse, MaisakaChatLoopService
 from src.maisaka.context.messages import (
     ContentContextMessage,
+    InternalContextMessage,
     LLMContextMessage,
     ModelOutputContextMessage,
     ReferenceMessage,
@@ -333,6 +334,8 @@ class FocusGroupRuntime:
             last = runtime._chat_history[-1]
             if isinstance(last, ContentContextMessage) and last.message_id == trigger.message_id:
                 text = last.processed_plain_text
+                if isinstance(last, InternalContextMessage) and last.source_kind == "schedule" and self._wait_until is not None:
+                    self._finish_wait(f"{runtime.session_name} 的日程到期")
         notice = ReferenceMessage(
             content=f'<focus_event session_id="{escape(runtime.session_id, quote=True)}" '
             f'chat_name="{escape(runtime.session_name, quote=True)}">\n{text}\n</focus_event>',
