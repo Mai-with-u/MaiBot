@@ -9,6 +9,7 @@ from src.common.async_work import run_sync_work
 from src.common.logger import get_logger
 
 from ...utils import profile_policy
+from ...utils.async_work import cancel_and_wait_for_tasks
 from .base import KernelServiceBase
 
 logger = get_logger("A_Memorix.SDKMemoryKernel")
@@ -198,15 +199,7 @@ class MemoryBackgroundTaskService(KernelServiceBase):
         async with self._background_lock:
             self._background_stopping = True
             tasks = [task for task in self._background_tasks.values() if task is not None and not task.done()]
-            for task in tasks:
-                task.cancel()
-            for task in tasks:
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-                except Exception as exc:
-                    logger.warning(f"后台任务退出异常: {exc}")
+            await cancel_and_wait_for_tasks(tasks, operation="关闭记忆后台任务")
             self._background_tasks.clear()
 
     async def _auto_save_loop(self) -> None:

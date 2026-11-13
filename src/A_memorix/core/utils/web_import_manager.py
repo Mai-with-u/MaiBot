@@ -27,6 +27,7 @@ from src.common.logger import get_logger
 from src.services import llm_service as llm_api
 
 from ...paths import default_data_dir, repo_root, resolve_repo_path, scripts_root
+from .async_work import cancel_and_wait_for_tasks
 from ..storage import (
     GraphStore,
     KnowledgeType,
@@ -2126,17 +2127,11 @@ class ImportTaskManager:
                     self._try_write_task_report(task)
             self._queue.clear()
             worker = self._worker_task
-            self._worker_task = None
 
         if worker:
-            worker.cancel()
-            try:
-                await worker
-            except asyncio.CancelledError:
-                logger.debug("Web 导入工作线程已取消")
-            except Exception:
-                logger.exception("Web 导入工作线程关闭异常")
+            await cancel_and_wait_for_tasks([worker], operation="关闭 Web 导入任务")
 
+        self._worker_task = None
         self._cleanup_temp_root()
 
     def _cleanup_temp_root(self) -> None:

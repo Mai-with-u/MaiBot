@@ -28,7 +28,6 @@ jobs:
         run: ruff check --output-format=github
         shell: pwsh
       - name: Run Ruff Format Check
-        env:
-          BASE_REF: ${{ github.event.pull_request.base.sha }}
-        run: python .github/scripts/check_ruff_format_regressions.py --baseline-ref "$env:BASE_REF"
+        # checkout 默认检出 PR 合并提交；第一父提交才是该次合并实际使用的目标基线。
+        run: python .github/scripts/check_ruff_format_regressions.py --baseline-ref 'HEAD^1'
         shell: pwsh

@@ -21,6 +21,7 @@ from src.common.logger import get_logger
 
 from ...paths import artifacts_root
 from ..runtime.search_runtime_initializer import build_search_runtime
+from .async_work import cancel_and_wait_for_tasks
 from .model_routing import (
     ResolvedLLMModel,
     generate_with_resolved_model,
@@ -913,13 +914,7 @@ class RetrievalTuningManager:
         worker = self._worker_task
         if worker is None or worker.done():
             return
-        worker.cancel()
-        try:
-            await worker
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.warning(f"Retrieval tuning worker shutdown failed: {e}")
+        await cancel_and_wait_for_tasks([worker], operation="关闭检索调优任务")
 
     async def create_task(self, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         if not self._is_enabled():
