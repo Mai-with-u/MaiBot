@@ -782,7 +782,10 @@ class ImageMemoryWritebackService:
         if not self._enabled():
             return
         if self._journal is None:
-            self._journal = ImageWritebackJournal(self._journal_path)
+            journal = await asyncio.to_thread(ImageWritebackJournal, self._journal_path)
+            if self._worker_task is not None and not self._worker_task.done():
+                return
+            self._journal = journal
         self._stopping = False
         self._worker_task = asyncio.create_task(self._worker_loop(), name="A_Memorix.image_writeback")
         self._compensation_task = asyncio.create_task(
@@ -805,9 +808,7 @@ class ImageMemoryWritebackService:
             except asyncio.CancelledError:
                 pass
 
-        if self._journal is not None:
-            self._journal.close()
-            self._journal = None
+        self._journal = None
 
     async def enqueue(self, message: Any) -> None:
         if not self._enabled() or self._stopping:
@@ -818,7 +819,7 @@ class ImageMemoryWritebackService:
             await self.start()
         if self._journal is None:
             raise RuntimeError("图片写回服务初始化未完成")
-        self._journal.enqueue(str(message.session_id), str(message.message_id))
+        await asyncio.to_thread(self._journal.enqueue, str(message.session_id), str(message.message_id))
 
     @staticmethod
     def _enabled() -> bool:
@@ -828,17 +829,11 @@ class ImageMemoryWritebackService:
     def list_jobs(self, status: str = "", limit: int = 25, offset: int = 0) -> Dict[str, Any]:
         # 管理服务独立读取任务，不启动消息接收或模型调用。
         journal = ImageWritebackJournal(self._journal_path)
-        try:
-            return journal.list_jobs(status, limit, offset)
-        finally:
-            journal.close()
+        return journal.list_jobs(status, limit, offset)
 
     def retry_failed(self) -> int:
         journal = ImageWritebackJournal(self._journal_path)
-        try:
-            return journal.retry_failed()
-        finally:
-            journal.close()
+        return journal.retry_failed()
 
     async def backfill_messages(self, messages: List[Any]) -> Dict[str, int]:
         """同步回填一批历史消息；出现外部引用保证重复执行仍然幂等。"""
@@ -861,21 +856,26 @@ class ImageMemoryWritebackService:
                 continue
             if self._journal is None:
                 raise RuntimeError("图片写回任务库未初始化")
-            job = self._journal.next_job()
+            journal = self._journal
+            job = await asyncio.to_thread(journal.next_job)
             if job is None:
                 await asyncio.sleep(max(0.1, global_config.a_memorix.image_memory.job_poll_interval_seconds))
                 continue
             try:
-                messages = find_messages(session_id=job["session_id"], message_id=job["message_id"], limit=1)
+                messages = await asyncio.to_thread(
+                    find_messages, session_id=job["session_id"], message_id=job["message_id"], limit=1
+                )
                 if not messages:
                     raise ValueError("图片入库任务的来源消息不存在")
                 message = messages[0]
                 await self._handle_message(message)
-                self._journal.complete(job["session_id"], job["message_id"])
+                await asyncio.to_thread(journal.complete, job["session_id"], job["message_id"])
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self._journal.fail(job, str(exc), 1 + int(global_config.a_memorix.image_memory.job_max_retries))
+                await asyncio.to_thread(
+                    journal.fail, job, str(exc), 1 + int(global_config.a_memorix.image_memory.job_max_retries)
+                )
                 logger.warning(f"图片记忆写入失败，任务已保留: {exc}", exc_info=True)
 
     async def _compensation_loop(self) -> None:

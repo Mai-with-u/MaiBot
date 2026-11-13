@@ -569,7 +569,10 @@ function TaskEditor({
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0">
-                    <Command shouldSort={false}>
+                    <Command filter={(value, search, keywords) => {
+                      const text = [value, ...(keywords ?? [])].join(' ').toLowerCase()
+                      return search.trim().toLowerCase().split(/\s+/).every((word) => text.includes(word)) ? 1 : 0
+                    }}>
                       <CommandInput
                         placeholder={isWeb ? '搜索联网服务…' : '搜索模型名称或厂商…'}
                         aria-label={isWeb ? '搜索联网服务' : '搜索模型名称或厂商'}

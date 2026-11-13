@@ -1,5 +1,6 @@
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 import sqlite3
 import time
@@ -10,10 +11,10 @@ class ImageWritebackJournal:
 
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.connection = sqlite3.connect(path)
-        self.connection.row_factory = sqlite3.Row
-        self.connection.execute("PRAGMA journal_mode=WAL")
-        self.connection.execute("""
+        self._path = path
+        with self._connect() as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("""
             CREATE TABLE IF NOT EXISTS image_writeback_jobs (
                 session_id TEXT NOT NULL,
                 message_id TEXT NOT NULL,
@@ -25,29 +26,29 @@ class ImageWritebackJournal:
                 PRIMARY KEY (session_id, message_id)
             )
         """)
-        self.connection.commit()
 
     def enqueue(self, session_id: str, message_id: str) -> None:
         if not session_id or not message_id:
             raise ValueError("图片入库任务缺少真实聊天流或消息 ID")
-        with self.connection:
-            self.connection.execute(
+        with self._connect() as connection:
+            connection.execute(
                 "INSERT OR IGNORE INTO image_writeback_jobs(session_id,message_id,updated_at) VALUES (?,?,?)",
                 (session_id, message_id, time.time()),
             )
 
     def next_job(self) -> Optional[Dict[str, Any]]:
         # 成功前始终保持 pending，进程退出不会丢失正在处理的任务。
-        row = self.connection.execute(
-            "SELECT * FROM image_writeback_jobs WHERE status='pending' AND retry_at<=? "
-            "ORDER BY retry_at,updated_at LIMIT 1",
-            (time.time(),),
-        ).fetchone()
-        return dict(row) if row is not None else None
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM image_writeback_jobs WHERE status='pending' AND retry_at<=? "
+                "ORDER BY retry_at,updated_at LIMIT 1",
+                (time.time(),),
+            ).fetchone()
+            return dict(row) if row is not None else None
 
     def complete(self, session_id: str, message_id: str) -> None:
-        with self.connection:
-            self.connection.execute(
+        with self._connect() as connection:
+            connection.execute(
                 "UPDATE image_writeback_jobs SET status='done',last_error='',updated_at=? "
                 "WHERE session_id=? AND message_id=?",
                 (time.time(), session_id, message_id),
@@ -56,8 +57,8 @@ class ImageWritebackJournal:
     def fail(self, job: Dict[str, Any], error: str, max_attempts: int) -> None:
         attempts = int(job["attempts"]) + 1
         now = time.time()
-        with self.connection:
-            self.connection.execute(
+        with self._connect() as connection:
+            connection.execute(
                 "UPDATE image_writeback_jobs SET status=?,attempts=?,retry_at=?,last_error=?,updated_at=? "
                 "WHERE session_id=? AND message_id=?",
                 (
@@ -74,25 +75,34 @@ class ImageWritebackJournal:
     def list_jobs(self, status: str, limit: int, offset: int) -> Dict[str, Any]:
         where = "WHERE status=?" if status else ""
         parameters = (status,) if status else ()
-        total = self.connection.execute(
-            f"SELECT COUNT(*) FROM image_writeback_jobs {where}",
-            parameters,
-        ).fetchone()[0]
-        rows = self.connection.execute(
-            f"SELECT * FROM image_writeback_jobs {where} ORDER BY updated_at DESC LIMIT ? OFFSET ?",
-            (*parameters, limit, offset),
-        ).fetchall()
-        items: List[Dict[str, Any]] = [dict(row) for row in rows]
-        return {"success": True, "items": items, "total": total}
+        with self._connect() as connection:
+            total = connection.execute(
+                f"SELECT COUNT(*) FROM image_writeback_jobs {where}",
+                parameters,
+            ).fetchone()[0]
+            rows = connection.execute(
+                f"SELECT * FROM image_writeback_jobs {where} ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                (*parameters, limit, offset),
+            ).fetchall()
+            items: List[Dict[str, Any]] = [dict(row) for row in rows]
+            return {"success": True, "items": items, "total": total}
 
     def retry_failed(self) -> int:
-        with self.connection:
-            cursor = self.connection.execute(
+        with self._connect() as connection:
+            cursor = connection.execute(
                 "UPDATE image_writeback_jobs SET status='pending',attempts=0,retry_at=0,updated_at=? "
                 "WHERE status='failed'",
                 (time.time(),),
             )
         return cursor.rowcount
 
-    def close(self) -> None:
-        self.connection.close()
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        """每次操作在当前线程内创建、提交并关闭连接，不跨线程共享事务。"""
+        connection = sqlite3.connect(self._path)
+        connection.row_factory = sqlite3.Row
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()

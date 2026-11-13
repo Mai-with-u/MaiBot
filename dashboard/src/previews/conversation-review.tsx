@@ -241,7 +241,7 @@ function ConversationReview({ thinking = false }: { thinking?: boolean }) {
                   <>
                     {[
                       { label: '统计', Icon: Activity, content: '2 轮 · 24,700 tokens' },
-                      { label: '当前上下文', Icon: Brain, content: '上下文 31 条 · 可用工具 20' },
+                      { label: '上下文', Icon: Brain, content: '上下文 31 条 · 可用工具 20' },
                       { label: '子代理', Icon: Bot, content: '当前没有子代理任务' },
                     ].map(({ label, Icon, content }) => (
                       <Popover key={label}>

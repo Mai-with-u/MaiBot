@@ -1,5 +1,6 @@
 import { ConversationAvatar, MessageBubble, TraceRound, TraceStep } from '@/components/ui/conversation'
 import { DataPanel } from '@/components/ui/surface'
+import { ChatStreamSettingsDialog, type ChatStreamSettingsTarget } from '@/components/chat-stream-settings-dialog'
 import { StatusIndicator } from '@/components/ui/data-browser'
 /**
  * MaiSaka 聊天流实时监控组件
@@ -220,19 +221,35 @@ interface StageStatusPanelProps {
 function StageStatusPanel({
   sessionName, status, hideStatus = false, sessionId, stats, ...navigation
 }: StageStatusPanelProps) {
+  const navigate = useNavigate()
+  const [settingsChat, setSettingsChat] = useState<ChatStreamSettingsTarget | null>(null)
   return (
-    <ObservationHeader
-      title={sessionName || status?.sessionName}
-      subtitle={!hideStatus && (status ? <StageStatusContent status={status} /> : '当前聊天流暂无阶段状态')}
-      {...navigation}
-      tools={
-        <>
-          <InspectorToggleButton view="stats" />
-          <InspectorToggleButton view="context" disabled={!sessionId} />
-          <InspectorToggleButton view="subagents" />
-        </>
-      }
-    />
+    <>
+      <ObservationHeader
+        title={sessionName || status?.sessionName}
+        subtitle={!hideStatus && (status ? <StageStatusContent status={status} /> : '当前聊天流暂无阶段状态')}
+        {...navigation}
+        onEditChat={sessionId ? () => setSettingsChat({
+          session_id: sessionId,
+          display_name: sessionName || status?.sessionName || '聊天流',
+        }) : undefined}
+        tools={
+          <>
+            <InspectorToggleButton view="stats" />
+            <InspectorToggleButton view="context" disabled={!sessionId} />
+            <InspectorToggleButton view="subagents" />
+          </>
+        }
+      />
+      <ChatStreamSettingsDialog
+        chat={settingsChat}
+        onOpenChange={(open) => !open && setSettingsChat(null)}
+        onDeleted={(deletedSessionId) => {
+          setSettingsChat(null)
+          if (deletedSessionId === sessionId) void navigate({ to: '/chat', search: {} })
+        }}
+      />
+    </>
   )
 }
 
