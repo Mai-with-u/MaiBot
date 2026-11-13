@@ -876,7 +876,8 @@ class SummaryImporter:
             summary_text = raw_summary.strip()
             entities = _normalize_entity_items(data.get("entities"))
             relations = _normalize_relation_items(data.get("relations"))
-            facts = _normalize_summary_facts(data.get("facts"))
+            # 无增量时兼容旧响应省略 facts；显式非法值和非空摘要仍严格校验。
+            facts = _normalize_summary_facts(data.get("facts", []))
             if summary_text and not facts:
                 return SummaryImportResult(False, "非空增量总结必须提供非空 facts，不能跳过事实去重")
             if not summary_text:

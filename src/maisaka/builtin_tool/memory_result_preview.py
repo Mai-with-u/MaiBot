@@ -7,15 +7,22 @@ MEMORY_RESULT_MAX_CHARS = 2800
 
 
 def build_memory_result_preview(
-    result: MemorySearchResult, content: str, *, session_id: str, limit: int,
+    result: MemorySearchResult,
+    content: str,
+    *,
+    session_id: str,
+    limit: int,
+    notice: str = "",
 ) -> str:
     """保留各命中的短正文，并提供同会话内完整原文的读取编号。"""
-    if len(content) <= MEMORY_RESULT_MAX_CHARS or result.to_dict().get("purpose", "memory") != "memory":
-        return content
+    full_content = f"{notice}\n{content}" if notice else content
+    if len(full_content) <= MEMORY_RESULT_MAX_CHARS or result.to_dict().get("purpose", "memory") != "memory":
+        return full_content
 
-    result_id = tool_result_store.save(session_id, "query_memory", content)
+    result_id = tool_result_store.save(session_id, "query_memory", full_content)
     header = (
-        f"以下为记忆片段预览，共 {len(result.hits[:limit])} 条；片段被截短，不代表完整事实。\n"
+        (f"{notice}\n" if notice else "")
+        + f"以下为记忆片段预览，共 {len(result.hits[:limit])} 条；片段被截短，不代表完整事实。\n"
         f'完整原文已保存为 {result_id}，需要细节时调用 read_tool_result(result_id="{result_id}")，'
         "可加 keyword 查找或用 offset 分段读取。\n"
     )

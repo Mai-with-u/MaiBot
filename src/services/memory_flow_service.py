@@ -902,17 +902,14 @@ class ImageMemoryWritebackService:
         lease_token = str(claimed.get("lease_token") or "")
         # 同一消息的多张图片共享聊天窗口，合并本批已领取任务后只补偿一次摘要。
         # 消息或时间不同的任务保持独立，避免跨窗口遗漏事实。
-        grouped: Dict[Tuple[str, str, float], List[Dict[str, Any]]] = {}
+        grouped: Dict[Tuple[str, str, float, str], List[Dict[str, Any]]] = {}
         for item in claimed.get("items") or []:
-            key = (str(item["chat_id"]), str(item["message_id"]), float(item["occurred_at"]))
+            key = (
+                str(item["chat_id"]), str(item["message_id"]), float(item["occurred_at"]),
+                str(item["summary_external_id"]),
+            )
             grouped.setdefault(key, []).append(item)
-        for (chat_id, message_id, occurred_at), items in grouped.items():
-            references = sorted((str(item["occurrence_id"]), str(item["description_hash"])) for item in items)
-            if len(references) == 1:
-                external_id = f"image_description_compensation:{references[0][0]}:{references[0][1]}"
-            else:
-                fingerprint = hashlib.sha256(json.dumps(references).encode("utf-8")).hexdigest()
-                external_id = f"image_description_compensation_batch:{fingerprint}"
+        for (chat_id, message_id, occurred_at, external_id), items in grouped.items():
             try:
                 result = await memory_service.ingest_summary(
                     external_id=external_id,

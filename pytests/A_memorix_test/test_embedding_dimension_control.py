@@ -240,8 +240,8 @@ async def test_runtime_self_check_reports_requested_dimension_without_explicit_o
         def get_requested_dimension(self) -> int:
             return self.detected_dimension
 
-        async def encode(self, text):
-            self.encode_calls.append(text)
+        async def encode(self, text, *, use_cache=True):
+            self.encode_calls.append((text, use_cache))
             return np.ones(self.detected_dimension, dtype=np.float32)
 
     manager = _FakeEmbeddingManager()
@@ -257,25 +257,20 @@ async def test_runtime_self_check_reports_requested_dimension_without_explicit_o
     assert report["requested_dimension"] == 384
     assert report["detected_dimension"] == 384
     assert report["encoded_dimension"] == 384
-    assert manager.encode_calls == ["A_Memorix runtime self check"]
+    assert manager.encode_calls == [("A_Memorix runtime self check", False)]
 
 
 @pytest.mark.asyncio
 async def test_encode_batch_keeps_batch_local_indexes_when_cache_hits_previous_batch(monkeypatch):
-    adapter = EmbeddingAPIAdapter(default_dimension=4, enable_cache=True)
-    adapter._dimension = 4
-    adapter._dimension_detected = True
+    adapter, client = _build_adapter(monkeypatch, client_type="openai", configured_dimension=4, effective_dimension=4)
+    adapter.enable_cache = True
+    monkeypatch.setattr(EmbeddingAPIAdapter, "_GLOBAL_TEXT_EMBEDDING_CACHE", {})
 
-    async def fake_detect_dimension() -> int:
-        return 4
+    async def fake_get_embedding(request):
+        base = float(ord(request.embedding_input[0]))
+        return SimpleNamespace(embedding=[base, base + 1.0, base + 2.0, base + 3.0])
 
-    async def fake_get_embedding_direct(text: str, dimensions: int | None = None):
-        del dimensions
-        base = float(ord(str(text)[0]))
-        return [base, base + 1.0, base + 2.0, base + 3.0]
-
-    monkeypatch.setattr(adapter, "_detect_dimension", fake_detect_dimension)
-    monkeypatch.setattr(adapter, "_get_embedding_direct", fake_get_embedding_direct)
+    monkeypatch.setattr(client, "get_embedding", fake_get_embedding)
 
     embeddings = await adapter.encode(["A", "B", "A", "C"], batch_size=2)
 
@@ -287,16 +282,18 @@ async def test_encode_batch_keeps_batch_local_indexes_when_cache_hits_previous_b
 
 @pytest.mark.asyncio
 async def test_failed_batch_finishes_inflight_calls_and_caches_successes(monkeypatch):
-    adapter = EmbeddingAPIAdapter(default_dimension=4, enable_cache=True)
+    adapter, client = _build_adapter(monkeypatch, client_type="openai", configured_dimension=4, effective_dimension=4)
+    adapter.enable_cache = True
     monkeypatch.setattr(EmbeddingAPIAdapter, "_GLOBAL_TEXT_EMBEDDING_CACHE", {})
     calls = []
-    async def encode(text, dimensions=None):
+    async def encode(request):
+        text = request.embedding_input
         calls.append(text)
         if text == "bad" and calls.count("bad") == 1:
-            return None
+            raise RuntimeError("simulated transient failure")
         await asyncio.sleep(0)
-        return [1.0] * 4
-    monkeypatch.setattr(adapter, "_get_embedding_direct", encode)
+        return SimpleNamespace(embedding=[1.0] * 4)
+    monkeypatch.setattr(client, "get_embedding", encode)
     with pytest.raises(RuntimeError):
         await adapter._encode_batch_internal(["bad", "good"], batch_size=2, dimensions=4)
     vectors = await adapter._encode_batch_internal(["bad", "good"], batch_size=2, dimensions=4)

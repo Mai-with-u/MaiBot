@@ -16,7 +16,7 @@ from .knowledge_types import (
 
 logger = get_logger("A_Memorix.MetadataSchema")
 
-SCHEMA_VERSION = 29
+SCHEMA_VERSION = 31
 RUNTIME_AUTO_MIGRATION_MIN_SCHEMA_VERSION = 9
 
 
@@ -1239,6 +1239,7 @@ class MetadataSchemaMixin:
             CREATE TABLE IF NOT EXISTS image_description_compensations (
                 occurrence_id TEXT NOT NULL,
                 description_hash TEXT NOT NULL,
+                summary_external_id TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL,
                 lease_token TEXT NOT NULL DEFAULT '',
                 lease_until REAL NOT NULL DEFAULT 0,
@@ -1301,6 +1302,12 @@ class MetadataSchemaMixin:
             );
             """
         )
+
+        columns = {row[1] for row in cursor.execute("PRAGMA table_info(image_description_compensations)")}
+        if "summary_external_id" not in columns:
+            cursor.execute(
+                "ALTER TABLE image_description_compensations ADD COLUMN summary_external_id TEXT NOT NULL DEFAULT ''"
+            )
 
     def _initialize_tables(self) -> None:
         """初始化数据库表结构"""
