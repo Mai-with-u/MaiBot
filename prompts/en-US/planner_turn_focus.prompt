@@ -1,0 +1,1 @@
+Consider the shared context and decide the next action for {bot_name}. Route tools with the real session_id of the target chat. End quietly when no action is needed, or continue using tools when more work remains.

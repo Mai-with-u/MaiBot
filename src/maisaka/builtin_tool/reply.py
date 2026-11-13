@@ -29,6 +29,7 @@ from src.plugin_runtime.host.reply_extensions import ReplyExtensionExecution, bu
 from src.services import send_service
 
 from .context import BuiltinToolRuntimeContext, PostProcessedReplyMessage, ResolvedReplyAttachments
+from .wait import resolve_wait_seconds
 
 if TYPE_CHECKING:
     from src.maisaka.reply_supplement import ReplySupplement
@@ -130,15 +131,14 @@ def get_tool_spec(context: Optional[ToolAvailabilityContext] = None) -> ToolSpec
     properties: dict[str, Any] = {
         "after_reply": {
             "type": "string",
-            "enum": ["continue", "stop", "wait"],
-            "default": "stop",
-            "description": "回复发送成功后的行为：continue 继续思考和调用工具；stop 结束本轮（默认）；wait 等待后再判断。stop/wait 会取消同批后续工具。",
+            "enum": ["continue", "wait"],
+            "default": "wait",
+            "description": "回复发送成功后的行为：continue 继续思考和调用工具；wait（默认）暂停，未填 wait_seconds 则结束本轮，填写 wait_seconds 则定时再判断。wait 会取消同批后续工具。",
         },
         "wait_seconds": {
             "type": "integer",
             "minimum": 0,
-            "default": 30,
-            "description": "after_reply=wait 时的等待秒数，默认 30 秒。",
+            "description": "可选。after_reply=wait 时最多等待的秒数，到期后即使没有新消息也会继续思考。不填表示结束本轮。",
         },
         "msg_id": {
             "type": "string",
@@ -433,12 +433,17 @@ async def handle_tool(
             f"{tool_ctx.runtime.log_prefix} 检测到 reply 工具参数被重复包裹，已自动解包: "
             f"调用编号={invocation.call_id}"
         )
-    after_reply = invocation_arguments.get("after_reply", "stop")
-    if after_reply not in ("continue", "stop", "wait"):
-        return tool_ctx.build_failure_result("reply", "after_reply 必须为 continue、stop 或 wait。")
-    wait_seconds = invocation_arguments.get("wait_seconds", 30)
-    if type(wait_seconds) is not int or wait_seconds < 0:
-        return tool_ctx.build_failure_result("reply", "wait_seconds 必须为非负整数。")
+    after_reply = invocation_arguments.get("after_reply", "wait")
+    if after_reply not in ("continue", "wait"):
+        return tool_ctx.build_failure_result("reply", "after_reply 必须为 continue 或 wait。")
+    if "wait_until" in invocation_arguments:
+        return tool_ctx.build_failure_result("reply", "不支持 wait_until，请使用 wait_seconds 指定等待秒数。")
+    try:
+        wait_seconds = resolve_wait_seconds(invocation_arguments, seconds_key="wait_seconds")
+    except ValueError as exc:
+        return tool_ctx.build_failure_result("reply", str(exc))
+    if after_reply == "continue" and wait_seconds is not None:
+        return tool_ctx.build_failure_result("reply", "after_reply=continue 时不能填写等待时间。")
     result = await execute_reply(tool_ctx, invocation_arguments, call_id=invocation.call_id)
     if result.success:
         # 控制由各自的 Planner 循环执行，避免 Focus 意外暂停单个成员的普通循环。

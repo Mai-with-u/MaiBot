@@ -12,7 +12,6 @@ from src.config.official_configs import TargetItem
 from src.core.tooling import ToolExecutionResult, ToolInvocation
 from src.maisaka.builtin_tool.query_memory import get_tool_spec as memory_spec
 from src.maisaka.builtin_tool.query_person_profile import get_tool_spec as profile_spec
-from src.maisaka.builtin_tool.stop import get_tool_spec as stop_spec
 from src.maisaka.builtin_tool.tool_search import get_tool_spec as search_spec
 from src.maisaka.builtin_tool.view_forward_message import get_tool_spec as forward_spec
 from src.maisaka.builtin_tool.wait import get_tool_spec as wait_spec
@@ -28,10 +27,10 @@ def test_lightweight_tools_shrink_schema_without_mutating_registry() -> None:
     plugin.provider_name = "plugin"
     disabled = profile_spec(enabled=False)
     definitions = build_lightweight_tools([
-        memory, profile_spec(), forward_spec(), stop_spec(), wait_spec(), search_spec(), plugin, disabled,
+        memory, profile_spec(), forward_spec(), wait_spec(), search_spec(), plugin, disabled,
     ])
     assert [item["name"] for item in definitions] == [
-        "query_memory", "query_person_profile", "view_forward_message", "stop", "tool_search",
+        "query_memory", "query_person_profile", "view_forward_message", "wait", "tool_search",
     ]
     assert set(definitions[0]["parameters_schema"]["properties"]) == {"query"}
     assert definitions[0]["parameters_schema"]["required"] == ["query"]
@@ -64,11 +63,11 @@ async def test_builtin_tools_remain_available_across_rounds() -> None:
     engine._turn_lightweight_private = True
     engine._build_tool_availability_context = Mock()
     definitions, reminder = await engine._build_action_tool_definitions()
-    assert [item["name"] for item in definitions] == ["query_memory", "tool_search"]
+    assert [item["name"] for item in definitions] == ["query_memory", "wait", "tool_search"]
     assert reminder == ""
     for _ in range(3):
         assert await engine._build_action_tool_definitions() == (definitions, "")
-    runtime.set_current_action_tool_names.assert_called_with(["query_memory", "tool_search"])
+    runtime.set_current_action_tool_names.assert_called_with(["query_memory", "wait", "tool_search"])
     runtime.update_deferred_tool_specs.assert_called_with([])
     assert runtime._tool_registry.list_tools.await_count == 4
 
@@ -122,7 +121,7 @@ def test_lightweight_prompt_snapshot_and_focus_exclusion(monkeypatch: pytest.Mon
 
 
 @pytest.mark.asyncio
-async def test_stop_ends_lightweight_turn_without_reply() -> None:
+async def test_untimed_wait_ends_lightweight_turn_without_reply() -> None:
     runtime = SimpleNamespace(
         _has_pending_messages=lambda: False, _chat_history=[], _enter_stop_state=Mock(),
         _end_planner_continuation=Mock(), _reset_consecutive_wait_count=Mock(),
@@ -134,14 +133,14 @@ async def test_stop_ends_lightweight_turn_without_reply() -> None:
     engine._should_replace_reasoning = Mock(return_value=False)
     engine._emit_planner_progress = AsyncMock()
     engine._handle_tool_calls = AsyncMock(return_value=(False, "", [], []))
-    response = SimpleNamespace(tool_calls=[SimpleNamespace(func_name="stop", call_id="stop-1")], raw_messages=[])
+    response = SimpleNamespace(tool_calls=[SimpleNamespace(func_name="wait", call_id="wait-1", args={})], raw_messages=[])
     state = CycleRuntimeState()
     assert await engine._handle_planner_response_actions(
         response=response, cycle_detail=SimpleNamespace(time_records={}), state=state, planner_extra_lines=[],
     )
     engine._handle_tool_calls.assert_not_awaited()
     runtime._enter_stop_state.assert_called_once()
-    assert state.cycle_end == engine._cycle_end_for_pause_tool("stop")
+    assert state.cycle_end == engine._cycle_end_for_pause_tool("wait:end")
 
 
 @pytest.mark.parametrize("locale", ["zh-CN", "en-US", "ja-JP"])
@@ -154,7 +153,8 @@ def test_lightweight_prompt_renders_in_all_supported_languages(locale: str) -> N
     assert "{bot_name}" not in text
     assert "query_memory" in text
     assert "tool_search" in text
-    assert "stop()" in text
+    assert "wait()" in text
+    assert "stop()" not in text
 
 
 @pytest.mark.asyncio

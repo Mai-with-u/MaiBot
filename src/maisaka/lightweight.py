@@ -13,7 +13,7 @@ LIGHTWEIGHT_TOOL_PARAMETERS = {
     "query_person_profile": ("person_name",),
     "view_forward_message": ("msg_id", "path"),
     "tool_search": ("query",),
-    "stop": (),
+    "wait": (),
     "schedule": ("action", "text", "delay_seconds", "due_at", "todo_id", "include_completed"),
 }
 
@@ -48,6 +48,8 @@ def build_lightweight_tools(specs: Sequence[ToolSpec]) -> List[Dict[str, Any]]:
             name: schema["properties"][name] for name in LIGHTWEIGHT_TOOL_PARAMETERS[spec.name]
         }
         schema["additionalProperties"] = False
+        if spec.name == "wait":
+            definition["description"] = "不发送消息，静默结束本轮思考并等待新消息；无需回复时单独调用，不填参数。"
         if spec.name == "query_memory":
             schema["required"] = ["query"]
         elif spec.name == "query_person_profile":

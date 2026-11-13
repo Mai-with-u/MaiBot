@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Literal,
 
 import asyncio
 import difflib
+import json
 import time
 import uuid
 
@@ -21,6 +22,7 @@ from src.common.data_models.message_component_data_model import (
     TextComponent,
 )
 from src.common.logger import get_logger
+from src.common.prompt_i18n import load_prompt
 from src.config.config import global_config
 from src.core.tooling import (
     ToolAvailabilityContext,
@@ -429,7 +431,7 @@ class MaisakaReasoningEngine:
         # Planner 时间从防抖后的输入批次开始，包含上下文准备、模型请求，直到工具选定。
         # 这段时间内的新消息必须先穿过防抖；旧的等待/静默决策不能盖过已就绪的新输入。
         waiting_decision = not response.tool_calls and not (self.passive_replyer_enabled and self._get_planner_content(response))
-        waiting_decision = waiting_decision or any(call.func_name in {"wait", "stop"} for call in response.tool_calls or [])
+        waiting_decision = waiting_decision or any(call.func_name == "wait" for call in response.tool_calls or [])
         if waiting_decision and self._runtime._has_pending_messages():
             await self._runtime._wait_for_message_quiet_period()
             if self._runtime._has_pending_messages():
@@ -437,19 +439,19 @@ class MaisakaReasoningEngine:
                 reminder = ChatResponse(output_items=(
                     ContextItemBuilder().set_role(RoleType.User)
                     .set_meta(ContextItemMeta.create(logical_turn_id=self._active_logical_turn_id))
-                    .add_text_content("有新消息，请根据新消息内容重新思考后规划新的行动").build(),
+                    .add_text_content(load_prompt("planner_replan").strip()).build(),
                 ), request_messages=[], selected_history_count=0, tool_count=0,
                     prompt_tokens=0, built_message_count=0, completion_tokens=0, total_tokens=0)
                 self._runtime._chat_history.extend(reminder.raw_messages)
                 state.cycle_end = CycleEnd("tool_continue", "新消息已就绪，跳过等待决策并重新规划。")
                 return False
 
-        # stop 是终止信号，不是供下一轮参考的工具交互。
+        # 无参数 wait 是终止信号，不是供下一轮参考的工具交互。
         # 在写入整段模型输出和执行同批工具前截断，避免留下孤立调用、
         # 参数错误或与终止意图冲突的正文；监控仍保留本轮 Planner 输出。
-        if any(tool_call.func_name == "stop" for tool_call in response.tool_calls or []):
+        if any(tool_call.func_name == "wait" and not tool_call.args for tool_call in response.tool_calls or []):
             self._end_planner_no_tool_cycle(planner_extra_lines, status_line="状态：已结束本轮思考")
-            state.cycle_end = self._cycle_end_for_pause_tool("stop")
+            state.cycle_end = self._cycle_end_for_pause_tool("wait:end")
             state.tool_result_summaries = []
             state.tool_monitor_results = []
             await self._emit_planner_progress(cycle_detail, state, [], "")
@@ -803,12 +805,12 @@ class MaisakaReasoningEngine:
                 "tool_stop_after_execution",
                 "插件工具请求在当前批次执行完成后结束 Planner，并等待新消息。",
             )
-        if pause_tool_name == "stop":
-            return CycleEnd("planner_no_tool_end", "Planner 调用 stop，已结束本轮思考并等待新消息。")
+        if pause_tool_name == "wait:end":
+            return CycleEnd("planner_no_tool_end", "暂时不行动，等待新消息")
         if pause_tool_name == "wait":
             return CycleEnd("tool_pause:wait", "Planner 调用 wait，本轮暂停并在等待结束后继续判断。")
-        if pause_tool_name == "reply:stop":
-            return CycleEnd("planner_no_tool_end", "回复已发送，after_reply=stop 结束本轮思考。")
+        if pause_tool_name == "reply:wait:end":
+            return CycleEnd("planner_no_tool_end", "回复已发送，after_reply=wait 未指定时间，结束本轮思考。")
         if pause_tool_name == "reply:wait":
             return CycleEnd("tool_pause:wait", "回复已发送，after_reply=wait 等待后继续判断。")
         if pause_tool_name:
@@ -1208,13 +1210,11 @@ class MaisakaReasoningEngine:
         """独立 wait 补齐工具结果，reply 后的等待只追加上下文提醒。"""
         after_reply = self._runtime._pending_wait_after_reply
         tool_call_id, logical_turn_id, elapsed_seconds, requested_seconds = self._runtime._consume_pending_wait_state()
-        elapsed_text = f"{elapsed_seconds:.1f} 秒"
-        requested_text = f"，原计划等待 {requested_seconds:.1f} 秒" if requested_seconds is not None else ""
-        content = (
-            f"等待已结束，实际等待 {elapsed_text}{requested_text}，期间收到了新的用户输入。请结合这些新消息继续下一轮思考。"
-            if has_new_messages
-            else f"等待已超时，实际等待 {elapsed_text}{requested_text}，期间没有收到新的用户输入。请基于现有上下文继续下一轮思考。"
-        )
+        content = load_prompt("planner_wait_completed", wait_state=json.dumps({
+            "elapsed_seconds": round(elapsed_seconds, 1),
+            "requested_seconds": requested_seconds,
+            "has_new_messages": has_new_messages,
+        }, ensure_ascii=False)).strip()
         if after_reply:
             return WaitCompletedMessage(
                 content=content, timestamp=datetime.now(), logical_turn_id=logical_turn_id,
@@ -2154,7 +2154,7 @@ class MaisakaReasoningEngine:
         deferred_post_history_messages: list[LLMContextMessage] = []
         should_stop_after_execution = False
         reply_pause = ""
-        reply_wait_seconds = 30
+        reply_wait_seconds: Optional[int] = None
         reply_pause_call_id = ""
 
         if self._runtime._tool_registry is None:
@@ -2224,10 +2224,10 @@ class MaisakaReasoningEngine:
                 self._runtime._reset_consecutive_wait_count(f"tool:{invocation.tool_name}")
             if result.success and invocation.tool_name == "reply" and not self.passive_replyer_enabled:
                 after_reply = result.metadata.get("after_reply", "continue")
-                if after_reply in {"stop", "wait"}:
+                if after_reply == "wait":
                     reply_pause = after_reply
                     reply_pause_call_id = tool_call.call_id
-                    reply_wait_seconds = result.metadata.get("wait_seconds", 30)
+                    reply_wait_seconds = result.metadata["wait_seconds"]
             if is_unexpanded_tool and not result.success and (
                 not self._turn_lightweight_private
                 or invocation.tool_name in self._runtime.deferred_tool_specs_by_name
@@ -2294,7 +2294,7 @@ class MaisakaReasoningEngine:
 
         self._append_tool_post_history_messages(deferred_post_history_messages)
         if reply_pause:
-            if reply_pause == "stop":
+            if reply_wait_seconds is None:
                 self._runtime._end_planner_continuation()
                 self._runtime._enter_stop_state()
             else:
@@ -2305,7 +2305,8 @@ class MaisakaReasoningEngine:
                     logical_turn_id=self._active_logical_turn_id,
                     after_reply=True,
                 )
-            return True, f"reply:{reply_pause}", tool_result_summaries, tool_monitor_results
+            pause_reason = "reply:wait:end" if reply_wait_seconds is None else "reply:wait"
+            return True, pause_reason, tool_result_summaries, tool_monitor_results
         if should_stop_after_execution:
             self._runtime._end_planner_continuation()
             self._runtime._reset_consecutive_wait_count("tool_stop_after_execution")

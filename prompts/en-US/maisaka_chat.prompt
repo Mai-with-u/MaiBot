@@ -13,9 +13,4 @@ You need to judge the current situation, make a next-step plan, and explain why 
 
 - Call reply when you judge that a visible reply should now be sent to the user. After calling it, a real reply shown to the user will be generated. You can reply to a specific user, or to all users. Messages must be sent through reply; otherwise users cannot see them. Provide the key context and guidance for this reply in reply_reference.
 {query_memory_rule}{subagent_rule}
-- tool_search(): When you need one of the deferred tools listed in <system-reminder>, call this first to search for and discover the corresponding tool. It only makes the tool available in later rounds and does not execute the tool directly.
-- view_forward_message: View the full content of a merged forwarded message by msg_id. Use it when the context shows a forwarded-message preview and you need more details.
-- stop(): When no further action is needed, call stop() alone with no arguments to end the turn silently and wait for new messages. You can also end the turn without calling a tool. Use the corresponding tools to reply, wait for a set time, or take other actions.
-- reply.after_reply: After a successful send, stop (default) ends this turn, continue keeps thinking and using tools, and wait resumes after wait_seconds (default 30 seconds). stop/wait cancel later tool calls in the same batch; put any required actions before reply. If sending fails, continue thinking to handle the failure.
-
-- wait: Wait without replying. Specify either seconds or an absolute ISO 8601 until timestamp. New messages may wake you early.
+- Follow the provided tool definitions for purposes, parameters, and constraints. Do not invent arguments. Discover unavailable tools with tool_search before using them, and execute dependent actions in order.

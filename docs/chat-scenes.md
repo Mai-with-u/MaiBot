@@ -45,6 +45,12 @@ Focus 的 group 是显式配置的共享会话组，可能同时包含私聊和�
 
 `get_scene` 不接受未知类型。Replyer 需要通过真实聊天流确定场景，找不到会话时抛出错误，不把未知会话当作私聊。无会话的 CLI/通用 Planner 请求使用 `UnscopedPromptProfile`，不注入任一场景的注意事项或注意力漂移配置。
 
+## Planner 正文动作补全
+
+普通工具式 Planner 和 Focus 在返回正文但没有工具调用时，使用 `fast_model` 对正文中的最终行动意图做一次短判断，只选择 `reply` 或 `wait`。判断器只读取 Planner 本次上下文中最近五条真实聊天消息的可见文本和完整的 Planner 正文，排除通知、工具结果、内部提示和自动参考，不提供工具或图片。输入不额外截断，输出沿用模型配置，不额外设置 token 上限；请求总时限为 10 秒。超时和无效输出直接报错，不自动改成静默结束。
+
+选择 `reply` 时，原始 Planner 正文直接作为 `reply_reference`；选择 `wait` 时补一个不带时间参数的调用。补出的调用与 Planner 输出绑定到同一逻辑回合，进入原有的工具校验、执行和监控路径，来源标记为“轻量判断器补全”。Focus 额外从真实工具声明的会话枚举中选择回复目标，目标不明确时选择 `wait`。已有工具调用、空正文、子代理任务，以及本来就用正文作为回复指导的被动回复和轻量私聊，不经过判断器。
+
 ## 实验性轻量私聊
 
 WebUI 的「Bot 配置 → 实验性功能 → 轻量私聊」提供可搜索的下拉菜单，可按私聊名称、昵称或用户 ID 搜索已有私聊，选择后添加，移除后恢复原模式；无需手填平台和用户 ID。
@@ -59,7 +65,7 @@ lightweight_private_chats = [
 
 `item_id` 填对方用户 ID，平台与用户 ID 支持 `*`；仅匹配已注册的真实私聊。命中的私聊优先采用轻量模式，不进入 Focus 共享上下文，其他聊天继续使用原模式。每轮开始时固定模式，配置修改不改变进行中的 Planner/Replyer 协议。
 
-轻量 Planner 直接输出自然语言回复指导，交给现有 Replyer；不需要调用 `reply`，默认回复完成后结束本轮。常驻 `query_memory(query)`、`query_person_profile(person_name)`、`view_forward_message(msg_id, path)`、`tool_search(query)` 和 `stop()`，仍遵守工具原有的启用条件。无需回复时可单独调用无参数的 `stop()`，静默结束本轮并等待新消息；不提供 Maisaka 子 Agent 工具。不额外限制工具查询轮数或每轮工具数量，沿用普通 Maisaka 的内部循环上限（当前为 16 轮）。空输出或执行失败保留原有错误记录，不伪造回复。
+轻量 Planner 直接输出自然语言回复指导，交给现有 Replyer；不需要调用 `reply`，默认回复完成后结束本轮。常驻 `query_memory(query)`、`query_person_profile(person_name)`、`view_forward_message(msg_id, path)`、`tool_search(query)` 和 `wait()`，仍遵守工具原有的启用条件。无需回复时可单独调用无参数的 `wait()`，静默结束本轮并等待新消息；不提供 Maisaka 子 Agent 工具。不额外限制工具查询轮数或每轮工具数量，沿用普通 Maisaka 的内部循环上限（当前为 16 轮）。空输出或执行失败保留原有错误记录，不伪造回复。
 
 扩展工具（插件、MCP、联网等）先进入工具目录，Planner 通过 `tool_search` 按名称或关键词搜索，后续轮次再按完整定义调用，不预先展开全部参数。沿用 `experimental.tool_search_tail_loading`：关闭时将发现的工具加入后续请求的工具列表，开启时通过搜索结果加载完整定义。已发现工具的执行权限跟随当前上下文中的搜索记录，记录被裁切或工具不再可用时，需要重新搜索；未加载的扩展工具不会执行。`read_tool_result` 也可按需搜索，用于读取联网等工具返回的原始结果编号。工具目录仍受各 Provider 的启用条件、聊天范围和权限控制。
 

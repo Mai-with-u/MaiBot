@@ -15,6 +15,7 @@ import json
 import time
 
 from src.common.logger import get_logger
+from src.common.prompt_i18n import load_prompt
 from src.core.tooling import ToolExecutionContext, ToolExecutionResult, ToolInvocation, ToolSpec
 from src.llm_models.payload_content.context_item import FunctionCallItem
 from src.llm_models.payload_content.tool_option import ToolCall
@@ -60,17 +61,6 @@ SUBAGENT_FORBIDDEN_TOOL_NAMES = frozenset(
         "wait",
     }
 )
-
-SUBAGENT_SYSTEM_PROMPT = (
-    "你是一个被派发任务的子代理。派发者看不到你的工作过程，只会收到你最后一条不带工具调用的文字。\n"
-    "工作方式：\n"
-    "1. 任务说明就是你知道的全部背景，不要假设任何没有写出来的信息。\n"
-    "2. 用提供的工具查清楚需要的事实；互不依赖的调用可以一次并行发出。\n"
-    "3. 工具返回无结果或失败时换一种查法，确实查不到就如实说明，不要编造。\n"
-    "4. 查清后直接输出结论：先给答案，再列出支撑它的关键事实；派发者后续可能用到的 id、链接、路径、版本号原样保留。\n"
-    "5. 你不能向任何人发言，也不能把任务再派发出去。结论控制在 800 字以内。"
-)
-SUBAGENT_FINAL_ROUND_HINT = "可用的轮数已经用完，这一轮不能再调用工具。请根据已经拿到的结果直接给出结论，没有查清的部分如实说明。"
 
 _STATUS_LABELS = {"running": "运行中", "completed": "已完成", "failed": "失败", "stopped": "已终止"}
 
@@ -219,7 +209,7 @@ async def _run_sub_agent_rounds(
         if is_final_round:
             sub_agent_history.append(
                 ReferenceMessage(
-                    content=SUBAGENT_FINAL_ROUND_HINT,
+                    content=load_prompt("subagent_final_round").strip(),
                     timestamp=datetime.now(),
                     reference_type=ReferenceMessageType.TOOL_HINT,
                     remaining_uses_value=None,
@@ -228,7 +218,7 @@ async def _run_sub_agent_rounds(
             )
         response = await runtime.run_sub_agent(
             context_message_limit=SUBAGENT_CONTEXT_MESSAGE_LIMIT,
-            system_prompt=SUBAGENT_SYSTEM_PROMPT,
+            system_prompt=load_prompt("maisaka_subagent").strip(),
             extra_messages=sub_agent_history,
             tool_definitions=[] if is_final_round else tool_definitions,
             include_parent_context=False,

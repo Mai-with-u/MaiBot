@@ -30,7 +30,7 @@ from .messages import (
 logger = get_logger("maisaka_context_compaction")
 COMPACTION_RETRY_INSTRUCTION = (
     "上一次未能生成可用的对话摘要。请重新根据前面的对话资料和摘要要求生成摘要。\n"
-    "这是摘要任务，禁止调用任何工具，包括 stop、reply、wait 或其他工具；"
+    "这是摘要任务，禁止调用任何工具，包括 reply、wait 或其他工具；"
     "不要执行或继续此前 Planner 的动作流程。\n"
     "直接输出合法的摘要 JSON 对象，不加代码块、分析或解释。"
     "使用 topics、background、progress、pending、agreements 五个分类，值均为字符串数组；"

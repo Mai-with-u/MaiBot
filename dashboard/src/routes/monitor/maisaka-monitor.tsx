@@ -163,10 +163,14 @@ function isWaitTool(toolName?: string) {
   return (toolName ?? '').trim().toLowerCase() === 'wait'
 }
 
-/** wait 为内置工具，只显示等待时长及完成状态，参数、JSON 与执行结果都不展示。 */
+/** wait 区分无参数结束与定时等待，参数、JSON 与执行结果都不展示。 */
 function formatWaitToolText(toolArgs?: Record<string, unknown>, completed = false) {
-  const seconds = Number(toolArgs?.seconds ?? 30)
-  return `${completed ? '已等待' : '等待'} ${Number.isFinite(seconds) ? Math.max(0, Math.trunc(seconds)) : 30} 秒`
+  if (toolArgs?.seconds === undefined) {
+    return completed ? '已结束本轮，等待新消息' : '结束本轮并等待新消息'
+  }
+  const seconds = Number(toolArgs.seconds)
+  if (!Number.isFinite(seconds) || seconds < 0) return '等待时长无效'
+  return `${completed ? '已等待' : '等待'} ${Math.trunc(seconds)} 秒`
 }
 
 function getToolIcon(toolName?: string): LucideIcon {
@@ -1198,13 +1202,14 @@ function WaitToolLabel({ args, waitUntil, pending = false }: {
   waitUntil?: number
   pending?: boolean
 }) {
+  const timedWaitUntil = args?.seconds === undefined ? undefined : waitUntil
   const [now, setNow] = useState(() => Date.now() / 1000)
   useEffect(() => {
-    if (waitUntil === undefined) return
+    if (timedWaitUntil === undefined) return
     const timer = window.setInterval(() => setNow(Date.now() / 1000), 1000)
     return () => window.clearInterval(timer)
-  }, [waitUntil])
-  const remaining = waitUntil === undefined ? undefined : Math.max(0, Math.ceil(waitUntil - now))
+  }, [timedWaitUntil])
+  const remaining = timedWaitUntil === undefined ? undefined : Math.max(0, Math.ceil(timedWaitUntil - now))
   const completed = remaining === 0 || (remaining === undefined && !pending)
   return (
     <span className="inline-flex items-center gap-2">

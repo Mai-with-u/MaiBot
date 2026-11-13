@@ -15,7 +15,4 @@ Judge the current situation and decide what to do next. If more information is n
 - The reply supplementer arranges quotes, pictures, stickers, and mentions. For a sticker, describe the desired emotion or image, or identify the message containing a sticker to reuse.
 - Describe reply extension requirements in your guidance. The reply supplementer selects available extensions and generates their parameters; conditional plugin instructions guide body generation.
 {query_memory_rule}{subagent_rule}
-- tool_search(): When you need one of the deferred tools listed in <system-reminder>, call this first to search for and discover the corresponding tool. It only makes the tool available in later rounds and does not execute the tool directly.
-- view_forward_message: View the full content of a merged forwarded message by msg_id. Use it when the context shows a forwarded-message preview and you need more details.
-- wait(): Use this when you need to pause for a while and judge again after the wait ends.
-- stop(): When you decide not to speak or have no further actions, call stop() alone with no arguments to end this round and wait for new messages.
+- Follow the provided tool definitions for purposes, parameters, and constraints. Do not invent arguments. Discover unavailable tools with tool_search before using them, and execute dependent actions in order.
