@@ -12,6 +12,11 @@ import threading
 import time
 import uuid
 
+from src.common.atomic_file import quarantine_file, write_private
+from src.common.logger import get_logger
+
+logger = get_logger("schedule")
+
 
 class TodoStore:
     """待办列表，完成后归档留存。"""
@@ -19,7 +24,7 @@ class TodoStore:
     def __init__(self, path: Path) -> None:
         self._path = path
         self._lock = threading.RLock()
-        self._items: List[Dict[str, Any]] = json.loads(path.read_text("utf-8")) if path.exists() else []
+        self._items: List[Dict[str, Any]] = self._load()
         for item in self._items:
             item.setdefault("session_id", "")
             item.setdefault("session_name", "主人私聊")
@@ -32,6 +37,19 @@ class TodoStore:
             item.setdefault("revision", uuid.uuid4().hex)
             if item["status"] == "dispatching":
                 item["status"] = "pending"
+
+    def _load(self) -> List[Dict[str, Any]]:
+        if not self._path.exists():
+            return []
+        try:
+            items = json.loads(self._path.read_text(encoding="utf-8-sig"))
+            if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+                raise ValueError("待办文件必须是 JSON 对象数组")
+            return items
+        except ValueError:
+            backup = quarantine_file(self._path)
+            logger.warning("待办文件损坏，已保留原文件：%s；以空列表启动日程服务。", backup, exc_info=True)
+            return []
 
     def list(self, include_completed: bool = False) -> List[Dict[str, Any]]:
         with self._lock:
@@ -225,8 +243,5 @@ class TodoStore:
 
     def _save(self, items: List[Dict[str, Any]]) -> None:
         # 先持久化再替换内存状态，写入失败不能显示为操作成功。
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self._path.with_suffix(".tmp")
-        temp_path.write_text(json.dumps(items, ensure_ascii=False), "utf-8")
-        temp_path.replace(self._path)
+        write_private(self._path, json.dumps(items, ensure_ascii=False))
         self._items = items

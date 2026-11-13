@@ -1652,12 +1652,11 @@ def update_bot_config_raw(raw_content: RawContentBody):
             raise HTTPException(status_code=400, detail=f"配置数据验证失败: {str(e)}") from e
 
         # 保存配置文件
-        config_path = os.path.join(CONFIG_DIR, "bot_config.toml")
-        with open(config_path, "w", encoding="utf-8") as f:
-            if shared_settings_path() is not None:
-                strip_shared_settings(config_data)
-                raw_content = tomlkit.dumps(config_data)
-            f.write(raw_content)
+        config_path = Path(CONFIG_DIR) / "bot_config.toml"
+        if shared_settings_path() is not None:
+            strip_shared_settings(config_data)
+            raw_content = tomlkit.dumps(config_data)
+        write_private(config_path, raw_content)
 
         logger.info("麦麦主程序配置已更新（原始模式）")
         return {"success": True, "message": "配置已保存"}
