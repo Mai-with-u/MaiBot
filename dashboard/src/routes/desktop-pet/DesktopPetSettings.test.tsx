@@ -20,7 +20,7 @@ vi.mock('@/components/DesktopPetSkinField', () => ({
   ),
 }))
 
-it('切换皮肤立即保存并刷新状态，其他字段继续保留在草稿中', async () => {
+it('切换皮肤立即保存全部草稿，其他字段停止编辑后自动保存', async () => {
   vi.mocked(backendApi.get).mockImplementation(async (path) => {
     if (path === '/api/webui/config/bot') {
       return { success: true, config: { desktop_pet: { enabled: true, skin_id: 'builtin', proactive_wake_interval_minutes: 30 } } }
@@ -67,7 +67,6 @@ it('切换皮肤立即保存并刷新状态，其他字段继续保留在草稿�
   )
 
   const interval = await screen.findByRole('spinbutton')
-  const form = interval.closest('form')!
   fireEvent.change(interval, { target: { value: '45' } })
   expect(backendApi.post).not.toHaveBeenCalled()
   fireEvent.change(screen.getByRole('combobox', { name: '当前皮肤' }), { target: { value: 'orange-sprout' } })
@@ -75,15 +74,14 @@ it('切换皮肤立即保存并刷新状态，其他字段继续保留在草稿�
   await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
   expect(backendApi.post).toHaveBeenCalledExactlyOnceWith(
     '/api/webui/config/bot/section/desktop_pet',
-    expect.objectContaining({ body: { skin_id: 'orange-sprout' } })
+    expect.objectContaining({ body: { skin_id: 'orange-sprout', proactive_wake_interval_minutes: 45 } })
   )
   expect(interval).toHaveValue(45)
-  await waitFor(() => expect(screen.getByRole('button', { name: 'common.save' })).toBeEnabled())
-  fireEvent.submit(form)
-  await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(2))
+  fireEvent.change(interval, { target: { value: '46' } })
+  await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(2), { timeout: 4000 })
   expect(backendApi.post).toHaveBeenLastCalledWith(
     '/api/webui/config/bot/section/desktop_pet',
-    expect.objectContaining({ body: { proactive_wake_interval_minutes: 45 } })
+    expect.objectContaining({ body: { proactive_wake_interval_minutes: 46 } })
   )
-  expect(interval).toHaveValue(45)
+  expect(interval).toHaveValue(46)
 })

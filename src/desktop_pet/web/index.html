@@ -56,6 +56,32 @@
     touch-action: none;
   }
   .dragging #pet { cursor: grabbing; }
+  [data-locked="true"] #pet,
+  [data-locked="true"] #pet * { pointer-events: none; }
+  #pet-lock {
+    position: absolute;
+    right: 12px;
+    bottom: 18px;
+    z-index: 20;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    padding: 3px;
+    border: 0;
+    border-radius: 5px;
+    background: rgba(255, 248, 236, .65);
+    color: var(--ink);
+    opacity: .25;
+    cursor: pointer;
+    transition: opacity .15s;
+  }
+  #pet-lock:hover, #pet-lock:focus-visible { opacity: .85; }
+  #pet-lock[aria-pressed="true"] { opacity: .45; }
+  #pet-lock svg { width: 16px; height: 16px; }
+  #pet-lock .locked-icon { display: none; }
+  #pet-lock[aria-pressed="true"] .locked-icon { display: inline; }
+  #pet-lock[aria-pressed="true"] .unlocked-icon { display: none; }
   /* 叶子摆动和跳跃会超出 SVG 视口，允许绘制到外层预留的动画区域。 */
   #builtin-pet { overflow: visible; }
 
@@ -450,6 +476,14 @@
 </head>
 <body>
 <div id="stage" data-mode="idle">
+  <button id="pet-lock" type="button" data-hit="5" aria-label="锁定桌宠" aria-pressed="false" title="锁定桌宠，禁止点击和拖动">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="5" y="10" width="14" height="11" rx="2" />
+      <path class="unlocked-icon" d="M8 10V6a4 4 0 0 1 7.5-2" />
+      <path class="locked-icon" d="M8 10V6a4 4 0 0 1 8 0v4" />
+      <path d="M12 14v3" />
+    </svg>
+  </button>
   <div id="thinking-caption" data-hit="0" role="status" hidden></div>
 
   <div id="pet" data-hit="34"><span id="screen-indicator" role="status" aria-label="正在持续阅读桌面" title="正在持续阅读桌面，可在聊天面板停止" hidden></span><canvas id="skin-canvas" style="display:none"></canvas><svg id="builtin-pet" width="150" height="107" viewBox="0 0 210 150" aria-hidden="true">
@@ -596,6 +630,7 @@
 </template>
 
 <script src="exploration-render.js"></script>
+<script src="alpha-region.js"></script>
 <script src="skin.js"></script>
 <script>
 (() => {
@@ -607,6 +642,8 @@
   const todoInput = document.getElementById("todo-input");
   const say = document.getElementById("say");
   const menu = document.getElementById("pet-menu");
+  const lockButton = document.getElementById("pet-lock");
+  let locked = false;
   const pupils = document.querySelectorAll(".pupil");
 
   const MAX_LOG = 30;
@@ -619,6 +656,8 @@
   // ---------- 点击区域 ----------
   // 窗口只在桌宠和气泡处接收鼠标，其余透明处交还给桌面。
   let regionFrame = 0;
+  let regionSignature = '';
+  let regionSending = false;
   // 用不受 transform 影响的布局盒计算，弹出动画进行中也按最终大小放行点击。
   function layoutBox(el) {
     if (el instanceof SVGElement || el === say || el.id === "chat") {
@@ -640,14 +679,28 @@
     return [x, y, el.offsetWidth, el.offsetHeight];
   }
   function updateRegion() {
-    cancelAnimationFrame(regionFrame);
-    regionFrame = requestAnimationFrame(() => {
+    if (regionFrame || regionSending) return;
+    regionFrame = requestAnimationFrame(async () => {
+      regionFrame = 0;
       if (!api) return;
       const pad = 8;
       const rects = [];
       for (const el of document.querySelectorAll("[data-hit]")) {
         if (getComputedStyle(el).display === "none") continue;
         let [x, y, w, h] = layoutBox(el);
+        const pixels = el === pet ? window.petSkin.hitRegion() : null;
+        if (pixels !== null) {
+          const bounds = document.getElementById('skin-canvas').getBoundingClientRect();
+          for (const [left, top, width, height] of pixels) {
+            rects.push([bounds.left + left, bounds.top + top, width, height, 0]);
+          }
+          const indicator = document.getElementById('screen-indicator');
+          if (!indicator.hidden) {
+            const dot = indicator.getBoundingClientRect();
+            rects.push([dot.left, dot.top, dot.width, dot.height, dot.width / 2]);
+          }
+          continue;
+        }
         if (el === pet && pet.dataset.skinHitbox) {
           const box = JSON.parse(pet.dataset.skinHitbox);
           x += box[0]; y += box[1]; w = box[2]; h = box[3];
@@ -657,7 +710,16 @@
         const topPad = el === pet ? 24 : pad;
         rects.push([x - pad, y - topPad, w + pad * 2, h + topPad + pad, Number(el.dataset.hit) + pad]);
       }
-      api.region(rects, devicePixelRatio);
+      const signature = JSON.stringify([rects, devicePixelRatio]);
+      if (signature === regionSignature) return;
+      regionSending = true;
+      try {
+        await api.region(rects, devicePixelRatio);
+        regionSignature = signature;
+      } finally {
+        regionSending = false;
+        updateRegion();
+      }
     });
   }
 
@@ -677,6 +739,7 @@
     modeRegionFrame = requestAnimationFrame(frame);
   }
   function setMode(mode) {
+    if (locked && mode !== "idle") return;
     if (stage.dataset.mode === mode) return;
     const fromBubble = mode === "chat" && say.classList.contains("show") ? say.getBoundingClientRect() : null;
     modeAnimation?.cancel();
@@ -721,6 +784,7 @@
 
   // ---------- 表情 ----------
   window.addEventListener('pet-skin-changed', updateRegion);
+  window.addEventListener('pet-skin-frame', updateRegion);
   function flash(name, ms) {
     const event = {squish: 'click', happy: 'happy', shake: 'error'}[name];
     if (event) window.petSkin.event(event);
@@ -757,7 +821,7 @@
     dragChain = dragChain.then(step).catch((error) => console.error(error));
   }
   pet.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0 || !api) return;
+    if (locked || event.button !== 0 || !api) return;
     pet.setPointerCapture(event.pointerId);
     drag = { sx: event.screenX, sy: event.screenY, moved: false };
     queueDrag(() => api.drag_begin());
@@ -802,6 +866,17 @@
   }
   pet.addEventListener("pointercancel", cancelDrag);
   pet.addEventListener("lostpointercapture", cancelDrag);
+
+  lockButton.addEventListener("click", () => {
+    locked = !locked;
+    cancelDrag();
+    stage.dataset.locked = String(locked);
+    lockButton.setAttribute("aria-pressed", String(locked));
+    lockButton.setAttribute("aria-label", locked ? "解锁桌宠" : "锁定桌宠");
+    lockButton.title = locked ? "解锁桌宠，恢复点击和拖动" : "锁定桌宠，禁止点击和拖动";
+    if (locked) setMode("idle");
+    updateRegion();
+  });
 
   document.getElementById("orb-chat").addEventListener("click", () => setMode("chat"));
   document.getElementById("orb-todo").addEventListener("click", () => setMode("todo"));

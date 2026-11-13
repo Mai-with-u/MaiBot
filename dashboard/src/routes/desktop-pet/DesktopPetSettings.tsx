@@ -1,15 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DesktopPetCurrentTaskField } from '@/components/DesktopPetCurrentTaskField'
 import { DesktopPetSkinField } from '@/components/DesktopPetSkinField'
 import { DynamicConfigForm } from '@/components/dynamic-form'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { BoardModule, BoardScreen } from '@/components/ui/board'
 import { Button } from '@/components/ui/button'
-import { useToast } from '@/hooks/use-toast'
 import { getBotConfig, getBotConfigSchema, updateBotConfigSection } from '@/lib/config-api'
 import { FieldHookRegistry } from '@/lib/field-hooks'
+import { resolveFieldLabel } from '@/lib/config-label'
+import { useAutoSave } from '@/routes/config/bot/hooks/useAutoSave'
 import type { ConfigSchemaResponse } from '@/types/config-schema'
 
 const settingsQueryKey = ['desktop-pet', 'settings'] as const
@@ -19,9 +21,12 @@ settingsFieldHooks.register('desktop_pet.show_current_task', DesktopPetCurrentTa
 
 export function DesktopPetSettings({ onSaved }: { onSaved: () => void }) {
   const { t } = useTranslation()
-  const { toast } = useToast()
   const queryClient = useQueryClient()
   const [changes, setChanges] = useState<Record<string, unknown>>({})
+  const changesRef = useRef(changes)
+  const [autoSaving, setAutoSaving] = useState(false)
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+  const [saveError, setSaveError] = useState<Error | null>(null)
   const settingsQuery = useQuery({
     queryKey: settingsQueryKey,
     queryFn: async () => {
@@ -44,18 +49,41 @@ export function DesktopPetSettings({ onSaved }: { onSaved: () => void }) {
       queryClient.setQueryData<typeof settings>(settingsQueryKey, (current) =>
         current && { ...current, values: { ...current.values, ...patch } }
       )
-      setChanges((current) => {
-        const remaining = { ...current }
-        for (const [field, value] of Object.entries(patch)) {
-          if (Object.is(current[field], value)) delete remaining[field]
-        }
-        return remaining
-      })
-      toast({ title: t('observation.pet.settingsSaved') })
+      const remaining = { ...changesRef.current }
+      for (const [field, value] of Object.entries(patch)) {
+        if (Object.is(remaining[field], value)) delete remaining[field]
+      }
+      changesRef.current = remaining
+      setChanges(remaining)
+      setSaveError(null)
       onSaved()
     },
     meta: { suppressErrorToast: true },
   })
+  const { mutateAsync } = save
+  const schema = settings?.schema
+  const saveSection = useCallback(async (_sectionName: string, data: unknown) => {
+    const patch = data as Record<string, unknown>
+    for (const field of schema?.fields ?? []) {
+      const value = patch[field.name]
+      if (typeof value !== 'number') continue
+      const label = resolveFieldLabel(field)
+      if (!Number.isFinite(value) || (field.type === 'integer' && !Number.isInteger(value))) {
+        throw new Error(t('observation.pet.settingsInvalidNumber', { label }))
+      }
+      if (field.minValue !== undefined && value < field.minValue) {
+        throw new Error(t('observation.pet.settingsMinValue', { label, min: field.minValue }))
+      }
+      if (field.maxValue !== undefined && value > field.maxValue) {
+        throw new Error(t('observation.pet.settingsMaxValue', { label, max: field.maxValue }))
+      }
+    }
+    await mutateAsync(patch)
+  }, [mutateAsync, schema, t])
+  const { triggerAutoSave, saveNow } = useAutoSave(
+    settingsQuery.isPending, setAutoSaving, setHasUnsavedChanges,
+    { saveSection, onSaveError: setSaveError }
+  )
 
   return (
     <BoardModule id="desktop-pet-settings" code="SETTINGS" title={t('observation.pet.settings')} span={12}>
@@ -69,33 +97,41 @@ export function DesktopPetSettings({ onSaved }: { onSaved: () => void }) {
           </div>
         )}
         {settings && (
-          <form className="space-y-3" onSubmit={(event) => {
-            event.preventDefault()
-            if (!save.isPending && Object.keys(changes).length > 0) save.mutate(changes)
-          }}>
-            <fieldset disabled={save.isPending} className="min-w-0">
+          <form noValidate className="space-y-3" onSubmit={(event) => event.preventDefault()}>
+            <fieldset className="min-w-0">
               <DynamicConfigForm
                 schema={settings.schema}
                 values={{ ...settings.values, ...changes }}
                 basePath="desktop_pet"
                 hooks={settingsFieldHooks}
                 onChange={(field, value) => {
-                  const changed = !Object.is(settings.values[field], value)
-                  setChanges((previous) => {
-                    const next = { ...previous }
-                    if (changed) next[field] = value
-                    else delete next[field]
-                    return next
-                  })
-                  if (field === 'skin_id' && changed) save.mutate({ skin_id: value })
+                  const currentValue = field in changesRef.current ? changesRef.current[field] : settings.values[field]
+                  if (Object.is(currentValue, value)) return
+                  const next = { ...changesRef.current, [field]: value }
+                  changesRef.current = next
+                  setChanges(next)
+                  setSaveError(null)
+                  if (field === 'skin_id') void saveNow('desktop_pet', next)
+                  else triggerAutoSave('desktop_pet', next)
                 }}
               />
             </fieldset>
-            {save.isError && <p role="alert" className="text-destructive text-sm">{save.error.message}</p>}
-            <div className="flex justify-end">
-              <Button type="submit" disabled={save.isPending || Object.keys(changes).length === 0}>
-                {t(save.isPending ? 'observation.pet.settingsSaving' : 'common.save')}
-              </Button>
+            {saveError && <Alert variant="destructive"><AlertDescription>{saveError.message}</AlertDescription></Alert>}
+            <div className="flex items-center justify-end gap-3">
+              <span role="status" className="text-muted-foreground text-xs">
+                {t(autoSaving ? 'observation.pet.settingsSaving' : saveError ? 'observation.pet.settingsSaveFailed' : hasUnsavedChanges ? 'observation.pet.settingsAutoSaveHint' : 'observation.pet.settingsSaved')}
+              </span>
+              {saveError && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={autoSaving}
+                  onClick={() => void saveNow('desktop_pet', { ...changesRef.current })}
+                >
+                  {t('common.retry')}
+                </Button>
+              )}
             </div>
           </form>
         )}

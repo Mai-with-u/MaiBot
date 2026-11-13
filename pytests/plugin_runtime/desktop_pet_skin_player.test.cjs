@@ -9,11 +9,13 @@ function setup() {
     const ctx = {globalAlpha:1, globalCompositeOperation:'source-over', clearRect(){draws.length=0},
       save(){stack.push([this.globalAlpha,this.globalCompositeOperation])}, scale(){},translate(){},rotate(){},
       drawImage(...args){draws.push({args,alpha:this.globalAlpha,operation:this.globalCompositeOperation})},
+      getImageData(x,y,width,height){return {data:new Uint8ClampedArray(width*height*4)}},
       restore(){[this.globalAlpha,this.globalCompositeOperation]=stack.pop()}};
     return {draws, style: {setProperty(){}}, dataset: {}, querySelectorAll(){return []}, classList: {values: new Set(), add(n){this.values.add(n)}, remove(n){this.values.delete(n)}, contains(n){return this.values.has(n)}}, getContext: () => ctx};
   };
   const elements = Object.fromEntries(['stage','pet','builtin-pet','skin-canvas'].map(id => [id, element()]));
   const context = {document:{getElementById:id=>elements[id],createElement:element}, window:{dispatchEvent(){}}, Event:class{}, Image:class {async decode(){}}, performance:{now:()=>now}, requestAnimationFrame:f=>{callback=f}, crypto:require('node:crypto').webcrypto};
+  vm.runInNewContext(fs.readFileSync('src/desktop_pet/web/alpha-region.js','utf8'),context);
   vm.runInNewContext(fs.readFileSync('src/desktop_pet/web/skin.js','utf8'),context);
   const frame={file:'image',rect:[0,0,100,100],duration_ms:1000};
   const skin={id:'custom',name:'test',version:'1',canvas:{width:128,height:128,anchor:[64,128],bubble_anchor:[64,0],hitbox:[0,0,128,128]}, resources:{image:'data:'},animations:{idle:{duration_ms:1000,sequence:[frame]},wave:{duration_ms:1000,sequence:[frame]}},states:{idle:'idle',thinking:'idle',talking:'idle',dragging:'idle'},events:{greeting:'wave'}};

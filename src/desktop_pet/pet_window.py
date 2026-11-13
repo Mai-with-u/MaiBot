@@ -111,7 +111,7 @@ def _bind_win32() -> None:
 
 
 def apply_region(hwnd: int, rects: List[List[float]], scale: float) -> None:
-    """把窗口可见/可点击区域设为若干圆角矩形的并集。
+    """把窗口可见/可点击区域设为矩形或圆角矩形的并集。
 
     Args:
         hwnd: 窗口句柄。
@@ -121,14 +121,11 @@ def apply_region(hwnd: int, rects: List[List[float]], scale: float) -> None:
     region = gdi32.CreateRectRgn(0, 0, 0, 0)
     for x, y, width, height, radius in rects:
         diameter = round(radius * 2 * scale)
-        part = gdi32.CreateRoundRectRgn(
-            round(x * scale),
-            round(y * scale),
-            round((x + width) * scale) + 1,
-            round((y + height) * scale) + 1,
-            diameter,
-            diameter,
-        )
+        bounds = (round(x * scale), round(y * scale), round((x + width) * scale), round((y + height) * scale))
+        if radius == 0:
+            part = gdi32.CreateRectRgn(*bounds)
+        else:
+            part = gdi32.CreateRoundRectRgn(bounds[0], bounds[1], bounds[2] + 1, bounds[3] + 1, diameter, diameter)
         gdi32.CombineRgn(region, region, part, RGN_OR)
         gdi32.DeleteObject(part)
     # 设置成功后区域归系统所有，不能再释放。

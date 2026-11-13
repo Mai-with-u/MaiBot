@@ -7,7 +7,7 @@ async function prepare() {
   const root = path.resolve(__dirname, '..');
   const output = path.join(root, 'web-dist');
   const files = [
-    ...['index.html', 'exploration.html', 'host-bridge.js', 'skin.js', 'exploration-render.js',
+    ...['index.html', 'exploration.html', 'host-bridge.js', 'alpha-region.js', 'skin.js', 'exploration-render.js',
       'exploration-products.css', 'fonts/ArkPixel12-ZhHans.woff2']
       .map(name => [path.resolve(root, '../../src/desktop_pet/web', name), path.join('pet', name)]),
     ...['login.html', 'login.css', 'login.js'].map(name => [path.join(root, 'renderer', name), path.join('login', name)]),
