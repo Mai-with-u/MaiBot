@@ -19,6 +19,9 @@ import os
 import sys
 import threading
 
+from src.common.atomic_file import quarantine_file
+from src.common.json_storage import read_json, write_json
+
 if TYPE_CHECKING:
     import webview
 
@@ -174,8 +177,15 @@ def saved_anchor(state_path: Path) -> Optional[Tuple[int, int]]:
     """读取上次拖到的位置；显示器布局变化后已不在任何屏幕上的位置作废。"""
     if not state_path.exists():
         return None
-    state = json.loads(state_path.read_text("utf-8"))
-    anchor = (state["anchor_x"], state["anchor_y"])
+    try:
+        state = read_json(state_path)
+        if not isinstance(state, dict) or any(type(state.get(key)) is not int for key in ("anchor_x", "anchor_y")):
+            raise ValueError("桌宠窗口位置必须包含整数 anchor_x 和 anchor_y")
+        anchor = (state["anchor_x"], state["anchor_y"])
+    except ValueError as exc:
+        backup = quarantine_file(state_path)
+        print(f"桌宠窗口位置文件损坏，已保留原文件：{backup}；使用默认位置。原因：{exc}", file=sys.stderr)
+        return None
     if not user32.MonitorFromPoint(wintypes.POINT(anchor[0], anchor[1] - 40), MONITOR_DEFAULTTONULL):
         return None
     return anchor
@@ -395,7 +405,7 @@ class PetApi:
                 return
             self._placed_by_user = True
             anchor_x, anchor_y = self._anchor
-            self._state_path.write_text(json.dumps({"anchor_x": anchor_x, "anchor_y": anchor_y}), "utf-8")
+            write_json(self._state_path, {"anchor_x": anchor_x, "anchor_y": anchor_y})
             self._outbox.emit({"type": "drag_ended", "gesture_id": gesture_id})
 
     def clicked(self) -> None:
