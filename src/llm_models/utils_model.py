@@ -1410,7 +1410,13 @@ class LLMOrchestrator:
                         context_items = context_result
                 if request_type == RequestType.RESPONSE and context_items:
                     # 图片解码、缩放及切图在线程池执行，避免阻塞 Bot 或 WebUI 事件循环。
-                    context_items = await asyncio.to_thread(normalize_context_images, context_items)
+                    context_items = await asyncio.to_thread(
+                        normalize_context_images,
+                        context_items,
+                        max_images=model_info.max_images,
+                        max_side=model_info.image_max_side,
+                        min_side=model_info.image_min_side,
+                    )
                 request = self._build_client_request(
                     request_type=request_type,
                     model_info=model_info,

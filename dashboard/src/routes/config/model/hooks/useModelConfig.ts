@@ -970,6 +970,9 @@ export function useModelConfig() {
           send_temperature: true,
           max_tokens: null,
           visual: false,
+          max_images: 0,
+          image_max_side: 8000,
+          image_min_side: 1,
           force_stream_mode: false,
           extra_params: {},
         }

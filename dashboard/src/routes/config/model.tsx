@@ -1946,6 +1946,53 @@ function ModelConfigPageContent() {
 
             {advancedModelSettingsVisible && (
               <>
+                <FormRow label="最大图片数量" htmlFor="max_images">
+                  <Input
+                    id="max_images"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={editingModel?.max_images ?? 0}
+                    onChange={(e) => {
+                      const value = Number(e.target.value)
+                      if (Number.isInteger(value) && value >= 0) {
+                        setEditingModel((prev) => prev ? { ...prev, max_images: value } : null)
+                      }
+                    }}
+                    className="h-8 w-28 text-sm"
+                  />
+                  <p className="text-xs text-muted-foreground">0 表示不限制。包含长图切片，超限时保留最近的图片。</p>
+                </FormRow>
+
+                {([
+                  ['image_max_side', '图片最大边长', 8000],
+                  ['image_min_side', '图片最小边长', 1],
+                ] as const).map(([field, label, defaultValue]) => (
+                  <FormRow key={field} label={label} htmlFor={field}>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id={field}
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={editingModel?.[field] ?? defaultValue}
+                        onChange={(e) => {
+                          const value = Number(e.target.value)
+                          if (Number.isInteger(value) && value >= 1) {
+                            setEditingModel((prev) => prev ? { ...prev, [field]: value } : null)
+                          }
+                        }}
+                        className="h-8 w-28 text-sm"
+                      />
+                      <FormUnit>像素</FormUnit>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {field === 'image_max_side'
+                        ? '限制长边，超限图片按比例缩小或分段。'
+                        : '约束短边，小图按比例放大，受长边上限约束时补边。不得超过最大边长。'}
+                    </p>
+                  </FormRow>
+                ))}
                 <FormRow label="强制流式" htmlFor="force_stream_mode">
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-xs text-muted-foreground">用于必须通过流式响应返回内容的模型</span>
