@@ -4,7 +4,7 @@
 
 from pathlib import Path
 from threading import Lock
-from typing import Annotated, Any, Dict, List, Tuple, Union, get_args, get_origin
+from typing import Annotated, Any, Dict, List, Literal, Tuple, Union, get_args, get_origin
 
 from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -26,6 +26,8 @@ from src.common.prompt_i18n import (
     extract_prompt_placeholders,
     get_builtin_prompt_name,
     get_custom_prompt_storage_name,
+    get_prompt_template_info,
+    iter_prompt_files,
     list_prompt_templates,
 )
 from src.common.paths import resource_path
@@ -117,6 +119,7 @@ class PromptFileInfo(BaseModel):
     modified_at: float = Field(..., description="最后修改时间戳")
     display_name: str = Field(default="", description="Prompt 展示名称")
     advanced: bool = Field(default=False, description="是否为高级 Prompt")
+    kind: Literal["main", "instruction"] = Field(default="main", description="主要 Prompt 或指令 Prompt")
     description: str = Field(default="", description="Prompt 描述")
     customized: bool = Field(default=False, description="是否存在用户自定义覆盖")
     custom_version_count: int = Field(default=0, description="用户自定义版本数量")
@@ -249,7 +252,10 @@ def _safe_prompt_path(language: str, filename: str) -> Path:
         raise HTTPException(status_code=400, detail="无效的 Prompt 文件名")
 
     prompt_name = get_builtin_prompt_name(normalized_filename.removesuffix(".prompt"))
-    prompt_path = (PROMPTS_DIR / normalized_language / f"{prompt_name}.prompt").resolve()
+    info = get_prompt_template_info(prompt_name, normalized_language, PROMPTS_DIR)
+    if info is None or info.path.relative_to(PROMPTS_DIR.resolve()).parts[0] != normalized_language:
+        raise HTTPException(status_code=404, detail="Prompt 文件不存在")
+    prompt_path = info.path.resolve()
     prompts_root = PROMPTS_DIR.resolve()
     try:
         prompt_path.relative_to(prompts_root)
@@ -887,7 +893,7 @@ def list_prompt_files():
             language = language_dir.name
             prompt_template_infos = list_prompt_templates(locale=language, prompts_root=PROMPTS_DIR)
             prompt_files: List[PromptFileInfo] = []
-            for prompt_file in sorted(language_dir.glob("*.prompt"), key=lambda item: item.name):
+            for prompt_file in sorted(iter_prompt_files(language_dir), key=lambda item: item.name):
                 custom_prompt_file = _safe_custom_prompt_path(language, prompt_file.name)
                 effective_prompt_file = custom_prompt_file if custom_prompt_file.exists() else prompt_file
                 stat = effective_prompt_file.stat()
@@ -907,6 +913,7 @@ def list_prompt_files():
                         modified_at=stat.st_mtime,
                         display_name=metadata.display_name if metadata else "",
                         advanced=metadata.advanced if metadata else False,
+                        kind="instruction" if "instructions" in prompt_file.relative_to(language_dir).parts[:-1] else "main",
                         description=metadata.description if metadata else "",
                         customized=custom_prompt_file.exists(),
                         custom_version_count=len(versions),

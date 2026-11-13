@@ -278,6 +278,7 @@ export function PromptManagementPage() {
   const [diffDefaultContent, setDiffDefaultContent] = useState('')
   const [query, setQuery] = useState('')
   const [showAdvancedPrompts, setShowAdvancedPrompts] = useState(false)
+  const [promptKind, setPromptKind] = useState<'all' | 'main' | 'instruction'>('all')
   const [versions, setVersions] = useState<PromptVersionInfo[]>([])
   const [activeVersionId, setActiveVersionId] = useState<string | null>(null)
   const [selectedVersionId, setSelectedVersionId] = useState(DEFAULT_VERSION_ID)
@@ -297,14 +298,15 @@ export function PromptManagementPage() {
 
   const filteredFiles = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
-    if (!normalizedQuery) return visiblePromptFiles
     return visiblePromptFiles.filter((file) => {
+      if (promptKind !== 'all' && (file.kind ?? 'main') !== promptKind) return false
+      if (!normalizedQuery) return true
       const searchableText = [file.name, file.display_name, file.description]
         .join(' ')
         .toLowerCase()
       return searchableText.includes(normalizedQuery)
     })
-  }, [visiblePromptFiles, query])
+  }, [visiblePromptFiles, query, promptKind])
 
   const selectedFile = promptFiles.find((file) => file.name === filename)
   const isCustomized = selectedFile?.customized ?? false
@@ -744,6 +746,18 @@ export function PromptManagementPage() {
           )}
         >
           <CardHeader className="shrink-0 p-3 pb-2 sm:p-6 sm:pb-3">
+            <Select value={promptKind} onValueChange={(value) => {
+              if (value === 'all' || value === 'main' || value === 'instruction') setPromptKind(value)
+            }}>
+              <SelectTrigger aria-label="Prompt 类型" className="mb-2 w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">全部 Prompt</SelectItem>
+                <SelectItem value="main">主要 Prompt</SelectItem>
+                <SelectItem value="instruction">指令 Prompt</SelectItem>
+              </SelectContent>
+            </Select>
             <div className="flex items-center gap-2">
               <div className="text-foreground flex h-10 shrink-0 items-center px-1 text-4xl leading-none font-bold sm:h-9">
                 {filteredFiles.length}

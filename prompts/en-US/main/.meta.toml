@@ -33,11 +33,6 @@ display_name = "Replyer"
 advanced = false
 description = "Maisaka reply generation template that creates the final reply from persona, expression style, chat notes, and reply context."
 
-[reply_attachments]
-display_name = "Reply attachments"
-advanced = true
-description = "Explains that the system sends reply images, mentions and emojis, preventing attachment information from being repeated in the reply text."
-
 [reply_group]
 display_name = "Group chat reply"
 advanced = true
@@ -108,11 +103,6 @@ display_name = "Image Description"
 advanced = false
 description = "Template for converting image content into a text description."
 
-[heuristic_memory_impression]
-display_name = "Memory Retrieval Impression"
-advanced = true
-description = "Template for generating a natural-language impression of the current chat to guide semantic long-term memory retrieval."
-
 [jargon_compare_inference]
 display_name = "Jargon Comparison Inference"
 advanced = true
@@ -178,46 +168,6 @@ display_name = "WebUI AI Search"
 advanced = true
 description = "Selects relevant results from real WebUI page and configuration candidates based on natural-language intent."
 
-[webui_help_skill_setup]
-display_name = "Setup and configuration workflow"
-advanced = true
-description = "Locates configuration, checks current values, and gives verifiable setup steps."
-
-[webui_help_skill_troubleshoot]
-display_name = "Troubleshooting workflow"
-advanced = true
-description = "Uses observed errors and settings to narrow the cause and identify the next check."
-
-[webui_help_skill_plugin]
-display_name = "Plugin selection and operations workflow"
-advanced = true
-description = "Checks plugin compatibility and uses the appropriate tools for installation or configuration."
-
-[webui_help_skill_develop]
-display_name = "Plugin development workflow"
-advanced = true
-description = "Uses version-relevant SDK docs for a minimal implementation and verification path."
-
-[webui_ai_search_input]
-display_name = "WebUI Help Conversation Input"
-advanced = true
-description = "Formats the current question and prior answers as untrusted context for the WebUI help agent."
-
-[webui_ai_search_final]
-display_name = "WebUI AI Search Final Instruction"
-advanced = true
-description = "Asks the model to stop researching and return the final JSON when AI search runs out of tool rounds or the answer is not in the required format."
-
-[webui_ai_search_correction]
-display_name = "WebUI AI Search Correction Instruction"
-advanced = true
-description = "Asks the model to remove unsupported content and rewrite the final JSON when an AI search answer fails evidence validation."
-
-[webui_ai_search_evidence]
-display_name = "WebUI AI Search Evidence Message"
-advanced = true
-description = "Wraps read-only tool results from AI search as evidence messages usable in requests without tools."
-
 [a_memorix_fact_deduplication]
 display_name = "Long-term memory fact deduplication"
 advanced = true
@@ -228,65 +178,20 @@ display_name = "External agent policy"
 advanced = true
 description = "External agent policy。"
 
-[agent_acp_environment]
-display_name = "External agent environment"
-advanced = true
-description = "External agent environment。"
-
-[agent_acp_failure]
-display_name = "External agent failure report"
-advanced = true
-description = "External agent failure report。"
-
 [agent_planner]
 display_name = "External planner policy"
 advanced = true
 description = "External planner policy。"
-
-[agent_planner_resume]
-display_name = "External planner recovery"
-advanced = true
-description = "External planner recovery。"
-
-[agent_planner_continue]
-display_name = "External planner continuation"
-advanced = true
-description = "External planner continuation。"
-
-[planner_reply_capabilities]
-display_name = "Planner reply capabilities"
-advanced = true
-description = "Available plugin reply capabilities for the current chat."
 
 [reply_cache]
 display_name = "Cached reply task"
 advanced = true
 description = "Switches to creative Replyer generation at the end of the Planner context."
 
-[desktop_pet_proactive_wake]
-display_name = "Desktop pet periodic reflection"
-advanced = false
-description = "Internal prompt for periodic reflection, autonomous exploration, and optional conversation."
-
-[desktop_pet_screen_read]
-display_name = "Desktop pet screen reading"
-advanced = false
-description = "Understand a local primary-screen capture, once or continuously."
-
-[desktop_pet_todo_context]
-display_name = "Resident owner todos"
-advanced = false
-description = "Refresh todos every turn and guide condition-based triggering."
-
 [desktop_pet_exploration]
 display_name = "Desktop pet exploration"
 advanced = false
 description = "Explore tool combinations for a human-defined goal and save evidence-backed candidate workflows."
-
-[desktop_pet_exploration_reuse]
-display_name = "Everyday exploration reuse"
-advanced = false
-description = "Retrieve and reuse exploration products as needed in ordinary owner chats."
 
 [desktop_pet_thinking_caption]
 display_name = "Desktop pet thinking caption"
@@ -303,17 +208,13 @@ display_name = "Long-form writing"
 advanced = false
 description = "Writes a complete article or community post in the bot's own identity and voice."
 
-[maisaka_wait_reminder]
-display_name = "Repeated wait reminder"
-advanced = true
-description = "After several consecutive waits, suggests waiting longer or ending this round to avoid an endless loop."
-
 [reply_supplement]
 display_name = "Reply supplement planning"
 advanced = true
 description = "While the reply body is generated in parallel, plans quotes, attachments and sending order."
 
-[reply_supplement_retry]
-display_name = "Reply supplement retry"
-advanced = true
-description = "Regenerates the reply supplement plan from the error of the previous failed attempt."
+[maisaka_subagent]
+display_name = "子代理"
+advanced = false
+description = "子代理独立任务的主要系统提示词。"
+

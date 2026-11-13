@@ -102,3 +102,27 @@ uv run --no-sync python -m pytest pytests/maisaka pytests/plugin_runtime/test_re
 日程由主程序持久化并每秒检查，不依赖桌宠是否启动。到期向原聊天投递内部任务并唤醒 Planner，包括正在定时等待的 Focus 组；Planner 结合最新上下文执行任务，完成后再归档。不会把任务投给其他群，也不会把跨群事项注入主人聊天的常驻待办上下文。创建日程不暂停当前轮次，也不代表已发送到期消息。
 
 桌宠面板、主人 `desktop_pet_todo` 和 `schedule` 共用原来的事项文件与附件。桌宠是管理入口，主程序是唯一写入方。重启后补投递尚未确认的到期任务；`triggered` 只表示已投递，`failed` 保存错误，重新安排未来时间后才再次尝试。进程在投递成功与保存回执之间退出时可能重复投递，因此不提供严格一次执行保证。
+
+## Prompt 用途分类
+
+Prompt 管理页可筛选「主要 Prompt」「指令 Prompt」或全部。内置文件放在 `prompts/{locale}/main/` 和 `prompts/{locale}/instructions/`，用途直接按目录识别，不增加元信息字段，与高级开关相互独立。
+
+主要 Prompt 定义人格、任务职责、输出方式和场景规则，包括普通、Focus、被动回复、轻量私聊以及独立子代理的系统模板。工具用途与参数由工具声明维护，主要模板只保留跨工具协作和消息归属规则。
+
+指令 Prompt 由现有加载器 `load_prompt` 按场景读取，可单独编辑和保存自定义版本：
+
+| 场景 | 模板 |
+| --- | --- |
+| 每轮行动提醒 | `planner_turn_action`、`planner_turn_passive`、`planner_turn_focus` |
+| 记忆与委派策略 | `planner_memory_group`、`planner_memory_private`、`planner_subagent_policy` |
+| 等待结束、新消息重规划 | `planner_wait_completed`、`planner_replan` |
+| 日程到期 | `schedule_due` |
+| 子代理最后一轮、结果返回 | `subagent_final_round`、`subagent_finished` |
+
+模板名称、版本 ID 与旧 API 地址保持原样；文件目录按用途整理，分类不改变消息的 system/user/tool 角色，也不改变触发条件。群聊与私聊的记忆策略保持分离，轻量模式仍不追加普通 Planner 的末尾行动指令。三种语言的新增模板与变量同步维护。
+
+### 文件发现与自定义 Prompt
+
+内置模板递归扫描 `prompts/{locale}/`，按模板名加载，不依赖嵌套深度。同一语言下模板名必须唯一；重名时明确报错。管理页按文件所在的 `instructions` 目录识别指令，其余归主要模板，不增加分类元信息字段。
+
+自定义覆盖和历史继续使用原路径 `data/custom_prompts/{locale}/{存储名}.prompt` 与 `.versions/{存储名}/`。内置文件挪动目录不影响覆盖匹配，无需迁移用户正文、清单或启用状态；旧模板名、历史别名和 API 地址继续有效。
