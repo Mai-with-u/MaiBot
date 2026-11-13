@@ -76,8 +76,12 @@
     cursor: pointer;
     transition: opacity .15s;
   }
+  [data-mode="idle"] #pet-lock[aria-pressed="false"] { display: none; }
   #pet-lock:hover, #pet-lock:focus-visible { opacity: .85; }
-  #pet-lock[aria-pressed="true"] { opacity: .45; }
+  #pet-lock[aria-pressed="true"] { opacity: 0; }
+  [data-locked="true"]:hover #pet-lock { opacity: .45; }
+  #pet-lock[aria-pressed="true"]:hover,
+  #pet-lock[aria-pressed="true"]:focus-visible { opacity: .85; }
   #pet-lock svg { width: 16px; height: 16px; }
   #pet-lock .locked-icon { display: none; }
   #pet-lock[aria-pressed="true"] .locked-icon { display: inline; }

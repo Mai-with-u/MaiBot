@@ -81,7 +81,7 @@ async def complete_missing_planner_action(
         "planner_text": content,
     }
     if routes:
-        payload["reply_targets"] = {str(index): sid for index, sid in enumerate(routes, 1)}
+        payload["reply_sessions"] = routes
     messages = [
         ContextItemBuilder().set_role(RoleType.System)
         .add_text_content(load_prompt("planner_action_judge")).build(),
@@ -103,17 +103,22 @@ async def complete_missing_planner_action(
 
     decision = result.response.strip()
     if result.tool_calls or result.native_tool_calls:
-        raise RespParseException(message="Planner 动作判断器应只返回 reply 或 wait，不应调用工具")
+        raise RespParseException(message="Planner 动作判断器应只返回 JSON 对象，不应调用工具")
+    try:
+        parsed = json.loads(decision)
+    except json.JSONDecodeError as exc:
+        raise RespParseException(message=f"Planner 动作判断器返回了无效 JSON：{decision!r}") from exc
+    if not isinstance(parsed, dict) or "action" not in parsed:
+        raise RespParseException(message=f"Planner 动作判断器返回了无效字段：{decision!r}")
+    action = parsed["action"]
     arguments: Dict[str, Any] = {}
-    if decision == "wait":
-        action = "wait"
+    if action == "wait" and set(parsed) == {"action"}:
         if routes:
             arguments["session_id"] = routes[0]
-    elif decision == "reply" and not routes:
-        action = "reply"
-    elif routes and decision in {f"reply {index}" for index in range(1, len(routes) + 1)}:
-        action = "reply"
-        arguments["session_id"] = routes[int(decision.split()[1]) - 1]
+    elif action == "reply" and not routes and set(parsed) == {"action"}:
+        pass
+    elif action == "reply" and routes and set(parsed) == {"action", "session_id"} and parsed["session_id"] in routes:
+        arguments["session_id"] = parsed["session_id"]
     else:
         raise RespParseException(message=f"Planner 动作判断器返回了无效选项：{decision!r}")
     if action == "reply":

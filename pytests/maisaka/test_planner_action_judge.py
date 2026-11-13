@@ -54,7 +54,9 @@ def chat_message(index: int, *, notify: bool = False) -> SessionBackedMessage:
 
 @pytest.fixture
 def judge_client(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    generate = AsyncMock(return_value=LLMResponseResult(output_items=tuple(text_items("reply")), model_name="fast"))
+    generate = AsyncMock(return_value=LLMResponseResult(
+        output_items=tuple(text_items(json.dumps({"action": "reply"}))), model_name="fast",
+    ))
     factory = Mock(return_value=SimpleNamespace(generate_response_with_context=generate))
     monkeypatch.setattr("src.maisaka.planner_action_judge.LLMServiceClient", factory)
     return SimpleNamespace(generate=generate, factory=factory)
@@ -63,7 +65,7 @@ def judge_client(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["reply", "wait"])
 async def test_one_short_request_becomes_standard_tool_call(judge_client: SimpleNamespace, action: str) -> None:
-    judge_client.generate.return_value.output_items = tuple(text_items(action))
+    judge_client.generate.return_value.output_items = tuple(text_items(json.dumps({"action": action})))
     original = "我决定回复刚才的问题，解释如何部署。"
     items = text_items(original)
     interrupt = asyncio.Event()
@@ -152,10 +154,15 @@ async def test_no_request_without_eligible_missing_action(judge_client: SimpleNa
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("answer", ["", "stop", "reply or wait", "reply 999", '{"action":"reply"}'])
+@pytest.mark.parametrize("answer", [
+    "", "reply", "reply 1", "stop", '```json\n{"action":"reply","target":null}\n```',
+    "null", "[]", '{"target":null}', '{"action":"stop","target":null}',
+    '{"action":"reply","target":1}', '{"action":"wait","target":1}',
+    '{"action":"reply","target":null,"extra":true}',
+])
 async def test_invalid_decision_is_exposed_without_retries(judge_client: SimpleNamespace, answer: str) -> None:
     judge_client.generate.return_value.output_items = tuple(text_items(answer)) if answer else ()
-    with pytest.raises(RespParseException, match="无效选项"):
+    with pytest.raises(RespParseException, match="无效"):
         await complete_missing_planner_action(text_items("回复吧"), tool_definitions(), session_id="s", logical_turn_id="t")
     judge_client.generate.assert_awaited_once()
 
@@ -181,7 +188,10 @@ async def test_timeout_cancels_the_request_without_fabricating_wait(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("answer,action,session", [("reply 2", "reply", "second"), ("wait", "wait", "first")])
+@pytest.mark.parametrize("answer,action,session", [
+    ('{"action":"reply","session_id":"second"}', "reply", "second"),
+    ('{"action":"wait"}', "wait", "first"),
+])
 async def test_focus_uses_only_real_routed_sessions(
     judge_client: SimpleNamespace, answer: str, action: str, session: str,
 ) -> None:
@@ -198,10 +208,29 @@ async def test_focus_uses_only_real_routed_sessions(
     assert result.tool_call.tool_call.materialize_args()["session_id"] == session
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", [None, True, 0, "unknown", "", [], {}])
+async def test_focus_rejects_invalid_reply_targets(judge_client: SimpleNamespace, target: Any) -> None:
+    definitions = tool_definitions()
+    for definition, spec in zip(definitions, [reply_spec(), wait_spec()], strict=True):
+        schema = routed_schema(spec, "first")
+        schema["properties"]["session_id"]["enum"] = ["first", "second"]
+        definition["parameters_schema"] = schema
+    judge_client.generate.return_value.output_items = tuple(text_items(json.dumps({"action": "reply", "session_id": target})))
+    with pytest.raises(RespParseException, match="无效选项"):
+        await complete_missing_planner_action(
+            text_items("回复第二个会话"), definitions, session_id="", logical_turn_id="focus-turn",
+        )
+    judge_client.generate.assert_awaited_once()
+
+
 @pytest.mark.parametrize("locale", ["zh-CN", "en-US", "ja-JP"])
 def test_judge_prompt_is_available_in_supported_languages(locale: str) -> None:
     prompt = load_prompt("planner_action_judge", locale=locale)
     assert "reply" in prompt and "wait" in prompt and "planner_text" in prompt
+    assert '{"action":"reply"}' in prompt
+    assert "reply_sessions" in prompt and "session_id" in prompt
+    assert '{"action":"wait"}' in prompt
 
 
 @pytest.mark.asyncio
@@ -217,7 +246,7 @@ async def test_service_preview_and_execution_receive_the_same_completed_call(
     judge_client: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, mode: str, request_kind: str,
     expected: bool, answer: str,
 ) -> None:
-    judge_client.generate.return_value.output_items = tuple(text_items(answer))
+    judge_client.generate.return_value.output_items = tuple(text_items(json.dumps({"action": answer})))
     monkeypatch.setattr("src.maisaka.chat_loop_service.global_config.agent.planner_enabled", False)
     monkeypatch.setattr("src.maisaka.chat_loop_service.global_config.debug.save_maisaka_reasoning", True)
     preview = Mock(return_value=SimpleNamespace(
