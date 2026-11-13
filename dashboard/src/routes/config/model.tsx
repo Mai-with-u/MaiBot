@@ -767,10 +767,11 @@ function ModelConfigPageContent() {
 
               <section
                 className="flex min-h-0 min-w-0 flex-col gap-2 lg:h-full lg:overflow-hidden"
+                data-model-library-list="true"
                 data-tour="models-tab-trigger"
               >
           {/* 列表标签、筛选键、搜索和添加入口排在同一行 */}
-          <div data-library-label="true" className="flex-wrap gap-y-2">
+          <div data-library-label="true" data-model-library-toolbar="true" className="flex-wrap gap-y-2">
             <b>MODELS</b>
             <h2>模型列表</h2>
             <div role="group" aria-label="筛选模型" data-library-filters="true" className="ml-1">
@@ -787,13 +788,25 @@ function ModelConfigPageContent() {
                 </Button>
               ))}
             </div>
-            <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
+            <div data-model-library-filter-select="true">
+              <Select value={modelKindFilter} onValueChange={(value) => setModelKindFilter(value as ModelKindFilter)}>
+                <SelectTrigger aria-label="筛选模型" className="h-8 w-24">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {MODEL_KIND_FILTERS.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div data-model-library-tools="true" className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
               {searchQuery && (
-                <span className="text-xs text-muted-foreground whitespace-nowrap">
+                <span data-model-library-result-count="true" className="text-xs text-muted-foreground whitespace-nowrap">
                   找到 {shownModels.length} 个
                 </span>
               )}
-              <div className="relative w-full sm:w-60">
+              <div data-model-library-search="true" className="relative w-full sm:w-60">
                 <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   placeholder="搜索名称、标识符或厂商"
@@ -805,16 +818,21 @@ function ModelConfigPageContent() {
                 />
               </div>
               {selectedModels.size > 0 && (
-                <Button onClick={openBatchDeleteDialog} size="sm" variant="destructive">
+                <Button
+                  onClick={openBatchDeleteDialog}
+                  size="sm"
+                  variant="destructive"
+                  className="shrink-0"
+                  aria-label={`批量删除 (${selectedModels.size})`}
+                >
                   <Trash2 className="h-4 w-4" strokeWidth={2} fill="none" />
-                  批量删除 ({selectedModels.size})
+                  <span data-model-library-batch-label="true">批量删除</span> ({selectedModels.size})
                 </Button>
               )}
-              {/* 手机上由页头右上角的「+」添加 */}
               <AddModelMenu
                 onAdd={openAddModelDialog}
                 disabled={apiProviders.length === 0}
-                className="hidden md:inline-flex"
+                className="inline-flex shrink-0"
                 dataTour="add-model-button"
               />
             </div>
