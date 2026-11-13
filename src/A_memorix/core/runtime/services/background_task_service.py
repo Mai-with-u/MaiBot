@@ -9,7 +9,7 @@ from src.common.async_work import run_sync_work
 from src.common.logger import get_logger
 
 from ...utils import profile_policy
-from ...utils.async_work import cancel_and_wait_for_tasks
+from ...utils.async_work import cancel_and_wait_for_tasks, cancellation_safe_to_thread
 from .base import KernelServiceBase
 
 logger = get_logger("A_Memorix.SDKMemoryKernel")
@@ -263,32 +263,10 @@ class MemoryBackgroundTaskService(KernelServiceBase):
         return [(name, store) for name, store in candidates if store is not None]
 
     async def _warmup_vector_store_in_thread(self, store: Any) -> Dict[str, Any]:
-        worker = asyncio.create_task(
-            asyncio.to_thread(store.warmup_index, force_train=True),
-            name="A_Memorix.vector_index_training.worker",
-        )
-        try:
-            return await asyncio.shield(worker)
-        except asyncio.CancelledError:
-            try:
-                await worker
-            except Exception as exc:
-                logger.warning(f"向量索引训练任务取消收尾异常: {exc}")
-            raise
+        return await cancellation_safe_to_thread(store.warmup_index, force_train=True)
 
     async def _run_legacy_vector_io_in_thread(self, operation: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        worker = asyncio.create_task(
-            asyncio.to_thread(operation, *args, **kwargs),
-            name="A_Memorix.legacy_vector_copy.worker",
-        )
-        try:
-            return await asyncio.shield(worker)
-        except asyncio.CancelledError:
-            try:
-                await worker
-            except Exception as exc:
-                logger.warning(f"可信旧向量复制任务取消收尾异常: {exc}")
-            raise
+        return await cancellation_safe_to_thread(operation, *args, **kwargs)
 
     async def _train_runtime_vector_indexes_once(self) -> Dict[str, Dict[str, Any]]:
         threshold_value = self._cfg("embedding.runtime_train_threshold", 256)
