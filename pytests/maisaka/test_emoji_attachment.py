@@ -94,6 +94,7 @@ async def test_supplement_exposes_reply_target_while_attachment_is_pending(monke
 
 @pytest.mark.asyncio
 async def test_backfill_persists_vectors_and_matching_only_embeds_the_query(monkeypatch, tmp_path):
+    """Exercise indexing and matching with an over-limit VLM response."""
     monkeypatch.setattr(semantic_match, "_index_path", tmp_path / "emoji.sqlite3")
     monkeypatch.setattr(semantic_match, "_config_key", lambda: "config")
     monkeypatch.setattr(semantic_match, "_model_key", lambda _: "test")
@@ -105,7 +106,8 @@ async def test_backfill_persists_vectors_and_matching_only_embeds_the_query(monk
         SimpleNamespace(file_hash="b", description="自嘲"),
     ]
     analyze = AsyncMock(side_effect=[
-        '{"emotion_tags":["安慰"],"content_tags":["猫","拥抱"]}',
+        '{"emotion_tags":["安慰","温柔","鼓励","理解","关切","放松"],'
+        '"content_tags":["猫","拥抱","毛毯","闭眼","尾巴","靠垫"]}',
         '{"emotion_tags":["自嘲"],"content_tags":["猫","捂脸"]}',
     ])
     monkeypatch.setattr(semantic_match, "emoji_manager", SimpleNamespace(
@@ -113,7 +115,10 @@ async def test_backfill_persists_vectors_and_matching_only_embeds_the_query(monk
     ))
 
     async def embed(label):
-        return SimpleNamespace(embedding={"安慰": [0.6, 0.8], "猫、捂脸": [0, 1]}.get(label, [1, 0]))
+        return SimpleNamespace(embedding={
+            "安慰、温柔、鼓励、理解、关切": [0.6, 0.8],
+            "猫、捂脸": [0, 1],
+        }.get(label, [1, 0]))
 
     client = SimpleNamespace(embed_text=AsyncMock(side_effect=embed))
     monkeypatch.setattr(semantic_match, "EmbeddingServiceClient", lambda **_: client)
@@ -122,8 +127,11 @@ async def test_backfill_persists_vectors_and_matching_only_embeds_the_query(monk
     client.embed_text.assert_not_awaited()
 
     await semantic_match.backfill_emoji_index()
-    assert [call.args[0] for call in client.embed_text.await_args_list] == ["猫、拥抱", "安慰"]
-    assert semantic_match.get_emoji_tags("a").content_tags == ["猫", "拥抱"]
+    assert [call.args[0] for call in client.embed_text.await_args_list] == [
+        "猫、拥抱、毛毯、闭眼、尾巴",
+        "安慰、温柔、鼓励、理解、关切",
+    ]
+    assert semantic_match.get_emoji_tags("a").content_tags == ["猫", "拥抱", "毛毯", "闭眼", "尾巴"]
 
     # 模拟注册提交后排队，第二张图无需等下一轮定时维护。
     semantic_match.schedule_emoji_index("b")
@@ -154,3 +162,38 @@ async def test_backfill_persists_vectors_and_matching_only_embeds_the_query(monk
     ) == "a"
     assert [call.args[0] for call in client.embed_text.await_args_list] == ["轻松地自嘲", "猫抱在一起"]
     assert analyze.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("raw_tags", "expected"),
+    [
+        (
+            '{"emotion_tags":["开心","惊喜","俏皮","撒娇","自嘲","得意"],'
+            '"content_tags":[" 猫 ","猫"," ","捂脸","尾巴","爪子","地毯","椅子"]}',
+            (["开心", "惊喜", "俏皮", "撒娇", "自嘲"], ["猫", "捂脸", "尾巴", "爪子", "地毯"]),
+        ),
+        ('{"emotion_tags":[],"content_tags":[" "]}', None),
+        ('{"emotion_tags":[],"content_tags":["猫","捂脸","尾巴","爪子","地毯",1]}', None),
+        ('{"emotion_tags":[],"content_tags":["猫",]}', None),
+    ],
+)
+async def test_backfill_trims_extra_model_tags_and_rejects_invalid_tags(monkeypatch, tmp_path, raw_tags, expected):
+    """Save normalized model tags only when the JSON and tag values are valid."""
+    monkeypatch.setattr(semantic_match, "_index_path", tmp_path / "emoji.sqlite3")
+    monkeypatch.setattr(semantic_match, "_config_key", lambda: None)
+    monkeypatch.setattr(semantic_match, "_backfill_cursor", 0)
+    monkeypatch.setattr(semantic_match, "_is_vlm_task_configured", lambda: True)
+    monkeypatch.setattr(semantic_match, "emoji_manager", SimpleNamespace(
+        emojis=[SimpleNamespace(file_hash="test")],
+        analyze_emoji_image=AsyncMock(return_value=raw_tags),
+    ))
+
+    await semantic_match.backfill_emoji_index()
+
+    tags = semantic_match.get_emoji_tags("test")
+    if expected is None:
+        assert tags is None
+    else:
+        assert tags is not None
+        assert (tags.emotion_tags, tags.content_tags) == expected
