@@ -27,6 +27,7 @@ from src.common.logger import get_logger
 from src.services import llm_service as llm_api
 
 from ...paths import default_data_dir, repo_root, resolve_repo_path, scripts_root
+from .async_work import cancel_and_wait_for_tasks
 from ..storage import (
     GraphStore,
     KnowledgeType,
@@ -55,6 +56,7 @@ from ..utils.model_routing import (
     generate_with_resolved_model,
     get_text_generation_model_tasks,
     pick_text_generation_task,
+    resolve_fast_text_generation_model,
     resolve_text_generation_model_selector,
 )
 from ..utils.relation_write_service import RelationWriteService
@@ -803,12 +805,13 @@ class ImportTaskManager:
 
     def _llm_retry_config(self) -> Dict[str, float]:
         timeout_cfg = self._timeout_config()
-        retries = max(0, self._cfg_int("web.import.llm_retry.max_attempts", 4))
+        # max_attempts 包含首次调用，额外重试次数应少一次。
+        max_attempts = max(1, self._cfg_int("web.import.llm_retry.max_attempts", 4))
         min_wait = max(0.1, float(self._cfg("web.import.llm_retry.min_wait_seconds", 3) or 3))
         max_wait = max(min_wait, float(self._cfg("web.import.llm_retry.max_wait_seconds", 40) or 40))
         mult = max(1.0, float(self._cfg("web.import.llm_retry.backoff_multiplier", 3) or 3))
         return {
-            "retries": retries,
+            "retries": max_attempts - 1,
             "min_wait": min_wait,
             "max_wait": max_wait,
             "multiplier": mult,
@@ -2124,17 +2127,11 @@ class ImportTaskManager:
                     self._try_write_task_report(task)
             self._queue.clear()
             worker = self._worker_task
-            self._worker_task = None
 
         if worker:
-            worker.cancel()
-            try:
-                await worker
-            except asyncio.CancelledError:
-                logger.debug("Web 导入工作线程已取消")
-            except Exception:
-                logger.exception("Web 导入工作线程关闭异常")
+            await cancel_and_wait_for_tasks([worker], operation="关闭 Web 导入任务")
 
+        self._worker_task = None
         self._cleanup_temp_root()
 
     def _cleanup_temp_root(self) -> None:
@@ -4107,7 +4104,9 @@ JSON schema:
 }}
 """
         try:
-            result = await self._llm_call(prompt, resolved_model)
+            # 时间字段抽取独立使用快速模型，不继承完整知识抽取的模型选择。
+            time_model = resolve_fast_text_generation_model(llm_api)
+            result = await self._llm_call(prompt, time_model)
         except Exception as e:
             logger.warning(f"chat_log 时间语义抽取失败: {e}")
             return None

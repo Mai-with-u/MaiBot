@@ -187,7 +187,8 @@ async def run_embedding_runtime_self_check(
     try:
         detected_dimension = _safe_int(await embedding_manager._detect_dimension(), 0)
         requested_dimension = _get_requested_dimension(embedding_manager, detected_dimension or configured_dimension)
-        encoded = await embedding_manager.encode(sample_text)
+        # 自检必须请求真实服务，不能用已有向量掩盖连接故障。
+        encoded = await embedding_manager.encode(sample_text, use_cache=False)
         encoded_array = _normalize_encoded_vector(encoded)
         encoded_dimension = int(encoded_array.shape[0])
     except Exception as exc:

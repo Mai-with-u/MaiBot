@@ -1878,26 +1878,27 @@ class MetadataStore(
         if not isinstance(metadata_patch, dict):
             raise TypeError("metadata_patch 必须是 dict")
 
-        cursor = self._conn.cursor()
-        cursor.execute(
-            """
-            SELECT metadata
-            FROM paragraphs
-            WHERE hash = ?
-            LIMIT 1
-            """,
-            (paragraph_hash,),
-        )
-        row = cursor.fetchone()
-        if row is None:
-            return None
-
-        metadata = self._decode_metadata(row["metadata"])
-        updated = self._merge_paragraph_metadata(metadata, metadata_patch)
-        if updated == metadata:
-            return metadata
-
         with self.transaction(immediate=True):
+            # 读取和合并也必须持有写事务，避免并发补丁基于同一旧值互相覆盖。
+            cursor = self._conn.cursor()
+            cursor.execute(
+                """
+                SELECT metadata
+                FROM paragraphs
+                WHERE hash = ?
+                LIMIT 1
+                """,
+                (paragraph_hash,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+
+            metadata = self._decode_metadata(row["metadata"])
+            updated = self._merge_paragraph_metadata(metadata, metadata_patch)
+            if updated == metadata:
+                return metadata
+
             cursor.execute(
                 """
                 UPDATE paragraphs
@@ -2358,23 +2359,24 @@ class MetadataStore(
         if not isinstance(patch, dict):
             raise TypeError("patch 必须是 dict")
 
-        cursor = self._conn.cursor()
-        cursor.execute(
-            """
-            SELECT metadata, is_deleted
-            FROM paragraphs
-            WHERE hash = ?
-            LIMIT 1
-            """,
-            (hash_token,),
-        )
-        row = cursor.fetchone()
-        if row is None or bool(row["is_deleted"]):
-            return None
-
-        metadata = self._decode_metadata(row["metadata"])
-        updated = self._merge_paragraph_metadata(metadata, patch) if merge else dict(patch)
         with self.transaction(immediate=True):
+            # 在同一事务内校验删除状态并合并，防止写回并发更新前的旧 metadata。
+            cursor = self._conn.cursor()
+            cursor.execute(
+                """
+                SELECT metadata, is_deleted
+                FROM paragraphs
+                WHERE hash = ?
+                LIMIT 1
+                """,
+                (hash_token,),
+            )
+            row = cursor.fetchone()
+            if row is None or bool(row["is_deleted"]):
+                return None
+
+            metadata = self._decode_metadata(row["metadata"])
+            updated = self._merge_paragraph_metadata(metadata, patch) if merge else dict(patch)
             cursor.execute(
                 """
                 UPDATE paragraphs

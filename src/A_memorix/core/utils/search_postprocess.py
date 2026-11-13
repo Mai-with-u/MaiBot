@@ -8,7 +8,7 @@ from .path_fallback_service import find_paths_from_query, to_retrieval_results
 
 
 def apply_safe_content_dedup(results: List[Any]) -> Tuple[List[Any], int]:
-    """按哈希和内容去重，同时至少保留一条结果。"""
+    """仅合并相同哈希或全文相等的结果，保留包含新增事实的较长正文。"""
     if not results:
         return [], 0
 
@@ -25,12 +25,8 @@ def apply_safe_content_dedup(results: List[Any]) -> Tuple[List[Any], int]:
         if hash_value in seen_hashes:
             continue
 
-        is_dup = False
-        for seen in seen_contents:
-            if content in seen or seen in content:
-                is_dup = True
-                break
-        if is_dup:
+        # 文本包含不等于事实等价，不能据此删除带有独立新增信息的结果。
+        if content in seen_contents:
             continue
 
         seen_hashes.add(hash_value)

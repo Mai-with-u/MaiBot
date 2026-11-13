@@ -222,6 +222,7 @@ class FactDeduplicator:
             candidates: Dict[str, List[Dict[str, Any]]] = {}
             fixed: Dict[str, Dict[str, Any]] = {}
             for fact in batch:
+                vector_candidates: List[Dict[str, Any]] = []
                 found = await asyncio.to_thread(self._candidates, scope_type, scope_id, fact["text"], paragraph_ids)
                 found = self._compatible_candidates(scope_type, fact, found)
                 exact = next(
@@ -247,7 +248,7 @@ class FactDeduplicator:
                 elif paragraph_ids and self.embedding is not None and self.vectors is not None:
                     vector = await self.embedding.encode(fact["text"])
                     hits, _ = await asyncio.to_thread(self.vectors.search, vector, k=8, allowed_ids=paragraph_ids)
-                    found += await asyncio.to_thread(self._paragraph_candidates, hits, scope_type, scope_id)
+                    vector_candidates = await asyncio.to_thread(self._paragraph_candidates, hits, scope_type, scope_id)
                 # 同一批和之前批次内的新事实也作为候选，不依赖尚未写入的向量。
                 earlier = facts[:offset] + batch[: batch.index(fact)]
                 inputs = [
@@ -265,8 +266,11 @@ class FactDeduplicator:
                     ).ratio(),
                     reverse=True,
                 )
-                # 历史候选与当前输入交错，避免历史候选占满上限后漏掉同批重复。
-                found = [row for pair in zip_longest(found, inputs) for row in pair if row is not None]
+                # 精确命中优先，其余名额由向量、关键词和同批输入轮流使用。
+                # 向量候选不能追加在已满的关键词列表后，否则截断时整路召回都会丢失。
+                found = ([exact] if exact is not None else []) + [
+                    row for group in zip_longest(vector_candidates, found, inputs) for row in group if row is not None
+                ]
                 found = self._compatible_candidates(scope_type, fact, found)
                 unique = {row["id"]: row for row in found}
                 candidates[fact["fact_id"]] = list(unique.values())[:8]

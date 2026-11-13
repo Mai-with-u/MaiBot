@@ -500,7 +500,7 @@ def test_schema_28_upgrade_retains_completed_checkpoint_without_backfill(tmp_pat
     monkeypatch.setattr(store, "backfill_person_fact_claims", lambda: pytest.fail("不得批量回填历史事实"))
     store.connect()
     try:
-        assert store.get_schema_version() == 29
+        assert store.get_schema_version() == 31
         assert store.get_summary_checkpoint("old-window")["phase"] == "complete"
         assert store.get_summary_checkpoint_count("chat-a") == 10
     finally:

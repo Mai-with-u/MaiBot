@@ -96,6 +96,7 @@ try:
         generate_with_resolved_model,
         get_text_generation_model_tasks,
         pick_text_generation_task,
+        resolve_fast_text_generation_model,
         resolve_text_generation_model_selector,
     )
     from A_memorix.core.utils.time_parser import normalize_time_meta
@@ -336,7 +337,9 @@ Chat paragraph:
 \"\"\"{text}\"\"\"
 """
         try:
-            result = await self._llm_call(prompt, resolved_model)
+            # 时间字段抽取独立使用快速模型，不继承完整知识抽取的模型选择。
+            time_model = resolve_fast_text_generation_model(llm_api)
+            result = await self._llm_call(prompt, time_model)
         except Exception as e:
             logger.warning(f"chat_log 时间语义抽取失败: {e}")
             return None
