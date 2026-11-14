@@ -620,7 +620,7 @@ async def _perform_update_plugin(request: UpdatePluginRequest) -> Dict[str, Any]
             if release is not None:
                 return await install_release(
                     plugin_id, entry, release, updating=True, automatic=request.version == "latest",
-                    mirror_id=request.mirror_id,
+                    mirror_id=request.mirror_id, force=request.force, expected_commit=request.expected_commit,
                 )
             request = request.model_copy(update={"repository_url": entry.repositoryUrl})
         await update_progress(
@@ -672,10 +672,8 @@ async def _perform_update_plugin(request: UpdatePluginRequest) -> Dict[str, Any]
             source_url = urls.get("repository") if isinstance(urls, dict) else None
             source_url = source_url or manifest.get("repository_url")
         result = await service.pull_repository(
-            repository_path=plugin_path,
-            branch=request.branch,
-            remote_url=source_url,
-            mirror_id=request.mirror_id,
+            repository_path=plugin_path, branch=request.branch, remote_url=source_url,
+            mirror_id=request.mirror_id, force=request.force, expected_commit=request.expected_commit,
         )
 
         if not result.get("success"):
@@ -688,7 +686,7 @@ async def _perform_update_plugin(request: UpdatePluginRequest) -> Dict[str, Any]
                 plugin_id=plugin_id,
                 error=error_msg,
             )
-            raise HTTPException(status_code=int(result.get("status_code", 500)), detail=error_msg)
+            raise HTTPException(status_code=int(result.get("status_code", 500)), detail=result.get("conflict", error_msg))
 
         await update_progress(
             stage="loading", progress=90, message="验证新版本...", operation="update", plugin_id=plugin_id
@@ -725,6 +723,7 @@ async def _perform_update_plugin(request: UpdatePluginRequest) -> Dict[str, Any]
                 "old_version": old_version,
                 "new_version": new_version,
                 "update_mode": "git_pull",
+                "backup_path": result.get("backup_path"),
             }
         except HTTPException as e:
             await update_progress(

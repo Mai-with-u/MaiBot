@@ -26,6 +26,7 @@ import { BootErrorScreen } from './components/boot-error-screen'
 import { ErrorBoundary } from './components/error-boundary'
 import { installMillenniumIconStyle } from './components/ui/millennium-icon-set'
 import { Toaster } from './components/ui/toaster'
+import { CodeUpdateConfirmation } from './components/code-update-confirmation'
 import { applyDesktopEmbedding } from './lib/desktop-host'
 import { isElectron } from './lib/runtime'
 import { queryClient } from './lib/query'
@@ -54,6 +55,7 @@ void bootstrapHostRuntime()
                       <RouterProvider router={router} />
                       <LazyTourRenderer />
                       <Toaster />
+                      <CodeUpdateConfirmation />
                     </TourProvider>
                   </AnimationProvider>
                 </ThemeProvider>

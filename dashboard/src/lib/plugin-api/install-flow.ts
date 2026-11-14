@@ -6,6 +6,7 @@
  */
 import { backendApi } from '@/lib/http'
 import { toast } from '@/hooks/use-toast'
+import { confirmCodeUpdate, getUpdateConflict } from '@/lib/update-confirmation'
 
 type InstallPluginResult = { success: boolean; message: string; warnings?: string[] }
 
@@ -74,16 +75,28 @@ export async function updatePlugin(
   release?: { version: string } | null,
   signal?: AbortSignal
 ): Promise<UpdatePluginResult> {
-  const result = await backendApi.post<UpdatePluginResult>('/api/webui/plugins/update', {
+  const send = (force: boolean, expectedCommit?: string) => backendApi.post<UpdatePluginResult>('/api/webui/plugins/update', {
     body: {
       plugin_id: pluginId,
       repository_url: repositoryUrl,
       branch: branch,
+      ...(force ? { force: true, expected_commit: expectedCommit } : {}),
       ...(release === null ? {} : release || (branch === 'main' ? { version: 'latest' } : {})),
     },
     errorMessage: '更新插件失败',
     signal,
   })
+  let result: UpdatePluginResult
+  try {
+    result = await send(false)
+  } catch (error) {
+    const conflict = getUpdateConflict(error)
+    if (!conflict || !await confirmCodeUpdate(conflict, signal)) throw error
+    result = await send(true, conflict.target_commit)
+  }
+  if (result.backup_path) {
+    toast({ title: '插件备份已保存', description: result.backup_path })
+  }
   showDependencyWarnings(result)
   return result
 }
