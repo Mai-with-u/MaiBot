@@ -5,7 +5,7 @@ from binascii import Error as BinasciiError
 from dataclasses import dataclass, field
 from datetime import datetime
 from html import escape
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Literal, Optional, Sequence
 
 import asyncio
 import difflib
@@ -99,6 +99,7 @@ from src.maisaka.visual.mode_utils import resolve_enable_visual_planner
 if TYPE_CHECKING:
     from .runtime import MaisakaHeartFlowChatting
     from src.maisaka.builtin_tool.provider import BuiltinToolHandler
+    from src.maisaka.turn_trigger.gates import TurnGateResult
 
 logger = get_logger("maisaka_reasoning_engine")
 
@@ -887,6 +888,32 @@ class MaisakaReasoningEngine:
         if self._runtime._has_pending_messages():
             # 消息、timeout、主动任务都可能带走消息缓存，不能绕过当前批次的防抖等待。
             await self._runtime._wait_for_message_quiet_period()
+
+        accepted_wait_continuation = (
+            self._runtime._agent_state == self._runtime._STATE_WAIT
+            and message_triggered
+            and self._runtime._has_pending_messages()
+            and self._runtime._message_turn_scheduler.accepted_wait_started_at
+            == self._runtime._pending_wait_started_at
+        )
+        should_review = (
+            message_triggered
+            and not (timeout_triggered or proactive_triggered)
+            and not silent_reply_frequency
+            and not accepted_wait_continuation
+            and self._runtime._has_pending_messages()
+        )
+        if should_review:
+            snapshot = list(self._runtime.message_cache[self._runtime._last_processed_index :])
+            try:
+                review_result = await self._runtime._message_turn_scheduler.review_message_turn(snapshot)
+                if review_result is not None and review_result.decision != "trigger":
+                    await self._apply_non_trigger_gate_result(review_result, snapshot)
+                    return TurnStartContext([], None, timeout_triggered, proactive_triggered, silent_reply_frequency)
+            except BaseException:
+                # 评估或消费异常/取消时释放占位，异常原样交给 run_loop 处理，不重新投递。
+                self._runtime._mark_message_turn_unscheduled()
+                raise
         if message_triggered:
             self._runtime._mark_message_turn_unscheduled()
 
@@ -942,6 +969,81 @@ class MaisakaReasoningEngine:
             silent_reply_frequency,
             continuation_logical_turn_id,
         )
+
+    async def _apply_non_trigger_gate_result(
+        self,
+        result: "TurnGateResult",
+        snapshot: Sequence[SessionMessage],
+    ) -> None:
+        """按门控判定收尾：wait 直接返回、delay 延迟重查、consume 静默消费本批。"""
+
+        runtime = self._runtime
+        decision = result.decision
+        try:
+            if decision == "consume":
+                await self._consume_gate_batch(messages=snapshot, consumed_count=result.consumed_count)
+        finally:
+            # 评估与静默暂存期间占位保持为 True，收尾时统一释放。
+            runtime._mark_message_turn_unscheduled()
+
+        reschedulable = runtime._running and runtime._focus_group is None
+        if decision == "delay" and reschedulable:
+            runtime._defer_message_turn_check(result.delay_seconds)
+        elif decision == "consume" and reschedulable and runtime._has_pending_messages():
+            # 部分消费或消费取消后仍有待处理消息，按原有调度链重新门控。
+            runtime._schedule_message_turn()
+
+    def _gate_batch_unchanged(self, snapshot: Sequence[SessionMessage]) -> bool:
+        """用对象身份比对当前待处理批次与评估快照，忽略缓存头部裁剪。"""
+
+        current = tuple(self._runtime.message_cache[self._runtime._last_processed_index :])
+        return len(current) == len(snapshot) and all(
+            a is b for a, b in zip(current, snapshot, strict=False)
+        )
+
+    async def _consume_gate_batch(self, *, messages: Sequence[SessionMessage], consumed_count: int) -> bool:
+        """将本批消息静默写入内部历史并推进游标，不进入 Planner。"""
+
+        runtime = self._runtime
+        full_snapshot = tuple(messages)
+        if consumed_count <= 0 or not full_snapshot:
+            return False
+        selected = full_snapshot[:consumed_count]
+
+        # 暂存阶段：逐条构建历史消息，不提前插历史、不推进游标、不持入站锁。
+        staged: list[LLMContextMessage] = []
+        for message in selected:
+            history_message = await self._build_history_message(message)
+            if history_message is not None:
+                staged.append(history_message)
+
+        # 暂存结束后二次复核：整批失效则丢弃候选、交给调用方重查新批次。
+        recheck_ok = (
+            runtime._running
+            and runtime._focus_group is None
+            and not runtime._has_forced_turn_trigger()
+            and not runtime._message_turn_changed.is_set()
+            and self._gate_batch_unchanged(full_snapshot)
+        )
+        if not recheck_ok:
+            return False
+
+        # 同步提交段：不含 await，插入历史、推进游标、通知门控、裁剪缓存。
+        for history_message in staged:
+            self._insert_chat_history_message(history_message)
+        runtime._last_processed_index = runtime._last_processed_index + consumed_count
+        runtime._message_turn_scheduler.record_message_consumed()
+        if not runtime._has_pending_messages():
+            runtime._fixed_message_debouncer.consume()
+        runtime._prune_processed_message_cache()
+
+        # 复用既有历史维护，不请求摘要模型，也不假装进行过引用使用。
+        await self._post_process_chat_history_after_cycle(
+            CycleDetail(cycle_id=runtime._cycle_counter),
+            enable_compaction=False,
+            consume_references=False,
+        )
+        return True
 
     async def _finalize_cycle(
         self,

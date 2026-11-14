@@ -651,6 +651,43 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                 allow_abort=False,
                 allow_kwargs_mutation=True,
             ),
+            HookSpec(
+                name="maisaka.turn_trigger.evaluate",
+                description="在 Maisaka 普通群聊动态门控放行前触发，可修正回复概率/阈值、改写判定，或对高置信度背景闲聊请求静默已读游标推进；不开放 abort。",
+                parameters_schema=build_object_schema(
+                    {
+                        "session_id": {"type": "string", "description": "当前聊天流 ID。"},
+                        "is_group_session": {"type": "boolean", "description": "是否为群聊会话。"},
+                        "frequency": {"type": "number", "description": "当前生效的回复频率。"},
+                        "probability": {"type": "number", "minimum": 0.0, "maximum": 1.0, "description": "本地逻辑回归先验概率 P_local。"},
+                        "threshold": {"type": "number", "minimum": 0.0, "maximum": 1.0, "description": "本地动态门控阈值。"},
+                        "decision": {"type": "string", "enum": ["trigger", "wait", "delay", "consume"], "description": "本地门控判定。"},
+                        "detail": {"type": "string", "description": "本地门控判定说明。"},
+                        "delay_seconds": {"type": "number", "minimum": 0.0, "description": "delay 判定的延迟秒数。"},
+                        "consumed_count": {"type": "integer", "minimum": 0, "description": "本批待处理消息数量，consume 时可静默推进的上限。"},
+                        "pending_messages": {"type": "array", "items": {"type": "object"}, "description": "本批待处理消息的序列化对象列表。"},
+                        "recent_messages": {"type": "array", "items": {"type": "object"}, "description": "最近聊天历史的 {sender, text, is_self} 列表。"},
+                    },
+                    required=[
+                        "session_id",
+                        "is_group_session",
+                        "frequency",
+                        "probability",
+                        "threshold",
+                        "decision",
+                        "detail",
+                        "delay_seconds",
+                        "consumed_count",
+                        "pending_messages",
+                        "recent_messages",
+                    ],
+                ),
+                default_timeout_ms=5000,
+                allow_blocking=True,
+                allow_observe=True,
+                allow_abort=False,
+                allow_kwargs_mutation=True,
+            ),
         ]
     )
 

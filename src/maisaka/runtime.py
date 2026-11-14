@@ -161,6 +161,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         self.message_cache: list[SessionMessage] = []
         self._last_processed_index = 0
         self._internal_turn_queue: asyncio.Queue[Literal["message", "timeout", "proactive"]] = asyncio.Queue()
+        self._message_turn_changed = asyncio.Event()
         self._proactive_trigger_message: Optional[SessionMessage] = None
         self._proactive_logical_turn_id: Optional[str] = None
         self._subagent_tasks = SubAgentTaskManager()
@@ -838,6 +839,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         logical_turn_id: str | None = None,
     ) -> None:
         """设置主动触发消息，并投递 proactive 内部循环。"""
+        self._message_turn_changed.set()
         if self._focus_group is not None:
             self._focus_group.register_proactive(self, trigger_message)
             return
@@ -1038,6 +1040,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         if self._focus_group is None:
             self._observe_message_debounce(message, received_at)
         self.message_cache.append(message)
+        self._message_turn_changed.set()
         self._emit_monitor_message_ingested(message)
         self._prune_processed_message_cache()
         if self._focus_group is not None:
@@ -1747,6 +1750,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
 
             logger.debug(f"{self.log_prefix} Maisaka 等待已超时")
             self._enter_running_state()
+            self._message_turn_changed.set()
             await self._internal_turn_queue.put("timeout")
         except asyncio.CancelledError:
             return
