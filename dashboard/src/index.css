@@ -340,6 +340,8 @@
 
 @layer base {
   :root {
+    color-scheme: light;
+
     /* Color Tokens */
     --color-primary: 28.9 94.8% 45.1%;
     --color-primary-foreground: 210 40% 98%;
@@ -471,6 +473,8 @@
   }
 
   .dark {
+    color-scheme: dark;
+
     /* Color Tokens */
     --color-primary: 28.9 94.8% 45.1%;
     --color-primary-foreground: 210 40% 98%;
