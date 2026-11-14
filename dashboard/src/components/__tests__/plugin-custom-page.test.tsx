@@ -178,7 +178,7 @@ describe('custom page bridge lifecycle', () => {
 
   it('isolates markup and forwards only the fixed plugin/page bindings', async () => {
     const { iframe, port } = await start()
-    expect(iframe.getAttribute('sandbox')).toBe('allow-scripts')
+    expect(iframe.getAttribute('sandbox')).toBe('allow-scripts allow-forms')
     expect(screen.queryByText('Plugin content')).not.toBeInTheDocument()
     await act(async () =>
       port.onmessage?.({
