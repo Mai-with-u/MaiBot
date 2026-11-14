@@ -543,11 +543,16 @@ export function usePluginList() {
     }
   }
 
+  // 取列表里的最新插件对象；列表里没有时沿用打开时的快照
+  const liveSelectedPlugin = selectedPlugin
+    ? plugins.find((plugin) => plugin.id === selectedPlugin.id) ?? selectedPlugin
+    : null
+
   return {
     // 列表 / 选中
     plugins,
     loading,
-    selectedPlugin,
+    selectedPlugin: liveSelectedPlugin,
     selectedPluginTab,
     openPluginConfig,
     closePluginConfig,
