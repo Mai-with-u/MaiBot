@@ -10,7 +10,7 @@
  *
  * 与 useImportForm 共享 settings 查询（同 queryKey 由 React Query 去重），表单侧负责默认值 seed 与别名联动。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { useQuery } from '@tanstack/react-query'
 
@@ -70,6 +70,12 @@ export interface UseImportQueueResult {
   invalidate: () => void
 }
 
+/**
+ * 管理导入任务轮询、当前详情和分块，让手动刷新与任务操作共用同一加载路径。
+ *
+ * 详情与分块响应只有在请求序号及当前选择仍匹配时才能写回；切换选择或卸载会使旧响应失效。
+ * 即使列表内容未变，手动刷新也重新加载详情，并在当前文件仍存在时保留其分块偏移。
+ */
 export function useImportQueue({
   active,
   buildRetryOverrides,
@@ -113,6 +119,37 @@ export function useImportQueue({
     useState<MemoryImportChunkListPayload | null>(null)
   const [importChunksLoading, setImportChunksLoading] = useState(false)
 
+  // 同步记录用户选择，异步响应不能依赖发起请求时的 React 闭包。
+  const selectionRef = useRef({ taskId: '', fileId: '', offset: 0 })
+  const detailRequestRef = useRef(0)
+  const chunksRequestRef = useRef(0)
+  const queueRequestRef = useRef(0)
+  const retryRequestRef = useRef(0)
+  const selectionVersionRef = useRef(0)
+  const refreshingQueueRef = useRef(0)
+  const handledTasksUpdateRef = useRef(0)
+
+  const changeTaskSelection = useCallback((taskId: string) => {
+    if (selectionRef.current.taskId === taskId) return
+    selectionRef.current = { taskId, fileId: '', offset: 0 }
+    detailRequestRef.current += 1
+    chunksRequestRef.current += 1
+    setSelectedImportTaskId(taskId)
+    setSelectedImportTask(null)
+    setSelectedImportFileId('')
+    setImportChunkOffset(0)
+    setImportChunksPayload(null)
+    setSelectedImportTaskLoading(false)
+    setImportChunksLoading(false)
+  }, [])
+
+  useEffect(() => () => {
+    detailRequestRef.current += 1
+    chunksRequestRef.current += 1
+    queueRequestRef.current += 1
+    retryRequestRef.current += 1
+  }, [])
+
   // 任务列表查询失败时同步到局部错误文案
   const tasksError = tasksQuery.error
   useEffect(() => {
@@ -121,10 +158,17 @@ export function useImportQueue({
     }
   }, [tasksError])
 
+  /** 只写回当前任务、文件和分页的最新请求；旧响应也不能清除新请求的加载或错误状态。 */
   const loadImportChunks = useCallback(
     async (taskId: string, fileId: string, offset: number = 0, silent: boolean = false) => {
+      const requestId = ++chunksRequestRef.current
+      const isCurrent = () => requestId === chunksRequestRef.current
+        && taskId === selectionRef.current.taskId
+        && fileId === selectionRef.current.fileId
+        && offset === selectionRef.current.offset
       if (!taskId || !fileId) {
         setImportChunksPayload(null)
+        setImportChunksLoading(false)
         return
       }
       try {
@@ -135,12 +179,14 @@ export function useImportQueue({
           offset,
           IMPORT_CHUNK_PAGE_SIZE
         )
+        if (!isCurrent()) return
         if (!payload.success) {
           throw new Error(payload.error || '加载分块详情失败')
         }
         setImportChunksPayload(payload)
         setImportErrorText('')
       } catch (error) {
+        if (!isCurrent()) return
         const message = error instanceof Error ? error.message : '加载分块详情失败'
         setImportChunksPayload(null)
         setImportErrorText(message)
@@ -152,14 +198,18 @@ export function useImportQueue({
           })
         }
       } finally {
-        setImportChunksLoading(false)
+        if (isCurrent()) setImportChunksLoading(false)
       }
     },
     [toast]
   )
 
+  /** 详情返回后按最新选择保留文件及偏移；当前请求失败时清空派生分块，并使旧分块响应失效。 */
   const loadImportTaskDetail = useCallback(
     async (taskId: string, silent: boolean = false) => {
+      const requestId = ++detailRequestRef.current
+      const isCurrent = () => requestId === detailRequestRef.current
+        && taskId === selectionRef.current.taskId
       if (!taskId) {
         setSelectedImportTask(null)
         setSelectedImportFileId('')
@@ -167,10 +217,9 @@ export function useImportQueue({
         return
       }
       try {
-        if (!silent) {
-          setSelectedImportTaskLoading(true)
-        }
+        setSelectedImportTaskLoading(!silent)
         const payload = await getMemoryImportTask(taskId, false)
+        if (!isCurrent()) return
         if (!payload.success || !payload.task) {
           throw new Error(payload.error || '任务不存在')
         }
@@ -178,9 +227,11 @@ export function useImportQueue({
         setSelectedImportTask(task)
         setImportErrorText('')
         const files = Array.isArray(task.files) ? task.files : []
-        const keepCurrentFile = files.some((file) => file.file_id === selectedImportFileId)
-        const nextFileId = keepCurrentFile ? selectedImportFileId : String(files[0]?.file_id ?? '')
-        const nextOffset = keepCurrentFile ? importChunkOffset : 0
+        const selection = selectionRef.current
+        const keepCurrentFile = files.some((file) => file.file_id === selection.fileId)
+        const nextFileId = keepCurrentFile ? selection.fileId : String(files[0]?.file_id ?? '')
+        const nextOffset = keepCurrentFile ? selection.offset : 0
+        selectionRef.current = { taskId, fileId: nextFileId, offset: nextOffset }
         if (!keepCurrentFile) {
           setImportChunkOffset(0)
         }
@@ -191,6 +242,11 @@ export function useImportQueue({
           setImportChunksPayload(null)
         }
       } catch (error) {
+        if (!isCurrent()) return
+        selectionRef.current = { taskId, fileId: '', offset: 0 }
+        chunksRequestRef.current += 1
+        setImportChunksLoading(false)
+        setImportChunkOffset(0)
         const message = error instanceof Error ? error.message : '加载导入任务详情失败'
         setSelectedImportTask(null)
         setSelectedImportFileId('')
@@ -204,69 +260,65 @@ export function useImportQueue({
           })
         }
       } finally {
-        if (!silent) {
-          setSelectedImportTaskLoading(false)
-        }
+        if (isCurrent()) setSelectedImportTaskLoading(false)
       }
     },
-    [importChunkOffset, loadImportChunks, selectedImportFileId, toast]
+    [loadImportChunks, toast]
   )
 
-  // 命令式刷新队列：触发任务列表查询重拉，并维护选中任务（沿用原 refreshImportQueue 语义）
-  const refreshImportQueue = useCallback(
-    async (silent: boolean = false) => {
+  /**
+   * 仅由最新刷新选中任务并加载详情；刷新期间用户改选后，不再应用创建或重试指定的新任务。
+   * 标记该次查询更新已处理，使轮询 effect 不重复加载同一详情；没有有效选择时回到首项。
+   */
+  const refreshQueue = useCallback(
+    async (silent: boolean = false, preferredTaskId?: string) => {
+      const requestId = ++queueRequestRef.current
+      const selectionVersion = selectionVersionRef.current
+      refreshingQueueRef.current += 1
       try {
         const result = await tasksQuery.refetch({ throwOnError: true })
+        if (requestId !== queueRequestRef.current) return
+        handledTasksUpdateRef.current = result.dataUpdatedAt
         const nextTasks = result.data?.items ?? []
         setImportErrorText('')
-
-        if (nextTasks.length <= 0) {
-          setSelectedImportTaskId('')
-          setSelectedImportTask(null)
-          setSelectedImportFileId('')
-          setImportChunksPayload(null)
-          return
-        }
-
-        setSelectedImportTaskId((currentTaskId) => {
-          if (!currentTaskId || !nextTasks.some((item) => item.task_id === currentTaskId)) {
-            return nextTasks[0].task_id
-          }
-          return currentTaskId
-        })
+        const currentTaskId = preferredTaskId !== undefined
+          && selectionVersion === selectionVersionRef.current
+          ? preferredTaskId : selectionRef.current.taskId
+        const nextTaskId = nextTasks.some((item) => item.task_id === currentTaskId)
+          ? currentTaskId : nextTasks[0]?.task_id ?? ''
+        changeTaskSelection(nextTaskId)
+        if (nextTaskId) await loadImportTaskDetail(nextTaskId, silent)
       } catch (error) {
+        if (requestId !== queueRequestRef.current) return
         const message = error instanceof Error ? error.message : '刷新导入任务失败'
         setImportErrorText(message)
         if (!silent) {
-          toast({
-            title: '刷新导入任务失败',
-            description: message,
-            variant: 'destructive',
-          })
+          toast({ title: '刷新导入任务失败', description: message, variant: 'destructive' })
         }
+      } finally {
+        refreshingQueueRef.current -= 1
       }
     },
-    [tasksQuery, toast]
+    [changeTaskSelection, loadImportTaskDetail, tasksQuery, toast]
+  )
+
+  const refreshImportQueue = useCallback(
+    (silent: boolean = false) => refreshQueue(silent), [refreshQueue]
   )
 
   const afterCreated = useCallback(
-    async (taskId: string) => {
-      await refreshImportQueue(true)
-      if (taskId) {
-        setSelectedImportTaskId(taskId)
-        await loadImportTaskDetail(taskId, true)
-      }
-    },
-    [loadImportTaskDetail, refreshImportQueue]
+    (taskId: string) => refreshQueue(true, taskId || undefined), [refreshQueue]
   )
 
   const selectImportTask = useCallback(
     async (taskId: string) => {
-      setSelectedImportTaskId(taskId)
+      selectionVersionRef.current += 1
+      changeTaskSelection(taskId)
+      selectionRef.current.offset = 0
       setImportChunkOffset(0)
       await loadImportTaskDetail(taskId)
     },
-    [loadImportTaskDetail]
+    [changeTaskSelection, loadImportTaskDetail]
   )
 
   const selectImportFile = useCallback(
@@ -274,6 +326,11 @@ export function useImportQueue({
       if (!selectedImportTaskId) {
         return
       }
+      selectionVersionRef.current += 1
+      detailRequestRef.current += 1
+      setSelectedImportTaskLoading(false)
+      selectionRef.current = { taskId: selectedImportTaskId, fileId, offset: 0 }
+      setImportChunksPayload(null)
       setSelectedImportFileId(fileId)
       setImportChunkOffset(0)
       await loadImportChunks(selectedImportTaskId, fileId, 0)
@@ -293,6 +350,11 @@ export function useImportQueue({
       if (nextOffset === importChunkOffset) {
         return
       }
+      selectionVersionRef.current += 1
+      detailRequestRef.current += 1
+      setSelectedImportTaskLoading(false)
+      selectionRef.current.offset = nextOffset
+      setImportChunksPayload(null)
       setImportChunkOffset(nextOffset)
       await loadImportChunks(selectedImportTaskId, selectedImportFileId, nextOffset)
     },
@@ -309,7 +371,6 @@ export function useImportQueue({
         throw new Error(payload.error || '取消导入任务失败')
       }
       await refreshImportQueue(true)
-      await loadImportTaskDetail(selectedImportTaskId, true)
       toast({
         title: '已请求取消任务',
         description: `任务 ${selectedImportTaskId.slice(0, 12)} 正在取消`,
@@ -323,27 +384,28 @@ export function useImportQueue({
         variant: 'destructive',
       })
     }
-  }, [loadImportTaskDetail, refreshImportQueue, selectedImportTaskId, toast])
+  }, [refreshImportQueue, selectedImportTaskId, toast])
 
+  /** 仅由最新重试响应刷新选中项，并将用户改选保护覆盖到重试接口本身的等待期。 */
   const retrySelectedImportTask = useCallback(async () => {
     if (!selectedImportTaskId) {
       return
     }
+    const requestId = ++retryRequestRef.current
+    const selectionVersion = selectionVersionRef.current
     try {
       const payload = await retryMemoryImportTask(selectedImportTaskId, {
         overrides: buildRetryOverrides?.() ?? {},
       })
+      if (requestId !== retryRequestRef.current) return
       if (!payload.success) {
         throw new Error(payload.error || '重试失败项失败')
       }
       const nextTaskId = String(payload.task?.task_id ?? '')
-      await refreshImportQueue(true)
-      if (nextTaskId) {
-        setSelectedImportTaskId(nextTaskId)
-        await loadImportTaskDetail(nextTaskId, true)
-      } else {
-        await loadImportTaskDetail(selectedImportTaskId, true)
-      }
+      const preferredTaskId = selectionVersion === selectionVersionRef.current
+        ? nextTaskId || undefined : undefined
+      await refreshQueue(true, preferredTaskId)
+      if (requestId !== retryRequestRef.current) return
       toast({
         title: '重试任务已创建',
         description: nextTaskId
@@ -351,6 +413,7 @@ export function useImportQueue({
           : '失败项已提交重试',
       })
     } catch (error) {
+      if (requestId !== retryRequestRef.current) return
       const message = error instanceof Error ? error.message : '重试失败项失败'
       setImportErrorText(message)
       toast({
@@ -359,37 +422,19 @@ export function useImportQueue({
         variant: 'destructive',
       })
     }
-  }, [buildRetryOverrides, loadImportTaskDetail, refreshImportQueue, selectedImportTaskId, toast])
+  }, [buildRetryOverrides, refreshQueue, selectedImportTaskId, toast])
 
-  // 任务加载后若未选中任务则自动选第一个；选中任务被删除则切到第一个（沿用原 effect 6-7 语义）
+  // 轮询成功时刷新当前选择；手动刷新已经消费的查询更新不再重复加载。
   useEffect(() => {
-    if (!active) {
-      return
-    }
-    if (!selectedImportTaskId && importTasks.length > 0) {
-      void selectImportTask(importTasks[0].task_id)
-    }
-  }, [active, importTasks, selectImportTask, selectedImportTaskId])
-
-  useEffect(() => {
-    if (!active) {
-      return
-    }
-    if (!selectedImportTaskId) {
-      setSelectedImportTask(null)
-      setSelectedImportFileId('')
-      setImportChunksPayload(null)
-      return
-    }
-    if (
-      !importTasks.some((task) => task.task_id === selectedImportTaskId) &&
-      importTasks.length > 0
-    ) {
-      void selectImportTask(importTasks[0].task_id)
-      return
-    }
-    void loadImportTaskDetail(selectedImportTaskId, true)
-  }, [active, importTasks, loadImportTaskDetail, selectImportTask, selectedImportTaskId])
+    if (!active || refreshingQueueRef.current > 0 || !tasksQuery.dataUpdatedAt
+      || handledTasksUpdateRef.current === tasksQuery.dataUpdatedAt) return
+    handledTasksUpdateRef.current = tasksQuery.dataUpdatedAt
+    const currentTaskId = selectionRef.current.taskId
+    const nextTaskId = importTasks.some((task) => task.task_id === currentTaskId)
+      ? currentTaskId : importTasks[0]?.task_id ?? ''
+    changeTaskSelection(nextTaskId)
+    if (nextTaskId) void loadImportTaskDetail(nextTaskId, nextTaskId === currentTaskId)
+  }, [active, changeTaskSelection, importTasks, loadImportTaskDetail, tasksQuery.dataUpdatedAt])
 
   // 派生：任务分组、选中任务的衍生信息、分块分页
   const runningImportTasks = useMemo(
