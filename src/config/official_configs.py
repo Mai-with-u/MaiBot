@@ -4547,6 +4547,19 @@ class ResponsePostProcessConfig(ConfigBase):
     )
     """开启后会对回复做错别字、分段等后处理。"""
 
+    remove_bracket_content: bool = Field(
+        default=True,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "清理括号内容",
+                "en_US": "Remove bracketed content",
+                "ja_JP": "括弧内の内容を削除",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """规则后处理时清理括号及其包裹的中文内容；关闭后保留括号动作描写，已保护的颜文字不受影响。"""
+
     typing_speed: float = Field(
         default=1.0,
         ge=0,
