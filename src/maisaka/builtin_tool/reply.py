@@ -133,7 +133,7 @@ def get_tool_spec(context: Optional[ToolAvailabilityContext] = None) -> ToolSpec
             "type": "string",
             "enum": ["continue", "wait"],
             "default": "wait",
-            "description": "回复发送成功后的行为：continue 继续思考和调用工具；wait（默认）暂停，未填 wait_seconds 则结束本轮，填写 wait_seconds 则定时再判断。wait 会取消同批后续工具。",
+            "description": "回复发送成功后的行为：continue 继续思考和调用工具；wait（默认）暂停，未填 wait_seconds 则结束本轮，填写 wait_seconds 则定时再判断。",
         },
         "wait_seconds": {
             "type": "integer",
@@ -142,7 +142,7 @@ def get_tool_spec(context: Optional[ToolAvailabilityContext] = None) -> ToolSpec
         },
         "msg_id": {
             "type": "string",
-            "description": "可选。要回复的真实聊天消息 msg_id；省略或留空表示向当前会话主动发言。内部任务编号也按无目标发言处理。",
+            "description": "可选。要回复的真实聊天消息 msg_id；省略或留空表示向当前会话主动发言。",
         },
         "chat_anlyze": {
             "type": "string",

@@ -37,6 +37,9 @@ class ChatPromptProfile:
             lines.append(f"当前聊天额外注意事项：\n{extra_prompt}")
         return "在该聊天中的注意事项：\n" + "\n\n".join(lines) + "\n" if lines else ""
 
+    def select_planner_template(self, *, passive_replyer: bool) -> str:
+        return "maisaka_chat_passive" if passive_replyer else "maisaka_chat"
+
     def select_chat_reply_template(self, *, self_reply: bool, mai_replier: bool) -> str:
         raise ValueError("回复模板选择需要已绑定的聊天场景")
 

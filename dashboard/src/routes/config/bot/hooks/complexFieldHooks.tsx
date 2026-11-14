@@ -912,19 +912,16 @@ function SharedMemoryChatStreamSelect({
   chats,
   onSelect,
   target,
-  privateOnly = false,
 }: {
   chats: ChatStream[]
   onSelect: (patch: Partial<ExpressionGroupTarget>) => void
   target: ExpressionGroupTarget
-  privateOnly?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const selectedChat = findSharedMemoryChatStream(chats, target)
   const normalizedSearch = search.trim().toLocaleLowerCase()
   const matchedChats = chats.filter((chat) => {
-    if (privateOnly && chat.chat_type !== 'private') return false
     if (!normalizedSearch) return true
     return [
       chat.display_name,
@@ -974,7 +971,7 @@ function SharedMemoryChatStreamSelect({
   return (
     <div className="flex min-w-0 items-center gap-2">
       <Label className="shrink-0 whitespace-nowrap text-[11px] leading-none text-muted-foreground">
-        {privateOnly ? '选择私聊' : '选择群聊/私聊'}
+        选择群聊/私聊
       </Label>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
@@ -983,7 +980,7 @@ function SharedMemoryChatStreamSelect({
             variant="outline"
             role="combobox"
             aria-expanded={open}
-            aria-label={privateOnly ? '选择轻量私聊' : '选择群聊或私聊'}
+            aria-label="选择群聊或私聊"
             className="h-8 min-w-0 flex-1 justify-between font-normal"
           >
             {selectedChat ? (
@@ -1005,7 +1002,7 @@ function SharedMemoryChatStreamSelect({
             <CommandInput
               value={search}
               onValueChange={setSearch}
-              placeholder={privateOnly ? '搜索私聊名称、昵称或用户 ID...' : '搜索群名、私聊名、群号或用户 ID...'}
+              placeholder="搜索群名、私聊名、群号或用户 ID..."
             />
             <CommandList className="max-h-[280px]">
               <CommandEmpty>未找到匹配的聊天流</CommandEmpty>
@@ -1021,7 +1018,7 @@ function SharedMemoryChatStreamSelect({
               )}
               {isResultLimited && (
                 <div className="border-t px-3 py-2 text-xs text-muted-foreground">
-                  {privateOnly ? '私聊最多显示' : '群聊和私聊各最多显示'} {resultLimit} 个匹配项，请输入关键词缩小范围。
+                  群聊和私聊各最多显示 {resultLimit} 个匹配项，请输入关键词缩小范围。
                 </div>
               )}
             </CommandList>
@@ -2764,69 +2761,6 @@ export const FocusWhitelistHook = createListItemEditorHook({
   itemTitle: (item) => {
     return `${platformLabel(item)} · ${ruleTypeLabel(item.type)}`
   },
-})
-
-function LightweightPrivateChatsEditor({
-  items,
-  onAddItem,
-  onRemoveItem,
-  emptyText,
-}: Pick<LearningRuleEditorProps, 'items' | 'onAddItem' | 'onRemoveItem' | 'emptyText'>) {
-  const chatsQuery = useQuery({
-    queryKey: ['lightweight-private-chat-options'],
-    queryFn: getAllChatStreams,
-  })
-  const chats = normalizeSharedMemoryChatStreams(chatsQuery.data ?? []).filter((chat) => chat.chat_type === 'private')
-  const targets: ExpressionGroupTarget[] = items.map((item) => ({
-    platform: normalizeSpecialTextValue(item.platform),
-    item_id: normalizeSpecialTextValue(item.item_id),
-    rule_type: 'private',
-  }))
-  const availableChats = chats.filter((chat) => !targets.some((target) => expressionTargetOptionKey(target) === chatStreamOptionKey(chat)))
-
-  return (
-    <div className="space-y-3">
-      {chatsQuery.isPending ? <p className="text-sm text-muted-foreground">正在加载私聊…</p> : chatsQuery.isError ? (
-        <div role="alert" className="flex items-center gap-2 text-sm text-destructive">
-          加载私聊失败：{chatsQuery.error.message}
-          <Button type="button" variant="ghost" size="sm" onClick={() => void chatsQuery.refetch()}>重试</Button>
-        </div>
-      ) : (
-        <>
-          <SharedMemoryChatStreamSelect
-            privateOnly
-            chats={availableChats}
-            target={{ platform: '', item_id: '', rule_type: 'private' }}
-            onSelect={(target) => onAddItem({ ...target, rule_type: 'private' })}
-          />
-          {chats.length === 0 && <p className="text-sm text-muted-foreground">暂无已知私聊，请先给机器人发送私聊消息。</p>}
-          {chats.length > 0 && availableChats.length === 0 && <p className="text-sm text-muted-foreground">所有已知私聊均已添加。</p>}
-        </>
-      )}
-      {targets.length === 0 && <p className="text-sm text-muted-foreground">{emptyText}</p>}
-      {targets.map((target, index) => {
-        const chat = findSharedMemoryChatStream(chats, target)
-        const label = chat ? chatStreamSelectLabel(chat)
-          : target.item_id === '*' ? `${target.platform === '*' ? '全部平台' : target.platform}的所有私聊`
-          : `${chatsQuery.isPending ? '正在加载私聊名称' : '未找到对应私聊'} · ${target.platform}:${target.item_id}`
-        return (
-          <div key={index} className="flex items-center justify-between gap-3 rounded-md border p-3">
-            <span className="min-w-0 truncate" title={label}>{label}</span>
-            <Button type="button" size="icon" variant="ghost" className="shrink-0" aria-label={`移除 ${label}`} onClick={() => onRemoveItem(index)}>
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-export const LightweightPrivateChatsHook = createListItemEditorHook({
-  addButtonPlacement: 'none',
-  helperText: '实验性功能，从下拉菜单搜索并选择已有私聊，选择后启用；移除后恢复原模式。轻量私聊优先于 Focus。',
-  emptyText: '轻量私聊未启用。请从上方菜单选择私聊。',
-  renderItems: (props) => <LightweightPrivateChatsEditor {...props} />,
 })
 
 export const HiddenFieldHook: FieldHookComponent = () => null

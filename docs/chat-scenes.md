@@ -45,35 +45,17 @@ Focus 的 group 是显式配置的共享会话组，可能同时包含私聊和�
 
 `get_scene` 不接受未知类型。Replyer 需要通过真实聊天流确定场景，找不到会话时抛出错误，不把未知会话当作私聊。无会话的 CLI/通用 Planner 请求使用 `UnscopedPromptProfile`，不注入任一场景的注意事项或注意力漂移配置。
 
+## 私聊 Planner 模板
+
+普通私聊使用 `maisaka_chat_private`，开启被动式 Replyer 时使用 `maisaka_chat_private_passive`。两套模板围绕当前用户的消息、未完成请求和连续对话做决策，分别沿用 `reply` 工具和自然语言回复指导的输出协议；私聊注意事项、记忆查询规则、注意力漂移与工具权限继续按私聊场景注入。
+
+群聊和未绑定会话继续使用 `maisaka_chat` / `maisaka_chat_passive`。Focus 使用 `maisaka_chat_focus`，共享组中的私聊也遵守 Focus 的统一协议。中英日三套私聊模板均可在 Prompt 管理页独立编辑；已有通用 Planner 自定义模板不会自动应用到新的私聊模板。
+
 ## Planner 正文动作补全
 
 普通工具式 Planner 和 Focus 在返回正文但没有工具调用时，使用 `fast_model` 对正文中的最终行动意图做一次短判断，只选择 `reply` 或 `wait`。判断器只读取 Planner 本次上下文中最近五条真实聊天消息的可见文本和完整的 Planner 正文，排除通知、工具结果、内部提示和自动参考，不提供工具或图片。输入不额外截断，输出沿用模型配置，不额外设置 token 上限；请求总时限为 10 秒。超时和无效输出直接报错，不自动改成静默结束。
 
-选择 `reply` 时，原始 Planner 正文直接作为 `chat_anlyze`；选择 `wait` 时补一个不带时间参数的调用。补出的调用与 Planner 输出绑定到同一逻辑回合，进入原有的工具校验、执行和监控路径，来源标记为“轻量判断器补全”。Focus 额外从真实工具声明的会话枚举中选择回复目标，目标不明确时选择 `wait`。已有工具调用、空正文、子代理任务，以及本来就用正文作为回复指导的被动回复和轻量私聊，不经过判断器。
-
-## 实验性轻量私聊
-
-WebUI 的「Bot 配置 → 实验性功能 → 轻量私聊」提供可搜索的下拉菜单，可按私聊名称、昵称或用户 ID 搜索已有私聊，选择后添加，移除后恢复原模式；无需手填平台和用户 ID。
-
-对应配置项为 `experimental.lightweight_private_chats`，默认空列表关闭。如需直接编辑配置，可在 `[experimental]` 下配置：
-
-```toml
-lightweight_private_chats = [
-    { platform = "qq", item_id = "123456", rule_type = "private" },
-]
-```
-
-`item_id` 填对方用户 ID，平台与用户 ID 支持 `*`；仅匹配已注册的真实私聊。命中的私聊优先采用轻量模式，不进入 Focus 共享上下文，其他聊天继续使用原模式。每轮开始时固定模式，配置修改不改变进行中的 Planner/Replyer 协议。
-
-轻量 Planner 直接输出自然语言回复指导，交给现有 Replyer；不需要调用 `reply`，默认回复完成后结束本轮。常驻 `query_memory(query)`、`query_person_profile(person_name)`、`view_forward_message(msg_id, path)`、`tool_search(query)` 和 `wait()`，仍遵守工具原有的启用条件。无需回复时可单独调用无参数的 `wait()`，静默结束本轮并等待新消息；不提供 Maisaka 子 Agent 工具。不额外限制工具查询轮数或每轮工具数量，沿用普通 Maisaka 的内部循环上限（当前为 16 轮）。空输出或执行失败保留原有错误记录，不伪造回复。
-
-扩展工具（插件、MCP、联网等）先进入工具目录，Planner 通过 `tool_search` 按名称或关键词搜索，后续轮次再按完整定义调用，不预先展开全部参数。沿用 `experimental.tool_search_tail_loading`：关闭时将发现的工具加入后续请求的工具列表，开启时通过搜索结果加载完整定义。已发现工具的执行权限跟随当前上下文中的搜索记录，记录被裁切或工具不再可用时，需要重新搜索；未加载的扩展工具不会执行。`read_tool_result` 也可按需搜索，用于读取联网等工具返回的原始结果编号。工具目录仍受各 Provider 的启用条件、聊天范围和权限控制。
-
-该模式跳过 Planner 的自动黑话、启发式记忆、人物画像和图片记忆注入，由显式查询补充必要信息。这里的自动注入指程序在模型调用前主动检索并加入参考材料，不是删除聊天历史或关闭记忆存储；图片记忆检索工具也未开放，因此轻量 Planner 不具备图片记忆召回能力。工具长结果的自动模型整理仍跳过。
-
-回复补充器保留，负责引用、图片、表情和插件扩展参数的编排；Planner 只需在回复指导中用自然语言描述需求。插件工具调用与插件回复扩展是不同能力：前者搜索加载后调用，后者沿用被动回复链路。Replyer 的人设、发送、记录和既有生成流程继续复用。模型仍使用现有 Planner/Replyer 配置；本模式不自动更换模型，也不保证完全不支持工具调用的模型能执行查询。
-
-私聊本来就不使用群聊频率额度、动态频控或空闲退避。轻量模式进一步移除 `wait`，回复后结束，等待新消息；保留私聊消息防抖和暂停开关。防抖用于合并连续短句，可通过 `chat.reply_timing.private_message_debounce_mode = "off"` 关闭。
+选择 `reply` 时，原始 Planner 正文直接作为 `chat_anlyze`；选择 `wait` 时补一个不带时间参数的调用。补出的调用与 Planner 输出绑定到同一逻辑回合，进入原有的工具校验、执行和监控路径，来源标记为“轻量判断器补全”。Focus 额外从真实工具声明的会话枚举中选择回复目标，目标不明确时选择 `wait`。已有工具调用、空正文、子代理任务，以及本来就用正文作为回复指导的被动回复，不经过判断器。
 
 ## 后续分叉
 
@@ -91,7 +73,7 @@ uv run --no-sync python -m pytest pytests/maisaka pytests/plugin_runtime/test_re
 
 ## 聊天单次日程
 
-普通群聊、私聊和 Focus 使用同一个 `schedule` 工具。轻量私聊也可登记日程；`wait` 仍只用于当前思考的结束或短暂等待。
+普通群聊、私聊和 Focus 使用同一个 `schedule` 工具。`wait` 仍只用于当前思考的结束或短暂等待。
 
 ```json
 {"action": "add", "text": "提醒大家提交作业", "delay_seconds": 600}
@@ -107,7 +89,7 @@ uv run --no-sync python -m pytest pytests/maisaka pytests/plugin_runtime/test_re
 
 Prompt 管理页可筛选「主要 Prompt」「指令 Prompt」或全部。内置文件放在 `prompts/{locale}/main/` 和 `prompts/{locale}/instructions/`，用途直接按目录识别，不增加元信息字段，与高级开关相互独立。
 
-主要 Prompt 定义人格、任务职责、输出方式和场景规则，包括普通、Focus、被动回复、轻量私聊以及独立子代理的系统模板。工具用途与参数由工具声明维护，主要模板只保留跨工具协作和消息归属规则。
+主要 Prompt 定义人格、任务职责、输出方式和场景规则，包括普通、Focus、被动回复以及独立子代理的系统模板。工具用途与参数由工具声明维护，主要模板只保留跨工具协作和消息归属规则。
 
 指令 Prompt 由现有加载器 `load_prompt` 按场景读取，可单独编辑和保存自定义版本：
 
@@ -119,10 +101,30 @@ Prompt 管理页可筛选「主要 Prompt」「指令 Prompt」或全部。内�
 | 日程到期 | `schedule_due` |
 | 子代理最后一轮、结果返回 | `subagent_final_round`、`subagent_finished` |
 
-模板名称、版本 ID 与旧 API 地址保持原样；文件目录按用途整理，分类不改变消息的 system/user/tool 角色，也不改变触发条件。群聊与私聊的记忆策略保持分离，轻量模式仍不追加普通 Planner 的末尾行动指令。三种语言的新增模板与变量同步维护。
+模板名称、版本 ID 与旧 API 地址保持原样；文件目录按用途整理，分类不改变消息的 system/user/tool 角色，也不改变触发条件。群聊与私聊的记忆策略保持分离。三种语言的新增模板与变量同步维护。
 
 ### 文件发现与自定义 Prompt
 
 内置模板递归扫描 `prompts/{locale}/`，按模板名加载，不依赖嵌套深度。同一语言下模板名必须唯一；重名时明确报错。管理页按文件所在的 `instructions` 目录识别指令，其余归主要模板，不增加分类元信息字段。
 
 自定义覆盖和历史继续使用原路径 `data/custom_prompts/{locale}/{存储名}.prompt` 与 `.versions/{存储名}/`。内置文件挪动目录不影响覆盖匹配，无需迁移用户正文、清单或启用状态；旧模板名、历史别名和 API 地址继续有效。
+
+
+### 模板目录分类
+
+各语言使用相同的目录结构，`main/` 保留主要模板，`instructions/` 保留补充指令，下面按模块归类：
+
+| 子目录 | 内容 |
+| --- | --- |
+| `planner/` | 聊天规划、Focus、动作判断与回合控制；私聊主模板放在 `main/planner/private/` |
+| `reply/` | 回复生成、缓存、附件和回复补充；群聊、私聊专用模板分别放在 `group/`、`private/` |
+| `agent/` | 外接 Agent、任务规划和子代理 |
+| `memory/` | 长期记忆总结、去重、修改与召回规则 |
+| `context/` | 普通及 Focus 上下文压缩 |
+| `learning/` | 表达、黑话与长文学习 |
+| `media/` | 图片描述及表情分析、筛选、标签与替换 |
+| `desktop_pet/` | 桌宠探索、唤醒、屏幕和待办上下文 |
+| `webui/` | WebUI AI 搜索与操作指导 |
+| `schedule/` | 日程到期指令 |
+
+各分类的 `.meta.toml` 与模板放在同一目录，保留显示名称、说明和高级开关。模板名称、正文、调用方式和自定义覆盖路径保持不变。

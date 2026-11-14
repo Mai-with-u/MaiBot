@@ -16,6 +16,9 @@ class PrivatePromptProfile(ChatPromptProfile):
     def query_memory_rule(self) -> str:
         return load_prompt("planner_memory_private").strip()
 
+    def select_planner_template(self, *, passive_replyer: bool) -> str:
+        return "maisaka_chat_private_passive" if passive_replyer else "maisaka_chat_private"
+
     def select_chat_reply_template(self, *, self_reply: bool, mai_replier: bool) -> str:
         if mai_replier:
             return "reply_private_followup_mai_replier" if self_reply else "reply_private_mai_replier"
