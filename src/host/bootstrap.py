@@ -1,25 +1,27 @@
 """MaiBot 唯一的启动入口：确定工作区布局，在终端完成升级确认，然后运行宿主。"""
 
 from pathlib import Path
-from typing import Set
+from typing import TYPE_CHECKING, Set
 
 import asyncio
 import os
 import sys
 
 from src.common.paths import INSTANCE_DIRECTORY_ENV
-from src.config.shared_models import CATALOG_FILENAME, SHARED_MODELS_ENV
-from src.config.legacy_upgrade_confirmation import LEGACY_UPGRADE_CONFIRM_ENV, collect_legacy_upgrade_reasons
 
-from .layout import Workspace, open_workspace
 from .launcher import UPDATE_REQUESTED
 
+if TYPE_CHECKING:
+    from .layout import Workspace
 
-def confirm_upgrades(workspace: Workspace) -> Set[str]:
+
+def confirm_upgrades(workspace: "Workspace") -> Set[str]:
     """0.x 升级需要真实终端确认，必须在派生无控制台的 Worker 之前完成。
 
     无法交互的部署（如 Docker）用 MAIBOT_LEGACY_0X_UPGRADE_CONFIRMED=1 预先确认全部 Bot。
     """
+    from src.config.legacy_upgrade_confirmation import LEGACY_UPGRADE_CONFIRM_ENV, collect_legacy_upgrade_reasons
+
     confirmed: Set[str] = set()
     preconfirmed = os.environ.get(LEGACY_UPGRADE_CONFIRM_ENV) == "1"
     for bot in workspace.registry.list_bots():
@@ -56,6 +58,11 @@ def main(root: Path) -> int:
     os.environ[INSTANCE_DIRECTORY_ENV] = str(root.resolve())
     # 仅宿主入口提供此标记，Bot 不得自行升级共享环境。
     os.environ["MAIBOT_PACKAGE_RUNNER"] = "1"
+    # 入口导入阶段不加载业务模块；实例目录准备好后才能初始化日志等全局资源。
+    from src.config.shared_models import CATALOG_FILENAME, SHARED_MODELS_ENV
+
+    from .layout import open_workspace
+
     workspace = open_workspace(root)
     os.environ[SHARED_MODELS_ENV] = str(workspace.host_directory / CATALOG_FILENAME)
     confirmed = confirm_upgrades(workspace)
