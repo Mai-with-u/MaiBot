@@ -7,6 +7,7 @@ import asyncio
 from src.A_memorix.core.image.component_paths import build_chat_external_ref, iter_message_image_components
 from src.chat.message_receive.message import SessionMessage
 from src.config.config import global_config
+from src.config.image_memory import is_image_memory_enabled
 from src.services.memory_service import memory_service
 
 IMAGE_MEMORY_REFERENCE_MARKER = "【图片记忆-内部参考】"
@@ -22,7 +23,7 @@ class ImageMemoryInjector:
         source_messages: Sequence[SessionMessage],
     ) -> str:
         config = global_config.a_memorix.image_memory
-        if not config.enabled:
+        if not is_image_memory_enabled():
             return ""
         queries: list[tuple[str, str]] = []
         for message in reversed(source_messages):

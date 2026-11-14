@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Literal, Optional
 
 from src.config.config import global_config, model_config
+from src.config.image_memory import is_image_memory_enabled
 from src.core.tooling import ToolAvailabilityContext, ToolExecutionContext, ToolExecutionResult, ToolInvocation, ToolSpec
 from src.llm_models.payload_content.tool_option import ToolDefinitionInput
 
@@ -80,7 +81,7 @@ def _get_query_person_profile_tool_spec() -> ToolSpec:
 
 
 def _get_query_image_memory_tool_spec() -> ToolSpec:
-    return get_query_image_memory_tool_spec(enabled=bool(global_config.a_memorix.image_memory.enabled))
+    return get_query_image_memory_tool_spec(enabled=is_image_memory_enabled())
 
 
 BUILTIN_TOOL_ENTRIES: List[BuiltinToolEntry] = [

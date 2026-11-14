@@ -20,6 +20,7 @@ from src.common.message_repository import count_messages, find_messages
 from src.common.data_models.message_component_data_model import TextComponent
 from src.chat.utils.utils import is_bot_self
 from src.config.config import global_config
+from src.config.image_memory import is_image_memory_enabled
 from src.person_info.person_info import Person, get_person_id, store_person_memory_from_answer
 from src.services import memory_service as memory_service_module
 from src.services.memory_service import memory_service
@@ -823,8 +824,8 @@ class ImageMemoryWritebackService:
 
     @staticmethod
     def _enabled() -> bool:
-        """接收与后台处理都服从长期记忆总开关和图片开关。"""
-        return global_config.a_memorix.plugin.enabled and global_config.a_memorix.image_memory.enabled
+        """接收与后台处理仅在配置了图片嵌入模型时启用。"""
+        return is_image_memory_enabled()
 
     def list_jobs(self, status: str = "", limit: int = 25, offset: int = 0) -> Dict[str, Any]:
         # 管理服务独立读取任务，不启动消息接收或模型调用。
@@ -952,6 +953,8 @@ class ImageMemoryWritebackService:
         return " ".join(part for part in parts if part)
 
     async def _handle_message(self, message: Any, *, component_paths: Optional[List[str]] = None) -> bool:
+        if not self._enabled():
+            return False
         raw_message = message.raw_message
         components = raw_message.components
         image_components = list(iter_message_image_components(components))
