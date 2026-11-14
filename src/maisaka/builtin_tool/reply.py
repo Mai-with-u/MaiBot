@@ -144,12 +144,13 @@ def get_tool_spec(context: Optional[ToolAvailabilityContext] = None) -> ToolSpec
             "type": "string",
             "description": "可选。要回复的真实聊天消息 msg_id；省略或留空表示向当前会话主动发言。内部任务编号也按无目标发言处理。",
         },
-        "reply_reference": {
+        "chat_anlyze": {
             "type": "string",
             "minLength": 1,
             "description": (
-                "提供本次回复的上下文关键信息，对当前聊天逻辑和内容的梳理，以及你认为此时需要回复的原因，"
-                "包括当前聊天状态、人物关系、事实信息、回忆信息；不是回复正文。"
+                "用一段精炼的话描述当前对话局面与查到的关键事实：如同转述一样梳理上文核心逻辑，"
+                "提炼通过搜索或工具查证到的关键事实结论，不写入长段原文时间戳或者具体的消息ID。"
+                "不要原文引用，不评价回复价值、不写回复原因、不构想或指导如何回复。"
             ),
         },
         "reply_style": {
@@ -265,7 +266,7 @@ def get_tool_spec(context: Optional[ToolAvailabilityContext] = None) -> ToolSpec
         parameters_schema={
             "type": "object",
             "properties": properties,
-            "required": ["reply_reference"],
+            "required": ["chat_anlyze"],
         },
         provider_name="maisaka_builtin",
         provider_type="builtin",
@@ -528,13 +529,13 @@ async def _execute_reply(
             return tool_ctx.build_failure_result("reply", "回复缓存模式缺少本轮 Planner 请求快照，无法生成回复。")
     if type(invocation_arguments.get("attach_emoji")) is int and invocation_arguments["attach_emoji"] == 0:
         invocation_arguments.pop("attach_emoji")
-    reply_reference = invocation_arguments.get("reply_reference")
-    if not isinstance(reply_reference, str) or not reply_reference.strip():
+    chat_anlyze = invocation_arguments.get("chat_anlyze")
+    if not isinstance(chat_anlyze, str) or not chat_anlyze.strip():
         return tool_ctx.build_failure_result(
             "reply",
-            "reply 工具必须提供非空字符串 `reply_reference`，请填写本次回复的上下文关键信息与回复方向后重新调用。",
+            "reply 工具必须提供非空字符串 `chat_anlyze`，请精炼转述当前对话局面与查证到的关键事实后重新调用。",
         )
-    invocation_arguments["reply_reference"] = reply_reference.strip()
+    invocation_arguments["chat_anlyze"] = chat_anlyze.strip()
     target_message_id = str(invocation_arguments.get("msg_id") or "").strip()
     if invocation_arguments.get("attach_at") and not config_module.global_config.chat.enable_reply_at:
         return tool_ctx.build_failure_result("reply", "回复时 @ 用户已关闭，不能使用 attach_at。")

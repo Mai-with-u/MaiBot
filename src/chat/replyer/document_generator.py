@@ -37,8 +37,8 @@ class DocumentReplyGenerator(MaisakaReplyGenerator):
     ) -> List[ContextItem]:
         """写作不套用聊天/复古短回复模板，材料和最终输出要求独立传入。"""
         del chat_history, reply_message, stream_id, enable_visual_message, think_level
-        reference = self._build_reply_reference_message(
-            reply_reason, str((reply_tool_args or {}).get("reply_reference", "")),
+        reference = self._build_chat_anlyze_message(
+            reply_reason, str((reply_tool_args or {}).get("chat_anlyze", "")),
         )
         system_prompt = self._load_prompt(
             "maisaka_replyer_document", identity=self._build_personality_prompt(),

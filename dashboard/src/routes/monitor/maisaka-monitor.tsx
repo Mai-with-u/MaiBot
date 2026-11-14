@@ -967,13 +967,13 @@ function ReplyToolArguments({
     prefer: '偏好',
     avoid: '避免',
   }
-  const referenceText = typeof args.reply_reference === 'string' ? args.reply_reference.trim() : ''
+  const chatAnalysisText = typeof args.chat_anlyze === 'string' ? args.chat_anlyze.trim() : ''
   const handledArguments = new Set([
     'msg_id',
     'attach_at',
     'attach_pic',
     'expression_intent',
-    'reply_reference',
+    'chat_anlyze',
     'reply_style',
     'set_quote',
   ])
@@ -1021,13 +1021,13 @@ function ReplyToolArguments({
         {!tool.status && <ToolFullJsonBlock tool={tool} />}
       </div>
       {!tool.status && <ReplySentLine tool={tool} />}
-      {(args.expression_intent != null || referenceText) && (
+      {(args.expression_intent != null || chatAnalysisText) && (
         <FoldSection title="回复依据" open={basisOpen} onOpenChange={setBasisOpen}>
           <div className="space-y-4 pt-3 leading-6">
-            {referenceText && (
+            {chatAnalysisText && (
               <div className="space-y-1">
-                <div className="text-muted-foreground">参考信息</div>
-                <p className="leading-6 break-words whitespace-pre-wrap">{referenceText}</p>
+                <div className="text-muted-foreground">对话分析</div>
+                <p className="leading-6 break-words whitespace-pre-wrap">{chatAnalysisText}</p>
               </div>
             )}
             {args.expression_intent != null && (

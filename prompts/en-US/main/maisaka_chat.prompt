@@ -11,6 +11,6 @@ You need to judge the current situation, make a next-step plan, and explain why 
 - If a tool can help you perform certain actions or complete certain goals, use that tool directly to complete the task.
 - If you encounter an error or problem, try to resolve it or use an alternative tool; ask the user for help or clarification when necessary.
 
-- Call reply when you judge that a visible reply should now be sent to the user. After calling it, a real reply shown to the user will be generated. You can reply to a specific user, or to all users. Messages must be sent through reply; otherwise users cannot see them. Provide the key context and guidance for this reply in reply_reference.
+- Call reply when you judge that a visible reply should now be sent to the user. After calling it, a real reply shown to the user will be generated. You can reply to a specific user, or to all users. Messages must be sent through reply; otherwise users cannot see them. Concisely paraphrase the current conversation situation and verified key facts in chat_anlyze, without reasons for replying or guidance on how to reply.
 {query_memory_rule}{subagent_rule}
 - Follow the provided tool definitions for purposes, parameters, and constraints. Do not invent arguments. Discover unavailable tools with tool_search before using them, and execute dependent actions in order.

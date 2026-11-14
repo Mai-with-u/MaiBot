@@ -83,11 +83,13 @@ async def test_one_short_request_becomes_standard_tool_call(judge_client: Simple
     assert options.tool_options is None and options.interrupt_flag is interrupt
     context = kwargs["context_factory"](None)
     assert len(context) == 2
+    assert "session_id" not in get_item_text(context[0])
+    assert "reply_sessions" not in get_item_text(context[0])
     assert json.loads(get_item_text(context[1])) == {"recent_chat": [], "planner_text": original}
     call = judgment.tool_call
     assert call.meta.logical_turn_id == "turn"
     assert call.tool_call.func_name == action
-    assert call.tool_call.materialize_args() == ({"reply_reference": original} if action == "reply" else {})
+    assert call.tool_call.materialize_args() == ({"chat_anlyze": original} if action == "reply" else {})
     assert format_tool_call_for_display({
         "name": action, "extra_content": call.tool_call.materialize_extra_content(),
     })["source_label"] == "轻量判断器补全"
@@ -102,7 +104,7 @@ async def test_full_planner_text_is_sent_without_truncation(judge_client: Simple
     )
     context = judge_client.generate.await_args.kwargs["context_factory"](None)
     assert json.loads(get_item_text(context[1]))["planner_text"] == content
-    assert result.tool_call.tool_call.materialize_args()["reply_reference"] == content
+    assert result.tool_call.tool_call.materialize_args()["chat_anlyze"] == content
 
 
 @pytest.mark.asyncio
@@ -125,11 +127,11 @@ async def test_only_last_five_real_chat_messages_reach_judge(judge_client: Simpl
     recent = json.loads(get_item_text(context[1]))["recent_chat"]
     assert len(recent) == 5
     for message, index in zip(recent, range(2, 7), strict=True):
-        assert message["session_id"] == "real-session"
+        assert set(message) == {"text"}
         assert f"发言人{index}" in message["text"] and message["text"].endswith(f"聊天正文{index}")
     assert "不要带给判断器" not in get_item_text(context[1])
     assert build_recent_chat_context([chat_message(1)]) == [
-        {"session_id": "real-session", "text": chat_message(1).render_visible_text()},
+        {"text": chat_message(1).render_visible_text()},
     ]
 
 
@@ -157,13 +159,29 @@ async def test_no_request_without_eligible_missing_action(judge_client: SimpleNa
 @pytest.mark.parametrize("answer", [
     "", "reply", "reply 1", "stop", '```json\n{"action":"reply","target":null}\n```',
     "null", "[]", '{"target":null}', '{"action":"stop","target":null}',
-    '{"action":"reply","target":1}', '{"action":"wait","target":1}',
-    '{"action":"reply","target":null,"extra":true}',
 ])
 async def test_invalid_decision_is_exposed_without_retries(judge_client: SimpleNamespace, answer: str) -> None:
     judge_client.generate.return_value.output_items = tuple(text_items(answer)) if answer else ()
     with pytest.raises(RespParseException, match="无效"):
         await complete_missing_planner_action(text_items("回复吧"), tool_definitions(), session_id="s", logical_turn_id="t")
+    judge_client.generate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["reply", "wait"])
+@pytest.mark.parametrize("extra", [
+    {"session_id": "b1d275ac2d6bb1d0aae5ea37347bb5de"},
+    {"target": 1},
+    {"target": None, "extra": True},
+])
+async def test_single_session_discards_undeclared_decision_fields(
+    judge_client: SimpleNamespace, action: str, extra: Any,
+) -> None:
+    judge_client.generate.return_value.output_items = tuple(text_items(json.dumps({"action": action, **extra})))
+    result = await complete_missing_planner_action(
+        text_items("回复吧"), tool_definitions(), session_id="real-session", logical_turn_id="turn",
+    )
+    assert result.tool_call.tool_call.materialize_args() == ({"chat_anlyze": "回复吧"} if action == "reply" else {})
     judge_client.generate.assert_awaited_once()
 
 
@@ -190,7 +208,9 @@ async def test_timeout_cancels_the_request_without_fabricating_wait(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("answer,action,session", [
     ('{"action":"reply","session_id":"second"}', "reply", "second"),
+    ('{"action":"reply","session_id":"second","body":"discard"}', "reply", "second"),
     ('{"action":"wait"}', "wait", "first"),
+    ('{"action":"wait","session_id":"unknown","body":"discard"}', "wait", "first"),
 ])
 async def test_focus_uses_only_real_routed_sessions(
     judge_client: SimpleNamespace, answer: str, action: str, session: str,
@@ -203,9 +223,18 @@ async def test_focus_uses_only_real_routed_sessions(
     judge_client.generate.return_value.output_items = tuple(text_items(answer))
     result = await complete_missing_planner_action(
         text_items("回复 session_id=second 的问题"), definitions, session_id="", logical_turn_id="focus-turn",
+        chat_history=[chat_message(1)],
     )
     assert result.tool_call.tool_call.func_name == action
     assert result.tool_call.tool_call.materialize_args()["session_id"] == session
+    context = judge_client.generate.await_args.kwargs["context_factory"](None)
+    assert "reply_sessions" in get_item_text(context[0])
+    assert "session_id" in get_item_text(context[0])
+    payload = json.loads(get_item_text(context[1]))
+    assert payload["reply_sessions"] == ["first", "second"]
+    assert payload["recent_chat"] == [{
+        "session_id": "real-session", "text": chat_message(1).render_visible_text(),
+    }]
 
 
 @pytest.mark.asyncio
@@ -229,8 +258,11 @@ def test_judge_prompt_is_available_in_supported_languages(locale: str) -> None:
     prompt = load_prompt("planner_action_judge", locale=locale)
     assert "reply" in prompt and "wait" in prompt and "planner_text" in prompt
     assert '{"action":"reply"}' in prompt
-    assert "reply_sessions" in prompt and "session_id" in prompt
+    assert "reply_sessions" not in prompt and "session_id" not in prompt
     assert '{"action":"wait"}' in prompt
+    focus_prompt = load_prompt("planner_action_judge_focus", locale=locale)
+    assert "reply_sessions" in focus_prompt and "session_id" in focus_prompt
+    assert '"action":"reply","session_id"' in focus_prompt
 
 
 @pytest.mark.asyncio
@@ -284,7 +316,7 @@ async def test_service_preview_and_execution_receive_the_same_completed_call(
     judge_context = judge_client.generate.await_args.kwargs["context_factory"](None)
     assert json.loads(get_item_text(judge_context[1]))["recent_chat"] == build_recent_chat_context(selected_history)
     assert response.tool_calls[0].func_name == answer
-    assert response.tool_calls[0].args == ({"reply_reference": "应该回复群友刚才的提问。"} if answer == "reply" else {})
+    assert response.tool_calls[0].args == ({"chat_anlyze": "应该回复群友刚才的提问。"} if answer == "reply" else {})
     assert preview.call_args.kwargs["output_items"] == response.output_items
     assert preview.call_args.kwargs["metadata"]["planner_action_judge"]["action"] == answer
 

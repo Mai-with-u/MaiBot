@@ -216,9 +216,9 @@ class MaisakaExpressionSelector:
 
         reference_parts: List[str] = []
         if isinstance(reply_tool_args, dict):
-            reply_reference = str(reply_tool_args.get("reply_reference") or "").strip()
-            if reply_reference:
-                reference_parts.append(f"回复信息参考：\n{reply_reference}")
+            chat_anlyze = str(reply_tool_args.get("chat_anlyze") or "").strip()
+            if chat_anlyze:
+                reference_parts.append(f"对话局面与关键事实：\n{chat_anlyze}")
         if reference_parts:
             query_parts.extend(reference_parts)
         else:

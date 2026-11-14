@@ -11,6 +11,7 @@ import uuid
 from src.common.data_models.llm_service_data_models import LLMGenerationOptions
 from src.common.logger import get_logger
 from src.common.prompt_i18n import load_prompt
+from src.core.tooling import filter_tool_arguments
 from src.llm_models.exceptions import LLMTaskTimeoutError, RespParseException
 from src.llm_models.payload_content.context_item import (
     ContextItem, ContextItemBuilder, ContextItemMeta, ContextToolCall, FunctionCallItem, RoleType,
@@ -35,16 +36,18 @@ class PlannerActionJudgment:
     metadata: Dict[str, Any]
 
 
-def build_recent_chat_context(chat_history: Sequence[LLMContextMessage]) -> List[Dict[str, str]]:
+def build_recent_chat_context(
+    chat_history: Sequence[LLMContextMessage], *, include_session_ids: bool = False,
+) -> List[Dict[str, str]]:
     """只取最近五条真实聊天消息，排除通知、工具和内部上下文。"""
     recent = []
     for message in reversed(chat_history):
         if not isinstance(message, SessionBackedMessage) or message.original_message.is_notify:
             continue
-        recent.append({
-            "session_id": message.original_message.session_id,
-            "text": message.render_visible_text(),
-        })
+        entry = {"text": message.render_visible_text()}
+        if include_session_ids:
+            entry["session_id"] = message.original_message.session_id
+        recent.append(entry)
         if len(recent) == 5:
             break
     return list(reversed(recent))
@@ -77,14 +80,16 @@ async def complete_missing_planner_action(
         raise ValueError("Planner 动作判断没有同时允许 reply 和 wait 的真实会话")
 
     payload: Dict[str, Any] = {
-        "recent_chat": await asyncio.to_thread(build_recent_chat_context, chat_history),
+        "recent_chat": await asyncio.to_thread(build_recent_chat_context, chat_history, include_session_ids=bool(routes)),
         "planner_text": content,
     }
+    judge_prompt = load_prompt("planner_action_judge")
     if routes:
         payload["reply_sessions"] = routes
+        judge_prompt += "\n" + load_prompt("planner_action_judge_focus")
     messages = [
         ContextItemBuilder().set_role(RoleType.System)
-        .add_text_content(load_prompt("planner_action_judge")).build(),
+        .add_text_content(judge_prompt).build(),
         ContextItemBuilder().set_role(RoleType.User)
         .add_text_content(json.dumps(payload, ensure_ascii=False)).build(),
     ]
@@ -111,6 +116,10 @@ async def complete_missing_planner_action(
     if not isinstance(parsed, dict) or "action" not in parsed:
         raise RespParseException(message=f"Planner 动作判断器返回了无效字段：{decision!r}")
     action = parsed["action"]
+    decision_properties = {"action": {}}
+    if action == "reply" and routes:
+        decision_properties["session_id"] = {}
+    parsed = filter_tool_arguments(parsed, {"properties": decision_properties})
     arguments: Dict[str, Any] = {}
     if action == "wait" and set(parsed) == {"action"}:
         if routes:
@@ -122,7 +131,7 @@ async def complete_missing_planner_action(
     else:
         raise RespParseException(message=f"Planner 动作判断器返回了无效选项：{decision!r}")
     if action == "reply":
-        arguments["reply_reference"] = content
+        arguments["chat_anlyze"] = content
 
     turn_id = logical_turn_id or next(
         (item.meta.logical_turn_id for item in output_items if item.meta.logical_turn_id), uuid.uuid4().hex,

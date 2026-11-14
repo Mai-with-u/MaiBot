@@ -528,7 +528,7 @@ class MaisakaReasoningEngine:
         target = state.reply_target_message
         arguments = {
             "msg_id": target.message_id if target is not None else "",
-            "reply_reference": content,
+            "chat_anlyze": content,
         }
         self._runtime._update_stage_status("Replyer", "根据 Planner 正文生成可见回复")
         tool_ctx = BuiltinToolRuntimeContext(self, self._runtime)

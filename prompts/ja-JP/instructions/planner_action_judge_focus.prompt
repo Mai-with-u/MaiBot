@@ -1,0 +1,2 @@
+現在は Focus 共有モードです。recent_chat の session_id は各メッセージの出所を示し、reply_sessions は返信可能な実際の会話 ID の一覧です。
+このモードの返信形式は {"action":"reply","session_id":"実際の会話ID"} に変更します。session_id には本文が明確に示す相手の実際の会話 ID を reply_sessions から選んでください。会話を特定できなければ {"action":"wait"} を出力してください。待機する場合は action だけを出力し、会話を選択しないでください。

@@ -169,7 +169,7 @@ class RetroReplyPromptMixin:
             chat_history=chat_history,
             reply_message=reply_message,
             reply_reason=reply_reason,
-            reply_reference=str((reply_tool_args or {}).get("reply_reference") or ""),
+            chat_anlyze=str((reply_tool_args or {}).get("chat_anlyze") or ""),
             expression_habits=expression_habits,
             reply_requirements=reply_requirements,
             length_instruction=length_instruction,
@@ -314,7 +314,7 @@ class RetroReplyPromptMixin:
         chat_history: List[LLMContextMessage],
         reply_message: Optional[SessionMessage],
         reply_reason: str,
-        reply_reference: str,
+        chat_anlyze: str,
         expression_habits: str,
         reply_requirements: str,
         length_instruction: str = "",
@@ -322,7 +322,7 @@ class RetroReplyPromptMixin:
     ) -> Dict[str, str]:
         """按旧版的块顺序准备模板占位符内容。"""
 
-        combined_reference = self._build_reply_reference_message(reply_reason, reply_reference)
+        combined_reference = self._build_chat_anlyze_message(reply_reason, chat_anlyze)
         reply_target_block = self._build_retro_reply_target_block(reply_message, chat_history)
         if reply_target_block:
             reply_target_block += "." if self._get_prompt_locale().startswith("en") else "。"
