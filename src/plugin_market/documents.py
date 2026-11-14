@@ -11,7 +11,7 @@ import re
 from src.common.git_source import GitSource
 from src.common.http_client import get_shared_ssl_context
 from src.common.network_security import validate_public_url
-from src.common.paths import get_instance_root
+from src.common.paths import builtin_plugin_root, third_party_plugin_root
 
 from .cache import market_cache
 from .sources import download_source, load_source_settings
@@ -20,8 +20,8 @@ DocumentKind = Literal["readme", "changelog"]
 PluginResolver = Callable[[str, bool], Awaitable[Tuple[Dict[str, Any], str]]]
 
 
-def _find_local_plugin(reference: str) -> Optional[Tuple[Path, Dict[str, Any]]]:
-    root = (get_instance_root() / "plugins").resolve()
+def _find_local_plugin(reference: str, root: Path) -> Optional[Tuple[Path, Dict[str, Any]]]:
+    root = root.resolve()
     if not root.is_dir():
         return None
     matches = []
@@ -74,7 +74,7 @@ def _remote_document(
         owner, repo = parsed.path.strip("/").removesuffix(".git").split("/")
         # README 跟随下载源，并保留所选发布版本的提交，避免展示其他版本的文档。
         # 更新日志仍按信息源读取，外部声明的 URL 则直接使用原地址。
-        git = download_source() if kind == "readme" else GitSource.select("github" if source == "official" else source)
+        git = download_source() if kind == "readme" else GitSource.select(source)
         url = git.raw_url(owner, repo, branch, declared if kind == "changelog" else "README.md")
 
     def load() -> str:
@@ -97,17 +97,21 @@ async def get_document(
 ) -> Dict[str, Any]:
     if not plugin_id.strip() or not branch.strip() or not 500 <= max_chars <= 200000:
         raise ValueError("plugin_id 和 branch 不能为空，max_chars 必须在 500 到 200000 之间")
-    local = await asyncio.to_thread(_find_local_plugin, plugin_id.strip()) if prefer_local else None
+    local = await asyncio.to_thread(_find_local_plugin, plugin_id.strip(), builtin_plugin_root())
+    builtin = local is not None
+    if local is None and prefer_local:
+        local = await asyncio.to_thread(_find_local_plugin, plugin_id.strip(), third_party_plugin_root())
     if local is not None:
         folder, manifest = local
         plugin = {"id": manifest["id"], "name": manifest["name"], "manifest": manifest,
                   "repository_url": manifest.get("urls", {}).get("repository", "")}
-        if prefer_local:
-            content = await asyncio.to_thread(read_local_document, folder, manifest, kind)
-            if content is not None:
-                return {"success": True, "plugin": {"id": plugin["id"], "name": plugin["name"]},
-                        "content": content[:max_chars], "chars": len(content), "truncated": len(content) > max_chars,
-                        "source": str(folder), "source_type": "local"}
+        content = await asyncio.to_thread(read_local_document, folder, manifest, kind)
+        if content is not None or builtin:
+            source_type = "local" if content is not None else "missing"
+            content = content if content is not None else ""
+            return {"success": True, "plugin": {"id": plugin["id"], "name": plugin["name"]},
+                    "content": content[:max_chars], "chars": len(content), "truncated": len(content) > max_chars,
+                    "source": str(folder), "source_type": source_type}
         source = (await asyncio.to_thread(load_source_settings)).information_source
     else:
         plugin, source = await resolver(plugin_id, force_refresh)

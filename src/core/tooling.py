@@ -19,6 +19,36 @@ from src.llm_models.payload_content.tool_option import ToolDefinitionInput
 logger = get_logger("core.tooling")
 
 
+def filter_tool_arguments(arguments: Dict[str, Any], schema: Dict[str, Any] | None) -> Dict[str, Any]:
+    """只保留工具声明的参数；参数值本身（正文、字典等）保持原样。"""
+
+    root = schema or {}
+
+    def declares(name: str, node: Dict[str, Any]) -> bool:
+        reference = node.get("$ref")
+        if isinstance(reference, str) and reference.startswith("#/"):
+            target = root
+            for part in reference[2:].split("/"):
+                target = target[part.replace("~1", "/").replace("~0", "~")]
+            if declares(name, target):
+                return True
+        if name in node.get("properties", {}):
+            return True
+        if any(re.search(pattern, name) for pattern in node.get("patternProperties", {})):
+            return True
+        additional = node.get("additionalProperties", False)
+        if additional is True or isinstance(additional, dict):
+            return True
+        return any(
+            declares(name, branch)
+            for keyword in ("allOf", "anyOf", "oneOf")
+            for branch in node.get(keyword, [])
+            if isinstance(branch, dict)
+        )
+
+    return {name: value for name, value in arguments.items() if declares(name, root)}
+
+
 def normalize_tool_description(metadata: Dict[str, Any]) -> Dict[str, Any]:
     """在工具输入边界统一描述字段，后续链路只使用 description。"""
     normalized = dict(metadata)
@@ -420,6 +450,7 @@ class ToolRegistry:
         route = (await self._list_routes(availability_context)).get(invocation.tool_name)
         if route is not None:
             provider, spec = route
+            invocation.arguments = filter_tool_arguments(invocation.arguments, spec.parameters_schema)
             metadata = dict(invocation.metadata)
             if provider.provider_type == "mcp":
                 # 服务器选择来自注册表，不接受调用方伪造的路由元数据。

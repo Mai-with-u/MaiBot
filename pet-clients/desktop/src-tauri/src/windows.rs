@@ -151,7 +151,8 @@ fn desktop_point(point: Anchor, _native_scale: f64, _desktop_scale: f64) -> Anch
 }
 
 fn validate_rects(rects: &[HitRect]) -> WindowResult<()> {
-    if rects.len() > 256
+    // A skin's alpha mask can contain multiple disjoint spans on every pixel row.
+    if rects.len() > 32_768
         || rects.iter().any(|rect| {
             rect.iter()
                 .any(|number| !number.is_finite() || number.abs() > 10_000.0)

@@ -359,7 +359,7 @@ export function useQuickShortcuts({
         label: t('home.quickActions.docs'),
         description: t('home.quickActions.descriptions.docs'),
         icon: BookOpen,
-        href: 'https://docs.mai-mai.org',
+        href: 'https://docs.maibot.chat/',
         external: true,
       },
       ...(['replyer', 'planner', 'reasoning'] as const).map((stage) => ({

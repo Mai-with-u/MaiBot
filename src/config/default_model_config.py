@@ -68,6 +68,9 @@ DEFAULT_MODEL_TEMPLATES: list[dict[str, Any]] = [
         "price_periods": [],
         "send_temperature": True,
         "visual": False,
+        "max_images": 0,
+        "image_max_side": 8000,
+        "image_min_side": 1,
         "extra_params": {"thinking": {"type": "enabled"}, "reasoning_effort": "high"},
     },
     {
@@ -80,6 +83,9 @@ DEFAULT_MODEL_TEMPLATES: list[dict[str, Any]] = [
         "price_periods": [],
         "send_temperature": True,
         "visual": False,
+        "max_images": 0,
+        "image_max_side": 8000,
+        "image_min_side": 1,
         "extra_params": {"thinking": {"type": "disabled"}},
     },
     {
@@ -92,6 +98,9 @@ DEFAULT_MODEL_TEMPLATES: list[dict[str, Any]] = [
         "price_periods": [],
         "send_temperature": True,
         "visual": False,
+        "max_images": 0,
+        "image_max_side": 8000,
+        "image_min_side": 1,
         "extra_params": {"thinking": {"type": "disabled"}},
     },
 ]

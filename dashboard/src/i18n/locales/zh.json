@@ -92,6 +92,7 @@
       "model": "模型",
       "adapter": "适配器",
       "learning": "学习",
+      "mutualGroups": "相通",
       "memory": "记忆",
       "plugin": "插件",
       "market": "市场",
@@ -106,7 +107,18 @@
     "keyNeedsBot": "{{label}} · 需要先启动 Bot",
     "pet": {
       "title": "桌宠",
+      "statusTitle": "桌宠状态",
+      "statusLoadFailed": "无法读取桌宠状态：{{error}}",
       "settings": "桌宠设置",
+      "settingsUnavailable": "当前主程序未提供桌宠配置",
+      "settingsSaving": "正在保存…",
+      "settingsSaved": "桌宠设置已保存",
+      "settingsAutoSaveHint": "停止编辑 2 秒后自动保存",
+      "settingsInvalidNumber": "{{label}}：请输入有效数值",
+      "settingsMinValue": "{{label}}：不得小于 {{min}}",
+      "settingsMaxValue": "{{label}}：不得大于 {{max}}",
+      "skinAutoSaveHint": "选择皮肤后会自动保存并应用。",
+      "settingsSaveFailed": "保存桌宠设置失败",
       "enabledLamp": "启用桌宠",
       "mode": {
         "local": "本机窗口",
@@ -191,7 +203,7 @@
     "customReload": "重载页面",
     "customStop": "停止页面",
     "customStopped": "页面已停止。点击重载页面可再次运行。",
-    "customStopRequestRate": "请求过于频繁，页面已停止（允许每秒 20 次请求，最多突发 200 次）。",
+    "customStopRequestRate": "请求过于频繁，页面已停止（允许每秒 {{rate}} 次请求，最多突发 {{burst}} 次）。",
     "customStopLayoutRate": "页面尺寸更新过于频繁，页面已停止。",
     "customStopHeight": "页面高度无效或超过 30000 像素，页面已停止。",
     "customStopDuplicateId": "插件发送了重复的请求编号，页面已停止。",
@@ -252,8 +264,10 @@
       "system": "系统"
     },
     "menu": {
+      "mutualGroups": "相通",
       "home": "首页",
       "botMainConfig": "麦麦设置",
+      "desktopPet": "桌宠",
       "aiModelProvider": "模型厂商设置",
       "modelManagement": "模型管理",
       "promptManagement": "Prompt管理",
@@ -615,7 +629,11 @@
       "repliedTitle": "已收到麦麦的回复",
       "repliedDescription": "如果回复和说话风格符合预期，就可以继续配置消息平台。",
       "keepChatting": "继续聊聊",
-      "continue": "试聊正常，配置消息平台"
+      "continue": "试聊正常，配置消息平台",
+      "failedTitle": "麦麦暂时没有回复",
+      "failedDescription": "可能是模型地址、API Key 或模型名有误。可以再发一句试试，或去模型配置检查。",
+      "checkModelConfig": "检查模型配置",
+      "learnBasics": "带我认识基础配置"
     },
     "botNameFallback": "麦麦",
     "userFallback": "用户",
@@ -787,6 +805,21 @@
       "about": "关于"
     },
     "appearance": {
+      "dashboardStyle": "界面风格",
+      "dashboardStyles": {
+        "modern": {
+          "label": "现代",
+          "description": "扁平的现代化UI"
+        },
+        "future-retro": {
+          "label": "未来复古",
+          "description": "高对比、粗糙、温暖和磨砂质感"
+        },
+        "millennium": {
+          "label": "千禧",
+          "description": "怀旧的千禧年风格"
+        }
+      },
       "layoutVersion": "布局",
       "layoutVersionDesc": "经典布局保留顶栏和卡片首页；麦麦观察布局去掉顶栏，侧栏上半区是设置、下半区是所有对话，首页是运行状态面板。只在桌面宽度生效。",
       "layoutClassic": "经典",
@@ -1185,13 +1218,13 @@
     "helpLink": "我没有密码，我该去哪里获得密码？",
     "helpTitle": "访问密码",
     "helpDesc": "Access Token 是访问 MaiBot WebUI 的唯一凭证，请按以下方式获取",
-    "method1Title": "方式一：查看启动日志",
-    "method1Desc": "在 MaiBot 启动时，控制台会显示 WebUI Access Token。",
-    "method1Example1": "🔑 WebUI Access Token: abc123...",
-    "method1Example2": "💡 请使用此 Token 登录 WebUI",
+    "method1Title": "方式一：查看宿主启动输出",
+    "method1Desc": "使用临时密码时，宿主启动输出会显示登录密码。已设置固定密码时，请使用您设置的密码，启动时不会再次打印。",
+    "method1Example1": "WebUI 临时登录密码：abc123...",
+    "method1Example2": "请查看宿主控制台输出，而非单个 Bot 的运行日志。",
     "method2Title": "方式二：查看配置文件",
-    "method2Desc": "Token 保存在项目根目录的配置文件中：",
-    "method2FileHint": "打开此文件，复制 access_token 字段的值",
+    "method2Desc": "密码保存在宿主工作区目录下的文件中（工作区路径见宿主启动输出）：",
+    "method2FileHint": "打开此文件，复制以下字段的值：",
     "securityTipTitle": "安全提示",
     "securityTip1": "请妥善保管您的 Token，不要泄露给他人",
     "securityTip2": "如需重置 Token，请在登录后前往 WEBUI设置",
@@ -1202,8 +1235,45 @@
   },
   "setupPage": {
     "steps": {
+      "nickname": {
+        "title": "取一个名字",
+        "label": "昵称",
+        "description": ""
+      },
+      "defineModel": {
+        "title": "设置你的模型来源",
+        "label": "定义模型",
+        "description": ""
+      },
+      "replyer": {
+        "title": "设置 回复模型",
+        "description": "这个模型决定了ta说话的风格，适合文笔和风格好的模型"
+      },
+      "planner": {
+        "title": "设置 行为模型",
+        "description": "这个模型控制麦麦的行为，需要能够使用工具，理解任务，拥有Agent能力的模型"
+      },
+      "basicSettings": {
+        "title": "设置",
+        "description": ""
+      },
+      "groupReplies": {
+        "title": "群聊回复",
+        "description": "开启后，麦麦在群聊被 @ 时会尽量回复。",
+        "label": "被 @ 时优先回复"
+      },
+      "desktopPet": {
+        "title": "桌宠",
+        "description": "",
+        "label": "启用桌宠",
+        "hint": "桌宠需要Windows桌面环境\n如果部署在服务器，可以稍后在设置中配置远程连接桌宠"
+      },
+      "dashboardAppearance": {
+        "title": "界面风格",
+        "description": ""
+      },
       "botProfile": {
-        "title": "基础与人格",
+        "title": "人格",
         "description": ""
       },
       "customToken": {
@@ -1216,15 +1286,19 @@
         "description": "配置机器人的基本信息"
       },
       "personality": {
-        "title": "人格配置",
-        "description": "定义机器人的性格和说话风格"
+        "title": "创建人格",
+        "choose": "你希望：",
+        "templateTitle": "选择模板",
+        "editTitle": "编辑人格",
+        "template": "使用现有的模板",
+        "manual": "自己来编写"
       },
       "apiProvider": {
         "title": "API配置",
         "description": ""
       },
       "modelSetup": {
-        "title": "模型配置",
+        "title": "模型",
         "description": ""
       }
     },
@@ -1247,8 +1321,8 @@
       "enterProviderName": "请输入 API 提供商名称",
       "enterBaseUrl": "请输入 API Base URL",
       "enterApiKey": "请输入 API Key",
-      "enterPlannerModelIdentifier": "请输入 planner 模型标识符",
-      "enterReplyerModelIdentifier": "请输入 replyer 模型标识符",
+      "enterPlannerModelIdentifier": "请输入行为模型标识符",
+      "enterReplyerModelIdentifier": "请输入回复模型标识符",
       "customTokenInvalid": "密码不符合要求：{{failedRules}}"
     },
     "toast": {
@@ -1263,7 +1337,7 @@
       "completeFailedTitle": "配置失败",
       "skipFailedTitle": "跳过失败",
       "customTokenSuccessTitle": "密码已更新",
-      "customTokenSuccessDescription": "请使用新的自定义密码重新登录，然后继续配置。",
+      "customTokenSuccessDescription": "已使用新密码登录，可以继续配置。",
       "unknownError": "未知错误"
     },
     "actions": {
@@ -1303,6 +1377,8 @@
         "noticeDescription": "需要修改登录密码，如果不修改，每次会随机生成密码",
         "label": "自定义密码 *",
         "placeholder": "输入新密码",
+        "confirmation": "再次输入新密码",
+        "mismatch": "两次输入的密码不一致。",
         "description": "",
         "requirements": "密码要求",
         "show": "显示",
@@ -1362,17 +1438,17 @@
         "personality": {
           "label": "人格特征",
           "placeholder": "描述机器人的人格特质和身份特征（建议 120 字以内）",
-          "description": "描述bot的核心人格特征，影响bot如何认识自己"
+          "description": "ta的性格特点和关键信息"
         },
         "behaviorStyle": {
           "label": "行为风格",
           "placeholder": "描述何时参与聊天、如何观察局面以及何时保持安静",
-          "description": "描述bot的行为，决定bot行为方式"
+          "description": "ta聊天时的行为和做事风格"
         },
         "replyStyle": {
           "label": "表达风格",
           "placeholder": "描述机器人说话的表达风格、表达习惯",
-          "description": "直接影响bot如何说话，说话风格"
+          "description": "ta说话的风格"
         },
         "multipleReplyStyle": {
           "label": "备用表达风格",
@@ -1423,7 +1499,7 @@
       },
       "apiProvider": {
         "providerName": {
-          "label": "API 提供商名称 *",
+          "label": "提供商",
           "placeholder": "例如 OpenAI、DeepSeek、自建服务",
           "description": "为api提供商命名"
         },
@@ -1432,11 +1508,14 @@
           "description": "请填写 OpenAI 兼容接口地址，例如 https://api.example.com/v1"
         },
         "apiKey": {
-          "label": "API Key *",
+          "label": "API Key",
           "description": "请填写该提供商的 API Key",
           "show": "显示 API Key",
           "hide": "隐藏 API Key"
-        }
+        },
+        "presetSelect": "选择预置提供商",
+        "usePreset": "预置",
+        "useCustom": "自定义"
       },
       "modelSetup": {
         "identifierPlaceholder": "输入模型标识符",
@@ -1458,7 +1537,44 @@
           "visual": {
             "label": "启用视觉"
           }
+        },
+        "fetching": "正在获取模型列表…",
+        "fetchFailed": "{{error}}，请手动填写模型标识符。",
+        "enableThinking": "启用思考",
+        "effort": {
+          "label": "思考强度",
+          "low": "低",
+          "high": "高",
+          "max": "最高"
         }
+      }
+    },
+    "errors": {
+      "loadStatus": "读取设置状态失败",
+      "loadBot": "读取 Bot 配置失败",
+      "loadPersonality": "读取人格配置失败",
+      "loadModel": "读取模型配置失败",
+      "fetchModels": "获取模型列表失败",
+      "emptyModelList": "提供商返回的模型列表为空",
+      "saveBot": "保存 Bot 配置失败",
+      "savePersonality": "保存人格配置失败",
+      "saveProvider": "保存 API 提供商配置失败",
+      "saveModel": "保存模型配置失败",
+      "complete": "标记设置完成失败",
+      "updateToken": "更新 Token 失败"
+    },
+    "connectionTest": {
+      "hint": "可以先测试一下模型能否正常调用，结果仅供参考。",
+      "button": "测试连通性",
+      "testing": "测试中…",
+      "passed": "通过",
+      "failed": "未通过",
+      "passedWithLatency": "通过（{{latency}}）",
+      "saveFailed": "保存配置失败，无法测试：{{error}}",
+      "canContinue": "测试未通过也可以继续完成配置，之后可在模型配置页调整。",
+      "roles": {
+        "planner": "行为模型",
+        "replyer": "回复模型"
       }
     }
   },
@@ -2262,7 +2378,45 @@
     "check": "检查更新",
     "apply": "确认更新并重启宿主",
     "current": "当前没有可应用的更新",
+    "lastUpdateTime": "上次更新执行时间：{{started}} — {{finished}}",
     "updated": "最近一次程序更新成功",
     "restarting": "宿主正在更新并重启，正在等待重新连接。若更新回滚失败，需查看终端处理后手动启动。"
+  },
+  "tour": {
+    "controls": {
+      "back": "上一步",
+      "close": "关闭",
+      "last": "完成",
+      "next": "下一步",
+      "nextWithProgress": "下一步 ({step}/{steps})",
+      "open": "打开引导",
+      "skip": "跳过"
+    },
+    "basicFeatures": {
+      "personality": {
+        "title": "人格",
+        "content": "这里写麦麦是一个怎样的人。性格、身份、说话视角都从这里来，可以直接在高亮处改改看。"
+      },
+      "replyStyle": {
+        "title": "说话风格",
+        "content": "控制回复的语气和长短，比如更简短、更活泼或更正式。改完记得点保存。"
+      },
+      "talkValue": {
+        "title": "群聊发言频率",
+        "content": "决定麦麦在群里主动说话的多少。数值越小越安静，觉得她太吵或太闷都可以调这里。"
+      },
+      "plugins": {
+        "title": "插件市场",
+        "content": "在这里搜索和安装插件，给麦麦加上新能力。装好的插件可以在「插件配置」里调整。"
+      },
+      "knowledgeBase": {
+        "title": "知识库",
+        "content": "在「导入导出」里导入资料，麦麦聊天时会参考这些内容，也会自动积累聊天中的记忆。"
+      },
+      "done": {
+        "title": "基础配置就是这些",
+        "content": "改过的配置都在左侧菜单里，随时可以回来调整。现在去和麦麦多聊聊吧！"
+      }
+    }
   }
 }

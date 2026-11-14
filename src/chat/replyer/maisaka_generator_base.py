@@ -4,7 +4,6 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 import asyncio
 import random
-import re
 import time
 
 from src.chat.message_receive.chat_manager import BotChatSession
@@ -59,7 +58,6 @@ from src.maisaka.context.messages import (
     SessionBackedMessage,
     build_context_items_from_history_entry,
 )
-from src.maisaka.context.planner_messages import extract_quote_ids_from_message_sequence
 from src.maisaka.context.compaction import PlannerRequestSnapshot
 from src.llm_models.model_client.base_client import ResponseRequest
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
@@ -187,52 +185,23 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             return ""
 
         user_info = reply_message.message_info.user_info
+        if not is_bot_self(reply_message.platform, user_info.user_id):
+            return ""
+
         sender_name = user_info.user_cardname or user_info.user_nickname or user_info.user_id
         bot_name = global_config.bot.nickname.strip() or sender_name
         target_message_id = to_display_message_id(reply_message.message_id) if reply_message.message_id else "未知"
-        # target_time = reply_message.timestamp.strftime("%Y-%m-%d %H:%M:%S")
-        quote_ids = extract_quote_ids_from_message_sequence(reply_message.raw_message)
         target_content = self._normalize_content(self._build_target_message_content(reply_message), limit=300)
         if not target_content:
             target_content = "[无可见文本内容]"
 
-        if is_bot_self(reply_message.platform, user_info.user_id):
-            return "\n".join(
-                [
-                    f"你想要补充说明你自己（{bot_name}） 发送的 msg_id为 {target_message_id} 的消息，"
-                    "你可以在这条目标消息的基础上补充发言，不要把你自己的发言当成别人的发言。",
-                    f"- 你之前的发言内容：{target_content}",
-                ]
-            )
-
-        # target_lines = [
-        #     "【本次回复目标】",
-        #     f"- msg_id：{target_message_id}",
-        # ]
-        # if quote_ids:
-        #     target_lines.append(f"- quote={','.join(quote_ids)}")
-        # target_lines.extend(
-        #     [
-        #         f"- 时间：{target_time}",
-        #         f"- 用户名：{sender_name}",
-        #         f"- 发言内容：{target_content}",
-        #         "",
-        #         "你这次要回复的就是这条目标消息，请结合整段上下文理解，但不要把其他历史消息当成当前回复对象。",
-        #     ]
-        # )
-        # return "\n".join(target_lines)
-
-        target_lines = [
-            f"你想要回复的消息是 {sender_name} 发送的 msg_id为 {target_message_id} 的消息，你这次要回复的就是这条目标消息，不要把其他历史消息当成当前回复对象。",
-        ]
-        if quote_ids:
-            target_lines.append(f"- quote={','.join(to_display_message_id(quote_id) for quote_id in quote_ids)}")
-        target_lines.extend(
+        return "\n".join(
             [
-                f"- 发言内容：{target_content}",
+                f"你想要补充说明你自己（{bot_name}） 发送的 msg_id为 {target_message_id} 的消息，"
+                "你可以在这条目标消息的基础上补充发言，不要把你自己的发言当成别人的发言。",
+                f"- 你之前的发言内容：{target_content}",
             ]
         )
-        return "\n".join(target_lines)
 
     @staticmethod
     def _render_target_at_component(component: AtComponent) -> str:
@@ -449,14 +418,6 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         return "请注意不要输出多余内容(包括不必要的前后缀，冒号，括号，表情包，@等 )，只输出发言内容就好。"
 
     @staticmethod
-    def _replace_regex_capture_groups(reaction: str, match: re.Match[str]) -> str:
-        """将 reaction 中的 [name] 替换为正则命名捕获组的内容。"""
-        replaced_reaction = reaction
-        for group_name, group_value in match.groupdict().items():
-            replaced_reaction = replaced_reaction.replace(f"[{group_name}]", group_value or "")
-        return replaced_reaction
-
-    @staticmethod
     def _build_text_from_message_sequence(message: SessionBackedMessage) -> str:
         text_parts: List[str] = []
         for component in message.raw_message.components:
@@ -499,44 +460,6 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                 return match_text
         return ""
 
-    def _build_keyword_reaction_prompt(
-        self,
-        chat_history: List[LLMContextMessage],
-        reply_message: Optional[SessionMessage],
-    ) -> str:
-        match_text = self._extract_keyword_reaction_match_text(chat_history, reply_message)
-        if not match_text:
-            return ""
-
-        matched_reactions: List[str] = []
-        keyword_reaction = global_config.keyword_reaction
-
-        for rule in keyword_reaction.keyword_rules:
-            keywords = [keyword.strip() for keyword in rule.keywords if keyword.strip()]
-            if keywords and any(keyword in match_text for keyword in keywords):
-                reaction = rule.reaction.strip()
-                if reaction:
-                    matched_reactions.append(reaction)
-
-        for rule in keyword_reaction.regex_rules:
-            reaction = rule.reaction.strip()
-            if not reaction:
-                continue
-            for pattern in rule.regex:
-                if not pattern.strip():
-                    continue
-                match = re.search(pattern, match_text)
-                if match is None:
-                    continue
-                matched_reactions.append(self._replace_regex_capture_groups(reaction, match))
-                break
-
-        if not matched_reactions:
-            return ""
-
-        reaction_lines = "\n".join(f"- {reaction}" for reaction in matched_reactions)
-        return f"【关键词反应】\n最新消息命中了预设反应规则，请在回复时优先参考以下要求：\n{reaction_lines}\n"
-
     def _build_system_prompt(
         self,
         reply_message: Optional[SessionMessage],
@@ -573,18 +496,18 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         )
 
     @staticmethod
-    def _build_reply_reference_message(reply_reason: str, reply_reference: str) -> str:
-        """有 reply reference 时只使用参考，否则使用 Planner 正文，并标注为当前想法。"""
+    def _build_chat_anlyze_message(reply_reason: str, chat_anlyze: str) -> str:
+        """优先使用对话分析，否则使用 Planner 正文，作为对话局面与关键事实注入。"""
 
-        thought = reply_reference.strip() or reply_reason.strip()
+        thought = chat_anlyze.strip() or reply_reason.strip()
         if not thought:
             return ""
         locale = BaseMaisakaReplyGenerator._get_prompt_locale()
         if locale.startswith("en"):
-            return f'Current thought:\n"{thought}"'
+            return f'Conversation situation and key facts:\n"{thought}"'
         if locale.startswith("ja"):
-            return f"現在の考え：\n「{thought}」"
-        return f"当前想法：\n“{thought}”"
+            return f"会話の状況と重要な事実：\n「{thought}」"
+        return f"对话局面与关键事实：\n“{thought}”"
 
     def _build_final_user_message(
         self,
@@ -712,10 +635,8 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             )
 
         items: List[ContextItem] = []
-        keywords_reaction_prompt = self._build_keyword_reaction_prompt(
-            chat_history=chat_history,
-            reply_message=reply_message,
-        )
+        # 关键词反应由内置插件通过 maisaka.replyer.before_request 追加到回复要求里。
+        keywords_reaction_prompt = ""
         system_prompt = self._build_system_prompt(
             reply_message=reply_message,
             reply_reason=reply_reason,
@@ -730,9 +651,9 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             reply_tool_args=reply_tool_args,
         )
         temporary_reply_style_message = self._build_temporary_reply_style_message(self._select_temporary_reply_style())
-        reply_reference_message = self._build_reply_reference_message(
+        chat_anlyze_message = self._build_chat_anlyze_message(
             reply_reason,
-            str((reply_tool_args or {}).get("reply_reference") or ""),
+            str((reply_tool_args or {}).get("chat_anlyze") or ""),
         )
         requested_reply_style_message = self._build_requested_reply_style_message(
             str((reply_tool_args or {}).get("reply_style") or "")
@@ -748,8 +669,8 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             items.append(
                 ContextItemBuilder().set_role(RoleType.User).add_text_content(temporary_reply_style_message).build()
             )
-        if reply_reference_message:
-            items.append(ContextItemBuilder().set_role(RoleType.User).add_text_content(reply_reference_message).build())
+        if chat_anlyze_message:
+            items.append(ContextItemBuilder().set_role(RoleType.User).add_text_content(chat_anlyze_message).build())
         items.append(ContextItemBuilder().set_role(RoleType.User).add_text_content(final_user_message).build())
         if requested_reply_style_message:
             items.append(
@@ -1226,6 +1147,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                     task_name=default_task_name,
                     model_name=cache_model_name,
                     extra_prompt=plugin_reply_prompt,
+                    match_text=self._extract_keyword_reaction_match_text(chat_history, reply_message),
                     attempt=retry_count + 1,
                     retry_count=retry_count,
                     max_retries=REPLYER_MAX_HOOK_RETRIES,
@@ -1320,8 +1242,8 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                 # 视觉请求构建会解码、缩放和编码图片，在工作线程中执行，避免阻塞聊天事件循环。
                 prompt_reply_tool_args = dict(reply_tool_args_for_attempt)
                 if cache_snapshot is not None:
-                    # 指导以 assistant 消息承接 Planner；表达选择和 Hook 仍接收完整参数。
-                    prompt_reply_tool_args.pop("reply_reference", None)
+                    # 对话分析以 assistant 消息承接 Planner；表达选择和 Hook 仍接收完整参数。
+                    prompt_reply_tool_args.pop("chat_anlyze", None)
                 built_request_messages = await asyncio.to_thread(
                     self._build_generation_messages,
                     super_creative_mode=super_creative_mode,
@@ -1373,9 +1295,9 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                 else:
                     model_info = cache_snapshot.model_info if isinstance(cache_snapshot, ResponseRequest) else None
                     reply_messages = await context_factory(active_model, model_info)
-                    reply_reference = str(active_reply_tool_args.get("reply_reference") or "").strip() or (reply_reason or "").strip()
+                    chat_anlyze = str(active_reply_tool_args.get("chat_anlyze") or "").strip() or (reply_reason or "").strip()
                     request = await asyncio.to_thread(
-                        build_cached_reply_request, cache_snapshot, reply_messages, reply_reference,
+                        build_cached_reply_request, cache_snapshot, reply_messages, chat_anlyze,
                     )
                     request_messages = request.context_items
                     prompt_preview = await asyncio.to_thread(PromptCLIVisualizer.build_prompt_dump_text, request_messages)

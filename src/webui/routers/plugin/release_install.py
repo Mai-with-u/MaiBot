@@ -11,6 +11,9 @@ import json
 import shutil
 import subprocess
 
+from src.common.code_update import (
+    backup_code, replace_code, restore_code, update_conflict,
+)
 from src.plugin_market.releases import PluginRelease, PluginReleaseEntry
 from src.plugin_runtime.plugin_catalog import RECEIPT_NAME
 from src.plugin_runtime.runner.manifest_validator import ManifestValidator, PluginDependencyDefinition
@@ -136,6 +139,31 @@ def _validate_candidate(candidate: Path, entry: PluginReleaseEntry, release: Plu
     return warnings
 
 
+def check_existing_code(target: Path, candidate: Path, force: bool) -> None:
+    if not (target / ".git").is_dir():
+        return
+    commit = _git(candidate, "rev-parse", "HEAD").strip()
+    _git(target, "fetch", "--no-tags", str(candidate.resolve()), commit)
+    conflict = update_conflict(target, commit)
+    if conflict and not force:
+        raise HTTPException(status_code=409, detail=conflict)
+
+
+def replace_existing_code(target: Path, candidate: Path, backup: Path, force: bool) -> None:
+    """只备份插件代码与配置，原地保留配置和数据。"""
+    _check_tree(target)
+    check_existing_code(target, candidate, force)
+    if not (target / ".git").is_dir():
+        raise HTTPException(status_code=400, detail="无 Git 安装不需要处理本地提交冲突")
+    commit = _git(candidate, "rev-parse", "HEAD").strip()
+    backup_code(target, backup, commit)
+    try:
+        replace_code(target, commit)
+    except Exception:
+        restore_code(target, backup)
+        raise
+
+
 async def _stop_runtime(plugin_id: str) -> List[str]:
     from src.common.runtime_loop import run_on_main_loop
     from src.plugin_runtime.integration import get_plugin_runtime_manager
@@ -175,11 +203,15 @@ async def _install_release(
     updating: bool,
     automatic: bool,
     mirror_id: Optional[str],
+    force: bool = False,
+    expected_commit: Optional[str] = None,
 ) -> Dict[str, Any]:
     from src.common.runtime_loop import run_on_main_loop
     from src.plugin_runtime.integration import get_plugin_runtime_manager
 
     operation = "update" if updating else "install"
+    if force and release.commit != expected_commit:
+        raise HTTPException(status_code=409, detail="目标版本已变化，请重新发起更新并确认")
     canonical_id = entry.manifest_id or plugin_id
     existing = resolve_mutable_plugin_path(canonical_id)
     if updating and existing is None:
@@ -195,7 +227,8 @@ async def _install_release(
     old_version = old_manifest["version"] if old_manifest else None
     if existing:
         read_release_receipt(target)  # 安装记录损坏时在动文件之前报错
-    if automatic and old_version and Version(release.version) <= Version(old_version):
+    if automatic and old_version and (Version(release.version) < Version(old_version)
+                                     or Version(release.version) == Version(old_version) and not force):
         raise HTTPException(status_code=409, detail="当前已是最新兼容版本，不会自动降级或重装")
     candidate = _work_directory(target.parent, ".update_tmp") / f"{target.name}.{uuid4().hex}"
     backup = _work_directory(target.parent, ".update_backups") / f"{target.name}.{uuid4().hex}"
@@ -213,6 +246,10 @@ async def _install_release(
             "plugin_id": canonical_id, "version": release.version, "tag": release.tag,
             "commit": release.commit, "repository_url": entry.repositoryUrl,
         }
+        if existing and force:
+            replace_existing_code(target, candidate, backup, force)
+            (target / RECEIPT_NAME).write_text(json.dumps(receipt_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            return
         (candidate / RECEIPT_NAME).write_text(json.dumps(receipt_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         if existing:
             backup.parent.mkdir(parents=True, exist_ok=True)
@@ -232,13 +269,14 @@ async def _install_release(
         failure: Optional[Exception] = None
         try:
             if existing:
-                # 先检查目录边界；停止运行时之后再检查并复制用户文件，避免复制过程中继续写入。
+                # 停止运行时后再备份或复制用户文件，避免更新期间继续写入。
                 await report_step(88, "正在检查已安装插件目录...")
                 await asyncio.to_thread(_check_tree, target)
                 await report_step(90, "正在停止旧版本插件，等待插件退出...")
                 stopped = await _stop_runtime(canonical_id)
                 await report_step(92, "正在保留插件配置和本地数据...")
-                await asyncio.to_thread(_preserve_user_files, target, candidate)
+                if not force:
+                    await asyncio.to_thread(_preserve_user_files, target, candidate)
             await report_step(95, "正在替换插件版本文件...")
             await asyncio.to_thread(replace_files)
             swapped = True
@@ -275,6 +313,8 @@ async def _install_release(
             raise HTTPException(status_code=502, detail=result.get("error", "下载发布版本失败"))
         async def validate_and_replace() -> List[str]:
             warnings = await asyncio.to_thread(_validate_candidate, candidate, entry, release)
+            if existing:
+                await asyncio.to_thread(check_existing_code, target, candidate, force)
             await report_step(85, "文件校验通过，等待其他插件操作或运行环境重启完成...")
             await run_on_main_loop(
                 get_plugin_runtime_manager().run_plugin_file_update(replace_and_reload, plugin_paths=[target])
@@ -313,10 +353,13 @@ async def install_release(
     updating: bool,
     automatic: bool,
     mirror_id: Optional[str],
+    force: bool = False,
+    expected_commit: Optional[str] = None,
 ) -> Dict[str, Any]:
     try:
         return await _install_release(
-            plugin_id, entry, release, updating=updating, automatic=automatic, mirror_id=mirror_id
+            plugin_id, entry, release, updating=updating, automatic=automatic, mirror_id=mirror_id,
+            force=force, expected_commit=expected_commit,
         )
     except Exception as exc:
         message = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)

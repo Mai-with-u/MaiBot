@@ -65,12 +65,14 @@ class _DummyEmbeddingManager:
     def __init__(self, dimension: int = 4) -> None:
         self.default_dimension = dimension
         self.calls: list[Any] = []
+        self.cache_flags: list[bool] = []
 
     async def _detect_dimension(self) -> int:
         return self.default_dimension
 
-    async def encode(self, text: Any) -> np.ndarray:
+    async def encode(self, text: Any, *, use_cache: bool = True) -> np.ndarray:
         self.calls.append(text)
+        self.cache_flags.append(use_cache)
         if isinstance(text, (list, tuple)):
             return np.ones((len(text), self.default_dimension), dtype=np.float32)
         return np.ones(self.default_dimension, dtype=np.float32)
@@ -288,6 +290,7 @@ async def test_runtime_self_check_reports_dual_pool_snapshot() -> None:
     paragraph_store.add(np.ones((1, 4), dtype=np.float32), ["paragraph-1"])
     graph_store.add(np.ones((1, 4), dtype=np.float32), ["entity:entity-1"])
 
+    manager = _DummyEmbeddingManager()
     report = await run_embedding_runtime_self_check(
         config={
             "embedding": {"dimension": 4},
@@ -297,7 +300,7 @@ async def test_runtime_self_check_reports_dual_pool_snapshot() -> None:
         vector_store=_DummyVectorStore(),
         paragraph_vector_store=paragraph_store,
         graph_vector_store=graph_store,
-        embedding_manager=_DummyEmbeddingManager(),
+        embedding_manager=manager,
     )
 
     assert report["ok"] is True
@@ -305,6 +308,7 @@ async def test_runtime_self_check_reports_dual_pool_snapshot() -> None:
     assert report["vector_pools"]["effective_mode"] == "dual"
     assert report["vector_pools"]["paragraph_pool"]["num_vectors"] == 1
     assert report["vector_pools"]["graph_pool"]["num_vectors"] == 1
+    assert manager.cache_flags == [False]
 
 
 @pytest.mark.asyncio

@@ -34,6 +34,7 @@ import { Label } from '@/components/ui/label'
 import { Card } from '@/components/ui/card'
 import { MultiSelect } from '@/components/ui/multi-select'
 import { Switch } from '@/components/ui/switch'
+import { Textarea } from '@/components/ui/textarea'
 import { Slider } from '@/components/ui/slider'
 import {
   Select,
@@ -42,13 +43,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { GripVertical, Plus, Trash2, AlertCircle } from 'lucide-react'
+import { GripVertical, Plus, Trash2, AlertCircle, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 // ============ 类型定义 ============
 
 export interface ItemFieldDefinition {
-  /** 字段类型: "string" | "number" | "boolean" | "select" */
+  /** 字段类型: "string" | "integer" | "number" | "boolean" | "switch" | "slider" | "select" | "array" */
   type: string
   label?: string
   placeholder?: string
@@ -78,7 +79,7 @@ export interface ListFieldEditorProps {
   value: unknown[] | unknown
   /** 值变化回调 */
   onChange: (value: unknown[]) => void
-  /** 数组元素类型: "string" | "number" | "object" */
+  /** 数组元素类型: "string" | "integer" | "number" | "object" */
   itemType?: string
   /** 当 itemType="object" 时的字段定义 */
   itemFields?: Record<string, ItemFieldDefinition>
@@ -174,10 +175,11 @@ function SortableItem({
             fields={itemFields}
             disabled={disabled}
           />
-        ) : itemType === 'number' ? (
+        ) : itemType === 'number' || itemType === 'integer' ? (
           <DraftNumberInput
             value={value}
             defaultValue={0}
+            integer={itemType === 'integer'}
             onValueChange={onChange}
             placeholder={placeholder ?? `第 ${index + 1} 项`}
             disabled={disabled}
@@ -214,6 +216,70 @@ function SortableItem({
   )
 }
 
+// ============ 紧凑的标签列表（对象项里的字符串数组） ============
+
+interface ChipListInputProps {
+  value: string[]
+  onChange: (value: string[]) => void
+  placeholder?: string
+  disabled?: boolean
+}
+
+/** 字符串数组的紧凑编辑：已有项显示为标签，输入后回车或逗号添加；没有项时只占一行。 */
+function ChipListInput({ value, onChange, placeholder, disabled }: ChipListInputProps) {
+  const [draft, setDraft] = useState('')
+
+  const commit = () => {
+    const next = draft.trim()
+    if (!next) return
+    if (!value.includes(next)) onChange([...value, next])
+    setDraft('')
+  }
+
+  return (
+    <div
+      className={cn(
+        'flex min-h-8 flex-wrap items-center gap-1.5 rounded-md border bg-background px-2 py-1',
+        disabled && 'opacity-60'
+      )}
+    >
+      {value.map((item, index) => (
+        <span
+          key={`${item}-${index}`}
+          className="inline-flex max-w-full items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono text-xs"
+        >
+          <span className="truncate">{item}</span>
+          <button
+            type="button"
+            aria-label={`移除 ${item}`}
+            disabled={disabled}
+            className="text-muted-foreground hover:text-destructive"
+            onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))}
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </span>
+      ))}
+      <input
+        value={draft}
+        disabled={disabled}
+        placeholder={value.length === 0 ? (placeholder ?? '输入后回车添加') : '继续添加'}
+        className="min-w-24 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ',') {
+            event.preventDefault()
+            commit()
+          } else if (event.key === 'Backspace' && !draft && value.length > 0) {
+            onChange(value.slice(0, -1))
+          }
+        }}
+      />
+    </div>
+  )
+}
+
 // ============ 对象项编辑器 ============
 
 interface ObjectItemEditorProps {
@@ -241,6 +307,7 @@ function ObjectItemEditor({
 
   const renderField = (fieldName: string, fieldDef: ItemFieldDefinition) => {
     const fieldValue = value?.[fieldName]
+    const isNumericField = fieldDef.type === 'number' || fieldDef.type === 'integer'
 
     // boolean / switch
     if (fieldDef.type === 'boolean' || fieldDef.type === 'switch') {
@@ -258,8 +325,8 @@ function ObjectItemEditor({
       )
     }
 
-    // slider (number with min/max)
-    if (fieldDef.type === 'slider' || (fieldDef.type === 'number' && fieldDef.min != null && fieldDef.max != null)) {
+    // slider (number / integer with min/max)
+    if (fieldDef.type === 'slider' || (isNumericField && fieldDef.min != null && fieldDef.max != null)) {
       const numValue = (fieldValue as number) ?? (fieldDef.default as number) ?? fieldDef.min ?? 0
       return (
         <div className="space-y-1">
@@ -329,8 +396,8 @@ function ObjectItemEditor({
       )
     }
 
-    // number
-    if (fieldDef.type === 'number') {
+    // number / integer
+    if (isNumericField) {
       return (
         <div className="space-y-1">
           <Label className="text-xs text-muted-foreground">
@@ -339,6 +406,7 @@ function ObjectItemEditor({
           <DraftNumberInput
             value={fieldValue}
             defaultValue={fieldDef.default}
+            integer={fieldDef.type === 'integer'}
             onValueChange={(nextValue) => handleFieldChange(fieldName, nextValue)}
             min={fieldDef.min}
             max={fieldDef.max}
@@ -358,48 +426,63 @@ function ObjectItemEditor({
         : Array.isArray(fieldDef.default)
           ? fieldDef.default
           : []
+      const itemType = fieldDef.item_type ?? 'string'
 
       return (
         <div className="space-y-1">
           <Label className="text-xs text-muted-foreground">
             {fieldDef.label ?? fieldName}
           </Label>
-          <ListFieldEditor
-            value={selectedValues}
-            onChange={(nextValue) => handleFieldChange(fieldName, nextValue)}
-            itemType={fieldDef.item_type ?? 'string'}
-            itemFields={fieldDef.item_fields}
-            minItems={fieldDef.min_items}
-            maxItems={fieldDef.max_items}
-            disabled={disabled}
-            placeholder={fieldDef.placeholder}
-          />
+          {itemType === 'string' ? (
+            <ChipListInput
+              value={selectedValues.map(String)}
+              onChange={(nextValue) => handleFieldChange(fieldName, nextValue)}
+              placeholder={fieldDef.placeholder}
+              disabled={disabled}
+            />
+          ) : (
+            <ListFieldEditor
+              value={selectedValues}
+              onChange={(nextValue) => handleFieldChange(fieldName, nextValue)}
+              itemType={itemType}
+              itemFields={fieldDef.item_fields}
+              minItems={fieldDef.min_items}
+              maxItems={fieldDef.max_items}
+              disabled={disabled}
+              placeholder={fieldDef.placeholder}
+            />
+          )}
         </div>
       )
     }
 
-    // string (default)
+    // string (default)：内容随长度自动增高，长文本不会被截断
+    const textValue = (fieldValue as string) ?? (fieldDef.default as string) ?? ''
     return (
       <div className="space-y-1">
         <Label className="text-xs text-muted-foreground">
           {fieldDef.label ?? fieldName}
         </Label>
-        <Input
-          type="text"
-          value={(fieldValue as string) ?? fieldDef.default ?? ''}
+        <Textarea
+          value={textValue}
           onChange={(e) => handleFieldChange(fieldName, e.target.value)}
           placeholder={fieldDef.placeholder}
           disabled={disabled}
-          className="h-8 text-sm"
+          rows={Math.min(8, Math.max(1, Math.ceil(textValue.length / 56), textValue.split('\n').length))}
+          className="min-h-8 resize-y py-1.5 text-sm leading-6"
         />
       </div>
     )
   }
 
+  // 短字段两列并排，长文本（字符串）独占一行
+  const isFullRow = (fieldDef: ItemFieldDefinition) =>
+    !['array', 'boolean', 'switch', 'integer', 'number', 'slider', 'select'].includes(fieldDef.type)
+
   return (
-    <Card className="p-3 space-y-2 bg-muted/30">
+    <Card className="grid gap-x-4 gap-y-3 bg-muted/30 p-3 sm:grid-cols-2">
       {Object.entries(fields).map(([fieldName, fieldDef]) => (
-        <div key={fieldName}>
+        <div key={fieldName} className={cn('min-w-0', isFullRow(fieldDef) && 'sm:col-span-2')}>
           {renderField(fieldName, fieldDef)}
         </div>
       ))}
@@ -496,7 +579,7 @@ export function ListFieldEditor({
       newItem = Object.fromEntries(
         Object.entries(itemFields).map(([k, v]) => [k, v.default ?? ''])
       )
-    } else if (itemType === 'number') {
+    } else if (itemType === 'number' || itemType === 'integer') {
       newItem = 0
     } else {
       newItem = ''

@@ -584,7 +584,7 @@ export const DynamicField: React.FC<DynamicFieldProps> = ({
   const renderNumberInput = () => {
     const min = schema.minValue
     const max = schema.maxValue
-    const step = schema.step ?? (schema.type === 'integer' ? 1 : 0.1)
+    const step = schema.step ?? (schema.type === 'integer' ? 1 : 'any')
 
     return (
       <DraftNumberInput

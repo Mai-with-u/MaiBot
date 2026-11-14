@@ -1,0 +1,2 @@
+当前为 Focus 共享模式。recent_chat 中的 session_id 标明每条消息的来源，reply_sessions 列出允许回复的真实会话 ID。
+本模式的回复格式改为 {"action":"reply","session_id":"真实会话ID"}，session_id 必须填写 reply_sessions 中正文明确指向的真实会话 ID。无法确定会话则输出 {"action":"wait"}。等待时只输出 action，不选择会话。

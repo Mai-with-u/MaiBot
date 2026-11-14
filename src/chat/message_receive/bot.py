@@ -9,6 +9,7 @@ import traceback
 from maim_message import MessageBase
 
 from src.common.paths import get_instance_root
+from src.common.runtime_loop import run_on_main_loop
 from src.chat.heart_flow.heartflow_message_processor import HeartFCMessageReceiver
 from src.chat.heart_flow.heartflow_manager import heartflow_manager
 from src.common.logger import get_logger
@@ -855,6 +856,23 @@ class ChatBot:
             traceback.print_exc()
 
     async def receive_message(self, message: SessionMessage) -> None:
+        await run_on_main_loop(self._receive_with_migration_gate(message))
+
+    async def _receive_with_migration_gate(self, message: SessionMessage) -> None:
+        """迁移期间等待该聊天流恢复，消息仍由原入站协程持有。"""
+        from src.services.chat_migration_gate import chat_migration_gate
+
+        route = RouteKeyFactory.from_session_message(message)
+        group = message.message_info.group_info
+        session_id = SessionUtils.calculate_session_id(
+            message.platform, user_id=message.message_info.user_info.user_id,
+            group_id=group.group_id if group else None,
+            account_id=route.account_id, scope=route.scope,
+        )
+        async with chat_migration_gate.activity(session_id):
+            await self._receive_message(message)
+
+    async def _receive_message(self, message: SessionMessage) -> None:
         """处理单条入站会话消息。
 
         Args:
@@ -965,6 +983,10 @@ class ChatBot:
             platform = message.platform
             user_id = user_info.user_id
             group_id = group_info.group_id if group_info else None
+
+            from src.desktop_pet.service import desktop_pet_service
+
+            desktop_pet_service.notify_user_message(platform, user_id, is_group=group_info is not None)
             _ = await chat_manager.get_or_create_session(
                 platform,
                 user_id,

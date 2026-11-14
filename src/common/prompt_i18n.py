@@ -237,28 +237,6 @@ def _iter_locale_candidates(requested_locale: str) -> list[str]:
     return locale_candidates
 
 
-def _iter_prompt_path_candidates(base_dir: Path, name: str, category: str | None = None) -> list[Path]:
-    candidates: list[Path] = []
-    for suffix in PROMPT_EXTENSIONS:
-        if category is not None:
-            candidates.append((base_dir / category / f"{name}{suffix}").resolve())
-        candidates.append((base_dir / f"{name}{suffix}").resolve())
-    return candidates
-
-
-def _resolve_custom_prompt_path(
-    name: str,
-    locale: str,
-    category: str | None,
-    custom_prompts_root: Path,
-) -> Path | None:
-    custom_locale_dir = custom_prompts_root / locale
-    for candidate_path in _iter_prompt_path_candidates(custom_locale_dir, name, category):
-        if candidate_path.is_file():
-            return candidate_path
-    return None
-
-
 def _resolve_legacy_custom_prompt_path(name: str, custom_prompts_root: Path) -> Path | None:
     for suffix in PROMPT_EXTENSIONS:
         candidate_path = (custom_prompts_root / f"{name}{suffix}").resolve()
@@ -278,6 +256,24 @@ def list_prompt_templates(locale: str | None = None, prompts_root: Path | None =
     return prompt_paths
 
 
+@lru_cache(maxsize=None)
+def _prompt_paths_for_locale(root: Path, locale: str, revision: int) -> dict[str, PromptTemplateInfo]:
+    """运行时按缓存版本索引模板；管理页仍实时扫描元信息。"""
+    return _scan_prompt_directory(root / locale, root)
+
+
+def get_prompt_template_info(
+    name: str, locale: str, prompts_root: Path | None = None,
+) -> PromptTemplateInfo | None:
+    root = get_prompts_root(prompts_root)
+    normalized_name = normalize_prompt_name(name)
+    for candidate in _iter_locale_candidates(normalize_locale(locale)):
+        info = _prompt_paths_for_locale(root, candidate, _PROMPT_CACHE_REVISION).get(normalized_name)
+        if info is not None:
+            return info
+    return None
+
+
 def resolve_prompt_path(
     name: str,
     locale: str | None = None,
@@ -290,56 +286,25 @@ def resolve_prompt_path(
     resolved_prompts_root = get_prompts_root(prompts_root)
     resolved_custom_prompts_root = get_custom_prompts_root(custom_prompts_root, prompts_root)
     normalized_name = normalize_prompt_name(name)
-    storage_name = get_custom_prompt_storage_name(normalized_name)
     normalized_category = normalize_prompt_category(category)
     requested_locale = normalize_locale(locale or get_locale())
-
-    if normalized_category is not None:
-        for locale_candidate in _iter_locale_candidates(requested_locale):
-            custom_path = _resolve_custom_prompt_path(
-                storage_name,
-                locale_candidate,
-                normalized_category,
-                resolved_custom_prompts_root,
-            )
-            if include_custom and custom_path is not None:
-                return custom_path
-
-            if include_custom and include_legacy_custom:
+    for locale_candidate in _iter_locale_candidates(requested_locale):
+        if include_custom:
+            storage_name = get_custom_prompt_storage_name(normalized_name)
+            custom_dir = resolved_custom_prompts_root / locale_candidate
+            custom_paths = [custom_dir / f"{storage_name}.prompt"]
+            if normalized_category is not None:
+                custom_paths.insert(0, custom_dir / normalized_category / f"{storage_name}.prompt")
+            for custom_path in custom_paths:
+                if custom_path.is_file():
+                    return custom_path.resolve()
+            if include_legacy_custom:
                 legacy_custom_path = _resolve_legacy_custom_prompt_path(storage_name, resolved_custom_prompts_root)
                 if legacy_custom_path is not None:
                     return legacy_custom_path
-
-            base_dir = resolved_prompts_root / locale_candidate
-            for suffix in PROMPT_EXTENSIONS:
-                candidate_path = (base_dir / normalized_category / f"{normalized_name}{suffix}").resolve()
-                if candidate_path.is_file():
-                    return candidate_path
-
-                # 允许带 category 的调用继续复用 locale 根目录下的平铺模板。
-                fallback_path = (base_dir / f"{normalized_name}{suffix}").resolve()
-                if fallback_path.is_file():
-                    return fallback_path
-    else:
-        for locale_candidate in _iter_locale_candidates(requested_locale):
-            custom_path = _resolve_custom_prompt_path(
-                storage_name,
-                locale_candidate,
-                None,
-                resolved_custom_prompts_root,
-            )
-            if include_custom and custom_path is not None:
-                return custom_path
-
-            if include_custom and include_legacy_custom:
-                legacy_custom_path = _resolve_legacy_custom_prompt_path(storage_name, resolved_custom_prompts_root)
-                if legacy_custom_path is not None:
-                    return legacy_custom_path
-
-            base_dir = resolved_prompts_root / locale_candidate
-            for candidate_path in _iter_prompt_path_candidates(base_dir, normalized_name):
-                if candidate_path.is_file():
-                    return candidate_path
+        info = _prompt_paths_for_locale(resolved_prompts_root, locale_candidate, _PROMPT_CACHE_REVISION).get(normalized_name)
+        if info is not None:
+            return info.path
 
     raise FileNotFoundError(t("prompt.template_not_found", prompt_locale=requested_locale, name=normalized_name))
 
@@ -459,6 +424,7 @@ def clear_prompt_cache() -> None:
     global _PROMPT_CACHE_REVISION
     _PROMPT_CACHE_REVISION += 1
     _read_prompt_template.cache_clear()
+    _prompt_paths_for_locale.cache_clear()
 
 
 def get_prompt_cache_revision() -> int:

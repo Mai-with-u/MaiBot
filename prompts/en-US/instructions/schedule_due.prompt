@@ -1,0 +1,3 @@
+[Scheduled task due; internal task]
+{schedule}
+Act on this task in the current chat. Use the current mode's reply mechanism if you need to speak. After completing the task, archive it using schedule complete and the real id above. Delivery means triggered, not completed.

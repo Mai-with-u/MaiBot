@@ -23,6 +23,7 @@ from src.common.data_models.message_component_data_model import (
     TextComponent,
 )
 from src.common.logger import get_logger
+from src.common.prompt_i18n import load_prompt
 from src.common.message_repository import find_messages
 from src.common.utils.utils_config import ExpressionConfigUtils, JargonConfigUtils
 from src.config.config import global_config, model_config
@@ -78,6 +79,7 @@ from src.web_search.service import WebSearchService
 from src.plugin_runtime.tool_provider import PluginToolProvider
 from src.services.message_word_frequency_service import update_high_frequency_terms_from_context_messages
 
+from .tool_discovery import search_tool_specs
 from .chat_loop_service import ChatResponse, MaisakaChatLoopService
 from .reasoning_engine import MaisakaReasoningEngine
 from .subagent_tasks import SubAgentTask, SubAgentTaskManager, format_tool_usage
@@ -189,6 +191,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         self._consecutive_idle_count = 0
         self._current_action_tool_names: set[str] = set()
         self.discovered_tool_names: set[str] = set()
+        self._tool_search_tail_loading: bool = False
         self.deferred_tool_specs_by_name: dict[str, ToolSpec] = {}
 
         self._min_extraction_interval = 30
@@ -735,6 +738,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         self._chat_history.append(InternalContextMessage(
             raw_message=MessageSequence([TextComponent(text), *images]), visible_text=text,
             timestamp=datetime.now(), message_id=task_id, source_kind=source_kind,
+            current_cycle_only=source_kind == "desktop_pet_proactive_wake",
         ))
         self._arm_forced_turn_state(message_id=task_id, reason=reason)
         self._queue_proactive_turn(proactive_trigger_message)
@@ -779,22 +783,12 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         task_preview = task.description.replace("\n", " ")
         if len(task_preview) > 200:
             task_preview = f"{task_preview[:200]}…"
-        detail_lines = [
-            f'<subagent_result id="{task.task_id}" status="{task.status}">',
-            f"你派发的子代理任务已结束。任务：{task_preview}",
-            f"工具使用：{format_tool_usage(task.tool_usage)}",
-        ]
-        if task.status == "completed":
-            detail_lines.append(f"结论：\n{task.conclusion}")
-        else:
-            detail_lines.append(f"子代理没有完成任务：{task.error_message}")
-        detail_lines.extend(
-            [
-                "请结合当前聊天自行决定是否使用这个结论，以及是否需要回复。",
-                "</subagent_result>",
-            ]
-        )
-        visible_text = "\n".join(detail_lines)
+        visible_text = load_prompt(
+            "subagent_finished", task_id=task.task_id, status=task.status,
+            task_preview=task_preview, tool_usage=format_tool_usage(task.tool_usage),
+            conclusion=task.conclusion if task.status == "completed" else "",
+            error_message=task.error_message if task.status != "completed" else "",
+        ).strip()
         self._chat_history.append(
             InternalContextMessage(
                 raw_message=MessageSequence([TextComponent(visible_text)]),
@@ -1500,16 +1494,16 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
     def build_deferred_tools_reminder(self) -> str:
         """构造供 planner 使用的 deferred tools 提示消息。"""
 
-        undiscovered_tool_specs = [
-            tool_spec
-            for tool_name, tool_spec in self.deferred_tool_specs_by_name.items()
-            if tool_name not in self.discovered_tool_names
+        # 末尾加载模式的目录不随激活改变；普通模式只列出尚未展开的工具。
+        deferred_tool_specs = [
+            spec for name, spec in self.deferred_tool_specs_by_name.items()
+            if self._tool_search_tail_loading or name not in self.discovered_tool_names
         ]
-        if not undiscovered_tool_specs:
+        if not deferred_tool_specs:
             return ""
 
         tool_lines: list[str] = []
-        for index, tool_spec in enumerate(undiscovered_tool_specs, start=1):
+        for index, tool_spec in enumerate(deferred_tool_specs, start=1):
             tool_name = tool_spec.name.strip()
             tool_description = tool_spec.description.strip()
             if tool_description:
@@ -1535,39 +1529,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
     ) -> list[ToolSpec]:
         """按名称或简要描述搜索 deferred tools。"""
 
-        normalized_query = " ".join(query.lower().split()).strip()
-        if not normalized_query:
-            return []
-
-        scored_matches: list[tuple[int, str, ToolSpec]] = []
-        query_terms = [term for term in normalized_query.replace("_", " ").replace("-", " ").split() if term]
-        for tool_name, tool_spec in self.deferred_tool_specs_by_name.items():
-            lower_name = tool_name.lower()
-            lower_description = tool_spec.description.lower()
-            score = 0
-
-            if normalized_query == lower_name:
-                score += 1000
-            if lower_name.startswith(normalized_query):
-                score += 300
-            if normalized_query in lower_name:
-                score += 200
-            if normalized_query in lower_description:
-                score += 100
-
-            for query_term in query_terms:
-                if query_term in lower_name:
-                    score += 25
-                if query_term in lower_description:
-                    score += 10
-
-            if score <= 0:
-                continue
-
-            scored_matches.append((score, tool_name, tool_spec))
-
-        scored_matches.sort(key=lambda item: (-item[0], item[1]))
-        return [tool_spec for _, _, tool_spec in scored_matches[: max(1, limit)]]
+        return search_tool_specs(list(self.deferred_tool_specs_by_name.values()), query, limit=limit)
 
     def discover_deferred_tools(self, tool_names: Sequence[str]) -> list[str]:
         """将指定 deferred tools 标记为已发现，并返回本次新发现的工具名。"""

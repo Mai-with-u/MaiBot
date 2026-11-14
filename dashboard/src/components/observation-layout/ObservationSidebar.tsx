@@ -3,8 +3,11 @@ import { useQuery } from '@tanstack/react-query'
 import {
   BookOpen,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronsUpDown,
   Minus,
+  MoreHorizontal,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
@@ -13,16 +16,21 @@ import {
   Settings,
   Sun,
 } from 'lucide-react'
-import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { motion, useReducedMotion } from 'motion/react'
+import { useContext, useEffect, useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SidebarUpdateButton } from '@/components/layout/SidebarUpdateButton'
 import type { MenuItem } from '@/components/layout/types'
+import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { PromptWarningDot } from '@/components/ui/prompt-warning-dot'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { toggleThemeWithTransition, useTheme } from '@/components/use-theme'
 import { promptCatalogQueryOptions } from '@/lib/prompt-query'
+import { TourContext } from '@/components/tour/tour-context'
+import { isDesktopEmbedded, reportDesktopLayout } from '@/lib/desktop-host'
 import { queryClient } from '@/lib/query'
 import { isBotIndependentPath, useBotAvailable } from '@/host/state'
 import '@/styles/observation-key-state.css'
@@ -32,6 +40,7 @@ import { ObservationConversations } from './ObservationConversations'
 
 const SETTINGS_OPEN_STORAGE_KEY = 'maibot-observation-settings-open'
 const SETTINGS_COMPACT_STORAGE_KEY = 'maibot-observation-settings-compact'
+const SETTINGS_PAGE_SIZE = 12
 const LOG_PATHS = ['/logs', '/statistics', '/reasoning-process']
 
 /** 侧栏键位空间有限，常用入口用短名；完整名称仍在悬停提示和读屏里。 */
@@ -40,6 +49,7 @@ const SHORT_LABELS: Record<string, string> = {
   '/config/model': 'observation.keys.model',
   '/adapter-management': 'observation.keys.adapter',
   '/resource/learning': 'observation.keys.learning',
+  '/chat-management': 'observation.keys.mutualGroups',
   '/resource/knowledge-base': 'observation.keys.memory',
   '/plugin-config': 'observation.keys.plugin',
   '/plugins': 'observation.keys.market',
@@ -113,6 +123,7 @@ export function ObservationSidebar({
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const { theme, setTheme } = useTheme()
   const [settingsOpen, setSettingsOpen] = useState(loadSettingsOpen)
+  const [toolsOpen, setToolsOpen] = useState(false)
   const [settingsCompact, setSettingsCompact] = useState(() => {
     try {
       return localStorage.getItem(SETTINGS_COMPACT_STORAGE_KEY) === 'true'
@@ -120,6 +131,9 @@ export function ObservationSidebar({
       return false
     }
   })
+  const reducedMotion = useReducedMotion()
+  const [settingsPage, setSettingsPage] = useState(0)
+  const [settingsPageDirection, setSettingsPageDirection] = useState(1)
   const settingsViewport = useRef<HTMLDivElement>(null)
   const { data: promptCatalog } = useQuery(
     {
@@ -142,6 +156,12 @@ export function ObservationSidebar({
   // 折叠成图标轨时设置键总是显示，否则图标轨里就没有入口了
   const settingsVisible = settingsOpen || collapsed
   const settingsSingleRow = settingsCompact && !collapsed
+  const settingsPaginated = !collapsed && !settingsSingleRow
+  const settingsPageCount = Math.max(1, Math.ceil(settingsItems.length / SETTINGS_PAGE_SIZE))
+  const currentSettingsPage = Math.min(settingsPage, settingsPageCount - 1)
+  const visibleSettingsItems = settingsPaginated
+    ? settingsItems.slice(currentSettingsPage * SETTINGS_PAGE_SIZE, (currentSettingsPage + 1) * SETTINGS_PAGE_SIZE)
+    : settingsItems
 
   useEffect(() => {
     try {
@@ -160,23 +180,7 @@ export function ObservationSidebar({
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
     let maxScroll = viewport.scrollWidth - viewport.clientWidth
     let wheelTarget = viewport.scrollLeft
-    let wheelPosition = wheelTarget
-    let lastFrameTime = 0
-    let wheelFrame = 0
-
-    const animateWheel = (frameTime: number) => {
-      const remaining = wheelTarget - wheelPosition
-      if (Math.abs(remaining) <= 1) {
-        viewport.scrollLeft = wheelTarget
-        wheelFrame = 0
-        return
-      }
-      const elapsed = frameTime - lastFrameTime
-      lastFrameTime = frameTime
-      wheelPosition += remaining * (1 - Math.exp(-elapsed / 30))
-      viewport.scrollLeft = wheelPosition
-      wheelFrame = requestAnimationFrame(animateWheel)
-    }
+    let lastWheelTime = 0
 
     const updateScrollEdges = () => {
       const position = viewport.scrollLeft
@@ -184,26 +188,25 @@ export function ObservationSidebar({
       row.toggleAttribute('data-clipped-right', position < maxScroll - 1)
     }
     const scrollSettings = (event: WheelEvent) => {
-      if (
-        event.ctrlKey || event.shiftKey || event.deltaX || !event.deltaY ||
-        maxScroll <= 0
-      ) {
-        cancelAnimationFrame(wheelFrame)
-        wheelFrame = 0
+      // 横向手势由浏览器直接处理；只将纵向滚轮映射到这一排按钮。
+      if (event.ctrlKey || event.shiftKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY) || maxScroll <= 0) {
+        lastWheelTime = 0
         return
       }
 
-      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewport.clientWidth : 1
       event.preventDefault()
-      const from = wheelFrame ? wheelTarget : viewport.scrollLeft
-      wheelTarget = Math.min(maxScroll, Math.max(0, from + event.deltaY * unit))
-      if (reducedMotion.matches) {
-        viewport.scrollLeft = wheelTarget
-      } else if (!wheelFrame) {
-        wheelPosition = viewport.scrollLeft
-        lastFrameTime = performance.now()
-        wheelFrame = requestAnimationFrame(animateWheel)
-      }
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewport.clientWidth : 1
+      const delta = event.deltaY * unit
+      const now = performance.now()
+      const position = viewport.scrollLeft
+      const reversing = Math.sign(delta) !== Math.sign(wheelTarget - position)
+      const from = now - lastWheelTime < 200 && !reversing ? wheelTarget : position
+      wheelTarget = Math.min(maxScroll, Math.max(0, from + delta))
+      lastWheelTime = now
+      viewport.scrollTo({
+        left: wheelTarget,
+        behavior: reducedMotion.matches ? 'instant' : 'smooth',
+      })
     }
     const observer = new ResizeObserver(() => {
       maxScroll = viewport.scrollWidth - viewport.clientWidth
@@ -215,7 +218,6 @@ export function ObservationSidebar({
     viewport.addEventListener('scroll', updateScrollEdges, { passive: true })
     viewport.addEventListener('wheel', scrollSettings, { passive: false })
     return () => {
-      cancelAnimationFrame(wheelFrame)
       observer.disconnect()
       viewport.removeEventListener('scroll', updateScrollEdges)
       viewport.removeEventListener('wheel', scrollSettings)
@@ -223,6 +225,45 @@ export function ObservationSidebar({
       row.removeAttribute('data-clipped-right')
     }
   }, [settingsSingleRow, settingsVisible, settingsItems.length])
+
+  // 嵌入一键包时把侧栏宽度告诉外壳，顶栏品牌列跟着对齐；
+  // 教程或首次试聊进行中时锁住外壳的「回首页」，免得把引导打断
+  const sidebarRef = useRef<HTMLElement>(null)
+  const tourRunning = useContext(TourContext)?.state.isRunning === true
+  const setupTrial = useRouterState({
+    select: (state) => new URLSearchParams(state.location.searchStr).get('setupTrial') === 'true',
+  })
+  const homeLocked = tourRunning || setupTrial
+  const layoutRef = useRef({ collapsed, homeLocked })
+  const reportLayoutRef = useRef<() => void>(() => {})
+  useEffect(() => {
+    const sidebar = sidebarRef.current
+    if (!sidebar || !isDesktopEmbedded()) return
+    const report = () =>
+      reportDesktopLayout({ sidebarWidth: Math.round(sidebar.getBoundingClientRect().width), ...layoutRef.current })
+    reportLayoutRef.current = report
+    report()
+    // 折叠动画期间宽度每帧都在变，只在停稳后报一次；外壳那边自己按同一条缓动跟着走
+    let timer = 0
+    const observer = new ResizeObserver(() => {
+      window.clearTimeout(timer)
+      timer = window.setTimeout(report, 120)
+    })
+    observer.observe(sidebar)
+    return () => {
+      window.clearTimeout(timer)
+      observer.disconnect()
+      reportLayoutRef.current = () => {}
+      // 只有侧栏真正卸载（例如回到登录页）才报宽度 0，外壳退回默认宽度
+      reportDesktopLayout({ sidebarWidth: 0, collapsed: layoutRef.current.collapsed, homeLocked: true })
+    }
+  }, [])
+  // 教程开关立即告诉外壳；折叠状态等宽度停稳后由上面的观察器报
+  useEffect(() => {
+    const lockChanged = layoutRef.current.homeLocked !== homeLocked
+    layoutRef.current = { collapsed, homeLocked }
+    if (lockChanged) reportLayoutRef.current()
+  }, [collapsed, homeLocked])
 
   const toggleSettings = () => {
     setSettingsOpen((current) => {
@@ -235,8 +276,69 @@ export function ObservationSidebar({
     })
   }
 
+  const toolClassName = collapsed ? 'flex w-full items-center gap-3 rounded-sm px-3 py-2 text-sm hover:bg-accent focus-visible:outline-2' : undefined
+  const toolItem = (element: ReactElement) => collapsed ? <DropdownMenuItem asChild>{element}</DropdownMenuItem> : element
+  const tools = (
+    <>
+      <BotSwitcher submenu={collapsed}>
+        <button type="button" data-observation-icon-key={!collapsed || undefined} className={toolClassName}>
+          <ChevronsUpDown aria-hidden="true" />
+          {collapsed && <span>{t('hostManager.currentBot')}</span>}
+        </button>
+      </BotSwitcher>
+      {toolItem(<Link
+        to="/settings"
+        data-observation-icon-key={!collapsed || undefined}
+        data-active={pathname === '/settings' ? 'true' : 'false'}
+        className={toolClassName}
+        title={t('sidebar.menu.settings')}
+        aria-label={t('sidebar.menu.settings')}
+        onClick={() => setToolsOpen(false)}
+      >
+        <Settings aria-hidden="true" />
+        {collapsed && <span>{t('sidebar.menu.settings')}</span>}
+      </Link>)}
+      {toolItem(<button
+        type="button"
+        data-observation-icon-key={!collapsed || undefined}
+        className={toolClassName}
+        title={t('header.viewDocs')}
+        aria-label={t('header.viewDocs')}
+        onClick={() => { setToolsOpen(false); window.open('https://docs.maibot.chat/', '_blank') }}
+      >
+        <BookOpen aria-hidden="true" />
+        {collapsed && <span>{t('header.viewDocs')}</span>}
+      </button>)}
+      {toolItem(<button
+        type="button"
+        data-observation-icon-key={!collapsed || undefined}
+        className={toolClassName}
+        aria-label={actualTheme === 'dark' ? t('header.switchToLight') : t('header.switchToDark')}
+        title={actualTheme === 'dark' ? t('header.switchToLight') : t('header.switchToDark')}
+        onClick={(event) => toggleThemeWithTransition(actualTheme === 'dark' ? 'light' : 'dark', setTheme, event)}
+      >
+        {actualTheme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+        {collapsed && <span>{actualTheme === 'dark' ? t('header.switchToLight') : t('header.switchToDark')}</span>}
+      </button>)}
+      <KeyTooltip label={collapsed ? t('common.search') : `${t('common.search')} · Ctrl K`} side={collapsed ? 'right' : 'bottom'}>
+        {toolItem(<button
+          type="button"
+          data-observation-icon-key={!collapsed || undefined}
+          className={collapsed ? toolClassName : 'ml-auto'}
+          aria-label={t('common.search')}
+          aria-keyshortcuts="Control+K Meta+K"
+          onClick={() => { setToolsOpen(false); onOpenSearch() }}
+        >
+          <Search aria-hidden="true" />
+          {collapsed && <span>{t('common.search')}</span>}
+        </button>)}
+      </KeyTooltip>
+    </>
+  )
+
   return (
     <aside
+      ref={sidebarRef}
       data-observation-sidebar="true"
       data-collapsed={collapsed ? 'true' : 'false'}
       aria-label={t('a11y.sidebarNav')}
@@ -271,7 +373,7 @@ export function ObservationSidebar({
 
       <section data-observation-settings="true">
         {!collapsed && (
-          <div className="flex items-center gap-1">
+          <div className="relative flex items-center gap-1">
             <button
               type="button"
               data-observation-section-title="true"
@@ -282,6 +384,37 @@ export function ObservationSidebar({
               <span>{t('observation.settingsBlock')}</span>
               <ChevronDown aria-hidden="true" data-open={settingsVisible ? 'true' : 'false'} />
             </button>
+            {settingsVisible && settingsPaginated && settingsPageCount > 1 && (
+              <div className="absolute left-1/2 flex -translate-x-1/2 items-center gap-1" role="group" aria-label="设置分页">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="上一页设置"
+                  disabled={currentSettingsPage === 0}
+                  onClick={() => {
+                    setSettingsPageDirection(-1)
+                    setSettingsPage(currentSettingsPage - 1)
+                  }}
+                >
+                  <ChevronLeft aria-hidden="true" />
+                </Button>
+                <span className="text-xs tabular-nums" aria-live="polite">
+                  {currentSettingsPage + 1}/{settingsPageCount}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="下一页设置"
+                  disabled={currentSettingsPage === settingsPageCount - 1}
+                  onClick={() => {
+                    setSettingsPageDirection(1)
+                    setSettingsPage(currentSettingsPage + 1)
+                  }}
+                >
+                  <ChevronRight aria-hidden="true" />
+                </Button>
+              </div>
+            )}
             {settingsVisible && (
               <button
                 type="button"
@@ -299,13 +432,21 @@ export function ObservationSidebar({
         {settingsVisible && (
           <ScrollArea
             scrollbars={settingsSingleRow ? 'horizontal' : 'vertical'}
-            className="min-h-0"
+            className={collapsed ? 'min-h-0 flex-1' : 'min-h-0'}
             data-observation-settings-row={settingsSingleRow || undefined}
             viewportRef={settingsViewport}
           >
             <nav aria-label={t('observation.settingsBlock')}>
-              <ul data-observation-keys="true" data-single-row={settingsSingleRow}>
-                {settingsItems.map((item) => {
+              <motion.ul
+                key={settingsPaginated ? currentSettingsPage : 'unpaged'}
+                data-observation-keys="true"
+                data-single-row={settingsSingleRow}
+                data-paginated={settingsPaginated && settingsPageCount > 1 || undefined}
+                initial={reducedMotion || !settingsPaginated ? false : { opacity: 0, x: settingsPageDirection * 12 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: reducedMotion ? 0 : 0.18, ease: 'easeOut' }}
+              >
+                {visibleSettingsItems.map((item) => {
                   const Icon = item.icon
                   const label = item.literalLabel ? item.label : t(item.label)
                   const shortLabel = SHORT_LABELS[item.path] ? t(SHORT_LABELS[item.path]) : label
@@ -357,7 +498,7 @@ export function ObservationSidebar({
                     </li>
                   )
                 })}
-              </ul>
+              </motion.ul>
             </nav>
           </ScrollArea>
         )}
@@ -367,57 +508,26 @@ export function ObservationSidebar({
 
       {botAvailable && <ObservationConversations collapsed={collapsed} />}
 
-      <div className={collapsed ? 'flex shrink-0 justify-center' : 'shrink-0'}>
+      <div data-observation-update="true" className={collapsed ? 'flex shrink-0 justify-center' : 'shrink-0'}>
         <SidebarUpdateButton collapsed={collapsed} />
       </div>
       <footer data-observation-tools="true">
-        <BotSwitcher>
-          <button type="button" data-observation-icon-key="true">
-            <ChevronsUpDown aria-hidden="true" />
-          </button>
-        </BotSwitcher>
-        <Link
-          to="/settings"
-          data-observation-icon-key="true"
-          data-active={pathname === '/settings' ? 'true' : 'false'}
-          title={t('sidebar.menu.settings')}
-          aria-label={t('sidebar.menu.settings')}
-        >
-          <Settings aria-hidden="true" />
-        </Link>
-        <button
-          type="button"
-          data-observation-icon-key="true"
-          title={t('header.viewDocs')}
-          aria-label={t('header.viewDocs')}
-          onClick={() => window.open('https://docs.mai-mai.org', '_blank')}
-        >
-          <BookOpen aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          data-observation-icon-key="true"
-          aria-label={actualTheme === 'dark' ? t('header.switchToLight') : t('header.switchToDark')}
-          title={actualTheme === 'dark' ? t('header.switchToLight') : t('header.switchToDark')}
-          onClick={(event) =>
-            toggleThemeWithTransition(actualTheme === 'dark' ? 'light' : 'dark', setTheme, event)
-          }
-        >
-          {actualTheme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
-        </button>
-
-        <KeyTooltip label={`${t('common.search')} · Ctrl K`} side={collapsed ? 'right' : 'bottom'}>
-          <button
-            type="button"
-            data-observation-icon-key="true"
-            className={collapsed ? undefined : 'ml-auto'}
-            aria-label={t('common.search')}
-            aria-keyshortcuts="Control+K Meta+K"
-            onClick={onOpenSearch}
-          >
-            <Search aria-hidden="true" />
-          </button>
-        </KeyTooltip>
+        {collapsed ? (
+          <div>
+            <DropdownMenu modal={false} open={toolsOpen} onOpenChange={setToolsOpen}>
+              <DropdownMenuTrigger asChild>
+                <button type="button" data-observation-icon-key="true"
+                  aria-label={t('header.moreActions')}>
+                  <MoreHorizontal aria-hidden="true" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="right" align="end" sideOffset={12}
+                aria-label={t('header.moreActions')} className="w-52 max-h-[calc(100dvh-2rem)] overflow-y-auto p-2 [&_svg]:size-4 [&_svg]:shrink-0">
+                {tools}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        ) : tools}
       </footer>
     </aside>
   )

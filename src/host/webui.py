@@ -15,15 +15,18 @@ import asyncio
 import os
 import re
 import socket
+import sqlite3
 import uvicorn
 
-from .anti_crawler import AntiCrawlerMiddleware, create_robots_txt_response
+from src.common.logger import get_logger
+
+from .anti_crawler import AntiCrawlerMiddleware, ClientIPResolver, create_robots_txt_response
 from .authentication import HostCredentials
 from .config import HostConfig
 from .data_transfer import register_data_transfer
 from .maintenance import HostMaintenance
 from .maim import register_maim_gateway
-from .proxy import DEVELOPMENT_ORIGINS, BotProxy, register_bot_proxy, same_webui_origin
+from .proxy import BotProxy, register_bot_proxy
 from .sessions import HostSessions
 from .settings import register_common_settings
 from .static import report_static_status, resolve_static_path, static_response
@@ -31,6 +34,8 @@ from .supervisor import BotSupervisor
 from .webui_auth import authenticate, register_host_auth
 
 
+_DEVELOPMENT_ORIGINS = frozenset({"http://localhost:7999", "http://127.0.0.1:7999"})
+logger = get_logger("host.webui")
 _DESKTOP_PET_SESSION_HTML = """<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -55,25 +60,27 @@ class UpdateRequest(BaseModel):
 
 
 def create_host_app(
-    supervisor: BotSupervisor, maintenance: HostMaintenance, sessions: HostSessions, credentials: HostCredentials,
+    supervisor: BotSupervisor, maintenance: HostMaintenance,
+    sessions: Optional[HostSessions], credentials: Optional[HostCredentials],
     stopping: asyncio.Event, *, config: HostConfig, static_path: Optional[Path] = None,
+    management_error: str = "",
 ) -> FastAPI:
     """WebUI 关闭时只提供文件传输，不影响适配器下载文件。"""
     proxy = BotProxy(supervisor, sessions)
     workspace = supervisor.workspace
-    management = config.webui_enabled
+    get_client_ip = ClientIPResolver(config.trusted_proxies, config.trust_xff).get_client_ip
 
     app = FastAPI(title="MaiBot WebUI", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(
-        CORSMiddleware, allow_origins=list(DEVELOPMENT_ORIGINS), allow_credentials=True,
+        CORSMiddleware, allow_origins=list(_DEVELOPMENT_ORIGINS), allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "X-MaiBot-Host", "Range", "Accept"],
         expose_headers=["Content-Disposition", "Content-Range"],
     )
     app.add_middleware(
         AntiCrawlerMiddleware, mode=config.anti_crawler_mode, allowed_ips=config.allowed_ips,
-        trusted_proxies=config.trusted_proxies, trust_xff=config.trust_xff,
-        is_authenticated=lambda request: sessions.valid(request.cookies.get(sessions.cookie_name)),
+        get_client_ip=get_client_ip,
+        is_authenticated=proxy.is_authenticated,
     )
 
     @app.get("/robots.txt", include_in_schema=False)
@@ -82,18 +89,16 @@ def create_host_app(
 
     @app.middleware("http")
     async def protect_requests(request: Request, call_next: Any) -> Response:
-        if request.url.path.startswith("/api/"):
+        path = request.url.path
+        if path.startswith("/api/"):
             if request.method not in {"GET", "HEAD", "OPTIONS"}:
-                login_origin = sessions.login_origin(request.cookies.get(sessions.cookie_name))
-                if not same_webui_origin(request.headers, login_origin):
-                    return JSONResponse(status_code=403, content={"detail": "请从当前 WebUI 发起操作"})
-                host_operation = request.url.path.startswith("/api/host/") and "/proxy/" not in request.url.path
+                host_operation = path.startswith("/api/host/") and "/proxy/" not in path
                 if host_operation and request.headers.get("x-maibot-host") != "1":
                     return JSONResponse(status_code=403, content={"detail": "缺少管理请求标识"})
             if stopping.is_set():
                 return JSONResponse(status_code=503, content={"detail": "宿主正在关闭"})
         response = await call_next(request)
-        if request.url.path.startswith("/api/"):
+        if path.startswith("/api/"):
             # 静态资源由 static_response 决定缓存策略；接口响应一律不缓存。
             response.headers["Cache-Control"] = "no-store"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -102,8 +107,12 @@ def create_host_app(
         return response
 
     register_maim_gateway(app, supervisor)
-    if not management:
+    if not config.webui_enabled or sessions is None or credentials is None:
         register_bot_proxy(app, proxy, management=False)
+        if management_error:
+            @app.get("/api/host/mode")
+            async def unavailable_mode() -> None:
+                raise HTTPException(503, management_error)
         return app
 
     async def require_session(request: Request) -> None:
@@ -113,7 +122,7 @@ def create_host_app(
 
     register_data_transfer(app, maintenance, require_session)
     register_bot_proxy(app, proxy, management=True)
-    register_host_auth(app, sessions, credentials, require_session)
+    register_host_auth(app, sessions, credentials, require_session, get_client_ip)
     register_common_settings(app, workspace, require_session)
 
     async def mode_payload(request: Request, authenticated: bool, bot_id: Optional[str] = None) -> Dict[str, Any]:
@@ -163,8 +172,8 @@ def create_host_app(
         # WebView 对 'self' 与 WS scheme 的匹配不同，显式允许同 Host 的 WS/WSS，兼容 TLS 反代。
         host = request.headers.get("host", "")
         login_origin = sessions.login_origin(request.cookies.get(sessions.cookie_name))
-        if login_origin and login_origin not in DEVELOPMENT_ORIGINS:
-            authority = urlsplit(login_origin).netloc
+        if login_origin and login_origin not in _DEVELOPMENT_ORIGINS:
+            authority = login_origin.partition("://")[2]
             if authority.lower().rpartition(":")[0] == host.lower():
                 host = authority
         if re.fullmatch(r"(?:[A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?", host) is None:
@@ -310,14 +319,23 @@ class HostWebUI:
         self.hosts = config.bind_hosts()
         self.port = config.port
         self.base_url = config.local_base_url()
-        self.credentials = HostCredentials(supervisor.workspace.host_directory / "webui.json")
-        self.sessions = HostSessions(
-            supervisor.workspace.root, credentials=self.credentials, secure_cookie=config.secure_cookie,
-        )
-        self.management = config.webui_enabled
+        self.credentials: Optional[HostCredentials] = None
+        self.sessions: Optional[HostSessions] = None
+        self.management_error = supervisor.workspace.webui_migration_error if config.webui_enabled else ""
+        if config.webui_enabled and not self.management_error:
+            try:
+                self.credentials = HostCredentials(supervisor.workspace.host_directory / "webui.json")
+                self.sessions = HostSessions(
+                    supervisor.workspace.root, credentials=self.credentials, secure_cookie=config.secure_cookie,
+                )
+            except (OSError, ValueError, sqlite3.Error):
+                self.management_error = "宿主 WebUI 认证初始化失败，请检查宿主日志"
+                logger.exception(f"{self.management_error}：{supervisor.workspace.host_directory}")
+        self.management = self.sessions is not None
         self.static_path = resolve_static_path() if self.management else None
         self.app = create_host_app(
-            supervisor, maintenance, self.sessions, self.credentials, stopping, config=config, static_path=self.static_path,
+            supervisor, maintenance, self.sessions, self.credentials, stopping, config=config,
+            static_path=self.static_path, management_error=self.management_error,
         )
         self._server: Optional[_HostHTTPServer] = None
         self.ssl_certfile = config.ssl_certfile
@@ -357,6 +375,8 @@ class HostWebUI:
             raise
 
     def open_url(self) -> str:
+        if self.sessions is None:
+            raise RuntimeError(self.management_error or "宿主 WebUI 未启用")
         return f"{self.base_url}/bots#ticket={self.sessions.issue_ticket()}"
 
     async def close(self) -> None:

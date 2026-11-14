@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Upload } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import type { FieldHookComponentProps } from '@/lib/field-hooks'
 import { backendApi } from '@/lib/http'
 import { Button } from '@/components/ui/button'
@@ -44,7 +45,8 @@ function BuiltinPetPreview() {
   )
 }
 
-export function DesktopPetSkinField({ value, onChange }: FieldHookComponentProps) {
+export function DesktopPetSkinField({ value, onChange, autoSave = false }: FieldHookComponentProps & { autoSave?: boolean }) {
+  const { t } = useTranslation()
   const [skins, setSkins] = useState<Skin[]>([])
   const [preview, setPreview] = useState<Skin | null>(null)
   const [animation, setAnimation] = useState('')
@@ -119,7 +121,9 @@ export function DesktopPetSkinField({ value, onChange }: FieldHookComponentProps
           {!skins.some(s => s.id === selected) && <option value={selected}>{selected}</option>}
           {skins.map(s => <option key={s.id} value={s.id}>{s.name} · {s.version}</option>)}
         </select>
-        <p className="text-xs text-muted-foreground">选择后保存配置生效，预览不打断桌宠。</p>
+        <p className="text-xs text-muted-foreground">
+          {autoSave ? t('observation.pet.skinAutoSaveHint') : '选择后保存配置生效，预览不打断桌宠。'}
+        </p>
       </div>
     </div>
     {!isBuiltin && preview && <div className="flex flex-wrap gap-2">{Object.keys(preview.animations).map(name => <Button key={name} type="button" variant={name === animation ? 'default' : 'outline'} size="sm" onClick={() => setAnimation(name)}>{name}</Button>)}</div>}

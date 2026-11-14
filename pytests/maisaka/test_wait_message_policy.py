@@ -1,10 +1,11 @@
-from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from src.chat.debounce import MessageDebouncer
+from src.core.tooling import ToolAvailabilityContext
+from src.maisaka.builtin_tool import get_builtin_tools
 from src.maisaka.builtin_tool.wait import handle_tool
 from src.maisaka.reasoning_engine import MaisakaReasoningEngine
 from src.maisaka.scenes.group.scheduling import GroupTurnScheduler
@@ -71,7 +72,7 @@ def test_group_wait_restarts_debounce_after_failed_wakeup(monkeypatch: pytest.Mo
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("tool", [None, "wait", "stop"])
+@pytest.mark.parametrize("tool", [None, "wait"])
 async def test_stale_wait_decision_is_not_executed(tool):
     engine = object.__new__(MaisakaReasoningEngine)
     engine._turn_passive_replyer = False
@@ -88,15 +89,46 @@ async def test_stale_wait_decision_is_not_executed(tool):
     assert runtime._chat_history
 
 
+@pytest.mark.parametrize("is_group_chat", [False, True])
+def test_wait_replaces_stop_in_ordinary_chat(is_group_chat: bool) -> None:
+    context = ToolAvailabilityContext(is_group_chat=is_group_chat)
+    names = {tool["name"] for tool in get_builtin_tools(context)}
+    assert {"reply", "wait"} <= names
+    assert "stop" not in names
+
+
 @pytest.mark.asyncio
-async def test_wait_absolute_time_and_validation():
+async def test_untimed_wait_ends_ordinary_planner_turn() -> None:
+    engine = object.__new__(MaisakaReasoningEngine)
+    engine._turn_passive_replyer = False
+    runtime = SimpleNamespace(
+        _has_pending_messages=lambda: False,
+        _end_planner_continuation=Mock(),
+        _reset_consecutive_wait_count=Mock(),
+        _enter_stop_state=Mock(),
+        _chat_history=[],
+    )
+    engine._runtime = runtime
+    engine._emit_planner_progress = AsyncMock()
+    response = SimpleNamespace(tool_calls=[SimpleNamespace(func_name="wait", args={})])
+    state = SimpleNamespace()
+
+    assert await engine._handle_planner_response_actions(
+        response=response, cycle_detail=None, state=state, planner_extra_lines=[]
+    )
+    runtime._enter_stop_state.assert_called_once_with()
+    assert state.cycle_end == engine._cycle_end_for_pause_tool("wait:end")
+    assert runtime._chat_history == []
+
+
+@pytest.mark.asyncio
+async def test_wait_seconds_and_validation():
     runtime = SimpleNamespace(_enter_counted_wait_state=Mock(return_value=1))
     ctx = SimpleNamespace(runtime=runtime, engine=SimpleNamespace(active_logical_turn_id="turn"),
                           build_success_result=Mock())
-    deadline = datetime.now(timezone.utc) + timedelta(seconds=60)
-    invocation = SimpleNamespace(arguments={"until": deadline.isoformat()}, call_id="call", tool_name="wait")
+    invocation = SimpleNamespace(arguments={"seconds": 60}, call_id="call", tool_name="wait")
     await handle_tool(ctx, invocation)
-    assert 59 <= runtime._enter_counted_wait_state.call_args.kwargs["seconds"] <= 60
-    invocation.arguments = {"seconds": 1, "until": deadline.isoformat()}
+    assert runtime._enter_counted_wait_state.call_args.kwargs["seconds"] == 60
+    invocation.arguments = {"seconds": -1}
     with pytest.raises(ValueError):
         await handle_tool(ctx, invocation)

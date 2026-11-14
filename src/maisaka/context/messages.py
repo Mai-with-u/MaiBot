@@ -620,6 +620,11 @@ class InternalContextMessage(ContentContextMessage):
     """内部生成或插件插入的上下文，不占据真实 IM 消息位置。"""
 
     source_kind: str = "internal"
+    current_cycle_only: bool = False
+
+    def consume_once(self) -> bool:
+        """仅供当前回合使用的内部提示在回合结束后移除。"""
+        return not self.current_cycle_only
 
 
 @dataclass(slots=True)

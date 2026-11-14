@@ -78,6 +78,10 @@ from src.maisaka.visual.mode_utils import resolve_enable_visual_planner
 
 from src.maisaka.scenes.factory import get_prompt_profile
 
+from .lightweight import is_lightweight_private_chat
+from .planner_action_judge import complete_missing_planner_action
+from .tool_arguments import filter_tool_call_items
+
 REQUEST_TYPE_BY_REQUEST_KIND = {
     "expression_selector": "expression.selector",
     "planner": "maisaka.planner",
@@ -92,17 +96,6 @@ PROMPT_PREVIEW_CATEGORY_BY_REQUEST_KIND = {
     "sub_agent": "sub_agent",
 }
 CONTEXT_SELECTION_CACHE_STABILITY_RATIO = 2.0
-FOCUS_PLANNER_FINAL_USER_REMINDER_TEMPLATE = (
-    "你需要输出对{bot_name}发言的分析，视情况输出文本内容的分析，思考是否进行工具调用"
-)
-PLANNER_FINAL_USER_REMINDER = "请你进行分析，是不调用工具，进行思考和等待\n还是使用工具搜集处理信息或使用reply回复"
-PASSIVE_PLANNER_FINAL_USER_REMINDERS = {
-    "zh-CN": "需要信息或操作时调用工具；决定发言时直接输出指导正文，不附带工具调用；不发言用 stop，需要稍后判断用 wait。",
-    "en-US": "Use tools for information or actions. To speak, output guidance without tool calls. Use stop to stay silent, or wait to reconsider later.",
-    "ja-JP": "情報や操作が必要ならツールを使い、発言する場合はツール呼び出しを伴わない指針本文を出力してください。発言しない場合は stop、後で再判断する場合は wait を使ってください。",
-}
-
-
 @dataclass(slots=True)
 class ChatResponse:
     """LLM 对话循环单步响应。"""
@@ -320,6 +313,10 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                             "type": "string",
                             "description": "Hook 可追加到本次 replyer 提示词中的额外回复要求。",
                         },
+                        "match_text": {
+                            "type": "string",
+                            "description": "本次回复所针对的最新用户消息文本，供插件做关键词等匹配；无可用文本时为空字符串。",
+                        },
                         "attempt": {
                             "type": "integer",
                             "description": "当前生成尝试序号，从 1 开始。",
@@ -355,6 +352,7 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                         "task_name",
                         "model_name",
                         "extra_prompt",
+                        "match_text",
                         "attempt",
                         "retry_count",
                         "max_retries",
@@ -681,6 +679,7 @@ class MaisakaChatLoopService:
         self._llm_chat_clients: dict[str, LLMServiceClient] = {}
         self.planner_request_snapshot: PlannerRequestSnapshot | None = None
         self.passive_replyer_override: Optional[bool] = None
+        self.lightweight_private_override: Optional[bool] = None
 
     @property
     def behavior_style_prompt(self) -> str:
@@ -810,15 +809,24 @@ class MaisakaChatLoopService:
         """构造每轮 Planner 请求末尾的一次性 user 提醒。"""
 
         prompt_name = self._get_chat_prompt_name()
-        if prompt_name == "maisaka_chat_passive":
-            return PASSIVE_PLANNER_FINAL_USER_REMINDERS.get(get_locale(), PASSIVE_PLANNER_FINAL_USER_REMINDERS["zh-CN"])
-        if prompt_name == "maisaka_chat":
-            return PLANNER_FINAL_USER_REMINDER
-        return FOCUS_PLANNER_FINAL_USER_REMINDER_TEMPLATE.format(bot_name=global_config.bot.nickname.strip())
+        if prompt_name == "maisaka_chat_lightweight":
+            return ""
+        instruction = {
+            "maisaka_chat": "planner_turn_action",
+            "maisaka_chat_passive": "planner_turn_passive",
+            "maisaka_chat_focus": "planner_turn_focus",
+        }[prompt_name]
+        return load_prompt(instruction, bot_name=global_config.bot.nickname.strip()).strip()
 
     def _get_chat_prompt_name(self) -> str:
         """选择当前聊天使用的 Planner 模板。"""
 
+        lightweight = (
+            self.lightweight_private_override if self.lightweight_private_override is not None
+            else is_lightweight_private_chat(self._session_id)
+        )
+        if lightweight:
+            return "maisaka_chat_lightweight"
         if focus_mode_manager.is_enabled_for_session(self._session_id, is_group_chat=self._is_group_chat):
             return "maisaka_chat_focus"
         passive_replyer = (
@@ -896,13 +904,7 @@ class MaisakaChatLoopService:
     def _build_planner_idle_focus_rule(self) -> str:
         """构造 Focus 模式下空闲等待动作提示。"""
 
-        return self._localized_text(
-            {
-                "en-US": "Consider all chats in the shared context. Every tool requires its target session_id. reply.after_reply controls the entire group: stop by default, continue for further actions, or wait with wait_seconds. Finish without tools when no action is needed.",
-                "ja-JP": "共有コンテキスト内の全チャットを判断し、各ツールに対象の session_id を指定してください。reply.after_reply はグループ全体に適用され、既定は stop、行動を続けるなら continue、待機するなら wait と wait_seconds を使います。行動が不要ならツールを呼ばず終了してください。",
-                "zh-CN": "结合共享上下文中的所有聊天判断，每个工具填写目标 session_id；reply.after_reply 作用于整个组，默认 stop，需继续操作选 continue，需等待选 wait 并填写 wait_seconds。没有需要执行的动作时不调用工具，静默结束本轮思考。",
-            }
-        )
+        return load_prompt("planner_turn_focus", bot_name=global_config.bot.nickname.strip()).strip()
 
     def _build_query_memory_rule(self) -> str:
         """按当前聊天类型构造记忆检索提示。"""
@@ -913,21 +915,7 @@ class MaisakaChatLoopService:
 
         if not global_config.capabilities.planner_subagent:
             return ""
-        rule = self._localized_text(
-            {
-                "en-US": "- subagent(): When something needs looking up before you can answer or judge it (reading docs, searching the web, checking version or plugin information, finding images, verifying a claim, and so on), prefer handing it to a sub-agent: state clearly what to find out and grant it the tools it may need. It only hands you its conclusion. Call a tool directly only for things that take a single step.",
-                "ja-JP": "- subagent()：答えたり判断したりする前に調べものが必要なこと（ドキュメントの確認、ウェブ検索、バージョンやプラグイン情報の確認、画像探し、ある主張の検証など）は、サブエージェントに任せることを優先してください。何を調べるかを明確に書き、使えそうなツールを許可します。サブエージェントは結論だけをあなたに渡します。一手で済むことだけ、該当するツールを直接呼び出してください。",
-                "zh-CN": "- subagent()：遇到需要查资料才能回答或判断的事（查文档、搜网页、查版本或插件信息、找图、核实某个说法等），优先交给子代理：写清楚要查什么，把用得上的工具授权给它；它查完只把结论交给你。只有一步就能完成的事才直接调用对应工具。",
-            }
-        )
-        rule += self._localized_text(
-            {
-                "en-US": " The sub-agent runs in the background: after dispatching it you do not need to wait and can keep chatting; its conclusion will be sent back to you later.",
-                "ja-JP": "サブエージェントはバックグラウンドで動作します。依頼したあとは待つ必要はなく、会話を続けてかまいません。結論は後であなたに返されます。",
-                "zh-CN": "子代理在后台运行，派发后不用等它，可以继续聊天，结论稍后会送回给你。",
-            }
-        )
-        return f"\n{rule}"
+        return "\n" + load_prompt("planner_subagent_policy").strip()
 
     def _build_current_chat_attention_tail_message(self) -> str:
         """构建追加到请求末尾的当前聊天专属注意事项。"""
@@ -1036,7 +1024,9 @@ class MaisakaChatLoopService:
         items: List[ContextItem] = []
         system_item = ContextItemBuilder().set_role(RoleType.System)
         uses_builtin_system_prompt = system_prompt is None and self._custom_chat_system_prompt is None
-        if uses_builtin_system_prompt and self._get_chat_prompt_name() in {"maisaka_chat", "maisaka_chat_passive"}:
+        if uses_builtin_system_prompt and self._get_chat_prompt_name() in {
+            "maisaka_chat", "maisaka_chat_passive", "maisaka_chat_lightweight",
+        }:
             # 普通聊天模板自己写明了名字：昵称说明跟在名字之后，且只说明与名字不同的昵称
             bot_nickname_notice = self._build_bot_nickname_notice(selected_history, skip_same_as_bot_name=True)
             resolved_system_prompt = self._build_chat_system_prompt(bot_nickname_notice=bot_nickname_notice)
@@ -1051,7 +1041,7 @@ class MaisakaChatLoopService:
             if bot_nickname_notice:
                 resolved_system_prompt = f"{bot_nickname_notice}\n\n{resolved_system_prompt}"
         # 普通 Planner 不持有 reply 工具，按真实会话展示可用回复扩展。
-        if self._get_chat_prompt_name() == "maisaka_chat_passive":
+        if self._get_chat_prompt_name() in {"maisaka_chat_passive", "maisaka_chat_lightweight"}:
             session = chat_manager.get_session_by_session_id(self._session_id)
             if session is not None:
                 capabilities = build_reply_extension_capabilities(ToolAvailabilityContext(
@@ -1398,6 +1388,27 @@ class MaisakaChatLoopService:
                 )
             except Exception as exc:
                 logger.warning(f"Hook maisaka.planner.after_response 返回的 output_items 无法反序列化，已忽略: {exc}")
+        action_judgment = None
+        if request_kind == "planner" and self._get_chat_prompt_name() in {"maisaka_chat", "maisaka_chat_focus"}:
+            action_judgment = await complete_missing_planner_action(
+                final_output_items, all_tools, session_id=self._session_id,
+                logical_turn_id=logical_turn_id, chat_history=selected_history, interrupt_flag=self._interrupt_flag,
+            )
+            if action_judgment is not None:
+                final_output_items = (*final_output_items, action_judgment.tool_call)
+                llm_duration_ms = round((time.perf_counter() - llm_started_at) * 1000, 2)
+        tool_schemas = {tool.name: tool.parameters_schema for tool in normalize_tool_options(list(all_tools))}
+        missing_tool_names = {
+            call.func_name for call in get_response_tool_calls(final_output_items)
+            if call.func_name not in tool_schemas
+        }
+        if missing_tool_names and self._tool_registry is not None:
+            for spec in await self._tool_registry.list_tools(ToolAvailabilityContext(
+                session_id=self._session_id, stream_id=self._session_id, is_group_chat=self._is_group_chat,
+            )):
+                if spec.name in missing_tool_names:
+                    tool_schemas[spec.name] = spec.parameters_schema
+        final_output_items = filter_tool_call_items(final_output_items, tool_schemas)
         prompt_tokens = self._coerce_int(after_response_kwargs.get("prompt_tokens"), generation_result.prompt_tokens)
         completion_tokens = self._coerce_int(
             after_response_kwargs.get("completion_tokens"),
@@ -1415,6 +1426,8 @@ class MaisakaChatLoopService:
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
         }
+        if action_judgment is not None:
+            prompt_metadata["planner_action_judge"] = action_judgment.metadata
         if global_config.debug.save_maisaka_reasoning:
             prompt_section_result = await asyncio.to_thread(
                 PromptCLIVisualizer.build_prompt_section_result,

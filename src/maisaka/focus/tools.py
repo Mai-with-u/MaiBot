@@ -12,6 +12,7 @@ from jsonschema import ValidationError, validate
 import asyncio
 import json
 
+from src.config.config import global_config
 from src.core.tooling import (
     ToolAvailabilityContext,
     ToolExecutionContext,
@@ -107,9 +108,11 @@ class FocusToolRouter:
     def __init__(self, group: FocusGroupRuntime) -> None:
         self.group = group
         self.routes: Dict[str, FocusToolRoute] = {}
+        self._tail_loading = False
 
     async def refresh(self) -> List[ToolSpec]:
         """合并各会话的工具，保留权限差异与同名工具的来源身份。"""
+        self._tail_loading = global_config.experimental.tool_search_tail_loading
         identities: Dict[Tuple[str, str, str, str], str] = {}
         routes: Dict[str, FocusToolRoute] = {}
         for session_id, runtime in list(self.group.members.items()):
@@ -167,6 +170,7 @@ class FocusToolRouter:
                 schema["properties"]["session_id"] = {"type": "string", "enum": sorted(route.variants)}
                 route.spec.parameters_schema = schema
         for session_id, runtime in self.group.members.items():
+            runtime._tool_search_tail_loading = self._tail_loading
             runtime.update_deferred_tool_specs(
                 [
                     route.spec
@@ -185,8 +189,10 @@ class FocusToolRouter:
     def definitions(self) -> List[Dict[str, Any]]:
         definitions = []
         for name, route in self.routes.items():
-            if self.is_default_visible(route.spec) or any(
-                name in self.group.members[session_id].discovered_tool_names for session_id in route.variants
+            if self.is_default_visible(route.spec) or (
+                not self._tail_loading and any(
+                    name in self.group.members[sid].discovered_tool_names for sid in route.variants
+                )
             ):
                 definitions.append(route.spec.to_llm_definition())
         return definitions

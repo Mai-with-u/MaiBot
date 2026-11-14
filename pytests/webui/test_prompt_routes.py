@@ -131,6 +131,46 @@ description = "用于分析表情包图片内容的模板。"
     assert file_info["description"] == "用于分析表情包图片内容的模板。"
 
 
+@pytest.mark.parametrize("kind", ["main", "instruction"])
+def test_prompt_kind_is_preserved_with_custom_versions(client: TestClient, kind: str) -> None:
+    source = config_router_module.PROMPTS_DIR / "zh-CN/replyer.prompt"
+    folder = source.parent / ("instructions" if kind == "instruction" else "main") / "nested"
+    folder.mkdir(parents=True)
+    source.rename(folder / source.name)
+    clear_prompt_cache()
+    client.put("/api/webui/config/prompts/zh-CN/replyer.prompt", json={"content": "Hi {name}", "create_version": True})
+    [info] = client.get("/api/webui/config/prompts").json()["files"]["zh-CN"]
+    assert info["kind"] == kind
+    assert info["customized"] is True
+    assert info["custom_version_count"] == 1
+
+
+def test_grouped_prompt_keeps_custom_versions_and_old_api_urls(client: TestClient) -> None:
+    url = "/api/webui/config/prompts/zh-CN/replyer.prompt"
+    saved = client.put(url, json={"content": "My {name}", "create_version": True, "label": "我的版本"}).json()
+    version_id = saved["active_version_id"]
+    source = config_router_module.PROMPTS_DIR / "zh-CN/replyer.prompt"
+    grouped = source.parent / "main" / source.name
+    grouped.parent.mkdir()
+    source.rename(grouped)
+    clear_prompt_cache()
+
+    [info] = client.get("/api/webui/config/prompts").json()["files"]["zh-CN"]
+    assert info["name"] == "replyer.prompt" and info["customized"]
+    content = client.get(url).json()
+    assert content["content"] == "My {name}"
+    assert content["active_version_id"] == version_id
+    assert content["versions"][0]["label"] == "我的版本"
+    root = config_router_module.CUSTOM_PROMPTS_DIR / "zh-CN"
+    assert (root / "replyer.prompt").exists()
+    assert (root / f".versions/replyer/{version_id}.prompt").exists()
+    assert not (root / "main/replyer.prompt").exists()
+    assert client.get(f"{url}/versions/{version_id}").json()["content"] == "My {name}"
+    client.delete(url)
+    assert not client.get(url).json()["customized"]
+    assert client.post(f"{url}/versions/{version_id}/activate").json()["content"] == "My {name}"
+
+
 def test_update_prompt_file_rejects_placeholder_mismatch(client: TestClient) -> None:
     response = client.put(
         "/api/webui/config/prompts/zh-CN/replyer.prompt",

@@ -222,6 +222,10 @@
   max-height: 42%;
   min-height: 0;
 }
+[data-observation-sidebar='true'][data-collapsed='true'] [data-observation-settings='true'] {
+  flex: 1 1 0;
+  max-height: none;
+}
 [data-observation-section-title='true'] {
   display: flex;
   align-items: center;
@@ -408,11 +412,59 @@
   justify-content: center;
   padding: 0.5rem 0;
 }
+[data-observation-sidebar='true'][data-collapsed='true'] [data-conversation-item='true'][data-selected='true'],
+[data-observation-sidebar='true'][data-collapsed='true'] [data-conversation-item='true']:hover {
+  background: transparent;
+  color: var(--surface-ink);
+}
+[data-observation-sidebar='true'][data-collapsed='true'] [data-conversation-item='true'][data-selected='true'] [data-conversation-avatar='true'],
+[data-observation-sidebar='true'][data-collapsed='true'] [data-conversation-item='true']:hover [data-conversation-avatar='true'],
+[data-observation-chat-stack='true'][data-active='true'] [data-observation-stack-avatar='true'] > [data-conversation-avatar='true'],
+[data-observation-chat-stack='true']:hover [data-observation-stack-avatar='true'] > [data-conversation-avatar='true'] {
+  border-color: #22c55e;
+  box-shadow: inset 0 0 0 1px #22c55e;
+}
 [data-observation-sidebar='true'][data-collapsed='true'] [data-conversation-scroll-list='true'] {
   --conversation-item-end-inset: 0px;
 }
+/* 图标轨里的对话只占实际高度，避免聊天屏在头像下方留下一整块空白。 */
+[data-observation-sidebar='true'][data-collapsed='true'] [data-observation-conversations='true'],
+[data-observation-sidebar='true'][data-collapsed='true'] [data-observation-conversation-list='true'],
+[data-observation-sidebar='true'][data-collapsed='true'] [data-conversation-scroll-list='true'] {
+  flex: 0 1 auto;
+}
+[data-observation-sidebar='true'][data-collapsed='true'] [data-conversation-scroll-list='true'] > [data-dashboard-scrollbar-viewport='true'] {
+  height: auto;
+}
+[data-observation-stack-avatar='true'] > [data-conversation-avatar='true'] {
+  width: 2rem;
+  height: 2rem;
+  border: 2px solid hsl(var(--background));
+}
+[data-observation-chat-stack='true'] {
+  cursor: pointer;
+}
+[data-observation-chat-stack='true'] [data-observation-chat-count='true'] {
+  position: absolute;
+  right: 2px;
+  bottom: 0;
+  box-sizing: border-box;
+  max-width: calc(100% - 4px);
+  overflow: hidden;
+  padding: 1px 3px;
+  font-family: sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 /* 折叠成图标轨后列宽只够放键位和头像，滚动条会压住内容；滚轮照常可用 */
 [data-observation-sidebar='true'][data-collapsed='true'] [data-dashboard-scrollbar='true'] {
+  display: none;
+}
+
+[data-observation-update='true']:empty {
   display: none;
 }
 
@@ -1217,3 +1269,51 @@
 :root[data-dashboard-style='millennium'] [data-observation-composer-input='true'] input { color: var(--mil-screen-ink); }
 [data-observation-composer-input='true']:focus-within { outline: 2px solid hsl(var(--ring)); outline-offset: 1px; }
 [data-observation-send='true'] svg { width: 1rem; height: 1rem; }
+
+/* 分页保留三行高度，最后一页不足十二项时不会带动下方会话列表跳动。 */
+[data-observation-keys='true'][data-paginated='true'] {
+  grid-template-rows: repeat(3, 3.125rem);
+}
+
+/* ---------- 原版风格的可读性 ----------
+   侧栏比主区暗一档，分出层次；设置键收进一张白卡；筛选框用输入框的白底和控件边，看得出能输入。 */
+:root[data-dashboard-style='modern'] [data-observation-shell='true'] {
+  --obs-side-bg: hsl(var(--muted) / 0.75);
+  --obs-key-ink: hsl(var(--foreground) / 0.78);
+  --obs-key-hover: hsl(var(--foreground) / 0.06);
+  --obs-input-bg: hsl(var(--background));
+  --obs-input-border: 1px solid hsl(var(--input));
+  --list-hover-bg: hsl(var(--foreground) / 0.06);
+}
+
+:root[data-dashboard-style='modern']
+  [data-observation-sidebar='true']:not([data-collapsed='true'])
+  [data-observation-settings='true'] {
+  padding: 0.5rem 0.375rem 0.375rem;
+  background: hsl(var(--background));
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.75rem;
+}
+
+:root[data-dashboard-style='modern'] [data-observation-key-label='true'] {
+  font-weight: 600;
+}
+
+:root[data-dashboard-style='modern'] [data-observation-conversations-head='true'] input {
+  background: hsl(var(--background));
+  border-color: hsl(var(--input));
+}
+
+:root[data-dashboard-style='modern'] [data-observation-count='true'] {
+  padding: 0 0.4375rem;
+  border-radius: 999px;
+  background: hsl(var(--foreground) / 0.08);
+  color: hsl(var(--foreground) / 0.8);
+  font-size: 0.6875rem;
+  letter-spacing: 0;
+}
+
+:root[data-dashboard-style='modern'] [data-observation-list-section='true'] {
+  padding-top: 0.75rem;
+  letter-spacing: 0.04em;
+}

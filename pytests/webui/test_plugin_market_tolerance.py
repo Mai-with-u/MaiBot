@@ -1,9 +1,10 @@
 """插件市场单条容错：一条脏记录不应让整个市场不可用。"""
 
-from types import SimpleNamespace
 from typing import Any, Dict
 
 import json
+
+import pytest
 
 from src.plugin_market import service
 from src.plugin_market.releases import parse_release_index
@@ -50,26 +51,6 @@ def _index_entry(plugin_id: str, release_manifest_id: str) -> Dict[str, Any]:
     }
 
 
-def _official_item(
-    plugin_id: str,
-    release_manifest_id: str,
-    repository_url: str = REPOSITORY_URL,
-    manifest_repository_url: str = REPOSITORY_URL,
-) -> Dict[str, Any]:
-    """构造官方市场摘要条目；两个仓库地址可分别置空以覆盖回退路径。"""
-
-    return {
-        "id": plugin_id,
-        "marketplace_id": plugin_id,
-        "repository_url": repository_url,
-        "install_mode": "releases",
-        "manifest": _manifest(plugin_id, manifest_repository_url),
-        "release": _release(release_manifest_id),
-        "stats": None,
-        "icon_url": None,
-    }
-
-
 def test_parse_release_index_skips_entry_with_mismatched_manifest_id():
     """条目内 release 的 manifest ID 与登记 ID 不一致时跳过该条，其余条目照常返回。"""
 
@@ -105,71 +86,54 @@ def test_parse_release_index_skips_entry_with_invalid_release_fields():
     assert [entry.id for entry in parsed.plugins] == ["github.example.valid"]
 
 
-def test_official_catalog_skips_item_with_mismatched_manifest_id(monkeypatch):
-    """官方摘要逐条解析，失配条目退化为空版本列表而不是拖垮整个列表。"""
-
-    monkeypatch.setattr(service, "download_source", lambda: SimpleNamespace(id="github"))
-
-    plugins = service._catalog(
-        [
-            _official_item("github.example.valid", "github.example.valid"),
-            _official_item("github.example.renamed", "github.example.old"),
-        ],
-        "official",
-    )
-
-    assert [plugin["id"] for plugin in plugins] == ["github.example.valid", "github.example.renamed"]
-    renamed = next(plugin for plugin in plugins if plugin["id"] == "github.example.renamed")
-    assert renamed["releases"]["versions"] == []
+@pytest.mark.parametrize("broken", [None, 42, {"id": "broken"}])
+def test_parse_release_index_skips_invalid_models(broken):
+    content = json.dumps({"schema_version": 1, "plugins": [
+        broken, _index_entry("valid", "valid"),
+    ]})
+    assert [entry.id for entry in parse_release_index(content).plugins] == ["valid"]
 
 
-def test_official_catalog_falls_back_to_official_repository_url(monkeypatch):
-    """清单未登记仓库地址时，回退发布信息改用官方条目声明的仓库地址，并把该地址写回插件信息。"""
-
-    monkeypatch.setattr(service, "download_source", lambda: SimpleNamespace(id="github"))
-
-    plugins = service._catalog(
-        [_official_item("github.example.renamed", "github.example.old", manifest_repository_url="")],
-        "official",
-    )
-
-    assert [plugin["id"] for plugin in plugins] == ["github.example.renamed"]
-    assert plugins[0]["releases"]["repositoryUrl"] == REPOSITORY_URL
-    assert plugins[0]["repository_url"] == REPOSITORY_URL
+def test_parse_release_index_all_invalid_entries_yield_empty_index():
+    content = json.dumps({"schema_version": 1, "plugins": [_index_entry("renamed", "old")]})
+    assert parse_release_index(content).plugins == []
 
 
-def test_official_catalog_falls_back_to_manifest_repository_url(monkeypatch):
-    """官方地址非空但过不了发布条目校验时改用清单登记的仓库地址，插件不因此被跳过。"""
-
-    monkeypatch.setattr(service, "download_source", lambda: SimpleNamespace(id="github"))
-
-    plugins = service._catalog(
-        [
-            _official_item(
-                "github.example.renamed", "github.example.old", repository_url="https://gitlab.com/example/plugin"
-            )
-        ],
-        "official",
-    )
-
-    assert [plugin["id"] for plugin in plugins] == ["github.example.renamed"]
-    assert plugins[0]["releases"]["repositoryUrl"] == REPOSITORY_URL
-    assert plugins[0]["repository_url"] == REPOSITORY_URL
+@pytest.mark.parametrize("content", ["not json", '{}', '{"schema_version":2,"plugins":[]}',
+                                     '{"schema_version":1,"plugins":{}}'])
+def test_parse_release_index_rejects_invalid_envelope(content):
+    with pytest.raises(ValueError):
+        parse_release_index(content)
 
 
-def test_official_catalog_skips_item_without_usable_repository_url(monkeypatch):
-    """两个来源都拿不到仓库地址时跳过该条，同批其余插件不受影响。"""
+def test_parse_release_index_rejects_conflicting_aliases():
+    first = _index_entry("first", "shared")
+    first["manifest_id"] = "shared"
+    second = _index_entry("second", "shared")
+    second["manifest_id"] = "shared"
+    with pytest.raises(ValueError, match="插件 ID 冲突"):
+        parse_release_index(json.dumps({"schema_version": 1, "plugins": [first, second]}))
 
-    monkeypatch.setattr(service, "download_source", lambda: SimpleNamespace(id="github"))
 
-    plugins = service._catalog(
-        [
-            _official_item("github.example.valid", "github.example.valid"),
-            _official_item(
-                "github.example.renamed", "github.example.old", repository_url="", manifest_repository_url=""
-            ),
-        ],
-        "official",
-    )
+@pytest.mark.parametrize("repository_url", ["", "https://gitlab.com/example/plugin"])
+def test_catalog_skips_item_without_usable_repository_url(repository_url):
+    """索引未收录且清单仓库地址无效时跳过该条，同批其余插件不受影响。"""
+    plugins = service._catalog([
+        {"id": "valid", "manifest": _manifest("valid")},
+        {"id": "invalid", "manifest": _manifest("invalid", repository_url)},
+    ])
+    assert [plugin["id"] for plugin in plugins] == ["valid"]
 
-    assert [plugin["id"] for plugin in plugins] == ["github.example.valid"]
+
+def test_catalog_keeps_renamed_plugin_without_invalid_release():
+    """历史快照 ID 不匹配时，目录仍可展示当前清单，但不提供无效发布版本。"""
+    index = parse_release_index(json.dumps({"schema_version": 1, "plugins": [
+        _index_entry("valid", "valid"), _index_entry("renamed", "old"),
+    ]}))
+    plugins = service._catalog([
+        {"id": "valid", "manifest": _manifest("valid")},
+        {"id": "renamed", "manifest": _manifest("renamed")},
+    ], index)
+    assert [plugin["id"] for plugin in plugins] == ["valid", "renamed"]
+    assert plugins[1]["releases"]["versions"] == []
+    assert plugins[1]["releases"]["recommended_version"] is None

@@ -69,7 +69,7 @@ _COMMIT_FIELD_SEPARATOR = "\x1f"
 BLOCKER_MESSAGES: Dict[str, str] = {
     "host_managed": "主程序由宿主统一更新，Bot 内不能直接更新",
     "uv_missing": "未找到 uv，请将 uv 加入 MaiBot 启动环境的 PATH",
-    "not_uv_tool": "当前不是 PyPI 来源的 uv tool 安装，请使用原安装工具更新",
+    "not_uv_tool": "当前安装不符合自动更新条件，请使用原安装方式更新",
     "package_runner_missing": "请通过 maibot run 启动，才能自动更新并重启",
     "other_instances_running": "同一工具环境还有其他实例运行，请先停止它们再更新",
     "package_busy": "工具环境正在更新，请稍后重试",
@@ -95,6 +95,12 @@ class LocalState:
     dirty_files: List[str] = field(default_factory=list)
     dependency_tool: Optional[str] = None
     deployment_type: str = "git"
+    blocker_message: Optional[str] = None  # 环境检查返回的具体原因及处理方式
+
+    def get_blocker_message(self, code: str) -> str:
+        if code == self.blocker and self.blocker_message is not None:
+            return self.blocker_message
+        return BLOCKER_MESSAGES[code]
 
 
 @dataclass
@@ -356,6 +362,7 @@ def inspect_local(root: Path = PROJECT_ROOT) -> LocalState:
             ensure_other_instances_stopped(environment, root)
         except SelfUpdateError as exc:
             state.blocker = exc.code
+            state.blocker_message = exc.message
         return state
     version, _ = _parse_pyproject((root / "pyproject.toml").read_text(encoding="utf-8"))
     state = LocalState(version=version, dependency_tool=detect_dependency_tool(root))
@@ -632,7 +639,7 @@ def request_update(
         package_index(selected)
         local = inspect_local(root)
         if local.blocker:
-            raise SelfUpdateError(local.blocker, BLOCKER_MESSAGES[local.blocker])
+            raise SelfUpdateError(local.blocker, local.get_blocker_message(local.blocker))
         if version_tuple(expected_commit) <= version_tuple(local.version):
             raise SelfUpdateError("already_up_to_date", "目标版本必须高于当前版本")
         if not release_exists(fetch_releases(selected), expected_commit):
@@ -653,7 +660,7 @@ def request_update(
 
     local = inspect_local(root)
     if local.blocker is not None:
-        raise SelfUpdateError(local.blocker, BLOCKER_MESSAGES[local.blocker])
+        raise SelfUpdateError(local.blocker, local.get_blocker_message(local.blocker))
     if local.branch is None or local.commit is None:
         raise ValueError("本地仓库状态缺少当前分支或提交，无法登记更新")
     if expected_commit == local.commit:
@@ -703,7 +710,7 @@ def _execute_update(pending: PendingUpdate, result: UpdateResult, logger: Any, r
         raise SelfUpdateError("request_expired", "更新请求已过期，请重新发起")
     local = inspect_local(root)
     if local.blocker is not None:
-        raise SelfUpdateError(local.blocker, BLOCKER_MESSAGES[local.blocker])
+        raise SelfUpdateError(local.blocker, local.get_blocker_message(local.blocker))
     if local.branch != pending.branch or local.commit != pending.base_commit:
         raise SelfUpdateError("state_changed", "登记更新之后本地仓库已发生变化，请重新检查更新")
     result.from_version = local.version

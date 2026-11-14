@@ -77,7 +77,7 @@ import {
   visibleStatsSlots,
 } from './home-layout'
 import { DesktopPetCardActions, DesktopPetCardBody } from './DesktopPetCard'
-import { getDesktopPetStatus } from '@/lib/desktop-pet-api'
+import { desktopPetStatusQueryOptions } from '@/lib/desktop-pet-api'
 import { useQuery } from '@tanstack/react-query'
 
 const ExpressionReviewer = lazy(() =>
@@ -154,13 +154,7 @@ function ObservationHomeContent() {
   const [editing, setEditing] = useState(false)
   const [libraryOpen, setLibraryOpen] = useState(true)
   const [dragId, setDragId] = useState<HomeCardId | null>(null)
-  // 桌宠状态：开启时 3 秒刷新一次；没开时放慢，只用来发现用户刚刚开启
-  const petStatusQuery = useQuery({
-    queryKey: ['desktop-pet-status'],
-    queryFn: ({ signal }) => getDesktopPetStatus(signal),
-    refetchInterval: (query) => (query.state.data?.enabled ? 3_000 : 30_000),
-    retry: false,
-  })
+  const petStatusQuery = useQuery(desktopPetStatusQueryOptions)
   const petStatus = petStatusQuery.data
   const petEnabled = Boolean(petStatus?.enabled)
   const statsSlots = visibleStatsSlots(layout, petEnabled)

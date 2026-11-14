@@ -1,0 +1,8 @@
+<subagent_result id="{task_id}" status="{status}">
+Your delegated task has finished. Task: {task_preview}
+Tool usage: {tool_usage}
+Conclusion:
+{conclusion}
+Error: {error_message}
+Use the current chat context to decide whether this result is useful and whether to reply.
+</subagent_result>

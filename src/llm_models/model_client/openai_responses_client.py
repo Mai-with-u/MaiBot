@@ -172,6 +172,9 @@ def _can_replay_item(item: ContextItem, request: ResponseRequest, provider_name:
     replay = get_item_replay(item)
     if replay is None:
         return False
+    if isinstance(item, FunctionCallItem) and replay.materialize().get("type") == "tool_search_call":
+        # 已保存的旧搜索记录使用可移植函数调用，不再回放原生工具唤醒协议。
+        return False
     scope = replay.scope
     return (
         scope.schema_version == PROVIDER_REPLAY_SCHEMA_VERSION

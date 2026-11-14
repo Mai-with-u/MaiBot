@@ -380,7 +380,7 @@ def _convert_messages(items: List[ContextItem]) -> Tuple[ContentListUnion, str |
                     response=_normalize_function_response_payload(item),
                 )
             )
-            contents.append(Content(role="tool", parts=[function_response_part]))
+            contents.append(Content(role="user", parts=[function_response_part]))
             index += 1
             continue
 

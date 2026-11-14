@@ -13,6 +13,7 @@ from src.llm_models.payload_content.context_item import get_item_text
 from src.maisaka.context.image_attachment import resolve_context_image
 from src.maisaka.context.message_id_alias import to_display_message_id
 from src.maisaka.context.messages import ToolResultMediaMessage
+from src.maisaka.context.post_processor import process_chat_history_after_cycle
 from src.maisaka.runtime import MaisakaHeartFlowChatting
 
 
@@ -31,6 +32,24 @@ def picture(color):
     output = BytesIO()
     Image.new("RGB", (2, 2), color).save(output, format="PNG")
     return ImageComponent(binary_hash="", binary_data=output.getvalue())
+
+
+@pytest.mark.parametrize("source_kind", ["desktop_pet_proactive_wake", "desktop_pet_todo", "agent_relay"])
+def test_only_periodic_wake_prompt_expires_after_current_cycle(source_kind: str) -> None:
+    chat = runtime()
+    chat.enqueue_internal_task(source_kind=source_kind, text="你被唤醒了。", reason="内部任务")
+    message = chat._chat_history[0]
+
+    # 模型请求前的整理不能提前移除本轮提示。
+    prepared = process_chat_history_after_cycle(
+        chat._chat_history, max_context_size=100, consume_references=False,
+    )
+    assert prepared.history == [message]
+    assert get_item_text(message.to_context_item()) == "你被唤醒了。"
+
+    finished = process_chat_history_after_cycle(prepared.history, max_context_size=100)
+    assert finished.history == ([] if source_kind == "desktop_pet_proactive_wake" else [message])
+    assert finished.removed_messages == []  # 唤醒提示不进入长期摘要。
 
 
 @pytest.mark.asyncio

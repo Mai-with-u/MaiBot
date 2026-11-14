@@ -3,22 +3,24 @@
  * 基础工作用卡片放在最前面，进阶工作默认收起；点开任一项在右侧抽屉里编辑模型顺序、使用方式和参数。
  */
 import { type ReactNode, useState } from 'react'
-import { ChevronDown, Plus, X } from 'lucide-react'
+import { ChevronDown, Pencil, Plus, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { DashedButton } from '@/components/ui/dashed-button'
 import {
   Dialog,
   DialogBody,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
 import { FormRow, FormSection, FormUnit } from '@/components/ui/form-section'
 import { Input } from '@/components/ui/input'
 import { OrderControls } from '@/components/ui/order-controls'
-import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger } from '@/components/ui/select'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { StatusLight } from '@/components/ui/status-light'
 import { DataPanel } from '@/components/ui/surface'
 import { cn } from '@/lib/utils'
@@ -58,6 +60,7 @@ interface TaskAssignmentBoardProps {
   onOpenTaskChange: (task: string | null) => void
   onChange: (task: string, field: TaskField, value: string[] | number | string) => void
   onAddWebService: () => void
+  onConfigureMaiReplier: (modelIdentifier: 'mai_replier' | 'mai_replier_today') => Promise<boolean>
   /** 进入页面前就有一步没做完时显示的步骤完成情况 */
   hasProviders: boolean
   /** 打开逐步引导；不传时引导条里不显示入口 */
@@ -78,6 +81,7 @@ export function TaskAssignmentBoard({
   onOpenTaskChange,
   onChange,
   onAddWebService,
+  onConfigureMaiReplier,
   hasProviders,
   onStartTour,
   tourRunning = false,
@@ -86,6 +90,20 @@ export function TaskAssignmentBoard({
 }: TaskAssignmentBoardProps) {
   const [guideDismissed, setGuideDismissed] = useState(readGuideDismissed)
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [replierInfoOpen, setReplierInfoOpen] = useState(false)
+  const [replierSetupOpen, setReplierSetupOpen] = useState(false)
+  const [configuringReplier, setConfiguringReplier] = useState(false)
+  const configureReplier = async (modelIdentifier: 'mai_replier' | 'mai_replier_today') => {
+    setConfiguringReplier(true)
+    try {
+      if (await onConfigureMaiReplier(modelIdentifier)) {
+        setReplierInfoOpen(false)
+        setReplierSetupOpen(false)
+      }
+    } finally {
+      setConfiguringReplier(false)
+    }
+  }
   const taskFields = fields.filter((field) => field.type === 'object')
   const metaOf = (field: FieldSchema): TaskMeta =>
     TASK_META[field.name] ?? { name: fallbackLabel(field), desc: field.description ?? '' }
@@ -192,11 +210,21 @@ export function TaskAssignmentBoard({
                   ))}
                   {list.length > 3 && <li data-task-card-more="true">+{list.length - 3}</li>}
                 </ol>
-                <div data-task-card-foot="true">
-                  <span className="text-xs text-muted-foreground">
-                    {list.length > 1 && !meta.hideStrategy ? strategyLabel(field.name) : ''}
-                  </span>
-                  <Button type="button" size="sm" variant="outline" onClick={() => onOpenTaskChange(field.name)}>
+                <div data-task-card-foot="true" className="flex-wrap">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    {field.name === 'replyer' && (
+                      <Button type="button" size="sm" variant="outline" onClick={() => setReplierInfoOpen(true)}>
+                        了解麦麦特调模型
+                      </Button>
+                    )}
+                    {list.length > 1 && !meta.hideStrategy && (
+                      <span>
+                        调用策略 <b className="font-semibold text-foreground">{strategyLabel(field.name)}</b>
+                      </span>
+                    )}
+                  </div>
+                  <Button type="button" size="sm" variant="outline" className="ml-auto" onClick={() => onOpenTaskChange(field.name)}>
+                    <Pencil aria-hidden="true" />
                     编辑
                   </Button>
                 </div>
@@ -242,6 +270,7 @@ export function TaskAssignmentBoard({
                       </DashedButton>
                     ) : (
                       <Button type="button" size="sm" variant="outline" onClick={() => onOpenTaskChange(field.name)}>
+                        <Pencil aria-hidden="true" />
                         编辑
                       </Button>
                     )}
@@ -252,6 +281,57 @@ export function TaskAssignmentBoard({
           )}
         </section>
       )}
+
+      <Dialog open={replierInfoOpen} onOpenChange={(open) => {
+        if (configuringReplier) return
+        setReplierInfoOpen(open)
+        if (!open) setReplierSetupOpen(false)
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>了解麦麦特调模型</DialogTitle>
+            <DialogDescription>为麦麦的拟人发言训练的开源模型，目前正在尝试中。</DialogDescription>
+          </DialogHeader>
+          <DialogBody type="auto">
+            <div className="space-y-3 text-sm">
+              <p>麦麦特调模型仅用于「回复」分工，不适用于规划等其他工作。</p>
+              <p>点击「一键配置」，选择稳定模型或最新测试模型，即可自动添加提供商并安排到「回复」分工。已有提供商和模型会直接复用。</p>
+              <p>模板提供「麦麦特调回复」和「麦麦特调回复（今日版）」两个模型。</p>
+              {replierSetupOpen && (
+                <FormSection title="选择回复模型">
+                  <p className="mb-3 text-xs text-muted-foreground">配置后将替换当前「回复」分工的模型列表，其他工作不受影响。</p>
+                  <div className="grid gap-3 sm:grid-cols-2" aria-busy={configuringReplier}>
+                    <DataPanel className="flex flex-col gap-3">
+                      <div>
+                        <p className="font-semibold">稳定模型</p>
+                        <p className="mt-1 text-xs text-muted-foreground">麦麦特调回复，适合日常使用。</p>
+                      </div>
+                      <Button disabled={configuringReplier} onClick={() => void configureReplier('mai_replier')}>
+                        使用稳定模型
+                      </Button>
+                    </DataPanel>
+                    <DataPanel className="flex flex-col gap-3">
+                      <div>
+                        <p className="font-semibold">最新测试模型</p>
+                        <p className="mt-1 text-xs text-muted-foreground">麦麦特调回复（今日版），体验最新训练效果。</p>
+                      </div>
+                      <Button disabled={configuringReplier} onClick={() => void configureReplier('mai_replier_today')}>
+                        使用最新测试模型
+                      </Button>
+                    </DataPanel>
+                  </div>
+                  {configuringReplier && <p role="status" className="mt-2 text-xs text-muted-foreground">正在配置并保存…</p>}
+                </FormSection>
+              )}
+            </div>
+          </DialogBody>
+          {!replierSetupOpen && (
+            <DialogFooter>
+              <Button onClick={() => setReplierSetupOpen(true)}>一键配置</Button>
+            </DialogFooter>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={Boolean(editingField)} modal={!tourRunning} onOpenChange={(open) => !open && onOpenTaskChange(null)}>
         {editingField && (
@@ -380,6 +460,7 @@ function TaskEditor({
     onChange('model_list', next)
   }
   const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const [addMenuOpen, setAddMenuOpen] = useState(false)
 
   return (
     <DialogContent
@@ -471,33 +552,61 @@ function TaskEditor({
             </DataPanel>
             <div data-task-order-add="true" className="flex gap-2">
               {addable.length > 0 ? (
-                <Select
-                  value=""
-                  onValueChange={(name) => onChange('model_list', single ? [name] : [...list, name])}
-                >
-                  {/* 触发器里的 span 会被截成单行，图标和文字直接放在触发器里，避免加号被挤到上一行 */}
-                  <SelectTrigger
-                    aria-label="添加模型"
-                    className="min-w-0 flex-1 justify-start gap-1.5 text-muted-foreground [&>svg:last-child]:ml-auto"
-                  >
-                    <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                    {single && list.length > 0 ? '换成…' : isWeb ? '选择联网服务' : '添加模型'}
-                  </SelectTrigger>
-                  <SelectContent>
-                    {/* 按厂商分组，同名模型也能分清来自哪家 */}
-                    {groupByProvider(addable).map(([provider, items]) => (
-                      <SelectGroup key={provider ?? ''}>
-                        {provider && <SelectLabel>{provider}</SelectLabel>}
-                        {items.map((candidate) => (
-                          <SelectItem key={candidate.name} value={candidate.name}>
-                            {candidate.name}
-                            {candidate.visual ? <span className="ml-2 text-xs text-muted-foreground">视觉</span> : null}
-                          </SelectItem>
+                <Popover open={addMenuOpen} onOpenChange={setAddMenuOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      role="combobox"
+                      aria-label="添加模型"
+                      aria-expanded={addMenuOpen}
+                      className="min-w-0 flex-1 justify-start gap-1.5 text-muted-foreground"
+                    >
+                      <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      {/* 仅截断文字，保留加号和下拉图标的位置 */}
+                      <span className="truncate">{single && list.length > 0 ? '换成…' : isWeb ? '选择联网服务' : '添加模型'}</span>
+                      <ChevronDown className="ml-auto h-4 w-4 shrink-0 opacity-50" aria-hidden="true" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0">
+                    <Command filter={(value, search, keywords) => {
+                      const text = [value, ...(keywords ?? [])].join(' ').toLowerCase()
+                      return search.trim().toLowerCase().split(/\s+/).every((word) => text.includes(word)) ? 1 : 0
+                    }}>
+                      <CommandInput
+                        placeholder={isWeb ? '搜索联网服务…' : '搜索模型名称或厂商…'}
+                        aria-label={isWeb ? '搜索联网服务' : '搜索模型名称或厂商'}
+                      />
+                      <CommandList>
+                        <CommandEmpty>{isWeb ? '没有匹配的联网服务' : '没有匹配的模型'}</CommandEmpty>
+                        {/* 按厂商分组，同名模型也能分清来自哪家 */}
+                        {groupByProvider(addable).map(([provider, items]) => (
+                          <CommandGroup
+                            key={provider ?? ''}
+                            heading={provider}
+                            className="[&_[cmdk-group-heading]]:mb-1 [&_[cmdk-group-heading]]:border-b [&_[cmdk-group-heading]]:border-border [&_[cmdk-group-heading]]:bg-muted/60 [&_[cmdk-group-heading]]:font-sans [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-semibold"
+                          >
+                            {items.map((candidate) => (
+                              <CommandItem
+                                key={candidate.name}
+                                value={candidate.name}
+                                className={provider ? 'pl-4' : undefined}
+                                keywords={provider ? [provider] : []}
+                                onSelect={() => {
+                                  onChange('model_list', single ? [candidate.name] : [...list, candidate.name])
+                                  setAddMenuOpen(false)
+                                }}
+                              >
+                                <span className="min-w-0 break-all">{candidate.name}</span>
+                                {candidate.visual ? <span className="shrink-0 text-xs text-muted-foreground">视觉</span> : null}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
                         ))}
-                      </SelectGroup>
-                    ))}
-                  </SelectContent>
-                </Select>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
               ) : (
                 <p className="flex-1 text-xs text-muted-foreground">
                   {candidates.length === 0

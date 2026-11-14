@@ -3,6 +3,7 @@
 from typing import Dict, Optional
 
 from src.common.i18n import get_locale
+from src.common.prompt_i18n import load_prompt
 from src.config.official_configs import AttentionDriftConfig
 from src.maisaka.attention_drift import render_attention_drift_prompt
 
@@ -53,10 +54,4 @@ class UnscopedPromptProfile(ChatPromptProfile):
     """CLI/未绑定会话不注入群聊或私聊设置；保留通用记忆检索提示。"""
 
     def query_memory_rule(self) -> str:
-        return localized_text(
-            {
-                "en-US": '- query_memory(): Consider retrieval more actively when the other person mentions signals like "before", "last time", "recently", "do you remember", "I like", or "I said", or when the reply depends on long-term preferences, prior promises, shared experiences, or long-term information about a person.',
-                "ja-JP": "- query_memory()：相手が「前に」「この前」「最近」「覚えてる？」「好き」「言った」などの合図を出した場合、または返信が長期的な好み、以前の約束、共有した経験、人物の長期的な情報に依存する場合は、より積極的に検索を検討できます。",
-                "zh-CN": "- query_memory()：当对方提到“之前”“上次”“最近”“还记得吗”“我喜欢”“我说过”等信号，或回复依赖长期偏好、先前承诺、共同经历、人物长期信息时，可以更积极检索。",
-            }
-        )
+        return load_prompt("planner_memory_private").strip()

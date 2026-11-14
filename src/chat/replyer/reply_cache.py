@@ -18,7 +18,7 @@ from src.llm_models.payload_content.context_item import (
 
 def build_cached_reply_request(
     snapshot: Union[ResponseRequest, ACPPlannerSnapshot], reply_messages: List[ContextItem],
-    reply_reference: str = "",
+    chat_anlyze: str = "",
 ) -> Union[ResponseRequest, ACPPlannerSnapshot]:
     """不重写前缀及工具定义；保留 Replyer 全部文本和图片，而非只提取纯文本。"""
     if not reply_messages:
@@ -32,9 +32,9 @@ def build_cached_reply_request(
         parts.extend(item.parts)
         parts.append(ContextTextPart(f"\n</replyer_{role}>\n"))
     request = snapshot.detached_snapshot()
-    if reply_reference.strip():
+    if chat_anlyze.strip():
         request.context_items.append(AssistantMessageItem(
-            meta=ContextItemMeta.create(), parts=(ContextTextPart(reply_reference),),
+            meta=ContextItemMeta.create(), parts=(ContextTextPart(chat_anlyze),),
         ))
     request.context_items.append(UserMessageItem(meta=ContextItemMeta.create(), parts=tuple(parts)))
     return request

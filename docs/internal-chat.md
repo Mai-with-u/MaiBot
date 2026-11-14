@@ -16,13 +16,18 @@
 
 ## SDK 开发联调
 
-SDK 2.17.0 发布前，可使用已有的本地 SDK 开发模式启动：
+主程序当前要求 `maibot-plugin-sdk>=2.23.0`。该版本将 Tool 和回复扩展的 `platforms`、
+`chat_scope`、`allowed_session` 统一为组件声明顶层字段，分别控制平台、聊天类型和指定会话，
+不进入模型调用参数。升级 SDK 时应同时更新 MaiBot，确保 Host 读取同一声明格式。
+
+联调尚未发布到 PyPI 的 SDK 时，先安装主程序所需的本地 SDK，再设置源码路径：
 
 ```powershell
+uv pip install -e ../maibot-plugin-sdk
 $env:MAIBOT_PLUGIN_SDK_PATH = (Resolve-Path ../maibot-plugin-sdk).Path
-uv run bot.py
+uv run --no-sync bot.py
 ```
 
-Runner 和版本校验会显式使用本地 SDK。主程序基础依赖仍兼容 2.16.0；
-使用新能力的插件 manifest 应要求 2.17.0，不满足时会报告版本不兼容。
+Runner 和版本校验会显式使用本地 SDK。使用 SDK 2.23.0 作用域声明的插件 manifest
+也应要求 `maibot-plugin-sdk>=2.23.0`，不满足时会报告版本不兼容。
 桌宠已[内置到主程序](desktop-pet.md)，自身不再依赖插件 SDK；插件可通过 `ctx.desktop_pet` 控制它。

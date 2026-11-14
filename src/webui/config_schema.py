@@ -266,6 +266,9 @@ class ConfigSchemaGenerator:
         resolved_path_prefix = path_prefix or cls._default_path_prefix(config_class)
 
         for field_name, field_info in config_class.model_fields.items():
+            if field_name in {"expression_groups", "jargon_groups", "shared_memory_groups", "global_memory_sharing_enabled"}:
+                # 旧字段仅供一次性数据库导入，编辑入口统一在相通组管理页。
+                continue
             shared_fields = {"Config": {"webui"}, "VisualConfig": {"image_cache_cleanup"},
                 "WebUIConfig": {"webui_style", "enforce_public_outbound_url"}, "EmojiConfig": {"cache_cleanup"}, "LogConfig": set(RETENTION_DEFAULTS["logs"])}
             if shared_settings_path() is not None and field_name in shared_fields.get(config_class.__name__, set()):

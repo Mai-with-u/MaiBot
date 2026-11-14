@@ -13,7 +13,7 @@ import { PluginDependenciesSection } from '@/host/PluginDependenciesSection'
 import { useToast } from '@/hooks/use-toast'
 
 interface SourceSettings {
-  information_source: 'official' | 'cnb' | 'github'
+  information_source: 'cnb' | 'github'
   download_source: 'cnb' | 'github' | 'custom'
   custom_download_prefix: string | null
 }
@@ -85,7 +85,6 @@ export function PluginSettingsDialog({ onClose, onSaved, onDependenciesChanged }
                   onValueChange={(value: SourceSettings['information_source']) => setDraft({ ...draft, information_source: value })}>
                   <SelectTrigger id="plugin-information-source"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="official">麦麦官方</SelectItem>
                     <SelectItem value="cnb">CNB镜像</SelectItem>
                     <SelectItem value="github">Github源</SelectItem>
                   </SelectContent>

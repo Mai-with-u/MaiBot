@@ -13,6 +13,7 @@ import sys
 import tomllib
 
 
+from src.common.logger import get_logger
 from src.common.paths import INSTANCE_DIRECTORY_ENV, PACKAGED_INSTALL, SOURCE_ROOT
 from src.common.process_lease import ProcessLease
 from src.common.runtime_context import RUNTIME_CONTEXT_ENV
@@ -27,6 +28,7 @@ from .legacy_runner import LEGACY_PACKAGE_INSTANCE_ENV
 
 MOVED_MARKER = "MOVED_TO_WORKSPACE.txt"
 _BOT_CONFIG = Path("config") / "bot_config.toml"
+logger = get_logger("host.layout")
 
 
 @dataclass(frozen=True)
@@ -34,6 +36,7 @@ class Workspace:
     root: Path
     registry: Registry
     config: HostConfig
+    webui_migration_error: str = ""
 
     @property
     def host_directory(self) -> Path:
@@ -66,15 +69,23 @@ def open_workspace(root: Path) -> Workspace:
         recover_archives(Workspace(root=root, registry=registry, config=load_host_config(root)))
         from .transfer_storage import recover_import
 
+        webui_migration_error = ""
         for bot in registry.list_bots():
             recover_import(bot, root / "host")
-            migrate_legacy_webui_data(
-                bot.directory, root / "host" / "webui.json" if bot.directory == root else None
-            )
+            credentials = root / "host" / "webui.json" if bot.directory == root else None
+            try:
+                migrate_legacy_webui_data(bot.directory, credentials)
+            except (OSError, ValueError):
+                legacy = bot.directory / "data" / "webui.json"
+                logger.exception(f"旧版 WebUI 设置迁移失败，已保留原文件：{legacy}")
+                if credentials is not None and not credentials.exists():
+                    webui_migration_error = f"旧版 WebUI 凭据未能迁移，请检查宿主日志：{legacy}"
         from .workspace_migration import migrate_workspace_config
 
         migrate_workspace_config(root, registry.list_bots())
-        return Workspace(root=root, registry=registry, config=load_host_config(root))
+        return Workspace(
+            root=root, registry=registry, config=load_host_config(root), webui_migration_error=webui_migration_error,
+        )
 
 
 def migrate_legacy_webui_data(directory: Path, credentials: Optional[Path]) -> None:

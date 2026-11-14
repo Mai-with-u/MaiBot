@@ -211,7 +211,7 @@ export function ChatWorkspaceSidebar({
   const { t } = useTranslation()
   const [searchQuery, setSearchQuery] = useState('')
   const sortedObservedSessions = useMemo(
-    () => Array.from(observedSessions.values()).sort((a, b) => b.lastActivity - a.lastActivity),
+    () => Array.from(observedSessions.values()).filter((session) => session.platform !== 'internal').sort((a, b) => b.lastActivity - a.lastActivity),
     [observedSessions]
   )
 

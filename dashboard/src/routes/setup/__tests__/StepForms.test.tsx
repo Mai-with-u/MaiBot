@@ -31,13 +31,15 @@ afterEach(() => {
 })
 
 describe('CustomTokenForm', () => {
+  const confirmationProps = { confirmation: '', onConfirmationChange: vi.fn() }
+
   it('默认以密码形式隐藏 Token，点击按钮后切换为明文', () => {
-    render(<CustomTokenForm token="secret" onChange={vi.fn()} />)
+    render(<CustomTokenForm token="secret" onChange={vi.fn()} {...confirmationProps} />)
 
     const input = screen.getByLabelText('setupPage.forms.customToken.label')
     expect(input).toHaveAttribute('type', 'password')
 
-    fireEvent.click(screen.getByRole('button', { name: 'setupPage.forms.customToken.show' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'setupPage.forms.customToken.show' })[0])
 
     expect(input).toHaveAttribute('type', 'text')
     // 切换后按钮标签变为“隐藏”
@@ -48,7 +50,7 @@ describe('CustomTokenForm', () => {
 
   it('输入 Token 时把输入值原样回调', () => {
     const onChange = vi.fn()
-    render(<CustomTokenForm token="" onChange={onChange} />)
+    render(<CustomTokenForm token="" onChange={onChange} {...confirmationProps} />)
 
     fireEvent.change(screen.getByLabelText('setupPage.forms.customToken.label'), {
       target: { value: 'Abc!123456' },
@@ -58,7 +60,7 @@ describe('CustomTokenForm', () => {
   })
 
   it('空 Token 时四条规则均未通过', () => {
-    render(<CustomTokenForm token="" onChange={vi.fn()} />)
+    render(<CustomTokenForm token="" onChange={vi.fn()} {...confirmationProps} />)
 
     for (const label of ['长度至少 10 位', '包含大写字母', '包含小写字母', '包含特殊符号']) {
       expect(screen.getByText(label)).toHaveClass('text-muted-foreground')
@@ -67,7 +69,7 @@ describe('CustomTokenForm', () => {
 
   it('按真实校验规则区分通过与未通过的样式', () => {
     // "abc" 只满足小写字母规则
-    render(<CustomTokenForm token="abc" onChange={vi.fn()} />)
+    render(<CustomTokenForm token="abc" onChange={vi.fn()} {...confirmationProps} />)
 
     expect(screen.getByText('包含小写字母')).toHaveClass('text-green-600')
     expect(screen.getByText('长度至少 10 位')).toHaveClass('text-muted-foreground')
@@ -76,7 +78,7 @@ describe('CustomTokenForm', () => {
   })
 
   it('Token 满足全部规则时四条规则均显示通过', () => {
-    render(<CustomTokenForm token="Abcdefghij!" onChange={vi.fn()} />)
+    render(<CustomTokenForm token="Abcdefghij!" onChange={vi.fn()} {...confirmationProps} />)
 
     for (const label of ['长度至少 10 位', '包含大写字母', '包含小写字母', '包含特殊符号']) {
       expect(screen.getByText(label)).toHaveClass('text-green-600')

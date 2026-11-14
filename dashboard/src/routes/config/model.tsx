@@ -767,10 +767,11 @@ function ModelConfigPageContent() {
 
               <section
                 className="flex min-h-0 min-w-0 flex-col gap-2 lg:h-full lg:overflow-hidden"
+                data-model-library-list="true"
                 data-tour="models-tab-trigger"
               >
           {/* 列表标签、筛选键、搜索和添加入口排在同一行 */}
-          <div data-library-label="true" className="flex-wrap gap-y-2">
+          <div data-library-label="true" data-model-library-toolbar="true" className="flex-wrap gap-y-2">
             <b>MODELS</b>
             <h2>模型列表</h2>
             <div role="group" aria-label="筛选模型" data-library-filters="true" className="ml-1">
@@ -787,13 +788,25 @@ function ModelConfigPageContent() {
                 </Button>
               ))}
             </div>
-            <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
+            <div data-model-library-filter-select="true">
+              <Select value={modelKindFilter} onValueChange={(value) => setModelKindFilter(value as ModelKindFilter)}>
+                <SelectTrigger aria-label="筛选模型" className="h-8 w-24">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {MODEL_KIND_FILTERS.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div data-model-library-tools="true" className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
               {searchQuery && (
-                <span className="text-xs text-muted-foreground whitespace-nowrap">
+                <span data-model-library-result-count="true" className="text-xs text-muted-foreground whitespace-nowrap">
                   找到 {shownModels.length} 个
                 </span>
               )}
-              <div className="relative w-full sm:w-60">
+              <div data-model-library-search="true" className="relative w-full sm:w-60">
                 <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   placeholder="搜索名称、标识符或厂商"
@@ -805,16 +818,21 @@ function ModelConfigPageContent() {
                 />
               </div>
               {selectedModels.size > 0 && (
-                <Button onClick={openBatchDeleteDialog} size="sm" variant="destructive">
+                <Button
+                  onClick={openBatchDeleteDialog}
+                  size="sm"
+                  variant="destructive"
+                  className="shrink-0"
+                  aria-label={`批量删除 (${selectedModels.size})`}
+                >
                   <Trash2 className="h-4 w-4" strokeWidth={2} fill="none" />
-                  批量删除 ({selectedModels.size})
+                  <span data-model-library-batch-label="true">批量删除</span> ({selectedModels.size})
                 </Button>
               )}
-              {/* 手机上由页头右上角的「+」添加 */}
               <AddModelMenu
                 onAdd={openAddModelDialog}
                 disabled={apiProviders.length === 0}
-                className="hidden md:inline-flex"
+                className="inline-flex shrink-0"
                 dataTour="add-model-button"
               />
             </div>
@@ -939,6 +957,7 @@ function ModelConfigPageContent() {
               }}
               onChange={updateTaskConfig}
               onAddWebService={() => setWebSearchEditor({ name: null })}
+              onConfigureMaiReplier={mc.handleConfigureMaiReplier}
               hasProviders={providers.length > 0}
               onStartTour={handleStartTour}
               tourRunning={tourIsRunning}
@@ -1269,7 +1288,7 @@ function ModelConfigPageContent() {
                   </div>
                 )}
                 <p className="font-medium text-foreground">
-                  关联模型会从模型列表和任务分配中移除，此操作无法撤销。
+                  关联模型会从共享模型列表和所有实例的任务分配中移除，此操作无法撤销。
                 </p>
               </div>
             </AlertDialogDescription>
@@ -1945,6 +1964,53 @@ function ModelConfigPageContent() {
 
             {advancedModelSettingsVisible && (
               <>
+                <FormRow label="最大图片数量" htmlFor="max_images">
+                  <Input
+                    id="max_images"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={editingModel?.max_images ?? 0}
+                    onChange={(e) => {
+                      const value = Number(e.target.value)
+                      if (Number.isInteger(value) && value >= 0) {
+                        setEditingModel((prev) => prev ? { ...prev, max_images: value } : null)
+                      }
+                    }}
+                    className="h-8 w-28 text-sm"
+                  />
+                  <p className="text-xs text-muted-foreground">0 表示不限制。包含长图切片，超限时保留最近的图片。</p>
+                </FormRow>
+
+                {([
+                  ['image_max_side', '图片最大边长', 8000],
+                  ['image_min_side', '图片最小边长', 1],
+                ] as const).map(([field, label, defaultValue]) => (
+                  <FormRow key={field} label={label} htmlFor={field}>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id={field}
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={editingModel?.[field] ?? defaultValue}
+                        onChange={(e) => {
+                          const value = Number(e.target.value)
+                          if (Number.isInteger(value) && value >= 1) {
+                            setEditingModel((prev) => prev ? { ...prev, [field]: value } : null)
+                          }
+                        }}
+                        className="h-8 w-28 text-sm"
+                      />
+                      <FormUnit>像素</FormUnit>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {field === 'image_max_side'
+                        ? '限制长边，超限图片按比例缩小或分段。'
+                        : '约束短边，小图按比例放大，受长边上限约束时补边。不得超过最大边长。'}
+                    </p>
+                  </FormRow>
+                ))}
                 <FormRow label="强制流式" htmlFor="force_stream_mode">
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-xs text-muted-foreground">用于必须通过流式响应返回内容的模型</span>

@@ -1,4 +1,4 @@
-"""主人聊天通过窗口进程管理同一份待办，不在主循环读写文件。"""
+"""主人聊天管理主程序中的统一事项，不依赖桌宠窗口读写文件。"""
 
 from typing import List, Optional
 import json
@@ -19,7 +19,7 @@ class TodoToolProvider:
             return []
         return [ToolSpec(
             name="desktop_pet_todo", provider_name=self.provider_name, provider_type=self.provider_type,
-            description="管理桌宠事项：bot 是到期唤醒自己的任务，user 是给主人的桌面提醒。支持绝对时间 due_at 或相对秒数 delay_seconds，不能同时传；省略时间保留原计划，due_at=null 取消定时。执行失败可查询 error，重新设置时间后重试。list 默认查询未完成，include_completed=true 包含归档；add 新增；update 修改；complete 完成并归档保留；delete 仅在明确要求删除时永久删除。修改、删除前先查询真实 todo_id，不猜 ID。condition_type=app 时程序每5秒检测应用，condition 填进程名或窗口标题关键字，不由模型猜测；natural 时 condition 保存自然语言触发条件，空字符串取消。条件与时间同时存在时，必须到时且条件成立。trigger 仅用于有当前证据的条件待办，必须提供真实 todo_id、revision 和 evidence；已触发不重复执行。桌宠须已启动。",
+            description="管理桌宠事项：bot 是到期唤醒自己的任务，user 是给主人的桌面提醒。支持绝对时间 due_at 或相对秒数 delay_seconds，不能同时传；省略时间保留原计划，due_at=null 取消定时。执行失败可查询 error，重新设置时间后重试。list 默认查询未完成，include_completed=true 包含归档；add 新增；update 修改；complete 完成并归档保留；delete 仅在明确要求删除时永久删除。修改、删除前先查询真实 todo_id，不猜 ID。condition_type=app 时程序每5秒检测应用，condition 填进程名或窗口标题关键字，不由模型猜测；natural 时 condition 保存自然语言触发条件，空字符串取消。条件与时间同时存在时，必须到时且条件成立。trigger 仅用于有当前证据的条件待办，必须提供真实 todo_id、revision 和 evidence；已触发不重复执行。定时 bot 任务不依赖桌宠启动；user 桌面提醒和应用条件检测在桌宠在线后触发。",
             parameters_schema={"type": "object", "additionalProperties": False, "required": ["action"],
                 "properties": {
                     "action": {"type": "string", "enum": ["list", "add", "update", "delete", "complete", "trigger"]},

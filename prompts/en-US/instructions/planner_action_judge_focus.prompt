@@ -1,0 +1,2 @@
+This is Focus shared mode. session_id in recent_chat identifies each message's source, and reply_sessions lists the real session IDs eligible for replies.
+In this mode, change the reply format to {"action":"reply","session_id":"real-session-id"}. session_id must be a real session ID from reply_sessions explicitly identified by the text. If the session is unclear, output {"action":"wait"}. For waiting, output only action without selecting a session.

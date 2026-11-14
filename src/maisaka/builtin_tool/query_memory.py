@@ -13,6 +13,7 @@ from src.person_info.person_info import resolve_person_id_for_memory
 from src.services.memory_service import MemorySearchResult, memory_service
 
 from .context import BuiltinToolRuntimeContext
+from .memory_result_preview import build_memory_result_preview
 
 logger = get_logger("maisaka_builtin_query_memory")
 
@@ -328,9 +329,9 @@ async def handle_tool(
         )
 
     content = _build_success_content(result, limit=limit)
-    if fallback_applied:
-        content = f"提示：人物定向检索未命中，已自动降级为关键词检索。\n{content}"
+    notice = "提示：人物定向检索未命中，已自动降级为关键词检索。" if fallback_applied else ""
     metadata: Dict[str, Any] = with_memory_feedback_task()
+    content = build_memory_result_preview(result, content, session_id=session_id, limit=limit, notice=notice)
     replyer_memory_reference = _build_replyer_memory_reference(structured_content)
     if replyer_memory_reference:
         metadata["replyer_memory_reference"] = replyer_memory_reference

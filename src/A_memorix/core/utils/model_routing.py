@@ -184,6 +184,16 @@ async def generate_with_resolved_model(
         return llm_api.LLMServiceResult.from_error(error_message, str(exc))
 
 
+def resolve_fast_text_generation_model(llm_api: Any) -> ResolvedLLMModel:
+    """轻量任务只选择快速模型或 utils，避免落到记忆总结、规划等任务。"""
+    available_tasks = get_text_generation_model_tasks(llm_api)
+    for task_name in ("fast_model", "utils"):
+        task_config = available_tasks.get(task_name)
+        if task_config is not None and task_has_model_list(task_config):
+            return ResolvedLLMModel(task_name=task_name, task_config=task_config)
+    raise RuntimeError("快速记忆任务需要配置 fast_model 或 utils 模型")
+
+
 def resolve_default_text_generation_task(llm_api: Any) -> str:
     """解析默认文本生成任务，避免宿主默认值落到 embedding。"""
 

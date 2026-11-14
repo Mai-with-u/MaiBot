@@ -6,6 +6,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useRouterState } from '@tanstack/react-router'
 import { motion } from 'motion/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTour } from '@/components/tour/use-tour'
+import { BASIC_FEATURES_TOUR_ID } from '@/components/tour/tours/basic-features-tour'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -68,6 +70,7 @@ import {
   getStoredUserAvatarVersion,
   getStoredUserName,
   getSavedVirtualTabs,
+  isChatRuntimeEventCurrent,
   saveUserAvatarVersion,
   saveUserName,
   saveVirtualTabs,
@@ -77,6 +80,8 @@ const MAX_CHAT_IMAGES = 8
 const MAX_MESSAGES_PER_CHAT_TAB = 1000
 const MAX_PROCESSED_MESSAGE_KEYS = 100
 const MAX_USER_AVATAR_BYTES = 5 * 1024 * 1024
+// 试聊等待回复的时长；收到「正在输入」会重新计时。
+const SETUP_TRIAL_REPLY_TIMEOUT_MS = 60_000
 
 function getRequestedObservedSessionId(): string | null {
   if (typeof window === 'undefined') {
@@ -276,9 +281,25 @@ export function ChatPage() {
   const [agentSelected, setAgentSelected] = useState(agentParam)
   const [handledAgentParam, setHandledAgentParam] = useState(agentParam)
   const [trialReplied, setTrialReplied] = useState(false)
+  // 试聊消息发出后迟迟没有回复或收到错误时提示检查模型配置；之后仍收到回复则恢复成功态。
+  const [trialFailed, setTrialFailed] = useState(false)
   const trialMessagePending = useRef(false)
+  const trialTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const clearTrialTimeout = useCallback(() => {
+    if (trialTimeoutRef.current) clearTimeout(trialTimeoutRef.current)
+    trialTimeoutRef.current = null
+  }, [])
+  const startTrialTimeout = useCallback(() => {
+    clearTrialTimeout()
+    trialTimeoutRef.current = setTimeout(() => {
+      trialTimeoutRef.current = null
+      if (trialMessagePending.current) setTrialFailed(true)
+    }, SETUP_TRIAL_REPLY_TIMEOUT_MS)
+  }, [clearTrialTimeout])
+  useEffect(() => clearTrialTimeout, [clearTrialTimeout])
   const canOpenMessagePlatform = typeof window.maibotDesktopHost?.openMessagePlatform === 'function'
   const { t, i18n } = useTranslation()
+  const { startTour } = useTour()
   const queryClient = useQueryClient()
   const {
     sessions: observedSessions,
@@ -411,7 +432,8 @@ export function ChatPage() {
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0]
 
   // 通用状态
-  const [inputValue, setInputValue] = useState('')
+  // 草稿由输入区渲染，这里仅保留发送和切换视图时需要的最新内容。
+  const inputValue = useRef('')
   const [selectedImages, setSelectedImages] = useState<ChatImageAttachment[]>([])
   const { flags: featureFlags } = useFeatureFlags()
   const agentEnabled = featureFlags?.agent === true
@@ -579,6 +601,8 @@ export function ChatPage() {
           // Only a live reply after this trial's own message completes the trial, not loaded history.
           if (tabId === 'webui-default' && trialMessagePending.current && (data.content?.trim() || data.segments?.length)) {
             trialMessagePending.current = false
+            clearTrialTimeout()
+            setTrialFailed(false)
             setTrialReplied(true)
           }
           updateTab(tabId, { isTyping: false, runtimeStatus: null })
@@ -617,6 +641,10 @@ export function ChatPage() {
         }
 
         case 'typing':
+          // 麦麦仍在生成时重新计时，避免本地慢模型被误判为失败。
+          if (tabId === 'webui-default' && trialMessagePending.current && data.is_typing) {
+            startTrialTimeout()
+          }
           updateTab(tabId, {
             isTyping: data.is_typing || false,
             runtimeStatus: data.is_typing
@@ -630,6 +658,10 @@ export function ChatPage() {
           break
 
         case 'error':
+          if (tabId === 'webui-default' && trialMessagePending.current) {
+            clearTrialTimeout()
+            setTrialFailed(true)
+          }
           setTabs((prev) =>
             prev.map((tab) => {
               if (tab.id !== tabId) return tab
@@ -690,7 +722,14 @@ export function ChatPage() {
             processedSet.delete(firstKey)
           }
           processedMessagesMapRef.current.set(tabId, processedSet)
-          updateTab(tabId, { messages: formattedMessages })
+          setTabs((prev) => prev.map((tab) => {
+            if (tab.id !== tabId) return tab
+            const status = tab.runtimeStatus
+            if (status && !isChatRuntimeEventCurrent(formattedMessages, status.updatedAt)) {
+              return { ...tab, messages: formattedMessages, isTyping: false, runtimeStatus: null }
+            }
+            return { ...tab, messages: formattedMessages }
+          }))
           setIsLoadingHistory(false)
           break
         }
@@ -699,7 +738,7 @@ export function ChatPage() {
           break
       }
     },
-    [addMessageToTab, t, toast, updateTab]
+    [addMessageToTab, clearTrialTimeout, startTrialTimeout, t, toast, updateTab]
   )
 
   const ensureSessionListener = useCallback(
@@ -862,7 +901,8 @@ export function ChatPage() {
         if (event.type === 'llm.retry') {
           setTabs((prev) =>
             prev.map((tab) => {
-              if (!matchesMonitorTarget(tab, event.data)) {
+              if (!matchesMonitorTarget(tab, event.data) ||
+                !isChatRuntimeEventCurrent(tab.messages, event.data.timestamp, event.data.replayed)) {
                 return tab
               }
               const currentStatus = tab.runtimeStatus
@@ -889,7 +929,8 @@ export function ChatPage() {
         if (event.type === 'llm.error') {
           setTabs((prev) =>
             prev.map((tab) => {
-              if (!matchesMonitorTarget(tab, event.data)) {
+              if (!matchesMonitorTarget(tab, event.data) ||
+                !isChatRuntimeEventCurrent(tab.messages, event.data.timestamp, event.data.replayed)) {
                 return tab
               }
               const currentStatus = tab.runtimeStatus
@@ -930,14 +971,14 @@ export function ChatPage() {
   // 发送消息到当前活动标签页
   const sendMessage = useCallback(async () => {
     const filesToSend = filesEnabled ? filesByTab[activeTabId] || [] : []
-    if (uploadingFiles || (!inputValue.trim() && selectedImages.length === 0 && filesToSend.length === 0) || !activeTab?.isConnected) {
+    if (uploadingFiles || (!inputValue.current.trim() && selectedImages.length === 0 && filesToSend.length === 0) || !activeTab?.isConnected) {
       return
     }
 
     const displayName =
       activeTab?.type === 'virtual' ? activeTab.virtualConfig?.userName || userName : userName
 
-    const messageContent = inputValue.trim()
+    const messageContent = inputValue.current.trim()
     const imagesToSend = selectedImages
     const currentTimestamp = Date.now() / 1000
 
@@ -968,12 +1009,16 @@ export function ChatPage() {
     }
     addMessageToTab(activeTabId, userMessage)
 
-    setInputValue('')
+    inputValue.current = ''
     setSelectedImages([])
     setFilesByTab(previous => ({ ...previous, [activeTabId]: [] }))
 
     try {
-      if (setupTrial && activeTabId === 'webui-default') trialMessagePending.current = true
+      if (setupTrial && activeTabId === 'webui-default') {
+        trialMessagePending.current = true
+        setTrialFailed(false)
+        startTrialTimeout()
+      }
       await chatWsClient.sendMessage(activeTabId, messageContent, displayName, {
         files: filesToSend.map(file => ({ file_ref: file.file_ref, name: file.name })),
         images: imagesToSend.map((image) => ({
@@ -983,7 +1028,11 @@ export function ChatPage() {
         })),
       })
     } catch (error) {
-      if (activeTabId === 'webui-default') trialMessagePending.current = false
+      if (activeTabId === 'webui-default') {
+        if (setupTrial && trialMessagePending.current) setTrialFailed(true)
+        trialMessagePending.current = false
+        clearTrialTimeout()
+      }
       console.error('发送聊天消息失败:', error)
       setTabs((prev) =>
         prev.map((tab) => {
@@ -1001,22 +1050,22 @@ export function ChatPage() {
         variant: 'destructive',
       })
     }
-  }, [activeTab, activeTabId, addMessageToTab, inputValue, selectedImages, filesByTab, filesEnabled, uploadingFiles, setupTrial, t, toast, userName])
+  }, [activeTab, activeTabId, addMessageToTab, selectedImages, filesByTab, filesEnabled, uploadingFiles, setupTrial, startTrialTimeout, clearTrialTimeout, t, toast, userName])
 
   // 首页快速聊天：带着首页写下的消息进来，连上本地聊天室后自动发出
   const [quickChatPending, setQuickChatPending] = useState(false)
   useEffect(() => {
     const message = takeQuickChatMessage()
     if (!message) return
-    setInputValue(message)
+    inputValue.current = message
     setQuickChatPending(true)
   }, [])
   useEffect(() => {
     if (!quickChatPending || activeObservedSessionId || agentActive) return
-    if (activeTabId !== 'webui-default' || !activeTab?.isConnected || !inputValue.trim()) return
+    if (activeTabId !== 'webui-default' || !activeTab?.isConnected || !inputValue.current.trim()) return
     setQuickChatPending(false)
     void sendMessage()
-  }, [activeObservedSessionId, activeTab?.isConnected, activeTabId, agentActive, inputValue, quickChatPending, sendMessage])
+  }, [activeObservedSessionId, activeTab?.isConnected, activeTabId, agentActive, quickChatPending, sendMessage])
 
   const handleAddFiles = async (files: FileList) => {
     if (!filesEnabled) return
@@ -1224,6 +1273,20 @@ export function ChatPage() {
     setActiveObservedSessionId(sessionId)
   }, [setSelectedObservedSession])
 
+  // sessionInfo.session_id 是网页连接 ID；观察页使用数据库中真实聊天流的 ID。
+  const internalSessionId = activeTab?.type === 'webui' || activeTab?.sessionInfo.platform === 'internal'
+    ? knownChatStreams.find((chat) => {
+        const { platform, group_id: groupId, user_id: userId } = activeTab.sessionInfo
+        if (chat.platform !== platform) return false
+        return groupId
+          ? chat.chat_type === 'group' && chat.group_id === groupId
+          : chat.chat_type === 'private' && chat.user_id === userId
+      })?.session_id
+    : undefined
+  const observeInternalSession = internalSessionId
+    ? () => selectObservedSession(internalSessionId)
+    : undefined
+
   // 在页内直接打开观察聊天流的设置弹窗，不再跳转到聊天管理页
   const openObservedSettings = useCallback((sessionId: string) => {
     // 名称来自聊天流资料，不依赖实时活动时间，避免每个监控事件都改变行回调。
@@ -1313,13 +1376,24 @@ export function ChatPage() {
         {setupTrial && (
           <section className="bg-card mx-4 mt-4 flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-lg border p-4" aria-live="polite">
             <div>
-              <p className="text-sm font-semibold">{t(trialReplied ? 'chat.setupTrial.repliedTitle' : 'chat.setupTrial.title')}</p>
-              <p className="text-muted-foreground mt-1 text-xs">{t(trialReplied ? 'chat.setupTrial.repliedDescription' : 'chat.setupTrial.description')}</p>
+              <p className="text-sm font-semibold">{t(trialReplied ? 'chat.setupTrial.repliedTitle' : trialFailed ? 'chat.setupTrial.failedTitle' : 'chat.setupTrial.title')}</p>
+              <p className="text-muted-foreground mt-1 text-xs">{t(trialReplied ? 'chat.setupTrial.repliedDescription' : trialFailed ? 'chat.setupTrial.failedDescription' : 'chat.setupTrial.description')}</p>
             </div>
+            {!trialReplied && trialFailed && (
+              <Button variant="outline" size="sm" onClick={() => navigate({ to: '/config/model' })}>
+                {t('chat.setupTrial.checkModelConfig')}
+              </Button>
+            )}
             {trialReplied && (
               <div className="flex gap-2">
                 <Button variant="ghost" size="sm" onClick={() => navigate({ to: '/chat', search: {}, replace: true })}>
                   {t('chat.setupTrial.keepChatting')}
+                </Button>
+                <Button variant={canOpenMessagePlatform ? 'outline' : 'default'} size="sm" onClick={() => {
+                  void navigate({ to: '/chat', search: {}, replace: true })
+                  startTour(BASIC_FEATURES_TOUR_ID)
+                }}>
+                  {t('chat.setupTrial.learnBasics')}
                 </Button>
                 {canOpenMessagePlatform && (
                   <Button size="sm" onClick={() => {
@@ -1350,6 +1424,7 @@ export function ChatPage() {
               }
               online={activeTab.isConnected}
               avatar={<MobileChatRoomTabAvatar tab={activeTab} />}
+              onObserve={observeInternalSession}
               onBack={() => setMobileRoomOpen(false)}
               userAvatar={{
                 userId,
@@ -1363,7 +1438,12 @@ export function ChatPage() {
         </div>
 
         {activeObservedSessionId ? (
-          <div className="relative min-h-0 min-w-0 flex-1" data-chat-observed-session>
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-chat-observed-session>
+            {internalSessionId === activeObservedSessionId && (
+              <div className="shrink-0 px-3 py-2">
+                <Button variant="outline" size="sm" onClick={() => switchTab(activeTab.id)}>返回聊天</Button>
+              </div>
+            )}
             <MaisakaMonitor sessionName={activeObservedSession?.sessionName}
               reasoningReturnTo={`/chat?observe=${encodeURIComponent(activeObservedSessionId)}`}
               floatingToolbarContainer={isMobileChat ? observedToolbarSlot : undefined}
@@ -1400,7 +1480,7 @@ export function ChatPage() {
           <>
             {activeTab && (
               <div className="hidden md:block">
-                <ChatConversationHeader tab={activeTab} onClear={() => setTabs(current => current.map(tab => tab.id === activeTab.id ? { ...tab, messages: [] } : tab))} />
+                <ChatConversationHeader tab={activeTab} onObserve={observeInternalSession} onClear={() => setTabs(current => current.map(tab => tab.id === activeTab.id ? { ...tab, messages: [] } : tab))} />
               </div>
             )}
             <MessageList
@@ -1430,8 +1510,8 @@ export function ChatPage() {
               files={filesEnabled ? filesByTab[activeTabId] || [] : []}
               onAddFiles={filesEnabled ? handleAddFiles : undefined}
               onRemoveFile={ref => setFilesByTab(previous => ({ ...previous, [activeTabId]: (previous[activeTabId] || []).filter(file => file.file_ref !== ref) }))}
-              value={inputValue}
-              onChange={setInputValue}
+              value={inputValue.current}
+              onChange={(value) => { inputValue.current = value }}
               onAddImages={handleAddImages}
               onRemoveImage={handleRemoveImage}
               onSendEmoji={sendUserEmoji}

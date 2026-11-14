@@ -169,7 +169,7 @@ class RetroReplyPromptMixin:
             chat_history=chat_history,
             reply_message=reply_message,
             reply_reason=reply_reason,
-            reply_reference=str((reply_tool_args or {}).get("reply_reference") or ""),
+            chat_anlyze=str((reply_tool_args or {}).get("chat_anlyze") or ""),
             expression_habits=expression_habits,
             reply_requirements=reply_requirements,
             length_instruction=length_instruction,
@@ -314,7 +314,7 @@ class RetroReplyPromptMixin:
         chat_history: List[LLMContextMessage],
         reply_message: Optional[SessionMessage],
         reply_reason: str,
-        reply_reference: str,
+        chat_anlyze: str,
         expression_habits: str,
         reply_requirements: str,
         length_instruction: str = "",
@@ -322,7 +322,7 @@ class RetroReplyPromptMixin:
     ) -> Dict[str, str]:
         """按旧版的块顺序准备模板占位符内容。"""
 
-        combined_reference = self._build_reply_reference_message(reply_reason, reply_reference)
+        combined_reference = self._build_chat_anlyze_message(reply_reason, chat_anlyze)
         reply_target_block = self._build_retro_reply_target_block(reply_message, chat_history)
         if reply_target_block:
             reply_target_block += "." if self._get_prompt_locale().startswith("en") else "。"
@@ -340,11 +340,8 @@ class RetroReplyPromptMixin:
             "time_block": f"当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             "reply_target_block": reply_target_block,
             "planner_reasoning": combined_reference,
-            # Mai Replier 对齐训练分布：关键词反应提示（"人机"否定/定型文模板等）
-            # 在训练数据中不存在，线上注入属训练外成分。Mai Replier 路径跳过。
-            "keywords_reaction_prompt": "" if mai_replier else self._build_keyword_reaction_prompt(
-                chat_history=chat_history, reply_message=reply_message,
-            ),
+            # 关键词反应由内置插件通过回复要求注入，这里只保留模板占位。
+            "keywords_reaction_prompt": "",
         }
 
     @staticmethod

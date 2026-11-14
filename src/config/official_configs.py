@@ -1115,6 +1115,19 @@ class ExperimentalConfig(ConfigBase):
     __ui_advanced__ = True
     __ui_order__ = 140
 
+    tool_search_tail_loading: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "工具定义末尾加载",
+                "en_US": "Load tool definitions at context tail",
+                "ja_JP": "ツール定義のコンテキスト末尾読み込み",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """实验性功能：搜索命中的工具定义仅追加到搜索结果，附带加载状态和调用指引，保持顶层工具声明不变以保留上下文缓存。关闭时沿用搜索后加入工具声明的逻辑。不使用 API 原生工具搜索；需要模型支持根据结果文本调用工具，普通聊天和 Focus 生效，切换从下一轮工具决策生效。"""
+
     desktop_pet_exploration_enabled: bool = Field(
         default=False,
         json_schema_extra={"label": {"zh_CN": "桌宠自由探索"}, "x-widget": "switch"},
@@ -1155,6 +1168,19 @@ class ExperimentalConfig(ConfigBase):
         },
     )
     """仅作用于普通聊天模式：Planner 不调用工具而输出正文时，将正文作为自然语言指导启动一次回复；篇幅、表达偏好和插件相关需求直接写入指导，引用与附件由并行回复补充器编排。关闭时使用原有 reply 工具。切换从下一轮思考生效，Focus 不受影响。"""
+
+    lightweight_private_chats: List["TargetItem"] = Field(
+        default_factory=list,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "轻量私聊",
+                "en_US": "Lightweight private chats",
+                "ja_JP": "軽量プライベートチャット",
+            },
+            "x-widget": "custom",
+        },
+    )
+    """_wrap_实验性功能：对指定私聊启用简化被动回复，常驻记忆、人物画像、转发查看、工具搜索、单次日程和无时间参数的 wait；插件、MCP 等扩展工具及原始结果回查按需搜索加载，遵守原有可用性与权限配置。沿用普通模式的内部循环上限，保留回复补充器；跳过自动参考注入，不提供定时等待或子 Agent 工具，默认回复完成后结束本轮，无需回复时可用无参数 wait 静默结束。仅匹配 private 类型，platform/item_id 可用 *；默认空列表关闭。优先于 Focus，普通聊天不受影响。"""
 
     reply_cache: bool = Field(
         default=False,
@@ -3983,7 +4009,7 @@ class AMemorixConfig(ConfigBase):
             "x-widget": "switch",
         },
     )
-    """是否让普通记忆查询在所有聊天流范围内检索"""
+    """旧全局共享开关，仅用于首次导入独立相通组；之后在相通页面管理。"""
 
     shared_memory_groups: list[ChatStreamGroup] = Field(
         default_factory=list,
@@ -3997,7 +4023,7 @@ class AMemorixConfig(ConfigBase):
             "x-display-as-section": True,
         },
     )
-    """把需要互相参考长期记忆的群聊或私聊放到同一组"""
+    """旧记忆组，仅用于首次导入独立相通组；之后在相通页面管理。"""
 
     episode: AMemorixEpisodeConfig = Field(
         default_factory=AMemorixEpisodeConfig,
@@ -4270,7 +4296,7 @@ class ExpressionConfig(ConfigBase):
             "x-widget": "custom",
         },
     )
-    """_wrap_让多个群聊或私聊共享学到的表达方式。"""
+    """旧表达组，仅用于首次导入独立相通组；之后在相通页面管理。"""
 
     learning_blacklist: List[LearningBlacklistUser] = Field(
         default_factory=list,
@@ -4318,7 +4344,7 @@ class JargonConfig(ConfigBase):
             "x-widget": "custom",
         },
     )
-    """_wrap_让多个群聊或私聊共享学到的黑话。"""
+    """旧黑话组，仅用于首次导入独立相通组；之后在相通页面管理。"""
 
     learning_blacklist: List[LearningBlacklistUser] = Field(
         default_factory=list,
@@ -4498,103 +4524,6 @@ class EmojiConfig(ConfigBase):
 
     cache_cleanup: EmojiCacheCleanupConfig = Field(default_factory=EmojiCacheCleanupConfig)
     """定期清理未注册表情包缓存，减少磁盘占用；已注册表情包不会被清理。"""
-
-
-class KeywordRuleConfig(ConfigBase):
-    """关键词规则配置类"""
-
-    keywords: list[str] = Field(
-        default_factory=lambda: [],
-        json_schema_extra={
-            "label": {
-                "zh_CN": "关键词",
-                "en_US": "Keywords",
-                "ja_JP": "キーワード",
-            },
-            "x-widget": "custom",
-        },
-    )
-    """要匹配的关键词；命中任意一个即可触发。"""
-
-    regex: list[str] = Field(
-        default_factory=lambda: [],
-        json_schema_extra={
-            "label": {
-                "zh_CN": "正则表达式",
-                "en_US": "Regular expressions",
-                "ja_JP": "正規表現",
-            },
-            "x-widget": "custom",
-        },
-    )
-    """要匹配的正则表达式；适合复杂文本规则。"""
-
-    reaction: str = Field(
-        default="",
-        json_schema_extra={
-            "label": {
-                "zh_CN": "反应提示",
-                "en_US": "Reaction prompt",
-                "ja_JP": "リアクションプロンプト",
-            },
-            "x-widget": "textarea",
-        },
-    )
-    """命中后给麦麦看的提示内容，不会直接当作消息发送。"""
-
-    def model_post_init(self, context: Optional[dict] = None) -> None:
-        """验证配置"""
-        if not self.keywords and not self.regex:
-            raise ValueError("关键词规则必须至少包含keywords或regex中的一个")
-
-        if not self.reaction:
-            raise ValueError("关键词规则必须包含reaction")
-
-        for pattern in self.regex:
-            try:
-                re.compile(pattern)
-            except re.error as e:
-                raise ValueError(f"无效的正则表达式 '{pattern}': {str(e)}") from e
-        return super().model_post_init(context)
-
-
-class KeywordReactionConfig(ConfigBase):
-    """关键词配置类"""
-
-    __ui_parent__ = "message_receive"
-
-    keyword_rules: list[KeywordRuleConfig] = Field(
-        default_factory=lambda: [],
-        json_schema_extra={
-            "label": {
-                "zh_CN": "关键词规则",
-                "en_US": "Keyword rules",
-                "ja_JP": "キーワードルール",
-            },
-            "x-widget": "custom",
-        },
-    )
-    """命中关键词后，给麦麦追加一段固定反应提示。"""
-
-    regex_rules: list[KeywordRuleConfig] = Field(
-        default_factory=lambda: [],
-        json_schema_extra={
-            "label": {
-                "zh_CN": "正则规则",
-                "en_US": "Regex rules",
-                "ja_JP": "正規表現ルール",
-            },
-            "x-widget": "custom",
-        },
-    )
-    """命中正则规则后，给麦麦追加一段固定反应提示。"""
-
-    def model_post_init(self, context: Optional[dict] = None) -> None:
-        """验证配置"""
-        for rule in self.keyword_rules + self.regex_rules:
-            if not isinstance(rule, KeywordRuleConfig):
-                raise ValueError(f"规则必须是KeywordRuleConfig类型，而不是{type(rule).__name__}")
-        return super().model_post_init(context)
 
 
 class ResponsePostProcessConfig(ConfigBase):

@@ -21,7 +21,7 @@ from src.core.tooling import ToolAvailabilityContext, ToolExecutionContext, Tool
 from src.maisaka.quote import decide_quote
 from src.maisaka.context.message_adapter import build_visible_text_from_sequence, parse_speaker_content
 from src.maisaka.context.message_id_alias import to_display_message_id
-from src.maisaka.context.messages import LLMContextMessage, SessionBackedMessage
+from src.maisaka.context.messages import InternalContextMessage, LLMContextMessage, SessionBackedMessage
 from src.maisaka.context.planner_messages import extract_quote_ids_from_message_sequence
 from src.plugin_runtime.host.hook_dispatcher import HookAbortedError, build_hook_abort_tool_result
 from src.plugin_runtime.host.message_utils import PluginMessageUtils
@@ -29,6 +29,7 @@ from src.plugin_runtime.host.reply_extensions import ReplyExtensionExecution, bu
 from src.services import send_service
 
 from .context import BuiltinToolRuntimeContext, PostProcessedReplyMessage, ResolvedReplyAttachments
+from .wait import resolve_wait_seconds
 
 if TYPE_CHECKING:
     from src.maisaka.reply_supplement import ReplySupplement
@@ -130,26 +131,26 @@ def get_tool_spec(context: Optional[ToolAvailabilityContext] = None) -> ToolSpec
     properties: dict[str, Any] = {
         "after_reply": {
             "type": "string",
-            "enum": ["continue", "stop", "wait"],
-            "default": "stop",
-            "description": "回复发送成功后的行为：continue 继续思考和调用工具；stop 结束本轮（默认）；wait 等待后再判断。stop/wait 会取消同批后续工具。",
+            "enum": ["continue", "wait"],
+            "default": "wait",
+            "description": "回复发送成功后的行为：continue 继续思考和调用工具；wait（默认）暂停，未填 wait_seconds 则结束本轮，填写 wait_seconds 则定时再判断。wait 会取消同批后续工具。",
         },
         "wait_seconds": {
             "type": "integer",
             "minimum": 0,
-            "default": 30,
-            "description": "after_reply=wait 时的等待秒数，默认 30 秒。",
+            "description": "可选。after_reply=wait 时最多等待的秒数，到期后即使没有新消息也会继续思考。不填表示结束本轮。",
         },
         "msg_id": {
             "type": "string",
-            "description": "要回复的消息msg_id。",
+            "description": "可选。要回复的真实聊天消息 msg_id；省略或留空表示向当前会话主动发言。内部任务编号也按无目标发言处理。",
         },
-        "reply_reference": {
+        "chat_anlyze": {
             "type": "string",
             "minLength": 1,
             "description": (
-                "提供本次回复的上下文关键信息，对当前聊天逻辑和内容的梳理，以及你认为此时需要回复的原因，"
-                "包括当前聊天状态、人物关系、事实信息、回忆信息；不是回复正文。"
+                "用一段精炼的话描述当前对话局面与查到的关键事实：如同转述一样梳理上文核心逻辑，"
+                "提炼通过搜索或工具查证到的关键事实结论，不写入长段原文时间戳或者具体的消息ID。"
+                "不要原文引用，不评价回复价值、不写回复原因、不构想或指导如何回复。"
             ),
         },
         "reply_style": {
@@ -265,7 +266,7 @@ def get_tool_spec(context: Optional[ToolAvailabilityContext] = None) -> ToolSpec
         parameters_schema={
             "type": "object",
             "properties": properties,
-            "required": ["msg_id", "reply_reference"],
+            "required": ["chat_anlyze"],
         },
         provider_name="maisaka_builtin",
         provider_type="builtin",
@@ -349,10 +350,12 @@ def _resolve_segment_reply_context(
 async def _resolve_reply_quote(
     tool_ctx: BuiltinToolRuntimeContext,
     text: str,
-    target_message: SessionMessage,
+    target_message: Optional[SessionMessage],
     bot_user_id: str,
 ) -> Tuple[bool, Optional[float]]:
     """群聊和私聊分别按固定公式及频率决定引用。"""
+    if target_message is None:
+        return False, 0.0
     stream = tool_ctx.runtime.chat_stream
     frequency = get_scene(stream.is_group_session).quote_frequency
     if frequency == "never" or stream.platform == CLI_PLATFORM_NAME:
@@ -431,12 +434,17 @@ async def handle_tool(
             f"{tool_ctx.runtime.log_prefix} 检测到 reply 工具参数被重复包裹，已自动解包: "
             f"调用编号={invocation.call_id}"
         )
-    after_reply = invocation_arguments.get("after_reply", "stop")
-    if after_reply not in ("continue", "stop", "wait"):
-        return tool_ctx.build_failure_result("reply", "after_reply 必须为 continue、stop 或 wait。")
-    wait_seconds = invocation_arguments.get("wait_seconds", 30)
-    if type(wait_seconds) is not int or wait_seconds < 0:
-        return tool_ctx.build_failure_result("reply", "wait_seconds 必须为非负整数。")
+    after_reply = invocation_arguments.get("after_reply", "wait")
+    if after_reply not in ("continue", "wait"):
+        return tool_ctx.build_failure_result("reply", "after_reply 必须为 continue 或 wait。")
+    if "wait_until" in invocation_arguments:
+        return tool_ctx.build_failure_result("reply", "不支持 wait_until，请使用 wait_seconds 指定等待秒数。")
+    try:
+        wait_seconds = resolve_wait_seconds(invocation_arguments, seconds_key="wait_seconds")
+    except ValueError as exc:
+        return tool_ctx.build_failure_result("reply", str(exc))
+    if after_reply == "continue" and wait_seconds is not None:
+        return tool_ctx.build_failure_result("reply", "after_reply=continue 时不能填写等待时间。")
     result = await execute_reply(tool_ctx, invocation_arguments, call_id=invocation.call_id)
     if result.success:
         # 控制由各自的 Planner 循环执行，避免 Focus 意外暂停单个成员的普通循环。
@@ -521,13 +529,13 @@ async def _execute_reply(
             return tool_ctx.build_failure_result("reply", "回复缓存模式缺少本轮 Planner 请求快照，无法生成回复。")
     if type(invocation_arguments.get("attach_emoji")) is int and invocation_arguments["attach_emoji"] == 0:
         invocation_arguments.pop("attach_emoji")
-    reply_reference = invocation_arguments.get("reply_reference")
-    if not isinstance(reply_reference, str) or not reply_reference.strip():
+    chat_anlyze = invocation_arguments.get("chat_anlyze")
+    if not isinstance(chat_anlyze, str) or not chat_anlyze.strip():
         return tool_ctx.build_failure_result(
             "reply",
-            "reply 工具必须提供非空字符串 `reply_reference`，请填写本次回复的上下文关键信息与回复方向后重新调用。",
+            "reply 工具必须提供非空字符串 `chat_anlyze`，请精炼转述当前对话局面与查证到的关键事实后重新调用。",
         )
-    invocation_arguments["reply_reference"] = reply_reference.strip()
+    invocation_arguments["chat_anlyze"] = chat_anlyze.strip()
     target_message_id = str(invocation_arguments.get("msg_id") or "").strip()
     if invocation_arguments.get("attach_at") and not config_module.global_config.chat.enable_reply_at:
         return tool_ctx.build_failure_result("reply", "回复时 @ 用户已关闭，不能使用 attach_at。")
@@ -539,21 +547,24 @@ async def _execute_reply(
     if not _use_expression_intent():
         reply_tool_args.pop("expression_intent", None)
 
-    if not target_message_id:
-        return tool_ctx.build_failure_result(
-            "reply",
-            "reply 工具需要提供有效的 `msg_id` 参数。",
-        )
-
-    if target_message is None:
+    if target_message is not None:
+        if target_message.message_id != target_message_id:
+            raise ValueError("回复快照的消息 ID 与回复参数不一致")
+    elif target_message_id:
         target_message = tool_ctx.runtime.find_source_message_by_id(target_message_id)
-    elif target_message.message_id != target_message_id:
-        raise ValueError("回复快照的消息 ID 与回复参数不一致")
-    if target_message is None:
-        return tool_ctx.build_failure_result(
-            "reply",
-            f"未找到要回复的目标消息，msg_id={to_display_message_id(target_message_id)}",
-        )
+        if target_message is None:
+            # 内部上下文可作为发言缘由，但不是可引用的真实聊天消息。
+            if any(
+                isinstance(message, InternalContextMessage) and message.message_id == target_message_id
+                for message in tool_ctx.runtime._chat_history
+            ):
+                target_message_id = ""
+            else:
+                return tool_ctx.build_failure_result(
+                    "reply",
+                    f"未找到要回复的目标消息，msg_id={to_display_message_id(target_message_id)}",
+                )
+    invocation_arguments["msg_id"] = target_message_id
 
     context = ToolAvailabilityContext(
         session_id=tool_ctx.runtime.session_id, stream_id=tool_ctx.runtime.session_id,
@@ -905,13 +916,15 @@ async def _execute_reply(
             metadata=reply_metadata,
         )
 
-    target_user_info = target_message.message_info.user_info
     bot_name = config_module.global_config.bot.nickname.strip() or "MaiSaka"
-    if is_bot_self(tool_ctx.runtime.chat_stream.platform, target_user_info.user_id):
-        # 自身消息只是回复的引用锚点，不能把其作者当作实际收件人。
+    if target_message is None or is_bot_self(
+        tool_ctx.runtime.chat_stream.platform, target_message.message_info.user_info.user_id,
+    ):
+        # 无目标发言直接发送到会话；自身消息也只是引用锚点，不能把其作者当作实际收件人。
         target_user_name = ""
         reply_receipt = f'"{bot_name}"已生成并向当前会话发送了回复"{combined_reply_text}"'
     else:
+        target_user_info = target_message.message_info.user_info
         target_user_name = target_user_info.user_cardname or target_user_info.user_nickname or target_user_info.user_id
         reply_receipt = f'"{bot_name}"已生成并向"{target_user_name}"发送了回复"{combined_reply_text}"'
 

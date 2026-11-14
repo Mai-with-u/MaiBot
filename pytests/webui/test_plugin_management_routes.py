@@ -118,6 +118,24 @@ def test_installed_plugins_expose_actual_usage_seconds(client: TestClient, monke
     assert response.json()["plugins"][0]["usage_seconds"] == 259_200.5
 
 
+def test_plugin_usage_is_available_after_corrupt_record_recovery(client: TestClient, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(integration_module, "get_instance_root", lambda: tmp_path)
+    usage_path = tmp_path / "data" / "plugin_runtime" / "plugin_usage.json"
+    usage_path.parent.mkdir(parents=True)
+    usage_path.write_bytes(bytes(968))
+    asyncio.run(integration_module.get_plugin_runtime_manager()._start_plugin_usage_tracking())
+
+    installed = client.get("/api/webui/plugins/installed")
+    assert installed.status_code == 200
+    plugin, = installed.json()["plugins"]
+    assert plugin["id"] == "test.demo"
+    assert plugin["usage_seconds"] == 0.0
+
+    usage = client.get("/api/webui/plugins/usage")
+    assert usage.status_code == 200
+    assert usage.json() == {"usage_seconds": {}}
+
+
 @pytest.mark.parametrize("status", ["timed_out", "failed"])
 def test_installed_plugins_keep_startup_diagnostics_before_runtime_ready(client: TestClient, monkeypatch, status) -> None:
     reason = "加载仍在等待" if status == "timed_out" else "on_load failed: invalid endpoint"

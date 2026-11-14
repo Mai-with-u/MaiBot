@@ -148,28 +148,36 @@ describe('ListFieldEditor', () => {
     expect(screen.getByRole('combobox')).toBeDisabled()
   })
 
-  it('保留对象数组子字段中的嵌套字符串数组编辑能力', async () => {
+  it('对象数组子字段中的字符串数组显示为标签，可回车添加和移除', () => {
     const handleChange = vi.fn()
 
-    render(
+    const { rerender } = render(
       <ListFieldEditor
         value={[{ push_groups: ['group-a'] }]}
         onChange={handleChange}
         itemType="object"
         itemFields={{
-          push_groups: {
-            type: 'array',
-            label: '推送群列表',
-            default: [],
-            item_type: 'string',
-          },
+          push_groups: { type: 'array', label: '推送群列表', default: [], item_type: 'string' },
         }}
       />
     )
 
-    const input = screen.getByDisplayValue('group-a')
-    fireEvent.change(input, { target: { value: 'group-b' } })
+    expect(screen.getByText('group-a')).toBeInTheDocument()
+    fireEvent.change(screen.getByPlaceholderText('继续添加'), { target: { value: 'group-b' } })
+    fireEvent.keyDown(screen.getByPlaceholderText('继续添加'), { key: 'Enter' })
+    expect(handleChange).toHaveBeenLastCalledWith([{ push_groups: ['group-a', 'group-b'] }])
 
+    rerender(
+      <ListFieldEditor
+        value={[{ push_groups: ['group-a', 'group-b'] }]}
+        onChange={handleChange}
+        itemType="object"
+        itemFields={{
+          push_groups: { type: 'array', label: '推送群列表', default: [], item_type: 'string' },
+        }}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: '移除 group-a' }))
     expect(handleChange).toHaveBeenLastCalledWith([{ push_groups: ['group-b'] }])
   })
 
@@ -506,10 +514,10 @@ describe('ListFieldEditor', () => {
     expect(handleChange).toHaveBeenCalledWith([{ tags: ['daily_news', 'ai_news'] }])
   })
 
-  it('嵌套数组字段在值为非数组且无 default 时从空列表添加', () => {
+  it('嵌套字符串数组在值为非数组且无 default 时从空列表添加', () => {
     const handleChange = vi.fn()
 
-    const { rerender } = render(
+    render(
       <ListFieldEditor
         value={[{ aliases: null }]}
         onChange={handleChange}
@@ -520,23 +528,10 @@ describe('ListFieldEditor', () => {
       />
     )
 
-    const addButtons = screen.getAllByRole('button', { name: /添加项目/ })
-    fireEvent.click(addButtons[0])
-    expect(handleChange).toHaveBeenCalledWith([{ aliases: [''] }])
-
-    rerender(
-      <ListFieldEditor
-        value={[{ aliases: [''] }]}
-        onChange={handleChange}
-        itemType="object"
-        itemFields={{
-          aliases: { type: 'array', label: '别名', item_type: 'string' },
-        }}
-      />
-    )
-
-    fireEvent.click(getRemoveButtons()[0])
-    expect(handleChange).toHaveBeenLastCalledWith([{ aliases: [] }])
+    const input = screen.getByPlaceholderText('输入后回车添加')
+    fireEvent.change(input, { target: { value: 'alias-1' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(handleChange).toHaveBeenLastCalledWith([{ aliases: ['alias-1'] }])
   })
 
   it('对象字符串子字段变更时合并写回整项', () => {

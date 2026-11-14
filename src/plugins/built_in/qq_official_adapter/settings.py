@@ -10,7 +10,7 @@ class PluginSettings(PluginConfigBase):
     __ui_order__: ClassVar[int] = 0
 
     enabled: bool = Field(default=False, description="启用 QQ 官方机器人连接")
-    config_version: str = Field(default="0.4.15", description="配置版本")
+    config_version: str = Field(default="0.4.16", description="配置版本")
 
 
 class QQOfficialSettings(PluginConfigBase):
@@ -70,9 +70,24 @@ class RecallSettings(PluginConfigBase):
     )
 
 
+class KickSettings(PluginConfigBase):
+    __ui_label__: ClassVar[str] = "踢人工具"
+    __ui_order__: ClassVar[int] = 4
+
+    enabled: bool = Field(default=False, description="启用 kick_member 踢人工具；需要 QQ 官方移除群成员接口权限")
+    allowed_groups: List[str] = Field(
+        default_factory=list,
+        description="允许使用踢人工具的群（统一群号或 group_openid）；留空不限制",
+    )
+    admin_users: List[str] = Field(
+        default_factory=list,
+        description="踢人保护名单（统一 QQ 号或 OpenID），名单内用户不会被移除",
+    )
+
+
 class FilterSettings(PluginConfigBase):
     __ui_label__: ClassVar[str] = "消息过滤"
-    __ui_order__: ClassVar[int] = 4
+    __ui_order__: ClassVar[int] = 5
 
     ignore_other_bots: bool = Field(
         default=True,
@@ -83,7 +98,7 @@ class FilterSettings(PluginConfigBase):
 
 class AdvancedSettings(PluginConfigBase):
     __ui_label__: ClassVar[str] = "高级设置"
-    __ui_order__: ClassVar[int] = 5
+    __ui_order__: ClassVar[int] = 6
 
     show_debug_info: bool = Field(
         default=False,
@@ -105,5 +120,6 @@ class AdapterSettings(PluginConfigBase):
     qq_official: QQOfficialSettings = Field(default_factory=QQOfficialSettings)
     mute: MuteSettings = Field(default_factory=MuteSettings)
     recall: RecallSettings = Field(default_factory=RecallSettings)
+    kick: KickSettings = Field(default_factory=KickSettings)
     filter: FilterSettings = Field(default_factory=FilterSettings)
     advanced: AdvancedSettings = Field(default_factory=AdvancedSettings)

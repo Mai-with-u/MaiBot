@@ -6,6 +6,13 @@ import { BOT_CONFIG_UPDATED_EVENT, getBotConfigCached } from '@/lib/config-api'
 export interface FeatureFlags {
   agent: boolean
   files: boolean
+  desktopPet: boolean
+}
+
+export function isDesktopPetEnabled(config: Record<string, unknown> | null): boolean {
+  const desktopPet = config?.desktop_pet
+  return desktopPet !== null && typeof desktopPet === 'object'
+    && (desktopPet as Record<string, unknown>).enabled === true
 }
 
 function resolveFeatureFlags(config: Record<string, unknown> | null): FeatureFlags {
@@ -17,6 +24,7 @@ function resolveFeatureFlags(config: Record<string, unknown> | null): FeatureFla
       && (agent as Record<string, unknown>).enabled === true,
     files: capabilities !== null && typeof capabilities === 'object'
       && (capabilities as Record<string, unknown>).files === true,
+    desktopPet: isDesktopPetEnabled(config),
   }
 }
 

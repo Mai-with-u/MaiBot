@@ -73,19 +73,6 @@ def describe_entry(entry: PluginReleaseEntry) -> Dict[str, Any]:
     return {**entry.model_dump(exclude={"versions"}), "versions": versions, "recommended_version": recommended}
 
 
-def parse_market_release_entry(data: Dict[str, Any], plugin_id: Optional[str] = None) -> PluginReleaseEntry:
-    entry = PluginReleaseEntry.model_validate({
-        "id": data["marketplace_id"], "manifest_id": data["id"],
-        "repositoryUrl": data["repository_url"], "mode": data["install_mode"],
-        "versions": data["versions"], "sync_error": data.get("sync_error"),
-        "rejected_releases": data.get("rejected_releases", []),
-    })
-    if plugin_id is not None and plugin_id.casefold() not in {entry.id.casefold(), (entry.manifest_id or "").casefold()}:
-        raise ValueError("插件中心返回的插件 ID 与请求不一致")
-    _validate_release_entry(entry)
-    return entry
-
-
 def parse_release_index(content: str) -> PluginReleaseIndex:
     """解析版本索引：单条无效只跳过该条，插件 ID 冲突仍视为索引整体错误。"""
     envelope = _ReleaseIndexEnvelope.model_validate_json(content)

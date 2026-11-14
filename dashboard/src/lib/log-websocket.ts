@@ -215,7 +215,7 @@ export class LogWebSocketManager {
         return
       }
 
-      await unifiedWsClient.subscribe('logs', 'main', { replay: 100 })
+      await unifiedWsClient.subscribe('logs', 'main', { replay: this.getMaxCacheSize() })
       if (this.logCallbacks.size === 0) {
         await unifiedWsClient.unsubscribe('logs', 'main')
         return

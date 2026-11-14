@@ -7,9 +7,11 @@ import copy
 import hashlib
 import inspect
 import os
+import shutil
 import tomlkit
 
 from src.agent.config import AgentConfig
+from src.common.atomic_file import write_private
 from src.common.i18n import t
 from src.common.logger import get_logger
 from src.common.paths import get_instance_root
@@ -19,7 +21,7 @@ from src.files.config import FilesConfig
 from src.web_search.config import WebConfig
 
 from .config_base import AttributeData, ConfigBase, Field
-from .builtin_typo_migration import migrate_builtin_typo_config
+from .builtin_typo_migration import migrate_builtin_keyword_reaction_config, migrate_builtin_typo_config
 from .config_upgrade_hooks import apply_config_upgrade_hooks
 from .config_utils import compare_versions, output_config_changes, recursive_parse_item_to_table
 from .default_model_config import create_default_model_config
@@ -43,7 +45,6 @@ from .official_configs import (
     ExperimentalConfig,
     ExpressionConfig,
     JargonConfig,
-    KeywordReactionConfig,
     LogConfig,
     MaimMessageConfig,
     MCPConfig,
@@ -74,8 +75,8 @@ BOT_CONFIG_PATH: Path = (CONFIG_DIR / "bot_config.toml").resolve().absolute()
 MODEL_CONFIG_PATH: Path = (CONFIG_DIR / "model_config.toml").resolve().absolute()
 LEGACY_ENV_PATH: Path = (PROJECT_ROOT / ".env").resolve().absolute()
 MMC_VERSION: str = read_project_version(PROJECT_ROOT)
-CONFIG_VERSION: str = "8.16.18"
-MODEL_CONFIG_VERSION: str = "1.17.25"
+CONFIG_VERSION: str = "8.16.25"
+MODEL_CONFIG_VERSION: str = "1.17.26"
 
 logger = get_logger("config")
 
@@ -145,7 +146,6 @@ class Config(ConfigBase):
     emoji: EmojiConfig = Field(default_factory=EmojiConfig)
     """表情包配置类"""
 
-    keyword_reaction: KeywordReactionConfig = Field(default_factory=KeywordReactionConfig)
     """关键词反应配置类"""
 
     response_post_process: ResponsePostProcessConfig = Field(default_factory=ResponsePostProcessConfig)
@@ -737,7 +737,10 @@ def load_config_from_file(
         logger.warning(f"配置文件缺失，正在生成默认配置: {config_path}")
         generate_new_config_file(config_class, config_path, new_ver, override_repr)
     with open(config_path, "r", encoding="utf-8") as f:
-        config_data = tomlkit.load(f)
+        try:
+            config_data = tomlkit.load(f)
+        except (UnicodeError, tomlkit.exceptions.ParseError) as exc:
+            raise ValueError(f"配置文件无法解析：{config_path}") from exc
     inner_table = config_data.get("inner")
     if not isinstance(inner_table, Mapping):
         raise TypeError(t("config.missing_inner_version"))
@@ -799,12 +802,18 @@ def load_config_from_file(
             if not isinstance(legacy_typo, Mapping):
                 raise TypeError("旧错字配置 chinese_typo 必须是 TOML 表")
             migrate_builtin_typo_config(legacy_typo)
+        legacy_keyword_reaction = original_data.get("keyword_reaction") if config_class is Config else None
+        if legacy_keyword_reaction is not None:
+            if not isinstance(legacy_keyword_reaction, Mapping):
+                raise TypeError("旧关键词反应配置 keyword_reaction 必须是 TOML 表")
+            migrate_builtin_keyword_reaction_config(legacy_keyword_reaction)
         if (
             compare_versions(old_ver, new_ver)
             or env_migration_applied
             or legacy_config_migration_applied
             or upgrade_hook_applied
             or legacy_typo is not None
+            or legacy_keyword_reaction is not None
         ):
             output_config_changes(attribute_data, logger, old_ver, new_ver, config_path.name)
             output_config = target_config
@@ -883,17 +892,17 @@ def write_config_to_file(
     if isinstance(config, Config) and shared_settings_path() is not None:
         strip_shared_settings(full_config_data)
 
-    # 备份旧文件
+    # 先完成序列化，再备份旧文件；提交前正式路径始终保留原配置。
+    content = tomlkit.dumps(full_config_data)
     if config_path.exists():
         backup_root = config_path.parent / "old"
         backup_root.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S%f")
         backup_path = backup_root / f"{config_path.stem}_{timestamp}.toml"
-        config_path.replace(backup_path)
+        shutil.copy2(config_path, backup_path)
 
     # 写入文件
-    with open(config_path, "w", encoding="utf-8") as f:
-        tomlkit.dump(full_config_data, f)
+    write_private(config_path, content)
 
 
 class _ConfigProxy:

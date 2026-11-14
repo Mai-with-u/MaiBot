@@ -98,6 +98,10 @@ class MemorySearchHitProcessingService(KernelServiceBase):
         return filtered
 
     def _filter_user_visible_hits(self, hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        # 迁移覆盖后保留的恢复记录不参与检索，包括启用全局记忆共享时。
+        hits = [item for item in hits if not str(
+            coerce_metadata_dict(item.get("metadata")).get("source") or item.get("source") or ""
+        ).startswith("migration_archive:")]
         hits = self._filter_fact_paragraph_hits(hits)
         hits = self._filter_current_effective_hits(self._filter_active_relation_hits(self._filter_episode_hits(hits)))
         return [{**hit, "metadata": visible_fact_metadata(coerce_metadata_dict(hit["metadata"]))}
@@ -239,7 +243,8 @@ class MemorySearchHitProcessingService(KernelServiceBase):
     @classmethod
     def _paragraph_scope_identity(cls, paragraph: Dict[str, Any]) -> tuple[str, set[str]]:
         """按新字段优先、旧来源兼容的顺序解释段落范围。"""
-        metadata = coerce_metadata_dict(paragraph.get("metadata"))
+        raw_metadata = paragraph.get("metadata")
+        metadata = json.loads(raw_metadata) if isinstance(raw_metadata, str) and raw_metadata else coerce_metadata_dict(raw_metadata)
         scope_type = str(metadata.get("scope_type", "") or "").strip().lower()
         chat_ids = cls._metadata_chat_scope_ids(metadata)
         source = str(paragraph.get("source", "") or metadata.get("source", "") or "").strip()

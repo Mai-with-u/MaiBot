@@ -13,15 +13,14 @@ export {
   ExpressionLearningListHook,
   FocusGroupsHook,
   FocusWhitelistHook,
+  LightweightPrivateChatsHook,
   JargonGroupsHook,
   JargonLearningListHook,
-  KeywordRulesHook,
   HiddenFieldHook,
   MCPRootItemsHook,
   MCPServersHook,
   MultipleReplyStyleHook,
   PrivateReplyPauseRulesHook,
-  RegexRulesHook,
 } from './complexFieldHooks'
 export { AMemorixRetrievalChatsHook } from './AMemorixRetrievalChatsHook'
 export { LearningBlacklistHook } from './LearningBlacklistHook'

@@ -9,7 +9,7 @@ import type { GitStatus, MaimaiVersion } from './types'
  * 插件市场展示缓存
  */
 const PLUGIN_LIST_CACHE_TTL = 5 * 60 * 1000
-const PLUGIN_LIST_STORAGE_KEY = 'maibot-plugin-market-list-cache-v6'
+const PLUGIN_LIST_STORAGE_KEY = 'maibot-plugin-market-list-cache-v7'
 
 const pluginListCaches = new Map<boolean, { timestamp: number; result: PluginInfo[] }>()
 const pluginListRequests = new Map<boolean, Promise<PluginInfo[]>>()
@@ -21,21 +21,6 @@ export function invalidatePluginMarketCache(): void {
   pluginListRequests.clear()
   localStorage.removeItem(PLUGIN_LIST_STORAGE_KEY)
   localStorage.removeItem(`${PLUGIN_LIST_STORAGE_KEY}-compatible`)
-}
-
-/** 互动只使带有旧统计的官方快照失效，镜像清单继续复用。 */
-export function invalidatePluginMarketStats(): void {
-  cacheGeneration += 1
-  // 在途官方快照也可能带旧统计，后续调用不能继续复用它；镜像清单缓存保留。
-  pluginListRequests.clear()
-  for (const compatibleOnly of [false, true]) {
-    const cached = pluginListCaches.get(compatibleOnly)?.result
-      ?? readPluginListStorageCache(compatibleOnly)?.data
-    if (cached?.some((plugin) => plugin.market_data_source === 'official')) {
-      pluginListCaches.delete(compatibleOnly)
-      localStorage.removeItem(compatibleOnly ? `${PLUGIN_LIST_STORAGE_KEY}-compatible` : PLUGIN_LIST_STORAGE_KEY)
-    }
-  }
 }
 
 interface PluginListStorageCache {
@@ -198,7 +183,7 @@ export function getCachedPluginList(compatibleOnly = false): PluginInfo[] | null
  */
 async function fetchPluginListUncached(compatibleOnly: boolean, forceRefresh: boolean): Promise<PluginInfo[]> {
   const market = await backendApi.get<{
-    source: 'official' | 'cnb' | 'github'
+    source: 'cnb' | 'github'
     plugins: PluginApiResponse[]
   }>('/api/webui/plugins/marketplace', {
     query: { compatible_only: compatibleOnly, force_refresh: forceRefresh }, errorMessage: '获取插件市场数据失败',

@@ -29,6 +29,9 @@ import {
 import type { CustomPage, WebUIPage } from '@/lib/plugin-webui'
 import { prepareUploadImage } from '@/lib/upload-image'
 
+const REQUESTS_PER_SECOND = 60
+const REQUEST_BURST = 600
+
 interface CustomPageProps {
   pluginId: string
   page: CustomPage
@@ -211,7 +214,7 @@ function CustomPageSession({
     port.current = channel.port1
     const signal = controller.current.signal
     let inflight = 0
-    let tokens = 200
+    let tokens = REQUEST_BURST
     let refill = performance.now()
     let layoutTokens = 100
     let layoutRefill = refill
@@ -237,12 +240,11 @@ function CustomPageSession({
         }
         return
       }
-      tokens = Math.min(200, tokens + (now - refill) / 50)
+      tokens = Math.min(REQUEST_BURST, tokens + ((now - refill) * REQUESTS_PER_SECOND) / 1000)
       refill = now
-      // Allow bursts of 200 messages and sustain 20 per second for batch uploads.
       // Flooding closes this page's bridge instead of growing a queue in the host.
       if (tokens < 1) {
-        stop(t('pluginWebUI.customStopRequestRate'))
+        stop(t('pluginWebUI.customStopRequestRate', { rate: REQUESTS_PER_SECOND, burst: REQUEST_BURST }))
         return
       }
       tokens -= 1

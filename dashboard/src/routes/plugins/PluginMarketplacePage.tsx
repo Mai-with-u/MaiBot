@@ -87,17 +87,6 @@ function isMarketHostInCompatibilityMode(plugin: PluginInfo, version: MaimaiVers
   return !!version && !!host && isPluginCompatibilityMode(host.min_version, host.max_version, version)
 }
 
-function needsCompatibilityModeReleaseDetail(plugin: PluginInfo, version: MaimaiVersion | null): boolean {
-  // 官方摘要按声明的 Host 上限筛选发行版，兼容窗口内的版本需在详情中确认。
-  const releases = plugin.releases
-  return plugin.market_data_source === 'official'
-    && releases?.mode === 'releases'
-    && !releases.sync_error
-    && releases.versions.length === 0
-    && plugin.manifest.manifest_version === 2
-    && isMarketHostInCompatibilityMode(plugin, version)
-}
-
 const buildPluginStatsMap = (
   pluginList: PluginInfo[],
   summary?: Record<string, PluginStatsData>
@@ -205,8 +194,8 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
     setStatsStatus('loading')
     setStatsError('')
     try {
-      // 官方清单的统计与版本来自同一快照；镜像清单独立读取一次官方统计摘要。
-      const nextStats = marketPlugins.length === 0 || (!forceRefresh && marketPlugins[0].market_data_source === 'official')
+      // 插件清单来自 CNB / GitHub，不含统计；统计单独读取一次官方统计摘要。
+      const nextStats = marketPlugins.length === 0
         ? buildPluginStatsMap(marketPlugins)
         : buildPluginStatsMap(marketPlugins, await getPluginStatsSummary(forceRefresh))
       if (requestId !== statsRequestRef.current) return
@@ -341,10 +330,6 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
       toast({ title: '插件不兼容', description: '该插件清单与当前 MaiBot 版本不兼容。', variant: 'destructive' })
       return
     }
-    if (!intent.version && needsCompatibilityModeReleaseDetail(target, maimaiVersion)) {
-      setDetailPluginId(target.id)
-      return
-    }
     const release = target.releases?.versions.find(version => version.version === intent.version && version.compatible && !version.yanked)
     if (intent.version && !release) {
       toast({ title: '所选版本不可安装', description: '版本未收录、已撤回或与此 MaiBot 不兼容，请重新选择。', variant: 'destructive' })
@@ -463,7 +448,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
       if (cachedPluginList?.length && !isUnmounted) {
         setPlugins(cachedPluginList)
         setPluginStats(buildPluginStatsMap(cachedPluginList))
-        setStatsStatus(cachedPluginList[0].market_data_source === 'official' ? 'ready' : 'loading')
+        setStatsStatus('loading')
         setLoading(false)
         console.info('加载插件市场中：展示缓存')
       } else {
@@ -607,7 +592,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
     if (plugin.builtin) return true
     if (plugin.releases?.sync_error) return false
     if (plugin.releases?.mode === 'releases') {
-      return Boolean(plugin.releases.recommended_version) || needsCompatibilityModeReleaseDetail(plugin, maimaiVersion)
+      return Boolean(plugin.releases.recommended_version)
     }
     if (plugin.releases?.branch_compatible !== undefined) return plugin.releases.branch_compatible
     if (!maimaiVersion) return true
@@ -632,7 +617,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
     if (plugin.builtin) return null
     if (plugin.releases?.sync_error) return `版本同步失败：${plugin.releases.sync_error}`
     if (plugin.releases?.mode === 'releases' && !plugin.releases.recommended_version) {
-      return needsCompatibilityModeReleaseDetail(plugin, maimaiVersion) ? null : '没有兼容的稳定版本，请在插件详情查看版本列表'
+      return '没有兼容的稳定版本，请在插件详情查看版本列表'
     }
     if (plugin.releases?.branch_compatible === false) return plugin.releases.branch_reasons?.join('；') || null
     if (!maimaiVersion) return null
@@ -725,11 +710,6 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
         description: getIncompatibleReason(plugin) ?? '插件与当前麦麦版本不兼容',
         variant: 'destructive',
       })
-      return
-    }
-
-    if (needsCompatibilityModeReleaseDetail(plugin, maimaiVersion)) {
-      handleDetail(plugin)
       return
     }
 
@@ -929,11 +909,6 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
       return
     }
 
-    if (needsCompatibilityModeReleaseDetail(plugin, maimaiVersion)) {
-      handleDetail(plugin)
-      return
-    }
-
     try {
       setPluginProgress({
         operation: 'update',
@@ -1101,7 +1076,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
         <Card ref={toolbarRef} data-plugin-market-toolbar="true" data-compact={toolbarPinned} className="p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             {/* 搜索框 */}
-            <div className="relative w-full sm:max-w-md sm:flex-1">
+            <div data-tour="plugin-market-search" className="relative w-full sm:max-w-md sm:flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="搜索插件..."

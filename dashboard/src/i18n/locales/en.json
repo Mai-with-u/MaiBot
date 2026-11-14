@@ -92,6 +92,7 @@
       "model": "Models",
       "adapter": "Adapters",
       "learning": "Learning",
+      "mutualGroups": "Sharing",
       "memory": "Memory",
       "plugin": "Plugins",
       "market": "Market",
@@ -106,7 +107,18 @@
     "keyNeedsBot": "{{label}} · Start a bot first",
     "pet": {
       "title": "Desktop pet",
+      "statusTitle": "Desktop pet status",
+      "statusLoadFailed": "Could not load desktop pet status: {{error}}",
       "settings": "Pet settings",
+      "settingsUnavailable": "Desktop pet settings are unavailable on this bot.",
+      "settingsSaving": "Saving…",
+      "settingsSaved": "Desktop pet settings saved",
+      "settingsAutoSaveHint": "Saves automatically 2 seconds after editing stops",
+      "settingsInvalidNumber": "{{label}}: enter a valid number",
+      "settingsMinValue": "{{label}}: must be at least {{min}}",
+      "settingsMaxValue": "{{label}}: must be at most {{max}}",
+      "skinAutoSaveHint": "Selecting a skin saves and applies it automatically.",
+      "settingsSaveFailed": "Could not save desktop pet settings",
       "enabledLamp": "Desktop pet on",
       "mode": {
         "local": "Local window",
@@ -191,7 +203,7 @@
     "customReload": "Reload page",
     "customStop": "Stop page",
     "customStopped": "Page stopped. Reload the page to run again.",
-    "customStopRequestRate": "Too many requests. Page stopped (20 requests per second, with bursts of up to 200).",
+    "customStopRequestRate": "Too many requests. Page stopped ({{rate}} requests per second, with bursts of up to {{burst}}).",
     "customStopLayoutRate": "Too many page size updates. Page stopped.",
     "customStopHeight": "Page height is invalid or exceeds 30000 pixels. Page stopped.",
     "customStopDuplicateId": "The plugin sent a duplicate request ID. Page stopped.",
@@ -252,8 +264,10 @@
       "system": "System"
     },
     "menu": {
+      "mutualGroups": "Sharing",
       "home": "Home",
       "botMainConfig": "Bot Main Config",
+      "desktopPet": "Desktop Pet",
       "aiModelProvider": "AI Model Providers",
       "modelManagement": "Model Management",
       "promptManagement": "Prompt Management",
@@ -615,7 +629,11 @@
       "repliedTitle": "The bot has replied",
       "repliedDescription": "If the reply and personality look right, continue to message platform setup.",
       "keepChatting": "Keep chatting",
-      "continue": "Continue to message platforms"
+      "continue": "Continue to message platforms",
+      "failedTitle": "No reply from the bot yet",
+      "failedDescription": "The model URL, API key or model name may be wrong. Try sending another message, or check the model settings.",
+      "checkModelConfig": "Check model settings",
+      "learnBasics": "Show me the basics"
     },
     "botNameFallback": "Mai",
     "userFallback": "User",
@@ -787,6 +805,21 @@
       "about": "About"
     },
     "appearance": {
+      "dashboardStyle": "Dashboard style",
+      "dashboardStyles": {
+        "modern": {
+          "label": "Modern",
+          "description": "A flat, modern UI"
+        },
+        "future-retro": {
+          "label": "Future Retro",
+          "description": "High contrast, rough textures, warm tones, and a matte finish"
+        },
+        "millennium": {
+          "label": "Millennium",
+          "description": "A nostalgic turn-of-the-millennium style"
+        }
+      },
       "layoutVersion": "Layout",
       "layoutVersionDesc": "Classic keeps the top bar and card home page. Observation removes the top bar: the sidebar shows settings on top and all conversations below, and home becomes a status board. Desktop width only.",
       "layoutClassic": "Classic",
@@ -1185,13 +1218,13 @@
     "helpLink": "I don't have a Token. Where can I get one?",
     "helpTitle": "Access Password",
     "helpDesc": "Access Token is the only credential to access MaiBot WebUI. Get yours in one of the following ways",
-    "method1Title": "Method 1: Check Startup Log",
-    "method1Desc": "When MaiBot starts, the console will display the WebUI Access Token.",
-    "method1Example1": "🔑 WebUI Access Token: abc123...",
-    "method1Example2": "💡 Use this Token to log in to WebUI",
+    "method1Title": "Method 1: Check Host Startup Output",
+    "method1Desc": "When using a temporary password, the host prints it at startup. If you have set a permanent password, use that password; it is not printed again at startup.",
+    "method1Example1": "WebUI 临时登录密码：abc123...",
+    "method1Example2": "Check the host console output, rather than an individual Bot's runtime log.",
     "method2Title": "Method 2: Check Config File",
-    "method2Desc": "The Token is saved in the config file at the project root:",
-    "method2FileHint": "Open this file and copy the value of the access_token field",
+    "method2Desc": "The password is stored in this file relative to the host workspace directory, whose path appears in the host startup output:",
+    "method2FileHint": "Open this file and copy the value of this field:",
     "securityTipTitle": "Security Notice",
     "securityTip1": "Keep your Token safe and never share it with others",
     "securityTip2": "To reset the Token, go to WebUI Settings after logging in",
@@ -1202,8 +1235,45 @@
   },
   "setupPage": {
     "steps": {
+      "nickname": {
+        "title": "Choose a Name",
+        "label": "Nickname",
+        "description": ""
+      },
+      "defineModel": {
+        "title": "Set Up Your Model Source",
+        "label": "Define a model",
+        "description": ""
+      },
+      "replyer": {
+        "title": "Set Up the Reply Model",
+        "description": "This model shapes how they speak. Choose one with strong writing and a good sense of style."
+      },
+      "planner": {
+        "title": "Set Up the Behavior Model",
+        "description": "This model controls how MaiMai acts. Choose an agent-capable model that can understand tasks and use tools."
+      },
+      "basicSettings": {
+        "title": "Settings",
+        "description": ""
+      },
+      "groupReplies": {
+        "title": "Group replies",
+        "description": "When enabled, MaiBot will try to reply when it is @mentioned in a group.",
+        "label": "Prioritize replies to @mentions"
+      },
+      "desktopPet": {
+        "title": "Desktop pet",
+        "description": "",
+        "label": "Enable desktop pet",
+        "hint": "The desktop pet requires a Windows desktop environment.\nIf MaiBot runs on a server, you can set up a remote connection to the desktop pet later in Settings."
+      },
+      "dashboardAppearance": {
+        "title": "Interface style",
+        "description": ""
+      },
       "botProfile": {
-        "title": "Basics & Personality",
+        "title": "Persona",
         "description": "Configure nickname, personality, and reply style"
       },
       "customToken": {
@@ -1216,15 +1286,19 @@
         "description": "Configure the bot's basic information"
       },
       "personality": {
-        "title": "Personality",
-        "description": "Define the bot's personality and speaking style"
+        "title": "Create a Persona",
+        "choose": "What would you like to do?",
+        "templateTitle": "Choose a Template",
+        "editTitle": "Edit Persona",
+        "template": "Use an existing template",
+        "manual": "Write your own"
       },
       "apiProvider": {
         "title": "API Setup",
         "description": "Configure the API provider"
       },
       "modelSetup": {
-        "title": "Model Setup",
+        "title": "Models",
         "description": "Configure planner and replyer models"
       }
     },
@@ -1247,8 +1321,8 @@
       "enterProviderName": "Please enter an API provider name",
       "enterBaseUrl": "Please enter the API base URL",
       "enterApiKey": "Please enter the API key",
-      "enterPlannerModelIdentifier": "Please enter the planner model identifier",
-      "enterReplyerModelIdentifier": "Please enter the replyer model identifier",
+      "enterPlannerModelIdentifier": "Please enter the behavior model identifier",
+      "enterReplyerModelIdentifier": "Please enter the reply model identifier",
       "customTokenInvalid": "Token does not meet the requirements: {{failedRules}}"
     },
     "toast": {
@@ -1263,7 +1337,7 @@
       "completeFailedTitle": "Setup failed",
       "skipFailedTitle": "Failed to skip the setup wizard",
       "customTokenSuccessTitle": "Token updated",
-      "customTokenSuccessDescription": "Please sign in again with the new custom token, then continue setup.",
+      "customTokenSuccessDescription": "You are signed in with the new password and can continue setup.",
       "unknownError": "Unknown error"
     },
     "actions": {
@@ -1303,6 +1377,8 @@
         "noticeDescription": "The random token changes on the next startup. Set a fixed custom token and use it for future WebUI sign-ins.",
         "label": "Custom Token *",
         "placeholder": "Enter a new password",
+        "confirmation": "Re-enter the new password",
+        "mismatch": "The passwords do not match.",
         "description": "After saving, your current session will expire and you will need to sign in with the new token.",
         "requirements": "Token requirements",
         "show": "Show",
@@ -1362,17 +1438,17 @@
         "personality": {
           "label": "Personality Traits",
           "placeholder": "Describe the bot's personality and identity traits (recommended within 120 characters)",
-          "description": "Describe the bot's core personality traits, shaping how it understands itself"
+          "description": "Their personality traits and key details"
         },
         "behaviorStyle": {
           "label": "Behavior style",
           "placeholder": "Describe when to participate, observe, or stay quiet",
-          "description": "Describe the bot's behavior, determining how it acts"
+          "description": "How they behave and approach things in chat"
         },
         "replyStyle": {
           "label": "Reply Style",
           "placeholder": "Describe how the bot speaks and expresses itself",
-          "description": "Directly shape how the bot speaks and its speaking style"
+          "description": "Their speaking style"
         },
         "multipleReplyStyle": {
           "label": "Alternate Reply Styles",
@@ -1423,7 +1499,7 @@
       },
       "apiProvider": {
         "providerName": {
-          "label": "API Provider Name *",
+          "label": "Provider",
           "placeholder": "For example OpenAI, DeepSeek, or self-hosted",
           "description": "This name is written to model_config.toml and referenced by the models below"
         },
@@ -1432,11 +1508,14 @@
           "description": "Enter an OpenAI-compatible endpoint, for example https://api.example.com/v1"
         },
         "apiKey": {
-          "label": "API Key *",
+          "label": "API Key",
           "description": "Enter the API key for this provider",
           "show": "Show API key",
           "hide": "Hide API key"
-        }
+        },
+        "presetSelect": "Choose a preset provider",
+        "usePreset": "Preset",
+        "useCustom": "Custom"
       },
       "modelSetup": {
         "identifierPlaceholder": "Enter model ID",
@@ -1459,7 +1538,44 @@
             "label": "Enable vision"
           }
         },
-        "saveHint": "You can configure more detailed task assignment later."
+        "saveHint": "You can configure more detailed task assignment later.",
+        "fetching": "Fetching model list…",
+        "fetchFailed": "{{error}}. Please enter the model ID manually.",
+        "enableThinking": "Enable thinking",
+        "effort": {
+          "label": "Thinking effort",
+          "low": "Low",
+          "high": "High",
+          "max": "Max"
+        }
+      }
+    },
+    "errors": {
+      "loadStatus": "Failed to read setup status",
+      "loadBot": "Failed to read bot config",
+      "loadPersonality": "Failed to read personality config",
+      "loadModel": "Failed to read model config",
+      "fetchModels": "Failed to fetch model list",
+      "emptyModelList": "The provider returned an empty model list",
+      "saveBot": "Failed to save bot config",
+      "savePersonality": "Failed to save personality config",
+      "saveProvider": "Failed to save API provider config",
+      "saveModel": "Failed to save model config",
+      "complete": "Failed to mark setup as complete",
+      "updateToken": "Failed to update token"
+    },
+    "connectionTest": {
+      "hint": "Check that the models can be called. The result is for reference only.",
+      "button": "Test connection",
+      "testing": "Testing…",
+      "passed": "Passed",
+      "failed": "Failed",
+      "passedWithLatency": "Passed ({{latency}})",
+      "saveFailed": "Could not save the config, so the test did not run: {{error}}",
+      "canContinue": "You can still finish setup if the test fails and adjust it later on the model settings page.",
+      "roles": {
+        "planner": "Behavior model",
+        "replyer": "Reply model"
       }
     }
   },
@@ -2265,7 +2381,45 @@
     "check": "Check for updates",
     "apply": "Confirm update and restart host",
     "current": "No applicable update",
+    "lastUpdateTime": "Last update execution: {{started}} — {{finished}}",
     "updated": "The last program update succeeded",
     "restarting": "The host is updating and restarting. Waiting to reconnect. If rollback fails, check the terminal and restart manually after repair."
+  },
+  "tour": {
+    "controls": {
+      "back": "Back",
+      "close": "Close",
+      "last": "Done",
+      "next": "Next",
+      "nextWithProgress": "Next ({step}/{steps})",
+      "open": "Open guide",
+      "skip": "Skip"
+    },
+    "basicFeatures": {
+      "personality": {
+        "title": "Personality",
+        "content": "Describe who the bot is here. Its character, identity and point of view all come from this field. Try editing it right in the highlight."
+      },
+      "replyStyle": {
+        "title": "Reply style",
+        "content": "Controls the tone and length of replies, such as shorter, livelier or more formal. Remember to save after editing."
+      },
+      "talkValue": {
+        "title": "Group talk frequency",
+        "content": "How often the bot speaks up in group chats. Lower values make it quieter. Adjust this if it talks too much or too little."
+      },
+      "plugins": {
+        "title": "Plugin market",
+        "content": "Search for and install plugins here to give the bot new abilities. Installed plugins can be tuned under Plugin Config."
+      },
+      "knowledgeBase": {
+        "title": "Knowledge base",
+        "content": "Import material under Import / Export. The bot refers to it while chatting and also builds up memories from conversations."
+      },
+      "done": {
+        "title": "That's the basics",
+        "content": "Everything you changed lives in the sidebar menu, so you can come back and adjust it anytime. Now go chat with the bot!"
+      }
+    }
   }
 }

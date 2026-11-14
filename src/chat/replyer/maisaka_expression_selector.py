@@ -13,7 +13,7 @@ from src.common.database.database_model import Expression, ModifiedBy
 from src.common.llm_json import parse_llm_json
 from src.common.logger import get_logger
 from src.common.prompt_i18n import load_prompt
-from src.common.utils.utils_config import ChatConfigUtils, ExpressionConfigUtils
+from src.common.utils.utils_config import ExpressionConfigUtils
 from src.config.config import global_config, model_config
 from src.learners.expression_style_utils import (
     is_prompt_example_expression_style,
@@ -65,35 +65,9 @@ class MaisakaExpressionSelector:
         return platform == "*" and item_id == "*"
 
     def _resolve_expression_group_scope(self, session_id: str) -> tuple[set[str], bool]:
-        related_session_ids = {session_id}
-        has_global_share = False
-        expression_groups = global_config.expression.expression_groups
+        from src.services.sharing_group_service import resolve_scope
 
-        for expression_group in expression_groups:
-            target_items = expression_group.targets
-            group_session_ids: set[str] = set()
-            contains_current_session = False
-            contains_global_share_marker = False
-
-            for target_item in target_items:
-                platform = target_item.platform.strip()
-                item_id = target_item.item_id.strip()
-                if not platform or not item_id:
-                    continue
-
-                target_session_ids = ChatConfigUtils.get_target_session_ids_with_wildcards(target_item)
-                group_session_ids.update(target_session_ids)
-                if ChatConfigUtils.target_matches_session_with_wildcards(target_item, session_id):
-                    contains_current_session = True
-                    if self._is_global_expression_group_marker(platform, item_id):
-                        contains_global_share_marker = True
-
-            if contains_global_share_marker:
-                has_global_share = True
-            if contains_current_session:
-                related_session_ids.update(group_session_ids)
-
-        return related_session_ids, has_global_share
+        return resolve_scope(session_id, "expression")
 
     def _load_all_expression_candidates(self, session_id: str) -> List[dict[str, Any]]:
         related_session_ids, has_global_share = self._resolve_expression_group_scope(session_id)
@@ -242,9 +216,9 @@ class MaisakaExpressionSelector:
 
         reference_parts: List[str] = []
         if isinstance(reply_tool_args, dict):
-            reply_reference = str(reply_tool_args.get("reply_reference") or "").strip()
-            if reply_reference:
-                reference_parts.append(f"回复信息参考：\n{reply_reference}")
+            chat_anlyze = str(reply_tool_args.get("chat_anlyze") or "").strip()
+            if chat_anlyze:
+                reference_parts.append(f"对话局面与关键事实：\n{chat_anlyze}")
         if reference_parts:
             query_parts.extend(reference_parts)
         else:

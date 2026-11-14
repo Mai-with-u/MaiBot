@@ -406,7 +406,7 @@ class RuntimeCoreCapabilityMixin:
             success, result = await replyer.generate_reply_with_context(
                 stream_id=stream_id, chat_history=[], reply_message=None,
                 reply_tool_args={
-                    "reply_reference": reference, "reply_style": "长回复", "_plugin_reply_prompt": format_instruction,
+                    "chat_anlyze": reference, "reply_style": "长回复", "_plugin_reply_prompt": format_instruction,
                 },
                 sub_agent_runner=select_expressions, log_reply=False,
             )

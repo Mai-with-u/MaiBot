@@ -14,7 +14,6 @@ import time
 import unicodedata
 
 from src.common.prompt_i18n import load_prompt
-from src.llm_models.payload_content.resp_format import RespFormat, RespFormatType
 from src.services import llm_service
 
 from .hash import compute_hash
@@ -56,54 +55,6 @@ def observation_id(*, platform: str, chat_id: str, message_ids: Sequence[str], w
     if not chat_id or not (message_ids or window_id):
         raise ValueError("去重写入缺少真实会话或来源标识")
     return compute_hash(json.dumps([platform, chat_id, sorted(set(message_ids)), window_id], ensure_ascii=False))
-
-
-def _dedup_response_format(
-    batch: Sequence[Dict[str, Any]],
-    candidates: Dict[str, List[Dict[str, Any]]],
-    relations: Sequence[Dict[str, str]],
-) -> RespFormat:
-    """候选枚举与每条事实绑定，避免模型混用 fact_id 和其他事实的候选引用。"""
-    decision_schemas: List[Dict[str, Any]] = []
-    for fact in batch:
-        targets = [row["id"] for row in candidates[fact["fact_id"]]]
-        candidate_ids: Dict[str, Any] = {"type": "array", "items": {"type": "string"}}
-        if targets:
-            candidate_ids["items"]["enum"] = targets
-        decision_schemas.append({
-            "type": "object",
-            "properties": {
-                "fact_id": {"type": "string", "enum": [fact["fact_id"]]},
-                "action": {"type": "string", "enum": ["keep", "reuse", "possible_duplicate"] if targets else ["keep"]},
-                "target_id": {"type": ["string", "null"], "enum": [*targets, None]},
-                "candidate_ids": candidate_ids,
-            },
-            "required": ["fact_id", "action", "target_id", "candidate_ids"],
-            "additionalProperties": False,
-        })
-    # strict 模式要求对象的属性全部声明并列为必填，无支持事实的关系返回空数组。
-    relation_properties = {
-        str(index): {"type": "array", "items": {"type": "string", "enum": [fact["fact_id"] for fact in batch]}}
-        for index in range(len(relations))
-    }
-    return RespFormat(format_type=RespFormatType.JSON_SCHEMA, schema={
-        "name": "fact_deduplication",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "decisions": {
-                    "type": "array", "items": {"anyOf": decision_schemas},
-                },
-                "relation_support": {
-                    "type": "object", "properties": relation_properties,
-                    "required": list(relation_properties), "additionalProperties": False,
-                },
-            },
-            "required": ["decisions", "relation_support"],
-            "additionalProperties": False,
-        },
-    })
 
 
 class FactDeduplicator:
@@ -271,6 +222,7 @@ class FactDeduplicator:
             candidates: Dict[str, List[Dict[str, Any]]] = {}
             fixed: Dict[str, Dict[str, Any]] = {}
             for fact in batch:
+                vector_candidates: List[Dict[str, Any]] = []
                 found = await asyncio.to_thread(self._candidates, scope_type, scope_id, fact["text"], paragraph_ids)
                 found = self._compatible_candidates(scope_type, fact, found)
                 exact = next(
@@ -296,7 +248,7 @@ class FactDeduplicator:
                 elif paragraph_ids and self.embedding is not None and self.vectors is not None:
                     vector = await self.embedding.encode(fact["text"])
                     hits, _ = await asyncio.to_thread(self.vectors.search, vector, k=8, allowed_ids=paragraph_ids)
-                    found += await asyncio.to_thread(self._paragraph_candidates, hits, scope_type, scope_id)
+                    vector_candidates = await asyncio.to_thread(self._paragraph_candidates, hits, scope_type, scope_id)
                 # 同一批和之前批次内的新事实也作为候选，不依赖尚未写入的向量。
                 earlier = facts[:offset] + batch[: batch.index(fact)]
                 inputs = [
@@ -314,8 +266,11 @@ class FactDeduplicator:
                     ).ratio(),
                     reverse=True,
                 )
-                # 历史候选与当前输入交错，避免历史候选占满上限后漏掉同批重复。
-                found = [row for pair in zip_longest(found, inputs) for row in pair if row is not None]
+                # 精确命中优先，其余名额由向量、关键词和同批输入轮流使用。
+                # 向量候选不能追加在已满的关键词列表后，否则截断时整路召回都会丢失。
+                found = ([exact] if exact is not None else []) + [
+                    row for group in zip_longest(vector_candidates, found, inputs) for row in group if row is not None
+                ]
                 found = self._compatible_candidates(scope_type, fact, found)
                 unique = {row["id"]: row for row in found}
                 candidates[fact["fact_id"]] = list(unique.values())[:8]
@@ -382,7 +337,6 @@ class FactDeduplicator:
                         ),
                     ),
                     temperature=0.0,
-                    response_format=_dedup_response_format(batch, model_candidates, relations),
                 )
             )
             if not response.success:

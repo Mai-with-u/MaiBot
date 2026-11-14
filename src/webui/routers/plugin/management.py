@@ -620,7 +620,7 @@ async def _perform_update_plugin(request: UpdatePluginRequest) -> Dict[str, Any]
             if release is not None:
                 return await install_release(
                     plugin_id, entry, release, updating=True, automatic=request.version == "latest",
-                    mirror_id=request.mirror_id,
+                    mirror_id=request.mirror_id, force=request.force, expected_commit=request.expected_commit,
                 )
             request = request.model_copy(update={"repository_url": entry.repositoryUrl})
         await update_progress(
@@ -672,10 +672,8 @@ async def _perform_update_plugin(request: UpdatePluginRequest) -> Dict[str, Any]
             source_url = urls.get("repository") if isinstance(urls, dict) else None
             source_url = source_url or manifest.get("repository_url")
         result = await service.pull_repository(
-            repository_path=plugin_path,
-            branch=request.branch,
-            remote_url=source_url,
-            mirror_id=request.mirror_id,
+            repository_path=plugin_path, branch=request.branch, remote_url=source_url,
+            mirror_id=request.mirror_id, force=request.force, expected_commit=request.expected_commit,
         )
 
         if not result.get("success"):
@@ -688,7 +686,7 @@ async def _perform_update_plugin(request: UpdatePluginRequest) -> Dict[str, Any]
                 plugin_id=plugin_id,
                 error=error_msg,
             )
-            raise HTTPException(status_code=int(result.get("status_code", 500)), detail=error_msg)
+            raise HTTPException(status_code=int(result.get("status_code", 500)), detail=result.get("conflict", error_msg))
 
         await update_progress(
             stage="loading", progress=90, message="验证新版本...", operation="update", plugin_id=plugin_id
@@ -725,6 +723,7 @@ async def _perform_update_plugin(request: UpdatePluginRequest) -> Dict[str, Any]
                 "old_version": old_version,
                 "new_version": new_version,
                 "update_mode": "git_pull",
+                "backup_path": result.get("backup_path"),
             }
         except HTTPException as e:
             await update_progress(
@@ -779,6 +778,7 @@ def _collect_installed_plugins(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     """将静态索引与运行状态快照合并；不读取文件或重新校验插件。"""
     plugins: List[Dict[str, Any]] = []
     seen_ids: Set[str] = set()
+    usage_seconds = snapshot["usage_seconds"]
     for entry in snapshot["plugins"]:
         plugin_id = entry.plugin_id
         if plugin_id in seen_ids:
@@ -796,7 +796,7 @@ def _collect_installed_plugins(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             and load_status not in {"success", "loading", "timed_out", "stopping"}
         ):
             load_status = "disabled"
-        plugins.append({
+        plugin = {
             "id": plugin_id,
             "manifest": entry.manifest,
             "builtin": entry.builtin,
@@ -806,9 +806,11 @@ def _collect_installed_plugins(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             "loaded": load_status == "success",
             "load_status": load_status,
             "status_badges": snapshot.get("status_badges", {}).get(plugin_id, []) if load_status == "success" else [],
-            "usage_seconds": snapshot["usage_seconds"].get(plugin_id, 0.0),
             "load_error": load_error if load_status in {"failed", "timed_out"} else "",
             "circuit_status": snapshot["circuit_statuses"].get(plugin_id),
             "release": entry.release,
-        })
+        }
+        if usage_seconds is not None:
+            plugin["usage_seconds"] = usage_seconds.get(plugin_id, 0.0)
+        plugins.append(plugin)
     return {"success": True, "plugins": plugins, "total": len(plugins)}

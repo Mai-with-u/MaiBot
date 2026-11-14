@@ -3,8 +3,14 @@
 export interface SetupStep {
   id: string
   title: string
+  label?: string
   description: string
-  icon: React.ComponentType<{ className?: string }>
+  group?: { id: string; label: string }
+}
+
+export interface BasicSetupConfig {
+  inevitable_at_reply: boolean
+  desktop_pet_enabled: boolean
 }
 
 // 步骤1：Bot基础信息
@@ -45,3 +51,5 @@ export interface ModelSetupConfig {
   replyer_reasoning_effort?: 'low' | 'high' | 'max'
   replyer_thinking: boolean
 }
+
+export type SetupModelRole = 'replyer' | 'planner'

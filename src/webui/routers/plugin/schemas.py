@@ -50,6 +50,8 @@ class UninstallPluginRequest(BaseModel):
 
 
 class UpdatePluginRequest(BaseModel):
+    force: bool = Field(False, description="备份代码和配置后强制更新，保留运行数据")
+    expected_commit: Optional[str] = Field(None, pattern="^[0-9a-f]{40}$", description="用户确认强制更新的目标提交")
     plugin_id: str = Field(..., description="插件 ID")
     repository_url: str = Field("", description="分支安装的仓库 URL；发布版本由索引解析")
     branch: Optional[str] = Field("main", description="分支名称")

@@ -80,15 +80,14 @@ import {
   ExpressionLearningListHook,
   LearningBlacklistHook,
   FocusWhitelistHook,
+  LightweightPrivateChatsHook,
   JargonGroupsHook,
   JargonLearningListHook,
-  KeywordRulesHook,
   HiddenFieldHook,
   MCPRootItemsHook,
   MCPServersHook,
   MultipleReplyStyleHook,
   PrivateReplyPauseRulesHook,
-  RegexRulesHook,
   useAutoSave,
 } from './bot/hooks'
 import { collectChatSettings } from '@/lib/chat-settings-schema'
@@ -376,6 +375,7 @@ function BotConfigPageContent() {
       ['chat.reply_timing.talk_rule_groups', ChatTalkRuleGroupsHook],
       ['chat.reply_timing.private_reply_pause_rules', PrivateReplyPauseRulesHook],
       ['experimental.focus_chat_whitelist', FocusWhitelistHook],
+      ['experimental.lightweight_private_chats', LightweightPrivateChatsHook],
       ['experimental.focus_groups', FocusGroupsHook],
       ['expression.expression_groups', ExpressionGroupsHook],
       ['expression.learning_list', ExpressionLearningListHook],
@@ -394,8 +394,6 @@ function BotConfigPageContent() {
       ['a_memorix.filter.retrieval.chat_stream.chats', AMemorixRetrievalChatsHook],
       ['a_memorix.filter.retrieval.chat_summary.chats', AMemorixRetrievalChatsHook],
       ['a_memorix.filter.retrieval.episode.chats', AMemorixRetrievalChatsHook],
-      ['keyword_reaction.keyword_rules', KeywordRulesHook],
-      ['keyword_reaction.regex_rules', RegexRulesHook],
       ['mcp.client.roots.items', MCPRootItemsHook],
       ['mcp.servers', MCPServersHook],
     ] as const

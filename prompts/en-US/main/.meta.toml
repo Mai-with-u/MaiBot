@@ -1,0 +1,220 @@
+[text_learning_expression]
+display_name = "Expressions from passages"
+advanced = true
+description = "Extracts expressions grounded in pasted passages for the user to select and import."
+
+[text_learning_jargon]
+display_name = "Jargon from passages"
+advanced = true
+description = "Extracts jargon and meanings from pasted passages for the user to select and import."
+
+[a_memorix_chat_summary]
+display_name = "Long-term Memory Chat Summary"
+advanced = false
+description = "Extracts incremental information and important knowledge from the current chat window for long-term memory."
+
+[maisaka_chat_passive]
+display_name = "Planner (Passive replyer)"
+advanced = true
+description = "Used when experimental passive replyer is enabled; final planner text guides a reply, while tool calls perform actions."
+
+[maisaka_chat]
+display_name = "Planner"
+advanced = false
+description = "Main Maisaka planning template that combines identity, time, tool instructions, and chat context to drive thinking, decisions, and tool calls."
+
+[maisaka_chat_merged_timing]
+display_name = "Planner (Timing merged)"
+advanced = false
+description = "Main Maisaka planning template used when independent timing awareness is disabled, with timing decisions merged into the planner."
+
+[maisaka_replyer]
+display_name = "Replyer"
+advanced = false
+description = "Maisaka reply generation template that creates the final reply from persona, expression style, chat notes, and reply context."
+
+[reply_group]
+display_name = "Group chat reply"
+advanced = true
+description = "Default group chat reply template in Creative mode."
+
+[reply_group_mai_replier]
+display_name = "Mai Replier group chat reply"
+advanced = true
+description = "Group chat reply template for Mai Replier, using the wording from training."
+
+[reply_private]
+display_name = "Private chat reply"
+advanced = true
+description = "Default private chat reply template in Creative mode."
+
+[reply_private_mai_replier]
+display_name = "Mai Replier private chat reply"
+advanced = true
+description = "Private chat reply template for Mai Replier."
+
+[reply_private_followup]
+display_name = "Private chat follow-up"
+advanced = true
+description = "Used in Creative mode when Mai adds to a message it just sent in a private chat."
+
+[reply_private_followup_mai_replier]
+display_name = "Mai Replier private chat follow-up"
+advanced = true
+description = "Used when Mai Replier adds to a message it just sent in a private chat."
+
+[default_expressor]
+display_name = "Default Expressor"
+advanced = true
+description = "Template for expression generation and cleanup, usually only edited while debugging the expression system."
+
+[emoji_content_analysis]
+display_name = "Emoji Content Analysis"
+advanced = true
+description = "Template for analyzing the visual content of emoji or sticker images."
+
+[emoji_grouped_tags]
+display_name = "Grouped Sticker Tags"
+advanced = true
+description = "Identifies the sticker's emotion and visible content separately."
+
+[emoji_content_filtration]
+display_name = "Emoji Content Filtration"
+advanced = true
+description = "Template for judging whether emoji or sticker content meets filtration requirements."
+
+[emoji_replace]
+display_name = "Emoji Replacement"
+advanced = true
+description = "Template for selecting or replacing emojis or stickers based on text context."
+
+[expression_evaluation]
+display_name = "Expression Evaluation"
+advanced = true
+description = "Template for evaluating the quality of candidate expressions."
+
+[expression_select]
+display_name = "Expression Selection"
+advanced = true
+description = "Template for selecting a suitable expression from the expression library."
+
+[image_description]
+display_name = "Image Description"
+advanced = false
+description = "Template for converting image content into a text description."
+
+[jargon_compare_inference]
+display_name = "Jargon Comparison Inference"
+advanced = true
+description = "Template for comparing and inferring the meaning of group-specific jargon."
+
+[jargon_explainer_summarize]
+display_name = "Jargon Explanation Summary"
+advanced = true
+description = "Template for summarizing jargon explanation results."
+
+[jargon_inference_content_only]
+display_name = "Jargon Inference"
+advanced = true
+description = "Template for inferring jargon meaning from content only."
+
+[jargon_inference_with_context]
+display_name = "Jargon Context Inference"
+advanced = true
+description = "Template for inferring jargon meaning with surrounding context."
+
+[learn_style]
+display_name = "Style Learning"
+advanced = true
+description = "Template for learning expression style from chat content."
+
+[learn_jargon]
+display_name = "Jargon Learning"
+advanced = true
+description = "Extracts group-specific jargon candidates from real chat and lets the jargon miner update meanings and co-occurrence profiles."
+
+[maisaka_chat_focus]
+display_name = "Focus Planner"
+advanced = true
+description = "Shared Focus planner for all chats in a group, selecting each tool's target through session_id."
+
+[maisaka_chat_optimized]
+display_name = "Planner (Optimized)"
+advanced = true
+description = "Main Maisaka planning template used when the experimental feature experimental.planner_optimized_prompt is enabled. It addresses the bot in the second person and trims the task description; Focus mode keeps using the Focus planner."
+
+[memory_fuzzy_modify_plan]
+display_name = "Memory Fuzzy Modification Plan"
+advanced = true
+description = "Template for planning which old memories to supersede and which new memories to write from a natural-language modification request."
+
+[context_compaction]
+display_name = "Ordinary Chat Rolling Context State"
+advanced = true
+description = "Reuses the ordinary chat Planner request to summarize history and prior state as topics, background, progress, pending matters, and agreements."
+
+[context_compaction_focus]
+display_name = "Focus Rolling Context State"
+advanced = true
+description = "Reuses the Focus Planner request to produce a five-category rolling summary for the shared group while preserving chat ownership."
+
+[memory_retrieval_react_prompt_head_memory]
+display_name = "Memory Retrieval ReAct Header"
+advanced = true
+description = "Advanced memory retrieval prompt header used by the ReAct-style memory query flow."
+
+[webui_ai_search]
+display_name = "WebUI AI Search"
+advanced = true
+description = "Selects relevant results from real WebUI page and configuration candidates based on natural-language intent."
+
+[a_memorix_fact_deduplication]
+display_name = "Long-term memory fact deduplication"
+advanced = true
+description = "Compare new facts with existing memories while preserving distinct events, state changes, and conflicting information."
+
+[agent_acp]
+display_name = "External agent policy"
+advanced = true
+description = "External agent policy。"
+
+[agent_planner]
+display_name = "External planner policy"
+advanced = true
+description = "External planner policy。"
+
+[reply_cache]
+display_name = "Cached reply task"
+advanced = true
+description = "Switches to creative Replyer generation at the end of the Planner context."
+
+[desktop_pet_exploration]
+display_name = "Desktop pet exploration"
+advanced = false
+description = "Explore tool combinations for a human-defined goal and save evidence-backed candidate workflows."
+
+[desktop_pet_thinking_caption]
+display_name = "Desktop pet thinking caption"
+advanced = false
+description = "Summarizes the current run stage as a short, playful desktop pet status line."
+
+[maisaka_expression_selector]
+display_name = "Expression selection"
+advanced = true
+description = "Picks the expressions that fit this reply from the candidates, based on the chat context."
+
+[maisaka_replyer_document]
+display_name = "Long-form writing"
+advanced = false
+description = "Writes a complete article or community post in the bot's own identity and voice."
+
+[reply_supplement]
+display_name = "Reply supplement planning"
+advanced = true
+description = "While the reply body is generated in parallel, plans quotes, attachments and sending order."
+
+[maisaka_subagent]
+display_name = "子代理"
+advanced = false
+description = "子代理独立任务的主要系统提示词。"
+

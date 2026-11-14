@@ -4,6 +4,7 @@ import { defaultRangeExtractor, useVirtualizer, type Range } from '@tanstack/rea
 import { Bot, Sparkles, User } from 'lucide-react'
 import {
   type ReactNode,
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -161,7 +162,7 @@ function RuntimeStatusIndicator({
 /**
  * 聊天消息列表：支持连续同发送者消息分组、富文本与系统/错误信息样式。
  */
-export function MessageList({
+export const MessageList = memo(function MessageList({
   messages: incomingMessages,
   isLoadingHistory,
   botDisplayName,
@@ -534,4 +535,4 @@ export function MessageList({
     </DataPanel>
     </ImageGalleryProvider>
   )
-}
+})

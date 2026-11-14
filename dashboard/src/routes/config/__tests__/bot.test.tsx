@@ -292,8 +292,6 @@ const EXPECTED_FIELD_HOOKS: Array<[string, 'replace' | 'wrapper' | 'hidden']> = 
   ['a_memorix.filter.retrieval.chat_stream.chats', 'replace'],
   ['a_memorix.filter.retrieval.chat_summary.chats', 'replace'],
   ['a_memorix.filter.retrieval.episode.chats', 'replace'],
-  ['keyword_reaction.keyword_rules', 'replace'],
-  ['keyword_reaction.regex_rules', 'replace'],
   ['mcp.client.roots.items', 'replace'],
   ['mcp.servers', 'replace'],
 ]

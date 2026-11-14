@@ -3,7 +3,6 @@
  * 统计读取与评分、点赞、下载记录统一调用公共市场接口。
  */
 import { ApiError, backendApi } from '@/lib/http'
-import { invalidatePluginMarketStats } from '@/lib/plugin-api/marketplace'
 
 const MARKET_API_BASE_URL = '/api/webui/plugins/marketplace'
 
@@ -194,7 +193,6 @@ export async function likePlugin(pluginId: string, userId?: string): Promise<Vot
     )
 
     const result: VoteStatsResponse = { success: true, ...data }
-    invalidatePluginMarketStats()
     return result
   } catch (error) {
     if (error instanceof ApiError) {
@@ -225,7 +223,6 @@ export async function dislikePlugin(pluginId: string, userId?: string): Promise<
     )
 
     const result: VoteStatsResponse = { success: true, ...data }
-    invalidatePluginMarketStats()
     return result
   } catch (error) {
     if (error instanceof ApiError) {
@@ -298,7 +295,6 @@ export async function ratePlugin(
     )
 
     const result: RatingStatsResponse = { success: true, ...data }
-    invalidatePluginMarketStats()
     return result
   } catch (error) {
     if (error instanceof ApiError) {
@@ -329,9 +325,6 @@ export async function recordPluginDownload(pluginId: string): Promise<DownloadSt
     )
 
     const result: DownloadStatsResponse = { success: true, ...data }
-    if (typeof result.downloads === 'number') {
-      invalidatePluginMarketStats()
-    }
     return result
   } catch (error) {
     if (error instanceof ApiError) {

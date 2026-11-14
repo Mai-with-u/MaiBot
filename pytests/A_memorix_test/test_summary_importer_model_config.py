@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 import asyncio
+import json
 
 import pytest
 
@@ -232,7 +233,8 @@ def test_summary_prompt_locales_share_image_evidence_contract(locale: str) -> No
 
 
 @pytest.mark.asyncio
-async def test_empty_incremental_summary_is_successful_noop(monkeypatch) -> None:
+@pytest.mark.parametrize("facts_field, expected", [("missing", True), ([], True), (None, False), ({}, False)])
+async def test_empty_incremental_summary_is_successful_noop(monkeypatch, facts_field, expected) -> None:
     class SummaryStore(_SummaryCheckpoints):
         @staticmethod
         def get_external_memory_ref(external_id: str):
@@ -257,10 +259,13 @@ async def test_empty_incremental_summary_is_successful_noop(monkeypatch) -> None
 
     async def fake_generate(request):
         assert "用户喜欢绿茶" in request.prompt
+        payload = {"summary": "", "entities": [], "relations": []}
+        if facts_field != "missing":
+            payload["facts"] = facts_field
         return SimpleNamespace(
             success=True,
             completion=SimpleNamespace(
-                response='{"summary": "", "entities": [], "relations": []}',
+                response=json.dumps(payload),
             ),
         )
 
@@ -284,37 +289,22 @@ async def test_empty_incremental_summary_is_successful_noop(monkeypatch) -> None
         },
     )
 
-    assert result.success is True
-    assert result.skipped is True
+    assert result.success is expected
+    assert result.skipped is expected
     assert result.paragraph_hash == ""
 
 
 @pytest.mark.asyncio
-async def test_history_only_followup_windows_do_not_write_repeated_paragraphs(monkeypatch) -> None:
-    class SummaryStore(_SummaryCheckpoints):
-        def __init__(self) -> None:
-            self.paragraphs = []
-            self.refs = {}
-
-        def get_external_memory_ref(self, external_id: str):
-            return self.refs.get(external_id)
-
-        def get_chat_summary_history(self, source: str):
-            assert source == "stream-1"
-            return list(self.paragraphs)
-
-        def upsert_external_memory_ref(self, *, external_id: str, paragraph_hash: str, **kwargs):
-            del kwargs
-            self.refs[external_id] = {
-                "external_id": external_id,
-                "paragraph_hash": paragraph_hash,
-            }
-
+async def test_history_only_followup_windows_do_not_write_repeated_paragraphs(monkeypatch, tmp_path, request) -> None:
     class GraphStore:
         def save(self) -> None:
             return None
 
-    store = SummaryStore()
+    from src.A_memorix.core.storage.metadata_store import MetadataStore
+
+    store = MetadataStore(data_dir=tmp_path / "metadata")
+    store.connect()
+    request.addfinalizer(store.close)
     importer = SummaryImporter(
         vector_store=None,
         graph_store=GraphStore(),
@@ -334,23 +324,25 @@ async def test_history_only_followup_windows_do_not_write_repeated_paragraphs(mo
         return SimpleNamespace(
             success=True,
             completion=SimpleNamespace(
-                response=f'{{"summary": "{summary}", "entities": [], "relations": []}}',
+                response=json.dumps(
+                    {
+                        "summary": summary,
+                        "entities": [],
+                        "relations": [],
+                        "facts": [{"fact_id": "f1", "text": summary}] if summary else [],
+                    }
+                ),
             ),
         )
 
     async def fake_execute_import(summary, entities, relations, stream_id, **kwargs):
-        del entities, relations, kwargs
-        paragraph_hash = f"paragraph-{len(paragraph_writes) + 1}"
-        paragraph_writes.append(summary)
-        store.paragraphs.append(
-            {
-                "hash": paragraph_hash,
-                "content": summary,
-                "source": f"chat_summary:{stream_id}",
-                "created_at": float(len(paragraph_writes)),
-                "metadata": {},
-            }
+        del entities, relations
+        paragraph_hash = store.add_paragraph(
+            summary,
+            source=f"chat_summary:{stream_id}",
+            metadata=kwargs.get("metadata", {}),
         )
+        paragraph_writes.append(summary)
         return paragraph_hash
 
     importer._ensure_runtime_self_check = fake_self_check
@@ -358,7 +350,7 @@ async def test_history_only_followup_windows_do_not_write_repeated_paragraphs(mo
     importer._persist_vector_store = lambda store: None
     monkeypatch.setattr(
         "src.A_memorix.core.utils.summary_importer.message_api.get_messages_by_time_in_chat",
-        lambda **kwargs: [SimpleNamespace(timestamp=2.0)],
+        lambda **kwargs: [SimpleNamespace(timestamp=2.0, platform="test", message_id="m1")],
     )
     monkeypatch.setattr(
         "src.A_memorix.core.utils.summary_importer.SummaryIdentityContext",

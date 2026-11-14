@@ -106,7 +106,18 @@
     "keyNeedsBot": "{{label}} · 먼저 Bot을 시작하세요",
     "pet": {
       "title": "데스크톱 펫",
+      "statusTitle": "데스크톱 펫 상태",
+      "statusLoadFailed": "데스크톱 펫 상태를 불러올 수 없습니다: {{error}}",
       "settings": "펫 설정",
+      "settingsUnavailable": "현재 봇에서 데스크톱 펫 설정을 사용할 수 없습니다.",
+      "settingsSaving": "저장 중…",
+      "settingsSaved": "데스크톱 펫 설정을 저장했습니다",
+      "settingsAutoSaveHint": "편집을 멈추면 2초 후 자동 저장됩니다",
+      "settingsInvalidNumber": "{{label}}: 올바른 숫자를 입력하세요",
+      "settingsMinValue": "{{label}}: {{min}} 이상이어야 합니다",
+      "settingsMaxValue": "{{label}}: {{max}} 이하여야 합니다",
+      "skinAutoSaveHint": "스킨을 선택하면 자동으로 저장되고 적용됩니다.",
+      "settingsSaveFailed": "데스크톱 펫 설정을 저장할 수 없습니다",
       "enabledLamp": "펫 사용",
       "mode": {
         "local": "로컬 창",
@@ -183,7 +194,7 @@
     "customReload": "페이지 새로고침",
     "customStop": "페이지 중지",
     "customStopped": "페이지가 중지되었습니다. 다시 불러오면 실행됩니다.",
-    "customStopRequestRate": "요청이 너무 많아 중지되었습니다(초당 20회, 순간 최대 200회).",
+    "customStopRequestRate": "요청이 너무 많아 중지되었습니다(초당 {{rate}}회, 순간 최대 {{burst}}회).",
     "customStopLayoutRate": "페이지 크기 업데이트가 너무 많아 중지되었습니다.",
     "customStopHeight": "페이지 높이가 잘못되었거나 30000픽셀을 초과하여 중지되었습니다.",
     "customStopDuplicateId": "요청 ID가 중복되어 중지되었습니다.",
@@ -246,6 +257,7 @@
     "menu": {
       "home": "홈",
       "botMainConfig": "봇 메인 설정",
+      "desktopPet": "데스크톱 펫",
       "aiModelProvider": "AI 모델 공급자",
       "modelManagement": "모델 관리",
       "promptManagement": "Prompt 관리",
@@ -576,7 +588,11 @@
       "repliedTitle": "봇이 응답했습니다",
       "repliedDescription": "응답과 말투가 괜찮다면 메시지 플랫폼 설정을 계속하세요.",
       "keepChatting": "계속 대화하기",
-      "continue": "메시지 플랫폼 설정"
+      "continue": "메시지 플랫폼 설정",
+      "failedTitle": "봇이 아직 응답하지 않았습니다",
+      "failedDescription": "모델 주소, API 키 또는 모델 이름이 잘못되었을 수 있습니다. 다시 보내 보거나 모델 설정을 확인하세요.",
+      "checkModelConfig": "모델 설정 확인",
+      "learnBasics": "기본 설정 안내 받기"
     },
     "botNameFallback": "麦麦",
     "userFallback": "사용자",
@@ -740,6 +756,21 @@
       "about": "정보"
     },
     "appearance": {
+      "dashboardStyle": "대시보드 스타일",
+      "dashboardStyles": {
+        "modern": {
+          "label": "모던",
+          "description": "평면적인 현대 UI"
+        },
+        "future-retro": {
+          "label": "퓨처 레트로",
+          "description": "높은 대비, 거친 질감, 따뜻한 색감과 무광 마감"
+        },
+        "millennium": {
+          "label": "밀레니엄",
+          "description": "향수를 불러일으키는 밀레니엄 스타일"
+        }
+      },
       "layoutVersion": "레이아웃",
       "layoutVersionDesc": "클래식은 상단 바와 카드형 홈을 유지합니다. 관찰 레이아웃은 상단 바를 없애고 사이드바 위쪽에 설정, 아래쪽에 모든 대화를 표시하며 홈은 상태 보드가 됩니다. 데스크톱 너비에서만 적용됩니다.",
       "layoutClassic": "클래식",
@@ -1138,13 +1169,13 @@
     "helpLink": "Token이 없습니다. 어디서 얻을 수 있나요?",
     "helpTitle": "접속 비밀번호",
     "helpDesc": "Access Token은 MaiBot WebUI에 액세스하는 유일한 자격 증명입니다. 다음 방법으로 얻으세요",
-    "method1Title": "방법 1: 시작 로그 확인",
-    "method1Desc": "MaiBot 시작 시 콘솔에 WebUI Access Token이 표시됩니다.",
-    "method1Example1": "🔑 WebUI Access Token: abc123...",
-    "method1Example2": "💡 이 Token으로 WebUI에 로그인하세요",
+    "method1Title": "방법 1: 호스트 시작 출력 확인",
+    "method1Desc": "임시 비밀번호를 사용하는 경우 호스트 시작 출력에 비밀번호가 표시됩니다. 고정 비밀번호를 설정했다면 해당 비밀번호를 사용하세요. 시작 시 다시 출력되지 않습니다.",
+    "method1Example1": "WebUI 临时登录密码：abc123...",
+    "method1Example2": "개별 Bot의 실행 로그가 아닌 호스트 콘솔 출력을 확인하세요.",
     "method2Title": "방법 2: 설정 파일 확인",
-    "method2Desc": "Token은 프로젝트 루트의 설정 파일에 저장됩니다:",
-    "method2FileHint": "이 파일을 열고 access_token 필드의 값을 복사하세요",
+    "method2Desc": "비밀번호는 호스트 작업 공간의 다음 파일에 저장됩니다. 작업 공간 경로는 호스트 시작 출력에서 확인할 수 있습니다:",
+    "method2FileHint": "이 파일을 열고 다음 필드의 값을 복사하세요:",
     "securityTipTitle": "보안 안내",
     "securityTip1": "Token을 안전하게 유지하고 타인에게 노출하지 마세요",
     "securityTip2": "Token을 재설정하려면 로그인 후 시스템 설정으로 이동하세요",
@@ -1155,8 +1186,45 @@
   },
   "setupPage": {
     "steps": {
+      "nickname": {
+        "title": "이름 정하기",
+        "label": "닉네임",
+        "description": ""
+      },
+      "defineModel": {
+        "title": "모델 제공처 설정",
+        "label": "모델 정의",
+        "description": ""
+      },
+      "replyer": {
+        "title": "답변 모델 설정",
+        "description": "이 모델이 말투를 결정합니다. 글쓰기와 표현력이 좋은 모델이 적합합니다."
+      },
+      "planner": {
+        "title": "행동 모델 설정",
+        "description": "이 모델은 마이마이의 행동을 결정합니다. 작업을 이해하고 도구를 사용할 수 있는 에이전트 모델을 선택하세요."
+      },
+      "basicSettings": {
+        "title": "설정",
+        "description": ""
+      },
+      "groupReplies": {
+        "title": "그룹 채팅 답장",
+        "description": "켜면 그룹 채팅에서 @멘션을 받았을 때 가능한 한 답장합니다.",
+        "label": "@멘션에 우선 답장"
+      },
+      "desktopPet": {
+        "title": "데스크톱 펫",
+        "description": "",
+        "label": "데스크톱 펫 사용",
+        "hint": "데스크톱 펫에는 Windows 데스크톱 환경이 필요합니다.\n서버에 배포한 경우 나중에 설정에서 데스크톱 펫의 원격 연결을 구성할 수 있습니다."
+      },
+      "dashboardAppearance": {
+        "title": "인터페이스 스타일",
+        "description": ""
+      },
       "botProfile": {
-        "title": "기본 정보와 성격",
+        "title": "페르소나",
         "description": "닉네임, 성격, 답변 스타일을 설정합니다"
       },
       "customToken": {
@@ -1169,15 +1237,19 @@
         "description": "봇의 기본 정보를 설정합니다"
       },
       "personality": {
-        "title": "성격 설정",
-        "description": "봇의 성격과 말투를 정의합니다"
+        "title": "페르소나 만들기",
+        "choose": "어떤 방식으로 시작할까요?",
+        "templateTitle": "템플릿 선택",
+        "editTitle": "페르소나 편집",
+        "template": "기존 템플릿 사용",
+        "manual": "직접 작성"
       },
       "apiProvider": {
         "title": "API 설정",
         "description": "API 제공자를 설정합니다"
       },
       "modelSetup": {
-        "title": "모델 설정",
+        "title": "모델",
         "description": "planner와 replyer 모델을 설정합니다"
       }
     },
@@ -1200,8 +1272,8 @@
       "enterProviderName": "API 제공자 이름을 입력해 주세요",
       "enterBaseUrl": "API Base URL을 입력해 주세요",
       "enterApiKey": "API Key를 입력해 주세요",
-      "enterPlannerModelIdentifier": "planner 모델 식별자를 입력해 주세요",
-      "enterReplyerModelIdentifier": "replyer 모델 식별자를 입력해 주세요",
+      "enterPlannerModelIdentifier": "행동 모델 식별자를 입력해 주세요",
+      "enterReplyerModelIdentifier": "답변 모델 식별자를 입력해 주세요",
       "customTokenInvalid": "Token이 요구 사항을 충족하지 않습니다: {{failedRules}}"
     },
     "toast": {
@@ -1216,7 +1288,7 @@
       "completeFailedTitle": "설정 완료에 실패했습니다",
       "skipFailedTitle": "설정 마법사 건너뛰기에 실패했습니다",
       "customTokenSuccessTitle": "Token이 업데이트되었습니다",
-      "customTokenSuccessDescription": "새 사용자 지정 Token으로 다시 로그인한 뒤 설정을 계속해 주세요.",
+      "customTokenSuccessDescription": "새 비밀번호로 로그인했습니다. 설정을 계속할 수 있습니다.",
       "unknownError": "알 수 없는 오류"
     },
     "actions": {
@@ -1256,6 +1328,8 @@
         "noticeDescription": "랜덤 Token은 다음 실행 때 변경됩니다. 고정 사용자 지정 Token을 설정하고 앞으로 WebUI 로그인에 사용하세요.",
         "label": "사용자 지정 Token *",
         "placeholder": "새 비밀번호 입력",
+        "confirmation": "새 비밀번호 다시 입력",
+        "mismatch": "비밀번호가 일치하지 않습니다.",
         "description": "저장하면 현재 로그인이 만료되며 새 Token으로 다시 로그인해야 합니다.",
         "requirements": "Token 요구 사항",
         "show": "표시",
@@ -1315,17 +1389,17 @@
         "personality": {
           "label": "성격 특성",
           "placeholder": "봇의 성격과 설정을 설명해 주세요 (권장 120자 이내)",
-          "description": "bot의 핵심 성격을 설명하며, bot이 자신을 인식하는 방식에 영향을 줍니다"
+          "description": "성격의 특징과 주요 정보"
         },
         "behaviorStyle": {
           "label": "행동 스타일",
           "placeholder": "대화에 참여하거나 상황을 관찰하거나 조용히 있을 때를 설명하세요",
-          "description": "bot의 행동을 설명하며, 행동 방식을 결정합니다"
+          "description": "채팅할 때의 행동과 일 처리 방식"
         },
         "replyStyle": {
           "label": "말투",
           "placeholder": "봇이 말하는 방식과 표현 습관을 설명해 주세요",
-          "description": "bot의 말하는 방식과 말투에 직접 영향을 줍니다"
+          "description": "말하는 스타일"
         },
         "multipleReplyStyle": {
           "label": "대체 답변 스타일",
@@ -1376,7 +1450,7 @@
       },
       "apiProvider": {
         "providerName": {
-          "label": "API 제공자 이름 *",
+          "label": "제공자",
           "placeholder": "예: OpenAI, DeepSeek, 자체 호스팅",
           "description": "이 이름은 model_config.toml에 저장되며 아래 모델에서 참조됩니다"
         },
@@ -1385,11 +1459,14 @@
           "description": "OpenAI 호환 엔드포인트를 입력해 주세요. 예: https://api.example.com/v1"
         },
         "apiKey": {
-          "label": "API Key *",
+          "label": "API 키",
           "description": "이 제공자의 API Key를 입력해 주세요",
           "show": "API Key 표시",
           "hide": "API Key 숨기기"
-        }
+        },
+        "presetSelect": "사전 설정 제공자 선택",
+        "usePreset": "사전 설정",
+        "useCustom": "사용자 지정"
       },
       "modelSetup": {
         "identifierPlaceholder": "모델 ID 입력",
@@ -1412,7 +1489,44 @@
             "label": "비전 사용"
           }
         },
-        "saveHint": "더 자세한 작업 할당은 나중에 설정할 수 있습니다."
+        "saveHint": "더 자세한 작업 할당은 나중에 설정할 수 있습니다.",
+        "fetching": "모델 목록을 가져오는 중…",
+        "fetchFailed": "{{error}}. 모델 ID를 직접 입력하세요.",
+        "enableThinking": "생각 활성화",
+        "effort": {
+          "label": "생각 강도",
+          "low": "낮음",
+          "high": "높음",
+          "max": "최대"
+        }
+      }
+    },
+    "errors": {
+      "loadStatus": "설정 상태를 읽지 못했습니다",
+      "loadBot": "봇 설정을 읽지 못했습니다",
+      "loadPersonality": "인격 설정을 읽지 못했습니다",
+      "loadModel": "모델 설정을 읽지 못했습니다",
+      "fetchModels": "모델 목록을 가져오지 못했습니다",
+      "emptyModelList": "제공자가 빈 모델 목록을 반환했습니다",
+      "saveBot": "봇 설정을 저장하지 못했습니다",
+      "savePersonality": "인격 설정을 저장하지 못했습니다",
+      "saveProvider": "API 제공자 설정을 저장하지 못했습니다",
+      "saveModel": "모델 설정을 저장하지 못했습니다",
+      "complete": "설정 완료를 기록하지 못했습니다",
+      "updateToken": "토큰을 업데이트하지 못했습니다"
+    },
+    "connectionTest": {
+      "hint": "모델을 호출할 수 있는지 미리 확인해 보세요. 결과는 참고용입니다.",
+      "button": "연결 테스트",
+      "testing": "테스트 중…",
+      "passed": "통과",
+      "failed": "실패",
+      "passedWithLatency": "통과 ({{latency}})",
+      "saveFailed": "설정을 저장하지 못해 테스트하지 못했습니다: {{error}}",
+      "canContinue": "테스트에 실패해도 설정을 완료할 수 있으며, 나중에 모델 설정 페이지에서 조정할 수 있습니다.",
+      "roles": {
+        "planner": "행동 모델",
+        "replyer": "답변 모델"
       }
     }
   },
@@ -2218,7 +2332,45 @@
     "check": "업데이트 확인",
     "apply": "업데이트 및 호스트 재시작",
     "current": "적용 가능한 업데이트가 없습니다",
+    "lastUpdateTime": "지난 업데이트 실행 시간: {{started}} — {{finished}}",
     "updated": "최근 업데이트에 성공했습니다",
     "restarting": "The host is updating and restarting. Waiting to reconnect. If rollback fails, check the terminal and restart manually after repair."
+  },
+  "tour": {
+    "controls": {
+      "back": "이전",
+      "close": "닫기",
+      "last": "완료",
+      "next": "다음",
+      "nextWithProgress": "다음 ({step}/{steps})",
+      "open": "가이드 열기",
+      "skip": "건너뛰기"
+    },
+    "basicFeatures": {
+      "personality": {
+        "title": "인격",
+        "content": "봇이 어떤 사람인지 여기에 적습니다. 성격, 신분, 말하는 시점이 모두 여기서 정해집니다. 강조된 칸에서 바로 수정해 보세요."
+      },
+      "replyStyle": {
+        "title": "말투",
+        "content": "답장의 어조와 길이를 조절합니다. 더 짧게, 더 활발하게, 더 정중하게 바꿀 수 있습니다. 수정 후 저장을 잊지 마세요."
+      },
+      "talkValue": {
+        "title": "그룹 발언 빈도",
+        "content": "그룹 채팅에서 봇이 먼저 말하는 정도를 정합니다. 값이 작을수록 조용해집니다."
+      },
+      "plugins": {
+        "title": "플러그인 마켓",
+        "content": "여기서 플러그인을 검색하고 설치해 봇에 새 기능을 추가할 수 있습니다. 설치한 플러그인은 「플러그인 설정」에서 조정합니다."
+      },
+      "knowledgeBase": {
+        "title": "지식 베이스",
+        "content": "「가져오기/내보내기」에서 자료를 가져오면 봇이 대화할 때 참고합니다. 대화 속 기억도 자동으로 쌓입니다."
+      },
+      "done": {
+        "title": "기본 설정은 여기까지입니다",
+        "content": "변경한 설정은 모두 왼쪽 메뉴에서 언제든 다시 조정할 수 있습니다. 이제 봇과 이야기해 보세요!"
+      }
+    }
   }
 }

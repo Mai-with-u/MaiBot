@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from typing import Dict, List, Sequence, Tuple
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 import asyncio
 import json
 
@@ -28,6 +28,14 @@ from .messages import (
 )
 
 logger = get_logger("maisaka_context_compaction")
+COMPACTION_RETRY_INSTRUCTION = (
+    "上一次未能生成可用的对话摘要。请重新根据前面的对话资料和摘要要求生成摘要。\n"
+    "这是摘要任务，禁止调用任何工具，包括 reply、wait 或其他工具；"
+    "不要执行或继续此前 Planner 的动作流程。\n"
+    "直接输出合法的摘要 JSON 对象，不加代码块、分析或解释。"
+    "使用 topics、background、progress、pending、agreements 五个分类，值均为字符串数组；"
+    "没有内容的分类使用空数组。保留仍有用的实际对话信息，不要返回空摘要。"
+)
 STATE_LABELS: Dict[str, str] = {
     "topics": "当前话题",
     "background": "关键背景",
@@ -38,15 +46,15 @@ STATE_LABELS: Dict[str, str] = {
 
 
 class ConversationState(BaseModel):
-    """可直接接续对话的状态；字段缺失或格式错误时拒绝提交压缩。"""
+    """可接续对话的状态；缺失分类补为空数组，额外字段不参与摘要。"""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
-    topics: List[str]
-    background: List[str]
-    progress: List[str]
-    pending: List[str]
-    agreements: List[str]
+    topics: List[str] = Field(default_factory=list)
+    background: List[str] = Field(default_factory=list)
+    progress: List[str] = Field(default_factory=list)
+    pending: List[str] = Field(default_factory=list)
+    agreements: List[str] = Field(default_factory=list)
 
     @field_validator("*")
     @classmethod
@@ -214,21 +222,8 @@ def _build_compaction_request(
     return request
 
 
-async def build_context_summary(
-    removed_messages: Sequence[LLMContextMessage],
-    *,
-    planner_snapshot: PlannerRequestSnapshot,
-    previous_summary: ContextSummaryMessage | None,
-    recent_messages: Sequence[LLMContextMessage],
-    session_id: str,
-    source_context: str = "",
-) -> ContextSummaryMessage:
-    """保留 Planner 的完整请求前缀，仅追加未覆盖资料和压缩指令。"""
-    request = await asyncio.to_thread(
-        _build_compaction_request, removed_messages, planner_snapshot=planner_snapshot,
-        previous_summary=previous_summary, recent_messages=recent_messages,
-        source_context=source_context,
-    )
+async def _generate_compaction_summary(request: ResponseRequest | ACPPlannerSnapshot, session_id: str) -> str:
+    """请求并校验一份摘要，保存每次已收到的模型响应供排查。"""
     if isinstance(request, ACPPlannerSnapshot):
         result = await generate_planner_response(
             request.config, session_id, request.context_items, [], history_item_ids=request.history_item_ids,
@@ -252,4 +247,31 @@ async def build_context_summary(
         f"input={result.prompt_tokens} hit={result.prompt_cache_hit_tokens} "
         f"miss={result.prompt_cache_miss_tokens} reported={result.prompt_cache_reported}"
     )
+    return rendered
+
+
+async def build_context_summary(
+    removed_messages: Sequence[LLMContextMessage],
+    *,
+    planner_snapshot: PlannerRequestSnapshot,
+    previous_summary: ContextSummaryMessage | None,
+    recent_messages: Sequence[LLMContextMessage],
+    session_id: str,
+    source_context: str = "",
+) -> ContextSummaryMessage:
+    """保留 Planner 请求前缀，首次摘要失败后追加纠正指令再尝试一次。"""
+    request = await asyncio.to_thread(
+        _build_compaction_request, removed_messages, planner_snapshot=planner_snapshot,
+        previous_summary=previous_summary, recent_messages=recent_messages,
+        source_context=source_context,
+    )
+    try:
+        rendered = await _generate_compaction_summary(request, session_id)
+    except Exception:
+        logger.warning("上下文压缩首次失败，追加禁止工具调用的摘要指令后重试一次", exc_info=True)
+        # 不回放失败响应中的工具调用，避免产生没有执行结果的上下文。
+        request.context_items.append(
+            ContextItemBuilder().set_role(RoleType.User).add_text_content(COMPACTION_RETRY_INSTRUCTION).build()
+        )
+        rendered = await _generate_compaction_summary(request, session_id)
     return ContextSummaryMessage(content=rendered, timestamp=removed_messages[-1].timestamp)

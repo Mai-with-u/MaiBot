@@ -1,16 +1,14 @@
 """插件市场只读查询；不依赖 WebUI 服务启动或登录状态。"""
 
 from packaging.version import Version
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from typing import Any, Dict, List, Literal, Optional, Tuple
-from urllib.error import HTTPError
 from urllib.parse import unquote, urlsplit
 import asyncio
 import json
 
 from src.common.git_source import GitSource
 from src.common.logger import get_logger
-from src.config.config import MMC_VERSION
 
 from .catalog import _filter_plugins, _normalize_plugin_catalog_item, _sort_stat_plugins
 from .documents import get_document
@@ -21,11 +19,10 @@ from .releases import (
     PluginReleaseIndex,
     describe_entry,
     manifest_compatibility,
-    parse_market_release_entry,
     parse_release_index,
     release_compatibility,
 )
-from .sources import download_source, fetch_information_file, load_source_settings, request_market, request_market_detail
+from .sources import download_source, fetch_information_file, load_source_settings
 from . import statistics
 
 logger = get_logger("plugin_market")
@@ -66,7 +63,7 @@ def _icon_url(icon: str, target: GitSource) -> str:
     if not parsed.scheme and not parsed.netloc:
         return target.raw_url("Mai-with-u", "plugin-repo", "main", icon)
 
-    # 官方接口可能直接返回固定提交的 GitHub URL；CNB 索引也可能包含完整镜像地址。
+    # 索引可能直接写固定提交的 GitHub URL；CNB 索引也可能包含完整镜像地址。
     prefixes = {
         "raw.githubusercontent.com": "/Mai-with-u/plugin-repo/",
         "cnb.cool": "/Mai-with-u/plugin-repo/-/git/raw/",
@@ -83,28 +80,10 @@ def _icon_url(icon: str, target: GitSource) -> str:
     return urlsplit(resolved)._replace(query=parsed.query, fragment=parsed.fragment).geturl()
 
 
-def _fallback_release_entry(plugin: Dict[str, Any], official_url: Any) -> Optional[PluginReleaseEntry]:
-    """索引缺少该插件时按校验结果挑仓库地址：官方条目声明优先，清单解析结果兜底，都无效则记警告并返回 None。"""
-
-    error: Optional[ValueError] = None
-    for repository_url in (official_url, plugin["repository_url"]):
-        try:
-            return PluginReleaseEntry(
-                id=plugin["marketplace_id"], manifest_id=plugin["id"], repositoryUrl=repository_url,
-                mode="releases", versions=[], sync_error="插件尚未收录到版本索引，请先同步插件中心",
-            )
-        except ValueError as exc:
-            error = exc
-    logger.warning(f"跳过无法构造回退发布信息的插件市场条目 {plugin['id']}：{error}")
-    return None
-
-
-def _catalog(
-    items: List[Dict[str, Any]], source: str, index: Optional[PluginReleaseIndex] = None,
-) -> List[Dict[str, Any]]:
+def _catalog(items: List[Dict[str, Any]], index: Optional[PluginReleaseIndex] = None) -> List[Dict[str, Any]]:
     """所有消费者共用清单合并、ID、图标和版本兼容性处理。"""
     icon_source = download_source()
-    records = {item["id"]: item for item in items} if source != "official" else {}
+    records = {item["id"]: item for item in items}
     entries = {entry.id: entry for entry in index.plugins} if index is not None else {}
     # Tag 中的有效清单也必须保留，不能因分支清单失效而丢失发布版本入口。
     if index is not None:
@@ -121,16 +100,8 @@ def _catalog(
         items = list(records.values())
     plugins = []
     for item in items:
-        if source == "official":
-            try:
-                entry = parse_market_release_entry({**item, "versions": [item["release"]] if item.get("release") else []})
-            except ValueError as exc:
-                logger.warning(f"跳过无效的插件市场条目：{exc}")
-                entry = None
-            raw = {"id": item["marketplace_id"], "manifest": item["manifest"]}
-        else:
-            entry = entries.get(item["id"])
-            raw = item
+        entry = entries.get(item["id"])
+        raw = item
         if entry is not None:
             description = describe_entry(entry)
             recommended = next((r for r in entry.versions if r.version == description["recommended_version"]), None)
@@ -139,20 +110,18 @@ def _catalog(
         plugin = _normalize_plugin_catalog_item(raw, include_manifest=True)
         if plugin is None:
             continue
-        stats = item.get("stats") if source == "official" else None
-        if stats is not None and not isinstance(stats, dict):
-            raise ValueError(f"插件 {plugin['id']} 的统计数据格式无效")
-        plugin["stats"] = statistics.normalize_statistics(stats) if stats is not None else None
+        plugin["stats"] = None  # 统计由官方统计服务单独读取，见 search()
         if entry is None:
-            # 官方条目声明的仓库地址优先：清单未登记仓库地址时后者是空串，过不了发布条目校验。
-            entry = _fallback_release_entry(plugin, item.get("repository_url"))
-            if entry is None:
+            try:
+                entry = PluginReleaseEntry(
+                    id=plugin["marketplace_id"], manifest_id=plugin["id"], repositoryUrl=plugin["repository_url"],
+                    mode="releases", versions=[], sync_error="插件尚未收录到版本索引，请先同步插件中心",
+                )
+            except ValidationError as exc:
+                logger.warning(f"跳过无法构造发布信息的插件市场条目 {plugin['id']}：{exc}")
                 continue
-            # README 与更新日志按该字段拼远端地址，回退地址校验通过后必须写回。
-            plugin["repository_url"] = entry.repositoryUrl
         plugin["releases"] = _release_description(entry, plugin["manifest"])
-        assets = item.get("assets") or {}
-        icon = item.get("icon_url") if source == "official" else assets.get("icon_64")
+        icon = (item.get("assets") or {}).get("icon_64")
         plugin["assets"] = {"icon_64": _icon_url(icon, icon_source)} if icon else None
         for field in ("changelog", "published_at", "updated_at"):
             plugin[field] = item.get(field)
@@ -162,16 +131,6 @@ def _catalog(
 
 async def _snapshot(force_refresh: bool) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     source = (await asyncio.to_thread(load_source_settings)).information_source
-    if source == "official":
-        data = await request_market(
-            "plugins/summary", {"maibot_version": MMC_VERSION, "compatible_only": "false"}, force_refresh,
-        )
-        plugins = await asyncio.to_thread(_catalog, data["plugins"], source)
-        return plugins, {
-            "source": source, "source_url": data["source_url"], "cache": data["cache"],
-            "stats_as_of": data.get("stats_as_of"), "growth_ranking": data.get("growth_ranking"),
-            "features": {"stats": True, "releases": True},
-        }
     details, index = await asyncio.gather(
         fetch_information_file("plugin_details.json", source, force_refresh), _git_releases(source, force_refresh),
     )
@@ -180,7 +139,7 @@ async def _snapshot(force_refresh: bool) -> Tuple[List[Dict[str, Any]], Dict[str
         items = json.loads(details["data"])
         if not isinstance(items, list):
             raise ValueError("插件市场列表响应格式不是列表")
-        return _catalog(items, source, index)
+        return _catalog(items, index)
 
     return await asyncio.to_thread(parse), {
         "source": source, "source_url": details["url"], "cache": details["cache"],
@@ -224,7 +183,7 @@ async def _git_releases(source: str, force_refresh: bool) -> PluginReleaseIndex:
 
 async def search(request: MarketSearch) -> Dict[str, Any]:
     plugins, metadata = await _snapshot(request.force_refresh)
-    if (request.include_stats or request.sort_by != "name") and metadata["source"] != "official":
+    if request.include_stats or request.sort_by != "name":
         summary = await statistics.get_summary(request.force_refresh)
         # 统计只按规范化后的 manifest.id 对应；没有记录时保留空值。
         plugins = [{**plugin, "stats": summary["stats"].get(plugin["id"])} for plugin in plugins]
@@ -264,24 +223,10 @@ async def search(request: MarketSearch) -> Dict[str, Any]:
 async def get_detail(plugin_id: str, force_refresh: bool = False) -> Dict[str, Any]:
     plugins, metadata = await _snapshot(force_refresh)
     plugin = await asyncio.to_thread(_resolve, plugin_id, plugins)
-    if metadata["source"] == "official":
-        data = await request_market_detail(plugin["id"], MMC_VERSION, force_refresh)
-        entry = await asyncio.to_thread(parse_market_release_entry, data, plugin["id"])
-        if data["manifest"]["id"] != plugin["id"]:
-            raise ValueError("插件中心返回的 manifest ID 与请求不一致")
-        metadata.update(cache=data["cache"], source_url=data["source_url"])
-        detail = await asyncio.to_thread(
-            _normalize_plugin_catalog_item, {"id": data["marketplace_id"], "manifest": data["manifest"]}, True,
-        )
-        if detail is None:
-            raise ValueError("插件中心返回了无效的插件清单")
-        # 详情的版本资料可继续缓存，统计沿用本轮官方摘要，避免互动后读回旧数值。
-        plugin = {**detail, "stats": plugin["stats"]}
-    else:
-        index = await _git_releases(metadata["source"], force_refresh)
-        entry = next((item for item in index.plugins if item.id == plugin["marketplace_id"]), None)
-        if entry is None:
-            raise ValueError(f"版本索引中没有插件 {plugin['marketplace_id']}")
+    index = await _git_releases(metadata["source"], force_refresh)
+    entry = next((item for item in index.plugins if item.id == plugin["marketplace_id"]), None)
+    if entry is None:
+        raise ValueError(f"版本索引中没有插件 {plugin['marketplace_id']}")
     releases = await asyncio.to_thread(_release_description, entry, plugin["manifest"])
     plugin.pop("releases", None)
     return {"success": True, **metadata, "plugin": plugin, "releases": releases}
@@ -316,19 +261,11 @@ async def load_release_index(force_refresh: bool = False) -> PluginReleaseIndex:
 
 
 async def load_plugin_release_entry(plugin_id: str, force_refresh: bool = False) -> Optional[PluginReleaseEntry]:
-    if (await asyncio.to_thread(load_source_settings)).information_source != "official":
-        index = await load_release_index(force_refresh)
-        return next(
-            (item for item in index.plugins if plugin_id.casefold() in {item.id.casefold(), (item.manifest_id or "").casefold()}),
-            None,
-        )
-    try:
-        data = await request_market_detail(plugin_id, MMC_VERSION, force_refresh)
-        return await asyncio.to_thread(parse_market_release_entry, data, plugin_id)
-    except HTTPError as exc:
-        if exc.code == 404:
-            return None
-        raise MarketError(502, f"获取插件中心版本失败：{exc}") from exc
+    index = await load_release_index(force_refresh)
+    return next(
+        (item for item in index.plugins if plugin_id.casefold() in {item.id.casefold(), (item.manifest_id or "").casefold()}),
+        None,
+    )
 
 
 async def resolve_release(plugin_id: str, version: str) -> Tuple[PluginReleaseEntry, Optional[PluginRelease]]:

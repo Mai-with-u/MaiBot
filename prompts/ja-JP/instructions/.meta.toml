@@ -1,0 +1,159 @@
+[reply_attachments]
+display_name = "返信の添付案内"
+advanced = true
+description = "返信に添付する画像、メンション、絵文字はシステムが送信することを示し、本文での添付情報の重複を防ぎます。"
+
+[heuristic_memory_impression]
+display_name = "記憶検索印象"
+advanced = true
+description = "現在のチャット流と直近メッセージから自然言語の印象を生成し、長期記憶の意味検索を補助するテンプレート。"
+
+[webui_help_skill_setup]
+display_name = "導入と設定の手順"
+advanced = true
+description = "設定箇所と現在値を確認し、結果を検証できる手順を示します。"
+
+[webui_help_skill_troubleshoot]
+display_name = "障害の切り分け手順"
+advanced = true
+description = "エラーと実際の設定から原因を絞り込み、次に確認する項目を示します。"
+
+[webui_help_skill_plugin]
+display_name = "プラグインの選定と操作手順"
+advanced = true
+description = "互換性を確認し、導入や設定に適したツールを使います。"
+
+[webui_help_skill_develop]
+display_name = "プラグイン開発の手順"
+advanced = true
+description = "該当する SDK の文書を使い、最小の実装と検証方法を示します。"
+
+[webui_ai_search_input]
+display_name = "WebUI ヘルプの会話入力"
+advanced = true
+description = "現在の質問と過去の回答を、WebUI ヘルプエージェントが参照する会話データとして整形します。"
+
+[webui_ai_search_final]
+display_name = "WebUI AI 検索の最終化指示"
+advanced = true
+description = "AI 検索でツールラウンドを使い切った場合や形式どおりに回答しなかった場合に、調査を終了して最終 JSON を返すよう求めます。"
+
+[webui_ai_search_correction]
+display_name = "WebUI AI 検索の修正指示"
+advanced = true
+description = "AI 検索の回答が根拠検証に失敗した場合に、根拠のない内容を削除して最終 JSON を書き直すよう求めます。"
+
+[webui_ai_search_evidence]
+display_name = "WebUI AI 検索の根拠メッセージ"
+advanced = true
+description = "AI 検索の読み取り専用ツールの結果を、ツールなしのリクエストで使える根拠メッセージに変換します。"
+
+[agent_acp_environment]
+display_name = "外部 Agent 環境説明"
+advanced = true
+description = "外部 Agent 環境説明。"
+
+[agent_acp_failure]
+display_name = "外部 Agent 失敗報告"
+advanced = true
+description = "外部 Agent 失敗報告。"
+
+[agent_planner_resume]
+display_name = "外部 Planner 中断復帰"
+advanced = true
+description = "外部 Planner 中断復帰。"
+
+[agent_planner_continue]
+display_name = "外部 Planner 継続実行"
+advanced = true
+description = "外部 Planner 継続実行。"
+
+[planner_reply_capabilities]
+display_name = "Planner reply capabilities"
+advanced = true
+description = "Available plugin reply capabilities for the current chat."
+
+[desktop_pet_proactive_wake]
+display_name = "デスクトップペットの定期的な思考"
+advanced = false
+description = "定期起動時に自主的な探索と必要に応じた交流を促す内部プロンプト。"
+
+[desktop_pet_screen_read]
+display_name = "デスクトップペットの画面読み取り"
+advanced = false
+description = "本機のメイン画面を一度確認、または継続的に変化を読み取ります。"
+
+[desktop_pet_todo_context]
+display_name = "主人のタスク常駐コンテキスト"
+advanced = false
+description = "毎ターン最新タスクを読み込み、条件成立による起動を判断します。"
+
+[desktop_pet_exploration_reuse]
+display_name = "探索経験の日常利用"
+advanced = false
+description = "通常の主人チャットで必要に応じて探索の資源と経験を検索・再利用します。"
+
+[maisaka_wait_reminder]
+display_name = "連続待機のリマインダー"
+advanced = true
+description = "待機が続いたとき、待機時間の延長か今回の思考の終了を促し、無限ループを防ぎます。"
+
+[reply_supplement_retry]
+display_name = "返信補足の再生成"
+advanced = true
+description = "返信補足の生成に失敗したとき、エラー内容に基づいて構成をやり直します。"
+
+[planner_memory_group]
+display_name = "群聊记忆使用策略"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[planner_memory_private]
+display_name = "私聊记忆使用策略"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[planner_replan]
+display_name = "新消息重规划指令"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[planner_subagent_policy]
+display_name = "子代理委派策略"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[planner_turn_action]
+display_name = "本轮行动指令"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[planner_turn_focus]
+display_name = "本轮行动指令（Focus）"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[planner_turn_passive]
+display_name = "本轮行动指令（被动回复）"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[planner_wait_completed]
+display_name = "等待结束指令"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[schedule_due]
+display_name = "日程到期指令"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[subagent_final_round]
+display_name = "子代理最后一轮指令"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[subagent_finished]
+display_name = "子代理完成指令"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"

@@ -1,0 +1,159 @@
+[reply_attachments]
+display_name = "回复附件提示"
+advanced = true
+description = "说明回复附带的图片、@ 和表情包由系统发送，避免正文重复输出附件信息。"
+
+[heuristic_memory_impression]
+display_name = "记忆启发印象"
+advanced = true
+description = "用于根据当前聊天流和最近消息生成自然语言聊天印象，辅助长期记忆语义召回。"
+
+[webui_help_skill_setup]
+display_name = "部署与配置流程"
+advanced = true
+description = "定位配置入口，核对当前值，给出可验证的操作步骤。"
+
+[webui_help_skill_troubleshoot]
+display_name = "故障定位流程"
+advanced = true
+description = "用报错与实际设置缩小故障范围，并给出下一项核验。"
+
+[webui_help_skill_plugin]
+display_name = "插件选型与操作流程"
+advanced = true
+description = "根据实际需求核查兼容性，并用对应工具处理安装和配置。"
+
+[webui_help_skill_develop]
+display_name = "插件开发指导流程"
+advanced = true
+description = "根据对应 SDK 文档给出最小实现、入口和验证步骤。"
+
+[webui_ai_search_input]
+display_name = "WebUI 答疑会话输入"
+advanced = true
+description = "将当前问题和历史问答整理成供 WebUI 答疑 Agent 参考的会话数据。"
+
+[webui_ai_search_final]
+display_name = "WebUI AI 搜索定稿指令"
+advanced = true
+description = "用于在 AI 搜索的工具轮次用尽或未按格式作答时，要求模型停止检索并返回最终 JSON。"
+
+[webui_ai_search_correction]
+display_name = "WebUI AI 搜索纠错指令"
+advanced = true
+description = "用于在 AI 搜索回答未通过证据校验时，要求模型删除无依据内容并重写最终 JSON。"
+
+[webui_ai_search_evidence]
+display_name = "WebUI AI 搜索证据消息"
+advanced = true
+description = "用于把 AI 搜索中只读工具的返回结果包装成无工具请求可用的证据消息。"
+
+[agent_acp_environment]
+display_name = "外接 Agent 环境说明"
+advanced = true
+description = "外接 Agent 环境说明。"
+
+[agent_acp_failure]
+display_name = "外接 Agent 失败回报"
+advanced = true
+description = "外接 Agent 失败回报。"
+
+[agent_planner_resume]
+display_name = "外接 Planner 中断恢复"
+advanced = true
+description = "外接 Planner 中断恢复。"
+
+[agent_planner_continue]
+display_name = "外接 Planner 继续执行"
+advanced = true
+description = "外接 Planner 继续执行。"
+
+[planner_reply_capabilities]
+display_name = "Planner reply capabilities"
+advanced = true
+description = "Available plugin reply capabilities for the current chat."
+
+[desktop_pet_proactive_wake]
+display_name = "桌宠定期主动思考"
+advanced = false
+description = "桌宠周期唤醒时的内部任务提示，引导自主探索并选择是否交流。"
+
+[desktop_pet_screen_read]
+display_name = "桌宠桌面阅读"
+advanced = false
+description = "理解本机主屏截图，支持单次查看和持续关注画面变化。"
+
+[desktop_pet_todo_context]
+display_name = "主人待办常驻上下文"
+advanced = false
+description = "每轮读取最新待办，并指导条件触发判断。"
+
+[desktop_pet_exploration_reuse]
+display_name = "探索经验日常复用"
+advanced = false
+description = "普通主人聊天按需检索并复用探索资源和经验。"
+
+[maisaka_wait_reminder]
+display_name = "连续等待提醒"
+advanced = true
+description = "连续多次等待后提醒延长等待或结束本轮思考，避免无限循环。"
+
+[reply_supplement_retry]
+display_name = "回复补充重试"
+advanced = true
+description = "回复补充生成失败后，根据错误信息重新生成补充编排。"
+
+[planner_memory_group]
+display_name = "群聊记忆使用策略"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[planner_memory_private]
+display_name = "私聊记忆使用策略"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[planner_replan]
+display_name = "新消息重规划指令"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[planner_subagent_policy]
+display_name = "子代理委派策略"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[planner_turn_action]
+display_name = "本轮行动指令"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[planner_turn_focus]
+display_name = "本轮行动指令（Focus）"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[planner_turn_passive]
+display_name = "本轮行动指令（被动回复）"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[planner_wait_completed]
+display_name = "等待结束指令"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[schedule_due]
+display_name = "日程到期指令"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[subagent_final_round]
+display_name = "子代理最后一轮指令"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[subagent_finished]
+display_name = "子代理完成指令"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
