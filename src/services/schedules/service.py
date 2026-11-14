@@ -58,7 +58,10 @@ class ScheduleService:
                 if action == "list":
                     return {"items": [item for item in store.list(command.get("include_completed", False))
                                       if belongs(item)]}
-                if action not in {"add", "update", "cancel", "complete"}:
+                actions = {"add", "update", "cancel", "complete"}
+                if owner:
+                    actions.update({"delete", "claim_condition", "finish"})
+                if action not in actions:
                     raise ValueError("不支持的日程操作")
                 if action != "add":
                     item = next((item for item in store.list(True) if item["id"] == command["todo_id"]

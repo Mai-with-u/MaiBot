@@ -60,7 +60,13 @@ class BuiltinToolEntry:
     def build_spec(self, context: Optional[ToolAvailabilityContext] = None) -> ToolSpec:
         """生成带统一可见性元数据的工具声明。"""
 
-        tool_spec = deepcopy(get_reply_tool_spec(context) if self.name == "reply" else self.get_spec())
+        if self.name == "reply":
+            tool_spec = get_reply_tool_spec(context)
+        elif self.name == "schedule":
+            tool_spec = get_schedule_tool_spec(context)
+        else:
+            tool_spec = self.get_spec()
+        tool_spec = deepcopy(tool_spec)
         tool_spec.metadata["builtin_stage"] = self.stage
         tool_spec.metadata["visibility"] = self.visibility
         return tool_spec

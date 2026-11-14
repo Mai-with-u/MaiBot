@@ -632,8 +632,14 @@ class DesktopPetService:
 
     async def trigger_condition_todo(
         self, todo_id: str, revision: str, evidence: str, *, applications: Optional[List[Dict[str, str]]] = None,
+        session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        snapshot = await self._command({"type": "todo", "action": "list"})
+        async def command(payload: Dict[str, Any]) -> Dict[str, Any]:
+            if session_id is not None:
+                return await schedule_service.command(payload, session_id=session_id)
+            return await self._command(payload)
+
+        snapshot = await command({"type": "todo", "action": "list"})
         original = next((item for item in snapshot["items"] if item["id"] == todo_id), None)
         if original is None or original["revision"] != revision:
             raise ValueError("待办已修改或删除，请重新查询")
@@ -643,19 +649,19 @@ class DesktopPetService:
             evidence = matching_application(original["condition"], applications)
             if not evidence:
                 raise ValueError("未检测到匹配的应用，不能触发")
-        result = await self._command({"type": "todo", "action": "claim_condition", "todo_id": todo_id,
+        result = await command({"type": "todo", "action": "claim_condition", "todo_id": todo_id,
                                       "revision": revision, "evidence": evidence})
         item = result["item"]
-        current = await self._command({"type": "todo", "action": "list"})
+        current = await command({"type": "todo", "action": "list"})
         if not any(entry["id"] == todo_id and entry["revision"] == revision for entry in current["items"]):
             raise ValueError("待办已修改或删除，本次触发取消")
         try:
             await self._activate_todo(item)
         except Exception as exc:
-            await self._command({"type": "todo", "action": "finish", "todo_id": todo_id,
+            await command({"type": "todo", "action": "finish", "todo_id": todo_id,
                                  "revision": revision, "error": str(exc)})
             raise
-        await self._command({"type": "todo", "action": "finish", "todo_id": todo_id, "revision": revision})
+        await command({"type": "todo", "action": "finish", "todo_id": todo_id, "revision": revision})
         return {"id": todo_id, "status": "triggered", "evidence": item["evidence"]}
 
     async def _activate_todo(self, item: Dict[str, Any]) -> None:
