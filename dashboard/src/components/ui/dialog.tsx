@@ -43,7 +43,7 @@ interface DialogContentProps extends React.ComponentPropsWithoutRef<
   hideOverlay?: boolean
   /** 单独调整遮罩样式，例如操作确认框关闭进出场动画。 */
   overlayClassName?: string
-  /** 回车触发主操作按钮 */
+  /** 回车触发主操作按钮；带 data-dialog-skip-confirm 的控件保留自身按键动作。 */
   confirmOnEnter?: boolean
   /** 右侧覆盖面板；默认保持居中弹窗和手机底部弹层。 */
   side?: 'center' | 'right'
@@ -97,7 +97,8 @@ const DialogContent = React.forwardRef<
             event.defaultPrevented ||
             !matchesShortcut(event, ['enter']) ||
             event.nativeEvent.isComposing ||
-            isEditableTarget(event.target)
+            isEditableTarget(event.target) ||
+            (event.target instanceof Element && event.target.closest('[data-dialog-skip-confirm]'))
           ) {
             return
           }

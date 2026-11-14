@@ -2,7 +2,7 @@ import { TimeRangeTrack, TimeRangeTicks } from '@/components/ui/time-range-track
 import { SegmentedMeter } from '@/components/ui/segmented-meter'
 import { SegmentedControl } from '@/components/ui/management'
 import { formatTalkTimeRange, getTimelineSegments } from '@/lib/time-range'
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ArrowLeft, Copy, Hand, History, Maximize, Minus, Moon, MousePointer2, Palette, Plus, Sun, ThumbsUp, Trash2, X } from 'lucide-react'
 
@@ -101,7 +101,9 @@ function applyPreviewTheme(style: DashboardStyle, dark: boolean) {
   }, dark)
 }
 
+/** Show interactive control states under the selected theme without persisting their values. */
 function Samples({ label, dark }: { label: string; dark: boolean }) {
+  const sampleId = useId()
   const [range, setRange] = useState({start: 18 * 60, end: 6 * 60})
   const [period, setPeriod] = useState('7')
   const [liked, setLiked] = useState(true)
@@ -145,11 +147,11 @@ function Samples({ label, dark }: { label: string; dark: boolean }) {
       <section>
         <h2>Switch 开关 · 关闭 / 开启 / 禁用 / 大尺寸</h2>
         <div className="sample-row">
-          <label>关闭 <Switch aria-label="默认关闭" /></label>
-          <label>开启 <Switch aria-label="默认开启" defaultChecked /></label>
-          <label>禁用 <Switch aria-label="禁用开关" disabled /></label>
-          <label>禁用开启 <Switch aria-label="禁用开启" defaultChecked disabled /></label>
-          <label>仅显示兼容 <Switch aria-label="仅显示兼容" size="lg" defaultChecked /></label>
+          <label htmlFor={`${sampleId}-switch-off`}>关闭 <Switch id={`${sampleId}-switch-off`} aria-label="默认关闭" /></label>
+          <label htmlFor={`${sampleId}-switch-on`}>开启 <Switch id={`${sampleId}-switch-on`} aria-label="默认开启" defaultChecked /></label>
+          <label htmlFor={`${sampleId}-switch-disabled`}>禁用 <Switch id={`${sampleId}-switch-disabled`} aria-label="禁用开关" disabled /></label>
+          <label htmlFor={`${sampleId}-switch-disabled-on`}>禁用开启 <Switch id={`${sampleId}-switch-disabled-on`} aria-label="禁用开启" defaultChecked disabled /></label>
+          <label htmlFor={`${sampleId}-switch-large`}>仅显示兼容 <Switch id={`${sampleId}-switch-large`} aria-label="仅显示兼容" size="lg" defaultChecked /></label>
         </div>
       </section>
       <section>
@@ -241,23 +243,23 @@ function Samples({ label, dark }: { label: string; dark: boolean }) {
       <section id="additional-controls" className="additional-controls">
         <h2>复选框 · 未选 / 全选 / 半选 / 禁用 / 紧凑</h2>
         <div className="sample-row">
-          <label><Checkbox aria-label="未选复选框" />未选</label>
-          <label><Checkbox aria-label="已选复选框" defaultChecked />已选</label>
-          <label><Checkbox aria-label="半选复选框" defaultChecked="indeterminate" />部分选中</label>
-          <label><Checkbox aria-label="禁用复选框" defaultChecked disabled />禁用</label>
-          <label><Checkbox aria-label="紧凑复选框" size="sm" defaultChecked />紧凑</label>
+          <label htmlFor={`${sampleId}-checkbox-off`}><Checkbox id={`${sampleId}-checkbox-off`} aria-label="未选复选框" />未选</label>
+          <label htmlFor={`${sampleId}-checkbox-on`}><Checkbox id={`${sampleId}-checkbox-on`} aria-label="已选复选框" defaultChecked />已选</label>
+          <label htmlFor={`${sampleId}-checkbox-mixed`}><Checkbox id={`${sampleId}-checkbox-mixed`} aria-label="半选复选框" defaultChecked="indeterminate" />部分选中</label>
+          <label htmlFor={`${sampleId}-checkbox-disabled`}><Checkbox id={`${sampleId}-checkbox-disabled`} aria-label="禁用复选框" defaultChecked disabled />禁用</label>
+          <label htmlFor={`${sampleId}-checkbox-small`}><Checkbox id={`${sampleId}-checkbox-small`} aria-label="紧凑复选框" size="sm" defaultChecked />紧凑</label>
         </div>
       </section>
       <section>
         <h2>单选框 · 标准 / 禁用 / 紧凑</h2>
         <RadioGroup aria-label="执行方式" defaultValue="auto" className="sample-row">
-          <label><RadioGroupItem value="auto" />自动</label>
-          <label><RadioGroupItem value="manual" />手动</label>
-          <label><RadioGroupItem value="disabled" disabled />不可用</label>
+          <label htmlFor={`${sampleId}-radio-auto`}><RadioGroupItem id={`${sampleId}-radio-auto`} value="auto" />自动</label>
+          <label htmlFor={`${sampleId}-radio-manual`}><RadioGroupItem id={`${sampleId}-radio-manual`} value="manual" />手动</label>
+          <label htmlFor={`${sampleId}-radio-disabled`}><RadioGroupItem id={`${sampleId}-radio-disabled`} value="disabled" disabled />不可用</label>
         </RadioGroup>
         <RadioGroup aria-label="紧凑执行方式" defaultValue="auto" className="sample-row sample-radio-compact">
-          <label><RadioGroupItem size="sm" value="auto" />自动（紧凑）</label>
-          <label><RadioGroupItem size="sm" value="manual" />手动（紧凑）</label>
+          <label htmlFor={`${sampleId}-radio-small-auto`}><RadioGroupItem id={`${sampleId}-radio-small-auto`} size="sm" value="auto" />自动（紧凑）</label>
+          <label htmlFor={`${sampleId}-radio-small-manual`}><RadioGroupItem id={`${sampleId}-radio-small-manual`} size="sm" value="manual" />手动（紧凑）</label>
         </RadioGroup>
       </section>
       <section>

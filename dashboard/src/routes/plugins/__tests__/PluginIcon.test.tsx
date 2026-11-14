@@ -128,7 +128,7 @@ describe('PluginIcon 图标回退', () => {
     )
 
     const image = container.querySelector('img')
-    expect(image).toHaveAttribute('src', '/api/webui/plugins/icon/hello%2Fworld')
+    expect(image).toHaveAttribute('src', '/api/webui/plugins/icon/hello%2Fworld?version=&icon=icon.png')
     expect(image).toHaveAttribute('alt', '')
     expect(container.firstElementChild).toHaveClass('custom-wrap')
 
@@ -149,7 +149,7 @@ describe('PluginIcon 图标回退', () => {
     const typeFallbackImage = container.querySelector('img')
     expect(typeFallbackImage).toHaveAttribute(
       'src',
-      '/api/webui/plugins/icon/local-type-fallback',
+      '/api/webui/plugins/icon/local-type-fallback?version=&icon=icon.png',
     )
     fireEvent.error(typeFallbackImage!)
     expect(container.querySelector('svg.lucide-bot')).not.toBeNull()
@@ -191,6 +191,6 @@ describe('PluginIcon 图标回退', () => {
       />,
     )
     expect(container.querySelector('img')).toBeNull()
-    expect(container.querySelector('svg.lucide-search')).not.toBeNull()
+    expect(container.querySelector('svg.lucide-plug')).not.toBeNull()
   })
 })

@@ -2031,6 +2031,7 @@ describe('KnowledgeBasePage import workflow', () => {
     await waitFor(() => expect(memoryApi.getMemoryCorrectionPlan).toHaveBeenCalledWith('correction-plan-1'))
 
     await user.type(screen.getByLabelText('修正内容'), '把测试用户的常住城市改为杭州')
+    await user.click(screen.getByRole('button', { name: '切换为人物 ID' }))
     await user.type(screen.getByLabelText('人物 ID'), 'person-1')
     await user.click(screen.getByRole('button', { name: '生成预览' }))
 
@@ -2054,6 +2055,7 @@ describe('KnowledgeBasePage import workflow', () => {
     await screen.findByLabelText('修正内容')
 
     await user.type(screen.getByLabelText('修正内容'), '把测试用户的常住城市改为杭州')
+    await user.click(screen.getByRole('button', { name: '切换为人物 ID' }))
     await user.type(screen.getByLabelText('人物 ID'), 'person-1')
     const chatInput = screen.getByLabelText('聊天流 ID / 名称')
     await user.type(chatInput, '测试')
@@ -2552,14 +2554,9 @@ describe('KnowledgeBasePage import workflow', () => {
 
       await user.click(screen.getByRole('tab', { name: '记忆查询' }))
       await openDetail()
-      await user.click(screen.getByRole('button', { name: '强化' }))
+      await user.click(screen.getByRole('button', { name: '状态' }))
       expect(window.location.search).toContain('mode=maintenance')
       expect(window.location.search).toContain('target=paragraph-record-action')
-      expect(await screen.findByLabelText('维护目标')).toHaveValue('paragraph-record-action')
-
-      await user.click(screen.getByRole('tab', { name: '记忆查询' }))
-      await openDetail()
-      await user.click(screen.getByRole('button', { name: '保护' }))
       expect(await screen.findByLabelText('维护目标')).toHaveValue('paragraph-record-action')
 
       await user.click(screen.getByRole('tab', { name: '记忆查询' }))
@@ -2572,17 +2569,17 @@ describe('KnowledgeBasePage import workflow', () => {
 
       await user.click(screen.getByRole('tab', { name: '记忆查询' }))
       await openDetail()
-      await user.click(screen.getByRole('tab', { name: /画像/ }))
+      await user.click(within(screen.getByRole('dialog')).getByRole('tab', { name: /画像/ }))
       await user.click(await screen.findByText('person-action-1'))
-      // 人物画像已并入记忆查询：落到 tab=records 的人物画像切面
-      expect(window.location.search).toContain('tab=records')
-      expect(window.location.search).toContain('view=profiles')
+      // 人物画像的地址规范化为 tab=profiles，界面仍归在记忆查询分组下。
+      expect(window.location.search).toContain('tab=profiles')
+      expect(new URLSearchParams(window.location.search).has('view')).toBe(false)
       expect(window.location.search).toContain('person_id=person-action-1')
       // 跳到画像会直接展开详情弹窗；先关掉它再继续操作标签
       expect(await screen.findByRole('dialog', { name: '画像详情' })).toBeInTheDocument()
       await user.keyboard('{Escape}')
 
-      // 人物画像切面下要靠内部子标签切回文字记录（外层「记忆查询」此时已是激活态）
+      // 外层记忆查询仍激活，通过内部文字记录页签切回记录列表。
       await user.click(screen.getByRole('tab', { name: '文字记录' }))
       await openDetail()
       await user.click(screen.getByRole('button', { name: '图谱' }))
