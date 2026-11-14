@@ -172,13 +172,24 @@ class SearchExecutionService:
         if not temporal_enabled:
             return False, None, "时序检索已禁用（retrieval.temporal.enabled=false）"
 
-        if not time_from_raw and not time_to_raw:
-            return False, None, "time/hybrid 模式至少需要 time_from 或 time_to"
+        # 与 person/source 一样先做空白归一化：纯空白时间串等同未提供，
+        # 否则 hybrid 会绕过下面的无时间分支、死在时间解析的「时间不能为空」上。
+        time_from_text = _sanitize_text(time_from_raw) or None
+        time_to_text = _sanitize_text(time_to_raw) or None
+
+        if not time_from_text and not time_to_text:
+            if query_type == "time":
+                return False, None, "time 模式至少需要 time_from 或 time_to"
+            # hybrid 是语义检索加可选的时间约束：没有时间范围时按开放窗口处理，
+            # 不让整次检索失败。模型常以 hybrid 且不带时间的方式调用（见 #2187，
+            # 实测 14/14 全部失败），且无法从报错中自我纠正；开放窗口下时序匹配
+            # 两端均不设限，person/source 过滤与时序排序保持不变。
+            logger.info("hybrid 模式未提供 time_from/time_to，按开放时间窗口继续检索")
 
         try:
             ts_from, ts_to = parse_query_time_range(
-                str(time_from_raw) if time_from_raw is not None else None,
-                str(time_to_raw) if time_to_raw is not None else None,
+                time_from_text,
+                time_to_text,
             )
         except ValueError as e:
             return False, None, f"时间参数错误: {e}"
