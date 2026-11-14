@@ -280,3 +280,48 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/statuses/$RELEASE_COMMIT" \
             -f state="$STATE" -f context='Release validation' \
             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+  cleanup-release-branch:
+    needs: [build-and-check, create-release]
+    if: needs.create-release.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Delete merged release branch after successful publishing
+        uses: actions/github-script@v7
+        env:
+          RELEASE_VERSION: ${{ needs.build-and-check.outputs.version }}
+          SOURCE_COMMIT: ${{ needs.build-and-check.outputs.commit }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const version = process.env.RELEASE_VERSION;
+            if (!/^\d+\.\d+\.\d+$/.test(version)) {
+              throw new Error(`正式版本号无效：${version}`);
+            }
+            const branch = `release/${version}`;
+            const pulls = await github.paginate(github.rest.pulls.list, {
+              owner, repo, state: 'closed', base: 'main', head: `${owner}:${branch}`,
+            });
+            let ref;
+            try {
+              ({ data: ref } = await github.rest.git.getRef({ owner, repo, ref: `heads/${branch}` }));
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              core.info(`${branch} 已删除`);
+              return;
+            }
+            if (!pulls.some(pr => pr.merged_at && pr.head.repo?.full_name === `${owner}/${repo}` &&
+                                  pr.head.sha === ref.object.sha)) {
+              throw new Error(`${branch} 当前提交没有已合并的发布 PR，保留分支`);
+            }
+            const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
+              owner, repo, basehead: `${ref.object.sha}...${process.env.SOURCE_COMMIT}`,
+            });
+            if (!['ahead', 'identical'].includes(comparison.status)) {
+              throw new Error(`${branch} 包含未纳入本次发布的提交，保留分支`);
+            }
+            await github.rest.git.deleteRef({ owner, repo, ref: `heads/${branch}` });
+            core.info(`已清理 ${branch}`);

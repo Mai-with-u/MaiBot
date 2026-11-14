@@ -1,4 +1,5 @@
-from datetime import datetime
+from collections import deque
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -12,6 +13,40 @@ from src.maisaka.builtin_tool.reply import get_tool_spec
 from src.maisaka.context.message_id_alias import to_display_message_id
 from src.maisaka.context.messages import ToolResultMediaMessage
 from src.maisaka.reply_supplement import ReplySupplementPlan, SupplementResources, resolve_supplement
+
+
+@pytest.mark.parametrize("elapsed, recent_hashes, expected_weight", [
+    (0, [], 0.2),
+    (300, [], 0.6),
+    (600, [], 1.0),
+    (1200, [], 1.0),
+    (-60, [], 0.2),
+    (1200, ["recent"], 0.2),
+    (1200, ["recent", "other"], 0.6),
+    (60, ["recent", "other"], 0.28),
+    (1200, ["other", "recent"], 0.2),
+    (1200, ["other"] * 2, 1.0),
+])
+def test_semantic_selection_cooldown_recovers_and_excludes_poor_matches(
+    monkeypatch, elapsed, recent_hashes, expected_weight,
+):
+    now = datetime(2026, 1, 1, 12)
+    emojis = {
+        "recent": SimpleNamespace(last_used_time=now - timedelta(seconds=elapsed)),
+        "unused": SimpleNamespace(last_used_time=None),
+        "irrelevant": SimpleNamespace(last_used_time=None),
+    }
+
+    def choose(candidates, *, weights, k):
+        assert candidates == ["recent", "unused"]
+        assert weights == pytest.approx([expected_weight, 1.0])
+        assert k == 1
+        return ["unused"]
+
+    monkeypatch.setattr(semantic_match.random, "choices", choose)
+    assert semantic_match._select_match(
+        {"recent": 0.9, "unused": 0.9, "irrelevant": 0.5}, emojis, now, recent_hashes,
+    ) == "unused"
 
 
 @pytest.mark.asyncio
@@ -101,8 +136,8 @@ async def test_backfill_persists_vectors_and_matching_only_embeds_the_query(monk
     monkeypatch.setattr(semantic_match, "_BACKFILL_BATCH_SIZE", 1)
     monkeypatch.setattr(semantic_match, "_is_vlm_task_configured", lambda: True)
     emojis = [
-        SimpleNamespace(file_hash="a", description="安慰"),
-        SimpleNamespace(file_hash="b", description="自嘲"),
+        SimpleNamespace(file_hash="a", description="安慰", last_used_time=None),
+        SimpleNamespace(file_hash="b", description="自嘲", last_used_time=None),
     ]
     analyze = AsyncMock(side_effect=[
         '{"emotion_tags":["安慰"],"content_tags":["猫","拥抱"]}',
@@ -110,6 +145,7 @@ async def test_backfill_persists_vectors_and_matching_only_embeds_the_query(monk
     ])
     monkeypatch.setattr(semantic_match, "emoji_manager", SimpleNamespace(
         emojis=emojis, analyze_emoji_image=analyze, get_emoji_by_hash_from_db=lambda _: emojis[1],
+        recent_emoji_hashes=deque(maxlen=semantic_match.RECENT_EMOJI_WINDOW),
     ))
 
     async def embed(label):

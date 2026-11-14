@@ -1,7 +1,8 @@
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Literal, Optional
+from typing import Any, Deque, Literal, Optional
 
 import asyncio
 import hashlib
@@ -36,6 +37,7 @@ DATA_DIR = PROJECT_ROOT / "data"
 EmojiRegisterStatus = Literal["registered", "skipped", "failed"]
 EMOJI_DIR = DATA_DIR / "emoji"  # 表情包存储目录
 MAX_EMOJI_FOR_PROMPT = 20  # 最大允许的表情包描述数量于图片替换的 prompt 中
+RECENT_EMOJI_WINDOW = 2
 BYTES_PER_MIB = 1024 * 1024
 
 
@@ -242,6 +244,8 @@ class EmojiManager:
 
         self._emoji_num: int = 0
         self.emojis: list[MaiEmoji] = []
+        # 按成功发送顺序记录；重复发送也占一次，最近一次使用重新开始冷却。
+        self.recent_emoji_hashes: Deque[str] = deque(maxlen=RECENT_EMOJI_WINDOW)
         self._maintenance_wakeup_event: asyncio.Event = asyncio.Event()
         self._pending_description_tasks: dict[str, asyncio.Task[None]] = {}
         self._emoji_save_locks: dict[str, asyncio.Lock] = {}
@@ -713,6 +717,7 @@ class EmojiManager:
         except Exception as e:
             logger.error(f"[记录表情包使用] 记录使用时出错: {e}")
             return False
+        self.recent_emoji_hashes.append(normalized_hash)
         return True
 
     def update_emoji(self, emoji: MaiEmoji) -> bool:
