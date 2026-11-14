@@ -3,6 +3,10 @@ name: Prepare Main Release
 on:
   workflow_dispatch:
 
+env:
+  # GitHub 运行器优先使用官方 PyPI，项目保留国内运行的混合源配置。
+  UV_INDEX: https://pypi.org/simple
+
 concurrency:
   group: prepare-main-release
   cancel-in-progress: false
