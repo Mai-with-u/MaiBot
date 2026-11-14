@@ -1,0 +1,55 @@
+[text_learning_expression]
+display_name = "长文学习表达"
+advanced = true
+description = "从用户粘贴的文段中提取有原文依据的表达候选，供用户选择导入。"
+
+[text_learning_jargon]
+display_name = "长文学习黑话"
+advanced = true
+description = "从用户粘贴的文段中提取黑话与含义，供用户选择导入。"
+
+[default_expressor]
+display_name = "改写器"
+advanced = true
+description = "表达方式生成与整理相关模板，通常只在调试表达系统时需要修改。"
+
+[expression_evaluation]
+display_name = "表达评价"
+advanced = true
+description = "用于评价候选表达方式质量的模板。"
+
+[expression_select]
+display_name = "表达选择"
+advanced = true
+description = "用于从表达库中选择合适表达方式的模板。"
+
+[jargon_compare_inference]
+display_name = "黑话对比推理"
+advanced = true
+description = "用于比较和推理群内黑话含义的模板。"
+
+[jargon_explainer_summarize]
+display_name = "黑话解释总结"
+advanced = true
+description = "用于总结黑话解释结果的模板。"
+
+[jargon_inference_content_only]
+display_name = "黑话推理"
+advanced = true
+description = "用于仅基于内容推理黑话含义的模板。"
+
+[jargon_inference_with_context]
+display_name = "黑话上下文推理"
+advanced = true
+description = "用于结合上下文推理黑话含义的模板。"
+
+[learn_style]
+display_name = "表达风格学习"
+advanced = true
+description = "用于从聊天内容中学习表达风格的模板。"
+
+[learn_jargon]
+display_name = "黑话学习"
+advanced = true
+description = "用于从真实聊天内容中抽取群内黑话候选，并交给黑话矿工更新含义和共现分布。"
+

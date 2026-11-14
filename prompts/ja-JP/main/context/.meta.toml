@@ -1,0 +1,10 @@
+[context_compaction]
+display_name = "通常チャットのローリング状態要約"
+advanced = true
+description = "通常チャットの Planner リクエストを再利用し、履歴と既存の要約を話題、背景、進展、未完了事項、約束の五分類に整理します。"
+
+[context_compaction_focus]
+display_name = "Focus ローリング状態要約"
+advanced = true
+description = "Focus Planner リクエストを再利用して共有グループの五分類のローリング要約を作成し、各チャットの出所を保持します。"
+

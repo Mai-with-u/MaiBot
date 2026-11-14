@@ -1,0 +1,25 @@
+[maisaka_chat_passive]
+display_name = "Planner (Passive replyer)"
+advanced = true
+description = "Used when experimental passive replyer is enabled; final planner text guides a reply, while tool calls perform actions."
+
+[maisaka_chat]
+display_name = "Planner"
+advanced = false
+description = "Main Maisaka planning template that combines identity, time, tool instructions, and chat context to drive thinking, decisions, and tool calls."
+
+[maisaka_chat_merged_timing]
+display_name = "Planner (Timing merged)"
+advanced = false
+description = "Main Maisaka planning template used when independent timing awareness is disabled, with timing decisions merged into the planner."
+
+[maisaka_chat_focus]
+display_name = "Focus Planner"
+advanced = true
+description = "Shared Focus planner for all chats in a group, selecting each tool's target through session_id."
+
+[maisaka_chat_optimized]
+display_name = "Planner (Optimized)"
+advanced = true
+description = "Main Maisaka planning template used when the experimental feature experimental.planner_optimized_prompt is enabled. It addresses the bot in the second person and trims the task description; Focus mode keeps using the Focus planner."
+

@@ -1,0 +1,55 @@
+[text_learning_expression]
+display_name = "文章からの表現学習"
+advanced = true
+description = "貼り付けた文章を根拠に表現候補を抽出し、ユーザーが選択して取り込みます。"
+
+[text_learning_jargon]
+display_name = "文章からの隠語学習"
+advanced = true
+description = "貼り付けた文章から隠語と意味を抽出し、ユーザーが選択して取り込みます。"
+
+[default_expressor]
+display_name = "既定表現器"
+advanced = true
+description = "表現方式の生成と整理に関するテンプレート。通常は表現システムのデバッグ時だけ編集する。"
+
+[expression_evaluation]
+display_name = "表現評価"
+advanced = true
+description = "候補表現の品質を評価するためのテンプレート。"
+
+[expression_select]
+display_name = "表現選択"
+advanced = true
+description = "表現ライブラリから適切な表現方式を選択するためのテンプレート。"
+
+[jargon_compare_inference]
+display_name = "隠語比較推論"
+advanced = true
+description = "グループ内の隠語の意味を比較・推論するためのテンプレート。"
+
+[jargon_explainer_summarize]
+display_name = "隠語説明要約"
+advanced = true
+description = "隠語説明の結果を要約するためのテンプレート。"
+
+[jargon_inference_content_only]
+display_name = "隠語推論"
+advanced = true
+description = "内容のみから隠語の意味を推論するためのテンプレート。"
+
+[jargon_inference_with_context]
+display_name = "隠語文脈推論"
+advanced = true
+description = "周辺文脈を組み合わせて隠語の意味を推論するためのテンプレート。"
+
+[learn_style]
+display_name = "表現スタイル学習"
+advanced = true
+description = "チャット内容から表現スタイルを学習するためのテンプレート。"
+
+[learn_jargon]
+display_name = "隠語学習"
+advanced = true
+description = "実際のチャットからグループ固有の隠語候補を抽出し、意味と共起分布を更新するためのテンプレート。"
+

@@ -1,0 +1,10 @@
+[reply_group]
+display_name = "Group chat reply"
+advanced = true
+description = "Default group chat reply template in Creative mode."
+
+[reply_group_mai_replier]
+display_name = "Mai Replier group chat reply"
+advanced = true
+description = "Group chat reply template for Mai Replier, using the wording from training."
+

@@ -1,0 +1,15 @@
+[agent_acp]
+display_name = "外部 Agent 接続ガイド"
+advanced = true
+description = "外部 Agent 接続ガイド。"
+
+[agent_planner]
+display_name = "外部 Planner 接続ガイド"
+advanced = true
+description = "外部 Planner 接続ガイド。"
+
+[maisaka_subagent]
+display_name = "子代理"
+advanced = false
+description = "子代理独立任务的主要系统提示词。"
+

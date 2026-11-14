@@ -1,0 +1,10 @@
+[desktop_pet_exploration]
+display_name = "Desktop pet exploration"
+advanced = false
+description = "Explore tool combinations for a human-defined goal and save evidence-backed candidate workflows."
+
+[desktop_pet_thinking_caption]
+display_name = "Desktop pet thinking caption"
+advanced = false
+description = "Summarizes the current run stage as a short, playful desktop pet status line."
+

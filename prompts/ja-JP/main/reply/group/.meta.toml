@@ -1,0 +1,10 @@
+[reply_group]
+display_name = "グループチャット返信"
+advanced = true
+description = "クリエイティブモードの既定のグループチャット返信テンプレート。"
+
+[reply_group_mai_replier]
+display_name = "Mai Replier のグループチャット返信"
+advanced = true
+description = "Mai Replier 専用のグループチャット返信テンプレート。学習時の文面を使用する。"
+

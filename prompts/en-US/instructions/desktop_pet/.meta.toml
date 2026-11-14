@@ -1,0 +1,20 @@
+[desktop_pet_proactive_wake]
+display_name = "Desktop pet periodic reflection"
+advanced = false
+description = "Internal prompt for periodic reflection, autonomous exploration, and optional conversation."
+
+[desktop_pet_screen_read]
+display_name = "Desktop pet screen reading"
+advanced = false
+description = "Understand a local primary-screen capture, once or continuously."
+
+[desktop_pet_todo_context]
+display_name = "Resident owner todos"
+advanced = false
+description = "Refresh todos every turn and guide condition-based triggering."
+
+[desktop_pet_exploration_reuse]
+display_name = "Everyday exploration reuse"
+advanced = false
+description = "Retrieve and reuse exploration products as needed in ordinary owner chats."
+

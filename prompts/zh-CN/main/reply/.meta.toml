@@ -1,0 +1,25 @@
+[maisaka_replyer]
+display_name = "回复"
+advanced = false
+description = "Maisaka 回复生成模板，负责根据人格、表达风格、群聊注意事项和待回复上下文生成最终回复。"
+
+[reply_cache]
+display_name = "回复缓存任务"
+advanced = true
+description = "在 Planner 上下文末尾切换到创意模式 Replyer 回复任务。"
+
+[maisaka_expression_selector]
+display_name = "表达方式挑选"
+advanced = true
+description = "根据聊天上下文，从候选表达方式中挑选适合本次回复的若干条。"
+
+[maisaka_replyer_document]
+display_name = "长文写作"
+advanced = false
+description = "以自身身份和口吻撰写完整的文章或社区帖子。"
+
+[reply_supplement]
+display_name = "回复补充编排"
+advanced = true
+description = "在正文并行生成时，编排引用、附件与发送顺序等回复补充内容。"
+

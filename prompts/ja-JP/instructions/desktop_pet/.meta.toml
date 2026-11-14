@@ -1,0 +1,20 @@
+[desktop_pet_proactive_wake]
+display_name = "デスクトップペットの定期的な思考"
+advanced = false
+description = "定期起動時に自主的な探索と必要に応じた交流を促す内部プロンプト。"
+
+[desktop_pet_screen_read]
+display_name = "デスクトップペットの画面読み取り"
+advanced = false
+description = "本機のメイン画面を一度確認、または継続的に変化を読み取ります。"
+
+[desktop_pet_todo_context]
+display_name = "主人のタスク常駐コンテキスト"
+advanced = false
+description = "毎ターン最新タスクを読み込み、条件成立による起動を判断します。"
+
+[desktop_pet_exploration_reuse]
+display_name = "探索経験の日常利用"
+advanced = false
+description = "通常の主人チャットで必要に応じて探索の資源と経験を検索・再利用します。"
+

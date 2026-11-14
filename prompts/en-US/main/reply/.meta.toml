@@ -1,0 +1,25 @@
+[maisaka_replyer]
+display_name = "Replyer"
+advanced = false
+description = "Maisaka reply generation template that creates the final reply from persona, expression style, chat notes, and reply context."
+
+[reply_cache]
+display_name = "Cached reply task"
+advanced = true
+description = "Switches to creative Replyer generation at the end of the Planner context."
+
+[maisaka_expression_selector]
+display_name = "Expression selection"
+advanced = true
+description = "Picks the expressions that fit this reply from the candidates, based on the chat context."
+
+[maisaka_replyer_document]
+display_name = "Long-form writing"
+advanced = false
+description = "Writes a complete article or community post in the bot's own identity and voice."
+
+[reply_supplement]
+display_name = "Reply supplement planning"
+advanced = true
+description = "While the reply body is generated in parallel, plans quotes, attachments and sending order."
+

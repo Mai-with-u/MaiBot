@@ -1,0 +1,10 @@
+[reply_attachments]
+display_name = "回复附件提示"
+advanced = true
+description = "说明回复附带的图片、@ 和表情包由系统发送，避免正文重复输出附件信息。"
+
+[reply_supplement_retry]
+display_name = "回复补充重试"
+advanced = true
+description = "回复补充生成失败后，根据错误信息重新生成补充编排。"
+

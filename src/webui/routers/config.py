@@ -26,7 +26,6 @@ from src.common.prompt_i18n import (
     extract_prompt_placeholders,
     get_builtin_prompt_name,
     get_custom_prompt_storage_name,
-    get_prompt_template_info,
     iter_prompt_files,
     list_prompt_templates,
 )
@@ -252,7 +251,7 @@ def _safe_prompt_path(language: str, filename: str) -> Path:
         raise HTTPException(status_code=400, detail="无效的 Prompt 文件名")
 
     prompt_name = get_builtin_prompt_name(normalized_filename.removesuffix(".prompt"))
-    info = get_prompt_template_info(prompt_name, normalized_language, PROMPTS_DIR)
+    info = list_prompt_templates(locale=normalized_language, prompts_root=PROMPTS_DIR).get(prompt_name)
     if info is None or info.path.relative_to(PROMPTS_DIR.resolve()).parts[0] != normalized_language:
         raise HTTPException(status_code=404, detail="Prompt 文件不存在")
     prompt_path = info.path.resolve()

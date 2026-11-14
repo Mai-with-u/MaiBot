@@ -1,0 +1,10 @@
+[desktop_pet_exploration]
+display_name = "デスクトップペットの探索"
+advanced = false
+description = "人が設定した目標に沿ってツールの組み合わせを探索し、実験の証拠がある候補図式を保存します。"
+
+[desktop_pet_thinking_caption]
+display_name = "デスクトップペットの思考キャプション"
+advanced = false
+description = "現在の実行段階を、短く楽しいデスクトップペットの状態文にまとめます。"
+

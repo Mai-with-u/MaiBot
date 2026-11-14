@@ -1,0 +1,10 @@
+[reply_attachments]
+display_name = "返信の添付案内"
+advanced = true
+description = "返信に添付する画像、メンション、絵文字はシステムが送信することを示し、本文での添付情報の重複を防ぎます。"
+
+[reply_supplement_retry]
+display_name = "返信補足の再生成"
+advanced = true
+description = "返信補足の生成に失敗したとき、エラー内容に基づいて構成をやり直します。"
+

@@ -1,0 +1,15 @@
+[heuristic_memory_impression]
+display_name = "記憶検索印象"
+advanced = true
+description = "現在のチャット流と直近メッセージから自然言語の印象を生成し、長期記憶の意味検索を補助するテンプレート。"
+
+[planner_memory_group]
+display_name = "群聊记忆使用策略"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[planner_memory_private]
+display_name = "私聊记忆使用策略"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
