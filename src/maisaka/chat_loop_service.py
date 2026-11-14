@@ -80,6 +80,7 @@ from src.maisaka.scenes.factory import get_prompt_profile
 
 from .lightweight import is_lightweight_private_chat
 from .planner_action_judge import complete_missing_planner_action
+from .tool_arguments import filter_tool_call_items
 
 REQUEST_TYPE_BY_REQUEST_KIND = {
     "expression_selector": "expression.selector",
@@ -1396,6 +1397,18 @@ class MaisakaChatLoopService:
             if action_judgment is not None:
                 final_output_items = (*final_output_items, action_judgment.tool_call)
                 llm_duration_ms = round((time.perf_counter() - llm_started_at) * 1000, 2)
+        tool_schemas = {tool.name: tool.parameters_schema for tool in normalize_tool_options(list(all_tools))}
+        missing_tool_names = {
+            call.func_name for call in get_response_tool_calls(final_output_items)
+            if call.func_name not in tool_schemas
+        }
+        if missing_tool_names and self._tool_registry is not None:
+            for spec in await self._tool_registry.list_tools(ToolAvailabilityContext(
+                session_id=self._session_id, stream_id=self._session_id, is_group_chat=self._is_group_chat,
+            )):
+                if spec.name in missing_tool_names:
+                    tool_schemas[spec.name] = spec.parameters_schema
+        final_output_items = filter_tool_call_items(final_output_items, tool_schemas)
         prompt_tokens = self._coerce_int(after_response_kwargs.get("prompt_tokens"), generation_result.prompt_tokens)
         completion_tokens = self._coerce_int(
             after_response_kwargs.get("completion_tokens"),
