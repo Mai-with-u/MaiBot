@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from src.maisaka.runtime import MaisakaHeartFlowChatting
 
 
-TurnGateDecision = Literal["trigger", "wait", "delay"]
+TurnGateDecision = Literal["trigger", "wait", "delay", "consume", "review"]
 RECENT_PRESENCE_WINDOW_SECONDS = 300.0
 """统计近期消息量与麦麦发言占比的时间窗口。"""
 
@@ -32,6 +32,10 @@ class TurnGateResult:
     decision: TurnGateDecision
     detail: str
     delay_seconds: float = 0.0
+    probability: float = 0.0
+    threshold: float = 0.0
+    consumed_count: int = 0
+    evaluated_at: float = 0.0
 
     @property
     def should_trigger(self) -> bool:
@@ -64,8 +68,13 @@ class DynamicReplyTurnGate:
         *,
         pending_messages: Sequence[SessionMessage],
         frequency: float,
+        finalize: bool = True,
     ) -> TurnGateResult:
-        """返回动态门控的触发判定。"""
+        """返回动态门控的触发判定。
+
+        ``finalize=False`` 用于插件门控评估：保留评分时刻与本地概率/阈值，且不提前关闭
+        虚拟轮次，供 ``apply_external_probability`` 在插件返回后重新裁决。
+        """
 
         external_messages = filter_external_messages(pending_messages, log_prefix=self._runtime.log_prefix)
         if not external_messages:
@@ -91,13 +100,72 @@ class DynamicReplyTurnGate:
             self._build_likelihood_input(external_messages, now, pending_messages=external_messages)
         )
         gate_decision = self._gate.evaluate(probability, frequency, now)
-        if gate_decision.should_trigger:
+        should_trigger = gate_decision.should_trigger
+        if finalize and should_trigger:
             self._gate.close_round()
-        decision_label = "进入Planner" if gate_decision.should_trigger else "等待更多消息"
+        decision_label = "进入Planner" if should_trigger else "等待更多消息"
         return TurnGateResult(
-            decision="trigger" if gate_decision.should_trigger else "wait",
+            decision="trigger" if should_trigger else "wait",
             detail=f"动态门控: {gate_decision.detail} 判定={decision_label}",
+            probability=gate_decision.probability,
+            threshold=gate_decision.threshold,
+            evaluated_at=now,
         )
+
+    def apply_external_probability(
+        self,
+        *,
+        probability: float,
+        frequency: float,
+        evaluated_at: float,
+        threshold_override: Optional[float] = None,
+        decision_override: Optional[TurnGateDecision] = None,
+        consumed_count: int = 0,
+        delay_seconds: float = 0.0,
+        detail: str = "",
+    ) -> TurnGateResult:
+        """用插件修正后的概率重新裁决本次门控，保留本地动态频控状态。
+
+        ``evaluated_at`` 是 ``evaluate(finalize=False)`` 的评分时刻；用它覆盖本次尚未
+        关闭的虚拟轮次需求，再用当前时间计算最新阈值，避免异步评估期间频控漂移。
+        """
+
+        if decision_override == "delay":
+            return TurnGateResult(
+                decision="delay",
+                detail=detail or "插件门控: 延迟重查",
+                delay_seconds=delay_seconds,
+                probability=probability,
+                consumed_count=consumed_count,
+                evaluated_at=evaluated_at,
+            )
+
+        self._gate.record_proactive_demand(probability, evaluated_at)
+        latest = self._gate.evaluate(probability, frequency, time.time())
+        threshold = threshold_override if threshold_override is not None else latest.threshold
+
+        if decision_override in ("trigger", "wait", "consume"):
+            decision = decision_override
+        else:
+            decision = "trigger" if probability >= threshold else "wait"
+
+        if decision == "trigger":
+            self._gate.close_round()
+        decision_label = "进入Planner" if decision == "trigger" else "等待更多消息"
+        return TurnGateResult(
+            decision=decision,
+            detail=detail or f"动态门控: {latest.detail} 判定={decision_label}",
+            delay_seconds=delay_seconds,
+            probability=probability,
+            threshold=threshold,
+            consumed_count=consumed_count,
+            evaluated_at=evaluated_at,
+        )
+
+    def close_round(self) -> None:
+        """静默消费成功后结束本次虚拟轮次。"""
+
+        self._gate.close_round()
 
     def _build_likelihood_input(
         self,
