@@ -171,11 +171,15 @@ class TodoStore:
         return image_id
 
     def image(self, image_id: str) -> str:
+        return self.read_image(self._path.parent / "todo_images", image_id)
+
+    @staticmethod
+    def read_image(directory: Path, image_id: str) -> str:
         from PIL import Image
 
         if len(image_id) != 64 or any(char not in "0123456789abcdef" for char in image_id):
             raise ValueError("图片标识无效")
-        raw = (self._path.parent / "todo_images" / image_id).read_bytes()
+        raw = (directory / image_id).read_bytes()
         with Image.open(BytesIO(raw)) as image:
             mime = Image.MIME[image.format]
         return f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")

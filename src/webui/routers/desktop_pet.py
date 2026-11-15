@@ -11,7 +11,7 @@ from src.desktop_pet.remote_server import on_main_loop
 from src.desktop_pet.service import desktop_pet_service
 from src.desktop_pet.thinking_caption import fast_model_configured
 from src.desktop_pet.skins import MAX_BYTES, find_skin, install_zip, list_skins
-from src.desktop_pet.todos import TodoStore
+from src.services.schedules.repository import read_schedule_items, schedules_directory
 
 router = APIRouter(prefix="/desktop-pet", tags=["desktop-pet"])
 
@@ -64,11 +64,8 @@ class ChatBody(BaseModel):
 
 
 def _todo_summary() -> Dict[str, Any]:
-    """读取未完成的待办，只读不写；本机窗口和远端客户端共用同一份待办文件。"""
-    path = get_instance_root() / "data" / "plugins" / "sengokucola.desktop-pet" / "todos.json"
-    if not path.exists():
-        return {"pending": 0, "items": []}
-    items = [item for item in TodoStore(path).list() if item["status"] != "completed"]
+    """只读汇总各会话日程，本机窗口和远端客户端由主程序统一管理。"""
+    items = read_schedule_items(schedules_directory())
     preview = [{"id": item["id"], "text": item["text"], "due_at": item.get("due_at")} for item in items]
     return {"pending": len(items), "items": preview[:TODO_PREVIEW_LIMIT]}
 
