@@ -1,8 +1,9 @@
 """按表达意图匹配已注册表情。"""
 
 from contextlib import closing
+from datetime import datetime
 from hashlib import sha256
-from math import isfinite
+from math import exp, isfinite
 from typing import Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field, field_validator
@@ -10,6 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 import asyncio
 import json
 import numpy as np
+import random
 import sqlite3
 
 from src.common.data_models.embedding_service_data_models import EmbeddingResult
@@ -21,7 +23,7 @@ from src.common.runtime_loop import get_main_loop
 from src.config.config import config_manager
 from src.services.embedding_service import EmbeddingServiceClient, resolve_embedding_model_fingerprint
 
-from .emoji_manager import _is_vlm_task_configured, emoji_manager
+from .emoji_manager import RECENT_EMOJI_WINDOW, _is_vlm_task_configured, emoji_manager
 
 logger = get_logger("emoji_semantic_index")
 _index_path = get_instance_root() / "data" / "emoji_semantic_index.sqlite3"
@@ -30,6 +32,32 @@ _tag_lock = asyncio.Lock()
 _pending: Dict[str, asyncio.Task[None]] = {}
 _backfill_cursor = 0
 _BACKFILL_BATCH_SIZE = 4
+_COOLDOWN_SECONDS = 600.0
+_RECENT_USE_WEIGHT = 0.2
+_MATCH_SCORE_WINDOW = 0.1
+_MATCH_TEMPERATURE = 0.05
+_MATCH_CANDIDATE_LIMIT = 10
+
+
+def _select_match(
+    scores: Dict[str, float], emojis: Dict[str, MaiEmoji], now: datetime, recent_hashes: List[str],
+) -> str:
+    """在相近的高分候选中抽样，时间与最近发送次数的冷却取更严格的一项。"""
+    ranked = sorted(scores, key=scores.__getitem__, reverse=True)[:_MATCH_CANDIDATE_LIMIT]
+    best_score = scores[ranked[0]]
+    candidates = [key for key in ranked if best_score - scores[key] <= _MATCH_SCORE_WINDOW]
+    weights: List[float] = []
+    # 从旧到新覆盖，同一表情以最后一次发送为准。
+    sends_since_use = {key: len(recent_hashes) - index - 1 for index, key in enumerate(recent_hashes)}
+    for key in candidates:
+        last_used = emojis[key].last_used_time
+        recovery = 1.0 if last_used is None else min(
+            1.0, max(0.0, (now - last_used).total_seconds()) / _COOLDOWN_SECONDS,
+        )
+        count_recovery = min(1.0, sends_since_use.get(key, RECENT_EMOJI_WINDOW) / RECENT_EMOJI_WINDOW)
+        cooldown_weight = _RECENT_USE_WEIGHT + (1.0 - _RECENT_USE_WEIGHT) * min(recovery, count_recovery)
+        weights.append(exp((scores[key] - best_score) / _MATCH_TEMPERATURE) * cooldown_weight)
+    return random.choices(candidates, weights=weights, k=1)[0]
 
 
 class EmojiTags(BaseModel):
@@ -250,9 +278,10 @@ async def match_emoji_description(emotion: str, session_id: str, *, content: str
     if config_key is None:
         raise ValueError("未配置表情语义匹配所需的 Embedding 模型。")
     tags_by_hash = await asyncio.to_thread(_read_tags)
+    emojis = {emoji.file_hash: emoji for emoji in emoji_manager.emojis}
     candidates = {
         emoji.file_hash: tags_by_hash[emoji.file_hash].embedding_texts()
-        for emoji in emoji_manager.emojis if emoji.file_hash in tags_by_hash
+        for emoji in emojis.values() if emoji.file_hash in tags_by_hash
     }
     for axis in queries:
         indexed = await asyncio.to_thread(_read_index, _axis_key(config_key, axis))
@@ -275,4 +304,5 @@ async def match_emoji_description(emotion: str, session_id: str, *, content: str
         totals = {key: totals[key] + score for key, score in scores.items()}
     if not totals:
         raise ValueError("当前 Embedding 模型空间中没有已索引的可用表情包。")
-    return max(totals, key=lambda key: totals[key] / len(queries))
+    scores = {key: total / len(queries) for key, total in totals.items()}
+    return _select_match(scores, emojis, datetime.now(), list(emoji_manager.recent_emoji_hashes.copy()))

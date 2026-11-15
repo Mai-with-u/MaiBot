@@ -45,7 +45,8 @@ def _resolve_llm_capability_route(
     if requested_model_name:
         return _DEFAULT_PLUGIN_LLM_TASK, requested_model_name
 
-    if model_alias in available_tasks:
+    # 已撤销的 emoji 仍作为旧 SDK 的任务名交给服务层解析到 planner。
+    if model_alias in available_tasks or model_alias == "emoji":
         return model_alias, None
 
     return _DEFAULT_PLUGIN_LLM_TASK, model_alias or None
@@ -406,7 +407,7 @@ class RuntimeCoreCapabilityMixin:
             success, result = await replyer.generate_reply_with_context(
                 stream_id=stream_id, chat_history=[], reply_message=None,
                 reply_tool_args={
-                    "reply_reference": reference, "reply_style": "长回复", "_plugin_reply_prompt": format_instruction,
+                    "chat_anlyze": reference, "reply_style": "长回复", "_plugin_reply_prompt": format_instruction,
                 },
                 sub_agent_runner=select_expressions, log_reply=False,
             )

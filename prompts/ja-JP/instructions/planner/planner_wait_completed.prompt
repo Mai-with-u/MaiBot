@@ -1,0 +1,4 @@
+[待機終了]
+今回の待機状態：{wait_state}
+elapsed_seconds は実際の秒数、requested_seconds は予定秒数（未指定は null）、has_new_messages は新しい入力の有無です。
+新しい入力があればそれを踏まえて再判断し、なければ既存のコンテキストから思考を続けてください。

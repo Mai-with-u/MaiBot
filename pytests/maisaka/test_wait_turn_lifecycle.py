@@ -57,6 +57,24 @@ def test_wait_requires_registered_call_and_turn() -> None:
         runtime._consume_pending_wait_state()
 
 
+@pytest.mark.asyncio
+async def test_timed_wait_wakes_thinking_without_new_messages() -> None:
+    runtime = _build_runtime_stub()
+    runtime._running = True
+    runtime.log_prefix = "test"
+    runtime._enter_wait_state(tool_call_id="wait-call", logical_turn_id="turn-wait")
+
+    await runtime._schedule_wait_timeout(seconds=0, tool_call_id="wait-call")
+
+    assert runtime._agent_state == runtime._STATE_RUNNING
+    assert runtime._internal_turn_queue.get_nowait() == "timeout"
+    engine = object.__new__(MaisakaReasoningEngine)
+    engine._runtime = runtime
+    completed = engine._build_wait_completed_message(has_new_messages=False)
+    assert completed.tool_call_id == "wait-call"
+    assert completed.logical_turn_id == "turn-wait"
+
+
 def test_proactive_switch_trigger_carries_source_logical_turn() -> None:
     runtime = _build_runtime_stub()
     runtime._agent_state = runtime._STATE_WAIT

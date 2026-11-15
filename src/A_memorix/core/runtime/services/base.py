@@ -26,3 +26,10 @@ class KernelServiceBase:
             object.__setattr__(self, name, value)
             return
         setattr(self._kernel, name, value)
+
+    def __delattr__(self, name: str) -> None:
+        """撤销代理属性时与赋值保持对称，避免留下临时的内核覆盖。"""
+        if name == "_kernel":
+            object.__delattr__(self, name)
+            return
+        delattr(self._kernel, name)

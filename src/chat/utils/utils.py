@@ -447,11 +447,13 @@ def _prepare_rule_response(text: str, enable_splitter: bool) -> _PreparedRespons
     else:
         protected_text = text
         kaomoji_mapping = {}
-    # 提取被 () 或 [] 或 （）包裹且包含中文的内容
-    pattern = re.compile(r"[(\[（](?=.*[一-鿿]).*?[)\]）]")
-    _extracted_contents = pattern.findall(protected_text)  # 在保护后的文本上查找
-    # 去除 () 和 [] 及其包裹的内容
-    cleaned_text = pattern.sub("", protected_text)
+    cleaned_text = protected_text
+    if global_config.response_post_process.remove_bracket_content:
+        # 提取被 () 或 [] 或 （）包裹且包含中文的内容
+        pattern = re.compile(r"[(\[（](?=.*[一-鿿]).*?[)\]）]")
+        _extracted_contents = pattern.findall(protected_text)  # 在保护后的文本上查找
+        # 去除 () 和 [] 及其包裹的内容
+        cleaned_text = pattern.sub("", protected_text)
 
     if cleaned_text == "":
         return _PreparedResponse([ProcessedResponseSegment("呃呃")])

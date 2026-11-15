@@ -1,12 +1,12 @@
 import type { ReactNode } from 'react'
-import { ArrowDownToLine, ArrowUpToLine, ChevronUp, Eraser } from 'lucide-react'
+import { ArrowDownToLine, ArrowUpToLine, ChevronUp, Eraser, Pencil } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { ConversationHeader } from '@/components/ui/conversation'
 
 /** 正式观察页和预览共用工具栏；导航使用图标，给记录区留出高度。 */
 export function ObservationHeader({
-  title, subtitle, tools, allExpanded, onToggleAll, autoScroll,
+  title, subtitle, tools, allExpanded, onToggleAll, autoScroll, onEditChat,
   onScrollToTop, onFindPreviousBotMessage, onScrollToBottom, onClearTimeline,
 }: {
   title: ReactNode
@@ -14,6 +14,7 @@ export function ObservationHeader({
   tools: ReactNode
   allExpanded?: boolean
   onToggleAll?: () => void
+  onEditChat?: () => void
   autoScroll: boolean
   onScrollToTop: () => void
   onFindPreviousBotMessage: () => void
@@ -27,6 +28,11 @@ export function ObservationHeader({
       layout="toolbar"
       actions={
         <>
+          {onEditChat && (
+            <Button variant="outline" size="icon-sm" aria-label="编辑聊天流" title="编辑聊天流" onClick={onEditChat}>
+              <Pencil />
+            </Button>
+          )}
           {onToggleAll && (
             <Button variant="outline" size="sm" onClick={onToggleAll}>
               {allExpanded ? '全部收起' : '全部展开'}

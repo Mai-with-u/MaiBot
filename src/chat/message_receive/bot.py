@@ -983,6 +983,10 @@ class ChatBot:
             platform = message.platform
             user_id = user_info.user_id
             group_id = group_info.group_id if group_info else None
+
+            from src.desktop_pet.service import desktop_pet_service
+
+            desktop_pet_service.notify_user_message(platform, user_id, is_group=group_info is not None)
             _ = await chat_manager.get_or_create_session(
                 platform,
                 user_id,

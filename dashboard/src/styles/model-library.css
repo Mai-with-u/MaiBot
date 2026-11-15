@@ -73,10 +73,111 @@
 }
 
 /* 筛选键：选中项压下去 */
+[data-model-library-list='true'] {
+  container: model-library / inline-size;
+}
+
+[data-model-library-filter-select='true'] {
+  display: none;
+}
+
+@container model-library (max-width: 1000px) {
+  [data-model-library-toolbar='true'] {
+    flex-wrap: nowrap;
+    gap: 0.5rem;
+  }
+
+  [data-model-library-toolbar='true'] > b,
+  [data-model-library-toolbar='true'] [data-library-filters],
+  [data-model-library-result-count='true'],
+  [data-model-library-batch-label='true'],
+  [data-model-library-toolbar='true'] [data-add-model-label='full'] {
+    display: none;
+  }
+
+  [data-model-library-filter-select='true'],
+  [data-model-library-toolbar='true'] [data-add-model-label='compact'] {
+    display: block;
+    flex-shrink: 0;
+  }
+
+  [data-model-library-tools='true'] {
+    flex: 1;
+    flex-wrap: nowrap;
+  }
+
+  [data-model-library-search='true'] {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+    max-width: 15rem;
+    margin-left: auto;
+  }
+}
+
+@container model-library (max-width: 560px) {
+  [data-model-library-toolbar='true'] > h2 {
+    display: none;
+  }
+}
+
 [data-library-filters] {
   display: flex;
   flex-wrap: wrap;
   gap: 0.375rem;
+}
+
+/* 以模型表格实际可用宽度响应侧栏、窗口缩放，给名称和操作保留空间。 */
+[data-model-config-table-surface='true'] {
+  container: model-table / inline-size;
+}
+
+[data-model-config-table-surface='true'] [data-dashboard-table-body='true'] > [data-dashboard-table-row='true']:last-child {
+  border-bottom: 0;
+}
+
+[data-model-config-table-surface='true'] [data-model-config-action-cell] {
+  width: calc(var(--control-height-xs) * 3 + 1.25rem);
+}
+
+[data-model-config-table-surface='true'] th[data-model-column='provider'] {
+  width: 14%;
+}
+
+[data-model-config-table-surface='true'] th[data-model-column='capabilities'] {
+  width: 6rem;
+}
+
+[data-model-config-table-surface='true'] th[data-model-column='price'] {
+  width: 8rem;
+}
+
+[data-model-config-table-surface='true'] th[data-model-column='tasks'] {
+  width: 22%;
+}
+
+@container model-table (max-width: 900px) {
+  [data-model-column='tasks'] {
+    display: none;
+  }
+}
+
+@container model-table (max-width: 740px) {
+  [data-model-column='price'] {
+    display: none;
+  }
+}
+
+@container model-table (max-width: 600px) {
+  [data-model-column='capabilities'] {
+    display: none;
+  }
+}
+
+@container model-table (max-width: 460px) {
+  [data-model-column='provider'] {
+    display: none;
+  }
 }
 
 /* 表格操作：平时淡一些，悬停行时才完全显出来 */

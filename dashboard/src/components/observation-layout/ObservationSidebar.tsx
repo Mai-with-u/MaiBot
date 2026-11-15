@@ -432,7 +432,7 @@ export function ObservationSidebar({
         {settingsVisible && (
           <ScrollArea
             scrollbars={settingsSingleRow ? 'horizontal' : 'vertical'}
-            className="min-h-0"
+            className={collapsed ? 'min-h-0 flex-1' : 'min-h-0'}
             data-observation-settings-row={settingsSingleRow || undefined}
             viewportRef={settingsViewport}
           >
@@ -513,18 +513,20 @@ export function ObservationSidebar({
       </div>
       <footer data-observation-tools="true">
         {collapsed ? (
-          <DropdownMenu open={toolsOpen} onOpenChange={setToolsOpen}>
-            <DropdownMenuTrigger asChild>
-              <button type="button" data-observation-icon-key="true"
-                aria-label={t('header.moreActions')} title={t('header.moreActions')}>
-                <MoreHorizontal aria-hidden="true" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent side="right" align="end" sideOffset={12}
-              aria-label={t('header.moreActions')} className="w-52 max-h-[calc(100dvh-2rem)] overflow-y-auto p-2 [&_svg]:size-4 [&_svg]:shrink-0">
-              {tools}
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <div>
+            <DropdownMenu modal={false} open={toolsOpen} onOpenChange={setToolsOpen}>
+              <DropdownMenuTrigger asChild>
+                <button type="button" data-observation-icon-key="true"
+                  aria-label={t('header.moreActions')}>
+                  <MoreHorizontal aria-hidden="true" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="right" align="end" sideOffset={12}
+                aria-label={t('header.moreActions')} className="w-52 max-h-[calc(100dvh-2rem)] overflow-y-auto p-2 [&_svg]:size-4 [&_svg]:shrink-0">
+                {tools}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         ) : tools}
       </footer>
     </aside>

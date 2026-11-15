@@ -1,0 +1,10 @@
+[context_compaction]
+display_name = "Ordinary Chat Rolling Context State"
+advanced = true
+description = "Reuses the ordinary chat Planner request to summarize history and prior state as topics, background, progress, pending matters, and agreements."
+
+[context_compaction_focus]
+display_name = "Focus Rolling Context State"
+advanced = true
+description = "Reuses the Focus Planner request to produce a five-category rolling summary for the shared group while preserving chat ownership."
+

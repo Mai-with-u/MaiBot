@@ -237,11 +237,11 @@ def test_vector_recovery_journal_resumes_idempotently_after_each_stage(
             interrupted = True
             raise OSError(f"injected interruption after {interrupted_stage}")
 
-    monkeypatch.setattr(recovery_service, "_write_vector_recovery_journal", interrupt_after_journal_write)
-    with pytest.raises(OSError, match="injected interruption"):
-        kernel._recover_known_vector_failure(error)
+    with monkeypatch.context() as patch:
+        patch.setattr(recovery_service, "_write_vector_recovery_journal", interrupt_after_journal_write)
+        with pytest.raises(OSError, match="injected interruption"):
+            kernel._recover_known_vector_failure(error)
 
-    monkeypatch.setattr(recovery_service, "_write_vector_recovery_journal", original_write)
     kernel._resume_vector_recovery_if_needed()
 
     journal = json.loads((data_dir / "vector_recovery.json").read_text(encoding="utf-8"))

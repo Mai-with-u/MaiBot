@@ -1,13 +1,14 @@
 """插件市场只读查询；不依赖 WebUI 服务启动或登录状态。"""
 
 from packaging.version import Version
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from typing import Any, Dict, List, Literal, Optional, Tuple
 from urllib.parse import unquote, urlsplit
 import asyncio
 import json
 
 from src.common.git_source import GitSource
+from src.common.logger import get_logger
 
 from .catalog import _filter_plugins, _normalize_plugin_catalog_item, _sort_stat_plugins
 from .documents import get_document
@@ -23,6 +24,8 @@ from .releases import (
 )
 from .sources import download_source, fetch_information_file, load_source_settings
 from . import statistics
+
+logger = get_logger("plugin_market")
 
 MarketSort = Literal[
     "name", "downloads", "likes", "rating", "downloads_growth_7d", "likes_growth_7d",
@@ -109,10 +112,14 @@ def _catalog(items: List[Dict[str, Any]], index: Optional[PluginReleaseIndex] = 
             continue
         plugin["stats"] = None  # 统计由官方统计服务单独读取，见 search()
         if entry is None:
-            entry = PluginReleaseEntry(
-                id=plugin["marketplace_id"], manifest_id=plugin["id"], repositoryUrl=plugin["repository_url"],
-                mode="releases", versions=[], sync_error="插件尚未收录到版本索引，请先同步插件中心",
-            )
+            try:
+                entry = PluginReleaseEntry(
+                    id=plugin["marketplace_id"], manifest_id=plugin["id"], repositoryUrl=plugin["repository_url"],
+                    mode="releases", versions=[], sync_error="插件尚未收录到版本索引，请先同步插件中心",
+                )
+            except ValidationError as exc:
+                logger.warning(f"跳过无法构造发布信息的插件市场条目 {plugin['id']}：{exc}")
+                continue
         plugin["releases"] = _release_description(entry, plugin["manifest"])
         icon = (item.get("assets") or {}).get("icon_64")
         plugin["assets"] = {"icon_64": _icon_url(icon, icon_source)} if icon else None

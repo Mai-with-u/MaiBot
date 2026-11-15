@@ -1,0 +1,25 @@
+[maisaka_replyer]
+display_name = "Replyer"
+advanced = false
+description = "Maisaka の返信生成テンプレート。人格、表現スタイル、グループチャット上の注意点、返信対象の文脈から最終返信を生成する。"
+
+[reply_cache]
+display_name = "返信キャッシュタスク"
+advanced = true
+description = "Planner の文脈末尾でクリエイティブ返信生成へ切り替えます。"
+
+[maisaka_expression_selector]
+display_name = "表現の選択"
+advanced = true
+description = "チャットの文脈に基づき、候補の中から今回の返信に合う表現を選びます。"
+
+[maisaka_replyer_document]
+display_name = "長文の執筆"
+advanced = false
+description = "自分の立場と口調で、完全な記事やコミュニティ投稿を書きます。"
+
+[reply_supplement]
+display_name = "返信補足の構成"
+advanced = true
+description = "本文の並行生成中に、引用・添付・送信順などの返信補足を構成します。"
+

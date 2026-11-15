@@ -5,7 +5,6 @@ import time
 
 from src.common.utils.utils_config import ChatConfigUtils
 from src.config.config import global_config
-from src.maisaka.lightweight import is_lightweight_private_chat
 from src.maisaka.scenes.base import ChatScene, DebounceMode, QuoteFrequency
 
 if TYPE_CHECKING:
@@ -72,7 +71,6 @@ class PrivateChatScene(ChatScene):
     def allows_focus(self, session_id: str) -> bool:
         return (
             global_config.experimental.focus_on_private
-            and not is_lightweight_private_chat(session_id)
             and not ChatConfigUtils.is_private_reply_paused(session_id)
         )
 

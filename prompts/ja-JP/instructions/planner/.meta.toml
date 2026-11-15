@@ -1,0 +1,40 @@
+[planner_reply_capabilities]
+display_name = "Planner reply capabilities"
+advanced = true
+description = "Available plugin reply capabilities for the current chat."
+
+[maisaka_wait_reminder]
+display_name = "連続待機のリマインダー"
+advanced = true
+description = "待機が続いたとき、待機時間の延長か今回の思考の終了を促し、無限ループを防ぎます。"
+
+[planner_replan]
+display_name = "新消息重规划指令"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[planner_subagent_policy]
+display_name = "子代理委派策略"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[planner_turn_action]
+display_name = "本轮行动指令"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[planner_turn_focus]
+display_name = "本轮行动指令（Focus）"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[planner_turn_passive]
+display_name = "本轮行动指令（被动回复）"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[planner_wait_completed]
+display_name = "等待结束指令"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+

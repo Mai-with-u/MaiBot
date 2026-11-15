@@ -1,0 +1,10 @@
+[reply_attachments]
+display_name = "Reply attachments"
+advanced = true
+description = "Explains that the system sends reply images, mentions and emojis, preventing attachment information from being repeated in the reply text."
+
+[reply_supplement_retry]
+display_name = "Reply supplement retry"
+advanced = true
+description = "Regenerates the reply supplement plan from the error of the previous failed attempt."
+

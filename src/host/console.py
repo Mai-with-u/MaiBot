@@ -1,5 +1,6 @@
 """宿主独占终端输入；选择目标后经私有 IPC 交给 Bot 的本地操作员链路。"""
 
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -59,7 +60,9 @@ class HostConsole:
         matches = exact or [bot for bot in bots if bot["name"] == selector or bot["bot_id"].startswith(selector)]
         if not selector or len(matches) != 1:
             raise ValueError("Bot 不存在或名称/ID前缀不唯一，请用 /bots 查看完整 ID")
-        bot = matches[0]
+        self._set_target(matches[0])
+
+    def _set_target(self, bot: Dict[str, Any]) -> None:
         self.bot_id, self.bot_name = bot["bot_id"], bot["name"]
         self._commands = []
         print(f"终端目标：{self.bot_name}（{self.bot_id}）", flush=True)
@@ -83,6 +86,17 @@ class HostConsole:
             await self.request("POST", text=text)
         return True
 
+    async def _select_default(self, enabled: List[Dict[str, Any]], session: PromptSession[str]) -> None:
+        """启动与终端并行运行，等待唯一可用的运行实例，不覆盖手动选择。"""
+        enabled_ids = {bot["bot_id"] for bot in enabled}
+        while self.bot_id is None and not self.stopping.is_set():
+            running = [bot for bot in await self.supervisor.statuses() if bot["status"] == "running"]
+            if len(running) == 1 and running[0]["bot_id"] in enabled_ids and self.bot_id is None:
+                self._set_target(running[0])
+                session.app.invalidate()
+                return
+            await asyncio.sleep(0.25)
+
     async def run(self) -> None:
         # 服务、重定向及 Docker 非交互启动不读取 stdin，也不占住默认线程池。
         if sys.stdin is None or not sys.stdin.isatty():
@@ -99,31 +113,35 @@ class HostConsole:
             return
         session: PromptSession[str] = PromptSession(history=InMemoryHistory())
         with patch_stdout(raw=True):
-            if len(enabled) == 1:
-                await self.select(enabled[0]["bot_id"])
-            await self.handle("/host-help")
-            while not self.stopping.is_set():
-                try:
-                    # 补全失败不能把旧 Bot 的聊天名带到新目标；发送仍会报告具体错误。
-                    self._commands = []
-                    if self.bot_id is not None:
-                        try:
-                            self._commands = await asyncio.wait_for(self.request("GET", "/completions"), timeout=3)
-                        except (ClientError, TimeoutError, RuntimeError):
-                            pass
-                    bots = await self.supervisor.statuses()
-                    completer = WordCompleter(
-                        ["/bots", "/use", "/host-help", "exit()", *self._commands,
-                         *[f"/use {bot['name']}" for bot in bots]], sentence=True,
-                    )
-                    text = await session.prompt_async(lambda: self._prompt(session), completer=completer)
-                    if not await self.handle(text):
+            selector = asyncio.create_task(self._select_default(enabled, session))
+            try:
+                await self.handle("/host-help")
+                while not self.stopping.is_set():
+                    try:
+                        # 补全失败不能把旧 Bot 的聊天名带到新目标；发送仍会报告具体错误。
+                        self._commands = []
+                        if self.bot_id is not None:
+                            try:
+                                self._commands = await asyncio.wait_for(self.request("GET", "/completions"), timeout=3)
+                            except (ClientError, TimeoutError, RuntimeError):
+                                pass
+                        bots = await self.supervisor.statuses()
+                        completer = WordCompleter(
+                            ["/bots", "/use", "/host-help", "exit()", *self._commands,
+                             *[f"/use {bot['name']}" for bot in bots]], sentence=True,
+                        )
+                        text = await session.prompt_async(lambda: self._prompt(session), completer=completer)
+                        if not await self.handle(text):
+                            break
+                    except EOFError:
                         break
-                except EOFError:
-                    break
-                except KeyboardInterrupt:
-                    self.stopping.set()
-                    return
-                except (ClientError, TimeoutError, ValueError, RuntimeError) as exc:
-                    print(f"终端输入失败：{exc}（未自动重发）", file=sys.stderr, flush=True)
-            print("终端输入已关闭，Bot 继续运行。", flush=True)
+                    except KeyboardInterrupt:
+                        self.stopping.set()
+                        return
+                    except (ClientError, TimeoutError, ValueError, RuntimeError) as exc:
+                        print(f"终端输入失败：{exc}（未自动重发）", file=sys.stderr, flush=True)
+                print("终端输入已关闭，Bot 继续运行。", flush=True)
+            finally:
+                selector.cancel()
+                with suppress(asyncio.CancelledError):
+                    await selector

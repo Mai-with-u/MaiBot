@@ -269,7 +269,7 @@ function ContextView({ sessionId }: { sessionId: string | null }) {
 
 const VIEW_META: Record<InspectorView, { label: string; icon: typeof Activity }> = {
   stats: { label: '统计', icon: Activity },
-  context: { label: '当前上下文', icon: Brain },
+  context: { label: '上下文', icon: Brain },
   subagents: { label: '子代理', icon: Bot },
 }
 
@@ -285,13 +285,15 @@ export function InspectorToggleButton({ view, disabled }: { view: InspectorView;
       variant="outline"
       size="sm"
       className="shrink-0"
+      data-inspector-toggle="true"
       disabled={disabled}
+      aria-label={label}
       aria-pressed={active}
       title={active ? `收起${label}` : `在右侧栏查看${label}`}
       onClick={() => toggleInspectorView(view)}
     >
       <Icon className="mr-1 h-3 w-3" />
-      {label}
+      <span data-inspector-toggle-label="true">{label}</span>
       {view === 'subagents' && runningCount > 0 && (
         <span className="ml-1 flex items-center gap-1 font-mono">· {runningCount}</span>
       )}

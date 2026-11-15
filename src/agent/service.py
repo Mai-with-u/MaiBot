@@ -7,6 +7,7 @@ import asyncio
 import json
 
 from src.common.async_work import run_sync_work
+from src.common.atomic_file import quarantine_file
 from src.common.json_storage import read_json, write_json
 from src.common.logger import get_logger
 from src.common.paths import get_instance_root
@@ -85,6 +86,27 @@ class AgentService:
     async def reload(self) -> None:
         await run_on_main_loop(self._reload())
 
+    def _load_runtime_state(self) -> Optional[Dict[str, Any]]:
+        state_path = self.root / "runtime.json"
+        if not state_path.exists():
+            return None
+        try:
+            state = read_json(state_path)
+            if (
+                not isinstance(state, dict)
+                or not isinstance(state.get("paused"), bool)
+                or not isinstance(state.get("error"), str)
+                or ("manual_pause" in state and not isinstance(state["manual_pause"], bool))
+            ):
+                raise ValueError("Agent 运行状态必须包含布尔 paused、字符串 error 和可选布尔 manual_pause")
+            return state
+        except ValueError:
+            backup = quarantine_file(state_path)
+            logger.warning("Agent 运行状态损坏，已保留原文件：%s；Agent 暂停，等待手动恢复。", backup, exc_info=True)
+            state = {"paused": True, "error": f"运行状态文件损坏，原文件已保留：{backup}", "manual_pause": True}
+            write_json(state_path, state)
+            return state
+
     async def _reload(self) -> None:
         async with self._lifecycle_lock:
             settings = self.config.model_dump()
@@ -93,9 +115,8 @@ class AgentService:
             await self.stop()
             if not self.config.enabled:
                 return
-            state_path = self.root / "runtime.json"
-            if await asyncio.to_thread(state_path.exists):
-                state = await asyncio.to_thread(read_json, state_path)
+            state = await asyncio.to_thread(self._load_runtime_state)
+            if state is not None:
                 self.paused, self.error = state["paused"], state["error"]
                 # 旧格式只有 paused/error；保留旧故障暂停，收到新请求时才继续。
                 self._manual_pause = state.get("manual_pause", self.paused and not self.error)

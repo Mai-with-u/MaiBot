@@ -19,8 +19,7 @@ export const TASK_META: Record<string, TaskMeta> = {
   fast_model: { name: '快速', desc: '断句、挑表达等要快的小事', fallback: '用工具模型' },
   memory: { name: '记忆', desc: '总结并写回长期记忆', fallback: '用工具模型' },
   learner: { name: '学习', desc: '学习表达方式和黑话', fallback: '用工具模型' },
-  emoji: { name: '表情', desc: '挑选要发的表情包', fallback: '用规划模型' },
-  voice: { name: '语音', desc: '把语音消息转成文字', hideTemperature: true, hideMaxTokens: true },
+  voice: { name: '语音识别', desc: '把语音消息转成文字', hideTemperature: true, hideMaxTokens: true },
   web_search: { name: '联网搜索', desc: '搜索网页、读取链接', singleModel: true },
   embedding: {
     name: '文本嵌入', desc: '给记忆和表达建立索引',

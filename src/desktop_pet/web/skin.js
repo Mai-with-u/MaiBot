@@ -7,6 +7,9 @@
   const ctx = canvas.getContext('2d');
   const previousCanvas = document.createElement('canvas');
   const previousCtx = previousCanvas.getContext('2d');
+  const hitCanvas = document.createElement('canvas');
+  const hitCtx = hitCanvas.getContext('2d', {willReadFrequently: true});
+  let hitRects = [];
   const transitionDuration = 160;
   let skin = null, images = {}, active = null, visible = true, switching = 0;
   let selected = '', started = performance.now(), flash = null;
@@ -44,6 +47,8 @@
     pet.dataset.skinHitbox = JSON.stringify(c.hitbox);
     stage.style.setProperty('--pet-top', (24 + c.anchor[1] - c.bubble_anchor[1] + 8) + 'px');
     canvas.width = c.width * 2; canvas.height = c.height * 2;
+    hitCanvas.width = c.width; hitCanvas.height = c.height;
+    hitRects = [];
     previousCanvas.width = canvas.width; previousCanvas.height = canvas.height;
     canvas.style.width = c.width + 'px'; canvas.style.height = c.height + 'px';
     builtin.style.display = skin.id === 'builtin' ? '' : 'none';
@@ -119,10 +124,16 @@
     ctx.drawImage(images[frame.file], x,y,w,h, (c.width-w*scale)/2,c.height-4-h*scale,w*scale,h*scale);
     ctx.restore();
     hasFrame = true;
+    // 用当前合成帧的 alpha 生成逐像素区域，包含动作位移和过渡，透明空隙交还桌面。
+    hitCtx.clearRect(0, 0, c.width, c.height);
+    hitCtx.drawImage(canvas, 0, 0, c.width, c.height);
+    hitRects = window.petAlphaRegion(hitCtx.getImageData(0, 0, c.width, c.height).data, c.width, c.height);
+    window.dispatchEvent(new Event('pet-skin-frame'));
   }
   requestAnimationFrame(tick);
   window.petSkin = {
     install,
+    hitRegion() { return skin && skin.id !== 'builtin' ? hitRects : null; },
     cancelInstall() { switching++; },
     event(event) {
       if (!skin || skin.id === 'builtin' || active) return;

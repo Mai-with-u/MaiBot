@@ -1,0 +1,5 @@
+[schedule_due]
+display_name = "日程到期指令"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+

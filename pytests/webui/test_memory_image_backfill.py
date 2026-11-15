@@ -15,11 +15,8 @@ async def test_writeback_jobs_show_real_chat_names_and_retry(monkeypatch, tmp_pa
 
     service = ImageMemoryWritebackService(tmp_path / "jobs.sqlite3")
     journal = ImageWritebackJournal(service._journal_path)
-    try:
-        journal.enqueue("real", "message-1")
-        journal.fail(journal.next_job(), "原图缓存已缺失", max_attempts=1)
-    finally:
-        journal.close()
+    journal.enqueue("real", "message-1")
+    journal.fail(journal.next_job(), "原图缓存已缺失", max_attempts=1)
     monkeypatch.setattr(routes.memory_automation_service, "image_writeback", service)
     monkeypatch.setattr(routes, "_find_real_chat_session", lambda key: object() if key == "real" else None)
     monkeypatch.setattr(routes, "_get_chat_name", lambda *args: "测试读书会")

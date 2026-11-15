@@ -129,7 +129,7 @@ def test_replyer_matches_eager_output(monkeypatch):
     monkeypatch.setattr(service, "_is_replyer_filtered_history_message", lambda message: False)
     for name in ("_build_system_prompt", "_build_final_user_message",
                  "_build_temporary_reply_style_message", "_select_temporary_reply_style",
-                 "_build_reply_reference_message", "_build_requested_reply_style_message"):
+                 "_build_chat_anlyze_message", "_build_requested_reply_style_message"):
         monkeypatch.setattr(service, name, lambda *args, **kwargs: "fixed")
     entries = history()
     kwargs = dict(reply_message=None, reply_reason="reason", enable_visual_message=True)

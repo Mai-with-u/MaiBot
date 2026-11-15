@@ -302,6 +302,39 @@ describe('usePluginList', () => {
     expect(result.current.selectedPluginTab).toBeUndefined()
   })
 
+  it('列表刷新后 selectedPlugin 使用最新的插件对象', async () => {
+    window.history.replaceState(null, '', '/plugin-config?plugin=test.emoji')
+    vi.mocked(getInstalledPlugins).mockResolvedValue([
+      makePlugin('test.emoji', { load_status: 'loading' }),
+    ])
+    const { result } = await renderPluginList()
+
+    expect(result.current.selectedPlugin?.load_status).toBe('loading')
+
+    vi.mocked(getInstalledPlugins).mockResolvedValue([
+      makePlugin('test.emoji', { load_status: 'success' }),
+    ])
+    await act(async () => {
+      await result.current.loadPlugins()
+    })
+
+    expect(result.current.selectedPlugin?.load_status).toBe('success')
+  })
+
+  it('选中插件不在刷新后的列表中时保留原快照', async () => {
+    window.history.replaceState(null, '', '/plugin-config?plugin=test.emoji')
+    vi.mocked(getInstalledPlugins).mockResolvedValue([makePlugin('test.emoji')])
+    const { result } = await renderPluginList()
+
+    vi.mocked(getInstalledPlugins).mockResolvedValue([])
+    await act(async () => {
+      await result.current.loadPlugins()
+    })
+
+    expect(result.current.plugins).toEqual([])
+    expect(result.current.selectedPlugin?.id).toBe('test.emoji')
+  })
+
   it('加载失败时用 Error.message 弹出 toast', async () => {
     vi.mocked(getInstalledPlugins).mockRejectedValue(new Error('列表接口不可用'))
     const { result } = await renderPluginList()

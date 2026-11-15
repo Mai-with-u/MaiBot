@@ -8,7 +8,7 @@ import signal
 import subprocess
 import sys
 
-from src.common.paths import PACKAGED_INSTALL, SOURCE_ROOT
+from src.common.paths import INSTANCE_DIRECTORY_ENV, PACKAGED_INSTALL, SOURCE_ROOT
 
 
 UPDATE_REQUESTED = 75
@@ -23,6 +23,10 @@ def _command(stage: str, root: Path) -> List[str]:
 
 
 def main(root: Path) -> int:
+    root = root.expanduser().resolve()
+    # 每个新解释器在加载入口模块前就拥有本次工作区目录，包括更新后的重新启动。
+    environment = os.environ.copy()
+    environment[INSTANCE_DIRECTORY_ENV] = str(root)
     stage = "bootstrap"
     interrupted = False
     child = None
@@ -43,8 +47,9 @@ def main(root: Path) -> int:
             # 继承终端与标准流；外部管理器只在整个运行周期结束后收到退出。
             # 源码入口可以从仓库外启动；程序目录用于模块查找，实例目录仍单独传入。
             child = subprocess.Popen(
-                _command(stage, root.resolve()),
+                _command(stage, root),
                 cwd=None if PACKAGED_INSTALL else SOURCE_ROOT,
+                env=environment,
             )
             code = child.wait()
             if interrupted:

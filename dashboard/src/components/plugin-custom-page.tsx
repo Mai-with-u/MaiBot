@@ -439,7 +439,7 @@ function CustomPageSession({
           <iframe
             ref={frame}
             title={page.title}
-            sandbox="allow-scripts"
+            sandbox="allow-scripts allow-forms"
             referrerPolicy="no-referrer"
             allow="camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'"
             srcDoc={source}

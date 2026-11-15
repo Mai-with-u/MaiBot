@@ -59,7 +59,7 @@ async def test_sdk_call_generates_with_real_session_and_preserves_chat(generatio
     assert args["stream_id"] == "real-stream" and args["reply_message"] is None
     assert args["chat_history"] == []
     assert args["reply_tool_args"] == {
-        "reply_reference": "原帖作者、评论者和我的浏览感想", "reply_style": "长回复",
+        "chat_anlyze": "原帖作者、评论者和我的浏览感想", "reply_style": "长回复",
         "_plugin_reply_prompt": "返回标题与分段正文的 JSON",
     }
     assert generation.runtime._chat_history == ["原有聊天消息"]
@@ -117,7 +117,7 @@ def test_actual_replyer_prompts_keep_personality_materials_and_post_format(monke
     items = generator._build_request_messages(
         chat_history=[], reply_message=None, reply_reason="", stream_id="real-stream",
         reply_requirements='仅输出 {"title":"标题","paragraphs":["段一","段二"]}',
-        reply_tool_args={"reply_reference": "真实浏览材料：原帖作者甲、评论者乙", "reply_style": "长回复"},
+        reply_tool_args={"chat_anlyze": "真实浏览材料：原帖作者甲、评论者乙", "reply_style": "长回复"},
     )
     text = "\n".join(get_item_text(item) for item in items)
     assert "喜欢游戏和观察社区的测试人格" in text

@@ -46,7 +46,7 @@ import { useModelAutoSave } from './useModelAutoSave'
 import { useEmbeddingWarning, type PendingEmbeddingUpdate } from './useEmbeddingWarning'
 import { readWebSearchConfig, type WebSearchConfig } from '../../webSearch/types'
 
-const ADVANCED_MODEL_TASK_NAMES = new Set(['memory', 'learner', 'emoji', 'voice'])
+const ADVANCED_MODEL_TASK_NAMES = new Set(['memory', 'learner', 'voice'])
 
 /** Unwrap backend `{ success, config }` envelope to get the actual config */
 function unwrapModelConfig(data: unknown): Record<string, unknown> {
@@ -970,6 +970,9 @@ export function useModelConfig() {
           send_temperature: true,
           max_tokens: null,
           visual: false,
+          max_images: 0,
+          image_max_side: 8000,
+          image_min_side: 1,
           force_stream_mode: false,
           extra_params: {},
         }

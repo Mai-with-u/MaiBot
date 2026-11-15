@@ -19,10 +19,13 @@ import os
 import sys
 import threading
 
+from src.common.atomic_file import quarantine_file
+from src.common.json_storage import read_json, write_json
+
 if TYPE_CHECKING:
     import webview
 
-    from .todos import TodoStore
+    from .todo_proxy import TodoProxy
 
 # 页面设计尺寸（CSS 像素），与 index.html 布局一致。
 PAGE_WIDTH = 260
@@ -111,7 +114,7 @@ def _bind_win32() -> None:
 
 
 def apply_region(hwnd: int, rects: List[List[float]], scale: float) -> None:
-    """把窗口可见/可点击区域设为若干圆角矩形的并集。
+    """把窗口可见/可点击区域设为矩形或圆角矩形的并集。
 
     Args:
         hwnd: 窗口句柄。
@@ -121,14 +124,11 @@ def apply_region(hwnd: int, rects: List[List[float]], scale: float) -> None:
     region = gdi32.CreateRectRgn(0, 0, 0, 0)
     for x, y, width, height, radius in rects:
         diameter = round(radius * 2 * scale)
-        part = gdi32.CreateRoundRectRgn(
-            round(x * scale),
-            round(y * scale),
-            round((x + width) * scale) + 1,
-            round((y + height) * scale) + 1,
-            diameter,
-            diameter,
-        )
+        bounds = (round(x * scale), round(y * scale), round((x + width) * scale), round((y + height) * scale))
+        if radius == 0:
+            part = gdi32.CreateRectRgn(*bounds)
+        else:
+            part = gdi32.CreateRoundRectRgn(bounds[0], bounds[1], bounds[2] + 1, bounds[3] + 1, diameter, diameter)
         gdi32.CombineRgn(region, region, part, RGN_OR)
         gdi32.DeleteObject(part)
     # 设置成功后区域归系统所有，不能再释放。
@@ -177,8 +177,15 @@ def saved_anchor(state_path: Path) -> Optional[Tuple[int, int]]:
     """读取上次拖到的位置；显示器布局变化后已不在任何屏幕上的位置作废。"""
     if not state_path.exists():
         return None
-    state = json.loads(state_path.read_text("utf-8"))
-    anchor = (state["anchor_x"], state["anchor_y"])
+    try:
+        state = read_json(state_path)
+        if not isinstance(state, dict) or any(type(state.get(key)) is not int for key in ("anchor_x", "anchor_y")):
+            raise ValueError("桌宠窗口位置必须包含整数 anchor_x 和 anchor_y")
+        anchor = (state["anchor_x"], state["anchor_y"])
+    except ValueError as exc:
+        backup = quarantine_file(state_path)
+        print(f"桌宠窗口位置文件损坏，已保留原文件：{backup}；使用默认位置。原因：{exc}", file=sys.stderr)
+        return None
     if not user32.MonitorFromPoint(wintypes.POINT(anchor[0], anchor[1] - 40), MONITOR_DEFAULTTONULL):
         return None
     return anchor
@@ -205,7 +212,7 @@ class Outbox:
 class PetApi:
     """暴露给页面的 js_api；下划线开头的成员不会暴露。"""
 
-    def __init__(self, outbox: Outbox, todos: "TodoStore", state_path: Path, request_dir: Path) -> None:
+    def __init__(self, outbox: Outbox, todos: "TodoProxy", state_path: Path, request_dir: Path) -> None:
         self._outbox = outbox
         self._todos = todos
         self._state_path = state_path
@@ -398,7 +405,7 @@ class PetApi:
                 return
             self._placed_by_user = True
             anchor_x, anchor_y = self._anchor
-            self._state_path.write_text(json.dumps({"anchor_x": anchor_x, "anchor_y": anchor_y}), "utf-8")
+            write_json(self._state_path, {"anchor_x": anchor_x, "anchor_y": anchor_y})
             self._outbox.emit({"type": "drag_ended", "gesture_id": gesture_id})
 
     def clicked(self) -> None:
@@ -539,36 +546,10 @@ def execute_command(api: PetApi, window: "webview.Window", command: Dict[str, An
             ack["result"] = window.evaluate_js(
                 f"window.petSkin.command({json.dumps(command['action'])}, {json.dumps(command['args'])}, {json.dumps(command['owner'])})"
             )
-        elif command["type"] == "todo":
-            action = command["action"]
-            if action == "list":
-                result = {"items": api._todos.list(include_completed=command.get("include_completed", False))}
-            elif action == "add":
-                result = {"item": api._todos.add(command["text"], **command.get("options", {}))}
-            elif action == "update":
-                result = {"item": api._todos.update(command["todo_id"], command.get("text"), **command.get("options", {}))}
-            elif action == "claim_due":
-                result = {"items": api._todos.claim_due()}
-            elif action == "claim_condition":
-                result = {"item": api._todos.claim_condition(command["todo_id"], command["revision"], command["evidence"])}
-            elif action == "finish":
-                api._todos.finish(command["todo_id"], command["revision"], command.get("error", ""))
-                result = {}
-            elif action == "complete":
-                api._todos.done(command["todo_id"])
-                result = {"completed": command["todo_id"]}
-            elif action == "delete":
-                api._todos.delete(command["todo_id"])
-                result = {"deleted": command["todo_id"]}
-            else:
-                raise ValueError("未知待办操作")
-            ack["result"] = result
-            if action not in {"list", "claim_due"}:
-                try:
-                    window.evaluate_js("window.pet.refreshTodos()")
-                except Exception as exc:
-                    # 数据已保存；界面刷新失败不能误报为写入失败并诱发重复新增。
-                    result["display_error"] = str(exc)
+        elif command["type"] == "todo_response":
+            api._todos.receive(command)
+        elif command["type"] == "todo_refresh":
+            window.evaluate_js("void window.pet.refreshTodos()")
         elif command["type"] == "exploration_tasks" and command["request_id"].startswith("records:"):
             # 窗口关闭后的迟到回执直接丢弃，不影响桌宠面板自己的查询。
             records_window = api._exploration_window
@@ -603,7 +584,7 @@ def main() -> None:
 
     import webview
 
-    from .todos import TodoStore
+    from .todo_proxy import TodoProxy
 
     _bind_win32()
     # 显式声明 DPI 感知，窗口位置、光标与窗口区域统一使用物理像素。
@@ -611,7 +592,7 @@ def main() -> None:
     outbox = Outbox()
     args.data_dir.mkdir(parents=True, exist_ok=True)
     args.runtime_dir.mkdir(parents=True, exist_ok=True)
-    api = PetApi(outbox, TodoStore(args.data_dir / "todos.json"), args.data_dir / "window.json", args.runtime_dir / "requests")
+    api = PetApi(outbox, TodoProxy(outbox.emit), args.data_dir / "window.json", args.runtime_dir / "requests")
     window = webview.create_window(
         "MaiBot Desktop Pet",
         url=PAGE.as_uri(),

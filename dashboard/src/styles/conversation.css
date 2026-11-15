@@ -212,6 +212,7 @@
 }
 /* 多操作工具栏仅改变排列方式；尺寸、留白与普通聊天标题栏一致。 */
 [data-conversation-header='true'][data-layout='toolbar'] {
+  container: conversation-toolbar / inline-size;
   flex-wrap: nowrap;
   overflow-x: auto;
 }
@@ -238,6 +239,23 @@
   flex: 0 0 auto;
   flex-wrap: nowrap;
 }
+
+@container conversation-toolbar (max-width: 1000px) {
+  [data-inspector-toggle-label='true'] {
+    display: none;
+  }
+
+  [data-inspector-toggle='true'] {
+    min-width: var(--control-height-sm);
+    padding-inline: 0.5rem;
+    gap: 0.25rem;
+  }
+
+  [data-inspector-toggle='true'] > svg {
+    margin-right: 0;
+  }
+}
+
 [data-conversation-screen='true'] {
   margin: 0.25rem 1rem 1rem;
   min-height: 0;

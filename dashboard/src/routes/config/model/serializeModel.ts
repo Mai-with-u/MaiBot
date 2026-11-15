@@ -13,6 +13,9 @@ export function serializeModel(model: ModelInfo): ModelInfo {
     price_periods: model.price_periods?.map((period) => ({ ...period })),
     send_temperature: model.send_temperature ?? true,
     visual: model.visual ?? false,
+    max_images: model.max_images ?? 0,
+    image_max_side: model.image_max_side ?? 8000,
+    image_min_side: model.image_min_side ?? 1,
     force_stream_mode: model.force_stream_mode ?? false,
     extra_params: model.extra_params ?? {},
   }

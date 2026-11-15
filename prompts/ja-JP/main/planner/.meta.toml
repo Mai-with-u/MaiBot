@@ -1,0 +1,25 @@
+[maisaka_chat_passive]
+display_name = "Planner（受動型 replyer）"
+advanced = true
+description = "実験的な受動型 replyer の有効時に使用。Planner の最終本文を返信の指針とし、操作にはツールを使う。"
+
+[maisaka_chat]
+display_name = "Planner"
+advanced = false
+description = "Maisaka のメイン計画テンプレート。身份、時刻、ツール説明、チャット文脈を統合し、思考・判断・ツール呼び出しを進める。"
+
+[maisaka_chat_merged_timing]
+display_name = "Planner（タイミング統合）"
+advanced = false
+description = "独立したタイミング判断を使わない場合の Maisaka メイン計画テンプレート。発話タイミングの判断を Planner に統合する。"
+
+[maisaka_chat_focus]
+display_name = "Focus Planner"
+advanced = true
+description = "同グループの全チャットを共有して思考し、ツールの session_id で操作対象を指定する Focus Planner。"
+
+[maisaka_chat_optimized]
+display_name = "Planner（最適化版）"
+advanced = true
+description = "実験機能 experimental.planner_optimized_prompt を有効にしたときに使う Maisaka メイン計画テンプレート。ボット自身を二人称で記述し、タスク説明を簡潔にしている。Focus モードでは引き続き Focus Planner を使う。"
+

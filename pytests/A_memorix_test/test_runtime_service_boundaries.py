@@ -1250,6 +1250,9 @@ async def test_ingest_service_uses_kernel_patched_write_boundaries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeMetadataStore:
+        def get_db_path(self) -> Path:
+            return Path(f"ingest-boundary-{id(self)}.db")
+
         def __init__(self) -> None:
             self.external_refs: list[dict[str, Any]] = []
 

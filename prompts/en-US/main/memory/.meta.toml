@@ -1,0 +1,20 @@
+[a_memorix_chat_summary]
+display_name = "Long-term Memory Chat Summary"
+advanced = false
+description = "Extracts incremental information and important knowledge from the current chat window for long-term memory."
+
+[memory_fuzzy_modify_plan]
+display_name = "Memory Fuzzy Modification Plan"
+advanced = true
+description = "Template for planning which old memories to supersede and which new memories to write from a natural-language modification request."
+
+[memory_retrieval_react_prompt_head_memory]
+display_name = "Memory Retrieval ReAct Header"
+advanced = true
+description = "Advanced memory retrieval prompt header used by the ReAct-style memory query flow."
+
+[a_memorix_fact_deduplication]
+display_name = "Long-term memory fact deduplication"
+advanced = true
+description = "Compare new facts with existing memories while preserving distinct events, state changes, and conflicting information."
+

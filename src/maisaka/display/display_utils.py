@@ -110,6 +110,8 @@ def _normalize_tool_call_source(source: Any) -> str:
         return TOOL_CALL_SOURCE_RESPONSE
     if normalized_source in {_TOOL_CALL_SOURCE_PROVIDER, "native", "provider_native"}:
         return _TOOL_CALL_SOURCE_PROVIDER
+    if normalized_source == "action_judge":
+        return "action_judge"
     return ""
 
 
@@ -123,6 +125,8 @@ def format_tool_call_source_label(source: str) -> str:
         return "正文调用"
     if normalized_source == _TOOL_CALL_SOURCE_PROVIDER:
         return "Provider 原生调用"
+    if normalized_source == "action_judge":
+        return "轻量判断器补全"
     return "未知来源"
 
 

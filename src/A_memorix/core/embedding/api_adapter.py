@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from threading import Lock
+
 import asyncio
 import hashlib
 import json
@@ -32,7 +34,9 @@ class EmbeddingAPIAdapter:
     """适配宿主 embedding 请求接口。"""
 
     _GLOBAL_DIMENSION_CACHE: Dict[str, Tuple[int, str, str]] = {}
+    TEXT_EMBEDDING_CACHE_MAX_ENTRIES = 2048
     _GLOBAL_TEXT_EMBEDDING_CACHE: Dict[Tuple[str, int, str], np.ndarray] = {}
+    _TEXT_CACHE_LOCK = Lock()
 
     def __init__(
         self,
@@ -289,6 +293,7 @@ class EmbeddingAPIAdapter:
         dimensions: Optional[int] = None,
         *,
         include_dimension: bool = True,
+        use_cache: bool = False,
     ) -> Optional[List[float]]:
         candidate_names = self._resolve_candidate_model_names()
         if not candidate_names:
@@ -302,8 +307,6 @@ class EmbeddingAPIAdapter:
             try:
                 model_info = self._find_model_info(candidate_name)
                 api_provider = self._find_provider(model_info.api_provider)
-                client = client_registry.get_client_class_instance(api_provider)
-
                 should_include_dimension = self._should_include_dimension(dimensions, include_dimension)
                 requested_dimension = (
                     self._resolve_canonical_dimension(dimensions) if should_include_dimension else None
@@ -315,19 +318,36 @@ class EmbeddingAPIAdapter:
                     include_dimension=should_include_dimension,
                 )
 
-                response = await self._request_with_retry(
-                    client=client,
-                    model_info=model_info,
-                    text=text,
-                    extra_params=extra_params,
+                # 每个响应使用自己的模型身份，不能读取其他并发请求更新的 last_success。
+                cache_key = self._embedding_cache_key(
+                    text, dimensions, model_name=candidate_name, include_dimension=include_dimension,
                 )
-                embedding = getattr(response, "embedding", None)
-                if embedding is None:
-                    raise RuntimeError(f"模型 {candidate_name} 未返回 embedding")
-                vector = self._validate_embedding_vector(
-                    embedding,
-                    source=f"embedding 模型 {candidate_name}",
-                )
+                cache_enabled = self.enable_cache and use_cache
+                vector = None
+                if cache_enabled:
+                    with self._TEXT_CACHE_LOCK:
+                        cached = self._GLOBAL_TEXT_EMBEDDING_CACHE.pop(cache_key, None)
+                        if cached is not None:
+                            self._GLOBAL_TEXT_EMBEDDING_CACHE[cache_key] = cached
+                            vector = cached.copy()
+                if vector is None:
+                    client = client_registry.get_client_class_instance(api_provider)
+                    response = await self._request_with_retry(
+                        client=client,
+                        model_info=model_info,
+                        text=text,
+                        extra_params=extra_params,
+                    )
+                    embedding = getattr(response, "embedding", None)
+                    if embedding is None:
+                        raise RuntimeError(f"模型 {candidate_name} 未返回 embedding")
+                    vector = self._validate_embedding_vector(embedding, source=f"embedding 模型 {candidate_name}")
+                    if cache_enabled:
+                        with self._TEXT_CACHE_LOCK:
+                            self._GLOBAL_TEXT_EMBEDDING_CACHE.pop(cache_key, None)
+                            self._GLOBAL_TEXT_EMBEDDING_CACHE[cache_key] = vector.copy()
+                            while len(self._GLOBAL_TEXT_EMBEDDING_CACHE) > self.TEXT_EMBEDDING_CACHE_MAX_ENTRIES:
+                                del self._GLOBAL_TEXT_EMBEDDING_CACHE[next(iter(self._GLOBAL_TEXT_EMBEDDING_CACHE))]
                 self._last_success_model_name = str(candidate_name or "").strip()
                 self._last_success_primary_model_name = candidate_names[0]
                 self._last_success_provider_name = str(model_info.api_provider or "").strip()
@@ -371,9 +391,16 @@ class EmbeddingAPIAdapter:
             }
         )
 
-    def _embedding_cache_key(self, text: str, dimensions: Optional[int]) -> Tuple[str, int, str]:
+    def _embedding_cache_key(
+        self, text: str, dimensions: Optional[int], *, model_name: str, include_dimension: bool = True,
+    ) -> Tuple[str, int, str]:
+        """按实际模型、请求维度语义和正文隔离缓存，不把备用结果归到候选列表。"""
         requested_dimension = self._resolve_canonical_dimension(dimensions)
-        return (self._dimension_cache_key(), int(requested_dimension), str(text or ""))
+        identity = self._fingerprint_hash({
+            "model": self.get_embedding_fingerprint(dimension=requested_dimension, model_name=model_name)["hash"],
+            "include_dimension": self._should_include_dimension(dimensions, include_dimension),
+        })
+        return (identity, int(requested_dimension), str(text or ""))
 
     async def _detect_dimension(self) -> int:
         configuration_key = self._dimension_cache_key()
@@ -452,6 +479,8 @@ class EmbeddingAPIAdapter:
         show_progress: bool = False,
         normalize: bool = True,
         dimensions: Optional[int] = None,
+        *,
+        use_cache: bool = True,
     ) -> np.ndarray:
         del show_progress
         del normalize
@@ -485,6 +514,7 @@ class EmbeddingAPIAdapter:
                 normalized_texts,
                 batch_size=max(1, int(batch_size)),
                 dimensions=requested_dimension,
+                use_cache=use_cache,
             )
             if embeddings.ndim == 1:
                 embeddings = embeddings.reshape(1, -1)
@@ -508,28 +538,13 @@ class EmbeddingAPIAdapter:
         texts: List[str],
         batch_size: int,
         dimensions: Optional[int] = None,
+        use_cache: bool = True,
     ) -> np.ndarray:
+        cache_enabled = self.enable_cache and use_cache
         all_embeddings: List[np.ndarray] = []
         for offset in range(0, len(texts), batch_size):
             batch = texts[offset : offset + batch_size]
             batch_results: List[Tuple[int, np.ndarray]] = []
-            uncached_items: List[Tuple[int, str]] = []
-
-            if self.enable_cache:
-                for index, text in enumerate(batch):
-                    cache_key = self._embedding_cache_key(text, dimensions)
-                    cached_vector = self._GLOBAL_TEXT_EMBEDDING_CACHE.get(cache_key)
-                    if cached_vector is None:
-                        uncached_items.append((index, text))
-                    else:
-                        batch_results.append((index, cached_vector.copy()))
-            else:
-                uncached_items = list(enumerate(batch))
-
-            if not uncached_items:
-                batch_results.sort(key=lambda item: item[0])
-                all_embeddings.extend(emb for _, emb in batch_results)
-                continue
 
             semaphore = asyncio.Semaphore(self.max_concurrent)
 
@@ -540,7 +555,7 @@ class EmbeddingAPIAdapter:
                 _semaphore: asyncio.Semaphore = semaphore,
             ):
                 async with _semaphore:
-                    embedding = await self._get_embedding_direct(text, dimensions=dimensions)
+                    embedding = await self._get_embedding_direct(text, dimensions=dimensions, use_cache=cache_enabled)
                     if embedding is None:
                         raise RuntimeError(f"文本 {absolute_index} 编码失败：embedding 返回为空")
                     vector = self._validate_embedding_vector(
@@ -549,7 +564,7 @@ class EmbeddingAPIAdapter:
                     )
                     return batch_index, vector
 
-            tasks = [encode_with_semaphore(text, index, offset + index) for index, text in uncached_items]
+            tasks = [encode_with_semaphore(text, index, offset + index) for index, text in enumerate(batch)]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             errors = [result for result in results if isinstance(result, BaseException)]
             normalized_results: List[Tuple[int, np.ndarray]] = []
@@ -558,10 +573,6 @@ class EmbeddingAPIAdapter:
                     continue
                 batch_index, vector = result
                 normalized_results.append((batch_index, vector))
-                if self.enable_cache:
-                    text = batch[batch_index]
-                    cache_key = self._embedding_cache_key(text, dimensions)
-                    self._GLOBAL_TEXT_EMBEDDING_CACHE[cache_key] = vector.copy()
 
             if errors:
                 raise errors[0]
@@ -578,16 +589,18 @@ class EmbeddingAPIAdapter:
         num_workers: Optional[int] = None,
         show_progress: bool = False,
         dimensions: Optional[int] = None,
+        *,
+        use_cache: bool = True,
     ) -> np.ndarray:
         del show_progress
         if num_workers is not None:
             previous = self.max_concurrent
             self.max_concurrent = max(1, int(num_workers))
             try:
-                return await self.encode(texts, batch_size=batch_size, dimensions=dimensions)
+                return await self.encode(texts, batch_size=batch_size, dimensions=dimensions, use_cache=use_cache)
             finally:
                 self.max_concurrent = previous
-        return await self.encode(texts, batch_size=batch_size, dimensions=dimensions)
+        return await self.encode(texts, batch_size=batch_size, dimensions=dimensions, use_cache=use_cache)
 
     def get_embedding_dimension(self) -> int:
         if self._dimension is not None:

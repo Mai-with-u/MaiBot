@@ -15,7 +15,7 @@ from src.chat.replyer.document_generator import DocumentReplyGenerator
 from src.chat.replyer.maisaka_generator_base import BaseMaisakaReplyGenerator, MaisakaReplyContext
 from src.common.data_models.llm_service_data_models import LLMResponseResult
 from src.common.i18n import get_locale, use_locale
-from src.common.prompt_i18n import PROMPTS_ROOT, clear_prompt_cache, extract_prompt_placeholders, load_prompt, load_prompt_template
+from src.common.prompt_i18n import clear_prompt_cache, extract_prompt_placeholders, load_prompt, load_prompt_template
 from src.config.config import global_config
 from src.config.model_configs import ModelInfo
 from src.desktop_pet.service import desktop_pet_service
@@ -319,7 +319,7 @@ def test_translated_templates_keep_chinese_structure(locale, tmp_path):
              "maisaka_replyer", "maisaka_replyer_document", "reply_attachments")
     with use_locale(locale):
         for name in names:
-            original = (PROMPTS_ROOT / "zh-CN" / f"{name}.prompt").read_text(encoding="utf-8")
+            original = load_prompt_template(name, locale="zh-CN", include_custom=False).template
             translated = load_reply_prompt(load_prompt, name)
             assert extract_prompt_placeholders(original) == extract_prompt_placeholders(translated)
             assert len(original.splitlines()) == len(translated.splitlines())
@@ -330,7 +330,7 @@ def test_translated_templates_keep_chinese_structure(locale, tmp_path):
         assert rendered.startswith(material + "\n")
         custom_path = tmp_path / "zh-CN" / "reply_attachments.prompt"
         custom_path.parent.mkdir()
-        original = (PROMPTS_ROOT / "zh-CN" / "reply_attachments.prompt").read_text(encoding="utf-8")
+        original = load_prompt_template("reply_attachments", locale="zh-CN", include_custom=False).template
         custom_path.write_text("自定义首行\n" + original, encoding="utf-8")
         custom = load_reply_prompt(
             load_prompt, "reply_attachments", custom_prompts_root=tmp_path, attachments=material,

@@ -1,0 +1,20 @@
+[a_memorix_chat_summary]
+display_name = "長期記憶のチャット要約"
+advanced = false
+description = "現在のチャットから長期記憶に保存する追加情報と重要な知識を抽出します。"
+
+[memory_fuzzy_modify_plan]
+display_name = "長期記憶の曖昧修正計画"
+advanced = true
+description = "自然言語の修正要求と候補記憶から、失効させる旧記憶と書き込む新記憶を計画するテンプレート。"
+
+[memory_retrieval_react_prompt_head_memory]
+display_name = "記憶検索 ReAct ヘッダー"
+advanced = true
+description = "ReAct 形式の記憶検索フローで使用する高度な記憶検索プロンプトのヘッダー。"
+
+[a_memorix_fact_deduplication]
+display_name = "長期記憶の事実重複判定"
+advanced = true
+description = "新しい事実と既存の記憶の重複を判定し、別の出来事、状態変化、矛盾する情報を保持します。"
+

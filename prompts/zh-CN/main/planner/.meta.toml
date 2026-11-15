@@ -1,0 +1,25 @@
+[maisaka_chat_passive]
+display_name = "规划器（被动式 replyer）"
+advanced = true
+description = "开启实验性被动式 replyer 时使用；Planner 最终正文作为回复指导，工具调用仍用于操作。"
+
+[maisaka_chat]
+display_name = "规划器"
+advanced = false
+description = "Maisaka 主规划模板，负责整合身份、时间、工具说明和聊天上下文，驱动主循环进行思考、决策与工具调用。"
+
+[maisaka_chat_merged_timing]
+display_name = "规划器（合并时机）"
+advanced = false
+description = "独立时间感知关闭时使用的 Maisaka 主规划模板，将节奏控制判断合并到 Planner。"
+
+[maisaka_chat_focus]
+display_name = "Focus 规划器"
+advanced = true
+description = "Focus 共享规划器，结合组内全部聊天，通过工具的 session_id 指定处理目标。"
+
+[maisaka_chat_optimized]
+display_name = "规划器（优化版）"
+advanced = true
+description = "开启实验功能 experimental.planner_optimized_prompt 后使用的 Maisaka 主规划模板，以第二人称描述麦麦自己并精简了任务说明；Focus 模式仍使用 Focus 规划器。"
+

@@ -23,13 +23,13 @@ from src.common.data_models.message_component_data_model import (
     TextComponent,
 )
 from src.common.logger import get_logger
+from src.common.prompt_i18n import load_prompt
 from src.common.message_repository import find_messages
 from src.common.utils.utils_config import ExpressionConfigUtils, JargonConfigUtils
 from src.config.config import global_config, model_config
 from src.agent.provider import AgentToolProvider
 from src.files.provider import FileToolProvider
 from src.desktop_pet.chat_tools import ChatSessionToolProvider
-from src.desktop_pet.todo_tools import TodoToolProvider
 from src.desktop_pet.exploration_tools import ExplorationToolProvider
 from src.desktop_pet.screen_tools import DesktopScreenToolProvider
 from src.core.tooling import ToolRegistry, ToolSpec
@@ -782,22 +782,12 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         task_preview = task.description.replace("\n", " ")
         if len(task_preview) > 200:
             task_preview = f"{task_preview[:200]}…"
-        detail_lines = [
-            f'<subagent_result id="{task.task_id}" status="{task.status}">',
-            f"你派发的子代理任务已结束。任务：{task_preview}",
-            f"工具使用：{format_tool_usage(task.tool_usage)}",
-        ]
-        if task.status == "completed":
-            detail_lines.append(f"结论：\n{task.conclusion}")
-        else:
-            detail_lines.append(f"子代理没有完成任务：{task.error_message}")
-        detail_lines.extend(
-            [
-                "请结合当前聊天自行决定是否使用这个结论，以及是否需要回复。",
-                "</subagent_result>",
-            ]
-        )
-        visible_text = "\n".join(detail_lines)
+        visible_text = load_prompt(
+            "subagent_finished", task_id=task.task_id, status=task.status,
+            task_preview=task_preview, tool_usage=format_tool_usage(task.tool_usage),
+            conclusion=task.conclusion if task.status == "completed" else "",
+            error_message=task.error_message if task.status != "completed" else "",
+        ).strip()
         self._chat_history.append(
             InternalContextMessage(
                 raw_message=MessageSequence([TextComponent(visible_text)]),
@@ -1317,7 +1307,6 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         self._tool_registry.register_provider(PluginToolProvider())
         self._tool_registry.register_provider(AgentToolProvider())
         self._tool_registry.register_provider(ChatSessionToolProvider())
-        self._tool_registry.register_provider(TodoToolProvider())
         self._tool_registry.register_provider(ExplorationToolProvider())
         self._tool_registry.register_provider(DesktopScreenToolProvider())
         self._tool_registry.register_provider(FileToolProvider())

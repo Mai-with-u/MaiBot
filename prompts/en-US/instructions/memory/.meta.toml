@@ -1,0 +1,15 @@
+[heuristic_memory_impression]
+display_name = "Memory Retrieval Impression"
+advanced = true
+description = "Template for generating a natural-language impression of the current chat to guide semantic long-term memory retrieval."
+
+[planner_memory_group]
+display_name = "群聊记忆使用策略"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[planner_memory_private]
+display_name = "私聊记忆使用策略"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+

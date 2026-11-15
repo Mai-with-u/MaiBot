@@ -27,7 +27,8 @@ export function AddModelMenu({ onAdd, disabled, className, dataTour }: AddModelM
             <DropdownMenuTrigger asChild>
               <Button size="sm" disabled={disabled} data-tour={dataTour}>
                 <Plus className="h-4 w-4" strokeWidth={2} fill="none" />
-                添加模型
+                <span data-add-model-label="full">添加模型</span>
+                <span data-add-model-label="compact" className="hidden">模型</span>
               </Button>
             </DropdownMenuTrigger>
           </span>

@@ -1,0 +1,10 @@
+[context_compaction]
+display_name = "普通聊天滚动状态摘要"
+advanced = true
+description = "复用普通聊天 Planner 请求，将历史与旧摘要整理为话题、背景、进展、未完事项和对话约定。"
+
+[context_compaction_focus]
+display_name = "Focus 滚动状态摘要"
+advanced = true
+description = "复用 Focus Planner 请求，为共享组生成五类滚动摘要，并保留各聊天的来源归属。"
+

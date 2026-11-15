@@ -1,0 +1,10 @@
+[reply_group]
+display_name = "群聊回复"
+advanced = true
+description = "创意模式下的默认群聊回复模板。"
+
+[reply_group_mai_replier]
+display_name = "Mai Replier 群聊回复"
+advanced = true
+description = "Mai Replier 专用的群聊回复模板，沿用训练时的提示词。"
+

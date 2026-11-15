@@ -78,8 +78,8 @@ async def _handle_logs_subscribe(connection_id: str, request_id: Optional[str], 
         request_id: 请求 ID。
         data: 订阅参数。
     """
-    replay_limit = int(data.get("replay", 100) or 100)
-    replay_limit = max(0, min(replay_limit, 500))
+    replay_limit = int(data.get("replay", 1000))
+    replay_limit = max(0, min(replay_limit, 5000))
     websocket_manager.subscribe(connection_id, domain="logs", topic="main")
     await websocket_manager.send_response(
         connection_id,

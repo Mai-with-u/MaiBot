@@ -1,0 +1,29 @@
+[agent_acp_environment]
+display_name = "外部 Agent 環境説明"
+advanced = true
+description = "外部 Agent 環境説明。"
+
+[agent_acp_failure]
+display_name = "外部 Agent 失敗報告"
+advanced = true
+description = "外部 Agent 失敗報告。"
+
+[agent_planner_resume]
+display_name = "外部 Planner 中断復帰"
+advanced = true
+description = "外部 Planner 中断復帰。"
+
+[agent_planner_continue]
+display_name = "外部 Planner 継続実行"
+advanced = true
+description = "外部 Planner 継続実行。"
+
+[subagent_final_round]
+display_name = "子代理最后一轮指令"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+
+[subagent_finished]
+display_name = "子代理完成指令"
+advanced = false
+description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"

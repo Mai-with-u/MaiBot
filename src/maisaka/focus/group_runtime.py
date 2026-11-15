@@ -29,6 +29,7 @@ from src.llm_models.payload_content.context_item import FunctionCallItem
 from src.maisaka.chat_loop_service import ChatResponse, MaisakaChatLoopService
 from src.maisaka.context.messages import (
     ContentContextMessage,
+    InternalContextMessage,
     LLMContextMessage,
     ModelOutputContextMessage,
     ReferenceMessage,
@@ -333,6 +334,8 @@ class FocusGroupRuntime:
             last = runtime._chat_history[-1]
             if isinstance(last, ContentContextMessage) and last.message_id == trigger.message_id:
                 text = last.processed_plain_text
+                if isinstance(last, InternalContextMessage) and last.source_kind == "schedule" and self._wait_until is not None:
+                    self._finish_wait(f"{runtime.session_name} 的日程到期")
         notice = ReferenceMessage(
             content=f'<focus_event session_id="{escape(runtime.session_id, quote=True)}" '
             f'chat_name="{escape(runtime.session_name, quote=True)}">\n{text}\n</focus_event>',
@@ -413,8 +416,14 @@ class FocusGroupRuntime:
         action = result.metadata.get("after_reply", "continue")
         if action == "continue":
             return
-        if action == "wait":
-            seconds = result.metadata["wait_seconds"]
+        self._apply_wait_control(result, session_id)
+
+    def _apply_wait_control(self, result: ToolExecutionResult, session_id: str) -> None:
+        """将显式 wait 和回复后的暂停统一应用到整个共享组。"""
+        if not result.success:
+            return
+        seconds = result.metadata["wait_seconds"]
+        if seconds is not None:
             self._consecutive_waits += 1
             self._wait_until = time.time() + seconds
             self._wait_session_id = session_id
@@ -645,10 +654,19 @@ class FocusGroupRuntime:
                     response.content or "",
                 )
                 if runtime is not None:
-                    if result.metadata.get("after_reply") != "wait":
+                    is_timed_wait = (
+                        spec is not None
+                        and spec.provider_name == "maisaka_builtin"
+                        and spec.name in {"reply", "wait"}
+                        and result.success
+                        and result.metadata.get("wait_seconds") is not None
+                    )
+                    if not is_timed_wait:
                         self._consecutive_waits = 0
                     if spec is not None and spec.provider_name == "maisaka_builtin" and spec.name == "reply":
                         self._apply_reply_control(result, runtime.session_id)
+                    elif spec is not None and spec.provider_name == "maisaka_builtin" and spec.name == "wait":
+                        self._apply_wait_control(result, runtime.session_id)
                     await runtime._reasoning_engine._record_tool_execution_effects(invocation, result, spec)
                     raw_content = result.get_history_content()
                     if global_config.capabilities.tool_result_condense and should_condense_tool_result(

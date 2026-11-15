@@ -1,7 +1,8 @@
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Literal, Optional
+from typing import Any, Deque, Literal, Optional
 
 import asyncio
 import hashlib
@@ -36,6 +37,7 @@ DATA_DIR = PROJECT_ROOT / "data"
 EmojiRegisterStatus = Literal["registered", "skipped", "failed"]
 EMOJI_DIR = DATA_DIR / "emoji"  # 表情包存储目录
 MAX_EMOJI_FOR_PROMPT = 20  # 最大允许的表情包描述数量于图片替换的 prompt 中
+RECENT_EMOJI_WINDOW = 2
 BYTES_PER_MIB = 1024 * 1024
 
 
@@ -242,6 +244,8 @@ class EmojiManager:
 
         self._emoji_num: int = 0
         self.emojis: list[MaiEmoji] = []
+        # 按成功发送顺序记录；重复发送也占一次，最近一次使用重新开始冷却。
+        self.recent_emoji_hashes: Deque[str] = deque(maxlen=RECENT_EMOJI_WINDOW)
         self._maintenance_wakeup_event: asyncio.Event = asyncio.Event()
         self._pending_description_tasks: dict[str, asyncio.Task[None]] = {}
         self._emoji_save_locks: dict[str, asyncio.Lock] = {}
@@ -713,6 +717,7 @@ class EmojiManager:
         except Exception as e:
             logger.error(f"[记录表情包使用] 记录使用时出错: {e}")
             return False
+        self.recent_emoji_hashes.append(normalized_hash)
         return True
 
     def update_emoji(self, emoji: MaiEmoji) -> bool:
@@ -889,10 +894,8 @@ class EmojiManager:
         emoji_replace_prompt_template.add_context("description", new_emoji.description or "无描述")
         emoji_replace_prompt = await prompt_manager.render_prompt(emoji_replace_prompt_template)
 
-        # 替换决策只使用文字描述，优先使用 emoji 任务，未配置时使用 planner。
-        emoji_models = config_manager.get_model_config().model_task_config.emoji.model_list
-        replacement_task_name = "emoji" if any(model_name.strip() for model_name in emoji_models) else "planner"
-        replacement_client = LLMServiceClient(task_name=replacement_task_name, request_type="emoji")
+        # 替换决策只使用文字描述，由 planner 任务统一处理。
+        replacement_client = LLMServiceClient(task_name="planner", request_type="emoji")
         decision_result = await replacement_client.generate_response(
             emoji_replace_prompt,
             session_id=session_id,

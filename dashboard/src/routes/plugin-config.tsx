@@ -1484,7 +1484,8 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
             )}
             <div className="min-w-0 xl:order-1">
               {showHostPolicy && <h2 className="mb-4 text-base font-medium">设置</h2>}
-              {!configError && !!schema?.runtime_widgets?.length && (
+              {/* 运行时控件由已加载实例提供，未启用、加载失败或未运行时没有可轮询的实例 */}
+              {plugin.load_status === 'success' && !!schema?.runtime_widgets?.length && (
                 <ConfigWidgetsPanel key={plugin.id} pluginId={plugin.id} />
               )}
               {configError && (

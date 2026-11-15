@@ -390,7 +390,7 @@ export function AuthPage() {
                 </DialogHeader>
 
                 <div className="space-y-4">
-                  {/* 方式一：查看控制台 */}
+                  {/* 方式一：查看宿主启动输出 */}
                   <div className="rounded-lg border bg-muted/50 p-4 space-y-2">
                     <div className="flex items-start gap-3">
                       <Terminal className="h-5 w-5 text-primary flex-shrink-0 mt-0.5" strokeWidth={2} fill="none" />
@@ -417,7 +417,7 @@ export function AuthPage() {
                           {t('auth.method2Desc')}
                         </p>
                         <div className="rounded bg-background p-2 font-mono text-xs break-all">
-                          <code className="text-primary">data/webui.json</code>
+                          <code className="text-primary">host/webui.json</code>
                         </div>
                         <p className="text-xs text-muted-foreground">
                           {t('auth.method2FileHint')} <code className="px-1 py-0.5 bg-background rounded">access_token</code>

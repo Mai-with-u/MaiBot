@@ -212,8 +212,10 @@ class MainSystem:
 
         from src.agent.service import agent_service
         from src.desktop_pet.service import desktop_pet_service
+        from src.services.schedules.service import schedule_service
 
         await agent_service.start()
+        await schedule_service.start()
 
         await desktop_pet_service.start()
 
@@ -295,12 +297,14 @@ async def main() -> None:
         from src.common.shutdown import request_shutdown
         from src.agent.service import agent_service
         from src.desktop_pet.service import desktop_pet_service
+        from src.services.schedules.service import schedule_service
 
         request_shutdown("main_finally")
         from src.common.http_service.console import close_console
 
         await close_console()
         await stop_ws_broadcasts()
+        await schedule_service.stop()
         await desktop_pet_service.stop()
         if system.app is not None:
             await system.app.stop()

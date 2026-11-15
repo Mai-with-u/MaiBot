@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CheckCircle2,
+  FileText,
+  Folder,
+  Maximize2,
+  PanelLeftOpen,
+  PanelLeftClose,
+  MoreHorizontal,
+  List,
   Eye,
   GitCompareArrows,
   RefreshCw,
@@ -24,7 +31,20 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
+  DashboardFolderPanel,
+  DashboardFolderTab,
+  DashboardFolderTabBar,
+} from '@/components/ui/dashboard-tabs'
+import { DataPanel } from '@/components/ui/surface'
+import { SelectionListItem } from '@/components/ui/selection-list-item'
+import { Tabs, TabsContent } from '@/components/ui/tabs'
 import {
   Dialog,
   DialogContent,
@@ -42,7 +62,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Separator } from '@/components/ui/separator'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { MOBILE_GLASS_CLASS } from '@/components/layout/mobile-glass'
 import { MobileHeaderActions } from '@/components/layout/MobileHeaderActions'
@@ -65,6 +84,9 @@ import {
 import { cn } from '@/lib/utils'
 import { promptCatalogQueryOptions } from '@/lib/prompt-query'
 import { queryClient } from '@/lib/query'
+import { promptFolder } from './prompt-folders'
+import { PromptDirectory } from './PromptDirectory'
+import '@/styles/prompt-management.css'
 
 const DEFAULT_VERSION_ID = '__default__'
 const DIFF_ADDED_CLASS = 'cm-prompt-diff-added'
@@ -232,12 +254,24 @@ function buildPromptDiff(defaultContent: string, currentContent: string): Prompt
       j += 1
     } else if (canRemove && removeScore >= addScore) {
       defaultLineClasses[i + 1] = DIFF_REMOVED_CLASS
-      addPromptDiffRange(defaultRangeClasses, i + 1, 0, defaultLines[i].length, DIFF_REMOVED_TEXT_CLASS)
+      addPromptDiffRange(
+        defaultRangeClasses,
+        i + 1,
+        0,
+        defaultLines[i].length,
+        DIFF_REMOVED_TEXT_CLASS
+      )
       removed += 1
       i += 1
     } else if (canAdd) {
       currentLineClasses[j + 1] = DIFF_ADDED_CLASS
-      addPromptDiffRange(currentRangeClasses, j + 1, 0, currentLines[j].length, DIFF_ADDED_TEXT_CLASS)
+      addPromptDiffRange(
+        currentRangeClasses,
+        j + 1,
+        0,
+        currentLines[j].length,
+        DIFF_ADDED_TEXT_CLASS
+      )
       added += 1
       j += 1
     }
@@ -278,6 +312,9 @@ export function PromptManagementPage() {
   const [diffDefaultContent, setDiffDefaultContent] = useState('')
   const [query, setQuery] = useState('')
   const [showAdvancedPrompts, setShowAdvancedPrompts] = useState(false)
+  const [promptKind, setPromptKind] = useState<'main' | 'instruction'>('main')
+  const [focusEditing, setFocusEditing] = useState(false)
+  const [onlyCustomized, setOnlyCustomized] = useState(false)
   const [versions, setVersions] = useState<PromptVersionInfo[]>([])
   const [activeVersionId, setActiveVersionId] = useState<string | null>(null)
   const [selectedVersionId, setSelectedVersionId] = useState(DEFAULT_VERSION_ID)
@@ -291,20 +328,25 @@ export function PromptManagementPage() {
     return catalog.files[language] ?? []
   }, [catalog, language])
 
-  const visiblePromptFiles = useMemo<PromptFileInfo[]>(() => {
-    return showAdvancedPrompts ? promptFiles : promptFiles.filter((file) => !file.advanced)
-  }, [promptFiles, showAdvancedPrompts])
-
+  const rootFiles = useMemo(
+    () => promptFiles.filter((file) => (file.kind ?? 'main') === promptKind),
+    [promptFiles, promptKind]
+  )
+  const visiblePromptFiles = useMemo(
+    () => (showAdvancedPrompts ? rootFiles : rootFiles.filter((file) => !file.advanced)),
+    [rootFiles, showAdvancedPrompts]
+  )
+  const rootPath = promptKind === 'main' ? 'main' : 'instructions'
   const filteredFiles = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
-    if (!normalizedQuery) return visiblePromptFiles
     return visiblePromptFiles.filter((file) => {
-      const searchableText = [file.name, file.display_name, file.description]
+      if (onlyCustomized && !file.customized) return false
+      return [file.name, file.relative_path, file.display_name, file.description]
         .join(' ')
         .toLowerCase()
-      return searchableText.includes(normalizedQuery)
+        .includes(normalizedQuery)
     })
-  }, [visiblePromptFiles, query])
+  }, [visiblePromptFiles, query, onlyCustomized])
 
   const selectedFile = promptFiles.find((file) => file.name === filename)
   const isCustomized = selectedFile?.customized ?? false
@@ -336,9 +378,7 @@ export function PromptManagementPage() {
       setSavedContent(result.content)
       setVersions(result.versions ?? [])
       setActiveVersionId(result.active_version_id)
-      setSelectedVersionId(
-        nextSelectedVersionId ?? result.active_version_id ?? DEFAULT_VERSION_ID
-      )
+      setSelectedVersionId(nextSelectedVersionId ?? result.active_version_id ?? DEFAULT_VERSION_ID)
       setValidation(result.validation ?? null)
     },
     []
@@ -371,8 +411,12 @@ export function PromptManagementPage() {
             : (result.languages[0] ?? '')
       setLanguage(nextLanguage)
 
-      const nextFiles = nextLanguage ? (result.files[nextLanguage] ?? []) : []
-      const nextBasicFiles = nextFiles.filter((file) => !file.advanced)
+      const nextFiles = (nextLanguage ? (result.files[nextLanguage] ?? []) : []).filter(
+        (file) => (file.kind ?? 'main') === promptKind
+      )
+      const nextBasicFiles = nextFiles.filter(
+        (file) => !file.advanced && (file.kind ?? 'main') === promptKind
+      )
       setFilename((current) =>
         nextFiles.some((file) => file.name === current)
           ? current
@@ -387,7 +431,7 @@ export function PromptManagementPage() {
     } finally {
       setLoadingCatalog(false)
     }
-  }, [language, toast])
+  }, [language, promptKind, toast])
 
   useEffect(() => {
     void loadCatalog()
@@ -463,12 +507,13 @@ export function PromptManagementPage() {
   }, [applyPromptContent, filename, language, selectedVersionStorageKey, toast])
 
   const handleLanguageChange = (nextLanguage: string) => {
+    if (!canLeaveEditor()) return
     setLanguage(nextLanguage)
     setQuery('')
     const nextFiles = catalog?.files[nextLanguage] ?? []
-    const nextVisibleFiles = showAdvancedPrompts
-      ? nextFiles
-      : nextFiles.filter((file) => !file.advanced)
+    const nextVisibleFiles = nextFiles.filter(
+      (file) => (file.kind ?? 'main') === promptKind && (showAdvancedPrompts || !file.advanced)
+    )
     setFilename(nextVisibleFiles[0]?.name ?? '')
   }
 
@@ -483,7 +528,10 @@ export function PromptManagementPage() {
       })
       applyPromptContent(result, result.active_version_id ?? DEFAULT_VERSION_ID)
       if (selectedVersionStorageKey) {
-        localStorage.setItem(selectedVersionStorageKey, result.active_version_id ?? DEFAULT_VERSION_ID)
+        localStorage.setItem(
+          selectedVersionStorageKey,
+          result.active_version_id ?? DEFAULT_VERSION_ID
+        )
       }
       toast({ title: 'Prompt 已保存', description: `${language}/${filename}` })
       void loadCatalog()
@@ -541,7 +589,10 @@ export function PromptManagementPage() {
           : await activatePromptVersion(language, filename, selectedVersionId)
       applyPromptContent(result, result.active_version_id ?? selectedVersionId)
       if (selectedVersionStorageKey) {
-        localStorage.setItem(selectedVersionStorageKey, result.active_version_id ?? selectedVersionId)
+        localStorage.setItem(
+          selectedVersionStorageKey,
+          result.active_version_id ?? selectedVersionId
+        )
       }
       toast({ title: '已应用 Prompt 版本', description: `${language}/${filename}` })
       void loadCatalog()
@@ -628,12 +679,40 @@ export function PromptManagementPage() {
     }
   }
 
+  const canLeaveEditor = () => {
+    if (!hasUnsavedChanges) return true
+    toast({
+      title: '当前 Prompt 有未保存修改',
+      description: '请先保存修改，再切换文件或分类。',
+      variant: 'destructive',
+    })
+    return false
+  }
+
+  const handleRootChange = (value: string) => {
+    if ((value !== 'main' && value !== 'instruction') || !canLeaveEditor()) return
+    setPromptKind(value)
+    setQuery('')
+    setOnlyCustomized(false)
+    setFilename(
+      promptFiles.find(
+        (file) => (file.kind ?? 'main') === value && (showAdvancedPrompts || !file.advanced)
+      )?.name ?? ''
+    )
+    setMobileEditing(false)
+  }
+
   const mobileEditorOpen = isMobileViewport && mobileEditing && Boolean(filename)
   // 编辑页的大标题换成文件名
   useMobileTitleOverride(mobileEditorOpen ? filename.replace(/\.prompt$/, '') : null)
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 p-3 sm:gap-4 sm:p-6">
+    <Tabs
+      value={promptKind}
+      onValueChange={handleRootChange}
+      data-prompt-management="true"
+      className="flex h-full min-h-0 flex-col p-3 sm:p-6"
+    >
       {/* 手机页头右上角：编辑页返回文件列表 */}
       {mobileEditorOpen && (
         <MobileHeaderActions>
@@ -667,350 +746,413 @@ export function PromptManagementPage() {
           </button>
         </div>
       )}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-center justify-between gap-2">
-          {/* 手机页头已经显示标题 */}
-          <h1 className="text-xl font-bold max-lg:hidden sm:text-2xl md:text-3xl">Prompt管理</h1>
-        </div>
-        <div className="flex min-w-0 items-center gap-1.5 sm:flex-wrap sm:gap-2">
-          <Select value={language} onValueChange={handleLanguageChange} disabled={loadingCatalog}>
-            <SelectTrigger className="h-8 w-[6.25rem] text-xs sm:h-9 sm:w-[160px] sm:text-sm">
-              <SelectValue placeholder="选择语言" />
-            </SelectTrigger>
-            <SelectContent>
-              {(catalog?.languages ?? []).map((item) => (
-                <SelectItem key={item} value={item}>
-                  <span className="inline-flex items-center gap-2">
-                    {item}
-                    {catalog?.files[item]?.some((file) => file.validation?.valid === false) && (
-                      <PromptWarningDot />
-                    )}
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => void loadCatalog()}
-            disabled={loadingCatalog}
-            className="h-8 w-8 shrink-0 sm:h-9 sm:w-9"
-            title="刷新"
-            aria-label="刷新"
-          >
-            <RefreshCw className={cn('h-4 w-4', loadingCatalog && 'animate-spin')} />
-          </Button>
-          <Button
-            variant={showAdvancedPrompts ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setShowAdvancedPrompts((current) => !current)}
-            className="h-8 shrink-0 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm"
-          >
-            <SlidersHorizontal className="h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4" />
-            <span className="hidden sm:inline">
-              {showAdvancedPrompts ? '隐藏高级' : '显示高级'}
-            </span>
-            {promptFiles.some((file) => file.advanced && file.validation?.valid === false) && (
-              <PromptWarningDot message="高级 Prompt 中有模板不兼容或缺少变量" />
-            )}
-          </Button>
-          <Button
-            size="sm"
-            className="h-8 shrink-0 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm"
-            onClick={handleSave}
-            disabled={!hasUnsavedChanges || saving || loadingFile || !filename}
-          >
-            <Save className="h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4" />
-            <span className="ml-1 sm:ml-0">
-              {saving
-                ? '保存中'
-                : hasUnsavedChanges
-                  ? selectedCustomVersion
-                    ? '保存修改'
-                    : '保存为新版本'
-                  : '已保存'}
-            </span>
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-3 max-lg:grid-rows-1 lg:grid-cols-[18rem_minmax(0,1fr)] lg:grid-rows-1 lg:gap-4">
-        {/* 手机上文件列表与编辑器分成两级页面 */}
-        <Card
-          className={cn(
-            'flex max-h-52 min-h-0 flex-col overflow-hidden max-lg:max-h-none sm:max-h-none',
-            isMobileViewport && mobileEditing && 'hidden'
-          )}
+      <h1 className="sr-only">Prompt 管理</h1>
+      <DashboardFolderTabBar
+        size="large"
+        aria-label="Prompt 根目录"
+        trailing={
+          <div className="flex flex-wrap items-center gap-2 pb-1">
+            <Select value={language} onValueChange={handleLanguageChange} disabled={loadingCatalog}>
+              <SelectTrigger className="h-8 w-[6.25rem] text-xs sm:h-9 sm:w-[160px] sm:text-sm">
+                <SelectValue placeholder="选择语言" />
+              </SelectTrigger>
+              <SelectContent>
+                {(catalog?.languages ?? []).map((item) => (
+                  <SelectItem key={item} value={item}>
+                    <span className="inline-flex items-center gap-2">
+                      {item}
+                      {catalog?.files[item]?.some((file) => file.validation?.valid === false) && (
+                        <PromptWarningDot />
+                      )}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => void loadCatalog()}
+              disabled={loadingCatalog}
+              className="h-8 w-8 shrink-0 sm:h-9 sm:w-9"
+              title="刷新"
+              aria-label="刷新"
+            >
+              <RefreshCw className={cn('h-4 w-4', loadingCatalog && 'animate-spin')} />
+            </Button>
+            <Button
+              variant={showAdvancedPrompts ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => {
+                if (canLeaveEditor()) setShowAdvancedPrompts((current) => !current)
+              }}
+              aria-pressed={showAdvancedPrompts}
+              aria-label={showAdvancedPrompts ? '隐藏高级' : '显示高级'}
+              className="h-8 shrink-0 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm"
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4" />
+              <span className="hidden sm:inline">
+                {showAdvancedPrompts ? '隐藏高级' : '显示高级'}
+              </span>
+              {promptFiles.some((file) => file.advanced && file.validation?.valid === false) && (
+                <PromptWarningDot message="高级 Prompt 中有模板不兼容或缺少变量" />
+              )}
+            </Button>
+          </div>
+        }
+      >
+        <DashboardFolderTab
+          value="main"
+          icon={<FileText className="size-4" />}
+          description={`main · 完整任务提示词 · ${promptFiles.filter((file) => (file.kind ?? 'main') === 'main').length}`}
         >
-          <CardHeader className="shrink-0 p-3 pb-2 sm:p-6 sm:pb-3">
-            <div className="flex items-center gap-2">
-              <div className="text-foreground flex h-10 shrink-0 items-center px-1 text-4xl leading-none font-bold sm:h-9">
-                {filteredFiles.length}
-              </div>
-              <div className="relative min-w-0 flex-1">
-                <Search className="text-muted-foreground pointer-events-none absolute top-2.5 left-2 h-4 w-4" />
-                <Input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="搜索"
-                  className="pl-8"
-                />
-              </div>
+          主模板
+        </DashboardFolderTab>
+        <DashboardFolderTab
+          value="instruction"
+          icon={<List className="size-4" />}
+          description={`instructions · 插入对话的短指令 · ${promptFiles.filter((file) => file.kind === 'instruction').length}`}
+        >
+          指令片段
+        </DashboardFolderTab>
+      </DashboardFolderTabBar>
+
+      <TabsContent value={promptKind} className="mt-0 flex min-h-0 flex-1" asChild>
+        <DashboardFolderPanel
+          data-prompt-workspace="true"
+          data-prompt-focus={!isMobileViewport && focusEditing}
+        >
+          <DataPanel
+            padding="none"
+            data-prompt-folders="true"
+            data-prompt-file-pane="true"
+            hidden={isMobileViewport ? mobileEditing : focusEditing}
+            className={cn(
+              'min-h-0 min-w-0 flex-col overflow-hidden',
+              (isMobileViewport ? mobileEditing : focusEditing) ? 'hidden' : 'flex'
+            )}
+          >
+            <div className="flex shrink-0 items-center justify-between gap-2 px-3 pt-2">
+              <span className="text-sm font-semibold">
+                模板目录{' '}
+                <span className="text-muted-foreground font-mono text-xs">
+                  {filteredFiles.length}
+                </span>
+              </span>
+              {!isMobileViewport && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7"
+                  aria-label="收起模板目录"
+                  onClick={() => setFocusEditing(true)}
+                >
+                  <PanelLeftClose className="size-4" />
+                </Button>
+              )}
             </div>
-          </CardHeader>
-          <Separator />
-          <ScrollArea className="min-h-0 flex-1" scrollbars="vertical">
-            <div className="space-y-1 p-2">
+            <div className="relative m-2 shrink-0">
+              <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 z-10 size-4 -translate-y-1/2" />
+              <Input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="搜索"
+                aria-label="搜索 Prompt 名称、路径或描述"
+                className="pl-9"
+              />
+            </div>
+            <ScrollArea className="min-h-0 flex-1" scrollbars="vertical">
               {loadingCatalog ? (
-                <div className="text-muted-foreground flex items-center justify-center gap-2 p-6 text-sm">
+                <div className="flex justify-center p-6">
                   <ThinkingIllustration size="sm" />
                 </div>
-              ) : filteredFiles.length > 0 ? (
-                filteredFiles.map((file) => (
-                  <button
-                    key={file.name}
-                    type="button"
-                    onClick={() => {
-                      setFilename(file.name)
-                      setMobileEditing(true)
-                    }}
-                    className={cn(
-                      'w-full rounded-md px-3 py-2 text-left text-sm transition-colors',
-                      'hover:bg-accent hover:text-accent-foreground',
-                      filename === file.name
-                        ? 'bg-accent text-accent-foreground'
-                        : 'text-muted-foreground'
-                    )}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className="truncate font-medium" title={file.display_name || file.name}>
-                        {file.display_name || file.name}
-                      </div>
-                      {file.validation?.valid === false && (
-                        <PromptWarningDot message={file.validation.message} />
-                      )}
-                      {file.advanced && (
-                        <Badge variant="outline" className="shrink-0 text-[10px]">
-                          高级
-                        </Badge>
-                      )}
-                      {file.customized && (
-                        <Badge variant="secondary" className="shrink-0 text-[10px]">
-                          自定义
-                        </Badge>
-                      )}
-                      {file.custom_version_count > 0 && (
-                        <Badge variant="outline" className="shrink-0 text-[10px]">
-                          {file.custom_version_count} 版
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="text-muted-foreground mt-0.5 truncate text-xs">{file.name}</div>
-                    {file.description && (
-                      <div className="text-muted-foreground mt-1 line-clamp-2 text-xs">
-                        {file.description}
-                      </div>
-                    )}
-                  </button>
-                ))
+              ) : filteredFiles.length ? (
+                <PromptDirectory
+                  key={`${language}/${promptKind}`}
+                  files={filteredFiles}
+                  selectedFile={selectedFile}
+                  filtering={Boolean(query.trim()) || onlyCustomized}
+                  onSelect={(file) => {
+                    if (filename !== file.name && !canLeaveEditor()) return
+                    setFilename(file.name)
+                    setMobileEditing(true)
+                  }}
+                />
               ) : (
                 <div className="text-muted-foreground p-6 text-center text-sm">
                   没有可编辑的 Prompt 文件
                 </div>
               )}
+            </ScrollArea>
+            <div className="border-border shrink-0 border-t py-2">
+              <SelectionListItem
+                selected={onlyCustomized}
+                onClick={() => setOnlyCustomized((current) => !current)}
+                className="flex items-center justify-between px-3"
+              >
+                <span>仅看已修改</span>
+                <span className="font-mono text-xs">
+                  {visiblePromptFiles.filter((file) => file.customized).length}
+                </span>
+              </SelectionListItem>
             </div>
-          </ScrollArea>
-        </Card>
+          </DataPanel>
 
-        <Card
-          className={cn(
-            'flex min-h-0 flex-col overflow-hidden',
-            isMobileViewport && !mobileEditing && 'hidden'
-          )}
-        >
-          <CardHeader className="flex flex-col gap-2 space-y-0 p-3 pb-2 sm:gap-3 sm:p-6 sm:pb-3">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
-              <div className="min-w-0">
-                <CardTitle className="flex items-center gap-2 truncate text-sm">
-                  <span className="truncate">
-                    {selectedFile?.display_name || filename || '未选择文件'}
-                  </span>
-                  {!loadingFile && validation?.valid === false && (
-                    <PromptWarningDot message={validation.message} />
+          <section
+            aria-label="Prompt 编辑器"
+            data-prompt-editor="true"
+            className={cn(
+              'flex min-h-0 flex-col overflow-hidden',
+              isMobileViewport && !mobileEditing && 'hidden'
+            )}
+          >
+            <div className="flex shrink-0 flex-col gap-3 pb-3">
+              <div className="flex min-w-0 flex-col gap-3">
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-muted-foreground mb-2 flex items-center gap-2 font-mono text-xs">
+                      <Folder className="size-3 shrink-0" />
+                      <span className="truncate" title={selectedFile?.relative_path}>
+                        {selectedFile?.relative_path ?? '选择模板'}
+                      </span>
+                    </div>
+                    <h2 data-prompt-title="true" className="flex items-center gap-2 text-xl">
+                      <span className="truncate">
+                        {selectedFile?.display_name || filename || '未选择文件'}
+                      </span>
+                      {!loadingFile && validation?.valid === false && (
+                        <PromptWarningDot message={validation.message} />
+                      )}
+                      {selectedFile?.advanced && (
+                        <Badge variant="outline" className="shrink-0">
+                          高级
+                        </Badge>
+                      )}
+                      {isCustomized && (
+                        <Badge variant="secondary" className="shrink-0">
+                          自定义
+                        </Badge>
+                      )}
+                    </h2>
+                    <p className="text-muted-foreground mt-1 text-xs">
+                      {language}
+                      {selectedFile ? ` · ${formatFileSize(selectedFile.size)}` : ''}
+                      {versions.length > 0 ? ` · ${versions.length} 个自定义版本` : ''}
+                      {hasUnsavedChanges ? ' · 有未保存修改' : ''}
+                    </p>
+                    {selectedFile?.description && (
+                      <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">
+                        {selectedFile.description}
+                      </p>
+                    )}
+                  </div>
+                  {!isMobileViewport && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0"
+                      aria-pressed={focusEditing}
+                      onClick={() => setFocusEditing((current) => !current)}
+                    >
+                      {focusEditing ? (
+                        <PanelLeftOpen className="mr-2 size-4" />
+                      ) : (
+                        <Maximize2 className="mr-2 size-4" />
+                      )}
+                      {focusEditing ? '展开模板目录' : '专注编辑'}
+                    </Button>
                   )}
-                  {selectedFile?.advanced && (
-                    <Badge variant="outline" className="shrink-0">
-                      高级
-                    </Badge>
-                  )}
-                  {isCustomized && (
-                    <Badge variant="secondary" className="shrink-0">
-                      自定义
-                    </Badge>
-                  )}
-                </CardTitle>
-                <p className="text-muted-foreground mt-1 text-xs">
-                  {language}
-                  {selectedFile ? ` · ${formatFileSize(selectedFile.size)}` : ''}
-                  {versions.length > 0 ? ` · ${versions.length} 个自定义版本` : ''}
-                  {hasUnsavedChanges ? ' · 有未保存修改' : ''}
-                </p>
-                {selectedFile?.description && (
-                  <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">
-                    {selectedFile.description}
-                  </p>
-                )}
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <Select
+                    value={selectedVersionId}
+                    onValueChange={handleVersionChange}
+                    disabled={loadingFile || saving || !filename}
+                  >
+                    <SelectTrigger
+                      aria-label="Prompt 版本"
+                      className="h-8 w-full text-xs sm:h-9 sm:w-[220px]"
+                    >
+                      <SelectValue placeholder="选择版本" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={DEFAULT_VERSION_ID}>默认版本</SelectItem>
+                      {versions.map((version) => (
+                        <SelectItem key={version.id} value={version.id}>
+                          {version.label}
+                          {version.active ? '（启用）' : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => void handleApplySelectedVersion()}
+                    disabled={
+                      !canApplySelectedVersion || applyingVersion || loadingFile || !filename
+                    }
+                    className="h-8 shrink-0 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm"
+                  >
+                    <CheckCircle2
+                      className={cn(
+                        'mr-1 h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4',
+                        applyingVersion && 'animate-pulse'
+                      )}
+                    />
+                    {applyingVersion
+                      ? '应用中'
+                      : selectedVersionIsApplied
+                        ? '已应用'
+                        : '应用此版本'}
+                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="sm" disabled={!filename}>
+                        <MoreHorizontal className="mr-2 size-4" />
+                        版本操作
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start">
+                      <DropdownMenuItem
+                        onSelect={() => void handleShowDefault()}
+                        disabled={loadingDefaultPrompt || loadingFile || !filename}
+                      >
+                        <Eye className="mr-2 size-4" />
+                        查看默认
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={() => setDeleteVersionDialogOpen(true)}
+                        disabled={!canDeleteSelectedVersion || deletingVersion}
+                        className="text-destructive focus:text-destructive"
+                      >
+                        <Trash2 className="mr-2 size-4" />
+                        删除版本
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  <Button
+                    variant={diffMode ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => void handleToggleDiffMode()}
+                    disabled={loadingDiffDefault || loadingFile || !filename}
+                    className="h-8 flex-1 px-2 text-xs sm:h-9 sm:flex-none sm:px-3 sm:text-sm"
+                  >
+                    <GitCompareArrows
+                      className={cn(
+                        'mr-1 h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4',
+                        loadingDiffDefault && 'animate-pulse'
+                      )}
+                    />
+                    {diffMode ? '退出对比' : '对比默认'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="ml-auto h-8 shrink-0 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm"
+                    onClick={handleSave}
+                    disabled={!hasUnsavedChanges || saving || loadingFile || !filename}
+                  >
+                    <Save className="h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4" />
+                    <span className="ml-1 sm:ml-0">
+                      {saving
+                        ? '保存中'
+                        : hasUnsavedChanges
+                          ? selectedCustomVersion
+                            ? '保存修改'
+                            : '保存为新版本'
+                          : '已保存'}
+                    </span>
+                  </Button>{' '}
+                </div>
               </div>
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <Select
-                  value={selectedVersionId}
-                  onValueChange={handleVersionChange}
-                  disabled={loadingFile || saving || !filename}
-                >
-                  <SelectTrigger className="h-8 w-full text-xs sm:h-9 sm:w-[220px]">
-                    <SelectValue placeholder="选择版本" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={DEFAULT_VERSION_ID}>默认版本</SelectItem>
-                    {versions.map((version) => (
-                      <SelectItem key={version.id} value={version.id}>
-                        {version.label}
-                        {version.active ? '（启用）' : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={() => void handleApplySelectedVersion()}
-                  disabled={!canApplySelectedVersion || applyingVersion || loadingFile || !filename}
-                  className="h-8 shrink-0 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm"
-                >
-                  <CheckCircle2
-                    className={cn(
-                      'mr-1 h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4',
-                      applyingVersion && 'animate-pulse'
-                    )}
-                  />
-                  {applyingVersion ? '应用中' : selectedVersionIsApplied ? '已应用' : '应用此版本'}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setDeleteVersionDialogOpen(true)}
-                  disabled={!canDeleteSelectedVersion || deletingVersion}
-                  className="h-8 shrink-0 px-2 text-xs text-destructive hover:text-destructive sm:h-9 sm:px-3 sm:text-sm"
-                  title="删除版本"
-                  aria-label="删除版本"
-                >
-                  <Trash2 className={cn('mr-1 h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4', deletingVersion && 'animate-pulse')} />
-                  {deletingVersion ? '移除中' : '移除版本'}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleShowDefault}
-                  disabled={loadingDefaultPrompt || loadingFile || !filename}
-                  className="h-8 flex-1 px-2 text-xs sm:h-9 sm:flex-none sm:px-3 sm:text-sm"
-                >
-                  <Eye
-                    className={cn(
-                      'mr-1 h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4',
-                      loadingDefaultPrompt && 'animate-pulse'
-                    )}
-                  />
-                  查看默认
-                </Button>
-                <Button
-                  variant={diffMode ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => void handleToggleDiffMode()}
-                  disabled={loadingDiffDefault || loadingFile || !filename}
-                  className="h-8 flex-1 px-2 text-xs sm:h-9 sm:flex-none sm:px-3 sm:text-sm"
-                >
-                  <GitCompareArrows
-                    className={cn(
-                      'mr-1 h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4',
-                      loadingDiffDefault && 'animate-pulse'
-                    )}
-                  />
-                  {diffMode ? '退出对比' : '对比默认'}
-                </Button>
-              </div>
+
+              {diffMode && (
+                <div className="text-muted-foreground flex flex-wrap items-center gap-2 text-xs">
+                  <Badge
+                    variant="outline"
+                    className="border-green-500/50 bg-green-500/10 text-green-700"
+                  >
+                    新增 {diffState.added}
+                  </Badge>
+                  <Badge variant="outline" className="border-red-500/50 bg-red-500/10 text-red-700">
+                    删除 {diffState.removed}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className="border-amber-500/50 bg-amber-500/10 text-amber-700"
+                  >
+                    修改 {diffState.changed}
+                  </Badge>
+                </div>
+              )}
+
+              {validation && !validation.valid && (
+                <Alert variant="destructive">
+                  <AlertTitle>Prompt 参数不匹配</AlertTitle>
+                  <AlertDescription>{validation.message}</AlertDescription>
+                </Alert>
+              )}
             </div>
-
-            {diffMode && (
-              <div className="text-muted-foreground flex flex-wrap items-center gap-2 text-xs">
-                <Badge variant="outline" className="border-green-500/50 bg-green-500/10 text-green-700">
-                  新增 {diffState.added}
-                </Badge>
-                <Badge variant="outline" className="border-red-500/50 bg-red-500/10 text-red-700">
-                  删除 {diffState.removed}
-                </Badge>
-                <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-amber-700">
-                  修改 {diffState.changed}
-                </Badge>
-              </div>
-            )}
-
-            {validation && !validation.valid && (
-              <Alert variant="destructive">
-                <AlertTitle>Prompt 参数不匹配</AlertTitle>
-                <AlertDescription>{validation.message}</AlertDescription>
-              </Alert>
-            )}
-          </CardHeader>
-          <CardContent className="min-h-0 flex-1 p-0">
-            {loadingFile ? (
-              <div className="text-muted-foreground flex h-full min-h-[320px] items-center justify-center gap-2 text-sm">
-                <ThinkingIllustration />
-              </div>
-            ) : diffMode ? (
-              <div className="grid h-full min-h-[320px] grid-rows-[minmax(0,1fr)_minmax(0,1fr)] gap-2 p-2 lg:grid-cols-2 lg:grid-rows-1">
-                <div className="flex min-h-0 flex-col gap-1">
-                  <div className="text-muted-foreground px-1 text-xs">默认版本</div>
-                  <CodeEditor
-                    value={diffDefaultContent}
-                    readOnly
-                    language="text"
-                    height="100%"
-                    minHeight="0"
-                    className="h-full"
-                    lineClassNames={diffState.defaultLineClasses}
-                    rangeClassNames={diffState.defaultRangeClasses}
-                  />
+            <div className="min-h-0 flex-1">
+              {loadingFile ? (
+                <div className="text-muted-foreground flex h-full min-h-[320px] items-center justify-center gap-2 text-sm">
+                  <ThinkingIllustration />
                 </div>
-                <div className="flex min-h-0 flex-col gap-1">
-                  <div className="text-muted-foreground px-1 text-xs">当前编辑</div>
-                  <CodeEditor
-                    value={content}
-                    onChange={setContent}
-                    language="text"
-                    height="100%"
-                    minHeight="0"
-                    placeholder="选择一个 Prompt 文件后开始编辑"
-                    className="h-full"
-                    lineClassNames={diffState.currentLineClasses}
-                    rangeClassNames={diffState.currentRangeClasses}
-                  />
+              ) : diffMode ? (
+                <div className="grid h-full min-h-[320px] grid-rows-[minmax(0,1fr)_minmax(0,1fr)] gap-2 p-2 lg:grid-cols-2 lg:grid-rows-1">
+                  <div className="flex min-h-0 flex-col gap-1">
+                    <div className="text-muted-foreground px-1 text-xs">默认版本</div>
+                    <CodeEditor
+                      value={diffDefaultContent}
+                      readOnly
+                      language="text"
+                      height="100%"
+                      minHeight="0"
+                      className="h-full"
+                      lineClassNames={diffState.defaultLineClasses}
+                      rangeClassNames={diffState.defaultRangeClasses}
+                    />
+                  </div>
+                  <div className="flex min-h-0 flex-col gap-1">
+                    <div className="text-muted-foreground px-1 text-xs">当前编辑</div>
+                    <CodeEditor
+                      value={content}
+                      onChange={setContent}
+                      language="text"
+                      height="100%"
+                      minHeight="0"
+                      placeholder="选择一个 Prompt 文件后开始编辑"
+                      className="h-full"
+                      lineClassNames={diffState.currentLineClasses}
+                      rangeClassNames={diffState.currentRangeClasses}
+                    />
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <CodeEditor
-                value={content}
-                onChange={setContent}
-                language="text"
-                height="100%"
-                minHeight="320px"
-                placeholder="选择一个 Prompt 文件后开始编辑"
-                className="h-full"
-              />
-            )}
-          </CardContent>
-        </Card>
-      </div>
+              ) : (
+                <CodeEditor
+                  value={content}
+                  onChange={setContent}
+                  language="text"
+                  height="100%"
+                  minHeight="0"
+                  readOnly={!filename}
+                  placeholder="选择一个 Prompt 文件后开始编辑"
+                  className="h-full"
+                />
+              )}
+            </div>
+            <div className="text-muted-foreground flex shrink-0 flex-wrap justify-between gap-2 pt-2 font-mono text-xs">
+              <span>
+                {selectedFile ? `${promptFolder(selectedFile) || rootPath} · ${filename}` : ''}
+              </span>
+              <span>
+                {language} · {splitPromptLines(content).length} 行
+                {hasUnsavedChanges ? ' · 未保存' : ''}
+              </span>
+            </div>
+          </section>
+        </DashboardFolderPanel>
+      </TabsContent>
 
       <AlertDialog open={deleteVersionDialogOpen} onOpenChange={setDeleteVersionDialogOpen}>
         <AlertDialogContent>
@@ -1061,6 +1203,6 @@ export function PromptManagementPage() {
           )}
         </DialogContent>
       </Dialog>
-    </div>
+    </Tabs>
   )
 }

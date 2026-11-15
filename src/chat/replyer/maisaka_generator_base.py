@@ -496,18 +496,18 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         )
 
     @staticmethod
-    def _build_reply_reference_message(reply_reason: str, reply_reference: str) -> str:
-        """有 reply reference 时只使用参考，否则使用 Planner 正文，并标注为当前想法。"""
+    def _build_chat_anlyze_message(reply_reason: str, chat_anlyze: str) -> str:
+        """优先使用对话分析，否则使用 Planner 正文，作为对话局面与关键事实注入。"""
 
-        thought = reply_reference.strip() or reply_reason.strip()
+        thought = chat_anlyze.strip() or reply_reason.strip()
         if not thought:
             return ""
         locale = BaseMaisakaReplyGenerator._get_prompt_locale()
         if locale.startswith("en"):
-            return f'Current thought:\n"{thought}"'
+            return f'Conversation situation and key facts:\n"{thought}"'
         if locale.startswith("ja"):
-            return f"現在の考え：\n「{thought}」"
-        return f"当前想法：\n“{thought}”"
+            return f"会話の状況と重要な事実：\n「{thought}」"
+        return f"对话局面与关键事实：\n“{thought}”"
 
     def _build_final_user_message(
         self,
@@ -651,9 +651,9 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             reply_tool_args=reply_tool_args,
         )
         temporary_reply_style_message = self._build_temporary_reply_style_message(self._select_temporary_reply_style())
-        reply_reference_message = self._build_reply_reference_message(
+        chat_anlyze_message = self._build_chat_anlyze_message(
             reply_reason,
-            str((reply_tool_args or {}).get("reply_reference") or ""),
+            str((reply_tool_args or {}).get("chat_anlyze") or ""),
         )
         requested_reply_style_message = self._build_requested_reply_style_message(
             str((reply_tool_args or {}).get("reply_style") or "")
@@ -669,8 +669,8 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             items.append(
                 ContextItemBuilder().set_role(RoleType.User).add_text_content(temporary_reply_style_message).build()
             )
-        if reply_reference_message:
-            items.append(ContextItemBuilder().set_role(RoleType.User).add_text_content(reply_reference_message).build())
+        if chat_anlyze_message:
+            items.append(ContextItemBuilder().set_role(RoleType.User).add_text_content(chat_anlyze_message).build())
         items.append(ContextItemBuilder().set_role(RoleType.User).add_text_content(final_user_message).build())
         if requested_reply_style_message:
             items.append(
@@ -1242,8 +1242,8 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                 # 视觉请求构建会解码、缩放和编码图片，在工作线程中执行，避免阻塞聊天事件循环。
                 prompt_reply_tool_args = dict(reply_tool_args_for_attempt)
                 if cache_snapshot is not None:
-                    # 指导以 assistant 消息承接 Planner；表达选择和 Hook 仍接收完整参数。
-                    prompt_reply_tool_args.pop("reply_reference", None)
+                    # 对话分析以 assistant 消息承接 Planner；表达选择和 Hook 仍接收完整参数。
+                    prompt_reply_tool_args.pop("chat_anlyze", None)
                 built_request_messages = await asyncio.to_thread(
                     self._build_generation_messages,
                     super_creative_mode=super_creative_mode,
@@ -1295,9 +1295,9 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                 else:
                     model_info = cache_snapshot.model_info if isinstance(cache_snapshot, ResponseRequest) else None
                     reply_messages = await context_factory(active_model, model_info)
-                    reply_reference = str(active_reply_tool_args.get("reply_reference") or "").strip() or (reply_reason or "").strip()
+                    chat_anlyze = str(active_reply_tool_args.get("chat_anlyze") or "").strip() or (reply_reason or "").strip()
                     request = await asyncio.to_thread(
-                        build_cached_reply_request, cache_snapshot, reply_messages, reply_reference,
+                        build_cached_reply_request, cache_snapshot, reply_messages, chat_anlyze,
                     )
                     request_messages = request.context_items
                     prompt_preview = await asyncio.to_thread(PromptCLIVisualizer.build_prompt_dump_text, request_messages)

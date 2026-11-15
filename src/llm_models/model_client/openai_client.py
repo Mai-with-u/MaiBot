@@ -138,25 +138,6 @@ THINK_CONTENT_PATTERN = re.compile(
 )
 """用于解析 `<think>` 推理块的正则表达式。"""
 
-XML_TOOL_CALL_PATTERN = re.compile(r"<tool_call>\s*(?P<body>.*?)\s*</tool_call>", re.DOTALL | re.IGNORECASE)
-"""用于兜底解析模型以 XML 文本返回的工具调用。
-
-这是一个暂时性兼容方案，专门处理“思维链内容里夹带工具调用”的情况；
-后续如果上游稳定返回标准 tool_calls 字段，这里可能会调整或移除。
-"""
-
-XML_FUNCTION_CALL_PATTERN = re.compile(
-    r"<function=(?P<name>[A-Za-z0-9_.-]+)>\s*(?P<arguments>.*?)\s*</function>",
-    re.DOTALL | re.IGNORECASE,
-)
-"""用于从 XML 风格工具调用块中提取函数名与参数。"""
-
-XML_PARAMETER_PATTERN = re.compile(
-    r"<parameter=(?P<name>[A-Za-z0-9_.-]+)>\s*(?P<value>.*?)\s*</parameter>",
-    re.DOTALL | re.IGNORECASE,
-)
-"""用于从 XML 风格工具调用块中提取参数列表。"""
-
 CHAT_COMPLETIONS_RESERVED_EXTRA_BODY_KEYS = {
     "max_tokens",
     "messages",
@@ -757,69 +738,6 @@ def _extract_reasoning_and_content(
     return None, match.group("content_only").strip() or None
 
 
-def _extract_xml_tool_calls(
-    raw_text: str | None,
-    parse_mode: ToolArgumentParseMode,
-    response: Any,
-    *,
-    source: str,
-) -> Tuple[str | None, List[ToolCall] | None]:
-    """从 XML 风格文本中兜底提取工具调用。"""
-    if not isinstance(raw_text, str) or not raw_text.strip():
-        return raw_text, None
-
-    tool_calls: List[ToolCall] = []
-
-    def _coerce_xml_parameter_value(raw_value: str) -> Any:
-        normalized_value = raw_value.strip()
-        if not normalized_value:
-            return ""
-        lowered_value = normalized_value.lower()
-        if lowered_value == "true":
-            return True
-        if lowered_value == "false":
-            return False
-        if lowered_value in {"null", "none"}:
-            return None
-        if normalized_value.startswith(("{", "[")):
-            try:
-                return parse_llm_json(normalized_value, repair=True)
-            except Exception:
-                return normalized_value
-        return normalized_value
-
-    def _parse_xml_parameters(raw_arguments: str) -> Dict[str, Any] | None:
-        parameters = {
-            match.group("name").strip(): _coerce_xml_parameter_value(match.group("value"))
-            for match in XML_PARAMETER_PATTERN.finditer(raw_arguments)
-        }
-        return parameters or None
-
-    def _replace_tool_call(match: re.Match[str]) -> str:
-        body = match.group("body")
-        function_match = XML_FUNCTION_CALL_PATTERN.search(body)
-        if function_match is None:
-            return match.group(0)
-
-        function_name = function_match.group("name").strip()
-        raw_arguments = function_match.group("arguments").strip()
-        arguments = _parse_xml_parameters(raw_arguments)
-        if arguments is None:
-            arguments = _parse_tool_arguments(raw_arguments, parse_mode, response) if raw_arguments else {}
-        tool_calls.append(
-            ToolCall(
-                call_id=_build_fallback_tool_call_id("xml_tool_call"),
-                func_name=function_name,
-                args=arguments,
-                extra_content=_build_tool_call_extra_content(source),
-            )
-        )
-        return ""
-
-    cleaned_text = XML_TOOL_CALL_PATTERN.sub(_replace_tool_call, raw_text).strip() or None
-    return cleaned_text, tool_calls or None
-
-
 def _get_content_block_value(content_block: Any, key: str) -> Any:
     """读取 OpenAI 兼容 content block 的字段，兼容 dict 与 SDK 对象。"""
 
@@ -959,45 +877,6 @@ def _log_length_truncation(
             f"模型{model_name or ''}因为达到最大输出 token 限制（max_tokens={limit}，"
             f"任务={task_name}，请求类型={request_type}），可能仅输出部分内容，可视情况调整"
         )
-
-
-def _apply_xml_tool_call_fallback(
-    content: str | None,
-    reasoning_content: str | None,
-    tool_calls: List[ToolCall] | None,
-    parse_mode: ToolArgumentParseMode,
-    raw_response: Any,
-) -> Tuple[str | None, str | None, List[ToolCall] | None]:
-    """当上游未返回标准 tool_calls 时，尝试从 XML 文本兜底解析。
-
-    这是一个暂时性处理方法，用来兼容思维链中混入工具调用的返回格式，
-    后续可能随着模型或上游接口的规范化而变更。
-    """
-    if tool_calls:
-        return content, reasoning_content, tool_calls
-
-    cleaned_reasoning, extracted_tool_calls = _extract_xml_tool_calls(
-        reasoning_content,
-        parse_mode,
-        raw_response,
-        source=TOOL_CALL_SOURCE_REASONING,
-    )
-    if extracted_tool_calls:
-        if not content and cleaned_reasoning:
-            content = cleaned_reasoning
-            cleaned_reasoning = None
-        logger.warning("OpenAI 兼容响应未返回标准 tool_calls，已从 XML 文本兜底解析工具调用")
-        return content, cleaned_reasoning, extracted_tool_calls
-
-    cleaned_content, extracted_tool_calls = _extract_xml_tool_calls(
-        content,
-        parse_mode,
-        raw_response,
-        source=TOOL_CALL_SOURCE_RESPONSE,
-    )
-    if extracted_tool_calls:
-        logger.warning("OpenAI 兼容响应未返回标准 tool_calls，已从 XML 文本兜底解析工具调用")
-    return cleaned_content, cleaned_reasoning, extracted_tool_calls
 
 
 def _build_portable_api_response(
@@ -1271,19 +1150,12 @@ class _OpenAIStreamAccumulator:
                 )
 
         raw_data = {"model": self.model_name} if self.model_name else None
-        content, reasoning_content, resolved_tool_calls = _apply_xml_tool_call_fallback(
-            content or None,
-            reasoning_content or None,
-            tool_calls or None,
-            self.tool_argument_parse_mode,
-            raw_data,
-        )
-        if not content and not reasoning_content and not resolved_tool_calls:
+        if not content and not reasoning_content and not tool_calls:
             raise EmptyResponseException(raw_data)
         return _build_portable_api_response(
             content=content,
             reasoning_content=reasoning_content,
-            tool_calls=resolved_tool_calls,
+            tool_calls=tool_calls or None,
             logical_turn_id=self.logical_turn_id,
             raw_data=raw_data,
             reasoning_replay=_build_reasoning_replay(
@@ -1456,20 +1328,13 @@ def _default_normal_response_parser(
 
     finish_reason = getattr(resp.choices[0], "finish_reason", None)
     _log_length_truncation(finish_reason, getattr(resp, "model", None), max_tokens, trace_context)
-    content, reasoning_content, resolved_tool_calls = _apply_xml_tool_call_fallback(
-        content,
-        reasoning_content,
-        parsed_tool_calls or None,
-        tool_argument_parse_mode,
-        resp,
-    )
-    if not content and not reasoning_content and not resolved_tool_calls:
+    if not content and not reasoning_content and not parsed_tool_calls:
         raise EmptyResponseException(resp)
     return (
         _build_portable_api_response(
             content=content,
             reasoning_content=reasoning_content,
-            tool_calls=resolved_tool_calls,
+            tool_calls=parsed_tool_calls or None,
             logical_turn_id=logical_turn_id,
             raw_data=resp,
             reasoning_replay=_build_reasoning_replay(reasoning_scope, native_reasoning),

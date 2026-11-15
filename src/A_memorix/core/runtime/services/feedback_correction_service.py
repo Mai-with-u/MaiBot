@@ -841,7 +841,7 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
         try:
             if self._feedback_classifier is None:
                 self._feedback_classifier = LLMServiceClient(
-                    task_name="utils",
+                    task_name="fast_model",
                     request_type="memory_feedback_correction",
                 )
             response = await self._feedback_classifier.generate_response(prompt)

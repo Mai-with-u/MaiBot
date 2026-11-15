@@ -1,7 +1,7 @@
 """maibot host 子命令：查询与控制运行中的宿主、创建 Bot、手动迁移旧实例。"""
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import argparse
 import asyncio
@@ -11,9 +11,8 @@ import sqlite3
 
 from src.common.paths import INSTANCE_DIRECTORY_ENV
 
-from .adopt import adopt, undo
-from .layout import create_bot, open_workspace
-from .registry import BotRecord
+if TYPE_CHECKING:
+    from .registry import BotRecord
 
 
 def add_host_command(commands: Any) -> None:
@@ -47,7 +46,7 @@ def add_host_command(commands: Any) -> None:
             subparser.add_argument("--name", help="Bot 显示名称，默认使用目录名")
 
 
-def _record_payload(bot: BotRecord) -> dict:
+def _record_payload(bot: "BotRecord") -> dict:
     return {
         "bot_id": bot.bot_id, "name": bot.name, "directory": str(bot.directory), "owned": bot.owned,
         "initialization": bot.initialization, "error": bot.error,
@@ -68,16 +67,21 @@ def run_host_command(args: argparse.Namespace, parser: argparse.ArgumentParser) 
                 action = "install_plugin_dependencies" if args.install else "plugin_dependencies"
             print(json.dumps(asyncio.run(control_request(root, action, bot_id)), ensure_ascii=False, indent=2))
             return 0
+        from .layout import create_bot, open_workspace
+
         workspace = open_workspace(root)
         if args.host_command == "list":
             print(json.dumps([_record_payload(bot) for bot in workspace.registry.list_bots()], ensure_ascii=False, indent=2))
         elif args.host_command == "create-bot":
             print(json.dumps(_record_payload(create_bot(workspace, args.name)), ensure_ascii=False, indent=2))
-        elif args.undo_bot_id is not None:
-            undo(workspace, args.undo_bot_id)
-            print(f"已撤销 {args.undo_bot_id}")
         else:
-            print(json.dumps(_record_payload(adopt(workspace, args.source, args.mode, args.name)), ensure_ascii=False, indent=2))
+            from .adopt import adopt, undo
+
+            if args.undo_bot_id is not None:
+                undo(workspace, args.undo_bot_id)
+                print(f"已撤销 {args.undo_bot_id}")
+            else:
+                print(json.dumps(_record_payload(adopt(workspace, args.source, args.mode, args.name)), ensure_ascii=False, indent=2))
     except (KeyError, OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
         parser.error(str(exc))
     return 0

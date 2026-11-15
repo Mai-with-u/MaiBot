@@ -85,7 +85,7 @@ async def check_host_shutdown(tmp_path, monkeypatch, failure):
 
 
 if __name__ == "__main__":
-    from pytests.startup_test.memory_shutdown_fixture import isolated
+    from pytests.A_memorix_test.memory_shutdown_fixture import isolated
 
     with isolated() as patch:
         asyncio.run(check_host_shutdown(Path(sys.argv[1]), patch, None if sys.argv[2] == "normal" else sys.argv[2]))
