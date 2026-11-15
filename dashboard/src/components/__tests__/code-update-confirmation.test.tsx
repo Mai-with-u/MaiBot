@@ -15,7 +15,7 @@ afterEach(() => { resolveUpdateConfirmation(false); vi.clearAllMocks() })
 const target = 'a'.repeat(40)
 const conflict = new ApiError('local changes', {
   status: 409,
-  detail: { detail: { code: 'local_changes', message: '存在本地修改', files: ['plugin.py'], diverged: true, target_commit: target } },
+  detail: { detail: { code: 'local_changes', message: '存在本地修改', files: ['plugin.py'], target_commit: target } },
 })
 
 describe('备份并强制更新确认', () => {
@@ -26,7 +26,6 @@ describe('备份并强制更新确认', () => {
     const operation = updatePlugin('demo', 'https://github.com/test/demo')
     await screen.findByText('plugin.py')
     expect(backendApi.post).toHaveBeenCalledTimes(1)
-    expect(screen.getByText(/本地提交与目标版本分叉/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '备份并强制更新' }))
     await expect(operation).resolves.toBe(response)
     expect(backendApi.post).toHaveBeenLastCalledWith('/api/webui/plugins/update', expect.objectContaining({
@@ -49,7 +48,7 @@ describe('备份并强制更新确认', () => {
     render(<CodeUpdateConfirmation />)
     let operation: Promise<boolean>
     act(() => {
-      operation = confirmCodeUpdate({ message: '本地修改', files: ['plugin.py'], diverged: false }, controller.signal)
+      operation = confirmCodeUpdate({ message: '本地修改', files: ['plugin.py'] }, controller.signal)
     })
     expect(screen.getByText(/将备份插件代码和配置/)).toBeInTheDocument()
     act(() => controller.abort())

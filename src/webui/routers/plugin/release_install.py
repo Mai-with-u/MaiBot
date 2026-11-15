@@ -140,22 +140,21 @@ def _validate_candidate(candidate: Path, entry: PluginReleaseEntry, release: Plu
 
 
 def check_existing_code(target: Path, candidate: Path, force: bool) -> None:
-    if not (target / ".git").is_dir():
+    if force or not (target / ".git").is_dir():
         return
     commit = _git(candidate, "rev-parse", "HEAD").strip()
-    _git(target, "fetch", "--no-tags", str(candidate.resolve()), commit)
-    conflict = update_conflict(target, commit)
-    if conflict and not force:
+    conflict = update_conflict(target, candidate, commit)
+    if conflict:
         raise HTTPException(status_code=409, detail=conflict)
 
 
-def replace_existing_code(target: Path, candidate: Path, backup: Path, force: bool) -> None:
+def replace_existing_code(target: Path, candidate: Path, backup: Path) -> None:
     """只备份插件代码与配置，原地保留配置和数据。"""
     _check_tree(target)
-    check_existing_code(target, candidate, force)
     if not (target / ".git").is_dir():
-        raise HTTPException(status_code=400, detail="无 Git 安装不需要处理本地提交冲突")
+        raise HTTPException(status_code=400, detail="强制替换代码需要 Git 安装")
     commit = _git(candidate, "rev-parse", "HEAD").strip()
+    _git(target, "fetch", "--update-shallow", "--no-tags", str(candidate.resolve()), commit)
     backup_code(target, backup, commit)
     try:
         replace_code(target, commit)
@@ -247,7 +246,7 @@ async def _install_release(
             "commit": release.commit, "repository_url": entry.repositoryUrl,
         }
         if existing and force:
-            replace_existing_code(target, candidate, backup, force)
+            replace_existing_code(target, candidate, backup)
             (target / RECEIPT_NAME).write_text(json.dumps(receipt_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             return
         (candidate / RECEIPT_NAME).write_text(json.dumps(receipt_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
