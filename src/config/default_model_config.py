@@ -50,7 +50,6 @@ DEFAULT_TASK_CONFIG_TEMPLATES: dict[str, dict[str, Any]] = {
     },
     "learner": {"model_list": [], "max_tokens": 8192, "hard_timeout": 120.0},
     "fast_model": {"model_list": [], "max_tokens": 8192, "temperature": 0.3, "hard_timeout": 120.0},
-    "emoji": {"model_list": [], "max_tokens": 8192, "hard_timeout": 120.0},
     "vlm": {"model_list": [], "max_tokens": 8192, "hard_timeout": 240.0},
     "voice": {"model_list": [], "max_tokens": 8192, "hard_timeout": 120.0},
     "embedding": {"model_list": [], "max_tokens": 4096, "hard_timeout": 60.0},

@@ -87,6 +87,25 @@ async def test_legacy_model_task_alias_remains_compatible(captured_requests: Lis
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("field_name", ["task_name", "model"])
+@pytest.mark.parametrize("with_tools", [False, True])
+async def test_retired_emoji_task_routes_to_planner(
+    field_name: str, with_tools: bool, captured_requests: List[Any]
+) -> None:
+    """新旧 SDK 的 emoji 任务在普通生成和工具生成中统一使用 planner。"""
+    manager = RuntimeCoreCapabilityMixin()
+    args = {"prompt": "hi", field_name: "emoji"}
+    if with_tools:
+        result = await manager._cap_llm_generate_with_tools("demo.plugin", "llm.generate_with_tools", args)
+    else:
+        result = await manager._cap_llm_generate("demo.plugin", "llm.generate", args)
+
+    assert result["success"] is True
+    assert captured_requests[0].task_name == "planner"
+    assert captured_requests[0].model_name is None
+
+
+@pytest.mark.asyncio
 async def test_explicit_task_disambiguates_colliding_model_name(captured_requests: List[Any]) -> None:
     """新版协议中即使模型与任务同名，model 也应表示具体模型。"""
     manager = RuntimeCoreCapabilityMixin()

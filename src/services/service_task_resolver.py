@@ -38,7 +38,7 @@ def resolve_task_name(task_name: str = "") -> str:
     """根据任务名解析实际可用的模型任务名称。
 
     Args:
-        task_name: 目标任务名；为空时返回首个可用任务。
+        task_name: 目标任务名；旧 emoji 任务使用 planner，为空时返回首个可用任务。
 
     Returns:
         str: 解析后的模型任务名。
@@ -52,6 +52,8 @@ def resolve_task_name(task_name: str = "") -> str:
         raise RuntimeError("没有可用的模型配置")
 
     normalized_task_name = task_name.strip()
+    if normalized_task_name == "emoji":
+        normalized_task_name = "planner"
     if not normalized_task_name:
         return next(iter(models.keys()))
     if normalized_task_name not in models:
