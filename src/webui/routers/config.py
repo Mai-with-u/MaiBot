@@ -114,6 +114,7 @@ class PromptFileInfo(BaseModel):
     """Prompt 文件信息。"""
 
     name: str = Field(..., description="Prompt 文件名")
+    relative_path: str = Field(..., description="相对于语言目录的模板路径，包含根分类和文件夹")
     size: int = Field(..., description="文件大小")
     modified_at: float = Field(..., description="最后修改时间戳")
     display_name: str = Field(default="", description="Prompt 展示名称")
@@ -908,6 +909,7 @@ def list_prompt_files():
                 prompt_files.append(
                     PromptFileInfo(
                         name=prompt_file.name,
+                        relative_path=prompt_file.relative_to(language_dir).as_posix(),
                         size=stat.st_size,
                         modified_at=stat.st_mtime,
                         display_name=metadata.display_name if metadata else "",

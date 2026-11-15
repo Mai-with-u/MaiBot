@@ -4,6 +4,7 @@ const API_BASE = '/api/webui/config/prompts'
 
 export interface PromptFileInfo {
   name: string
+  relative_path: string
   size: number
   modified_at: number
   display_name: string
