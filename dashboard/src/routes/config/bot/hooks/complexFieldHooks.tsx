@@ -1,7 +1,6 @@
 import { TimeRangeTrack, TimeRangeTicks } from '@/components/ui/time-range-track'
 import { formatTalkTimeRange, getTimelineSegments, parseTalkTimeRange, type TimelineRange } from '@/lib/time-range'
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { useQuery } from '@tanstack/react-query'
 
 import {
   AlertCircle,
@@ -51,7 +50,7 @@ import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { fieldTitleClassName } from '@/components/dynamic-form/fieldStyle'
-import { getAllChatStreams, getChatStreams, resolveChatTargets, type ChatStream, type ChatTargetResolveRequest } from '@/lib/chat-management-api'
+import { getChatStreams, resolveChatTargets, type ChatStream, type ChatTargetResolveRequest } from '@/lib/chat-management-api'
 import { formatChatDisplayName } from '@/lib/chat-display'
 import { getBotConfigCached } from '@/lib/config-api'
 import {
