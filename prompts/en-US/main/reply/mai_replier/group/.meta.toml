@@ -1,0 +1,10 @@
+[reply_mai_replier_group_system]
+display_name = "Mai Replier · Group chat · System"
+advanced = true
+description = "System message template for Mai Replier Group chat. Contains only persona by default and can be edited independently."
+
+[reply_group_mai_replier]
+display_name = "Mai Replier · Group chat · User"
+advanced = true
+description = "User message template for Mai Replier Group chat."
+

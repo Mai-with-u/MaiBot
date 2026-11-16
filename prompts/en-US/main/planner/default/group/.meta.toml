@@ -1,0 +1,9 @@
+[planner_default_group]
+display_name = "Default planner · Group chat"
+advanced = false
+description = "Planning template for Group chat outside Focus mode, using tools to perform actions and initiate replies."
+
+[planner_passive_group]
+display_name = "Passive reply planner · Group chat"
+advanced = true
+description = "Planning template for Group chat outside Focus mode with Passive Replyer enabled. The final analysis text guides reply generation."

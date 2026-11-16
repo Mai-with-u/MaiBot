@@ -1,20 +1,14 @@
-[reply_private]
-display_name = "Private chat reply"
-advanced = true
-description = "Default private chat reply template in Creative mode."
+[reply_private_system]
+display_name = "Private chat · System"
+advanced = false
+description = "System template for persona, chat background, and attention guidance."
 
-[reply_private_mai_replier]
-display_name = "Mai Replier private chat reply"
-advanced = true
-description = "Private chat reply template for Mai Replier."
+[reply_private]
+display_name = "Private chat · User"
+advanced = false
+description = "Reply template combining chat history and turn requirements in one user message."
 
 [reply_private_followup]
-display_name = "Private chat follow-up"
-advanced = true
-description = "Used in Creative mode when Mai adds to a message it just sent in a private chat."
-
-[reply_private_followup_mai_replier]
-display_name = "Mai Replier private chat follow-up"
-advanced = true
-description = "Used when Mai Replier adds to a message it just sent in a private chat."
-
+display_name = "Private chat follow-up · User"
+advanced = false
+description = "Reply template combining chat history and turn requirements in one user message."

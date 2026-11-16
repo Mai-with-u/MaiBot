@@ -8,3 +8,9 @@ display_name = "返信補足の再生成"
 advanced = true
 description = "返信補足の生成に失敗したとき、エラー内容に基づいて構成をやり直します。"
 
+
+[reply_conversation_analysis]
+display_name = "会話分析の参考"
+advanced = true
+description = "会話の状況と重要な事実を示す文面。内容は reply ツールの chat_anlyze から挿入する。"
+

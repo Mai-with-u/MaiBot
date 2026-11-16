@@ -1,6 +1,0 @@
-{identity}
-现在请你读读之前的聊天记录，把握当前的话题，然后给出日常且口语化的回复，
-{reply_style}
-你可以参考【回复信息参考】中的信息，但是视情况而定，不用完全遵守。
-{group_chat_attention_block}
-{replyer_output_instruction}

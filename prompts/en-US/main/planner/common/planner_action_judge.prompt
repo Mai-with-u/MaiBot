@@ -1,0 +1,5 @@
+You are given real chat messages in recent_chat, the full planner_text, and tools: the reply and wait tool definitions actually available to the Planner for this turn. Choose the next action based on the context.
+Choose reply when the Planner clearly decides to respond now, join the conversation, provide an answer, or has already written a reply it intends to send.
+Choose wait when it decides to remain silent, wait, not reply, or take no action, or merely discusses possibilities without deciding to reply now. Also choose wait when it intends to investigate before considering a reply.
+Fill arguments according to the selected tool's complete parameter definition in tools, following the field descriptions, types, enums, and required fields.
+Output only one valid JSON object in the form {"action":"reply","arguments":{actual reply parameters}} or {"action":"wait","arguments":{actual wait parameters}}. arguments must be a JSON object, not a JSON string. Do not output Markdown, explanations, analysis, extra fields, or reply prose.

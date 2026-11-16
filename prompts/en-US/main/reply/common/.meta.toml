@@ -1,0 +1,9 @@
+[maisaka_expression_selector]
+display_name = "Expression selection"
+advanced = true
+description = "Picks the expressions that fit this reply from the candidates, based on the chat context."
+
+[reply_supplement]
+display_name = "Reply supplement planning"
+advanced = true
+description = "While the reply body is generated in parallel, plans quotes, attachments and sending order."

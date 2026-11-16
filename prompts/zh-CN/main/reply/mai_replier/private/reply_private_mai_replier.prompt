@@ -1,0 +1,12 @@
+{extra_info_block}{expression_habits_block}
+
+你正在和{sender_name}聊天，这是你们之前聊的内容:
+{time_block}
+{dialogue_prompt}
+
+{reply_target_block}
+{planner_reasoning}
+{reply_guidance}
+{reply_style}
+请注意不要输出多余内容(包括不必要的前后缀，冒号，括号，表情包，at或 @等 )，只输出发言内容就好。
+现在，你说：

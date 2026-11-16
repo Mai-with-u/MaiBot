@@ -1,10 +1,9 @@
+[reply_group_system]
+display_name = "群聊 · System"
+advanced = false
+description = "System 模板：人设、当前聊天背景与注意力提示。"
+
 [reply_group]
-display_name = "群聊回复"
-advanced = true
-description = "创意模式下的默认群聊回复模板。"
-
-[reply_group_mai_replier]
-display_name = "Mai Replier 群聊回复"
-advanced = true
-description = "Mai Replier 专用的群聊回复模板，沿用训练时的提示词。"
-
+display_name = "群聊 · User"
+advanced = false
+description = "回复模板，聊天记录和本轮回复要求组织为一条 User 消息。"

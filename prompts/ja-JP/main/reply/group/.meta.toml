@@ -1,10 +1,9 @@
+[reply_group_system]
+display_name = "グループ · System"
+advanced = false
+description = "人格、チャットの背景、注意力の指示を含む System テンプレート。"
+
 [reply_group]
-display_name = "グループチャット返信"
-advanced = true
-description = "クリエイティブモードの既定のグループチャット返信テンプレート。"
-
-[reply_group_mai_replier]
-display_name = "Mai Replier のグループチャット返信"
-advanced = true
-description = "Mai Replier 専用のグループチャット返信テンプレート。学習時の文面を使用する。"
-
+display_name = "グループ · User"
+advanced = false
+description = "履歴と今回の返信要件を一つの User メッセージにまとめる返信テンプレート。"

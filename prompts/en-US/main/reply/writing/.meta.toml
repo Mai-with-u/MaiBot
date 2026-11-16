@@ -1,0 +1,4 @@
+[maisaka_replyer_document]
+display_name = "Long-form writing"
+advanced = false
+description = "Writes a complete article or community post in the bot's own identity and voice."

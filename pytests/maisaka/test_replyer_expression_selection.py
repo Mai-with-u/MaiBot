@@ -14,10 +14,8 @@ from src.config.config import global_config
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("retro", [False, True], ids=["normal", "retro"])
-async def test_reply_context_preserves_expression_selection_in_creative_mode(monkeypatch, retro: bool) -> None:
+async def test_reply_context_preserves_expression_selection(monkeypatch) -> None:
     generator = object.__new__(BaseMaisakaReplyGenerator)
-    monkeypatch.setattr(global_config.chat, "creative_mode", retro)
     monkeypatch.setattr(generator, "_resolve_session_id", lambda stream_id: stream_id)
     selection = MaisakaExpressionSelectionResult(
         expression_habits="测试表达", selected_expression_ids=[1],

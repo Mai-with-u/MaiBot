@@ -904,16 +904,6 @@ class ChatConfig(ConfigBase):
     __ui_use_subtabs__ = True
     __ui_root_sub_label__ = "聊天设置"
 
-    creative_mode: bool = Field(
-        default=True,
-        json_schema_extra={
-            "x-chat-settings": {"scope": "common", "row": 10},
-            "label": {"zh_CN": "创意模式", "en_US": "Creative mode", "ja_JP": "クリエイティブモード"},
-            "x-widget": "switch",
-        },
-    )
-    """使用单次构建的prompt，激发模型回复表现的创造力，减少AI刻板句式。关闭可能提高缓存率。"""
-
     enable_reply_at: bool = Field(
         default=True,
         json_schema_extra={
@@ -1115,19 +1105,6 @@ class ExperimentalConfig(ConfigBase):
     __ui_advanced__ = True
     __ui_order__ = 140
 
-    tool_search_tail_loading: bool = Field(
-        default=False,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "工具定义末尾加载",
-                "en_US": "Load tool definitions at context tail",
-                "ja_JP": "ツール定義のコンテキスト末尾読み込み",
-            },
-            "x-widget": "switch",
-        },
-    )
-    """实验性功能：搜索命中的工具定义仅追加到搜索结果，附带加载状态和调用指引，保持顶层工具声明不变以保留上下文缓存。关闭时沿用搜索后加入工具声明的逻辑。不使用 API 原生工具搜索；需要模型支持根据结果文本调用工具，普通聊天和 Focus 生效，切换从下一轮工具决策生效。"""
-
     desktop_pet_exploration_enabled: bool = Field(
         default=False,
         json_schema_extra={"label": {"zh_CN": "桌宠自由探索"}, "x-widget": "switch"},
@@ -1145,7 +1122,7 @@ class ExperimentalConfig(ConfigBase):
             "x-widget": "switch",
         },
     )
-    """实验性功能：Replyer 使用所选语言 Prompt 生成回复，再由同一实际 Replyer 模型翻译为中文。优先于回复缓存模式，翻译会增加耗时和费用。"""
+    """实验性功能：Replyer 使用所选语言 Prompt 生成回复，再由同一实际 Replyer 模型翻译为中文。翻译会增加耗时和费用。"""
 
     super_creative_language: Literal["ja-JP", "ru-RU", "fr-FR", "zh-classical"] = Field(
         default="ja-JP",
@@ -1168,16 +1145,6 @@ class ExperimentalConfig(ConfigBase):
         },
     )
     """仅作用于普通聊天模式：Planner 不调用工具而输出正文时，将正文作为自然语言指导启动一次回复；篇幅、表达偏好和插件相关需求直接写入指导，引用与附件由并行回复补充器编排。关闭时使用原有 reply 工具。切换从下一轮思考生效，Focus 不受影响。"""
-
-    reply_cache: bool = Field(
-        default=False,
-        json_schema_extra={
-            "label": {"zh_CN": "回复缓存模式", "en_US": "Reply cache mode", "ja_JP": "返信キャッシュモード"},
-            "x-widget": "switch",
-        },
-    )
-    """复用本轮 Planner 请求前缀及实际模型，在末尾追加创意模式 Replyer 的完整 system/user 内容生成回复。
-    独立于被动式 replyer；不使用 Replyer 模型配置，强制使用创意模板。缓存命中由服务端决定，缺少 Planner 快照时明确失败。"""
 
     group_attention_drift: GroupAttentionDriftConfig = Field(
         default_factory=GroupAttentionDriftConfig,

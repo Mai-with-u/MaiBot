@@ -1,0 +1,15 @@
+[reply_mai_replier_private_system]
+display_name = "Mai Replier · Private chat · System"
+advanced = true
+description = "System message template for Mai Replier Private chat. Contains only persona by default and can be edited independently."
+
+[reply_private_mai_replier]
+display_name = "Mai Replier · Private chat · User"
+advanced = true
+description = "User message template for Mai Replier Private chat."
+
+[reply_private_followup_mai_replier]
+display_name = "Mai Replier · Private chat follow-up · User"
+advanced = true
+description = "User message template for Mai Replier Private chat follow-up."
+

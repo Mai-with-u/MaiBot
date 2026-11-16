@@ -3,7 +3,7 @@
 from functools import lru_cache
 from html import unescape
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, unquote, urlparse
 from uuid import uuid4
 import asyncio
@@ -56,7 +56,8 @@ REPLAY_IMAGE_ROOTS = (
 )
 ALLOWED_SUFFIXES = {".txt", ".html", ".json"}
 SESSION_CHAT_TYPES = ("group", "private")
-REPLY_REQUEST_STAGES = {"replyer", "replyer_creative"}
+NORMAL_REPLY_STAGES = {"replyer", "maisaka.replyer"}
+REPLY_REQUEST_STAGES = NORMAL_REPLY_STAGES | {"replyer_creative"}
 REPLY_OUTPUT_STAGES = REPLY_REQUEST_STAGES | {"replyer_translation"}
 ALL_GROUP_SESSIONS = "__all_group_chats__"
 PROMPT_METADATA_MARKER = "[请求信息]"
@@ -526,12 +527,15 @@ def _list_stage_infos() -> list[ReasoningPromptStageInfo]:
     if not PROMPT_LOG_ROOT.is_dir():
         return []
 
-    stage_infos: list[ReasoningPromptStageInfo] = []
+    stage_sessions: Dict[str, Set[str]] = {}
+    stage_modified_at: Dict[str, float] = {}
     for stage_dir in PROMPT_LOG_ROOT.iterdir():
         if not stage_dir.is_dir() or not _is_safe_name(stage_dir.name):
             continue
 
         session_dirs = [path for path in stage_dir.iterdir() if path.is_dir() and _is_safe_name(path.name)]
+        stage_name = "replyer" if stage_dir.name in NORMAL_REPLY_STAGES else stage_dir.name
+        stage_sessions.setdefault(stage_name, set()).update(path.name for path in session_dirs)
         latest_modified_at = 0.0
         for session_dir in session_dirs:
             try:
@@ -539,16 +543,14 @@ def _list_stage_infos() -> list[ReasoningPromptStageInfo]:
             except OSError:
                 continue
 
-        stage_infos.append(
-            ReasoningPromptStageInfo(
-                name=stage_dir.name,
-                session_count=len(session_dirs),
-                latest_modified_at=latest_modified_at,
-            )
-        )
+        stage_modified_at[stage_name] = max(stage_modified_at.get(stage_name, 0.0), latest_modified_at)
 
-    stage_infos.sort(key=lambda item: item.name)
-    return stage_infos
+    return [
+        ReasoningPromptStageInfo(
+            name=name, session_count=len(sessions), latest_modified_at=stage_modified_at[name],
+        )
+        for name, sessions in sorted(stage_sessions.items())
+    ]
 
 
 def _resolve_stage_name(stage: str) -> str:
@@ -557,17 +559,24 @@ def _resolve_stage_name(stage: str) -> str:
         return "planner"
     if not _is_safe_name(normalized_stage):
         raise HTTPException(status_code=400, detail="阶段名称不合法")
-    return normalized_stage
+    return "replyer" if normalized_stage in NORMAL_REPLY_STAGES else normalized_stage
+
+
+def _stage_storage_names(stage: str) -> Tuple[str, ...]:
+    """回复历史合并读取曾按请求类型命名的目录，记录路径仍指向原文件。"""
+    return ("replyer", "maisaka.replyer") if stage == "replyer" else (stage,)
 
 
 def _list_session_names(stage: str) -> list[str]:
-    stage_dir = PROMPT_LOG_ROOT / stage
-    if not stage_dir.is_dir():
-        return []
-
-    session_dirs = [path for path in stage_dir.iterdir() if path.is_dir() and _is_safe_name(path.name)]
-    session_dirs.sort(key=lambda path: path.stat().st_mtime, reverse=True)
-    return [path.name for path in session_dirs]
+    session_modified_at: Dict[str, float] = {}
+    for storage_name in _stage_storage_names(stage):
+        stage_dir = PROMPT_LOG_ROOT / storage_name
+        if not stage_dir.is_dir():
+            continue
+        for path in stage_dir.iterdir():
+            if path.is_dir() and _is_safe_name(path.name):
+                session_modified_at[path.name] = max(session_modified_at.get(path.name, 0.0), path.stat().st_mtime)
+    return sorted(session_modified_at, key=session_modified_at.__getitem__, reverse=True)
 
 
 def _resolve_session_name(session: str, sessions: list[str]) -> str:
@@ -1884,14 +1893,14 @@ def _collect_prompt_file_records(
     session: str,
     session_info_map: dict[str, ReasoningPromptSessionInfo],
 ) -> list[dict[str, object]]:
-    if session != ALL_GROUP_SESSIONS:
-        return _collect_prompt_file_records_for_session(stage, session, session_info_map)
-
     items: list[dict[str, object]] = []
-    for session_name, session_info in session_info_map.items():
-        if not _is_group_session_info(session_name, session_info):
-            continue
-        items.extend(_collect_prompt_file_records_for_session(stage, session_name, session_info_map))
+    session_names = (
+        [name for name, info in session_info_map.items() if _is_group_session_info(name, info)]
+        if session == ALL_GROUP_SESSIONS else [session]
+    )
+    for storage_name in _stage_storage_names(stage):
+        for session_name in session_names:
+            items.extend(_collect_prompt_file_records_for_session(storage_name, session_name, session_info_map))
 
     items.sort(
         key=lambda item: (
@@ -2022,7 +2031,7 @@ def _hydrate_prompt_file_records(
 ) -> list[ReasoningPromptFile]:
     items: List[ReasoningPromptFile] = []
     for record in records:
-        if record.get("stage") == "replyer":
+        if record.get("stage") in NORMAL_REPLY_STAGES:
             item = _hydrate_replyer_prompt_file_record(
                 record, include_previews=include_previews or include_output_preview,
             )
@@ -2044,7 +2053,7 @@ def _deduplicate_replyer_prompt_records(items: list[ReasoningPromptFile]) -> lis
     seen_indexes: dict[tuple[str, str], list[int]] = {}
 
     for item in items:
-        if item.stage != "replyer" or not item.output_preview:
+        if item.stage not in NORMAL_REPLY_STAGES or not item.output_preview:
             deduplicated_items.append(item)
             continue
 

@@ -1,0 +1,9 @@
+[planner_turn_focus]
+display_name = "Focus turn instructions"
+advanced = false
+description = "Instructions for shared Focus planning, covering group chats and private chats with Focus enabled."
+
+[planner_action_judge_focus]
+display_name = "Focus action judgment supplement"
+advanced = true
+description = "Instructions for shared Focus planning, covering group chats and private chats with Focus enabled."

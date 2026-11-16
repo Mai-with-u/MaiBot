@@ -1,20 +1,14 @@
-[reply_private]
-display_name = "私聊回复"
-advanced = true
-description = "创意模式下的默认私聊回复模板。"
+[reply_private_system]
+display_name = "私聊 · System"
+advanced = false
+description = "System 模板：人设、当前聊天背景与注意力提示。"
 
-[reply_private_mai_replier]
-display_name = "Mai Replier 私聊回复"
-advanced = true
-description = "Mai Replier 专用的私聊回复模板。"
+[reply_private]
+display_name = "私聊 · User"
+advanced = false
+description = "回复模板，聊天记录和本轮回复要求组织为一条 User 消息。"
 
 [reply_private_followup]
-display_name = "私聊补充发言"
-advanced = true
-description = "创意模式下，麦麦在私聊中继续补充自己上一条发言时使用。"
-
-[reply_private_followup_mai_replier]
-display_name = "Mai Replier 私聊补充发言"
-advanced = true
-description = "Mai Replier 在私聊中继续补充自己上一条发言时使用。"
-
+display_name = "私聊补充发言 · User"
+advanced = false
+description = "回复模板，聊天记录和本轮回复要求组织为一条 User 消息。"

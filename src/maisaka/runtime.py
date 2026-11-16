@@ -190,7 +190,6 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         self._consecutive_idle_count = 0
         self._current_action_tool_names: set[str] = set()
         self.discovered_tool_names: set[str] = set()
-        self._tool_search_tail_loading: bool = False
         self.deferred_tool_specs_by_name: dict[str, ToolSpec] = {}
 
         self._min_extraction_interval = 30
@@ -294,8 +293,8 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         self._update_stage_status("空闲", "等待消息触发")
         logger.info(f"{self.log_prefix} Maisaka 运行时已启动")
 
-    async def build_retro_reply_history(self) -> List[LLMContextMessage]:
-        """独立读取复古回复窗口，避免 Planner 裁切缩短回复器的聊天记录。"""
+    async def build_reply_history(self) -> List[LLMContextMessage]:
+        """独立读取回复窗口，避免 Planner 裁切缩短回复器的聊天记录。"""
 
         context_limit = max(1, int(self._max_context_size * 0.6))
         recent_messages = await asyncio.to_thread(
@@ -1492,11 +1491,8 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
     def build_deferred_tools_reminder(self) -> str:
         """构造供 planner 使用的 deferred tools 提示消息。"""
 
-        # 末尾加载模式的目录不随激活改变；普通模式只列出尚未展开的工具。
-        deferred_tool_specs = [
-            spec for name, spec in self.deferred_tool_specs_by_name.items()
-            if self._tool_search_tail_loading or name not in self.discovered_tool_names
-        ]
+        # 工具定义在搜索结果中加载，目录不随激活改变。
+        deferred_tool_specs = list(self.deferred_tool_specs_by_name.values())
         if not deferred_tool_specs:
             return ""
 

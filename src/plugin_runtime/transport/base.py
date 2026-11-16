@@ -15,7 +15,7 @@ from typing import Awaitable, Callable
 
 # 分帧常量
 FRAME_HEADER_SIZE = 4  # 4 字节长度前缀
-MAX_FRAME_SIZE = 16 * 1024 * 1024  # 16 MB 最大帧大小
+MAX_FRAME_SIZE = 32 * 1024 * 1024  # 32 MiB 最大帧大小，Host 与 Runner 共用
 
 
 class ConnectionClosed(Exception):

@@ -1,12 +1,12 @@
 """超级创意模式的两阶段生成、最终 Hook 输入和请求语言隔离。"""
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Tuple
 from unittest.mock import AsyncMock, Mock
 
 import asyncio
 import json
-
 import pytest
 
 from src.chat.replyer import maisaka_generator_base
@@ -40,7 +40,6 @@ def replyer(monkeypatch):
     monkeypatch.setattr(global_config.debug, "save_maisaka_reasoning", False)
     monkeypatch.setattr(global_config.experimental, "super_creative_mode", True)
     monkeypatch.setattr(global_config.experimental, "super_creative_language", "ja-JP")
-    monkeypatch.setattr(global_config.chat, "creative_mode", True)
     monkeypatch.setattr(global_config.debug, "gemini_reply_compatibility", False)
     monkeypatch.setattr(global_config.personality, "multiple_probability", 0)
     monkeypatch.setattr(maisaka_generator_base, "resolve_enable_visual_planner", lambda: False)
@@ -85,6 +84,43 @@ def replyer(monkeypatch):
     return SimpleNamespace(
         generator=generator, calls=calls, responses=responses, after_responses=after_responses, state=state,
     )
+
+
+@pytest.mark.parametrize("mai_replier", [False, True])
+def test_expression_intent_follows_conversation_analysis(replyer, mai_replier: bool) -> None:
+    with use_locale("zh-CN"):
+        items = replyer.generator._build_reply_request_messages(
+            chat_history=[], reply_message=None, reply_reason="", mai_replier=mai_replier,
+            reply_tool_args={
+                "chat_anlyze": "对方提出交换条件。",
+                "expression_intent": {
+                    "avoid": ["暧昧接受交换", "承诺照片"],
+                    "reply_act": "拒绝并反将一军",
+                    "focus": "用显卡换照片",
+                    "tone": "嫌弃、带点调侃",
+                },
+            },
+        )
+    user_text = get_item_text(items[1])
+    expected = (
+        "你的回复最好避免【暧昧接受交换、承诺照片】，回复目的是【拒绝并反将一军】。"
+        "表达重点是【用显卡换照片】，可以用【嫌弃、带点调侃】的语气表达。"
+    )
+    assert expected in user_text
+    assert user_text.index("对方提出交换条件。") < user_text.index(expected)
+
+
+@pytest.mark.parametrize("locale, expected", [
+    ("zh-CN", "表达重点是【拒绝交换】。"),
+    ("en-US", "Focus on [拒绝交换]."),
+    ("ja-JP", "伝える重点は【拒绝交换】です。"),
+])
+def test_expression_intent_omits_empty_fields(locale: str, expected: str) -> None:
+    with use_locale(locale):
+        assert BaseMaisakaReplyGenerator._build_expression_intent_guidance({
+            "focus": "拒绝交换", "avoid": [], "tone": " ",
+        }) == expected
+        assert BaseMaisakaReplyGenerator._build_expression_intent_guidance(None) == ""
 
 
 @pytest.mark.asyncio
@@ -238,17 +274,9 @@ async def test_hook_retry_regenerates_and_translates_each_reply(replyer) -> None
     assert result.metrics.extra["replyer_aggregate_total_tokens"] == 60
 
 
-@pytest.mark.asyncio
-async def test_super_creative_does_not_use_planner_snapshot(replyer) -> None:
-    snapshot = SimpleNamespace(request=SimpleNamespace(detached_snapshot=Mock(side_effect=AssertionError("Planner reused"))))
-    success, result = await replyer.generator.generate_reply_with_context(chat_history=[], planner_snapshot=snapshot)
-
-    assert success and result.text_fragments == ["月亮正在微笑。"]
-    snapshot.request.detached_snapshot.assert_not_called()
-    assert len(replyer.calls) == 2
 
 
-@pytest.mark.parametrize("profile", ["standard", "retro", "document"])
+@pytest.mark.parametrize("profile", ["reply", "document"])
 def test_each_prompt_profile_loads_japanese_templates(replyer, monkeypatch, profile: str) -> None:
     personality = "喜欢观察月亮的中文人设"
     monkeypatch.setattr(global_config.personality, "personality", personality)
@@ -270,7 +298,7 @@ def test_each_prompt_profile_loads_japanese_templates(replyer, monkeypatch, prof
         )
         assert get_locale() == "en-US"
 
-    expected = {"standard": "maisaka_replyer", "retro": "reply_group", "document": "maisaka_replyer_document"}
+    expected = {"reply": "reply_group", "document": "maisaka_replyer_document"}
     assert (expected[profile], "ja-JP") in loaded
     system = next(item for item in items if isinstance(item, SystemMessageItem))
     assert personality in get_item_text(system)
@@ -316,7 +344,7 @@ async def test_language_uses_same_replyer_for_translation(replyer, monkeypatch, 
 @pytest.mark.parametrize("locale", ["ru-RU", "fr-FR"])
 def test_translated_templates_keep_chinese_structure(locale, tmp_path):
     names = ("reply_group", "reply_group_mai_replier", "reply_private", "reply_private_followup",
-             "maisaka_replyer", "maisaka_replyer_document", "reply_attachments")
+             "maisaka_replyer_document", "reply_attachments")
     with use_locale(locale):
         for name in names:
             original = load_prompt_template(name, locale="zh-CN", include_custom=False).template
@@ -358,17 +386,103 @@ def test_mai_replier_uses_dedicated_private_template(self_reply: bool, shared_na
         shared = load_prompt_template(shared_name, locale=locale, include_custom=False)
         dedicated = load_prompt_template(dedicated_name, locale=locale, include_custom=False)
         assert dedicated.locale == locale
-        assert extract_prompt_placeholders(dedicated.template) == extract_prompt_placeholders(shared.template)
+        assert extract_prompt_placeholders(dedicated.template) == extract_prompt_placeholders(shared.template) | {"reply_guidance"}
+
+
+
+@pytest.mark.parametrize("profile", ["reply", "mai_replier"])
+@pytest.mark.parametrize("is_group", [True, False])
+@pytest.mark.parametrize("locale, style, expected, excluded", [
+    ("zh-CN", "简短表达", "1-2句短句即可", "最好一次对一个话题"),
+    ("zh-CN", "正常回复", "最好一次对一个话题", "1-2句短句即可"),
+    ("zh-CN", "长回复", "可以针对问题做出较为详细的评论和说明。", "日常且口语化的回复"),
+    ("en-US", "简短表达", "one or two short, conversational sentences", "one topic at a time"),
+    ("en-US", "正常回复", "one topic at a time", "one or two short, conversational sentences"),
+    ("en-US", "长回复", "You may comment on and explain the question in detail.", "conversational tone"),
+    ("ja-JP", "简短表达", "短い一文か二文", "一度にひとつの話題"),
+    ("ja-JP", "正常回复", "一度にひとつの話題", "短い一文か二文"),
+    ("ja-JP", "长回复", "質問について詳しく意見を述べたり説明したりして構いません。", "日常的な話し言葉"),
+])
+def test_guidance_switches_in_each_message_structure(
+    replyer, monkeypatch: pytest.MonkeyPatch, profile: str, is_group: bool,
+    locale: str, style: str, expected: str, excluded: str,
+) -> None:
+    monkeypatch.setattr(global_config.personality, "reply_style", "configured-style")
+    replyer.generator.chat_stream.is_group_session = is_group
+    with use_locale(locale):
+        items = replyer.generator._build_request_messages(
+            chat_history=[], reply_message=None, reply_reason="", prompt_profile=profile,
+            reply_tool_args={"reply_style": style},
+        )
+    # Mai Replier 的群聊与私聊在 User 模板中切换引导语，不向人设风格追加篇幅要求。
+    assert len(items) == 2
+    guidance_message = get_item_text(items[1])
+    assert expected in guidance_message
+    assert excluded not in guidance_message
+    assert "configured-style" in guidance_message
+    assert "configured-style\n本次篇幅" not in guidance_message
+
+
+def test_mai_replier_private_followup_uses_guidance_without_fixed_short_reply(replyer, monkeypatch):
+    generator = replyer.generator
+    generator.chat_stream.is_group_session = False
+    monkeypatch.setattr(generator, "_select_reply_prompt_name", lambda **kwargs: "reply_private_followup_mai_replier")
+    monkeypatch.setattr(global_config.personality, "reply_style", "configured-style")
+    with use_locale("zh-CN"):
+        items = generator._build_request_messages(
+            chat_history=[], reply_message=None, reply_reason="", prompt_profile="mai_replier",
+            reply_tool_args={"reply_style": "长回复"},
+        )
+    user = get_item_text(items[1])
+    assert "注意保持上下文的连贯性" in user
+    assert "可以针对问题做出较为详细的评论和说明。" in user
+    assert "尽量简短" not in user
+    assert "不要回复的太有条理" not in user
+    assert user.count("可以针对问题做出较为详细的评论和说明。") == 1
+
+
+
+
+
+
+@pytest.mark.parametrize("locale", ["zh-CN", "en-US", "ja-JP"])
+@pytest.mark.parametrize("is_group, scene", [(True, "group"), (False, "private")])
+def test_mai_replier_applies_custom_system_template(
+    replyer, monkeypatch, tmp_path: Path, locale: str, is_group: bool, scene: str,
+) -> None:
+    name = f"reply_mai_replier_{scene}_system"
+    builtin = load_prompt_template(name, locale=locale, include_custom=False).template
+    assert builtin.strip() == "{identity}"
+    custom_dir = tmp_path / locale
+    custom_dir.mkdir()
+    (custom_dir / f"{name}.prompt").write_text(builtin + "\ncustom-system-instruction", encoding="utf-8")
+
+    def custom_load(prompt_name: str, **kwargs: Any) -> str:
+        return load_prompt(prompt_name, custom_prompts_root=tmp_path, **kwargs)
+
+    generator = replyer.generator
+    generator.chat_stream.is_group_session = is_group
+    monkeypatch.setattr(generator, "_load_prompt_func", custom_load)
+    with use_locale(locale):
+        items = generator._build_request_messages(
+            chat_history=[], reply_message=None, reply_reason="", prompt_profile="mai_replier",
+        )
+    assert len(items) == 2
+    assert isinstance(items[0], SystemMessageItem)
+    assert "custom-system-instruction" in get_item_text(items[0])
+    assert global_config.bot.nickname in get_item_text(items[0])
+    assert isinstance(items[1], UserMessageItem)
+    assert "custom-system-instruction" not in get_item_text(items[1])
 
 
 @pytest.mark.parametrize("is_group, template", [(True, "reply_group"), (False, "reply_private")])
 @pytest.mark.parametrize("style, think_level, instruction", [
-    ("简短表达", 1, "用一到两句口语短句回复"),
-    ("正常回复", 1, "篇幅与当前话题相称"),
-    ("长回复", 1, "本次篇幅以说清问题为准"),
-    ("", 0, "用一到两句口语短句回复"),
+    ("简短表达", 1, "1-2句短句即可"),
+    ("正常回复", 1, "最好一次对一个话题"),
+    ("长回复", 1, "可以针对问题做出较为详细的评论和说明。"),
+    ("", 0, "1-2句短句即可"),
 ])
-def test_creative_chat_uses_one_template_for_all_lengths(
+def test_chat_uses_one_user_template_for_all_lengths(
     replyer, monkeypatch: pytest.MonkeyPatch, is_group: bool, template: str,
     style: str, think_level: int, instruction: str,
 ) -> None:
@@ -379,21 +493,19 @@ def test_creative_chat_uses_one_template_for_all_lengths(
 
     with use_locale("zh-CN"):
         items = generator._build_request_messages(
-            chat_history=[], reply_message=None, reply_reason="", prompt_profile="retro",
+            chat_history=[], reply_message=None, reply_reason="", prompt_profile="reply",
             reply_tool_args={"reply_style": style}, think_level=think_level,
         )
 
-    assert [call.args[0] for call in load.call_args_list if call.args[0].startswith(("reply_group", "reply_private"))] == [
+    assert [call.args[0] for call in load.call_args_list if call.args[0] == template] == [
         template,
     ]
     assert get_item_text(items[-1]).count(instruction) == 1
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("creative", [False, True])
 @pytest.mark.parametrize("super_creative", [False, True])
-async def test_mai_replier_ignores_both_creative_modes(replyer, monkeypatch, creative, super_creative):
-    monkeypatch.setattr(global_config.chat, "creative_mode", creative)
+async def test_mai_replier_ignores_super_creative_mode(replyer, monkeypatch, super_creative):
     monkeypatch.setattr(global_config.experimental, "super_creative_mode", super_creative)
     replyer.state.model_info = ModelInfo(
         model_type="llm", name="mai-replier", model_identifier="mai_replier", api_provider="test-provider",
@@ -406,7 +518,7 @@ async def test_mai_replier_ignores_both_creative_modes(replyer, monkeypatch, cre
             chat_history=[], reply_tool_args={"reply_style": "简短表达"},
         )
     assert success and result.text_fragments == ["直接输出中文"]
-    assert [call.args[0] for call in load.call_args_list if call.args[0].startswith("reply_group")] == [
+    assert [call.args[0] for call in load.call_args_list if call.args[0] == "reply_group_mai_replier"] == [
         "reply_group_mai_replier",
     ]
     assert len(replyer.calls) == 1

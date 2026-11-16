@@ -23,11 +23,6 @@ display_name = "本轮行动指令"
 advanced = false
 description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
 
-[planner_turn_focus]
-display_name = "本轮行动指令（Focus）"
-advanced = false
-description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
-
 [planner_turn_passive]
 display_name = "本轮行动指令（被动回复）"
 advanced = false

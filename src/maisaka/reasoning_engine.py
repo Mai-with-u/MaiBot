@@ -197,6 +197,7 @@ class MaisakaReasoningEngine:
     async def _run_interruptible_planner(
         self,
         *,
+        deferred_tools_reminder: str = "",
         injected_user_messages: Optional[list[str]] = None,
         tail_user_messages: Optional[list[str]] = None,
         tool_definitions: Optional[list[dict[str, Any]]] = None,
@@ -213,6 +214,7 @@ class MaisakaReasoningEngine:
             planner_task = asyncio.create_task(
                 self._runtime._chat_loop_service.chat_loop_step(
                     self._runtime._chat_history,
+                    deferred_tools_reminder=deferred_tools_reminder,
                     injected_user_messages=injected_user_messages,
                     tail_user_messages=tail_user_messages,
                     tool_definitions=tool_definitions,
@@ -254,7 +256,6 @@ class MaisakaReasoningEngine:
                 continue
             deferred_tool_specs.append(tool_spec)
 
-        self._runtime._tool_search_tail_loading = global_config.experimental.tool_search_tail_loading
         self._runtime.update_deferred_tool_specs(deferred_tool_specs)
         selected_history, _ = self._runtime._chat_loop_service.select_llm_context_messages(
             self._runtime._chat_history,
@@ -267,8 +268,6 @@ class MaisakaReasoningEngine:
         active_specs = [*visible_builtin_tool_specs, *discovered_deferred_tool_specs]
         self._runtime.set_current_action_tool_names([spec.name for spec in active_specs])
         definitions = [spec.to_llm_definition() for spec in visible_builtin_tool_specs]
-        if not self._runtime._tool_search_tail_loading:
-            definitions.extend(spec.to_llm_definition() for spec in discovered_deferred_tool_specs)
         return (
             definitions,
             self._runtime.build_deferred_tools_reminder(),
@@ -279,15 +278,12 @@ class MaisakaReasoningEngine:
         *,
         profile_message: SessionMessage,
         source_messages: list[SessionMessage],
-        deferred_tools_reminder: str,
         round_text: Optional[str] = None,
         context_timings: Optional[Dict[str, float]] = None,
     ) -> list[str]:
         """构造本轮 planner 的一次性注入消息。"""
 
         injected_messages: list[str] = []
-        if deferred_tools_reminder:
-            injected_messages.append(deferred_tools_reminder)
 
         async def build_heuristic_memory_message() -> str:
             try:
@@ -658,7 +654,6 @@ class MaisakaReasoningEngine:
         injected_user_messages = await self._build_planner_injected_user_messages(
             profile_message=trigger_message,
             source_messages=source_messages,
-            deferred_tools_reminder=deferred_tools_reminder,
             round_text=round_text,
             context_timings=context_timings,
         )
@@ -696,6 +691,7 @@ class MaisakaReasoningEngine:
                 None,
             )
             response = await self._run_interruptible_planner(
+                deferred_tools_reminder=deferred_tools_reminder,
                 injected_user_messages=injected_user_messages or None,
                 tail_user_messages=build_consecutive_wait_reminders(self._runtime._consecutive_wait_count),
                 tool_definitions=action_tool_definitions,

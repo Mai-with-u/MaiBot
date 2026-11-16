@@ -1,6 +1,7 @@
 """将工具式 Planner 遗漏的动作补成标准工具调用。"""
 
 from dataclasses import dataclass
+from jsonschema import ValidationError, validate
 from typing import Any, Dict, List, Optional, Sequence
 
 import asyncio
@@ -83,6 +84,10 @@ async def complete_missing_planner_action(
         "recent_chat": await asyncio.to_thread(build_recent_chat_context, chat_history, include_session_ids=bool(routes)),
         "planner_text": content,
     }
+    payload["tools"] = [
+        {"name": tool.name, "description": tool.description, "parameters": tool.parameters_schema}
+        for tool in (tools["reply"], tools["wait"])
+    ]
     judge_prompt = load_prompt("planner_action_judge")
     if routes:
         payload["reply_sessions"] = routes
@@ -113,25 +118,19 @@ async def complete_missing_planner_action(
         parsed = json.loads(decision)
     except json.JSONDecodeError as exc:
         raise RespParseException(message=f"Planner 动作判断器返回了无效 JSON：{decision!r}") from exc
-    if not isinstance(parsed, dict) or "action" not in parsed:
+    if not isinstance(parsed, dict) or set(parsed) != {"action", "arguments"}:
         raise RespParseException(message=f"Planner 动作判断器返回了无效字段：{decision!r}")
     action = parsed["action"]
-    decision_properties = {"action": {}}
-    if action == "reply" and routes:
-        decision_properties["session_id"] = {}
-    parsed = filter_tool_arguments(parsed, {"properties": decision_properties})
-    arguments: Dict[str, Any] = {}
-    if action == "wait" and set(parsed) == {"action"}:
-        if routes:
-            arguments["session_id"] = routes[0]
-    elif action == "reply" and not routes and set(parsed) == {"action"}:
-        pass
-    elif action == "reply" and routes and set(parsed) == {"action", "session_id"} and parsed["session_id"] in routes:
-        arguments["session_id"] = parsed["session_id"]
-    else:
+    arguments = parsed["arguments"]
+    if not isinstance(action, str) or action not in {"reply", "wait"} or not isinstance(arguments, dict):
         raise RespParseException(message=f"Planner 动作判断器返回了无效选项：{decision!r}")
-    if action == "reply":
-        arguments["chat_anlyze"] = content
+    schema = tools[action].parameters_schema
+    if filter_tool_arguments(arguments, schema) != arguments:
+        raise RespParseException(message=f"Planner 动作判断器返回了未声明的工具参数：{decision!r}")
+    try:
+        await asyncio.to_thread(validate, arguments, schema)
+    except ValidationError as exc:
+        raise RespParseException(message=f"Planner 动作判断器的 {action} 参数不符合工具声明：{exc.message}") from exc
 
     turn_id = logical_turn_id or next(
         (item.meta.logical_turn_id for item in output_items if item.meta.logical_turn_id), uuid.uuid4().hex,

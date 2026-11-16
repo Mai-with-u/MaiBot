@@ -1,0 +1,9 @@
+[planner_default_private]
+display_name = "默认规划器 · 私聊"
+advanced = false
+description = "非 Focus 模式下的私聊规划模板，通过工具执行行动和发起回复。"
+
+[planner_passive_private]
+display_name = "被动回复规划器 · 私聊"
+advanced = true
+description = "非 Focus 模式下启用被动式 Replyer 时的私聊规划模板，最终分析正文用于指导回复。"

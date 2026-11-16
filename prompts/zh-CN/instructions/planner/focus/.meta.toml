@@ -1,0 +1,9 @@
+[planner_turn_focus]
+display_name = "Focus 本轮行动指令"
+advanced = false
+description = "Focus 共享规划时使用的指令片段，适用于共享组中的群聊及已启用 Focus 的私聊。"
+
+[planner_action_judge_focus]
+display_name = "Focus 行动判定补充"
+advanced = true
+description = "Focus 共享规划时使用的指令片段，适用于共享组中的群聊及已启用 Focus 的私聊。"

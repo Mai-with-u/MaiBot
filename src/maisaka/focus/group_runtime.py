@@ -58,7 +58,7 @@ class FocusChatLoopService(MaisakaChatLoopService):
     """组级请求没有默认聊天，不把某个成员的身份或额外规则冒充成整个组。"""
 
     def _get_chat_prompt_name(self) -> str:
-        return "maisaka_chat_focus"
+        return "planner_focus"
 
 
 class FocusGroupRuntime:
@@ -531,7 +531,8 @@ class FocusGroupRuntime:
                 response = await self._service.chat_loop_step(
                     history,
                     tool_definitions=self.tools.definitions(),
-                    injected_user_messages=[self._roster(), self.tools.deferred_notice(), *references],
+                    deferred_tools_reminder=self.tools.deferred_notice(),
+                    injected_user_messages=[self._roster(), *references],
                     tail_user_messages=build_consecutive_wait_reminders(self._consecutive_waits),
                     max_context_size=max(self.max_context_size, sum(message.count_in_context for message in history) + 1),
                     logical_turn_id=logical_turn_id,
@@ -606,7 +607,6 @@ class FocusGroupRuntime:
             injected = await member._reasoning_engine._build_planner_injected_user_messages(
                 profile_message=messages[-1],
                 source_messages=messages,
-                deferred_tools_reminder="",
             )
             jargon = member._reasoning_engine._refresh_jargon_reference_message()
             if jargon is not None:

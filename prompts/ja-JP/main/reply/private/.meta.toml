@@ -1,20 +1,14 @@
-[reply_private]
-display_name = "個人チャット返信"
-advanced = true
-description = "クリエイティブモードの既定の個人チャット返信テンプレート。"
+[reply_private_system]
+display_name = "個別チャット · System"
+advanced = false
+description = "人格、チャットの背景、注意力の指示を含む System テンプレート。"
 
-[reply_private_mai_replier]
-display_name = "Mai Replier の個人チャット返信"
-advanced = true
-description = "Mai Replier 専用の個人チャット返信テンプレート。"
+[reply_private]
+display_name = "個別チャット · User"
+advanced = false
+description = "履歴と今回の返信要件を一つの User メッセージにまとめる返信テンプレート。"
 
 [reply_private_followup]
-display_name = "個人チャットでの補足発言"
-advanced = true
-description = "クリエイティブモードの個人チャットで、直前の自分の発言に補足するときに使う。"
-
-[reply_private_followup_mai_replier]
-display_name = "Mai Replier の個人チャットでの補足発言"
-advanced = true
-description = "Mai Replier が個人チャットで直前の自分の発言に補足するときに使う。"
-
+display_name = "個別チャットの補足発言 · User"
+advanced = false
+description = "履歴と今回の返信要件を一つの User メッセージにまとめる返信テンプレート。"

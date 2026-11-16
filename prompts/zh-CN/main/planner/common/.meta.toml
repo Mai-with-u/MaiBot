@@ -1,0 +1,4 @@
+[planner_action_judge]
+display_name = "行动判定"
+advanced = true
+description = "规划器缺少明确行动时的行动判定模板，普通模式与 Focus 共用。"

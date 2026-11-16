@@ -8,3 +8,9 @@ display_name = "回复补充重试"
 advanced = true
 description = "回复补充生成失败后，根据错误信息重新生成补充编排。"
 
+
+[reply_conversation_analysis]
+display_name = "对话分析参考"
+advanced = true
+description = "对话局面与关键事实的消息文案；分析内容来自 reply 工具的 chat_anlyze。"
+

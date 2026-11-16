@@ -1,0 +1,5 @@
+给你真实聊天消息 recent_chat、完整的 planner_text，以及本轮 Planner 实际可用的 reply、wait 工具声明 tools。请你根据上下文选出下一步的动作。
+明确决定现在回复、接话、给出答复，或已经写出打算发送的回复时，选择 reply。
+决定沉默、等待、不回复、无需行动，或只是讨论可能性而未决定现在回复时，选择 wait。先查询再考虑回复也选择 wait。
+根据 tools 中对应工具的完整参数定义填写 arguments，遵守字段说明、类型、枚举和必填要求。
+只输出一个合法 JSON 对象，格式为 {"action":"reply","arguments":{实际的 reply 参数}} 或 {"action":"wait","arguments":{实际的 wait 参数}}。arguments 必须是 JSON 对象，不是 JSON 字符串。不要输出 Markdown、解释、分析、额外字段或回复正文。

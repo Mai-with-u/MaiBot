@@ -8,3 +8,9 @@ display_name = "Reply supplement retry"
 advanced = true
 description = "Regenerates the reply supplement plan from the error of the previous failed attempt."
 
+
+[reply_conversation_analysis]
+display_name = "Conversation analysis reference"
+advanced = true
+description = "Wording for the conversation situation and key facts message, using chat_anlyze from the reply tool."
+

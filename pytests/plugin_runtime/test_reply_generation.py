@@ -103,9 +103,7 @@ async def test_failure_and_empty_output_are_reported(generation, success, text, 
     assert result["error"] == (error if not success else "Replyer 返回了空文本")
 
 
-@pytest.mark.parametrize("retro", [False, True])
-def test_actual_replyer_prompts_keep_personality_materials_and_post_format(monkeypatch, retro):
-    monkeypatch.setattr(global_config.chat, "creative_mode", retro)
+def test_actual_replyer_prompts_keep_personality_materials_and_post_format(monkeypatch):
     monkeypatch.setattr(global_config.personality, "personality", "喜欢游戏和观察社区的测试人格")
     monkeypatch.setattr(global_config.personality, "multiple_probability", 0)
     session = SimpleNamespace(is_group_session=True, platform="xiaoheihe", group_id="post:123:thread:browse", user_id="")

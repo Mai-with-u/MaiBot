@@ -1,0 +1,10 @@
+[reply_mai_replier_group_system]
+display_name = "Mai Replier · 群聊 · System"
+advanced = true
+description = "Mai Replier 的群聊 System 消息模板，默认只包含人设；可独立编辑。"
+
+[reply_group_mai_replier]
+display_name = "Mai Replier · 群聊 · User"
+advanced = true
+description = "Mai Replier 的群聊 User 消息模板。"
+

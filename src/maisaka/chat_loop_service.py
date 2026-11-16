@@ -808,11 +808,11 @@ class MaisakaChatLoopService:
 
         prompt_name = self._get_chat_prompt_name()
         instruction = {
-            "maisaka_chat": "planner_turn_action",
-            "maisaka_chat_passive": "planner_turn_passive",
-            "maisaka_chat_private": "planner_turn_action",
-            "maisaka_chat_private_passive": "planner_turn_passive",
-            "maisaka_chat_focus": "planner_turn_focus",
+            "planner_default_group": "planner_turn_action",
+            "planner_passive_group": "planner_turn_passive",
+            "planner_default_private": "planner_turn_action",
+            "planner_passive_private": "planner_turn_passive",
+            "planner_focus": "planner_turn_focus",
         }[prompt_name]
         return load_prompt(instruction, bot_name=global_config.bot.nickname.strip()).strip()
 
@@ -820,7 +820,7 @@ class MaisakaChatLoopService:
         """选择当前聊天使用的 Planner 模板。"""
 
         if focus_mode_manager.is_enabled_for_session(self._session_id, is_group_chat=self._is_group_chat):
-            return "maisaka_chat_focus"
+            return "planner_focus"
         passive_replyer = (
             self.passive_replyer_override if self.passive_replyer_override is not None
             else global_config.experimental.passive_replyer
@@ -998,6 +998,7 @@ class MaisakaChatLoopService:
         *,
         enable_visual_message: bool,
         include_day_boundary_time_messages: bool = False,
+        deferred_tools_reminder: str = "",
         injected_user_messages: Sequence[str] | None = None,
         tail_user_messages: Sequence[str] | None = None,
         final_user_message: str | None = None,
@@ -1016,7 +1017,7 @@ class MaisakaChatLoopService:
         system_item = ContextItemBuilder().set_role(RoleType.System)
         uses_builtin_system_prompt = system_prompt is None and self._custom_chat_system_prompt is None
         if uses_builtin_system_prompt and self._get_chat_prompt_name() in {
-            "maisaka_chat", "maisaka_chat_passive", "maisaka_chat_private", "maisaka_chat_private_passive",
+            "planner_default_group", "planner_passive_group", "planner_default_private", "planner_passive_private",
         }:
             # 普通聊天模板自己写明了名字：昵称说明跟在名字之后，且只说明与名字不同的昵称
             bot_nickname_notice = self._build_bot_nickname_notice(selected_history, skip_same_as_bot_name=True)
@@ -1032,7 +1033,7 @@ class MaisakaChatLoopService:
             if bot_nickname_notice:
                 resolved_system_prompt = f"{bot_nickname_notice}\n\n{resolved_system_prompt}"
         # 普通 Planner 不持有 reply 工具，按真实会话展示可用回复扩展。
-        if self._get_chat_prompt_name() in {"maisaka_chat_passive", "maisaka_chat_private_passive"}:
+        if self._get_chat_prompt_name() in {"planner_passive_group", "planner_passive_private"}:
             session = chat_manager.get_session_by_session_id(self._session_id)
             if session is not None:
                 capabilities = build_reply_extension_capabilities(ToolAvailabilityContext(
@@ -1054,6 +1055,9 @@ class MaisakaChatLoopService:
         if exploration_context:
             resolved_system_prompt += "\n\n" + exploration_context
         system_item.add_text_content(resolved_system_prompt)
+        # 工具目录不随激活改变，放在历史之前以复用稳定的请求前缀。
+        if deferred_tools_reminder.strip():
+            system_item.add_text_content("\n\n" + deferred_tools_reminder.strip())
         items.append(system_item.build())
 
         previous_context_timestamp: datetime | None = None
@@ -1151,6 +1155,7 @@ class MaisakaChatLoopService:
         self,
         chat_history: List[LLMContextMessage],
         *,
+        deferred_tools_reminder: str = "",
         injected_user_messages: Sequence[str] | None = None,
         request_kind: str = "planner",
         response_format: RespFormat | None = None,
@@ -1183,6 +1188,7 @@ class MaisakaChatLoopService:
             selected_history,
             enable_visual_message=enable_visual_message,
             include_day_boundary_time_messages=request_kind == "planner",
+            deferred_tools_reminder=deferred_tools_reminder,
             injected_user_messages=injected_user_messages,
             tail_user_messages=tail_user_messages,
             final_user_message=(
@@ -1224,7 +1230,7 @@ class MaisakaChatLoopService:
             tool_specs = await self._tool_registry.list_tools(availability_context)
             tool_specs = [
                 spec for spec in tool_specs if spec.provider_name != "maisaka_builtin"
-                or is_builtin_tool_in_action_stage(spec, passive_replyer=self._get_chat_prompt_name() in {"maisaka_chat_passive", "maisaka_chat_private_passive"})
+                or is_builtin_tool_in_action_stage(spec, passive_replyer=self._get_chat_prompt_name() in {"planner_passive_group", "planner_passive_private"})
             ]
             all_tools = [tool_spec.to_llm_definition() for tool_spec in tool_specs]
             tool_provider_types = [tool_spec.provider_type for tool_spec in tool_specs]
@@ -1235,7 +1241,7 @@ class MaisakaChatLoopService:
                 is_group_chat=self._is_group_chat,
             )
             builtin_definitions = get_builtin_tools(
-                availability_context, passive_replyer=self._get_chat_prompt_name() in {"maisaka_chat_passive", "maisaka_chat_private_passive"},
+                availability_context, passive_replyer=self._get_chat_prompt_name() in {"planner_passive_group", "planner_passive_private"},
             )
             all_tools = [*builtin_definitions, *self._extra_tools]
             tool_provider_types = ["builtin"] * len(builtin_definitions) + [""] * len(self._extra_tools)
@@ -1380,7 +1386,7 @@ class MaisakaChatLoopService:
             except Exception as exc:
                 logger.warning(f"Hook maisaka.planner.after_response 返回的 output_items 无法反序列化，已忽略: {exc}")
         action_judgment = None
-        if request_kind == "planner" and self._get_chat_prompt_name() in {"maisaka_chat", "maisaka_chat_private", "maisaka_chat_focus"}:
+        if request_kind == "planner" and self._get_chat_prompt_name() in {"planner_default_group", "planner_default_private", "planner_focus"}:
             action_judgment = await complete_missing_planner_action(
                 final_output_items, all_tools, session_id=self._session_id,
                 logical_turn_id=logical_turn_id, chat_history=selected_history, interrupt_flag=self._interrupt_flag,

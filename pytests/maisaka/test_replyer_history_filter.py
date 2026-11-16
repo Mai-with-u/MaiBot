@@ -1,4 +1,5 @@
 from datetime import datetime
+from types import SimpleNamespace
 from typing import List
 
 import pytest
@@ -7,6 +8,7 @@ from src.chat.message_receive.message import SessionMessage
 from src.chat.replyer.maisaka_generator_base import BaseMaisakaReplyGenerator
 from src.common.data_models.message_component_data_model import MessageSequence, TextComponent
 from src.llm_models.payload_content.context_item import ContextItemBuilder, RoleType, get_item_text
+from src.maisaka.context.compaction import ContextSummaryMessage
 from src.maisaka.context.messages import (
     ComplexSessionMessage,
     ContentContextMessage,
@@ -18,7 +20,6 @@ from src.maisaka.context.messages import (
     ToolResultMediaMessage,
     ToolResultMessage,
 )
-from src.maisaka.context.compaction import ContextSummaryMessage
 
 
 def _build_mixed_history() -> List[LLMContextMessage]:
@@ -97,29 +98,30 @@ def test_common_filter_only_keeps_real_chat_messages() -> None:
     ] == history[:3]
 
 
-@pytest.mark.parametrize("retro", [False, True], ids=["normal", "retro"])
+@pytest.mark.parametrize("mai_replier", [False, True], ids=["reply", "mai-replier"])
 @pytest.mark.parametrize("visual", [False, True], ids=["text", "visual"])
-def test_request_history_excludes_internal_messages(monkeypatch, retro: bool, visual: bool) -> None:
+def test_request_history_excludes_internal_messages(monkeypatch, mai_replier: bool, visual: bool) -> None:
     generator = object.__new__(BaseMaisakaReplyGenerator)
     history = _build_mixed_history()
-    if retro:
-        # 替换模板与展示依赖，保留真实的复古入口过滤和图文上下文组装。
-        monkeypatch.setattr(generator, "_select_retro_prompt_name", lambda **kwargs: "test")
-        monkeypatch.setattr(generator, "_build_personality_prompt", lambda: "测试人设")
-        monkeypatch.setattr(generator, "_build_retro_template_context", lambda **kwargs: {
-            "dialogue_prompt": "\n".join(message.processed_plain_text for message in kwargs["chat_history"]),
-        })
-        monkeypatch.setattr(generator, "_load_prompt", lambda name, **kwargs: kwargs["dialogue_prompt"], raising=False)
-        monkeypatch.setattr(
-            generator, "_render_retro_history_line", lambda message, history_by_id: message.processed_plain_text,
-        )
-        # 图片预处理会读取真实消息媒体；此测试不涉及图片缩放。
-        monkeypatch.setattr(generator, "_prepare_retro_visual_history", lambda messages: (messages, {}))
-        items = generator._build_retro_request_messages(
-            chat_history=history, reply_message=None, reply_reason="", enable_visual_message=visual, mai_replier=True,
-        )
-    else:
-        items = generator._build_history_messages(history, enable_visual_message=visual)
+    generator.chat_stream = SimpleNamespace(session_id="test", is_group_session=True)
+    # 隔离模板与展示依赖，保留真实入口的过滤与图文组装。
+    monkeypatch.setattr(generator, "_select_reply_prompt_name", lambda **kwargs: "test")
+    monkeypatch.setattr(generator, "_build_personality_prompt", lambda: "测试人设")
+    monkeypatch.setattr(generator, "_build_chat_attention_block", lambda session_id: "")
+    monkeypatch.setattr(generator, "_build_reply_attachment_prompt", lambda **kwargs: "")
+    monkeypatch.setattr(generator, "_build_reply_template_context", lambda **kwargs: {
+        "dialogue_prompt": "\n".join(message.processed_plain_text for message in kwargs["chat_history"]),
+    })
+    monkeypatch.setattr(
+        generator, "_load_prompt",
+        lambda name, **kwargs: kwargs["identity"] if "identity" in kwargs else kwargs["dialogue_prompt"],
+    )
+    monkeypatch.setattr(generator, "_render_reply_history_line", lambda message, history_by_id: message.processed_plain_text)
+    monkeypatch.setattr(generator, "_prepare_reply_visual_history", lambda messages: (messages, {}))
+    items = generator._build_request_messages(
+        chat_history=history, reply_message=None, reply_reason="", enable_visual_message=visual,
+        prompt_profile="mai_replier" if mai_replier else "reply",
+    )
 
     text = "\n".join(get_item_text(item) for item in items)
     for message in history[:3]:

@@ -32,13 +32,18 @@ class ChatPromptProfile:
     def replyer_attention_block(self, extra_prompt: str) -> str:
         lines = []
         if text := self.attention_text().strip():
-            lines.append(f"通用注意事项：\n{text}")
+            lines.append(text)
         if extra_prompt := extra_prompt.strip():
-            lines.append(f"当前聊天额外注意事项：\n{extra_prompt}")
-        return "在该聊天中的注意事项：\n" + "\n\n".join(lines) + "\n" if lines else ""
+            lines.append(extra_prompt)
+        prefix = localized_text({
+            "zh-CN": "在该聊天中的部分背景信息如下，",
+            "en-US": "Some background information for this chat follows: ",
+            "ja-JP": "このチャットの背景情報は以下のとおりです。",
+        })
+        return prefix + "\n".join(lines) + "\n" if lines else ""
 
     def select_planner_template(self, *, passive_replyer: bool) -> str:
-        return "maisaka_chat_passive" if passive_replyer else "maisaka_chat"
+        return "planner_passive_group" if passive_replyer else "planner_default_group"
 
     def select_chat_reply_template(self, *, self_reply: bool, mai_replier: bool) -> str:
         raise ValueError("回复模板选择需要已绑定的聊天场景")

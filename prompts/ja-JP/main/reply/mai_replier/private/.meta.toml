@@ -1,0 +1,15 @@
+[reply_mai_replier_private_system]
+display_name = "Mai Replier · 個別チャット · System"
+advanced = true
+description = "Mai Replier の個別チャット用 System テンプレート。既定では人格のみを含み、個別に編集できる。"
+
+[reply_private_mai_replier]
+display_name = "Mai Replier · 個別チャット · User"
+advanced = true
+description = "Mai Replier の個別チャット用 User テンプレート。"
+
+[reply_private_followup_mai_replier]
+display_name = "Mai Replier · 個別チャットの補足発言 · User"
+advanced = true
+description = "Mai Replier の個別チャットの補足発言用 User テンプレート。"
+
