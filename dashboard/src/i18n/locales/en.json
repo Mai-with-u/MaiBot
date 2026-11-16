@@ -1766,7 +1766,7 @@
     "items": {
       "home": "Home",
       "homeDesc": "View dashboard overview",
-      "chatDesc": "Conversation settings: open the group conversation settings to check its reply frequency. At zero, the group still receives messages but does not enter Planner. Private chat has its own pause switch.",
+      "chatDesc": "Conversation settings: open the group conversation settings to check its viewing frequency. At zero, the group still receives messages but does not enter Planner. Private chat has its own pause switch.",
       "botConfig": "Bot Main Config",
       "botConfigDesc": "Configure bot settings and shared groups",
       "model": "Model Config",
@@ -2424,8 +2424,8 @@
         "content": "Controls the tone and length of replies, such as shorter, livelier or more formal. Remember to save after editing."
       },
       "talkValue": {
-        "title": "Group talk frequency",
-        "content": "How often the bot speaks up in group chats. Lower values make it quieter. Adjust this if it talks too much or too little."
+        "title": "Group viewing frequency",
+        "content": "The base probability of checking a debounced message batch with Planner. Activation enables continuous checks until the internal budget is exhausted, followed by recovery over 16 decisions. This is not the reply probability."
       },
       "plugins": {
         "title": "Plugin market",

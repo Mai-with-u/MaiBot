@@ -13,7 +13,7 @@ from src.common.data_models.llm_service_data_models import LLMGenerationOptions
 from src.common.logger import get_logger
 from src.common.prompt_i18n import load_prompt
 from src.core.tooling import filter_tool_arguments
-from src.llm_models.exceptions import LLMTaskTimeoutError, RespParseException
+from src.llm_models.exceptions import RespParseException
 from src.llm_models.payload_content.context_item import (
     ContextItem, ContextItemBuilder, ContextItemMeta, ContextToolCall, FunctionCallItem, RoleType,
     get_response_text, get_response_tool_calls,
@@ -25,7 +25,6 @@ from .context.messages import LLMContextMessage, SessionBackedMessage
 
 logger = get_logger("maisaka_planner_action_judge")
 
-JUDGE_TIMEOUT_SECONDS = 10.0
 JUDGE_SOURCE = "action_judge"
 
 
@@ -100,16 +99,12 @@ async def complete_missing_planner_action(
     ]
     client = LLMServiceClient("fast_model", request_type="maisaka.planner_action_judge", session_id=session_id)
     started = time.perf_counter()
-    try:
-        async with asyncio.timeout(JUDGE_TIMEOUT_SECONDS):
-            result = await client.generate_response_with_context(
-                context_factory=lambda _: messages,
-                options=LLMGenerationOptions(
-                    temperature=0, interrupt_flag=interrupt_flag,
-                ),
-            )
-    except TimeoutError as exc:
-        raise LLMTaskTimeoutError("fast_model", "planner_action_judge", JUDGE_TIMEOUT_SECONDS) from exc
+    result = await client.generate_response_with_context(
+        context_factory=lambda _: messages,
+        options=LLMGenerationOptions(
+            temperature=0, interrupt_flag=interrupt_flag,
+        ),
+    )
 
     decision = result.response.strip()
     if result.tool_calls or result.native_tool_calls:

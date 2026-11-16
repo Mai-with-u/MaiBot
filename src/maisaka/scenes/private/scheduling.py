@@ -33,5 +33,5 @@ class PrivateTurnScheduler(MessageTurnScheduler):
         )
         if not messages:
             return TurnGateResult(decision="wait", detail="没有新的外部消息 判定=等待更多消息")
-        # 拟合数据只覆盖群聊；私聊里每条消息都是对麦麦说的，不设门控。
+        # 私聊里每条消息都是对麦麦说的，不设概率门控。
         return TurnGateResult(decision="trigger", detail="私聊不设动态门控 判定=进入Planner")

@@ -56,7 +56,7 @@ class MaisakaRuntimeDisplayMixin:
         body_lines = scope_lines if scope_lines is not None else [
             f"聊天流名称：{getattr(self, 'session_name', self.session_id)}",
             f"聊天流ID：{self.session_id}",
-            f"当前回复频率：{self._format_reply_frequency_for_display(self._get_effective_reply_frequency())}",
+            f"外部查看频率：{self._format_reply_frequency_for_display(self._get_effective_reply_frequency())}",
         ]
 
         panel_title = "MaiSaka 循环"

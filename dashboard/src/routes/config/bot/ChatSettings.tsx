@@ -25,15 +25,11 @@ const CHAT_PANELS: Record<ChatScope, ChatGroup[][]> = {
         'talk_value',
         'message_debounce_mode',
         'group_quote_frequency',
-        'no_action_backoff_base_seconds',
-        'no_action_backoff_cap_seconds',
-        'no_action_backoff_start_count',
-        'no_action_backoff_bypass_pending_count',
       ],
     }],
     [
       { title: '触发回复', fields: ['mentioned_bot_reply', 'inevitable_at_reply', 'enable_reply_at', 'planner_message_steering'] },
-      { title: '动态发言规则', fields: ['talk_rule_groups'] },
+      { title: '动态查看规则', fields: ['talk_rule_groups'] },
     ],
   ],
   private: [

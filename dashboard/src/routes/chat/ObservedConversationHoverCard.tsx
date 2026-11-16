@@ -35,7 +35,7 @@ export function ObservedConversationHoverCard({
   }
   useEffect(() => () => clearTimeout(timer.current), [])
 
-  // 只有真实聊天流有学习规则和回复频率；共享流展示组级状态，不查询聊天配置。
+  // 只有真实聊天流有学习规则和查看频率；共享流展示组级状态，不查询聊天配置。
   const detail = useQuery({
     queryKey: ['chat-stream-detail', sessionId],
     queryFn: () => getChatStreamDetail(sessionId),
@@ -97,12 +97,12 @@ export function ObservedConversationHoverCard({
               </div>
             ))}
             <div className="flex items-center justify-between gap-3">
-              <dt className="text-muted-foreground">当前回复频率</dt>
+              <dt className="text-muted-foreground">当前查看频率</dt>
               <dd className="font-medium">{detail.data.talk_frequency.effective_value_label}</dd>
             </div>
           </dl>
         ) : (
-          <p role="status" className="text-muted-foreground">正在加载学习状态和回复频率…</p>
+          <p role="status" className="text-muted-foreground">正在加载学习状态和查看频率…</p>
         )}
         <div className="space-y-1">
           <p className="text-muted-foreground">最近消息</p>

@@ -529,6 +529,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
             return
 
         self._running = False
+        self._message_turn_scheduler.close()
         # 先向普通推理循环发出取消，再等待 Focus、学习器或子代理的清理。
         # 否则后台服务退出期间仍可能继续规划和调用即将销毁的插件。
         if self._internal_loop_task is not None:
@@ -557,7 +558,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         logger.debug(f"{self.log_prefix} Maisaka 运行时已停止")
 
     def adjust_talk_frequency(self, frequency: float) -> None:
-        """调整当前会话的回复频率倍率。"""
+        """调整当前会话的查看频率倍率。"""
         self._talk_frequency_adjust = max(0.0, float(frequency))
         self._schedule_message_turn()
 
@@ -1027,6 +1028,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         if self._focus_group is None:
             self._observe_message_debounce(message, received_at)
         self.message_cache.append(message)
+        self._message_turn_scheduler.observe_message()
         self._emit_monitor_message_ingested(message)
         self._prune_processed_message_cache()
         if self._focus_group is not None:
@@ -1047,8 +1049,10 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         )
 
     def _request_planner_interrupt_for_message(self, message: SessionMessage) -> None:
-        """快速反应模式下，用新消息打断运行中的 Planner。"""
-        if not self.scene.is_group or not global_config.chat.reply_timing.planner_message_steering or self._agent_state != self._STATE_RUNNING:
+        """私聊默认、群聊快速反应模式下，用新消息打断运行中的 Planner。"""
+        if self._agent_state != self._STATE_RUNNING:
+            return
+        if self.scene.is_group and not global_config.chat.reply_timing.planner_message_steering:
             return
 
         request_result = self._planner_interrupt.request()
@@ -1068,17 +1072,17 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         )
 
     def _get_effective_reply_frequency(self) -> float:
-        """返回当前会话生效的回复频率。"""
+        """返回当前会话生效的查看频率。"""
         return self.scene.effective_reply_frequency(self)
 
     @staticmethod
     def _format_reply_frequency_for_display(frequency: float) -> str:
-        """将回复频率格式化为日志中易读的数值。"""
+        """将查看频率格式化为日志中易读的数值。"""
         normalized_frequency = max(0.0, float(frequency))
         return f"{normalized_frequency:.3f}（{normalized_frequency * 100:.1f}%）"
 
     def _get_base_reply_frequency(self) -> float:
-        """返回当前会话类型对应的基础回复频率。"""
+        """返回当前会话类型对应的基础查看频率。"""
         return self.scene.base_reply_frequency(self.session_id)
 
     def _is_reply_frequency_silent(self) -> bool:
@@ -1613,6 +1617,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
             is_bare_image=kind == 1 and length == 0,
             is_pure_emoji=kind == 2 and length == 0,
             mode=mode,
+            is_group=self.scene.is_group,
             at_bot=message.is_at or message.is_mentioned,
             received_at=received_at,
             wall_time=time.time(),

@@ -208,7 +208,10 @@ class MaisakaReasoningEngine:
         self._runtime._planner_interrupt.bind(interrupt_flag)
         self._runtime._chat_loop_service.set_interrupt_flag(interrupt_flag)
         try:
-            if self._runtime.chat_stream.is_group_session and global_config.chat.reply_timing.planner_message_steering and self._runtime._has_pending_messages():
+            if (
+                not self._runtime.chat_stream.is_group_session
+                or global_config.chat.reply_timing.planner_message_steering
+            ) and self._runtime._has_pending_messages():
                 # 覆盖整理上下文到绑定中断标记之间收到消息的窗口。
                 interrupt_flag.set()
             planner_task = asyncio.create_task(
@@ -850,11 +853,12 @@ class MaisakaReasoningEngine:
         """消费触发信号并准备本轮初始消息与触发消息。"""
 
         message_triggered, timeout_triggered, proactive_triggered = self._drain_ready_turn_triggers(queued_trigger)
+        silence_triggered = self._runtime._message_turn_scheduler.consume_silence_trigger()
         silent_reply_frequency = self._runtime._is_reply_frequency_silent()
 
         if (
             self._runtime._agent_state == self._runtime._STATE_WAIT
-            and not (timeout_triggered or proactive_triggered)
+            and not (timeout_triggered or proactive_triggered or silence_triggered)
             and not silent_reply_frequency
             and not (
                 message_triggered
@@ -903,6 +907,16 @@ class MaisakaReasoningEngine:
                 self._runtime._chat_history.append(wait_message)
             elif proactive_logical_turn_id:
                 continuation_logical_turn_id = proactive_logical_turn_id
+        elif silence_triggered:
+            trigger_message = self._runtime.message_cache[-1] if self._runtime.message_cache else None
+            if trigger_message is None:
+                return TurnStartContext([], None, timeout_triggered, proactive_triggered, silent_reply_frequency)
+            self._runtime._enter_running_state()
+            if self._runtime._has_pending_wait_tool_call():
+                wait_message = self._build_wait_completed_message(has_new_messages=False)
+                continuation_logical_turn_id = wait_message.logical_turn_id
+                self._runtime._chat_history.append(wait_message)
+            await self._emit_flow_step("turn.silence", "静默查看触发", "预计消息到达时间已过，概率判定通过，查看当前对话。")
         elif timeout_triggered and self._runtime._has_pending_wait_tool_call():
             trigger_message = self._runtime.message_cache[-1] if self._runtime.message_cache else None
             if trigger_message is None:
@@ -936,6 +950,10 @@ class MaisakaReasoningEngine:
 
         completed_cycle = await self._end_cycle(cycle_detail)
         cycle_end = state.cycle_end
+        if state.response is not None and not state.planner_interrupted and cycle_end.reason not in {
+            "cycle_error", "cancelled",
+        }:
+            self._runtime._message_turn_scheduler.record_planner_run()
         if round_index + 1 >= self._runtime._max_internal_rounds and cycle_end.reason in {
             "continue",
             "tool_continue",
@@ -1016,6 +1034,7 @@ class MaisakaReasoningEngine:
 
                 trace_token = reasoning_trace_id.set(uuid.uuid4().hex)
                 try:
+                    self._runtime._message_turn_scheduler.start_planner_turn()
                     self._turn_passive_replyer = global_config.experimental.passive_replyer
                     self._runtime._chat_loop_service.passive_replyer_override = self._turn_passive_replyer
                     self._active_logical_turn_id = turn_start_context.logical_turn_id or uuid.uuid4().hex
@@ -1102,6 +1121,7 @@ class MaisakaReasoningEngine:
                             self._runtime._update_stage_status("等待", "等待后继续思考")
                         else:
                             self._runtime._update_stage_status("空闲", "本轮处理结束")
+                    self._runtime._message_turn_scheduler.finish_planner_turn()
         except asyncio.CancelledError:
             self._runtime._log_internal_loop_cancelled()
             raise

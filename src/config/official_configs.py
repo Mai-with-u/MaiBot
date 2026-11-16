@@ -449,7 +449,7 @@ class TalkRulesItem(ConfigBase):
     def model_post_init(self, context: Any) -> None:
         super().model_post_init(context)
         if self.rule_type == "group" and is_global_talk_rule_target(self.platform, self.item_id):
-            raise ValueError("动态发言频率规则必须指定平台或群聊 ID；所有群的默认频率请使用总体发言频率")
+            raise ValueError("动态查看频率规则必须指定平台或群聊 ID；所有群的默认频率请使用总体查看频率")
 
     enabled: bool = Field(
         default=True,
@@ -458,7 +458,7 @@ class TalkRulesItem(ConfigBase):
             "x-widget": "switch",
         },
     )
-    """关闭时保留该规则，但不参与发言频率匹配。"""
+    """关闭时保留该规则，但不参与查看频率匹配。"""
 
     platform: str = Field(
         default="",
@@ -515,13 +515,13 @@ class TalkRulesItem(ConfigBase):
         default=0.5,
         json_schema_extra={
             "label": {
-                "zh_CN": "发言频率",
-                "en_US": "Talk frequency",
-                "ja_JP": "発言頻度",
+                "zh_CN": "查看频率",
+                "en_US": "Viewing frequency",
+                "ja_JP": "確認頻度",
             },
         },
     )
-    """该规则下的发言频率；0 更安静，1 按正常频率。"""
+    """该规则下的外部查看概率，取值 0 到 1；0 不主动查看。"""
 
 
 class PrivateReplyPauseRule(ConfigBase):
@@ -554,10 +554,10 @@ DEFAULT_TALK_RULE_GROUP_NAME = "默认"
 
 class TalkRuleGroup(ConfigBase):
     name: str = Field(default=DEFAULT_TALK_RULE_GROUP_NAME)
-    """发言频率规则组名称。"""
+    """查看频率规则组名称。"""
 
     rules: List[TalkRulesItem] = Field(default_factory=list)
-    """组内的发言频率规则，顺序用于相同优先级下的匹配。"""
+    """组内的查看频率规则，顺序用于相同优先级下的匹配。"""
 
 
 class TalkRuleGroups(ConfigBase):
@@ -565,9 +565,9 @@ class TalkRuleGroups(ConfigBase):
         super().model_post_init(context)
         names = [group.name for group in self.groups]
         if any(not name.strip() or name != name.strip() for name in names) or len(names) != len(set(names)):
-            raise ValueError("动态发言规则组名称须非空、无首尾空白且唯一")
+            raise ValueError("动态查看规则组名称须非空、无首尾空白且唯一")
         if self.active_group not in names:
-            raise ValueError(f"找不到启用的动态发言规则组：{self.active_group}")
+            raise ValueError(f"找不到启用的动态查看规则组：{self.active_group}")
 
     active_group: str = Field(default=DEFAULT_TALK_RULE_GROUP_NAME)
     """当前生效的规则组名称。"""
@@ -583,7 +583,7 @@ def get_active_talk_rule_group(config: TalkRuleGroups) -> TalkRuleGroup:
 class ChatReplyTimingConfig(ConfigBase):
     """聊天回复时机与频率配置类"""
 
-    __ui_label__ = "回复频率"
+    __ui_label__ = "查看频率"
     __ui_icon__ = "activity"
 
     message_debounce_mode: Literal["off", "fast", "natural", "steady"] = Field(
@@ -600,15 +600,15 @@ class ChatReplyTimingConfig(ConfigBase):
             "x-option-descriptions": {
                 "off": "关闭防抖，新消息不等待，直接进入判断。",
                 "fast": "安静 1 秒、活跃 3 秒，同人续发 1 秒、换人 0.5 秒。等待更少，但更容易漏接分段补充。",
-                "natural": "默认：安静 2 秒、活跃 5 秒，同人续发 2 秒、换人 0.5 秒。兼顾等待时间和补充消息。",
-                "steady": "安静 4 秒、活跃 7 秒，同人续发 4 秒、换人 2 秒。合并更多判断、多留补充时间，但没有补充时也更慢，并非每个群都能等得更齐。",
+                "natural": "默认：安静 2.5 秒、活跃 6 秒，同人续发 2.5 秒、换人 1 秒；整批最多 10 秒，@或提及后最多 2 秒。兼顾等待时间和补充消息。",
+                "steady": "安静 5 秒、活跃 9 秒，同人续发 5 秒、换人 3 秒；整批最多 12 秒，@或提及后最多 3.5 秒。合并更多判断、多留补充时间，但没有补充时也更慢，并非每个群都能等得更齐。",
             },
         },
     )
     """仅作用于群聊，默认自然，只需选择关闭、快速、自然或沉稳，无需另开开关。
     一批指合并后一起送入判断的消息；新批次按上一条有效消息的间隔选择初始等待：超过 30 秒或没有历史为安静，否则为活跃。同人/换人均与紧邻的上一条消息比较，重新从新消息起计算等待，可提前或延后结束。
-    快速为安静 1 秒、活跃 3 秒、同人 1 秒、换人 0.5 秒：更快，但更容易漏接分段补充。自然为 2/5/2/0.5 秒：默认折中。沉稳为 4/7/4/2 秒：减少更多判断、多留补充机会，也会让没有补充的消息多等，不能保证每个群、每次都更完整。
-    三档共用：裸图开启新批次时至少等 4 秒，后续消息仍按续发规则重算；批次内纯表情包不能延长等待，但可以提前结束；整批从第一条实际收到起最多 8 秒，@或提及后最多 1 秒，连续提及取最早上限。上限优先于其他等待规则。
+    快速为安静 1 秒、活跃 3 秒、同人 1 秒、换人 0.5 秒：更快，但更容易漏接分段补充。自然为 2.5/6/2.5/1 秒：默认折中。沉稳为 5/9/5/3 秒：减少更多判断、多留补充机会，也会让没有补充的消息多等，不能保证每个群、每次都更完整。
+    三档共用：裸图开启新批次时至少等 4 秒，后续消息仍按续发规则重算；批次内纯表情包不能延长等待，但可以提前结束；整批从第一条实际收到起，快速/自然/沉稳最多等待 8/10/12 秒；@或提及后分别最多等待 1/2/3.5 秒，连续提及取最早上限。上限优先于其他等待规则。
     更换等待档位从下一条有效消息起生效，不重置批次或提及上限，不延长已到期批次；选择关闭会结束正在进行的等待，之后新消息不再等待。这里的时间仅指防抖排队，不包含模型生成和发送耗时。
     """
 
@@ -658,15 +658,19 @@ class ChatReplyTimingConfig(ConfigBase):
         json_schema_extra={
             "x-chat-settings": {"scope": "group", "row": 10, "quick": True},
             "label": {
-                "zh_CN": "群聊频率",
-                "en_US": "Group talk frequency",
-                "ja_JP": "グループ発言頻度",
+                "zh_CN": "群聊查看频率",
+                "en_US": "Group viewing frequency",
+                "ja_JP": "グループ確認頻度",
             },
             "x-widget": "slider",
             "step": 0.001,
         },
     )
-    """群聊里麦麦主动说话的频率；越小越安静。"""
+    """群聊防抖后每批消息进入 Planner 的基础概率，不代表实际回复比例。0 不主动查看，1 每批查看。
+    激活后内部频率从该值开始，每次有效 Planner 运行减 1/16，归零前查看概率始终为 1，衰减期不重复激活。
+    归零后进入恢复期，在 16 次判定中恢复基础概率；恢复期间再次激活会重新开始衰减。频率变化不终止正在运行的 Planner 循环。
+    根据当前和上一轮上下文的外部消息平均接收间隔预测下一条消息，到期仍无消息时也进行概率判定。
+    """
 
     private_reply_paused: bool = Field(
         default=False,
@@ -724,90 +728,20 @@ class ChatReplyTimingConfig(ConfigBase):
     )
     """开启后，被 @ 时会尽量回复。"""
 
-    no_action_backoff_base_seconds: float = Field(
-        default=15,
-        ge=0,
-        json_schema_extra={
-            "x-chat-settings": {"scope": "group", "row": 50},
-            "label": {
-                "zh_CN": "空闲退避基准",
-                "en_US": "Idle backoff base",
-                "ja_JP": "アイドルバックオフ基準",
-            },
-            "x-widget": "input",
-            "x-layout": "inline-right",
-            "x-input-width": "7.5rem",
-            "x-description-display": "icon",
-            "advanced": False,
-        },
-    )
-    """连续决定不回复后，下一次检查前先等多久。"""
-
-    no_action_backoff_cap_seconds: float = Field(
-        default=300,
-        ge=0,
-        json_schema_extra={
-            "x-chat-settings": {"scope": "group", "row": 50},
-            "label": {
-                "zh_CN": "空闲退避上限",
-                "en_US": "Idle backoff cap",
-                "ja_JP": "アイドルバックオフ上限",
-            },
-            "x-widget": "input",
-            "x-description-display": "icon",
-            "advanced": True,
-        },
-    )
-    """不回复退避等待的最长时间。"""
-
-    no_action_backoff_start_count: int = Field(
-        default=2,
-        ge=1,
-        json_schema_extra={
-            "x-chat-settings": {"scope": "group", "row": 60},
-            "label": {
-                "zh_CN": "空闲退避起点",
-                "en_US": "Idle backoff start",
-                "ja_JP": "アイドルバックオフ開始",
-            },
-            "x-widget": "input",
-            "x-description-display": "icon",
-            "advanced": True,
-        },
-    )
-    """连续几次不回复后开始放慢检查。"""
-
-    no_action_backoff_bypass_pending_count: int = Field(
-        default=6,
-        ge=0,
-        json_schema_extra={
-            "x-chat-settings": {"scope": "group", "row": 60},
-            "label": {
-                "zh_CN": "空闲退避绕过消息数",
-                "en_US": "Idle backoff bypass messages",
-                "ja_JP": "アイドルバックオフ迂回メッセージ数",
-            },
-            "x-widget": "input",
-            "x-description-display": "icon",
-            "advanced": True,
-        },
-    )
-    """等待期间新消息达到多少条就立刻重新处理；0 表示不按条数打断等待。"""
-
     talk_rule_groups: TalkRuleGroups = Field(
         default_factory=TalkRuleGroups,
         json_schema_extra={
-            "x-chat-settings": {"scope": "group", "row": 80, "dialog": "动态发言规则"},
+            "x-chat-settings": {"scope": "group", "row": 80, "dialog": "动态查看规则"},
             "label": {
-                "zh_CN": "动态发言规则组",
-                "en_US": "Dynamic talk frequency rule groups",
-                "ja_JP": "動的な発言頻度ルールグループ",
+                "zh_CN": "动态查看规则组",
+                "en_US": "Dynamic viewing frequency rule groups",
+                "ja_JP": "動的な確認頻度ルールグループ",
             },
             "x-widget": "custom",
         },
     )
     """
-    _wrap_为不同场景保存发言频率规则，仅当前规则组内已启用的群聊规则参与匹配。
+    _wrap_为不同场景保存查看频率规则，仅当前规则组内已启用的群聊规则参与匹配。
     """
 
 
@@ -951,7 +885,7 @@ class ChatConfig(ConfigBase):
     """私聊回复时参考的最近消息数量。"""
 
     reply_timing: ChatReplyTimingConfig = Field(default_factory=ChatReplyTimingConfig)
-    """什么时候回复、回复频率与等待退避配置。"""
+    """什么时候查看、查看频率与消息防抖配置。"""
 
     reply_style: ChatReplyStyleConfig = Field(default_factory=ChatReplyStyleConfig)
     """如何回复、引用回复与聊天 Prompt 配置。"""

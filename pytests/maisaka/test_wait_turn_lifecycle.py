@@ -8,10 +8,12 @@ import pytest
 
 from src.maisaka.reasoning_engine import MaisakaReasoningEngine
 from src.maisaka.runtime import MaisakaHeartFlowChatting
+from src.maisaka.scenes.private.scheduling import PrivateTurnScheduler
 
 
 def _build_runtime_stub() -> MaisakaHeartFlowChatting:
     runtime = object.__new__(MaisakaHeartFlowChatting)
+    runtime._message_turn_scheduler = PrivateTurnScheduler(runtime)
     runtime.message_cache = []
     runtime._last_processed_index = 0
     runtime._agent_state = runtime._STATE_RUNNING

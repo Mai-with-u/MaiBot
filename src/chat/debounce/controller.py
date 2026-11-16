@@ -13,6 +13,8 @@ class WaitTimes:
     active: float
     same_author: float
     different_author: float
+    batch_limit: float = 8.0
+    mention_limit: float = 1.0
 
 
 WAIT_PROFILES: Dict[DebounceMode, WaitTimes] = {
@@ -21,10 +23,14 @@ WAIT_PROFILES: Dict[DebounceMode, WaitTimes] = {
     "steady": WaitTimes(4.0, 7.0, 4.0, 2.0),
 }
 
+GROUP_WAIT_PROFILES: Dict[DebounceMode, WaitTimes] = {
+    "fast": WAIT_PROFILES["fast"],
+    "natural": WaitTimes(2.5, 6.0, 2.5, 1.0, batch_limit=10.0, mention_limit=2.0),
+    "steady": WaitTimes(5.0, 9.0, 5.0, 3.0, batch_limit=12.0, mention_limit=3.5),
+}
+
 QUIET_THRESHOLD = 30.0
 BARE_IMAGE_MIN_WAIT = 4.0
-BATCH_LIMIT = 8.0
-MENTION_LIMIT = 1.0
 
 
 class MessageDebouncer:
@@ -32,6 +38,7 @@ class MessageDebouncer:
 
     def __init__(self) -> None:
         self._first: Optional[float] = None
+        self._batch_deadline: Optional[float] = None
         self._last_arrival: Optional[float] = None
         self._last_author: Optional[str] = None
         self._deadline: Optional[float] = None
@@ -54,9 +61,10 @@ class MessageDebouncer:
         wall_time: float,
         now: float,
         mode: DebounceMode = "natural",
+        is_group: bool = False,
     ) -> str:
-        """更新截止时间并返回本次规则说明；预处理耗时也占用 8 秒/1 秒上限。"""
-        waits = WAIT_PROFILES[mode]
+        """更新截止时间并返回本次规则说明；预处理耗时也计入批次和提及上限。"""
+        waits = (GROUP_WAIT_PROFILES if is_group else WAIT_PROFILES)[mode]
         arrival = now - max(0.0, wall_time - received_at)
         previous_arrival = self._last_arrival
         previous_author = self._last_author
@@ -67,14 +75,18 @@ class MessageDebouncer:
         new_batch = self._first is None
         if new_batch:
             self._first = arrival
+        batch_deadline = self._first + waits.batch_limit
+        self._batch_deadline = (
+            batch_deadline if self._batch_deadline is None else min(self._batch_deadline, batch_deadline)
+        )
         if at_bot:
-            urgent = now - max(0.0, wall_time - received_at) + MENTION_LIMIT
+            urgent = now - max(0.0, wall_time - received_at) + waits.mention_limit
             self._urgent = min(self._urgent, urgent) if self._urgent is not None else urgent
         # 已到期但因模型/工具忙碌尚未消费的批次，不允许被新消息重新延长。
         # 这些消息仍进入原有上下文缓存，一起消费，不为补偿模型忙碌再排一遍队。
         if self._deadline is None or self._deadline > now:
             reasons = []
-            limit = self._first + BATCH_LIMIT
+            limit = self._batch_deadline
             if self._urgent is not None:
                 limit = min(limit, self._urgent)
             if new_batch:
@@ -92,10 +104,10 @@ class MessageDebouncer:
             if is_pure_emoji and not new_batch:
                 reasons.append("纯表情包不延长等待")
                 candidate = min(candidate, self._deadline)
-            if candidate > self._first + BATCH_LIMIT:
-                reasons.append("受整批 8 秒上限限制")
+            if candidate > self._batch_deadline:
+                reasons.append(f"受整批 {self._batch_deadline - self._first:g} 秒上限限制")
             if self._urgent is not None and candidate > self._urgent:
-                reasons.append("受@或提及 1 秒上限限制")
+                reasons.append("受@或提及上限限制")
             self._deadline = min(candidate, limit)
             reason = "；".join(reasons)
         else:
@@ -111,5 +123,5 @@ class MessageDebouncer:
 
     def consume(self) -> None:
         """结束当前防抖批次，只保留上一条消息的时间和发言人供下一批使用。"""
-        self._first = self._deadline = self._urgent = None
+        self._first = self._batch_deadline = self._deadline = self._urgent = None
         self.changed.set()

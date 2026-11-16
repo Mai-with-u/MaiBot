@@ -1330,7 +1330,9 @@ class MaisakaChatLoopService:
                     tool_options=all_tools if all_tools else None,
                     response_format=response_format,
                     interrupt_flag=self._interrupt_flag,
-                    force_stream_mode=request_kind == "planner" and global_config.chat.reply_timing.planner_message_steering,
+                    force_stream_mode=request_kind == "planner" and (
+                        self._is_group_chat is False or global_config.chat.reply_timing.planner_message_steering
+                    ),
                 ),
             )
         if request_kind == "planner":
