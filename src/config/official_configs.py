@@ -854,6 +854,8 @@ class ChatConfig(ConfigBase):
 
     max_context_size: int = Field(
         default=50,
+        ge=30,
+        le=300,
         json_schema_extra={
             "x-chat-settings": {"scope": "group", "row": 10, "quick": True},
             "label": {
@@ -861,15 +863,16 @@ class ChatConfig(ConfigBase):
                 "en_US": "Group context size",
                 "ja_JP": "グループ文脈数",
             },
-            "x-widget": "input",
-            "x-layout": "inline-right",
-            "x-input-width": "6.5rem",
+            "x-widget": "slider",
+            "step": 1,
         },
     )
     """群聊回复时参考的最近消息数量；越大越懂上下文，也更耗模型。"""
 
     max_private_context_size: int = Field(
         default=75,
+        ge=30,
+        le=300,
         json_schema_extra={
             "x-chat-settings": {"scope": "private", "row": 10, "quick": True},
             "label": {
@@ -877,12 +880,61 @@ class ChatConfig(ConfigBase):
                 "en_US": "Private context size",
                 "ja_JP": "個別チャット文脈数",
             },
-            "x-widget": "input",
-            "x-layout": "inline-right",
-            "x-input-width": "6.5rem",
+            "x-widget": "slider",
+            "step": 1,
         },
     )
     """私聊回复时参考的最近消息数量。"""
+
+    use_token_limit: bool = Field(
+        default=False,
+        json_schema_extra={
+            "x-chat-settings": {"scope": "group", "row": 11, "quick": True},
+            "label": {"zh_CN": "使用 Token 上限", "en_US": "Use token limit", "ja_JP": "トークン上限を使用"},
+            "x-widget": "switch",
+        },
+    )
+    """群聊改用模型返回的实际输入 Token 用量触发上下文裁切，不再按消息条数限制。"""
+
+    max_context_tokens: int = Field(
+        default=128000,
+        ge=16000,
+        le=1000000,
+        json_schema_extra={
+            "x-chat-settings": {"scope": "group", "row": 12, "quick": True},
+            "label": {"zh_CN": "Token 上限", "en_US": "Token limit", "ja_JP": "トークン上限"},
+            "x-widget": "input",
+            "x-layout": "inline-right",
+            "x-input-width": "8rem",
+            "x-depends-on": "use_token_limit",
+        },
+    )
+    """群聊输入达到此 Token 数后裁切旧历史；范围 16K–1M（1K=1000）。用量由模型响应返回，单次请求可能超过阈值。"""
+
+    private_use_token_limit: bool = Field(
+        default=False,
+        json_schema_extra={
+            "x-chat-settings": {"scope": "private", "row": 11, "quick": True},
+            "label": {"zh_CN": "使用 Token 上限", "en_US": "Use token limit", "ja_JP": "トークン上限を使用"},
+            "x-widget": "switch",
+        },
+    )
+    """私聊改用模型返回的实际输入 Token 用量触发上下文裁切，不再按消息条数限制。"""
+
+    private_max_context_tokens: int = Field(
+        default=128000,
+        ge=16000,
+        le=1000000,
+        json_schema_extra={
+            "x-chat-settings": {"scope": "private", "row": 12, "quick": True},
+            "label": {"zh_CN": "Token 上限", "en_US": "Token limit", "ja_JP": "トークン上限"},
+            "x-widget": "input",
+            "x-layout": "inline-right",
+            "x-input-width": "8rem",
+            "x-depends-on": "private_use_token_limit",
+        },
+    )
+    """私聊输入达到此 Token 数后裁切旧历史；范围 16K–1M（1K=1000）。用量由模型响应返回，单次请求可能超过阈值。"""
 
     reply_timing: ChatReplyTimingConfig = Field(default_factory=ChatReplyTimingConfig)
     """什么时候查看、查看频率与消息防抖配置。"""

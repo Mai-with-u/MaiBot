@@ -12,7 +12,7 @@ from .messages import (
     ToolResultMessage,
 )
 
-# 达到配置的上下文条数即触发裁切，保留目标按配置条数计算。
+# 达到配置的条数或模型返回的输入 Token 阈值时裁切，保留近期上下文。
 TRIM_TARGET_RATIO = 0.2
 MIN_RETAINED_CHAT_MESSAGES = 5
 
@@ -32,6 +32,8 @@ def process_chat_history_after_cycle(
     chat_history: list[LLMContextMessage],
     *,
     max_context_size: int,
+    max_context_tokens: Optional[int] = None,
+    prompt_tokens: int = 0,
     pending_call_ids: set[str] | None = None,
     consume_references: bool = True,
 ) -> HistoryPostProcessResult:
@@ -52,8 +54,13 @@ def process_chat_history_after_cycle(
 
     compact_removed_count = 0
     removed_messages: list[LLMContextMessage] = []
-    if remaining_context_count >= max_context_size:
-        target_context_count = max(MIN_RETAINED_CHAT_MESSAGES, int(max_context_size * TRIM_TARGET_RATIO))
+    should_trim = (
+        prompt_tokens >= max_context_tokens
+        if max_context_tokens is not None else remaining_context_count >= max_context_size
+    )
+    if should_trim:
+        retained_base = remaining_context_count if max_context_tokens is not None else max_context_size
+        target_context_count = max(MIN_RETAINED_CHAT_MESSAGES, int(retained_base * TRIM_TARGET_RATIO))
         removed_messages = _trim_history_to_context_target(
             processed_history,
             target_context_count=target_context_count,

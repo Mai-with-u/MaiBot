@@ -676,6 +676,7 @@ class MaisakaChatLoopService:
         self._custom_chat_system_prompt = chat_system_prompt
         self._prompt_load_lock = asyncio.Lock()
         self._llm_chat_clients: dict[str, LLMServiceClient] = {}
+        self.last_planner_prompt_tokens: int = 0
         self.planner_request_snapshot: PlannerRequestSnapshot | None = None
         self.passive_replyer_override: Optional[bool] = None
 
@@ -1444,6 +1445,9 @@ class MaisakaChatLoopService:
             if global_config.debug.show_maisaka_thinking:
                 prompt_section = prompt_section_result.panel
 
+        if request_kind == "planner":
+            self.last_planner_prompt_tokens = prompt_tokens
+
         return ChatResponse(
             output_items=tuple(final_output_items),
             request_messages=list(built_messages),
@@ -1483,6 +1487,13 @@ class MaisakaChatLoopService:
             MIN_RETAINED_CHAT_MESSAGES,
             int(base_context_size * CONTEXT_SELECTION_CACHE_STABILITY_RATIO),
         )
+        use_token_limit = (
+            global_config.chat.private_use_token_limit
+            if is_group_chat is False else global_config.chat.use_token_limit
+        ) and request_kind in {"planner", "replyer"}
+        if use_token_limit:
+            # Token 模式保留完整活动历史，裁切由模型返回的实际输入用量触发。
+            effective_context_size = max(MIN_RETAINED_CHAT_MESSAGES, len(filtered_history) + 1)
         selected_indices: List[int] = []
         counted_message_count = 0
 
@@ -1538,7 +1549,10 @@ class MaisakaChatLoopService:
             )
         tool_message_count = sum(1 for message in selected_history if isinstance(message, ToolResultMessage))
         normal_message_count = selected_context_count
-        stability_text = f"|cache_window {base_context_size}->{effective_context_size}"
+        stability_text = (
+            "|token_limit" if use_token_limit
+            else f"|cache_window {base_context_size}->{effective_context_size}"
+        )
         overflow_text = f"|tool_turn_overflow +{tool_turn_overflow}" if tool_turn_overflow else ""
         selection_reason = (
             f"实际发送 {len(selected_history)} 条上下文"

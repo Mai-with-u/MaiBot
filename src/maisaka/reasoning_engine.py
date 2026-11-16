@@ -1400,6 +1400,8 @@ class MaisakaReasoningEngine:
         process_result = process_chat_history_after_cycle(
             self._runtime._chat_history,
             max_context_size=self._runtime._max_context_size,
+            max_context_tokens=self._runtime._max_context_tokens,
+            prompt_tokens=self._runtime._chat_loop_service.last_planner_prompt_tokens,
             pending_call_ids=self._runtime._get_pending_wait_tool_call_ids(),
             consume_references=consume_references,
         )
@@ -1451,6 +1453,7 @@ class MaisakaReasoningEngine:
         self._runtime._chat_history = final_history
         if process_result.removed_messages:
             self._runtime._chat_loop_service.planner_request_snapshot = None
+            self._runtime._chat_loop_service.last_planner_prompt_tokens = 0
         if trimmed_chat_count <= 0:
             return
         # 常规收尾不单独展示，仅在确实裁切上下文后记录附加处理。

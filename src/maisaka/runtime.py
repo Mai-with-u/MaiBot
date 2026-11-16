@@ -220,6 +220,13 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         return self.scene.max_context_size
 
     @property
+    def _max_context_tokens(self) -> Optional[int]:
+        """当前会话的 Token 裁切阈值；关闭时继续使用条数窗口。"""
+        if self.chat_stream.is_group_session:
+            return global_config.chat.max_context_tokens if global_config.chat.use_token_limit else None
+        return global_config.chat.private_max_context_tokens if global_config.chat.private_use_token_limit else None
+
+    @property
     def scene(self) -> ChatScene:
         """真实聊天流唯一决定场景；场景无状态，运行状态由每个调度器持有。"""
         return get_scene(self.chat_stream.is_group_session)
@@ -295,6 +302,9 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
 
     async def build_reply_history(self) -> List[LLMContextMessage]:
         """独立读取回复窗口，避免 Planner 裁切缩短回复器的聊天记录。"""
+
+        if self._max_context_tokens is not None:
+            return [message for message in self._chat_history if isinstance(message, SessionBackedMessage)]
 
         context_limit = max(1, int(self._max_context_size * 0.6))
         recent_messages = await asyncio.to_thread(
@@ -373,7 +383,8 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
     def _get_context_restore_limit(self) -> int:
         """返回启动时最多回灌的真实消息数量。"""
 
-        return max(1, ceil(self._max_context_size * CONTEXT_RESTORE_FILL_RATIO))
+        context_size = 300 if self._max_context_tokens is not None else self._max_context_size
+        return max(1, ceil(context_size * CONTEXT_RESTORE_FILL_RATIO))
 
     async def restore_proactive_user_context(self) -> int:
         """主动回合前确保上下文含有可回复的真实用户消息。
