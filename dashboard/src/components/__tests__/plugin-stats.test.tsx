@@ -1,4 +1,7 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import type { ReactElement } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { getPluginFeedback } from '@/lib/plugin-feedback'
+import { fireEvent, render as renderUI, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { PluginStats } from '../plugin-stats'
@@ -20,6 +23,13 @@ const toastMock = vi.hoisted(() => vi.fn())
 vi.mock('@/hooks/use-toast', () => ({
   useToast: () => ({ toast: toastMock }),
 }))
+
+vi.mock('@/lib/plugin-feedback', () => ({ getPluginFeedback: vi.fn() }))
+
+function render(ui: ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return renderUI(<QueryClientProvider client={client}>{ui}</QueryClientProvider>)
+}
 
 vi.mock('@/lib/plugin-stats', () => ({
   getPluginReviewIdentity: vi.fn(),
@@ -62,6 +72,7 @@ function getStarButtons(dialog: HTMLElement): HTMLElement[] {
 
 describe('PluginStats', () => {
   beforeEach(() => {
+    vi.mocked(getPluginFeedback).mockResolvedValue({ plugin_id: 'demo-plugin', snapshot_at: 0, items: [], total: 0, next_offset: null })
     vi.mocked(getPluginReviewIdentity).mockResolvedValue({ username: '麦麦' })
     vi.mocked(getPluginStats).mockResolvedValue(makeStats())
     vi.mocked(getPluginUserState).mockResolvedValue(makeUserState())
@@ -122,6 +133,13 @@ describe('PluginStats', () => {
       })
     )
 
+    vi.mocked(getPluginFeedback).mockResolvedValue({
+      plugin_id: 'demo-plugin', snapshot_at: 0, total: 2, next_offset: null,
+      items: [
+        { id: 'u1', username: '测试用户', rating: null, comment: '非常好用', created_at: '2026-01-02T00:00:00Z', updated_at: '2026-01-02T00:00:00Z', reply: null },
+        { id: 'u3', username: null, rating: 4, comment: '还不错', created_at: '2026-01-04T00:00:00Z', updated_at: '2026-01-04T00:00:00Z', reply: null },
+      ],
+    })
     render(<PluginStats pluginId="demo-plugin" />)
 
     // 两个分区同时存在，旧的合并标题「最近评价」不再出现
@@ -130,12 +148,12 @@ describe('PluginStats', () => {
     expect(screen.queryByText('最近评价')).not.toBeInTheDocument()
 
     // 评论分区展示评论正文和用户名。
-    expect(screen.getByText('非常好用')).toBeInTheDocument()
+    expect(await screen.findByText('非常好用')).toBeInTheDocument()
     expect(screen.getByText('还不错')).toBeInTheDocument()
     expect(screen.getByText('测试用户')).toBeInTheDocument()
   })
 
-  it('只有纯评分条目时仅渲染「最近评分」，不渲染「最近评论」', async () => {
+  it('只有纯评分条目时渲染评分和独立评论空态', async () => {
     vi.mocked(getPluginStats).mockResolvedValue(
       makeStats({
         recent_ratings: [
@@ -148,7 +166,8 @@ describe('PluginStats', () => {
     render(<PluginStats pluginId="demo-plugin" />)
 
     expect(await screen.findByText('最近评分')).toBeInTheDocument()
-    expect(screen.queryByText('最近评论')).not.toBeInTheDocument()
+    expect(screen.getByText('最近评论')).toBeInTheDocument()
+    expect(await screen.findByText('暂无评论。')).toBeInTheDocument()
     // 纯评分条目没有评论正文，也不应出现「仅评论」标注
     expect(screen.queryByText('仅评论')).not.toBeInTheDocument()
   })

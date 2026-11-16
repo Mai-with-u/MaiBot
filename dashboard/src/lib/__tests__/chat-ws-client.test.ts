@@ -105,6 +105,7 @@ describe('chatWsClient', () => {
       session: 'tab-1',
       data: {
         content: '看看这张图',
+        files: [],
         emojis: [],
         images: [
           {
@@ -118,7 +119,7 @@ describe('chatWsClient', () => {
     })
   })
 
-  it('未传附件时 message.send 使用空图片与空表情列表', async () => {
+  it('未传附件时 message.send 使用空文件、图片与表情列表', async () => {
     const client = await loadClient()
 
     await client.sendMessage('tab-2', '你好', 'Bob')
@@ -129,6 +130,7 @@ describe('chatWsClient', () => {
       session: 'tab-2',
       data: {
         content: '你好',
+        files: [],
         emojis: [],
         images: [],
         user_name: 'Bob',

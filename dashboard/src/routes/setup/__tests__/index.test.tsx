@@ -387,9 +387,17 @@ describe('SetupPage 完成与跳过', () => {
   })
 
   it('确认跳过向导后标记完成并跳转首页', async () => {
+    const draftKey = 'maibot-setup-draft-v1:standalone'
+    let resolveStatus!: (status: SetupStatus) => void
+    mocks.loadSetupStatus.mockReturnValueOnce(new Promise<SetupStatus>((resolve) => {
+      resolveStatus = resolve
+    }))
     render(<SetupPage />)
+    expect(sessionStorage.getItem(draftKey)).toBeNull()
+    resolveStatus({ ...defaultStatus })
     await waitLoadingDone()
-    expect(sessionStorage.getItem('maibot-setup-draft-v1:standalone')).not.toBeNull()
+    await waitFor(() => expect(sessionStorage.getItem(draftKey)).not.toBeNull())
+    expect(JSON.parse(sessionStorage.getItem(draftKey)!)).toMatchObject({ botBasic: defaultBotBasic })
 
     fireEvent.click(screen.getByRole('button', { name: 'setupPage.skipDialog.confirm' }))
 
@@ -397,7 +405,7 @@ describe('SetupPage 完成与跳过', () => {
       expect(mocks.navigate).toHaveBeenCalledWith({ to: '/' })
     })
     expect(mocks.completeSetup).toHaveBeenCalledTimes(1)
-    expect(sessionStorage.getItem('maibot-setup-draft-v1:standalone')).toBeNull()
+    expect(sessionStorage.getItem(draftKey)).toBeNull()
   })
 
   it('跳过时标记完成失败则提示错误且不跳转', async () => {
@@ -436,7 +444,7 @@ describe('SetupPage 自定义 Token 步骤', () => {
     expect(screen.getByRole('button', { name: 'setupPage.actions.saveToken' })).toBeInTheDocument()
   })
 
-  it('Token 不满足真实校验规则时提示失败规则且不提交', async () => {
+  it('Token 不满足真实校验规则时禁用提交并显示未满足规则', async () => {
     render(<SetupPage />)
     await waitLoadingDone()
 
@@ -448,15 +456,9 @@ describe('SetupPage 自定义 Token 步骤', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.saveToken' }))
 
-    await waitFor(() => {
-      expect(mocks.toast).toHaveBeenCalledWith({
-        title: 'setupPage.toast.validationFailedTitle',
-        description: `setupPage.validation.customTokenInvalid:${JSON.stringify({
-          failedRules: '长度至少 10 位, 包含大写字母, 包含特殊符号',
-        })}`,
-        variant: 'destructive',
-      })
-    })
+    expect(screen.getByRole('button', { name: 'setupPage.actions.saveToken' })).toBeDisabled()
+    expect(screen.getAllByLabelText('setupPage.forms.customToken.unmet')).toHaveLength(3)
+    expect(mocks.toast).not.toHaveBeenCalled()
     expect(mocks.updateAccessToken).not.toHaveBeenCalled()
   })
 
@@ -780,7 +782,8 @@ it('展开当前阶段，保存基础设置后进入带试聊引导的聊天页'
 
 describe('SetupPage 模型列表拉取', () => {
   it('拉取失败时最多重试到上限，不再持续请求服务商', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true })
+    // 只推进请求重试定时器，保留换页动画所用的真实帧时钟。
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] })
     mocks.fetchSetupModels.mockRejectedValue(new Error('401 Unauthorized'))
     render(<SetupPage />)
     await waitLoadingDone()
@@ -839,7 +842,8 @@ describe('SetupPage 连通性测试', () => {
     expect(mocks.saveModelSetupConfig).toHaveBeenLastCalledWith(defaultModelSetup, 'MyProvider', 'planner')
     expect(mocks.testSetupModel).toHaveBeenNthCalledWith(2, 'deepseek-v4')
     fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.previous' }))
-    expect(screen.getByText('401 invalid key')).toBeInTheDocument()
+    await screen.findByRole('heading', { name: 'setupPage.steps.replyer.title' })
+    expect(await screen.findByText('401 invalid key')).toBeInTheDocument()
   })
 
   it('保存配置失败时提示错误且不调用模型测试', async () => {

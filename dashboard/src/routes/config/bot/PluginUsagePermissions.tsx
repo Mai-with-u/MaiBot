@@ -18,6 +18,7 @@ interface Props {
   onChange: (value: Record<string, unknown>) => void
 }
 
+/** Edit one plugin's user and chat allowlists without discarding rules for the other plugins. */
 export function PluginUsagePermissions({ pluginSection, onChange }: Props) {
   const [plugins, setPlugins] = useState<InstalledPlugin[]>([])
   const [chats, setChats] = useState<Array<{ label: string; value: string }>>([])
@@ -69,9 +70,9 @@ export function PluginUsagePermissions({ pluginSection, onChange }: Props) {
               </div>
               {rule.enabled && (
                 <div className="space-y-4">
-                  <label className="block space-y-2 text-sm">
+                  <label htmlFor="plugin-allowed-users" className="block space-y-2 text-sm">
                     <span>放行用户</span>
-                    <Input value={usersText} placeholder="例如 qq:123456789，多个用户用逗号分隔"
+                    <Input id="plugin-allowed-users" value={usersText} placeholder="例如 qq:123456789，多个用户用逗号分隔"
                       onChange={(event) => {
                         const text = event.target.value
                         const users = Array.from(new Set(text.split(/[，,\s]+/).filter(Boolean)))

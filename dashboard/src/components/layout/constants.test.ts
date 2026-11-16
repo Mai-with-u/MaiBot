@@ -115,6 +115,10 @@ describe('menuSections 菜单结构', () => {
     )
   })
 
+  it('电脑入口当前不在主侧栏菜单中', () => {
+    expect(allItems.map((item) => item.path)).not.toContain('/agent')
+  })
+
   it('桌宠入口受桌宠开关控制', () => {
     expect(allItems.find((item) => item.path === '/desktop-pet')?.featureFlag).toBe('desktopPet')
   })

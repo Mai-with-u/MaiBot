@@ -632,6 +632,52 @@ describe('useImportQueue', () => {
     )
   })
 
+  it('列表内容未变时每次手动刷新仍重新读取详情与分块', async () => {
+    let doneChunks = 1
+    vi.mocked(memoryApi.getMemoryImportTask).mockImplementation(async () => ({
+      success: true,
+      task: makeTask({ done_chunks: doneChunks }),
+    }))
+    const { result } = renderQueue()
+    await waitFor(() => expect(result.current.selectedImportFileId).toBe('file-1'))
+    vi.mocked(memoryApi.getMemoryImportTask).mockClear()
+    vi.mocked(memoryApi.getMemoryImportTaskChunks).mockClear()
+
+    for (doneChunks of [2, 3]) {
+      await act(async () => {
+        await result.current.refreshImportQueue(true)
+      })
+      await waitFor(() =>
+        expect(result.current.selectedImportTaskResolved?.done_chunks).toBe(doneChunks),
+      )
+      expect(memoryApi.getMemoryImportTask).toHaveBeenCalledTimes(doneChunks - 1)
+      expect(memoryApi.getMemoryImportTaskChunks).toHaveBeenCalledTimes(doneChunks - 1)
+    }
+  })
+
+  it.each(['afterCreated', 'cancelSelectedImportTask', 'retrySelectedImportTask'] as const)(
+    '%s 已主动加载详情时，相同列表不再额外触发详情刷新',
+    async (operation) => {
+      const { result } = renderQueue()
+      await waitFor(() => expect(result.current.selectedImportFileId).toBe('file-1'))
+      vi.mocked(memoryApi.getMemoryImportTask).mockClear()
+      vi.mocked(memoryApi.getMemoryImportTaskChunks).mockClear()
+
+      await act(async () => {
+        if (operation === 'afterCreated') {
+          await result.current.afterCreated('task-1')
+        } else {
+          await result.current[operation]()
+        }
+      })
+
+      expect(memoryApi.getMemoryImportTask).toHaveBeenCalledExactlyOnceWith('task-1', false)
+      expect(memoryApi.getMemoryImportTaskChunks).toHaveBeenCalledExactlyOnceWith(
+        'task-1', 'file-1', 0, IMPORT_CHUNK_PAGE_SIZE,
+      )
+    },
+  )
+
   it('轮询间隔取 settings.poll_interval_ms，且不低于 200ms', async () => {
     vi.mocked(memoryApi.getMemoryImportSettings).mockResolvedValue({
       success: true,
@@ -952,6 +998,7 @@ describe('useMemoryCorrection', () => {
     await waitFor(() => expect(configured.result.current.candidateLimit).toBe('8'))
     act(() => {
       configured.result.current.setRequestText('改')
+      configured.result.current.setPersonLookupMode('id')
       configured.result.current.setPersonId('p1')
       configured.result.current.setScope('memory')
       configured.result.current.setCandidateLimit('   ')
@@ -976,6 +1023,7 @@ describe('useMemoryCorrection', () => {
     await waitFor(() => expect(unconfigured.result.current.candidateLimit).toBe(''))
     act(() => {
       unconfigured.result.current.setRequestText('改')
+      unconfigured.result.current.setPersonLookupMode('id')
       unconfigured.result.current.setPersonId('p1')
     })
     await act(async () => {
@@ -1056,6 +1104,7 @@ describe('useMemoryCorrection', () => {
     await waitForSelectedPlan(result, 'plan-1')
     act(() => {
       result.current.setRequestText('改成杭州')
+      result.current.setPersonLookupMode('id')
       result.current.setPersonId('person-1')
     })
     await act(async () => {
@@ -1093,6 +1142,7 @@ describe('useMemoryCorrection', () => {
     await waitForSelectedPlan(first.result, 'plan-1')
     act(() => {
       first.result.current.setRequestText('改')
+      first.result.current.setPersonLookupMode('id')
       first.result.current.setPersonId('p')
     })
     await act(async () => {
@@ -1113,6 +1163,7 @@ describe('useMemoryCorrection', () => {
     await waitForSelectedPlan(second.result, 'plan-1')
     act(() => {
       second.result.current.setRequestText('改')
+      second.result.current.setPersonLookupMode('id')
       second.result.current.setPersonId('p')
     })
     await act(async () => {
@@ -1134,6 +1185,7 @@ describe('useMemoryCorrection', () => {
     await waitForSelectedPlan(result, 'plan-1')
     act(() => {
       result.current.setRequestText('改')
+      result.current.setPersonLookupMode('id')
       result.current.setPersonId('p')
     })
     await act(async () => {
@@ -1157,6 +1209,7 @@ describe('useMemoryCorrection', () => {
     vi.mocked(memoryApi.getMemoryCorrectionPlan).mockRejectedValue(new Error('同步超时'))
     act(() => {
       result.current.setRequestText('改')
+      result.current.setPersonLookupMode('id')
       result.current.setPersonId('p')
     })
     await act(async () => {

@@ -150,6 +150,8 @@ describe('usePluginLifecycle 缺口', () => {
   })
 
   it('只写入当前操作且 plugin_id 匹配的进度', async () => {
+    const pending = createDeferred<{ success: boolean; message: string }>()
+    vi.mocked(uninstallPlugin).mockReturnValue(pending.promise)
     const plugin = makePlugin('test.emoji')
     const { result } = renderLifecycle()
     await waitFor(() => expect(progressClient.subscribe).toHaveBeenCalled())
@@ -173,6 +175,14 @@ describe('usePluginLifecycle 缺口', () => {
     expect(result.current.deleteProgress).toBeNull()
     expect(result.current.updateProgress).toBeNull()
 
+    let deleting!: Promise<void>
+    act(() => { deleting = result.current.handleConfirmDeletePlugin() })
+    act(() => {
+      progressClient.emit(makeProgress({ operation: 'update', stage: 'loading', plugin_id: 'test.emoji', progress: 88 }))
+      progressClient.emit(makeProgress({ operation: 'uninstall', stage: 'loading', plugin_id: 'other.plugin', progress: 44 }))
+    })
+    expect(result.current.deleteProgress).toMatchObject({ operation: 'uninstall', progress: 0 })
+    expect(result.current.updateProgress).toBeNull()
     act(() => {
       progressClient.emit(
         makeProgress({
@@ -187,6 +197,7 @@ describe('usePluginLifecycle 缺口', () => {
       operation: 'uninstall',
       progress: 30,
     })
+    await act(async () => { pending.resolve({ success: true, message: 'ok' }); await deleting })
   })
 
   it('仓库地址为空字符串时按缺仓库处理，不调用更新接口', async () => {

@@ -329,7 +329,7 @@ describe('StatisticsCards 卡片渲染与状态', () => {
     render(createElement(StatisticsOverviewCard))
 
     expect(dashboardState.fetchDashboardData).toHaveBeenCalled()
-    expect(document.querySelector('[data-home-titleless-content="true"]')).toBeInTheDocument()
+    expect(screen.getByText('home.stats.overviewTitle')).toBeInTheDocument()
     expect(document.querySelector('[data-home-statistics-overview="true"]')).toBeInTheDocument()
     expect(screen.getByText('1.5M')).toBeInTheDocument()
     expect(screen.getByText('¥12.30')).toBeInTheDocument()
@@ -339,15 +339,15 @@ describe('StatisticsCards 卡片渲染与状态', () => {
     expect(screen.getByText('42')).toBeInTheDocument()
     expect(screen.getByText('home.stats.inputTokens 999 · home.stats.outputTokens 1M')).toBeInTheDocument()
     expect(screen.getByText('home.stats.replied:num=7')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'home.timeRange.24h' })).toHaveAttribute(
-      'aria-pressed',
+    expect(screen.getByRole('radio', { name: 'home.timeRange.24h' })).toHaveAttribute(
+      'aria-checked',
       'true'
     )
 
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: 'home.timeRange.7d' }))
+    await user.click(screen.getByRole('radio', { name: 'home.timeRange.7d' }))
     expect(dashboardState.setTimeRange).toHaveBeenCalledWith(168)
-    await user.click(screen.getByRole('button', { name: 'home.timeRange.30d' }))
+    await user.click(screen.getByRole('radio', { name: 'home.timeRange.30d' }))
     expect(dashboardState.setTimeRange).toHaveBeenCalledWith(720)
   })
 
