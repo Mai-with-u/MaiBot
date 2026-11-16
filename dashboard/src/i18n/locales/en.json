@@ -1234,7 +1234,23 @@
     "switchToDark": "Switch to dark mode"
   },
   "setupPage": {
+    "platform": {
+      "local": "Start chatting without connecting",
+      "localHint": "Start a conversation in WebUI Chat. You can connect a platform later in Adapter Management.",
+      "loading": "Loading built-in chat platforms…",
+      "loadFailed": "Failed to load chat platforms",
+      "retry": "Reload",
+      "empty": "No built-in chat platforms are available. You can add a connection later in Adapter Management.",
+      "connectHint": "After setup, the selected platform’s connection settings will open so you can configure your account and sign in.",
+      "connect": "Finish and configure connection",
+      "startChat": "Finish and start chatting",
+      "completeDescription": "Basic settings saved. Continue configuring the selected chat platform’s connection."
+    },
     "steps": {
+      "chatPlatform": {
+        "title": "Choose a chat platform",
+        "description": "Connect a built-in chat platform, or start chatting with MaiBot without one."
+      },
       "nickname": {
         "title": "Choose a Name",
         "label": "Nickname",

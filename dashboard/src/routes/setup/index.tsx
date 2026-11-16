@@ -75,6 +75,7 @@ import {
   updateAccessToken,
 } from './api'
 import { ConnectionTestPanel } from './ConnectionTestPanel'
+import { PlatformSetupForm } from './PlatformSetupForm'
 import type { ConnectionTestState } from './ConnectionTestPanel'
 import { PERSONALITY_MODES, readSetupDraft, writeSetupDraft } from './draft'
 import type { PersonalityMode } from './draft'
@@ -142,6 +143,7 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
   const [basicSettings, setBasicSettings] = useState<BasicSetupConfig | null>(null)
   const [desktopPetDraft, setDesktopPetDraft] = useState<boolean | null>(null)
   const [dashboardStyleDraft, setDashboardStyleDraft] = useState<DashboardStyle | null>(null)
+  const [chatPlatformId, setChatPlatformId] = useState<string | null>(null)
   const [needsApiKey, setNeedsApiKey] = useState(false)
   const [resumeModelStep, setResumeModelStep] = useState<SetupModelRole | null>(null)
 
@@ -241,6 +243,7 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
     step('group-replies', 'groupReplies', basics),
     step('desktop-pet', 'desktopPet', basics),
     step('dashboard-appearance', 'dashboardAppearance', basics),
+    step('chat-platform', 'chatPlatform'),
   ]
 
   const currentStep = requiresCustomToken ? 0 : Math.max(0, steps.findIndex((item) => item.id === activeStep))
@@ -412,6 +415,7 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
           setPersonalityPresetId(draft.personalityPresetId)
           setDesktopPetDraft(draft.desktopPetDraft)
           setDashboardStyleDraft(draft.dashboardStyleDraft)
+          setChatPlatformId(draft.chatPlatformId ?? null)
         }
         setDraftReady(true)
       } catch (error) {
@@ -442,9 +446,10 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
       basicSettings,
       desktopPetDraft,
       dashboardStyleDraft,
+      chatPlatformId,
     })
   }, [
-    activeStep, apiProviderSetup, basicSettings, botBasic, dashboardStyleDraft, desktopPetDraft,
+    activeStep, apiProviderSetup, basicSettings, botBasic, chatPlatformId, dashboardStyleDraft, desktopPetDraft,
     draftKey, draftReady, modelSetup, needsApiKey, personalityDrafts, personalityMode,
     personalityPresetId, personalityTemplate, resumeModelStep,
   ])
@@ -465,6 +470,7 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
         case 'define-model':
         case 'replyer':
         case 'desktop-pet':
+        case 'chat-platform':
           return true
         case 'planner':
           await saveApiProviderSetupConfig(apiProviderSetup)
@@ -643,7 +649,7 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
     setIsCompleting(true)
 
     try {
-      // 保存桌宠设置，完成引导后应用界面风格并进入试聊。
+      // 完成引导后应用界面风格，进入所选平台配置或本地试聊。
       const saved = await saveCurrentStep()
       if (!saved) {
         return
@@ -659,13 +665,17 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
 
       toast({
         title: t('setupPage.toast.completeSuccessTitle'),
-        description: t('setupPage.toast.completeSuccessDescription', {
+        description: t(chatPlatformId ? 'setupPage.platform.completeDescription' : 'setupPage.toast.completeSuccessDescription', {
           appName: APP_NAME,
         }),
       })
 
-      // MaiBot 会热加载配置文件，完成后进入聊聊体验本地对话。
-      navigate({ to: '/chat', search: { setupTrial: true } })
+      // MaiBot 会热加载配置文件；平台连接沿用适配器的配置与登录流程。
+      if (chatPlatformId) {
+        navigate({ to: '/adapter-management', search: { plugin: chatPlatformId } })
+      } else {
+        navigate({ to: '/chat', search: { setupTrial: true } })
+      }
     } catch (error) {
       toast({
         title: t('setupPage.toast.completeFailedTitle'),
@@ -823,6 +833,8 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
             />
           </fieldset>
         )
+      case 'chat-platform':
+        return <PlatformSetupForm value={chatPlatformId} onChange={setChatPlatformId} disabled={isSaving || isCompleting} />
       default:
         return null
     }
@@ -936,7 +948,7 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
                     </>
                   ) : (
                     <>
-                      {t('setupPage.actions.complete')}
+                      {t(chatPlatformId ? 'setupPage.platform.connect' : 'setupPage.platform.startChat')}
                       <CheckCircle2 className="ml-2 h-4 w-4" strokeWidth={2} fill="none" />
                     </>
                   )}

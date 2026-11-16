@@ -1234,7 +1234,23 @@
     "switchToDark": "切换到深色模式"
   },
   "setupPage": {
+    "platform": {
+      "local": "暂不连接，直接聊天",
+      "localHint": "在 WebUI 的「聊聊」中开始对话，之后可随时在适配器管理中连接平台。",
+      "loading": "正在加载内置聊天平台…",
+      "loadFailed": "加载聊天平台失败",
+      "retry": "重新加载",
+      "empty": "当前没有内置聊天平台，可稍后在适配器管理中添加连接。",
+      "connectHint": "完成引导后，将打开所选平台的连接配置，继续设置账号并登录。",
+      "connect": "完成并配置连接",
+      "startChat": "完成并开始聊天",
+      "completeDescription": "基础配置已保存，请继续配置所选聊天平台的连接。"
+    },
     "steps": {
+      "chatPlatform": {
+        "title": "选择聊天平台",
+        "description": "连接内置聊天平台，或暂不连接，直接和麦麦聊天。"
+      },
       "nickname": {
         "title": "取一个名字",
         "label": "昵称",

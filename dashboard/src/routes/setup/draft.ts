@@ -18,6 +18,7 @@ export interface SetupDraft {
   basicSettings: BasicSetupConfig | null
   desktopPetDraft: boolean | null
   dashboardStyleDraft: DashboardStyle | null
+  chatPlatformId?: string | null
 }
 
 export function readSetupDraft(key: string): SetupDraft | null {
