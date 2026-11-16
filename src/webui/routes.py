@@ -23,6 +23,7 @@ from src.webui.routers.news import router as news_router
 from src.webui.routers.person import router as person_router
 from src.webui.routers.plugin import router as plugin_router
 from src.webui.routers.reasoning_process import router as reasoning_process_router
+from src.webui.routers.schedules import router as schedules_router
 from src.webui.routers.search import router as search_router
 from src.webui.routers.statistics import router as statistics_router
 from src.webui.routers.system import router as system_router
@@ -64,6 +65,7 @@ router.include_router(plugin_router)
 router.include_router(system_router)
 router.include_router(agent_router)
 router.include_router(desktop_pet_router)
+router.include_router(schedules_router)
 router.include_router(desktop_pet_remote_router)
 router.include_router(files_router)
 router.include_router(reasoning_process_router)

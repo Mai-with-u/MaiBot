@@ -615,7 +615,7 @@ function ObservationHomeContent() {
         <BoardScreen className="flex flex-col">
           {[
             { label: t('home.cache.all'), rate: summary?.cache_hit_rate ?? null },
-            { label: t('home.cache.chat'), rate: summary?.chat_cache_hit_rate ?? null },
+            { label: t('home.cache.core'), rate: summary?.core_cache_hit_rate ?? null },
           ].map((item) => (
             <div key={item.label} data-observation-cache-row="true">
               <div className="flex items-baseline justify-between gap-2">

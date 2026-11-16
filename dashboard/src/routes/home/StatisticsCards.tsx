@@ -340,9 +340,9 @@ function CacheBreakdown({ summary, locale }: { summary: StatisticsSummary; local
       total: summary.cache_hit_tokens + summary.cache_miss_tokens,
     },
     {
-      label: t('home.cache.chat'),
-      hitRate: summary.chat_cache_hit_rate,
-      total: summary.chat_cache_hit_tokens + summary.chat_cache_miss_tokens,
+      label: t('home.cache.core'),
+      hitRate: summary.core_cache_hit_rate,
+      total: summary.core_cache_hit_tokens + summary.core_cache_miss_tokens,
     },
   ]
 

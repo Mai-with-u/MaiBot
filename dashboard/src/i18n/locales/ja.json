@@ -2185,7 +2185,7 @@
       "description": "入力トークンのキャッシュヒット状況",
       "hitRate": "キャッシュヒット率",
       "all": "すべて",
-      "chat": "チャット",
+      "core": "コア",
       "hitTokens": "ヒットToken",
       "missTokens": "未ヒットToken",
       "eligibleTokens": "集計対象 {{value}} Token"

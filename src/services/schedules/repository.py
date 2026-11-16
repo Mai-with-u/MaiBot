@@ -37,7 +37,9 @@ def owner_session_id() -> str:
     return sessions[0].session_id
 
 
-def read_schedule_items(directory: Path, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def read_schedule_items(
+    directory: Path, session_id: Optional[str] = None, include_completed: bool = False,
+) -> List[Dict[str, Any]]:
     """供工作线程只读最新快照，不创建写入实例或修改状态。"""
     paths = [schedule_path(directory, session_id)] if session_id is not None else sorted(directory.glob("*.json"))
     items: List[Dict[str, Any]] = []
@@ -49,7 +51,7 @@ def read_schedule_items(directory: Path, session_id: Optional[str] = None) -> Li
             raise ValueError(f"日程文件必须是 JSON 对象数组: {path}")
         if any(item["session_id"] != path.stem for item in data):
             raise ValueError(f"日程会话归属与文件名不一致: {path}")
-        items.extend(item for item in data if item["status"] not in {"completed", "cancelled"})
+        items.extend(item for item in data if include_completed or item["status"] not in {"completed", "cancelled"})
     return items
 
 
