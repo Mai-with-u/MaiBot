@@ -23,6 +23,7 @@ def _build_runtime_stub() -> MaisakaHeartFlowChatting:
     runtime._proactive_trigger_message = None
     runtime._proactive_logical_turn_id = None
     runtime._internal_turn_queue = asyncio.Queue()
+    runtime._message_turn_changed = asyncio.Event()
     runtime._mark_message_turn_unscheduled = lambda: None
     runtime._cancel_deferred_message_turn_task = lambda: None
     return runtime

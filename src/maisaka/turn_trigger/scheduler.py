@@ -1,8 +1,9 @@
 """Maisaka 消息触发调度。"""
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import Optional, Sequence, TYPE_CHECKING
 
+from src.chat.message_receive.message import SessionMessage
 from src.common.logger import get_logger
 
 from .gates import TurnGateResult
@@ -37,6 +38,10 @@ class MessageTurnScheduler(ABC):
         logger.debug(f"{runtime.log_prefix} 回复调度 待处理={pending_count} {result.detail}")
         if result.decision == "delay":
             runtime._defer_message_turn_check(result.delay_seconds)
+            return
+
+        if result.decision == "review":
+            runtime._enqueue_message_turn()
             return
 
         if result.should_trigger:
@@ -75,6 +80,16 @@ class MessageTurnScheduler(ABC):
             return TurnGateResult(decision="trigger", detail=f"调度=静默消费 频率={frequency:.3f}")
 
         return self._evaluate_scene(pending_count, frequency)
+
+    async def review_message_turn(self, pending_messages: Sequence[SessionMessage]) -> Optional[TurnGateResult]:
+        """场景默认不附加评估，返回 None 让内部循环沿用原有采集流程。"""
+
+        return None
+
+    def record_message_consumed(self) -> None:
+        """静默消费成功后的通知，基类场景无需维护门控状态。"""
+
+        return None
 
     @abstractmethod
     def _resume_wait_on_message(self) -> bool:
