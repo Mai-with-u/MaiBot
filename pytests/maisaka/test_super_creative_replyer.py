@@ -103,17 +103,19 @@ def test_expression_intent_follows_conversation_analysis(replyer, mai_replier: b
         )
     user_text = get_item_text(items[1])
     expected = (
-        "你的回复最好避免【暧昧接受交换、承诺照片】，回复目的是【拒绝并反将一军】。"
-        "表达重点是【用显卡换照片】，可以用【嫌弃、带点调侃】的语气表达。"
+        "你的回复目的是拒绝并反将一军。"
+        "表达重点是用显卡换照片，可以用嫌弃、带点调侃的语气表达。"
     )
     assert expected in user_text
+    assert "暧昧接受交换" not in user_text
+    assert "承诺照片" not in user_text
     assert user_text.index("对方提出交换条件。") < user_text.index(expected)
 
 
 @pytest.mark.parametrize("locale, expected", [
-    ("zh-CN", "表达重点是【拒绝交换】。"),
-    ("en-US", "Focus on [拒绝交换]."),
-    ("ja-JP", "伝える重点は【拒绝交换】です。"),
+    ("zh-CN", "表达重点是拒绝交换。"),
+    ("en-US", "Focus on 拒绝交换."),
+    ("ja-JP", "伝える重点は拒绝交换です。"),
 ])
 def test_expression_intent_omits_empty_fields(locale: str, expected: str) -> None:
     with use_locale(locale):

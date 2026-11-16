@@ -4,12 +4,12 @@ advanced = true
 description = "Template for generating a natural-language impression of the current chat to guide semantic long-term memory retrieval."
 
 [planner_memory_group]
-display_name = "群聊记忆使用策略"
+display_name = "Group chat memory policy"
 advanced = false
-description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+description = "Instruction template loaded for its triggering scenario; edited separately from main prompts."
 
 [planner_memory_private]
-display_name = "私聊记忆使用策略"
+display_name = "Private chat memory policy"
 advanced = false
-description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+description = "Instruction template loaded for its triggering scenario; edited separately from main prompts."
 

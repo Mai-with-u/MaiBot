@@ -6,7 +6,7 @@ Requirements:
 1. Focus on the current topic, mood, interaction pattern, mentioned people, and referenced past events.
 2. If the window is mostly greetings or short banter, say that honestly.
 3. Do not add facts that are not supported by the recent messages.
-4. Do not output JSON, numbered lists, or explanations. Output one concise paragraph.
+4. Do not output JSON, numbered lists, or explanations. Output one concise paragraph in Chinese.
 
 Current chat:
 {chat_identity}

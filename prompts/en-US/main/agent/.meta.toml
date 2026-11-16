@@ -1,15 +1,15 @@
 [agent_acp]
-display_name = "External agent policy"
+display_name = "External agent integration guide"
 advanced = true
-description = "External agent policy。"
+description = "External agent integration guide."
 
 [agent_planner]
-display_name = "External planner policy"
+display_name = "External planner integration guide"
 advanced = true
-description = "External planner policy。"
+description = "External planner integration guide."
 
 [maisaka_subagent]
-display_name = "子代理"
+display_name = "Subagent"
 advanced = false
-description = "子代理独立任务的主要系统提示词。"
+description = "Main system prompt for an independent subagent task."
 

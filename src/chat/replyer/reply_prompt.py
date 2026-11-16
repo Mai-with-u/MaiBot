@@ -351,10 +351,7 @@ class ChatReplyPromptMixin:
         clauses: List[str] = []
         for name, template in templates.items():
             value = expression_intent.get(name)
-            if name == "avoid":
-                text = "、".join(item.strip() for item in (value or []) if item.strip())
-            else:
-                text = value.strip() if value else ""
+            text = value.strip() if value else ""
             if text:
                 clauses.append(template.format(value=text))
         guidance = "".join(clauses).strip()

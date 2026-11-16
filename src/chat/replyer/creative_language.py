@@ -24,22 +24,19 @@ CLASSICAL_TRANSLATION_INSTRUCTION = (
 
 EXPRESSION_INTENT_GUIDANCE: Dict[str, Dict[str, str]] = {
     "zh-CN": {
-        "avoid": "你的回复最好避免【{value}】，",
-        "reply_act": "回复目的是【{value}】。",
-        "focus": "表达重点是【{value}】，",
-        "tone": "可以用【{value}】的语气表达。",
+        "reply_act": "你的回复目的是{value}。",
+        "focus": "表达重点是{value}，",
+        "tone": "可以用{value}的语气表达。",
     },
     "en-US": {
-        "avoid": "Your reply should preferably avoid [{value}]. ",
-        "reply_act": "The purpose of your reply is [{value}]. ",
-        "focus": "Focus on [{value}]. ",
-        "tone": "You may use a [{value}] tone.",
+        "reply_act": "The purpose of your reply is {value}. ",
+        "focus": "Focus on {value}. ",
+        "tone": "You may use a {value} tone.",
     },
     "ja-JP": {
-        "avoid": "返信では【{value}】をなるべく避けてください。",
-        "reply_act": "返信の目的は【{value}】です。",
-        "focus": "伝える重点は【{value}】です。",
-        "tone": "【{value}】という口調で表現できます。",
+        "reply_act": "あなたの返信の目的は{value}です。",
+        "focus": "伝える重点は{value}です。",
+        "tone": "{value}という口調で表現できます。",
     },
 }
 

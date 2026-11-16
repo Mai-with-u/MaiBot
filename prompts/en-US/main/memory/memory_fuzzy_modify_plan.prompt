@@ -42,4 +42,4 @@ Rules:
 3. Mark old memories as superseded only when the user clearly asks to correct, replace, or remove an old fact.
 4. For person profile changes, prefer writing a new person_fact and refreshing that profile.
 5. Do not generate operations that directly overwrite the full profile text.
-6. Do not exceed the input max_targets count for mark_superseded operations, and sort them deterministically from highest to lowest priority.
+6. Do not exceed the input max_targets count for mark_superseded operations, and sort them from highest to lowest certainty.

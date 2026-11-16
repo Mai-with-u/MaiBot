@@ -19,11 +19,11 @@ advanced = true
 description = "外部 Planner 継続実行。"
 
 [subagent_final_round]
-display_name = "子代理最后一轮指令"
+display_name = "サブエージェントの最終ラウンド指示"
 advanced = false
-description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+description = "場面に応じて読み込む指示テンプレート。主要な Prompt とは別に編集します。"
 
 [subagent_finished]
-display_name = "子代理完成指令"
+display_name = "サブエージェントの完了通知"
 advanced = false
-description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+description = "場面に応じて読み込む指示テンプレート。主要な Prompt とは別に編集します。"

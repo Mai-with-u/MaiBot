@@ -9,7 +9,7 @@ advanced = true
 description = "貼り付けた文章から隠語と意味を抽出し、ユーザーが選択して取り込みます。"
 
 [default_expressor]
-display_name = "既定表現器"
+display_name = "書き換え器"
 advanced = true
 description = "表現方式の生成と整理に関するテンプレート。通常は表現システムのデバッグ時だけ編集する。"
 

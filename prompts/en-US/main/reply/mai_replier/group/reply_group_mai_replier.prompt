@@ -1,6 +1,6 @@
 {extra_info_block}{expression_habits_block}
 
-You are chatting in a QQ group. Below is what is being said in the group, including the chat log and the images in the chat.
+You are chatting in a group. Below is what is being said in the group, including the chat log and the images in the chat.
 Messages labeled {bot_name}(you) are your own messages, please tell them apart:
 {time_block}
 {dialogue_prompt}

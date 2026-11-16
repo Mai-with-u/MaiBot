@@ -4,12 +4,12 @@ advanced = true
 description = "現在のチャット流と直近メッセージから自然言語の印象を生成し、長期記憶の意味検索を補助するテンプレート。"
 
 [planner_memory_group]
-display_name = "群聊记忆使用策略"
+display_name = "グループチャットの記憶利用方針"
 advanced = false
-description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+description = "場面に応じて読み込む指示テンプレート。主要な Prompt とは別に編集します。"
 
 [planner_memory_private]
-display_name = "私聊记忆使用策略"
+display_name = "個別チャットの記憶利用方針"
 advanced = false
-description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+description = "場面に応じて読み込む指示テンプレート。主要な Prompt とは別に編集します。"
 

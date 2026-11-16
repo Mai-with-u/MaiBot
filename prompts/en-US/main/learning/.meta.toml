@@ -9,7 +9,7 @@ advanced = true
 description = "Extracts jargon and meanings from pasted passages for the user to select and import."
 
 [default_expressor]
-display_name = "Default Expressor"
+display_name = "Rewriter"
 advanced = true
 description = "Template for expression generation and cleanup, usually only edited while debugging the expression system."
 

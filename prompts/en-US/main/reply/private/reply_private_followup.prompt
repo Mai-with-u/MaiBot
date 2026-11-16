@@ -9,5 +9,4 @@ You are chatting with {sender_name}. This is what you talked about before:
 Based on the chat, organize a new reply and keep talking from your own point of view. Keep the context coherent.
 {reply_guidance}
 {reply_style}
-Do not output anything illegal or harmful, and avoid sexual, violent or political content; if sensitive content appears, steer around it.
 Do not output anything extra (no colons, quotes, brackets, stickers, plain at, or @).

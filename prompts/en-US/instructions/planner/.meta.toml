@@ -9,27 +9,27 @@ advanced = true
 description = "After several consecutive waits, suggests waiting longer or ending this round to avoid an endless loop."
 
 [planner_replan]
-display_name = "新消息重规划指令"
+display_name = "Replanning for new messages"
 advanced = false
-description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+description = "Instruction template loaded for its triggering scenario; edited separately from main prompts."
 
 [planner_subagent_policy]
-display_name = "子代理委派策略"
+display_name = "Subagent delegation policy"
 advanced = false
-description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+description = "Instruction template loaded for its triggering scenario; edited separately from main prompts."
 
 [planner_turn_action]
-display_name = "本轮行动指令"
+display_name = "Turn action instructions"
 advanced = false
-description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+description = "Instruction template loaded for its triggering scenario; edited separately from main prompts."
 
 [planner_turn_passive]
-display_name = "本轮行动指令（被动回复）"
+display_name = "Turn action instructions (passive reply)"
 advanced = false
-description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+description = "Instruction template loaded for its triggering scenario; edited separately from main prompts."
 
 [planner_wait_completed]
-display_name = "等待结束指令"
+display_name = "Wait completion instructions"
 advanced = false
-description = "按触发场景加载的指令模板；与主要 Prompt 分开编辑。"
+description = "Instruction template loaded for its triggering scenario; edited separately from main prompts."
 

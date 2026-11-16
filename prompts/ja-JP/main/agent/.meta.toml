@@ -9,7 +9,7 @@ advanced = true
 description = "外部 Planner 接続ガイド。"
 
 [maisaka_subagent]
-display_name = "子代理"
+display_name = "サブエージェント"
 advanced = false
-description = "子代理独立任务的主要系统提示词。"
+description = "サブエージェントの独立タスクに使う主要なシステムプロンプト。"
 
