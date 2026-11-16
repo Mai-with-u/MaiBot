@@ -53,7 +53,7 @@ import { useNews } from '@/routes/home/hooks/useNews'
 import { useNewsReadState } from '@/routes/home/hooks/useNewsReadState'
 import { useQuickShortcuts } from '@/routes/home/hooks/useQuickShortcuts'
 import { useReviewStats } from '@/routes/home/hooks/useReviewStats'
-import { formatCacheRate, formatNumber } from '@/routes/home/StatisticsCards'
+import { formatCacheRate, formatNumber } from '@/routes/home/statistics-format'
 import {
   formatChartTimeAxis,
   formatTokenAxis,

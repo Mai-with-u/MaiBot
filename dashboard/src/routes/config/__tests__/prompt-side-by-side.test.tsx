@@ -45,17 +45,24 @@ const props = {
   onChange: vi.fn(),
   rightFilename: '',
   onEditTemplate: () => true,
+  editDefaultPrompt: false,
+  onSave: vi.fn(),
+  saving: false,
+  hasUnsavedChanges: true,
+  saveLabel: 'Save',
+  onRightStateChange: vi.fn(),
+  onSaved: vi.fn(),
 }
 
 describe('inline side-by-side Prompt viewing', () => {
   it('waits for a directory selection and preserves the editable left draft', async () => {
-    vi.mocked(getPromptFile).mockResolvedValue({ content: 'applied-b' } as PromptFileContent)
+    vi.mocked(getPromptFile).mockResolvedValue(promptContent('b.prompt', 'applied-b'))
     const view = render(<PromptSideBySide {...props} />)
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByDisplayValue('unsaved-a')).not.toHaveAttribute('readonly')
     expect(getPromptFile).not.toHaveBeenCalled()
     view.rerender(<PromptSideBySide {...props} rightFilename="b.prompt" />)
-    expect(await screen.findByDisplayValue('applied-b')).toHaveAttribute('readonly')
+    expect(await screen.findByDisplayValue('applied-b')).not.toHaveAttribute('readonly')
     expect(screen.getByDisplayValue('unsaved-a')).toBeInTheDocument()
     expect(getPromptFile).toHaveBeenCalledWith('zh-CN', 'b.prompt')
   })
@@ -67,13 +74,26 @@ describe('inline side-by-side Prompt viewing', () => {
         ? new Promise((resolve) => {
             resolveEarlier = resolve
           })
-        : Promise.resolve({ content: 'applied-c' } as PromptFileContent)
+        : Promise.resolve(promptContent('c.prompt', 'applied-c'))
     )
     const view = render(<PromptSideBySide {...props} rightFilename="b.prompt" />)
     view.rerender(<PromptSideBySide {...props} rightFilename="c.prompt" />)
     expect(await screen.findByDisplayValue('applied-c')).toBeInTheDocument()
-    await act(async () => resolveEarlier({ content: 'stale-b' } as PromptFileContent))
+    await act(async () => resolveEarlier(promptContent('b.prompt', 'stale-b')))
     expect(screen.queryByDisplayValue('stale-b')).not.toBeInTheDocument()
     expect(screen.getByDisplayValue('applied-c')).toBeInTheDocument()
   })
 })
+
+function promptContent(filename: string, content: string): PromptFileContent {
+  return {
+    success: true,
+    language: 'zh-CN',
+    filename,
+    content,
+    customized: false,
+    active_version_id: null,
+    versions: [],
+    validation: { valid: true, missing_placeholders: [], extra_placeholders: [], message: '' },
+  }
+}

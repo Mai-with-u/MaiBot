@@ -86,10 +86,49 @@ function KeyTooltip({
   children: ReactElement
 }) {
   const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    let pointer: { x: number; y: number } | null = null
+    let frame: number | null = null
+    const updateAfterScroll = () => {
+      if (frame !== null) cancelAnimationFrame(frame)
+      // Radix 会在滚动时关闭提示；等滚动和命中区域更新后，展开鼠标实际停留的键位。
+      frame = requestAnimationFrame(() => {
+        frame = null
+        if (!pointer) return
+        const target = document.elementFromPoint(pointer.x, pointer.y)
+        setOpen(target !== null && triggerRef.current?.contains(target) === true)
+      })
+    }
+    const trackPointer = (event: PointerEvent) => {
+      if (event.pointerType === 'mouse') pointer = { x: event.clientX, y: event.clientY }
+    }
+    const trackWheel = (event: WheelEvent) => {
+      pointer = { x: event.clientX, y: event.clientY }
+    }
+    const handleScroll = (event: Event) => {
+      if (event.target instanceof Element && event.target.contains(triggerRef.current)) updateAfterScroll()
+    }
+    window.addEventListener('pointermove', trackPointer, true)
+    window.addEventListener('wheel', trackWheel, { capture: true, passive: true })
+    window.addEventListener('scroll', handleScroll, true)
+    return () => {
+      window.removeEventListener('pointermove', trackPointer, true)
+      window.removeEventListener('wheel', trackWheel, true)
+      window.removeEventListener('scroll', handleScroll, true)
+      if (frame !== null) cancelAnimationFrame(frame)
+    }
+  }, [])
+
   return (
     <Tooltip open={open} onOpenChange={setOpen} disableHoverableContent>
       <TooltipTrigger
+        ref={triggerRef}
         asChild
+        onPointerEnter={(event) => {
+          if (event.pointerType === 'mouse') setOpen(true)
+        }}
         onPointerLeave={() => setOpen(false)}
         onClick={() => setOpen(false)}
         onFocus={(event) => {
@@ -99,7 +138,7 @@ function KeyTooltip({
       >
         {children}
       </TooltipTrigger>
-      <TooltipContent side={side}>{label}</TooltipContent>
+      <TooltipContent side={side} className="pointer-events-none">{label}</TooltipContent>
     </Tooltip>
   )
 }
@@ -283,7 +322,7 @@ export function ObservationSidebar({
       <BotSwitcher submenu={collapsed}>
         <button type="button" data-observation-icon-key={!collapsed || undefined} className={toolClassName}>
           <ChevronsUpDown aria-hidden="true" />
-          {collapsed && <span>{t('hostManager.currentBot')}</span>}
+          {collapsed && <span>{t('hostManager.multiBotManagement')}</span>}
         </button>
       </BotSwitcher>
       {toolItem(<Link

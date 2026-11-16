@@ -56,7 +56,7 @@ const setupRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/setup/index.tsx'), 'SetupPage'),
 })
 
-// 受保护的路由 Root（带外壳：按设置使用经典布局或麦麦观察布局）
+// 受保护的路由 Root（统一使用麦麦观察布局）
 const protectedRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: 'protected',

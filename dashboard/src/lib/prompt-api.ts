@@ -92,6 +92,20 @@ export async function getDefaultPromptFile(
   )
 }
 
+export async function updateDefaultPromptFile(
+  language: string,
+  filename: string,
+  content: string
+): Promise<PromptFileContent> {
+  return backendApi.put<PromptFileContent>(
+    `${API_BASE}/${encodeURIComponent(language)}/${encodeURIComponent(filename)}/default`,
+    {
+      body: { content },
+      errorMessage: '保存默认 Prompt 文件失败',
+    }
+  )
+}
+
 export async function updatePromptFile(
   language: string,
   filename: string,

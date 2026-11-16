@@ -18,7 +18,6 @@ import { MOBILE_GLASS_CLASS } from '@/components/layout/mobile-glass'
 import { useHideMobileTabBar } from '@/components/layout/mobile-nav-context'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { useFeatureFlags } from '@/hooks/use-feature-flags'
-import { useLayoutVersion } from '@/lib/layout-version'
 import { takeQuickChatMessage } from '@/lib/quick-chat'
 import { useToast } from '@/hooks/use-toast'
 import { Button } from '@/components/ui/button'
@@ -277,7 +276,6 @@ export function ChatPage() {
     select: (state) => new URLSearchParams(state.location.searchStr).get('agent') === 'true',
   })
   // 麦麦观察布局的侧栏已经列出所有对话，聊天页不再显示自带的会话列表，选择完全跟随地址
-  const inObservationLayout = useLayoutVersion() === 'observation'
   const [agentSelected, setAgentSelected] = useState(agentParam)
   const [handledAgentParam, setHandledAgentParam] = useState(agentParam)
   const [trialReplied, setTrialReplied] = useState(false)
@@ -423,7 +421,7 @@ export function ChatPage() {
       setAgentSelected(false)
       setActiveObservedSessionId(observeParam)
       setMobileRoomOpen(true)
-    } else if (inObservationLayout) {
+    } else {
       setActiveObservedSessionId(null)
     }
   }
@@ -1299,9 +1297,9 @@ export function ChatPage() {
 
   return (
     <div data-chat-workspace="true">
-      {/* 桌面端：左侧会话侧边栏（麦麦观察布局由外壳侧栏提供） */}
-      {!inObservationLayout && <motion.div
-        className="hidden shrink-0 md:block"
+      {/* 平板端提供页内会话列表，桌面端由外壳侧栏提供。 */}
+      <motion.div
+        className="hidden shrink-0 md:block lg:hidden"
         variants={{
           initial: { opacity: 0, x: '-100%' },
           animate: { opacity: 1, x: 0 },
@@ -1329,7 +1327,7 @@ export function ChatPage() {
           onOpenObservedSettings={openObservedSettings}
           onClose={closeTab}
         />
-      </motion.div>}
+      </motion.div>
 
       {/* 移动端：会话列表（未进入对话时） */}
       {!mobileRoomOpen && (

@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next'
 import {
   CheckCircle2,
   FileText,
-  Folder,
   Maximize2,
   PanelLeftOpen,
   PanelLeftClose,
@@ -76,11 +75,13 @@ import {
   getPromptVersionFile,
   resetPromptFile,
   updatePromptFile,
+  updateDefaultPromptFile,
   type PromptCatalog,
   type PromptFileInfo,
   type PromptValidationResult,
   type PromptVersionInfo,
 } from '@/lib/prompt-api'
+import { getSetting } from '@/lib/settings-manager'
 import { cn } from '@/lib/utils'
 import { promptCatalogQueryOptions } from '@/lib/prompt-query'
 import { queryClient } from '@/lib/query'
@@ -292,8 +293,13 @@ function buildPromptDiff(defaultContent: string, currentContent: string): Prompt
 
 export function PromptManagementPage() {
   const { t } = useTranslation()
+  const [editDefaultPrompt, setEditDefaultPrompt] = useState(() => getSetting('editDefaultPrompt'))
   const [sideBySideOpen, setSideBySideOpen] = useState(false)
   const [rightFilename, setRightFilename] = useState('')
+  const [rightEditorState, setRightEditorState] = useState({ dirty: false, busy: false })
+  const handleRightStateChange = useCallback((dirty: boolean, busy: boolean) => {
+    setRightEditorState({ dirty, busy })
+  }, [])
   const { toast } = useToast()
   const [catalog, setCatalog] = useState<PromptCatalog | null>(null)
   const [language, setLanguage] = useState('zh-CN')
@@ -356,6 +362,12 @@ export function PromptManagementPage() {
   const selectedFile = promptFiles.find((file) => file.name === filename)
   const isCustomized = selectedFile?.customized ?? false
   const selectedCustomVersion = selectedVersionId !== DEFAULT_VERSION_ID
+  const editingDefaultPrompt = editDefaultPrompt && !selectedCustomVersion
+  const saveLabel = editingDefaultPrompt
+    ? t('settings.other.saveDefaultPrompt')
+    : selectedCustomVersion
+      ? '保存修改'
+      : '保存为新版本'
   const selectedVersionIsApplied = selectedCustomVersion
     ? selectedVersionId === activeVersionId
     : !isCustomized
@@ -388,6 +400,16 @@ export function PromptManagementPage() {
     },
     []
   )
+
+  useEffect(() => {
+    const refreshSetting = () => setEditDefaultPrompt(getSetting('editDefaultPrompt'))
+    window.addEventListener('maibot-settings-change', refreshSetting)
+    window.addEventListener('storage', refreshSetting)
+    return () => {
+      window.removeEventListener('maibot-settings-change', refreshSetting)
+      window.removeEventListener('storage', refreshSetting)
+    }
+  }, [])
 
   useEffect(() => {
     diffModeRef.current = diffMode
@@ -522,18 +544,24 @@ export function PromptManagementPage() {
 
     try {
       setSaving(true)
-      const result = await updatePromptFile(language, filename, content, {
-        versionId: selectedCustomVersion ? selectedVersionId : null,
-        createVersion: !selectedCustomVersion,
-      })
-      applyPromptContent(result, result.active_version_id ?? DEFAULT_VERSION_ID)
+      const result = editingDefaultPrompt
+        ? await updateDefaultPromptFile(language, filename, content)
+        : await updatePromptFile(language, filename, content, {
+            versionId: selectedCustomVersion ? selectedVersionId : null,
+            createVersion: !selectedCustomVersion,
+          })
+      const nextVersionId = editingDefaultPrompt
+        ? DEFAULT_VERSION_ID
+        : (result.active_version_id ?? DEFAULT_VERSION_ID)
+      applyPromptContent(result, nextVersionId)
+      if (editingDefaultPrompt) setDiffDefaultContent(result.content)
       if (selectedVersionStorageKey) {
-        localStorage.setItem(
-          selectedVersionStorageKey,
-          result.active_version_id ?? DEFAULT_VERSION_ID
-        )
+        localStorage.setItem(selectedVersionStorageKey, nextVersionId)
       }
-      toast({ title: 'Prompt 已保存', description: `${language}/${filename}` })
+      toast({
+        title: editingDefaultPrompt ? t('settings.other.defaultPromptSaved') : 'Prompt 已保存',
+        description: `${language}/${filename}`,
+      })
       void loadCatalog()
     } catch (error) {
       toast({
@@ -547,7 +575,7 @@ export function PromptManagementPage() {
   }
 
   const handleVersionChange = async (nextVersionId: string) => {
-    if (!language || !filename) return
+    if (!language || !filename || !canLeaveRightEditor()) return
     if (hasUnsavedChanges) {
       toast({
         title: '当前 Prompt 有未保存修改',
@@ -579,7 +607,7 @@ export function PromptManagementPage() {
   }
 
   const handleApplySelectedVersion = async () => {
-    if (!language || !filename) return
+    if (!language || !filename || !canLeaveRightEditor()) return
 
     try {
       setApplyingVersion(true)
@@ -608,7 +636,7 @@ export function PromptManagementPage() {
   }
 
   const handleDeleteSelectedVersion = async () => {
-    if (!language || !filename || !selectedCustomVersion) return
+    if (!language || !filename || !selectedCustomVersion || !canLeaveRightEditor()) return
 
     try {
       setDeletingVersion(true)
@@ -679,7 +707,18 @@ export function PromptManagementPage() {
     }
   }
 
+  const canLeaveRightEditor = () => {
+    if (!sideBySideOpen || (!rightEditorState.dirty && !rightEditorState.busy)) return true
+    toast({
+      title: t('promptCompare.unsavedRight'),
+      description: t('promptCompare.saveRightFirst'),
+      variant: 'destructive',
+    })
+    return false
+  }
+
   const canLeaveEditor = () => {
+    if (!canLeaveRightEditor()) return false
     if (!hasUnsavedChanges) return true
     toast({
       title: '当前 Prompt 有未保存修改',
@@ -761,7 +800,7 @@ export function PromptManagementPage() {
             disabled={saving || loadingFile}
             className="bg-foreground text-background h-11 rounded-full px-5 text-[15px] font-semibold disabled:opacity-50"
           >
-            {saving ? '保存中' : selectedCustomVersion ? '保存修改' : '保存为新版本'}
+            {saving ? '保存中' : saveLabel}
           </button>
         </div>
       )}
@@ -897,6 +936,7 @@ export function PromptManagementPage() {
                   filtering={Boolean(query.trim()) || onlyCustomized}
                   onSelect={(file) => {
                     if (sideBySideOpen) {
+                      if (file.name !== rightFilename && !canLeaveRightEditor()) return
                       setRightFilename(file.name)
                       setMobileEditing(true)
                       return
@@ -936,43 +976,46 @@ export function PromptManagementPage() {
           >
             <div
               hidden={!filename}
-              className={cn('flex shrink-0 flex-col gap-3 pb-3', !filename && 'hidden')}
+              className={cn('flex shrink-0 flex-col gap-1.5 pb-2', !filename && 'hidden')}
             >
-              <div className="flex min-w-0 flex-col gap-3">
-                <div className="flex min-w-0 items-start justify-between gap-3">
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <div className="flex min-w-0 items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <div className="text-muted-foreground mb-2 flex items-center gap-2 font-mono text-xs">
-                      <Folder className="size-3 shrink-0" />
-                      <span className="truncate" title={selectedFile?.relative_path}>
-                        {selectedFile?.relative_path ?? '选择模板'}
-                      </span>
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5">
+                      <h2
+                        data-prompt-title="true"
+                        className="flex min-w-0 items-center gap-2 text-base"
+                        title={selectedFile?.relative_path}
+                      >
+                        <span className="truncate">
+                          {selectedFile?.display_name || filename || '未选择文件'}
+                        </span>
+                        {!loadingFile && validation?.valid === false && (
+                          <PromptWarningDot message={validation.message} />
+                        )}
+                        {selectedFile?.advanced && (
+                          <Badge variant="outline" className="shrink-0">
+                            高级
+                          </Badge>
+                        )}
+                        {isCustomized && (
+                          <Badge variant="secondary" className="shrink-0">
+                            自定义
+                          </Badge>
+                        )}
+                      </h2>
+                      <p className="text-muted-foreground text-xs">
+                        {language}
+                        {selectedFile ? ` · ${formatFileSize(selectedFile.size)}` : ''}
+                        {versions.length > 0 ? ` · ${versions.length} 个自定义版本` : ''}
+                        {hasUnsavedChanges ? ' · 有未保存修改' : ''}
+                      </p>
                     </div>
-                    <h2 data-prompt-title="true" className="flex items-center gap-2 text-xl">
-                      <span className="truncate">
-                        {selectedFile?.display_name || filename || '未选择文件'}
-                      </span>
-                      {!loadingFile && validation?.valid === false && (
-                        <PromptWarningDot message={validation.message} />
-                      )}
-                      {selectedFile?.advanced && (
-                        <Badge variant="outline" className="shrink-0">
-                          高级
-                        </Badge>
-                      )}
-                      {isCustomized && (
-                        <Badge variant="secondary" className="shrink-0">
-                          自定义
-                        </Badge>
-                      )}
-                    </h2>
-                    <p className="text-muted-foreground mt-1 text-xs">
-                      {language}
-                      {selectedFile ? ` · ${formatFileSize(selectedFile.size)}` : ''}
-                      {versions.length > 0 ? ` · ${versions.length} 个自定义版本` : ''}
-                      {hasUnsavedChanges ? ' · 有未保存修改' : ''}
-                    </p>
                     {selectedFile?.description && (
-                      <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">
+                      <p
+                        className="text-muted-foreground mt-0.5 truncate text-xs"
+                        title={selectedFile.description}
+                      >
                         {selectedFile.description}
                       </p>
                     )}
@@ -981,7 +1024,7 @@ export function PromptManagementPage() {
                     <Button
                       variant="outline"
                       size="sm"
-                      className="shrink-0"
+                      className="h-7 shrink-0 gap-1 px-2"
                       aria-pressed={focusEditing}
                       onClick={() => setFocusEditing((current) => !current)}
                     >
@@ -994,7 +1037,7 @@ export function PromptManagementPage() {
                     </Button>
                   )}
                 </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                   <Select
                     value={selectedVersionId}
                     onValueChange={handleVersionChange}
@@ -1002,7 +1045,7 @@ export function PromptManagementPage() {
                   >
                     <SelectTrigger
                       aria-label="Prompt 版本"
-                      className="h-8 w-full text-xs sm:h-9 sm:w-[220px]"
+                      className="h-7 w-[160px] min-w-0 text-xs sm:w-[180px]"
                     >
                       <SelectValue placeholder="选择版本" />
                     </SelectTrigger>
@@ -1023,11 +1066,11 @@ export function PromptManagementPage() {
                     disabled={
                       !canApplySelectedVersion || applyingVersion || loadingFile || !filename
                     }
-                    className="h-8 shrink-0 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm"
+                    className="h-7 shrink-0 gap-1 px-2 text-xs"
                   >
                     <CheckCircle2
                       className={cn(
-                        'mr-1 h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4',
+                        'size-3.5',
                         applyingVersion && 'animate-pulse'
                       )}
                     />
@@ -1039,8 +1082,8 @@ export function PromptManagementPage() {
                   </Button>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="sm" disabled={!filename}>
-                        <MoreHorizontal className="mr-2 size-4" />
+                      <Button variant="outline" size="sm" className="h-7 gap-1 px-2" disabled={!filename}>
+                        <MoreHorizontal className="size-3.5" />
                         版本操作
                       </Button>
                     </DropdownMenuTrigger>
@@ -1049,7 +1092,7 @@ export function PromptManagementPage() {
                         onSelect={() => void handleShowDefault()}
                         disabled={loadingDefaultPrompt || loadingFile || !filename}
                       >
-                        <Eye className="mr-2 size-4" />
+                        <Eye className="size-3.5" />
                         查看默认
                       </DropdownMenuItem>
                       <DropdownMenuItem
@@ -1057,7 +1100,7 @@ export function PromptManagementPage() {
                         disabled={!canDeleteSelectedVersion || deletingVersion}
                         className="text-destructive focus:text-destructive"
                       >
-                        <Trash2 className="mr-2 size-4" />
+                        <Trash2 className="size-3.5" />
                         删除版本
                       </DropdownMenuItem>
                     </DropdownMenuContent>
@@ -1065,8 +1108,10 @@ export function PromptManagementPage() {
                   <Button
                     variant="outline"
                     size="sm"
+                    className="h-7 gap-1 px-2"
                     aria-pressed={sideBySideOpen}
                     onClick={() => {
+                      if (!canLeaveRightEditor()) return
                       setSideBySideOpen((current) => !current)
                       if (sideBySideOpen && selectedFile) setPromptKind(selectedFile.kind ?? 'main')
                       setDiffMode(false)
@@ -1076,22 +1121,23 @@ export function PromptManagementPage() {
                     }}
                     disabled={loadingFile || !filename}
                   >
-                    <PanelLeftOpen className="mr-2 size-4" />
+                    <PanelLeftOpen className="size-3.5" />
                     {t(sideBySideOpen ? 'promptCompare.exit' : 'promptCompare.title')}
                   </Button>
                   <Button
                     variant={diffMode ? 'default' : 'outline'}
                     size="sm"
                     onClick={() => {
+                      if (!canLeaveRightEditor()) return
                       setSideBySideOpen(false)
                       void handleToggleDiffMode()
                     }}
                     disabled={loadingDiffDefault || loadingFile || !filename}
-                    className="h-8 flex-1 px-2 text-xs sm:h-9 sm:flex-none sm:px-3 sm:text-sm"
+                    className="h-7 gap-1 px-2 text-xs"
                   >
                     <GitCompareArrows
                       className={cn(
-                        'mr-1 h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4',
+                        'size-3.5',
                         loadingDiffDefault && 'animate-pulse'
                       )}
                     />
@@ -1099,24 +1145,28 @@ export function PromptManagementPage() {
                   </Button>
                   <Button
                     size="sm"
-                    className="ml-auto h-8 shrink-0 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm"
+                    className="ml-auto h-7 shrink-0 gap-1 px-2 text-xs"
                     onClick={handleSave}
                     disabled={!hasUnsavedChanges || saving || loadingFile || !filename}
                   >
-                    <Save className="h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4" />
+                    <Save className="size-3.5" />
                     <span className="ml-1 sm:ml-0">
-                      {saving
-                        ? '保存中'
-                        : hasUnsavedChanges
-                          ? selectedCustomVersion
-                            ? '保存修改'
-                            : '保存为新版本'
-                          : '已保存'}
+                      {saving ? '保存中' : hasUnsavedChanges ? saveLabel : '已保存'}
                     </span>
                   </Button>{' '}
                 </div>
               </div>
 
+              {editingDefaultPrompt && (
+                <details className="rounded-md border border-border bg-muted/30 px-2 py-1 text-xs">
+                  <summary className="cursor-pointer text-muted-foreground">
+                    {t('settings.other.editDefaultPrompt')}
+                  </summary>
+                  <p className="pt-1 leading-relaxed text-muted-foreground">
+                    {t('settings.other.editingDefaultPromptDesc')}
+                  </p>
+                </details>
+              )}
               {diffMode && (
                 <div className="text-muted-foreground flex flex-wrap items-center gap-2 text-xs">
                   <Badge
@@ -1168,6 +1218,13 @@ export function PromptManagementPage() {
                   onChange={setContent}
                   rightFilename={rightFilename}
                   onEditTemplate={handleEditBlockTemplate}
+                  editDefaultPrompt={editDefaultPrompt}
+                  onSave={handleSave}
+                  saving={saving}
+                  hasUnsavedChanges={hasUnsavedChanges}
+                  saveLabel={saveLabel}
+                  onRightStateChange={handleRightStateChange}
+                  onSaved={() => void loadCatalog()}
                 />
               ) : diffMode ? (
                 <div className="grid h-full min-h-[320px] grid-rows-[minmax(0,1fr)_minmax(0,1fr)] gap-2 p-2 lg:grid-cols-2 lg:grid-rows-1">

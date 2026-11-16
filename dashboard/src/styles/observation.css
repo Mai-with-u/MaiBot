@@ -1,4 +1,4 @@
-/* 麦麦观察布局：外壳侧栏 + 首页面板。只在 [data-observation-shell] 内生效，不影响经典布局。 */
+/* 麦麦观察布局：桌面侧栏、移动端导航与首页面板。 */
 [data-observation-shell='true'] {
   --obs-sidebar-width: 18.5rem;
   --obs-rail-width: 4.25rem;
@@ -100,7 +100,7 @@
   background-image: var(--mil-speck);
   background-size: 5px 5px;
 }
-/* 千禧主题给主内容区也铺了颗粒点（经典布局里它有实色底）；新布局的主内容区是透明的，
+/* 千禧主题给主内容区也铺了颗粒点；透明的主内容区不应重复铺设，
    再铺一层会和外壳的点错位叠成双倍密度，这里只保留外壳那一层 */
 :root[data-dashboard-style='millennium'] [data-observation-shell='true'] [data-dashboard-main='true'] {
   background-image: none;

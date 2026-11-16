@@ -1,13 +1,16 @@
 import { useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronsUpDown } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
+import { ChevronsUpDown, Wrench } from 'lucide-react'
 
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuPortal,
+  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -26,7 +29,7 @@ export function BotSwitcher({ children, submenu = false }: { children: ReactElem
   if (!runtime.host) return null
 
   const current = runtime.bots.find((bot) => bot.bot_id === runtime.selected_bot_id)
-  const label = `${t('hostManager.currentBot')}: ${current?.name ?? t('hostManager.noSelection')}`
+  const label = `${t('hostManager.multiBotManagement')} · ${t('hostManager.currentBot')}: ${current?.name ?? t('hostManager.noSelection')}`
   const select = async (id: string) => {
     if (switching || id === runtime.selected_bot_id) return
     setSwitching(true)
@@ -39,14 +42,23 @@ export function BotSwitcher({ children, submenu = false }: { children: ReactElem
   }
 
   const botOptions = (
-    <DropdownMenuRadioGroup value={runtime.selected_bot_id ?? ''} onValueChange={(id) => void select(id)}>
-      {runtime.bots.map((bot) => (
-        <DropdownMenuRadioItem key={bot.bot_id} value={bot.bot_id} disabled={switching}>
-          <span className="min-w-0 truncate">{bot.name}</span>
-          <span className="text-muted-foreground ml-3 shrink-0 text-xs">{t(`hostManager.status.${bot.status}`)}</span>
-        </DropdownMenuRadioItem>
-      ))}
-    </DropdownMenuRadioGroup>
+    <>
+      <DropdownMenuRadioGroup value={runtime.selected_bot_id ?? ''} onValueChange={(id) => void select(id)}>
+        {runtime.bots.map((bot) => (
+          <DropdownMenuRadioItem key={bot.bot_id} value={bot.bot_id} disabled={switching}>
+            <span className="min-w-0 truncate">{bot.name}</span>
+            <span className="text-muted-foreground ml-3 shrink-0 text-xs">{t(`hostManager.status.${bot.status}`)}</span>
+          </DropdownMenuRadioItem>
+        ))}
+      </DropdownMenuRadioGroup>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem asChild>
+        <Link to="/bots" className="gap-3">
+          <Wrench aria-hidden="true" className="h-4 w-4" />
+          <span>{t('hostManager.managePage')}</span>
+        </Link>
+      </DropdownMenuItem>
+    </>
   )
 
   if (submenu) {
@@ -54,7 +66,7 @@ export function BotSwitcher({ children, submenu = false }: { children: ReactElem
       <DropdownMenuSub>
         <DropdownMenuSubTrigger disabled={switching} aria-label={label} title={label} className="gap-3 px-3 py-2">
           <ChevronsUpDown aria-hidden="true" />
-          <span>{t('hostManager.currentBot')}</span>
+          <span>{t('hostManager.multiBotManagement')}</span>
         </DropdownMenuSubTrigger>
         <DropdownMenuPortal>
           <DropdownMenuSubContent sideOffset={8} className="z-[60] max-h-80 max-w-[calc(100vw-2rem)] overflow-y-auto">

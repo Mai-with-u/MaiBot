@@ -174,6 +174,12 @@ class PromptVersionListResponse(BaseModel):
     versions: List[PromptVersionInfo] = Field(default_factory=list)
 
 
+class DefaultPromptUpdateRequest(BaseModel):
+    """源码默认 Prompt 保存请求。"""
+
+    content: str
+
+
 class PromptUpdateRequest(BaseModel):
     """Prompt 保存请求。"""
 
@@ -1003,6 +1009,24 @@ def get_default_prompt_file(language: str, filename: str):
     except Exception as e:
         logger.error(f"读取默认 Prompt 文件失败: {prompt_path} {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"读取默认 Prompt 文件失败: {str(e)}") from e
+
+
+@router.put("/prompts/{language}/{filename}/default", response_model=PromptFileResponse)
+def update_default_prompt_file(language: str, filename: str, request: DefaultPromptUpdateRequest):
+    """直接更新源码默认模板，保留现有自定义版本及其启用状态。"""
+
+    prompt_path = _safe_prompt_path(language, filename)
+    if not prompt_path.is_file():
+        raise HTTPException(status_code=404, detail="Prompt 文件不存在")
+
+    _ensure_prompt_parameters_match(prompt_path, request.content)
+    try:
+        prompt_path.write_text(request.content, encoding="utf-8", newline="\n")
+        clear_prompt_cache()
+    except OSError as exc:
+        logger.error(f"保存默认 Prompt 文件失败: {prompt_path} {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"保存默认 Prompt 文件失败: {exc}") from exc
+    return get_default_prompt_file(language, filename)
 
 
 @router.get("/prompts/{language}/{filename}/versions", response_model=PromptVersionListResponse)

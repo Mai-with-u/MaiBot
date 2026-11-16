@@ -141,6 +141,7 @@ export function ObservationConversations({ collapsed }: { collapsed: boolean }) 
   const { sessions: monitorSessions, stageStatuses, latestMessages } = useMaisakaMonitorOverview()
   const [query, setQuery] = useState('')
   const [chatsOpen, setChatsOpen] = useState(false)
+  const [frozenSessions, setFrozenSessions] = useState<SessionInfo[] | null>(null)
   const [settingsChat, setSettingsChat] = useState<ChatStreamSettingsTarget | null>(null)
   const { data: chatStreams = [], isError } = useQuery({
     queryKey: ['chat-streams', 'all'],
@@ -161,10 +162,16 @@ export function ObservationConversations({ collapsed }: { collapsed: boolean }) 
     () => buildObservedSessions(chatStreams, monitorSessions, stageStatuses),
     [chatStreams, monitorSessions, stageStatuses]
   )
-  const sorted = useMemo(
+  const latestSorted = useMemo(
     () => Array.from(sessions.values()).filter((session) => session.platform !== 'internal').sort((a, b) => b.lastActivity - a.lastActivity),
     [sessions]
   )
+  // 悬停期间固定列表成员与顺序，避免实时活跃更新使点击目标和滚动位置跳动。
+  const sorted = frozenSessions ?? latestSorted
+  useEffect(() => {
+    setFrozenSessions(null)
+  }, [collapsed, selected_bot_id])
+
   const normalizedQuery = query.trim().toLowerCase()
   const observedItems = useMemo<ObservedListEntry[]>(() => {
     const filtered = normalizedQuery
@@ -191,13 +198,15 @@ export function ObservationConversations({ collapsed }: { collapsed: boolean }) 
 
   const openObserved = useCallback((sessionId: string) => {
     setChatsOpen(false)
+    if (collapsed) setFrozenSessions(null)
     void navigate({ to: '/chat', search: { observe: sessionId } })
-  }, [navigate])
+  }, [collapsed, navigate])
 
   const openSettings = useCallback((chat: ChatStreamSettingsTarget) => {
     setChatsOpen(false)
+    if (collapsed) setFrozenSessions(null)
     setSettingsChat(chat)
-  }, [])
+  }, [collapsed])
 
   const renderObservedItem = (item: ObservedListEntry) => {
     if (item.kind === 'heading') return <h3 data-observation-list-section="true">{item.title}</h3>
@@ -249,7 +258,14 @@ export function ObservationConversations({ collapsed }: { collapsed: boolean }) 
   ]
 
   return (
-    <section data-observation-conversations="true" aria-label={t('observation.allConversations')}>
+    <section
+      data-observation-conversations="true"
+      aria-label={t('observation.allConversations')}
+      onPointerEnter={(event) => {
+        if (!collapsed && event.pointerType === 'mouse') setFrozenSessions(latestSorted)
+      }}
+      onPointerLeave={() => setFrozenSessions(null)}
+    >
       {!collapsed && (
         <div data-observation-conversations-head="true">
           <span id="observation-conversations-title">{t('observation.allConversations')}</span>
@@ -283,7 +299,10 @@ export function ObservationConversations({ collapsed }: { collapsed: boolean }) 
             {renderObservedItem({ kind: 'local', key: 'local:chat', agent: false })}
             {flags?.agent === true && renderObservedItem({ kind: 'local', key: 'local:agent', agent: true })}
             <div>
-              <Popover open={chatsOpen} onOpenChange={setChatsOpen}>
+              <Popover open={chatsOpen} onOpenChange={(open) => {
+                setChatsOpen(open)
+                if (!open) setFrozenSessions(null)
+              }}>
                 <PopoverTrigger asChild>
                   <button
                     type="button"
@@ -317,6 +336,10 @@ export function ObservationConversations({ collapsed }: { collapsed: boolean }) 
                   align="start"
                   sideOffset={12}
                   aria-label={t('chat.sidebar.observedChats')}
+                  onPointerEnter={(event) => {
+                    if (event.pointerType === 'mouse') setFrozenSessions(latestSorted)
+                  }}
+                  onPointerLeave={() => setFrozenSessions(null)}
                   // 首帧高度独立于定位结果，避免定位变量尚未写入时列表被内容撑开、挂载全部会话。
                   className="flex h-[min(36rem,calc(100dvh-2rem))] max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-2rem)] flex-col overflow-hidden p-0 data-[state=open]:animate-none data-[state=closed]:animate-none"
                 >

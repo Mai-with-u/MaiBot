@@ -20,13 +20,12 @@ from .authentication import HostCredentials
 
 
 logger = get_logger("host.sessions")
-_SESSION_SECONDS = 8 * 60 * 60
+_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 _TICKET_SECONDS = 60
 _MAX_TICKETS = 64
 
 
 class _Session(NamedTuple):
-    expires_at: float
     origin: Optional[str]
 
 
@@ -35,7 +34,7 @@ class _InvalidSessionSchema(ValueError):
 
 
 class HostSessions:
-    """数据库只保存票号摘要与绝对过期时间，认证走内存，不阻塞事件循环。
+    """数据库只保存票号摘要与登录来源，会话持续有效直到撤销，认证走内存，不阻塞事件循环。
 
     摘要绑定当前密码：改密码或临时密码轮换后，即使清理会话前进程退出，旧票号也无法恢复。
     写方法包含同步数据库操作，异步调用方必须使用 asyncio.to_thread。
@@ -69,20 +68,23 @@ class HostSessions:
 
     def _load_sessions(self) -> Dict[str, _Session]:
         with closing(sqlite3.connect(self._path)) as db, db:
-            db.execute("CREATE TABLE IF NOT EXISTS sessions (digest TEXT PRIMARY KEY, expires_at REAL NOT NULL)")
+            db.execute("CREATE TABLE IF NOT EXISTS sessions (digest TEXT PRIMARY KEY, origin TEXT)")
             columns = {row[1] for row in db.execute("PRAGMA table_info(sessions)")}
-            missing = {"digest", "expires_at"} - columns
+            missing = {"digest"} - columns
             if missing:
                 raise _InvalidSessionSchema(f"登录会话表缺少必需列：{', '.join(sorted(missing))}")
             if "origin" not in columns:
                 db.execute("ALTER TABLE sessions ADD COLUMN origin TEXT")
+            if "expires_at" in columns:
+                # 升级时仅保留尚未到期的旧会话，之后不再按时间失效。
+                db.execute("DELETE FROM sessions WHERE expires_at <= ?", (time.time(),))
+                db.execute("ALTER TABLE sessions DROP COLUMN expires_at")
             # 临时密码每次启动都会轮换，不恢复上一进程的登录。
             if self._credentials.token_source == "temporary":
                 db.execute("DELETE FROM sessions")
-            db.execute("DELETE FROM sessions WHERE expires_at <= ?", (time.time(),))
             return {
-                digest: _Session(expires_at, origin)
-                for digest, expires_at, origin in db.execute("SELECT digest, expires_at, origin FROM sessions")
+                digest: _Session(origin)
+                for digest, origin in db.execute("SELECT digest, origin FROM sessions")
             }
 
     def _digest(self, session: str) -> str:
@@ -114,29 +116,25 @@ class HostSessions:
 
     def create_session(self, origin: Optional[str] = None) -> str:
         with self._lock:
-            now = time.time()
-            self._sessions = {key: record for key, record in self._sessions.items() if record.expires_at > now}
             session = secrets.token_urlsafe(32)
             digest = self._digest(session)
-            expires_at = now + _SESSION_SECONDS
             with closing(sqlite3.connect(self._path)) as db, db:
-                db.execute("DELETE FROM sessions WHERE expires_at <= ?", (now,))
-                db.execute("INSERT INTO sessions (digest, expires_at, origin) VALUES (?, ?, ?)", (digest, expires_at, origin))
+                db.execute("INSERT INTO sessions (digest, origin) VALUES (?, ?)", (digest, origin))
             # 提交成功后才发布内存状态；写失败不能签发无法恢复的 Cookie。
-            self._sessions[digest] = _Session(expires_at, origin)
+            self._sessions[digest] = _Session(origin)
             return session
 
     def _active_session(self, session: Optional[str]) -> Optional[_Session]:
-        record = self._sessions.get(self._digest(session)) if session else None
-        return record if record and record.expires_at > time.time() else None
+        return self._sessions.get(self._digest(session)) if session else None
 
     def login_origin(self, session: Optional[str]) -> Optional[str]:
         record = self._active_session(session)
         return record.origin if record else None
 
     def set_cookie(self, response: Response, session: str) -> None:
+        # 沿用旧版的 7 天持久 Cookie，关闭浏览器不会立即退出。
         response.set_cookie(
-            self.cookie_name, session, max_age=_SESSION_SECONDS, httponly=True,
+            self.cookie_name, session, max_age=_COOKIE_MAX_AGE_SECONDS, httponly=True,
             samesite="lax", path="/", secure=self.secure_cookie,
         )
 

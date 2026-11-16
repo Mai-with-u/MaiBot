@@ -50,22 +50,7 @@ export function BootErrorScreen({ message }: { message: string }) {
       className="relative isolate flex min-h-screen items-center justify-center overflow-hidden p-4"
     >
       <Card className="bg-card/80 border-border/50 relative z-10 w-full max-w-md shadow-2xl backdrop-blur-xl">
-        <button
-          type="button"
-          data-auth-theme-toggle="true"
-          onClick={toggleTheme}
-          className="hover:bg-accent text-foreground absolute top-4 right-4 z-10 rounded-lg p-2 transition-colors"
-          title={dark ? '切换到浅色模式' : '切换到深色模式'}
-          aria-label={dark ? '切换到浅色模式' : '切换到深色模式'}
-        >
-          {dark ? (
-            <Sun className="h-5 w-5" strokeWidth={2.5} fill="none" />
-          ) : (
-            <Moon className="h-5 w-5" strokeWidth={2.5} fill="none" />
-          )}
-        </button>
-
-        <CardHeader className="pr-16 text-left">
+        <CardHeader className="text-left">
           <div className="space-y-2">
             <CardTitle className="text-2xl font-bold">WebUI 暂时无法连接</CardTitle>
             <CardDescription className="flex items-center gap-2 text-base">
@@ -91,15 +76,33 @@ export function BootErrorScreen({ message }: { message: string }) {
             重新连接
           </Button>
 
-          <button
-            type="button"
-            aria-expanded={helpOpen}
-            onClick={() => setHelpOpen((open) => !open)}
-            className="text-primary hover:text-primary/80 flex w-full items-center justify-start gap-1 text-left text-[11px] underline-offset-4 transition-colors hover:underline"
-          >
-            <HelpCircle className="h-3 w-3" strokeWidth={2} fill="none" />
-            一直连不上？看看这几项
-          </button>
+          <div className="flex items-center justify-between gap-3">
+            <button
+              type="button"
+              aria-expanded={helpOpen}
+              onClick={() => setHelpOpen((open) => !open)}
+              className="text-primary hover:text-primary/80 flex items-center justify-start gap-1 text-left text-[11px] underline-offset-4 transition-colors hover:underline"
+            >
+              <HelpCircle className="h-3 w-3" strokeWidth={2} fill="none" />
+              一直连不上？看看这几项
+            </button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              data-auth-theme-toggle="true"
+              onClick={toggleTheme}
+              className="shrink-0 text-foreground"
+              title={dark ? '切换到浅色模式' : '切换到深色模式'}
+              aria-label={dark ? '切换到浅色模式' : '切换到深色模式'}
+            >
+              {dark ? (
+                <Sun className="h-5 w-5" strokeWidth={2.5} fill="none" />
+              ) : (
+                <Moon className="h-5 w-5" strokeWidth={2.5} fill="none" />
+              )}
+            </Button>
+          </div>
           {helpOpen && (
             <ul className="text-muted-foreground list-disc space-y-1 pl-5 text-xs">
               <li>确认麦麦主程序已经启动，并且没有在启动过程中报错退出。</li>

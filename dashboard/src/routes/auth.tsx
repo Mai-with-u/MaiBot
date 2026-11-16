@@ -300,22 +300,7 @@ export function AuthPage() {
 
       {/* 认证卡片 - 磨砂玻璃效果 */}
       <Card className="relative z-10 w-full max-w-md shadow-2xl backdrop-blur-xl bg-card/80 border-border/50">
-        {/* 主题切换按钮 */}
-        <button
-          type="button"
-          data-auth-theme-toggle="true"
-          onClick={toggleTheme}
-          className="absolute right-4 top-4 rounded-lg p-2 hover:bg-accent transition-colors z-10 text-foreground"
-          title={actualTheme === 'dark' ? t('auth.switchToLight') : t('auth.switchToDark')}
-        >
-          {actualTheme === 'dark' ? (
-            <Sun className="h-5 w-5" strokeWidth={2.5} fill="none" />
-          ) : (
-            <Moon className="h-5 w-5" strokeWidth={2.5} fill="none" />
-          )}
-        </button>
-
-        <CardHeader className="pr-16 text-left">
+        <CardHeader className="text-left">
           <div className="space-y-2">
             <CardTitle className="text-2xl font-bold">{t('auth.welcome')}</CardTitle>
             <CardDescription className="flex items-center gap-2 text-base">
@@ -374,69 +359,87 @@ export function AuthPage() {
             </Button>
 
             {/* 帮助文本 */}
-            <Dialog>
-              <DialogTrigger asChild>
-                <button className="flex w-full items-center justify-start gap-1 text-left text-[11px] text-primary transition-colors underline-offset-4 hover:text-primary/80 hover:underline">
-                  <HelpCircle className="h-3 w-3" strokeWidth={2} fill="none" />
-                  {t('auth.helpLink')}
-                </button>
-              </DialogTrigger>
-              <DialogContent className="sm:max-w-md">
-                <DialogHeader>
-                  <DialogTitle className="flex items-center gap-2">
-                    <Lock className="h-5 w-5 text-primary" strokeWidth={2} fill="none" />
-                    {t('auth.helpTitle')}
-                  </DialogTitle>
-                </DialogHeader>
+            <div className="flex items-center justify-between gap-3">
+              <Dialog>
+                <DialogTrigger asChild>
+                  <button type="button" className="flex items-center justify-start gap-1 text-left text-[11px] text-primary transition-colors underline-offset-4 hover:text-primary/80 hover:underline">
+                    <HelpCircle className="h-3 w-3" strokeWidth={2} fill="none" />
+                    {t('auth.helpLink')}
+                  </button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-md">
+                  <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2">
+                      <Lock className="h-5 w-5 text-primary" strokeWidth={2} fill="none" />
+                      {t('auth.helpTitle')}
+                    </DialogTitle>
+                  </DialogHeader>
 
-                <div className="space-y-4">
-                  {/* 方式一：查看宿主启动输出 */}
-                  <div className="rounded-lg border bg-muted/50 p-4 space-y-2">
-                    <div className="flex items-start gap-3">
-                      <Terminal className="h-5 w-5 text-primary flex-shrink-0 mt-0.5" strokeWidth={2} fill="none" />
-                      <div className="flex-1 space-y-2">
-                        <h4 className="font-semibold text-sm">{t('auth.method1Title')}</h4>
-                        <p className="text-sm text-muted-foreground">
-                          {t('auth.method1Desc')}
-                        </p>
-                        <div className="rounded bg-background p-2 font-mono text-xs">
-                          <p className="text-muted-foreground">{t('auth.method1Example1')}</p>
-                          <p className="text-muted-foreground">{t('auth.method1Example2')}</p>
+                  <div className="space-y-4">
+                    {/* 方式一：查看宿主启动输出 */}
+                    <div className="rounded-lg border bg-muted/50 p-4 space-y-2">
+                      <div className="flex items-start gap-3">
+                        <Terminal className="h-5 w-5 text-primary flex-shrink-0 mt-0.5" strokeWidth={2} fill="none" />
+                        <div className="flex-1 space-y-2">
+                          <h4 className="font-semibold text-sm">{t('auth.method1Title')}</h4>
+                          <p className="text-sm text-muted-foreground">
+                            {t('auth.method1Desc')}
+                          </p>
+                          <div className="rounded bg-background p-2 font-mono text-xs">
+                            <p className="text-muted-foreground">{t('auth.method1Example1')}</p>
+                            <p className="text-muted-foreground">{t('auth.method1Example2')}</p>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* 方式二：查看配置文件 */}
-                  <div className="rounded-lg border bg-muted/50 p-4 space-y-2">
-                    <div className="flex items-start gap-3">
-                      <FileText className="h-5 w-5 text-primary flex-shrink-0 mt-0.5" strokeWidth={2} fill="none" />
-                      <div className="flex-1 space-y-2">
-                        <h4 className="font-semibold text-sm">{t('auth.method2Title')}</h4>
-                        <p className="text-sm text-muted-foreground">
-                          {t('auth.method2Desc')}
-                        </p>
-                        <div className="rounded bg-background p-2 font-mono text-xs break-all">
-                          <code className="text-primary">host/webui.json</code>
+                    {/* 方式二：查看配置文件 */}
+                    <div className="rounded-lg border bg-muted/50 p-4 space-y-2">
+                      <div className="flex items-start gap-3">
+                        <FileText className="h-5 w-5 text-primary flex-shrink-0 mt-0.5" strokeWidth={2} fill="none" />
+                        <div className="flex-1 space-y-2">
+                          <h4 className="font-semibold text-sm">{t('auth.method2Title')}</h4>
+                          <p className="text-sm text-muted-foreground">
+                            {t('auth.method2Desc')}
+                          </p>
+                          <div className="rounded bg-background p-2 font-mono text-xs break-all">
+                            <code className="text-primary">host/webui.json</code>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            {t('auth.method2FileHint')} <code className="px-1 py-0.5 bg-background rounded">access_token</code>
+                          </p>
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                          {t('auth.method2FileHint')} <code className="px-1 py-0.5 bg-background rounded">access_token</code>
-                        </p>
                       </div>
                     </div>
-                  </div>
 
-                  {/* 安全提示 */}
-                  <div className="text-xs text-muted-foreground">
-                    <ul className="list-disc list-inside space-y-1">
-                      <li>{t('auth.securityTip1')}</li>
-                      <li>{t('auth.securityTip2')}</li>
-                    </ul>
+                    {/* 安全提示 */}
+                    <div className="text-xs text-muted-foreground">
+                      <ul className="list-disc list-inside space-y-1">
+                        <li>{t('auth.securityTip1')}</li>
+                        <li>{t('auth.securityTip2')}</li>
+                      </ul>
+                    </div>
                   </div>
-                </div>
-              </DialogContent>
-            </Dialog>
-
+                </DialogContent>
+              </Dialog>
+              {/* 主题切换按钮 */}
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                data-auth-theme-toggle="true"
+                onClick={toggleTheme}
+                className="shrink-0 text-foreground"
+                title={actualTheme === 'dark' ? t('auth.switchToLight') : t('auth.switchToDark')}
+                aria-label={actualTheme === 'dark' ? t('auth.switchToLight') : t('auth.switchToDark')}
+              >
+                {actualTheme === 'dark' ? (
+                  <Sun className="h-5 w-5" strokeWidth={2.5} fill="none" />
+                ) : (
+                  <Moon className="h-5 w-5" strokeWidth={2.5} fill="none" />
+                )}
+              </Button>
+            </div>
           </form>
         </CardContent>
       </Card>

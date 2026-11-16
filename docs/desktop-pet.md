@@ -25,7 +25,7 @@ Android 用户可安装独立[安卓悬浮桌宠](../pet-clients/android/README.
 
 使用对应系统的分发包时，无需安装 Python、Node.js、Rust 或完整 MaiBot。Windows 使用 WebView2 Runtime，安装器在缺少时在线安装；macOS 使用系统 WKWebView，Linux 使用 WebKitGTK 4.1 及相应桌面运行库。启动后填写宿主地址，在 WebUI 页面中登录；只有多个机器人时才需要选择目标。
 
-桌宠没有独立密码框，也不把密码写入本地配置。Windows、Linux 和 macOS 14 及以上为各服务器使用独立 WebView 数据存储；macOS 10.15～13 使用默认 WebKit 数据存储，遵循浏览器的 Cookie 域和路径隔离规则。宿主会话当前有效期为 8 小时；有效期内再次连接可复用，过期、撤销或宿主认证状态变化导致失效时重新显示 WebUI 登录页。桌宠 WebView 和另外打开的浏览器各自管理会话。
+桌宠没有独立密码框，也不把密码写入本地配置。Windows、Linux 和 macOS 14 及以上为各服务器使用独立 WebView 数据存储；macOS 10.15～13 使用默认 WebKit 数据存储，遵循浏览器的 Cookie 域和路径隔离规则。固定密码登录沿用旧版的 7 天 Cookie，服务端不再额外设置 8 小时会话过期限制；Cookie 有效期内，重连和宿主重启可复用登录，检查登录状态不会延长有效期。Cookie 到期或被清除、会话撤销或宿主认证状态变化导致失效时重新显示 WebUI 登录页。桌宠 WebView 和另外打开的浏览器各自管理会话。
 
 认证完成后切换到同源的独立轻量连接页，维持桌宠通信，不持续加载完整 React WebUI。服务端需要同步更新，提供 `/api/host/desktop-pet/session`；该页面复用现有宿主会话校验，未经认证返回 401，不绕过宿主登录或 Nginx 等反向代理认证。
 

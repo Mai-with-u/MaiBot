@@ -1,7 +1,7 @@
 /**
  * 仪表盘首页领域类型（页面逻辑下沉）。
  *
- * 从 routes/index.tsx 抽出，供 home/hooks 下的领域 hook 与主渲染层共享。
+ * 供首页领域 hook 与观察面板共享。
  */
 import type { LucideIcon } from 'lucide-react'
 
