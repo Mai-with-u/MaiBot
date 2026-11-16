@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { ChevronRight, FileText, Folder, FolderOpen } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
@@ -7,7 +8,7 @@ import { PromptWarningDot } from '@/components/ui/prompt-warning-dot'
 import { SelectionListItem } from '@/components/ui/selection-list-item'
 import type { PromptFileInfo } from '@/lib/prompt-api'
 import { cn } from '@/lib/utils'
-import { buildPromptFolders, inPromptFolder, promptFolder } from './prompt-folders'
+import { buildPromptFolders, inPromptFolder, promptFolder, PROMPT_FOLDER_LABELS } from './prompt-folders'
 
 interface PromptDirectoryProps {
   files: PromptFileInfo[]
@@ -23,7 +24,13 @@ export function PromptDirectory({
   filtering,
   onSelect,
 }: PromptDirectoryProps) {
-  const folders = useMemo(() => buildPromptFolders(files), [files])
+  const { t } = useTranslation()
+  const folders = useMemo(() => buildPromptFolders(files, {
+    ...PROMPT_FOLDER_LABELS,
+    ...Object.fromEntries(['default', 'focus', 'mai_replier', 'common', 'writing', 'group', 'private'].map(key => [
+      key, t(`promptFolders.${key}`, { defaultValue: PROMPT_FOLDER_LABELS[key] }),
+    ])),
+  }), [files, t])
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
 
   function renderFolder(path: string, depth: number) {

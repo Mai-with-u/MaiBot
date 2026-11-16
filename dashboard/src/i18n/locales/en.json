@@ -2421,5 +2421,70 @@
         "content": "Everything you changed lives in the sidebar menu, so you can come back and adjust it anytime. Now go chat with the bot!"
       }
     }
+  },
+  "promptBlocks": {
+    "title": "Block content",
+    "close": "Close",
+    "loading": "Loading actual content…",
+    "actual": "Actual instruction",
+    "example": "Dynamic example (not real chat history)",
+    "edit": "Edit linked template",
+    "genericExample": "Example: {{name}} is replaced with the current context when a request is built.",
+    "styles": {
+      "简短表达": "Short",
+      "正常回复": "Normal",
+      "长回复": "Long"
+    },
+    "descriptions": {
+      "identity": "Built from the current bot name, aliases, and persona settings.",
+      "style": "Expression style from persona settings, replaced by the random alternative style when one is selected for this reply.",
+      "history": "Actual chat history for each turn, possibly including images, rendered in the reply user template alongside the corresponding messages.",
+      "expression": "Expression habits selected for this conversation; may be empty. Mai Replier normally skips this block.",
+      "analysis": "Conversation situation and key facts from the reply tool’s chat_anlyze argument. The linked template only wraps this material.",
+      "time": "The current time when the request is built.",
+      "target": "Information from the actual reply target; may be empty for proactive messages.",
+      "requirements": "Additional requirements or plugin injections for this turn; empty when unused.",
+      "attention": "Chat-specific notes or attention guidance from configuration; may be empty.",
+      "duplicate": "A reminder when the same target was recently replied to; empty otherwise.",
+      "attachment": "Information about images, emojis, or other attachments sent with the reply; empty when unused.",
+      "template": "The currently applied content of the linked template. Its variables are filled when a request is built.",
+      "unknown": "Filled by the module that owns this template when a request is built. Its meaning depends on the current template.",
+      "instruction": "Actual short instructions used for reply generation, selected by reply length.",
+      "background": "Background information combining the general group or private chat prompt with the prompt configured for this specific chat. Unconfigured parts are omitted; the block is empty when both are empty."
+    },
+    "examples": {
+      "identity": "Your name is Mai.\nYou enjoy casual group conversations.",
+      "name": "Mai",
+      "style": "Use natural, conversational language without forced rhetoric.",
+      "history": "[21:58:03] Alex: Want to play tonight?\n[21:58:10] Sam: Sure, give me ten minutes.",
+      "expression": "Use “give me a moment” to express a short wait.",
+      "analysis": "The group is planning a game tonight and needs to confirm the starting time.",
+      "time": "2026-11-15 22:00:00",
+      "target": "Reply to Alex: Want to play tonight?",
+      "requirements": "Explain the specific reason in this reply.",
+      "duplicate": "This message was recently answered; avoid repeating the same reply.",
+      "attachment": "An image will be sent separately after the text.",
+      "background": "Some background information for this chat follows: This chat mainly discusses technical topics.\nThe members of this group are developing a bot together."
+    }
+  },
+  "promptFolders": {
+    "default": "Default mode",
+    "mai_replier": "Mai Replier",
+    "common": "Shared",
+    "writing": "Writing",
+    "group": "Group chat",
+    "private": "Private chat",
+    "focus": "Focus mode"
+  },
+  "promptCompare": {
+    "title": "Side-by-side view",
+    "description": "Select a Prompt on each side for read-only viewing. Template language: {{language}}.",
+    "left": "Left Prompt",
+    "right": "Right Prompt",
+    "choose": "Choose a Prompt",
+    "current": "Current editor content (including unsaved changes)",
+    "applied": "Currently applied version",
+    "chooseFromDirectory": "Choose the second Prompt from the directory on the left",
+    "exit": "Exit side-by-side"
   }
 }

@@ -8,6 +8,7 @@ export interface CodeEditorProps {
   onChange?: (value: string) => void
   language?: Language
   readOnly?: boolean
+  highlightActiveLine?: boolean
   height?: string
   minHeight?: string
   maxHeight?: string
@@ -16,6 +17,7 @@ export interface CodeEditorProps {
   className?: string
   lineClassNames?: Record<number, string>
   rangeClassNames?: CodeEditorRangeClassName[]
+  onPlaceholderClick?: (placeholder: { name: string; x: number; y: number }) => void
 }
 
 export interface CodeEditorRangeClassName {

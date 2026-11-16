@@ -876,6 +876,22 @@ def _coerce_config_numeric_values(data: Dict[str, Any], config_type: type[Config
 # ===== 架构获取接口 =====
 
 
+@router.get("/prompt-blocks/{language}")
+def get_prompt_block_instructions(language: str, filename: str = "") -> Dict[str, Dict[str, str]]:
+    """返回与回复生成共用的短指令，预览不执行模型请求。"""
+    from src.chat.replyer.creative_language import GROUP_REPLY_GUIDANCE, PRIVATE_REPLY_GUIDANCE
+
+    _safe_prompt_path(language, "reply_group_system.prompt")
+    guidance = PRIVATE_REPLY_GUIDANCE if filename in {
+        "reply_private_system.prompt", "reply_private.prompt", "reply_private_followup.prompt",
+        "reply_private_mai_replier.prompt", "reply_private_followup_mai_replier.prompt",
+        "reply_mai_replier_private_system.prompt",
+    } else GROUP_REPLY_GUIDANCE
+    return {
+        "reply_guidance": guidance[language],
+    }
+
+
 @router.get("/prompts", response_model=PromptCatalogResponse)
 def list_prompt_files():
     """列出 prompts 目录下的语言和 Prompt 文件。"""

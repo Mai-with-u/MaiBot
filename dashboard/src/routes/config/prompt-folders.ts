@@ -8,7 +8,12 @@ export const PROMPT_FOLDER_LABELS: Record<string, string> = {
   media: '图片与表情包',
   memory: '记忆',
   planner: '规划器',
+  focus: 'Focus 模式',
   reply: '回复',
+  default: '默认模式',
+  mai_replier: 'Mai Replier',
+  common: '公共',
+  writing: '写作',
   group: '群聊',
   private: '私聊',
   webui: 'WebUI',
@@ -26,7 +31,7 @@ export function inPromptFolder(file: PromptFileInfo, folder: string): boolean {
 }
 
 /** 从真实路径收集父目录，父目录统计包含所有后代文件。 */
-export function buildPromptFolders(files: PromptFileInfo[]) {
+export function buildPromptFolders(files: PromptFileInfo[], labels = PROMPT_FOLDER_LABELS) {
   const folders = new Map<
     string,
     { path: string; label: string; depth: number; count: number; customized: boolean }
@@ -39,7 +44,7 @@ export function buildPromptFolders(files: PromptFileInfo[]) {
       const path = parts.slice(0, depth + 1).join('/')
       const entry = folders.get(path) ?? {
         path,
-        label: PROMPT_FOLDER_LABELS[part] ?? part,
+        label: labels[part] ?? part,
         depth,
         count: 0,
         customized: false,

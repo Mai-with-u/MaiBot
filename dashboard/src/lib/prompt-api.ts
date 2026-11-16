@@ -2,6 +2,13 @@ import { backendApi } from '@/lib/http'
 
 const API_BASE = '/api/webui/config/prompts'
 
+export function getPromptBlockInstructions(
+  language: string,
+  filename?: string
+): Promise<Record<string, Record<string, string>>> {
+  return backendApi.get(`/api/webui/config/prompt-blocks/${encodeURIComponent(language)}?filename=${encodeURIComponent(filename ?? '')}`)
+}
+
 export interface PromptFileInfo {
   name: string
   relative_path: string

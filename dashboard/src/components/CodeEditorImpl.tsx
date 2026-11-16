@@ -6,7 +6,7 @@ import { toml as tomlMode } from '@codemirror/legacy-modes/mode/toml'
 import { linter } from '@codemirror/lint'
 import type { Extension, Range, RangeSet } from '@codemirror/state'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { Decoration, EditorView, ViewPlugin } from '@codemirror/view'
+import { Decoration, EditorView, ViewPlugin, keymap } from '@codemirror/view'
 import CodeMirror from '@uiw/react-codemirror'
 
 import { useTheme } from '@/components/use-theme'
@@ -38,7 +38,11 @@ function createDiffDecorationExtension(
     const lineDecorations = Object.entries(lineClassNames)
       .map(([lineNumber, className]) => {
         const parsedLineNumber = Number(lineNumber)
-        if (!Number.isInteger(parsedLineNumber) || parsedLineNumber < 1 || parsedLineNumber > state.doc.lines) {
+        if (
+          !Number.isInteger(parsedLineNumber) ||
+          parsedLineNumber < 1 ||
+          parsedLineNumber > state.doc.lines
+        ) {
           return null
         }
         return Decoration.line({ class: className }).range(state.doc.line(parsedLineNumber).from)
@@ -79,6 +83,7 @@ export default function CodeEditorImpl({
   onChange,
   language = 'text',
   readOnly = false,
+  highlightActiveLine = true,
   height = '400px',
   minHeight,
   maxHeight,
@@ -87,6 +92,7 @@ export default function CodeEditorImpl({
   className = '',
   lineClassNames = {},
   rangeClassNames = [],
+  onPlaceholderClick,
 }: CodeEditorProps) {
   const { resolvedTheme } = useTheme()
 
@@ -139,6 +145,60 @@ export default function CodeEditorImpl({
     extensions.push(EditorView.editable.of(false))
   }
 
+  if (onPlaceholderClick) {
+    const inspect = (view: EditorView, position: number, x: number, y: number) => {
+      const line = view.state.doc.lineAt(position)
+      for (const match of line.text.matchAll(/(?<!\{)\{([A-Za-z_]\w*)\}(?!\})/g)) {
+        const start = line.from + match.index!
+        if (position >= start && position <= start + match[0].length) {
+          onPlaceholderClick({ name: match[1], x, y })
+          return true
+        }
+      }
+      return false
+    }
+    extensions.push(
+      EditorView.domEventHandlers({
+        click(event, view) {
+          const position = view.posAtCoords({ x: event.clientX, y: event.clientY })
+          return position !== null && inspect(view, position, event.clientX, event.clientY)
+        },
+      }),
+      keymap.of([
+        {
+          key: 'Alt-Enter',
+          run(view) {
+            const position = view.state.selection.main.head
+            const coords = view.coordsAtPos(position)
+            return coords ? inspect(view, position, coords.left, coords.bottom) : false
+          },
+        },
+      ]),
+      EditorView.decorations.compute(['doc'], (state) => {
+        const ranges: Range<Decoration>[] = []
+        for (const match of state.doc.toString().matchAll(/(?<!\{)\{([A-Za-z_]\w*)\}(?!\})/g)) {
+          ranges.push(
+            Decoration.mark({ class: 'cm-prompt-placeholder' }).range(
+              match.index!,
+              match.index! + match[0].length
+            )
+          )
+        }
+        return Decoration.set(ranges)
+      }),
+      EditorView.theme({
+        '.cm-prompt-placeholder': {
+          backgroundColor: 'hsl(var(--primary) / 0.1)',
+          borderRadius: '3px',
+        },
+        '.cm-prompt-placeholder:hover': {
+          backgroundColor: 'hsl(var(--primary) / 0.2)',
+          cursor: 'pointer',
+        },
+      })
+    )
+  }
+
   // 如果外部传了 theme prop 则使用，否则从 context 自动获取
   const effectiveTheme = theme ?? resolvedTheme
 
@@ -160,7 +220,7 @@ export default function CodeEditorImpl({
         placeholder={placeholder}
         basicSetup={{
           lineNumbers: true,
-          highlightActiveLineGutter: true,
+          highlightActiveLineGutter: highlightActiveLine,
           highlightSpecialChars: true,
           history: true,
           foldGutter: true,
@@ -174,7 +234,7 @@ export default function CodeEditorImpl({
           autocompletion: true,
           rectangularSelection: true,
           crosshairCursor: true,
-          highlightActiveLine: true,
+          highlightActiveLine,
           highlightSelectionMatches: true,
           closeBracketsKeymap: true,
           defaultKeymap: true,

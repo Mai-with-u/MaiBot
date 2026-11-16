@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   CheckCircle2,
   FileText,
@@ -17,7 +18,6 @@ import {
   Trash2,
 } from 'lucide-react'
 
-import { CodeEditor } from '@/components/CodeEditor'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
   AlertDialog,
@@ -86,6 +86,8 @@ import { promptCatalogQueryOptions } from '@/lib/prompt-query'
 import { queryClient } from '@/lib/query'
 import { promptFolder } from './prompt-folders'
 import { PromptDirectory } from './PromptDirectory'
+import { PromptBlockEditor } from './PromptBlockEditor'
+import { PromptSideBySide } from './PromptSideBySide'
 import '@/styles/prompt-management.css'
 
 const DEFAULT_VERSION_ID = '__default__'
@@ -289,6 +291,9 @@ function buildPromptDiff(defaultContent: string, currentContent: string): Prompt
 }
 
 export function PromptManagementPage() {
+  const { t } = useTranslation()
+  const [sideBySideOpen, setSideBySideOpen] = useState(false)
+  const [rightFilename, setRightFilename] = useState('')
   const { toast } = useToast()
   const [catalog, setCatalog] = useState<PromptCatalog | null>(null)
   const [language, setLanguage] = useState('zh-CN')
@@ -389,11 +394,11 @@ export function PromptManagementPage() {
   }, [diffMode])
 
   useEffect(() => {
-    if (!filename || showAdvancedPrompts) return
+    if (!filename || showAdvancedPrompts || sideBySideOpen) return
     const currentFile = promptFiles.find((file) => file.name === filename)
     if (!currentFile?.advanced) return
-    setFilename(visiblePromptFiles[0]?.name ?? '')
-  }, [filename, promptFiles, showAdvancedPrompts, visiblePromptFiles])
+    setFilename('')
+  }, [filename, promptFiles, showAdvancedPrompts, sideBySideOpen])
 
   const loadCatalog = useCallback(async () => {
     try {
@@ -411,16 +416,9 @@ export function PromptManagementPage() {
             : (result.languages[0] ?? '')
       setLanguage(nextLanguage)
 
-      const nextFiles = (nextLanguage ? (result.files[nextLanguage] ?? []) : []).filter(
-        (file) => (file.kind ?? 'main') === promptKind
-      )
-      const nextBasicFiles = nextFiles.filter(
-        (file) => !file.advanced && (file.kind ?? 'main') === promptKind
-      )
+      const nextFiles = nextLanguage ? (result.files[nextLanguage] ?? []) : []
       setFilename((current) =>
-        nextFiles.some((file) => file.name === current)
-          ? current
-          : (nextBasicFiles[0]?.name ?? nextFiles[0]?.name ?? '')
+        nextLanguage === language && nextFiles.some((file) => file.name === current) ? current : ''
       )
     } catch (error) {
       toast({
@@ -431,7 +429,7 @@ export function PromptManagementPage() {
     } finally {
       setLoadingCatalog(false)
     }
-  }, [language, promptKind, toast])
+  }, [language, toast])
 
   useEffect(() => {
     void loadCatalog()
@@ -439,6 +437,10 @@ export function PromptManagementPage() {
 
   useEffect(() => {
     if (!language || !filename) {
+      setLoadingFile(false)
+      setMobileEditing(false)
+      setFocusEditing(false)
+      setDiffMode(false)
       setContent('')
       setSavedContent('')
       setVersions([])
@@ -508,13 +510,11 @@ export function PromptManagementPage() {
 
   const handleLanguageChange = (nextLanguage: string) => {
     if (!canLeaveEditor()) return
+    setSideBySideOpen(false)
+    setRightFilename('')
     setLanguage(nextLanguage)
     setQuery('')
-    const nextFiles = catalog?.files[nextLanguage] ?? []
-    const nextVisibleFiles = nextFiles.filter(
-      (file) => (file.kind ?? 'main') === promptKind && (showAdvancedPrompts || !file.advanced)
-    )
-    setFilename(nextVisibleFiles[0]?.name ?? '')
+    setFilename('')
   }
 
   const handleSave = async () => {
@@ -689,16 +689,35 @@ export function PromptManagementPage() {
     return false
   }
 
+  const handleEditBlockTemplate = (file: PromptFileInfo) => {
+    if (!canLeaveEditor()) return false
+    setSideBySideOpen(false)
+    setRightFilename('')
+    setShowAdvancedPrompts(true)
+    setPromptKind(file.kind ?? 'main')
+    setQuery('')
+    setOnlyCustomized(false)
+    setFilename(file.name)
+    setMobileEditing(true)
+    return true
+  }
+
   const handleRootChange = (value: string) => {
-    if ((value !== 'main' && value !== 'instruction') || !canLeaveEditor()) return
+    if (value !== 'main' && value !== 'instruction') return
+    if (sideBySideOpen) {
+      setPromptKind(value)
+      setQuery('')
+      setOnlyCustomized(false)
+      setMobileEditing(false)
+      return
+    }
+    if (!canLeaveEditor()) return
+    setSideBySideOpen(false)
+    setRightFilename('')
     setPromptKind(value)
     setQuery('')
     setOnlyCustomized(false)
-    setFilename(
-      promptFiles.find(
-        (file) => (file.kind ?? 'main') === value && (showAdvancedPrompts || !file.advanced)
-      )?.name ?? ''
-    )
+    setFilename('')
     setMobileEditing(false)
   }
 
@@ -784,7 +803,7 @@ export function PromptManagementPage() {
               variant={showAdvancedPrompts ? 'default' : 'outline'}
               size="sm"
               onClick={() => {
-                if (canLeaveEditor()) setShowAdvancedPrompts((current) => !current)
+                if (sideBySideOpen || canLeaveEditor()) setShowAdvancedPrompts((current) => !current)
               }}
               aria-pressed={showAdvancedPrompts}
               aria-label={showAdvancedPrompts ? '隐藏高级' : '显示高级'}
@@ -870,9 +889,18 @@ export function PromptManagementPage() {
                 <PromptDirectory
                   key={`${language}/${promptKind}`}
                   files={filteredFiles}
-                  selectedFile={selectedFile}
+                  selectedFile={
+                    sideBySideOpen
+                      ? promptFiles.find((file) => file.name === rightFilename)
+                      : selectedFile
+                  }
                   filtering={Boolean(query.trim()) || onlyCustomized}
                   onSelect={(file) => {
+                    if (sideBySideOpen) {
+                      setRightFilename(file.name)
+                      setMobileEditing(true)
+                      return
+                    }
                     if (filename !== file.name && !canLeaveEditor()) return
                     setFilename(file.name)
                     setMobileEditing(true)
@@ -906,7 +934,10 @@ export function PromptManagementPage() {
               isMobileViewport && !mobileEditing && 'hidden'
             )}
           >
-            <div className="flex shrink-0 flex-col gap-3 pb-3">
+            <div
+              hidden={!filename}
+              className={cn('flex shrink-0 flex-col gap-3 pb-3', !filename && 'hidden')}
+            >
               <div className="flex min-w-0 flex-col gap-3">
                 <div className="flex min-w-0 items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -1032,9 +1063,29 @@ export function PromptManagementPage() {
                     </DropdownMenuContent>
                   </DropdownMenu>
                   <Button
+                    variant="outline"
+                    size="sm"
+                    aria-pressed={sideBySideOpen}
+                    onClick={() => {
+                      setSideBySideOpen((current) => !current)
+                      if (sideBySideOpen && selectedFile) setPromptKind(selectedFile.kind ?? 'main')
+                      setDiffMode(false)
+                      setRightFilename('')
+                      setFocusEditing(false)
+                      if (isMobileViewport) setMobileEditing(sideBySideOpen)
+                    }}
+                    disabled={loadingFile || !filename}
+                  >
+                    <PanelLeftOpen className="mr-2 size-4" />
+                    {t(sideBySideOpen ? 'promptCompare.exit' : 'promptCompare.title')}
+                  </Button>
+                  <Button
                     variant={diffMode ? 'default' : 'outline'}
                     size="sm"
-                    onClick={() => void handleToggleDiffMode()}
+                    onClick={() => {
+                      setSideBySideOpen(false)
+                      void handleToggleDiffMode()
+                    }}
                     disabled={loadingDiffDefault || loadingFile || !filename}
                     className="h-8 flex-1 px-2 text-xs sm:h-9 sm:flex-none sm:px-3 sm:text-sm"
                   >
@@ -1094,15 +1145,39 @@ export function PromptManagementPage() {
               )}
             </div>
             <div className="min-h-0 flex-1">
-              {loadingFile ? (
+              {!filename ? (
+                <DataPanel className="flex h-full flex-col items-center justify-center gap-3 text-center">
+                  <FileText className="text-muted-foreground size-8" />
+                  <h2 data-prompt-title="true" className="text-lg">
+                    请选择提示词
+                  </h2>
+                  <p className="text-muted-foreground text-sm">
+                    从左侧目录选择一个提示词后开始编辑
+                  </p>
+                </DataPanel>
+              ) : loadingFile ? (
                 <div className="text-muted-foreground flex h-full min-h-[320px] items-center justify-center gap-2 text-sm">
                   <ThinkingIllustration />
                 </div>
+              ) : sideBySideOpen ? (
+                <PromptSideBySide
+                  language={language}
+                  files={promptFiles}
+                  filename={filename}
+                  content={content}
+                  onChange={setContent}
+                  rightFilename={rightFilename}
+                  onEditTemplate={handleEditBlockTemplate}
+                />
               ) : diffMode ? (
                 <div className="grid h-full min-h-[320px] grid-rows-[minmax(0,1fr)_minmax(0,1fr)] gap-2 p-2 lg:grid-cols-2 lg:grid-rows-1">
                   <div className="flex min-h-0 flex-col gap-1">
                     <div className="text-muted-foreground px-1 text-xs">默认版本</div>
-                    <CodeEditor
+                    <PromptBlockEditor
+                      promptLanguage={language}
+                      promptFilename={filename}
+                      files={promptFiles}
+                      onEditTemplate={handleEditBlockTemplate}
                       value={diffDefaultContent}
                       readOnly
                       language="text"
@@ -1115,7 +1190,11 @@ export function PromptManagementPage() {
                   </div>
                   <div className="flex min-h-0 flex-col gap-1">
                     <div className="text-muted-foreground px-1 text-xs">当前编辑</div>
-                    <CodeEditor
+                    <PromptBlockEditor
+                      promptLanguage={language}
+                      promptFilename={filename}
+                      files={promptFiles}
+                      onEditTemplate={handleEditBlockTemplate}
                       value={content}
                       onChange={setContent}
                       language="text"
@@ -1129,7 +1208,11 @@ export function PromptManagementPage() {
                   </div>
                 </div>
               ) : (
-                <CodeEditor
+                <PromptBlockEditor
+                  promptLanguage={language}
+                  promptFilename={filename}
+                  files={promptFiles}
+                  onEditTemplate={handleEditBlockTemplate}
                   value={content}
                   onChange={setContent}
                   language="text"
@@ -1141,7 +1224,13 @@ export function PromptManagementPage() {
                 />
               )}
             </div>
-            <div className="text-muted-foreground flex shrink-0 flex-wrap justify-between gap-2 pt-2 font-mono text-xs">
+            <div
+              hidden={!filename}
+              className={cn(
+                'text-muted-foreground flex shrink-0 flex-wrap justify-between gap-2 pt-2 font-mono text-xs',
+                !filename && 'hidden'
+              )}
+            >
               <span>
                 {selectedFile ? `${promptFolder(selectedFile) || rootPath} · ${filename}` : ''}
               </span>
@@ -1191,7 +1280,11 @@ export function PromptManagementPage() {
             </div>
           ) : (
             <div className="min-h-0 flex-1">
-              <CodeEditor
+              <PromptBlockEditor
+                promptLanguage={language}
+                promptFilename={filename}
+                files={promptFiles}
+                onEditTemplate={handleEditBlockTemplate}
                 value={defaultPromptContent}
                 readOnly
                 language="text"
