@@ -2114,6 +2114,10 @@ class PluginRuntimeManager(
             )
             self._plugin_config_watcher_subscriptions[plugin_id] = (config_path, subscription_id)
 
+        # Runner 首次加载可能才生成默认配置；先订阅再刷新，补齐目录扫描与配置生成之间的状态变化。
+        # 运行时重启也走这里，不能只依赖此前是否已经建立订阅。
+        await self._plugin_catalog.refresh_plugins(list(desired_config_paths))
+
     def _build_plugin_config_change_callback(self, plugin_id: str) -> Callable[[Sequence[FileChange]], Awaitable[None]]:
         """为指定插件生成配置文件变更回调。"""
 
