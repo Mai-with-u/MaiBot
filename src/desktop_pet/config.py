@@ -34,6 +34,11 @@ _WAKE_COLUMN = {**_COLUMNS, "x-column": "主动思考"}
 _SCREEN_COLUMN = {**_COLUMNS, "x-column": "读取桌面"}
 
 
+def _replace_removed_sound(value: object) -> object:
+    """已移除的柔和啵叮配置转换为小木敲。"""
+    return "wood" if value == "soft" else value
+
+
 class DesktopPetConfig(ConfigBase):
     __ui_label__ = "桌宠"
     __ui_order__ = 45
@@ -75,11 +80,7 @@ class DesktopPetConfig(ConfigBase):
     )
     """本机桌宠新回复的提示音，保存后从下一条回复生效；不影响未读橙点。"""
 
-    @field_validator("message_sound", mode="before")
-    @classmethod
-    def replace_removed_sound(cls, value: object) -> object:
-        """已移除的柔和啵叮配置转换为小木敲。"""
-        return "wood" if value == "soft" else value
+    _normalize_message_sound = field_validator("message_sound", mode="before")(_replace_removed_sound)
 
     proactive_wake_enabled: bool = Field(default=False, json_schema_extra=_switch("定期主动思考", **_WAKE_COLUMN))
     """桌宠运行期间定期唤醒主人聊天流，自主探索并选择是否交流；会调用模型，默认关闭。"""
