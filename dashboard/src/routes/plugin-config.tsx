@@ -1,3 +1,4 @@
+import { TargetSelect, type ConfigTarget } from '@/components/TargetSelect'
 import { DataPanel, PageFrame } from '@/components/ui/surface'
 import { SegmentedMeter } from '@/components/ui/segmented-meter'
 import { type CSSProperties, useEffect, useRef, useState } from 'react'
@@ -197,6 +198,22 @@ function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
 
   // 根据 ui_type 渲染不同的控件
   switch (field.ui_type) {
+    case 'target': {
+      const targetType = field.item_fields?.type?.default
+      const targetPlatform = field.item_fields?.platform?.default
+      if (targetType !== 'group' && targetType !== 'user') {
+        return <p role="alert" className="text-sm text-destructive">目标字段必须声明 group 或 user 类型</p>
+      }
+      const selected = (value ?? field.default ?? []) as ConfigTarget[]
+      return <div className="space-y-2">
+        <Label>{label}</Label>
+        <TargetSelect value={selected} onChange={onChange} type={targetType}
+          platform={typeof targetPlatform === 'string' && targetPlatform ? targetPlatform : undefined}
+          label={label} disabled={field.disabled} />
+        {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+      </div>
+    }
+
     case 'chat-stream': {
       const current = value ?? field.default
       const multiple = field.type === 'array'
@@ -428,8 +445,8 @@ interface SectionRendererProps {
 }
 
 function getFieldGridClassName(field: ConfigFieldSchema): string {
-  if (field.ui_type === 'textarea' || field.ui_type === 'list' || field.ui_type === 'slider' || field.ui_type === 'chat-stream' || field.ui_type === 'json') {
-    return 'lg:col-span-2'
+  if (field.ui_type === 'textarea' || field.ui_type === 'list' || field.ui_type === 'slider' || field.ui_type === 'chat-stream' || field.ui_type === 'target' || field.ui_type === 'json') {
+    return 'min-w-0 lg:col-span-2'
   }
 
   return 'min-w-0'

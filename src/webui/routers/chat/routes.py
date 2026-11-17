@@ -1320,6 +1320,36 @@ def get_available_platforms() -> Dict[str, object]:
         return {"success": False, "error": str(e), "platforms": []}
 
 
+@router.get("/targets")
+def search_config_targets(
+    target_type: Literal["group", "user"] = Query(...),
+    platform: Optional[str] = Query(default=None),
+    search: str = Query(default="", max_length=200),
+    limit: int = Query(default=50, ge=1, le=100),
+) -> Dict[str, object]:
+    """配置目标搜索：用户直接查人物账号，包含未建立私聊的用户。"""
+    with get_db_session() as session:
+        if target_type == "group":
+            statement = select(ChatSession.platform, ChatSession.group_id, func.max(ChatSession.group_name)).where(
+                col(ChatSession.group_id).is_not(None), ChatSession.group_id != "",
+            )
+            if platform:
+                statement = statement.where(ChatSession.platform == platform)
+            if search:
+                statement = statement.where(col(ChatSession.group_name).contains(search) | col(ChatSession.group_id).contains(search))
+            statement = statement.group_by(ChatSession.platform, ChatSession.group_id).order_by(ChatSession.platform, ChatSession.group_id).limit(limit)
+        else:
+            statement = select(PersonInfo.platform, PersonInfo.user_id, func.max(PersonInfo.user_nickname))
+            if platform:
+                statement = statement.where(PersonInfo.platform == platform)
+            if search:
+                statement = statement.where(col(PersonInfo.user_nickname).contains(search) | col(PersonInfo.person_name).contains(search) | col(PersonInfo.user_id).contains(search))
+            statement = statement.group_by(PersonInfo.platform, PersonInfo.user_id).order_by(PersonInfo.platform, PersonInfo.user_id).limit(limit)
+        targets = [{"platform": p, "type": target_type, "id": identity, "name": name or identity}
+                   for p, identity, name in session.exec(statement).all()]
+    return {"success": True, "targets": targets}
+
+
 @router.get("/persons")
 def get_persons_by_platform(
     platform: str = Query(..., description="平台名称"),
