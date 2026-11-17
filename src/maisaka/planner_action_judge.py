@@ -83,10 +83,6 @@ async def complete_missing_planner_action(
         "recent_chat": await asyncio.to_thread(build_recent_chat_context, chat_history, include_session_ids=bool(routes)),
         "planner_text": content,
     }
-    payload["tools"] = [
-        {"name": tool.name, "description": tool.description, "parameters": tool.parameters_schema}
-        for tool in (tools["reply"], tools["wait"])
-    ]
     judge_prompt = load_prompt("planner_action_judge")
     if routes:
         payload["reply_sessions"] = routes
@@ -103,25 +99,21 @@ async def complete_missing_planner_action(
         context_factory=lambda _: messages,
         options=LLMGenerationOptions(
             temperature=0, interrupt_flag=interrupt_flag,
+            tool_options=[tools["reply"], tools["wait"]],
         ),
     )
 
-    decision = result.response.strip()
-    if result.tool_calls or result.native_tool_calls:
-        raise RespParseException(message="Planner 动作判断器应只返回 JSON 对象，不应调用工具")
-    try:
-        parsed = json.loads(decision)
-    except json.JSONDecodeError as exc:
-        raise RespParseException(message=f"Planner 动作判断器返回了无效 JSON：{decision!r}") from exc
-    if not isinstance(parsed, dict) or set(parsed) != {"action", "arguments"}:
-        raise RespParseException(message=f"Planner 动作判断器返回了无效字段：{decision!r}")
-    action = parsed["action"]
-    arguments = parsed["arguments"]
-    if not isinstance(action, str) or action not in {"reply", "wait"} or not isinstance(arguments, dict):
-        raise RespParseException(message=f"Planner 动作判断器返回了无效选项：{decision!r}")
+    # 文本工具调用的兼容解析及解析失败重试由 LLM 层统一处理。
+    calls = get_response_tool_calls(result.output_items)
+    if len(calls) != 1:
+        raise RespParseException(message="Planner 动作判断器必须返回且仅返回一个 reply 或 wait 工具调用")
+    action = calls[0].func_name
+    arguments = calls[0].materialize_args()
+    if action not in {"reply", "wait"}:
+        raise RespParseException(message=f"Planner 动作判断器返回了无效工具：{action!r}")
     schema = tools[action].parameters_schema
     if filter_tool_arguments(arguments, schema) != arguments:
-        raise RespParseException(message=f"Planner 动作判断器返回了未声明的工具参数：{decision!r}")
+        raise RespParseException(message=f"Planner 动作判断器返回了未声明的工具参数：{arguments!r}")
     try:
         await asyncio.to_thread(validate, arguments, schema)
     except ValidationError as exc:

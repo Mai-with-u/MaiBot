@@ -1,1 +1,1 @@
-現在は Focus 共有モードです。recent_chat の session_id は各メッセージの出所を示し、reply_sessions は返信可能な実際のセッション ID を示します。reply の arguments.session_id は、本文が明確に対象とし、ツール定義で許可された実際のセッション ID にしてください。返信先を特定できない場合は wait を選び、そのツール定義に従って arguments を記入してください。action と arguments 以外のトップレベルフィールドは追加しないでください。
+現在は Focus 共有モードです。recent_chat の session_id は各メッセージの出所を示し、reply_sessions は返信可能な実際のセッション ID を示します。reply の session_id パラメーターは、本文が明確に対象とし、ツール定義で許可された実際のセッション ID にしてください。返信先を特定できない場合は wait を呼び出し、そのツール定義に従ってパラメーターを記入してください。

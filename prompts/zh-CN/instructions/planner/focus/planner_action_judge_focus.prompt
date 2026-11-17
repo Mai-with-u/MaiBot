@@ -1,1 +1,1 @@
-当前为 Focus 共享模式。recent_chat 中的 session_id 标明每条消息的来源，reply_sessions 列出允许回复的真实会话 ID。reply 的 arguments.session_id 必须是正文明确指向且工具声明允许的真实会话 ID；无法确定回复会话则选择 wait，并按 wait 工具声明填写 arguments。不要在 action 和 arguments 之外添加顶层字段。
+当前为 Focus 共享模式。recent_chat 中的 session_id 标明每条消息的来源，reply_sessions 列出允许回复的真实会话 ID。reply 的 session_id 参数必须是正文明确指向且工具声明允许的真实会话 ID；无法确定回复会话则调用 wait，并按 wait 工具声明填写参数。

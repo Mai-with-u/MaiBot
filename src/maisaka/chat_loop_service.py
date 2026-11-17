@@ -39,7 +39,13 @@ from src.llm_models.payload_content.context_item import (
 from src.llm_models.payload_content.context_protocol import ContextProtocolMode
 from src.llm_models.payload_content.native_tool import NativeToolCallSummary
 from src.llm_models.payload_content.resp_format import RespFormat
-from src.llm_models.payload_content.tool_option import ToolCall, ToolDefinitionInput, ToolOption, normalize_tool_options
+from src.llm_models.payload_content.tool_option import (
+    ToolCall,
+    ToolDefinitionInput,
+    ToolOption,
+    normalize_tool_option,
+    normalize_tool_options,
+)
 from src.plugin_runtime.hook_payloads import (
     deserialize_prompt_items,
     serialize_prompt_items,
@@ -1397,7 +1403,10 @@ class MaisakaChatLoopService:
             if action_judgment is not None:
                 final_output_items = (*final_output_items, action_judgment.tool_call)
                 llm_duration_ms = round((time.perf_counter() - llm_started_at) * 1000, 2)
-        tool_schemas = {tool.name: tool.parameters_schema for tool in normalize_tool_options(list(all_tools))}
+        tool_schemas = {
+            tool.name: tool.parameters_schema
+            for tool in map(normalize_tool_option, all_tools)
+        }
         missing_tool_names = {
             call.func_name for call in get_response_tool_calls(final_output_items)
             if call.func_name not in tool_schemas
