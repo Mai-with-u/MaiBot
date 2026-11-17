@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { getSetting } from '@/lib/settings-manager'
+import { isDesktopEmbedded } from '@/lib/desktop-host'
 import { checkHostUpdate, getHostUpdate, HOST_UPDATE_CHECK_EVENT, type HostUpdateCheck } from '@/host/api'
 
 let startupCheck: ReturnType<typeof checkHostUpdate> | undefined
@@ -14,6 +15,7 @@ const HostUpdateSection = lazy(() =>
 )
 
 export function SidebarUpdateButton({ collapsed = false }: { collapsed?: boolean }) {
+  const embedded = isDesktopEmbedded()
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [status, setStatus] = useState<HostUpdateCheck | null>(null)
@@ -21,12 +23,14 @@ export function SidebarUpdateButton({ collapsed = false }: { collapsed?: boolean
   const [alwaysShow, setAlwaysShow] = useState(() => getSetting('alwaysShowUpdateButton'))
 
   useEffect(() => {
+    if (embedded) return
     const refreshSetting = () => setAlwaysShow(getSetting('alwaysShowUpdateButton'))
     window.addEventListener('maibot-settings-change', refreshSetting)
     return () => window.removeEventListener('maibot-settings-change', refreshSetting)
-  }, [])
+  }, [embedded])
 
   useEffect(() => {
+    if (embedded) return
     let cancelled = false
     let receivedCheck = false
     void getHostUpdate().then(result => {
@@ -49,14 +53,14 @@ export function SidebarUpdateButton({ collapsed = false }: { collapsed?: boolean
       cancelled = true
       window.removeEventListener(HOST_UPDATE_CHECK_EVENT, handleStatus)
     }
-  }, [])
+  }, [embedded])
 
   const updateAvailable = Boolean(status?.latest_commit && status?.latest_commit !== status.local.commit)
   const version = updateAvailable && status?.latest_version
     ? status.latest_version
     : status?.local.version || localVersion
   const label = `${t('settings.selfUpdate.title')}${version ? ` V${version}` : ''}`
-  if (!open && !alwaysShow && !updateAvailable) return null
+  if (embedded || (!open && !alwaysShow && !updateAvailable)) return null
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
