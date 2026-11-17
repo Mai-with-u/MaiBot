@@ -27,6 +27,7 @@ final class PetWebView extends WebView {
         setBackgroundColor(Color.TRANSPARENT);
         setOverScrollMode(OVER_SCROLL_NEVER);
         getSettings().setJavaScriptEnabled(true);
+        getSettings().setMediaPlaybackRequiresUserGesture(!role.equals("pet"));
         getSettings().setDomStorageEnabled(true);
         getSettings().setAllowFileAccess(false);
         getSettings().setAllowContentAccess(false);
@@ -50,10 +51,11 @@ final class PetWebView extends WebView {
                 if (path == null || path.contains("..") || !path.matches("/(pet|android)/[A-Za-z0-9_./-]+")) return blocked();
                 try {
                     if (path.endsWith(".woff2")) return new WebResourceResponse("font/woff2", null, getContext().getAssets().open(path.substring(1)));
+                    if (path.endsWith(".wav")) return new WebResourceResponse("audio/wav", null, getContext().getAssets().open(path.substring(1)));
                     byte[] bytes = runtime.asset(path.substring(1)).getBytes(StandardCharsets.UTF_8);
                     String mime = path.endsWith(".html") ? "text/html" : path.endsWith(".css") ? "text/css" : "application/javascript";
                     Map<String, String> headers = new java.util.HashMap<>();
-                    headers.put("Content-Security-Policy", "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'");
+                    headers.put("Content-Security-Policy", "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self'; media-src 'self'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'");
                     headers.put("Cache-Control", "no-store");
                     return new WebResourceResponse(mime, "UTF-8", 200, "OK", headers, new ByteArrayInputStream(bytes));
                 } catch (Exception error) { return blocked(); }

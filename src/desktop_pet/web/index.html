@@ -673,6 +673,7 @@
   const chatMessageIds = new Set();
   let historyHasMore = true;
   let historyRequest = null;
+  let historyConnected = !window.desktopPetBridge;
   const WAIT_LIMIT_MS = 120000;
 
   let api = null;
@@ -1034,7 +1035,7 @@
 
   // ---------- 对话 ----------
   async function loadHistory() {
-    if (!api || !api.history || historyRequest || !historyHasMore) return;
+    if (!api || !api.history || !historyConnected || historyRequest || !historyHasMore) return;
     historyRequest = crypto.randomUUID();
     chatError.textContent = "";
     try {
@@ -1782,6 +1783,8 @@
         return;
       }
       if (message.type === "connection") {
+        historyConnected = message.connected;
+        if (!message.connected) historyRequest = null;
         document.getElementById("remote-controls").hidden = false;
         document.getElementById("remote-status").textContent = message.text;
         let indicator = document.getElementById("remote-indicator");
@@ -1797,6 +1800,7 @@
         indicator.title = message.text;
         indicator.setAttribute("aria-label", message.text);
         if (message.connected) {
+          if (!historyLoaded) void loadHistory();
           window.pet.refreshTodos().then(() => { todoError.textContent = ""; }).catch(error => window.pet.todoError(String(error)));
         } else {
           stopWaiting();

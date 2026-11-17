@@ -175,6 +175,11 @@ fn local_window(
                 && url.path() == format!("/{path}")
         })
         .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny);
+    #[cfg(target_os = "windows")]
+    {
+        // Local windows share one WebView2 profile and must use identical browser arguments.
+        builder = builder.additional_browser_args("--autoplay-policy=no-user-gesture-required");
+    }
     builder = builder
         .on_permission_request(|_, _| tauri::webview::PermissionResponse::Deny)
         .on_download(|_, _| false);
@@ -730,7 +735,7 @@ async fn pet_call(window: WebviewWindow, method: String, args: Vec<Value>) -> Re
             let _ = page(
                 app,
                 "pet",
-                json!({"type":"accepted","request_id":request_id}),
+                json!({"type":"accepted","request_id":request_id,"message_id":result["message_id"]}),
             )
             .await;
             Ok(result)
@@ -783,6 +788,10 @@ async fn pet_call(window: WebviewWindow, method: String, args: Vec<Value>) -> Re
             .clone()),
         "done_todo" => todo(app, "complete", json!({"todo_id":args.first()})).await,
         "open_exploration_records" => open_records(app),
+        "history" => send_event(
+            app,
+            json!({"type":"history","cursors":args.first(),"request_id":args.get(1)}),
+        ),
         "exploration_tasks" => send_event(
             app,
             json!({"type":"exploration_tasks","task_id":args.first(),"request_id":args.get(1)}),
@@ -949,7 +958,7 @@ async fn execute(app: &tauri::AppHandle, session: Session, nonce: &str, command:
                 Ok(json!({}))
             }
         }
-        "skin" | "animation" | "reply" | "notice" | "thinking_caption" | "thinking" | "idle"
+        "history" | "skin" | "animation" | "reply" | "notice" | "thinking_caption" | "thinking" | "idle"
         | "failed" | "accepted" | "buttons" | "button_result" | "screen_state"
         | "exploration_state" | "exploration_result" | "exploration_tasks" | "todo_refresh" => {
             page(app, "pet", command).await

@@ -5,9 +5,22 @@
   if (!bridge) return;
   window.pywebview = { api: bridge.api };
   const received = new Set([
-    'reply', 'notice', 'thinking_caption', 'thinking', 'idle', 'failed', 'accepted',
+    'history', 'reply', 'notice', 'thinking_caption', 'thinking', 'idle', 'failed', 'accepted',
     'buttons', 'button_result', 'screen_state', 'exploration_state', 'exploration_result', 'exploration_tasks', 'connection',
   ]);
+  const sounds = {wood: 'wooden-pop.wav', bubbles: 'soft-bubbles.wav', bell: 'warm-bell.wav', water: 'water-drop.wav'};
+  let lastSound = -Infinity;
+  let playingSound = null;
+  function playReplySound(sound) {
+    if (sound === 'off' || sound === undefined) return;
+    if (!Object.hasOwn(sounds, sound)) throw new Error(`未知提示音: ${sound}`);
+    const now = performance.now();
+    if (now - lastSound < 1000) return;
+    lastSound = now;
+    playingSound?.pause();
+    playingSound = new Audio(new URL(`sounds/${sounds[sound]}`, location.href).href);
+    playingSound.play().catch(error => console.error('桌宠提示音播放失败', error));
+  }
   bridge.onCommand(async ({ id, command }) => {
     try {
       let result = {};
@@ -31,6 +44,7 @@
         window.records.receive(command);
       } else if (received.has(command.type)) {
         window.pet.receive(command);
+        if (command.type === 'reply') playReplySound(command.sound);
       } else {
         throw new Error(`未知桌宠页面指令: ${command.type}`);
       }

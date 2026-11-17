@@ -12,7 +12,7 @@
       case 'send': {
         if (!/^[a-f0-9]{32}$/.test(a[0])) throw new Error('无效请求 ID');
         const result = await request('POST', '/chat/' + a[0], {text: a[1], images: a[2]});
-        window.pet.receive({type:'accepted', request_id:a[0]}); return result;
+        window.pet.receive({type:'accepted', request_id:a[0], message_id:result.message_id}); return result;
       }
       case 'todos': return (await todo('list', {include_completed:!!a[0]})).items.filter(item => !a[0] || item.status === 'completed');
       case 'todo_image': {
@@ -23,6 +23,7 @@
       case 'update_todo': return (await todo('update', {todo_id:a[0], text:a[1], options:a[2]})).item;
       case 'done_todo': return todo('complete', {todo_id:a[0]});
       case 'clicked': return event('clicked');
+      case 'history': return event('history', {cursors:a[0], request_id:a[1]});
       case 'refresh_buttons': return event('buttons_refresh');
       case 'click_button': return event('button_click', {plugin_id:a[0], button_id:a[1], action_id:a[2]});
       case 'exploration_tasks': return event('exploration_tasks', {task_id:a[0], request_id:a[1]});

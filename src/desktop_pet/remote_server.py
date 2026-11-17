@@ -106,6 +106,15 @@ def validate_event(event: Dict[str, Any]) -> None:
         _text_field(event, "task_id", limit=64, empty=True)
         _text_field(event, "request_id", limit=64)
         return
+    if kind == "history":
+        _text_field(event, "request_id", limit=64)
+        cursors = event.get("cursors")
+        if not isinstance(cursors, dict) or len(cursors) > 100:
+            raise ValueError("历史记录游标格式无效")
+        for session_id, cursor in cursors.items():
+            if not isinstance(session_id, str) or len(session_id) > 200 or type(cursor) is not int or cursor < 0:
+                raise ValueError("历史记录游标无效")
+        return
     if kind == "explore":
         _text_field(event, "goal", limit=2000)
         return

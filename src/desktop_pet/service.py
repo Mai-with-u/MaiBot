@@ -236,8 +236,8 @@ class DesktopPetService:
         from src.webui.routers.chat.service import relay_plugin_chat_message
 
         self._require_remote(peer)
-        await relay_plugin_chat_message("builtin.desktop_pet", payload["text"], images=payload["images"])
-        return {"accepted": True, "request_id": request_id}
+        message_id = await relay_plugin_chat_message("builtin.desktop_pet", payload["text"], images=payload["images"])
+        return {"accepted": True, "request_id": request_id, "message_id": message_id}
 
     async def remote_todo(self, peer: RemotePeer, action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         self._require_remote(peer)

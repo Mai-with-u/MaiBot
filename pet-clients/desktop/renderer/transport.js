@@ -30,7 +30,7 @@
   const MAX_EVENT_BYTES = 64 * 1024;
   const REQUEST_ID = /^[0-9a-f]{32}$/;
   const USER_EVENTS = new Set(['clicked', 'buttons_refresh', 'button_click', 'drag_started', 'drag_ended',
-    'screen_action', 'exploration_tasks', 'explore']);
+    'screen_action', 'exploration_tasks', 'explore', 'history']);
   const pendingCommands = new Map();
   const pendingRequests = new Set();
   let options, controller, runner, connection, generation = 0;

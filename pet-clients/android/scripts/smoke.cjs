@@ -134,9 +134,24 @@ async function run() {
     await until(async () => { const moved = await overlayBounds(); return moved && moved[3] < bounds[3]; }, 'overlay moving above the keyboard');
     await delay(300);
     await fs.writeFile(path.join(artifacts, 'keyboard.png'), (await exec(adbPath, ['-s', serial, 'exec-out', 'screencap', '-p'], {encoding:'buffer', maxBuffer:16e6})).stdout);
+    await pet.getByText('历史回复 29', {exact:true}).waitFor();
+    await pet.locator('#log').evaluate(log => { log.scrollTop = 0; log.dispatchEvent(new WheelEvent('wheel', {deltaY:-120, bubbles:true})); });
+    await pet.getByText('更早的历史回复', {exact:true}).waitFor();
+    await pet.locator('#log').evaluate(log => { log.scrollTop = log.scrollHeight; });
+    await pet.evaluate(() => {
+      window.__petAudioStarted = false;
+      const NativeAudio = window.Audio;
+      window.Audio = function (...args) {
+        const audio = new NativeAudio(...args);
+        audio.addEventListener('playing', () => { window.__petAudioStarted = true; });
+        return audio;
+      };
+    });
     await pet.locator('#chat-input').fill('Android 测试聊天'); await pet.locator('#chat-input').press('Enter');
     await until(() => fixture.chats.length === 1, 'chat submission');
     await pet.getByText('来自本机测试服务器的回复', {exact:true}).waitFor();
+    await pet.waitForFunction(() => window.__petAudioStarted);
+    await pet.waitForFunction(() => document.querySelector('#unread-indicator').hidden);
     await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
     const todos = await pet.evaluate(async () => {
       const api = window.desktopPetBridge.api;
@@ -158,6 +173,9 @@ async function run() {
     fixture.connection.ws.close(1012, 'Android reconnect test');
     await until(() => fixture.readyCount > previousReady, 'WebSocket reconnect');
     assert.equal(fixture.chats.length, 1); assert.equal(fixture.writes.length, 3);
+    // History testing expands the chat panel; close it before testing transparent canvas taps.
+    await pet.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true})));
+    await pet.waitForFunction(() => document.querySelector('#stage').dataset.mode === 'idle');
     await adb('shell', 'input', 'tap', '20', '500'); // Outside touch releases the editor's window focus.
     // Clock has a different UID and permits overlays. Its menu is under our transparent canvas.
     await adb('shell', 'am', 'start', '-n', 'com.android.deskclock/.DeskClock');

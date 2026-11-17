@@ -8,7 +8,8 @@ async function prepare() {
   const output = path.join(root, 'web-dist');
   const files = [
     ...['index.html', 'exploration.html', 'host-bridge.js', 'alpha-region.js', 'skin.js', 'exploration-render.js',
-      'exploration-products.css', 'fonts/ArkPixel12-ZhHans.woff2']
+      'exploration-products.css', 'fonts/ArkPixel12-ZhHans.woff2',
+      'sounds/soft-bubbles.wav', 'sounds/wooden-pop.wav', 'sounds/warm-bell.wav', 'sounds/water-drop.wav']
       .map(name => [path.resolve(root, '../../src/desktop_pet/web', name), path.join('pet', name)]),
     ...['login.html', 'login.css', 'login.js'].map(name => [path.join(root, 'renderer', name), path.join('login', name)]),
   ];

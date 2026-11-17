@@ -4,8 +4,21 @@ import pytest
 
 from src.chat.message_receive.chat_manager import chat_manager
 from src.desktop_pet.rendering import render_history_events
+from src.desktop_pet.remote_server import validate_event
 from src.desktop_pet.service import DesktopPetService
 from src.maisaka.monitor import event_store
+
+
+def test_remote_history_accepts_cursor_requests():
+    validate_event({"type": "history", "request_id": "page-1", "cursors": {}})
+    validate_event({"type": "history", "request_id": "page-2", "cursors": {"owner": 25}})
+
+
+@pytest.mark.parametrize("cursors", [None, [], {"owner": -1}, {"owner": True}, {"owner": "25"},
+                                    {str(index): 1 for index in range(101)}])
+def test_remote_history_rejects_invalid_cursors(cursors):
+    with pytest.raises(ValueError):
+        validate_event({"type": "history", "request_id": "page", "cursors": cursors})
 
 
 @pytest.mark.asyncio

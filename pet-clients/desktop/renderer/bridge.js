@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const invoke = (command, payload) => window.__TAURI_INTERNALS__.invoke(command, payload);
-  const methods = ['ready', 'send', 'todos', 'todo_image', 'add_todo', 'update_todo', 'done_todo',
+  const methods = ['ready', 'send', 'history', 'todos', 'todo_image', 'add_todo', 'update_todo', 'done_todo',
     'open_exploration_records', 'exploration_tasks', 'explore', 'fit', 'region',
     'drag_begin', 'drag_move', 'drag_end', 'clicked', 'screen_action', 'refresh_buttons',
     'click_button', 'copy_panel_content', 'exit_client', 'refresh', 'window_control',
