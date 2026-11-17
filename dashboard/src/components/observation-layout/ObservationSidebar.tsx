@@ -6,12 +6,10 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsUpDown,
-  Minus,
   MoreHorizontal,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
-  Plus,
   Search,
   Settings,
   Sun,
@@ -22,7 +20,6 @@ import { useTranslation } from 'react-i18next'
 
 import { SidebarUpdateButton } from '@/components/layout/SidebarUpdateButton'
 import type { MenuItem } from '@/components/layout/types'
-import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { PromptWarningDot } from '@/components/ui/prompt-warning-dot'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -37,10 +34,33 @@ import '@/styles/observation-key-state.css'
 import { BotSwitcher } from '@/host/BotSwitcher'
 
 import { ObservationConversations } from './ObservationConversations'
+import { SidebarSettingsMenu } from './SidebarSettingsMenu'
 
 const SETTINGS_OPEN_STORAGE_KEY = 'maibot-observation-settings-open'
-const SETTINGS_COMPACT_STORAGE_KEY = 'maibot-observation-settings-compact'
-const SETTINGS_PAGE_SIZE = 12
+const SETTINGS_LAYOUT_STORAGE_KEY = 'maibot-observation-settings-layout'
+
+interface SettingsLayout {
+  rows: number
+  order: string[]
+}
+
+function loadSettingsLayout(): SettingsLayout {
+  try {
+    const saved = localStorage.getItem(SETTINGS_LAYOUT_STORAGE_KEY)
+    if (!saved) return { rows: 2, order: [] }
+    const parsed: unknown = JSON.parse(saved)
+    if (typeof parsed !== 'object' || parsed === null) return { rows: 2, order: [] }
+    return {
+      rows: 'rows' in parsed && (parsed.rows === 1 || parsed.rows === 2 || parsed.rows === 3) ? parsed.rows : 2,
+      order: 'order' in parsed && Array.isArray(parsed.order)
+        ? [...new Set(parsed.order.filter((path): path is string => typeof path === 'string'))]
+        : [],
+    }
+  } catch {
+    // 浏览器存储不可用或旧偏好损坏时，仍可在当前页面调整布局。
+    return { rows: 2, order: [] }
+  }
+}
 const LOG_PATHS = ['/logs', '/statistics', '/reasoning-process']
 
 /** 侧栏键位空间有限，常用入口用短名；完整名称仍在悬停提示和读屏里。 */
@@ -163,17 +183,11 @@ export function ObservationSidebar({
   const { theme, setTheme } = useTheme()
   const [settingsOpen, setSettingsOpen] = useState(loadSettingsOpen)
   const [toolsOpen, setToolsOpen] = useState(false)
-  const [settingsCompact, setSettingsCompact] = useState(() => {
-    try {
-      return localStorage.getItem(SETTINGS_COMPACT_STORAGE_KEY) === 'true'
-    } catch {
-      return false
-    }
-  })
+  const [settingsLayout, setSettingsLayout] = useState(loadSettingsLayout)
   const reducedMotion = useReducedMotion()
   const [settingsPage, setSettingsPage] = useState(0)
   const [settingsPageDirection, setSettingsPageDirection] = useState(1)
-  const settingsViewport = useRef<HTMLDivElement>(null)
+  const settingsSection = useRef<HTMLElement>(null)
   const { data: promptCatalog } = useQuery(
     {
       ...promptCatalogQueryOptions,
@@ -194,76 +208,58 @@ export function ObservationSidebar({
       : theme
   // 折叠成图标轨时设置键总是显示，否则图标轨里就没有入口了
   const settingsVisible = settingsOpen || collapsed
-  const settingsSingleRow = settingsCompact && !collapsed
-  const settingsPaginated = !collapsed && !settingsSingleRow
-  const settingsPageCount = Math.max(1, Math.ceil(settingsItems.length / SETTINGS_PAGE_SIZE))
+  const settingsPaginated = !collapsed
+  const settingsPageSize = settingsLayout.rows * 4
+  const itemByPath = new Map(settingsItems.map((item) => [item.path, item]))
+  const savedPaths = new Set(settingsLayout.order)
+  const orderedSettingsItems = [
+    ...settingsLayout.order.flatMap((path) => {
+      const item = itemByPath.get(path)
+      return item ? [item] : []
+    }),
+    ...settingsItems.filter((item) => !savedPaths.has(item.path)),
+  ]
+  const settingsPageCount = Math.max(1, Math.ceil(orderedSettingsItems.length / settingsPageSize))
   const currentSettingsPage = Math.min(settingsPage, settingsPageCount - 1)
   const visibleSettingsItems = settingsPaginated
-    ? settingsItems.slice(currentSettingsPage * SETTINGS_PAGE_SIZE, (currentSettingsPage + 1) * SETTINGS_PAGE_SIZE)
-    : settingsItems
+    ? orderedSettingsItems.slice(currentSettingsPage * settingsPageSize, (currentSettingsPage + 1) * settingsPageSize)
+    : orderedSettingsItems
 
   useEffect(() => {
     try {
-      localStorage.setItem(SETTINGS_COMPACT_STORAGE_KEY, String(settingsCompact))
-    } catch {
-      // 存储不可用时，布局选择仅在当前页面保留。
+      localStorage.setItem(SETTINGS_LAYOUT_STORAGE_KEY, JSON.stringify(settingsLayout))
+    } catch (error) {
+      console.warn('无法保存侧边栏布局偏好', error)
     }
-  }, [settingsCompact])
+  }, [settingsLayout])
 
   useEffect(() => {
-    const viewport = settingsViewport.current
-    if (!settingsVisible || !settingsSingleRow || !viewport) return
-    const row = viewport.parentElement
-    if (!row) return
-
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
-    let maxScroll = viewport.scrollWidth - viewport.clientWidth
-    let wheelTarget = viewport.scrollLeft
-    let lastWheelTime = 0
-
-    const updateScrollEdges = () => {
-      const position = viewport.scrollLeft
-      row.toggleAttribute('data-clipped-left', position > 1)
-      row.toggleAttribute('data-clipped-right', position < maxScroll - 1)
-    }
-    const scrollSettings = (event: WheelEvent) => {
-      // 横向手势由浏览器直接处理；只将纵向滚轮映射到这一排按钮。
-      if (event.ctrlKey || event.shiftKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY) || maxScroll <= 0) {
-        lastWheelTime = 0
-        return
-      }
-
+    const section = settingsSection.current
+    if (!section || !settingsVisible || !settingsPaginated || settingsPageCount <= 1) return
+    let lastWheelTime = -Infinity
+    let accumulatedDelta = 0
+    const turnPage = (event: WheelEvent) => {
+      if (event.target instanceof Node && !section.contains(event.target)) return
+      if (event.ctrlKey || event.shiftKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return
       event.preventDefault()
-      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewport.clientWidth : 1
-      const delta = event.deltaY * unit
+      // 一次滚轮或触控板手势只翻一页，避免惯性连续跳页。
       const now = performance.now()
-      const position = viewport.scrollLeft
-      const reversing = Math.sign(delta) !== Math.sign(wheelTarget - position)
-      const from = now - lastWheelTime < 200 && !reversing ? wheelTarget : position
-      wheelTarget = Math.min(maxScroll, Math.max(0, from + delta))
+      const elapsed = now - lastWheelTime
       lastWheelTime = now
-      viewport.scrollTo({
-        left: wheelTarget,
-        behavior: reducedMotion.matches ? 'instant' : 'smooth',
-      })
+      if (elapsed < 180 && accumulatedDelta === 0) return
+      if (elapsed >= 180) accumulatedDelta = 0
+      const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? section.clientHeight : 1)
+      if (Math.sign(delta) !== Math.sign(accumulatedDelta)) accumulatedDelta = 0
+      accumulatedDelta += delta
+      if (Math.abs(accumulatedDelta) < 24) return
+      const direction = Math.sign(accumulatedDelta)
+      accumulatedDelta = 0
+      setSettingsPageDirection(direction)
+      setSettingsPage((page) => Math.max(0, Math.min(settingsPageCount - 1, page + direction)))
     }
-    const observer = new ResizeObserver(() => {
-      maxScroll = viewport.scrollWidth - viewport.clientWidth
-      wheelTarget = Math.min(wheelTarget, maxScroll)
-      updateScrollEdges()
-    })
-    observer.observe(viewport)
-    updateScrollEdges()
-    viewport.addEventListener('scroll', updateScrollEdges, { passive: true })
-    viewport.addEventListener('wheel', scrollSettings, { passive: false })
-    return () => {
-      observer.disconnect()
-      viewport.removeEventListener('scroll', updateScrollEdges)
-      viewport.removeEventListener('wheel', scrollSettings)
-      row.removeAttribute('data-clipped-left')
-      row.removeAttribute('data-clipped-right')
-    }
-  }, [settingsSingleRow, settingsVisible, settingsItems.length])
+    section.addEventListener('wheel', turnPage, { passive: false })
+    return () => section.removeEventListener('wheel', turnPage)
+  }, [settingsVisible, settingsPaginated, settingsPageCount])
 
   // 嵌入一键包时把侧栏宽度告诉外壳，顶栏品牌列跟着对齐；
   // 教程或首次试聊进行中时锁住外壳的「回首页」，免得把引导打断
@@ -410,7 +406,7 @@ export function ObservationSidebar({
         </button>
       </div>
 
-      <section data-observation-settings="true">
+      <section ref={settingsSection} data-observation-settings="true">
         {!collapsed && (
           <div className="relative flex items-center gap-1">
             <button
@@ -425,9 +421,9 @@ export function ObservationSidebar({
             </button>
             {settingsVisible && settingsPaginated && settingsPageCount > 1 && (
               <div className="absolute left-1/2 flex -translate-x-1/2 items-center gap-1" role="group" aria-label="设置分页">
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
+                <button
+                  type="button"
+                  data-observation-section-title="true"
                   aria-label="上一页设置"
                   disabled={currentSettingsPage === 0}
                   onClick={() => {
@@ -436,13 +432,13 @@ export function ObservationSidebar({
                   }}
                 >
                   <ChevronLeft aria-hidden="true" />
-                </Button>
+                </button>
                 <span className="text-xs tabular-nums" aria-live="polite">
                   {currentSettingsPage + 1}/{settingsPageCount}
                 </span>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
+                <button
+                  type="button"
+                  data-observation-section-title="true"
                   aria-label="下一页设置"
                   disabled={currentSettingsPage === settingsPageCount - 1}
                   onClick={() => {
@@ -451,36 +447,44 @@ export function ObservationSidebar({
                   }}
                 >
                   <ChevronRight aria-hidden="true" />
-                </Button>
+                </button>
               </div>
             )}
-            {settingsVisible && (
-              <button
-                type="button"
-                data-observation-section-title="true"
-                aria-label={t('observation.compactSettings')}
-                aria-pressed={settingsSingleRow}
-                title={t('observation.compactSettings')}
-                onClick={() => setSettingsCompact((current) => !current)}
-              >
-                {settingsSingleRow ? <Plus aria-hidden="true" /> : <Minus aria-hidden="true" />}
-              </button>
-            )}
+            <SidebarSettingsMenu
+              rows={settingsLayout.rows}
+              items={orderedSettingsItems}
+              onRowsChange={(rows) => {
+                setSettingsLayout((layout) => ({ ...layout, rows }))
+                setSettingsPage(0)
+              }}
+              onReorder={(paths) => {
+                setSettingsLayout((layout) => {
+                  // 暂时不可见的插件入口保留排序位置，重新启用时仍按原偏好排列。
+                  const visiblePaths = new Set(paths)
+                  let index = 0
+                  const order = layout.order.map((path) => visiblePaths.has(path) ? paths[index++] : path)
+                  return { ...layout, order: [...order, ...paths.slice(index)] }
+                })
+                setSettingsPage(0)
+              }}
+              onResetOrder={() => {
+                setSettingsLayout((layout) => ({ ...layout, order: [] }))
+                setSettingsPage(0)
+              }}
+            />
           </div>
         )}
         {settingsVisible && (
           <ScrollArea
-            scrollbars={settingsSingleRow ? 'horizontal' : 'vertical'}
+            scrollbars="vertical"
             className={collapsed ? 'min-h-0 flex-1' : 'min-h-0'}
-            data-observation-settings-row={settingsSingleRow || undefined}
-            viewportRef={settingsViewport}
           >
             <nav aria-label={t('observation.settingsBlock')}>
               <motion.ul
                 key={settingsPaginated ? currentSettingsPage : 'unpaged'}
                 data-observation-keys="true"
-                data-single-row={settingsSingleRow}
-                data-paginated={settingsPaginated && settingsPageCount > 1 || undefined}
+                data-paginated={settingsPaginated || undefined}
+                style={settingsPaginated ? { gridTemplateRows: `repeat(${settingsLayout.rows}, 3.125rem)` } : undefined}
                 initial={reducedMotion || !settingsPaginated ? false : { opacity: 0, x: settingsPageDirection * 12 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ duration: reducedMotion ? 0 : 0.18, ease: 'easeOut' }}

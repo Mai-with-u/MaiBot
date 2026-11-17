@@ -82,10 +82,9 @@
   --mil-float:
     inset 2px 2px 0 var(--mil-hi), inset -2px -2px 0 var(--mil-lo),
     6px 6px 0 var(--mil-float-shadow);
-  --mil-sunk-outset: 4px;
+  --mil-sunk-outset: 0px;
   --mil-sunk:
-    inset 3px 3px 0 var(--mil-screen-shade), -2px -2px 0 2px var(--mil-lo),
-    2px 2px 0 2px var(--mil-hi);
+    inset 3px 3px 0 var(--mil-screen-shade), inset -2px -2px 0 var(--mil-hi);
   --mil-keycap:
     inset 0 0 0 2px var(--mil-line), inset 0 -7px 0 var(--mil-key-side),
     inset 4px 4px 0 var(--mil-key-hi);

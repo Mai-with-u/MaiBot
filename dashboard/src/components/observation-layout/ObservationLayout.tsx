@@ -83,7 +83,7 @@ export function ObservationLayout({ children }: { children: ReactNode }) {
 
   const isLogsPath = LOG_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))
   // 首页、聊天和日志自己管理滚动区域，其余设置页按内容撑高、由 main 滚动
-  const isScrollablePage = !isLogsPath && !CONVERSATION_PATHS.has(pathname) && pathname !== '/help-history'
+  const isScrollablePage = !isLogsPath && !CONVERSATION_PATHS.has(pathname) && pathname !== '/help-history' && pathname !== '/resource/person' && pathname !== '/chat-management'
 
   const settingsItems = useMemo<MenuItem[]>(
     () => [

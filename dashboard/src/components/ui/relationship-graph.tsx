@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { MessageCircle, UsersRound } from 'lucide-react'
 
 import { Button } from './button'
-import { DataPanel } from './surface'
 import { Switch } from './switch'
 import { Label } from './label'
 import { regionOutline, type RegionRect } from './relationship-regions'
@@ -30,12 +29,14 @@ export function RelationshipGraph({
   columns,
   selectedId,
   layout = 'columns',
+  toolbarActions,
   onSelect,
 }: {
   nodes: RelationshipNode[]
   edges: RelationshipEdge[]
   columns: string[]
   layout?: 'columns' | 'overview'
+  toolbarActions?: ReactNode
   selectedId?: string
   onSelect: (id: string) => void
 }) {
@@ -204,64 +205,8 @@ export function RelationshipGraph({
     ),
   ])
   return (
-    <DataPanel
-      ref={viewport}
-      inset
-      padding="none"
-      className="relative h-full min-h-0 touch-none overflow-hidden border-2"
-      style={{ cursor: dragging ? 'grabbing' : 'grab' }}
-      onPointerDown={(event) => {
-        if (event.button !== 0 && event.button !== 1) return
-        if (event.button === 0 && (event.target as HTMLElement).closest('button')) return
-        event.preventDefault()
-        drag.current = { x: event.clientX, y: event.clientY }
-        setDragging(true)
-        event.currentTarget.setPointerCapture(event.pointerId)
-      }}
-      onMouseDown={(event) => {
-        if (event.button === 1) event.preventDefault()
-      }}
-      onAuxClick={(event) => {
-        if (event.button === 1) event.preventDefault()
-      }}
-      onPointerMove={(event) => {
-        if (!drag.current) return
-        const dx = event.clientX - drag.current.x
-        const dy = event.clientY - drag.current.y
-        drag.current = { x: event.clientX, y: event.clientY }
-        setView((current) => ({ ...current, x: current.x + dx, y: current.y + dy }))
-      }}
-      onPointerUp={() => {
-        drag.current = null
-        setDragging(false)
-      }}
-      onPointerCancel={() => {
-        drag.current = null
-        setDragging(false)
-      }}
-      onLostPointerCapture={() => {
-        drag.current = null
-        setDragging(false)
-      }}
-      onKeyDown={(event) => {
-        if (event.target !== event.currentTarget) return
-        const moves: Record<string, [number, number]> = {
-          ArrowLeft: [40, 0],
-          ArrowRight: [-40, 0],
-          ArrowUp: [0, 40],
-          ArrowDown: [0, -40],
-        }
-        const move = moves[event.key]
-        if (move) {
-          event.preventDefault()
-          setView((current) => ({ ...current, x: current.x + move[0], y: current.y + move[1] }))
-        }
-      }}
-      role="region"
-      aria-label="相通关系图"
-      tabIndex={0}
-    >
-      <div className="bg-background absolute top-3 right-3 z-10 flex flex-wrap items-center gap-2 p-1">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex shrink-0 flex-wrap items-center gap-3 pb-3">
         {overview && (
           <Label className="flex cursor-pointer items-center gap-2 text-xs">
             <Switch
@@ -284,202 +229,259 @@ export function RelationshipGraph({
         <Button size="xs" variant="outline" onClick={() => setView({ x: 0, y: 0, scale: 1 })}>
           重置
         </Button>
+        {toolbarActions && <div className="ml-auto flex flex-wrap items-center gap-3">{toolbarActions}</div>}
       </div>
       <div
-        className="relative origin-top-left select-none"
-        style={{
-          width,
-          height,
-          transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
+        ref={viewport}
+        className="relative min-h-0 flex-1 touch-none overflow-hidden"
+        style={{ cursor: dragging ? 'grabbing' : 'grab' }}
+        onPointerDown={(event) => {
+          if (event.button !== 0 && event.button !== 1) return
+          if (event.button === 0 && (event.target as HTMLElement).closest('button')) return
+          event.preventDefault()
+          drag.current = { x: event.clientX, y: event.clientY }
+          setDragging(true)
+          event.currentTarget.setPointerCapture(event.pointerId)
         }}
+        onMouseDown={(event) => {
+          if (event.button === 1) event.preventDefault()
+        }}
+        onAuxClick={(event) => {
+          if (event.button === 1) event.preventDefault()
+        }}
+        onPointerMove={(event) => {
+          if (!drag.current) return
+          const dx = event.clientX - drag.current.x
+          const dy = event.clientY - drag.current.y
+          drag.current = { x: event.clientX, y: event.clientY }
+          setView((current) => ({ ...current, x: current.x + dx, y: current.y + dy }))
+        }}
+        onPointerUp={() => {
+          drag.current = null
+          setDragging(false)
+        }}
+        onPointerCancel={() => {
+          drag.current = null
+          setDragging(false)
+        }}
+        onLostPointerCapture={() => {
+          drag.current = null
+          setDragging(false)
+        }}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return
+          const moves: Record<string, [number, number]> = {
+            ArrowLeft: [40, 0],
+            ArrowRight: [-40, 0],
+            ArrowUp: [0, 40],
+            ArrowDown: [0, -40],
+          }
+          const move = moves[event.key]
+          if (move) {
+            event.preventDefault()
+            setView((current) => ({ ...current, x: current.x + move[0], y: current.y + move[1] }))
+          }
+        }}
+        role="region"
+        aria-label="相通关系图"
+        tabIndex={0}
       >
-        {overview && mergeShared && (
+        <div
+          className="relative origin-top-left select-none"
+          style={{
+            width,
+            height,
+            transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
+          }}
+        >
+          {overview && mergeShared && (
+            <svg
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0"
+              width={width}
+              height={height}
+            >
+              {groupNodes.map((group) => (
+                <path
+                  key={group.id}
+                  data-group-region={group.id}
+                  d={regionOutline(mergedRegions.get(group.id)!)}
+                  fill={group.colors?.[0] ?? '#888888'}
+                  fillOpacity={0.12 * (group.opacity ?? 1)}
+                  stroke={group.colors?.[0] ?? '#888888'}
+                  strokeWidth={2}
+                  opacity={activeId && !linked.has(group.id) ? 0.3 : 1}
+                />
+              ))}
+            </svg>
+          )}
+          {overview &&
+            groupNodes.map((group, index) => (
+              <section
+                key={`region:${group.id}`}
+                aria-label={`${group.label}相通组`}
+                className={mergeShared ? 'absolute' : 'absolute border-2'}
+                style={{
+                  left: mergeShared ? 20 : index * 280 + 20,
+                  top: mergeShared ? 60 + index * 104 : 48,
+                  width: mergeShared ? 244 : 254,
+                  height: mergeShared ? 72 : regionHeight,
+                  borderColor: group.colors?.[0],
+                  backgroundColor: mergeShared
+                    ? 'transparent'
+                    : `${group.colors?.[0] ?? '#888888'}12`,
+                  opacity: (group.opacity ?? 1) * (activeId && !linked.has(group.id) ? 0.4 : 1),
+                }}
+              >
+                <button
+                  type="button"
+                  className={`hover:bg-accent flex w-full cursor-pointer items-start gap-2 px-3 py-3 text-left focus-visible:outline-2 ${mergeShared ? 'h-full' : 'border-b-2'}`}
+                  style={{ borderColor: group.colors?.[0] }}
+                  title={`编辑${group.label}`}
+                  onClick={() => onSelect(group.id)}
+                  onMouseEnter={() => setFocusedId(group.id)}
+                  onMouseLeave={() => setFocusedId(null)}
+                  onFocus={() => setFocusedId(group.id)}
+                  onBlur={() => setFocusedId(null)}
+                >
+                  <UsersRound
+                    className="mt-0.5 h-5 w-5 shrink-0"
+                    style={{ color: group.colors?.[0] }}
+                  />
+                  <span className="min-w-0">
+                    <strong className="block truncate">{group.label}</strong>
+                    <span className="text-muted-foreground block truncate text-xs">
+                      {group.description}
+                    </span>
+                  </span>
+                </button>
+                {!mergeShared && membersByGroup[index].length === 0 && (
+                  <p className="text-muted-foreground px-3 pt-8 text-xs">
+                    {edges.some((edge) => edge.from === group.id)
+                      ? mergeShared
+                        ? '成员位于下方交叠区域'
+                        : '成员均位于下方共同成员区'
+                      : '暂无成员，点击组名添加'}
+                  </p>
+                )}
+              </section>
+            ))}
+          {overview && !mergeShared && sharedMembers.length > 0 && (
+            <section
+              aria-label="共同成员"
+              className="absolute border-2 border-dashed"
+              style={{
+                left: 20,
+                top: sharedTop,
+                width: sharedColumns * 280 - 26,
+                height: Math.ceil(sharedMembers.length / sharedColumns) * 88 + 72,
+              }}
+            >
+              <h3 className="px-3 py-3 text-sm font-semibold">
+                共同成员
+                <span className="text-muted-foreground ml-2 text-xs font-normal">
+                  多色标记对应所属相通组，每个聊天只显示一次
+                </span>
+              </h3>
+            </section>
+          )}
+          {(overview ? ['点击组名编辑 · 悬停聊天查看所属组'] : columns).map((label, index) => (
+            <div
+              key={label}
+              className="text-muted-foreground absolute text-xs font-semibold"
+              style={{
+                left: overview ? 32 : index * 430 + 24,
+                top: overview ? sectionStarts[index] - 36 : 20,
+              }}
+            >
+              {label}
+            </div>
+          ))}
           <svg
             aria-hidden="true"
             className="pointer-events-none absolute inset-0"
-            width={width}
-            height={height}
+            width="100%"
+            height="100%"
           >
-            {groupNodes.map((group) => (
-              <path
-                key={group.id}
-                data-group-region={group.id}
-                d={regionOutline(mergedRegions.get(group.id)!)}
-                fill={group.colors?.[0] ?? '#888888'}
-                fillOpacity={0.12 * (group.opacity ?? 1)}
-                stroke={group.colors?.[0] ?? '#888888'}
-                strokeWidth={2}
-                opacity={activeId && !linked.has(group.id) ? 0.3 : 1}
-              />
-            ))}
+            {[...edges]
+              .filter(() => !overview)
+              .sort(
+                (a, b) =>
+                  Number(a.from === activeId || a.to === activeId) -
+                  Number(b.from === activeId || b.to === activeId)
+              )
+              .map((edge) => {
+                const from = positions.get(edge.from)!
+                const to = positions.get(edge.to)!
+                const active = edge.from === activeId || edge.to === activeId
+                const outgoing = edges
+                  .filter((item) => item.from === edge.from)
+                  .sort((a, b) => positions.get(a.to)!.y - positions.get(b.to)!.y)
+                const incoming = edges
+                  .filter((item) => item.to === edge.to)
+                  .sort((a, b) => positions.get(a.from)!.y - positions.get(b.from)!.y)
+                const fromY =
+                  from.y + 10 + (40 * (outgoing.indexOf(edge) + 1)) / (outgoing.length + 1)
+                const toY = to.y + 10 + (40 * (incoming.indexOf(edge) + 1)) / (incoming.length + 1)
+                const sourceX =
+                  from.x + 16 + (198 * (outgoing.indexOf(edge) + 1)) / (outgoing.length + 1)
+                // 连线沿网格间隙走，避免穿过上排成员卡片。
+                const laneX = to.x - 12 - incoming.indexOf(edge) * 4
+                const bendY = sectionStarts[1] - 58 + (outgoing.indexOf(edge) % 5) * 5
+                const path = overview
+                  ? `M ${sourceX} ${from.y + 60} C ${sourceX} ${bendY}, ${laneX} ${bendY - 24}, ${laneX} ${bendY} V ${toY} H ${to.x}`
+                  : `M ${from.x + 230} ${fromY} C ${from.x + 330} ${fromY}, ${to.x - 100} ${toY}, ${to.x} ${toY}`
+                return (
+                  <path
+                    key={`${edge.from}:${edge.to}`}
+                    d={path}
+                    fill="none"
+                    stroke={edge.color ?? 'currentColor'}
+                    strokeWidth={active ? 4 : 3}
+                    opacity={(edge.opacity ?? 1) * (active ? 1 : activeId ? 0.12 : 0.65)}
+                  />
+                )
+              })}
           </svg>
-        )}
-        {overview &&
-          groupNodes.map((group, index) => (
-            <section
-              key={`region:${group.id}`}
-              aria-label={`${group.label}相通组`}
-              className={mergeShared ? 'absolute' : 'absolute border-2'}
-              style={{
-                left: mergeShared ? 20 : index * 280 + 20,
-                top: mergeShared ? 60 + index * 104 : 48,
-                width: mergeShared ? 244 : 254,
-                height: mergeShared ? 72 : regionHeight,
-                borderColor: group.colors?.[0],
-                backgroundColor: mergeShared
-                  ? 'transparent'
-                  : `${group.colors?.[0] ?? '#888888'}12`,
-                opacity: (group.opacity ?? 1) * (activeId && !linked.has(group.id) ? 0.4 : 1),
-              }}
-            >
-              <button
-                type="button"
-                className={`hover:bg-accent flex w-full cursor-pointer items-start gap-2 px-3 py-3 text-left focus-visible:outline-2 ${mergeShared ? 'h-full' : 'border-b-2'}`}
-                style={{ borderColor: group.colors?.[0] }}
-                title={`编辑${group.label}`}
-                onClick={() => onSelect(group.id)}
-                onMouseEnter={() => setFocusedId(group.id)}
-                onMouseLeave={() => setFocusedId(null)}
-                onFocus={() => setFocusedId(group.id)}
-                onBlur={() => setFocusedId(null)}
-              >
-                <UsersRound
-                  className="mt-0.5 h-5 w-5 shrink-0"
-                  style={{ color: group.colors?.[0] }}
-                />
-                <span className="min-w-0">
-                  <strong className="block truncate">{group.label}</strong>
-                  <span className="text-muted-foreground block truncate text-xs">
-                    {group.description}
-                  </span>
-                </span>
-              </button>
-              {!mergeShared && membersByGroup[index].length === 0 && (
-                <p className="text-muted-foreground px-3 pt-8 text-xs">
-                  {edges.some((edge) => edge.from === group.id)
-                    ? mergeShared
-                      ? '成员位于下方交叠区域'
-                      : '成员均位于下方共同成员区'
-                    : '暂无成员，点击组名添加'}
-                </p>
-              )}
-            </section>
-          ))}
-        {overview && !mergeShared && sharedMembers.length > 0 && (
-          <section
-            aria-label="共同成员"
-            className="absolute border-2 border-dashed"
-            style={{
-              left: 20,
-              top: sharedTop,
-              width: sharedColumns * 280 - 26,
-              height: Math.ceil(sharedMembers.length / sharedColumns) * 88 + 72,
-            }}
-          >
-            <h3 className="px-3 py-3 text-sm font-semibold">
-              共同成员
-              <span className="text-muted-foreground ml-2 text-xs font-normal">
-                多色标记对应所属相通组，每个聊天只显示一次
-              </span>
-            </h3>
-          </section>
-        )}
-        {(overview ? ['点击组名编辑 · 悬停聊天查看所属组'] : columns).map((label, index) => (
-          <div
-            key={label}
-            className="text-muted-foreground absolute text-xs font-semibold"
-            style={{
-              left: overview ? 32 : index * 430 + 24,
-              top: overview ? sectionStarts[index] - 36 : 20,
-            }}
-          >
-            {label}
-          </div>
-        ))}
-        <svg
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0"
-          width="100%"
-          height="100%"
-        >
-          {[...edges]
-            .filter(() => !overview)
-            .sort(
-              (a, b) =>
-                Number(a.from === activeId || a.to === activeId) -
-                Number(b.from === activeId || b.to === activeId)
-            )
-            .map((edge) => {
-              const from = positions.get(edge.from)!
-              const to = positions.get(edge.to)!
-              const active = edge.from === activeId || edge.to === activeId
-              const outgoing = edges
-                .filter((item) => item.from === edge.from)
-                .sort((a, b) => positions.get(a.to)!.y - positions.get(b.to)!.y)
-              const incoming = edges
-                .filter((item) => item.to === edge.to)
-                .sort((a, b) => positions.get(a.from)!.y - positions.get(b.from)!.y)
-              const fromY =
-                from.y + 10 + (40 * (outgoing.indexOf(edge) + 1)) / (outgoing.length + 1)
-              const toY = to.y + 10 + (40 * (incoming.indexOf(edge) + 1)) / (incoming.length + 1)
-              const sourceX =
-                from.x + 16 + (198 * (outgoing.indexOf(edge) + 1)) / (outgoing.length + 1)
-              // 连线沿网格间隙走，避免穿过上排成员卡片。
-              const laneX = to.x - 12 - incoming.indexOf(edge) * 4
-              const bendY = sectionStarts[1] - 58 + (outgoing.indexOf(edge) % 5) * 5
-              const path = overview
-                ? `M ${sourceX} ${from.y + 60} C ${sourceX} ${bendY}, ${laneX} ${bendY - 24}, ${laneX} ${bendY} V ${toY} H ${to.x}`
-                : `M ${from.x + 230} ${fromY} C ${from.x + 330} ${fromY}, ${to.x - 100} ${toY}, ${to.x} ${toY}`
+          {nodes
+            .filter((node) => !overview || node.column !== 0)
+            .map((node) => {
+              const position = positions.get(node.id)!
               return (
-                <path
-                  key={`${edge.from}:${edge.to}`}
-                  d={path}
-                  fill="none"
-                  stroke={edge.color ?? 'currentColor'}
-                  strokeWidth={active ? 4 : 3}
-                  opacity={(edge.opacity ?? 1) * (active ? 1 : activeId ? 0.12 : 0.65)}
-                />
+                <Button
+                  key={node.id}
+                  variant="outline"
+                  className="absolute h-[60px] w-[230px] flex-col items-start gap-1 border-2 px-3 text-left"
+                  style={{
+                    left: position.x,
+                    top: position.y,
+                    opacity: (node.opacity ?? 1) * (activeId && !linked.has(node.id) ? 0.5 : 1),
+                  }}
+                  aria-pressed={selectedId === node.id}
+                  title={[node.label, node.description].filter(Boolean).join(' · ')}
+                  onMouseEnter={() => setFocusedId(node.id)}
+                  onMouseLeave={() => setFocusedId(null)}
+                  onFocus={() => setFocusedId(node.id)}
+                  onBlur={() => setFocusedId(null)}
+                  onClick={() => onSelect(node.id)}
+                >
+                  <span aria-hidden="true" className="absolute inset-x-0 top-0 flex h-1.5">
+                    {node.colors?.map((color) => (
+                      <span key={color} className="flex-1" style={{ backgroundColor: color }} />
+                    ))}
+                  </span>
+                  <span className="flex w-full items-center gap-2 font-medium">
+                    <MessageCircle aria-hidden="true" className="h-4 w-4 shrink-0 opacity-60" />
+                    <span className="truncate">{node.label}</span>
+                  </span>
+                  <span className="text-muted-foreground block w-full truncate text-xs">
+                    {node.description}
+                  </span>
+                </Button>
               )
             })}
-        </svg>
-        {nodes
-          .filter((node) => !overview || node.column !== 0)
-          .map((node) => {
-            const position = positions.get(node.id)!
-            return (
-              <Button
-                key={node.id}
-                variant="outline"
-                className="absolute h-[60px] w-[230px] flex-col items-start gap-1 border-2 px-3 text-left"
-                style={{
-                  left: position.x,
-                  top: position.y,
-                  opacity: (node.opacity ?? 1) * (activeId && !linked.has(node.id) ? 0.5 : 1),
-                }}
-                aria-pressed={selectedId === node.id}
-                title={[node.label, node.description].filter(Boolean).join(' · ')}
-                onMouseEnter={() => setFocusedId(node.id)}
-                onMouseLeave={() => setFocusedId(null)}
-                onFocus={() => setFocusedId(node.id)}
-                onBlur={() => setFocusedId(null)}
-                onClick={() => onSelect(node.id)}
-              >
-                <span aria-hidden="true" className="absolute inset-x-0 top-0 flex h-1.5">
-                  {node.colors?.map((color) => (
-                    <span key={color} className="flex-1" style={{ backgroundColor: color }} />
-                  ))}
-                </span>
-                <span className="flex w-full items-center gap-2 font-medium">
-                  <MessageCircle aria-hidden="true" className="h-4 w-4 shrink-0 opacity-60" />
-                  <span className="truncate">{node.label}</span>
-                </span>
-                <span className="text-muted-foreground block w-full truncate text-xs">
-                  {node.description}
-                </span>
-              </Button>
-            )
-          })}
+        </div>
       </div>
-    </DataPanel>
+    </div>
   )
 }

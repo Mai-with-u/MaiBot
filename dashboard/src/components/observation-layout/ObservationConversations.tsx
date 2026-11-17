@@ -88,7 +88,7 @@ const ObservedRow = memo(function ObservedRow({
         onSelect={() => onSelect(session.sessionId)}
         avatar={<ConversationAvatar src={avatarUrl} name={session.sessionName} />}
         status={
-          <span className="inline-flex min-w-0 items-center gap-1">
+          <span className="inline-flex min-w-0 items-center gap-1 pr-1.5">
             <StatusIndicator
               variant="inline"
               status={getStageStatusLight(status)}

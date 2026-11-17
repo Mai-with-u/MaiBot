@@ -237,6 +237,8 @@
   font-weight: 700;
   letter-spacing: 0.06em;
 }
+[data-observation-section-title='true']:disabled { opacity: 0.35; cursor: default; }
+[data-observation-section-title='true']:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
 [data-observation-section-title='true'] svg {
   width: 0.875rem;
   height: 0.875rem;
@@ -251,30 +253,6 @@
 }
 [data-observation-sidebar='true'][data-collapsed='true'] [data-observation-keys='true'] {
   grid-template-columns: minmax(0, 1fr);
-}
-[data-observation-keys='true'][data-single-row='true'] {
-  grid-template-columns: none;
-  grid-auto-flow: column;
-  grid-auto-columns: calc((100% - 2rem) / 4.5);
-}
-[data-observation-settings-row='true'] [data-dashboard-scrollbar='true'] {
-  display: none;
-}
-[data-observation-settings-row='true'][data-clipped-left]::before,
-[data-observation-settings-row='true'][data-clipped-right]::after {
-  content: '';
-  position: absolute;
-  z-index: 1;
-  inset-block: 2px;
-  width: 2px;
-  background: var(--obs-label-ink);
-  pointer-events: none;
-}
-[data-observation-settings-row='true'][data-clipped-left]::before {
-  left: 0;
-}
-[data-observation-settings-row='true'][data-clipped-right]::after {
-  right: 0;
 }
 [data-observation-key='true'] {
   position: relative;
@@ -316,22 +294,6 @@
   /* 放不下的名字直接截断、末尾淡出，不加省略号；短名字居中，碰不到淡出区 */
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 0.625rem), transparent);
   mask-image: linear-gradient(to right, #000 calc(100% - 0.625rem), transparent);
-}
-[data-observation-keys='true'][data-single-row='true'] [data-observation-key='true'] {
-  height: 2.75rem;
-  gap: 0.125rem;
-  padding: 0.125rem 0.1875rem 0.25rem;
-}
-[data-observation-keys='true'][data-single-row='true'] [data-observation-key='true'] > svg {
-  width: 0.875rem;
-  height: 0.875rem;
-  flex-shrink: 0;
-}
-[data-observation-keys='true'][data-single-row='true'] [data-observation-key-label='true'] {
-  flex-shrink: 0;
-  line-height: 1.25;
-  mask-image: none;
-  text-overflow: ellipsis;
 }
 [data-observation-key='true']:focus-visible,
 [data-observation-icon-key='true']:focus-visible {
@@ -1270,9 +1232,48 @@
 [data-observation-composer-input='true']:focus-within { outline: 2px solid hsl(var(--ring)); outline-offset: 1px; }
 [data-observation-send='true'] svg { width: 1rem; height: 1rem; }
 
-/* 分页保留三行高度，最后一页不足十二项时不会带动下方会话列表跳动。 */
-[data-observation-keys='true'][data-paginated='true'] {
-  grid-template-rows: repeat(3, 3.125rem);
+/* 窄面板保留全部统计项，按两列排列，避免桌面四列读数互相覆盖。 */
+@container board (max-width: 56rem) {
+  [data-board-screen='true']:has(> [data-observation-usage-big='true']) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: auto;
+  }
+  [data-observation-usage-big='true'],
+  [data-observation-usage-small='true'] {
+    grid-row: auto;
+    justify-content: flex-start;
+    gap: 0.375rem;
+    padding: 0.75rem 0.5rem;
+    border-right: 0;
+    border-bottom: var(--board-rule);
+  }
+  [data-observation-usage-big='true']:first-child { padding-left: 0.5rem; }
+  [data-observation-usage-small='true']:nth-of-type(n + 5) { border-bottom: 0; }
+  [data-observation-usage-big='true'] [data-board-number='true'] {
+    font-size: 1.75rem;
+  }
+  [data-observation-usage-small='true'] [data-board-number='true'] {
+    font-size: 1.25rem;
+  }
+  [data-observation-usage-big='true'] [data-board-number='true'],
+  [data-observation-usage-small='true'] [data-board-number='true'] {
+    overflow-wrap: anywhere;
+  }
+}
+
+/* 手机输入框独占一行，头像、模式与发送按钮放在下一行。 */
+@container observation-home (max-width: 36rem) {
+  [data-observation-composer='true'] {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.625rem;
+  }
+  [data-observation-composer-input='true'] {
+    order: -1;
+    flex: 1 0 100%;
+  }
+  [data-observation-composer-input='true'] input { font-size: 1rem; }
+  [data-observation-send-group='true'] { margin-left: auto; }
 }
 
 /* ---------- 原版风格的可读性 ----------
