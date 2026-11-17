@@ -25,6 +25,7 @@ from .authentication import HostCredentials
 from .config import HostConfig
 from .data_transfer import register_data_transfer
 from .maintenance import HostMaintenance
+from .person_migration import register_person_migration
 from .maim import register_maim_gateway
 from .proxy import BotProxy, register_bot_proxy
 from .sessions import HostSessions
@@ -121,6 +122,7 @@ def create_host_app(
             raise HTTPException(401, "请登录 WebUI")
 
     register_data_transfer(app, maintenance, require_session)
+    register_person_migration(app, maintenance, require_session)
     register_bot_proxy(app, proxy, management=True)
     register_host_auth(app, sessions, credentials, require_session, get_client_ip)
     register_common_settings(app, workspace, require_session)

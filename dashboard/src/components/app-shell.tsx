@@ -20,10 +20,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   // 必须依据实际匹配的页面放行，避免返回管理页时短暂启动旧 Bot 页的请求。
   const pathname = useRouterState({ select: (state) => state.matches.at(-1)?.pathname })
   const search = useRouterState({ select: state => state.location.searchStr })
-  const transferPage = pathname === '/data-transfer' && Boolean(runtime.selected_bot_id)
   const commonSettings = pathname === '/config/bot' && new URLSearchParams(search).get('mode') === 'common'
   const botUnavailable =
-    runtime.host && !runtime.selected_bot_running && !commonSettings && !transferPage && !isBotIndependentPath(pathname)
+    runtime.host && !runtime.selected_bot_running && !commonSettings && !isBotIndependentPath(pathname)
   const content = botUnavailable ? <BotUnavailable /> : children
 
   return (

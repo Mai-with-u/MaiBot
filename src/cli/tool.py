@@ -26,7 +26,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         add_host_command(commands)
     else:
         commands.add_parser("host", help="管理工作区内的 Bot")
+    if argv and argv[0] == "person-migrate":
+        from .person_migration import add_person_migration_command, run_person_migration
+
+        add_person_migration_command(commands)
+    else:
+        commands.add_parser("person-migrate", help="停机合并人物数据")
     args = parser.parse_args(argv)
+    if args.command == "person-migrate":
+        try:
+            return run_person_migration(args)
+        except (RuntimeError, ValueError, OSError) as exc:
+            parser.error(str(exc))
     if args.command == "host":
         # host 子命令使用工作区路径，单 Bot 的配置在独立进程中加载。
         return run_host_command(args, parser)

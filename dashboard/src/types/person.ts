@@ -17,13 +17,13 @@ export interface PersonInfo {
   id: number
   is_known: boolean
   person_id: string
+  individual_id: string
+  source_person_name: string | null
   person_name: string | null
-  name_reason: string | null
   platform: string
   user_id: string
   nickname: string | null
   group_nick_name: GroupNickName[] | null
-  memory_points: string | null
   know_times: number | null
   know_since: number | null
   last_know: number | null
@@ -52,10 +52,10 @@ export interface PersonDetailResponse {
  * 人物更新请求
  */
 export interface PersonUpdateRequest {
+  expected_individual_id?: string
+  expected_profile?: IndividualProfile
   person_name?: string
-  name_reason?: string
   nickname?: string
-  memory_points?: string
   is_known?: boolean
 }
 
@@ -80,6 +80,8 @@ export interface PersonDeleteResponse {
  * 人物统计数据
  */
 export interface PersonStats {
+  individuals: number
+  linked_individuals: number
   total: number
   known: number
   unknown: number
@@ -92,4 +94,46 @@ export interface PersonStats {
 export interface PersonStatsResponse {
   success: boolean
   data: PersonStats
+}
+
+/** 跨平台统一个体，成员保留各自的账号资料。 */
+export interface IndividualProfile {
+  display_name: string
+  is_known: boolean
+}
+
+export interface ProfileOrigin extends IndividualProfile {
+  individual_id: string
+  person_id: string
+  platform: string
+  user_id: string
+}
+
+export interface Individual extends IndividualProfile {
+  individual_id: string
+  display_name: string
+  members: PersonInfo[]
+  profile_sources: ProfileOrigin[]
+}
+
+export interface IndividualDirectoryEntry extends Individual {
+  member_count: number
+}
+
+export interface IndividualDirectoryResponse {
+  data: IndividualDirectoryEntry[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export type ProfileField = keyof IndividualProfile
+
+export interface IndividualMergePreview {
+  target_individual_id: string
+  revision: string
+  profile: IndividualProfile
+  conflicts: ProfileField[]
+  sources: (IndividualProfile & { individual_id: string; origins: ProfileOrigin[] })[]
+  members: Record<string, string>
 }

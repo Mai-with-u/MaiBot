@@ -78,7 +78,6 @@ async def test_profile_admin_alias_actions_write_override_and_enqueue_refresh(tm
             "manual_aliases": list(override["aliases"]) if override else [],
             "effective_aliases": list(override["aliases"]) if override else derived_aliases,
             "has_override": override is not None,
-            "memory_traits": [],
             "override": override,
         }
 

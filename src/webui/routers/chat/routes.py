@@ -21,6 +21,7 @@ from src.common.database.database_model import (
     HighFrequencyTerm,
     Jargon,
     Messages,
+    Individual,
     PersonInfo,
     StatisticsMessageHourly,
     ToolRecord,
@@ -1327,10 +1328,10 @@ def get_persons_by_platform(
 ) -> Dict[str, object]:
     """获取指定平台的用户列表。"""
     try:
-        statement = select(PersonInfo).where(col(PersonInfo.platform) == platform)
+        statement = select(PersonInfo).join(Individual, PersonInfo.individual_id == Individual.individual_id).where(col(PersonInfo.platform) == platform)
         if search:
             statement = statement.where(
-                (col(PersonInfo.person_name).contains(search))
+                (col(Individual.display_name).contains(search))
                 | (col(PersonInfo.user_nickname).contains(search))
                 | (col(PersonInfo.user_id).contains(search))
             )
@@ -1346,11 +1347,11 @@ def get_persons_by_platform(
                 {
                     "person_id": person.person_id,
                     "user_id": person.user_id,
-                    "person_name": person.person_name,
+                    "person_name": person.individual.display_name,
                     "nickname": person.user_nickname,
-                    "is_known": person.is_known,
+                    "is_known": person.individual.is_known,
                     "platform": person.platform,
-                    "display_name": person.person_name or person.user_nickname or person.user_id,
+                    "display_name": person.individual.display_name or person.user_nickname or person.user_id,
                 }
                 for person in persons
             ]

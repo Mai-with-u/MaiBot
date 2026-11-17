@@ -57,6 +57,9 @@ from .v48_to_v49 import migrate_v48_to_v49
 from .v49_to_v50 import migrate_v49_to_v50
 from .v50_to_v51 import migrate_v50_to_v51
 from .v51_to_v52 import migrate_v51_to_v52
+from .v52_to_v53 import migrate_v52_to_v53
+from .v53_to_v54 import migrate_v53_to_v54
+from .v54_to_v55 import migrate_v54_to_v55
 from .version_store import SQLiteUserVersionStore
 
 EMPTY_SCHEMA_VERSION = 0
@@ -112,7 +115,10 @@ V49_SCHEMA_VERSION = 49
 V50_SCHEMA_VERSION = 50
 V51_SCHEMA_VERSION = 51
 V52_SCHEMA_VERSION = 52
-LATEST_SCHEMA_VERSION = V52_SCHEMA_VERSION
+V53_SCHEMA_VERSION = 53
+V54_SCHEMA_VERSION = 54
+V55_SCHEMA_VERSION = 55
+LATEST_SCHEMA_VERSION = V55_SCHEMA_VERSION
 
 _LEGACY_V1_EXCLUSIVE_TABLES = (
     "chat_streams",
@@ -2042,6 +2048,23 @@ def build_default_migration_registry() -> MigrationRegistry:
                 name="v51_to_v52",
                 description="移除聊天迁移记录指纹，使用稳定来源记录键去重。",
                 handler=migrate_v51_to_v52,
+            ),
+            MigrationStep(
+                version_from=V52_SCHEMA_VERSION,
+                version_to=V53_SCHEMA_VERSION,
+                name="v52_to_v53",
+                description="新增 Individual，为每个平台用户建立独立个体。",
+                handler=migrate_v52_to_v53,
+            ),
+            MigrationStep(
+                version_from=V53_SCHEMA_VERSION, version_to=V54_SCHEMA_VERSION,
+                name="v53_to_v54", description="统一 Individual 人物资料，保留账号来源与合并资料审计。",
+                handler=migrate_v53_to_v54,
+            ),
+            MigrationStep(
+                version_from=V54_SCHEMA_VERSION, version_to=V55_SCHEMA_VERSION,
+                name="v54_to_v55", description="移除旧记忆点与名称设定原因字段。",
+                handler=migrate_v54_to_v55,
             ),
         ]
     )

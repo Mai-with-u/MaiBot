@@ -7,10 +7,10 @@ import {
   Home,
   MessageCircle,
   MessageSquare,
-  Network,
   Puzzle,
   Settings,
   Store,
+  Users,
   Wifi,
 } from 'lucide-react'
 
@@ -107,14 +107,14 @@ export const menuSections: MenuSection[] = [
         searchDescription: 'search.items.learningDesc',
       },
       {
-        icon: (props) => createElement(Network, props),
-        label: 'sidebar.menu.mutualGroups',
-        path: '/chat-management',
-      },
-      {
         icon: KnowledgeIcon,
         label: 'sidebar.menu.knowledgeBase',
         path: '/resource/knowledge-base',
+      },
+      {
+        icon: (props) => createElement(Users, props),
+        label: 'sidebar.menu.contacts',
+        path: '/resource/person',
       },
     ],
   },

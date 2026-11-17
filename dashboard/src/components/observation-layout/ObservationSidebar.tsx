@@ -69,7 +69,7 @@ const SHORT_LABELS: Record<string, string> = {
   '/config/model': 'observation.keys.model',
   '/adapter-management': 'observation.keys.adapter',
   '/resource/learning': 'observation.keys.learning',
-  '/chat-management': 'observation.keys.mutualGroups',
+  '/resource/person': 'sidebar.menu.contacts',
   '/resource/knowledge-base': 'observation.keys.memory',
   '/plugin-config': 'observation.keys.plugin',
   '/plugins': 'observation.keys.market',
@@ -79,6 +79,7 @@ const SHORT_LABELS: Record<string, string> = {
 }
 
 function isItemActive(item: MenuItem, pathname: string): boolean {
+  if (item.path === '/resource/person' && pathname === '/chat-management') return true
   if (item.path === '/logs')
     return LOG_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))
   return pathname === item.path || pathname.startsWith(`${item.path}/`)
