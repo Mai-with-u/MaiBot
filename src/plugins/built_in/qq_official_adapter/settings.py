@@ -1,8 +1,42 @@
 from __future__ import annotations
 
-from typing import ClassVar, List
+from typing import Any, ClassVar, List, Literal
+
+from pydantic import field_validator, model_validator
 
 from maibot_sdk import Field, PluginConfigBase
+
+
+class GroupTarget(PluginConfigBase):
+    """配置中的 QQ 群身份；name 仅用于显示，不参与匹配。"""
+
+    platform: Literal["qq"] = "qq"
+    type: Literal["group"] = "group"
+    id: str = Field(default="", min_length=1)
+    name: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def read_legacy_id(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return {"id": value.strip()}
+        return value
+
+
+class UserTarget(PluginConfigBase):
+    """配置中的 QQ 用户身份，保留原始平台 ID。"""
+
+    platform: Literal["qq"] = "qq"
+    type: Literal["user"] = "user"
+    id: str = Field(default="", min_length=1)
+    name: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def read_legacy_id(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return {"id": value.strip()}
+        return value
 
 
 class PluginSettings(PluginConfigBase):
@@ -10,7 +44,7 @@ class PluginSettings(PluginConfigBase):
     __ui_order__: ClassVar[int] = 0
 
     enabled: bool = Field(default=False, description="启用 QQ 官方机器人连接")
-    config_version: str = Field(default="0.4.16", description="配置版本")
+    config_version: str = Field(default="0.5.3", description="配置版本")
 
 
 class QQOfficialSettings(PluginConfigBase):
@@ -30,9 +64,14 @@ class QQOfficialSettings(PluginConfigBase):
         description="统一账号 ID（如 NapCat 机器人 QQ 号）；非空时聊天流按此 ID 归属，与其它 qq 适配器共享上下文",
         json_schema_extra={"label": "关联QQ号"},
     )
+    enable_mapping: bool = Field(
+        default=False,
+        description="将用户 OpenID 按手动关联或静默同步结果映射为 QQ 号；关闭时保留关联记录，但不转换用户 ID",
+        json_schema_extra={"label": "启用映射"},
+    )
     silent_user_sync: bool = Field(
         default=True,
-        description="在已绑定群中与 SnowLuma 静默匹配 QQ 号、昵称和群名片；需填写关联QQ号，三条不同正文一致后生效",
+        description="在已绑定群中与 SnowLuma 静默匹配 QQ 号及资料，作为数据迁移依据；需填写关联QQ号，三条不同正文一致后确认。仅在启用映射时将用户 ID 转为 QQ 号，不自动迁移数据",
         json_schema_extra={"label": "静默同步群成员身份"},
     )
     snowluma_identity_only: bool = Field(
@@ -42,46 +81,68 @@ class QQOfficialSettings(PluginConfigBase):
     )
 
 
-class MuteSettings(PluginConfigBase):
+class TargetListSettings(PluginConfigBase):
+    @field_validator("allowed_groups", "admin_users", check_fields=False)
+    @classmethod
+    def validate_targets(cls, value: List[Any]) -> List[Any]:
+        for target in value:
+            if not target.id.strip():
+                raise ValueError("目标 ID 不能为空")
+        return value
+
+    @field_validator("allowed_groups", "admin_users", mode="before", check_fields=False)
+    @classmethod
+    def normalize_legacy_targets(cls, value: Any) -> Any:
+        if isinstance(value, list):
+            return [item for item in value if not isinstance(item, str) or item.strip()]
+        return value
+
+
+class MuteSettings(TargetListSettings):
     __ui_label__: ClassVar[str] = "禁言工具"
     __ui_order__: ClassVar[int] = 2
 
     enabled: bool = Field(default=True, description="启用 set_mute 禁言设置工具；时长为 0 解除禁言，正整数施加禁言")
-    allowed_groups: List[str] = Field(
+    allowed_groups: List[GroupTarget] = Field(
         default_factory=list,
+        json_schema_extra={"x-widget": "target", "label": "允许群", "hint": "搜索并选择群；留空不限制"},
         description="允许使用禁言与解除禁言的群（统一群号或 group_openid）；留空不限制",
     )
-    admin_users: List[str] = Field(
+    admin_users: List[UserTarget] = Field(
         default_factory=list,
-        description="禁言保护名单（统一 QQ 号或 OpenID），名单内用户不会被禁言",
+        json_schema_extra={"x-widget": "target", "label": "保护用户", "hint": "搜索并选择不允许被操作的用户"},
+        description="禁言保护名单（关闭映射时仅匹配 OpenID；启用映射时可匹配关联 QQ 号、Union ID 或 OpenID），名单内用户不会被禁言",
     )
     min_duration: int = Field(default=60, ge=1, description="最短禁言时长（秒）")
     max_duration: int = Field(default=2592000, ge=1, le=2592000, description="最长禁言时长（秒），官方上限 30 天")
 
 
-class RecallSettings(PluginConfigBase):
+class RecallSettings(TargetListSettings):
     __ui_label__: ClassVar[str] = "撤回工具"
     __ui_order__: ClassVar[int] = 3
 
     enabled: bool = Field(default=True, description="启用 recall_message 撤回工具，默认开启，关闭时不向模型提供该工具")
-    allowed_groups: List[str] = Field(
+    allowed_groups: List[GroupTarget] = Field(
         default_factory=list,
+        json_schema_extra={"x-widget": "target", "label": "允许群", "hint": "搜索并选择群；留空不限制"},
         description="允许使用撤回的群（统一群号或 group_openid）；留空不限制，单聊不受此限制",
     )
 
 
-class KickSettings(PluginConfigBase):
+class KickSettings(TargetListSettings):
     __ui_label__: ClassVar[str] = "踢人工具"
     __ui_order__: ClassVar[int] = 4
 
     enabled: bool = Field(default=False, description="启用 kick_member 踢人工具；需要 QQ 官方移除群成员接口权限")
-    allowed_groups: List[str] = Field(
+    allowed_groups: List[GroupTarget] = Field(
         default_factory=list,
+        json_schema_extra={"x-widget": "target", "label": "允许群", "hint": "搜索并选择群；留空不限制"},
         description="允许使用踢人工具的群（统一群号或 group_openid）；留空不限制",
     )
-    admin_users: List[str] = Field(
+    admin_users: List[UserTarget] = Field(
         default_factory=list,
-        description="踢人保护名单（统一 QQ 号或 OpenID），名单内用户不会被移除",
+        json_schema_extra={"x-widget": "target", "label": "保护用户", "hint": "搜索并选择不允许被操作的用户"},
+        description="踢人保护名单（关闭映射时仅匹配 OpenID；启用映射时可匹配关联 QQ 号、Union ID 或 OpenID），名单内用户不会被移除",
     )
 
 

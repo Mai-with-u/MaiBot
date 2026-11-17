@@ -282,6 +282,20 @@ function CustomPageSession({
           if (request.kind === 'navigate') {
             if (!pages.some((target) => target.id === request.name))
               throw new Error('Page is not declared by this plugin')
+            if (
+              true &&
+              pluginId === 'Mai-with-u.qq-adapter' &&
+              request.name === 'group-mappings' &&
+              request.args.view === 'injection'
+            ) {
+              const search = new URLSearchParams({ tab: 'user-migration' })
+              if (typeof request.args.source === 'string') search.set('source', request.args.source)
+              if (typeof request.args.target === 'string') search.set('target', request.args.target)
+              if (request.args.fromMapping === true) search.set('fromMapping', 'true')
+              channel.port1.postMessage({ id, result: null })
+              window.location.assign(`/data-transfer?${search}`)
+              return
+            }
             const state = new URLSearchParams({ state: JSON.stringify(request.args) })
             channel.port1.postMessage({ id, result: null })
             window.location.assign(`${extensionPath(pluginId, request.name)}?${state}`)

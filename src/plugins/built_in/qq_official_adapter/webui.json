@@ -6,8 +6,8 @@
   "pages": [
     {
       "id": "group-mappings",
-      "title": "QQ 群与用户映射",
-      "description": "扫码连接 QQ 官方机器人，查看群和用户 OpenID 对应关系及头像。",
+      "title": "QQ 官方适配器",
+      "description": "",
       "icon": "list",
       "mode": "custom",
       "queries": {
@@ -33,7 +33,11 @@
             },
             "source": {
               "type": "string",
-              "choices": ["manual", "auto"]
+              "choices": [
+                "manual",
+                "auto",
+                "union"
+              ]
             },
             "group_openid": {
               "type": "string"
@@ -42,6 +46,14 @@
         },
         "login_status": {
           "api": "webui_login_status",
+          "version": "1"
+        },
+        "mapping_migrations": {
+          "api": "webui_mapping_migrations",
+          "version": "1"
+        },
+        "identity_mode": {
+          "api": "webui_identity_mode",
           "version": "1"
         }
       },
@@ -55,6 +67,40 @@
         "login_cancel": {
           "api": "webui_login_cancel",
           "version": "1"
+        },
+        "finish_mapping": {
+          "api": "webui_finish_mapping",
+          "version": "1",
+          "confirmation": "关闭 QQ 号映射，后续使用原始 OpenID。是否继续？"
+        },
+        "set_mapping_mode": {
+          "api": "webui_set_mapping_mode",
+          "version": "1",
+          "parameters": {
+            "enabled": {
+              "type": "boolean",
+              "required": true
+            }
+          }
+        },
+        "delete_bindings": {
+          "api": "webui_delete_bindings",
+          "version": "1",
+          "confirmation": "删除所选绑定及相关静默匹配记录？历史用户数据不受影响。",
+          "parameters": {
+            "kind": {
+              "type": "string",
+              "required": true,
+              "choices": [
+                "group",
+                "user"
+              ]
+            },
+            "openids_json": {
+              "type": "string",
+              "required": true
+            }
+          }
         }
       }
     }

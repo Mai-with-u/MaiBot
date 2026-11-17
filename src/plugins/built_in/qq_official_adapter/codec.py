@@ -24,6 +24,14 @@ QQ_FACE_TAG_PATTERN = re.compile(r"<faceType=.*?>", re.IGNORECASE)
 QQ_MENTION_TOKEN_PATTERN = re.compile(r"<@!?([0-9A-Za-z_-]+)>")
 
 
+def extract_user_openid(event_type: str, payload: Mapping[str, Any]) -> str:
+    author = payload.get("author")
+    if not isinstance(author, Mapping):
+        raise ValueError("消息缺少 author")
+    keys = ("member_openid", "openid", "id", "user_openid") if event_type in GROUP_EVENTS else ("user_openid", "openid", "id")
+    return next((value for key in keys if (value := str(author.get(key) or "").strip())), "")
+
+
 def decode_message(
     event_type: str,
     payload: Mapping[str, Any],
@@ -36,6 +44,7 @@ def decode_message(
     id_map: Optional[Mapping[str, Mapping[str, str]]] = None,
     unified_account_id: str = "",
     group_name: str = "",
+    union_user_map: Optional[Mapping[str, str]] = None,
 ) -> Tuple[Dict[str, Any], str, str]:
     """将官方群 @/全量群/单聊事件转换为 MaiBot 网关消息，并返回场景和目标 OpenID。
 
@@ -55,28 +64,34 @@ def decode_message(
 
     is_group = event_type in GROUP_EVENTS
     group_id = str(payload.get("group_openid") or "").strip() if is_group else ""
-    user_keys = ("member_openid", "openid", "id", "user_openid") if is_group else ("user_openid", "openid", "id")
-    user_id = next(
-        (candidate for key in user_keys if (candidate := str(author.get(key) or "").strip())),
-        "",
-    )
+    user_id = extract_user_openid(event_type, payload)
     if not user_id or (is_group and not group_id):
         raise ValueError("消息缺少用户或群 OpenID")
 
-    # 统一 ID 映射：把群/用户 OpenID 替换为指定 ID（如真实 QQ 号），与其它 qq 适配器共享聊天流；
-    # 原始 OpenID 保留在 additional_config，供出站发送时反查。
+
+    # 旧 QQ 号 / OpenID 保持生效，只有管理员手动转换的用户才使用 Union。
     group_map = (id_map or {}).get("group") or {}
-    user_map = (id_map or {}).get("user") or {}
+    user_map = dict(union_user_map or {})
+    legacy_user = str((id_map or {}).get("user", {}).get(user_id) or user_id)
+    canonical_user = legacy_user
+    user_map[user_id] = canonical_user
     unified_group = str(group_map.get(group_id) or "") if group_id else ""
-    unified_user = str(user_map.get(user_id) or "")
     # 主程序通过正式 account_id 字段计算 session 归属，扩展配置只保存平台专属数据。
     additional_config: Dict[str, Any] = {}
     if is_group:
         additional_config["qq_official_group_openid"] = group_id
         additional_config["platform_io_target_group_id"] = unified_group or group_id
     else:
-        additional_config["platform_io_target_user_id"] = unified_user or user_id
+        additional_config["platform_io_target_user_id"] = canonical_user
     additional_config["qq_official_user_openid"] = user_id
+    # 官方身份字段独立于人工 ID 映射保存，union 标识仅在平台关联应用后有效。
+    for field in ("id", "username", "avatar", "bot", "union_openid", "member_role", "member_nickname"):
+        if field in author and (is_group or field not in {"member_role", "member_nickname"}):
+            additional_config[f"qq_official_author_{field}"] = author[field]
+    if is_group and "union_group_openid" in payload:
+        additional_config["qq_official_union_group_openid"] = payload["union_group_openid"]
+    if is_group and "mentions" in payload:
+        additional_config["qq_official_mentions"] = payload["mentions"]
     # 官方引用索引（message_scene.ext 的 msg_idx）：出站 message_reference 只能用 REFIDX，
     # 不能用消息 id（ROBOT1.0_...）；ref_msg_idx 表示用户这条消息本身引用了谁。
     msg_idx, ref_msg_idx = extract_message_scene_fields(payload)
@@ -84,8 +99,7 @@ def decode_message(
         additional_config["qq_official_msg_idx"] = msg_idx
     if ref_msg_idx:
         additional_config["qq_official_ref_msg_idx"] = ref_msg_idx
-    if unified_user:
-        user_id = unified_user
+    user_id = canonical_user
     if unified_group:
         group_id = unified_group
 
@@ -111,12 +125,14 @@ def decode_message(
         raise ValueError("消息缺少有效的 timestamp") from None
 
     target_id = group_id if is_group else user_id
-    nickname = str(author.get("nickname") or author.get("nick") or author.get("username") or user_id).strip() or user_id
+    nickname = str(author.get("username") or author.get("nickname") or author.get("nick") or user_id).strip() or user_id
     message_info: Dict[str, Any] = {
         "user_info": {"user_id": user_id, "user_nickname": nickname},
         "additional_config": additional_config,
     }
     if is_group:
+        if "member_nickname" in author:
+            message_info["user_info"]["user_cardname"] = str(author["member_nickname"] or "").strip() or None
         message_info["group_info"] = {
             "group_id": group_id,
             # 官方事件通常不带群名，改由插件查 group_openid 的群基本信息补齐；
@@ -250,6 +266,7 @@ def _rewrite_mention_tokens(
     """
 
     display_names: Dict[str, str] = {}
+    card_names: Dict[str, str] = {}
     for mention in payload.get("mentions") or []:
         if not isinstance(mention, Mapping):
             continue
@@ -264,6 +281,9 @@ def _rewrite_mention_tokens(
         name = str(mention.get("username") or mention.get("nickname") or mention.get("nick") or "").strip()
         if mention_id and name:
             display_names[mention_id] = name
+        cardname = str(mention.get("member_nickname") or "").strip()
+        if mention_id and cardname:
+            card_names[mention_id] = cardname
 
     # 按原文顺序切分为文本片段与 at 段，保持 "文本A @x 文本B @y 文本C" 的穿插位置。
     # pieces 元素：str 为文本；tuple(at 段, 可读标签) 为 @。
@@ -289,6 +309,7 @@ def _rewrite_mention_tokens(
             )
             continue
         name = display_names.get(mention_id)
+        cardname = card_names.get(mention_id)
         pieces.append(
             (
                 {
@@ -296,10 +317,10 @@ def _rewrite_mention_tokens(
                     "data": {
                         "target_user_id": user_map.get(mention_id, mention_id),
                         "target_user_nickname": name,
-                        "target_user_cardname": None,
+                        "target_user_cardname": cardname,
                     },
                 },
-                f"@{name or mention_id}",
+                f"@{cardname or name or mention_id}",
             )
         )
     pieces.append(content[cursor:])

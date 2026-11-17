@@ -9,6 +9,7 @@ import pytest
 
 from src.plugins.built_in.qq_official_adapter import codec
 from src.plugins.built_in.qq_official_adapter.plugin import QQOfficialAdapterPlugin
+from src.plugins.built_in.qq_official_adapter.settings import AdapterSettings
 
 
 def message(segments, group=True):
@@ -28,6 +29,7 @@ def file_segment(binary=b"hello", name="测试.txt", kind="file"):
 
 def adapter():
     plugin = QQOfficialAdapterPlugin()
+    plugin._plugin_config_instance = AdapterSettings()
     plugin._set_context(SimpleNamespace(logger=logging.getLogger("qq-file-test")))
     plugin._ready = True
     return plugin
