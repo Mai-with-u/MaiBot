@@ -1,3 +1,4 @@
+import { USER_DATA_MIGRATION_ENABLED } from '@/lib/release-features'
 import { Link, useParams } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -391,7 +392,7 @@ export function PluginWebUIPage() {
   const [pageState] = useState(readPluginPageState)
   const qqPage = runtime.host && pluginId === 'Mai-with-u.qq-adapter' && pageId === 'group-mappings'
   useEffect(() => {
-    if (true && qqPage && pageState.view === 'injection') {
+    if (USER_DATA_MIGRATION_ENABLED && qqPage && pageState.view === 'injection') {
       const search = new URLSearchParams({ tab: 'user-migration' })
       if (typeof pageState.source === 'string') search.set('source', pageState.source)
       if (typeof pageState.target === 'string') search.set('target', pageState.target)

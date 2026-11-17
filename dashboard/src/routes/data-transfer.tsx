@@ -1,3 +1,4 @@
+import { USER_DATA_MIGRATION_ENABLED } from '@/lib/release-features'
 import { UserDataInjection } from '@/components/user-data-injection'
 import { useHostRuntime } from '@/host/state'
 import { useNavigate, useSearch } from '@tanstack/react-router'
@@ -33,7 +34,7 @@ function BotDataTransferPage() {
     <TabsList aria-label={t('sidebar.menu.dataTransfer')} className="shrink-0">
       <TabsTrigger value="transfer">{t('dataManagement.transfer')}</TabsTrigger>
       <TabsTrigger value="chat-migration">聊天迁移</TabsTrigger>
-      {true && <TabsTrigger value="user-migration">用户数据灌注</TabsTrigger>}
+      {USER_DATA_MIGRATION_ENABLED && <TabsTrigger value="user-migration">用户数据灌注</TabsTrigger>}
       {(flags?.files || tab === 'files') && (
         <TabsTrigger value="files">{t('files.title')}</TabsTrigger>
       )}
@@ -48,7 +49,7 @@ function BotDataTransferPage() {
     >
       <div className="mx-auto w-full max-w-6xl space-y-6 p-4 sm:p-6">
         <Tabs
-          value={tab === 'user-migration' && !true ? 'transfer' : tab}
+          value={tab === 'user-migration' && !USER_DATA_MIGRATION_ENABLED ? 'transfer' : tab}
           onValueChange={(value) => {
             if (
               value !== 'transfer' &&
@@ -84,7 +85,7 @@ function BotDataTransferPage() {
           <TabsContent value="chat-migration" className="mt-0">
             <ChatMigrationWorkspace headerActions={pageTabs} />
           </TabsContent>
-          {true && <TabsContent value="user-migration" className="mt-0 space-y-4">
+          {USER_DATA_MIGRATION_ENABLED && <TabsContent value="user-migration" className="mt-0 space-y-4">
             {pageTabs}
             <UserDataInjection
               initialSource={source}

@@ -1,3 +1,4 @@
+import { USER_DATA_MIGRATION_ENABLED } from '@/lib/release-features'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -283,7 +284,7 @@ function CustomPageSession({
             if (!pages.some((target) => target.id === request.name))
               throw new Error('Page is not declared by this plugin')
             if (
-              true &&
+              USER_DATA_MIGRATION_ENABLED &&
               pluginId === 'Mai-with-u.qq-adapter' &&
               request.name === 'group-mappings' &&
               request.args.view === 'injection'

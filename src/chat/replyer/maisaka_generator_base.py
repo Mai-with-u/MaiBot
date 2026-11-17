@@ -28,6 +28,7 @@ from src.common.logger import get_logger
 from src.common.utils.utils_config import ChatConfigUtils
 from src.config.config import global_config
 from src.config.model_configs import ModelInfo
+from src.llm_models.exceptions import LLMRequestError
 from src.llm_models.payload_content.context_item import (
     CONTEXT_ITEM_SCHEMA_VERSION,
     AssistantMessageItem,
@@ -1125,7 +1126,10 @@ class BaseMaisakaReplyGenerator(ChatReplyPromptMixin):
             except HookAbortedError as exc:
                 return await finalize_abort(exc)
             except Exception as exc:
-                logger.exception("Maisaka 回复器调用失败")
+                if isinstance(exc, LLMRequestError):
+                    logger.error(f"Maisaka 回复器调用失败: {exc}")
+                else:
+                    logger.exception("Maisaka 回复器调用失败")
                 result.error_message = str(exc)
                 result.metrics = GenerationMetrics(
                     prompt_ms=prompt_ms,

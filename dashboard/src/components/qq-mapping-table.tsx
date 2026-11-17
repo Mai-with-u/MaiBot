@@ -1,3 +1,4 @@
+import { USER_DATA_MIGRATION_ENABLED } from '@/lib/release-features'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -137,7 +138,7 @@ export function QQMappingTable({ kind }: { kind: 'group' | 'user' }) {
     queryFn: async () => {
       const data = (await invokeQQWebUI('queries', 'mappings')) as Mappings
       const migration =
-        true && kind === 'user'
+        USER_DATA_MIGRATION_ENABLED && kind === 'user'
           ? ((await invokeQQWebUI('queries', 'mapping_migrations')) as { candidates: Candidate[] })
           : { candidates: [] }
       return { rows: data[kind], candidates: migration.candidates }
@@ -249,7 +250,7 @@ export function QQMappingTable({ kind }: { kind: 'group' | 'user' }) {
             取消选择
           </Button>
         )}
-        {true && kind === 'user' && (
+        {USER_DATA_MIGRATION_ENABLED && kind === 'user' && (
           <Button
             className="ml-auto"
             variant="outline"
@@ -354,7 +355,7 @@ export function QQMappingTable({ kind }: { kind: 'group' | 'user' }) {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
-                      {true && kind === 'user' && migration?.status === 'pending' && (
+                      {USER_DATA_MIGRATION_ENABLED && kind === 'user' && migration?.status === 'pending' && (
                         <Button
                           variant="outline"
                           size="xs"
@@ -364,10 +365,10 @@ export function QQMappingTable({ kind }: { kind: 'group' | 'user' }) {
                           迁回此 OpenID
                         </Button>
                       )}
-                      {true && kind === 'user' && migration?.status === 'migrated' && (
+                      {USER_DATA_MIGRATION_ENABLED && kind === 'user' && migration?.status === 'migrated' && (
                         <span className="text-muted-foreground text-xs">已迁移</span>
                       )}
-                      {true && kind === 'user' && migration?.status === 'conflict' && (
+                      {USER_DATA_MIGRATION_ENABLED && kind === 'user' && migration?.status === 'conflict' && (
                         <span className="text-destructive text-xs">身份冲突</span>
                       )}
                       <Button

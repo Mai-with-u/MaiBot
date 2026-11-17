@@ -1,3 +1,4 @@
+import { USER_DATA_MIGRATION_ENABLED } from '@/lib/release-features'
 import { migrationUserId } from '@/lib/person-migration-navigation'
 import {
   createRootRoute,
@@ -396,7 +397,7 @@ const dataTransferRoute = createRoute({
     fromMapping?: boolean
   } => ({
     tab:
-      search.tab === 'files' || search.tab === 'chat-migration' || (true && search.tab === 'user-migration')
+      search.tab === 'files' || search.tab === 'chat-migration' || (USER_DATA_MIGRATION_ENABLED && search.tab === 'user-migration')
         ? search.tab
         : undefined,
     source: migrationUserId(search.source),

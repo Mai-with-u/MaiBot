@@ -40,7 +40,11 @@ error_code_mapping = {
 }
 
 
-class NetworkConnectionError(Exception):
+class LLMRequestError(Exception):
+    """已知的模型请求失败，调用方可直接展示错误原因而不打印异常栈。"""
+
+
+class NetworkConnectionError(LLMRequestError):
     """连接异常，常见于网络问题或服务器不可用"""
 
     def __init__(self, message: str | None = None):
@@ -67,7 +71,7 @@ class ReqAbortException(OperationAbortedError):
         return self.message or "请求因未知原因异常终止"
 
 
-class RespNotOkException(Exception):
+class RespNotOkException(LLMRequestError):
     """请求响应异常，见于请求未能成功响应（非 '200 OK'）"""
 
     def __init__(self, status_code: int, message: str | None = None):
@@ -84,7 +88,7 @@ class RespNotOkException(Exception):
             return f"未知的异常响应代码：{self.status_code}"
 
 
-class ResponseContextException(Exception):
+class ResponseContextException(LLMRequestError):
     """携带原始响应上下文的异常基类。"""
 
     default_message: str = "请求失败"
@@ -110,7 +114,7 @@ class EmptyResponseException(ResponseContextException):
     default_message = "响应内容为空，这可能是一个临时性问题"
 
 
-class ModelAttemptFailed(Exception):
+class ModelAttemptFailed(LLMRequestError):
     """当在单个模型上的所有重试都失败后，由“执行者”函数抛出，以通知“调度器”切换模型。"""
 
     def __init__(self, message: str, original_exception: Exception | None = None):
