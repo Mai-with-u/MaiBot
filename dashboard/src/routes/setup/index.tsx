@@ -3,6 +3,9 @@ import {
   ArrowRight,
   CheckCircle2,
   Globe,
+  Monitor,
+  Moon,
+  Sun,
 } from 'lucide-react'
 import { useContext, useEffect, useEffectEvent, useLayoutEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -11,6 +14,7 @@ import { useHostRuntime } from '@/host/state'
 import { DashboardStylePicker } from '@/components/dashboard-style-picker'
 import { useTheme } from '@/components/use-theme'
 import { Button } from '@/components/ui/button'
+import { SegmentedControl } from '@/components/ui/management'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { SetupWizardLayout } from './SetupWizardLayout'
@@ -36,6 +40,7 @@ import { findTemplateByBaseUrl } from '@/routes/config/providerTemplates'
 import { APP_NAME } from '@/lib/version'
 import { useToast } from '@/hooks/use-toast'
 import { validateToken } from '@/lib/token-validator'
+import { getPluginConfig, togglePlugin } from '@/lib/plugin-api'
 import type { ModelListItem } from '@/lib/config-api'
 import type { DashboardStyle } from '@/lib/theme/tokens'
 import { DashboardStylePreviewContext } from '@/lib/theme-context'
@@ -116,7 +121,7 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
   const navigate = useNavigate()
   const { t, i18n: i18nInstance } = useTranslation()
   const { toast } = useToast()
-  const { themeConfig, updateThemeConfig } = useTheme()
+  const { theme, setTheme, themeConfig, updateThemeConfig } = useTheme()
   const setDashboardStylePreview = useContext(DashboardStylePreviewContext)
   const currentLang = i18nInstance.resolvedLanguage || i18nInstance.language || 'zh'
   const createDefaultPersonalityConfig = (): PersonalityConfig => ({
@@ -655,6 +660,20 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
         return
       }
 
+      if (chatPlatformId) {
+        const config = await getPluginConfig(chatPlatformId)
+        const plugin = config.plugin as { enabled?: boolean } | undefined
+        if (typeof plugin?.enabled !== 'boolean') {
+          throw new Error('无法确认适配器启用状态，请重试')
+        }
+        if (!plugin.enabled) {
+          const result = await togglePlugin(chatPlatformId)
+          if (!result.success || !result.enabled || result.runtime_status === 'failed' || result.runtime_status === 'config_error') {
+            throw new Error(result.note || result.message || '适配器启用失败')
+          }
+        }
+      }
+
       await completeSetup()
       setDraftReady(false)
       writeSetupDraft(draftKey, null)
@@ -670,7 +689,7 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
         }),
       })
 
-      // MaiBot 会热加载配置文件；平台连接沿用适配器的配置与登录流程。
+      // 所选适配器已启用，进入配置页继续扫码授权或填写连接信息。
       if (chatPlatformId) {
         navigate({ to: '/adapter-management', search: { plugin: chatPlatformId } })
       } else {
@@ -824,13 +843,28 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
         )
       case 'dashboard-appearance':
         return (
-          <fieldset aria-label={t('setupPage.steps.dashboardAppearance.title')}>
+          <fieldset className="space-y-6" aria-label={t('setupPage.steps.dashboardAppearance.title')} disabled={isSaving || isCompleting}>
             <DashboardStylePicker
               value={dashboardStyleDraft ?? themeConfig.dashboardStyle}
               onChange={setDashboardStyleDraft}
               disabled={isSaving || isCompleting}
               className="grid gap-3 sm:grid-cols-3"
             />
+            <div className="space-y-3">
+              <h3 className="text-base font-semibold">{t('settings.appearance.themeMode')}</h3>
+              <SegmentedControl
+                aria-label={t('settings.appearance.themeMode')}
+                value={theme}
+                onValueChange={(value) => {
+                  if (value === 'light' || value === 'dark' || value === 'system') setTheme(value)
+                }}
+                options={[
+                  { value: 'light', label: <span className="inline-flex items-center gap-2"><Sun />{t('settings.appearance.light')}</span> },
+                  { value: 'dark', label: <span className="inline-flex items-center gap-2"><Moon />{t('settings.appearance.dark')}</span> },
+                  { value: 'system', label: <span className="inline-flex items-center gap-2"><Monitor />{t('settings.appearance.system')}</span> },
+                ]}
+              />
+            </div>
           </fieldset>
         )
       case 'chat-platform':
