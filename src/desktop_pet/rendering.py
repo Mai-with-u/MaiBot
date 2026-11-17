@@ -4,6 +4,28 @@ from typing import Any, Dict, List
 import base64
 
 
+def render_history_events(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """只适配聊天流浏览的消息事件展示，查询和分页由共享事件账本负责。"""
+    from src.webui.routers.system import _resolve_monitor_media_file
+
+    items = {}
+    for event in events:
+        kind = event["event"]
+        if kind not in {"message.ingested", "message.sent", "message.updated"}:
+            continue
+        data = event["data"]
+        parts = [{"kind": "text", "text": data["content"]}]
+        for media in data.get("media", []):
+            if media["kind"] in {"image", "emoji"}:
+                path = _resolve_monitor_media_file(media["kind"], media["hash"])
+                parts.append({"kind": "image", "src": image_src({
+                    "binary_data_base64": base64.b64encode(path.read_bytes()).decode("ascii"),
+                })})
+        items[data["message_id"]] = {"id": data["message_id"],
+                                     "who": "mai" if kind == "message.sent" else "me", "parts": parts}
+    return list(items.values())
+
+
 def image_src(segment: Dict[str, Any]) -> str:
     """把图片/表情消息段转成页面可直接显示的 data URI。"""
     encoded = segment["binary_data_base64"]

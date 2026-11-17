@@ -20,6 +20,7 @@ import { parse as parseToml } from 'smol-toml'
 
 import { DesktopPetCurrentTaskField } from '@/components/DesktopPetCurrentTaskField'
 import { DesktopPetSkinField } from '@/components/DesktopPetSkinField'
+import { DesktopPetSoundField } from '@/components/DesktopPetSoundField'
 import { AgentACPField, AgentConnectionSettings, AgentCustomArgs, AgentDesktopField } from '@/components/agent/AgentConnectionSettings'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
@@ -356,6 +357,7 @@ function BotConfigPageContent() {
     const hookEntries = [
       ['desktop_pet.skin_id', DesktopPetSkinField],
       ['desktop_pet.show_current_task', DesktopPetCurrentTaskField],
+      ['desktop_pet.message_sound', DesktopPetSoundField, 'wrapper'],
       ['agent.connection', AgentConnectionSettings, 'wrapper'],
       ['agent.desktop_manifest', AgentDesktopField, 'wrapper'],
       ['agent.acp_args', AgentCustomArgs, 'wrapper'],

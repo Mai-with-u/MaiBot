@@ -5,15 +5,25 @@ from zipfile import BadZipFile
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 import asyncio
+import base64
 
 from src.common.paths import get_instance_root
 from src.desktop_pet.remote_server import on_main_loop
 from src.desktop_pet.service import desktop_pet_service
+from src.desktop_pet.sounds import MESSAGE_SOUNDS, SOUND_DIRECTORY
 from src.desktop_pet.thinking_caption import fast_model_configured
 from src.desktop_pet.skins import MAX_BYTES, find_skin, install_zip, list_skins
 from src.services.schedules.repository import read_schedule_items, schedules_directory
 
 router = APIRouter(prefix="/desktop-pet", tags=["desktop-pet"])
+
+
+@router.get("/sounds/{sound}")
+def sound_preview(sound: str) -> Dict[str, str]:
+    if sound not in MESSAGE_SOUNDS:
+        raise HTTPException(404, "提示音不存在")
+    encoded = base64.b64encode((SOUND_DIRECTORY / MESSAGE_SOUNDS[sound]).read_bytes()).decode("ascii")
+    return {"src": f"data:audio/wav;base64,{encoded}"}
 
 
 @router.get("/skins")
@@ -108,3 +118,12 @@ async def chat(body: ChatBody):
 
     message_id = await relay_plugin_chat_message("builtin.desktop_pet", text)
     return {"message_id": message_id}
+
+
+@router.post("/restart")
+async def restart():
+    try:
+        await desktop_pet_service.restart()
+    except (RuntimeError, ConnectionError, TimeoutError, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"reloaded": True}

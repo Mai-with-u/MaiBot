@@ -18,9 +18,12 @@ import json
 import os
 import sys
 import threading
+import time
 
 from src.common.atomic_file import quarantine_file
 from src.common.json_storage import read_json, write_json
+
+from .sounds import MESSAGE_SOUNDS, SOUND_DIRECTORY
 
 if TYPE_CHECKING:
     import webview
@@ -232,6 +235,20 @@ class PetApi:
         self._drag_lock = threading.Lock()
         self._scale = 1.0
         self._closing = False
+        self._last_message_sound = -1.0
+
+    def _play_message_sound(self, sound: str) -> None:
+        """异步播放轻柔的啵叮提示音，连续分段回复在一秒内只响一次。"""
+        import winsound
+
+        if sound == "off":
+            return
+        path = SOUND_DIRECTORY / MESSAGE_SOUNDS[sound]
+        now = time.monotonic()
+        if now - self._last_message_sound < 1:
+            return
+        self._last_message_sound = now
+        winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
 
     def _attach(self, window: "webview.Window") -> None:
         """在窗口首次显示前（GUI 线程）调整样式与位置。"""
@@ -302,6 +319,9 @@ class PetApi:
 
     def ready(self) -> None:
         self._outbox.emit({"type": "ready"})
+
+    def history(self, cursors: Dict[str, int], request_id: str) -> None:
+        self._outbox.emit({"type": "history", "cursors": cursors, "request_id": request_id})
 
     def send(self, request_id: str, text: str, images: List[Dict[str, str]]) -> None:
         import re
@@ -555,8 +575,10 @@ def execute_command(api: PetApi, window: "webview.Window", command: Dict[str, An
             records_window = api._exploration_window
             if records_window is not None:
                 records_window.evaluate_js(f"window.records.receive({json.dumps(command)})")
-        elif command["type"] in {"reply", "notice", "thinking_caption", "thinking", "idle", "failed", "accepted", "buttons", "button_result", "screen_state", "exploration_state", "exploration_result", "exploration_tasks"}:
+        elif command["type"] in {"history", "reply", "notice", "thinking_caption", "thinking", "idle", "failed", "accepted", "buttons", "button_result", "screen_state", "exploration_state", "exploration_result", "exploration_tasks"}:
             window.evaluate_js(f"window.pet.receive({json.dumps(command)})")
+            if command["type"] == "reply":
+                api._play_message_sound(command["sound"])
         else:
             raise ValueError(f"未知的桌宠指令: {command['type']}")
     except Exception as exc:
@@ -612,7 +634,8 @@ def main() -> None:
     webview.start(
         pump_commands,
         (api, window, commands),
-        private_mode=True,
+        # 本机页面复用专用 WebView2 缓存，避免每次退出等待清理、启动重新建库。
+        private_mode=False,
         storage_path=str(args.runtime_dir / "webview"),
     )
 

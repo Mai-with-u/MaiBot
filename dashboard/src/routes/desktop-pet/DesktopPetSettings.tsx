@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 
 import { DesktopPetCurrentTaskField } from '@/components/DesktopPetCurrentTaskField'
 import { DesktopPetSkinField } from '@/components/DesktopPetSkinField'
+import { DesktopPetSoundField } from '@/components/DesktopPetSoundField'
 import { DynamicConfigForm } from '@/components/dynamic-form'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { BoardModule, BoardScreen } from '@/components/ui/board'
@@ -18,6 +19,7 @@ const settingsQueryKey = ['desktop-pet', 'settings'] as const
 const settingsFieldHooks = new FieldHookRegistry()
 settingsFieldHooks.register('desktop_pet.skin_id', (props) => <DesktopPetSkinField {...props} autoSave />)
 settingsFieldHooks.register('desktop_pet.show_current_task', DesktopPetCurrentTaskField)
+settingsFieldHooks.register('desktop_pet.message_sound', DesktopPetSoundField, 'wrapper')
 
 export function DesktopPetSettings({ onSaved }: { onSaved: () => void }) {
   const { t } = useTranslation()
